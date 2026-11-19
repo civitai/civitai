@@ -549,8 +549,11 @@ type FileObjects = {
 
 async function deleteImages(imageIds: number[]) {
   if (!imageIds.length) return;
-  const { deleteImageById } = await import('~/server/services/image.service');
-  for (const id of imageIds) await deleteImageById({ id, updatePost: false }).catch(() => null);
+  const service = await import('~/server/services/image.service');
+  for (const id of imageIds)
+    await service
+      .deleteImages([id], { updatePosts: false, actor: { system: 'creator-service-deal-file' } })
+      .catch(() => null);
 }
 
 /** Deletes every stored version of one object; false (and logged) when any may remain. */
@@ -1484,11 +1487,14 @@ export async function deleteScanCopies({ limit = 50 } = {}) {
           AND "status" = 'Failed'::"ServiceDealFileStatus"))
     ORDER BY "id" LIMIT ${limit}::int`;
   if (!rows.length) return 0;
-  const { deleteImageById } = await import('~/server/services/image.service');
+  const service = await import('~/server/services/image.service');
   let deleted = 0;
   for (const row of rows) {
     try {
-      await deleteImageById({ id: row.imageId, updatePost: false });
+      await service.deleteImages([row.imageId], {
+        updatePosts: false,
+        actor: { system: 'creator-service-deal-file' },
+      });
       await dbWrite.$executeRaw`
         UPDATE "ServiceDealFile" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
       deleted++;

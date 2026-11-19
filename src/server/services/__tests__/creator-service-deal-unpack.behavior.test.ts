@@ -106,10 +106,10 @@ vi.mock('~/server/utils/service-deal-zip', async (importOriginal) => {
   };
 });
 
-const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImageById: vi.fn() }));
+const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImages: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: images.createImage,
-  deleteImageById: images.deleteImageById,
+  deleteImages: images.deleteImages,
 }));
 
 const preview = vi.hoisted(() => ({ entryCopy: vi.fn() }));
@@ -365,8 +365,8 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImageById.mockImplementation(async ({ id }: { id: number }) => {
-    await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
+  images.deleteImages.mockImplementation(async (ids: number[]) => {
+    await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
   });
   await holder.db.exec(`
     TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
@@ -850,7 +850,7 @@ describe('resuming', () => {
     });
     await unpack.unpackFinals();
     // Its scan has not finished, so nothing is deleted.
-    expect(images.deleteImageById).not.toHaveBeenCalled();
+    expect(images.deleteImages).not.toHaveBeenCalled();
     const rows = await q<{
       fileId: number | null;
       dealId: number;
@@ -1156,7 +1156,7 @@ describe('copies of scanned images', () => {
 
   it('keeps a copy whose delete failed pointed at, and retries it', async () => {
     const { fileId } = await settled();
-    images.deleteImageById.mockRejectedValueOnce(new Error('store down'));
+    images.deleteImages.mockRejectedValueOnce(new Error('store down'));
     expect(await unpack.deleteEntryScanCopies()).toBe(0);
     expect((await entries(fileId))[0].imageId).toBe(1);
     expect(await unpack.deleteEntryScanCopies()).toBe(1);
@@ -1199,8 +1199,11 @@ describe('copies of scanned images', () => {
 
     it('removes the copy of a passed image only: a rejected one and one still being scanned stay', async () => {
       const { fileId } = await threeImages();
-      expect(images.deleteImageById).toHaveBeenCalledTimes(1);
-      expect(images.deleteImageById).toHaveBeenCalledWith({ id: 1, updatePost: false });
+      expect(images.deleteImages).toHaveBeenCalledTimes(1);
+      expect(images.deleteImages).toHaveBeenCalledWith([1], {
+        updatePosts: false,
+        actor: { system: 'creator-service-deal-file' },
+      });
       expect(await q(`SELECT id FROM "Image" ORDER BY id`)).toEqual([{ id: 2 }, { id: 3 }]);
       const rows = await orphans();
       expect(rows.map((r) => [r.scanStatus, r.imageId, r.fileId, r.dealId])).toEqual([

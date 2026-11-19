@@ -161,10 +161,10 @@ vi.mock('~/server/services/creator-service-deal-file-scan', () => ({
   isFinalsMalwareScanOn: scanSeam.isFinalsMalwareScanOn,
 }));
 
-const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImageById: vi.fn() }));
+const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImages: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: images.createImage,
-  deleteImageById: images.deleteImageById,
+  deleteImages: images.deleteImages,
 }));
 
 const preview = vi.hoisted(() => ({ entryCopy: vi.fn() }));
@@ -359,8 +359,8 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImageById.mockImplementation(async ({ id }: { id: number }) => {
-    await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
+  images.deleteImages.mockImplementation(async (ids: number[]) => {
+    await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
   });
   await holder.db.exec(`
     TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;

@@ -57,6 +57,8 @@ describe('/api/metrics publishes the host-media safety counters at 0', () => {
     ['civitai_app_block_media_serving_degraded_total', 'reason', 'no_session'],
     ['civitai_app_block_media_input_refused_total', 'phase', 'estimate'],
     ['civitai_app_block_media_input_refused_total', 'phase', 'submit'],
+    ['civitai_app_block_unlock_charged_not_released_total', 'read_back', 'ok'],
+    ['civitai_app_block_unlock_charged_not_released_total', 'read_back', 'failed'],
   ])('%s{%s="%s"} is exposed at 0 on a pod that never fired it', async (name, label, value) => {
     expect(await scrape()).toMatch(
       new RegExp(`^${name}\\{[^}]*\\b${label}="${value}"[^}]*\\} 0$`, 'm')

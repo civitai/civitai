@@ -114,12 +114,11 @@ import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { enrichMyChallengeCards } from '~/server/services/challenge-participation.util';
 import {
   getEffectiveBrowsingLevel,
-  isChallengeHiddenByCoverScan,
-  isChallengeHiddenByPoiCover,
   isImageHiddenFromGreenViewer,
   winnerImageFields,
   winnerImageStateSql,
 } from '~/server/games/daily-challenge/challenge-visibility';
+import { isChallengeDetailHidden } from '~/server/games/daily-challenge/challenge-detail-visibility';
 import {
   getChallengeExcludedUserIds,
   challengeCreatorBlockSql,
@@ -137,7 +136,6 @@ import {
 } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   deriveDomainCurrency,
-  isChallengeHiddenByDomainCurrency,
   isNonSfwForGreen,
   type ChallengeBuzzType,
 } from '~/server/games/daily-challenge/challenge-currency';
@@ -1130,94 +1128,24 @@ export async function getChallengeDetail(
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
-  // User-created challenges are still flag-gated. Hiding them here (rather than only in the UI)
-  // covers the direct-link case: the detail page's SSG prefetch and every client fetch go through
-  // this function, so without the flag the page falls through to its not-found branch.
-  if (challenge.source === ChallengeSource.User && !canAccessUserChallenges) return null;
-
-  // Block gate: a viewer the creator has blocked can't open the challenge — direct-link parity
-  // with model/article/post detail. Scoped to user challenges (System/mod challenges have no owner
-  // to block); moderators exempt. A creator viewing their own challenge is self-safe:
-  // amIBlockedByUser returns false when targetUserId === userId.
-  if (viewerId != null && isModerator !== true && challenge.source === ChallengeSource.User) {
-    const blocked = await amIBlockedByUser({
-      userId: viewerId,
-      targetUserId: challenge.createdById ?? undefined,
-    });
-    if (blocked) return null;
-  }
-
-  // Visibility check: only show challenges that are visible to the public. The creator and
-  // moderators may preview a not-yet-visible or Cancelled challenge, and are likewise exempt
-  // from the scan/POI/cover gates below (mods need to inspect hidden challenges; the creator
-  // needs to see their own pending/blocked one).
-  const now = new Date();
-  const canPreviewUnpublished =
-    isModerator === true || (viewerId != null && challenge.createdById === viewerId);
-  if (challenge.visibleAt > now && !canPreviewUnpublished) return null;
-  if (challenge.status === ChallengeStatus.Cancelled && !canPreviewUnpublished) return null;
-
-  // Scan gate: user-created challenges stay hidden until moderation scan passes.
+  const checksUserGates = challenge.source === ChallengeSource.User && canAccessUserChallenges;
+  const [blockedByCreator, cover] = await Promise.all([
+    checksUserGates && viewerId != null && !isModerator
+      ? amIBlockedByUser({ userId: viewerId, targetUserId: challenge.createdById ?? undefined })
+      : false,
+    checksUserGates && challenge.coverImageId
+      ? dbRead.image.findUnique({
+          where: { id: challenge.coverImageId },
+          select: { poi: true, ingestion: true, nsfwLevel: true },
+        })
+      : null,
+  ]);
   if (
-    !canPreviewUnpublished &&
-    challenge.source === ChallengeSource.User &&
-    challenge.ingestion !== ChallengeIngestionStatus.Scanned
-  ) {
-    return null;
-  }
-
-  // POI + cover-scan gate: a cover depicting a real person (Image.poi, set by the image scanner),
-  // or one that hasn't finished moderation scanning yet, keeps the challenge out of public view —
-  // direct-URL parity with the feed filter. Mod/creator exempt; skip the lookup entirely for trusted
-  // System challenges. NSFW-on-green page gating is handled client-side by <Gated> (MatureContentRedirect),
-  // matching model/image detail pages; buildChallengeDetail applies the site's ceiling to the cover
-  // and winner images.
-  if (
-    !canPreviewUnpublished &&
-    challenge.source === ChallengeSource.User &&
-    challenge.coverImageId
-  ) {
-    const cover = await dbRead.image.findUnique({
-      where: { id: challenge.coverImageId },
-      select: { poi: true, ingestion: true, nsfwLevel: true },
-    });
-    if (
-      isChallengeHiddenByPoiCover(
-        {
-          source: challenge.source,
-          createdById: challenge.createdById,
-          coverPoi: cover?.poi ?? false,
-        },
-        viewerId
-      )
-    )
-      return null;
-
-    if (
-      isChallengeHiddenByCoverScan(
-        { source: challenge.source, createdById: challenge.createdById, coverImage: cover },
-        viewerId
-      )
-    )
-      return null;
-  }
-
-  // Domain-currency gate — direct-URL parity with the feed filter. Like the other gates above,
-  // moderators and creators can preview unpublished/hidden challenges regardless of domain.
-  // On the green site a mismatched (yellow) challenge is returned anyway: the detail page's
-  // <Gated> shows the civitai.red redirect card instead of a bare 404. The red side keeps
-  // hiding green challenges — there's no equivalent redirect surface pointing back to green.
-  if (
-    !isGreen &&
-    !canPreviewUnpublished &&
-    isChallengeHiddenByDomainCurrency(
-      {
-        source: challenge.source,
-        buzzType: challenge.buzzType,
-        createdById: challenge.createdById,
-      },
-      isGreen ?? false,
-      viewerId
+    isChallengeDetailHidden(
+      challenge,
+      { id: viewerId, isModerator, isGreen, canAccessUserChallenges, blockedByCreator },
+      cover,
+      new Date()
     )
   )
     return null;
