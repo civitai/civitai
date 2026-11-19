@@ -4,7 +4,8 @@ import { isRedCapableHost } from '~/server/utils/server-domain';
 
 /**
  * A model file's `url` (its storage location) and its training epoch URLs are for the version's
- * owner (and moderators), for their own upload and training flows. Everyone else downloads through
+ * owner when the request may read as the owner (`ownerView`), and for moderators, for their own
+ * upload and training flows. Everyone else downloads through
  * `/api/download/models/{versionId}`, which applies the access rules.
  *
  * This runs after the resolver, on every request, so no shared cache upstream of it can hold an
@@ -26,8 +27,8 @@ type OwnerOnlyFileUrlsConfig<TData, TInput> = {
 
 /**
  * The decision, pulled out of the middleware so it is directly testable (tRPC's `middleware()`
- * returns a builder, not a callable). Returns `data` unchanged for the owner and moderators,
- * stripped for everyone else — including when the owner can't be resolved.
+ * returns a builder, not a callable). Returns `data` unchanged for moderators and, with
+ * `ownerView`, the owner; stripped for everyone else, including when the owner can't be resolved.
  */
 export async function resolveOwnerOnlyFileUrls<TData, TInput>(
   config: OwnerOnlyFileUrlsConfig<TData, TInput>,
