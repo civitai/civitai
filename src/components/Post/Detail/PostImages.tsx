@@ -15,8 +15,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostContestCollectionInfoAlert';
 import { PostStickerOverlay } from '~/components/Post/Detail/PostStickerOverlay';
-import type { SongList } from '~/components/MusicPlayer/PostSong';
-import { PostSongTile, SongMenuItems } from '~/components/MusicPlayer/PostSong';
+import { postSongList, PostSongTile, SongMenuItems } from '~/components/MusicPlayer/PostSong';
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -87,7 +86,7 @@ export function PostImages({
     [features.music, images]
   );
   const songIds = useMemo(() => songs.map((song) => song.id), [songs]);
-  const songList: SongList = { name: postTitle || 'this post', songs };
+  const songList = postSongList(postTitle, songs);
   const items = useMemo(() => mergeDetailItems(images, texts), [images, texts]);
 
   if (isLoading)

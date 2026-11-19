@@ -29,7 +29,11 @@ import clsx from 'clsx';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
-import { MUSIC_UP_NEXT_Z_INDEX, PlayerTooltip, MUSIC_PLAYER_BAR_HEIGHT } from '~/components/MusicPlayer/MusicPlayerLayers';
+import {
+  MUSIC_UP_NEXT_Z_INDEX,
+  PlayerTooltip,
+  MUSIC_PLAYER_BAR_HEIGHT,
+} from '~/components/MusicPlayer/MusicPlayerLayers';
 import {
   ACCENT,
   accentAt,
@@ -39,8 +43,9 @@ import {
 } from '~/components/MusicPlayer/MusicPlayerParts';
 import { useMusicPlayerCovers } from '~/components/MusicPlayer/useMusicPlayerCover';
 import type { PlayerSongCover } from '~/server/services/post.service';
+import { useShallow } from 'zustand/react/shallow';
 import type { MusicTrack, MusicUpNextSection } from '~/store/music-player.store';
-import { useMusicPlayerStore } from '~/store/music-player.store';
+import { repeatingAfterUpNext, useMusicPlayerStore } from '~/store/music-player.store';
 import { formatPlaybackTime } from '~/utils/audio-player';
 
 const store = useMusicPlayerStore.getState;
@@ -81,6 +86,9 @@ export function MusicUpNextPanel({
   const queued = useMusicPlayerStore((s) => s.queued);
   const list = useMusicPlayerStore((s) => s.list);
   const listName = useMusicPlayerStore((s) => s.listName);
+  const repeating = useMusicPlayerStore(useShallow(repeatingAfterUpNext));
+  // On the wrap, all but the first song are shuffled again, so this order is not the one played.
+  const shuffle = useMusicPlayerStore((s) => s.shuffle);
   const [panel, setPanel] = useState<HTMLElement | null>(null);
   const [dragId, setDragId] = useState<number | null>(null);
   const [dropHint, setDropHint] = useState<DropHint>(null);
@@ -96,8 +104,8 @@ export function MusicUpNextPanel({
   }, [dragId, onClose]);
 
   const ids = useMemo(
-    () => [...new Set([current, ...queued, ...list].map((t) => t.id))],
-    [current, queued, list]
+    () => [...new Set([current, ...queued, ...list, ...repeating].map((t) => t.id))],
+    [current, queued, list, repeating]
   );
   const covers = useMusicPlayerCovers(ids);
   const upNext = [...queued, ...list];
@@ -178,15 +186,27 @@ export function MusicUpNextPanel({
             ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
             zIndex: MUSIC_UP_NEXT_Z_INDEX,
             bottom: `calc(${MUSIC_PLAYER_BAR_HEIGHT}px + var(--safe-area-inset-bottom) + 12px)`,
-            maxHeight:
-              `calc(100dvh - var(--header-height, 0px) - ${MUSIC_PLAYER_BAR_HEIGHT}px - var(--safe-area-inset-bottom) - 24px)`,
+            maxHeight: `calc(100dvh - var(--header-height, 0px) - ${MUSIC_PLAYER_BAR_HEIGHT}px - var(--safe-area-inset-bottom) - 24px)`,
           } as CSSProperties
         }
       >
-        <PanelHeader summary={upNextSummary(upNext)} />
+        <PanelHeader summary={upNextSummary(repeating.length ? repeating : upNext)} />
         <div className="min-h-0 flex-1 overflow-y-auto">
           <NowPlaying track={current} cover={covers.get(current.id)} playing={playing} />
-          {!upNext.length && !dragging ? (
+          {repeating.length > 0 ? (
+            // Repeat all with Up next played out: the songs that play again. Not reorderable.
+            <div className="flex flex-col gap-0.5 px-2.5 pb-2.5 pt-1.5">
+              <SectionLabel>{shuffle ? 'REPEATING, SHUFFLED' : 'REPEATING'}</SectionLabel>
+              {repeating.map((track, i) => (
+                <RowContent
+                  key={`${track.id}-${i}`}
+                  track={track}
+                  cover={covers.get(track.id)}
+                  still
+                />
+              ))}
+            </div>
+          ) : !upNext.length && !dragging ? (
             <p className={clsx('px-[18px] py-4 text-sm', dimmed)}>
               Nothing queued. Add songs with Add to up next.
             </p>
@@ -407,14 +427,37 @@ function RowContent({
   className,
   handle,
   remove,
+  still = false,
 }: {
   track: MusicTrack;
   cover?: PlayerSongCover;
   className?: string;
   handle?: ReactNode;
   remove?: ReactNode;
+  /** Shown only: not playable from here, no grip. */
+  still?: boolean;
 }) {
   const title = track.title || 'Untitled song';
+  const body = (
+    <>
+      <SongArt url={cover?.url} width={44} iconSize={20} className="size-11 rounded-lg" />
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className={clsx('truncate text-[15px] font-semibold leading-tight', brightText)}>
+          {title}
+        </span>
+        <span className={clsx('truncate text-xs', dimmed)}>{track.creator.username}</span>
+      </span>
+      <span className={clsx('shrink-0 text-xs', dimmed)}>
+        {formatPlaybackTime(track.durationSec)}
+      </span>
+    </>
+  );
+  if (still)
+    return (
+      <div className={clsx('flex items-center gap-3 rounded-[10px] p-2 px-11', className)}>
+        {body}
+      </div>
+    );
   return (
     <div
       className={clsx(
@@ -433,16 +476,7 @@ function RowContent({
         onClick={() => store().playFromUpNext(track.id)}
         className="flex min-w-0 flex-1 items-center gap-3 text-left"
       >
-        <SongArt url={cover?.url} width={44} iconSize={20} className="size-11 rounded-lg" />
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className={clsx('truncate text-[15px] font-semibold leading-tight', brightText)}>
-            {title}
-          </span>
-          <span className={clsx('truncate text-xs', dimmed)}>{track.creator.username}</span>
-        </span>
-        <span className={clsx('shrink-0 text-xs', dimmed)}>
-          {formatPlaybackTime(track.durationSec)}
-        </span>
+        {body}
       </button>
       {remove ?? <span className="size-6 shrink-0" />}
     </div>

@@ -571,6 +571,17 @@ function storedSongIds(value: unknown): number[] {
   return [...new Set(ids)].slice(0, RECENTLY_PLAYED_MAX);
 }
 
+/**
+ * With repeat all and nothing left in Up next: the songs that play again after the current one, in
+ * order (the sequence `advance` restarts from, the current song last).
+ */
+export function repeatingAfterUpNext(
+  s: Pick<PlayerData, 'repeat' | 'queued' | 'list' | 'history' | 'sequenceStart' | 'current'>
+): MusicTrack[] {
+  if (s.repeat !== 'all' || !s.current || s.queued.length || s.list.length) return [];
+  return [...s.history.slice(s.sequenceStart).map((h) => h.track), s.current];
+}
+
 /** The global player's state. Exactly one `<audio>` element plays it: `MusicPlayerAudio`. */
 export const useMusicPlayerStore = createMusicPlayerStore();
 

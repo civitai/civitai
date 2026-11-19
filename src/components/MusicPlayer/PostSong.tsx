@@ -21,8 +21,16 @@ export type SongImage = {
   user: { id: number; username?: string | null };
 };
 
-/** The list play was pressed in and its name: the songs after the played one become Up next. */
-export type SongList = { name: string; songs: SongImage[] };
+/**
+ * The list play was pressed in and its name: the songs after the played one become Up next, then,
+ * with `wrap` (a post's few songs), the ones before it.
+ */
+export type SongList = { name: string; songs: SongImage[]; wrap?: boolean };
+
+/** A post's songs as the list play is pressed in: few and closed, so Up next wraps. */
+export function postSongList(postTitle: string | null | undefined, songs: SongImage[]): SongList {
+  return { name: postTitle || 'this post', songs, wrap: true };
+}
 
 export function songTrack(image: SongImage): MusicTrack {
   const metadata = (image.metadata ?? {}) as { title?: string; duration?: number };
@@ -54,7 +62,15 @@ export function playSongWithCreatorList(song: SongImage, moreFrom: SongList, sta
 export function playSongFromList(song: SongImage, list: SongList, startAtSec?: number) {
   const index = list.songs.findIndex((s) => s.id === song.id);
   if (index < 0) return store().playTrack(songTrack(song));
-  store().playFromList({ name: list.name, tracks: list.songs.map(songTrack), index, startAtSec });
+  const songs = list.wrap
+    ? [...list.songs.slice(index), ...list.songs.slice(0, index)]
+    : list.songs;
+  store().playFromList({
+    name: list.name,
+    tracks: songs.map(songTrack),
+    index: list.wrap ? 0 : index,
+    startAtSec,
+  });
 }
 
 /**

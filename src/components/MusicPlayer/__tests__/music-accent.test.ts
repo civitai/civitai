@@ -66,13 +66,20 @@ describe('the artwork accent', () => {
   it.each([
     ['very dark', [10, 12, 30]],
     ['very light', [250, 245, 235]],
-    ['grey', [128, 128, 128]],
     ['bright yellow', [255, 230, 0]],
   ] as const)('clamps a %s cover into a readable accent', (_, [r, g, b]) => {
     const accent = musicAccentFromHash(flatHash(r, g, b));
 
     expect(accent).not.toBeNull();
     expectReadable(accent!.accent);
+  });
+
+  // A grey accent reads like the player's dimmed "off" controls, so Shuffle and Repeat look off.
+  it.each([
+    ['grey', [128, 128, 128]],
+    ['grey tabby', [120, 114, 104]],
+  ] as const)('is null for a %s cover, which has no colour to take', (_, [r, g, b]) => {
+    expect(musicAccentFromHash(flatHash(r, g, b))).toBeNull();
   });
 
   it('keeps the hue of a dark cover rather than inventing one', () => {

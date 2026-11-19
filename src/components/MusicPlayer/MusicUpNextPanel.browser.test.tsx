@@ -178,7 +178,11 @@ describe('the Up next panel', () => {
       const previous = document.documentElement.getAttribute('data-mantine-color-scheme');
       document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
       try {
-        const rgb = (css: string) => css.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+        const rgb = (css: string) =>
+          css
+            .match(/[\d.]+/g)!
+            .slice(0, 3)
+            .map(Number);
         const lum = (c: number[]) =>
           c
             .map((v) => v / 255)
@@ -187,9 +191,9 @@ describe('the Up next panel', () => {
         const surface = lum(rgb(getComputedStyle(panel().element()).backgroundColor));
         const length = panel().getByText(formatPlaybackTime(rain.durationSec)).first().element();
         const text = lum(rgb(getComputedStyle(length).color));
-        expect((Math.max(text, surface) + 0.05) / (Math.min(text, surface) + 0.05)).toBeGreaterThanOrEqual(
-          4.5
-        );
+        expect(
+          (Math.max(text, surface) + 0.05) / (Math.min(text, surface) + 0.05)
+        ).toBeGreaterThanOrEqual(4.5);
       } finally {
         if (previous) document.documentElement.setAttribute('data-mantine-color-scheme', previous);
         else document.documentElement.removeAttribute('data-mantine-color-scheme');
@@ -243,6 +247,29 @@ describe('the Up next panel', () => {
     await vi.waitFor(() =>
       expect(titles(player().list)).toEqual(['Palm Static', 'Rain on Shibuya', 'Chrome Heart'])
     );
+  });
+
+  test('with repeat all on the last song, lists the songs that play again', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    player().cycleRepeat();
+    player().next();
+    await openPanel();
+
+    await expect.element(panel().getByText('REPEATING')).toBeInTheDocument();
+    await expect.element(panel().getByText('2 songs', { exact: false })).toBeInTheDocument();
+    await expect
+      .element(panel().getByText('Nothing queued', { exact: false }))
+      .not.toBeInTheDocument();
+    // Shown only: no play, reorder or remove controls on these rows.
+    await expect.element(inPanel('Play Midnight Arcade')).not.toBeInTheDocument();
+
+    await inPanel('Shuffle').click();
+    await expect.element(panel().getByText('REPEATING, SHUFFLED')).toBeInTheDocument();
+    await inPanel('Shuffle').click();
+
+    await onBar('Repeat').click();
+    await expect.element(panel().getByText('REPEATING')).not.toBeInTheDocument();
+    await expect.element(panel().getByText('Nothing queued', { exact: false })).toBeInTheDocument();
   });
 
   test('shuffle and repeat show the same state on the bar and in the panel header', async () => {
