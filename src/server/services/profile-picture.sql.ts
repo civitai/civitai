@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import {
+  hasBlockMarkerSql,
   imageNotRestrictedSql,
   imageReviewedSql,
   notHeldForReviewSql,
@@ -15,6 +16,7 @@ export const servableProfilePictureSql = Prisma.sql`
   AND ${notHeldForReviewSql()}
   AND ${imageReviewedSql('i')}
   AND ${imageNotRestrictedSql()}
+  AND NOT ${hasBlockMarkerSql('i')}
 `;
 
 const heldReviewList = OWNER_HIDDEN_REVIEWS.map((review) => `'${review}'`).join(', ');

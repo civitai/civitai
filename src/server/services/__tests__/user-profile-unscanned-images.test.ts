@@ -254,3 +254,35 @@ describe('getUserWithProfile — model-restricted cover', () => {
     expect(await coverFor(moderator)).toBe('cover-Scanned');
   });
 });
+
+// The Kysely profile read carries no block reason in the picture payload; the service reads it by
+// id for a visitor, and a picture carrying one is no one's avatar but its owner's.
+describe('getUserWithProfile — avatar with a block reason, on the Kysely read', () => {
+  const gate = (blockedFor: string | null) =>
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      modelRestricted: false,
+      blockedFor,
+    } as never);
+
+  it('withholds it from a visitor, not the owner', async () => {
+    kysely.on = true;
+    setUser('Scanned');
+    gate('tos');
+
+    const avatarFor = async (sessionUserId: number, isModerator = false) =>
+      (await getUserWithProfile({ id: OWNER, sessionUserId, isModerator })).profilePicture?.url ??
+      null;
+    expect(await avatarFor(VISITOR)).toBeNull();
+    expect(await avatarFor(OWNER)).toBe('avatar-Scanned');
+  });
+
+  it('serves one without a block reason', async () => {
+    kysely.on = true;
+    setUser('Scanned');
+    gate(null);
+
+    expect(
+      (await getUserWithProfile({ id: OWNER, sessionUserId: VISITOR })).profilePicture?.url
+    ).toBe('avatar-Scanned');
+  });
+});
