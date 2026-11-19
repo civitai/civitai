@@ -446,6 +446,7 @@ export async function everyEntryHead(
   try {
     const entries = await directoryOf(zipfile, max);
     let failed = false;
+    let inflatedTotal = 0;
     const limit = pLimit(ENTRY_HEAD_READS);
     const reads = entries.map((entry) =>
       limit(async () => {
@@ -533,8 +534,20 @@ export async function everyEntryHead(
             if (!enough) enough = head.push(chunk);
             if (!inflate) {
               if (enough) break;
-            } else if ((inflated += chunk.length) > SERVICE_ZIP_MAX_ENTRY_BYTES)
-              throw new ZipRejectedError(TOO_LARGE_REFUSAL);
+            } else {
+              // The same limits an unpacked archive's entries are held to, across the whole archive.
+              inflated += chunk.length;
+              inflatedTotal += chunk.length;
+              if (inflatedTotal > SERVICE_ZIP_MAX_TOTAL_BYTES)
+                throw new ZipRejectedError('The archive is too large once unpacked.');
+              if (inflated > SERVICE_ZIP_MAX_ENTRY_BYTES)
+                throw new ZipRejectedError(TOO_LARGE_REFUSAL);
+              if (
+                inflated > SERVICE_ZIP_RATIO_FLOOR_BYTES &&
+                inflated > Math.max(1, entry.compressedSize) * SERVICE_ZIP_MAX_RATIO
+              )
+                throw new ZipRejectedError(RATIO_REFUSAL);
+            }
           }
         } catch (error) {
           if (((error as { code?: string })?.code ?? '').startsWith('Z_'))

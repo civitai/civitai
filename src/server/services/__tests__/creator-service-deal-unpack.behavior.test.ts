@@ -1024,6 +1024,17 @@ describe('video by any other name', () => {
       }),
       /described differently/,
     ]),
+    // Inflated in full, so held to the limits an unpacked archive's entries are.
+    [
+      'weights.pt',
+      torchZip(
+        [['code/__torch__/big.py', Buffer.alloc(8 * 1024 * 1024), 'deflate']],
+        'weights',
+        [],
+        { 'weights/code/__torch__/big.py': { descriptor: true } }
+      ),
+      /compressed beyond/,
+    ],
     // A deflate stream that ends before the data the directory gives it.
     [
       'weights.pt',
