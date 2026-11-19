@@ -379,38 +379,87 @@ func TestWriteContextBound(t *testing.T) {
 	}
 }
 
-// A request's write-back draws on ONE budget (WithWriteBudget): two sequential writes and a lock
-// release against a store slower than the bound wait about one 400ms bound in total, not 400ms each;
-// once spent, the later round trips fail at once, counted error. A ctx without the budget bounds
-// each round trip on its own (the control: the same three round trips then take three bounds, so
-// the timing can see stacking). Fails on: each round trip taking a fresh bound under the budget.
+// A request's write-back draws on ONE budget (WithWriteBudget): three sequential writes against a
+// store slower than a 500ms bound wait about one bound in total (asserted under 1100ms, where
+// stacking would take at least 1500ms), not 500ms each; once spent, the later writes fail at once,
+// counted error. A ctx without the budget bounds each round trip on its own (the control: the same
+// three then take at least 1500ms, so the timing can see stacking). Fails on: each round trip taking
+// a fresh bound under the budget.
 func TestWriteBackSharesOneBudgetPerRequest(t *testing.T) {
 	newSources := func() (*Sources, *observed) {
 		r := testkit.NewRedis()
 		r.Delay = time.Hour
 		obs := &observed{}
-		return &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{ObserveWrite: obs.observe, WriteTimeout: 400 * time.Millisecond}}, obs
+		return &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{ObserveWrite: obs.observe, WriteTimeout: 500 * time.Millisecond}}, obs
 	}
 	run := func(ctx context.Context, s *Sources) time.Duration {
 		start := time.Now()
 		s.writePacked(ctx, []packedWrite{{cache: MissTagIDs, id: 41, key: "k:41", val: []byte("v41"), ttl: time.Hour}})
 		s.writePacked(ctx, []packedWrite{{cache: MissUserCosmetics, id: 42, key: "k:42", val: []byte("v42"), ttl: time.Hour}})
-		s.releaseLocks(ctx, []string{"lock:43"})
+		s.writePacked(ctx, []packedWrite{{cache: MissImageFrames, id: 43, key: "k:43", val: []byte("v43"), ttl: time.Hour}})
 		return time.Since(start)
 	}
 
 	s, obs := newSources()
-	if el := run(WithWriteBudget(context.Background()), s); el >= 700*time.Millisecond {
-		t.Fatalf("shared budget: two writes and a release took %v, want under 700ms (one 400ms bound)", el)
+	if el := run(WithWriteBudget(context.Background()), s); el >= 1100*time.Millisecond {
+		t.Fatalf("shared budget: three writes took %v, want under 1100ms (one 500ms bound)", el)
 	}
-	if o := obs.get(); !reflect.DeepEqual(o, map[string]int{"tag-ids/error": 1, "user-cosmetics/error": 1}) {
-		t.Fatalf("observed %v, want both writes error", o)
+	if o := obs.get(); !reflect.DeepEqual(o, map[string]int{"tag-ids/error": 1, "user-cosmetics/error": 1, "image-frames/error": 1}) {
+		t.Fatalf("observed %v, want all three writes error", o)
 	}
 
-	// Control: no budget, so each round trip has its own 400ms bound (three of them).
+	// Control: no budget, so each round trip has its own 500ms bound (three of them).
 	s, _ = newSources()
-	if el := run(context.Background(), s); el < 1200*time.Millisecond {
-		t.Fatalf("no budget: took %v, want at least 1200ms (three separate 400ms bounds)", el)
+	if el := run(context.Background(), s); el < 1500*time.Millisecond {
+		t.Fatalf("no budget: took %v, want at least 1500ms (three separate 500ms bounds)", el)
+	}
+}
+
+// The budget is charged by WALL time: eight writes in flight together against a store that answers
+// each in 200ms use about 200ms of a 1s budget, not 1600ms, so a ninth write after them still lands:
+// all nine written. Fails on: charging each round trip its own duration (the eight would spend the
+// budget and the ninth fail at once, counted error). Run under -race it also exercises the budget's
+// mutex across goroutines.
+func TestWriteBudgetChargesParallelWritesByWallTime(t *testing.T) {
+	r := testkit.NewRedis()
+	r.Delay = 200 * time.Millisecond
+	obs := &observed{}
+	s := &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{ObserveWrite: obs.observe, WriteTimeout: time.Second}}
+	ctx := WithWriteBudget(context.Background())
+	var wg sync.WaitGroup
+	for i := 1; i <= 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.writePacked(ctx, []packedWrite{{cache: MissTagIDs, id: 70 + i, key: "p:" + string(rune('0'+i)), val: []byte("v"), ttl: time.Hour}})
+		}()
+	}
+	wg.Wait()
+	s.writePacked(ctx, []packedWrite{{cache: MissUserCosmetics, id: 79, key: "p:9", val: []byte("v9"), ttl: time.Hour}})
+	if o := obs.get(); !reflect.DeepEqual(o, map[string]int{"tag-ids/written": 8, "user-cosmetics/written": 1}) {
+		t.Fatalf("observed %v, want 8 tag-ids and 1 user-cosmetics written", o)
+	}
+}
+
+// A lock release gets lockReleaseFloor even once the request's write budget is spent: a slow write
+// spends the 100ms budget, the store recovers, and the release still deletes the lock. Fails on: the
+// release drawing on the spent budget with no floor (its context ends before it is sent, and the lock
+// is held to its expiry).
+func TestReleaseLocksFloorAfterBudgetSpent(t *testing.T) {
+	r := testkit.NewRedis()
+	r.Delay = time.Hour
+	r.SetString("lock:61", []byte("1"))
+	obs := &observed{}
+	s := &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{ObserveWrite: obs.observe, WriteTimeout: 100 * time.Millisecond}}
+	ctx := WithWriteBudget(context.Background())
+	s.writePacked(ctx, []packedWrite{{cache: MissTagIDs, id: 60, key: "k:60", val: []byte("v60"), ttl: time.Hour}})
+	if o := obs.get(); !reflect.DeepEqual(o, map[string]int{"tag-ids/error": 1}) {
+		t.Fatalf("observed %v, want the slow write error (budget spent)", o)
+	}
+	r.Delay = 0
+	s.releaseLocks(ctx, []string{"lock:61"})
+	if _, ok := r.String("lock:61"); ok {
+		t.Fatal("lock:61 still held: the release got no floor past the spent budget")
 	}
 }
 

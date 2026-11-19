@@ -116,34 +116,70 @@ func (c *MissCompute) recordWrite(ctx context.Context, cache, key string, id int
 	c.WriteLog.write(ctx, cache, key, id, result, err)
 }
 
-// cacheWriteTimeout bounds a request's write-back: the time it spends waiting on its round trips
-// (the entries' SETs, the revalidation locks' release), which run detached from the request
-// (writeContext), adds up to at most this much (WithWriteBudget), so a request that writes several
-// caches in sequence still waits at most this long on all of them together. A healthy pipeline
-// answers in milliseconds, so the bound only bites on a sick store; it is the default system-store
-// read bound (REDIS_SYS_READ_TIMEOUT_MS, 1000 ms), below go-redis's default 3 s read timeout, so it
-// also caps how long a page that already failed (and falls back) waits on its writes. The writes run
-// inline on the computing goroutine, so a request handler still returns only after them, and a
-// draining shutdown waits for them like any other in-flight work.
+// cacheWriteTimeout bounds a request's write-back (WithWriteBudget): the WALL time during which at
+// least one of its round trips (the entries' SETs, the revalidation locks' release), run detached
+// from the request (writeContext), is in flight adds up to at most this much, so a request that writes
+// several caches in sequence, or in parallel, still waits at most this long on all of them together
+// (plus timer slack, and lockReleaseFloor per lock release made after it is spent). A healthy
+// pipeline answers in milliseconds, so the bound only bites on a sick store; it is the default
+// system-store read bound (REDIS_SYS_READ_TIMEOUT_MS, 1000 ms), below go-redis's default 3 s read
+// timeout, so it also caps how long a page that already failed (and falls back) waits on its writes.
+// The writes run inline on the computing goroutine, so a request handler still returns only after
+// them, and a draining shutdown waits for them like any other in-flight work.
 const cacheWriteTimeout = time.Second
+
+// lockReleaseFloor is the least a revalidation lock's release gets, even once the request's write
+// budget is spent. A lock left held is not harmless the way a lost cache write is: until its 10 s
+// expiry every other revalidation of that entry serves stale, and a reader of the official models
+// with no cached entry answers an empty list. A healthy DEL answers in milliseconds, and a request
+// releases at most a handful of lock sets (one per stale-while-revalidate fill, one for the official
+// models), so the floor adds at most a few times this past the budget.
+const lockReleaseFloor = 50 * time.Millisecond
 
 // writeBudgetKey keys a request's write-back budget (WithWriteBudget).
 type writeBudgetKey struct{}
 
-// writeBudget is the write-back time one request has left: set to the bound on its first round trip,
-// less each round trip's duration as it ends. It is time spent writing, not a wall-clock deadline: a
-// request that computes for seconds between two healthy writes still has (nearly) all of it.
+// writeBudget is the write-back time one request has used, charged by WALL time: only the intervals
+// in which at least one of its round trips is in flight count, once each however many overlap (the
+// page's parallel fills write concurrently). It is time spent writing, not a deadline from the first
+// write: a request that computes for seconds between two healthy writes still has (nearly) all of
+// it.
 type writeBudget struct {
-	mu      sync.Mutex
-	started bool
-	left    time.Duration
+	mu       sync.Mutex
+	used     time.Duration // the closed busy intervals
+	inFlight int
+	busy     time.Time // when inFlight last went 0 → 1
+}
+
+// begin opens one round trip at now and returns what is left of bound: bound less the closed busy
+// intervals and the open one. Every round trip in flight was given a timeout of at most what was
+// left when it began, and the budget has been draining 1:1 since (it has been busy throughout), so
+// no round trip outlives the moment the budget runs out (a lock release's floor aside).
+func (b *writeBudget) begin(bound time.Duration, now time.Time) time.Duration {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.inFlight == 0 {
+		b.busy = now
+	}
+	b.inFlight++
+	return bound - b.used - now.Sub(b.busy)
+}
+
+// end closes one round trip at now; the last one in flight closes the busy interval.
+func (b *writeBudget) end(now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.inFlight--
+	if b.inFlight == 0 {
+		b.used += now.Sub(b.busy)
+	}
 }
 
 // WithWriteBudget marks ctx as one request: every write-back round trip under it draws on one budget
 // (cacheWriteTimeout, or MissCompute.WriteTimeout) instead of each taking its own bound, so N
-// sequential round trips against a sick store wait about one bound in total, not N. The server
-// installs it once per computation; on a ctx that already carries one it returns ctx unchanged.
-// Without it each round trip is bounded on its own.
+// round trips against a sick store wait about one bound in total, not N. The server installs it
+// once per computation; on a ctx that already carries one it returns ctx unchanged. Without it each
+// round trip is bounded on its own.
 func WithWriteBudget(ctx context.Context) context.Context {
 	if _, ok := ctx.Value(writeBudgetKey{}).(*writeBudget); ok {
 		return ctx
@@ -151,15 +187,20 @@ func WithWriteBudget(ctx context.Context) context.Context {
 	return context.WithValue(ctx, writeBudgetKey{}, &writeBudget{})
 }
 
-// writeContext is the context of a write-back round trip: ctx's values (its span, so the write stays
-// in the request's trace) without its cancellation or deadline, bounded by what is left of the
-// request's write budget (WithWriteBudget; the computation's WriteTimeout, 0: cacheWriteTimeout), or
-// by that bound alone on a ctx without one. The returned cancel ends the round trip and charges its
-// duration to the budget; once the budget is spent a round trip fails at once (counted error). The
-// writes come after the lookup has answered, so a request that ends meanwhile (a sibling lookup
-// failed and the page falls back, the client left, the budget ran out) no longer cancels entries
-// already computed.
+// writeContext is the context of a cache write's round trip (writeContextFloor with no floor).
 func (c *MissCompute) writeContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return c.writeContextFloor(ctx, 0)
+}
+
+// writeContextFloor is the context of a write-back round trip: ctx's values (its span, so the write
+// stays in the request's trace) without its cancellation or deadline, bounded by what is left of the
+// request's write budget (WithWriteBudget; the computation's WriteTimeout, 0: cacheWriteTimeout) but
+// never below floor, or by that bound alone on a ctx without a budget. The returned cancel ends the
+// round trip (charging the budget); once the budget is spent a round trip with no floor fails at once
+// (counted error). The writes come after the lookup has answered, so a request that ends meanwhile (a
+// sibling lookup failed and the page falls back, the client left, the budget ran out) no longer
+// cancels entries already computed.
+func (c *MissCompute) writeContextFloor(ctx context.Context, floor time.Duration) (context.Context, context.CancelFunc) {
 	d := cacheWriteTimeout
 	if c != nil && c.WriteTimeout > 0 {
 		d = c.WriteTimeout
@@ -167,22 +208,14 @@ func (c *MissCompute) writeContext(ctx context.Context) (context.Context, contex
 	detached := context.WithoutCancel(ctx)
 	b, ok := ctx.Value(writeBudgetKey{}).(*writeBudget)
 	if !ok {
-		return context.WithTimeout(detached, d)
+		return context.WithTimeout(detached, max(d, floor))
 	}
-	b.mu.Lock()
-	if !b.started {
-		b.started, b.left = true, d
-	}
-	left := b.left
-	b.mu.Unlock()
-	wctx, cancel := context.WithTimeout(detached, max(left, 0))
-	start := time.Now()
+	left := b.begin(d, time.Now())
+	wctx, cancel := context.WithTimeout(detached, max(left, floor, 0))
+	var once sync.Once
 	return wctx, func() {
 		cancel()
-		spent := time.Since(start)
-		b.mu.Lock()
-		b.left -= spent
-		b.mu.Unlock()
+		once.Do(func() { b.end(time.Now()) })
 	}
 }
 

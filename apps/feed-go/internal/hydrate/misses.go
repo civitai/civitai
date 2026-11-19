@@ -623,12 +623,14 @@ func (s *Sources) revalidateStale(ctx context.Context, spec lookupSpec, got map[
 // releaseLocks deletes the revalidation locks taken, best effort, after the writes (Node deletes
 // them after its write; a failed delete leaves the lock to its 10 s expiry). A failed lookup leaves
 // them to expire, as Node's does. Like the writes it follows, it runs detached from the request
-// (writeContext): a request that ended after its writes still releases its locks.
+// (writeContextFloor): a request that ended after its writes still releases its locks, and one whose
+// write budget is spent still gets lockReleaseFloor for the release (a lock left held keeps others
+// serving stale, or the official models empty, until it expires).
 func (s *Sources) releaseLocks(ctx context.Context, locks []string) {
 	if len(locks) == 0 {
 		return
 	}
-	ctx, cancel := s.Compute.writeContext(ctx)
+	ctx, cancel := s.Compute.writeContextFloor(ctx, lockReleaseFloor)
 	defer cancel()
 	// One DEL per key: the locks of different ids live in different cluster slots.
 	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
