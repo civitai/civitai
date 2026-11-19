@@ -358,7 +358,7 @@ export const imageQueueActions = {
         id: reportId,
         status: ReportStatus.Actioned,
         userId: locals.user.id,
-        noReward: !!(alreadyRemoved && unpaid),
+        noReward: !!unpaid,
       });
     if (csamBlocklistFailed) return fail(502, { error: CSAM_BLOCKLIST_RETRY, imageId });
     if (alreadyRemoved && reportId)
@@ -637,9 +637,7 @@ export const imageQueueActions = {
     const held = results.flatMap((r): HeldRemoval[] => (r.held ? [r.held] : []));
     // A ban removed these, not a ruling on their reports: those close unpaid.
     const unpaidReports = new Set(
-      imageIds.flatMap((imageId, i) =>
-        results[i].alreadyRemoved && results[i].unpaid ? reportsByImage.get(imageId) ?? [] : []
-      )
+      imageIds.flatMap((imageId, i) => (results[i].unpaid ? reportsByImage.get(imageId) ?? [] : []))
     );
     // A held removal's reports stay open: the image is still up, and confirming the hold actions
     // them. A skipped block's reports stay open too.

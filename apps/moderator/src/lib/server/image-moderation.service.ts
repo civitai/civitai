@@ -93,6 +93,9 @@ const OWNER_BANNED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "I
  *  again, whatever blocked it. The ban's own block skips rows already blocked, so a rule block can be the
  *  only cause on record. */
 const BANNED_OWNER_BLOCKED = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS DISTINCT FROM ${BLOCKED_REASON_CSAM} AND ${OWNER_BANNED})`;
+/** What Remove leaves as it is: a banned owner's grace-blocked image still gets the real block, which
+ *  clears the breadcrumbs an account restore reads. */
+const KEPT_BY_REMOVE = sql<boolean>`(${MODERATION_BLOCKED} OR (${BANNED_OWNER_BLOCKED} AND ("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NULL))`;
 
 /** `needsReview` for a row a moderator lifts (an unblock or an approved appeal): the review a grace
  *  block recorded, when lifting does not settle it, else none. The main app's `reviewKeptWhenLiftedSql`. */
@@ -453,7 +456,7 @@ export async function blockImage({
   skipped?: true;
   /** `skipModeratorRemoved` left it as it was. */
   alreadyRemoved?: true;
-  /** Its owner is banned: the ban removed it, so closing its report pays no reporter. */
+  /** A banned owner's blocked image: the ban removed it, so closing its report pays no reporter. */
   unpaid?: true;
 }> {
   const img = await dbRead
@@ -471,16 +474,22 @@ export async function blockImage({
     .executeTakeFirst();
   if (!img) return {};
   // An image under the review flag goes on to the block below, which decides its reports as before.
+  let unpaid = false;
   if (skipModeratorRemoved) {
-    const removed = await dbWrite
+    const prior = await dbWrite
       .selectFrom('Image')
-      .select(sql<boolean>`${OWNER_BANNED}`.as('unpaid'))
+      .select([
+        sql<boolean>`(${KEPT_BY_REMOVE} AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK})`.as(
+          'removed'
+        ),
+        sql<boolean>`${OWNER_BANNED}`.as('ownerBanned'),
+        sql<boolean>`${BANNED_OWNER_BLOCKED}`.as('bannedOwnerBlocked'),
+      ])
       .where('id', '=', imageId)
-      .where(
-        sql<boolean>`(${MODERATION_BLOCKED} OR ${BANNED_OWNER_BLOCKED}) AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
-      )
       .executeTakeFirst();
-    if (removed) return { alreadyRemoved: true, ...(removed.unpaid && { unpaid: true as const }) };
+    if (prior?.removed)
+      return { alreadyRemoved: true, ...(prior.ownerBanned && { unpaid: true as const }) };
+    unpaid = !!prior?.bannedOwnerBlocked;
   }
 
   if (!skipAppealCheck) {
@@ -522,7 +531,7 @@ export async function blockImage({
       // second time. Decided here, not off the replica read above.
       .where(NOT_FLAG_ONLY_REMAINING)
       // Decided again in the statement, for a block that landed since the check above.
-      .$if(skipModeratorRemoved, (qb) => qb.where(sql<boolean>`NOT ${MODERATION_BLOCKED}`))
+      .$if(skipModeratorRemoved, (qb) => qb.where(sql<boolean>`NOT ${KEPT_BY_REMOVE}`))
       .returning('id')
       .executeTakeFirst();
     // A statement of its own, after the UPDATE took the row lock: one that waited on a dismissal
@@ -599,7 +608,8 @@ export async function blockImage({
     if (e instanceof CsamBlocklistWriteError && blocked.held) e.skipped = true;
     throw e;
   });
-  return blocked.held ? { skipped: true } : {};
+  if (blocked.held) return { skipped: true };
+  return unpaid ? { unpaid: true } : {};
 }
 
 export type DismissResult = { ok: true } | { ok: false; reason: 'changed' | 'unavailable' };

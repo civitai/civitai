@@ -459,7 +459,30 @@ describe('a verdict on a report of an image a moderator already removed', () => 
     expect(metadata).toEqual({});
     expect(notifiedImages()).toEqual([`/images/${GRACE}`]);
     expect(reportsMovedTo('Actioned')).toEqual([report(GRACE)]);
+    expect(setReportStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ id: report(GRACE), noReward: false })
+    );
     expect(remove).not.toHaveProperty('alreadyRemoved');
+  });
+
+  it('Remove on a grace-blocked image of a banned owner still writes the real block, and pays nobody', async () => {
+    await db.query(
+      `INSERT INTO "User" ("id", "bannedAt") VALUES (7, now()) ON CONFLICT DO NOTHING`
+    );
+
+    const remove = await verdict('block', GRACE);
+
+    const { metadata } = (
+      await db.query<{ metadata: Record<string, unknown> | null }>(
+        `SELECT metadata FROM "Image" WHERE id = $1`,
+        [GRACE]
+      )
+    ).rows[0];
+    expect(metadata).toEqual({});
+    expect(remove).not.toHaveProperty('alreadyRemoved');
+    expect(setReportStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ id: report(GRACE), status: 'Actioned', noReward: true })
+    );
   });
 
   it('refuses a report that is not on the image, moving no report', async () => {
