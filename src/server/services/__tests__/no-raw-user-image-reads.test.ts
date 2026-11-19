@@ -26,7 +26,7 @@ const SQL_KEYWORDS = new Set([
 ]);
 const USER_ALIAS = /"User"\s+(?:AS\s+)?([A-Za-z_][A-Za-z0-9_]*)/g;
 const UNALIASED_SELECT =
-  /SELECT\b(?:(?!SELECT\b|FROM\b)[\s\S]){0,400}?(?<![.\w"])image(?![\w"])(?:(?!SELECT\b)[\s\S]){0,400}?FROM\s+"User"(?=\s+(?:WHERE|LIMIT|ORDER)\b|\s*[)`;])/g;
+  /SELECT\b(?:(?!SELECT\b|FROM\b)[\s\S]){0,400}?(?:(?<![.\w'"])image(?![\w'"])|(?<![.\w])"image")(?:(?!SELECT\b)[\s\S]){0,400}?FROM\s+(?:public\.)?"User"(?=\s+(?:WHERE|LIMIT|ORDER)\b|\s*[)`;])/g;
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
@@ -63,6 +63,8 @@ describe('raw User.image reads in server SQL', () => {
     expect(
       rawReads('SELECT id, username, image, "deletedAt"\n FROM "User"\n WHERE id = 1')
     ).toHaveLength(1);
+    expect(rawReads('SELECT id, "image" FROM "User" WHERE id = 1')).toHaveLength(1);
+    expect(rawReads('SELECT id, image FROM public."User" WHERE id = 1')).toHaveLength(1);
     expect(rawReads('u."imageId", u.imageUrl, i.image FROM "Image" i')).toEqual([]);
     expect(
       rawReads('SELECT u.id, CASE WHEN x THEN NULL ELSE u.image END AS image FROM "User" u')

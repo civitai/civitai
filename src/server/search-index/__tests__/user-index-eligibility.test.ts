@@ -6,7 +6,7 @@ import { norm, renderTag, whereClausesOf } from './sql-shape.test-utils';
 /** The WHERE clauses of a statement, less the one inside the `image` column's own subquery. */
 const eligibilityClausesOf = (statement: string) =>
   whereClausesOf(
-    norm(statement).replace(/CASE WHEN EXISTS \(.*?\) THEN NULL ELSE u\.image END/, 'u.image')
+    norm(statement).replace(/CASE WHEN \(?EXISTS \(.*?\) THEN NULL ELSE u\.image END/, 'u.image')
   );
 
 /**
