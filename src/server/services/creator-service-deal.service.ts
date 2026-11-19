@@ -996,13 +996,14 @@ const reminders: Reminder[] = [
     notice: 'overdue',
     to: 'seller',
     statuses: ['Accepted', 'InRevision'],
-    at: overdueClock,
+    // The due date, not `overdueClock`: a revision asked for after it starts a new round, not a late one.
+    at: Prisma.sql`"dueAt"`,
   },
 ];
 
 /**
  * Reminders whose time fell in (since, upTo]. The caller moves `since` to `upTo` after each run, so
- * each reminder goes out once; the key, built from its due time, makes an overlapping run a no-op.
+ * each reminder goes out once. The key carries the due time, so a moved due date is a new reminder.
  */
 export async function remindServiceDeals({ since, upTo }: { since: Date; upTo: Date }) {
   let sent = 0;

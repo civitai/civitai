@@ -3286,6 +3286,28 @@ describe('site notifications', () => {
     expect(new Set(resolved.map((n) => n.key)).size).toBe(4);
   });
 
+  it('words each new notice for its reader', () => {
+    const say = (type: string, details: Record<string, unknown>) =>
+      creatorServiceNotifications[type].prepareMessage({
+        details: { dealId: 1, offeringTitle: 'Logo', ...details },
+      } as never)?.message;
+    expect(say('service-deal-dispute-resolved', { resolution: 'Refund' })).toContain(
+      'The Buzz goes back to the buyer.'
+    );
+    expect(say('service-deal-dispute-resolved', { resolution: 'Release' })).toContain(
+      'The Buzz goes to the seller.'
+    );
+    expect(say('service-deal-cancellation-declined', { requestedBy: 'seller' })).toBe(
+      'The seller declined to cancel the deal for "Logo". Moderators will review it.'
+    );
+    expect(say('service-deal-cancelled', { requestedBy: 'buyer' })).toBe(
+      'The buyer canceled the deal for "Logo".'
+    );
+    expect(say('service-deal-cancelled', { closeReason: 'overdue', buzzReturned: true })).toBe(
+      '"Logo": Canceled automatically: nothing delivered in time. Your Buzz is being returned.'
+    );
+  });
+
   describe('reminders', () => {
     const HOUR = 3_600_000;
     const at = (hoursFromNow: number) => new Date(Date.now() + hoursFromNow * HOUR);
@@ -3340,6 +3362,28 @@ describe('site notifications', () => {
       await creatorServiceDealsJob.run({});
       await creatorServiceDealsJob.run({});
       expect(sent()).toEqual([[SELLER, 'service-deal-overdue', `/services/deals/${id}`]]);
+    });
+
+    it('does not call a seller late for a revision asked for after the due date', async () => {
+      const id = await delivered();
+      await q(`UPDATE "ServiceDeal" SET "dueAt" = now() - interval '2 days' WHERE id = $1`, [id]);
+      await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'tweak' });
+      reset();
+      await remind(-1);
+      expect(sent()).toEqual([]);
+    });
+
+    it('keeps its window and still pays out when the reminders fail', async () => {
+      jobDates.clear();
+      const paid = await delivered();
+      await deals.acceptServiceDealDelivery({ dealId: paid, userId: BUYER });
+      await q(`UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute' WHERE id = $1`, [
+        paid,
+      ]);
+      jobDates.set('creator-service-deal-reminders', new Date(NaN));
+      expect(await creatorServiceDealsJob.run({})).toMatchObject({ reminded: 0 });
+      expect((await deal(paid)).settledAt).not.toBeNull();
+      expect(Number.isNaN(jobDates.get('creator-service-deal-reminders')?.getTime())).toBe(true);
     });
 
     it('reminds nobody about a deal that has moved on', async () => {

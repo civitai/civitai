@@ -6,6 +6,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { sendEmail } from '~/server/email/client';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { serviceDealNotificationTypes } from '~/server/notifications/creator-service.notifications';
 import {
   clearNotificationEmailEnabledCache,
   optOutOfNotificationEmail,
@@ -28,6 +29,18 @@ const migration = (dir: string) =>
 const db = { pg: null as unknown as PGlite };
 
 const DEAL = 'service-deal-requested';
+/** The types 20261203120100_deal_push_default_backfill granted. */
+const FIRST_DEAL_PUSH_TYPES: string[] = [
+  'service-deal-requested',
+  'service-deal-accepted',
+  'service-deal-declined',
+  'service-deal-expired',
+  'service-deal-delivered',
+  'service-deal-revision-requested',
+  'service-deal-cancellation-requested',
+  'service-deal-completed',
+  'service-deal-paid-out',
+];
 const deal = { type: DEAL, details: { dealId: 7, offeringTitle: 'Portrait' } };
 
 beforeAll(async () => {
@@ -140,7 +153,12 @@ describe('deal push backfill', () => {
     await later();
     await later();
 
-    expect((await pushTypes(1)).filter((t) => t !== 'service-deal-accepted')).toHaveLength(8);
+    // Exactly the deal types the first backfill did not cover, spelled as the registry spells them.
+    expect((await pushTypes(1)).filter((t) => t !== 'service-deal-accepted')).toEqual(
+      Object.values(serviceDealNotificationTypes)
+        .filter((t) => !FIRST_DEAL_PUSH_TYPES.includes(t))
+        .sort()
+    );
     // Deal push turned off, a choice already made about the new notices, and no subscription.
     expect(await pushTypes(2)).toEqual(['new-mention']);
     expect(await pushTypes(3)).toEqual(['service-deal-accepted', 'service-deal-overdue']);
