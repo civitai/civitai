@@ -49,6 +49,7 @@ import {
   CONSENT_SPEND_SCOPE,
 } from '~/server/services/blocks/scope-grant.service';
 import {
+  isAppTokenRefusedError,
   isConsentRequiredError,
   manifestCanMintOauthToken,
   manifestWantsOauthToken,
@@ -749,12 +750,16 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   const wantsOauth = tunnel.declaredAuth
     ? tunnel.declaredAuth === 'oauth'
     : manifestWantsOauthToken(app.manifest);
+  // The hub mints nothing for a suspended app's client; its owner keeps the dev-scoped token below.
   const oauth =
     wantsOauth && env.APP_BLOCK_OAUTH_TOKENS_ENABLED
       ? await mintDevTunnelOauth({
           userId,
           clientId: app.appId,
           scopes: granted,
+        }).catch((err) => {
+          if (isAppTokenRefusedError(err)) return null;
+          throw err;
         })
       : null;
 

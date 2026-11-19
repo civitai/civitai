@@ -143,6 +143,15 @@ const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
 
 const alias = [{ find: '~', replacement: path.resolve(__dirname, './src') }, ...civitaiAlias];
 
+// Unit projects start every in-memory PGlite from one cached initialised cluster (test/pglite-empty-datadir.mjs).
+const unitAlias = [
+  {
+    find: /^@electric-sql\/pglite$/,
+    replacement: path.resolve(__dirname, 'test/pglite-cached-boot.mjs'),
+  },
+  ...alias,
+];
+
 // Browser-mode (`component` project) alias: stub the native `sharp` module.
 // A few `.browser.test.tsx` tests import a Next *page* to render its client shell;
 // the page's `getServerSideProps` transitively pulls a server service that does
@@ -608,10 +617,11 @@ export default defineConfig({
       'apps/*/vitest.config.ts',
       'apps/*/vitest.config.mts',
       {
-        resolve: { alias },
+        resolve: { alias: unitAlias },
         plugins: [optimizerCacheKeyPlugin],
         test: {
           ...unitTestConfig,
+          globalSetup: ['test/pglite-empty-datadir.mjs'],
           name: 'unit',
           // `scripts/` is included so the typecheck wrapper's outcome
           // classifier (scripts/typecheck.mjs) is covered — it is the thing that
@@ -626,10 +636,11 @@ export default defineConfig({
         },
       },
       {
-        resolve: { alias },
+        resolve: { alias: unitAlias },
         plugins: [nativePoolPlugin, optimizerCacheKeyPlugin],
         test: {
           ...unitTestConfig,
+          globalSetup: ['test/pglite-empty-datadir.mjs'],
           name: 'unit-native',
           include: sharpExecutingTestFiles,
           // Pinned, not inherited: `unit` may be pointed at `threads` for an experiment, and these

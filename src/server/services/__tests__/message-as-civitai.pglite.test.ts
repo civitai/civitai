@@ -178,6 +178,12 @@ beforeEach(async () => {
   }) as never);
   redisMock.sysRedis.del.mockImplementation((async (key: string) =>
     Number(redisStore.delete(key))) as never);
+  // The send lock is on the cache cluster, the idempotency record in system Redis; one store backs
+  // both here, since their keys never collide.
+  for (const command of ['set', 'get', 'eval', 'del'] as const)
+    redisMock.redis[command].mockImplementation(
+      redisMock.sysRedis[command].getMockImplementation()!
+    );
 });
 
 describe('sendAsCivitai', () => {
@@ -367,6 +373,11 @@ describe('sendAsCivitai refusals that must not take the thread', () => {
     redisStore.clear();
     await sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'x' });
     expect([...redisStore.keys()].filter((k) => k.includes('send-lock'))).toEqual([]);
+    // Taken on the cache cluster, never in system Redis.
+    const lockWrites = (client: typeof redisMock.redis) =>
+      client.set.mock.calls.filter((c: unknown[]) => String(c[0]).includes('send-lock')).length;
+    expect(lockWrites(redisMock.redis)).toBeGreaterThan(0);
+    expect(lockWrites(redisMock.sysRedis)).toBe(0);
   });
 
   it("does not free another sender's lock when its own has expired", async () => {
