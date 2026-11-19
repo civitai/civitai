@@ -67,7 +67,7 @@ export async function checkLiveIntent(
 const doneRuns = (db: Db) =>
   db
     .selectFrom('text_scan_test_run')
-    .select(['id', 'kind', 'prompt_ids', 'prompt_overrides', 'model', 'thinking', 'created_at'])
+    .select(['id', 'kind', 'prompt_ids', 'prompt_overrides', 'model', 'thinking'])
     .where('set_id', '=', String(INTENT_EVAL_SET_ID))
     .where('status', '=', 'done')
     .orderBy('id', 'desc');
@@ -98,21 +98,22 @@ async function judgeRun(
     runnableCases(db, INTENT_EVAL_SET_ID).select(['c.id', 'c.expected', 'c.updated_at']).execute(),
     db
       .selectFrom('text_scan_test_result')
-      .select(['case_id', 'status', 'output'])
+      .select(['case_id', 'status', 'output', 'created_at'])
       .where('run_id', '=', run.id)
       .execute(),
   ]);
   if (!cases.length) return refuse('The intent test set has no case to check against.');
   const byCase = new Map(results.map((r) => [r.case_id, r]));
-  const ranAt = new Date(run.created_at).getTime();
 
   let uncovered = 0;
   let falseClears = 0;
   let falseFlags = 0;
   for (const c of cases) {
     const result = byCase.get(c.id);
-    // A case added or edited after the run started was not scanned as it is now.
-    const changed = new Date(c.updated_at).getTime() > ranAt;
+    // A case edited after its verdict was written was not scanned as it is now. Per verdict, not per
+    // run: a baseline top-up scans cases added after the run row was created.
+    const changed =
+      !!result && new Date(c.updated_at).getTime() > new Date(result.created_at).getTime();
     if (changed || !result || result.status !== 'ok') {
       uncovered++;
       continue;

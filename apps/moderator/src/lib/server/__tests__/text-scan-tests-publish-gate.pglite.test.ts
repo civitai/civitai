@@ -276,6 +276,16 @@ describe('checkLiveIntent', () => {
     expect(await checkLiveIntent(db, liveWith(6))).toEqual({ ok: true, runId: run });
   });
 
+  it('verifies a topped-up baseline: a case added after the run row, scanned since', async () => {
+    const { run } = await passingRun({
+      kind: 'baseline',
+      promptIds: { base: 1, 'model-com-face-intent': 5 },
+    });
+    const added = await intentCase(true);
+    await answer(run, added, true);
+    expect(await checkLiveIntent(db, liveWith(5, 'x'))).toEqual({ ok: true, runId: run });
+  });
+
   it('marks a restored version with no run of its own unverified', async () => {
     await passingRun({ kind: 'baseline', promptIds: { base: 1, 'model-com-face-intent': 5 } });
     expect(await checkLiveIntent(db, liveWith(4, 'synthetic older text'))).toMatchObject({
