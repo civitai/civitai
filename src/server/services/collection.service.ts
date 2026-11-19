@@ -68,7 +68,7 @@ import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionsSearchIndex } from '~/server/search-index';
-import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
+import { isWithheldMatureCover } from '~/server/search-index/utils/tagged-mature-image';
 import { collectionWithoutImageSelect } from '~/server/selectors/collection.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
@@ -4108,7 +4108,7 @@ export const getCollectionCoverImages = async ({
     const tags = tagIdsByImage.get(image.id);
     // For every viewer, mods and owners too, as in the search docs: unlike the viewer's addon
     // exclusions in `showsImage`, this rule does not depend on editable browsing-settings config.
-    if (isTaggedMatureImage({ nsfwLevel: image.nsfwLevel, tags })) return [];
+    if (isWithheldMatureCover({ nsfwLevel: image.nsfwLevel, tags })) return [];
     if (!showsImage({ ...image, tags })) return [];
     return [
       {
