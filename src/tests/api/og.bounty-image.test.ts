@@ -13,7 +13,7 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 // The card fetches its cover over HTTP; the URLs it asks for name the image it picked.
-const fetchMock = vi.fn(async () => new Response(null, { status: 404 }));
+const fetchMock = vi.fn(async (_url: RequestInfo | URL) => new Response(null, { status: 404 }));
 vi.stubGlobal('fetch', fetchMock);
 
 import handler from '~/pages/api/og';
