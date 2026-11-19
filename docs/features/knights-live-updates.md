@@ -23,7 +23,9 @@ and the page reads its data again after each vote.
 - The vote action reads the item's stage before the vote and announces after it. The tick announces items that lapsed
   (`escalateExpired`) or that a moderator ruled (`closeModeratorRuledItems`).
 - /play joins the topic of every stage the player judges. A drop removes the item from the buffer, unless it moved to a stage
-  the player also judges. The item on screen is swapped for the next ready one, with a short notice.
+  the player also judges. The item on screen stays up under a "Settled by the Order" card (`SettledCard.svelte`): the answers,
+  Skip and the answer keys are locked, and "Next image" (or Enter, Space or Esc) moves on the way Skip does, only after 600 ms
+  (`SETTLED_GUARD_MS`) so a press already on its way cannot dismiss it or land on the next image.
 
 ## Stats
 
