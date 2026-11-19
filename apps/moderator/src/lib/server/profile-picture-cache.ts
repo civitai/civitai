@@ -16,8 +16,8 @@ export async function profilePictureUserIds(
   return pictureUserIds(db, imageIds);
 }
 
-// The main app and the event engine each cache a user's profile picture for a day, and avatars are
-// shown or hidden on its rating. A held or blocked picture also clears the legacy `User.image` naming
+// The main app caches a user's profile picture for a day, and avatars are shown or hidden on its
+// rating. A held or blocked picture also clears the legacy `User.image` naming
 // it, by the statement the main app runs; the users whose picture is held or blocked get their
 // basic-user entry, session and search document refreshed.
 // Never throws: it follows a committed moderation write.

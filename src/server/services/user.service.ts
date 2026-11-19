@@ -2481,8 +2481,7 @@ function logProfilePictureRefreshError(error: unknown, meta: Record<string, unkn
  * their sessions, whose shape carries the picture's url. For a user whose picture is under an
  * owner-hidden hold or carries a block marker, a `User.image` naming it is cleared first
  * (`clearHeldUserImages`), and their basic-user cache entry and search document are refreshed too.
- * The event engine's copy of the picture is busted as well. Never throws: the write it follows has
- * committed, and a moderation action must not fail on a cache refill. A failed step is logged and
+ * Never throws: the write it follows has committed, and a moderation action must not fail on a cache refill. A failed step is logged and
  * alerted (`alertRefreshStepFailure`).
  */
 export async function refreshProfilePicturesForUsers(userIds: number[]) {

@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Caches from '~/server/redis/caches';
 import type * as ReDerive from '~/server/services/blocks/app-listing-rating-rederive.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import * as refreshAlert from '~/server/services/profile-picture-refresh-alert';

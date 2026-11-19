@@ -16,10 +16,9 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
  */
 
 const MODERATOR = { id: 1, isModerator: true };
-const { dbHandle, del, hSet, syncSearchIndexBulk } = vi.hoisted(() => ({
+const { dbHandle, del, syncSearchIndexBulk } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   del: vi.fn(async (_keys: string[]) => 0),
-  hSet: vi.fn(async (_key: string, _value: Record<string, string>) => 1),
   syncSearchIndexBulk: vi.fn(async (_batch: { entityIds: number[]; action?: string }) => undefined),
 }));
 
@@ -41,7 +40,7 @@ vi.mock('../db', () => ({
   },
 }));
 vi.mock('../redis', () => ({
-  getRedis: () => ({ del, hSet, expire: async () => true }),
+  getRedis: () => ({ del }),
   getSysRedis: () => ({ packed: { set: vi.fn(async () => undefined) } }),
 }));
 vi.mock('../image-moderation-effects', () => ({
@@ -143,7 +142,6 @@ const ownerRow = async () =>
 beforeEach(async () => {
   del.mockReset();
   del.mockImplementation(async () => 0);
-  hSet.mockClear();
   syncSearchIndexBulk.mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);
