@@ -161,7 +161,8 @@ describePg('app-token mint vs a suspension, on two real connections', () => {
 
   it('a mint and an id-ordered multi-row suspension wait on each other without deadlocking', async () => {
     await admin.query(
-      `INSERT INTO app_blocks VALUES ('b1', $1, 'approved'), ('b2', $1, 'approved')`,
+      // b2 first, so a scan in physical order would lock b2 before b1: only ORDER BY id avoids it.
+      `INSERT INTO app_blocks VALUES ('b2', $1, 'approved'), ('b1', $1, 'approved')`,
       [CLIENT]
     );
     // The main app's writers lock every row of the client FOR UPDATE in id order: here it holds b1.
@@ -179,6 +180,27 @@ describePg('app-token mint vs a suspension, on two real connections', () => {
     // b2 is still approved, so the client keeps minting.
     await expect(minting).resolves.toMatchObject({ accessToken: expect.any(String) });
   });
+
+  it('mints nothing once a suspension holds the lock past the timeout, and the timeout stays local', async () => {
+    await admin.query(`INSERT INTO app_blocks VALUES ('b1', $1, 'approved')`, [CLIENT]);
+    const single = new pg.Pool({ connectionString: urlFor(DB_NAME), max: 1 });
+    try {
+      dbHandle.current = new Kysely<DB>({ dialect: new PostgresDialect({ pool: single }) });
+      // A committed mint leaves its pooled connection with no timeout (SET LOCAL, not SET).
+      await expect(mint()).resolves.toMatchObject({ accessToken: expect.any(String) });
+      expect((await single.query('SHOW lock_timeout')).rows[0].lock_timeout).toBe('0');
+      await admin.query('TRUNCATE "ApiKey"');
+
+      await suspender.query('BEGIN');
+      await suspender.query(`SELECT id FROM app_blocks WHERE id = 'b1' FOR UPDATE`);
+
+      await expect(mint()).rejects.toMatchObject({ code: '55P03' });
+      expect(await liveTokens()).toBe(0);
+    } finally {
+      await suspender.query('ROLLBACK');
+      await single.end();
+    }
+  }, 15_000);
 
   it.each([
     ['an approved block', ['approved']],
