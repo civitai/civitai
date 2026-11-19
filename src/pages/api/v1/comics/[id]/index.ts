@@ -10,8 +10,6 @@ import {
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { booleanString } from '~/utils/zod-helpers';
 
-/** GET /api/v1/comics/{id} — one published comic and its chapter list, without page images. */
-
 const schema = z.object({
   id: z.coerce.number().int().gt(0).lte(2147483647),
   nsfw: booleanString().optional(),

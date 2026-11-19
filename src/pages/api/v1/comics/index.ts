@@ -7,12 +7,11 @@ import {
   admitComicsRequest,
   comicsBrowsingLevel,
   listPublicComics,
+  parseComicsCursor,
 } from '~/server/utils/public-comics';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ComicGenre } from '~/shared/utils/prisma/enums';
 import { booleanString } from '~/utils/zod-helpers';
-
-/** GET /api/v1/comics — published comics, as the site's comics feed lists them. */
 
 const schema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
@@ -35,11 +34,17 @@ async function handler(
 
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: z.prettifyError(parsed.error) });
-  const { nsfw, ...params } = parsed.data;
+  const { nsfw, cursor, ...params } = parsed.data;
+  const parsedCursor = cursor != null ? parseComicsCursor(cursor, params.sort) : undefined;
+  if (parsedCursor === null) return res.status(400).json({ error: 'Invalid cursor' });
 
   try {
     const browsingLevel = comicsBrowsingLevel(req, res, nsfw);
-    const { items, nextCursor } = await listPublicComics({ ...params, browsingLevel });
+    const { items, nextCursor } = await listPublicComics({
+      ...params,
+      cursor: parsedCursor,
+      browsingLevel,
+    });
     const { nextPage } = getNextPage({ req, nextCursor });
     return res.status(200).json({ items, metadata: { nextCursor, nextPage } });
   } catch (e) {

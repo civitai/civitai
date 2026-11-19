@@ -20,13 +20,12 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { Availability, type ComicGenre } from '~/shared/utils/prisma/enums';
+import { Availability, ImageIngestionStatus, type ComicGenre } from '~/shared/utils/prisma/enums';
 import { slugitOr } from '~/utils/string-helpers';
 
-// The public REST API for comics. Every request is evaluated as an anonymous civitai.red visitor
-// (the site's own reader rules: published, not TOS, owner not banned, tainted chapters held back,
-// restricted panels withheld), then narrowed to the caller's browsing level, so a response depends
-// only on the URL and the region.
+// The public REST API for comics. Every request is evaluated as an anonymous civitai.red visitor,
+// then narrowed to the caller's browsing level, so the default (PG) response can sit in the shared
+// cache.
 
 const anonymous: PublicComicsCtx = { user: undefined, features: { isGreen: false } };
 
@@ -35,11 +34,10 @@ const PAGE_WIDTH = 1600;
 
 /** Every bit of `level` is allowed. A comic at 0 (not yet rated) passes, as in the site's feed. */
 const fits = (level: number, browsingLevel: number) => (level & ~browsingLevel) === 0;
-/** An image must also be rated. */
 const imageFits = (level: number, browsingLevel: number) =>
   level !== 0 && fits(level, browsingLevel);
 
-/** A comic with any mature chapter is only shown on the red site; the green one sends readers there. */
+/** A comic with any mature chapter lives on the red site. */
 const comicUrl = (id: number, name: string, nsfwLevel: number) =>
   `${getBaseUrl(
     Flags.intersects(nsfwLevel, nsfwBrowsingLevelsFlag) ? 'red' : undefined
@@ -56,13 +54,47 @@ const chapterUrl = (
 
 function coverImage(
   image: { id: number; url: string; nsfwLevel: number } | null | undefined,
-  browsingLevel: number
+  browsingLevel: number,
+  clean: Set<number>
 ) {
-  if (!image || !imageFits(image.nsfwLevel, browsingLevel)) return null;
+  if (!image || !clean.has(image.id) || !imageFits(image.nsfwLevel, browsingLevel)) return null;
   return {
     url: getEdgeUrl(image.url, { width: COVER_WIDTH, name: String(image.id) }),
     nsfwLevel: image.nsfwLevel,
   };
+}
+
+/**
+ * The ids among `ids` whose image has finished scanning and is not held or in violation. A cover is
+ * any image the creator picked, so unlike a page it has not passed the reader's panel check.
+ */
+async function cleanImageIds(ids: (number | undefined)[]) {
+  const wanted = ids.filter((id): id is number => id != null);
+  if (!wanted.length) return new Set<number>();
+  const rows = await dbRead.image.findMany({
+    where: {
+      id: { in: wanted },
+      ingestion: ImageIngestionStatus.Scanned,
+      needsReview: null,
+      tosViolation: false,
+    },
+    select: { id: true },
+  });
+  return new Set(rows.map((row) => row.id));
+}
+
+/** The feed's cursor for `sort`, or null when it is malformed: a comic id, or "<rank>:<id>". */
+export function parseComicsCursor(
+  cursor: string,
+  sort: 'Newest' | 'MostFollowed' | 'MostChapters'
+) {
+  const id = (value: string) => {
+    const n = Number(value);
+    return n > 0 && n <= 2147483647 ? n : null;
+  };
+  if (sort === 'Newest') return /^\d{1,10}$/.test(cursor) ? id(cursor) : null;
+  const match = /^(\d{1,18}):(\d{1,10})$/.exec(cursor);
+  return match && id(match[2]) != null ? cursor : null;
 }
 
 const isInEarlyAccess = (
@@ -118,7 +150,7 @@ export async function listPublicComics({
   browsingLevel,
 }: {
   limit: number;
-  cursor?: string;
+  cursor?: number | string;
   sort: 'Newest' | 'MostFollowed' | 'MostChapters';
   period?: 'Day' | 'Week' | 'Month' | 'Year' | 'AllTime';
   genre?: ComicGenre;
@@ -132,17 +164,18 @@ export async function listPublicComics({
     userId = user.id;
   }
 
-  // The feed's cursor is a comic id for Newest and "<rank>:<id>" otherwise.
-  const parsedCursor = cursor && /^\d+$/.test(cursor) ? Number(cursor) : cursor;
   const { items, nextCursor } = await getPublicComicProjects({
-    input: { limit, cursor: parsedCursor, sort, period, genre, userId, browsingLevel },
+    input: { limit, cursor, sort, period, genre, userId, browsingLevel },
     ctx: anonymous,
   });
 
-  const metas = await dbRead.comicProject.findMany({
-    where: { id: { in: items.map((item) => item.id) } },
-    select: { id: true, meta: true },
-  });
+  const [metas, clean] = await Promise.all([
+    dbRead.comicProject.findMany({
+      where: { id: { in: items.map((item) => item.id) } },
+      select: { id: true, meta: true },
+    }),
+    cleanImageIds(items.map((item) => item.coverImage?.id)),
+  ]);
   const allowDownload = new Map(
     metas.map(({ id, meta }) => [id, parseComicProjectMeta(meta)?.allowDownload === true])
   );
@@ -155,7 +188,7 @@ export async function listPublicComics({
       genre: item.genre,
       url: comicUrl(item.id, item.name, item.nsfwLevel),
       nsfwLevel: item.nsfwLevel,
-      coverImage: coverImage(item.coverImage, browsingLevel),
+      coverImage: coverImage(item.coverImage, browsingLevel, clean),
       user: { username: item.user.username },
       chapterCount: item.chapterCount,
       followerCount: item.followerCount,
@@ -181,6 +214,7 @@ async function readComic(id: number, browsingLevel: number) {
 export async function getPublicComic(id: number, browsingLevel: number, now = new Date()) {
   const comic = await readComic(id, browsingLevel);
   if (!comic) return null;
+  const clean = await cleanImageIds([comic.coverImage?.id]);
   return {
     id: comic.id,
     name: comic.name,
@@ -188,19 +222,21 @@ export async function getPublicComic(id: number, browsingLevel: number, now = ne
     url: comicUrl(comic.id, comic.name, comic.nsfwLevel),
     nsfwLevel: comic.nsfwLevel,
     allowDownload: comic.meta?.allowDownload === true,
-    coverImage: coverImage(comic.coverImage, browsingLevel),
+    coverImage: coverImage(comic.coverImage, browsingLevel, clean),
     user: { username: comic.user.username },
     followerCount: comic.followerCount,
     readerCount: comic.readerCount,
-    chapters: comic.chapters.map((chapter) => ({
-      number: chapter.position + 1,
-      name: chapter.name,
-      publishedAt: chapter.publishedAt,
-      nsfwLevel: chapter.nsfwLevel,
-      pageCount: chapter.panelCount,
-      earlyAccessEndsAt: isInEarlyAccess(chapter, now) ? chapter.earlyAccessEndsAt : null,
-      url: chapterUrl(comic, chapter.position + 1, chapter.name),
-    })),
+    chapters: comic.chapters
+      .filter((chapter) => fits(chapter.nsfwLevel, browsingLevel))
+      .map((chapter) => ({
+        number: chapter.position + 1,
+        name: chapter.name,
+        publishedAt: chapter.publishedAt,
+        nsfwLevel: chapter.nsfwLevel,
+        pageCount: chapter.panelCount,
+        earlyAccessEndsAt: isInEarlyAccess(chapter, now) ? chapter.earlyAccessEndsAt : null,
+        url: chapterUrl(comic, chapter.position + 1, chapter.name),
+      })),
   };
 }
 
@@ -212,8 +248,11 @@ export async function getPublicComicChapter(
 ) {
   const comic = await readComic(id, browsingLevel);
   const chapter = comic?.chapters.find((ch) => ch.position === number - 1);
-  if (!comic || !chapter) return { status: 404 as const };
-  if (isInEarlyAccess(chapter, now))
+  if (!comic || !chapter || !fits(chapter.nsfwLevel, browsingLevel))
+    return { status: 404 as const };
+  // The reader empties a locked chapter's panels by its own clock, which may run a moment ahead.
+  const locked = chapter.panels.length === 0 && chapter.panelCount > 0;
+  if (isInEarlyAccess(chapter, now) || locked)
     return { status: 403 as const, earlyAccessEndsAt: chapter.earlyAccessEndsAt };
 
   return {

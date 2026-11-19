@@ -13,6 +13,7 @@ import {
   getPublicComic,
   getPublicComicChapter,
   listPublicComics,
+  parseComicsCursor,
 } from '~/server/utils/public-comics';
 import {
   allBrowsingLevelsFlag,
@@ -26,14 +27,14 @@ import {
   ImageIngestionStatus,
 } from '~/shared/utils/prisma/enums';
 
-/**
- * The comics REST API serves what the site's public reader serves to a signed-out visitor,
- * narrowed to the caller's browsing level. These drive the real reader service over database rows.
- */
+/** Drives the real reader service over mocked database rows. */
 
 const OWNER = 990000001;
 const COMIC = 990000100;
-const NOW = new Date('2026-11-19T00:00:00Z');
+// The reader service reads the real clock, so early-access dates sit far from it.
+const NOW = new Date();
+const PAST = new Date('2020-01-01T00:00:00Z');
+const FUTURE = new Date('2099-01-01T00:00:00Z');
 
 const cleanImage = (id: number, nsfwLevel: number, extra: Record<string, unknown> = {}) => ({
   id,
@@ -103,6 +104,7 @@ beforeEach(() => {
   dbMock.dbRead.comicProject.findUnique.mockReset();
   dbMock.dbRead.comicProject.findMany.mockReset().mockResolvedValue([]);
   dbMock.dbRead.user.findUnique.mockReset().mockResolvedValue(null);
+  dbMock.dbRead.image.findMany.mockReset().mockResolvedValue([]);
 });
 
 describe('a comic the public reader would not serve is not found', () => {
@@ -144,6 +146,56 @@ describe('browsing level', () => {
   });
 });
 
+describe('chapter level', () => {
+  it('leaves out a chapter above the level even when the comic level lags behind', async () => {
+    serve(comic({ chapters: [chapter(0, NsfwLevel.PG), chapter(1, NsfwLevel.R)] }));
+    const listed = await getPublicComic(COMIC, publicBrowsingLevelsFlag, NOW);
+    expect(listed?.chapters.map((c) => c.number)).toEqual([1]);
+    expect((await getPublicComicChapter(COMIC, 2, publicBrowsingLevelsFlag, NOW)).status).toBe(404);
+  });
+});
+
+describe('covers', () => {
+  const COVER = 990000400;
+  const cover = (nsfwLevel: number) => ({
+    id: COVER,
+    url: 'cover-url',
+    nsfwLevel,
+    modelRestricted: false,
+    userId: OWNER,
+  });
+  const clean = () => dbMock.dbRead.image.findMany.mockResolvedValue([{ id: COVER }]);
+
+  it('serves a clean cover in the level, resized', async () => {
+    clean();
+    serve(comic({ coverImage: cover(NsfwLevel.PG) }));
+    const url = (await getPublicComic(COMIC, publicBrowsingLevelsFlag, NOW))?.coverImage?.url;
+    expect(url).toMatch(/cover-url/);
+    expect(url).toMatch(/width=450/);
+  });
+
+  it.each([
+    ['above the level', NsfwLevel.R, true],
+    ['unrated', 0, true],
+    ['not yet clean (held, unscanned or in violation)', NsfwLevel.PG, false],
+  ])('drops a cover %s', async (_, level, isClean) => {
+    if (isClean) clean();
+    serve(comic({ coverImage: cover(level) }));
+    expect((await getPublicComic(COMIC, publicBrowsingLevelsFlag, NOW))?.coverImage).toBeNull();
+  });
+
+  it('asks only for scanned, unheld, non-violating images', async () => {
+    serve(comic({ coverImage: cover(NsfwLevel.PG) }));
+    await getPublicComic(COMIC, publicBrowsingLevelsFlag, NOW);
+    expect(dbMock.dbRead.image.findMany.mock.calls[0][0].where).toEqual({
+      id: { in: [COVER] },
+      ingestion: ImageIngestionStatus.Scanned,
+      needsReview: null,
+      tosViolation: false,
+    });
+  });
+});
+
 describe('pages', () => {
   it('withholds a restricted panel image and keeps the page in order', async () => {
     serve(
@@ -165,6 +217,13 @@ describe('pages', () => {
       [1, true],
       [2, false],
     ]);
+  });
+
+  it('withholds an unrated page image even at every level', async () => {
+    serve(comic({ chapters: [chapter(0, NsfwLevel.PG, { panels: [panel(990000301, 0)] })] }));
+    const result = await getPublicComicChapter(COMIC, 1, allBrowsingLevelsFlag, NOW);
+    if (result.status !== 200) throw new Error(`expected 200, got ${result.status}`);
+    expect(result.chapter.pages[0].url).toBeNull();
   });
 
   it('serves a resized page, not the original', async () => {
@@ -189,18 +248,25 @@ describe('early access', () => {
     });
 
   it('lists the chapter with its end date but refuses its pages until then', async () => {
-    const endsAt = new Date('2026-11-25T00:00:00Z');
-    serve(ea(endsAt));
+    serve(ea(FUTURE));
     const listed = await getPublicComic(COMIC, allBrowsingLevelsFlag, NOW);
-    expect(listed?.chapters[0]).toMatchObject({ number: 1, earlyAccessEndsAt: endsAt });
+    expect(listed?.chapters[0]).toMatchObject({ number: 1, earlyAccessEndsAt: FUTURE });
     expect(await getPublicComicChapter(COMIC, 1, allBrowsingLevelsFlag, NOW)).toEqual({
       status: 403,
-      earlyAccessEndsAt: endsAt,
+      earlyAccessEndsAt: FUTURE,
     });
   });
 
+  it('refuses rather than serving no pages when the reader locked it a moment before', async () => {
+    serve(ea(FUTURE));
+    const justAfter = new Date(FUTURE.getTime() + 1);
+    expect((await getPublicComicChapter(COMIC, 1, allBrowsingLevelsFlag, justAfter)).status).toBe(
+      403
+    );
+  });
+
   it('serves the pages once early access has ended', async () => {
-    serve(ea(new Date('2026-11-10T00:00:00Z')));
+    serve(ea(PAST));
     const result = await getPublicComicChapter(COMIC, 1, allBrowsingLevelsFlag, NOW);
     expect(result.status).toBe(200);
   });
@@ -235,12 +301,38 @@ describe('allowDownload', () => {
   });
 });
 
+describe('list items', () => {
+  it('maps the feed item and hands back its cursor as a string', async () => {
+    const rows = [990000102, 990000101, 990000100].map((id) => ({
+      ...comic({ id }),
+      chapters: [],
+      updatedAt: NOW,
+    }));
+    dbMock.dbRead.comicProject.findMany.mockImplementation(async ({ select }) =>
+      select && 'meta' in select && !('chapters' in select) ? [] : rows
+    );
+    const { items, nextCursor } = await listPublicComics({
+      limit: 2,
+      sort: 'Newest',
+      browsingLevel: publicBrowsingLevelsFlag,
+    });
+    expect(items[0]).toMatchObject({
+      id: 990000102,
+      name: 'My Comic',
+      url: expect.stringMatching(/\/comics\/990000102\/my-comic$/),
+      user: { username: 'creator' },
+      chapterCount: 0,
+      allowDownload: false,
+    });
+    expect(nextCursor).toBe('990000101');
+  });
+});
+
 describe('list', () => {
   it('asks the feed for public comics only, at the caller level, as a signed-out visitor', async () => {
     await listPublicComics({ limit: 20, sort: 'Newest', browsingLevel: publicBrowsingLevelsFlag });
     const { where } = dbMock.dbRead.comicProject.findMany.mock.calls[0][0];
     expect(where).toMatchObject({ tosViolation: false, user: { bannedAt: null } });
-    // Mature levels are never in the allowed set at the public level.
     expect(where.nsfwLevel.in).not.toContain(NsfwLevel.R);
   });
 
@@ -255,6 +347,21 @@ describe('list', () => {
       })
     ).toEqual({ items: [], nextCursor: undefined });
     expect(dbMock.dbRead.comicProject.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('parseComicsCursor', () => {
+  it.each([
+    ['123', 'Newest', 123],
+    ['5:123', 'MostFollowed', '5:123'],
+    ['abc', 'Newest', null],
+    ['99999999999', 'Newest', null],
+    ['0', 'Newest', null],
+    ['123', 'MostFollowed', null],
+    ['x:1', 'MostChapters', null],
+    ['5:99999999999', 'MostFollowed', null],
+  ] as const)('%s for %s is %s', (cursor, sort, expected) => {
+    expect(parseComicsCursor(cursor, sort)).toBe(expected);
   });
 });
 
