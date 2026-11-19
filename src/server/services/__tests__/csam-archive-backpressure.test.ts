@@ -54,6 +54,8 @@ const csamBaseDir = await vi.hoisted(async () => {
 const v3 = vi.hoisted(() => ({
   comments: [] as { id: number; userId: number; content: string }[],
   tables: {} as Record<string, Record<string, unknown>[]>,
+  // Makes a `kyselyRead` statement fail, as a statement timeout would.
+  failWhen: undefined as ((table: string, eq: Record<string, unknown>) => boolean) | undefined,
   calls: [] as {
     userId?: number;
     afterId?: number;
@@ -105,11 +107,14 @@ vi.mock('~/server/db/kyselyDb', () => {
           : { ...state, eq: { ...state.eq, [column]: value } }
       ),
     limit: (take: number) => mainQuery(table, { ...state, take }),
-    execute: async () =>
-      (v3.tables[table] ?? [])
+    execute: async () => {
+      if (v3.failWhen?.(table, state.eq ?? {}))
+        throw new Error('canceling statement due to statement timeout');
+      return (v3.tables[table] ?? [])
         .filter((r) => Object.entries(state.eq ?? {}).every(([c, v]) => r[c] === v))
         .filter((r) => state.afterId === undefined || (r.id as number) > state.afterId)
-        .slice(0, state.take),
+        .slice(0, state.take);
+    },
   });
   return {
     kyselyV3Read: { selectFrom: () => query({}) },
@@ -1081,6 +1086,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
         serviceOfferings: [],
         questions: [],
         answers: [],
+        authorPassIncomplete: false,
       },
       (_k, v) => (typeof v === 'bigint' ? v.toString() : v)
     );
@@ -1094,6 +1100,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     v3.comments = comments;
     v3.calls = [];
     v3.tables = {};
+    v3.failWhen = undefined;
   }
 
   /**
@@ -1270,6 +1277,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
       'serviceOfferings',
       'questions',
       'answers',
+      'authorPassIncomplete',
     ]);
     expect(bundle.posts).toEqual([{ id: 4, userId: report.userId, detail: 'p4' }]);
     expect(bundle.chatMessages.map((m: { isReportedUser: boolean }) => m.isReportedUser)).toEqual([
@@ -1277,6 +1285,34 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
       false,
     ]);
     expect(bundle.serviceOfferings).toEqual([{ id: 3, sellerId: report.userId, title: 's3' }]);
+  });
+
+  it("still writes the bundle when the pass for messages outside the user's chats fails", async () => {
+    seedDb();
+    v3.tables = {
+      ChatMember: [{ chatId: 9, userId: report.userId }],
+      ChatMessage: [
+        { id: 7, chatId: 9, userId: report.userId, content: 'mine' },
+        { id: 8, chatId: 9, userId: report.userId + 1, content: 'theirs' },
+      ],
+      Post: [{ id: 4, userId: report.userId, detail: 'p4' }],
+    };
+    // The member-chat pass filters on chatId; the other pass filters on the author.
+    v3.failWhen = (table, eq) => table === 'ChatMessage' && 'userId' in eq;
+
+    await archiveCsamDataForReport(report as never);
+
+    const bundle = JSON.parse(uploads.get('data.json')!.toString('utf8'));
+    expect(bundle.chatMessages.map((m: { id: number }) => m.id)).toEqual([7, 8]);
+    expect(bundle.posts).toEqual([{ id: 4, userId: report.userId, detail: 'p4' }]);
+    expect(bundle.answers).toEqual([]);
+    expect(bundle.authorPassIncomplete).toBe(true);
+    const warned = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([p]) => p as Record<string, unknown>)
+      .filter((p) => p.subType === 'archive-section-incomplete');
+    expect(warned).toHaveLength(1);
+    expect(JSON.stringify(warned)).not.toContain(String(report.userId));
   });
 
   it("archives a held user's comments on their own", async () => {

@@ -2299,12 +2299,13 @@ const userCommentRows = (userId: number) =>
 /** The reported user's own content, written to `data.json` under `name` after `images`. Comments are not held, so this archive may be their only copy. */
 export const userContentSections: {
   name: string;
-  rows: (userId: number) => AsyncIterable<unknown>;
+  rows: (userId: number, incomplete?: Set<string>) => AsyncIterable<unknown>;
 }[] = [
   { name: 'comments', rows: userCommentRows },
   ...userContentReaders.map(({ name, rows }) => ({
     name,
-    rows: (userId: number) => rows(kyselyRead, userId),
+    rows: (userId: number, incomplete?: Set<string>) =>
+      rows(kyselyRead, userId, undefined, incomplete),
   })),
 ];
 
@@ -2858,6 +2859,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     }
 
     const outPath = `${reportDirs.base}/${userId}_data.json`;
+    const incomplete = new Set<string>();
     await writeJsonObject({
       sink: fs.createWriteStream(outPath),
       replacer: bigintReplacer,
@@ -2882,10 +2884,30 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         ['images', { items: flattenPages(scanUserImages()) }],
         ...userContentSections.map(
           ({ name, rows }) =>
-            [name, { items: rows(userId) }] as [string, { items: AsyncIterable<unknown> }]
+            [name, { items: rows(userId, incomplete) }] as [
+              string,
+              { items: AsyncIterable<unknown> }
+            ]
         ),
+        // Read when reached, after every section above has streamed.
+        [
+          'authorPassIncomplete',
+          {
+            get value() {
+              return incomplete.has('authorPass');
+            },
+          },
+        ],
       ],
     });
+    if (incomplete.size)
+      logToAxiom({
+        name: 'csam-report',
+        type: 'warning',
+        subType: 'archive-section-incomplete',
+        message: 'a chat pass failed; the bundle was written without it',
+        payload: { passes: [...incomplete], count: incomplete.size },
+      });
 
     const readableStream = fs.createReadStream(outPath);
     archived.push({

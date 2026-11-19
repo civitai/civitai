@@ -52,7 +52,13 @@ export async function* flattenPages<T>(
 }
 
 type Db = Kysely<DB>;
-type Reader = (db: Db, userId: number, pageSize?: number) => AsyncIterable<unknown>;
+/** `incomplete` collects the names of passes that failed soft; see `chatMessages`. */
+type Reader = (
+  db: Db,
+  userId: number,
+  pageSize?: number,
+  incomplete?: Set<string>
+) => AsyncIterable<unknown>;
 
 /**
  * Text the reported user wrote, one reader per table, each selecting a fixed column list so a new
@@ -126,7 +132,10 @@ export const userContentReaders: { name: string; rows: Reader }[] = [
         }, pageSize)
       ),
   },
-  { name: 'chatMessages', rows: (db, userId, pageSize) => chatMessages(db, userId, pageSize) },
+  {
+    name: 'chatMessages',
+    rows: (db, userId, pageSize, incomplete) => chatMessages(db, userId, pageSize, incomplete),
+  },
   {
     name: 'profile',
     rows: async function* (db, userId) {
@@ -308,7 +317,7 @@ const CHAT_MESSAGE_COLUMNS = [
  * The user's other messages are found by `userId`, which no index leads with: the read walks the
  * primary key, so even a user with none outside their chats costs a scan of the table.
  */
-async function* chatMessages(db: Db, userId: number, pageSize?: number) {
+async function* chatMessages(db: Db, userId: number, pageSize?: number, incomplete?: Set<string>) {
   const memberships = await db
     .selectFrom('ChatMember')
     .select('chatId')
@@ -332,23 +341,30 @@ async function* chatMessages(db: Db, userId: number, pageSize?: number) {
       }, pageSize)
     );
   const inMemberChat = new Set(memberChats);
-  yield* withEdits(
-    db,
-    userId,
-    outsideChats(
-      inMemberChat,
-      scanPagesById(({ afterId, take }) => {
-        let q = db
-          .selectFrom('ChatMessage')
-          .select(CHAT_MESSAGE_COLUMNS)
-          .where('userId', '=', userId)
-          .orderBy('id', 'asc')
-          .limit(take);
-        if (afterId !== undefined) q = q.where('id', '>', afterId);
-        return q.execute();
-      }, pageSize)
-    )
-  );
+  // Given `incomplete`, this pass fails soft: the scan can outlast the statement timeout, and
+  // losing every other section to it is the worse outcome. Rows already yielded stay.
+  try {
+    yield* withEdits(
+      db,
+      userId,
+      outsideChats(
+        inMemberChat,
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('ChatMessage')
+            .select(CHAT_MESSAGE_COLUMNS)
+            .where('userId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      )
+    );
+  } catch (e) {
+    if (!incomplete) throw e;
+    incomplete.add('authorPass');
+  }
 }
 
 /**

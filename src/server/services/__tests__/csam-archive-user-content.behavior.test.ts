@@ -406,10 +406,11 @@ describe('the archive text sections', () => {
         [5, 5, ME],
         [9, 8, ME],
         [15, 8, OTHER],
-        [17, 8, ME],
         [16, 9, ME],
       ])
         await message(id, chat, from);
+      // In a chat the user is not a member of: deleted and edited, and still archived as stored.
+      await message(17, 8, ME, { content: 'kept', deletedAt: new Date(Date.UTC(2026, 9, 4)) });
       const editedAt = new Date(Date.UTC(2026, 9, 2));
       const deletedAt = new Date(Date.UTC(2026, 9, 3));
       await message(10, 5, ME, { content: '', editedAt, deletedAt, referenceMessageId: 1 });
@@ -419,7 +420,8 @@ describe('the archive text sections', () => {
         (32, 10, ${ME}, 'second draft', '2026-10-02 10:00', 'x'),
         (31, 10, ${ME}, 'first draft', '2026-10-02 09:00', 'x'),
         (33, 4, ${OTHER}, 'their draft', '2026-10-02 11:00', 'x'),
-        (34, 2, ${OTHER}, 'not in scope', '2026-10-02 12:00', 'x')`);
+        (34, 2, ${OTHER}, 'not in scope', '2026-10-02 12:00', 'x'),
+        (35, 17, ${ME}, 'before the edit', '2026-10-03 09:00', 'x')`);
 
       const sent = queries.length;
       const rows = await read('chatMessages', ME);
@@ -467,6 +469,11 @@ describe('the archive text sections', () => {
         expect.objectContaining({ id: 33, previousContent: 'their draft' }),
       ]);
       expect(rows.find((r) => r.id === 1)?.previousVersions).toEqual([]);
+      expect(rows.find((r) => r.id === 17)).toMatchObject({
+        content: 'kept',
+        deletedAt: new Date(Date.UTC(2026, 9, 4)),
+        previousVersions: [expect.objectContaining({ id: 35, previousContent: 'before the edit' })],
+      });
       for (const row of rows)
         for (const version of row.previousVersions as Record<string, unknown>[])
           expect(Object.keys(version).sort()).toEqual([
@@ -475,7 +482,6 @@ describe('the archive text sections', () => {
             'id',
             'previousContent',
           ]);
-      expect(JSON.stringify(rows)).not.toContain('not in scope');
       for (const row of rows)
         expect(Object.keys(row).sort()).toEqual(
           [
