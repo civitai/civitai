@@ -61,11 +61,14 @@ serves it the audience anyone may read: SFW apps only.
 
 ### Subscribing as itself (client credentials)
 
-With `APP_INDEX_CLIENT_ID`, `APP_INDEX_CLIENT_SECRET` and `APP_INDEX_TOKEN_URL` set, the index gets
-its own access token from the auth hub with the OAuth client credentials grant (`internal/token`)
-and sends it on every subscription. `APP_INDEX_TOKEN_RESOURCE` and `APP_INDEX_TOKEN_SCOPE`, when set,
-are sent as the token request's `resource` and `scope`. The token is kept until 30 s before it
-expires.
+With `APP_INDEX_CLIENT_ID`, `APP_INDEX_CLIENT_SECRET`, `APP_INDEX_TOKEN_URL` and
+`APP_INDEX_TOKEN_RESOURCE` set, the index gets its own access token from the auth hub with the
+OAuth client credentials grant (`internal/token`) and sends it on every subscription.
+`APP_INDEX_TOKEN_RESOURCE` is the resource the token is for (the hub issues a service token only
+for a named resource), and `APP_INDEX_TOKEN_SCOPE` is sent as `scope` when set.
+`APP_INDEX_TOKEN_URL` must be https, or http only to a cluster-local service name (`*.svc`,
+`*.svc.cluster.local`), since the client secret crosses that hop. The token is kept until 30 s
+before it expires.
 
 - A stream that ends with `invalid_token` (the token expired or was revoked) drops the token and
   subscribes again from the stored cursor, never an empty one, with a new token. This waits the
@@ -75,12 +78,29 @@ expires.
   kept.
 - `app_index_token_fetches_total{outcome}` counts calls to the token endpoint.
 
-The token only changes what the index reads once the registry's origin maps the index's client to
-an audience: until then the origin refuses it, and the index keeps retrying with backoff. Set a
-client only once the origin lists it, and only once search filters mature apps per viewer.
-Unset, nothing changes: no token is fetched and no `Authorization` header is sent. Setting a client
-together with `APP_INDEX_REGISTRY_TOKEN`, or any of these settings without `APP_INDEX_CLIENT_ID`,
-refuses to start.
+Setting a client together with `APP_INDEX_REGISTRY_TOKEN`, or any of these settings without the
+others it needs, refuses to start. Unset, nothing changes: no token is fetched and no
+`Authorization` header is sent.
+
+**Rollout order.** Configure the client last:
+
+1. The auth hub: the index's service client, and `serviceSubjects` and relay listings on the
+   resources its token is exchanged for.
+2. The apps origin: `REGISTRY_ADAPTER_SERVICE_CLIENTS` names the index's client.
+3. Only then this service's client settings, and only once search filters mature apps per viewer.
+
+Configured before steps 1 and 2, every token is refused: the index stops taking in changes and
+keeps retrying with backoff. Its stored cursor and serving generation are kept, and it catches up
+once the steps are done.
+
+**What to expect once it is on:**
+
+- One `cursor_expired` rebuild at switch-on (`app_index_rebuilds_total{reason="cursor_expired"}`).
+  The stored cursor names the anonymous audience, the origin refuses it for the service's, and a
+  new generation is built beside the serving one.
+- After that, `app_index_reconnects_total{reason="auth"}` rises about every 15 minutes: an
+  exchanged token lasts at most that long, and each expiry ends the stream with `invalid_token`,
+  which resumes from the cursor with a new token.
 
 ## Configuration
 

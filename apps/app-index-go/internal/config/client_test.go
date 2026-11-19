@@ -33,6 +33,19 @@ func TestClientCredentials(t *testing.T) {
 	}
 }
 
+// http to a cluster-local service name is allowed; the secret then never leaves the cluster.
+func TestClientTokenURLHTTPOnlyInCluster(t *testing.T) {
+	for _, u := range []string{"http://auth.auth.svc/api/auth/oauth/token", "http://auth.auth.svc.cluster.local:8080/t", "HTTP://Auth.Auth.SVC.cluster.local./t"} {
+		m := base()
+		m["APP_INDEX_CLIENT_ID"], m["APP_INDEX_CLIENT_SECRET"], m["APP_INDEX_TOKEN_RESOURCE"] = "id-1", "sec-9f", "https://r.invalid" //nolint:gosec // test fixture, not a credential
+		m["APP_INDEX_TOKEN_URL"] = u
+		c, err := FromEnv(env(m))
+		if err != nil || c.Client == nil || c.Client.TokenURL != u {
+			t.Fatalf("%s: %+v %v, want accepted", u, c, err)
+		}
+	}
+}
+
 // A half-configured client is refused at start, never silently anonymous.
 func TestClientCredentialsRefusesHalfAConfiguration(t *testing.T) {
 	cases := []struct {
@@ -40,12 +53,15 @@ func TestClientCredentialsRefusesHalfAConfiguration(t *testing.T) {
 		set  map[string]string
 		want string
 	}{
-		{"no secret", map[string]string{"APP_INDEX_CLIENT_ID": "id-1", "APP_INDEX_TOKEN_URL": "https://auth.invalid/t"}, "APP_INDEX_CLIENT_SECRET is required"}, //nolint:gosec // test fixture, not a credential
-		{"no token url", map[string]string{"APP_INDEX_CLIENT_ID": "id-1", "APP_INDEX_CLIENT_SECRET": "sec-9f"}, "APP_INDEX_TOKEN_URL must be"},
-		{"bad token url", map[string]string{"APP_INDEX_CLIENT_ID": "id-1", "APP_INDEX_CLIENT_SECRET": "sec-9f", "APP_INDEX_TOKEN_URL": "ftp://auth.invalid"}, "APP_INDEX_TOKEN_URL must be"}, //nolint:gosec // test fixture, not a credential
-		{"secret without id", map[string]string{"APP_INDEX_CLIENT_SECRET": "sec-9f"}, "APP_INDEX_CLIENT_ID is required"},
-		{"resource without id", map[string]string{"APP_INDEX_TOKEN_RESOURCE": "https://r.invalid"}, "APP_INDEX_CLIENT_ID is required"},                                                                                     //nolint:gosec // test fixture, not a credential
-		{"client and static token", map[string]string{"APP_INDEX_CLIENT_ID": "id-1", "APP_INDEX_CLIENT_SECRET": "sec-9f", "APP_INDEX_TOKEN_URL": "https://auth.invalid/t", "APP_INDEX_REGISTRY_TOKEN": "tok"}, "not both"}, //nolint:gosec // test fixture, not a credential
+		{"no secret", map[string]string{"APP_INDEX_CLIENT_ID": "id-1", "APP_INDEX_TOKEN_URL": "https://auth.invalid/t", "APP_INDEX_TOKEN_RESOURCE": "https://r.invalid"}, "APP_INDEX_CLIENT_SECRET is required"},                                                                                           //nolint:gosec // test fixture, not a credential
+		{"no token url", map[string]string{"APP_INDEX_CLIENT_ID": "id-1", "APP_INDEX_CLIENT_SECRET": "sec-9f"}, "APP_INDEX_TOKEN_URL must be"},                                                                                                                                                             //nolint:gosec // test fixture, not a credential
+		{"bad token url", map[string]string{"APP_INDEX_CLIENT_ID": "id-1", "APP_INDEX_CLIENT_SECRET": "sec-9f", "APP_INDEX_TOKEN_URL": "ftp://auth.invalid", "APP_INDEX_TOKEN_RESOURCE": "https://r.invalid"}, "APP_INDEX_TOKEN_URL must be"},                                                              //nolint:gosec // test fixture, not a credential
+		{"http token url off-cluster", map[string]string{"APP_INDEX_CLIENT_ID": "id-1", "APP_INDEX_CLIENT_SECRET": "sec-9f", "APP_INDEX_TOKEN_URL": "http://auth.invalid/t", "APP_INDEX_TOKEN_RESOURCE": "https://r.invalid"}, "APP_INDEX_TOKEN_URL must be an https URL"},                                 //nolint:gosec // test fixture, not a credential
+		{"http token url to a host merely containing svc", map[string]string{"APP_INDEX_CLIENT_ID": "id-1", "APP_INDEX_CLIENT_SECRET": "sec-9f", "APP_INDEX_TOKEN_URL": "http://auth.svc.example.invalid/t", "APP_INDEX_TOKEN_RESOURCE": "https://r.invalid"}, "APP_INDEX_TOKEN_URL must be an https URL"}, //nolint:gosec // test fixture, not a credential
+		{"no resource", map[string]string{"APP_INDEX_CLIENT_ID": "id-1", "APP_INDEX_CLIENT_SECRET": "sec-9f", "APP_INDEX_TOKEN_URL": "https://auth.invalid/t"}, "APP_INDEX_TOKEN_RESOURCE is required"},                                                                                                    //nolint:gosec // test fixture, not a credential
+		{"secret without id", map[string]string{"APP_INDEX_CLIENT_SECRET": "sec-9f"}, "APP_INDEX_CLIENT_ID is required"},                                                                                                                                                                                   //nolint:gosec // test fixture, not a credential
+		{"resource without id", map[string]string{"APP_INDEX_TOKEN_RESOURCE": "https://r.invalid"}, "APP_INDEX_CLIENT_ID is required"},                                                                                                                                                                     //nolint:gosec // test fixture, not a credential
+		{"client and static token", map[string]string{"APP_INDEX_CLIENT_ID": "id-1", "APP_INDEX_CLIENT_SECRET": "sec-9f", "APP_INDEX_TOKEN_URL": "https://auth.invalid/t", "APP_INDEX_TOKEN_RESOURCE": "https://r.invalid", "APP_INDEX_REGISTRY_TOKEN": "tok"}, "not both"},                                //nolint:gosec // test fixture, not a credential
 	}
 	for _, tc := range cases {
 		m := base()

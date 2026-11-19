@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -19,8 +20,9 @@ type Config struct {
 	// client below, the subscription is anonymous: the registry serves the audience anyone may read.
 	RegistryToken string
 	// Client is the index's own OAuth client, whose client-credentials token every subscription
-	// carries (APP_INDEX_CLIENT_ID, APP_INDEX_CLIENT_SECRET, APP_INDEX_TOKEN_URL, and optionally
-	// APP_INDEX_TOKEN_RESOURCE and APP_INDEX_TOKEN_SCOPE). Nil when APP_INDEX_CLIENT_ID is unset.
+	// carries (APP_INDEX_CLIENT_ID, APP_INDEX_CLIENT_SECRET, APP_INDEX_TOKEN_URL,
+	// APP_INDEX_TOKEN_RESOURCE, and optionally APP_INDEX_TOKEN_SCOPE). Nil when APP_INDEX_CLIENT_ID
+	// is unset.
 	Client *Client
 	// Schema is the subscribed schema (APP_INDEX_SCHEMA, default the app entity schema).
 	Schema string
@@ -108,8 +110,11 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 }
 
 // clientFromEnv reads the client credentials settings: all unset is nil; APP_INDEX_CLIENT_ID set
-// needs the secret and an http(s) token URL; any of the others without the id is an error, so a
-// half-configured client never silently falls back to an anonymous subscription.
+// needs the secret, a token URL (https, or http only to a cluster-local host) and the resource the
+// token is for (the hub issues a service token only for a named resource: without one every fetch
+// would be refused and the index would retry forever instead of failing at start); any of the
+// others without the id is an error, so a half-configured client never silently falls back to an
+// anonymous subscription.
 func clientFromEnv(getenv func(string) string) (*Client, error) {
 	cl := &Client{
 		ID:       getenv("APP_INDEX_CLIENT_ID"),
@@ -127,10 +132,21 @@ func clientFromEnv(getenv func(string) string) (*Client, error) {
 	if cl.Secret == "" {
 		return nil, errors.New("APP_INDEX_CLIENT_SECRET is required with APP_INDEX_CLIENT_ID")
 	}
-	if u, err := url.Parse(cl.TokenURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, errors.New("APP_INDEX_TOKEN_URL must be an http(s) URL with APP_INDEX_CLIENT_ID")
+	u, err := url.Parse(cl.TokenURL)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && (u.Scheme != "http" || !clusterLocal(u.Hostname()))) {
+		return nil, errors.New("APP_INDEX_TOKEN_URL must be an https URL (http only to a cluster-local *.svc host) with APP_INDEX_CLIENT_ID")
+	}
+	if cl.Resource == "" {
+		return nil, errors.New("APP_INDEX_TOKEN_RESOURCE is required with APP_INDEX_CLIENT_ID")
 	}
 	return cl, nil
+}
+
+// clusterLocal reports whether host is a Kubernetes service name: `*.svc` or `*.svc.cluster.local`.
+// The client secret crosses this hop, so plain http is allowed only inside the cluster.
+func clusterLocal(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return strings.HasSuffix(host, ".svc") || strings.HasSuffix(host, ".svc.cluster.local")
 }
 
 func intEnv(getenv func(string) string, name string, def, lo, hi int) (int, error) {
