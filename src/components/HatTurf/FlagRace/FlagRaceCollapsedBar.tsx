@@ -1,9 +1,19 @@
+import type { ReactNode } from 'react';
 import { ActionIcon, Badge, Button, Group, Text } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { FALLBACK_COLOR } from '~/components/HatTurf/hat-turf.utils';
-import { ART } from '~/components/HatTurf/FlagRace/FlagRacePanel';
+import { ART, FlagRacePanel } from '~/components/HatTurf/FlagRace/FlagRacePanel';
+import flagClasses from '~/components/HatTurf/FlagRace/FlagRacePanel.module.scss';
+import { useNavBannersDismissed } from '~/components/AppLayout/NavAnnouncementSlot/nav-banners-dismissed';
+import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
+import {
+  eventHomeBlockCollapseId,
+  eventHomeBlockDismissId,
+  eventHomeBlockDisplay,
+  flagRaceHomeKey,
+} from '~/components/HomeBlocks/scored-event-home-block.utils';
 import { flagsHeld, flagsPot } from '~/components/HatTurf/FlagRace/flag-race.utils';
 import { HeroBulbs } from '~/components/Events/ScoredEvent/HeroBulbs';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -11,10 +21,52 @@ import { trpc } from '~/utils/trpc';
 import partyClasses from '~/components/HomeBlocks/ScoredEventHomeBlock.module.scss';
 import type { FlagSummary } from '~/server/events/turf/turf.service';
 
-/** The Flag Race row's key in the event home block's collapse/hide cookie entries, apart from the event's own block. */
-export const flagRaceHomeKey = (event: string) => `${event}:flags`;
+/**
+ * The home Flag Race row: full, shrunk to a bar, or hidden, as the event's own home block does. The
+ * panel's X shrinks it, the bar's X hides it, and the event page's ShowEventHomeBlock brings it back.
+ */
+export function FlagRaceHomeRow({
+  event,
+  summary,
+  children,
+}: {
+  event: string;
+  summary: FlagSummary;
+  /** Today's flags. */
+  children: ReactNode;
+}) {
+  const { dismissed, dismiss, restore } = useNavBannersDismissed();
+  const key = flagRaceHomeKey(event);
+  const display = eventHomeBlockDisplay(key, dismissed);
+  if (display === 'hidden') return null;
+  if (display === 'collapsed')
+    return (
+      <HomeBlockWrapper py={16}>
+        <FlagRaceCollapsedBar
+          event={event}
+          summary={summary}
+          onExpand={() => restore(eventHomeBlockCollapseId(key))}
+          onClose={() => dismiss(eventHomeBlockDismissId(key), eventHomeBlockCollapseId(key))}
+        />
+      </HomeBlockWrapper>
+    );
+  return (
+    <HomeBlockWrapper py={32}>
+      <div className={flagClasses.wrap}>
+        <section className={clsx(partyClasses.party, flagClasses.row)}>
+          <FlagRacePanel
+            event={event}
+            summary={summary}
+            onCollapse={() => dismiss(eventHomeBlockCollapseId(key))}
+          />
+          {children}
+        </section>
+      </div>
+    </HomeBlockWrapper>
+  );
+}
 
-export function FlagRaceCollapsedBar({
+function FlagRaceCollapsedBar({
   event,
   summary,
   onExpand,
