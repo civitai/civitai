@@ -876,7 +876,7 @@ describe('video by any other name', () => {
   });
 
   const ogg = (...pages: Buffer[]) => Buffer.concat(pages);
-  it.each([
+  it.each<[string, Buffer, RegExp]>([
     ['weights.pt', buildZip([{ name: 'clip.mp4', data: MP4_BYTES() }]), /\.pt model/],
     [
       'weights.pt',
@@ -1017,7 +1017,7 @@ describe('video by any other name', () => {
       descriptor(0, 4096, 4096),
       descriptor(crc32(Buffer.alloc(4096, 3)), 10, 4096),
       descriptor(crc32(Buffer.alloc(4096, 3)), 4096, 10),
-    ].map((wrong) => [
+    ].map((wrong): [string, Buffer, RegExp] => [
       'weights.pt',
       torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
         'weights/data/0': { descriptor: wrong },
@@ -1035,6 +1035,20 @@ describe('video by any other name', () => {
       ),
       /compressed beyond/,
     ],
+    // Delivered without its images scanned, so it may hold none.
+    ...[
+      ['extra/cover.png', PNG_BYTES()],
+      ['extra/cover', JPEG_BYTES()],
+      ['extra/scan.tif', Buffer.concat([Buffer.from('II*\0', 'latin1'), Buffer.alloc(40)])],
+      ['data/1', PNG_BYTES()],
+    ].map(([path, bytes]): [string, Buffer, RegExp] => [
+      'weights.pt',
+      torchZip([
+        ['data/0', Buffer.alloc(4096, 3)],
+        [path as string, bytes as Buffer],
+      ]),
+      /\.pt model/,
+    ]),
     // A deflate stream that ends before the data the directory gives it.
     [
       'weights.pt',
@@ -1051,7 +1065,7 @@ describe('video by any other name', () => {
       ]),
       /\.pt model/,
     ],
-    ...[tsStream(188), tsPackets(4)].map((stream) => [
+    ...[tsStream(188), tsPackets(4)].map((stream): [string, Buffer, RegExp] => [
       'weights.pt',
       torchZip([
         ['data/0', Buffer.alloc(4096, 3)],

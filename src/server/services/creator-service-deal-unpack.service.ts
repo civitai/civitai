@@ -304,14 +304,15 @@ async function isTorchArchive(file: ClaimedFinal) {
     !paths.every((path) => path.endsWith('/') || TORCH_ENTRY.test(path))
   )
     return false;
-  // Unzipped, every entry is a file of its own: none may be something a player or extractor opens.
-  // Tensor bytes are opaque, so a stream is looked for only where a file of one would start.
-  return everyEntryHead(
-    source,
-    TORCH_MAX_ENTRIES,
-    (path, head) =>
-      !['video', 'archive'].includes(sniffEntry(head, { tsAnywhere: !TORCH_TENSOR.test(path) }))
-  );
+  // Unzipped, every entry is a file of its own, and the archive is delivered without its images
+  // being scanned: none may be a picture, a video or an archive. Tensor bytes are opaque, so a
+  // stream is looked for only where a file of one would start, and only the image formats a
+  // viewer opens are refused.
+  return everyEntryHead(source, TORCH_MAX_ENTRIES, (path, head) => {
+    const tensor = TORCH_TENSOR.test(path);
+    const kind = sniffEntry(head, { tsAnywhere: !tensor });
+    return kind === 'other' || (tensor && kind === 'unscannable');
+  });
 }
 
 /** The Final's first bytes past any leading ID3v2 tags, which a player skips to play what follows. */
