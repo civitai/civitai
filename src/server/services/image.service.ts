@@ -1691,22 +1691,30 @@ export const updateImageReportStatusByReason = ({
 };
 
 /** Actions the Pending TOS reports on these images and pays their reporters, filer and co-reporters,
- *  through `bulkSetReportStatus`: a report another path has moved since is left as it is. */
+ *  through `bulkSetReportStatus`: a report another path has moved since is left as it is. A report on
+ *  a banned owner's image closes unpaid, as the moderator app's report queue closes it: the ban
+ *  removed the image, not a ruling on the report. */
 export const actionPendingTosReports = async (ids: number[], actorId: number) => {
   if (!ids.length) return;
-  const reports = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT DISTINCT r.id FROM "Report" r
+  // On the primary: a ban from moments ago may not have reached a replica.
+  const reports = await dbWrite.$queryRaw<{ id: number; ownerBanned: boolean }[]>`
+    SELECT r.id, bool_or(u."bannedAt" IS NOT NULL) AS "ownerBanned" FROM "Report" r
     JOIN "ImageReport" i ON i."reportId" = r.id
+    JOIN "Image" img ON img.id = i."imageId"
+    LEFT JOIN "User" u ON u.id = img."userId"
     WHERE i."imageId" = ANY(${ids}::int[])
       AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
       AND r.status = ${ReportStatus.Pending}::"ReportStatus"
+    GROUP BY r.id
   `;
+  const unpaid = new Set(reports.filter((r) => r.ownerBanned).map((r) => r.id));
   const moved = await bulkSetReportStatus({
     ids: reports.map((r) => r.id),
     status: ReportStatus.Actioned,
     userId: actorId,
     fromStatus: ReportStatus.Pending,
     rewardRemovedReporters: false,
+    paysNoReporter: (reportId) => unpaid.has(reportId),
   });
   // The moderator app's resolved marker, so a lagging replica does not hand them back to its queue.
   if (moved.length)

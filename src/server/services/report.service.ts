@@ -737,6 +737,7 @@ export async function bulkSetReportStatus({
   userId,
   ip,
   noRewardFor = () => [],
+  paysNoReporter = () => false,
   rewardRemovedReporters = true,
   fromStatus,
 }: {
@@ -746,6 +747,8 @@ export async function bulkSetReportStatus({
   ip?: string;
   /** Reporters of a report who get no reward for it; the report is still actioned. */
   noRewardFor?: (reportId: number) => readonly number[];
+  /** Reports actioned with no reporter rewarded. */
+  paysNoReporter?: (reportId: number) => boolean;
   rewardRemovedReporters?: boolean;
   /** Moves only the reports in this status; any other is left as it is. */
   fromStatus?: ReportStatus;
@@ -787,6 +790,7 @@ export async function bulkSetReportStatus({
   // If we're actioning reports, we need to reward the users who reported them
   if (status === ReportStatus.Actioned) {
     const prepReports = reports.map((report) => {
+      if (paysNoReporter(report.id)) return { id: report.id, userIds: [] };
       const excluded = [...noRewardFor(report.id), ...reportersWithoutReward(report)];
       return {
         id: report.id,

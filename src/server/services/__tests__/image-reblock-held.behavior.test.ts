@@ -94,6 +94,7 @@ beforeAll(async () => {
       "previouslyReviewedCount" int NOT NULL DEFAULT 0
     );
     CREATE TABLE "ImageReport" ("imageId" int, "reportId" int);
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
     CREATE TABLE "CsamQueueSetAside" ("imageId" int PRIMARY KEY, outcome text NOT NULL);
     CREATE TABLE "ImageDeferredBlockEffect" (
       "imageId" int PRIMARY KEY,
@@ -133,7 +134,7 @@ beforeEach(async () => {
     return (await run(flat)).affectedRows ?? 0;
   }) as never);
   await holder.db.exec(`
-    TRUNCATE "Image", "Report", "ImageReport", "CsamQueueSetAside", "ImageDeferredBlockEffect";
+    TRUNCATE "Image", "Report", "ImageReport", "User", "CsamQueueSetAside", "ImageDeferredBlockEffect";
     INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", "pHash") VALUES
       (${HELD}, 7, 'Blocked', 'CSAM', 32, NULL, 201),
       (${FLAGGED_LIVE}, 7, 'Scanned', NULL, 4, 'csam', 202),
@@ -547,6 +548,18 @@ describe("handleBlockImages and the images' reports", () => {
     await expect(handleBlockImages({ ids: all, moderatorId: 2 })).resolves.toBeDefined();
 
     expect(await reportStatus(report(OTHER_REASON))).toBe('Pending');
+    expect(rewardedReports()).toEqual([]);
+  });
+
+  it("closes a banned owner's reports and pays none of their reporters", async () => {
+    await holder.db.exec(`
+      INSERT INTO "User" (id, "bannedAt") VALUES (7, now());
+      UPDATE "Report" SET "alsoReportedBy" = '{10}' WHERE id = ${report(OTHER_REASON)};
+    `);
+
+    await handleBlockImages({ ids: all, moderatorId: 2 });
+
+    expect(await reportStatus(report(OTHER_REASON))).toBe('Actioned');
     expect(rewardedReports()).toEqual([]);
   });
 
