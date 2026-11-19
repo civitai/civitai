@@ -361,7 +361,9 @@ describe('claimRateLimitAttempt when the claim script fails on a fail-closed sco
 
   it('a store that refuses the call itself refuses with SERVICE_UNAVAILABLE', async () => {
     redisMock.redis.eval.mockRejectedValue(
-      new Error("READONLY You can't write against a read only replica.")
+      new Error(
+        "READONLY You can't write against a read only replica. script: 3f1c0b, on @user_script:61."
+      )
     );
     const outcome = await claimOn('buzz:script-readonly').catch((e: unknown) => e);
     expect((outcome as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
@@ -377,13 +379,26 @@ describe('claimRateLimitAttempt when the claim script fails on a fail-closed sco
     expect(hSetWithTTL).toHaveBeenCalledTimes(1);
   });
 
-  it('control: the same refused call on a fallback scope takes the read-then-write path', async () => {
+  it('on a fallback scope a store that refuses the call counts locally, so the next call is refused', async () => {
     redisMock.redis.eval.mockRejectedValue(
-      new Error("READONLY You can't write against a read only replica.")
+      new Error(
+        'OOM command not allowed when used memory > maxmemory. script: 3f1c0b, on @user_script:61.'
+      )
     );
-    const record = await claimOn('model:script-readonly');
+    const req = freshReq();
+    const once = () =>
+      claimRateLimitAttempt({
+        rules: [{ limit: 1, period: 60 }],
+        keyName: 'model:script-oom',
+        user: undefined,
+        req,
+      });
+    const record = await once();
     await record();
-    expect(hSetWithTTL).toHaveBeenCalledTimes(1);
+    expect(hSetWithTTL).not.toHaveBeenCalled();
+
+    const refused = await once().catch((e: unknown) => e);
+    expect((refused as TRPCError).code).toBe('TOO_MANY_REQUESTS');
   });
 });
 

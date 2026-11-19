@@ -378,9 +378,13 @@ type StoreClaim =
   | { kind: 'unavailable' }
   | { kind: 'error' };
 
-/** A Lua compile or runtime error, as Redis reports it, as against a refusal of the call itself. */
+/**
+ * A Lua compile or runtime error, as against the store refusing the work. Redis 7 tags every error
+ * raised inside a script with `on @user_script:N`, including a redis.call's own (OOM, READONLY,
+ * MISCONF, WRONGTYPE), which keep their code; only a script fault comes back as plain `ERR`.
+ */
 const isScriptError = (error: unknown) =>
-  error instanceof Error && /user_script|Error (?:running|compiling) script/.test(error.message);
+  error instanceof Error && /^ERR\b/.test(error.message) && /user_script/.test(error.message);
 
 const storeUnavailable = () =>
   new TRPCError({
@@ -506,7 +510,9 @@ export async function claimRateLimitAttempt({
   const bucket = rateLimitBucket(keyName, user, req);
   const { cacheKey, hashKey } = bucket;
   const failClosed = isFailClosedRateLimitScope(scope);
-  const { attempts, degraded } = await readAttemptsOrLocal(bucket, failClosed);
+  const read = await readAttemptsOrLocal(bucket, failClosed);
+  const { attempts } = read;
+  let { degraded } = read;
   if (degraded && failClosed) {
     throw new TRPCError({
       code: 'SERVICE_UNAVAILABLE',
@@ -575,9 +581,11 @@ export async function claimRateLimitAttempt({
       });
     }
     if (outcome.kind === 'unavailable') {
-      // The store refused the call itself (failover, OOM, cluster down), not the script.
+      // The store refused the work (failover, OOM, cluster down), not the script: decide as an
+      // unwritable store does, on the local count.
       rateLimitClaimPathCounter.inc({ path: 'degraded' });
       if (failClosed) throw storeUnavailable();
+      degraded = true;
     } else {
       // The script errored: this call decides on the read-then-write path below.
       rateLimitClaimPathCounter.inc({ path: 'fallback' });
