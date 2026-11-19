@@ -21,6 +21,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 vi.mock('~/components/Image/Infinite/ImagesInfinite', () => ({ default: () => null }));
+// The landing sections above the toolbar have their own tests.
+vi.mock('~/components/Music/MusicLandingSections', () => ({
+  RecentlyPlayedSection: () => null,
+  RisingSection: () => null,
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 vi.mock('~/components/Filters/useSortAvailability', () => ({

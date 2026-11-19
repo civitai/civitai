@@ -26,7 +26,7 @@ const UNLISTED_TAGS = 'unlisted';
 
 export function MusicFeedPage() {
   const features = useFeatureFlags();
-  const { hidden: _hidden, ...filters } = useImageFilters('images');
+  const { hidden: _hidden, ...filters } = useImageFilters('music');
   const { query, replace } = useImageQueryParams();
   const [view, setView] = useSongFeedView();
   // `!!`: an off flag is absent from FeatureAccess, and `enabled: undefined` reads as enabled.
@@ -86,12 +86,13 @@ export function MusicFeedPage() {
                 {/* Pencil `ZYWeT`: one row, also on a phone. */}
                 <div className="flex flex-nowrap items-center gap-2">
                   <SongViewToggle value={view} onChange={setView} />
-                  <SortFilter type="images" />
-                  <MediaFiltersDropdown filterType="images" hideMediaTypes isFeed />
+                  <SortFilter type="music" />
+                  <MediaFiltersDropdown filterType="music" hideMediaTypes isFeed />
                 </div>
               </div>
               <IsClient>
                 <ImagesInfinite
+                  filterType="music"
                   filters={{ ...filters, types: [MediaType.audio] }}
                   listItem={view === 'list' ? SONG_ROWS : undefined}
                   songListName={listName}

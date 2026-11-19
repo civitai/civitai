@@ -70,19 +70,22 @@ export const ownContentPickerFilters = (userId: number | undefined) =>
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
 // The media-type scope a feed falls back to when its filters are cleared.
-// `/images` shows images, `/videos` shows videos; model-image feeds stay
+// `/images` shows images, `/videos` videos, `/music` songs; model-image feeds stay
 // unscoped (all media types). Returning `undefined` here would let `removeEmpty`
 // drop `types` from the payload, so the feed would serve every media type.
 export const getDefaultMediaTypes = (
-  filterType: FilterKeys<'images' | 'videos' | 'modelImages'>
+  filterType: FilterKeys<'images' | 'videos' | 'music' | 'modelImages'>
 ): MediaType[] | undefined => {
   if (filterType === 'images') return [MediaType.image];
   if (filterType === 'videos') return [MediaType.video];
+  if (filterType === 'music') return [MediaType.audio];
   return undefined;
 };
 
 // could have userImages and userVideo
-export const useImageFilters = (type: FilterKeys<'images' | 'videos' | 'modelImages'>) => {
+export const useImageFilters = (
+  type: FilterKeys<'images' | 'videos' | 'music' | 'modelImages'>
+) => {
   const storeFilters = useFiltersContext((state) => state[type]);
   const { query } = useImageQueryParams(); // router params are the overrides
   const availability = useSortAvailability();

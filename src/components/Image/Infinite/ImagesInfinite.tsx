@@ -105,7 +105,7 @@ type ImagesInfiniteProps = {
   };
   /** What Up next calls the list a song in this feed plays from. */
   songListName?: string;
-  filterType?: 'images' | 'videos';
+  filterType?: 'images' | 'videos' | 'music';
   showAds?: boolean;
   showEmptyCta?: boolean;
   emptyMessage?: string;
