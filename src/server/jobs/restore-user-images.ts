@@ -27,8 +27,8 @@ const isRestored = async (userId: number) => (await filterRestored([userId])).le
 
 /**
  * Undoes the grace block `remove-deleted-user-images` wrote, for the accounts `restoreUser` puts on
- * a worklist. Finding them instead would cost a ~1.7s `User` scan every tick, since the breadcrumb
- * has no index; an empty worklist costs one SMEMBERS.
+ * a worklist. The breadcrumb has no index, so finding them instead would cost a `User` scan every
+ * tick; an empty worklist costs one SMEMBERS.
  *
  * `refreshPictures` runs once, after the loop, for the accounts that had images unblocked, drained
  * or threw. The grace block cleared any `User.image` naming one of their images, and that stays

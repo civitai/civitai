@@ -99,6 +99,14 @@ beforeAll(async () => {
       metadata jsonb,
       "scanJobs" jsonb
     );
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" (
+      id serial PRIMARY KEY,
+      "entityType" "EntityType" NOT NULL,
+      "entityId" int NOT NULL,
+      status "AppealStatus" NOT NULL DEFAULT 'Pending'
+    );
     CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (
@@ -554,22 +562,29 @@ describe('a restore and the recorded review flag, on the real statement', () => 
         (99, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs(null)}),
         (100, ${OWNER}, 'Blocked', 'moderated', 32, 'tag', ${crumbs('not-a-review')}),
         (101, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', ${crumbs('appeal')}),
-        (102, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('appeal')});
+        (102, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('appeal')}),
+        (103, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('appeal')});
+      -- 83's and 101's appeals are still Pending; 102's and 103's were decided during the window.
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
+        ('Image', 83, 'Pending'), ('Image', 101, 'Pending'), ('Image', 102, 'Approved'), ('Image', 103, 'Rejected');
     `);
-    // 101's appeal is still Pending; 102's was decided.
-    dbMock.dbWrite.appeal.findMany.mockImplementation((async ({
-      where,
-    }: {
-      where: { entityId: { in: number[] } };
-    }) => where.entityId.in.filter((id) => id === 101).map((entityId) => ({ entityId }))) as never);
+    dbMock.dbWrite.appeal.findMany.mockImplementation(
+      (async ({ where }: { where: { entityId: { in: number[] } } }) =>
+        (
+          await holder.db.query<{ entityId: number }>(
+            `SELECT "entityId" FROM "Appeal" WHERE status = 'Pending' AND "entityId" = ANY($1)`,
+            [where.entityId.in]
+          )
+        ).rows) as never
+    );
 
     await unblockAccountDeletionImages(OWNER);
 
     const rows = await reviewsOf([
-      81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 98, 99, 100, 101, 102,
+      81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 98, 99, 100, 101, 102, 103,
     ]);
     // Control: every row was restored, so the review flags below are the restore's doing.
-    expect(rows.map((row) => row.ingestion)).toEqual(Array(21).fill('Scanned'));
+    expect(rows.map((row) => row.ingestion)).toEqual(Array(22).fill('Scanned'));
     expect(rows.map((row) => [row.id, row.needsReview])).toEqual([
       // Nothing set since: every listed review but csam comes back.
       [81, 'poi'],
@@ -599,6 +614,8 @@ describe('a restore and the recorded review flag, on the real statement', () => 
       // An approval must not publish an image a minor or poi review is still owed on.
       [101, 'minor'],
       [102, 'poi'],
+      // A recorded appeal decided during the window has no queue left to clear it.
+      [103, null],
     ]);
 
     const logged = loggingMock.logToAxiom.mock.calls
@@ -611,7 +628,6 @@ describe('a restore and the recorded review flag, on the real statement', () => 
       { imageId: 93, kept: 'minor', dropped: 'newUser' },
       { imageId: 94, kept: 'poi', dropped: 'newUser' },
       { imageId: 101, kept: 'minor', dropped: 'appeal', pendingAppeal: true },
-      { imageId: 102, kept: 'poi', dropped: 'appeal' },
     ]);
   });
 

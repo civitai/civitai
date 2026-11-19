@@ -90,7 +90,7 @@ const METADATA_LOOKUP = /^\(?"metadata"->>\?::text\)?(::"\w+")?$/;
 const METADATA_MINUS = /^"metadata"(\s*-\s*\?::text)+$/;
 const SCOPED_ON_BREADCRUMB = /"metadata"->>\?::text IS NOT NULL/;
 const CLAIM_START =
-  /FROM \(\s*SELECT i\.id, i\."needsReview" AS "currentReview", i\."metadata"->>\?::text AS "recordedReview"\s+FROM "Image" i\s+WHERE\s/;
+  /FROM \(\s*SELECT i\.id, i\."needsReview" AS "currentReview",[\s\S]*?AS "recordedReview"\s+FROM "Image" i\s+WHERE\s/;
 const BOUNDED_CLAIM = /^LIMIT \?\s*\)\s*c\s+WHERE "Image"\.id = c\.id\s*$/;
 const OWNER_CHECK = /^\s*\(SELECT [^()]*\([^()]*\)[^()]* FROM "User" u WHERE u\.id = \?\)\s*$/;
 const ENUM_RANGE = /\(SELECT unnest\(enum_range\(NULL::"ImageIngestionStatus"\)\)::text\)/;
@@ -173,8 +173,12 @@ function applyRestoreUpdate(rawSql: string, values: unknown[]) {
   );
 
   const claim = sql.slice(claimAt, sql.indexOf('RETURNING'));
-  const recordedReviewKey = params.shift() as string;
-  const innerWhereAt = claim.indexOf('WHERE');
+  const innerWhereAt = claim.indexOf('WHERE', claim.indexOf('FROM "Image" i'));
+  // Which recorded review counts (a decided appeal's does not) is pinned on Postgres too.
+  const recordedReviewKey = params.splice(
+    0,
+    (claim.slice(0, innerWhereAt).match(/\?/g) ?? []).length
+  )[0] as string;
   const limitAt = claim.lastIndexOf('LIMIT');
   if (limitAt < innerWhereAt || !BOUNDED_CLAIM.test(claim.slice(limitAt).trim()))
     throw new Error(`the claim must be bounded by a LIMIT: ${claim}`);

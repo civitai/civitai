@@ -113,7 +113,17 @@ export async function unblockAccountDeletionImages(userId: number) {
           END,
           "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
       FROM (
-        SELECT i.id, i."needsReview" AS "currentReview", i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text AS "recordedReview"
+        SELECT i.id, i."needsReview" AS "currentReview",
+          -- A recorded appeal decided during the window has no queue left to clear it.
+          CASE
+            WHEN i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = 'appeal' AND NOT EXISTS (
+              SELECT 1 FROM "Appeal" a
+              WHERE a."entityType" = 'Image'::"EntityType"
+                AND a."entityId" = i.id
+                AND a.status = 'Pending'::"AppealStatus"
+            ) THEN NULL
+            ELSE i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
+          END AS "recordedReview"
         FROM "Image" i
         WHERE i."userId" = ${userId}
           AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
