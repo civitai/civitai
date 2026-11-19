@@ -231,6 +231,16 @@ describe('setReportStatus', () => {
     );
   });
 
+  it('pays no reporter at all when the caller closes it with noReward', async () => {
+    updateResult = { userId: 10, alsoReportedBy: [11, 12] };
+
+    await setReportStatus({ id: 1, status: ReportStatus.Actioned, userId: 7, noReward: true });
+
+    expect(rewardReportReporters).toHaveBeenCalledWith(
+      expect.objectContaining({ reporterIds: [10, 11, 12], unpaidReporterIds: [10, 11, 12] })
+    );
+  });
+
   it('stamps previouslyReviewedCount when actioning', async () => {
     await setReportStatus({ id: 1, status: ReportStatus.Actioned, userId: 7 });
 
