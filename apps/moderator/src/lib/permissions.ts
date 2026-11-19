@@ -47,6 +47,7 @@ export const PERMISSIONS = [
   // an ownership or claim dispute — a legal question, not a content one — and the model reports panel
   // puts the button one click from every report in the queue.
   { id: 'model.takeDown', label: 'Take down a model (ownership / claim)' },
+  { id: 'model.mergeAnalysis.run', label: 'Run a model merge analysis' },
 
   // Also destructive, but never behind the page grant: an erasure request, carried out by the
   // main app's `deleteUser`. That app checks this id by its literal (`ModeratorGrantId` in
@@ -176,6 +177,13 @@ export const PERMISSIONS = [
   {
     id: 'creatorServices.reviewDispute',
     label: 'Write Creator Services dispute reviews (no refund or release)',
+  },
+  // Releases or keeps a held Creator Program payout. Gates the button only: the main app's
+  // `/api/admin/creator-program-payout-review` checks the moderator session and the row version, not
+  // this grant. Reading the holds is the page grant.
+  {
+    id: 'creatorProgram.payoutReview.decide',
+    label: 'Decide Creator Program payout-review holds (clear, escalate, withhold)',
   },
   // Checked by this literal in the main app's `/api/mod/label-store/predictions` (`ModeratorGrantId`).
   { id: 'labelStore.submitPrediction', label: 'Submit model predictions to the label store' },

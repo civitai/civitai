@@ -6,6 +6,7 @@ import { createInstantMeiliSearch } from '~/components/Search/site-search-client
 import {
   createOwnerImageSearch,
   withSemanticImageSearch,
+  type OwnerImageUser,
 } from '~/components/Search/semanticImageSearchClient';
 import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
 import { withSemanticComicSearch } from '~/components/Search/semanticComicSearchClient';
@@ -72,14 +73,15 @@ const semanticMeilisearch = withUserHydration(
 );
 
 // An owner-scoped Images search (the showcase picker), with or without `imageSearch`.
-const ownerImagesSearch = withUserHydration(
-  createResilientSearchClient(
-    withSemanticImageSearch(
-      createInstantMeiliSearch({ primaryKey: 'id' }),
-      createOwnerImageSearch()
+const createOwnerImagesClient = (getUser: () => OwnerImageUser | undefined) =>
+  withUserHydration(
+    createResilientSearchClient(
+      withSemanticImageSearch(
+        createInstantMeiliSearch({ primaryKey: 'id' }),
+        createOwnerImageSearch({ getUser })
+      )
     )
-  )
-);
+  );
 
 // Caps the option list's scroll area at the room left in the window, so its last row stays
 // reachable. Mantine's `size: true` would cap the outer dropdown instead and clip the scroll area.
@@ -231,6 +233,18 @@ const QuickSearchDropdownInner = ({
   const features = useFeatureFlags();
   const { settings: addons } = useBrowsingSettingsAddons();
   const currentUser = useCurrentUser();
+  const currentUserId = currentUser?.id;
+  const currentUsername = currentUser?.username;
+  const currentUserImage = currentUser?.image;
+  const ownerImagesSearch = useMemo(
+    () =>
+      createOwnerImagesClient(() =>
+        currentUserId
+          ? { id: currentUserId, username: currentUsername, image: currentUserImage }
+          : undefined
+      ),
+    [currentUserId, currentUsername, currentUserImage]
+  );
   // The target is clamped to `supportedIndexes` — the set the CALLER declared, which is not
   // necessarily the set the selector offers: the offered list below narrows it further by feature
   // flag, and this fallback does not. A bare `models` fallback would leave the component searching

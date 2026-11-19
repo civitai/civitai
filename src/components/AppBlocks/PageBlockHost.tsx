@@ -161,7 +161,7 @@ import {
 } from './mediaUploadBatchLogic';
 import { MEDIA_UPLOAD_BATCH_CONCURRENCY } from '~/shared/constants/media-upload-batch.constants';
 import {
-  PAGE_HOST_CAPABILITIES,
+  pageHostCapabilities,
   projectBlockInitMaturity,
   withSignedInFlag,
 } from './projectBlockInit';
@@ -840,11 +840,19 @@ export interface PageBlockHostProps {
    */
   onRefreshEntryUrl?: () => Promise<string>;
   /**
-   * DEV-TUNNEL ONLY: every `BLOCK_ERROR` payload the block posts (unvalidated), for the dev host
-   * to keep for App Assistant's app activity (`useDevPreviewErrorReporter`). Unset on every other
-   * surface, so a production block's errors go nowhere new.
+   * DEV-TUNNEL AND REVIEW-PREVIEW ONLY: every `BLOCK_ERROR` payload the block posts
+   * (unvalidated). The dev host keeps them for App Assistant's app activity
+   * (`useDevPreviewErrorReporter`); the review preview shows them, in memory only, in the review
+   * page's console (`ReviewConsole`). Unset on every other surface, so a production block's
+   * errors go nowhere new.
    */
   onBlockError?: (payload: unknown) => void;
+  /**
+   * REVIEW-PREVIEW ONLY: the block's `BLOCK_READY` payload (unvalidated), which names the SDK
+   * that sent it (`sdkName`, `sdkVersion`). The review console reads it to tell an SDK too old to
+   * forward non-fatal errors from an app that simply has none.
+   */
+  onBlockReady?: (payload: unknown) => void;
   /**
    * MOD REVIEW SANDBOX (#2831) read-only gate. Default false → prod behavior is
    * BYTE-IDENTICAL. When true (the mod review preview host only), EVERY
@@ -1008,6 +1016,7 @@ export function PageBlockHost({
   onGuestReloaded,
   onRefreshEntryUrl,
   onBlockError,
+  onBlockReady,
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
@@ -1573,7 +1582,8 @@ export function PageBlockHost({
       ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
       // Keyed on `surface`, never on `grantedScopes` — see BLOCK_HOST_LOCAL_PREVIEW_STORAGE.
       ...blockInitStorageMode(surface),
-      capabilities: PAGE_HOST_CAPABILITIES,
+      // Keyed on `surface` too: `blockErrors:v1` only where the host collects non-fatal errors.
+      capabilities: pageHostCapabilities(surface),
     }),
     [
       surface,
@@ -1923,9 +1933,12 @@ export function PageBlockHost({
     return off;
   }, [onMessage, noteGuestFrame]);
 
-  // BLOCK_READY → ready.
+  // BLOCK_READY → ready. The payload also reaches `onBlockReady` (review preview only).
+  const onBlockReadyRef = useRef(onBlockReady);
+  onBlockReadyRef.current = onBlockReady;
   useEffect(() => {
-    const off = onMessage<unknown>('BLOCK_READY', () => {
+    const off = onMessage<unknown>('BLOCK_READY', (raw) => {
+      onBlockReadyRef.current?.(raw);
       // Launch mark: stamped HERE, in the message handler, not in the beacon
       // effect. The beacon fires on the committed `status`, which is a React
       // commit later — timing it there would fold an arbitrary amount of React
@@ -1991,7 +2004,8 @@ export function PageBlockHost({
     });
   }, [status, appBlockId, blockInstanceId]);
 
-  // BLOCK_ERROR{fatal:true} → fatal. Every report also reaches `onBlockError` (dev tunnel only).
+  // BLOCK_ERROR{fatal:true} → fatal. Every report also reaches `onBlockError` (dev tunnel and
+  // review preview only).
   const onBlockErrorRef = useRef(onBlockError);
   onBlockErrorRef.current = onBlockError;
   useEffect(() => {
@@ -4657,7 +4671,7 @@ export function PageBlockHost({
   // 'display', so this stays byte-compatible with an SDK that sends none) selects
   // the mode:
   //
-  //   • 'display' (DEFAULT — PUBLIC image, e.g. a cosmetic background): the upload
+  //   • 'display' (DEFAULT — a moderated image, e.g. a cosmetic background): the upload
   //     routes through civitai's SESSION-AUTHED path → REAL createImage +
   //     ingestImage scan → server-side gate (blockImageUpload.persist + gate), and
   //     ONLY a moderated image id that is scanned-clean, within the SFW ceiling,
@@ -4902,8 +4916,8 @@ export function PageBlockHost({
         return;
       }
 
-      // display (default): moderated public-image path. Shared with the app's other
-      // viewers only when the app asked (`shareWith`, above).
+      // display (default): moderated image path, private to the viewer. Shared with the
+      // app's other viewers only when the app asked (`shareWith`, above).
       let resolved: BlockUploadedImageInfo | null = null;
       let resolvedShared = false;
       dialogStore.trigger({

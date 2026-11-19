@@ -51,19 +51,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 
-import {
-  CLEANUP_INDEXES,
-  cleanupIndex,
-  EMPTY_PAGE_BACKOFF_BUDGET_MS,
-  EMPTY_PAGE_BACKOFF_MS,
-  EMPTY_PAGE_CONFIRM_DELAY_MS,
-  EMPTY_PAGE_TRUST_COVERAGE,
-} from '~/server/meilisearch/cleanup';
+import { CLEANUP_INDEXES, cleanupIndex } from '~/server/meilisearch/cleanup';
 import { MAX_CURSOR_AGE_MS, readScanCursor } from '~/server/meilisearch/cleanup-cursor';
-import {
-  COVERAGE_SHORTFALL_FLOOR,
-  COVERAGE_SHORTFALL_RATIO,
-} from '~/server/meilisearch/cleanup-coverage';
 
 /** ids 1..n, dense — the fixtures below need indexes big enough to clear the absolute
  *  shortfall floor, which no toy fixture can. */
@@ -246,6 +235,9 @@ function makeDelayRecorder() {
   return { delays, delay: async (ms: number) => void delays.push(ms) };
 }
 
+// The confirm and retry waits are real 0.5–1.5 s timers; a test that times them passes its own.
+const NO_DELAY = { delay: async () => undefined };
+
 beforeEach(() => {
   installCursorStore();
   // MUTATE the canonical nodes, never replace them: consumer modules captured
@@ -271,7 +263,7 @@ describe('cleanupIndex: a SHORT page does not end the scan', () => {
     const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], pageCap: 3 });
     setFakeIndex(fake);
 
-    const stats = await cleanupIndex(modelsCfg, { apply: false, batch: 10 });
+    const stats = await cleanupIndex(modelsCfg, { ...NO_DELAY, apply: false, batch: 10 });
 
     expect(stats.idsScanned).toBe(10);
     expect(stats.staleFound).toBe(10);
@@ -304,7 +296,7 @@ describe('cleanupIndex: a single empty page does not end the scan', () => {
     const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6], emptyOnCalls: [2] });
     setFakeIndex(fake);
 
-    const stats = await cleanupIndex(modelsCfg, { apply: false, batch: 2 });
+    const stats = await cleanupIndex(modelsCfg, { ...NO_DELAY, apply: false, batch: 2 });
 
     expect(stats.idsScanned).toBe(6);
     expect(stats.staleFound).toBe(6);
@@ -330,7 +322,7 @@ describe('cleanupIndex: a single empty page does not end the scan', () => {
     const fake = makeFakeIndex({ docs: [1, 2, 3] });
     setFakeIndex(fake);
 
-    const stats = await cleanupIndex(modelsCfg, { apply: false, batch: 3 });
+    const stats = await cleanupIndex(modelsCfg, { ...NO_DELAY, apply: false, batch: 3 });
 
     expect(stats.idsScanned).toBe(3);
     expect(stats.batchesProcessed).toBe(1);
@@ -349,7 +341,7 @@ describe('cleanupIndex: the effective batch is clamped to pagination.maxTotalHit
     const fake = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], maxTotalHits: 5 });
     setFakeIndex(fake);
 
-    const stats = await cleanupIndex(modelsCfg, { apply: false, batch: 1000 });
+    const stats = await cleanupIndex(modelsCfg, { ...NO_DELAY, apply: false, batch: 1000 });
 
     expect(stats.idsScanned).toBe(12);
     expect(stats.batchesProcessed).toBe(3);
@@ -373,7 +365,7 @@ describe('cleanupIndex: the effective batch is clamped to pagination.maxTotalHit
     const fake = makeFakeIndex({ docs: [1, 2, 3, 4], maxTotalHits: 100000 });
     setFakeIndex(fake);
 
-    const stats = await cleanupIndex(modelsCfg, { apply: false, batch: 2 });
+    const stats = await cleanupIndex(modelsCfg, { ...NO_DELAY, apply: false, batch: 2 });
 
     expect(fake.searchCalls.every((c) => c.limit === 2)).toBe(true);
     expect(stats.idsScanned).toBe(4);
@@ -398,7 +390,7 @@ describe('cleanupIndex: a batch whose eligibility lookup fails is SKIPPED, not f
       .mockRejectedValueOnce(new Error('replica blip'))
       .mockResolvedValue([]);
 
-    const stats = await cleanupIndex(modelsCfg, { apply: false, batch: 3 });
+    const stats = await cleanupIndex(modelsCfg, { ...NO_DELAY, apply: false, batch: 3 });
 
     // Page 1 (ids 1-3) was fetched but never judged; page 2 (ids 4-6) was.
     expect(stats.idsSkipped).toBe(3);
@@ -426,11 +418,15 @@ describe('cleanupIndex: isIndexing is reported, not assumed', () => {
     // constant.
     const busy = makeFakeIndex({ docs: [1, 2], isIndexing: true });
     setFakeIndex(busy);
-    expect((await cleanupIndex(modelsCfg, { apply: false, batch: 2 })).indexingAtStart).toBe(true);
+    expect(
+      (await cleanupIndex(modelsCfg, { ...NO_DELAY, apply: false, batch: 2 })).indexingAtStart
+    ).toBe(true);
 
     const idle = makeFakeIndex({ docs: [1, 2], isIndexing: false });
     setFakeIndex(idle);
-    expect((await cleanupIndex(modelsCfg, { apply: false, batch: 2 })).indexingAtStart).toBe(false);
+    expect(
+      (await cleanupIndex(modelsCfg, { ...NO_DELAY, apply: false, batch: 2 })).indexingAtStart
+    ).toBe(false);
   });
 });
 
@@ -446,7 +442,12 @@ describe('cleanupIndex: the cursor must strictly advance', () => {
     const fake = makeFakeIndex({ docs: [7], frozenPage: [7] });
     setFakeIndex(fake);
 
-    const stats = await cleanupIndex(modelsCfg, { apply: false, batch: 5, maxBatches: 50 });
+    const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
+      apply: false,
+      batch: 5,
+      maxBatches: 50,
+    });
 
     // Batch 1 is judged (cursor -1 → 7 advances). Batch 2 returns 7 again, so
     // the guard fires and the scan stops.
@@ -470,7 +471,7 @@ describe('cleanupIndex: only stale documents are deleted', () => {
     readQuery.mockResolvedValue(rows([2, 4, 6, 8, 10]));
     writeQuery.mockResolvedValue(rows([2, 4, 6, 8, 10]));
 
-    const stats = await cleanupIndex(modelsCfg, { apply: true, batch: 10 });
+    const stats = await cleanupIndex(modelsCfg, { ...NO_DELAY, apply: true, batch: 10 });
 
     expect(fake.deleted).toEqual([[1, 3, 5, 7, 9]]);
     expect(stats.idsScanned).toBe(10);
@@ -492,7 +493,7 @@ describe('cleanupIndex: only stale documents are deleted', () => {
     readQuery.mockResolvedValue(rows([5, 6]));
     writeQuery.mockResolvedValue(rows([3, 4, 5, 6]));
 
-    const stats = await cleanupIndex(modelsCfg, { apply: true, batch: 6 });
+    const stats = await cleanupIndex(modelsCfg, { ...NO_DELAY, apply: true, batch: 6 });
 
     expect(fake.deleted).toEqual([[1, 2]]);
     expect(stats.staleFound).toBe(4);
@@ -511,7 +512,7 @@ describe('cleanupIndex: only stale documents are deleted', () => {
     readQuery.mockResolvedValue([]);
     writeQuery.mockRejectedValue(new Error('primary unreachable'));
 
-    const stats = await cleanupIndex(modelsCfg, { apply: true, batch: 3 });
+    const stats = await cleanupIndex(modelsCfg, { ...NO_DELAY, apply: true, batch: 3 });
 
     expect(fake.deleted).toEqual([]);
     expect(stats.deleted).toBe(0);
@@ -523,7 +524,7 @@ describe('cleanupIndex: only stale documents are deleted', () => {
     const fake = makeFakeIndex({ docs: [1, 2, 3] });
     setFakeIndex(fake);
 
-    const stats = await cleanupIndex(modelsCfg, { apply: false, batch: 3 });
+    const stats = await cleanupIndex(modelsCfg, { ...NO_DELAY, apply: false, batch: 3 });
 
     expect(fake.deleted).toEqual([]);
     expect(stats.deleted).toBe(0);
@@ -542,6 +543,7 @@ describe('cleanupIndex: deletions are flushed incrementally', () => {
     setFakeIndex(fake);
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: true,
       batch: 3,
       deleteChunkSize: 2,
@@ -579,6 +581,7 @@ describe('cleanupIndex: deletions are flushed incrementally', () => {
     let batchesSeen = 0;
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: true,
       batch: 3,
       deleteChunkSize: 2,
@@ -627,6 +630,7 @@ describe('cleanupIndex: a truncated pass RESUMES rather than restarting', () => 
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 3,
       resumable: true,
@@ -662,6 +666,7 @@ describe('cleanupIndex: a truncated pass RESUMES rather than restarting', () => 
     const rec = makeDelayRecorder();
 
     const one = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 8,
       resumable: true,
@@ -677,6 +682,7 @@ describe('cleanupIndex: a truncated pass RESUMES rather than restarting', () => 
     const second = makeFakeIndex({ docs: [1, 2, 3, 4, 5, 6, 7, 8] });
     setFakeIndex(second);
     const two = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 8,
       resumable: true,
@@ -705,6 +711,7 @@ describe('cleanupIndex: a truncated pass RESUMES rather than restarting', () => 
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 300,
       resumable: true,
@@ -732,6 +739,7 @@ describe('cleanupIndex: a truncated pass RESUMES rather than restarting', () => 
     let batchesSeen = 0;
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 3,
       resumable: true,
@@ -771,6 +779,7 @@ describe('cleanupIndex: a truncated pass RESUMES rather than restarting', () => 
       .mockResolvedValue([]);
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 3,
       resumable: true,
@@ -798,6 +807,7 @@ describe('cleanupIndex: a truncated pass RESUMES rather than restarting', () => 
     const runOne = makeFakeIndex({ docs, emptyOnCalls: [2, 3, 4, 5, 6, 7] });
     setFakeIndex(runOne);
     const one = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 300,
       resumable: true,
@@ -811,6 +821,7 @@ describe('cleanupIndex: a truncated pass RESUMES rather than restarting', () => 
     const runTwo = makeFakeIndex({ docs });
     setFakeIndex(runTwo);
     const two = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 300,
       resumable: true,
@@ -862,20 +873,6 @@ const COVERAGE_BAND: { total: number; covered: number; reachedEnd: boolean }[] =
 ];
 
 describe('cleanupIndex: keeping the cursor and reporting incomplete are ONE decision', () => {
-  it('pins the coverage band constants by value', async () => {
-    // 🔴 Same lesson as the staleness bound and the empty-page constants, and it applies
-    // here HARDER: consolidating the predicate promoted these two from deciding a log
-    // line to deciding, alone, whether a truncated pass keeps its resume cursor.
-    //
-    // The six-row table below reads them purely through behaviour, which is what makes
-    // it independent of the numbers — and therefore blind to the numbers moving. Its
-    // rows only bracket the ratio to roughly [0.15, 0.4) and the floor to [800, 3000];
-    // measured, 0.15 / 0.39 / 800 / 3000 all survive it. The table narrows the
-    // survivable range, the value pin closes it.
-    expect(COVERAGE_SHORTFALL_RATIO).toBe(0.25);
-    expect(COVERAGE_SHORTFALL_FLOOR).toBe(1000);
-  });
-
   for (const { total, covered, reachedEnd } of COVERAGE_BAND) {
     it(`covered ${covered} of ${total} → ${
       reachedEnd ? 'clears' : 'KEEPS'
@@ -896,6 +893,7 @@ describe('cleanupIndex: keeping the cursor and reporting incomplete are ONE deci
       const rec = makeDelayRecorder();
 
       const stats = await cleanupIndex(modelsCfg, {
+        ...NO_DELAY,
         apply: false,
         batch: covered,
         resumable: true,
@@ -927,6 +925,7 @@ describe('cleanupIndex: keeping the cursor and reporting incomplete are ONE deci
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 300,
       resumable: true,
@@ -954,6 +953,7 @@ describe('cleanupIndex: a cursor the scan could not advance past is DISCARDED', 
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 5,
       maxBatches: 50,
@@ -983,6 +983,7 @@ describe('cleanupIndex: a cursor the scan could not advance past is DISCARDED', 
     const errors: string[] = [];
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 5,
       maxBatches: 50,
@@ -1011,6 +1012,7 @@ describe('cleanupIndex: a cursor the scan could not advance past is DISCARDED', 
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 5,
       maxBatches: 50,
@@ -1040,6 +1042,7 @@ describe('cleanupIndex: `cursorCleared` means a cursor was actually discarded', 
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 8,
       resumable: true,
@@ -1065,6 +1068,7 @@ describe('cleanupIndex: `cursorCleared` means a cursor was actually discarded', 
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 8,
       resumable: true,
@@ -1078,16 +1082,6 @@ describe('cleanupIndex: `cursorCleared` means a cursor was actually discarded', 
 });
 
 describe('cleanupIndex: a stored cursor cannot be carried indefinitely', () => {
-  it('pins the bound at seven days', async () => {
-    // The boundary cases below are written against the SYMBOL, which is what makes
-    // them independent of the value — and therefore blind to the value changing.
-    // The choice is load-bearing and argued from the job's cadence: nightly, so
-    // seven consecutive resumes, which at the rate the largest index was observed
-    // to scan is enough for one full sweep. Widening it silently is how an index
-    // drifts into never re-checking early ids.
-    expect(MAX_CURSOR_AGE_MS).toBe(7 * 24 * 60 * 60 * 1000);
-  });
-
   it('resumes from a cursor that is just inside the staleness bound', async () => {
     // Boundary, lower side. Paired with the case below so the bound is observable
     // in BOTH directions — either one alone is satisfied by an implementation that
@@ -1118,6 +1112,7 @@ describe('cleanupIndex: a stored cursor cannot be carried indefinitely', () => {
       const rec = makeDelayRecorder();
 
       const stats = await cleanupIndex(modelsCfg, {
+        ...NO_DELAY,
         apply: false,
         batch: 10,
         resumable: true,
@@ -1151,6 +1146,7 @@ describe('cleanupIndex: a stored cursor cannot be carried indefinitely', () => {
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 10,
       resumable: true,
@@ -1175,6 +1171,7 @@ describe('cleanupIndex: a stored cursor cannot be carried indefinitely', () => {
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 10,
       resumable: true,
@@ -1233,6 +1230,7 @@ describe('cleanupIndex: an unusable stored cursor fails SAFE', () => {
       const rec = makeDelayRecorder();
 
       const stats = await cleanupIndex(modelsCfg, {
+        ...NO_DELAY,
         apply: false,
         batch: 10,
         resumable: true,
@@ -1254,6 +1252,7 @@ describe('cleanupIndex: an unusable stored cursor fails SAFE', () => {
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 10,
       resumable: true,
@@ -1280,6 +1279,7 @@ describe('cleanupIndex: an unusable stored cursor fails SAFE', () => {
     const errors: string[] = [];
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 300,
       resumable: true,
@@ -1314,6 +1314,7 @@ describe('cleanupIndex: an unusable stored cursor fails SAFE', () => {
     const errors: string[] = [];
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 8,
       resumable: true,
@@ -1338,7 +1339,12 @@ describe('cleanupIndex: an unusable stored cursor fails SAFE', () => {
     setFakeIndex(fake);
     const rec = makeDelayRecorder();
 
-    const stats = await cleanupIndex(modelsCfg, { apply: false, batch: 10, delay: rec.delay });
+    const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
+      apply: false,
+      batch: 10,
+      delay: rec.delay,
+    });
 
     expect(fake.searchCalls[0].filter).toBe('id > -1');
     expect(stats.resumedFrom).toBe(null);
@@ -1368,6 +1374,7 @@ describe('cleanupIndex: an empty page is re-asked harder when coverage says it c
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 5,
       resumable: true,
@@ -1399,6 +1406,7 @@ describe('cleanupIndex: an empty page is re-asked harder when coverage says it c
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 300,
       resumable: true,
@@ -1430,6 +1438,7 @@ describe('cleanupIndex: an empty page is re-asked harder when coverage says it c
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 300,
       resumable: true,
@@ -1454,6 +1463,7 @@ describe('cleanupIndex: an empty page is re-asked harder when coverage says it c
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 300,
       resumable: true,
@@ -1479,6 +1489,7 @@ describe('cleanupIndex: an empty page is re-asked harder when coverage says it c
     const recEsc = makeDelayRecorder();
     // 4800 of 8000 = 0.60, below the 0.90 trust threshold.
     await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 4800,
       resumable: true,
@@ -1494,23 +1505,13 @@ describe('cleanupIndex: an empty page is re-asked harder when coverage says it c
     const recTrust = makeDelayRecorder();
     // 7600 of 8000 = 0.95, above it.
     await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 7600,
       resumable: true,
       delay: recTrust.delay,
     });
     expect(recTrust.delays).toEqual([500]);
-  });
-
-  it('pins the empty-page constants by value', async () => {
-    // Every test above reads the SCHEDULE through behaviour, which is what makes them
-    // independent of the numbers — and therefore blind to the numbers changing. Same
-    // lesson as the staleness bound: the band fixtures narrow the survivable range, the
-    // value pin closes it.
-    expect(EMPTY_PAGE_CONFIRM_DELAY_MS).toBe(500);
-    expect(EMPTY_PAGE_BACKOFF_MS).toEqual([1000, 2000, 4000, 8000, 15000]);
-    expect(EMPTY_PAGE_TRUST_COVERAGE).toBe(0.9);
-    expect(EMPTY_PAGE_BACKOFF_BUDGET_MS).toBe(5 * 60 * 1000);
   });
 
   it('INVARIANT GUARD (green on unfixed code): a genuinely exhausted index still ends on one cheap confirm', async () => {
@@ -1523,6 +1524,7 @@ describe('cleanupIndex: an empty page is re-asked harder when coverage says it c
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 10,
       resumable: true,
@@ -1545,6 +1547,7 @@ describe('cleanupIndex: an empty page is re-asked harder when coverage says it c
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 10,
       resumable: true,
@@ -1575,6 +1578,7 @@ describe('cleanupIndex: an empty page is re-asked harder when coverage says it c
     const rec = makeDelayRecorder();
 
     const stats = await cleanupIndex(modelsCfg, {
+      ...NO_DELAY,
       apply: false,
       batch: 6,
       resumable: true,

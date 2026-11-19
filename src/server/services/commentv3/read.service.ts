@@ -1,3 +1,4 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { sql } from 'kysely';
 import type { RawBuilder } from 'kysely';
 import { constants } from '~/server/common/constants';
@@ -102,7 +103,9 @@ const TIMESTAMP_SEC = sql`(c.metadata->>'timestampSec')::float8`;
 
 const COLUMNS = sql`c.id, c."parentId", c."replyToId", c.depth, c.content, c."createdAt", c."updatedAt",
   ${PINNED_AT} AS "pinnedAt", c.hidden, c."tosViolation", c.locked, c."reactionCount", c."deletedAt", c."userId",
-  u.username, u."deletedAt" AS "userDeletedAt", u.image AS "userImage", ${TIMESTAMP_SEC} AS "timestampSec"`;
+  u.username, u."deletedAt" AS "userDeletedAt", ${sql.raw(
+    fallbackUserImageColumn
+  )} AS "userImage", ${TIMESTAMP_SEC} AS "timestampSec"`;
 
 /** Whether a row's ToS state and author let this viewer see it. `alias` names the CommentV3 row. */
 const allowedTo = (v: CommentV3Viewer, alias: string) => {
@@ -590,7 +593,7 @@ export async function getTimedComments(
     userImage: string | null;
   }>`
     SELECT c.id, ${TIMESTAMP_SEC} AS "timestampSec", c.content, c."userId", u.username,
-           u.image AS "userImage"
+           ${sql.raw(fallbackUserImageColumn)} AS "userImage"
       FROM "CommentV3" c JOIN "User" u ON u.id = c."userId"
      WHERE c."entityType" = ${entity.entityType}::"CommentEntityType" AND c."entityId" = ${
     entity.entityId

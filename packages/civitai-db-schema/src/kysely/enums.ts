@@ -772,6 +772,7 @@ export const JobQueueType = {
   ImageScan: 'ImageScan',
   ReplacedImageDelete: 'ReplacedImageDelete',
   ImageStorageDelete: 'ImageStorageDelete',
+  ImageDelete: 'ImageDelete',
   CdnAccessSync: 'CdnAccessSync',
   ImageCdnPersistRetry: 'ImageCdnPersistRetry',
   CsamArchive: 'CsamArchive',

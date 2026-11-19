@@ -310,24 +310,26 @@ export function searchServiceSource(
   };
 }
 
-// Cap on the word matches ranked ahead of the rest of a text search.
-const MAX_WORD_MATCHES = 200;
+// Cap on the matches ranked ahead of the rest of a text search.
+const MAX_FIRST_MATCHES = 200;
 
 /**
- * Text candidates with the points holding every query word in `key` first (in their own similarity
- * order), then the rest of the semantic ranking without them. Embeddings rank meaning, so a query
- * that is a model's name, or a word of it, otherwise loses to look-alike names and spellings.
- * Make one per request: the word matches are fetched once and reused for every later block.
+ * Text candidates with the points `narrow` admits first (in their own similarity order), then the
+ * rest of the semantic ranking without them. The matches are fetched once per source and reused
+ * for every later block, so make one per request.
  */
-export function withWordMatchesFirst(source: CandidateSource, key: string): CandidateSource {
+function withMatchesFirst(
+  source: CandidateSource,
+  narrow: (filter: CandidateFilter, text: string) => CandidateFilter
+): CandidateSource {
   let matches: ReturnType<CandidateSource> | undefined;
   return async (args) => {
     if (!('text' in args.query) || !args.query.text.trim()) return source(args);
     matches ??= source({
       ...args,
-      filter: { ...args.filter, allWords: { key, text: args.query.text } },
+      filter: narrow(args.filter, args.query.text),
       offset: 0,
-      limit: MAX_WORD_MATCHES,
+      limit: MAX_FIRST_MATCHES,
     });
     const first = await matches;
     const rest = (offset: number, limit: number) =>
@@ -342,6 +344,25 @@ export function withWordMatchesFirst(source: CandidateSource, key: string): Cand
     const tail = head.length < args.limit ? await rest(0, args.limit - head.length) : undefined;
     return { ...first, ids: [...head, ...(tail?.ids ?? [])] };
   };
+}
+
+/**
+ * The points holding every query word in `key` first. Embeddings rank meaning, so a query that is a
+ * model's name, or a word of it, otherwise loses to look-alike names and spellings.
+ */
+export function withWordMatchesFirst(source: CandidateSource, key: string): CandidateSource {
+  return withMatchesFirst(source, (filter, text) => ({ ...filter, allWords: { key, text } }));
+}
+
+/**
+ * The points carrying `tagId` first. A rare term embeds as its nearest common concept (a tiefling
+ * as horns), so the images tagged with it lose to unrelated ones that share that concept.
+ */
+export function withTagMatchesFirst(source: CandidateSource, tagId: number): CandidateSource {
+  return withMatchesFirst(source, (filter) => ({
+    ...filter,
+    tagIds: [...new Set([...(filter.tagIds ?? []), tagId])],
+  }));
 }
 
 /** The viewer's hidden users, those they blocked and those who blocked them: never candidates. */

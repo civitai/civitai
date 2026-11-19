@@ -510,14 +510,20 @@ describe("/apps catalog cache — the viewer's browsing level", () => {
     expect(new Set([pgOnly, withR, withRX, withX]).size).toBe(4);
   });
 
-  it('levels that differ only in PG / PG-13 / XXX / Blocked share one entry', async () => {
+  it('🔴 XXX allowed vs not never share an entry: an xxx listing is shown only with XXX', async () => {
+    const withRX = await prefixFor({ ...red, viewerBrowsingLevel: 13 });
+    const withRXxxx = await prefixFor({ ...red, viewerBrowsingLevel: 13 | 16 });
+    expect(withRXxxx).not.toBe(withRX);
+  });
+
+  it('levels that differ only in PG / PG-13 / Blocked share one entry', async () => {
     const pgOnly = await keyFor({ ...red, viewerBrowsingLevel: 1 });
-    for (const level of [undefined, null, 0, 2, 3, 16, 1 | 32]) {
+    for (const level of [undefined, null, 0, 2, 3, 1 | 32]) {
       expect(await keyFor({ ...red, viewerBrowsingLevel: level }), `level ${level}`).toBe(pgOnly);
     }
     const withR = await keyFor({ ...red, viewerBrowsingLevel: 7 });
     expect(await keyFor({ ...red, viewerBrowsingLevel: 4 })).toBe(withR);
-    expect(await keyFor({ ...red, viewerBrowsingLevel: 5 | 16 })).toBe(withR);
+    expect(await keyFor({ ...red, viewerBrowsingLevel: 5 | 32 })).toBe(withR);
   });
 
   it('off a red-capable host the level changes nothing: every level shares one entry', async () => {
@@ -528,11 +534,11 @@ describe("/apps catalog cache — the viewer's browsing level", () => {
     }
   });
 
-  it('the level adds at most four key prefixes (R allowed × X allowed), whatever is sent', async () => {
+  it('the level adds at most eight key prefixes (R × X × XXX allowed), whatever is sent', async () => {
     const prefixes = new Set<string>();
     for (const viewerBrowsingLevel of [...Array(64).keys(), 1 << 20, 2 ** 31 - 1]) {
       prefixes.add(await prefixFor({ ...red, viewerBrowsingLevel }));
     }
-    expect(prefixes.size).toBe(4);
+    expect(prefixes.size).toBe(8);
   });
 });

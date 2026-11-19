@@ -58,6 +58,12 @@ offering's rating, which is the highest of the seller's pick, this verdict and i
 level. The offering is shown once its content checks complete. Off or in shadow, XGuard runs, as for
 Crucible. It has no Clavata counterpart.
 
+AppDoc's (an App Blocks shared document: every string value and object key of its data → `nsfw`,
+keyed by the document's rating id) rates the document for content levels: its level is the higher
+of this verdict and its referenced images' levels (`src/server/services/apps/doc-rater.service.ts`).
+The `app-doc-rater` job submits it for apps whose `app-blocks-shared-doc-levels` flag is on; until
+`AppDoc` is active, those documents stay hidden from everyone but their author.
+
 ChatMessage, CommentV3, UserProfile, Post, Model, Article and TrackLyrics also list `csam`, asked only while its
 gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;
 in `review` every sender's window is scanned, and the others are asked for `csam` alone, still one

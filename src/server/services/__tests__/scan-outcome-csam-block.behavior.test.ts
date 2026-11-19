@@ -27,6 +27,9 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getImagesModRules: vi.fn(async () => []),
+  resetBlockedNsfwLevel: vi.fn(async () => undefined),
+  dropBlockedImageDeleteQueue: vi.fn(async () => undefined),
+  queueImageSearchIndexUpdate: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/utils/mod-rules', async (importOriginal) => ({
   ...(await importOriginal<typeof ModRules>()),
@@ -44,13 +47,16 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
-import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
+import { markImageScanError, resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
 import { blockImageFromRating } from '../image-scan-result.service';
+import { unblockAccountDeletionImages } from '../account-deletion-images';
+import { blockBannedUserImages } from '~/server/services/user.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { auditPostImageMeta } from '~/utils/metadata/audit';
 import { getImagesModRules } from '~/server/services/image.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { ModerationRuleAction } from '~/shared/utils/prisma/enums';
 
 const holder = vi.hoisted(() => ({
@@ -58,6 +64,10 @@ const holder = vi.hoisted(() => ({
   tagNsfwLevel: 1,
   /** Set to an image id: that row turns CSAM-blocked right after the scan's fresh read of it. */
   csamLandsAfterRead: null as number | null,
+  /** Set to an image id: its owner is banned, with the media block, right after the fresh read. */
+  banLandsAfterRead: null as number | null,
+  /** Set to an image id: a hold keeps it, blocked, right after the fresh read. */
+  holdLandsAfterRead: null as number | null,
 }));
 
 const OWNER = 8;
@@ -70,10 +80,12 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
-    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "userId" int NOT NULL REFERENCES "User"(id),
+      "postId" int,
+      type text NOT NULL DEFAULT 'image',
       "updatedAt" timestamp(3),
       "pHash" bigint,
       ingestion "ImageIngestionStatus",
@@ -86,6 +98,14 @@ beforeAll(async () => {
       "scannedAt" timestamp(3),
       metadata jsonb,
       "scanJobs" jsonb
+    );
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" (
+      id serial PRIMARY KEY,
+      "entityType" "EntityType" NOT NULL,
+      "entityId" int NOT NULL,
+      status "AppealStatus" NOT NULL DEFAULT 'Pending'
     );
     CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
@@ -126,21 +146,46 @@ beforeEach(async () => {
       ];
     if (text.includes('is_new_user')) return [{ isNewUser: false }];
     if (text.includes(' AS held ')) return (await runOnPglite(strings, values)).rows;
-    if (text.includes('"User"')) {
+    if (text.includes('FROM "Image" i WHERE i.id')) {
       const { rows } = await runOnPglite(strings, values);
       if (holder.csamLandsAfterRead != null)
         await holder.db.query(
           `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM', "nsfwLevel" = 32 WHERE id = $1`,
           [holder.csamLandsAfterRead]
         );
+      if (holder.banLandsAfterRead != null) {
+        const id = holder.banLandsAfterRead;
+        await holder.db.query(
+          `UPDATE "User" SET "bannedAt" = now() WHERE id = (SELECT "userId" FROM "Image" WHERE id = $1)`,
+          [id]
+        );
+        await holder.db.query(
+          `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated', "nsfwLevel" = 32 WHERE id = $1`,
+          [id]
+        );
+      }
+      if (holder.holdLandsAfterRead != null) {
+        const id = holder.holdLandsAfterRead;
+        await holder.db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [id]);
+        await holder.db.query(
+          `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated', "nsfwLevel" = 32 WHERE id = $1`,
+          [id]
+        );
+      }
       return rows;
     }
-    if (text.includes('UPDATE "Image"') || text.includes('SELECT "blockedFor" FROM "Image"'))
+    if (
+      text.includes('UPDATE "Image"') ||
+      text.includes('SELECT "blockedFor" FROM "Image"') ||
+      text.includes('SELECT ingestion, "blockedFor", "nsfwLevel" FROM "Image"')
+    )
       return (await runOnPglite(strings, values)).rows;
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
   holder.tagNsfwLevel = 1;
   holder.csamLandsAfterRead = null;
+  holder.banLandsAfterRead = null;
+  holder.holdLandsAfterRead = null;
   await holder.db.exec(`
     TRUNCATE "Image", "User", "EvidenceHeldUser", "EvidenceHoldImage", "CsamReport";
     INSERT INTO "User" (id, "bannedAt") VALUES (${OWNER}, NULL), (${OTHER_OWNER}, NULL);
@@ -298,6 +343,37 @@ describe('a scan of a CSAM-blocked image', () => {
   });
 });
 
+describe('a ban that lands after the scan read the row', () => {
+  it('keeps the media block when the audit comes back clean', async () => {
+    await holder.db.exec(
+      `UPDATE "Image" SET ingestion = 'Rescan', "blockedFor" = NULL, "nsfwLevel" = 0 WHERE id = ${OTHER}`
+    );
+    holder.banLandsAfterRead = OTHER;
+
+    const outcome = await scan(OTHER);
+
+    const BANNED = { ingestion: 'Blocked', blockedFor: 'moderated', nsfwLevel: 32 };
+    expect(await imageRow(OTHER)).toEqual(BANNED);
+    // A Scanned outcome would queue the image for Knights review and signal its owner.
+    expect(outcome).toMatchObject(BANNED);
+  });
+});
+
+describe('a hold that lands after the scan read the row', () => {
+  it('keeps the block when the audit comes back clean', async () => {
+    await holder.db.exec(
+      `UPDATE "Image" SET ingestion = 'Rescan', "blockedFor" = NULL, "nsfwLevel" = 0 WHERE id = ${OTHER}`
+    );
+    holder.holdLandsAfterRead = OTHER;
+
+    const outcome = await scan(OTHER);
+
+    const HELD = { ingestion: 'Blocked', blockedFor: 'moderated', nsfwLevel: 32 };
+    expect(await imageRow(OTHER)).toEqual(HELD);
+    expect(outcome).toMatchObject(HELD);
+  });
+});
+
 describe('the rating block', () => {
   it('keeps a stored CSAM reason and the short-circuit reports it', async () => {
     await blockImageFromRating({ imageId: CSAM, blockedReason: 'tos' });
@@ -398,6 +474,428 @@ describe('a scan of an image with a locked rating', () => {
       ingestion: 'Scanned',
       blockedFor: null,
       nsfwLevel: PG13,
+    });
+  });
+});
+
+/**
+ * An account deleted with the grace option has its images blocked with breadcrumbs, and a restore
+ * puts back whatever the breadcrumbs recorded. A block written over a grace block in the meantime
+ * must outlive that restore; a write that would lift a grace block leaves the row alone.
+ */
+/** Grace-blocked, then written to by the writer under test. */
+const GRACED = 71;
+/** Grace-blocked and left alone: the restore must put it back, or the restore never ran. */
+const CONTROL = 72;
+/** Never grace-blocked. */
+const PLAIN = 73;
+
+const BREADCRUMBS = `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": null}'`;
+
+const graceRow = async (id: number) =>
+  (
+    await holder.db.query<{
+      ingestion: string;
+      blockedFor: string | null;
+      nsfwLevel: number;
+      breadcrumb: boolean;
+    }>(
+      `SELECT ingestion, "blockedFor", "nsfwLevel",
+        ((metadata -> 'accountDeletionPriorIngestion') IS NOT NULL
+          OR (metadata -> 'accountDeletionPriorBlockedFor') IS NOT NULL
+          OR (metadata -> 'accountDeletionPriorNeedsReview') IS NOT NULL) AS breadcrumb
+      FROM "Image" WHERE id = $1`,
+      [id]
+    )
+  ).rows[0];
+
+const GRACE_BLOCK = {
+  ingestion: 'Blocked',
+  blockedFor: 'moderated',
+  nsfwLevel: 32,
+  breadcrumb: true,
+};
+const RESTORED = { ingestion: 'Scanned', blockedFor: null, breadcrumb: false };
+
+const restore = async () => {
+  await unblockAccountDeletionImages(OWNER);
+  // Positive control: the restore ran and reverted the grace block nothing else wrote over.
+  expect(
+    await graceRow(CONTROL),
+    'the restore did not revert the untouched grace block'
+  ).toMatchObject(RESTORED);
+};
+
+describe('a restore and the recorded review flag, on the real statement', () => {
+  const crumbs = (review: string | null) =>
+    `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": ${
+      review === null ? 'null' : `"${review}"`
+    }}'`;
+  const reviewsOf = async (ids: number[]) =>
+    (
+      await holder.db.query<{ id: number; needsReview: string | null; ingestion: string }>(
+        `SELECT id, "needsReview", ingestion FROM "Image" WHERE id = ANY($1) ORDER BY id`,
+        [ids]
+      )
+    ).rows;
+
+  it('keeps the higher of the current and the recorded review, and logs the one it drops', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", metadata) VALUES
+        (81, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('poi')}),
+        (82, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')}),
+        (83, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('appeal')}),
+        (84, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('modRule')}),
+        (85, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('tag')}),
+        (86, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('remixSource')}),
+        (87, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('newUser')}),
+        (88, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('not-a-review')}),
+        (89, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('csam')}),
+        (90, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs(null)}),
+        (91, ${OWNER}, 'Blocked', 'moderated', 32, 'csam', ${crumbs('minor')}),
+        (92, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('minor')}),
+        (93, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', ${crumbs('newUser')}),
+        (94, ${OWNER}, 'Blocked', 'moderated', 32, 'newUser', ${crumbs('poi')}),
+        (95, ${OWNER}, 'Blocked', 'moderated', 32, 'tag', ${crumbs('tag')}),
+        (96, ${OWNER}, 'Blocked', 'moderated', 32, 'appeal', ${crumbs('csam')}),
+        (98, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', '{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null}'),
+        (99, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs(null)}),
+        (100, ${OWNER}, 'Blocked', 'moderated', 32, 'tag', ${crumbs('not-a-review')}),
+        (101, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', ${crumbs('appeal')}),
+        (102, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('appeal')}),
+        (103, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('appeal')});
+      -- 83's and 101's appeals are still Pending; 102's and 103's were decided during the window.
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
+        ('Image', 83, 'Pending'), ('Image', 101, 'Pending'), ('Image', 102, 'Approved'), ('Image', 103, 'Rejected');
+    `);
+    dbMock.dbWrite.appeal.findMany.mockImplementation(
+      (async ({ where }: { where: { entityId: { in: number[] } } }) =>
+        (
+          await holder.db.query<{ entityId: number }>(
+            `SELECT "entityId" FROM "Appeal" WHERE status = 'Pending' AND "entityId" = ANY($1)`,
+            [where.entityId.in]
+          )
+        ).rows) as never
+    );
+
+    await unblockAccountDeletionImages(OWNER);
+
+    const rows = await reviewsOf([
+      81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 98, 99, 100, 101, 102, 103,
+    ]);
+    // Control: every row was restored, so the review flags below are the restore's doing.
+    expect(rows.map((row) => row.ingestion)).toEqual(Array(22).fill('Scanned'));
+    expect(rows.map((row) => [row.id, row.needsReview])).toEqual([
+      // Nothing set since: every listed review but csam comes back.
+      [81, 'poi'],
+      [82, 'minor'],
+      [83, 'appeal'],
+      [84, 'modRule'],
+      [85, 'tag'],
+      [86, 'remixSource'],
+      [87, 'newUser'],
+      // A value outside the list, a recorded csam (dismissed, or the block would have kept it) and
+      // a JSON null write nothing.
+      [88, null],
+      [89, null],
+      [90, null],
+      // A current csam is never overwritten.
+      [91, 'csam'],
+      // Otherwise the higher of the two stays.
+      [92, 'minor'],
+      [93, 'minor'],
+      [94, 'poi'],
+      [95, 'tag'],
+      [96, 'appeal'],
+      // Nothing usable recorded (no key, JSON null, a value outside the list): the current flag stays.
+      [98, 'minor'],
+      [99, 'poi'],
+      [100, 'tag'],
+      // An approval must not publish an image a minor or poi review is still owed on.
+      [101, 'minor'],
+      [102, 'poi'],
+      // A recorded appeal decided during the window has no queue left to clear it.
+      [103, null],
+    ]);
+
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as { message?: string; payload?: { reviews: { imageId: number }[] } })
+      .filter((entry) => entry.message === 'kept the higher of two competing review flags')
+      .flatMap((entry) => entry.payload?.reviews ?? []);
+    expect(logged.sort((a, b) => a.imageId - b.imageId)).toEqual([
+      { imageId: 91, kept: 'csam', dropped: 'minor' },
+      { imageId: 92, kept: 'minor', dropped: 'poi' },
+      { imageId: 93, kept: 'minor', dropped: 'newUser' },
+      { imageId: 94, kept: 'poi', dropped: 'newUser' },
+      { imageId: 101, kept: 'minor', dropped: 'appeal', pendingAppeal: true },
+    ]);
+  });
+
+  it('leaves an account deleted again blocked, and restores it once it is not', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", metadata) VALUES
+        (97, ${OTHER_OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')});
+      UPDATE "User" SET "deletedAt" = now() WHERE id = ${OTHER_OWNER};
+    `);
+
+    const deleted = await unblockAccountDeletionImages(OTHER_OWNER);
+    // The claim finds nothing, so the reversal reads as drained: restore-user-images then drops the
+    // worklist entry, and a later restore queues it again.
+    expect(deleted).toMatchObject({ unblocked: 0, drained: true });
+    expect(await reviewsOf([97])).toEqual([{ id: 97, needsReview: null, ingestion: 'Blocked' }]);
+
+    await holder.db.exec(`UPDATE "User" SET "deletedAt" = NULL WHERE id = ${OTHER_OWNER}`);
+    await unblockAccountDeletionImages(OTHER_OWNER);
+    expect(await reviewsOf([97])).toEqual([{ id: 97, needsReview: 'minor', ingestion: 'Scanned' }]);
+  });
+});
+
+describe('the account-deletion grace block', () => {
+  beforeEach(async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", metadata) VALUES
+        (${GRACED}, ${OWNER}, 'Blocked', 'moderated', 32, ${BREADCRUMBS}),
+        (${CONTROL}, ${OWNER}, 'Blocked', 'moderated', 32, ${BREADCRUMBS}),
+        (${PLAIN}, ${OWNER}, 'Scanned', NULL, 1, NULL);
+    `);
+  });
+
+  describe('a block written during the grace period outlives the restore', () => {
+    it('from a scan verdict', async () => {
+      holder.tagNsfwLevel = 16;
+      vi.mocked(auditPostImageMeta).mockReturnValue({
+        success: false,
+        blockedFor: ['tos-term'],
+      } as never);
+
+      await scan(GRACED);
+      await restore();
+
+      expect(await graceRow(GRACED)).toEqual({
+        ingestion: 'Blocked',
+        blockedFor: 'tos-term',
+        nsfwLevel: 32,
+        breadcrumb: false,
+      });
+    });
+
+    it('from a CSAM scan verdict', async () => {
+      holder.tagNsfwLevel = 16;
+      vi.mocked(auditPostImageMeta).mockReturnValue({
+        success: false,
+        blockedFor: ['CSAM'],
+      } as never);
+
+      await scan(GRACED);
+
+      expect(await graceRow(GRACED)).toEqual({
+        ingestion: 'Blocked',
+        blockedFor: 'CSAM',
+        nsfwLevel: 32,
+        breadcrumb: false,
+      });
+      await restore();
+      expect((await graceRow(GRACED)).blockedFor).toBe('CSAM');
+    });
+
+    it('from a moderation rule', async () => {
+      vi.mocked(getImagesModRules).mockResolvedValue([{ id: 1 }] as never);
+      vi.mocked(evaluateRules).mockReturnValue({
+        id: 1,
+        action: ModerationRuleAction.Block,
+        reason: 'rule',
+      } as never);
+
+      await scan(GRACED);
+      await restore();
+
+      expect(await graceRow(GRACED)).toMatchObject({ ingestion: 'Blocked', breadcrumb: false });
+    });
+
+    it('from the rating block', async () => {
+      await blockImageFromRating({ imageId: GRACED, blockedReason: 'tos' });
+      await restore();
+
+      expect(await graceRow(GRACED)).toEqual({
+        ingestion: 'Blocked',
+        blockedFor: 'tos',
+        nsfwLevel: 32,
+        breadcrumb: false,
+      });
+    });
+
+    it('from a ban, which also keeps every grace-blocked image blocked', async () => {
+      // A reason and level the ban's own block would not write, so keeping them is visible; and a
+      // metadata value that is not an object, which must not fail the whole statement.
+      await holder.db.exec(`
+        UPDATE "Image" SET "blockedFor" = 'tos', "nsfwLevel" = 16 WHERE id = ${CONTROL};
+        UPDATE "Image" SET metadata = '"x"'::jsonb WHERE id = ${PLAIN};
+      `);
+
+      await blockBannedUserImages(OWNER);
+      // The ban leaves a grace-blocked row as it was, without its breadcrumbs, and blocks the rest.
+      expect(await graceRow(GRACED)).toEqual({ ...GRACE_BLOCK, breadcrumb: false });
+      expect(await graceRow(CONTROL)).toEqual({
+        ingestion: 'Blocked',
+        blockedFor: 'tos',
+        nsfwLevel: 16,
+        breadcrumb: false,
+      });
+      expect(await graceRow(PLAIN)).toEqual({
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+        nsfwLevel: 32,
+        breadcrumb: false,
+      });
+
+      // With no breadcrumb left the restore has nothing to claim; the assertions above are the guard.
+      await unblockAccountDeletionImages(OWNER);
+      expect(await graceRow(GRACED)).toMatchObject({
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+      });
+    });
+  });
+
+  describe('a write that would lift a grace block leaves the row alone', () => {
+    it('a clean scan verdict', async () => {
+      const outcome = await scan(GRACED);
+
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+      // A Scanned outcome would queue the image for review and signal its owner.
+      expect(outcome).toMatchObject({
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+        nsfwLevel: 32,
+      });
+      // Control: the same clean verdict lifts a row that is not grace-blocked, and drops a breadcrumb
+      // it carries, so a later block written over it cannot inherit one.
+      await holder.db.exec(
+        `UPDATE "Image" SET ingestion = 'Rescan', metadata = ${BREADCRUMBS} WHERE id = ${PLAIN}`
+      );
+      await scan(PLAIN);
+      expect(await graceRow(PLAIN)).toMatchObject({
+        ingestion: 'Scanned',
+        blockedFor: null,
+        breadcrumb: false,
+      });
+    });
+
+    it('a clean scan verdict, which still keeps the image hash', async () => {
+      await holder.db.exec(`UPDATE "Image" SET "pHash" = 5 WHERE id = ${GRACED}`);
+
+      await resolveScanOutcome({
+        image: await loaded(GRACED),
+        pHash: BigInt(77),
+        workflowId: 'wf',
+        prompt: 'a landscape',
+      });
+
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+      const { rows } = await holder.db.query<{ pHash: string | null }>(
+        `SELECT "pHash"::text AS "pHash" FROM "Image" WHERE id = ${GRACED}`
+      );
+      expect(rows[0].pHash).toBe('77');
+    });
+
+    it('a clean scan verdict on a grace block whose recorded state is JSON null', async () => {
+      await holder.db.exec(
+        `UPDATE "Image" SET metadata = '{"accountDeletionPriorIngestion": null}' WHERE id = ${GRACED}`
+      );
+
+      await scan(GRACED);
+
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+    });
+
+    it('a clean scan verdict for an image loaded before the grace block', async () => {
+      const stale = {
+        ...(await loaded(GRACED)),
+        ingestion: 'Pending',
+        blockedFor: null,
+        nsfwLevel: 0,
+      };
+
+      const outcome = await resolveScanOutcome({
+        image: stale as ScanImage,
+        workflowId: 'wf',
+        prompt: 'a landscape',
+      });
+
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+      expect(outcome).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    });
+
+    it('a clean scan verdict while an appeal is pending, which only keeps the block', async () => {
+      dbMock.dbWrite.appeal.findMany.mockResolvedValue([{ entityId: GRACED }] as never);
+
+      await scan(GRACED);
+
+      // Keeping the grace block is not a new block: the breadcrumbs stay for the restore.
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+    });
+
+    it('a clean scan verdict for a banned owner, which only keeps the block', async () => {
+      await holder.db.exec(`
+        UPDATE "User" SET "bannedAt" = now() WHERE id = ${OWNER};
+        UPDATE "Image" SET ingestion = 'Rescan', "blockedFor" = 'moderated' WHERE id = ${PLAIN};
+      `);
+
+      await scan(GRACED);
+      await scan(PLAIN);
+
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+      // Control: the ban branch did fire, keeping the block on a row that is not grace-blocked.
+      expect(await graceRow(PLAIN)).toMatchObject({
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+      });
+    });
+
+    it('reports the image blocked when the skipped row cannot be read back', async () => {
+      const route = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation() as unknown as (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => Promise<unknown>;
+      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(((
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) =>
+        strings.join('').includes('SELECT ingestion, "blockedFor", "nsfwLevel" FROM "Image"')
+          ? Promise.reject(new Error('read failed'))
+          : route(strings, ...values)) as never);
+
+      const outcome = await scan(GRACED);
+
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+      expect(outcome).toMatchObject({
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+        nsfwLevel: 32,
+      });
+    });
+
+    it('a scan error', async () => {
+      // Blocked without breadcrumbs: only the grace block is kept. Pins the existing error write on
+      // other blocked rows, not a judgement on it.
+      await holder.db.exec(
+        `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = ${PLAIN}`
+      );
+      const fail = (imageId: number) =>
+        markImageScanError({
+          workflowId: 'wf',
+          imageId,
+          status: 'failed',
+          failureType: 'x',
+          failedSteps: [],
+        });
+
+      await fail(GRACED);
+      await fail(PLAIN);
+
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+      // Control: the error write does reach a blocked row that is not grace-blocked.
+      expect((await graceRow(PLAIN)).ingestion).toBe('Error');
     });
   });
 });

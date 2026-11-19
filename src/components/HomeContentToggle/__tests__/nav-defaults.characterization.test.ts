@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { navRegistry } from '~/components/HomeContentToggle/nav-registry';
 import { resolveNavItems } from '~/components/HomeContentToggle/resolve-nav-items';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { navigationSettingsSchema } from '~/server/schema/user.schema';
 
 /**
  * The sub nav's DEFAULT layout — what a user who never opens the customization modal sees.
@@ -48,7 +49,7 @@ describe('sub-nav default layout', () => {
       'updates',
       'shop',
     ]);
-    expect(more.map((e) => e.key)).toEqual(['storylines', 'bounties', 'challenges']);
+    expect(more.map((e) => e.key)).toEqual(['storylines', 'bounties', 'challenges', 'services']);
   });
 
   /**
@@ -161,5 +162,51 @@ describe('the storylines entry', () => {
   it('hides with every flag but its own', () => {
     const { bar, more } = resolve(flagsExcept('storylines'));
     expect([...bar, ...more].map((e) => e.key)).not.toContain('storylines');
+  });
+});
+
+// The /services page's own SSR gate is two flags; each must hide the entry on its own.
+describe('the services entry', () => {
+  const onlyFlags = (...names: string[]): FeatureAccess =>
+    new Proxy({} as FeatureAccess, {
+      get: (_target, key) => (names as readonly string[]).includes(key as string),
+    }) as FeatureAccess;
+  const placed = (features: FeatureAccess) => {
+    const { bar, more } = resolve(features);
+    return [...bar, ...more].map((e) => e.key);
+  };
+
+  it('lands in More when both of its flags are on', () => {
+    expect(resolve(onlyFlags('creatorShop', 'creatorServices')).more.map((e) => e.key)).toEqual([
+      'services',
+    ]);
+  });
+
+  it.each([['creatorShop'], ['creatorServices']])('is left out with only %s on', (flag) => {
+    expect(placed(onlyFlags(flag))).not.toContain('services');
+  });
+
+  it('honours a saved config that moved it to the bar', () => {
+    const { bar, more } = resolveNavItems(
+      navRegistry,
+      { features: onlyFlags('creatorShop', 'creatorServices'), isAuthed: true },
+      { bar: ['home', 'services', 'models'], more: [], hidden: [] }
+    );
+    expect(bar.map((e) => e.key).slice(0, 3)).toEqual(['home', 'services', 'models']);
+    expect(more.map((e) => e.key)).not.toContain('services');
+  });
+
+  it('still validates a config saved before it existed, and places it in More', () => {
+    const saved = {
+      bar: ['home', 'models', 'images', 'videos', 'updates', 'shop'],
+      more: ['storylines', 'bounties', 'challenges'],
+      hidden: [],
+    };
+    const { more } = resolveNavItems(
+      navRegistry,
+      { features: allFlags(true), isAuthed: true },
+      navigationSettingsSchema.parse(saved)
+    );
+    expect(more.map((e) => e.key)).toContain('services');
   });
 });

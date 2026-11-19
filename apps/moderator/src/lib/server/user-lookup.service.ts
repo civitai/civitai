@@ -4,6 +4,7 @@ import { OWNED_REPORT_ENTITIES, chatReportSubject } from './report-entities';
 import { strikeCountsByUserIds } from './moderation-memory.service';
 import { legacyStrikeId, legacyStrikeIssuerName } from '$lib/legacy-strike-import';
 import { getModeratorContact, type ModeratorContact } from './user-signals.service';
+import { isInt4Id, normalizeUserSearchTerm } from './users.service';
 
 // The PAGE LOAD half of User Lookup — identity, profile, score, counts, stats, reports, subscription.
 // One file per endpoint is the rule for this page's services; the sibling files are
@@ -149,14 +150,14 @@ export type UserLookupResult = {
 // know which kind of identifier it holds. Numeric input is tried as an id first, then as a username —
 // usernames can be all digits.
 export async function resolveUserId(term: string): Promise<number | null> {
-  const value = term.trim();
+  const value = normalizeUserSearchTerm(term);
   if (!value) return null;
 
   // Bounded HERE, not at the call sites: `User.id` is int4, so an over-long digit string errors the
   // comparison rather than missing — and this runs inside User Lookup's LAYOUT load, so one extra
   // digit rendered a 500 on every section instead of "no user matches". Falling through rather than
   // returning null is deliberate: all-digit usernames exist.
-  if (/^\d+$/.test(value) && Number(value) <= 2_147_483_647) {
+  if (/^\d+$/.test(value) && isInt4Id(Number(value))) {
     const byId = await dbRead
       .selectFrom('User')
       .select('id')

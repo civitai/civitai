@@ -27,7 +27,7 @@ beforeAll(async () => {
       hash text, "userId" int NOT NULL, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       type "MediaType" NOT NULL DEFAULT 'image', width int, height int, metadata jsonb, "needsReview" text,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb,
-      "modelRestricted" boolean NOT NULL DEFAULT false
+      "modelRestricted" boolean NOT NULL DEFAULT false, "blockedFor" text
     );
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int);
   `);
@@ -67,6 +67,18 @@ describe('profile picture lookup', () => {
 
     expect(result).not.toHaveProperty(String(OWNER));
     expect(result).not.toHaveProperty(String(NO_PICTURE));
+    expect(result[OTHER]).toMatchObject({ id: 20 });
+  });
+
+  it.each([
+    ['the Blocked level', `"nsfwLevel" = 32`],
+    ['a block reason', `"blockedFor" = 'tos'`],
+  ])('returns no picture for a Scanned avatar carrying %s', async (_, set) => {
+    await db.exec(`UPDATE "Image" SET ${set} WHERE id = 10`);
+
+    const result = await lookupProfilePictures([OWNER, OTHER]);
+
+    expect(result).not.toHaveProperty(String(OWNER));
     expect(result[OTHER]).toMatchObject({ id: 20 });
   });
 

@@ -7,6 +7,7 @@ import { AppListingCard } from '~/components/Apps/AppListingCard';
 import { AppSubListingCard } from '~/components/Apps/AppSubListingCard';
 import { AppListingCardSkeletonGrid } from '~/components/Apps/AppListingCardSkeleton';
 import gridClasses from '~/components/Apps/AppListingsMarketplaceBody.module.scss';
+import { appIndexServerQuery } from '~/components/Apps/app-index-search-query';
 import { hasActiveAppsStoreFilters } from '~/components/Apps/appsStoreQueryParams';
 import { useAppsStoreQueryParams } from '~/components/Apps/useAppsStoreQueryParams';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -15,6 +16,7 @@ import { pageSearchFor } from '~/components/Search/search-target';
 import type { StoreGridItem } from '~/server/schema/blocks/app-listing-read.schema';
 import { isSubListingCard } from '~/shared/constants/app-sub-listing.constants';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
+import { storeGridCardMatches } from '~/shared/utils/store-grid-search';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -162,6 +164,18 @@ export function AppListingsMarketplaceBody() {
     if (filters.query.trim() !== searchInput.trim()) setSearchInput(filters.query);
   });
 
+  // With `app-index-search` on, the server says on each page whether this viewer's searches can go
+  // to the app index (`indexSearchRoutable`). Only then is the debounced search sent, and the
+  // server may answer it from the index (a page marked `search: 'index'`) or fall back to the plain
+  // grid, which the client-side filter below narrows as before. Otherwise the request, and its
+  // query key, stay exactly as without the feature (`appIndexServerQuery`).
+  const [indexRoutable, setIndexRoutable] = useState<boolean | undefined>(undefined);
+  const serverQuery = appIndexServerQuery({
+    flagOn: !!features.appIndexSearch,
+    serverRoutable: indexRoutable,
+    search: debouncedSearch,
+  });
+
   const {
     data,
     isLoading,
@@ -176,6 +190,7 @@ export function AppListingsMarketplaceBody() {
       kind,
       category: category ?? undefined,
       sort,
+      query: serverQuery,
       // 🔴 48, NOT 24, AND IT IS THE COLUMN LADDER THAT MOVED IT. 24 was six rows at
       // the old four-column maximum; at the FIVE columns the grid now reaches on a
       // 2560 monitor it is under five, so a viewer on the widest screen the container
@@ -246,17 +261,19 @@ export function AppListingsMarketplaceBody() {
     () => (data?.pages ?? []).flatMap((p): StoreGridItem[] => p.items),
     [data]
   );
+  // A page the app index answered already holds the search's results, in its order.
+  const indexAnswered = data?.pages[0]?.search === 'index';
+  const pageSaysRoutable = data?.pages[0]?.indexSearchRoutable;
+  useEffect(() => {
+    if (pageSaysRoutable !== undefined) setIndexRoutable(pageSaysRoutable);
+  }, [pageSaysRoutable]);
   // Client-side search over loaded pages (name + tagline). See the ⚠️ gap note:
   // this is complete only while the catalog fits in the loaded pages.
   const filteredItems = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    if (!q) return gridItems;
-    return gridItems.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        (c.tagline ? c.tagline.toLowerCase().includes(q) : false)
-    );
-  }, [gridItems, debouncedSearch]);
+    if (!q || indexAnswered) return gridItems;
+    return gridItems.filter((c) => storeGridCardMatches(c, q));
+  }, [gridItems, debouncedSearch, indexAnswered]);
 
   // The BROAD predicate — includes search, because a viewer looking at an empty
   // grid can't tell which control emptied it. The dropdown's `Indicator` counts

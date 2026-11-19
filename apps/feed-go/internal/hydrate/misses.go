@@ -50,20 +50,29 @@ var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecoratio
 // wrote for it hydrate identically. The image meta (meta.go) is the exception: its misses are
 // neither written back nor kept in process (see memoized).
 type MissCompute struct {
-	// WriteBack (FEED_GO_CACHE_WRITEBACK, default off) writes each computed entry where, and as, the
-	// Node lookup writes it: same key, same msgpackr bytes, same expiry. Only for a miss Node would
-	// write too (no key, or an undecodable value; never inside a bust's debounce window or after a
-	// failed read), and as SET NX: a key another writer filled since the read is never overwritten.
-	// The frame and event-decoration lookups (image and model) then read Primary, as Node's do
-	// (entityDB); the user-cosmetics and tag-ids lookups read the replica either way, as Node's fetch
-	// does (dbRead); the version-images and model-data lookups read Primary for a version or model a
-	// recent write flagged, as Node's lag-aware reads do (lagAwareDB). The model-tags and
-	// official-models lookups read the replica, as Node's fetch does (dbRead).
-	WriteBack bool
-	// Primary is the primary database (DATABASE_URL, Node's dbWrite), required with WriteBack: the
-	// frame and event-decoration lookups write what they read, so they must not read a lagging replica
-	// (an unequipped or withheld frame would be cached again for a day).
+	// WriteBack (FEED_GO_CACHE_WRITEBACK, default none) is the caches whose computed entries are
+	// written where, and as, the Node lookup writes them: same key, same msgpackr bytes, same expiry.
+	// A cache not in it is never written (nor its locks taken). Only for a miss Node would write too
+	// (no key, or an undecodable value; never inside a bust's debounce window or after a failed read),
+	// and as SET NX: a key another writer filled since the read is never overwritten. A written-back
+	// frame or event-decoration lookup (image and model) reads Primary, as Node's does (entityDB); the
+	// user-cosmetics and tag-ids lookups read the replica either way, as Node's fetch does (dbRead); a
+	// written-back version-images or model-data lookup reads Primary for a version or model a recent
+	// write flagged, as Node's lag-aware reads do (lagAwareDB). The model-tags and official-models
+	// lookups read the replica, as Node's fetch does (dbRead).
+	WriteBack WriteSet
+	// Primary is the primary database (DATABASE_URL, Node's dbWrite), required when WriteBack holds a
+	// PrimaryCaches cache: the frame and event-decoration lookups write what they read, so they must
+	// not read a lagging replica (an unequipped or withheld frame would be cached again for a day).
 	Primary Querier
+	// ObserveWrite counts cache writes (feed_go_cache_writes_total): cache is a WriteCaches label,
+	// result one of WriteResults.
+	ObserveWrite func(cache, result string, n int)
+	// WriteLog logs each cache write, rate-limited (FEED_GO_CACHE_WRITE_LOG_PER_MIN); nil logs none.
+	WriteLog *WriteLog
+	// WriteTimeout bounds a request's write-back, run detached from the request (writeContext): the
+	// total time its round trips wait under WithWriteBudget; 0 is cacheWriteTimeout. Tests shorten it.
+	WriteTimeout time.Duration
 	// FrameNegative mirrors the `frame-cache-negative` flag (FEED_GO_FRAME_CACHE_NEGATIVE): whether the
 	// frame cache's notFound markers are live. Off, a marker is read as a miss and none is written,
 	// as Node does while the flag is off. It is one flag for every entity's frame cache, so it
@@ -76,8 +85,8 @@ type MissCompute struct {
 	// Node, which rebuilds the blocked list from the database on a cache miss, would have had one.
 	TagGate func(context.Context) (map[int]bool, error)
 	// ClickHouse is the reader the image metric-hash misses are computed with (imagemetrics.go:
-	// MetricService's populate, its query and, with WriteBack, its locks and writes). nil (no
-	// FEED_GO_CLICKHOUSE_HOST / FEED_GO_CLICKHOUSE_USERNAME) leaves those misses falling back
+	// MetricService's populate, its query and, with MissMetrics written back, its locks and writes).
+	// nil (no FEED_GO_CLICKHOUSE_HOST / FEED_GO_CLICKHOUSE_USERNAME) leaves those misses falling back
 	// (`metrics-miss`).
 	ClickHouse ClickHouse
 	// MetricsTimeout bounds one page's metrics lookup (FEED_GO_CLICKHOUSE_TIMEOUT_MS), held to at most
@@ -97,7 +106,7 @@ type MissCompute struct {
 	Tracer trace.Tracer
 
 	// flight coalesces concurrent lookups of one cache and id set; recent keeps answers for a few
-	// seconds with write-back off (lookupShared).
+	// seconds for a cache not written back (lookupShared).
 	flight   singleflight.Group
 	recentMu sync.Mutex
 	recent   map[recentKey]recentEntry
@@ -116,8 +125,8 @@ type MissCompute struct {
 	Now func() time.Time
 }
 
-// Recent lookups (write-back off only): how long a computed entry answers repeat misses in this
-// process, and how many entries are held at most.
+// Recent lookups (caches not written back only): how long a computed entry answers repeat misses in
+// this process, and how many entries are held at most.
 const (
 	recentTTL = 10 * time.Second
 	recentMax = 50_000
@@ -142,9 +151,9 @@ type recentEntry struct {
 //   - concurrent calls for the same cache and id set share one lookup (singleflight; the first
 //     caller's context runs it, so a joiner sees that caller's cancellation as its own error, and
 //     a traced joiner gets a `miss lookup join` span for its wait, joinSpan);
-//   - with write-back off, each answer (a record or "no row") is kept for recentTTL and answers the
-//     next miss of that id without a query. With write-back on nothing is kept: the written cache
-//     entry answers repeats, and a kept answer could outlive the bust that should replace it. The
+//   - for a cache not written back, each answer (a record or "no row") is kept for recentTTL and
+//     answers the next miss of that id without a query. For one written back nothing is kept: the
+//     written cache entry answers repeats, and a kept answer could outlive the bust that should replace it. The
 //     image meta is never kept either (memoized): Node keeps no per-pod copy of it, so a meta its
 //     owner just hid is never served again, and its multi-KB values would crowd the cap.
 //
@@ -239,15 +248,15 @@ func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
 	return kept, nil
 }
 
-// memoized is whether lookupShared keeps cache's answers in recent: with write-back off, for every
-// cache but the image meta (imageMetaCache has no per-pod L1 in Node, deliberately: a hideMeta flip
+// memoized is whether lookupShared keeps cache's answers in recent: for a cache not written back,
+// except the image meta (imageMetaCache has no per-pod L1 in Node, deliberately: a hideMeta flip
 // must not leave the old prompt served from a process's copy). The tag ids, the model frames, the
 // model decorations and the version showcases are kept: none depends on the viewer (the showcase
 // lookup reads no user, and the per-viewer image filter runs on every read), Node keeps tag ids in a
 // per-pod L1 far longer than recentTTL, and a model frame or decoration is the same lookup the image
 // ones keep.
 func (c *MissCompute) memoized(cache string) bool {
-	return !c.WriteBack && cache != MissImageMeta
+	return !c.writes(cache) && cache != MissImageMeta
 }
 
 // fromRecent adds the kept, unexpired answers of ids to out and returns the ids it could not answer.
@@ -316,12 +325,12 @@ func (c *MissCompute) observe(cache, result string, n int) {
 	}
 }
 
-// entityDB is the database the frame and event-decoration lookups (image and model) read. Node reads
-// the primary (dbWrite, src/server/redis/caches.ts) and caches what it reads for a day. With
-// WriteBack on this service writes what it reads too, so it reads the primary as well; with it off
-// nothing it reads is cached, and the replica's lag only affects this one answer.
-func (s *Sources) entityDB() (Querier, error) {
-	if !s.Compute.WriteBack {
+// entityDB is the database the frame and event-decoration lookups (image and model) of cache read.
+// Node reads the primary (dbWrite, src/server/redis/caches.ts) and caches what it reads for a day.
+// With cache written back this service writes what it reads too, so it reads the primary as well;
+// otherwise nothing it reads is cached, and the replica's lag only affects this one answer.
+func (s *Sources) entityDB(cache string) (Querier, error) {
+	if !s.Compute.writes(cache) {
 		return s.Replica, nil
 	}
 	if s.Compute.Primary == nil {
@@ -403,8 +412,11 @@ func specReason(cache string) string {
 }
 
 // packedWrite is one cache write: SET key val EX ttl NX, or without NX when overwrite (a stale
-// entry revalidated under its lock, as Node's refill overwrites it).
+// entry revalidated under its lock, as Node's refill overwrites it). cache and id name it in the
+// write counter and log (id 0: a key with no per-id suffix).
 type packedWrite struct {
+	cache     string
+	id        int
 	key       string
 	val       []byte
 	ttl       time.Duration
@@ -467,8 +479,9 @@ func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[
 			return fmt.Errorf("%s: a computed entry for %d does not decode", spec.cache, id)
 		}
 		got[id] = e
-		if p == nil && c.WriteBack && (writable[id] || replace[id]) && (found || writeNotFound) {
-			writes = append(writes, packedWrite{key: s.Packed.key(spec.key, id), val: b, ttl: ttl, overwrite: found && replace[id]})
+		if p == nil && c.writes(spec.cache) && (writable[id] || replace[id]) && (found || writeNotFound) {
+			writes = append(writes, packedWrite{cache: spec.cache, id: id, key: s.Packed.key(spec.key, id), val: b, ttl: ttl,
+				overwrite: found && replace[id]})
 		}
 	}
 	if p != nil {
@@ -538,7 +551,7 @@ func (s *Sources) fillSWR(ctx context.Context, spec lookupSpec, ids []int, got m
 	if s.Compute == nil {
 		return nil
 	}
-	replace, locks := s.revalidateStale(ctx, spec.key, got)
+	replace, locks := s.revalidateStale(ctx, spec, got)
 	if err := s.fill(ctx, spec, ids, got, writable, true, replace, lookup); err != nil {
 		return err
 	}
@@ -559,17 +572,18 @@ func (s *Sources) lockKey(key string, id int) string {
 // cacheLockTTL is the revalidation lock's EX (setNxKeepTtlWithEx(…, '1', 10)).
 const cacheLockTTL = 10 * time.Second
 
-// revalidateStale is fetch's stale-while-revalidate step over the answer got of the cache at key
-// (Stale entries, read with its ttl), removing from got the stale ids to look up again:
+// revalidateStale is fetch's stale-while-revalidate step over the answer got of spec's cache (Stale
+// entries, read with its ttl), removing from got the stale ids to look up again:
 //
-//   - write-back on, as Node: each stale id takes the revalidation lock Node's fetch takes (SET NX EX
+//   - the cache written back, as Node: each stale id takes the revalidation lock Node's fetch takes (SET NX EX
 //     10); an id whose lock is held elsewhere, or whose lock write failed, keeps its stale entry
 //     (served, as Node serves it), and one whose lock is taken is looked up and its value written
 //     over the stale one (replace). The locks taken are returned for releaseLocks;
-//   - write-back off: every stale id is looked up (nothing is written, so no lock guards a write),
+//   - the cache not written back: every stale id is looked up (nothing is written, so no lock guards a write),
 //     so a busted entry is never served past its backdated stamp;
 //   - under a Go-first probe (WithPresence): every stale id is a miss (recorded by fill), no lock.
-func (s *Sources) revalidateStale(ctx context.Context, key string, got map[int]Entry) (map[int]bool, []string) {
+func (s *Sources) revalidateStale(ctx context.Context, spec lookupSpec, got map[int]Entry) (map[int]bool, []string) {
+	key := spec.key
 	stale := make([]int, 0, len(got))
 	for id, e := range got {
 		if e.Stale {
@@ -579,7 +593,7 @@ func (s *Sources) revalidateStale(ctx context.Context, key string, got map[int]E
 	if len(stale) == 0 {
 		return nil, nil
 	}
-	if presenceOf(ctx) != nil || !s.Compute.WriteBack || s.Packed.Redis == nil {
+	if presenceOf(ctx) != nil || !s.Compute.writes(spec.cache) || s.Packed.Redis == nil {
 		for _, id := range stale {
 			delete(got, id)
 		}
@@ -608,11 +622,16 @@ func (s *Sources) revalidateStale(ctx context.Context, key string, got map[int]E
 
 // releaseLocks deletes the revalidation locks taken, best effort, after the writes (Node deletes
 // them after its write; a failed delete leaves the lock to its 10 s expiry). A failed lookup leaves
-// them to expire, as Node's does.
+// them to expire, as Node's does. Like the writes it follows, it runs detached from the request
+// (writeContextFloor): a request that ended after its writes still releases its locks, and one whose
+// write budget is spent still gets lockReleaseFloor for the release (a lock left held keeps others
+// serving stale, or the official models empty, until it expires).
 func (s *Sources) releaseLocks(ctx context.Context, locks []string) {
 	if len(locks) == 0 {
 		return
 	}
+	ctx, cancel := s.Compute.writeContextFloor(ctx, lockReleaseFloor)
+	defer cancel()
 	// One DEL per key: the locks of different ids live in different cluster slots.
 	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
 		for _, k := range locks {
@@ -641,21 +660,45 @@ func (s *Sources) fillModelEvents(ctx context.Context, models []int, got map[int
 }
 
 // writePacked sends writes in one pipeline, best effort: Node swallows a failed cache write too (the
-// lookup has already answered).
+// lookup has already answered). The pipeline runs detached from the request, under its own bound
+// (writeContext), so a request that ends first does not cancel entries already computed. Each write
+// is counted and logged with its result (recordWrite), an error with its text.
 func (s *Sources) writePacked(ctx context.Context, writes []packedWrite) {
 	if len(writes) == 0 || s.Packed.Redis == nil {
 		return
 	}
-	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
-		for _, w := range writes {
+	wctx, cancel := s.Compute.writeContext(ctx)
+	defer cancel()
+	cmds := make([]redis.Cmder, len(writes))
+	_, _ = s.Packed.Redis.Pipelined(wctx, func(p redis.Pipeliner) error {
+		for i, w := range writes {
 			if w.overwrite {
-				p.Set(ctx, w.key, w.val, w.ttl)
+				cmds[i] = p.Set(wctx, w.key, w.val, w.ttl)
 				continue
 			}
-			p.SetNX(ctx, w.key, w.val, w.ttl)
+			cmds[i] = p.SetNX(wctx, w.key, w.val, w.ttl)
 		}
 		return nil
 	})
+	for i, w := range writes {
+		s.Compute.recordWrite(ctx, w.cache, w.key, w.id, packedWriteResult(cmds[i]), cmds[i].Err())
+	}
+}
+
+// packedWriteResult is one SET's result: error when it failed, nx_lost for a SET NX that found the key
+// held (go-redis answers that as false, or as redis.Nil), written otherwise.
+func packedWriteResult(cmd redis.Cmder) string {
+	nx, isNX := cmd.(*redis.BoolCmd)
+	err := cmd.Err()
+	switch {
+	case isNX && errors.Is(err, redis.Nil):
+		return WriteNXLost
+	case err != nil:
+		return WriteError
+	case isNX && !nx.Val():
+		return WriteNXLost
+	}
+	return WriteWritten
 }
 
 // jsonColumn is a json/jsonb column selected as text (`::text`), as Prisma hands it to the Node code.
@@ -747,17 +790,17 @@ const (
 // without frames whose creator cosmetic is withheld. The cosmetic join is the cache's appendFn,
 // which runs on every read (joinFrames).
 func (s *Sources) lookupImageFrames(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
-	return s.lookupEntityFrames(ctx, sqlImageFrames, ids)
+	return s.lookupEntityFrames(ctx, MissImageFrames, sqlImageFrames, ids)
 }
 
 // lookupModelFrames is cosmeticEntityCaches.Model's lookupFn: lookupImageFrames over the models (the
 // join is modelCosmetics').
 func (s *Sources) lookupModelFrames(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
-	return s.lookupEntityFrames(ctx, sqlModelFrames, ids)
+	return s.lookupEntityFrames(ctx, MissModelFrames, sqlModelFrames, ids)
 }
 
-func (s *Sources) lookupEntityFrames(ctx context.Context, sql string, ids []int) (map[int]jspack.Obj, error) {
-	db, err := s.entityDB()
+func (s *Sources) lookupEntityFrames(ctx context.Context, cache, sql string, ids []int) (map[int]jspack.Obj, error) {
+	db, err := s.entityDB(cache)
 	if err != nil {
 		return nil, err
 	}
@@ -963,17 +1006,17 @@ const (
 // cosmetic record (cosmeticCache.fetch); a row whose cosmetic is found nowhere, or whose data is not
 // event decoration data, is skipped. The last row per image wins.
 func (s *Sources) lookupImageEvents(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
-	return s.lookupEntityEvents(ctx, sqlImageEvents, "Image", ids)
+	return s.lookupEntityEvents(ctx, MissEventDecorations, sqlImageEvents, "Image", ids)
 }
 
 // lookupModelEvents is eventDecorationEntityCaches.Model's lookupFn: lookupImageEvents over the
 // models, `equippedToType` 'Model' (Node: `entity as CosmeticEntity`).
 func (s *Sources) lookupModelEvents(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
-	return s.lookupEntityEvents(ctx, sqlModelEvents, "Model", ids)
+	return s.lookupEntityEvents(ctx, MissModelDecorations, sqlModelEvents, "Model", ids)
 }
 
-func (s *Sources) lookupEntityEvents(ctx context.Context, sql, entity string, ids []int) (map[int]jspack.Obj, error) {
-	db, err := s.entityDB()
+func (s *Sources) lookupEntityEvents(ctx context.Context, cache, sql, entity string, ids []int) (map[int]jspack.Obj, error) {
+	db, err := s.entityDB(cache)
 	if err != nil {
 		return nil, err
 	}

@@ -7,6 +7,7 @@ import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { shallow } from 'zustand/shallow';
 import { FileUploadProvider } from '~/components/FileUpload/FileUploadProvider';
+import { dedupeAddedImages } from '~/components/Post/EditV2/post-edit-images';
 import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import type { PostEditQuerySchema } from '~/server/schema/post.schema';
 import type {
@@ -89,7 +90,7 @@ type State = {
 
 // #region [create store]
 type Store = ReturnType<typeof createContextStore>;
-const createContextStore = (post?: PostDetailEditable) => {
+export const createContextStore = (post?: PostDetailEditable) => {
   // Deliberately outside the store's reactive state: these are per-mount callbacks, not data.
   // Keeping them here means registering costs no `set()` (so no notification to every
   // subscriber, and nothing extra for the devtools middleware to serialize) and lets the many
@@ -100,11 +101,12 @@ const createContextStore = (post?: PostDetailEditable) => {
     devtools(
       immer((set) => ({
         post,
-        images:
+        images: dedupeAddedImages(
           post?.images.map((data, index) => ({
-            type: 'added',
+            type: 'added' as const,
             data: { ...data, index: data.index ?? index },
-          })) ?? [],
+          })) ?? []
+        ),
         texts: post?.texts ?? [],
         isReordering: false,
         presetTitle: null,
@@ -123,7 +125,7 @@ const createContextStore = (post?: PostDetailEditable) => {
           }),
         setImages: (cb) =>
           set((state) => {
-            state.images = cb(state.images);
+            state.images = dedupeAddedImages(cb(state.images));
           }),
         updateImage: (id, cb) =>
           set((state) => {

@@ -46,6 +46,7 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../image-moderation-effects', () => ({
   applyBlockSideEffects,
+  writeBlockBlocklistEntry: vi.fn(async () => undefined),
   applyAcceptSideEffects: vi.fn(async () => undefined),
   applyVisibilitySideEffects: vi.fn(async () => undefined),
   refundAppealFee: vi.fn(async () => undefined),
@@ -767,5 +768,34 @@ describe('approving an appeal whose image turns held after the close', () => {
 
     expect(await appealStatus()).toBe('Approved');
     await nothingPaidOrTold();
+  });
+});
+
+describe('an explicit unblock of an image an account deletion blocked', () => {
+  it.each([
+    ['minor', 'minor'],
+    ['appeal', null],
+    ['csam', null],
+  ])('a recorded %s leaves the review flag %s, and the breadcrumbs go', async (review, flag) => {
+    await db.query(
+      `UPDATE "Image" SET "metadata" = jsonb_build_object(
+         'accountDeletionPriorIngestion', 'Scanned',
+         'accountDeletionPriorBlockedFor', NULL,
+         'accountDeletionPriorNeedsReview', $2::text,
+         'keep', 1)
+       WHERE "id" = $1`,
+      [OTHER_FLAG_REMOVED, review]
+    );
+
+    await acceptImage({ imageId: OTHER_FLAG_REMOVED, userId: 2, restoreRemoved: true });
+
+    const { rows } = await db.query<{
+      needsReview: string | null;
+      ingestion: string;
+      metadata: unknown;
+    }>(`SELECT "needsReview", "ingestion", "metadata" FROM "Image" WHERE "id" = $1`, [
+      OTHER_FLAG_REMOVED,
+    ]);
+    expect(rows[0]).toEqual({ needsReview: flag, ingestion: 'Scanned', metadata: { keep: 1 } });
   });
 });

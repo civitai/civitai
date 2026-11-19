@@ -19,7 +19,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const mocks = vi.hoisted(() => ({
   music: true,
-  deleteImageById: vi.fn(),
+  deleteImages: vi.fn(),
   createImageIngestionRequest: vi.fn(),
 }));
 
@@ -29,7 +29,7 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
-  deleteImageById: mocks.deleteImageById,
+  deleteImages: mocks.deleteImages,
 }));
 vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Orchestrator>()),
@@ -277,16 +277,14 @@ describe('setSongCover', () => {
   it('deletes the replaced cover through the image delete service, after the new one is linked', async () => {
     const first = await setCover(owner, { url: 'a1b2c3d4-0000-4000-8000-000000000001' });
     let linkedAtDelete: unknown;
-    mocks.deleteImageById.mockImplementation(async () => {
+    mocks.deleteImages.mockImplementation(async () => {
       linkedAtDelete = (await songMetadata()).coverImageId;
     });
 
     const second = await setCover(owner);
 
-    expect(mocks.deleteImageById).toHaveBeenCalledTimes(1);
-    expect(mocks.deleteImageById).toHaveBeenCalledWith(
-      expect.objectContaining({ id: first.id, deletedById: OWNER })
-    );
+    expect(mocks.deleteImages).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteImages).toHaveBeenCalledWith([first.id], { actor: { id: OWNER } });
     expect(linkedAtDelete).toBe(second.id);
     expect(await songMetadata()).toMatchObject({
       title: 'Midnight Arcade',
@@ -311,7 +309,7 @@ describe('setSongCover', () => {
 
       expect((await songMetadata()).coverImageId).toBe(cover.id);
     }
-    expect(mocks.deleteImageById).not.toHaveBeenCalled();
+    expect(mocks.deleteImages).not.toHaveBeenCalled();
   });
 
   it('refuses an upload key that already belongs to another image', async () => {
@@ -331,6 +329,6 @@ describe('setSongCover', () => {
     expect(cover.id).toBe(31);
     expect((await songMetadata()).coverImageId).toBe(31);
     expect(await rows('url = $1', [NEW_KEY])).toHaveLength(1);
-    expect(mocks.deleteImageById).not.toHaveBeenCalled();
+    expect(mocks.deleteImages).not.toHaveBeenCalled();
   });
 });

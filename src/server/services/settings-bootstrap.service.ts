@@ -16,6 +16,8 @@ import { env } from '~/env/server';
 import { env as clientEnv } from '~/env/client';
 import { logToAxiom } from '~/server/logging/client';
 import { eventViewerOf } from '~/server/events/event-viewer';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
+import { getRequestCredential } from '~/server/auth/request-credential';
 
 /**
  * The per-user settings bootstrap: the session plus every ambient seed a page needs on its
@@ -98,6 +100,16 @@ export async function resolveSettingsBootstrapSeeds(
   // The nav banners and the event seeds both read the viewer's event cosmetic: one read each
   // per request, not one per member (event-cosmetic-reads.ts).
   const eventCosmeticReads: EventCosmeticReads = new Map();
+  // The session as this credential may use it: a moderator on a reduced key is not one here.
+  const viewerSession = session?.user
+    ? {
+        ...session,
+        user: withModeratorRightsFor(
+          session.user,
+          getRequestCredential({ context: credential ?? undefined })
+        )!,
+      }
+    : session;
   const eventUser = session?.user && {
     ...session.user,
     isModerator: !!credential && eventViewerOf({ ...credential, user: session.user }).isModerator,
@@ -193,7 +205,7 @@ export async function resolveSettingsBootstrapSeeds(
     navBanners,
     siteAlerts,
     eventSeeds,
-    session: bootstrapSession(session),
+    session: bootstrapSession(viewerSession),
   };
 }
 

@@ -125,7 +125,7 @@ export const remixAppRouter = router({
   admin: remixAppAdminRouter,
   list: remixAppProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
-    .query(() => listRemixApps()),
+    .query(({ ctx }) => listRemixApps(ctx)),
   quote: remixAppProcedure
     .use(quoteRateLimit)
     .meta({ requiredScope: TokenScope.AIServicesRead })

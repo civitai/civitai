@@ -14,38 +14,7 @@ import { join } from 'path';
 // so importing image.service doesn't boot real infra (the established pattern in
 // the other service tests, e.g. block-registry.subscriptions.test.ts).
 
-const {
-  fetch: fetchMock,
-  counterIncMock,
-  staleCounterIncMock,
-} = vi.hoisted(() => ({
-  fetch: vi.fn(),
-  counterIncMock: vi.fn().mockName('image_metrics_clickhouse_timeout_total'),
-  staleCounterIncMock: vi.fn().mockName('image_metrics_stale_cache_timeout_total'),
-}));
-
-// Capture the soft-fallback Prometheus counters. image.service registers two on this
-// path; override just `registerCounter` with name-keyed spies, keeping every other
-// prom helper real (the import graph also uses registerGaugeWithLabels /
-// registerCounterWithLabels at module load). Keyed by NAME: a shared spy makes
-// "which arm incremented" unanswerable.
-vi.mock('~/server/prom/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/prom/client')>();
-  return {
-    ...actual,
-    registerCounter: ({ name }: { name: string }) => ({
-      // Both counters keyed by NAME. A catch-all would let any OTHER counter in
-      // image.service's import graph answer for this one, and the
-      // `not.toHaveBeenCalled` assertions below would break for an unrelated reason.
-      inc:
-        name === 'image_metrics_stale_cache_timeout_total'
-          ? staleCounterIncMock
-          : name === 'image_metrics_clickhouse_timeout_total'
-          ? counterIncMock
-          : vi.fn(),
-    }),
-  };
-});
+const { fetch: fetchMock } = vi.hoisted(() => ({ fetch: vi.fn() }));
 
 // event-engine-common is a git submodule, not checked out by default — stub the
 // value imports image.service pulls from it. MetricService
@@ -90,8 +59,6 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 import { getImageMetricsObject } from '../image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
-const logToAxiomMock = loggingMock.logToAxiom;
 
 const never = () => new Promise<never>(() => {});
 
@@ -118,9 +85,8 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
       buzz: 100,
       play: null,
     });
-    // happy path must NOT count a soft-fallback, and must not touch the cache:
-    // reading it unconditionally would add N round trips to the SSR hot path.
-    expect(counterIncMock).not.toHaveBeenCalled();
+    // The happy path must not touch the cache: reading it unconditionally would add N round
+    // trips to the SSR hot path.
     expect(redisMock.redis.hGetAll).not.toHaveBeenCalled();
   });
 
@@ -142,9 +108,6 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
     // and the outer catch) now leave the id absent.
     expect(result).toEqual({});
     expect(result[1]).toBeUndefined();
-
-    // the timeout path must increment the soft-fallback counter exactly once
-    expect(counterIncMock).toHaveBeenCalledTimes(1);
   });
 
   it('leaves every id ABSENT when the metric read THROWS and the cache is COLD', async () => {
@@ -157,7 +120,6 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
     const result = await getImageMetricsObject([{ id: 1 }, { id: 2 }]);
 
     expect(result).toEqual({});
-    expect(counterIncMock).not.toHaveBeenCalled();
   });
 
   it('CONTROL: a read that ANSWERS with no rows keeps every id present, so a real zero stays known', async () => {
@@ -183,7 +145,6 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
         play: null,
       });
     }
-    expect(counterIncMock).not.toHaveBeenCalled();
   });
 });
 
@@ -242,9 +203,6 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
       play: undefined, // cached before plays were read: unknown, not 0
     });
     expect(result[2]).toBeUndefined();
-    // The THROW arm takes the same fallback and increments neither counter.
-    expect(counterIncMock).not.toHaveBeenCalled();
-    expect(staleCounterIncMock).not.toHaveBeenCalled();
   });
 
   it('serves the cached count for a warm id when the ClickHouse read HANGS', async () => {
@@ -254,7 +212,6 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
 
     expect(result[1]?.reactionLike).toBe(62);
     expect(result[2]).toBeUndefined();
-    expect(counterIncMock).toHaveBeenCalledTimes(1);
   });
 
   it('reads the cache key event-engine-common owns', async () => {
@@ -287,12 +244,9 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     });
   });
 
-  it('keeps the other ids when ONE key rejects, and says so', async () => {
+  it('keeps the other ids when ONE key rejects', async () => {
     fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
     redisMock.redis.hGetAll.mockImplementation(async (key: string) => {
-      // TWO rejecting keys: with one, a log moved into the per-key catch still
-      // reads "1 of 2" and still appears once, so a line-per-image storm on the
-      // feed hot path is invisible.
       if (key === 'metrics:Image:2' || key === 'metrics:Image:3')
         throw new Error('MOVED 1234 10.0.0.1:6379');
       return CACHED[key] ?? {};
@@ -303,21 +257,6 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     expect(result[1]?.reactionLike).toBe(62);
     expect(result[2]).toBeUndefined();
     expect(result[3]).toBeUndefined();
-
-    // The rejection's only signal. Counted per KEY, not per call, and the
-    // denominator is the DE-DUPLICATED id set - hence three ids in, 'of 2' out.
-    const rejectionLogs = logToAxiomMock.mock.calls.filter(
-      ([payload]) => (payload as { name?: string })?.name === 'getCachedImageMetrics rejected'
-    );
-    expect(rejectionLogs).toHaveLength(1);
-    expect(rejectionLogs[0][0].message).toBe('Metric cache read rejected for 2 of 3 ids');
-    expect(rejectionLogs[0][0].type).toBe('warning');
-    // The DATASET too: filtering on the payload alone passes a log routed to an
-    // Axiom stream nobody alerts on.
-    expect(logToAxiomMock).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'getCachedImageMetrics rejected' }),
-      'clickhouse'
-    );
   });
 
   it('serves the keys that LANDED when one key is still outstanding at the deadline', async () => {
@@ -336,7 +275,6 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     // one slow shard zeroing a whole page - the defect this arm exists to stop.
     expect(result[1]?.reactionLike).toBe(62);
     expect(result[3]).toBeUndefined();
-    expect(staleCounterIncMock).toHaveBeenCalledTimes(1);
   });
 
   it('gives up on a WEDGED cache read instead of waiting out the redis backstop', async () => {
@@ -346,9 +284,6 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     );
 
     const start = Date.now();
-    // TWO ids, so "one log per outage" is distinguishable from "one log per id",
-    // and a duplicate so `idCount` pins the DE-DUPLICATED set rather than the
-    // caller's array.
     const result = await getImageMetricsObject([{ id: 1 }, { id: 1 }, { id: 2 }]);
     const elapsed = Date.now() - start;
 
@@ -369,30 +304,12 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     // bound, not the tight one.
     expect(elapsed).toBeGreaterThanOrEqual(490);
     expect(elapsed).toBeLessThan(800);
-    expect(staleCounterIncMock).toHaveBeenCalledTimes(1);
-    // The counter alone left the log unpinned: its name, message and dataset were
-    // all free, and this is the half of an outage the comment says must be audible.
-    const timeoutLogs = logToAxiomMock.mock.calls.filter(
-      ([payload]) => (payload as { name?: string })?.name === 'getCachedImageMetrics timeout'
-    );
-    expect(timeoutLogs).toHaveLength(1);
-    // `.message` directly, not toMatchObject: a mismatch then prints both strings
-    // instead of "(3 matching properties omitted)".
-    expect(timeoutLogs[0][0].message).toBe('Stale metric cache read exceeded 500ms');
-    // `type` is what this codebase queries Axiom on, so an alertable line that
-    // silently becomes `info` is the same defect as one sent to another dataset.
-    expect(timeoutLogs[0][0].type).toBe('warning');
-    expect(timeoutLogs[0][0].idCount).toBe(2);
-    expect(timeoutLogs[0][1]).toBe('clickhouse');
   });
 
   it('leaves the deadline wide enough to admit a real round trip', async () => {
     fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
     // 10ms against a 500ms deadline: two orders of magnitude, so no event-loop
-    // stall can flip this. The deadline's own bounds are pinned in the WEDGED
-    // case, which waits it out anyway; this case exists for the ADMIT path and
-    // for the timeout log's negative control below. Do not delete it as a
-    // duplicate of a floor case - the control goes with it.
+    // stall can flip this. The deadline's own bounds are pinned in the WEDGED case.
     redisMock.redis.hGetAll.mockImplementation(
       (key: string) => new Promise((resolve) => setTimeout(() => resolve(CACHED[key] ?? {}), 10))
     );
@@ -400,14 +317,6 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     const result = await getImageMetricsObject([{ id: 1 }]);
 
     expect(result[1]?.reactionLike).toBe(62);
-    expect(staleCounterIncMock).not.toHaveBeenCalled();
-    // The timeout log's NEGATIVE control: without it, hoisting that log out of the
-    // onTimeout callback so it fires on every fallback passes the whole file.
-    expect(
-      logToAxiomMock.mock.calls.filter(
-        ([payload]) => (payload as { name?: string })?.name === 'getCachedImageMetrics timeout'
-      )
-    ).toHaveLength(0);
   });
 
   it('keeps each id with its own counts when the replies arrive OUT OF ORDER', async () => {

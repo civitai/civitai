@@ -179,7 +179,7 @@ describe('describeOutcome', () => {
 
 const picked = (id: string, key = id): PickedItem => ({
   question: { key: 'q', kind: 'rating', prompt: 'Rate it', options: [] },
-  item: { id, key, src: `cdn/${id}`, width: 1, height: 1 },
+  item: { id, key, src: `cdn/${id}`, width: 1, height: 1, live: `live-${id}` },
   banner: null,
   category: null,
 });
@@ -211,6 +211,13 @@ describe('createItemBuffer', () => {
     expect(buffer.next()?.item.id).toBe('a');
     expect(buffer.next()?.item.id).toBe('b');
     expect(buffer.next()).toBeNull();
+  });
+
+  it('drops the items whose live key is named, and returns their keys', () => {
+    const buffer = createItemBuffer();
+    fill(buffer, ['a', 'b', 'c']);
+    expect(buffer.dropLive(new Set(['live-a', 'live-c', 'live-x']))).toEqual(['a', 'c']);
+    expect(buffer.tokens()).toEqual(['b']);
   });
 
   it('asks to decode only the first three, and only once each', () => {

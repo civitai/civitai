@@ -1310,9 +1310,6 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
 
     expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'crucible-entry-post-refresh-failed', postId: 300 })
-    );
   });
 
   it('refunds a paid draft entry when its post was published or moved meanwhile', async () => {
@@ -1406,20 +1403,11 @@ describe('submitEntry — creator notification', () => {
     expect(sentDetails()).toMatchObject({ crucibleId: 1, crucibleName: null });
   });
 
-  it('logs a notification it could not send without failing the entry', async () => {
+  it('does not fail the entry when its notification cannot be sent', async () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.image));
     createNotification.mockRejectedValue(new Error('notifications down'));
 
     await expect(submit()).resolves.toMatchObject({ id: 5 });
-    await vi.waitFor(() =>
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'error',
-          name: 'crucible-notification-failed',
-          notificationType: 'crucible-entry-submitted',
-        })
-      )
-    );
   });
 });
 

@@ -8,8 +8,17 @@ import { xmlSafe } from '~/server/services/ncmec-xml';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
+/** How a held text came to be reviewed: the filing moderator's recorded read, or its hold decided on its own. */
+export const CSAM_REVIEW_ORIGINS = ['filer-read', 'individual-decision'] as const;
+export type CsamReviewOrigin = (typeof CSAM_REVIEW_ORIGINS)[number];
+
 /** A held text's review: a moderator read it before filing, or decided its hold on its own. */
-export type CsamContextReview = { byId: number; at: string };
+export type CsamContextReview = {
+  byId: number;
+  at: string;
+  /** Missing on captures stored before it was recorded. */
+  origin?: CsamReviewOrigin;
+};
 
 /** Text posted with a report's images, copied when the report is filed. */
 export type CsamContextText = {
@@ -99,7 +108,11 @@ function decisionReview(hold: CsamHoldRow): CsamContextReview | undefined {
   const meta = hold.meta as { reviewedDecision?: unknown } | null;
   if (hold.status !== 'Confirmed' || meta?.reviewedDecision !== true) return;
   if (!hold.decidedById || !hold.decidedAt) return;
-  return { byId: hold.decidedById, at: new Date(hold.decidedAt).toISOString() };
+  return {
+    byId: hold.decidedById,
+    at: new Date(hold.decidedAt).toISOString(),
+    origin: 'individual-decision',
+  };
 }
 
 type Scope = {
@@ -339,7 +352,11 @@ async function readsBy(
     const item = items.find((i) => i.id === row.entityId);
     if (!item || row.entityId === null || reads.has(row.entityId)) continue;
     if (item.heldSince && new Date(row.createdAt) < new Date(item.heldSince)) continue;
-    reads.set(row.entityId, { byId: moderatorId, at: new Date(row.createdAt).toISOString() });
+    reads.set(row.entityId, {
+      byId: moderatorId,
+      at: new Date(row.createdAt).toISOString(),
+      origin: 'filer-read',
+    });
   }
   return reads;
 }
@@ -403,12 +420,53 @@ export function reportedUserIdsOf(userId: number, details: unknown) {
   return ids;
 }
 
-/** Earlier captures are kept: a re-filing never replaces text already captured. */
-export function foldContextText(prior: unknown, added: CsamContextText[] | undefined) {
-  const kept = Array.isArray(prior) ? (prior as CsamContextText[]) : [];
-  const key = (c: CsamContextText) => `${c.source}:${c.id}`;
-  const seen = new Set(kept.map(key));
-  const merged = kept.concat((added ?? []).filter((c) => !seen.has(key(c))));
+/**
+ * Merges a filing's captures into a report's. A capture is added as its own entry unless its text
+ * equals the item's latest capture, so an item edited, or edited and changed back, keeps each text in
+ * order. When it equals the latest capture the report already held, `onIdentical` hears it once per
+ * item. An earlier capture changes only one way: a stored latest capture with no review takes the
+ * review of an identical capture whose review names a known origin (`CSAM_REVIEW_ORIGINS`), with its
+ * text and capture time kept.
+ */
+export function foldContextText(
+  prior: unknown,
+  added: CsamContextText[] | undefined,
+  onIdentical?: (capture: CsamContextText, reviewUpgrade?: CsamContextReview) => void
+) {
+  const merged = Array.isArray(prior) ? [...(prior as CsamContextText[])] : [];
+  const item = (c: CsamContextText) => `${c.source}:${c.id}`;
+  const latest = new Map<string, { capture: CsamContextText; stored: boolean }>();
+  const consider = (c: CsamContextText, stored: boolean) => {
+    const current = latest.get(item(c));
+    if (!current || c.capturedAt >= current.capture.capturedAt)
+      latest.set(item(c), { capture: c, stored });
+  };
+  for (const c of merged) consider(c, true);
+  const heard = new Set<string>();
+  for (const c of added ?? []) {
+    const current = latest.get(item(c));
+    if (current && current.capture.text === c.text) {
+      if (current.stored && !heard.has(item(c))) {
+        heard.add(item(c));
+        const review = c.reviewed;
+        const upgrade =
+          !current.capture.reviewed &&
+          review?.origin &&
+          (CSAM_REVIEW_ORIGINS as readonly string[]).includes(review.origin)
+            ? review
+            : undefined;
+        if (upgrade) {
+          const reviewed = { ...current.capture, reviewed: upgrade };
+          merged[merged.indexOf(current.capture)] = reviewed;
+          latest.set(item(c), { capture: reviewed, stored: true });
+        }
+        onIdentical?.(c, upgrade);
+      }
+      continue;
+    }
+    merged.push(c);
+    consider(c, false);
+  }
   return merged.length ? merged : undefined;
 }
 

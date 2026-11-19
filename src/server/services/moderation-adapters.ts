@@ -11,6 +11,7 @@ import {
   textScanWebSearchAdapters,
 } from '~/server/services/text-scan/adapter';
 import {
+  appDocTextScanAdapter,
   bountyEntryTextScanAdapter,
   collectionTextScanAdapter,
   imageCaptionTextScanAdapter,
@@ -46,6 +47,7 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   TrackLyrics: trackLyricsModerationAdapter,
   ServiceOffering: serviceOfferingModerationAdapter,
   PostText: postTextTextScanAdapter,
+  AppDoc: appDocTextScanAdapter,
   ...textScanShadowAdapters(),
   ...textScanWebSearchAdapters(),
   ...scamModerationAdapters,

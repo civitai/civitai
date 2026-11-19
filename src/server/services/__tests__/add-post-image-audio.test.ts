@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   submitTrackLyricsScan: vi.fn(async () => undefined),
   throwOnBlockedUserContent: vi.fn(),
   stageGenerationOutputImage: vi.fn(),
-  deleteImageById: vi.fn(async () => undefined),
+  deleteImages: vi.fn(async () => undefined),
   music: false,
 }));
 
@@ -105,7 +105,7 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/image.service', () => ({
   createImage: mocks.createImage,
   createImageResources: vi.fn(async () => undefined),
-  deleteImageById: mocks.deleteImageById,
+  deleteImages: mocks.deleteImages,
   deleteImageFromS3: vi.fn(),
   deleteImagesForModelVersionCache: vi.fn(),
   getImagesForPosts: vi.fn(),
@@ -554,7 +554,7 @@ describe('addPostImage — generated song cover', () => {
     expect(linkSql()).toContain('UPDATE "Image"');
     expect(linkSql()).toContain("jsonb_build_object('coverImageId'");
     expect(linkSql()).toContain(`AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'coverImageId')`);
-    expect(mocks.deleteImageById).not.toHaveBeenCalled();
+    expect(mocks.deleteImages).not.toHaveBeenCalled();
   });
 
   it("reads the workflow with the caller's own orchestrator token", async () => {
@@ -630,13 +630,13 @@ describe('addPostImage — generated song cover', () => {
   it('removes the cover row it made when the song gained a cover first, leaving one cover', async () => {
     dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
     await postFromGenerator();
-    expect(mocks.deleteImageById).toHaveBeenCalledWith({ id: 12, deletedById: 5 });
+    expect(mocks.deleteImages).toHaveBeenCalledWith([12], { actor: { id: 5 } });
   });
 
   it('removes the cover row when the link fails, and still posts the song', async () => {
     dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('db down'));
     await postFromGenerator();
-    expect(mocks.deleteImageById).toHaveBeenCalledWith({ id: 12, deletedById: 5 });
+    expect(mocks.deleteImages).toHaveBeenCalledWith([12], { actor: { id: 5 } });
     expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalled();
   });
 

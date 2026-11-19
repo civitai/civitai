@@ -2,18 +2,21 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { ComponentProps } from 'svelte';
+  import QuestionRules from '$lib/QuestionRules.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
   import { modal } from '$lib/modal';
   import '$lib/overlay.css';
 
   let {
     guide,
+    scrollToRules = false,
     first,
     message,
     submitting,
     submit,
   }: {
     guide: ComponentProps<typeof RatingGuide>['guide'];
+    scrollToRules?: boolean;
     /** The first-visit guide says so; a reopened one does not. */
     first: boolean;
     message: string | null;
@@ -22,6 +25,12 @@
   } = $props();
 
   let form = $state<HTMLFormElement>();
+  // scrollIntoView would also scroll the overlay and push the dialog's top out of view.
+  const scrollOnOpen = (node: HTMLElement, wanted: boolean) => {
+    const box = node.closest<HTMLElement>('.scroll');
+    if (!wanted || !box) return;
+    box.scrollTop += node.getBoundingClientRect().top - box.getBoundingClientRect().top - 16;
+  };
   // Escape is the same answer as the button: the guide is read.
   const close = () => {
     if (!submitting) form?.requestSubmit();
@@ -44,6 +53,8 @@
       <p class="intro">What each level means. Rate what the image shows, not what you would like to see.</p>
       <div class="rule" aria-hidden="true"><span class="gem"></span></div>
       <RatingGuide {guide} />
+      <div class="rule" aria-hidden="true"><span class="gem"></span></div>
+      <div use:scrollOnOpen={scrollToRules}><QuestionRules /></div>
     </div>
     <form class="footer" method="POST" action="?/dismissGuide" use:enhance={submit} bind:this={form}>
       {#if message}

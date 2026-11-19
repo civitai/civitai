@@ -96,16 +96,27 @@ const LOCK_TTL_S = 10 * 60;
 const MAX_STEPS = 6;
 
 const redisKeys = async () => {
-  const { REDIS_SYS_KEYS } = await import('~/server/redis/client');
+  const { REDIS_KEYS, REDIS_SYS_KEYS } = await import('~/server/redis/client');
   return {
     takedown: (slug: string) => `${REDIS_SYS_KEYS.BLOCKS.LIVE_POINTER_TAKEDOWN}:${slug}` as const,
-    lock: (slug: string) => `${REDIS_SYS_KEYS.BLOCKS.LIVE_POINTER_LOCK}:${slug}` as const,
-    dirty: (slug: string) => `${REDIS_SYS_KEYS.BLOCKS.LIVE_POINTER_DIRTY}:${slug}` as const,
+    lock: (slug: string) => `${REDIS_KEYS.BLOCKS.LIVE_POINTER_LOCK}:${slug}` as const,
+    dirty: (slug: string) => `${REDIS_KEYS.BLOCKS.LIVE_POINTER_DIRTY}:${slug}` as const,
   };
 };
 const sys = async () => (await import('~/server/redis/client')).sysRedis;
 const read = async <T>(p: Promise<T>) =>
   (await import('~/server/redis/client')).withSysReadDeadline(p);
+// The lock and the dirty mark are on the cache cluster, each command bounded like a sys read.
+const cluster = async <T>(
+  fn: string,
+  op: (client: typeof import('~/server/redis/client')['redis']) => Promise<T>
+) => {
+  const [{ redis }, { boundedClusterCall }] = await Promise.all([
+    import('~/server/redis/client'),
+    import('~/server/utils/cluster-window-count'),
+  ]);
+  return boundedClusterCall(fn, () => op(redis));
+};
 
 // The takedown key holds 'attempted' or 'confirmed'; any other value present reads as attempted.
 const redisStore: LivePointerStore = {
@@ -123,20 +134,28 @@ const redisStore: LivePointerStore = {
   clearTakedown: async (slug) => {
     await (await sys()).del((await redisKeys()).takedown(slug));
   },
-  acquire: async (slug) =>
-    !!(await read(
-      (await sys()).set((await redisKeys()).lock(slug), '1', { NX: true, EX: LOCK_TTL_S })
-    )),
+  acquire: async (slug) => {
+    const key = (await redisKeys()).lock(slug);
+    return !!(await cluster('livePointer.acquire', (r) =>
+      r.set(key, '1', { NX: true, EX: LOCK_TTL_S })
+    ));
+  },
   refresh: async (slug) => {
-    await (await sys()).set((await redisKeys()).lock(slug), '1', { XX: true, EX: LOCK_TTL_S });
+    const key = (await redisKeys()).lock(slug);
+    await cluster('livePointer.refresh', (r) => r.set(key, '1', { XX: true, EX: LOCK_TTL_S }));
   },
   release: async (slug) => {
-    await (await sys()).del((await redisKeys()).lock(slug));
+    const key = (await redisKeys()).lock(slug);
+    await cluster('livePointer.release', (r) => r.del(key));
   },
   markDirty: async (slug) => {
-    await (await sys()).set((await redisKeys()).dirty(slug), '1', { EX: LOCK_TTL_S });
+    const key = (await redisKeys()).dirty(slug);
+    await cluster('livePointer.markDirty', (r) => r.set(key, '1', { EX: LOCK_TTL_S }));
   },
-  takeDirty: async (slug) => (await (await sys()).del((await redisKeys()).dirty(slug))) > 0,
+  takeDirty: async (slug) => {
+    const key = (await redisKeys()).dirty(slug);
+    return (await cluster('livePointer.takeDirty', (r) => r.del(key))) > 0;
+  },
 };
 
 const defaultDeps: LiveUnpublishDeps = {

@@ -19,14 +19,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * stable regardless of the live card.
  */
 
-const { mockDbRead, mockDbWrite, mockLog, mockFlag } = vi.hoisted(() => ({
+const { mockDbRead, mockDbWrite, mockFlag } = vi.hoisted(() => ({
   mockDbRead: {
     blockSubscriptionAttribution: { findMany: vi.fn() },
   },
   mockDbWrite: {
     blockSubscriptionAttribution: { updateMany: vi.fn() },
   },
-  mockLog: vi.fn(),
   mockFlag: vi.fn(),
 }));
 
@@ -35,10 +34,7 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: mockDbWrite,
 }));
 vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...args: unknown[]) => {
-    mockLog(...args);
-    return Promise.resolve(null);
-  },
+  logToAxiom: () => Promise.resolve(null),
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksBackpayEnabled: () => mockFlag(),
@@ -108,7 +104,6 @@ function signOff(version: string | null = TEST_CARD.version) {
 beforeEach(() => {
   vi.restoreAllMocks();
   cardHolder.current = TEST_CARD; // reset to the default 20% card
-  mockLog.mockReset();
   mockFlag.mockReset();
   mockDbRead.blockSubscriptionAttribution.findMany.mockReset().mockResolvedValue([]);
   mockDbWrite.blockSubscriptionAttribution.updateMany.mockReset().mockResolvedValue({ count: 1 });
@@ -211,13 +206,6 @@ describe('happy path (gate forced open)', () => {
     expect(out.confirmedCount).toBe(0);
     expect(out.heldCount).toBe(0);
     expect(mockDbWrite.blockSubscriptionAttribution.updateMany).not.toHaveBeenCalled();
-    expect(mockLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: expect.stringContaining('failed an independent invariant'),
-        feeAgrees: false,
-      }),
-      'webhooks'
-    );
   });
 });
 

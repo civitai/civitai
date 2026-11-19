@@ -64,7 +64,7 @@ beforeAll(async () => {
       hash text, "userId" int NOT NULL, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "needsReview" text, type "MediaType" NOT NULL DEFAULT 'image', width int, height int, metadata jsonb,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb,
-      "modelRestricted" boolean NOT NULL DEFAULT false
+      "modelRestricted" boolean NOT NULL DEFAULT false, "blockedFor" text
     );
     INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview") VALUES
       (${CLEAN}, 'clean', ${CLEAN_AUTHOR}, 'Scanned', NULL),
@@ -80,6 +80,8 @@ beforeAll(async () => {
       (80, 'unrated', 8, 'Scanned', 0);
     INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "modelRestricted") VALUES
       (90, 'restricted-r', 9, 4, true), (100, 'restricted-pg', 10, 1, true);
+    INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevel", "blockedFor") VALUES
+      (120, 'block-level', 12, 'Scanned', 32, NULL), (130, 'block-reason', 13, 'Scanned', 1, 'tos');
   `);
 });
 afterAll(() => pg.close());
@@ -148,9 +150,11 @@ describe('servable profile pictures', () => {
       90,
       100,
       110,
+      120,
+      130,
     ]);
 
-    // Unscanned (Pending, Error), unrated, csam- and minor-held pictures are left out; a moderator's rating stands in
+    // Unscanned (Pending, Error), unrated, blocked, csam- and minor-held pictures are left out; a moderator's rating stands in
     // for a scan.
     expect(pictureUrls(pictures)).toEqual([
       'clean',

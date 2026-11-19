@@ -3,6 +3,7 @@ package modelfeed
 import (
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,7 @@ func TestBuildHighestRatedFirstPage(t *testing.T) {
 		mm."userId", CONCAT(mm."thumbsUpCount", '|', mm."downloadCount", '|', mm."modelId")::text as "cursorId"
 		FROM "ModelMetric" mm JOIN "Model" m ON m."id" = mm."modelId"
 		WHERE (mm."mode" IS NULL OR mm."mode" != 'Archived'::"ModelModifier")
+		AND (mm."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier")
 		AND (mm."poi" = false OR mm."userId" = $1)
 		AND NOT EXISTS (SELECT 1 FROM "TagsOnModels" tom WHERE tom."modelId" = m."id" AND tom."tagId" = ANY($2::int[]))
 		AND mm."status" = 'Published'::"ModelStatus"
@@ -190,7 +192,7 @@ func TestBuildFilters(t *testing.T) {
 		t.Error("archived: no mode clause")
 	}
 	want := []any{7, []int{4}, 7, 9, 8, []string{"Checkpoint", "LORA"}, cutoff, []string{"Sell"}, false, true, false, "Merge",
-		[]string{"LORA"}, []int{3}, 3, 11}
+		[]string{"LORA"}, []int{3}, 3, 11, 7}
 	if !reflect.DeepEqual(stmt.Args, want) {
 		t.Fatalf("args\n got  %#v\n want %#v", stmt.Args, want)
 	}
@@ -276,6 +278,7 @@ func TestDecreaseDate(t *testing.T) {
 func TestBuildCollection(t *testing.T) {
 	stmt := build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, ViewerID: 7, CollectionID: 42, CollectionTagID: 88, ExcludedUserIDs: []int{9}})
 	wantWhere := `WHERE (mm."mode" IS NULL OR mm."mode" != 'Archived'::"ModelModifier")
+		AND (mm."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier" OR mm."userId" = $7)
 		AND mm."status" = 'Published'::"ModelStatus"
 		AND mm."availability" != 'Private'::"Availability"
 		AND EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."modelId" = mm."modelId" AND ci."collectionId" = $1
@@ -287,7 +290,7 @@ func TestBuildCollection(t *testing.T) {
 	if got := norm(stmt.Text); !strings.Contains(got, norm(wantWhere)) {
 		t.Fatalf("SQL:\n got  %s\n want …%s…", got, norm(wantWhere))
 	}
-	if want := []any{42, 7, 88, []int{9}, 1, 3}; !reflect.DeepEqual(stmt.Args, want) {
+	if want := []any{42, 7, 88, []int{9}, 1, 3, 7}; !reflect.DeepEqual(stmt.Args, want) {
 		t.Fatalf("args %#v, want %#v", stmt.Args, want)
 	}
 	// Signed out: accepted items only, nothing bound for a viewer; no tag clause without a tag.
@@ -368,5 +371,50 @@ func TestBuildOfficialPinFilters(t *testing.T) {
 		if s := build(t, q).Text; strings.Contains(s, `mm."modelId" = ANY(`) || strings.Contains(s, `mm."modelId" != ALL(`) {
 			t.Fatalf("an id filter for no ids:\n%s", s)
 		}
+	}
+}
+
+// modelNotWithheldSql: a taken-down model is listed only to its owner and to moderators.
+func TestBuildTakenDown(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		q    PageQuery
+		want string // "" = no clause
+	}{
+		{"signed out", PageQuery{}, `(mm."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier")`},
+		// The viewer is bound last, renumbering nothing else.
+		{"signed in", PageQuery{ViewerID: 7}, `(mm."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier" OR mm."userId" = $3)`},
+		{"moderator", PageQuery{ViewerID: 8, IsModerator: true}, ""},
+	} {
+		c.q.Take, c.q.Sort, c.q.BrowsingLevel = 2, SortHighestRated, 1
+		stmt := build(t, c.q)
+		got := norm(stmt.Text)
+		if c.q.ViewerID != 0 && !c.q.IsModerator && stmt.Args[len(stmt.Args)-1] != c.q.ViewerID {
+			t.Errorf("%s: last arg %v, want the viewer %d", c.name, stmt.Args[len(stmt.Args)-1], c.q.ViewerID)
+		}
+		if c.want == "" {
+			if strings.Contains(got, "'TakenDown'") {
+				t.Errorf("%s: unexpected taken-down clause", c.name)
+			}
+		} else if !strings.Contains(got, c.want) {
+			t.Errorf("%s: missing %s", c.name, c.want)
+		}
+	}
+}
+
+// A cursored page of a multi-field DESC sort splits into UNION ALL branches, each with the WHERE:
+// the viewer must be bound in both, with no slot left for Postgres to reject.
+func TestBuildTakenDownSplitCursor(t *testing.T) {
+	stmt := build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, ViewerID: 7, Cursor: "50|10|3101002"})
+	if strings.Contains(stmt.Text, withheldViewerSlot) {
+		t.Fatal("unbound viewer slot left in the SQL")
+	}
+	n := strconv.Itoa(len(stmt.Args))
+	if stmt.Args[len(stmt.Args)-1] != 7 {
+		t.Fatalf("last arg %v, want the viewer 7", stmt.Args[len(stmt.Args)-1])
+	}
+	clause := `OR mm."userId" = $` + n + `)`
+	if got := strings.Count(norm(stmt.Text), clause); got != 2 {
+		t.Fatalf("%s appears %d times, want once per UNION branch:\n%s", clause, got, norm(stmt.Text))
 	}
 }

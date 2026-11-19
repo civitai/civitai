@@ -260,8 +260,8 @@ export function ImageDetailCarousel({
     <div ref={ref} className="relative flex min-h-0 flex-1 items-stretch justify-stretch">
       <Embla
         withControls={canNavigate}
-        // min-w-0: otherwise the mounted slides' content widths add up to the carousel's minimum
-        // width (three song stages side by side) and push it past the stage area.
+        // min-w-0 here and on each slide: a slide's content (a text slide's words, a song stage)
+        // must not widen the carousel or the slide past the stage.
         className="min-w-0 flex-1"
         onSlideChange={handleSlideChange}
         setEmbla={handleSetEmbla}
@@ -274,7 +274,6 @@ export function ImageDetailCarousel({
         <Embla.Viewport className="h-full touch-pan-y">
           <Embla.Container className="flex h-full">
             {(items ?? imageSlides.map(asImageItem)).map((item, i) => (
-              // min-w-0: a slide is the carousel's width, never its content's (a song stage's).
               <Embla.Slide
                 key={item.type === 'image' ? item.image.id : item.key}
                 index={i}

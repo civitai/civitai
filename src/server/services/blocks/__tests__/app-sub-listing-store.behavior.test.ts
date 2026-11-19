@@ -2,8 +2,9 @@ import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 
 // Booting PGlite (WASM Postgres) can exceed the default 10s hook timeout on a contended runner.
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -194,8 +195,7 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TABLE "User" (
       "id" integer PRIMARY KEY, "username" text, "image" text,
-      "bannedAt" timestamptz, "deletedAt" timestamptz
-    );
+      "bannedAt" timestamptz, "deletedAt" timestamptz, "profilePictureId" int);
     CREATE TABLE "Image" (
       "id" integer PRIMARY KEY, "url" text NOT NULL, "userId" integer NOT NULL,
       "nsfwLevel" integer NOT NULL DEFAULT 0, "ingestion" text NOT NULL DEFAULT 'Scanned',
@@ -845,6 +845,62 @@ describe('store catalog with sub-listings, executed', () => {
       })
     ).resolves.toMatchObject({ status: 'approved' });
     expect(childIds(await page()).sort()).toEqual([CHILD_A, CHILD_B]);
+  });
+});
+
+/**
+ * A store search the app index answers, with sub-listing cards on the page: the apps come from
+ * the index, the sub-listing cards from the real catalog read above, so every gate that read
+ * applies to a child still applies. The index is the only stand-in.
+ */
+describe('a store search answered by the app index, executed', () => {
+  const SEARCH = { kind: 'all', sort: 'name', limit: 48, query: 'gen' } as const;
+  const SFW_VIEWER = { ...BASE_OPTS, viewerBrowsingLevel: 1 };
+
+  beforeEach(() => {
+    setEnv({ APP_INDEX_URL: 'http://app-index.invalid/', APP_INDEX_SEARCH_COMPARE_SAMPLE: 0 });
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    // The index answers both on-site apps, in its own order.
+    vi.stubGlobal('fetch', async () =>
+      Response.json({
+        results: ['other-app', 'custom-generators'].map((slug) => ({
+          slug,
+          name: slug,
+          tagline: '',
+          iconUrl: '',
+          rating: 'g',
+        })),
+      })
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('merges the children the viewer may see, after the index apps', async () => {
+    const { listStoreGrid } = await import('~/server/services/blocks/app-index-search.service');
+    const res = await listStoreGrid(SEARCH, SFW_VIEWER, { indexSearch: true });
+    expect(res.search).toBe('index');
+    expect(ids(res.items).slice(0, 2)).toEqual([OTHER, PARENT]);
+    expect(childIds(res.items).sort()).toEqual([CHILD_A, CHILD_B]);
+  });
+
+  it('a child too mature for the viewer stays out of the merged page', async () => {
+    await holder.db.exec(
+      `UPDATE app_sub_listings SET content_rating = 'x' WHERE id = '${CHILD_A}'`
+    );
+    const { listStoreGrid } = await import('~/server/services/blocks/app-index-search.service');
+    const res = await listStoreGrid(SEARCH, SFW_VIEWER, { indexSearch: true });
+    expect(res.search).toBe('index');
+    expect(ids(res.items)).toEqual([OTHER, PARENT, CHILD_B]);
+  });
+
+  it('a child that does not match the search stays out of the merged page', async () => {
+    await holder.db.exec(`UPDATE app_sub_listings SET title = 'Moon Shot' WHERE id = '${CHILD_B}'`);
+    const { listStoreGrid } = await import('~/server/services/blocks/app-index-search.service');
+    const res = await listStoreGrid(SEARCH, SFW_VIEWER, { indexSearch: true });
+    expect(ids(res.items)).toEqual([OTHER, PARENT, CHILD_A]);
   });
 });
 

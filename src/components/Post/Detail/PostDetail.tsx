@@ -537,6 +537,7 @@ export function PostDetailContent({ postId, deferredSsr }: Props) {
                   images={images}
                   texts={postTexts}
                   authorId={post.user.id}
+                  linkedTextId={Number(query.text) || undefined}
                   isLoading={imagesLoading}
                   collectionItems={collectionItems}
                   isOwner={currentUser?.id === post.user.id}

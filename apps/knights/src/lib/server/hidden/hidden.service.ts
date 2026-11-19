@@ -86,6 +86,7 @@ function eligibleReferences(
     .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
     .where('r.questionKey', '=', questionKey)
     .where('q.active', '=', true)
+    .where('img.userId', 'is distinct from', userId)
     .$if(exclude.length > 0, (qb) => qb.where('r.id', 'not in', exclude))
     .where((eb) =>
       eb.not(

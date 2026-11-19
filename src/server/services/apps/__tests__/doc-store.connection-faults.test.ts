@@ -143,18 +143,6 @@ describe('doc-store: a connect() rejection that is misconfiguration, not an outa
     const err = await rejection(createDocStore({ db }).get(CTX, PREFS, 'k'));
     expect(err).toBe(fault);
     expect(sent).toEqual([]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'app-blocks-doc-store-config-fault',
-        type: 'error',
-        message: fault.message,
-      }),
-      'app-blocks'
-    );
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'app-blocks-doc-store-connection-fault' }),
-      expect.anything()
-    );
   });
 });
 

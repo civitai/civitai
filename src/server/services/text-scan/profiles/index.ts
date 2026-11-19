@@ -16,3 +16,4 @@ import './image-caption.profile';
 import './track-lyrics.profile';
 import './service-offering.profile';
 import './post-text.profile';
+import './app-doc.profile';

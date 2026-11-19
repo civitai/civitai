@@ -29,6 +29,8 @@ export const YESNO_QUESTION_MAX = 600;
 export const MODERATOR_RETIRED = 'moderator-retired';
 export const MODERATION_META_KEY = 'moderation';
 export const REWORD_OF_META_KEY = 'rewordOf';
+/** The image's level when a rating item went to the Inquisitors: what "pushed down" was measured from. */
+export const ESCALATED_FROM_LEVEL_META_KEY = 'escalatedFromLevel';
 
 export type ModerationNote = { action: string; by: number; note: string; at: string };
 

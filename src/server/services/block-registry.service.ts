@@ -1,3 +1,4 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
@@ -3462,7 +3463,7 @@ export class BlockRegistry {
         oc.name AS app_name,
         u.id AS owner_user_id,
         u.username AS owner_username,
-        u.image AS owner_image,
+        ${Prisma.raw(fallbackUserImageColumn)} AS owner_image,
         ab.manifest,
         ab.status,
         ab.content_rating,

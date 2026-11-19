@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
+import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
 import { dbRead, dbWrite } from './db';
 import { dropBlockedImageDeleteQueue } from './blocked-image-queue';
 import { insertModActivityBatch, recordModActivity } from './mod-activity';
@@ -10,6 +11,7 @@ import {
   applyAcceptSideEffects,
   applyVisibilitySideEffects,
   CsamBlocklistWriteError,
+  writeBlockBlocklistEntry,
   refundAppealFee,
   notifyAppealResolved,
   emailAppealResolution,
@@ -33,7 +35,7 @@ import {
   setAsideCounts,
   setAsideState,
 } from './csam-queue-set-aside';
-import type { Kysely, Transaction } from 'kysely';
+import type { Kysely, RawBuilder, Transaction } from 'kysely';
 import { queueModelsForImageChildTagChanges } from './image-models-reindex';
 import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
@@ -55,9 +57,10 @@ const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("need
 )))`;
 
 /**
- * The two `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
+ * The three `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
  * out here for the same reason `BLOCKED_REASON_MODERATED` is: this app does not import from the
- * main app's `src/`. Canonical definitions are `PRIOR_INGESTION_KEY` / `PRIOR_BLOCKED_FOR_KEY` in
+ * main app's `src/`. Canonical definitions are `PRIOR_INGESTION_KEY` / `PRIOR_BLOCKED_FOR_KEY` /
+ * `PRIOR_NEEDS_REVIEW_KEY` in
  * `src/server/utils/image-removal-mode.ts`, and the drift between the two spellings is pinned by
  * `src/server/services/__tests__/account-deletion-marker-clearing.test.ts`.
  *
@@ -67,6 +70,22 @@ const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("need
  */
 const ACCOUNT_DELETION_PRIOR_INGESTION_KEY = 'accountDeletionPriorIngestion';
 const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
+const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
+
+/** `needsReview` for a row a moderator lifts (an unblock or an approved appeal): the review a grace
+ *  block recorded, when lifting does not settle it, else none. The main app's `reviewKeptWhenLiftedSql`. */
+const reviewKeptWhenLifted = sql<string | null>`(CASE
+  WHEN "metadata"->>${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${[
+  ...REVIEWS_KEPT_WHEN_LIFTED,
+]}::text[])
+  THEN "metadata"->>${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text
+END)`;
+
+/** The grace-block breadcrumbs off `metadata`; a non-object value is left as it is. */
+const withoutGraceMarkers = (metadata: RawBuilder<unknown>) =>
+  sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
+    THEN (${metadata}) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text
+    ELSE ${metadata} END)`;
 
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
@@ -195,16 +214,18 @@ export async function acceptImage({
 
   // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
   // metadata=NULL — both `-` and `||` NULL-propagate, silently dropping the stamp otherwise.
-  const metadataExpr =
+  // The account-deletion breadcrumbs come off too: a lifted row is not the deletion's to put back.
+  const metadataExpr = withoutGraceMarkers(
     nr === 'remixSource'
       ? sql`(COALESCE("metadata", '{}'::jsonb) - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
-      : sql`"metadata" - 'ruleId' - 'ruleReason'`;
+      : sql`"metadata" - 'ruleId' - 'ruleReason'`
+  );
 
   // Refused in the statement itself, not off the replica read above.
   const updated = await dbWrite
     .updateTable('Image')
     .set({
-      needsReview: null,
+      needsReview: reviewKeptWhenLifted,
       blockedFor: null,
       ingestion: 'Scanned',
       metadata: metadataExpr,
@@ -401,8 +422,8 @@ export async function blockImage({
         //     NULL-propagates too and would drop the stamp.
         metadata:
           img.needsReview === 'remixSource'
-            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text) || '{"remixSourceReviewed": true}'::jsonb`
-            : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text`,
+            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text) || '{"remixSourceReviewed": true}'::jsonb`
+            : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text`,
       })
       .where('id', '=', imageId)
       // Already removed with only the review flag left: blocking again would only notify the uploader a
@@ -415,6 +436,8 @@ export async function blockImage({
     const state = await tx
       .selectFrom('Image')
       .select([
+        // Read here, not off the replica read above, which may not have the scan's hash yet.
+        pHashText,
         HELD_IMAGE.as('held'),
         sql<boolean>`"blockedFor" = ${BLOCKED_REASON_CSAM}`.as('removedForCsam'),
         sql<boolean>`"needsReview" = ${FLAG_KEPT_THROUGH_BLOCK}`.as('underReview'),
@@ -443,7 +466,20 @@ export async function blockImage({
         .execute();
     return { updated: !!updated, state };
   });
-  if (!updated) return state?.held ? { skipped: true } : {};
+  const blockRow = { ...img, pHash: state?.pHash ?? null };
+  if (!updated) {
+    // Removed for CSAM already: a re-block repeats only its CSAM entry, which is how a moderator
+    // retries one that failed (CSAM_BLOCKLIST_RETRY). A failure again throws as on a first block.
+    // A TOS entry is best-effort, with no retry to honour.
+    if (state?.removedForCsam)
+      await writeBlockBlocklistEntry(blockRow, { imageId, actorUserId: userId, csam: true }).catch(
+        (e: unknown) => {
+          if (e instanceof CsamBlocklistWriteError) e.skipped = true;
+          throw e;
+        }
+      );
+    return state?.held ? { skipped: true } : {};
+  }
   const blocked = state!;
   await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
@@ -452,8 +488,8 @@ export async function blockImage({
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
 
-  // `img` is the pre-block row (read above, before the update).
-  await applyBlockSideEffects(img, {
+  // The pre-block row (read above, before the update), with the hash read under the block.
+  await applyBlockSideEffects(blockRow, {
     imageId,
     actorUserId: userId,
     ip,
@@ -812,7 +848,14 @@ export async function resolveImageAppeal({
   if (status === 'Approved') {
     const { numUpdatedRows } = await dbWrite
       .updateTable('Image')
-      .set({ needsReview: null, blockedFor: null, ingestion: 'Scanned' })
+      // On a row an account deletion blocked, the approval settles the appeal but not a review the
+      // deletion recorded, which comes back.
+      .set({
+        needsReview: reviewKeptWhenLifted,
+        blockedFor: null,
+        ingestion: 'Scanned',
+        metadata: withoutGraceMarkers(sql`"metadata"`),
+      })
       .where('id', '=', imageId)
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
       .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)

@@ -26,6 +26,7 @@ beforeAll(async () => {
       ingestion "ImageIngestionStatus" NOT NULL,
       "blockedFor" text,
       "nsfwLevel" int NOT NULL DEFAULT 0,
+      metadata jsonb,
       "updatedAt" timestamp(3)
     );
   `);

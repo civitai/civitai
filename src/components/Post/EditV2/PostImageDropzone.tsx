@@ -78,7 +78,7 @@ export function PostImageDropzone({
   // picks: an import, or an in-memory copy taken at the pick, fails only on its own content.
   const pickedFilesRef = useRef(new WeakSet<File>());
   const [unreadablePicks, setUnreadablePicks] = useState(0);
-  const { files, canAdd, remaining, error, upload, progress, loading } = useMediaUpload<{
+  const { files, canAdd, remaining, reserved, error, upload, progress, loading } = useMediaUpload<{
     postId: number;
   }>({
     count: images.length,
@@ -260,7 +260,7 @@ export function PostImageDropzone({
         Import from Generator
       </Button>
       <Text size="sm" c={remaining === 0 ? 'orange' : 'dimmed'} ta="center" aria-live="polite">
-        {images.length} / {maxItems} files
+        {images.length + reserved} / {maxItems} files
       </Text>
       {!!files.length && showProgress && <Progress value={progress} animated size="lg" />}
       {!files.length && <UploadNotice />}

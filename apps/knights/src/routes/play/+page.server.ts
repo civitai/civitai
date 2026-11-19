@@ -1,7 +1,6 @@
 import { type ActionFailure, fail } from '@sveltejs/kit';
 import { isBlockReason } from '$lib/block-reasons';
 import { db } from '$lib/server/db';
-import { getDailyStatus } from '$lib/server/daily/daily.service';
 import { openItem } from '$lib/server/feed-token';
 import { imageUrl, THUMBNAIL_WIDTH } from '$lib/server/image-url';
 import { metrics } from '$lib/server/metrics';
@@ -15,7 +14,6 @@ import {
 import { DISMISS_FAILED } from '$lib/notice-copy';
 import { consented, consentFailure, requireConsent, requireMember } from '$lib/server/membership';
 import { getPlayerStatus } from '$lib/server/player-status';
-import { goldForRank } from '$lib/server/progression/config';
 import { isRank, RANK_RULES } from '$lib/server/ranks';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
@@ -32,6 +30,9 @@ import { seenStore } from '$lib/server/seen-runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { recordSkip, skippedFor } from '$lib/server/skips';
 import { creditLateJudgment } from '$lib/server/queue/vote-record';
+import { stagesWorkedBy } from '$lib/server/queue/ranks';
+import { announceMoves, itemStages, playDaily } from '$lib/server/live/announce';
+import { signalsEnabled } from '$lib/server/live/signals';
 import { STALE_REASONS } from './optimistic';
 import { railFor } from '$lib/server/rail-runtime';
 import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
@@ -63,6 +64,7 @@ const REJECTION_TEXT: Record<RejectReason, string> = {
   'bad-answer': 'That answer is not on offer.',
   'bad-block-reason': BLOCK_REASON_TEXT,
   'already-voted': 'You have already judged this one.',
+  'own-image': 'You cannot judge your own image.',
   'not-open': 'This one has already been settled.',
   unavailable: 'This one is not open for judging.',
   'no-weight': 'Your standing is too low for your judgment to count yet.',
@@ -166,7 +168,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   const mutedApprentice = muted && status.rank === 'Acolyte';
   const [picked, daily, rail, apprenticeMeter] = await Promise.all([
     lockedUntil || muted || resetPending ? null : pickItem(locals.user.id, status.rank, skipped),
-    getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, level: status.level, now }),
+    playDaily(db, locals.user.id, status, now),
     railFor(locals.user.id, now, status.fervor),
     mutedApprentice
       ? getApprenticeProgress(db, locals.user.id).then(progressPayload)
@@ -180,11 +182,8 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     banner: picked?.banner ?? null,
     category: picked?.category ?? null,
     ...common,
-    // `goldPerVote` lets the rail move today's gold the moment a vote is cast (`withVotesSent`).
-    daily: {
-      ...daily,
-      goldPerVote: isRank(status.rank) ? goldForRank(status.rank, status.rating.belowBar) : 0,
-    },
+    daily,
+    live: { at: now.getTime(), stages: stagesWorkedBy(status.rank) },
     rail,
     resetPending,
     apprenticeMeter,
@@ -304,6 +303,10 @@ async function creditLate(userId: number, itemId: number, answer: string): Promi
 
 async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { locals }: VoteEvent) {
   try {
+    const before =
+      ref.kind === 'hidden' || !(await signalsEnabled().catch(() => false))
+        ? []
+        : await itemStages(db, [itemId]).catch(() => []);
     const result =
       ref.kind === 'hidden'
         ? await answerHiddenCheck(
@@ -335,6 +338,7 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
             },
             queueDeps
           );
+    void announceMoves(db, before);
     if (result.status === 'limited') {
       refused('limited', { ref, itemId }, locals.user.id);
       return limitedFailure(result.until);

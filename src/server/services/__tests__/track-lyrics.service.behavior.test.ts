@@ -35,7 +35,8 @@ const SCHEMA = `
     id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
     "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
     "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}', "scanJobs" jsonb,
-    "acceptableMinor" boolean NOT NULL DEFAULT false
+    "acceptableMinor" boolean NOT NULL DEFAULT false, minor boolean,
+    "modelRestricted" boolean NOT NULL DEFAULT false
   );
   CREATE TABLE "TrackLyrics" ("imageId" int PRIMARY KEY, text text NOT NULL, lines jsonb NOT NULL);
   CREATE TABLE "Post" (

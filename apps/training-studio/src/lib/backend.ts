@@ -69,6 +69,10 @@ export interface StudioBackend {
   /** The server's mature count for these dataset blobs under the v2 rating, which also starts rating
    *  the rest. Absent, or `enabled: false`, means Review counts from the upload rating. */
   datasetRating?(blobIds: string[]): Promise<DatasetRatingCount>;
+  /** The training ecosystems whose base model licence this user has yet to accept. Absent means
+   *  Review doesn't ask, and the submit's own refusal decides. */
+  pendingLicenses?(): Promise<string[]>;
+  acceptLicense?(ecosystem: string): Promise<void>;
   /** Where each of these dataset files stands for training. Absent, or `enabled: false`, means Review
    *  doesn't wait and the submit's own refusal decides. */
   datasetReadiness?(blobIds: string[]): Promise<ReadinessProbe>;

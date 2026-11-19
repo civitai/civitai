@@ -81,6 +81,18 @@ export type FliptFeatureFlags = {
    * state (e.g. verifying a rollout) rather than a developer's `.env`.
    */
   getBoolean(flag: string, entityId?: string, context?: Record<string, string>): Promise<boolean>;
+  /**
+   * Boolean evaluation honoring local overrides that says when it could NOT read the flag: `null`
+   * when no client is available (Flipt unreachable since start and no usable snapshot) or the
+   * evaluation throws (an unknown flag key). For a gate that must fail CLOSED, which `isEnabled`
+   * cannot express because it answers `false` for both "off" and "unreadable". Waits for the first
+   * init attempt, as `isEnabled` does.
+   */
+  readBoolean(
+    flag: string,
+    entityId?: string,
+    context?: Record<string, string>
+  ): Promise<boolean | null>;
   /** Variant evaluation honoring local overrides. `null` when there's no match or Flipt is unreachable. */
   getVariant(
     flag: string,
@@ -493,6 +505,18 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
         return evalBooleanCached(client, flag, entityId, context);
       } catch {
         return false;
+      }
+    },
+
+    async readBoolean(flag, entityId = 'global', context = {}) {
+      if (localOverrides[flag] !== undefined) return localOverrides[flag] === 'on';
+      const client = await getInstance();
+      if (!client) return null;
+      try {
+        return evalBooleanCached(client, flag, entityId, context);
+      } catch (e) {
+        onEvalError(e, flag);
+        return null;
       }
     },
 

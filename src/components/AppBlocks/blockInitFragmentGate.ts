@@ -275,6 +275,36 @@ export const BLOCK_HOST_LOCAL_PREVIEW_STORAGE: Record<BlockHostSurface, boolean>
 };
 
 /**
+ * The BLOCK_INIT `capabilities` entry by which a host says it COLLECTS the frame's non-fatal
+ * errors. A new enough SDK (`REVIEW_CONSOLE_MIN_SDKS`) then forwards uncaught errors, unhandled
+ * rejections and `console.error` as `BLOCK_ERROR { fatal: false, source, stack?, at }`; an older
+ * one ignores it. A wire contract with the SDK: compared there as this exact string.
+ */
+export const BLOCK_ERRORS_CAPABILITY = 'blockErrors:v1';
+
+/**
+ * Does this surface's host COLLECT the block's non-fatal errors, and so advertise
+ * {@link BLOCK_ERRORS_CAPABILITY}? Keyed on the SURFACE, like the storage record below.
+ *
+ *  - `review-preview` is `true`: the review page keeps them in memory for the moderator's own
+ *    session (`ReviewConsole`). Nothing is stored or sent anywhere. The same surface also mounts
+ *    the queue modal's preview and the standalone review preview page, which have no console:
+ *    there a new SDK's reports reach the host and are dropped, as every other surface's are.
+ *  - `dev-tunnel` is `false` although its host collects them (`useDevPreviewErrorReporter`): the
+ *    SDK already sends them there on `storageMode: 'local-preview'`, so listing the capability
+ *    too would be a second signal for the same thing.
+ *  - every other surface is `false`: nothing there would receive them, so a published app must
+ *    not be asked to send them.
+ */
+export const BLOCK_HOST_ERROR_REPORTS: Record<BlockHostSurface, boolean> = {
+  'model-slot': false,
+  'page-run': false,
+  'dev-tunnel': false,
+  'review-preview': true,
+  'private-run': false,
+};
+
+/**
  * The `storageMode` fragment of a BLOCK_INIT payload for this surface: the key is
  * present only where {@link BLOCK_HOST_LOCAL_PREVIEW_STORAGE} says so, and
  * ABSENT (not `undefined`, which postMessage would still deliver as a key)

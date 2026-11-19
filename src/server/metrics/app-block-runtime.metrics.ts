@@ -741,6 +741,7 @@ type Bundle = {
   mediaVerdictTotal: Counter<string>;
   mediaServingDegradedTotal: Counter<string>;
   mediaInputRefusedTotal: Counter<string>;
+  unlockChargedNotReleasedTotal: Counter<string>;
   outputTruncatedTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
@@ -752,6 +753,8 @@ type Bundle = {
   docStoreErrorsTotal: Counter<string>;
   storageOpsTotal: Counter<string>;
   docStoreEnabled: Gauge<string>;
+  storageHookCallsTotal: Counter<string>;
+  storageHookCallDurationSeconds: Histogram<string>;
   postSubjectRefusalsTotal: Counter<string>;
   rateLimitRefusalsTotal: Counter<string>;
   docStoreUnchangedWritesTotal: Counter<string>;
@@ -1151,6 +1154,15 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['phase']
   );
 
+  // Beside the `app-block-unlock-charged-not-released` WARN: an unlock that charged and did not
+  // release the output. Expected flat zero; published at 0 by seedAppBlockMediaMetrics.
+  const unlockChargedNotReleasedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_unlock_charged_not_released_total',
+    'App Block output unlocks that charged and did not release the output, one per unlock, by read_back (ok = the read-back after the lift succeeded and the output was not released | failed = the read-back itself failed, so release is unknown). Expected to be zero. Every label is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['read_back']
+  );
+
   const outputTruncatedTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_output_truncated_total',
@@ -1351,6 +1363,26 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_doc_store_enabled',
     'Whether this process can serve the App Blocks document store: 1 = its connection is configured and the role check passed; 0 = no connection configured, the role bypasses row-level security (every call answers storage_disabled), or the role has not yet been read successfully. Evaluated on every scrape',
     []
+  );
+
+  // One increment per permission-hook decision the document-store write path asked for
+  // (apps/doc-store-hook.ts), by outcome. No app label on this side: the runner's own
+  // `storage_hook_runner_calls_total` carries the app. `unavailable` and `offline` are the
+  // fail-closed outcomes (the write was refused 503); everything else is the hook's own answer.
+  const storageHookCallsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_storage_hook_calls_total',
+    'App Storage permission-hook decisions on the write path, by outcome: allow, denied (the hook refused), error|timeout|oom|stack_overflow|invalid_result (the hook failed; the write is refused), unavailable (the runner could not be reached or answered unverifiably; refused, retryable), offline (the per-app runner-offline flag is on; refused without a call)',
+    ['outcome']
+  );
+  // Wall time of one runner round trip, as the write path saw it, by the same outcome (no
+  // observation for `offline`, which makes no call).
+  const storageHookCallDurationSeconds = getOrCreateHistogram(
+    reg,
+    'civitai_app_block_storage_hook_call_duration_seconds',
+    'Wall time of one permission-hook runner call from the document-store write path, by outcome',
+    ['outcome'],
+    [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2]
   );
 
   // ── PER-APP RATE-LIMIT REFUSALS, EVERY APP BLOCKS LIMITER ────────────────────
@@ -1621,6 +1653,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     mediaVerdictTotal,
     mediaServingDegradedTotal,
     mediaInputRefusedTotal,
+    unlockChargedNotReleasedTotal,
     outputTruncatedTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
@@ -1632,6 +1665,8 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     docStoreErrorsTotal,
     storageOpsTotal,
     docStoreEnabled,
+    storageHookCallsTotal,
+    storageHookCallDurationSeconds,
     postSubjectRefusalsTotal,
     rateLimitRefusalsTotal,
     docStoreUnchangedWritesTotal,
@@ -1923,6 +1958,7 @@ export function recordBlockMediaVerdict(
 
 export const BLOCK_MEDIA_SERVING_DEGRADED_REASONS = ['eval_failed', 'no_session'] as const;
 export const BLOCK_MEDIA_INPUT_REFUSED_PHASES = ['estimate', 'submit'] as const;
+export const BLOCK_UNLOCK_READ_BACK_OUTCOMES = ['ok', 'failed'] as const;
 
 /** Fail-soft emit of one degraded App Block serve decision (see the counter). */
 export function recordBlockMediaServingDegraded(
@@ -1946,17 +1982,30 @@ export function recordBlockMediaInputRefused(
   }
 }
 
+/** Fail-soft emit of one unlock that charged and did not release the output (see the counter). */
+export function recordBlockUnlockChargedNotReleased(readBackFailed: boolean): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().unlockChargedNotReleasedTotal.inc({
+      read_back: readBackFailed ? 'failed' : 'ok',
+    });
+  } catch {
+    /* instrument-only */
+  }
+}
+
 /**
  * Publishes the host-media safety counters at 0 for every label, so a series that never fired is
  * distinguishable from one that is not deployed. Idempotent; /api/metrics calls it on every scrape.
  */
 export function seedAppBlockMediaMetrics(reg: Registry = client.register): void {
   try {
-    const { mediaServingDegradedTotal, mediaInputRefusedTotal } =
+    const { mediaServingDegradedTotal, mediaInputRefusedTotal, unlockChargedNotReleasedTotal } =
       ensureRegisterAppBlockRuntimeMetrics(reg);
     for (const reason of BLOCK_MEDIA_SERVING_DEGRADED_REASONS)
       mediaServingDegradedTotal.inc({ reason }, 0);
     for (const phase of BLOCK_MEDIA_INPUT_REFUSED_PHASES) mediaInputRefusedTotal.inc({ phase }, 0);
+    for (const read_back of BLOCK_UNLOCK_READ_BACK_OUTCOMES)
+      unlockChargedNotReleasedTotal.inc({ read_back }, 0);
   } catch {
     // Seeding is a readability nicety; losing it must not cost the scrape.
   }
@@ -2117,7 +2166,37 @@ const DOC_STORE_SEEDED_ERROR_CODES: Partial<Record<StorageApiCode, readonly DocS
   service_unavailable: DOC_STORE_ENDPOINTS,
   internal_error: DOC_STORE_ENDPOINTS,
   moderation_unavailable: ['storage_write', 'storage_tally'],
+  // Raised only by the permission-hook gate, on a document write or a tally.
+  hook_unavailable: ['storage_write', 'storage_tally'],
 };
+
+/** Every outcome of `civitai_app_block_storage_hook_calls_total`, published at 0. */
+export const STORAGE_HOOK_CALL_OUTCOMES = [
+  'allow',
+  'denied',
+  'error',
+  'timeout',
+  'oom',
+  'stack_overflow',
+  'invalid_result',
+  'unavailable',
+  'offline',
+] as const;
+export type StorageHookCallOutcome = (typeof STORAGE_HOOK_CALL_OUTCOMES)[number];
+
+/**
+ * One permission-hook decision on the write path. `seconds` is the runner round trip (omitted
+ * when no call was made). Total.
+ */
+export function recordStorageHookCall(outcome: StorageHookCallOutcome, seconds?: number): void {
+  try {
+    const m = ensureRegisterAppBlockRuntimeMetrics();
+    m.storageHookCallsTotal.inc({ outcome });
+    if (seconds !== undefined) m.storageHookCallDurationSeconds.observe({ outcome }, seconds);
+  } catch {
+    /* instrument-only — a metrics error must never change a hook decision */
+  }
+}
 
 /** One error envelope sent by the document-store route. Total. */
 export function recordDocStoreError(endpoint: DocStoreEndpoint, code: StorageApiCode): void {
@@ -2189,6 +2268,8 @@ export function seedAppBlockDocStoreMetrics(reg: Registry = client.register): vo
     for (const op of STORAGE_TALLY_OPS) {
       for (const route of STORAGE_TALLY_ROUTES) storageOpsTotal.inc({ op, route }, 0);
     }
+    const { storageHookCallsTotal } = ensureRegisterAppBlockRuntimeMetrics(reg);
+    for (const outcome of STORAGE_HOOK_CALL_OUTCOMES) storageHookCallsTotal.inc({ outcome }, 0);
   } catch {
     // Seeding is a readability nicety; losing it must not cost the scrape.
   }

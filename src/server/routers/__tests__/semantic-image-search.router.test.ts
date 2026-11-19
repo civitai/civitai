@@ -148,6 +148,7 @@ describe('semanticImageSearch router — own images without the flag', () => {
       userIds: [7],
     });
     expect(h.search.mock.calls[0][0].refuseNarrowing).toBe(true);
+    expect(h.search.mock.calls[0][0].tagMatchesFirst).toBe(true);
   });
 
   it('logs the search as it ran, not as it was asked', async () => {
@@ -204,6 +205,7 @@ describe('semanticImageSearch router — own images without the flag', () => {
     const { input } = h.search.mock.calls[0][0];
     expect(input.usernames).toEqual(['vixen']);
     expect(h.search.mock.calls[0][0].refuseNarrowing).toBe(false);
+    expect(h.search.mock.calls[0][0].tagMatchesFirst).toBe(false);
     expect(input.userIds).toBeUndefined();
   });
 });

@@ -34,7 +34,7 @@ func TestParseFallsBackOnUnportedShapes(t *testing.T) {
 	cases := map[string]map[string]any{
 		"input-hidden":       {"hidden": true},
 		"input-username":     {"username": "x"},
-		"input-tags":         {"tags": []any{num("1")}},
+		"input-reactions":    {"reactions": []any{"Like"}},
 		"input-sort":         {"sort": "Random"},
 		"input-include":      {"include": []any{"cosmetics", "tags"}},
 		"input-cursor":       {"cursor": true},
@@ -47,7 +47,7 @@ func TestParseFallsBackOnUnportedShapes(t *testing.T) {
 		}
 	}
 	// Falsy values of unsupported keys are the same as absent.
-	if _, err := Parse(map[string]any{"hidden": false, "tags": []any{}, "username": ""}); err != nil {
+	if _, err := Parse(map[string]any{"hidden": false, "reactions": []any{}, "username": ""}); err != nil {
 		t.Fatalf("falsy keys must not fall back: %v", err)
 	}
 }
@@ -105,8 +105,8 @@ func TestParseTools(t *testing.T) {
 		}
 	}
 	// With another unported key, that key still names the fallback.
-	if _, err := Parse(parseObj(t, `{"tools":[42],"techniques":[3]}`)); fallback.Reason(err) != "input-techniques" {
-		t.Errorf("tools + techniques: reason %q (err %v), want input-techniques", fallback.Reason(err), err)
+	if _, err := Parse(parseObj(t, `{"tools":[42],"reactions":["Like"]}`)); fallback.Reason(err) != "input-reactions" {
+		t.Errorf("tools + reactions: reason %q (err %v), want input-reactions", fallback.Reason(err), err)
 	}
 }
 

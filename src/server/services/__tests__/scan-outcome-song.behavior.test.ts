@@ -120,7 +120,11 @@ beforeEach(async () => {
     const text = strings.join('');
     // A song has no tags; reading them would be the image audit running on it.
     if (text.includes('TagsOnImageDetails')) throw new Error('a song must not be tag-audited');
-    if (text.includes(' AS held ') || text.includes('"User"'))
+    if (
+      text.includes(' AS held ') ||
+      text.includes('"User"') ||
+      text.includes('FROM "Image" i WHERE i.id')
+    )
       return (await runOnPglite(strings, values)).rows;
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);

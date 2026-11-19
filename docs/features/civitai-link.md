@@ -149,7 +149,10 @@ All four go through `clFetch`, which sends `credentials: 'include'` — link-ser
 browser with the **civitai session cookie**, so the base URL must be same-registrable-domain.
 `getCivitaiLinkBaseUrl()` rewrites `.civitai.com` → `.civitai.red` for `.red` hosts and returns
 `undefined` for any other origin (PR previews, `civitai.green`), where the cookie could never
-arrive; callers disable the feature rather than fire a request that always 401s.
+arrive; callers disable the feature rather than fire a request that always 401s. A host listed in
+`NEXT_PUBLIC_CIVITAI_LINK_SAME_ORIGIN_HOSTS` (comma-separated exact hostnames, unset by default)
+talks to link-service at its own origin instead (`/api/link`, `/api/socketio`), which needs the
+ingress to route those paths on that host first.
 
 Once an instance is selected the shared worker joins its room by key and the connection is a
 socket, not polling.

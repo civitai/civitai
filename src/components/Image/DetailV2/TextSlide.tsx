@@ -9,7 +9,7 @@ import articleBodyClasses from '~/components/RichTextEditor/ArticleBody.module.s
 import { trpc } from '~/utils/trpc';
 
 const PAGE =
-  'my-auto w-full max-w-[680px] rounded-xl bg-white p-6 shadow-sm @md:p-10 dark:bg-dark-6';
+  'my-auto w-full min-w-0 max-w-[680px] break-words rounded-xl bg-white p-6 shadow-sm @md:p-10 dark:bg-dark-6';
 
 /**
  * A storyline text item as a full-stage slide, in the article page's reading typography,

@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * `queryCache` / `queryCacheRaw` with the cluster cache unavailable: the query runs against the
@@ -19,6 +19,12 @@ const HUNG = Symbol('hung');
 const within = <T>(p: Promise<T>, ms: number) =>
   Promise.race([p, new Promise<typeof HUNG>((r) => setTimeout(() => r(HUNG), ms))]);
 const never = () => new Promise<never>(() => undefined);
+/** `within` on fake timers: runs the clock `ms` ahead, so a result that is not HUNG settled in time. */
+async function settle<T>(p: Promise<T>, ms: number) {
+  const result = within(p, ms);
+  await vi.advanceTimersByTimeAsync(ms);
+  return result;
+}
 
 const ROWS = [{ id: 1 }, { id: 2 }];
 const SQL = Prisma.sql`SELECT 1`;
@@ -29,13 +35,18 @@ function prismaDb() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('queryCache with the cache unavailable', () => {
   it('a rejecting cache read runs the query and returns its rows', async () => {
     redisMock.redis.packed.get.mockRejectedValue(new Error('cluster down'));
 
-    const result = await within(
+    const result = await settle(
       queryCache(prismaDb(), 'qc-test')(SQL, { ttl: 60, tag: 't' }),
       2000
     );
@@ -48,15 +59,13 @@ describe('queryCache with the cache unavailable', () => {
     redisMock.redis.packed.set.mockImplementation(never);
     redisMock.redis.sAdd.mockImplementation(never);
 
-    const started = Date.now();
-    const result = await within(
+    // read (250ms) + write-back incl. tag (250ms) + slack.
+    const result = await settle(
       queryCache(prismaDb(), 'qc-test')(SQL, { ttl: 60, tag: 't' }),
-      3000
+      1000
     );
 
     expect(result).toEqual(ROWS);
-    // read (250ms) + write-back incl. tag (250ms) + slack.
-    expect(Date.now() - started).toBeLessThan(1000);
   });
 });
 
@@ -66,14 +75,12 @@ describe('queryCacheRaw with the cache unavailable', () => {
     redisMock.redis.packed.set.mockResolvedValue('OK');
     const executor = vi.fn(async () => ROWS) as never as Parameters<typeof queryCacheRaw>[0];
 
-    const started = Date.now();
-    const result = await within(
+    const result = await settle(
       queryCacheRaw(executor, 'qcr-test')(SQL, { ttl: 60, tag: 't' }),
-      3000
+      1000
     );
 
     expect(result).toEqual(ROWS);
-    expect(Date.now() - started).toBeLessThan(1000);
   });
 });
 
@@ -92,9 +99,9 @@ describe('queryCache single-flight on a miss', () => {
 
     const calls = Array.from({ length: 5 }, () => cached(SQL, { ttl: 60, tag: 't' }));
     // Let every read time out and join before the query settles.
-    await new Promise((r) => setTimeout(r, 400));
+    await vi.advanceTimersByTimeAsync(400);
     release();
-    const results = await within(Promise.all(calls), 3000);
+    const results = await settle(Promise.all(calls), 3000);
 
     expect(queryRaw).toHaveBeenCalledTimes(1);
     expect(results).not.toBe(HUNG);
@@ -119,9 +126,9 @@ describe('queryCache single-flight on a miss', () => {
 
     const first = cached(SQL, { ttl: 60, tag: 't' });
     const joiner = cached(SQL, { ttl: 60, tag: 't' });
-    await new Promise((r) => setTimeout(r, 400));
+    await vi.advanceTimersByTimeAsync(400);
     release();
-    const [a, b] = (await within(Promise.all([first, joiner]), 3000)) as {
+    const [a, b] = (await settle(Promise.all([first, joiner]), 3000)) as {
       id: number;
       amount: unknown;
     }[][];
@@ -138,10 +145,13 @@ describe('queryCache single-flight on a miss', () => {
     redisMock.redis.packed.set.mockResolvedValue('OK');
     const queryRaw = vi.fn(async () => ROWS);
     const db = { $queryRaw: queryRaw } as never as Parameters<typeof queryCache>[0];
-    await Promise.all([
-      queryCache(db, 'qc-sf-a')(SQL, { ttl: 60, tag: 't' }),
-      queryCache(db, 'qc-sf-b')(SQL, { ttl: 60, tag: 't' }),
-    ]);
+    await settle(
+      Promise.all([
+        queryCache(db, 'qc-sf-a')(SQL, { ttl: 60, tag: 't' }),
+        queryCache(db, 'qc-sf-b')(SQL, { ttl: 60, tag: 't' }),
+      ]),
+      1000
+    );
     expect(queryRaw).toHaveBeenCalledTimes(2);
   });
 
@@ -151,8 +161,8 @@ describe('queryCache single-flight on a miss', () => {
     const queryRaw = vi.fn(async () => ROWS);
     const db = { $queryRaw: queryRaw } as never as Parameters<typeof queryCache>[0];
     const cached = queryCache(db, 'qc-sf-seq');
-    await cached(SQL, { ttl: 60, tag: 't' });
-    await cached(SQL, { ttl: 60, tag: 't' });
+    await settle(cached(SQL, { ttl: 60, tag: 't' }), 1000);
+    await settle(cached(SQL, { ttl: 60, tag: 't' }), 1000);
     expect(queryRaw).toHaveBeenCalledTimes(2);
   });
 });
@@ -170,9 +180,9 @@ describe('fetchThroughCache fail-open single-flight (same helper)', () => {
     });
 
     const calls = Array.from({ length: 4 }, () => fetchThroughCache(KEY, fetchFn));
-    await new Promise((r) => setTimeout(r, 50));
+    await vi.advanceTimersByTimeAsync(50);
     release();
-    const results = (await within(Promise.all(calls), 2000)) as { items: number[] }[];
+    const results = (await settle(Promise.all(calls), 2000)) as { items: number[] }[];
 
     expect(fetchFn).toHaveBeenCalledTimes(1);
     for (const r of results) expect(r).toEqual({ items: [1, 2, 3] });
@@ -196,9 +206,9 @@ describe('fetchThroughCache fail-open single-flight (same helper)', () => {
       return v;
     });
     const joiner = fetchThroughCache(KEY, fetchFn);
-    await new Promise((r) => setTimeout(r, 50));
+    await vi.advanceTimersByTimeAsync(50);
     release();
-    const [a, b] = (await within(Promise.all([first, joiner]), 2000)) as { items: number[] }[];
+    const [a, b] = (await settle(Promise.all([first, joiner]), 2000)) as { items: number[] }[];
 
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(a.items).toEqual([1, 2]);
