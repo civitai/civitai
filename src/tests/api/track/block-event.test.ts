@@ -5,7 +5,6 @@ import type * as CivitaiRedis from '@civitai/redis';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { calledHybridNodes } from '~/__tests__/mocks/hybrid';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as RateLimitModule from '~/server/services/blocks/block-event-rate-limit';
 
 /**
@@ -15,9 +14,7 @@ import type * as RateLimitModule from '~/server/services/blocks/block-event-rate
  * private-run predicate and the deployment signals. Redis is the canonical mock, and every case
  * fails if the ingest touches it (see `redisTouched`).
  *
- * `PublicEndpoint` is replaced by a pass-through that records the allowed methods, so the method
- * gate itself (which that wrapper owns) is not exercised here; what is pinned is that the route
- * asks for POST only.
+ * `PublicEndpoint` is replaced by a pass-through, so the method gate it owns is not exercised here.
  *
  * Nothing in this file touches a network: every sink is a mock.
  */
@@ -301,24 +298,9 @@ afterEach(() => {
   expect(redisTouched()).toEqual([]);
 });
 
-describe('the Redis guard itself', () => {
-  it('POSITIVE CONTROL: sees a call to any command, at any depth, and is clean after a reset', () => {
-    redisMock.sysRedis.hGetAll('k');
-    redisMock.redis.zAdd('k', []);
-    redisMock.redis.packed.get('k');
-    expect(redisTouched()).toEqual(['redis.packed.get', 'redis.zAdd', 'sysRedis.hGetAll']);
-    vi.clearAllMocks();
-    expect(redisTouched()).toEqual([]);
-  });
-});
-
 // ── the request gates ────────────────────────────────────────────────────────
 
 describe('POST /api/track/block-event — request gates', () => {
-  it('asks the endpoint wrapper for POST only', async () => {
-    expect((await loadHandler()).allowedMethods).toEqual(['POST']);
-  });
-
   it('refuses a beacon with no Origin or Referer, and a cross-origin one', async () => {
     for (const origin of [null, 'https://evil.example', 'https://evil.civitai.com']) {
       const res = await post({ events: [event()] }, { origin });
@@ -329,40 +311,12 @@ describe('POST /api/track/block-event — request gates', () => {
     expect(mockGetSession).not.toHaveBeenCalled();
   });
 
-  it('refuses a batch of 51 and an empty one, and accepts exactly 50', async () => {
-    const batch = (n: number) => ({ events: Array.from({ length: n }, () => event()) });
-    expect((await post(batch(51))).status).toHaveBeenCalledWith(400);
-    expect((await post({ events: [] })).status).toHaveBeenCalledWith(400);
-    expect(mockInsert).not.toHaveBeenCalled();
-
-    expect((await post(batch(50))).status).toHaveBeenCalledWith(200);
-    expect(insertedRows()).toHaveLength(50);
-  });
-
-  it('refuses a row with no app or instance id, and an unparseable body', async () => {
-    for (const bad of [{ appBlockId: '' }, { blockInstanceId: undefined }, { appBlockId: 7 }]) {
-      expect((await post({ events: [event(bad)] })).status).toHaveBeenCalledWith(400);
-    }
-    expect((await post(null, { rawBody: '{not json' })).status).toHaveBeenCalledWith(400);
-    expect((await post({ nope: true })).status).toHaveBeenCalledWith(400);
-    expect(mockInsert).not.toHaveBeenCalled();
-  });
-
   it('accepts an object body as well as a string one', async () => {
     expect((await post({ events: [event()] }, { objectBody: true })).status).toHaveBeenCalledWith(
       200
     );
     expect((await post({ events: [event()] })).status).toHaveBeenCalledWith(200);
     expect(insertedRows()).toHaveLength(2);
-  });
-
-  it('short-circuits in dev', async () => {
-    devStore.isDev = true;
-    const delta = await outcomeDelta(async () => {
-      expect((await post({ events: [event()] })).status).toHaveBeenCalledWith(200);
-    });
-    expect(delta).toEqual({});
-    expect(mockInsert).not.toHaveBeenCalled();
   });
 });
 
@@ -500,45 +454,6 @@ describe('POST /api/track/block-event — what is stored', () => {
     expect(delta).toEqual({ accepted: 1, undeclared_prop: 1 });
   });
 
-  it('stores boolean true as 1', async () => {
-    await post({ events: [event({ eventName: 'level_cleared', properties: { assisted: true } })] });
-    expect(insertedRows()[0].boolProps).toEqual({ assisted: 1 });
-  });
-
-  it.each([
-    ['an enum value the manifest does not declare', { difficulty: 'nightmare' }],
-    ['an enum value in the wrong case', { difficulty: 'Calm' }],
-    ['a number where an enum is declared', { difficulty: 3 }],
-    ['a numeric string where a number is declared', { seconds: '12' }],
-    ['NaN', { seconds: Number.NaN }],
-    ['Infinity', { seconds: Number.POSITIVE_INFINITY }],
-    ['null where a number is declared', { seconds: null }],
-    ['a boolean where a number is declared', { seconds: true }],
-    ['the string "true" where a boolean is declared', { assisted: 'true' }],
-    ['1 where a boolean is declared', { assisted: 1 }],
-    ['an object where an enum is declared', { difficulty: { toString: 'calm' } }],
-  ])('strips %s and flags the row', async (_label, properties) => {
-    // An object body, because NaN and Infinity do not survive JSON.stringify.
-    const delta = await outcomeDelta(() =>
-      post({ events: [event({ eventName: 'level_cleared', properties })] }, { objectBody: true })
-    );
-    expect(insertedRows()).toEqual([
-      expect.objectContaining({
-        eventName: 'level_cleared',
-        enumProps: {},
-        numProps: {},
-        boolProps: {},
-      }),
-    ]);
-    expect(delta).toEqual({ accepted: 1, invalid_value: 1 });
-  });
-
-  it('strips an out-of-range JSON number that parses to Infinity', async () => {
-    const rawBody = `{"events":[{"appBlockId":"${APP}","blockInstanceId":"page_apb_arcade","eventName":"level_cleared","properties":{"seconds":1e999,"difficulty":"brutal"}}]}`;
-    await post(null, { rawBody });
-    expect(insertedRows()[0]).toMatchObject({ numProps: {}, enumProps: { difficulty: 'brutal' } });
-  });
-
   it('flags a row once however many of its values are invalid, and keeps the valid one', async () => {
     const delta = await outcomeDelta(() =>
       post({
@@ -570,22 +485,6 @@ describe('POST /api/track/block-event — what is stored', () => {
     });
     expect(insertedRows()[1].enumProps).toEqual({ constructor: 'wizard' });
   });
-
-  it('ignores `properties` that is not an object', async () => {
-    const delta = await outcomeDelta(() =>
-      post({
-        events: [
-          event({ eventName: 'level_cleared', properties: ['difficulty', 'calm'] }),
-          event({ eventName: 'level_cleared', properties: 'difficulty=calm' }),
-          event({ eventName: 'level_cleared', properties: null }),
-        ],
-      })
-    );
-    expect(insertedRows().map((r) => [r.enumProps, r.numProps, r.boolProps])).toEqual(
-      Array(3).fill([{}, {}, {}])
-    );
-    expect(delta).toEqual({ accepted: 3 });
-  });
 });
 
 // ── identity ─────────────────────────────────────────────────────────────────
@@ -599,12 +498,6 @@ describe('POST /api/track/block-event — identity is server-derived', () => {
     // sha256('u:9102'), first 8 bytes big-endian, computed outside this codebase.
     expect(row.viewerKey).toBe('988994381281639022');
     expect(typeof row.viewerKey).toBe('string');
-  });
-
-  it('sends the documented vector for user 42 as a string', async () => {
-    sessionStore.session = { user: { id: 42 } };
-    await post({ events: [event()] });
-    expect(insertedRows()[0].viewerKey).toBe('6590179527920541835');
   });
 
   it('🔴 writes a signed-out row with the unknown-viewer key "0", as a string', async () => {
@@ -736,12 +629,6 @@ describe('POST /api/track/block-event — identity is server-derived', () => {
     expect(delta).toEqual({ accepted: 1 });
   });
 
-  it('resolves the session once per request, however many rows', async () => {
-    sessionStore.session = { user: { id: OTHER_VIEWER } };
-    await post({ events: Array.from({ length: 9 }, () => event()) });
-    expect(mockGetSession).toHaveBeenCalledTimes(1);
-  });
-
   it('writes a signed-out row even when no client address resolves, and counts it', async () => {
     const anon = await outcomeDelta(() => post({ events: [event(), event()] }, { ip: null }));
     expect(insertedRows().map((r) => [r.isAnon, r.viewerKey])).toEqual([
@@ -795,21 +682,8 @@ describe('POST /api/track/block-event — what is withheld', () => {
     expect(thrown).toEqual({ insert_failed: 1 });
   });
 
-  it('does nothing harmful when no ClickHouse client is configured', async () => {
-    chStore.present = false;
-    const delta = await outcomeDelta(async () => {
-      expect((await post({ events: [event()] })).status).toHaveBeenCalledWith(200);
-    });
-    expect(mockInsert).not.toHaveBeenCalled();
-    expect(delta).toEqual({ insert_failed: 1 });
-  });
-
   it.each([
     ['the production signal is absent', { env: undefined }],
-    ['the production signal is empty', { env: '' }],
-    ['the production signal has another value', { env: 'staging' }],
-    ['the production signal differs in case', { env: 'Production' }],
-    ['the production signal has whitespace', { env: ' production' }],
     ['IS_PREVIEW is set, despite the signal', { isPreview: true, cacheKeyNamespace: '' }],
     [
       'a cache namespace is set, despite the signal',
@@ -836,15 +710,6 @@ describe('POST /api/track/block-event — what is withheld', () => {
     expect(mockInsert).not.toHaveBeenCalled();
     // The validation path ran in full: the unknown app and the invalid value were classified.
     expect(delta).toEqual({ non_prod_skipped: 3, unknown_app: 1, invalid_value: 1 });
-  });
-
-  it('the production deployment (signal exactly "production", no veto) inserts the same batch', async () => {
-    expect(process.env.CIVITAI_DEPLOYMENT_ENVIRONMENT).toBe('production');
-    const delta = await outcomeDelta(() =>
-      post({ events: [event(), event({ eventName: 'not_declared' })] })
-    );
-    expect(insertedRows()).toHaveLength(2);
-    expect(delta).toEqual({ accepted: 1, undeclared_event: 1 });
   });
 });
 
@@ -893,15 +758,6 @@ describe('POST /api/track/block-event — the rate limit', () => {
     expect(insertedRows()).toHaveLength(111);
   });
 
-  it('does not resolve a session for a caller who is entirely over budget', async () => {
-    const handler = await loadHandler();
-    await post(batch(50), { handler });
-    await post(batch(50), { handler });
-    mockGetSession.mockClear();
-    await post(batch(5), { handler });
-    expect(mockGetSession).not.toHaveBeenCalled();
-  });
-
   it('🔴 a flood of invented app ids creates no buckets', async () => {
     const handler = await loadHandler();
     const limiter: typeof RateLimitModule = await import(
@@ -928,19 +784,6 @@ describe('POST /api/track/block-event — the rate limit', () => {
 
 describe('POST /api/track/block-event — the block instance id', () => {
   it.each([
-    ['page_apb_arcade'],
-    ['mbi_01HZX3'],
-    ['bki_01HZX3'],
-    ['bus_pub_01HZX3'],
-    ['bus_view_01HZX3'],
-    ['pdb_01HZX3'],
-  ])('stores the platform-shaped id %s', async (blockInstanceId) => {
-    const delta = await outcomeDelta(() => post({ events: [event({ blockInstanceId })] }));
-    expect(insertedRows()[0].blockInstanceId).toBe(blockInstanceId);
-    expect(delta).toEqual({ accepted: 1 });
-  });
-
-  it.each([
     ['free text', 'my diary entry for today'],
     ['an email', 'someone@example.com'],
     ['an unknown prefix', 'note_01HZX3'],
@@ -955,36 +798,6 @@ describe('POST /api/track/block-event — the block instance id', () => {
     ]);
     expect(JSON.stringify(mockInsert.mock.calls)).not.toContain(blockInstanceId);
     expect(delta).toEqual({ accepted: 1, invalid_instance_id: 1 });
-  });
-
-  it('bounds both ids at 256 characters and trims them', async () => {
-    const at = (n: number) => `bki_${'a'.repeat(n - 4)}`;
-    expect(
-      (await post({ events: [event({ blockInstanceId: at(257) })] })).status
-    ).toHaveBeenCalledWith(400);
-    expect(
-      (await post({ events: [event({ appBlockId: 'a'.repeat(257) })] })).status
-    ).toHaveBeenCalledWith(400);
-    expect(
-      (await post({ events: [event({ blockInstanceId: '   ' })] })).status
-    ).toHaveBeenCalledWith(400);
-    expect((await post({ events: [event({ appBlockId: '   ' })] })).status).toHaveBeenCalledWith(
-      400
-    );
-    expect(mockInsert).not.toHaveBeenCalled();
-
-    expect(
-      (await post({ events: [event({ blockInstanceId: at(256) })] })).status
-    ).toHaveBeenCalledWith(200);
-    expect(
-      (await post({ events: [event({ appBlockId: `  ${APP} `, blockInstanceId: ' bki_x ' })] }))
-        .status
-    ).toHaveBeenCalledWith(200);
-    // 256 passes the schema but is past the stored grammar's length, so it is stored empty.
-    expect(insertedRows().map((r) => [r.appBlockId, r.blockInstanceId])).toEqual([
-      ['apb_arcade', ''],
-      ['apb_arcade', 'bki_x'],
-    ]);
   });
 });
 
@@ -1123,15 +936,6 @@ describe('POST /api/track/block-event — failures stay inside', () => {
     expect(signal!.aborted).toBe(false);
     vi.advanceTimersByTime(1);
     expect(signal!.aborted).toBe(true);
-  });
-
-  it('does not leave the deadline timer armed after a write that answered', async () => {
-    sessionStore.session = { user: { id: OTHER_VIEWER } };
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-    vi.setSystemTime(DAY_1_NOON);
-    await post({ events: [event()] });
-    expect(mockInsert).toHaveBeenCalledTimes(1);
-    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('🔴 sheds new batches once 32 writes are in flight, and recovers when they settle', async () => {

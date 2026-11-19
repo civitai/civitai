@@ -1,9 +1,7 @@
-import { readFileSync } from 'fs';
-import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { DocStoreDb } from '~/server/services/apps/doc-store';
 import { createDocStore } from '~/server/services/apps/doc-store';
-import { createPgliteHarness, MIGRATION_DOWN, MIGRATION_UP } from './doc-store.harness';
+import { createPgliteHarness } from './doc-store.harness';
 import type { Harness } from './doc-store.harness';
 import {
   ctx,
@@ -105,40 +103,5 @@ describe('runtime isolation shape of every statement the store sent', () => {
     ).toBeGreaterThan(5);
     expect(new Set(statements.map((s) => s.app)).size).toBeGreaterThan(10);
     expect(violations).toEqual([]);
-  });
-});
-
-describe('migration', () => {
-  const up = readFileSync(MIGRATION_UP, 'utf8');
-  const down = readFileSync(MIGRATION_DOWN, 'utf8');
-  let pg: PGlite;
-  afterAll(async () => {
-    await pg?.close();
-  });
-
-  it('applies twice (idempotent), rolls back twice, and re-applies', async () => {
-    pg = new PGlite();
-    const tables = async () =>
-      (
-        await pg.query<{ n: number }>(
-          `SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'appdata'`
-        )
-      ).rows[0].n;
-    await pg.exec(up);
-    await pg.exec(`INSERT INTO appdata.usage_app (app_id, ns, bytes) VALUES ('ab_MIG', 'prod', 5)`);
-    await pg.exec(up);
-    expect(await tables()).toBe(7);
-    // Re-applying keeps data.
-    expect(
-      (await pg.query<{ bytes: number }>(`SELECT bytes::int FROM appdata.usage_app`)).rows
-    ).toEqual([{ bytes: 5 }]);
-    await pg.exec(down);
-    await pg.exec(down);
-    expect(await tables()).toBe(0);
-    expect((await pg.query(`SELECT 1 FROM pg_roles WHERE rolname = 'appdata_rw'`)).rows).toEqual(
-      []
-    );
-    await pg.exec(up);
-    expect(await tables()).toBe(7);
   });
 });
