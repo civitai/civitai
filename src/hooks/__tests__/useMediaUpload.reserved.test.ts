@@ -47,8 +47,12 @@ vi.mock('~/utils/media-preprocessors', () => ({
   }),
 }));
 vi.mock('~/utils/metadata/audit', () => ({ auditPostImageMeta: vi.fn() }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof Notifications>()),
+  showErrorNotification: vi.fn(),
+}));
 
+import type * as Notifications from '~/utils/notifications';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 
 const named = (prefix: string, n: number) =>
