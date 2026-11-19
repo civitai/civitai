@@ -624,21 +624,21 @@ async function deleteFileObjects(
     .catch(() => null);
   const etag = head?.ETag?.replace(/"/g, '') ?? null;
   const imageStore = file.watermarkedKey ? await getImageUploadBackend() : null;
+  // The upload last: a run stopped part-way leaves the original, and its ETag, for the next one.
   const targets = [
-    { client, bucket, key: file.s3Key },
     ...(file.deliveryKey ? [{ client, bucket, key: file.deliveryKey }] : []),
     ...(imageStore && file.watermarkedKey
       ? [{ client: imageStore.s3, bucket: imageStore.bucket, key: file.watermarkedKey }]
       : []),
+    { client, bucket, key: file.s3Key },
   ];
-  let deleted = true;
   for (const target of targets) {
     if (!(await stillDeletable())) return { etag, deleted: false };
-    if (!(await deleteEveryVersion(target, file.id))) deleted = false;
+    if (!(await deleteEveryVersion(target, file.id))) return { etag, deleted: false };
   }
   // A preview deleted mid-scan: its hidden copy goes with it.
   if (file.imageId) await deleteImages([file.imageId]);
-  return { etag, deleted };
+  return { etag, deleted: true };
 }
 
 /**
@@ -667,7 +667,7 @@ const dealHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
 )`;
 
 /**
- * A removed file whose scans finished clean (or an upload never completed), with an uploader not on
+ * A removed file whose scans finished clean (or that can never be judged), with an uploader not on
  * a report, no hold on its deal, and its scan copies gone, has nothing left to keep. A removed file
  * that failed, or was never judged, stays for the moderators. `f` names the file row.
  */
@@ -675,9 +675,12 @@ const purgeable = (f: Prisma.Sql) => Prisma.sql`(
   ${f}."removedAt" IS NOT NULL
   -- Not before any download link signed while it was listed has expired.
   AND ${f}."removedAt" <= now() - (${SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS}::int * interval '1 second')
-  -- An upload never completed was never judged, and was deleted outright before removal was deferred.
+  -- Never judged, and never will be: an upload never completed, or a preview (whose scan skips
+  -- removed files) not in a scan. Both were deleted outright before removal was deferred.
   AND (${f}."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-    OR ${f}."status" = 'Uploading'::"ServiceDealFileStatus")
+    OR ${f}."status" = 'Uploading'::"ServiceDealFileStatus"
+    OR (${f}."kind" = 'Preview'::"ServiceDealFileKind"
+      AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"))
   AND NOT ${mustKeep(f)}
   -- Scan copies of its images go first (deleteEntryScanCopies).
   AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e

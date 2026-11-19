@@ -469,6 +469,17 @@ describe('the purge after the sweep', () => {
     expect(await kept(attachmentId)).toBe(true);
   });
 
+  it('deletes a removed preview its scan never reached', async () => {
+    const { dealId } = await closedDeal('Cancelled', 40);
+    const [preview] = await q<{ id: number }>(
+      `INSERT INTO "ServiceDealFile" ("dealId", kind, "s3Key", "mimeType", size, status, "scanStatus", "malwareScanStatus")
+       VALUES ($1, 'Preview', 'k/unscanned', 'image/png', 10, 'Processing', 'Pending', 'Pending') RETURNING id`,
+      [dealId]
+    );
+    await sweepAndPurge();
+    expect(await kept(preview.id)).toBe(false);
+  });
+
   it('waits until a download link signed before the removal has expired', async () => {
     const { finalId } = await closedDeal('Cancelled', 40);
     await sweep();
@@ -554,7 +565,7 @@ describe('the purge after the sweep', () => {
   it.each(['k/archive', 'wm-1'])(
     'keeps the row and writes no record when only the delete of %s fails',
     async (failing) => {
-      const { finalId } = await closedDeal('Cancelled', 40);
+      const { dealId, finalId } = await closedDeal('Cancelled', 40);
       await q(
         `UPDATE "ServiceDealFile" SET "deliveryKey" = 'k/archive', "watermarkedKey" = 'wm-1' WHERE id = $1`,
         [finalId]
@@ -569,6 +580,10 @@ describe('the purge after the sweep', () => {
       expect(
         await q(`SELECT * FROM "ServiceDealFilePurge" WHERE "fileId" = $1`, [finalId])
       ).toEqual([]);
+      // The upload goes last, so a failure before it leaves the original in place.
+      expect(s3.purgeObjectVersions.mock.calls.map(([arg]) => arg.key)).not.toContain(
+        `k/${dealId}/final`
+      );
     }
   );
 
