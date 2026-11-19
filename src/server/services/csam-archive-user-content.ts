@@ -1,5 +1,5 @@
 import type { DB } from '@civitai/db-schema/kysely';
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 
 /**
  * Rows fetched per round-trip by the cursor-paged scans that feed an evidence bundle.
@@ -66,15 +66,13 @@ type Reader = (db: Db, userId: number, pageSize?: number) => AsyncIterable<unkno
 
 /**
  * Text the reported user wrote, one reader per table, each selecting a fixed column list so a new
- * column never reaches the archive unreviewed. Rows are written as stored: a field that was blanked
- * in place is archived blank, and nothing is recovered from any other store.
+ * column never reaches the archive unreviewed. `serviceOfferings` also carries the removal fields a
+ * moderator sets, which record why an offering's text was taken down. Rows are written as stored:
+ * nothing is recovered from any other store. A profile cleared by a hold decision is the one in-place
+ * blank no row records, so `profile` names those decisions in `blankedReasons`.
  *
- * Only `Collection` (`userId`), `ChatMember` (`userId` first) and `ChatMessage` (`chatId, id`)
- * have a btree index that serves their filter here; `Bounty` and `ResourceReview` have hash
- * indexes on `userId`, and `Post`, `PostText`, `Article`, `BountyEntry`, `ServiceOffering`
- * (`sellerId, status` serves the equality only), `Question` and `Answer` page on the primary key
- * while filtering. Because the cursor resumes where the last page stopped, a primary-key walk
- * costs about one pass over the table across all pages, not one per page.
+ * Each table's owner filter is served by an owner index in the database, some of which the Prisma
+ * schema does not declare, except `PostText`, `Question` and `Answer`, which are small.
  */
 export const userContentReaders: { name: string; rows: Reader }[] = [
   {
@@ -138,11 +136,37 @@ export const userContentReaders: { name: string; rows: Reader }[] = [
   {
     name: 'profile',
     rows: async function* (db, userId) {
-      yield* await db
-        .selectFrom('UserProfile')
-        .select(['userId', 'bio', 'message', 'messageAddedAt', 'sfwBio', 'sfwMessage', 'location'])
-        .where('userId', '=', userId)
-        .execute();
+      const [profiles, decisions] = await Promise.all([
+        db
+          .selectFrom('UserProfile')
+          .select([
+            'userId',
+            'bio',
+            'message',
+            'messageAddedAt',
+            'sfwBio',
+            'sfwMessage',
+            'location',
+          ])
+          .where('userId', '=', userId)
+          .execute(),
+        // Every decision but a dismissal confirms the hold and clears the profile's text fields.
+        db
+          .selectFrom('TextScanHold')
+          .select(['id', 'decidedAt', sql<string | null>`"meta"->>'decision'`.as('decision')])
+          .where('entityType', '=', 'UserProfile')
+          .where('entityId', '=', userId)
+          .where('status', '=', 'Confirmed')
+          .orderBy('id', 'asc')
+          .execute(),
+      ]);
+      const blankedReasons = decisions.map(
+        ({ id, decidedAt, decision }) =>
+          `blanked by decision ${decision ?? 'unknown'} on hold ${id} at ${
+            decidedAt?.toISOString() ?? 'an unknown time'
+          }`
+      );
+      for (const profile of profiles) yield { ...profile, blankedReasons };
     },
   },
   {
@@ -269,8 +293,10 @@ export const userContentReaders: { name: string; rows: Reader }[] = [
 ];
 
 /**
- * Every message, from either side, in each chat the user has a membership row in, in chat then id
- * order. Paged per chat on `(chatId, id)`: `ChatMessage` has no index leading with `userId`.
+ * Every message, from either side and including deleted ones, in each chat the user has a membership
+ * row in, whatever its status, in chat then id order. Paged per chat because `ChatMessage` has no
+ * index leading with `userId`. The `(chatId, id)` index is partial on undeleted messages, so it
+ * cannot serve this read: each page sorts the chat's messages, which only a very long chat feels.
  */
 async function* chatMessages(db: Db, userId: number, pageSize?: number) {
   const chats = await db

@@ -81,16 +81,22 @@ vi.mock('~/server/db/kyselyDb', () => {
   });
   // The other tables `userContentSections` reads, by table name. Filtering by owner is covered
   // against Postgres in csam-archive-user-content.behavior.test.ts; this serves rows as stored.
-  type MainState = { afterId?: number; take?: number };
+  type MainState = { afterId?: number; take?: number; eq?: Record<string, number> };
   const mainQuery = (table: string, state: MainState): Record<string, unknown> => ({
     select: () => mainQuery(table, state),
     distinct: () => mainQuery(table, state),
     orderBy: () => mainQuery(table, state),
-    where: (_column: string, op: string, value: number) =>
-      mainQuery(table, op === '>' ? { ...state, afterId: value } : state),
+    where: (column: string, op: string, value: number) =>
+      mainQuery(
+        table,
+        op === '>'
+          ? { ...state, afterId: value }
+          : { ...state, eq: { ...state.eq, [column]: value } }
+      ),
     limit: (take: number) => mainQuery(table, { ...state, take }),
     execute: async () =>
       (v3.tables[table] ?? [])
+        .filter((r) => Object.entries(state.eq ?? {}).every(([c, v]) => r[c] === v))
         .filter((r) => state.afterId === undefined || (r.id as number) > state.afterId)
         .slice(0, state.take),
   });

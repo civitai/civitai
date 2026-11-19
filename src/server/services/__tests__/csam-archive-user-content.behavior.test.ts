@@ -175,6 +175,10 @@ beforeAll(async () => {
     ])
       .replace('"userId" INTEGER', '"userId" INTEGER PRIMARY KEY')
       .replace('"messageAddedAt" TEXT', '"messageAddedAt" TIMESTAMP(3)')}
+    CREATE TABLE "TextScanHold" (
+      id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
+      status TEXT NOT NULL, "decidedAt" TIMESTAMP(3), meta JSONB
+    );
     CREATE TABLE "ChatMember" (id SERIAL PRIMARY KEY, "chatId" INTEGER NOT NULL, "userId" INTEGER NOT NULL);
     ${ddl('ChatMessage', [
       'id',
@@ -193,7 +197,13 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 
 beforeEach(async () => {
-  const tables = [...OWNED.map((o) => o.table), 'UserProfile', 'ChatMember', 'ChatMessage'];
+  const tables = [
+    ...OWNED.map((o) => o.table),
+    'UserProfile',
+    'TextScanHold',
+    'ChatMember',
+    'ChatMessage',
+  ];
   await pg.exec(`TRUNCATE ${tables.map((t) => `"${t}"`).join(', ')};`);
 });
 
@@ -226,12 +236,16 @@ describe('the archive text sections', () => {
             ? id
             : c === owner
             ? userId
+            : c === 'csamHeld'
+            ? id === 9
+            : id === 7
+            ? null
             : TIME_COLUMNS.has(c)
             ? new Date(Date.UTC(2026, 9, 1))
-            : c === 'csamHeld'
-            ? false
             : /Id$|^index$/.test(c)
             ? 1
+            : id === 9
+            ? ''
             : `${c}-${id}`
         );
         await pg.query(
@@ -247,6 +261,19 @@ describe('the archive text sections', () => {
 
       expect(rows.map((r) => r.id)).toEqual([2, 4, 7, 9, 11]);
       expect(rows.every((r) => r[owner] === ME)).toBe(true);
+      // Unpublished, removed, blank or held rows come back as stored, not filtered or filled in.
+      expect(rows.find((r) => r.id === 7)).toEqual(
+        Object.fromEntries(
+          columns.map((c) => [
+            c,
+            c === 'id' ? 7 : c === owner ? ME : c === 'csamHeld' ? false : null,
+          ])
+        )
+      );
+      const blank = rows.find((r) => r.id === 9)!;
+      for (const c of columns.filter((c) => typeof blank[c] === 'string'))
+        expect(blank[c]).toBe('');
+      if (columns.includes('csamHeld')) expect(blank.csamHeld).toBe(true);
       for (const row of rows) expect(Object.keys(row).sort()).toEqual([...columns].sort());
     });
 
@@ -272,23 +299,58 @@ describe('the archive text sections', () => {
           sfwBio: null,
           sfwMessage: null,
           location: 'here',
+          blankedReasons: [],
         },
       ]);
       expect(await read('profile', OTHER + 1)).toEqual([]);
     });
   });
 
+  describe('profile blanking', () => {
+    it("names each confirmed decision on the user's profile and nothing else", async () => {
+      await pg.query(`INSERT INTO "UserProfile" ("userId", bio) VALUES ($1, NULL)`, [ME]);
+      await pg.query(
+        `INSERT INTO "TextScanHold" (id, "entityType", "entityId", status, "decidedAt", meta) VALUES
+           (41, 'UserProfile', $1, 'Confirmed', '2026-10-05 12:00', '{"decision":"remove_ban"}'),
+           (42, 'UserProfile', $1, 'Dismissed', '2026-10-06 12:00', '{"decision":"dismiss"}'),
+           (43, 'UserProfile', $2, 'Confirmed', '2026-10-07 12:00', '{"decision":"remove"}'),
+           (44, 'Post', $1, 'Confirmed', '2026-10-08 12:00', '{"decision":"remove"}'),
+           (45, 'UserProfile', $1, 'Pending', NULL, NULL)`,
+        [ME, OTHER]
+      );
+      const [row] = await read('profile', ME);
+      expect(row.bio).toBeNull();
+      expect(row.blankedReasons).toEqual([
+        'blanked by decision remove_ban on hold 41 at 2026-10-05T12:00:00.000Z',
+      ]);
+    });
+  });
+
   describe('chatMessages', () => {
-    const message = (id: number, chatId: number, userId: number) =>
+    const message = (
+      id: number,
+      chatId: number,
+      userId: number,
+      extra: { content?: string; at?: Date; referenceMessageId?: number } = {}
+    ) =>
       pg.query(
-        `INSERT INTO "ChatMessage" (id, "chatId", "userId", content, secret) VALUES ($1, $2, $3, $4, 'x')`,
-        [id, chatId, userId, `m${id}`]
+        `INSERT INTO "ChatMessage" (id, "chatId", "userId", content, "editedAt", "deletedAt", "referenceMessageId", secret)
+         VALUES ($1, $2, $3, $4, $5, $5, $6, 'x')`,
+        [
+          id,
+          chatId,
+          userId,
+          extra.content ?? `m${id}`,
+          extra.at ?? null,
+          extra.referenceMessageId ?? null,
+        ]
       );
 
     it("holds both sides of the user's chats and nothing from a chat they are not in", async () => {
       await pg.exec(`INSERT INTO "ChatMember" ("chatId", "userId") VALUES
-        (5, ${ME}), (5, ${OTHER}), (6, ${ME}), (6, ${OTHER}), (7, ${OTHER}), (7, 40)`);
-      // Chat 5 spans pages; chat 7 is someone else's conversation and must not appear.
+        (5, ${ME}), (5, ${OTHER}), (6, ${ME}), (6, ${OTHER}), (7, ${OTHER}), (7, 40), (8, ${OTHER})`);
+      // Chat 5 spans pages; chat 7 is someone else's conversation and must not appear. Chat 8
+      // holds a message from the user but no membership row of theirs, so it must not appear either.
       for (const [id, chat, from] of [
         [1, 5, ME],
         [2, 7, OTHER],
@@ -297,8 +359,11 @@ describe('the archive text sections', () => {
         [5, 5, ME],
         [6, 7, 40],
         [8, 5, OTHER],
+        [9, 8, ME],
       ])
         await message(id, chat, from);
+      const deletedAt = new Date(Date.UTC(2026, 9, 3));
+      await message(10, 5, ME, { content: '', at: deletedAt, referenceMessageId: 1 });
 
       const rows = await read('chatMessages', ME);
 
@@ -307,8 +372,15 @@ describe('the archive text sections', () => {
         [5, 3, false],
         [5, 5, true],
         [5, 8, false],
+        [5, 10, true],
         [6, 4, false],
       ]);
+      expect(rows.find((r) => r.id === 10)).toMatchObject({
+        content: '',
+        editedAt: deletedAt,
+        deletedAt,
+        referenceMessageId: 1,
+      });
       for (const row of rows)
         expect(Object.keys(row).sort()).toEqual(
           [
