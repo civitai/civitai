@@ -177,6 +177,13 @@ describe('getModelShowcaseImages: the version and its model', () => {
     expect(await servedMature()).toEqual([EXCLUDED]);
   });
 
+  it('serves a mature image restricted by its base model only to its uploader', async () => {
+    await harness.pg.exec(`UPDATE "Image" SET "modelRestricted" = true`);
+    expect(await servedMature()).toEqual([]);
+    await harness.pg.exec(`UPDATE "Image" SET "userId" = ${MATURE_VIEWER.userId}`);
+    expect(await servedMature()).toEqual([EXCLUDED]);
+  });
+
   it.each([
     ['a minor model', `UPDATE "Model" SET minor = true`],
     ['a SFW-only model', `UPDATE "Model" SET "sfwOnly" = true`],
