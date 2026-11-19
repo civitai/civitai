@@ -100,6 +100,26 @@ describe('the Song Card at phone width', () => {
   });
 });
 
+test('a song with no genre and no creator keeps every row and the cover its size', async () => {
+  const bare = {
+    ...song(3, 'No Name'),
+    metadata: { title: 'No Name', duration: 60 },
+    user: { id: 103, username: null },
+  } as unknown as ImagesInfiniteModel;
+  const height = Math.floor(MUSIC_FEED_COLUMN_WIDTH * SONG_COVER_RATIO + SONG_CARD_TEXT_HEIGHT);
+  await renderAtViewport(
+    <div style={{ width: MUSIC_FEED_COLUMN_WIDTH }}>
+      <SongCard data={bare} height={height} />
+    </div>,
+    { width: 1440, height: 900 }
+  );
+  await vi.waitFor(() => expect(title('No Name')).toBeTruthy());
+  const card = cardOf(title('No Name'));
+  const [cover, ...rows] = [...card.children].map((el) => el.getBoundingClientRect().height);
+  expect(rows).toEqual([20, 16, 15, 15]);
+  expect(cover).toBe(height - SONG_CARD_TEXT_HEIGHT);
+});
+
 test('the music feed lays Song Cards six across at 1440 (Pencil `xNZ0Z`)', async () => {
   const many = Array.from({ length: 8 }, (_, i) => song(i + 1, `Song ${i + 1}`));
   function DesktopFeed() {

@@ -113,6 +113,7 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
 
 import { ImagesInfiniteContent } from '~/components/Image/Infinite/ImagesInfinite';
 import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
+import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import { SONG_ROW_HEIGHT, SongRow } from '~/components/Music/SongRow';
 import { SONG_CARD_TEXT_HEIGHT, SONG_COVER_RATIO } from '~/components/Music/song-card.constants';
 import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
@@ -162,6 +163,14 @@ const expectPlayedFrom = (name: string) => {
     tracks: songs.map((s) => songTrack(s as never)),
     index: 1,
   });
+};
+
+// The height the masonry gives `data` in a column `width` wide.
+const sized = (data: unknown, width: number) => {
+  const { imageDimensions, adjustHeight } = feed.masonry!;
+  const { width: w, height: h } = imageDimensions(data);
+  const height = (h / w) * width;
+  return adjustHeight({ imageRatio: width / height, width, height }, data);
 };
 
 describe('songs in an image feed', () => {
@@ -219,16 +228,56 @@ describe('songs in an image feed', () => {
   });
 
   test('the grid gives every song the Song Card shape, whatever the file reports', async () => {
+    await page.viewport(1440, 900);
     await renderWithProviders(<ImagesInfiniteContent songListName="All music" />);
     await expect.poll(() => feed.masonry).toBeDefined();
-    const { imageDimensions, adjustHeight } = feed.masonry!;
-    const sized = (data: unknown, width: number) => {
-      const { width: w, height: h } = imageDimensions(data);
-      const height = (h / w) * width;
-      return adjustHeight({ imageRatio: width / height, width, height }, data);
-    };
     const wide = { ...songs[0], width: 1920, height: 1080 };
     expect(sized(wide, 213)).toBeCloseTo(200 + SONG_CARD_TEXT_HEIGHT);
     expect(sized(songs[1], 320)).toBeCloseTo(320 * SONG_COVER_RATIO + SONG_CARD_TEXT_HEIGHT);
+  });
+
+  test('in a single column, a song is sized at the width it is drawn at', async () => {
+    await page.viewport(390, 800);
+    await renderWithProviders(<ImagesInfiniteContent songListName="All music" />);
+    await expect.poll(() => feed.masonry).toBeDefined();
+    const drawn = page
+      .getByTestId('masonry')
+      .element()
+      .parentElement!.getBoundingClientRect().width;
+    expect(drawn).toBeLessThan(213 * 2 + 16);
+    expect(sized(songs[0], 213)).toBeCloseTo(
+      Math.min(drawn, 450) * SONG_COVER_RATIO + SONG_CARD_TEXT_HEIGHT
+    );
+  });
+
+  test('an image in the same feed keeps the image card height', async () => {
+    await renderWithProviders(<ImagesInfiniteContent songListName="All music" />);
+    await expect.poll(() => feed.masonry).toBeDefined();
+    const picture = { id: 50, type: 'image', width: 600, height: 900, user: { id: 9 } };
+    const { width, height } = feed.masonry!.imageDimensions(picture);
+    const args = { imageRatio: width / height, width: 300, height: (height / width) * 300 };
+    expect(feed.masonry!.adjustHeight(args, picture)).toBe(adjustImagesCardHeight(args));
+  });
+});
+
+describe('the list view, scrolled', () => {
+  test('drops the rows above the viewport and places the ones in it', async () => {
+    feed.images = Array.from({ length: 300 }, (_, i) => song(i + 1, `Song ${i + 1}`));
+    await renderWithProviders(
+      <ScrollArea>
+        <ImagesInfiniteContent listItem={SONG_ROWS} songListName="All music" />
+      </ScrollArea>
+    );
+    await expect.element(page.getByText('Song 1', { exact: true })).toBeInTheDocument();
+    const list = page.getByRole('list').element();
+    const scroller = list.closest<HTMLElement>('[style*="overflow"]')!;
+    scroller.scrollTop = SONG_ROW_HEIGHT * 150;
+    scroller.dispatchEvent(new Event('scroll'));
+
+    await expect.element(page.getByText('Song 151', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('Song 1', { exact: true }).query()).toBeNull();
+    const row = page.getByText('Song 151', { exact: true }).element().closest('[role="listitem"]')!;
+    const offset = row.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    expect(offset).toBe(SONG_ROW_HEIGHT * 150);
   });
 });

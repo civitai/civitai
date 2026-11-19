@@ -9,6 +9,7 @@ import { renderWithProviders } from '../../../../../test/component-setup';
 const state = vi.hoisted(() => ({
   feed: undefined as { filters: Record<string, unknown>; songListName?: string } | undefined,
   viewer: null as { id: number; username: string } | null,
+  audioCount: 34,
 }));
 
 vi.mock('~/components/Filters/useSortAvailability', () => ({
@@ -23,7 +24,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     },
     'userProfile.overview': {
       useQuery: (_input: unknown, opts?: { enabled?: boolean }) => ({
-        data: opts?.enabled === false ? undefined : { audioCount: 34 },
+        data: opts?.enabled === false ? undefined : { audioCount: state.audioCount },
       }),
     },
   }),
@@ -42,6 +43,7 @@ vi.mock('~/components/Image/Filters/MediaFiltersDropdown', () => ({
 beforeEach(() => {
   state.feed = undefined;
   state.viewer = null;
+  state.audioCount = 34;
   useRouter().query = { username: 'alice' };
 });
 
@@ -73,6 +75,12 @@ describe('the profile music tab', () => {
   test("shows the creator's song count above the songs", async () => {
     renderWithProviders(<UserMediaInfinite type={MediaType.audio} />);
     await expect.element(page.getByText('34 songs')).toBeVisible();
+  });
+
+  test('counts a single song in the singular', async () => {
+    state.audioCount = 1;
+    renderWithProviders(<UserMediaInfinite type={MediaType.audio} />);
+    await expect.element(page.getByText('1 song', { exact: true })).toBeVisible();
   });
 
   test('the images tab names no song list', async () => {

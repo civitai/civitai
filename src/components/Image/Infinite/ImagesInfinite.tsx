@@ -4,10 +4,13 @@ import { getQueryKey } from '@trpc/react-query';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -24,6 +27,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { getImagesSpanMaxHeight } from '~/components/Image/Infinite/images-span';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
+import { MASONRY_GAP } from '~/components/MasonryColumns/masonry.utils';
 import { VirtualList } from '~/components/MasonryColumns/VirtualList';
 import { SONG_CARD_TEXT_HEIGHT, SONG_COVER_RATIO } from '~/components/Music/song-card.constants';
 import { FeedSongCoversProvider, SongListNameProvider } from '~/components/Music/FeedSongList';
@@ -51,6 +55,29 @@ import { queryClient, trpc } from '~/utils/trpc';
 import { backoffDelay } from '~/utils/backoff';
 
 const SONG_CARD_COVER = { width: 1000, height: 1000 * SONG_COVER_RATIO };
+// `MasonryColumnsVirtual` draws a lone column up to `max-w-[450px]` but sizes its items at the
+// column width.
+const SINGLE_COLUMN_MAX_WIDTH = 450;
+
+/** At the drawn width when the feed has one column, so the cover keeps its ratio. */
+function songCardHeight(args: { width: number; height: number }, feedWidth: number) {
+  const singleColumn = feedWidth > 0 && feedWidth < args.width * 2 + MASONRY_GAP;
+  const coverHeight = singleColumn
+    ? Math.min(feedWidth, SINGLE_COLUMN_MAX_WIDTH) * SONG_COVER_RATIO
+    : args.height;
+  return coverHeight + SONG_CARD_TEXT_HEIGHT;
+}
+
+/**
+ * Renders `children` once its width is known: the masonry lays out again only when its data or
+ * columns change, so a width read after its first layout would never reach the item heights.
+ */
+function FeedWidth({ children }: { children: (width: number) => ReactNode }) {
+  const [width, setWidth] = useState(0);
+  const ref = useResizeObserver<HTMLDivElement>((entry) => setWidth(entry.contentRect.width));
+  useIsomorphicLayoutEffect(() => setWidth(ref.current?.clientWidth ?? 0), []);
+  return <div ref={ref}>{width > 0 && children(width)}</div>;
+}
 // Stable, so a feed without the music flag reads no covers and re-renders nothing for them.
 const NO_IMAGES: ImageGetInfinite = [];
 const SEARCH_RETRY_MAX_ATTEMPTS = 10;
@@ -151,7 +178,6 @@ function ImagesFeed({
   ...imageProviderProps
 }: ImagesInfiniteProps & { feedSearch?: FeedSearch }) {
   const features = useFeatureFlags();
-  // The Song Card has one shape, so every song in the grid gets the same height.
   const isSongCard = (data: ImageGetInfinite[number]) =>
     !MasonryItem && !!features.music && data.type === MediaType.audio;
   const imageFilters = useImageFilters(filterType);
@@ -337,6 +363,33 @@ function ImagesFeed({
       <SearchRefusalNotice refusal={refusal} profanityMatches={feedSearch?.profanityMatches} />
     );
 
+  const masonry = (feedWidth: number) => (
+    <MasonryColumnsVirtual
+      data={images}
+      imageDimensions={(data) => {
+        if (isSongCard(data)) return SONG_CARD_COVER;
+        const width = data?.width ? data.width : 450;
+        const height = data?.height ? data.height : 450;
+        return { width, height };
+      }}
+      adjustHeight={(args, data) =>
+        isSongCard(data)
+          ? songCardHeight(args, feedWidth)
+          : adjustImagesCardHeight(args, !!MasonryItem)
+      }
+      maxItemHeight={600}
+      render={MasonryItem ?? ImagesCardMemoized}
+      itemId={(data) => data.id}
+      withAds={showAds}
+      spanLandscapeMaxHeight={getImagesSpanMaxHeight({
+        optedIn: landscapeSpan,
+        flagOn: features.masonryLandscapeSpan,
+        customCard: !!MasonryItem,
+      })}
+      hasMore={hasNextPage && !isRetrying}
+    />
+  );
+
   return (
     <>
       {searchInput && (
@@ -370,31 +423,10 @@ function ImagesFeed({
                     itemId={(image) => image.id}
                     render={listItem.render}
                   />
+                ) : features.music ? (
+                  <FeedWidth>{masonry}</FeedWidth>
                 ) : (
-                  <MasonryColumnsVirtual
-                    data={images}
-                    imageDimensions={(data) => {
-                      if (isSongCard(data)) return SONG_CARD_COVER;
-                      const width = data?.width ? data.width : 450;
-                      const height = data?.height ? data.height : 450;
-                      return { width, height };
-                    }}
-                    adjustHeight={(args, data) =>
-                      isSongCard(data)
-                        ? args.height + SONG_CARD_TEXT_HEIGHT
-                        : adjustImagesCardHeight(args, !!MasonryItem)
-                    }
-                    maxItemHeight={600}
-                    render={MasonryItem ?? ImagesCardMemoized}
-                    itemId={(data) => data.id}
-                    withAds={showAds}
-                    spanLandscapeMaxHeight={getImagesSpanMaxHeight({
-                      optedIn: landscapeSpan,
-                      flagOn: features.masonryLandscapeSpan,
-                      customCard: !!MasonryItem,
-                    })}
-                    hasMore={hasNextPage && !isRetrying}
-                  />
+                  masonry(0)
                 )}
               </ImagesProvider>
             </FeedSongCoversProvider>

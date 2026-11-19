@@ -4,7 +4,7 @@ import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
 import clsx from 'clsx';
-import React from 'react';
+import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SortFilter } from '~/components/Filters';
 import { resolveFeedSort } from '~/components/Filters/sort-availability';
@@ -16,11 +16,15 @@ import type { ImageSections } from '~/components/Image/image.utils';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { PROFILE_SONG_COLUMN_WIDTH } from '~/components/Music/song-card.constants';
+import {
+  PROFILE_SONG_SIDE_PADDING,
+  profileSongColumnWidth,
+} from '~/components/Music/song-card.constants';
 import { songTextDimmed } from '~/components/Music/song-styles';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { isViewer } from '~/utils/is-viewer';
@@ -85,6 +89,12 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
     { enabled: !!profileUsername && type === MediaType.audio }
   );
 
+  const isAudio = type === MediaType.audio;
+  const [tabWidth, setTabWidth] = useState(0);
+  const tabRef = useResizeObserver<HTMLDivElement>((entry) => {
+    if (isAudio) setTabWidth(entry.contentRect.width);
+  });
+
   // currently not showing any content if the username is undefined
   if (!profileUsername) return <NotFound />;
 
@@ -94,14 +104,19 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
   const viewingReactions = section === 'reactions';
 
   const isVideo = type === 'video';
-  const isAudio = type === MediaType.audio;
   const jumpToEmpty = viewingReactions ? undefined : jumpToEmptyMessage(query.jumpTo, sort);
-  const columnWidth = isAudio ? PROFILE_SONG_COLUMN_WIDTH : constants.cardSizes.image;
+  const columnWidth = isAudio
+    ? profileSongColumnWidth(tabWidth - 2 * PROFILE_SONG_SIDE_PADDING)
+    : constants.cardSizes.image;
 
   return (
-    <Box mt="md">
+    <Box mt="md" ref={tabRef}>
       <MasonryProvider columnWidth={columnWidth} maxColumnCount={7} maxSingleColumnWidth={450}>
-        <MasonryContainer p={0} columnWidth={columnWidth}>
+        <MasonryContainer
+          p={0}
+          {...(isAudio && { px: PROFILE_SONG_SIDE_PADDING })}
+          columnWidth={columnWidth}
+        >
           <Stack gap="xs">
             <Group gap={8} justify="space-between">
               <Group gap={8}>
