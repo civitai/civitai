@@ -1579,8 +1579,7 @@ describe('cover moderation and scan gate', () => {
       mockTagRows.mockResolvedValueOnce(rows);
       const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
       await handler(req as never, res as never);
-      expect((res._json() as any).items[0].coverImageUrl).not.toBe('edge:fallback-10');
-      expect((res._json() as any).items[0].coverImageUrl).toMatch(/^edge:/);
+      expect((res._json() as any).items[0].coverImageUrl).toBe('edge:primary-10');
     });
   });
 
