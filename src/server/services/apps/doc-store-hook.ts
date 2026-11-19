@@ -337,7 +337,7 @@ export async function loadHookSource(sha256: string): Promise<string | null> {
         message: err instanceof Error ? err.message : String(err),
       },
       'app-blocks'
-    ).catch(() => undefined);
+    );
     return null;
   }
   if (source === null || sha256Hex(Buffer.from(source, 'utf8')) !== sha256) return null;
@@ -427,7 +427,7 @@ function logUnavailable(access: StorageAccess, collection: string, why: string):
       why,
     },
     'app-blocks'
-  ).catch(() => undefined);
+  );
 }
 
 /**
