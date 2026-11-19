@@ -137,6 +137,7 @@ import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor'
 import { providerFetchSpikeMonitorJob } from '~/server/jobs/provider-fetch-spike-monitor';
 import { userActivityRollupJob } from '~/server/jobs/user-activity-rollup';
 import { userPopulationSnapshotJob } from '~/server/jobs/user-population-snapshot';
+import { modelHotRankSnapshotJob } from '~/server/jobs/model-hot-rank-snapshot';
 import { metricReconciliationJobs } from '~/server/jobs/metric-reconciliation-audit';
 import { reconcileWildcardSetsJob } from '~/server/jobs/reconcile-wildcard-sets';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
@@ -287,6 +288,7 @@ export const jobs: Job[] = [
   providerFetchSpikeMonitorJob,
   userActivityRollupJob,
   userPopulationSnapshotJob,
+  modelHotRankSnapshotJob,
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,
