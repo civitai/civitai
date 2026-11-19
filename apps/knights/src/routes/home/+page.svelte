@@ -232,7 +232,7 @@
     grid-area: verdicts;
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
+    gap: 1rem;
     padding-top: 1.75rem;
   }
   .links {
