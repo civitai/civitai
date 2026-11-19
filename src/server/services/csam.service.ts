@@ -153,6 +153,7 @@ function foldGeneratedImages(stored: unknown, added: GeneratedImagesEntry[] | un
 function foldDetails(
   stored: unknown,
   added: CsamReportFormOutput | undefined,
+  filedById: number,
   onIdentical?: (capture: CsamContextText) => void
 ) {
   const prior = isRecord(stored) ? stored : {};
@@ -165,12 +166,23 @@ function foldDetails(
     const list = unionLists<unknown>(prior[key], next[key], (item) => item);
     if (list) folded[key] = list;
   }
+  const identical: CsamContextText[] = [];
   const contextText = foldContextText(
     prior.contextText,
     (next as { contextText?: CsamContextText[] }).contextText,
-    onIdentical
+    (capture) => {
+      identical.push(capture);
+      onIdentical?.(capture);
+    }
   );
   if (contextText) folded.contextText = contextText;
+  // Internal record of a filing whose text the report already held; never part of what is sent.
+  const refiles = [
+    ...(Array.isArray(prior.identicalRefiles) ? prior.identicalRefiles : []),
+    ...identical.map((c) => ({ filedById, at: c.capturedAt, item: `${c.source}:${c.id}` })),
+  ];
+  if (refiles.length) folded.identicalRefiles = refiles;
+  else delete folded.identicalRefiles;
   const generatedImages = foldGeneratedImages(prior.generatedImages, next.generatedImages);
   if (generatedImages) folded.generatedImages = generatedImages;
   const nextEvidence = (next as Record<string, unknown>).generatorEvidence;
@@ -299,8 +311,11 @@ export async function createCsamReport({
           data: {
             ...data,
             images: foldImages(locked.images, data.images),
-            details: foldDetails(locked.details, details as CsamReportFormOutput, (c) =>
-              identical.push(c)
+            details: foldDetails(
+              locked.details,
+              details as CsamReportFormOutput,
+              reportedById,
+              (c) => identical.push(c)
             ),
             sendClaimId: null,
             sendClaimedAt: null,

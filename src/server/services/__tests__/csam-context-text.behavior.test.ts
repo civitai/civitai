@@ -290,8 +290,10 @@ describe('fold', () => {
     const edited = capture(7, 'edited later', 12);
     const other = capture(8, 'new', 12);
 
-    expect(foldContextText([first], [edited, other])).toEqual([first, edited, other]);
+    const prior = [first];
+    expect(foldContextText(prior, [edited, other])).toEqual([first, edited, other]);
     expect(first).toEqual(before);
+    expect(prior).toEqual([first]);
     expect(foldContextText(undefined, undefined)).toBeUndefined();
   });
 
@@ -305,7 +307,10 @@ describe('fold', () => {
     const first = capture(7, 'same words', 8);
     expect(foldContextText([first], [capture(7, 'same words', 12)])).toEqual([first]);
     const twice = [capture(9, 'once', 12), capture(9, 'once', 12)];
-    expect(foldContextText([], twice)).toEqual([twice[0]]);
+    const heard: CsamContextText[] = [];
+    expect(foldContextText([], twice, (c) => heard.push(c))).toEqual([twice[0]]);
+    // A repeat within one filing is not a re-file of text the report held.
+    expect(heard).toEqual([]);
   });
 
   it('keeps the same text on another item or source as its own capture', () => {

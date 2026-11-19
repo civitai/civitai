@@ -270,6 +270,22 @@ describe('attached text on an image report', () => {
     expect(infos.filter((info) => info.includes('the edited words'))).toHaveLength(1);
   });
 
+  it('never sends the internal record of identical re-files', async () => {
+    const marker = 'refile-marker-item:99';
+    await send({
+      contextText,
+      identicalRefiles: [{ filedById: 10, at: '2026-10-12T09:00:00.000Z', item: marker }],
+    });
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    const sent = submitReport.mock.calls[0][0];
+    const xml = buildReport(sent);
+    expect(JSON.stringify(sent)).not.toContain(marker);
+    expect(JSON.stringify(sent)).not.toContain('identicalRefiles');
+    expect(xml).not.toContain(marker);
+    expect(xml).toContain('held &lt;i&gt;words');
+  });
+
   it('adds no page incident to a report with no attached text', async () => {
     await send({});
 

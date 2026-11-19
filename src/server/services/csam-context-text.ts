@@ -403,7 +403,6 @@ export function reportedUserIdsOf(userId: number, details: unknown) {
   return ids;
 }
 
-/** Earlier captures are kept: a re-filing never replaces text already captured. */
 /**
  * Merges a filing's captures into a report's. Every earlier capture is kept as it was. A capture of an
  * item already in the report is added as its own entry when its text differs in any way, so an item
