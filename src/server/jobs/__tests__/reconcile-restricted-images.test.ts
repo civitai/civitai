@@ -9,6 +9,14 @@ const queryRaw = dbMock.dbWrite.$queryRaw;
 // in for it and returns the chunk's rowcount.
 const executeRaw = vi.fn<(...call: unknown[]) => Promise<number>>();
 const bustCachesForPosts = vi.fn(async (_postIds: number[]) => undefined);
+// The search-index queues, at the Redis boundary: `<index>:<action>` and the ids queued under it.
+const { addToQueue } = vi.hoisted(() => ({
+  addToQueue: vi.fn(async (_key: string, _ids: number[]) => true),
+}));
+vi.mock('~/server/redis/queues', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  addToQueue,
+}));
 
 import { reconcileRestrictedImages } from '~/server/jobs/reconcile-restricted-images';
 import {
@@ -43,6 +51,9 @@ const isVersionQuery = (call: unknown[]) =>
 let versionIds: number[] = [1, 2, 3];
 let overhidden = 0;
 let chunkPostIds: number[][] = [];
+let chunkImageIds: number[][] = [];
+let collectionsShowing: number[] = [];
+let collectionLookups: unknown[][] = [];
 
 const run = () =>
   reconcileRestrictedImages.run({}).result as Promise<{
@@ -57,16 +68,24 @@ beforeEach(() => {
   restricted.list = ['Alpha', 'Beta'];
   overhidden = 0;
   chunkPostIds = [];
+  chunkImageIds = [];
+  collectionsShowing = [];
+  collectionLookups = [];
   executeRaw.mockReset();
   executeRaw.mockResolvedValue(0);
   queryRaw.mockImplementation((...call: unknown[]) => {
     if (isUpdateQuery(call)) {
       const chunk = executeRaw.mock.calls.length;
       return executeRaw(...call).then((flagged) => [
-        { flagged, postIds: chunkPostIds[chunk] ?? [] },
+        { flagged, postIds: chunkPostIds[chunk] ?? [], imageIds: chunkImageIds[chunk] ?? [] },
       ]);
     }
     if (isOverhiddenQuery(call)) return Promise.resolve([{ count: BigInt(overhidden) }]);
+    if (sqlOf(call).includes('pg_index')) return Promise.resolve([{ present: true }]);
+    if (sqlOf(call).includes('"CollectionItem"')) {
+      collectionLookups.push(valuesOf(call).filter((v) => typeof v === 'number' && v > 500 && v < 5000));
+      return Promise.resolve(collectionsShowing.map((collectionId) => ({ collectionId })));
+    }
     if (isVersionQuery(call)) return Promise.resolve(versionIds.map((id) => ({ id })));
     return Promise.resolve([]);
   });
@@ -217,5 +236,52 @@ describe('reconcile-restricted-images', () => {
       expect.objectContaining({ postIds: [11], error: 'redis down' }),
       'webhooks'
     );
+  });
+});
+
+describe('reconcile-restricted-images search reindex', () => {
+  const collectionUpdates = () =>
+    addToQueue.mock.calls
+      .filter(([key]) => key.startsWith('collections') && key.endsWith(':Update'))
+      .flatMap(([, ids]) => ids);
+
+  it('rebuilds the collection documents showing each newly restricted image', async () => {
+    versionIds = Array.from({ length: 250 }, (_, i) => i + 1);
+    executeRaw.mockResolvedValue(1);
+    chunkImageIds = [[501, 502], [], [503]];
+    collectionsShowing = [77];
+
+    await run();
+
+    expect(collectionLookups.map((ids) => [...new Set(ids)])).toEqual([[501, 502], [503]]);
+    expect(collectionUpdates()).toEqual([77, 77]);
+  });
+
+  it('queues nothing when no image was newly restricted', async () => {
+    collectionsShowing = [77];
+    await run();
+    expect(collectionLookups).toEqual([]);
+    expect(addToQueue).not.toHaveBeenCalled();
+  });
+
+  it('looks the collections up in bounded batches', async () => {
+    chunkImageIds = [Array.from({ length: 1200 }, (_, i) => i + 501)];
+    executeRaw.mockResolvedValue(1200);
+    await run();
+    expect(collectionLookups.map((ids) => new Set(ids).size)).toEqual([500, 500, 200]);
+  });
+
+  it('logs counts, not ids, when the reindex fails, and still finishes the run', async () => {
+    chunkImageIds = [[501, 502]];
+    collectionsShowing = [77];
+    executeRaw.mockResolvedValue(2);
+    addToQueue.mockRejectedValueOnce(new Error('redis down'));
+
+    const result = await run();
+
+    expect(result.flagged).toBe(2);
+    expect(restrictedImageReconcileLastSuccessGauge.set).toHaveBeenCalledTimes(1);
+    const logged = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
+    expect(logged).not.toContain('501');
   });
 });

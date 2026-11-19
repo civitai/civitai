@@ -5,6 +5,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForImages,
+} from '~/server/services/collection-media-index';
+import {
   flagRestrictedImages,
   getRestrictedModelVersionIds,
 } from '~/server/services/restricted-images.service';
@@ -16,6 +20,51 @@ import {
 import { createJob } from './job';
 
 const VERSIONS_PER_CHUNK = 100;
+const IMAGES_PER_REINDEX = 500;
+const REINDEX_SOURCE = 'reconcile-restricted-images';
+
+// The collection documents that show a newly restricted image are rebuilt without it (the image
+// feed reads the flag itself; its search index is retired). Logged, not thrown, like the showcase
+// refresh: the flags are committed, so no later run selects these images again. Counts only.
+async function reindexRestrictedImages(imageIds: number[]) {
+  let images = 0;
+  let collections = 0;
+  let truncated = false;
+  try {
+    for (const ids of chunk(imageIds, IMAGES_PER_REINDEX)) {
+      const found = await getCollectionIdsForImages({ imageIds: ids, source: REINDEX_SOURCE });
+      const rebuilt = await enqueueCollectionRebuild({ ...found, source: REINDEX_SOURCE });
+      images += ids.length;
+      collections += rebuilt.queued;
+      truncated ||= found.truncated;
+    }
+  } catch (error) {
+    logToAxiom(
+      {
+        name: REINDEX_SOURCE,
+        type: 'error',
+        message: 'Search reindex failed',
+        images,
+        collections,
+        pending: imageIds.length - images,
+        error: (error as Error).message,
+      },
+      'webhooks'
+    );
+    return;
+  }
+  if (truncated)
+    logToAxiom(
+      {
+        name: REINDEX_SOURCE,
+        type: 'warning',
+        message: 'Collection reindex truncated',
+        images,
+        collections,
+      },
+      'webhooks'
+    );
+}
 
 // Sets `Image."modelRestricted"` for images whose resources point at a base model
 // whose `matureRestricted` includes `images`: the backstop for
@@ -67,6 +116,7 @@ export const reconcileRestrictedImages = createJob(
             'webhooks'
           )
         );
+      if (chunkResult.imageIds.length) await reindexRestrictedImages(chunkResult.imageIds);
     }
 
     // Reported, never acted on. This is also the recovery query if a model owner

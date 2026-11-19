@@ -4,7 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
 
 type Db = Pick<Prisma.TransactionClient, '$queryRaw'>;
-type FlagResult = { flagged: number; postIds: number[] };
+type FlagResult = { flagged: number; postIds: number[]; imageIds: number[] };
 
 /** Versions whose base model restricts mature `images`, optionally only those `among`. */
 export async function getRestrictedModelVersionIds(db: Db, among?: number[]): Promise<number[]> {
@@ -31,7 +31,8 @@ export async function flagRestrictedImages(
   db: Db,
   { modelVersionIds, imageIds }: { modelVersionIds: number[]; imageIds?: number[] }
 ): Promise<FlagResult> {
-  if (!modelVersionIds.length || (imageIds && !imageIds.length)) return { flagged: 0, postIds: [] };
+  if (!modelVersionIds.length || (imageIds && !imageIds.length))
+    return { flagged: 0, postIds: [], imageIds: [] };
   // 🔴 `EXCEPT` against `idx_image_restricted_true`, not a `modelRestricted` filter on the joined
   // row: the filter runs after a random `Image_pkey` probe per candidate, while the `EXCEPT` is two
   // index-only scans. With `imageIds` the candidates are already a handful of key probes.
@@ -54,14 +55,19 @@ export async function flagRestrictedImages(
               : Prisma.sql`EXCEPT SELECT id FROM "Image" WHERE "modelRestricted" = true`
           }
         )
-      RETURNING i."postId"
+      RETURNING i.id, i."postId"
     )
     SELECT
       count(*)::int AS flagged,
-      COALESCE(array_agg(DISTINCT "postId") FILTER (WHERE "postId" IS NOT NULL), '{}') AS "postIds"
+      COALESCE(array_agg(DISTINCT "postId") FILTER (WHERE "postId" IS NOT NULL), '{}') AS "postIds",
+      COALESCE(array_agg(id), '{}') AS "imageIds"
     FROM updated
   `;
-  return { flagged: result?.flagged ?? 0, postIds: result?.postIds ?? [] };
+  return {
+    flagged: result?.flagged ?? 0,
+    postIds: result?.postIds ?? [],
+    imageIds: result?.imageIds ?? [],
+  };
 }
 
 /**
@@ -93,6 +99,6 @@ export async function flagImagesOnRestrictedVersions({
       },
       'webhooks'
     );
-    return { flagged: 0, postIds: [] };
+    return { flagged: 0, postIds: [], imageIds: [] };
   }
 }

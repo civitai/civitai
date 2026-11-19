@@ -175,7 +175,7 @@ describe('flagImagesOnRestrictedVersions', () => {
       imageIds: [1, 3, 4],
     });
 
-    expect(result).toEqual({ flagged: 1, postIds: [7] });
+    expect(result).toEqual({ flagged: 1, postIds: [7], imageIds: [1] });
     expect(await restrictedIds()).toEqual([1, 4]);
   });
 
@@ -184,6 +184,7 @@ describe('flagImagesOnRestrictedVersions', () => {
       {
         flagged: 2,
         postIds: [7],
+        imageIds: expect.arrayContaining([1, 2]),
       }
     );
     expect(await restrictedIds()).toEqual([1, 2, 4]);
@@ -193,6 +194,7 @@ describe('flagImagesOnRestrictedVersions', () => {
     expect(await flagImagesOnRestrictedVersions({ modelVersionIds: [OPEN_VERSION] })).toEqual({
       flagged: 0,
       postIds: [],
+      imageIds: [],
     });
     expect(await restrictedIds()).toEqual([4]);
   });
@@ -202,6 +204,6 @@ describe('flagImagesOnRestrictedVersions', () => {
 
     await expect(
       flagImagesOnRestrictedVersions({ modelVersionIds: [RESTRICTED_VERSION], imageIds: [1] })
-    ).resolves.toEqual({ flagged: 0, postIds: [] });
+    ).resolves.toEqual({ flagged: 0, postIds: [], imageIds: [] });
   });
 });
