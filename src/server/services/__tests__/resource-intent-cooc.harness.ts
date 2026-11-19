@@ -38,11 +38,29 @@ afterEach(async () => {
 export async function utcPglite(...migrations: string[]) {
   const db = new PGlite({
     parsers: { 1114: (v: string) => new Date(`${v.replace(' ', 'T')}Z`) },
+    loadDataDir: await migratedDataDir(migrations),
   });
   open.add(db);
   await db.exec(`SET TIME ZONE 'UTC'`);
-  for (const m of migrations) await db.exec(m);
   return db;
+}
+
+// Booting PGlite and replaying migrations costs ~2 s; starting from a migrated data dir is a fraction.
+const migratedDataDirs = new Map<string, Promise<File | Blob>>();
+function migratedDataDir(migrations: string[]) {
+  const key = migrations.join('\0');
+  let dir = migratedDataDirs.get(key);
+  if (!dir) {
+    dir = (async () => {
+      const template = new PGlite();
+      for (const m of migrations) await template.exec(m);
+      const dump = await template.dumpDataDir('none');
+      await template.close();
+      return dump;
+    })();
+    migratedDataDirs.set(key, dir);
+  }
+  return dir;
 }
 
 /** A `CoocSql` over PGlite that records each statement's text. */
