@@ -2973,8 +2973,8 @@ const getAllImagesUncaptured = async (
         AND.push(Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${ownerId})`);
       } else AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
     }
-    // An image blocked until its metadata is verified reads Blocked for ingestion and level, which
-    // these gates drop. Its rating is gone, so a capped domain can't tell it is safe and lists none.
+    // A metadata-blocked image reads Blocked for ingestion and level, which these gates drop. Its
+    // rating is gone, so only red, which shows every level, lists it.
     if (!requiringMeta || domain !== 'red') {
       if (browsingLevel)
         AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);

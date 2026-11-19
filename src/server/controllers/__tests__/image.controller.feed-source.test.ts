@@ -206,7 +206,6 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     expect(getAllImagesMock).not.toHaveBeenCalled();
   });
 
-  // The feed service has no filter for metadata-blocked images and answers it with an empty page.
   it("serves a creator's Requiring Metadata filter from the database", async () => {
     const input = { limit: 10, browsingLevel: 1, include: [], userId: 7, requiringMeta: true };
     const result = await getInfiniteImagesHandler({ input: input as never, ctx });
