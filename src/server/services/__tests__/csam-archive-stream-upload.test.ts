@@ -53,6 +53,7 @@ const csamBaseDir = await vi.hoisted(async () => {
 // CommentV3 rows for `userContentSections`, served the way the keyset scan asks for them.
 const v3 = vi.hoisted(() => ({
   comments: [] as { id: number; userId: number; content: string }[],
+  tables: {} as Record<string, Record<string, unknown>[]>,
   calls: [] as { table?: string; userId?: number; afterId?: number; take?: number }[],
 }));
 vi.mock('~/server/db/kyselyDb', () => {
@@ -78,7 +79,25 @@ vi.mock('~/server/db/kyselyDb', () => {
         .slice(0, state.take);
     },
   });
-  return { kyselyV3Read: { selectFrom: () => query({}) } };
+  // The other tables `userContentSections` reads, by table name. Filtering by owner is covered
+  // against Postgres in csam-archive-user-content.behavior.test.ts; this serves rows as stored.
+  type MainState = { afterId?: number; take?: number };
+  const mainQuery = (table: string, state: MainState): Record<string, unknown> => ({
+    select: () => mainQuery(table, state),
+    distinct: () => mainQuery(table, state),
+    orderBy: () => mainQuery(table, state),
+    where: (_column: string, op: string, value: number) =>
+      mainQuery(table, op === '>' ? { ...state, afterId: value } : state),
+    limit: (take: number) => mainQuery(table, { ...state, take }),
+    execute: async () =>
+      (v3.tables[table] ?? [])
+        .filter((r) => state.afterId === undefined || (r.id as number) > state.afterId)
+        .slice(0, state.take),
+  });
+  return {
+    kyselyV3Read: { selectFrom: () => query({}) },
+    kyselyRead: { selectFrom: (table: string) => mainQuery(table, {}) },
+  };
 });
 vi.mock('~/env/other', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -483,6 +502,7 @@ beforeEach(() => {
   pendingUploads.clear();
   recordedArchiveCalls = [];
   v3.calls = [];
+  v3.tables = {};
   // A regression to the edge copy must fail here, not reach the network.
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   mockFetchBlob = async (url: unknown) => {

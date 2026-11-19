@@ -53,6 +53,7 @@ const csamBaseDir = await vi.hoisted(async () => {
 // CommentV3 rows for `userContentSections`, served the way the keyset scan asks for them.
 const v3 = vi.hoisted(() => ({
   comments: [] as { id: number; userId: number; content: string }[],
+  tables: {} as Record<string, Record<string, unknown>[]>,
   calls: [] as {
     userId?: number;
     afterId?: number;
@@ -89,7 +90,25 @@ vi.mock('~/server/db/kyselyDb', () => {
         .slice(0, state.take);
     },
   });
-  return { kyselyV3Read: { selectFrom: () => query({}) } };
+  // The other tables `userContentSections` reads, by table name. Filtering by owner is covered
+  // against Postgres in csam-archive-user-content.behavior.test.ts; this serves rows as stored.
+  type MainState = { afterId?: number; take?: number };
+  const mainQuery = (table: string, state: MainState): Record<string, unknown> => ({
+    select: () => mainQuery(table, state),
+    distinct: () => mainQuery(table, state),
+    orderBy: () => mainQuery(table, state),
+    where: (_column: string, op: string, value: number) =>
+      mainQuery(table, op === '>' ? { ...state, afterId: value } : state),
+    limit: (take: number) => mainQuery(table, { ...state, take }),
+    execute: async () =>
+      (v3.tables[table] ?? [])
+        .filter((r) => state.afterId === undefined || (r.id as number) > state.afterId)
+        .slice(0, state.take),
+  });
+  return {
+    kyselyV3Read: { selectFrom: () => query({}) },
+    kyselyRead: { selectFrom: (table: string) => mainQuery(table, {}) },
+  };
 });
 // The other half of the redirect: `baseDir` only honours `env.DIRNAME` when `isProd`. Scoped to
 // this file's module graph — no `process.cwd()` monkey-patching, which would leak to every other
@@ -275,10 +294,10 @@ let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 import {
   archiveCsamDataForReport,
   archiveUserComments,
-  ARCHIVE_SCAN_PAGE_SIZE,
   CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
   getCsamsToArchive,
 } from '~/server/services/csam.service-new';
+import { ARCHIVE_SCAN_PAGE_SIZE } from '~/server/services/csam-archive-user-content';
 import { createHash } from 'crypto';
 import { Readable } from 'stream';
 import fsAsync from 'fs/promises';
@@ -1044,6 +1063,18 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
         modelVersions,
         images,
         comments,
+        posts: [],
+        postTexts: [],
+        articles: [],
+        chatMessages: [],
+        profile: [],
+        resourceReviews: [],
+        collections: [],
+        bounties: [],
+        bountyEntries: [],
+        serviceOfferings: [],
+        questions: [],
+        answers: [],
       },
       (_k, v) => (typeof v === 'bigint' ? v.toString() : v)
     );
@@ -1056,6 +1087,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     dbMock.dbWrite.csamReport.update.mockResolvedValue({});
     v3.comments = comments;
     v3.calls = [];
+    v3.tables = {};
   }
 
   /**
@@ -1192,6 +1224,50 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     expect(v3.calls).toHaveLength(2);
     expect(v3.calls[0].orderBy).toEqual(['id', 'asc']);
     expect(v3.calls[1]).toMatchObject({ afterId: pageSize, take: pageSize });
+  });
+
+  it('writes the other text sections after comments, keeping the existing keys first', async () => {
+    seedDb();
+    v3.comments = [{ id: 1, userId: report.userId, content: 'c1' }];
+    v3.tables = {
+      Post: [{ id: 4, userId: report.userId, detail: 'p4' }],
+      ChatMember: [{ chatId: 9 }],
+      ChatMessage: [
+        { id: 7, chatId: 9, userId: report.userId, content: 'mine' },
+        { id: 8, chatId: 9, userId: report.userId + 1, content: 'theirs' },
+      ],
+      ServiceOffering: [{ id: 3, sellerId: report.userId, title: 's3' }],
+    };
+
+    await archiveCsamDataForReport(report as never);
+
+    const bundle = JSON.parse(uploads.get('data.json')!.toString('utf8'));
+    expect(Object.keys(bundle)).toEqual([
+      'user',
+      'reportId',
+      'models',
+      'modelVersions',
+      'images',
+      'comments',
+      'posts',
+      'postTexts',
+      'articles',
+      'chatMessages',
+      'profile',
+      'resourceReviews',
+      'collections',
+      'bounties',
+      'bountyEntries',
+      'serviceOfferings',
+      'questions',
+      'answers',
+    ]);
+    expect(bundle.posts).toEqual([{ id: 4, userId: report.userId, detail: 'p4' }]);
+    expect(bundle.chatMessages.map((m: { isReportedUser: boolean }) => m.isReportedUser)).toEqual([
+      true,
+      false,
+    ]);
+    expect(bundle.serviceOfferings).toHaveLength(1);
   });
 
   it("archives a held user's comments on their own", async () => {
