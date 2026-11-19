@@ -67,6 +67,9 @@ type SQL struct {
 
 type builder struct{ args []any }
 
+// withheldViewerSlot stands for the taken-down clause's viewer until Build binds it, last.
+const withheldViewerSlot = "\x00withheld-viewer\x00"
+
 // arg binds v and returns its placeholder.
 func (b *builder) arg(v any) string {
 	b.args = append(b.args, v)
@@ -315,8 +318,7 @@ func (q *PageQuery) Build() (SQL, error) {
 	if !q.IsModerator {
 		withheld := `(` + p + `."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier"`
 		if q.ViewerID != 0 {
-			// Inlined, not bound: an int cannot inject, and binding would renumber every later arg.
-			withheld += ` OR mm."userId" = ` + strconv.Itoa(q.ViewerID)
+			withheld += ` OR mm."userId" = ` + withheldViewerSlot
 		}
 		and = append(and, withheld+`)`)
 	}
@@ -621,6 +623,10 @@ func (q *PageQuery) Build() (SQL, error) {
       ` + order + `
     LIMIT ` + limit + `
   `
+	}
+	// Bound last, so the clause leaves every other placeholder's number as it was.
+	if strings.Contains(text, withheldViewerSlot) {
+		text = strings.Replace(text, withheldViewerSlot, b.arg(q.ViewerID), 1)
 	}
 	return SQL{Text: text, Args: b.args}, nil
 }
