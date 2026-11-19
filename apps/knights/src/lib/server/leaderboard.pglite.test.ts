@@ -195,6 +195,26 @@ describe('queryBoard', () => {
     expect(rows.map((r) => r.image)).toEqual(['img-1', 'img-2', null, 'pic-ok']);
   });
 
+  it("drops a legacy User.image naming another of the user's own images that is blocked or held", async () => {
+    await member(1, 'Knight', 3);
+    await member(2, 'Knight', 2);
+    await member(3, 'Knight', 1);
+    await pg.exec(
+      `INSERT INTO "Image" ("id","url","nsfwLevel","ingestion","blockedFor","needsReview","userId") VALUES
+        (80,'4f9a2c1e-0b7d-4c3a-9e21-5d6f7a8b9c01',1,'Scanned','moderated',NULL,1),
+        (81,'5a0b3d2f-1c8e-4d4b-8f32-6e7a8b9c0d12',1,'Scanned',NULL,'minor',2),
+        (82,'6b1c4e3a-2d9f-4e5c-9a43-7f8b9c0d1e23',1,'Scanned',NULL,NULL,3)`
+    );
+    await pg.exec(`UPDATE "User" SET "image"='4f9a2c1e-0b7d-4c3a-9e21-5d6f7a8b9c01' WHERE "id"=1`);
+    await pg.exec(`UPDATE "User" SET "image"='5A0B3D2F-1C8E-4D4B-8F32-6E7A8B9C0D12' WHERE "id"=2`);
+    // Control: the same shape on an image that is neither blocked nor held is kept.
+    await pg.exec(`UPDATE "User" SET "image"='6b1c4e3a-2d9f-4e5c-9a43-7f8b9c0d1e23' WHERE "id"=3`);
+
+    const { rows } = await queryBoard(db, NOW);
+
+    expect(rows.map((r) => r.image)).toEqual([null, null, '6b1c4e3a-2d9f-4e5c-9a43-7f8b9c0d1e23']);
+  });
+
   it('reads each rank badge cosmetic image from the Trophy cosmetics, Paladin included', async () => {
     await pg.exec(`INSERT INTO "Cosmetic" ("id","source","data") VALUES
       (859,'Trophy','{"url":"knight-key"}'),(860,'Purchase','{"url":"not-a-trophy"}'),

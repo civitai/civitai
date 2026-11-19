@@ -1,8 +1,11 @@
 import { sql, type Kysely, type SqlBool } from 'kysely';
 import {
+  blockMarkerText,
+  ownImageNamedByUserImage,
   servablePictureSql,
   userImageNamesPicture,
 } from '@civitai/db-queries/profile-picture-clear';
+import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_STAGE_RANKS } from '@civitai/shared/new-order';
@@ -45,12 +48,21 @@ export async function queryBoard(db: Kysely<DB>, now: Date): Promise<Board> {
       'p.userId',
       sql<string>`coalesce(u."username", 'Knight')`.as('username'),
       // The main app's profile-picture rule: any rated level the site serves as a picture, never one that is
-      // held for review or carries a block marker. Otherwise the legacy `User.image`, unless it names that picture.
+      // held for review or carries a block marker. Otherwise the legacy `User.image`, unless it names that
+      // picture or another of the user's own images that is held or blocked.
       sql<string | null>`coalesce(
         case when ${servablePictureSql()} then i.url end,
-        case when i.id is not null and ${sql.raw(
-          userImageNamesPicture('i')
-        )} then null else u.image end
+        case
+          when i.id is not null and ${sql.raw(userImageNamesPicture('i'))} then null
+          when u.image is not null and exists (
+            select 1 from "Image" o
+            where ${sql.raw(ownImageNamedByUserImage('o'))}
+              and (o."needsReview" in (${sql.join(OWNER_HIDDEN_REVIEWS)}) or ${sql.raw(
+        blockMarkerText('o')
+      )})
+          ) then null
+          else u.image
+        end
       )`.as('image'),
       'p.rankType',
       'p.exp',
@@ -64,7 +76,7 @@ export async function queryBoard(db: Kysely<DB>, now: Date): Promise<Board> {
     .where('p.rankType', 'in', [...KNIGHTS_STAGE_RANKS])
     .where('u.bannedAt', 'is', null)
     .where('u.deletedAt', 'is', null)
-    .groupBy(['p.userId', 'u.username', 'u.image', 'i.id', 'p.rankType', 'p.exp'])
+    .groupBy(['p.userId', 'u.id', 'u.username', 'u.image', 'i.id', 'p.rankType', 'p.exp'])
     .execute();
 
   const rows = grouped
