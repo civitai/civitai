@@ -4,8 +4,8 @@
 // `__tests__/data-read-grant.ledger.test.ts`.
 //
 //   basis   when                                        what must also hold
-//   own     the reading client IS the source app        the user may run apps; the source
-//                                                       declares the collection
+//   own     the reading client IS the source app, and   the user may run apps; the source
+//           the client has no other approved app        declares the collection
 //   grant   the reading client is another app that      its manifest declares the import of
 //           imports from the source                     the collection; the source declares it
 //                                                       exportable; the user granted the
@@ -63,6 +63,7 @@ export type CollectionReadRefusal =
   | 'apps_disabled'
   | 'consumer_not_found'
   | 'consumer_ambiguous'
+  | 'client_owns_multiple_blocks'
   | 'import_self'
   | 'import_not_declared'
   | 'source_rating'
@@ -153,6 +154,10 @@ async function decide(
     const found = await resolveConsumer(reader.clientId);
     if (!found.ok) return found;
     consumer = found.consumer;
+  } else if (!(await clientIsOnlySource(reader.clientId, source.id))) {
+    // A client id names the client, not one block: a client that owns several approved blocks
+    // could otherwise read any of them as its own, a non-exportable collection included.
+    return refuse('client_owns_multiple_blocks');
   }
   const declaredImport = consumer?.imports.get(sourceBlockId);
   if (consumer && !declaredImport?.collections.has(collection)) {
@@ -212,6 +217,18 @@ async function runGateRefusal(
     if (err instanceof TRPCError) return refuse('apps_disabled');
     throw docStoreUnavailable();
   }
+}
+
+/** Whether the source is the ONE approved app of `clientId` (never one of several). */
+async function clientIsOnlySource(clientId: string, sourceId: string): Promise<boolean> {
+  const rows = await docStoreDependency(
+    dbRead.appBlock.findMany({
+      where: { appId: clientId, status: 'approved' },
+      select: { id: true },
+      take: 2,
+    })
+  );
+  return rows.length === 1 && rows[0].id === sourceId;
 }
 
 /**

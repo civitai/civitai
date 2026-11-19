@@ -135,6 +135,33 @@ describe('basis own: the reading client is the source app', () => {
     expect(runGate).toHaveBeenCalledWith(USER_ID);
   });
 
+  it('🔴 a client with a second approved app reads neither as its own', async () => {
+    // A second approved app under the SAME client, with a collection it does not export.
+    rows.push({
+      id: 'apb_twin_4402',
+      appId: SOURCE_CLIENT,
+      blockId: 'twin-block-9317',
+      status: 'approved',
+      manifest: sourceManifest(),
+    });
+    expect(
+      await decideCollectionRead(reader(SOURCE_CLIENT), {
+        sourceBlockId: 'twin-block-9317',
+        collection: 'vault',
+      })
+    ).toEqual({ ok: false, reason: 'client_owns_multiple_blocks' });
+    expect(await decideCollectionRead(reader(SOURCE_CLIENT), target('journal'))).toEqual({
+      ok: false,
+      reason: 'client_owns_multiple_blocks',
+    });
+    // Control: the second app not approved, the client owns one approved app again.
+    rows[rows.length - 1].status = 'pending';
+    expect(await decideCollectionRead(reader(SOURCE_CLIENT), target('journal'))).toMatchObject({
+      ok: true,
+      basis: 'own',
+    });
+  });
+
   it('refuses an unapproved source', async () => {
     rows = [sourceRow({ status: 'pending' })];
     expect(await decideCollectionRead(reader(SOURCE_CLIENT), target('journal'))).toEqual({
