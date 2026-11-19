@@ -592,7 +592,7 @@ export const getModelHandler = async ({
     const matureLockReason = forEditor
       ? await getMatureLockReason({
           model: { ...model, userId: model.user.id },
-          viewerId: ctx.user?.id,
+          viewerId: ownerViewer?.id,
         })
       : null;
 
