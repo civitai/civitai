@@ -77,6 +77,7 @@ describe("a comic's search document cover, by tag and level", () => {
       id: 3,
       coverImageUrl: 'key-30',
       coverImageNsfwLevel: NsfwLevel.R,
+      coverImageTagIds: [CHILD_TAG],
     });
   });
 });

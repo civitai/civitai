@@ -483,3 +483,36 @@ describe('filterPreferences — collection covers', () => {
     expect(hit.srcs).toEqual(['a', 'b']);
   });
 });
+
+describe("filterPreferences — 'comics' applies the system hidden tags to the cover", () => {
+  const SYSTEM_TAG = 9911;
+  const comic = (id: number, coverImageTagIds: number[]) => ({
+    id,
+    nsfwLevel: 4,
+    name: 'comic',
+    userId: 77,
+    coverImageTagIds,
+  });
+  const run = (systemTags: number[]) =>
+    filterPreferences({
+      type: 'comics',
+      data: [comic(1, [5, SYSTEM_TAG]), comic(2, [5])],
+      hiddenPreferences: {
+        ...emptyPrefs(),
+        systemHiddenTags: new Map(systemTags.map((id): [number, boolean] => [id, true])),
+      },
+      browsingLevel: 31,
+      currentUser: null as never,
+      canViewNsfw: true,
+    });
+
+  it('hides a comic whose cover carries a system-hidden tag, keeping the control', () => {
+    const { items, hidden } = run([SYSTEM_TAG]);
+    expect(items.map((c) => c.id)).toEqual([2]);
+    expect(hidden.tags).toBe(1);
+  });
+
+  it('shows both when the add-on hides no tags', () => {
+    expect(run([]).items.map((c) => c.id)).toEqual([1, 2]);
+  });
+});

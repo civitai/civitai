@@ -93,6 +93,8 @@ type ComicForSearchIndex = {
   userId: number;
   coverImageUrl: string | null;
   coverImageNsfwLevel: number | null;
+  /** The cover's enabled tag ids, for the client's hidden-tag filter. */
+  coverImageTagIds: number[] | null;
   user: {
     id: number;
     username: string | null;
@@ -237,7 +239,11 @@ async function pullComics(db: RawQueryClient, filters: Prisma.Sql[]) {
       SELECT
         cp.id AS "projectId",
         i.url AS "coverImageUrl",
-        i."nsfwLevel" AS "coverImageNsfwLevel"
+        i."nsfwLevel" AS "coverImageNsfwLevel",
+        ARRAY(
+          SELECT t."tagId" FROM "TagsOnImageDetails" t
+          WHERE t."imageId" = i.id AND NOT t.disabled
+        ) AS "coverImageTagIds"
       FROM "ComicProject" cp
       JOIN "Image" i ON i.id = cp."coverImageId"
       WHERE cp.id IN (SELECT id FROM target)
@@ -261,6 +267,7 @@ async function pullComics(db: RawQueryClient, filters: Prisma.Sql[]) {
       t.*,
       (SELECT "coverImageUrl" FROM cover_images ci WHERE ci."projectId" = t.id),
       (SELECT "coverImageNsfwLevel" FROM cover_images ci WHERE ci."projectId" = t.id),
+      (SELECT "coverImageTagIds" FROM cover_images ci WHERE ci."projectId" = t.id),
       (SELECT "user" FROM users u WHERE u.id = t."userId"),
       (SELECT stats FROM stats s WHERE s."projectId" = t.id)
     FROM target t
