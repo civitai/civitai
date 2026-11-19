@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import type { CsamContextText } from '~/server/services/csam-context-text';
+import type { CsamContextReview, CsamContextText } from '~/server/services/csam-context-text';
 import {
   Kysely,
   PostgresAdapter,
@@ -317,6 +317,65 @@ describe('fold', () => {
     expect(foldContextText([b, a], [capture(7, 'text B', 12)])).toHaveLength(2);
   });
 
+  describe('an identical capture with a review', () => {
+    const review = (origin?: string) =>
+      ({ byId: MOD, at: at(11).toISOString(), ...(origin && { origin }) } as CsamContextReview);
+    const reviewed = (c: CsamContextText, r: CsamContextReview) => ({ ...c, reviewed: r });
+
+    it.each(['filer-read', 'individual-decision'])(
+      'marks the stored capture reviewed (%s), keeping its text and capture time',
+      (origin) => {
+        const stored = capture(7, 'same words', 8);
+        const before = structuredClone(stored);
+        const heard: [CsamContextText, CsamContextReview | undefined][] = [];
+        const again = reviewed(capture(7, 'same words', 12), review(origin));
+
+        const folded = foldContextText([stored], [again], (c, up) => heard.push([c, up]));
+
+        expect(folded).toEqual([{ ...stored, reviewed: review(origin) }]);
+        expect(stored).toEqual(before);
+        expect(heard).toEqual([[again, review(origin)]]);
+      }
+    );
+
+    it('changes nothing without a review, or with one that names no origin or an unknown one', () => {
+      const stored = capture(7, 'same words', 8);
+      const heard: (CsamContextReview | undefined)[] = [];
+      expect(
+        foldContextText([stored], [capture(7, 'same words', 12)], (_, up) => heard.push(up))
+      ).toEqual([stored]);
+      expect(
+        foldContextText([stored], [reviewed(capture(7, 'same words', 12), review())], (_, up) =>
+          heard.push(up)
+        )
+      ).toEqual([stored]);
+      expect(
+        foldContextText(
+          [stored],
+          [reviewed(capture(7, 'same words', 12), review('batched'))],
+          (_, up) => heard.push(up)
+        )
+      ).toEqual([stored]);
+      expect(heard).toEqual([undefined, undefined, undefined]);
+    });
+
+    it('never replaces or removes a stored review', () => {
+      const earlier = { byId: OTHER, at: at(9).toISOString(), origin: 'filer-read' } as const;
+      const stored = reviewed(capture(7, 'same words', 8), earlier);
+      expect(
+        foldContextText([stored], [reviewed(capture(7, 'same words', 12), review('filer-read'))])
+      ).toEqual([stored]);
+      expect(foldContextText([stored], [capture(7, 'same words', 12)])).toEqual([stored]);
+    });
+
+    it('marks only the latest capture, and only when its text matches', () => {
+      const a = capture(7, 'text A', 8);
+      const b = capture(7, 'text B', 10);
+      const aAgain = reviewed(capture(7, 'text A', 12), review('filer-read'));
+      expect(foldContextText([a, b], [aAgain])).toEqual([a, b, aAgain]);
+    });
+  });
+
   it('adds a capture whose text differs only in whitespace', () => {
     const first = capture(7, 'same words', 8);
     const spaced = capture(7, 'same  words ', 12);
@@ -507,6 +566,7 @@ describe('held text items', () => {
     expect(byId(rows, 4)?.reviewed).toEqual({
       byId: MOD_B,
       at: at(4).toISOString().replace('14:05', '00:00'),
+      origin: 'individual-decision',
     });
     const [incident] = contextWebPageIncidents(rows);
     expect(incident.additionalInfo).toContain(
@@ -526,7 +586,7 @@ describe('held text items', () => {
     expect(result.text).toBe('pending words');
 
     const rows = await snapshot(MOD, new Date());
-    expect(byId(rows, 2)?.reviewed).toEqual({ byId: MOD, at: result.readAt });
+    expect(byId(rows, 2)?.reviewed).toEqual({ byId: MOD, at: result.readAt, origin: 'filer-read' });
     expect(contextWebPageIncidents(rows)[0].additionalInfo).not.toContain(
       'Text item 2 of this post, posted 10/02/2026 00:00 UTC by the reported account. Not reviewed'
     );
