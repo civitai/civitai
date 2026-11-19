@@ -41,6 +41,8 @@ const V = {
   nonexistent: 107,
   hashMatchedDraft: 108,
   postVersion: 109,
+  strangerFlagged: 110,
+  ownFlagged: 111,
 } as const;
 
 const version = (
@@ -50,6 +52,7 @@ const version = (
     publishedAt?: Date | null;
     availability?: Availability;
     userId?: number;
+    poi?: boolean;
   } = {}
 ) => ({
   id,
@@ -60,6 +63,7 @@ const version = (
     userId: over.userId ?? STRANGER,
     status: ModelStatus.Published,
     availability: Availability.Public,
+    poi: over.poi ?? false,
   },
 });
 
@@ -70,6 +74,8 @@ const VERSIONS = [
   version(V.strangerScheduled, { publishedAt: new Date(Date.now() + DAY) }),
   version(V.strangerPrivate, { availability: Availability.Private }),
   version(V.strangerPrivateGranted, { availability: Availability.Private }),
+  version(V.strangerFlagged, { poi: true }),
+  version(V.ownFlagged, { poi: true, userId: OWNER.id }),
 ];
 
 // get_image_resources row shapes. `asserted` is the meta.civitaiResources branch.
@@ -157,6 +163,14 @@ describe('createImageResources: version ids asserted in image meta', () => {
     await createImageResources({ imageId: IMAGE_ID });
 
     expect(writtenVersionIds()).toEqual([V.published, V.ownDraft, V.strangerPrivateGranted]);
+  });
+
+  it("drops a version of someone else's flagged model and keeps one of the owner's", async () => {
+    arrange([asserted(V.strangerFlagged), asserted(V.ownFlagged), asserted(V.published)]);
+
+    await createImageResources({ imageId: IMAGE_ID });
+
+    expect(writtenVersionIds()).toEqual([V.ownFlagged, V.published]);
   });
 
   it('asks for every grant in one call, for the image owner', async () => {

@@ -8,6 +8,14 @@
 //
 // Results are in relevance order (store.Query), at most `limit` of them. There is one page: no
 // other sort and no paging, since no caller reads either.
+//
+// Every /search response, success or error, allows any origin (CORS), so an app in a sandboxed
+// iframe can call it straight from the browser: it answers only public listings, takes no
+// credentials and sets no cookies. `OPTIONS /search` answers a CORS preflight. The other routes
+// send no CORS header: they are for probes and monitoring, not for browsers.
+//
+// A 200 from /search is cacheable for SearchCacheControl's 30 s, so a shared cache in front of
+// the service can absorb repeated searches. Every other response, errors included, is no-store.
 package api
 
 import (
@@ -35,6 +43,17 @@ const (
 	MaxLimit     = 50
 )
 
+// Response headers.
+const (
+	// SearchCacheControl is the Cache-Control of a 200 from /search: an index answer is at most
+	// this stale, in exchange for repeated searches never reaching the store.
+	SearchCacheControl = "public, max-age=30"
+	// NoStore is the Cache-Control of every other response.
+	NoStore = "no-store"
+	// PreflightMaxAge is how long, in seconds, a browser may reuse a /search preflight answer.
+	PreflightMaxAge = "86400"
+)
+
 // Server answers the HTTP API from a store.
 type Server struct {
 	Store    store.Store
@@ -53,8 +72,23 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /search", s.search)
-	mux.Handle("GET /metrics", promhttp.HandlerFor(s.Gatherer, promhttp.HandlerOpts{}))
+	mux.HandleFunc("OPTIONS /search", preflight)
+	metricsHandler := promhttp.HandlerFor(s.Gatherer, promhttp.HandlerOpts{})
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", NoStore)
+		metricsHandler.ServeHTTP(w, r)
+	})
 	return mux
+}
+
+// preflight answers a CORS preflight for /search: 204, no body.
+func preflight(w http.ResponseWriter, _ *http.Request) {
+	h := w.Header()
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Methods", "GET")
+	h.Set("Access-Control-Max-Age", PreflightMaxAge)
+	h.Set("Cache-Control", NoStore)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +118,8 @@ type apiError struct {
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	outcome := "ok"
+	// Before any write, so every status (200, 400, 500, 503) carries it.
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	defer func() {
 		s.Metrics.Searches.WithLabelValues(outcome).Inc()
 		s.Metrics.SearchTime.Observe(time.Since(start).Seconds())
@@ -116,7 +152,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	if res.Results == nil {
 		res.Results = []store.Result{}
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeJSONCache(w, http.StatusOK, res, SearchCacheControl)
 }
 
 // ParseQuery validates the search parameters.
@@ -150,8 +186,12 @@ func ParseQuery(v map[string][]string) (store.Query, error) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	writeJSONCache(w, status, v, NoStore)
+}
+
+func writeJSONCache(w http.ResponseWriter, status int, v any, cacheControl string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Cache-Control", cacheControl)
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }

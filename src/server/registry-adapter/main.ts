@@ -13,6 +13,11 @@
  *   KEEP_ALIVE_TIMEOUT             the HTTP/SSE server's idle keep-alive timeout in ms (default
  *                                  100000, above a fronting proxy's 90 s; `serve.ts`)
  *   NEXT_PUBLIC_BASE_URL           the site origin the runtime record links to
+ *   REGISTRY_ADAPTER_APP_SEARCH_URL
+ *                                  the public app search endpoint; when set (an https: URL), the
+ *                                  app search service entity is published on the `service`
+ *                                  stream. Unset or empty publishes none; any other value refuses
+ *                                  to start (`parseAppSearchUrl` in `entities.ts`)
  *   REGISTRY_ADAPTER_RESOURCE_URL  this source's public URL, its OAuth resource identifier; when
  *                                  set (with AUTH_JWT_ISSUER, the issuer whose tokens it
  *                                  accepts), protected resource metadata is served and named by
@@ -51,7 +56,12 @@ import { createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
 import { liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';
 import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
 import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
-import { SERVED_SCHEMAS, buildEntitiesPerRead } from '~/server/registry-adapter/entities';
+import {
+  APP_SEARCH_URN,
+  SERVED_SCHEMAS,
+  buildEntitiesPerRead,
+  parseAppSearchUrl,
+} from '~/server/registry-adapter/entities';
 import type { ResourceConfig } from '~/server/registry-adapter/auth';
 import { createCivitaiTokenVerifier } from '~/server/registry-adapter/auth.live';
 import {
@@ -77,6 +87,12 @@ function main() {
   const pollMs = positiveNumber('REGISTRY_ADAPTER_POLL_SECONDS', 60) * 1000;
   const baseUrl = (process.env.NEXT_PUBLIC_BASE_URL || 'https://civitai.com').replace(/\/$/, '');
   const onError = (err: unknown) => console.error('registry-adapter:', err);
+  const appSearchUrl = parseAppSearchUrl(process.env.REGISTRY_ADAPTER_APP_SEARCH_URL);
+  console.log(
+    appSearchUrl
+      ? `registry-adapter: service ${APP_SEARCH_URN} at ${appSearchUrl}`
+      : 'registry-adapter: app search not published (REGISTRY_ADAPTER_APP_SEARCH_URL unset)'
+  );
   const resourceUrl = process.env.REGISTRY_ADAPTER_RESOURCE_URL;
   const issuer = process.env.AUTH_JWT_ISSUER;
   const resource: ResourceConfig | undefined =
@@ -111,6 +127,7 @@ function main() {
     serves: SERVED_SCHEMAS,
     read: buildEntitiesPerRead(readApps, {
       baseUrl,
+      appSearchUrl,
       onSkip: (reason) => console.warn('registry-adapter:', reason),
     }),
     store,

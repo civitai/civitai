@@ -109,6 +109,8 @@ func PublicEndpoint(path string) string {
 		return EndpointAsPosts
 	case ProcedureModelGetAll:
 		return EndpointModelGetAll
+	case ProcedureInfinite:
+		return EndpointInfinite
 	}
 	return ""
 }

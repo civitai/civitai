@@ -108,6 +108,10 @@ const featureFlags = createFeatureFlags({
   // feed; its own flag, so either can be turned on or killed alone. Enable only once the edge routes
   // `/api/trpc-go/model.getAll`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransportModelGetAll: { availability: [], fliptKey: 'feed-go-transport-model-getall' },
+  // Sends `image.getInfinite` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the
+  // gallery feed; its own flag, so each can be turned on or killed alone. Enable only once the edge
+  // routes `/api/trpc-go/image.getInfinite`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransportInfinite: { availability: [], fliptKey: 'feed-go-transport-infinite' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse

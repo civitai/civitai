@@ -384,14 +384,17 @@ describe("the app's env as next dev reads it", () => {
 });
 
 describe('FLIPT_LOCAL_OVERRIDES for the Go-transport flags', () => {
-  it('turns both on when unset', () => {
+  it('turns all three on when unset', () => {
     expect(mergeFliptOverrides(undefined)).toBe(
-      'feed-go-transport=on,feed-go-transport-model-getall=on'
+      'feed-go-transport=on,feed-go-transport-model-getall=on,feed-go-transport-infinite=on'
     );
   });
   it("keeps the developer's other keys and their own value for ours", () => {
     expect(mergeFliptOverrides('x=on, feed-go-transport=off')).toBe(
-      'x=on,feed-go-transport=off,feed-go-transport-model-getall=on'
+      'x=on,feed-go-transport=off,feed-go-transport-model-getall=on,feed-go-transport-infinite=on'
+    );
+    expect(mergeFliptOverrides('feed-go-transport-infinite=off')).toBe(
+      'feed-go-transport-infinite=off,feed-go-transport=on,feed-go-transport-model-getall=on'
     );
   });
 });
@@ -435,14 +438,16 @@ describe('what a run gives Next (planLaunch)', () => {
         startFeedGo: true,
         nextEnv: {
           FEED_GO_LOCAL_URL: PROXY,
-          FLIPT_LOCAL_OVERRIDES: 'feed-go-transport=on,feed-go-transport-model-getall=on',
+          FLIPT_LOCAL_OVERRIDES:
+            'feed-go-transport=on,feed-go-transport-model-getall=on,feed-go-transport-infinite=on',
         },
       });
     }
   });
-  it('leaves FLIPT_LOCAL_OVERRIDES alone when the developer already named both keys', () => {
+  it('leaves FLIPT_LOCAL_OVERRIDES alone when the developer already named every key', () => {
     const appEnv = {
-      FLIPT_LOCAL_OVERRIDES: 'feed-go-transport=off,feed-go-transport-model-getall=on',
+      FLIPT_LOCAL_OVERRIDES:
+        'feed-go-transport=off,feed-go-transport-model-getall=on,feed-go-transport-infinite=off',
     };
     expect(
       planLaunch({ mode: 'auto', portFree: true, port: 3000, appEnv, proxyUrl: PROXY }).nextEnv

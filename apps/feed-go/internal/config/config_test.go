@@ -202,6 +202,33 @@ func TestLoadServeModelGetAllDefaultsOff(t *testing.T) {
 	}
 }
 
+func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_SERVE_INFINITE", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.ServeInfinite != want {
+			t.Errorf("FEED_GO_SERVE_INFINITE=%q -> %v, want %v", in, c.ServeInfinite, want)
+		}
+	}
+	// Its own switch: the model.getAll one does not turn it on, nor it the model.getAll one.
+	t.Setenv("FEED_GO_SERVE_INFINITE", "")
+	t.Setenv("FEED_GO_SERVE_MODEL_GETALL", "true")
+	if c, err := Load(); err != nil || c.ServeInfinite || !c.ServeModelGetAll {
+		t.Fatalf("FEED_GO_SERVE_MODEL_GETALL=true alone: ServeInfinite=%v ServeModelGetAll=%v err=%v, want false, true", c.ServeInfinite, c.ServeModelGetAll, err)
+	}
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	t.Setenv("FEED_GO_SERVE_MODEL_GETALL", "")
+	if c, err := Load(); err != nil || !c.ServeInfinite || c.ServeModelGetAll {
+		t.Fatalf("FEED_GO_SERVE_INFINITE=true alone: ServeInfinite=%v ServeModelGetAll=%v err=%v, want true, false", c.ServeInfinite, c.ServeModelGetAll, err)
+	}
+}
+
 // SESSION_REVOCATION_CACHE is a default-on switch (isEnvSwitchOn): only off/0/false, any case and
 // surrounding whitespace, turn it off; unset, empty and unknown values keep it on. The cases are the
 // package's own env-switch.test.ts.
