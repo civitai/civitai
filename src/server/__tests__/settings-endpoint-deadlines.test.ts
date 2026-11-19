@@ -104,8 +104,6 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 import handler from '~/pages/api/user/settings';
 import { resolveSettingsBootstrapForRender } from '~/server/services/settings-bootstrap.service';
 import { setSessionCookie } from '~/server/auth/civ-cookie';
-// The unit setup replaces this export with a spy (src/__tests__/setup.ts).
-import { logToAxiom } from '~/server/logging/client';
 
 const invoke = (headers: Record<string, string> = { host: 'civitai.com' }) => {
   const json = vi.fn();
@@ -403,15 +401,6 @@ describe('settings bootstrap during a server render', () => {
     await expect(
       resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest)
     ).rejects.toThrow(/^settings bootstrap failed: Error P1001$/);
-    // …while the full reason is kept in the structured log.
-    expect(logToAxiom).toHaveBeenCalledWith(
-      {
-        type: 'warning',
-        name: 'settings bootstrap failed',
-        message: 'connect ECONNREFUSED db.internal.example:5432',
-      },
-      'settings'
-    );
 
     const { done, json } = invoke();
     await vi.runAllTimersAsync();

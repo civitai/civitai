@@ -156,7 +156,7 @@ internal/fallback    the fallback error and its reasons
   as fixext type 0, `notFound` / `debounce` markers honoured, stale entries served. **By default this
   service never writes those keys** — a Go encoding bug cannot poison a cache the Node app reads.
   The cost: a miss Go computes (§3.1) stays a miss for the next reader until Node fills it.
-  `FEED_GO_CACHE_WRITEBACK=true` writes what Node writes instead (§3.1). The shadow does **not**
+  `FEED_GO_CACHE_WRITEBACK=<cache>,…` writes what Node writes instead, for the caches it lists (§3.1). The shadow does **not**
   measure how often misses happen: a sample reaches this service after Node has answered the same
   request, so Node has just filled every key it read and the shadow almost never sees a miss.
   Serving reads first, before Node, so it needs a Go-first measurement of the miss rate (the cache
@@ -313,18 +313,42 @@ model.getAll the user-cosmetics and creator-membership misses still fall back, a
 official-models entry is read and refilled as §15.2.2 describes. `input-techniques` is an input shape, not
 a cache miss: it stays an unsupported fallback.
 
-**Write-back** (`FEED_GO_CACHE_WRITEBACK`, default off). Off, nothing is written (the tests assert the
-cache is untouched), and a lagging replica read affects only the one answer it feeds. On, each
-computed entry is written where and as Node's fetch writes it: the same key
+**Write-back** (`FEED_GO_CACHE_WRITEBACK`, default none). A per-cache allowlist: a comma-separated
+list of the caches to write back, each named by its `cache` label of `feed_go_cache_miss_total`:
+
+| Name | Cache (Node) | Lookup reads |
+|---|---|---|
+| `user-cosmetics` | `userCosmeticCache` | replica |
+| `image-frames` | `cosmeticEntityCaches.Image` | primary |
+| `event-decorations` | `eventDecorationEntityCaches.Image` | primary |
+| `tag-ids` | `tagIdsForImagesCache` (incl. its stale revalidation and locks) | replica |
+| `model-frames` | `cosmeticEntityCaches.Model` | primary |
+| `model-decorations` | `eventDecorationEntityCaches.Model` | primary |
+| `version-images` | `imagesForModelVersionsCache` (incl. its stale revalidation and locks) | primary for a lag-flagged id |
+| `model-data` | `dataForModelsCache` | primary for a lag-flagged id |
+| `model-tags` | `modelTagCache` | replica |
+| `official-models` | getOfficialModelIds' entry (and its lock) | replica |
+| `metrics` | the image metric hashes (MetricService's populate: locks, hashes) | ClickHouse |
+
+e.g. `FEED_GO_CACHE_WRITEBACK=metrics,tag-ids`. Empty (the default) writes nothing. Throughout this
+document "write-back on" (or "off") for a cache means that cache is (or is not) listed. A name not in
+the table fails startup (a typo never silently leaves a cache unwritten); `image-meta` is computed but
+never written, so it is not a name. The old bool form (`true`, `false`, `1`, `0`, …) is not
+accepted: it fails startup like any unknown name. A cache not listed is never
+written (no entry, lock or hash; the tests assert the cache is untouched), and a lagging replica read
+affects only the one answer it feeds. For a listed cache, each computed entry is written where and as
+Node's fetch writes it: the same key
 (`CACHE_KEY_NAMESPACE`-prefixed outside production), msgpackr's bytes of `{...result, cachedAt}` or of
 the `{[idKey]: id, notFound: true, cachedAt}` marker, the same expiry (user cosmetics a day, markers a
 day; model data a day, no marker; model tags and their markers a day; frames and event decorations,
 image and model, a day, markers an hour, frame markers only with
 `frame-cache-negative` on; tag ids and their markers 9 h, the 8 h ttl plus its 1 h stale tail), and
 only for a miss Node writes (no key or an undecodable value; never
-inside a bust's debounce window or after a failed read). Write-back needs `DATABASE_URL` (the primary,
-Node's `dbWrite`; startup fails without it): the frame and event-decoration lookups (image and model),
-and the frames' withheld check, then read the primary, as Node's do (`src/server/redis/caches.ts`, the
+inside a bust's debounce window or after a failed read). Listing a cache whose lookup reads the
+primary (`image-frames`, `event-decorations`, `model-frames`, `model-decorations`, `version-images`,
+`model-data`) needs `DATABASE_URL` (the primary, Node's `dbWrite`; startup fails without it, and the
+primary pool, 4 connections, is opened only then): a listed frame or event-decoration lookup (image
+and model), and the frames' withheld check, then reads the primary, as Node's do (`src/server/redis/caches.ts`, the
 two `dbWrite.$queryRaw` lookups). That primary read is the guard against re-caching stale state: read
 from a lagging replica, a frame just unequipped or withheld would be written back and served for a
 day. With the primary read, a fill races an equip or unequip exactly as Node's own fill does.
@@ -339,19 +363,30 @@ write flagged, as Node's lag-aware reads do. The
 shared caches Go already filled from the replica before this change (basic users, `cosmetics2`,
 `basic-tags`, profile pictures, thumbnails) are still never written.
 
+**Write outcomes.** Every write of a listed cache is counted per key in
+`feed_go_cache_writes_total{cache,result}`: `written` (the key holds the value now), `nx_lost` (a
+`SET NX` found the key filled by another writer since the read; nothing written) or `error` (the
+command failed; for the metric hashes it also fails the populate, as Node's does). The series exist,
+at 0, for each listed cache and result from startup, and only for those. With
+`FEED_GO_CACHE_WRITE_LOG_PER_MIN` (default 0: none) each write also logs a `cache write` line (`cache`,
+`key`, `id` when the key has one, `result`; never the value), at most that many per (cache, result)
+per minute (a token bucket like §10.3's; a line carries `suppressed`), so the keys a bad write filled
+can be found and purged.
+
 **Repeated misses** (`lookupShared`). Concurrent requests that miss the same ids of one cache share
-one lookup (singleflight per cache and id set). With write-back off, each lookup's answer (a record,
+one lookup (singleflight per cache and id set). For a cache not written back, each lookup's answer (a record,
 or "no row") is also kept in process for 10 s (at most 50 000 ids; expired ones are swept at most
 once a second, and while it is full of live ones a new id is not kept), so the same miss within seconds
 sends no query: without a write, Node's next fill is the only thing that would otherwise end the
-repeats. With write-back on nothing is kept (the written entry answers repeats). Every computed cache
+repeats. For a written-back cache nothing is kept (the written entry answers repeats). Every computed cache
 is kept but the image meta (§13): the tag ids, model frames, model decorations, model data, model
 tags and the official models too, as none depends on the viewer
 and Node already serves tag ids from a per-process copy for longer than 10 s. The kept answer is a
 §9 divergence.
 
 **Rollout order** (operator decision, 2026-11-15): `FEED_GO_COMPUTE_MISSES` on first, then
-`FEED_GO_CACHE_WRITEBACK` on (with `DATABASE_URL`) **before any serving ramp past 10%**. Below that,
+`FEED_GO_CACHE_WRITEBACK` (with `DATABASE_URL` once a primary-reading cache is listed) **before any
+serving ramp past 10%**, one cache at a time, each read against its `feed_go_cache_writes_total`. Below that,
 Node still serves most requests and refills these caches; past it a Go-served request's misses recur
 on every Go-served request for those ids (the reason §7.1's probe miss rate understates the steady
 state with write-back off). Read the ramp decision against §7.1's go/no-go queries.
@@ -1267,6 +1302,7 @@ error, rate-limited or not.
 |---|---|
 | `FEED_GO_FALLBACK_LOG_PER_MIN` | Fallback lines per key per minute (default 0: none). |
 | `FEED_GO_ERROR_LOG_PER_MIN` | Error lines per key per minute (default 60). |
+| `FEED_GO_CACHE_WRITE_LOG_PER_MIN` | `cache write` lines per (cache, result) per minute (default 0: none; §3.1). These carry the key and id written, never the value. |
 
 *What is logged.* Never an error's text, the request input, a cookie, a token or an id. A fallback's
 `Detail` (its `Error()` text) is never logged; its loggable detail (`fallback.SafeDetail`) is opt-in
@@ -1316,14 +1352,15 @@ None of this is in this PR.
   `FEED_GO_LAZY_POST_IMAGES` at the flags' values, and `FEED_GO_FALLBACK_URL` (the in-cluster Node
   service) once serving. `FEED_GO_FRAME_CACHE_NEGATIVE` mirrors a live flag: the deployment must set
   it to `frame-cache-negative`'s production value (and change it when the flag changes), or frame
-  markers are read and written differently from Node (§8). `FEED_GO_CACHE_WRITEBACK` stays off until
-  the operator decides; turning it on also needs `DATABASE_URL`, the primary (§3.1). The metric-hash
+  markers are read and written differently from Node (§8). `FEED_GO_CACHE_WRITEBACK` stays empty (no
+  cache written) until the operator decides, then lists caches one at a time; listing a cache whose
+  lookup reads the primary also needs `DATABASE_URL` (§3.1). The metric-hash
   misses need `FEED_GO_CLICKHOUSE_HOST`, `FEED_GO_CLICKHOUSE_USERNAME`, `FEED_GO_CLICKHOUSE_PASSWORD`
   (§3.1): a dedicated SELECT-only login on what the populate reads, in feed-go's own Secret. The
   app's `CLICKHOUSE_*` keys reach feed-go through the shared app config but are ignored, so until
   that Secret exists the misses fall back (`metrics-miss`).
 - **Network:** Node pods → feed-go `:9090` (shadow); feed-go → replica, both Redis (and the system
-  Redis Sentinels), the JWKS endpoint, the image feed service, the primary (only with write-back on),
+  Redis Sentinels), the JWKS endpoint, the image feed service, the primary (only with a primary-reading cache written back),
   ClickHouse's HTTP endpoint (only with a reader configured), and (serving) the Node service.
 - **Monitoring:** a scrape of `:9090/metrics`; a dashboard of §10's queries and the shadow results.
 - **Flags:** the Node-side shadow sample percentage, and later the client transport flag. Created OFF.

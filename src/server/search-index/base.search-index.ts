@@ -630,11 +630,15 @@ export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>
       // timestamps, so an id queued in both carries no record of which action came last, and the
       // drain order alone decides the outcome. Pulling second lets `pullData`'s own WHERE
       // arbitrate; pulling first rebuilt the document and then deleted it.
-      if (queuedDeletes.content.length > 0 && !partial) {
+      // The cleanup commits the Delete checkout itself, before any re-queue of a failed delete.
+      const cleanupCommitsDeletes = queuedDeletes.content.length > 0 && !partial;
+      if (cleanupCommitsDeletes) {
         await onSearchIndexDocumentsCleanup({
           indexName,
           ids: queuedDeletes.content,
           client: processor.client,
+          commit: queuedDeletes.commit,
+          rebuilding: new Set(updatedItems),
         });
       }
 
@@ -652,7 +656,7 @@ export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>
 
       // Commit queues:
       await queuedUpdates.commit();
-      await queuedDeletes.commit();
+      if (!cleanupCommitsDeletes) await queuedDeletes.commit();
       // Also re-queues failed ids that came from `updateIds` rather than the queue: `setLastUpdate`
       // below moves the window past them, so the queue is the only place they can be retried.
       if (!partial && (!queues || queues.includes('update')))
@@ -761,6 +765,11 @@ export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>
         return true;
       });
       const batches = chunk(dedupedItems, updateSyncChunkSize);
+      const rebuilding = new Set(
+        dedupedItems
+          .filter((i) => actionOf(i) === SearchIndexUpdateQueueAction.Update)
+          .map(({ id }) => id)
+      );
       let totalTasks = 0;
 
       for (const batch of batches) {
@@ -776,6 +785,7 @@ export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>
             indexName,
             ids: deleteIds,
             client: processor.client,
+            rebuilding,
           });
         }
 
@@ -867,10 +877,9 @@ export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>
             indexName,
             ids: queuedDeletes.content,
             client: processor.client,
+            commit: queuedDeletes.commit,
           });
-        }
-
-        await queuedDeletes.commit();
+        } else await queuedDeletes.commit();
       }
 
       if (opts.processUpdates) {

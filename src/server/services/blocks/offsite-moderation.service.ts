@@ -37,6 +37,7 @@ import { readListingMediaSplit } from '~/server/services/blocks/listing-media-sp
 import { getOpenHoldsBySlug } from '~/server/services/blocks/publish-request-holds.service';
 import {
   forgetRevokedAppTokens,
+  lockAppBlockClientRows,
   revokeAppBlockOauthTokens,
   type RevokedAppTokens,
 } from '~/server/services/blocks/app-block-token-revoke.service';
@@ -567,6 +568,7 @@ async function flipBackingBlockStatus(
 ): Promise<boolean> {
   if (!opts.isOnsite || !opts.appBlockId) return false;
   if (opts.to === 'approved') await assertNoOpenReviewHold(tx, opts.appBlockId, opts.ownerFacing);
+  if (opts.to === 'suspended') await lockAppBlockClientRows(tx, opts.appBlockId);
   const flip = await tx.appBlock.updateMany({
     where: { id: opts.appBlockId, status: opts.from },
     data: { status: opts.to },

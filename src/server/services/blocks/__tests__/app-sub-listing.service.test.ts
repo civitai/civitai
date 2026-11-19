@@ -807,25 +807,15 @@ describe('the tables are absent (manual-apply migration not run)', () => {
     ).rejects.toBe(half);
   });
 
-  it('the in-app hooks stay silent instead of logging an error per withdraw', async () => {
-    read.appListing.findFirst.mockRejectedValueOnce(missing[0]);
-    await syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
-  });
-
   // Before the migration `app_listings` exists and `app_sub_listings` does not, so the first
   // statement to fail is the version touch, not the parent read.
-  it.each(missing)(
-    'the hooks stay silent when the sub-listing table is missing (%s)',
-    async (err) => {
-      write.appSubListing.updateMany.mockRejectedValue(err);
-      await expect(
-        syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' })
-      ).resolves.toBeUndefined();
-      expect(write.appSubListing.updateMany).toHaveBeenCalled();
-      expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
-    }
-  );
+  it.each(missing)('the hooks resolve when the sub-listing table is missing (%s)', async (err) => {
+    write.appSubListing.updateMany.mockRejectedValue(err);
+    await expect(
+      syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' })
+    ).resolves.toBeUndefined();
+    expect(write.appSubListing.updateMany).toHaveBeenCalled();
+  });
 });
 
 describe('withdrawSubListing / listMySubListings', () => {

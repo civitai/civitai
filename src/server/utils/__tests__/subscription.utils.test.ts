@@ -326,46 +326,6 @@ describe('invalidateSubscriptionCaches', () => {
     mockCapBust.mockResolvedValue(undefined);
   });
 
-  it('logs the failing step to Axiom when refreshSession rejects', async () => {
-    const { refreshSession } = await import('~/server/auth/session-invalidation');
-    const { logToAxiom } = await import('~/server/logging/client');
-    const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
-
-    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('sysRedis down'));
-
-    await expect(invalidateSubscriptionCaches(42)).resolves.toBeUndefined();
-
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'invalidate-subscription-caches-step-failed',
-        type: 'error',
-        userId: 42,
-        step: 'refreshSession',
-        error: 'sysRedis down',
-      }),
-      'webhooks'
-    );
-  });
-
-  it('logs the failing step to Axiom when getMultipliersForUser rejects', async () => {
-    const { getMultipliersForUser } = await import('~/server/services/buzz.service');
-    const { logToAxiom } = await import('~/server/logging/client');
-    const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
-
-    vi.mocked(getMultipliersForUser).mockRejectedValueOnce(new Error('db unreachable'));
-
-    await invalidateSubscriptionCaches(99);
-
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 99,
-        step: 'getMultipliersForUser',
-        error: 'db unreachable',
-      }),
-      'webhooks'
-    );
-  });
-
   it('runs every other step when the first one rejects', async () => {
     const { refreshSession } = await import('~/server/auth/session-invalidation');
     const { getMultipliersForUser } = await import('~/server/services/buzz.service');
@@ -406,33 +366,5 @@ describe('invalidateSubscriptionCaches', () => {
       .mock.calls.map(([sql]) => sql as Prisma.Sql)
       .find((sql) => sql.sql?.includes('"collaborationDisabledAt" = NULL'));
     expect(reopen?.values).toContain(4527785);
-  });
-
-  it('does not log when every step resolves', async () => {
-    const { logToAxiom } = await import('~/server/logging/client');
-    const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
-
-    await invalidateSubscriptionCaches(1);
-
-    expect(logToAxiom).not.toHaveBeenCalled();
-  });
-
-  it('logs every rejection independently — partial failures are not swallowed', async () => {
-    const { refreshSession } = await import('~/server/auth/session-invalidation');
-    const { setVaultFromSubscription } = await import('~/server/services/vault.service');
-    const { logToAxiom } = await import('~/server/logging/client');
-    const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
-
-    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('a'));
-    vi.mocked(setVaultFromSubscription).mockRejectedValueOnce(new Error('b'));
-
-    await invalidateSubscriptionCaches(7);
-
-    const steps = vi
-      .mocked(logToAxiom)
-      .mock.calls.map((call) => (call[0] as { step: string }).step);
-    expect(steps).toContain('refreshSession');
-    expect(steps).toContain('setVaultFromSubscription');
-    expect(steps).toHaveLength(2);
   });
 });

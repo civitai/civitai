@@ -257,11 +257,11 @@ describe('blocking an image already removed with its block reason kept', () => {
     expect(actionedReports()).toEqual([]);
   });
 
-  it('leaves its report open when the review flag is on it too', async () => {
+  it('leaves its report open when the review flag is on it too, and repeats its CSAM entry', async () => {
     await block(HELD_FLAGGED);
 
     expect(await row(HELD_FLAGGED)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM' });
-    expect(blocklistReasons()).toEqual({});
+    expect(blocklistReasons()).toEqual({ '105': 'CSAM' });
     expect(notifiedImages()).toEqual([]);
     expect(actionedReports()).toEqual([]);
   });

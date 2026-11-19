@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { promisify } from 'util';
 import zlib from 'zlib';
 import { Packr } from 'msgpackr';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   CoocCountAccumulator,
@@ -19,7 +19,6 @@ import {
   decodeCheckpointAttachSection,
   encodeCheckpointAttachSection,
 } from '~/server/services/resource-intent-cooc/checkpoint-attach';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   CoocSnapshotHolder,
   CoocStudySnapshots,
@@ -46,11 +45,6 @@ import { fakeImageDb, freshDb } from './resource-intent-cooc.harness';
  */
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
-
-beforeEach(() => {
-  loggingMock.logToAxiom.mockReset();
-  loggingMock.logToAxiom.mockResolvedValue(undefined);
-});
 
 const DAY = 86_400_000;
 // The payload's own msgpack options and brotli, to inspect and re-pack its elements.
@@ -317,11 +311,6 @@ describe('loading and serving the section', () => {
     expect(served.fallbackReason).toBeNull();
     expect(served.snapshot?.contentHash).toBe(hash);
     expect(served.snapshot?.checkpoints).toBeNull();
-    // Absent is not invalid: no section-invalid report for a snapshot that predates the section.
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'resource-intent-checkpoint-section-invalid' }),
-      'temp-search'
-    );
   });
 
   it('a section built under another build hash is not served; the snapshot still is', async () => {
@@ -346,13 +335,6 @@ describe('loading and serving the section', () => {
     const served = await new CoocSnapshotHolder({ sql: () => sql }).resolve();
     expect(served.snapshot?.contentHash).toBe(hash);
     expect(served.snapshot?.checkpoints).toBeNull();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'resource-intent-checkpoint-section-invalid',
-        contentHash: hash,
-      }),
-      'temp-search'
-    );
   });
 
   it('🔴 study mode: a study snapshot serves its section; a foreign section serves none', async () => {

@@ -11,6 +11,10 @@ const ch = vi.hoisted(() => ({
   liveRows: [] as { hash: string; reason: string }[],
   csamHashes: [] as string[],
   lookupFails: false,
+  /** The live-row read (not the CSAM-entry lookup) fails, quoting its query. */
+  liveQueryFails: false,
+  /** Every insert fails, quoting its rows. */
+  insertFails: false,
   // Rows oldest first; `at` is created_at in seconds (default: list order). An argMax-per-hash
   // query reads only each hash's newest row, and with the live-CSAM tie-break a same-second live
   // CSAM row wins the tie; without it the later-listed row does. A plain filter reads every row.
@@ -41,7 +45,10 @@ vi.mock('$lib/server/clickhouse', () => ({
   getClickhouse: () => ({
     query: async ({ query }: { query: string }) => {
       ch.queries.push(query);
-      if (!query.includes("= 'CSAM'")) return { json: async () => ch.liveRows };
+      if (!query.includes("= 'CSAM'")) {
+        if (ch.liveQueryFails) throw new Error(`Code: 62. Syntax error in: ${query}`);
+        return { json: async () => ch.liveRows };
+      }
       if (ch.lookupFails) throw new Error('Socket hang up');
       if (ch.tableRows) {
         type Row = NonNullable<typeof ch.tableRows>[number];
@@ -69,6 +76,7 @@ vi.mock('$lib/server/clickhouse', () => ({
       return { json: async () => ch.csamHashes.map((hash) => ({ hash })) };
     },
     insert: async ({ table, values }: { table: string; values: unknown[] }) => {
+      if (ch.insertFails) throw new Error(`Cannot parse input: ${JSON.stringify(values)}`);
       ch.inserts.push({ table, values });
     },
   }),
@@ -88,6 +96,8 @@ beforeEach(() => {
   ch.liveRows = [];
   ch.csamHashes = [CSAM_HASH];
   ch.lookupFails = false;
+  ch.liveQueryFails = false;
+  ch.insertFails = false;
   ch.tableRows = undefined;
   logToAxiom.mockClear();
 });
@@ -183,10 +193,34 @@ describe('a hash with a CSAM entry keeps it', () => {
           step: 'unblock',
           imageId: 9,
           actorUserId: 2,
-          hashes: [OTHER],
+          hashCount: 1,
         }),
       })
     );
+  });
+
+  it('a failed live-row read refuses the unblock and logs no hash', async () => {
+    ch.liveQueryFails = true;
+
+    await removeImagesFromBlocklist([OTHER], { step: 'unblock', imageId: 9, actorUserId: 2 });
+
+    expect(ch.inserts).toEqual([]);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'blocklist-disable-refused' })
+    );
+    expect(JSON.stringify(logToAxiom.mock.calls)).not.toContain(OTHER);
+  });
+
+  it('a failed disable write throws no hash', async () => {
+    ch.liveRows = [{ hash: OTHER, reason: 'TOS' }];
+    ch.insertFails = true;
+
+    const thrown = await removeImagesFromBlocklist([OTHER]).then(
+      () => expect.unreachable('the disable reported success'),
+      (e: unknown) => e as Error
+    );
+
+    expect(JSON.stringify([thrown.message, thrown.cause])).not.toContain(OTHER);
   });
 
   it('a failed lookup leaves the other block unwritten and logged, after the CSAM row lands', async () => {
@@ -208,7 +242,7 @@ describe('a hash with a CSAM entry keeps it', () => {
           step: 'block',
           imageId: 9,
           actorUserId: 2,
-          hashes: [OTHER],
+          hashCount: 1,
         }),
       })
     );
