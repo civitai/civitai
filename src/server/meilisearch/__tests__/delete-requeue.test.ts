@@ -2,11 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MeiliSearch } from 'meilisearch';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
-const queued = vi.hoisted(() => ({ calls: [] as unknown[], deleteQueue: [] as number[] }));
+const queued = vi.hoisted(() => ({
+  calls: [] as unknown[],
+  deleteQueue: [] as number[],
+  onQueue: (() => undefined) as () => unknown,
+}));
 vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
   SearchIndexUpdate: {
     queueUpdate: async (args: unknown) => {
       queued.calls.push(args);
+      queued.onQueue();
       return true;
     },
     getQueue: async () => ({ content: queued.deleteQueue, commit: async () => undefined }),
@@ -31,6 +36,7 @@ const requeuedDeletes = () =>
 beforeEach(() => {
   queued.calls = [];
   queued.deleteQueue = [];
+  queued.onQueue = () => undefined;
 });
 
 describe('onSearchIndexDocumentsCleanup when the delete task fails', () => {
@@ -73,5 +79,17 @@ describe('onSearchIndexDocumentsCleanup when the delete task fails', () => {
       client: clientWhoseDeleteEnds('succeeded'),
     });
     expect(queued.calls).toEqual([]);
+  });
+
+  it('commits the checkout the ids came from before re-queueing them', async () => {
+    const order: string[] = [];
+    queued.onQueue = () => order.push('requeue');
+    await onSearchIndexDocumentsCleanup({
+      indexName: 'idx',
+      ids: [4],
+      client: clientWhoseDeleteEnds('failed'),
+      commit: async () => void order.push('commit'),
+    });
+    expect(order).toEqual(['commit', 'requeue']);
   });
 });

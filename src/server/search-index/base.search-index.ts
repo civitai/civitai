@@ -635,6 +635,7 @@ export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>
           indexName,
           ids: queuedDeletes.content,
           client: processor.client,
+          commit: queuedDeletes.commit,
         });
       }
 
@@ -867,10 +868,9 @@ export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>
             indexName,
             ids: queuedDeletes.content,
             client: processor.client,
+            commit: queuedDeletes.commit,
           });
-        }
-
-        await queuedDeletes.commit();
+        } else await queuedDeletes.commit();
       }
 
       if (opts.processUpdates) {
