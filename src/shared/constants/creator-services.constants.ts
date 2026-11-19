@@ -150,11 +150,9 @@ export const SERVICE_FINAL_EXTENSIONS = [
   'yml',
   'csv',
 ] as const;
-/**
- * The highest scan rating a preview may carry (PG-13). Services are SFW-only in v1; a preview above
- * this fails, and so does one the scan left unrated. Relaxing it is this one number.
- */
-export const SERVICE_PREVIEW_MAX_NSFW_LEVEL = 2;
+/** Why a preview rated above its deal's content level was refused. Shown to the seller and to moderators. */
+export const SERVICE_PREVIEW_OVER_LEVEL_REASON =
+  "This preview is rated above this deal's content level.";
 
 /**
  * The structured reasons a party may give when leaving a deal, one list per action. A muted party

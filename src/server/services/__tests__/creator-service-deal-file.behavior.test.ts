@@ -1,4 +1,5 @@
 import { readFileSync } from 'fs';
+import { SERVICE_PREVIEW_OVER_LEVEL_REASON } from '~/shared/constants/creator-services.constants';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -232,7 +233,7 @@ const readyPreview = async (dealId: number) => {
 };
 
 const list = (dealId: number, userId: number, isModerator = false) =>
-  files.listServiceDealFiles({ dealId, userId, isModerator });
+  files.listServiceDealFiles({ dealId, userId, isModerator, servableLevels: 31 });
 
 const download = (fileId: number, userId: number, isModerator = false) =>
   files.resolveServiceDealFileDownload({ fileId, userId, isModerator });
@@ -1080,6 +1081,38 @@ describe('what the listing shows', () => {
     expect(JSON.stringify(seen)).not.toContain('service-deals/');
   });
 
+  it('withholds a preview rated above what the domain may show, URL and all', async () => {
+    const { dealId, previewId } = await delivered();
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 4`);
+    await q(`UPDATE "ServiceDealFile" SET "nsfwLevel" = 4 WHERE id = $1`, [previewId]);
+    const watermarkedKey = (await fileRow(previewId)).watermarkedKey as string;
+    const sfw = 1 | 2;
+    for (const userId of [BUYER, SELLER]) {
+      const seen = await files.listServiceDealFiles({
+        dealId,
+        userId,
+        isModerator: false,
+        servableLevels: sfw,
+      });
+      expect(seen.find((f) => f.id === previewId)).toMatchObject({
+        previewUrl: null,
+        previewOffDomain: true,
+      });
+      expect(JSON.stringify(seen)).not.toContain(watermarkedKey);
+    }
+    const red = await files.listServiceDealFiles({
+      dealId,
+      userId: BUYER,
+      isModerator: false,
+      servableLevels: 31,
+    });
+    expect(red.find((f) => f.id === previewId)).toMatchObject({
+      previewUrl: expect.stringContaining(watermarkedKey),
+    });
+    expect(red.find((f) => f.id === previewId)).not.toHaveProperty('previewOffDomain');
+  });
+
   it('never shows the buyer a preview that is not Ready', async () => {
     const { dealId, previewId } = await delivered();
     await files.deliverServiceDeal({ dealId, userId: SELLER });
@@ -1291,15 +1324,78 @@ describe('preview pipeline', () => {
     }
   });
 
-  it.each([4, 8, 16, 32])('rejects a preview the scan rated %i: SFW only in v1', async (level) => {
-    const { fileId } = await waiting();
-    await files.startPreviewScans();
-    await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = $1`, [level]);
-    await files.settlePreviewScans();
-    expect(await fileRow(fileId)).toMatchObject({ status: 'Failed', scanStatus: 'Failed' });
-    expect(await files.publishPreviews()).toBe(0);
-    expect(preview.build).not.toHaveBeenCalled();
+  it.each([4, 8, 16])(
+    "rejects a preview rated %i on a PG-13 deal, saying it is above the deal's level",
+    async (level) => {
+      const { fileId } = await waiting();
+      await files.startPreviewScans();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = $1`, [level]);
+      await files.settlePreviewScans();
+      expect(await fileRow(fileId)).toMatchObject({
+        status: 'Failed',
+        scanStatus: 'Failed',
+        failReason: SERVICE_PREVIEW_OVER_LEVEL_REASON,
+      });
+      expect(await files.publishPreviews()).toBe(0);
+      expect(preview.build).not.toHaveBeenCalled();
+    }
+  );
+
+  it("passes a preview up to its deal's own level", async () => {
+    for (const [dealLevel, level] of [
+      [4, 4],
+      [16, 8],
+    ]) {
+      await holder.db.exec(
+        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY; DELETE FROM "Image"; ALTER SEQUENCE "Image_id_seq" RESTART`
+      );
+      const { fileId } = await waiting();
+      await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = $1`, [dealLevel]);
+      await files.startPreviewScans();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = $1`, [level]);
+      await files.settlePreviewScans();
+      expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Passed', nsfwLevel: level });
+    }
   });
+
+  it("reads the deal's level when the scan settles, not when it started", async () => {
+    const { fileId } = await waiting();
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 4`);
+    await files.startPreviewScans();
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 2`);
+    await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4`);
+    await files.settlePreviewScans();
+    expect(await fileRow(fileId)).toMatchObject({
+      status: 'Failed',
+      failReason: SERVICE_PREVIEW_OVER_LEVEL_REASON,
+    });
+  });
+
+  it.each(
+    [
+      ['a minor', `"minor" = true`],
+      ['a real person', `poi = true`],
+      ['one held for review', `"needsReview" = 'csam'`],
+      ['a Blocked rating', `"nsfwLevel" = 32`],
+    ].flatMap(([name, set]): [string, number, number, string][] => [
+      [name, 16, 4, set],
+      [name, 2, 8, set],
+    ])
+  )(
+    'refuses %s with the plain reason (deal %i, rated %i)',
+    async (_name, dealLevel, level, set) => {
+      const { fileId } = await waiting();
+      await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = $1`, [dealLevel]);
+      await files.startPreviewScans();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = $1`, [level]);
+      await q(`UPDATE "Image" SET ${set}`);
+      await files.settlePreviewScans();
+      expect(await fileRow(fileId)).toMatchObject({
+        status: 'Failed',
+        failReason: 'This preview was rejected when it was checked.',
+      });
+    }
+  );
 
   it('does not pass a scanned preview the scan left unrated', async () => {
     const { fileId } = await waiting();

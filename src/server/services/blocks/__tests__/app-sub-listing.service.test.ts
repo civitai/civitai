@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 
 import { resetSharedMocks } from '~/__tests__/mocks';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -35,13 +36,17 @@ vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => ({ query: mockPoolQu
 // `app-blocks-shared-doc-levels`, for every app; off unless a case turns it on.
 const docLevels = vi.hoisted(() => ({ on: false }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const real = await importOriginal<typeof import('~/server/flipt/client')>();
+  const real = await importOriginal<typeof FliptClient>();
   return {
     ...real,
     isFlipt: (flag: string, entityId?: string, context?: unknown) =>
       flag === 'app-blocks-shared-doc-levels'
         ? Promise.resolve(docLevels.on)
         : real.isFlipt(flag, entityId, context as never),
+    readFliptBoolean: (flag: string, entityId?: string, context?: unknown) =>
+      flag === 'app-blocks-shared-doc-levels'
+        ? Promise.resolve(docLevels.on)
+        : real.readFliptBoolean(flag, entityId, context as never),
   };
 });
 vi.mock('~/server/services/image.service', () => ({ getImage: mockGetImage }));
@@ -362,16 +367,44 @@ describe('upsertSubListing — refusals', () => {
         expect(write.appSubListing.findMany).toHaveBeenCalledWith(
           expect.objectContaining({ where: { parentListingId: PARENT, itemKey: 'gen-1' } })
         );
+        // The stricter card does not move, so it is not written.
         expect(write.appSubListing.update.mock.calls).toEqual([
-          [
-            {
-              where: { id: 'asl_STRICT' },
-              data: { contentRating: 'x', pendingContentRating: null },
-            },
-          ],
           [{ where: { id: 'asl_LOOSE' }, data: { contentRating: 'r', pendingContentRating: 'r' } }],
         ]);
         expect(mockBust).toHaveBeenCalled();
+      });
+
+      it('a re-rate that moves no card writes nothing and leaves the catalog cache alone', async () => {
+        write.appSubListing.findMany.mockResolvedValueOnce([
+          { id: 'asl_SAME', contentRating: 'r', pendingContentRating: null },
+        ]);
+        mockBust.mockClear();
+        await syncSubListingRatingFromDoc({ appBlockId: 'apb_1', itemKey: 'gen-1', level: 4 });
+        expect(write.appSubListing.update).not.toHaveBeenCalled();
+        expect(mockBust).not.toHaveBeenCalled();
+      });
+
+      it('🔴 an item re-rated XXX (16) makes its card xxx, never x', async () => {
+        write.appSubListing.findMany.mockResolvedValueOnce([
+          { id: 'asl_X', contentRating: 'x', pendingContentRating: 'r' },
+        ]);
+        await syncSubListingRatingFromDoc({ appBlockId: 'apb_1', itemKey: 'gen-1', level: 16 });
+        expect(write.appSubListing.update.mock.calls).toEqual([
+          [
+            {
+              where: { id: 'asl_X' },
+              data: { contentRating: 'xxx', pendingContentRating: 'xxx' },
+            },
+          ],
+        ]);
+      });
+
+      it('🔴 an item rated XXX publishes as an xxx card', async () => {
+        mockFindShared.mockResolvedValueOnce(rated(16, 'rated'));
+        await upsert();
+        expect(write.appSubListing.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ contentRating: 'xxx' }) })
+        );
       });
     });
 

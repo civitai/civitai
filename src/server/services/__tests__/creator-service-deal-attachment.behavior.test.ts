@@ -401,7 +401,7 @@ async function delivered(dealId: number) {
 
 /** A moderator here holds the csamReports permission unless `canReviewCsam` says otherwise. */
 const list = (dealId: number, userId: number, isModerator = false, canReviewCsam = isModerator) =>
-  files.listServiceDealFiles({ dealId, userId, isModerator, canReviewCsam });
+  files.listServiceDealFiles({ dealId, userId, isModerator, canReviewCsam, servableLevels: 31 });
 const download = (
   fileId: number,
   userId: number,

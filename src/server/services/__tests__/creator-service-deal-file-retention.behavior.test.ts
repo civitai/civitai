@@ -405,7 +405,7 @@ describe('holds', () => {
   const partyViews = (dealId: number) =>
     Promise.all(
       [BUYER, SELLER].map((userId) =>
-        files.listServiceDealFiles({ dealId, userId, isModerator: false })
+        files.listServiceDealFiles({ dealId, userId, isModerator: false, servableLevels: 31 })
       )
     );
 
@@ -439,6 +439,7 @@ describe('holds', () => {
       userId: OTHER,
       isModerator: true,
       canReviewCsam: true,
+      servableLevels: 31,
     });
     expect(listed.map((f) => [f.id, f.canDownload, f.removedAt != null])).toEqual([
       [finalId, true, true],
@@ -449,6 +450,7 @@ describe('holds', () => {
       userId: OTHER,
       isModerator: true,
       canReviewCsam: true,
+      servableLevels: 31,
     });
     expect(download).toMatchObject({ key: `k/${dealId}/final`, removed: true });
   });

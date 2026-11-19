@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 import {
   CopyObjectCommand,
   GetObjectCommand,
@@ -43,9 +45,9 @@ import {
   SERVICE_FINAL_MAX_FILES,
   SERVICE_PREVIEW_ANIMATED_MAX_BYTES,
   SERVICE_PREVIEW_GIVE_UP_MS,
+  SERVICE_PREVIEW_OVER_LEVEL_REASON,
   SERVICE_PREVIEW_MAX_BYTES,
   SERVICE_PREVIEW_MAX_FILES,
-  SERVICE_PREVIEW_MAX_NSFW_LEVEL,
   SERVICE_PREVIEW_MIME_TYPES,
   SERVICE_DEAL_HOLD_REASONS,
   SERVICE_PREVIEW_PROCESSING_STALE_MS,
@@ -895,6 +897,8 @@ type ListedFile = {
   failReason: string | null;
   scanStatus: ServiceDealFileScanStatus | null;
   previewUrl: string | null;
+  /** A ready preview this domain may not show; `previewUrl` is null. */
+  previewOffDomain?: boolean;
   canDownload: boolean;
   /** Moderators only: when the uploader removed a file that was kept. */
   removedAt?: Date;
@@ -914,6 +918,7 @@ type FileRow = {
   malwareScanStatus: ServiceDealFileScanStatus;
   watermarkedKey: string | null;
   removedAt: Date | null;
+  nsfwLevel: number | null;
 };
 
 /**
@@ -951,12 +956,15 @@ export async function listServiceDealFiles({
   userId,
   isModerator,
   canReviewCsam = false,
+  servableLevels,
 }: {
   dealId: number;
   userId: number;
   isModerator: boolean;
   /** See `resolveServiceDealFileDownload`. */
   canReviewCsam?: boolean;
+  /** What this domain may show; a preview rated outside it is listed without its URL. */
+  servableLevels: number;
 }) {
   const [deal] = await dbWrite.$queryRaw<DealForFiles[]>`
     SELECT d."id", d."buyerId", d."sellerId", d."status"::text AS "status", d."revisionsUsed",
@@ -974,7 +982,7 @@ export async function listServiceDealFiles({
   const rows = await dbWrite.$queryRaw<FileRow[]>`
     SELECT f."id", f."round", f."kind", f."fileName", f."mimeType", f."size", f."deliverySize",
       f."status", f."failReason", f."scanStatus", f."malwareScanStatus", f."watermarkedKey",
-      f."removedAt"
+      f."removedAt", f."nsfwLevel"
     FROM "ServiceDealFile" f
     WHERE f."dealId" = ${dealId}::int
     ORDER BY f."round", f."id"`;
@@ -1038,7 +1046,9 @@ export async function listServiceDealFiles({
       (privileged ||
         (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && finalScansClear(row)));
     const lockedFinal = buyerOnly && row.kind === 'Final' && !downloadable;
-    const key = row.watermarkedKey;
+    const offDomain =
+      row.kind === 'Preview' && !!row.nsfwLevel && !Flags.intersects(row.nsfwLevel, servableLevels);
+    const key = offDomain ? null : row.watermarkedKey;
 
     return [
       {
@@ -1061,6 +1071,7 @@ export async function listServiceDealFiles({
                 type: isVideoPreviewMime(row.mimeType) ? 'video' : undefined,
               })
             : null,
+        ...(offDomain && row.status === 'Ready' ? { previewOffDomain: true } : {}),
         canDownload: downloadable,
       },
     ];
@@ -1400,16 +1411,17 @@ export async function settlePreviewScans() {
   const waiting = Prisma.sql`f."kind" = 'Preview'::"ServiceDealFileKind"
     AND f."status" = 'Processing'::"ServiceDealFileStatus"
     AND f."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"`;
+  // A preview may go as high as the deal's own level, read now, as its finals may.
   const passed = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
     SET "scanStatus" = 'Passed'::"ServiceDealFileScanStatus", "processingAt" = NULL,
       "nsfwLevel" = i."nsfwLevel"
-    FROM "Image" i
-    WHERE i."id" = f."imageId" AND ${waiting}
+    FROM "Image" i, "ServiceDeal" d
+    WHERE i."id" = f."imageId" AND d."id" = f."dealId" AND ${waiting}
       AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"
       AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
-      AND i."nsfwLevel" BETWEEN 1 AND ${SERVICE_PREVIEW_MAX_NSFW_LEVEL}::int`;
-  const rejected = await dbWrite.$executeRaw`
+      AND i."nsfwLevel" BETWEEN 1 AND d."maxNsfwLevel"`;
+  const refused = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
     SET "status" = 'Failed'::"ServiceDealFileStatus", "scanStatus" = 'Failed'::"ServiceDealFileScanStatus",
       "failReason" = 'This preview was rejected when it was checked.'
@@ -1417,8 +1429,19 @@ export async function settlePreviewScans() {
     WHERE i."id" = f."imageId" AND ${waiting}
       AND (i."ingestion" = 'Blocked'::"ImageIngestionStatus"
         OR (i."ingestion" = 'Scanned'::"ImageIngestionStatus"
-          AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor"
-            OR i."nsfwLevel" > ${SERVICE_PREVIEW_MAX_NSFW_LEVEL}::int)))`;
+          -- Blocked rates above every level a deal can have.
+          AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor" OR i."nsfwLevel" > ${NsfwLevel.XXX}::int)))`;
+  // Only the rating is above the deal's level: the seller is told that, and nothing else.
+  const overLevel = await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile" f
+    SET "status" = 'Failed'::"ServiceDealFileStatus", "scanStatus" = 'Failed'::"ServiceDealFileScanStatus",
+      "failReason" = ${SERVICE_PREVIEW_OVER_LEVEL_REASON}
+    FROM "Image" i, "ServiceDeal" d
+    WHERE i."id" = f."imageId" AND d."id" = f."dealId" AND ${waiting}
+      AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"
+      AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
+      AND i."nsfwLevel" > d."maxNsfwLevel" AND i."nsfwLevel" <= ${NsfwLevel.XXX}::int`;
+  const rejected = refused + overLevel;
   const unchecked = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
     SET "status" = 'Failed'::"ServiceDealFileStatus",

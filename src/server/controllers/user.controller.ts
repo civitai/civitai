@@ -684,8 +684,10 @@ export const updateUserHandler = async ({
       : inputProfilePicture;
 
   try {
+    // From the primary: the unchanged-value pass below must not compare against a lagging replica.
     const user = await getUserById({
       id,
+      db: dbWrite,
       select: {
         username: true,
         image: true,
@@ -713,6 +715,9 @@ export const updateUserHandler = async ({
         newPictureUrls.flatMap((url) => keysIn(url))
       )
     )
+      throw throwBadRequestError('Invalid avatar URL');
+    // Our upload keys reach `User.image` only through `profilePicture`, whose Image row is scanned.
+    if (data.image && data.image !== user.image && keysIn(data.image).length)
       throw throwBadRequestError('Invalid avatar URL');
 
     const payloadCosmeticIds: number[] = [];

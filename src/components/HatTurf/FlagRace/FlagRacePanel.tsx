@@ -21,8 +21,8 @@ import type { FlagSummary } from '~/server/events/turf/turf.service';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import classes from './FlagRacePanel.module.scss';
 
-const ART =
-  'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/5064a196-aa66-4c07-bb2a-f3f2ccbacef1/width=900,optimized=true/5064a196-aa66-4c07-bb2a-f3f2ccbacef1.jpeg';
+export const ART_ID = '5064a196-aa66-4c07-bb2a-f3f2ccbacef1';
+const ART = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${ART_ID}/width=900,optimized=true/${ART_ID}.jpeg`;
 const RULES_ARTICLE = '/articles/38657';
 export const HOWTO_DISMISSED_KEY = 'flag-race-howto-dismissed';
 
@@ -45,7 +45,16 @@ function useHowtoDismissed() {
 }
 
 /** The Flag Race row's side panel: the race's clock, what is at stake, who holds what, and the way in. */
-export function FlagRacePanel({ event, summary }: { event: string; summary: FlagSummary }) {
+export function FlagRacePanel({
+  event,
+  summary,
+  onCollapse,
+}: {
+  event: string;
+  summary: FlagSummary;
+  /** Renders a collapse X; omit to hide it. */
+  onCollapse?: () => void;
+}) {
   const teamColor = useTeamColor();
   const [dismissed, setDismissed] = useHowtoDismissed();
   const held = flagsHeld(summary.flags);
@@ -55,6 +64,18 @@ export function FlagRacePanel({ event, summary }: { event: string; summary: Flag
   return (
     <div className={classes.panel} data-testid="flag-race-panel">
       <img className={classes.art} src={ART} alt="" />
+      {onCollapse && (
+        <ActionIcon
+          variant="filled"
+          color="dark"
+          radius="xl"
+          className="!absolute right-3 top-3 z-[7] opacity-80"
+          aria-label="Collapse the Flag Race"
+          onClick={onCollapse}
+        >
+          <IconX size={14} />
+        </ActionIcon>
+      )}
       <div className={classes.artSpace} />
       <div className={classes.head}>
         <div className={classes.titles}>
