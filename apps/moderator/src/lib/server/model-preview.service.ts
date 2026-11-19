@@ -45,7 +45,7 @@ export type ModelPreviewFile = {
   pickleScan: string;
   virusScan: string;
   visibility: string;
-  /** Contents deleted with the row kept (the old-training-data cleanup). The model page hides it. */
+  /** Bytes deleted, row kept. */
   purged: boolean;
 };
 

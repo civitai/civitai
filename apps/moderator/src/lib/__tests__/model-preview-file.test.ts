@@ -13,4 +13,11 @@ describe('previewFileControl', () => {
     expect(previewFileControl({ type: 'Training Data', purged: false })).toEqual({ kind: 'view' });
     expect(previewFileControl({ type: 'Model', purged: false })).toEqual({ kind: 'download' });
   });
+
+  it('labels a purged file of another type as a removed file, not as training data', () => {
+    expect(previewFileControl({ type: 'Model', purged: true })).toEqual({
+      kind: 'purged',
+      label: 'File removed (purged)',
+    });
+  });
 });

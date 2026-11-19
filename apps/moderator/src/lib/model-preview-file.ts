@@ -1,5 +1,5 @@
-/** What a file row in `ModelPreview` offers. A purged file keeps its row, the record that it existed,
- *  but its bytes are gone, so it offers nothing to open and says so instead of showing its visibility. */
+/** What a `ModelPreview` file row offers. A purged file has no bytes, so it shows a label in place of
+ *  its visibility badge and offers no View or download. */
 export type PreviewFileControl =
   | { kind: 'purged'; label: string }
   | { kind: 'view' }

@@ -38,10 +38,9 @@ export const GET: RequestHandler = async ({ params, locals, fetch }) => {
     'Training data'
   );
   if (!resolved.ok) {
-    // The resolver serves live datasets only. When every one on the version was purged, that is the
-    // answer, not an upstream fault.
-    if (await allTrainingDataPurged(versionId)) error(410, 'Training data was purged.');
     console.error('[training-data] resolve failed', resolved.error);
+    // The resolver only serves live datasets, so a failure on an all-purged version is expected.
+    if (await allTrainingDataPurged(versionId)) error(410, 'Training data was purged.');
     error(502, resolved.error);
   }
 
@@ -78,7 +77,7 @@ export const GET: RequestHandler = async ({ params, locals, fetch }) => {
   });
 };
 
-/** True only when the version has training data files and all of them were purged. */
+/** bool_and is NULL with no rows, so a version that never had training data reads false. */
 async function allTrainingDataPurged(versionId: number): Promise<boolean> {
   const row = await dbRead
     .selectFrom('ModelFile')
