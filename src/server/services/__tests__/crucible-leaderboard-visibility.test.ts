@@ -598,7 +598,8 @@ describe('crucible.getJudgingProgress', () => {
       { crucibleId: CRUCIBLE_ID, id: 3 },
     ]);
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
-    redisMock.sysRedis.sMembers.mockResolvedValue(['1:2']);
+    // The judge's voted pairs, on the cache cluster.
+    redisMock.redis.sMembers.mockResolvedValue(['1:2']);
 
     const progress = await caller(signedIn(STRANGER_ID)).getJudgingProgress({
       crucibleId: CRUCIBLE_ID,
@@ -641,7 +642,8 @@ describe('crucible.getJudgingProgress', () => {
   // visible entries is the browsing level hiding them, and must not read as votes spent.
   it('reports votes used up only when the judge exhausted pairs among entries they can see', async () => {
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
-    redisMock.sysRedis.sMembers.mockResolvedValue(['1:2']);
+    // The judge's voted pairs, on the cache cluster.
+    redisMock.redis.sMembers.mockResolvedValue(['1:2']);
 
     queryRaw.mockResolvedValue([
       { crucibleId: CRUCIBLE_ID, id: 1 },

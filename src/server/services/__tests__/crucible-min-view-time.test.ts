@@ -53,6 +53,8 @@ beforeEach(() => {
   }));
   processVote.mockResolvedValue({ winnerElo: 1532, loserElo: 1468 });
   redisMock.sysRedis.eval.mockResolvedValue(1);
+  // The voted-pair record, on the cache cluster: 1 = the pair was not voted yet.
+  redisMock.redis.eval.mockResolvedValue(1);
 });
 
 describe('submitVote — minimum view time', () => {
@@ -90,10 +92,11 @@ describe('submitVote — minimum view time', () => {
     // vote on it after watching properly.
     await expect(vote({ winnerWatchedMs: 0, loserWatchedMs: 0 })).rejects.toThrow();
 
-    const { sysRedis } = await import('~/server/redis/client');
+    const { redis, sysRedis } = await import('~/server/redis/client');
     expect(sysRedis.sAdd).not.toHaveBeenCalled();
     expect(sysRedis.eval).not.toHaveBeenCalled();
     expect(sysRedis.hIncrBy).not.toHaveBeenCalled();
+    expect(redis.eval, 'the voted-pair record on the cache cluster').not.toHaveBeenCalled();
   });
 });
 

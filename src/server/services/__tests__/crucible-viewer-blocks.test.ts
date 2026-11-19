@@ -134,7 +134,8 @@ beforeEach(() => {
     [1, 2, 3].map((id) => ({ crucibleId: CRUCIBLE_ID, id }))
   );
   redisMock.sysRedis.hGetAll.mockResolvedValue({});
-  redisMock.sysRedis.sMembers.mockResolvedValue(['1:2']);
+  // The judge's voted pairs, on the cache cluster.
+  redisMock.redis.sMembers.mockResolvedValue(['1:2']);
   redisMock.sysRedis.sCard.mockResolvedValue(3);
   redisMock.sysRedis.set.mockResolvedValue('OK');
 });

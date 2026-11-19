@@ -15,7 +15,9 @@ import { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } from '~/shared/constants/cruci
 const findUnique = dbMock.dbRead.crucible.findUnique;
 const queryRaw = dbMock.dbRead.$queryRaw;
 const hGetAll = redisMock.sysRedis.hGetAll;
-const sMembers = redisMock.sysRedis.sMembers;
+// The judge's voted pairs, on the cache cluster. (sysRedis.sMembers, the dismissed pairs, stays
+// empty: a voted pair served from there would pass these tests through the dismissal path.)
+const sMembers = redisMock.redis.sMembers;
 const getAllEntryElos = vi.fn();
 
 vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
@@ -24,6 +26,7 @@ vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
 }));
 
 const { getJudgingPair } = await import('~/server/services/crucible.service');
+const { getVotedPairsKey } = await import('~/server/services/crucible-redis-keys');
 
 const activeCrucible = {
   id: 1,
@@ -169,7 +172,7 @@ describe('getJudgingPair — already-voted pairs', () => {
     for (let i = 0; i < 20; i++) {
       expect(pairIds(await getJudgingPair({ crucibleId: 1, userId: 1 }))).not.toEqual([1, 2]);
     }
-    expect(sMembers).toHaveBeenCalledWith(expect.stringMatching(/:1:1$/));
+    expect(sMembers).toHaveBeenCalledWith(getVotedPairsKey(1, 1));
   });
 
   it('returns null after ONE query when a short sample holds every entry and all are judged', async () => {
