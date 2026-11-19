@@ -77,11 +77,11 @@ jobs:
           echo "$config" | jq '{User, ExposedPorts, Cmd, WorkingDir}'
           docker image ls storage-hook-runner:ci --format 'size: {{.Size}}'
           [ "$(echo "$config" | jq -r .User)" = "nodeapp" ]
-          # `adduser -S` without -G leaves nodeapp's primary group as alpine's default, not nodejs,
-          # so the image's own gid is not asserted: the pod pins runAsGroup 1001, and what it needs
-          # is that the shipped files belong to 1001:1001 (the COPY --chown nodeapp:nodejs).
+          # uid AND gid 1001 (the Dockerfile's `adduser -G nodejs`), and the shipped files owned by
+          # them (COPY --chown nodeapp:nodejs).
           docker run --rm --entrypoint id storage-hook-runner:ci
           [ "$(docker run --rm --entrypoint id storage-hook-runner:ci -u)" = "1001" ]
+          [ "$(docker run --rm --entrypoint id storage-hook-runner:ci -g)" = "1001" ]
           [ "$(docker run --rm --entrypoint stat storage-hook-runner:ci -c '%u:%g' /app/dist/server.js)" = "1001:1001" ]
           [ "$(docker run --rm --entrypoint stat storage-hook-runner:ci -c '%u:%g' /app/node_modules)" = "1001:1001" ]
           [ "$(echo "$config" | jq -c '.ExposedPorts | keys')" = '["8080/tcp","9091/tcp"]' ]

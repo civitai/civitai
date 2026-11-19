@@ -212,11 +212,12 @@ pnpm --filter @civitai/storage-hook-runner-app build      # tsup → dist/server
 docker build -f apps/storage-hook-runner/Dockerfile -t civitai-storage-hook-runner .
 ```
 
-The image is built from a `storage-hook-runner-vX.Y.Z` tag, as the other apps in this repo are.
-`pnpm run release:storage-hook-runner` (`:minor`, `:major`) bumps this package's version and cuts
-that tag with `scripts/release-app.mjs`. The first tag, `storage-hook-runner-v0.0.1`, matches the
-version already in `package.json`, so it is cut directly (not through the script, which would bump
-it to 0.0.2 first).
+The image is built from a `storage-hook-runner-vX.Y.Z` tag, as the other apps in this repo are,
+once the in-cluster tag build knows this app's tag prefix. Until then a pushed tag builds nothing,
+so cut the first tag only after that build entry is live. `pnpm run release:storage-hook-runner`
+(`:minor`, `:major`) bumps this package's version and cuts that tag with `scripts/release-app.mjs`.
+The first tag, `storage-hook-runner-v0.0.1`, matches the version already in `package.json`, so it
+is cut directly (not through the script, which would bump it to 0.0.2 first).
 
 CI: `.github/workflows/storage-hook-runner-image.yml` builds the image on PRs and `main` without
 pushing it, then runs it with a read-only root filesystem as uid 1001 and requires `/readyz` and
