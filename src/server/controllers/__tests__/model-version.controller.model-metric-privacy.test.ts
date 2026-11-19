@@ -129,6 +129,43 @@ describe('modelVersion.getById: the model-level metric privacy the version edito
   });
 });
 
+describe('modelVersion.getById: the version files', () => {
+  const FILES = [
+    { id: 1, name: 'public.safetensors', type: 'Model', visibility: 'Public' },
+    { id: 2, name: 'private.safetensors', type: 'Model', visibility: 'Private' },
+    { id: 3, name: 'data.zip', type: 'Training Data', visibility: 'Private' },
+  ];
+  const fileNames = async (user: { id: number; isModerator?: boolean } | null) => {
+    mockGetVersionById.mockImplementation(async ({ select }) => ({
+      ...(project(versionRow, select) as object),
+      files: FILES.map((f) => ({ ...f })),
+    }));
+    const version = await getModelVersionHandler({
+      input: { id: versionRow.id, withFiles: true },
+      ctx: { user, features: {}, domain: 'blue' },
+    } as never);
+    return version.files.map((f: { name: string }) => f.name);
+  };
+
+  it.each([
+    ['a signed-out visitor', null],
+    ['another user', { id: 99 }],
+  ])('gives %s the Public files and training data only', async (_, user) => {
+    expect(await fileNames(user)).toEqual(['public.safetensors', 'data.zip']);
+  });
+
+  it.each([
+    ['the owner', { id: OWNER_ID }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('gives %s every file', async (_, user) => {
+    expect(await fileNames(user)).toEqual([
+      'public.safetensors',
+      'private.safetensors',
+      'data.zip',
+    ]);
+  });
+});
+
 describe('modelVersion.getById: coverage and recommended resources', () => {
   it('reads them through the one-statement loader, not as nested selects of the version', async () => {
     const generationCoverage = { covered: true, coveredNext: false };

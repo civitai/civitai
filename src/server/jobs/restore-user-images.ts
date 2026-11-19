@@ -17,7 +17,7 @@ export const RESTORE_USERS_PER_RUN = 25;
 async function isRestored(userId: number) {
   const [row] = await dbWrite.$queryRaw<{ restored: boolean }[]>`
     SELECT EXISTS (
-      SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NULL
+      SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL
     ) AS restored
   `;
   return row?.restored ?? false;
@@ -26,7 +26,7 @@ async function isRestored(userId: number) {
 async function filterRestored(userIds: number[]) {
   if (!userIds.length) return [];
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT u.id FROM "User" u WHERE u.id = ANY(${userIds}) AND u."deletedAt" IS NULL
+    SELECT u.id FROM "User" u WHERE u.id = ANY(${userIds}) AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL
   `;
   const restored = new Set(rows.map((r) => r.id));
   return userIds.filter((id) => restored.has(id));
@@ -46,20 +46,22 @@ export async function runRestoreUserImages(
   refreshPictures: (userIds: number[]) => Promise<unknown> = refreshProfilePicturesForUsersLazy
 ) {
   const pending = await readPendingImageRestores();
-  if (!pending.length) return { pending: 0, finished: 0, unblocked: 0, reDeleted: 0 };
+  if (!pending.length) return { pending: 0, finished: 0, unblocked: 0, dropped: 0 };
 
   let unblocked = 0;
   let finished = 0;
-  let reDeleted = 0;
+  let dropped = 0;
   const refreshed: number[] = [];
   const drained: number[] = [];
 
   for (const userId of pending.slice(0, RESTORE_USERS_PER_RUN)) {
-    // Re-deletion is terminal for this entry, not a state to wait out: the grace block is once
-    // more correct, and `restoreUser` re-queues the id if the account is ever restored again.
+    // Re-deletion or a ban is terminal for this entry, not a state to wait out: the grace block is
+    // once more correct. `restoreUser` re-queues a re-deleted account it restores again; a ban
+    // leaves the images hidden after an unban too, until a moderator unblocks them
+    // (`handleUnblockImages`).
     if (!(await isRestored(userId))) {
       await clearPendingImageRestore(userId);
-      reDeleted++;
+      dropped++;
       continue;
     }
 
@@ -92,7 +94,7 @@ export async function runRestoreUserImages(
     finished++;
   }
 
-  return { pending: pending.length, finished, unblocked, reDeleted };
+  return { pending: pending.length, finished, unblocked, dropped };
 }
 
 export const restoreUserImages = createJob(

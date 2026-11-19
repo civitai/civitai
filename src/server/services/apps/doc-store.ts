@@ -1187,8 +1187,7 @@ const SQL_VIEWER_PROD_USAGE = `SELECT vu.app_id, vu.bytes, vu.docs FROM appdata.
 // documents they created (`author_kind = 'user'`), the two cells of the record core's owner rule
 // that name a user (`recordOwner` in `app-record.ts`). Never another user's private key space,
 // never a counter or app document, never a document moderation hid. In (coll, scope_uid, key)
-// order after a keyset cursor. $1 app, $2 ns, $3 the user, $4 coll, $5 scope_uid and $6 key of
-// the cursor (exclusive), $7 limit.
+// order after a keyset cursor, whatever the app's status.
 const SQL_VIEWER_RECORDS = `SELECT d.coll, d.scope_uid, d.key, d.data, d.version, d.author_kind,
     d.author_uid, d.last_writer_uid, d.record_id::text AS record_id
   FROM appdata.doc d
@@ -1331,6 +1330,17 @@ const SQL_CHARGE_APP_SEQS = `INSERT INTO appdata.usage_app AS u (app_id, ns, byt
 // Row mapping
 // ---------------------------------------------------------------------------
 
+/**
+ * A document row's author as a reader sees it: a counter document is nobody's; an app document,
+ * or one whose author uid is gone, the app's; otherwise the user, marked when it is the viewer.
+ */
+function rowAuthor(row: Record<string, unknown>, viewerUid: number | null): DocAuthor {
+  const authorUid = row.author_uid === null ? null : Number(row.author_uid);
+  if (row.author_kind === 'counter') return { kind: 'counter' };
+  if (row.author_kind === 'app' || authorUid === null) return { kind: 'app' };
+  return { kind: 'user', uid: authorUid, isViewer: authorUid === viewerUid };
+}
+
 function toDocRecord(
   row: Record<string, unknown>,
   ctx: DocStoreContext,
@@ -1351,19 +1361,13 @@ function toDocRecord(
       else if (kind === 'mark' && name !== REPORT_MARK) marks[name] = Number(v);
     }
   }
-  const authorUid = row.author_uid === null ? null : Number(row.author_uid);
   return {
     key: row.key as string,
     data: row.data as Record<string, unknown>,
     version: Number(row.version),
     createdAt: new Date(row.created_at as string | Date),
     updatedAt: new Date(row.updated_at as string | Date),
-    author:
-      row.author_kind === 'counter'
-        ? { kind: 'counter' }
-        : row.author_kind === 'app' || authorUid === null
-        ? { kind: 'app' }
-        : { kind: 'user', uid: authorUid, isViewer: authorUid === ctx.viewerUid },
+    author: rowAuthor(row, ctx.viewerUid),
     counters,
     marks,
     viewer:
@@ -3084,13 +3088,7 @@ function buildDocStore(deps: DocStoreDeps) {
     };
   }
 
-  /**
-   * One page of the documents `userId` OWNS in one app's production namespace, for their export
-   * (`SQL_VIEWER_RECORDS`): their private documents and the visible shared documents they
-   * created, in (collection, key space, key) order after `after` (exclusive). Never another
-   * user's private document, a counter or app document, or a document moderation hid. Reads the
-   * rows as they are, whatever the app's status.
-   */
+  /** One page of the documents `userId` owns in one app, for their export (`SQL_VIEWER_RECORDS`). */
   async function viewerRecords(
     userId: number,
     appId: string,
@@ -3117,24 +3115,16 @@ function buildDocStore(deps: DocStoreDeps) {
           ])
         ).rows
     );
-    return rows.map((r) => {
-      const authorUid = r.author_uid === null ? null : Number(r.author_uid);
-      return {
-        coll: r.coll as string,
-        scopeUid: Number(r.scope_uid),
-        key: r.key as string,
-        data: r.data as Record<string, unknown>,
-        version: Number(r.version),
-        author:
-          r.author_kind === 'counter'
-            ? { kind: 'counter' as const }
-            : r.author_kind === 'app' || authorUid === null
-            ? { kind: 'app' as const }
-            : { kind: 'user' as const, uid: authorUid, isViewer: authorUid === userId },
-        lastWriterUid: r.last_writer_uid === null ? null : Number(r.last_writer_uid),
-        recordId: r.record_id === null || r.record_id === undefined ? null : String(r.record_id),
-      };
-    });
+    return rows.map((r) => ({
+      coll: r.coll as string,
+      scopeUid: Number(r.scope_uid),
+      key: r.key as string,
+      data: r.data as Record<string, unknown>,
+      version: Number(r.version),
+      author: rowAuthor(r, userId),
+      lastWriterUid: r.last_writer_uid === null ? null : Number(r.last_writer_uid),
+      recordId: r.record_id === null || r.record_id === undefined ? null : String(r.record_id),
+    }));
   }
 
   /**

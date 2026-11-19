@@ -1,3 +1,4 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import type { DB } from '@civitai/db-schema/kysely';
 import type { Selectable } from 'kysely';
 import { randomUUID } from 'crypto';
@@ -3455,7 +3456,7 @@ async function fetchEntrySample(
           u.id as user_id,
           u.username as user_username,
           u."deletedAt" as "user_deletedAt",
-          u.image as user_image
+          ${Prisma.raw(fallbackUserImageColumn)} as user_image
         FROM "CrucibleEntry" ce
         JOIN "Image" i ON i.id = ce."imageId"
         JOIN "User" u ON u.id = ce."userId"
@@ -3481,7 +3482,7 @@ async function fetchEntrySample(
           u.id as user_id,
           u.username as user_username,
           u."deletedAt" as "user_deletedAt",
-          u.image as user_image
+          ${Prisma.raw(fallbackUserImageColumn)} as user_image
         FROM "CrucibleEntry" ce
         JOIN "Image" i ON i.id = ce."imageId"
         JOIN "User" u ON u.id = ce."userId"

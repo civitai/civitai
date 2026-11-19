@@ -1,3 +1,4 @@
+import { PGlite } from '@electric-sql/pglite';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockResetNsfwLevel, mockDropDeleteQueue, mockQueueSearchIndex, mockBustCachesForPosts } =
@@ -66,8 +67,8 @@ let images: ImageRow[] = [];
 let queue: QueueRow[] = [];
 /** Rows handed back per reversal pass, terminating empty pass included. */
 let claimedPerPass: number[] = [];
-/** Accounts deleted again: the reversal must not claim their rows. */
-let deletedUsers = new Set<number>();
+/** The owner is neither deleted nor banned. */
+let ownerLive = true;
 
 function splitTopLevel(body: string) {
   const parts: string[] = [];
@@ -90,6 +91,7 @@ const METADATA_MINUS = /^"metadata"(\s*-\s*\?::text)+$/;
 const SCOPED_ON_BREADCRUMB = /"metadata"->>\?::text IS NOT NULL/;
 const CLAIMS_BY_ID = /^WHERE\s+id IN \(\s*SELECT i\.id\s+FROM "Image" i\s+WHERE\s/;
 const BOUNDED_CLAIM = /^LIMIT \?\s*\)\s*$/;
+const OWNER_CHECK = /^\s*\(SELECT [^()]*\([^()]*\)[^()]* FROM "User" u WHERE u\.id = \?\)\s*$/;
 const ENUM_RANGE = /\(SELECT unnest\(enum_range\(NULL::"ImageIngestionStatus"\)\)::text\)/;
 
 const COALESCE_EXPR = /^COALESCE\(("\w+"),\s*([\s\S]+)\)$/;
@@ -181,24 +183,19 @@ function applyRestoreUpdate(rawSql: string, values: unknown[]) {
 
   // Every predicate is applied, and one this does not recognise is rejected rather than assumed,
   // so a reversal that widens its scope cannot pass by relying on the harness to narrow it back.
-  const NOT_REDELETED =
-    /EXISTS \(SELECT 1 FROM "User" u WHERE u\.id = i\."userId" AND u\."deletedAt" IS NULL\)/;
-  const predicates = where
-    .replace(NOT_REDELETED, '__not_redeleted__')
-    .split(/\s+AND\s+/)
-    .map((clause) => {
-      if (clause.trim() === '__not_redeleted__')
-        return (row: ImageRow) => !deletedUsers.has(row.userId);
-      const args = params.splice(0, (clause.match(/\?/g) ?? []).length);
-      if (/^\s*i\."userId" = \?/.test(clause)) return (row: ImageRow) => row.userId === args[0];
-      if (/^\s*i\.ingestion = 'Blocked'/.test(clause))
-        return (row: ImageRow) => row.ingestion === 'Blocked';
-      if (/^\s*i\."metadata"->>\?::text IS NOT NULL/.test(clause))
-        return (row: ImageRow) => row.metadata[args[0] as string] != null;
-      if (/^\s*i\."metadata"->>\?::text IN /.test(clause) && ENUM_RANGE.test(clause))
-        return (row: ImageRow) => INGESTION_STATUSES.includes(row.metadata[args[0] as string]);
-      throw new Error(`unrecognized reversal predicate: ${clause.trim()}`);
-    });
+  const predicates = where.split(/\s+AND\s+/).map((clause) => {
+    const args = params.splice(0, (clause.match(/\?/g) ?? []).length);
+    if (/^\s*i\."userId" = \?/.test(clause)) return (row: ImageRow) => row.userId === args[0];
+    if (/^\s*i\.ingestion = 'Blocked'/.test(clause))
+      return (row: ImageRow) => row.ingestion === 'Blocked';
+    if (/^\s*i\."metadata"->>\?::text IS NOT NULL/.test(clause))
+      return (row: ImageRow) => row.metadata[args[0] as string] != null;
+    if (/^\s*i\."metadata"->>\?::text IN /.test(clause) && ENUM_RANGE.test(clause))
+      return (row: ImageRow) => INGESTION_STATUSES.includes(row.metadata[args[0] as string]);
+    // What the owner check means is pinned against Postgres below; here it only gates the claim.
+    if (OWNER_CHECK.test(clause)) return (row: ImageRow) => row.userId === args[0] && ownerLive;
+    throw new Error(`unrecognized reversal predicate: ${clause.trim()}`);
+  });
 
   const limit = params.shift() as number;
   const claimed = images.filter((row) => predicates.every((holds) => holds(row))).slice(0, limit);
@@ -276,7 +273,7 @@ beforeEach(() => {
   images = [];
   queue = [];
   claimedPerPass = [];
-  deletedUsers = new Set();
+  ownerLive = true;
   mockSysRedis.sAdd.mockResolvedValue(1);
 
   mockDbWrite.$queryRaw.mockImplementation(
@@ -493,16 +490,6 @@ describe('unblockAccountDeletionImages', () => {
     ]);
   });
 
-  it('leaves the rows of an account deleted again while it runs', async () => {
-    images = [hidden(1, 'Scanned')];
-    deletedUsers.add(7);
-
-    const result = await unblockAccountDeletionImages(7);
-
-    expect(images[0]).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
-    expect(result.unblocked).toBe(0);
-  });
-
   it('leaves the review flag alone on a row blocked before the flag was recorded', async () => {
     images = [hidden(1, 'Scanned', { needsReview: null })];
 
@@ -587,6 +574,50 @@ describe('unblockAccountDeletionImages', () => {
     expect(images.every((row) => row.ingestion === 'Scanned')).toBe(true);
     for (const [ids] of mockResetNsfwLevel.mock.calls as unknown as number[][][])
       expect(ids.length).toBeLessThanOrEqual(RESTORE_BATCH_SIZE);
+  });
+
+  it('stops at the next pass once the owner is banned or deleted again', async () => {
+    images = Array.from({ length: RESTORE_BATCH_SIZE + 3 }, (_, i) => hidden(i + 1, 'Scanned'));
+    mockResetNsfwLevel.mockImplementationOnce(async () => {
+      ownerLive = false;
+    });
+
+    const result = await unblockAccountDeletionImages(7);
+
+    expect(claimedPerPass).toEqual([RESTORE_BATCH_SIZE, 0]);
+    expect(result.unblocked).toBe(RESTORE_BATCH_SIZE);
+    expect(images.filter((row) => row.ingestion === 'Blocked')).toHaveLength(3);
+  });
+
+  it('claims only for an owner that is neither deleted nor banned, in Postgres', async () => {
+    await unblockAccountDeletionImages(7);
+    const sql = (mockDbWrite.$queryRaw.mock.calls[0][0] as unknown as string[]).join('?');
+    const where = sql.slice(
+      sql.indexOf('WHERE', sql.indexOf('FROM "Image" i')) + 5,
+      sql.lastIndexOf('LIMIT')
+    );
+    const check = where.split(/\s+AND\s+/).find((clause) => OWNER_CHECK.test(clause));
+    expect(check, 'the claim carries no owner check').toBeDefined();
+
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
+      INSERT INTO "User" VALUES (1, NULL, NULL), (2, now(), NULL), (3, NULL, now()), (4, now(), now());
+    `);
+    const live = async (id: number) =>
+      (
+        await db.query<{ live: boolean | null }>(`SELECT ${check!.replace('?', '$1')} AS live`, [
+          id,
+        ])
+      ).rows[0].live === true;
+    expect(await Promise.all([1, 2, 3, 4, 5].map(live))).toEqual([
+      true,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    await db.close();
   });
 
   it('skips a row whose breadcrumb is not a real ingestion status and restores the rest', async () => {

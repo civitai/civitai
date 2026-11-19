@@ -1379,6 +1379,105 @@ describe('the report-not-filed view matches a report to the held item', () => {
     expect(await listed()).toEqual([22, 23, 24]);
   });
 
+  describe('an identical re-file', () => {
+    // The report holds the item's text from before the decision; the re-file after it added no entry.
+    const refiled = (item: string, at: string) =>
+      db.query(
+        `INSERT INTO "CsamReport" ("userId", "details", "createdAt") VALUES (10, $1::jsonb, '2026-09-01')`,
+        [
+          JSON.stringify({
+            contextText: [{ source: 'postText', id: 210, capturedAt: before }],
+            identicalRefiles: [{ filedById: 11, at, item }],
+          }),
+        ]
+      );
+
+    it.each([
+      ['postText:210', 21],
+      ['comment:220', 22],
+      ['postDescription:230', 23],
+    ])('after the decision covers the item (%s)', async (item, id) => {
+      await refiled(item, after);
+      expect(await listed()).not.toContain(id);
+      expect(await listed()).toHaveLength(3);
+    });
+
+    it('reads the decision in UTC whatever the session time zone', async () => {
+      await db.exec(`SET TIME ZONE 'America/Denver'`);
+      try {
+        // Six hours before the decision: read in Denver time it would look later than the decision.
+        await refiled('postText:210', '2026-09-12T18:00:00.000Z');
+        expect(await listed()).toEqual([21, 22, 23, 24]);
+        await refiled('postText:210', '2026-09-13T00:00:00.000Z');
+        expect(await listed()).toEqual([22, 23, 24]);
+      } finally {
+        await db.exec(`SET TIME ZONE 'UTC'`);
+      }
+    });
+
+    it('at the decision instant covers the item', async () => {
+      await refiled('postText:210', '2026-09-13T00:00:00.000Z');
+      expect(await listed()).toEqual([22, 23, 24]);
+    });
+
+    it.each([
+      ['before the decision', 'postText:210', before],
+      ['the same id under another source', 'comment:210', after],
+      ['another item', 'postText:211', after],
+      ['a date with no time', 'postText:210', '2026-09-14'],
+      ['an impossible month', 'postText:210', '2026-19-14T00:00:00.000Z'],
+      // Read as a date this would throw and fail the whole queue; compared as text it sorts before.
+      [
+        'a day the month does not have, without failing the view',
+        'postText:210',
+        '2026-02-31T00:00:00.000Z',
+      ],
+      ['an impossible hour', 'postText:210', '2026-09-14T24:00:00.000Z'],
+      ['more than three fractional digits', 'postText:210', '2026-09-14T00:00:00.0001Z'],
+      ['no milliseconds', 'postText:210', '2026-09-14T00:00:00Z'],
+    ])('does not cover for a re-file %s', async (_, item, at) => {
+      await refiled(item, at);
+      expect(await listed()).toEqual([21, 22, 23, 24]);
+    });
+
+    it.each([
+      ['not an array', { identicalRefiles: 'x' }],
+      ['scalar elements', { identicalRefiles: ['x', null, 3] }],
+      ['an element with no item or time', { identicalRefiles: [{ filedById: 11 }] }],
+    ])(
+      'keeps the queue working, and the item listed, when the record is %s',
+      async (_, details) => {
+        await db.query(
+          `INSERT INTO "CsamReport" ("userId", "details", "createdAt") VALUES (10, $1::jsonb, '2026-09-14')`,
+          [JSON.stringify(details)]
+        );
+        expect(await listed()).toEqual([21, 22, 23, 24]);
+      }
+    );
+
+    it('does not cover an item edited and held again after the re-file', async () => {
+      await seed([
+        {
+          id: 25,
+          entityType: 'PostText',
+          entityId: 210,
+          createdAt: '2026-09-15',
+          status: 'Confirmed',
+          decidedById: 11,
+          decidedAt: '2026-09-16',
+          meta: {
+            decision: 'remove',
+            reportChoice: 'imagery',
+            kind: 'redetected',
+            priorHoldId: 21,
+          },
+        },
+      ]);
+      await refiled('postText:210', after);
+      expect(await listed()).toEqual([22, 23, 24, 25]);
+    });
+  });
+
   it('keeps an item whose captured entry has no capture time, or one not in ISO form', async () => {
     await report([{ source: 'comment', id: 220, capturedAt: '2026-09-14' }]);
     await report([{ source: 'postText', id: 210 }]);

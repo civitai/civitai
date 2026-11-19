@@ -1,7 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import type { ProtectedContext } from '~/server/createContext';
 import type { Tracker } from '~/server/clickhouse/client';
+import type { Context } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
+import { canViewOwnerOnly, canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
   HasOfficialFileOfSizeInput,
@@ -186,10 +191,49 @@ async function submitInlineScan({
   });
 }
 
-export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
+export const getFilesByVersionIdHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
-    const data = await getFilesForModelVersionCache([input.id]);
-    return data[input.id];
+    // The cached list is every file of the version, for every viewer, so the viewer's rules are
+    // applied here, after the read: a version they may not see reads as one with no files.
+    const version = await dbRead.modelVersion.findUnique({
+      where: { id: input.id },
+      select: {
+        status: true,
+        publishedAt: true,
+        model: { select: { userId: true, status: true, poi: true } },
+      },
+    });
+    if (!version) return undefined;
+    const viewer = ownerOrModeratorViewer(ctx);
+    const ownerId = version.model.userId;
+    if (
+      !canViewPoiModel(version.model.poi, ownerId, viewer) ||
+      !canViewModelVersionStatus({
+        viewer,
+        ownerId,
+        modelStatus: version.model.status,
+        versionStatus: version.status,
+        publishedAt: version.publishedAt,
+      })
+    )
+      return undefined;
+
+    const data = (await getFilesForModelVersionCache([input.id]))[input.id];
+    if (!data || canViewOwnerOnly(ownerId, viewer)) return data;
+    // Training data keeps its own public view (the router's strip); other non-Public files are
+    // the owner's and moderators'.
+    return {
+      ...data,
+      files: data.files.filter(
+        (file) => file.visibility === 'Public' || file.type === 'Training Data'
+      ),
+    };
   } catch (error) {
     throw throwDbError(error);
   }

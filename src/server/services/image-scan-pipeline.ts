@@ -1,6 +1,6 @@
 import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
 import { isMinorRestrictedLevel } from '@civitai/shared/minor-content-gate';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import type { TagType } from '~/shared/utils/prisma/enums';
 import {
   ImageIngestionStatus,
@@ -356,6 +356,7 @@ export async function loadImageForScan(imageId: number) {
       blockedFor: true,
       needsReview: true,
       minor: true,
+      poi: true,
     },
   });
 
@@ -546,6 +547,43 @@ function isBlockKeptByBanOrHold(imageId: number) {
     Prisma.sql`FROM "Image" m WHERE m.id = ${imageId}`,
     blockKeptByBanOrHoldSql('m')
   );
+}
+
+/** One image in this many is logged without a prior review, so the line's volume shows it runs. */
+const SCAN_AFTER_REVIEW_SAMPLE = 100;
+
+/**
+ * Counts only: what this scan newly set on an image a moderator reviewed earlier, against a fixed
+ * sample of unreviewed images. Never throws: the outcome is already written.
+ */
+async function logScanAfterReview(image: ScanImage, toUpdate: Prisma.ImageUpdateInput) {
+  // Read now, before the caller's later mappings change `toUpdate`.
+  const newlySet = {
+    newlyBlocked:
+      toUpdate.ingestion === ImageIngestionStatus.Blocked &&
+      image.ingestion !== ImageIngestionStatus.Blocked,
+    newlyMinor: toUpdate.minor === true && !image.minor,
+    newlyPoi: toUpdate.poi === true && !image.poi,
+    newlyNeedsReview: !!toUpdate.needsReview && !image.needsReview,
+  };
+  try {
+    const sampled = image.id % SCAN_AFTER_REVIEW_SAMPLE === 0;
+    const [row] = await dbRead.$queryRaw<{ reviewed: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1 FROM "ModActivity"
+        WHERE "entityType" = 'image' AND "entityId" = ${image.id} AND activity = 'review'
+      ) AS reviewed
+    `;
+    const priorReview = !!row?.reviewed;
+    if (!priorReview && !sampled) return;
+    logToAxiom({
+      name: 'scan-outcome-after-review',
+      type: 'info',
+      payload: { priorReview, sampled, ...newlySet },
+    });
+  } catch {
+    /* empty */
+  }
 }
 
 /**
@@ -805,6 +843,8 @@ export async function resolveScanOutcome({
     });
     return [];
   });
+  // Not awaited: a slow replica must not hold up the outcome.
+  void logScanAfterReview(image, toUpdate).catch(() => undefined);
   if (written?.blockedFor === BlockedReason.CSAM) {
     toUpdate.ingestion = ImageIngestionStatus.Blocked;
     toUpdate.blockedFor = BlockedReason.CSAM;

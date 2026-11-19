@@ -58,9 +58,8 @@ export const appStorageRouter = router({
     }),
 
   /**
-   * One page of the bundle of every record the user owns, across every app, whatever the
-   * app's status, as record-core objects (`exportMyAppRecords`). Not a route at all (NOT_FOUND) while
-   * the record core is switched off. A query, so a later settings-page button calls the same one.
+   * One page of every record the user owns, across apps, as record-core objects
+   * (`exportMyAppRecords`). NOT_FOUND while the record core is switched off.
    */
   exportMine: appStorageUserProcedure
     .meta({ blockApiKeys: true })

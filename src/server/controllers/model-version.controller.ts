@@ -98,6 +98,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
@@ -149,10 +150,13 @@ const loadModelVersion = async ({
   input,
   ctx,
   forceWriteDb,
+  publicRead,
 }: {
   input: GetModelVersionSchema;
   ctx: Context;
   forceWriteDb: boolean;
+  /** The public read: a version the viewer may not see by its status is not found. */
+  publicRead: boolean;
 }) => {
   const { id, withFiles } = input;
 
@@ -171,6 +175,7 @@ const loadModelVersion = async ({
         steps: true,
         clipSkip: true,
         status: true,
+        publishedAt: true,
         createdAt: true,
         trainingDetails: true,
         trainingStatus: true,
@@ -229,7 +234,20 @@ const loadModelVersion = async ({
       },
     });
     const ownerViewer = ownerOrModeratorViewer(ctx);
-    if (version && !canViewPoiModel(version.model.poi, version.model.user.id, ownerViewer))
+    const hiddenByStatus =
+      publicRead &&
+      !!version &&
+      !canViewModelVersionStatus({
+        viewer: ownerViewer,
+        ownerId: version.model.user.id,
+        modelStatus: version.model.status as ModelStatus,
+        versionStatus: version.status as ModelStatus,
+        publishedAt: version.publishedAt,
+      });
+    if (
+      hiddenByStatus ||
+      (version && !canViewPoiModel(version.model.poi, version.model.user.id, ownerViewer))
+    )
       throw throwNotFoundError(`No version with id ${input.id}`);
 
     // Separate linked components from regular recommended resources
@@ -370,9 +388,13 @@ const loadModelVersion = async ({
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
-      files: version.files as unknown as Array<
-        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }
-      >,
+      // Training data keeps its own public view (the router's strip); other non-Public files are the
+      // owner's and moderators'.
+      files: (isOwnerOrMod || !version.files
+        ? version.files
+        : version.files.filter(
+            (file) => file.visibility === 'Public' || file.type === 'Training Data'
+          )) as unknown as Array<Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }>,
       settings: version.settings as RecommendedSettingsSchema | undefined,
       recommendedResources: generationResources,
       linkedComponents,
@@ -386,7 +408,7 @@ const loadModelVersion = async ({
 export const getModelVersionHandler = async (params: {
   input: GetModelVersionSchema;
   ctx: Context;
-}) => loadModelVersion({ ...params, forceWriteDb: false });
+}) => loadModelVersion({ ...params, forceWriteDb: false, publicRead: true });
 
 // Owner-only entry point. Always reads from the primary DB so freshly-mutated
 // files / linked components are visible regardless of replication lag. The
@@ -395,7 +417,12 @@ export const getModelVersionHandler = async (params: {
 export const getModelVersionForEditHandler = async (params: {
   input: GetModelVersionSchema;
   ctx: Context;
-}) => loadModelVersion({ ...params, forceWriteDb: true });
+}) => {
+  // The router's ownership guard reads the user alone; the owner's editor view also needs a
+  // session or a full-access key.
+  if (!ownerOrModeratorViewer(params.ctx)) throw throwAuthorizationError();
+  return loadModelVersion({ ...params, forceWriteDb: true, publicRead: false });
+};
 
 export const toggleNotifyEarlyAccessHandler = async ({
   input,
