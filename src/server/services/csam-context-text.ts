@@ -425,7 +425,8 @@ export function reportedUserIdsOf(userId: number, details: unknown) {
  * equals the item's latest capture, so an item edited, or edited and changed back, keeps each text in
  * order. When it equals the latest capture the report already held, `onIdentical` hears it once per
  * item. An earlier capture changes only one way: a stored latest capture with no review takes the
- * review of an identical capture that has one, with its text and capture time kept.
+ * review of an identical capture whose review names a known origin (`CSAM_REVIEW_ORIGINS`), with its
+ * text and capture time kept.
  */
 export function foldContextText(
   prior: unknown,
