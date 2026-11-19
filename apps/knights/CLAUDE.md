@@ -9,6 +9,9 @@ civitai.com's styling: plain CSS in `src/global.css`, no Mantine, no `@civitai/u
 The game is moving here from the main Next.js app: `src/components/Games`,
 `src/server/services/games/new-order.service.ts` and `src/server/jobs/new-order-jobs.ts`. It keeps using the main
 Postgres through `@civitai/db/kysely` and the existing `NewOrderPlayer` tables; do not add a second database.
+`$lib/server/db` exports `db` (the primary) and `dbRead` (a read replica when `DATABASE_REPLICA_URL` is set, else the
+primary). Only lag-tolerant reads take `dbRead` (the play feed's `getFeed`, the leaderboard board); writes, transactions
+and reads of the player's own just-written rows stay on `db`.
 
 ## Access gate
 
