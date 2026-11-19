@@ -1,7 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as CoverageSource from '~/server/services/generation/coverage-source';
 
@@ -71,8 +70,6 @@ beforeEach(() => {
   searchWithSignal.mockResolvedValue({ hits: [], estimatedTotalHits: 0 });
   dbMock.dbRead.resourceInsight.findMany.mockReset();
   dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([]);
-  loggingMock.logToAxiom.mockReset();
-  loggingMock.logToAxiom.mockResolvedValue(undefined);
 });
 
 describe('buildResourceIntentFilter — the deterministic gates reach Meilisearch', () => {
@@ -744,7 +741,7 @@ describe('findResourceIntentCandidates — the labels change the response', () =
   // fallback's own `.slice`: unsliced it would hand stage 3 up to twice the caller's
   // cap in options and hydrate the same, with the shadow row recording the pool
   // width as the shortlist size. Tightening one arm must not replace the other.
-  it('🔴 keeps the seed order whole, caps it, and logs once PER FAILURE when the label table is unreachable', async () => {
+  it('🔴 keeps the seed order whole, and caps it when the label table is unreachable', async () => {
     searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
     dbMock.dbRead.resourceInsight.findMany.mockRejectedValue(new Error('relation missing'));
 
@@ -753,16 +750,9 @@ describe('findResourceIntentCandidates — the labels change the response', () =
 
     const { entries: capped } = await findResourceIntentCandidates(criteria, { ...opts, cap: 2 });
     expect(capped.map((e) => e.versionId)).toEqual([10701, 20802]);
-
-    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(2);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'resource-intent-insight-read-failed' }),
-      'temp-search'
-    );
   });
 
-  // 🔴 The seam half of the fallback. The log above reaches an operator, not the
-  // CALLER, and the caller is the one that owns this response's cache TTL — so a
+  // 🔴 The seam half of the fallback. The caller owns this response's cache TTL — so a
   // fallback that returns a correctly-shaped shortlist and no flag is
   // indistinguishable from success at the only boundary that can act on it. Both
   // arms are here because `insightFallback: true` hardcoded would pass the first

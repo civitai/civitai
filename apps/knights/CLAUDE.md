@@ -29,7 +29,7 @@ The game-tuning variables (`KNIGHTS_HIDDEN_CHECK_*`, `KNIGHTS_YESNO_*`, `KNIGHTS
 `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE`, `KNIGHTS_SHOP_DISABLED`, `KNIGHTS_CONVERSION_DISABLED`) can also be saved on the moderator app's Config page, as the optional `game` (and `yesNoShare`) fields of
 `system:knights-v2-sources` (`KnightsSourcesConfig` in `@civitai/shared/new-order`). Every reader goes through `storedSettings()`
 (`settings/runtime.ts`, one cached read at most every 30 s): a saved value wins, a failed or slow read keeps the last value read, and
-with none read yet the environment applies. Kill switches follow the same rule. The same read carries `ruleGuide`, the question rules shown in the Codex and `/play` guide; its text is entered on the Config page, never committed. Detail: [game settings](../../docs/features/knights-sources.md#game-settings).
+with none read yet the environment applies. Kill switches follow the same rule. Detail: [game settings](../../docs/features/knights-sources.md#game-settings).
 
 ## Queue (`src/lib/server/queue`)
 
@@ -132,7 +132,7 @@ Queue producers (moderator enqueue endpoint, scan sampling, owner ratings, the `
 ## Wired packages
 
 `@civitai/auth` (guard), `@civitai/axiom` (logging), `@civitai/brand` (favicon), `@civitai/buzz` (gold conversion, Buzz packs), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
-`@civitai/flipt` (access flag), `@civitai/redis` (today only a sys client: the guard's session revocation check, the skip sets, the seen-notice records, the vote-limit gate, the legacy XP mirror, the leaderboard cache; new cached data goes on a cache client built with `createCacheRedis`, never on the sys client, which holds only durable state),
+`@civitai/flipt` (access flag), `@civitai/redis` (a sys client for the guard's session revocation check, the skip sets, the seen-notice records, the legacy XP mirror and the leaderboard cache; a cache client, `getCacheRedis`, for the vote-limit gate, whose keys share the player's `{id}` hash tag; new cached data goes on the cache client, never on the sys client, which holds only durable state),
 `@civitai/shared` (`NsfwLevel`; `new-order-levels` is the original game's level curve, which Knights no longer uses (see Progression), still used by the main app's `game-helpers.ts`). Add others when a task needs them.
 
 ## Deploy

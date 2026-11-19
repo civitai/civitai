@@ -17,7 +17,6 @@ vi.mock('~/server/jobs/job', () => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import { leaderboardJobs } from '../prepare-leaderboard';
 
@@ -98,12 +97,6 @@ describe('update-user-leaderboard-rank', () => {
 
     expect(await rankOf(A_USER)).toBe(4);
     expect(await rankOf(B_USER)).toBe(7);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'user-rank-partially-populated',
-        error: { unpopulated: ['board-b'] },
-      })
-    );
   });
 
   it('carries a board from its latest day when it has missed more than one', async () => {

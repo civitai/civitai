@@ -23,12 +23,12 @@ with no viewer (no browsing level) keeps the .red face.
 
 Four nullable columns on `Model`:
 
-| Column | Meaning |
-|---|---|
-| `sfwName` | The .com title. Set means the face is on; `NULL` means off. |
-| `sfwDescription` | The .com description. `NULL` while the face is on means .com shows none; the .red description is never shown in its place. |
-| `coverImageId` | The creator's pick for the .red cover. |
-| `sfwCoverImageId` | The .com cover: one of the creator's own images rated PG or PG-13. |
+| Column            | Meaning                                                                                                                    |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `sfwName`         | The .com title. Set means the face is on; `NULL` means off.                                                                |
+| `sfwDescription`  | The .com description. `NULL` while the face is on means .com shows none; the .red description is never shown in its place. |
+| `coverImageId`    | The creator's pick for the .red cover.                                                                                     |
+| `sfwCoverImageId` | The .com cover: one of the creator's own images rated PG or PG-13.                                                         |
 
 The `sfw*` names follow `UserProfile.sfwBio` / `sfwCoverImageId`. They are unrelated to
 `Model.sfwOnly`, which restricts what a resource may generate.
@@ -120,6 +120,18 @@ The marker goes when the owner sets a .com cover again (through the save checks)
 off, or edits the listing so that it passes both checks. That edit gets one check, once the owner has
 stopped editing for two minutes; no verdict keeps the marker. The old cover is not put back.
 Creator Studio's Make Safe can draft a removed face again.
+
+## Version text verdicts
+
+A second job (`model-com-face-version-text.service.ts`), which runs only while the
+`com-face-version-text-jobs` flag is on, rates each name and trigger word of a
+faced model's published, non-private versions on its own, after the same owner edits (two minutes
+quiet) and from an hourly sweep for text with no current verdict. Verdicts are kept server-side in
+`KeyValue` rows (`com-face-version-text:v:<versionId>`), never in version `meta`, which clients
+receive. A held string (a minor, poi or csam detection) is stored as its SHA-256, not its text. The
+sweep deletes the rows of versions .com no longer shows (unpublished, private, deleted, or on a
+model deleted or without a face). A csam detection places a csam hold; a string the rater refuses
+queues a forced Model text scan instead. Nothing reads the verdicts for display yet.
 
 ## Draft action
 

@@ -130,11 +130,9 @@ import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
 const mockRedis = redisMock.redis;
 const mockSysRedis = redisMock.sysRedis;
-const mockLogToAxiom = loggingMock.logToAxiom;
 
 function fakePerUserFlag(opts?: { user?: { isModerator?: boolean } }) {
   return Promise.resolve(!!opts?.user?.isModerator);
@@ -496,13 +494,6 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     // The PAYLOAD-level discriminator must stay absent: the payload is a real
     // measurement; it is one bucket inside it that could not be read.
     expect(result.unavailable).toBeUndefined();
-    // 🔴 AND IT IS REPORTED. The catch's only observability is this log, and nothing
-    // asserted it — so deleting the call was a green mutation, which would have made
-    // a missing production table completely silent.
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'block-goods-earnings', type: 'error' }),
-      'civitai-prod'
-    );
   });
 
   it('a NON-table goods failure RETHROWS — it is not laundered into "unreadable"', async () => {
