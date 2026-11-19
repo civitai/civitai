@@ -49,6 +49,7 @@ dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Prom
 
 const retention = await import('~/server/services/creator-service-deal-file-retention');
 const files = await import('~/server/services/creator-service-deal-file.service');
+const unpack = await import('~/server/services/creator-service-deal-unpack.service');
 
 const MIGRATIONS = [
   '20261025120000_creator_services_foundation',
@@ -460,8 +461,9 @@ describe('the purge after the sweep', () => {
       `UPDATE "ServiceDealFile" SET status = 'Uploading', "scanStatus" = 'Pending' WHERE id = $1`,
       [finalId]
     );
+    // A content verdict leaves the status Ready; only a refusal at completion sets Failed.
     await q(
-      `UPDATE "ServiceDealFile" SET status = 'Failed', "scanStatus" = 'Failed' WHERE id = $1`,
+      `UPDATE "ServiceDealFile" SET status = 'Ready', "scanStatus" = 'Failed' WHERE id = $1`,
       [attachmentId]
     );
     await sweepAndPurge();
@@ -469,17 +471,34 @@ describe('the purge after the sweep', () => {
     expect(await kept(attachmentId)).toBe(true);
   });
 
-  it('deletes a removed file refused at completion, before any scan', async () => {
+  it('deletes a removed file refused at completion, after settleFinals has marked its scan Failed', async () => {
     const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
     await q(
-      `UPDATE "ServiceDealFile" SET status = 'Failed', "scanStatus" = 'Pending', "malwareScanStatus" = 'Pending'`
+      `UPDATE "ServiceDealFile" SET status = 'Failed', "failReason" = 'refused', "scanStatus" = 'Pending', "malwareScanStatus" = 'NotScanned'`
     );
     await q(`UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Failed' WHERE id = $1`, [
       attachmentId,
     ]);
+    await unpack.settleFinals();
+    const [settled] = await q<{ scanStatus: string }>(
+      `SELECT "scanStatus" FROM "ServiceDealFile" WHERE id = $1`,
+      [finalId]
+    );
+    expect(settled.scanStatus).toBe('Failed');
     await sweepAndPurge();
     expect(await kept(finalId)).toBe(false);
     expect(await kept(attachmentId)).toBe(true);
+  });
+
+  it('keeps a removed preview that was rejected', async () => {
+    const { dealId } = await closedDeal('Cancelled', 40);
+    const [preview] = await q<{ id: number }>(
+      `INSERT INTO "ServiceDealFile" ("dealId", kind, "s3Key", "mimeType", size, status, "scanStatus", "malwareScanStatus")
+       VALUES ($1, 'Preview', 'k/rejected', 'image/png', 10, 'Failed', 'Failed', 'Pending') RETURNING id`,
+      [dealId]
+    );
+    await sweepAndPurge();
+    expect(await kept(preview.id)).toBe(true);
   });
 
   it('deletes a removed preview its scan never reached', async () => {

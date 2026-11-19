@@ -679,13 +679,16 @@ const purgeableState = (f: Prisma.Sql) => Prisma.sql`(
   ${f}."removedAt" IS NOT NULL
   -- Not before any download link signed while it was listed has expired.
   AND ${f}."removedAt" <= now() - (${SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS}::int * interval '1 second')
-  -- Never judged, and never will be: an upload never completed, one refused at completion before
-  -- any scan, or a preview (whose scan skips removed files) not in a scan.
+  -- Never judged, and never will be: an upload never completed, one refused at completion (only
+  -- failFile sets status Failed on a Final or Attachment; settleFinals then marks its scan Failed,
+  -- which is not a content verdict), or a preview (whose scan skips removed files) not in a scan.
   AND (${f}."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
     OR ${f}."status" = 'Uploading'::"ServiceDealFileStatus"
     OR (${f}."status" = 'Failed'::"ServiceDealFileStatus"
-      AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
-      AND ${f}."malwareScanStatus" <> 'Failed'::"ServiceDealFileScanStatus")
+      AND ${f}."kind" <> 'Preview'::"ServiceDealFileKind"
+      AND ${f}."malwareScanStatus" <> 'Failed'::"ServiceDealFileScanStatus"
+      AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+        WHERE e."fileId" = ${f}."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"))
     OR (${f}."kind" = 'Preview'::"ServiceDealFileKind"
       AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"))
   AND NOT ${mustKeep(f)}
