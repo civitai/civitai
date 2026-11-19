@@ -7,6 +7,7 @@ import { AppListingCard } from '~/components/Apps/AppListingCard';
 import { AppSubListingCard } from '~/components/Apps/AppSubListingCard';
 import { AppListingCardSkeletonGrid } from '~/components/Apps/AppListingCardSkeleton';
 import gridClasses from '~/components/Apps/AppListingsMarketplaceBody.module.scss';
+import { appIndexServerQuery } from '~/components/Apps/app-index-search-query';
 import { hasActiveAppsStoreFilters } from '~/components/Apps/appsStoreQueryParams';
 import { useAppsStoreQueryParams } from '~/components/Apps/useAppsStoreQueryParams';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -162,10 +163,17 @@ export function AppListingsMarketplaceBody() {
     if (filters.query.trim() !== searchInput.trim()) setSearchInput(filters.query);
   });
 
-  // With `app-index-search` on, the debounced search goes to the server, which may answer it from
-  // the app index (a page marked `search: 'index'`) or fall back to the plain grid, which the
-  // client-side filter below then narrows as before. Off, the query is never sent.
-  const serverQuery = features.appIndexSearch ? debouncedSearch.trim() || undefined : undefined;
+  // With `app-index-search` on, the server says on each page whether this viewer's searches can go
+  // to the app index (`indexSearchRoutable`). Only then is the debounced search sent, and the
+  // server may answer it from the index (a page marked `search: 'index'`) or fall back to the plain
+  // grid, which the client-side filter below narrows as before. Otherwise the request, and its
+  // query key, stay exactly as without the feature (`appIndexServerQuery`).
+  const [indexRoutable, setIndexRoutable] = useState<boolean | undefined>(undefined);
+  const serverQuery = appIndexServerQuery({
+    flagOn: !!features.appIndexSearch,
+    serverRoutable: indexRoutable,
+    search: debouncedSearch,
+  });
 
   const {
     data,
@@ -254,6 +262,10 @@ export function AppListingsMarketplaceBody() {
   );
   // A page the app index answered already holds the search's results, in its order.
   const indexAnswered = data?.pages[0]?.search === 'index';
+  const pageSaysRoutable = data?.pages[0]?.indexSearchRoutable;
+  useEffect(() => {
+    if (pageSaysRoutable !== undefined) setIndexRoutable(pageSaysRoutable);
+  }, [pageSaysRoutable]);
   // Client-side search over loaded pages (name + tagline). See the ⚠️ gap note:
   // this is complete only while the catalog fits in the loaded pages.
   const filteredItems = useMemo(() => {

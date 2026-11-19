@@ -7,6 +7,7 @@ import type {
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { NsfwLevel } from '~/server/common/enums';
 import type { AppIndexSearchReason } from '~/server/prom/app-index-search.metrics';
+import type { ListAvailableListingsOpts } from '~/server/services/blocks/app-listing.service';
 
 const h = vi.hoisted(() => ({
   listAvailableListings: vi.fn(),
@@ -180,7 +181,8 @@ describe('listStoreGrid', () => {
       h.listAvailableListings.mockClear();
       const input = { ...INPUT, query };
       const res = await listStoreGrid(input, SFW_OPTS, { indexSearch: true });
-      expect(res).toBe(DB_PAGE);
+      // The database page as is, plus the routability the client keys its request on.
+      expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: true });
       expect(h.listAvailableListings.mock.calls[0][0]).toBe(input);
     }
     expect(fetchCalls).toEqual([]);
@@ -204,6 +206,7 @@ describe('listStoreGrid', () => {
       items: [card(DELTA), card(BETA), card(ALPHA)],
       nextCursor: undefined,
       search: 'index',
+      indexSearchRoutable: true,
     });
     expect(h.recordAppIndexSearch).toHaveBeenCalledWith('index', 'ok');
     // Identical fields (BETA's rating differs only in case): no field counter moves.
@@ -304,7 +307,7 @@ describe('listStoreGrid', () => {
   ])('index answers %s: the database page, as before', async (_, reply, reason) => {
     stubIndex(reply);
     const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
-    expect(res).toBe(DB_PAGE);
+    expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: true });
     expect(fetchCalls).toHaveLength(1);
     expect(h.listStoreListingsBySlugs).not.toHaveBeenCalled();
     expect(h.recordAppIndexSearch).toHaveBeenCalledWith('db_fallback', reason);
@@ -318,7 +321,7 @@ describe('listStoreGrid', () => {
   it('hydration failure: the database page', async () => {
     h.listStoreListingsBySlugs.mockRejectedValue(new Error('db'));
     const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
-    expect(res).toBe(DB_PAGE);
+    expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: true });
     expect(h.recordAppIndexSearch).toHaveBeenCalledWith('db_fallback', 'error');
   });
 
@@ -330,7 +333,7 @@ describe('listStoreGrid', () => {
         { ...SFW_OPTS, redCapable: true, viewerBrowsingLevel },
         { indexSearch: true }
       );
-      expect(res).toBe(DB_PAGE);
+      expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: false });
       expect(h.recordAppIndexSearch).toHaveBeenCalledWith('db_fallback', 'mature_viewer');
     }
     expect(fetchCalls).toEqual([]);
@@ -345,16 +348,54 @@ describe('listStoreGrid', () => {
     expect(res.search).toBe('index');
   });
 
-  it.each<[string, Partial<ListAppListingsInput>, () => void, AppIndexSearchReason]>([
-    ['no APP_INDEX_URL', {}, () => setEnv({ APP_INDEX_URL: undefined }), 'no_url'],
-    ['a store cursor', { cursor: 'abc' }, () => undefined, 'unsupported_input'],
-    ['a developer filter', { userId: 7 }, () => undefined, 'unsupported_input'],
-  ])('%s: the database page', async (_, extra, setup, reason) => {
+  it.each<[string, Partial<ListAppListingsInput>, () => void, AppIndexSearchReason, boolean]>([
+    ['no APP_INDEX_URL', {}, () => setEnv({ APP_INDEX_URL: undefined }), 'no_url', false],
+    ['a store cursor', { cursor: 'abc' }, () => undefined, 'unsupported_input', true],
+    ['a developer filter', { userId: 7 }, () => undefined, 'unsupported_input', true],
+  ])('%s: the database page', async (_, extra, setup, reason, routable) => {
     setup();
     const res = await listStoreGrid({ ...INPUT, ...extra }, SFW_OPTS, { indexSearch: true });
-    expect(res).toBe(DB_PAGE);
+    expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: routable });
     expect(fetchCalls).toEqual([]);
     expect(h.recordAppIndexSearch).toHaveBeenCalledWith('db_fallback', reason);
+  });
+
+  // The index could leave out listings the database grid shows these viewers, so they keep it.
+  it.each<[string, Partial<ListAvailableListingsOpts>, AppIndexSearchReason]>([
+    ['a tester floor', { floor: 'testers' }, 'unsupported_viewer'],
+    ['a moderator floor', { floor: 'moderators' }, 'unsupported_viewer'],
+    ['sub-listing cards in the grid', { includeSubListings: true }, 'sub_listings'],
+  ])('%s: the database page, and not routable', async (_, extra, reason) => {
+    const res = await listStoreGrid(INPUT, { ...SFW_OPTS, ...extra }, { indexSearch: true });
+    expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: false });
+    expect(fetchCalls).toEqual([]);
+    expect(h.listStoreListingsBySlugs).not.toHaveBeenCalled();
+    expect(h.recordAppIndexSearch).toHaveBeenCalledWith('db_fallback', reason);
+    // Not routable is said even on a page without a query, so the client never sends one.
+    const plain = await listStoreGrid(
+      { ...INPUT, query: undefined },
+      { ...SFW_OPTS, ...extra },
+      {
+        indexSearch: true,
+      }
+    );
+    expect(plain.indexSearchRoutable).toBe(false);
+  });
+
+  it.each<[string, Partial<ListAppListingsInput>, Partial<ListAvailableListingsOpts>, string]>([
+    ['public-external scope, any kind', { kind: 'all' }, { scope: 'public-external' }, 'offsite'],
+    [
+      'public-external scope, on-site asked',
+      { kind: 'onsite' },
+      { scope: 'public-external' },
+      'offsite',
+    ],
+    ['full scope, the request kind', { kind: 'offsite' }, { scope: 'full' }, 'offsite'],
+    ['full scope, all kinds', { kind: 'all' }, { scope: 'full' }, ''],
+  ])('%s: the index is asked for the right kind', async (_, input, opts, kind) => {
+    await listStoreGrid({ ...INPUT, ...input }, { ...SFW_OPTS, ...opts }, { indexSearch: true });
+    expect(fetchCalls).toHaveLength(1);
+    expect(new URL(fetchCalls[0]).searchParams.get('kind') ?? '').toBe(kind);
   });
 
   it('times out quickly', () => {

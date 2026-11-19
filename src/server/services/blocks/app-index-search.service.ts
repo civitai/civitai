@@ -9,8 +9,12 @@
  * the index's order. The index holds what an anonymous registry subscriber may read, the SFW
  * audience, so a viewer who may see r/x listings is never routed to it.
  *
- * Everything else is today's database path, unchanged: the flag off, no query, a mature viewer,
- * a developer-filtered or paged request, APP_INDEX_URL unset, and any index failure (a timeout of
+ * A flagged request is sent to the index only when the index can answer it without dropping a
+ * listing the database grid would show this viewer: an SFW-only viewer on the `public` audience
+ * floor, a grid without sub-listing cards, and, for the `public-external` store scope (off-site
+ * listings only), the index asked for off-site apps only. Everything else is today's database
+ * path, unchanged: the flag off, no query, a mature viewer, a tester or moderator floor, sub-listing
+ * cards, a developer-filtered or paged request, APP_INDEX_URL unset, and any index failure (a timeout of
  * APP_INDEX_SEARCH_TIMEOUT_MS, a non-2xx answer such as 503 before the index is ready, or a body
  * that is not a search response). On the database path the client filters by the query itself,
  * as it always has; a page answered by the index says so (`search: 'index'`), so the client does
@@ -57,6 +61,12 @@ export type StoreGridPage = {
   nextCursor?: string;
   /** Set when the index answered the query: the items are already the search's results. */
   search?: 'index';
+  /**
+   * With the flag on, whether this viewer's searches can go to the index (`viewerNotRoutable`).
+   * The client sends its search text as `query` only once a page has said true, so a viewer the
+   * index never answers keeps today's request and client-side filtering. Absent with the flag off.
+   */
+  indexSearchRoutable?: boolean;
 };
 
 // The index answers every field as a string, '' for none.
@@ -108,9 +118,30 @@ export async function listStoreGrid(
   { indexSearch }: { indexSearch: boolean },
   reads: StoreGridReads = DB_READS
 ): Promise<StoreGridPage> {
+  if (!indexSearch) return reads.listAvailableListings(input, opts);
+  const indexSearchRoutable = viewerNotRoutable(opts) === null;
   const query = input.query?.trim() ?? '';
-  if (!indexSearch || query === '') return reads.listAvailableListings(input, opts);
-  return searchThroughIndex(input, query, opts, reads);
+  const page =
+    query === ''
+      ? await reads.listAvailableListings(input, opts)
+      : await searchThroughIndex(input, query, opts, reads);
+  return { ...page, indexSearchRoutable };
+}
+
+/**
+ * Why this viewer's searches cannot go to the index, or null when they can. Each condition is one
+ * where the index could leave out a listing the database grid shows this viewer.
+ */
+export function viewerNotRoutable(opts: ListAvailableListingsOpts): AppIndexSearchReason | null {
+  if (!env.APP_INDEX_URL) return 'no_url';
+  const mature = matureRatingsAllowed(opts.redCapable ?? false, opts.viewerBrowsingLevel);
+  // The index holds the anonymous registry audience: SFW listings only.
+  if (mature.r || mature.x || mature.xxx) return 'mature_viewer';
+  // A tester or moderator floor admits listings that are not public.
+  if ((opts.floor ?? 'public') !== 'public') return 'unsupported_viewer';
+  // Sub-listing cards are not apps; the index has none.
+  if (opts.includeSubListings === true) return 'sub_listings';
+  return null;
 }
 
 /** Why a flagged request is not sent to the index, or null when it is. */
@@ -118,12 +149,21 @@ function notRoutable(
   input: ListAppListingsInput,
   opts: ListAvailableListingsOpts
 ): AppIndexSearchReason | null {
-  if (!env.APP_INDEX_URL) return 'no_url';
-  const mature = matureRatingsAllowed(opts.redCapable ?? false, opts.viewerBrowsingLevel);
-  if (mature.r || mature.x || mature.xxx) return 'mature_viewer';
+  const viewer = viewerNotRoutable(opts);
+  if (viewer) return viewer;
   // The index answers one page of the store grid: no developer filter, no store cursor.
   if (input.userId != null || input.cursor) return 'unsupported_input';
   return null;
+}
+
+/**
+ * The `kind` the index is asked for: off-site only under the `public-external` scope, which shows
+ * nothing else (so the index's `limit` is not spent on apps the store gates would drop), else the
+ * request's own.
+ */
+function indexKind(input: ListAppListingsInput, opts: ListAvailableListingsOpts): string | null {
+  if (opts.scope === 'public-external') return 'offsite';
+  return input.kind === 'all' ? null : input.kind;
 }
 
 async function searchThroughIndex(
@@ -142,7 +182,7 @@ async function searchThroughIndex(
 
   let indexed: IndexResult[];
   try {
-    indexed = await fetchIndexResults(query, input);
+    indexed = await fetchIndexResults(query, input, indexKind(input, opts));
   } catch (err) {
     return fallBack(dbPage, query, err instanceof IndexUnavailable ? err.reason : 'error');
   }
@@ -187,10 +227,11 @@ async function fallBack(
 /** The index's results, in its order. Throws IndexUnavailable naming why it could not. */
 async function fetchIndexResults(
   query: string,
-  input: ListAppListingsInput
+  input: ListAppListingsInput,
+  kind: string | null
 ): Promise<IndexResult[]> {
   const params = new URLSearchParams({ q: query, limit: String(input.limit) });
-  if (input.kind !== 'all') params.set('kind', input.kind);
+  if (kind) params.set('kind', kind);
   if (input.category) params.set('category', input.category);
   const base = (env.APP_INDEX_URL as string).replace(/\/+$/, '');
   let res: Response;
