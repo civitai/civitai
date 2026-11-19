@@ -673,7 +673,8 @@ describe('judging a file by what it is', () => {
   const serveHeads = () =>
     s3.send.mockImplementation(async (command: { input: { Key: string; Range?: string } }) => {
       const whole = bucket.objects.get(command.input.Key)!;
-      return body(command.input.Range ? whole.subarray(0, 16) : whole);
+      const range = /^bytes=0-(\d+)$/.exec(command.input.Range ?? '');
+      return body(range ? whole.subarray(0, Number(range[1]) + 1) : whole);
     });
 
   it.each([
@@ -704,19 +705,99 @@ describe('judging a file by what it is', () => {
     expect(await entries(fileId)).toEqual([]);
   });
 
-  it('leaves plain documents without entries, and does not sniff a model file', async () => {
+  it('leaves plain documents without entries, and takes a model file that is a zip', async () => {
     const dealId = await accepted();
     const doc = await final(dealId, 'brief.txt', Buffer.from('just some words in a text file'));
     serveHeads();
     expect(await unpack.unpackFinals()).toBe(1);
     expect(await entries(doc)).toEqual([]);
     expect((await fileRow(doc)).unpackedAt).not.toBeNull();
-    // A model file may begin with any bytes, so it is not sniffed.
+    // A checkpoint is often a zip: a model file is refused only for a picture or a video.
     const model = await final(dealId, 'm.pt', PK);
-    s3.send.mockClear();
     expect(await unpack.unpackFinals()).toBe(1);
-    expect(s3.send).not.toHaveBeenCalled();
-    expect(await fileRow(model)).toMatchObject({ scanStatus: 'Pending' });
+    expect(await fileRow(model)).toMatchObject({ scanStatus: 'Pending', failReason: null });
+    expect(await entries(model)).toEqual([]);
+  });
+});
+
+describe('video by any other name', () => {
+  const serveHeads = () =>
+    s3.send.mockImplementation(async (command: { input: { Key: string; Range?: string } }) => {
+      const whole = bucket.objects.get(command.input.Key)!;
+      const range = /^bytes=0-(\d+)$/.exec(command.input.Range ?? '');
+      return body(range ? whole.subarray(0, Number(range[1]) + 1) : whole);
+    });
+  /** One Ogg page opening (beginning-of-stream) a stream whose first packet is `packet`. */
+  const oggPage = (packet: Buffer, beginning = true) =>
+    Buffer.concat([
+      Buffer.from('OggS', 'latin1'),
+      Buffer.from([0, beginning ? 0x02 : 0]),
+      Buffer.alloc(20),
+      Buffer.from([1, packet.length]),
+      packet,
+    ]);
+  const vorbis = oggPage(Buffer.concat([Buffer.from('\x01vorbis', 'latin1'), Buffer.alloc(22)]));
+  const theora = oggPage(Buffer.concat([Buffer.from('\x80theora', 'latin1'), Buffer.alloc(34)]));
+  const comments = oggPage(Buffer.alloc(40), false);
+  const tsPackets = (prefix = 0) =>
+    Buffer.concat(
+      [0, 1, 2, 3].map(() =>
+        Buffer.concat([Buffer.alloc(prefix), Buffer.from([0x47]), Buffer.alloc(187)])
+      )
+    );
+  const VIDEOS: [string, Buffer][] = [
+    ['an mp4', MP4_BYTES()],
+    ['a webm', Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(40)])],
+    ['an avi', Buffer.concat([Buffer.from('RIFF\0\0\0\0AVI ', 'latin1'), Buffer.alloc(40)])],
+    ['an Ogg Theora', Buffer.concat([theora, comments])],
+    ['an Ogg with sound then Theora', Buffer.concat([vorbis, theora, comments])],
+    ['an MPEG-TS stream', tsPackets()],
+    ['an M2TS stream', tsPackets(4)],
+  ];
+  const refused = async (name: string, content: Buffer) => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, name, content);
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    return fileRow(fileId);
+  };
+
+  it.each(
+    ['weights.safetensors', 'weights.ckpt', 'weights.pt', 'weights.gguf'].flatMap((name) =>
+      VIDEOS.map(([kind, content]) => [name, kind, content] as const)
+    )
+  )('refuses %s holding %s', async (name, _kind, content) => {
+    expect(await refused(name, content)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: expect.stringMatching(/Video/),
+    });
+  });
+
+  it.each([
+    ['clip.ogg', Buffer.concat([theora, comments])],
+    ['song.mp3', tsPackets()],
+  ])('refuses %s, which is video', async (name, content) => {
+    expect((await refused(name, content)).failReason).toMatch(/Video/);
+  });
+
+  it('refuses a picture named as a model file', async () => {
+    expect((await refused('weights.safetensors', PNG_BYTES())).failReason).toMatch(/image/);
+  });
+
+  const safetensors = () => {
+    const header = Buffer.from('{"w":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}', 'latin1');
+    const size = Buffer.alloc(8);
+    size.writeBigUInt64LE(BigInt(header.length));
+    return Buffer.concat([size, header, Buffer.alloc(600)]);
+  };
+  const gguf = () =>
+    Buffer.concat([Buffer.from('GGUF', 'latin1'), Buffer.from([3, 0, 0, 0]), Buffer.alloc(600)]);
+  it.each([
+    ['weights.safetensors', safetensors()],
+    ['weights.gguf', gguf()],
+    ['song.ogg', Buffer.concat([vorbis, comments])],
+  ])('takes %s as it is', async (name, content) => {
+    expect(await refused(name, content)).toMatchObject({ scanStatus: 'Pending', failReason: null });
   });
 });
 

@@ -21,6 +21,7 @@ import {
   readEntry,
   s3ZipSource,
   sniffEntry,
+  SNIFF_BYTES,
   ZipRejectedError,
   type OpenedZip,
   type ZipEntry,
@@ -258,16 +259,27 @@ const isModelName = (name: string) =>
   (SERVICE_ZIP_MODEL_EXTENSIONS as readonly string[]).includes(fileExtension(name));
 
 /**
- * A Final that is not an archive, an image or a model file is judged by its first bytes, not its
- * name: an image or a video called notes.txt is still one. Returns whether it is an image.
+ * A Final that is not an archive or an image is judged by its first bytes, not its name: an image
+ * or a video called notes.txt is still one. A model file may begin with almost anything (a
+ * checkpoint is often a zip), so for one only a picture or a video is refused. Returns whether it
+ * is an image.
  */
 async function isImageByContent(file: ClaimedFinal) {
   const response = await getS3Client().send(
-    new GetObjectCommand({ Bucket: await getBucket(), Key: file.s3Key, Range: 'bytes=0-15' })
+    new GetObjectCommand({
+      Bucket: await getBucket(),
+      Key: file.s3Key,
+      Range: `bytes=0-${SNIFF_BYTES - 1}`,
+    })
   );
   if (!response.Body) throw new Error('Empty object body');
   const kind = sniffEntry(Buffer.from(await response.Body.transformToByteArray()));
   if (kind === 'video') throw new ZipRejectedError('Video cannot be delivered yet.');
+  if (isModelName(file.fileName)) {
+    if (kind === 'image' || kind === 'unscannable')
+      throw new ZipRejectedError('This file is an image, not the model file its name says.');
+    return false;
+  }
   if (kind === 'archive')
     throw new ZipRejectedError('Archives must be delivered as a .zip, not renamed.');
   if (kind === 'unscannable')
@@ -315,7 +327,7 @@ export async function unpackFinals({
       }
     } else if (isImageName(file.fileName)) {
       await unpackImage(file);
-    } else if (!isModelName(file.fileName) && (await isImageByContent(file))) {
+    } else if (await isImageByContent(file)) {
       await unpackImage(file);
     }
     await markUnpacked(file.id, extension !== 'zip');

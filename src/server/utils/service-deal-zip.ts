@@ -162,6 +162,39 @@ export function entryRefusal(
 
 export type EntryKind = 'image' | 'other';
 
+/** Three packets in a row of a transport stream (188 bytes), or of one with a 4-byte timecode (192). */
+function isMpegTs(head: Buffer) {
+  const synced = (start: number, packet: number) =>
+    [0, 1, 2].every((i) => head[start + i * packet] === 0x47);
+  return synced(0, 188) || synced(4, 192);
+}
+
+const OGG_AUDIO = ['\x01vorbis', 'OpusHead', '\x7fFLAC', 'Speex   '];
+
+/**
+ * Whether every stream an Ogg file opens with is a sound codec. Its streams are declared in the
+ * first pages (each marked beginning-of-stream); anything else there, or pages running past the
+ * bytes read, is not taken as sound.
+ */
+function isOggAudio(head: Buffer) {
+  let offset = 0;
+  let streams = 0;
+  while (head.subarray(offset, offset + 4).toString('latin1') === 'OggS') {
+    if (offset + 27 > head.length) return false;
+    if (!(head[offset + 5] & 0x02)) break;
+    const segments = head[offset + 26];
+    const data = offset + 27 + segments;
+    if (data > head.length) return false;
+    let length = 0;
+    for (let i = 0; i < segments; i++) length += head[offset + 27 + i];
+    const packet = head.subarray(data, data + 8).toString('latin1');
+    if (!OGG_AUDIO.some((magic) => packet.startsWith(magic))) return false;
+    streams++;
+    offset = data + length;
+  }
+  return streams > 0 && offset < head.length;
+}
+
 /** What the first bytes of an entry are, whatever its name says. */
 export function sniffEntry(head: Buffer): EntryKind | 'video' | 'archive' | 'unscannable' {
   const at = (offset: number, text: string) =>
@@ -177,6 +210,8 @@ export function sniffEntry(head: Buffer): EntryKind | 'video' | 'archive' | 'uns
   if (at(0, 'RIFF') && at(8, 'AVI ')) return 'video';
   if (
     at(4, 'ftyp') ||
+    isMpegTs(head) ||
+    (at(0, 'OggS') && !isOggAudio(head)) ||
     bytes(0x1a, 0x45, 0xdf, 0xa3) ||
     bytes(0x46, 0x4c, 0x56, 1) ||
     bytes(0, 0, 1, 0xba) ||
@@ -206,7 +241,8 @@ export function sniffEntry(head: Buffer): EntryKind | 'video' | 'archive' | 'uns
   return 'other';
 }
 
-const SNIFF_BYTES = 16;
+/** Enough for an MPEG-TS stream's third sync byte and an Ogg file's first pages. */
+export const SNIFF_BYTES = 512;
 
 export type ZipEntry = {
   /** Position among the archive's entries; stable between reads of the same archive. */
