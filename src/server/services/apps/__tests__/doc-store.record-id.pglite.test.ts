@@ -5,6 +5,7 @@ import {
   createPgliteHarness,
   MIGRATION_RECORD_ID_BACKFILL,
   type Harness,
+  type Row,
 } from './doc-store.harness';
 import { BOARD, ctx, freshApp, NS_PROD, PREFS } from './doc-store.functional';
 
@@ -21,6 +22,14 @@ const ALICE = 4301;
 const BOB = 4402;
 // How Postgres prints a uuid.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** The one row a query returns; throws when it returns none. */
+async function oneRow(h: Harness, sql: string, params: unknown[]): Promise<Row> {
+  const rows = await h.raw(sql, params);
+  const row = rows.at(0);
+  if (row === undefined) throw new Error(`no row from: ${sql}`);
+  return row;
+}
 
 describe('the record_id column and its default', () => {
   let h: Harness;
@@ -59,14 +68,13 @@ describe('the record_id column and its default', () => {
   it('keeps a document’s record_id across an update', async () => {
     const app = freshApp('RECORDIDKEEP');
     const c = ctx(app, NS_PROD, ALICE);
-    const read = async () =>
-      (
-        await h.raw(
-          `SELECT d.record_id::text AS record_id, d.version FROM appdata.doc d
-            WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = 'prefs' AND d.key = 'k1'`,
-          [app, NS_PROD]
-        )
-      )[0];
+    const read = () =>
+      oneRow(
+        h,
+        `SELECT d.record_id::text AS record_id, d.version FROM appdata.doc d
+          WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = 'prefs' AND d.key = 'k1'`,
+        [app, NS_PROD]
+      );
     await store.put(c, PREFS, 'k1', { theme: 'moss' });
     const first = await read();
     await store.put(c, PREFS, 'k1', { theme: 'oak' });
@@ -88,7 +96,12 @@ describe('the record_id column and its default', () => {
 
 describe('the record_id backfill', () => {
   const file = readFileSync(MIGRATION_RECORD_ID_BACKFILL, 'utf8');
-  const blocks = file.match(/DO \$backfill\$[\s\S]*?\$backfill\$;/g) ?? [];
+  const blocks: string[] = Array.from(
+    file.matchAll(/DO \$backfill\$[\s\S]*?\$backfill\$;/g),
+    (m) => m[0]
+  );
+  // The block the tests run; empty (and the shape test red) unless the file holds exactly one.
+  const doBlock: string = blocks.length === 1 ? blocks.join('') : '';
   let h: Harness;
 
   beforeAll(async () => {
@@ -105,7 +118,7 @@ describe('the record_id backfill', () => {
   it('is one DO block between SET and RESET of lock_timeout, and nothing else', () => {
     expect(blocks).toHaveLength(1);
     const rest = file
-      .replace(blocks[0], '')
+      .replace(doBlock, '')
       .split('\n')
       .filter((l) => !l.startsWith('--') && l.trim() !== '')
       .join(' ');
@@ -135,15 +148,16 @@ describe('the record_id backfill', () => {
     const count = async (where: string) =>
       Number(
         (
-          await h.raw(
+          await oneRow(
+            h,
             `SELECT count(*)::int AS n FROM appdata.doc WHERE app_id IN ($1, $2, $3) AND ${where}`,
             apps
           )
-        )[0].n
+        ).n
       );
     expect(await count('record_id IS NULL')).toBe(2500);
 
-    await h.raw(blocks[0]);
+    await h.raw(doBlock);
     expect(await count('record_id IS NULL')).toBe(0);
     const ids = await h.raw(
       `SELECT key, record_id::text AS record_id FROM appdata.doc
@@ -155,7 +169,7 @@ describe('the record_id backfill', () => {
     for (const r of ids) expect(r.record_id).toMatch(UUID_RE);
     expect(ids.find((r) => r.key === 'kept')?.record_id).toBe(kept);
 
-    await h.raw(blocks[0]);
+    await h.raw(doBlock);
     const again = await h.raw(
       `SELECT key, record_id::text AS record_id FROM appdata.doc
         WHERE app_id IN ($1, $2, $3) ORDER BY app_id, scope_uid, key`,
