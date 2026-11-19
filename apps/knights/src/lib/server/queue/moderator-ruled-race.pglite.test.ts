@@ -67,21 +67,21 @@ it('leaves an item another path moved off Open after the sweep read it', async (
 });
 
 it('leaves an item a moderator claimed on the Inquisitor page after the sweep read it', async () => {
-  await seedPlayer(pg, 1, 'Knight');
-  await seedImage(pg, 10, { nsfwLevel: 2 });
+  await seedPlayer(pg, 3, 'Knight');
+  await seedImage(pg, 30, { nsfwLevel: 2 });
   const id = await enqueueItem(
     db,
-    { questionKey: 'knights.image.nsfwLevel', imageId: 10, source: 'test', expiresAt: null },
+    { questionKey: 'knights.image.nsfwLevel', imageId: 30, source: 'test', expiresAt: null },
     NOW
   );
   const applyConsensus = vi.fn();
-  await castVote(db, { userId: 1, itemId: id, answer: '2' }, { applyConsensus, now: () => NOW });
+  await castVote(db, { userId: 3, itemId: id, answer: '2' }, { applyConsensus, now: () => NOW });
   await db
     .updateTable('KnightsQueueItem')
     .set({ status: 'Inquisitor', escalationReason: 'pushed-down' })
     .where('id', '=', id)
     .execute();
-  await lockImage(pg, 10, { reason: 'Moderator review', level: 4 });
+  await lockImage(pg, 30, { reason: 'Moderator review', level: 4 });
 
   // The connection is handed out in call order: the sweep reads the item waiting on the Inquisitors, a moderator's claim commits, then the sweep's close runs.
   const [swept] = await Promise.all([
