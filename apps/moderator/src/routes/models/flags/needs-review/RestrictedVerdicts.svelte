@@ -20,17 +20,21 @@
     rows,
     total,
     civitaiUrl,
-    startOpen = true,
+    queueEmpty = false,
   }: {
     rows: RestrictedVerdictRow[];
     total: number;
     civitaiUrl: string;
-    /** Collapsed, the panel is one line: it sits in the queue column's fixed-height header, and
-     *  opened with dozens of leads it once left the queue list under it 0px tall. */
-    startOpen?: boolean;
+    /** Opens the panel. Otherwise it stays one line: it sits in the queue column's fixed-height
+     *  header, and opened with dozens of leads it once left the queue list under it 0px tall. */
+    queueEmpty?: boolean;
   } = $props();
 
-  let expanded = $state(untrack(() => startOpen));
+  let expanded = $state(untrack(() => queueEmpty));
+  // Ruling the last queue item leaves only these leads to work on.
+  $effect(() => {
+    if (queueEmpty) expanded = true;
+  });
 
   const RESTRICTION_LABEL: Record<Restriction, string> = {
     minor: 'minor',
@@ -87,18 +91,25 @@
         type="button"
         class="ml-auto shrink-0 text-xs {LINK_CLASS}"
         aria-expanded={expanded}
+        aria-controls="restricted-verdict-leads"
         onclick={() => (expanded = !expanded)}
       >
-        {expanded ? 'Hide' : 'Show'}
+        {expanded ? 'Hide' : 'Show'}<span class="sr-only"> leads</span>
       </button>
     </div>
+    {#if !expanded && Object.keys(errors).length}
+      <p class="m-0 mt-1 text-xs text-red-5" role="alert">A ruling failed: show the leads to see it.</p>
+    {/if}
     {#if expanded}
-    <p class="m-0 mt-1 text-xs text-dark-2">
+    <p class="m-0 mt-1 hidden text-xs text-dark-2 lg:block">
       The owner marked these minor, a real person or SFW-only. Minor and real-person models keep their
       rating until you rule or the owner unticks the flag; SFW-only models were rated NSFW, and Keep
       restores SFW-only. Minor first.
     </p>
-    <ul class="m-0 mt-2 flex max-h-[30vh] list-none flex-col gap-2 overflow-y-auto p-0">
+    <ul
+      id="restricted-verdict-leads"
+      class="m-0 mt-2 flex max-h-24 list-none flex-col gap-2 overflow-y-auto p-0 lg:max-h-[30vh]"
+    >
       {#each rows as row (row.modelId)}
         <li class="rounded border border-dark-4 p-2 text-sm">
           <div class="flex flex-wrap items-center gap-1.5">

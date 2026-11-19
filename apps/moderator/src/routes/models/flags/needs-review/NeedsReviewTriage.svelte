@@ -128,7 +128,7 @@
       rows={data.restrictedVerdicts}
       total={data.restrictedVerdictTotal}
       civitaiUrl={data.civitaiUrl}
-      startOpen={data.items.length === 0}
+      queueEmpty={data.items.length === 0}
     />
   </div>
 {/snippet}

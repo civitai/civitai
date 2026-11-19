@@ -23,11 +23,13 @@ const SVELTE = path.dirname(require.resolve('svelte/package.json'));
 const pkg = JSON.parse(readFileSync(path.join(SVELTE, 'package.json'), 'utf8'));
 const { compile } = await import(pathToFileURL(path.join(SVELTE, 'src/compiler/index.js')).href);
 
-function serverEntry(spec: string): string {
+function entry(spec: string, condition: 'default' | 'browser'): string {
   let e = pkg.exports['.' + spec.slice('svelte'.length)];
-  while (e && typeof e === 'object') e = e.default;
+  while (e && typeof e === 'object') e = e[condition] ?? e.default;
   return pathToFileURL(path.join(SVELTE, e)).href;
 }
+const serverEntry = (spec: string) => entry(spec, 'default');
+const clientEntry = (spec: string) => entry(spec, 'browser');
 
 const PASS = `<script>let { children, ...rest } = $props();</script>{@render children?.()}`;
 const STUBS: Record<string, string> = {
@@ -63,22 +65,28 @@ mkdirSync(cache, { recursive: true });
 const work = mkdtempSync(path.join(cache, 'restricted-verdicts-panel-'));
 afterAll(() => rmSync(work, { recursive: true, force: true }));
 
-function emit(name: string, source: string) {
-  const { js } = compile(source, { generate: 'server', filename: `${name}.svelte` });
+/** Compiles for the server (rendered to a string) or the client (mounted, so the toggle can be clicked). */
+function emit(name: string, source: string, generate: 'server' | 'client') {
+  const dir = path.join(work, generate);
+  mkdirSync(dir, { recursive: true });
+  const resolve = generate === 'server' ? serverEntry : clientEntry;
+  const { js } = compile(source, { generate, filename: `${name}.svelte` });
   writeFileSync(
-    path.join(work, `${name}.js`),
+    path.join(dir, `${name}.js`),
     js.code.replace(
       /(from |import )['"](svelte[^'"]*)['"]/g,
-      (_: string, k: string, s: string) => `${k}'${serverEntry(s)}'`
+      (_: string, k: string, s: string) => `${k}'${resolve(s)}'`
     )
   );
 }
 
 let Panel: unknown;
+let ClientPanel: unknown;
 let render: (c: unknown, o: { props: unknown }) => { body: string };
 
 beforeAll(async () => {
-  for (const [name, source] of Object.entries(STUBS)) emit(name, source);
+  for (const generate of ['server', 'client'] as const)
+    for (const [name, source] of Object.entries(STUBS)) emit(name, source, generate);
   let panel = readFileSync(
     path.resolve(import.meta.dirname, '../RestrictedVerdicts.svelte'),
     'utf8'
@@ -87,9 +95,13 @@ beforeAll(async () => {
     expect(panel).toMatch(from);
     panel = panel.replace(from, to);
   }
-  emit('Panel', panel);
-  Panel = (await import(/* @vite-ignore */ pathToFileURL(path.join(work, 'Panel.js')).href))
-    .default;
+  emit('Panel', panel, 'server');
+  emit('Panel', panel, 'client');
+  const load = async (generate: string) =>
+    (await import(/* @vite-ignore */ pathToFileURL(path.join(work, generate, 'Panel.js')).href))
+      .default;
+  Panel = await load('server');
+  ClientPanel = await load('client');
   ({ render } = await import(/* @vite-ignore */ serverEntry('svelte/server')));
 });
 
@@ -129,7 +141,7 @@ function show(props: Record<string, unknown>) {
 
 describe('the restricted-verdict panel above the Needs review queue', () => {
   it('starts collapsed to its heading, so the queue under it keeps the column', () => {
-    const panel = show({ startOpen: false });
+    const panel = show({});
     expect(panel.querySelectorAll('li')).toHaveLength(0);
     const toggle = panel.querySelector('button[aria-expanded]')!;
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
@@ -137,13 +149,35 @@ describe('the restricted-verdict panel above the Needs review queue', () => {
   });
 
   it('opened, lists every lead in a box that scrolls instead of growing', () => {
-    const panel = show({ startOpen: true });
+    const panel = show({ queueEmpty: true });
     const list = panel.querySelector('ul')!;
     expect(list.querySelectorAll(':scope > li')).toHaveLength(61);
-    expect(list.className).toMatch(/\bmax-h-/);
+    const cap = /\bmax-h-\[(\d+)vh\]/.exec(list.className);
+    expect(Number(cap?.[1])).toBeLessThanOrEqual(50);
     expect(list.className).toMatch(/\boverflow-y-auto\b/);
     expect(panel.querySelector('button[aria-expanded]')!.getAttribute('aria-expanded')).toBe(
       'true'
     );
+  });
+
+  it('opens and closes on its toggle', async () => {
+    const { mount, unmount, flushSync } = await import(/* @vite-ignore */ clientEntry('svelte'));
+    document.body.innerHTML = '';
+    const app = mount(ClientPanel, {
+      target: document.body,
+      props: { rows: LEADS, total: LEADS.length, civitaiUrl: 'https://civitai.com' },
+    });
+    const toggle = document.querySelector<HTMLButtonElement>('button[aria-expanded]')!;
+    const leads = () => document.querySelectorAll('section[aria-label="Scan rated NSFW"] ul > li');
+
+    expect(leads()).toHaveLength(0);
+    toggle.click();
+    flushSync();
+    expect(leads()).toHaveLength(61);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    toggle.click();
+    flushSync();
+    expect(leads()).toHaveLength(0);
+    unmount(app);
   });
 });
