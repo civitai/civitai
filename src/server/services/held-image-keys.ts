@@ -4,6 +4,7 @@ import {
   blockMarkerText,
   clearHeldUserImagesStatement,
   dropStaleHeldImageMarkersStatement,
+  pictureUserIdsStatement,
   restoreClearedUserImagesStatement,
 } from '@civitai/db-queries/profile-picture-clear';
 import { type RawQueryClient } from '~/server/services/profile-picture.sql';
@@ -37,6 +38,11 @@ export async function anyImageHeldOrBlocked(db: RawQueryClient, keys: string[]) 
  */
 export async function clearHeldUserImages(db: RawUnsafeQueryClient, userIds: number[]) {
   return runStatement(db, clearHeldUserImagesStatement(userIds));
+}
+
+/** `pictureUserIdsStatement` from `@civitai/db-queries/profile-picture-clear`. */
+export async function getPictureUserIds(db: RawUnsafeQueryClient, imageIds: number[]) {
+  return runStatement(db, pictureUserIdsStatement(imageIds));
 }
 
 /** `restoreClearedUserImagesStatement` from `@civitai/db-queries/profile-picture-clear`, which the moderator app runs too. */

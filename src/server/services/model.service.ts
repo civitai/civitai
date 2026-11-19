@@ -359,7 +359,6 @@ import {
   queueComFaceRecheck,
   queueComFaceRestore,
 } from '~/server/services/model-com-face-recheck.service';
-import { queueComFaceVersionText } from '~/server/services/model-com-face-version-text.service';
 import {
   isGenerationDisabled,
   toPublicApiVersionFlags,
@@ -864,12 +863,14 @@ export const getModelsRaw = async ({
     )`);
   }
 
+  let listedUserId: number | undefined;
   if (username || user) {
     const userFindArgs = { where: { username: (username || user) ?? '' }, select: { id: true } };
     const targetUser =
       (await dbRead.user.findUnique(userFindArgs)) ?? (await dbWrite.user.findUnique(userFindArgs));
 
     if (!targetUser) throw throwNotFoundError('User not found');
+    listedUserId = targetUser.id;
 
     AND.push(Prisma.sql`mm."userId" = ${targetUser.id}`);
   }
@@ -1089,7 +1090,9 @@ export const getModelsRaw = async ({
     );
   }
   if (availability) {
-    if (availability === Availability.Private && !(username || isModerator)) {
+    // Private models are listed only to their owner and moderators.
+    const ownListing = !!sessionUser && listedUserId === sessionUser.id;
+    if (availability === Availability.Private && !(ownListing || isModerator)) {
       throw throwAuthorizationError();
     }
 
@@ -1633,6 +1636,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
   let isPrivate = false;
+
+  // A Private model is listed to moderators only: these lists are cached per moderator flag, not per
+  // user, so an owner exemption here would reach other viewers.
+  if (!sessionUser?.isModerator) AND.push({ availability: { not: Availability.Private } });
 
   // If the user is not a moderator, only show published models
   if (!sessionUser?.isModerator || !status?.length) {
@@ -2293,13 +2300,21 @@ export const updateModelById = async ({
   // through here, and the cached body's images/files/downloadUrl depend on
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
-  // A taken-down model's search document carries no images, so a change of mode rewrites it.
   if (written && 'mode' in written) {
-    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
-    // Not awaited: the lookup reads every image on the model.
     const writtenMode =
       written.mode && typeof written.mode === 'object' ? written.mode.set : written.mode;
+    // Update would not remove a taken-down model's document: the indexer only writes eligible models.
+    await modelsSearchIndex.queueUpdate([
+      {
+        id,
+        action:
+          writtenMode === ModelModifier.TakenDown
+            ? SearchIndexUpdateQueueAction.Delete
+            : SearchIndexUpdateQueueAction.Update,
+      },
+    ]);
+    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
+    // Not awaited: the lookup reads every image on the model.
     if (
       writtenMode === ModelModifier.TakenDown ||
       priorMode === ModelModifier.TakenDown ||
@@ -4784,10 +4799,8 @@ export const upsertModel = async (
       (data.name !== undefined && data.name !== beforeUpdate.name) ||
       (data.description !== undefined && data.description !== beforeUpdate.description);
     const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
-    if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged)) {
+    if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
       await queueComFaceRecheck(id);
-      await queueComFaceVersionText(id);
-    }
     if (!isModerator && listingChanged) await queueComFaceRestore(id);
     if (heldVerdictApplied) {
       const { finishHeldVerdictApply } = await import(

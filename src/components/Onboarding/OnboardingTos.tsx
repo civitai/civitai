@@ -1,6 +1,7 @@
 import { Button, Center, Group, Loader, ScrollArea, Stack, Title } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { NewAccountNotice } from '~/components/Onboarding/NewAccountNotice';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
 import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
@@ -27,6 +28,7 @@ export function OnboardingTos() {
         title="Terms of Service"
         description="Please take a moment to review and accept our terms of service."
       />
+      <NewAccountNotice />
       <ScrollArea type="auto" p="md" className="h-[400px] border border-gray-9 dark:border-gray-7">
         {termsLoading ? (
           <Center h={366}>

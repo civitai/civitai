@@ -29,6 +29,7 @@ import type * as MetricsModule from '~/server/metrics/app-block-runtime.metrics'
  */
 
 const h = vi.hoisted(() => ({
+  userSettings: vi.fn(async (_userId?: number): Promise<Record<string, unknown>> => ({})),
   authorize: vi.fn(),
   assertEnabled: vi.fn(async () => undefined),
   trainingFlag: vi.fn(async () => true),
@@ -101,6 +102,7 @@ vi.mock('~/server/auth/session-client', () => ({
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
+  getUserSettings: (...a: unknown[]) => h.userSettings(...(a as [])),
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: vi.fn(async () => null),
@@ -168,6 +170,7 @@ import {
   trainingRunKey,
 } from '~/server/services/blocks/block-training-quote.service';
 import { blockTrainingBodySchema } from '~/server/schema/blocks/workflow.schema';
+import { GENERATION_LICENSE_TERMS } from '~/shared/constants/generation-license.constants';
 
 // ── An in-memory Redis: get/set (NX/XX/KEEPTTL/EX)/getDel/del/incrBy/decrBy. ──
 // One store behind both clients: the quote and the reservations are in system Redis, the run
@@ -399,6 +402,7 @@ beforeEach(() => {
   h.getActiveDevTunnel.mockImplementation(async () => null);
   h.reserveDevSessionBuzz.mockReset();
   h.buzzAccounts.mockImplementation(async () => ENOUGH_BUZZ);
+  h.userSettings.mockImplementation(async () => ({}));
 });
 afterEach(() => envMock.reset());
 
@@ -1457,4 +1461,45 @@ describe('training on the shared confirmed-quote path', () => {
       expect(logged).toBe(over);
     }
   );
+});
+
+describe('training SUBMIT — the base model licence', () => {
+  const h3Body = (over: Record<string, unknown> = {}) =>
+    body({ model: 'minimaxh3image', params: { ...PARAMS, ecosystem: 'minimaxh3image' }, ...over });
+  async function confirmedH3Quote() {
+    const { snapshot } = (await estimate(h3Body())) as {
+      snapshot: { trainingQuote: { quoteId: string } };
+    };
+    await consent(snapshot.trainingQuote.quoteId);
+    return snapshot.trainingQuote.quoteId;
+  }
+  beforeEach(() => {
+    h.features.mockImplementation(
+      () =>
+        ({ aiToolkitSdxl: true, trainingStepsPricing: true, minimaxh3ImageTraining: true } as never)
+    );
+  });
+
+  it('refuses a MiniMax H3 Image run whose licence is not accepted, reserving nothing', async () => {
+    const quoteId = await confirmedH3Quote();
+    await expect(submit(h3Body({ quoteId }))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(/Accept the MiniMax-H3-Image licence terms before training/),
+    });
+    expect(h.userSettings).toHaveBeenCalledWith(VIEWER);
+    expect(realSubmits()).toHaveLength(0);
+    expect(h.reserveAppSpend).not.toHaveBeenCalled();
+  });
+
+  it('control: the same run is submitted once the licence is accepted', async () => {
+    const [terms] = GENERATION_LICENSE_TERMS;
+    h.userSettings.mockImplementation(async () => ({
+      generationLicenseAcceptances: {
+        [terms.key]: { version: terms.version, acceptedAt: new Date().toISOString() },
+      },
+    }));
+    const quoteId = await confirmedH3Quote();
+    await submit(h3Body({ quoteId }));
+    expect(realSubmits()).toHaveLength(1);
+  });
 });

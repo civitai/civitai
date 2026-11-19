@@ -15,6 +15,7 @@ import {
 import {
   clearHeldUserImages,
   dropStaleHeldImageMarkers,
+  getPictureUserIds,
   restoreClearedUserImages,
 } from '~/server/services/held-image-keys';
 import {
@@ -2452,14 +2453,9 @@ export async function deleteUserProfilePictureCache(userId: number) {
   );
 }
 
-/** The users whose profile picture is one of `imageIds`, from the primary. */
+/** `getPictureUserIds` on the primary. */
 export async function getProfilePictureUserIds(imageIds: number[]) {
-  if (!imageIds.length) return [];
-  const users = await dbWrite.user.findMany({
-    where: { profilePictureId: { in: imageIds } },
-    select: { id: true },
-  });
-  return users.map((x) => x.id);
+  return getPictureUserIds(dbWrite, imageIds);
 }
 
 export const PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY = 10;

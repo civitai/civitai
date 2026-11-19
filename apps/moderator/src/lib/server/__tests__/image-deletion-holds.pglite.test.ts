@@ -61,7 +61,7 @@ const { syncSearchIndexBulk } = await import('../search-index');
 const { imageDeleteHoldLegs } = await import('../delete-hold-sql');
 
 const SCHEMA = `
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER, "image" TEXT);
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "url" TEXT,

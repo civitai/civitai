@@ -36,6 +36,7 @@ import {
   updateImageNsfwLevel,
   getOpenImageReportIds,
   updateImageReportStatusByReason,
+  logCsamBlocklistNoHash,
   writeModeratorBlock,
   logNoticeUnderReview,
 } from '~/server/services/image.service';
@@ -345,9 +346,11 @@ export const setTosViolationHandler = async ({
     await queueComicsForPanelImage(id);
     if (image.postId) await bustCachesForPosts(image.postId);
     // After the steps that hide the image: a blocklist write that throws must not skip them.
-    if (image.pHash)
+    const pHash = written.pHashes.get(id);
+    if (!pHash && written.removedForCsam.has(id)) logCsamBlocklistNoHash([id], 'block');
+    if (pHash)
       await addBlockedImage({
-        hash: image.pHash,
+        hash: pHash,
         // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
         reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
         context: { step: 'block', imageIds: [id], actorUserId: user.id },

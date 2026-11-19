@@ -753,10 +753,20 @@ export const updateUserHandler = async ({
 
     const isSettingCosmetics = payloadCosmeticIds.length > 0;
 
+    // An unchanged image stays out of the write, so a moderation clear committed since the read stands.
+    // A new picture replaces an upload key left in `User.image`: only the profile picture may carry one.
+    const imageChanged = data.image !== undefined && data.image !== user.image;
+    const image = imageChanged
+      ? data.image
+      : newPicture && keysIn(user.image).length
+      ? null
+      : undefined;
+
     const updatedUser = await updateUserById({
       id,
       data: {
         ...data,
+        image,
         username,
         profilePicture: newPicture
           ? {
@@ -807,10 +817,8 @@ export const updateUserHandler = async ({
 
     // Without this the new showcase isn't visible until the nightly rebuild, up to 24h later.
     // The modal sends the field on every user-level save, so this recomputes on cosmetic
-    // saves too. That is deliberate: comparing against the stored value would have to read
-    // it back, and the only cheap read is the replica — an A->B->A save inside the
-    // replication window would then compare equal and skip the recompute it needs. The
-    // upsert is 0.87 ms and idempotent, so the redundant call costs less than that risk.
+    // saves too. That is deliberate: the upsert is cheap and idempotent, cheaper than
+    // reading the stored value back to compare.
     if (input.leaderboardShowcase !== undefined)
       postUpdatePromises.push(updateLeaderboardRankForUsers({ userIds: id }));
 
