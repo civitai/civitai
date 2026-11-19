@@ -181,10 +181,6 @@ export async function emptyMyAppStorage(
   return viewerData.emptyViewerData(userId, appBlockId, { shared: opts.includeShared });
 }
 
-// ---------------------------------------------------------------------------
-// EXPORT: every record the user owns, across every app, as record-core objects.
-// ---------------------------------------------------------------------------
-
 /** Records per export page at most (the router's input bound). */
 export const APP_RECORD_EXPORT_PAGE_MAX = 100;
 /**
@@ -319,8 +315,6 @@ function decodeExportCursor(raw: string): ExportCursor {
  * Bounded per page: at most `limit` (≤ {@link APP_RECORD_EXPORT_PAGE_MAX}) records, and no
  * record is added once the page's bodies reach {@link APP_RECORD_EXPORT_PAGE_BODY_BYTES}. In
  * (app, collection, key space, key) order; `nextCursor` resumes after the last row read.
- *
- * `config` is the record core's: the caller holds one only while it is switched on.
  */
 export async function exportMyAppRecords(
   config: AppRecordConfig,
