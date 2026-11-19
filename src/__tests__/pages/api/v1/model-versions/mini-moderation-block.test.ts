@@ -478,6 +478,17 @@ describe('mini/[id] generation gate rules', () => {
     expect(body?.checkPermission).toBe(false);
   });
 
+  it('offers no free trial while the rules are unreadable', async () => {
+    h.rulesKnown.value = false;
+    const { body } = await call(undefined, {
+      checkPermission: true,
+      earlyAccessEndsAt: new Date('2099-01-01T00:00:00Z'),
+      freeTrialLimit: 5,
+    } as unknown as Partial<Row>);
+    expect(body?.checkPermission).toBe(true);
+    expect(body?.freeTrialLimit).toBeUndefined();
+  });
+
   it('keeps an answer built while the rules were unreadable for at most a minute', async () => {
     h.rulesKnown.value = false;
     const before = Date.now();

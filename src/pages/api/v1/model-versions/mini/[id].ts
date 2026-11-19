@@ -834,7 +834,10 @@ async function handler(
     requireAuth: modelVersion.requireAuth,
     checkPermission: modelVersion.checkPermission || gateAsksPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
-    freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
+    // Without readable rules a kill switch can't be told apart, so no trial may stand in for the
+    // permission check's refusal.
+    freeTrialLimit:
+      modelVersion.checkPermission && gateRuleState.known ? modelVersion.freeTrialLimit : undefined,
     additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
     minor: modelVersion.minor,
     sfwOnly: modelVersion.sfwOnly,
