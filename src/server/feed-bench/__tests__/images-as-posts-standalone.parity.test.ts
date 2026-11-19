@@ -22,7 +22,9 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
  *   - `getImagesAsPostsInfiniteHandler`, by a fake that ECHOES what it was called with (the parsed,
  *     clamped input and the viewer) inside a payload with a Date, an undefined and a Set, so the
  *     transformer's meta is exercised. The handler itself is the same function in both arms by
- *     construction (one import); what this test pins is everything around it.
+ *     construction (one import); what this test pins is everything around it;
+ *   - the app router, by one holding only the real image router: parity is with the procedure, its
+ *     middlewares and the route around it, not with the rest of the production `appRouter`.
  *
  * Inputs: every request in feed-go's golden fixtures (apps/feed-go/testdata/golden/as-posts), with
  * its host and its signed-in viewer, plus a request with no input and an invalid one.
@@ -197,15 +199,17 @@ describe('standalone arm vs the tRPC route', () => {
     expect(trpc.body).toContain(`"modelId":${modelId}`);
   });
 
-  // The schema reads a missing input as `undefined`; whatever it decides, both arms decide the same.
-  // Error bodies are not compared (the standalone arm does not port tRPC's error shape).
-  it('no input at all: same status, and the same answer when it is one', async () => {
+  // The schema is an object, so a missing input (read as `undefined`) is rejected on both arms
+  // before the handler runs. Error bodies are not compared (the standalone arm does not port tRPC's
+  // error shape).
+  it('no input at all: a 400 on both, and the handler never runs', async () => {
     const { trpc, standalone, trpcCall, standaloneCall } = await both({
       host: 'blue.example.test',
     });
-    expect(standalone.status).toBe(trpc.status);
-    if (trpc.status === 200) expect(standalone).toEqual(trpc);
-    expect(standaloneCall).toEqual(trpcCall);
+    expect(trpc.status).toBe(400);
+    expect(standalone.status).toBe(400);
+    expect(trpcCall).toHaveLength(0);
+    expect(standaloneCall).toHaveLength(0);
   });
 
   it('an input the schema rejects is a 400 on both (error bodies are not compared)', async () => {

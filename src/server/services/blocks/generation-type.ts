@@ -205,6 +205,7 @@ export const BLOCK_TRAINING_ECOSYSTEMS = [
   'ltx23',
   'ltx25',
   'minimaxh3',
+  'minimaxh3image',
   'ernie',
   'anima',
   'boogu',

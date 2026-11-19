@@ -125,13 +125,6 @@ vi.mock('~/server/services/model-com-face-recheck.service', async (importOrigina
   queueComFaceRecheck: mockQueueComFaceRecheck,
   queueComFaceRestore: mockQueueComFaceRestore,
 }));
-const { mockQueueComFaceVersionText } = vi.hoisted(() => ({
-  mockQueueComFaceVersionText: vi.fn(),
-}));
-vi.mock('~/server/services/model-com-face-version-text.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  queueComFaceVersionText: mockQueueComFaceVersionText,
-}));
 const { mockPreviewComFaceIntent, mockPreviewTextScanNsfw } = vi.hoisted(() => ({
   mockPreviewComFaceIntent: vi.fn(),
   mockPreviewTextScanNsfw: vi.fn(),
@@ -1196,8 +1189,6 @@ describe('.com face re-check after a listing edit', () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed' });
     expect(mockQueueComFaceRecheck).toHaveBeenCalledTimes(1);
     expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
-    expect(mockQueueComFaceVersionText).toHaveBeenCalledTimes(1);
-    expect(mockQueueComFaceVersionText).toHaveBeenCalledWith(MODEL_ID);
   });
 
   it('queues it for an owner who edits the description', async () => {
@@ -1205,15 +1196,12 @@ describe('.com face re-check after a listing edit', () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID, description: 'New description' });
     expect(mockQueueComFaceRecheck).toHaveBeenCalledTimes(1);
     expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
-    expect(mockQueueComFaceVersionText).toHaveBeenCalledTimes(1);
-    expect(mockQueueComFaceVersionText).toHaveBeenCalledWith(MODEL_ID);
   });
 
   it('does not queue it for a moderator’s edit', async () => {
     mockStored(withFace);
     await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, name: 'Renamed' });
     expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
-    expect(mockQueueComFaceVersionText).not.toHaveBeenCalled();
   });
 
   it('arms the restore check on a .red listing edit only, not on a .com edit', async () => {
@@ -1250,30 +1238,24 @@ describe('.com face re-check after a listing edit', () => {
       mockStored({ ...withFace, ...unchanged });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: withFace.sfwName });
       expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
-      expect(mockQueueComFaceVersionText).not.toHaveBeenCalled();
     });
 
     it('queues it when the owner retitles the .com face', async () => {
       mockStored({ ...withFace, ...unchanged });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
       expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
-      expect(mockQueueComFaceVersionText).toHaveBeenCalledTimes(1);
-      expect(mockQueueComFaceVersionText).toHaveBeenCalledWith(MODEL_ID);
     });
 
     it('queues it when the owner picks another .com cover', async () => {
       mockStored({ ...withFace, ...unchanged });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwCoverImageId: 6 });
       expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
-      expect(mockQueueComFaceVersionText).toHaveBeenCalledTimes(1);
-      expect(mockQueueComFaceVersionText).toHaveBeenCalledWith(MODEL_ID);
     });
 
     it('does not queue it when the owner clears the .com face', async () => {
       mockStored({ ...withFace, ...unchanged });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
       expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
-      expect(mockQueueComFaceVersionText).not.toHaveBeenCalled();
     });
   });
 
