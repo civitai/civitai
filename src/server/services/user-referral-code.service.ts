@@ -43,11 +43,17 @@ export const upsertUserReferralCode = async ({
   isModerator?: boolean;
 }) => {
   if (id) {
+    const where = { id, ...(isModerator ? {} : { userId }) };
     // Never writes userId: an update must not move a code to another account, a moderator's included.
-    const { count } = await dbWrite.userReferralCode.updateMany({
-      where: { id, ...(isModerator ? {} : { userId }) },
-      data: { note, code: isModerator && code ? code : undefined },
-    });
+    const data = { note, code: isModerator && code ? code : undefined };
+    // Prisma answers count 0, without querying, when no field is set; look the row up instead.
+    if (data.note === undefined && data.code === undefined) {
+      // primary: same view of the row as the scoped write below
+      const row = await dbWrite.userReferralCode.findFirst({ where });
+      if (!row) throw throwNotFoundError(REFERRAL_CODE_NOT_FOUND);
+      return row;
+    }
+    const { count } = await dbWrite.userReferralCode.updateMany({ where, data });
     // Same answer for a missing id and someone else's, so the error does not reveal which ids exist.
     if (!count) throw throwNotFoundError(REFERRAL_CODE_NOT_FOUND);
     // primary: read-your-write of the row just updated

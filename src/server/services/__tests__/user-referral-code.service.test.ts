@@ -59,7 +59,7 @@ beforeEach(async () => {
     string,
     ReturnType<typeof vi.fn>
   >;
-  for (const method of ['updateMany', 'findUniqueOrThrow'])
+  for (const method of ['updateMany', 'findUniqueOrThrow', 'findFirst'])
     write[method].mockImplementation((a: unknown) => real[method](a));
 });
 
@@ -74,16 +74,27 @@ describe('upsertUserReferralCode with an id', () => {
   });
 
   it('answers a missing id exactly as it answers a code the caller does not own', async () => {
-    const notYours = await errorOf(upsertUserReferralCode({ id: CODE_ID, userId: OTHER }));
-    const missing = await errorOf(upsertUserReferralCode({ id: 999, userId: OTHER }));
+    const notYours = await errorOf(
+      upsertUserReferralCode({ id: CODE_ID, userId: OTHER, note: 'x' })
+    );
+    const missing = await errorOf(upsertUserReferralCode({ id: 999, userId: OTHER, note: 'x' }));
 
     expect(missing).toEqual(notYours);
   });
 
-  it("updates the owner's note and keeps the owner", async () => {
-    await upsertUserReferralCode({ id: CODE_ID, userId: OWNER, note: 'edited' });
+  it("updates the owner's note, keeps the owner and ignores a new code", async () => {
+    await upsertUserReferralCode({ id: CODE_ID, userId: OWNER, note: 'edited', code: 'MY-PICK' });
 
     expect(await row()).toMatchObject({ userId: OWNER, note: 'edited', code: 'OWNER-CODE' });
+  });
+
+  it('answers an edit with nothing to change by ownership, not as missing', async () => {
+    await expect(upsertUserReferralCode({ id: CODE_ID, userId: OWNER })).resolves.toMatchObject({
+      id: CODE_ID,
+    });
+    expect((await errorOf(upsertUserReferralCode({ id: CODE_ID, userId: OTHER })))?.code).toBe(
+      'NOT_FOUND'
+    );
   });
 
   it("lets a moderator edit another user's code without taking it over", async () => {
