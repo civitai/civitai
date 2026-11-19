@@ -290,7 +290,7 @@ describe('listCsamHolds', () => {
 describe('the lead-review and report-not-filed views', () => {
   beforeEach(async () => {
     await db.exec(`CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER,
-      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now())`);
+      "details" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now())`);
     await seed([
       {
         id: 8,
@@ -324,12 +324,8 @@ describe('the lead-review and report-not-filed views', () => {
     expect(held).toMatchObject({ leadReviewAt: '2026-09-15T00:00:00Z', reportChoice: null });
   });
 
-  it('lists a reportable confirm until a report on its author is filed after the decision', async () => {
+  it('lists only a reportable confirm', async () => {
     expect(await ids('report-not-filed')).toEqual([8]);
-    await db.query(`INSERT INTO "CsamReport" ("userId", "createdAt") VALUES (10, '2026-09-01')`);
-    expect(await ids('report-not-filed')).toEqual([8]);
-    await db.query(`INSERT INTO "CsamReport" ("userId", "createdAt") VALUES (10, '2026-09-14')`);
-    expect(await ids('report-not-filed')).toEqual([]);
   });
 });
 
@@ -1248,5 +1244,61 @@ describe('version text hits on Model holds', () => {
     await expect(getHoldVersionTexts(1)).resolves.toBeNull();
     await expect(getHoldVersionTexts(999)).resolves.toBeNull();
     expect(await item(98)).toMatchObject({ versionTextHits: null, versionTextHitsStale: false });
+  });
+});
+
+describe('the report-not-filed view matches a report to the held item', () => {
+  beforeEach(async () => {
+    await db.exec(`DROP TABLE IF EXISTS "CsamReport"; CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY,
+      "userId" INTEGER, "details" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now())`);
+    const confirmed = {
+      createdAt: '2026-09-12',
+      status: 'Confirmed' as const,
+      decidedById: 11,
+      decidedAt: '2026-09-13',
+      meta: { decision: 'remove', reportChoice: 'imagery' },
+    };
+    await seed([
+      { id: 21, entityType: 'PostText', ...confirmed },
+      { id: 22, entityType: 'CommentV3', ...confirmed },
+      { id: 23, entityType: 'Post', ...confirmed },
+      { id: 24, entityType: 'ChatMessage', ...confirmed },
+    ]);
+  });
+  const listed = async () =>
+    (await listCsamHolds({ ...OLDEST_PENDING, status: 'report-not-filed' })).items.map((h) => h.id);
+  const report = (contextText: object[] | null, createdAt = '2026-09-14') =>
+    db.query(
+      `INSERT INTO "CsamReport" ("userId", "details", "createdAt") VALUES (10, $1::jsonb, $2)`,
+      [contextText === null ? null : JSON.stringify({ contextText }), createdAt]
+    );
+
+  it('keeps listing an item when a later report on its author captured something else', async () => {
+    await report([
+      { source: 'postDescription', id: 999 },
+      { source: 'comment', id: 998 },
+    ]);
+    expect(await listed()).toEqual([21, 22, 23]);
+  });
+
+  it.each([
+    [21, 'postText', 210],
+    [22, 'comment', 220],
+    [23, 'postDescription', 230],
+  ])('drops hold %i once a later report captured its text (%s %i)', async (id, source, itemId) => {
+    await report([{ source, id: itemId }]);
+    expect(await listed()).not.toContain(id);
+    expect((await listed()).length).toBe(2);
+  });
+
+  it('ignores a report filed before the decision', async () => {
+    await report([{ source: 'postText', id: 210 }], '2026-09-01');
+    expect(await listed()).toEqual([21, 22, 23, 24]);
+  });
+
+  it('falls back to any later report on the author for an item a report never captures', async () => {
+    expect(await listed()).toContain(24);
+    await report(null);
+    expect(await listed()).toEqual([21, 22, 23]);
   });
 });

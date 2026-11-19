@@ -97,6 +97,25 @@ const STATUS_COLUMN = {
   dismissed: 'Dismissed',
 } as const;
 
+// A report covers a hold when it captured that item's text. Holds whose text a report never captures
+// on its own fall back to any later report on the author.
+const ITEM_SOURCE: Record<string, string> = {
+  PostText: 'postText',
+  CommentV3: 'comment',
+  Post: 'postDescription',
+};
+const itemSourceCase = sql.raw(
+  `CASE h."entityType" ${Object.entries(ITEM_SOURCE)
+    .map(([type, source]) => `WHEN '${type}' THEN '${source}'`)
+    .join(' ')} END`
+);
+const reportCoversHold = sql<boolean>`r."createdAt" >= h."decidedAt" AND CASE
+  WHEN ${itemSourceCase} IS NULL THEN r."userId" = h."userId"
+  ELSE jsonb_typeof(r.details -> 'contextText') = 'array'
+    AND r.details -> 'contextText' @> jsonb_build_array(
+      jsonb_build_object('source', ${itemSourceCase}, 'id', h."entityId"))
+  END`;
+
 const csamHolds = ({
   status,
   search,
@@ -112,13 +131,11 @@ const csamHolds = ({
     .where('h.label', '=', 'csam');
   if (status !== 'all') query = query.where('h.status', '=', STATUS_COLUMN[status]);
   if (status === 'lead-review') query = query.where(sql<boolean>`h.meta ? 'needsLeadReview'`);
-  // Confirmed with a reportable choice, and no CSAM report on the author filed since the decision.
+  // Confirmed with a reportable choice, and no CSAM report filed since the decision that covers it.
   if (status === 'report-not-filed')
     query = query
       .where(sql<boolean>`h.meta ->> 'reportChoice' IN (${sql.join([...CSAM_REPORTABLE_CHOICES])})`)
-      .where(
-        sql<boolean>`NOT EXISTS (SELECT 1 FROM "CsamReport" r WHERE r."userId" = h."userId" AND r."createdAt" >= h."decidedAt")`
-      );
+      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM "CsamReport" r WHERE ${reportCoversHold})`);
   if (author !== undefined) query = query.where('h.userId', '=', author);
   if (search && 'id' in search)
     query = query.where((eb) =>
