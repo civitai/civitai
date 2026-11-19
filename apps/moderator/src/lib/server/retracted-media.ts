@@ -8,6 +8,7 @@ import {
   retractedTier,
   type RetractedTier,
 } from '@civitai/shared/retracted-media-tier';
+import { evidenceHeldUrlSql, reportListedUrlSql } from '@civitai/shared/held-url';
 import { blockedForPatterns } from './blocked-for-patterns';
 import { dbWrite } from './db';
 import { insertModActivity } from './mod-activity';
@@ -39,6 +40,8 @@ export async function getRetractedMedia(
     .selectFrom('Image as i')
     .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor', 'i.ingestion'])
     .select(sql<boolean>`${sql.raw(retractedSuspectSql('i'))}`.as('suspect'))
+    .select(sql<boolean>`${sql.raw(reportListedUrlSql('i."url"'))}`.as('listed'))
+    .select(sql<boolean>`${sql.raw(evidenceHeldUrlSql('i."url"'))}`.as('evidenceHeld'))
     .where('i.id', '=', imageId)
     .where(
       sql<boolean>`${sql.raw(retractedImageWhereSql('i', { cdnLeg: retractedMediaCdnLeg() }))}`
@@ -47,7 +50,8 @@ export async function getRetractedMedia(
   if (!row) return null;
   const tier = retractedTier(row, blockedForPatterns());
   if (!csamReview) {
-    if (tier === 'suspect') return null;
+    // Bytes are per url, so the url-level checks count as much as this row's own.
+    if (tier === 'suspect' || row.listed || row.evidenceHeld) return null;
     // Refused when the scanner marks it, has no verdict for it, or cannot be read.
     // A scanned image can be rescanned, so its verdict is read fresh rather than from the cache.
     const verdict =

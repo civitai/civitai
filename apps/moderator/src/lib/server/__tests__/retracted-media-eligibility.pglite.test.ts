@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /**
@@ -245,6 +245,51 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
     expect(await tierOf(7)).toBe('plain');
     scanner.verdict = 'hit';
     expect(await getRetractedMedia(7, { csamReview: false })).toBeNull();
+  });
+});
+
+describe('copies sharing bytes with a restricted image', () => {
+  // 990000101: a plain blocked image whose url another row shares. 990000103: a plain blocked image
+  // whose pHash another row has. Each test lists or holds the other row, then removes it.
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor", "pHash") VALUES
+        (990000101, 'key-990000101', 990100101, 'Blocked', 'moderated', NULL),
+        (990000102, 'key-990000101', 990100102, 'Scanned', NULL, NULL),
+        (990000103, 'key-990000103', 990100103, 'Blocked', 'moderated', 990990990),
+        (990000104, 'key-990000104', 990100104, 'Scanned', NULL, 990990990);
+    `);
+  });
+  beforeEach(() => {
+    scanner.verdict = 'clear';
+  });
+  afterEach(async () => {
+    await db.exec(`
+      DELETE FROM "CsamReport" WHERE "userId" = 990100199;
+      DELETE FROM "EvidenceHoldImage" WHERE "imageId" IN (990000102, 990000104);
+    `);
+  });
+
+  const report = (imageId: number) =>
+    db.query(`INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100199, '{}', $1)`, [
+      JSON.stringify([{ id: imageId }]),
+    ]);
+  const hold = (imageId: number) =>
+    db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [imageId]);
+
+  it('serves both images to any moderator while neither copy is reported or held', async () => {
+    expect(await tierOf(990000101)).toBe('plain');
+    expect(await tierOf(990000103)).toBe('plain');
+  });
+
+  it.each([
+    ['a reported row on the same url', 990000101, () => report(990000102)],
+    ['a reported row with the same pHash', 990000103, () => report(990000104)],
+    ['a held row on the same url', 990000101, () => hold(990000102)],
+  ])('keeps an image with %s to moderators cleared for CSAM review', async (_label, id, mark) => {
+    await mark();
+    expect(await getRetractedMedia(id, { csamReview: false })).toBeNull();
+    expect(await getRetractedMedia(id, { csamReview: true })).toMatchObject({ url: `key-${id}` });
   });
 });
 
