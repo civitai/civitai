@@ -23,10 +23,6 @@ const { mockGetFilesForModelVersionCache, mockCancellableQuery, mockImagesCache,
     mockImagesCache: vi.fn(),
     mockCurated: vi.fn(),
   }));
-vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  withCuratedShowcases: mockCurated,
-}));
 
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: { cancellableQuery: mockCancellableQuery },
@@ -186,6 +182,7 @@ function primeOneModel(flags: { minor: boolean; sfwOnly: boolean }) {
 async function servedByModelsApi() {
   const { items } = await getModelsWithVersions({
     input: { browsingLevel: 1, take: 10, period: 'AllTime' } as never,
+    curate: mockCurated,
   });
   expect(items).toHaveLength(1);
   return items[0].modelVersions[0].images.map((i: { id: number }) => i.id);
@@ -314,6 +311,7 @@ describe('/api/v1/models — a page with a held and an unflagged model', () => {
 
     const { items } = await getModelsWithVersions({
       input: { browsingLevel: 1, take: 10, period: 'AllTime' } as never,
+      curate: mockCurated,
     });
     const served = Object.fromEntries(
       items.map((item: { id: number; modelVersions: { images: { id: number }[] }[] }) => [

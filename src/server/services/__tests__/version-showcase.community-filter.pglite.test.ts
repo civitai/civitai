@@ -60,13 +60,6 @@ vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   preventReplicationLagBatch: vi.fn(async () => undefined),
 }));
-vi.mock('../../../../event-engine-common/services/metrics', () => ({
-  MetricService: class {
-    fetch = vi.fn();
-  },
-}));
-vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
-vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 const {
   getVersionShowcases,

@@ -1,3 +1,4 @@
+import type { getShowcaseHeldLevels } from '~/server/services/model.service';
 import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
 import { toIndexedVersion, toIndexedVersions } from '~/server/search-index/models-index-versions';
 import { Prisma } from '@prisma/client';
@@ -199,7 +200,11 @@ export async function appendCommunityCoverImages(
     minor?: boolean;
     sfwOnly?: boolean;
   }[],
-  images: ImagesForModelVersions[]
+  images: ImagesForModelVersions[],
+  lookups: {
+    communityCovers?: typeof getShowcaseCommunityCovers;
+    heldLevels?: typeof getShowcaseHeldLevels;
+  } = {}
 ) {
   const present = new Set(images.map((image) => image.id));
   const missing = models.flatMap((model) =>
@@ -216,9 +221,13 @@ export async function appendCommunityCoverImages(
   const { getShowcaseHeldLevels, withinHeldLevel } = await import(
     '~/server/services/model.service'
   );
+  const {
+    communityCovers = getShowcaseCommunityCovers,
+    heldLevels: getHeldLevels = getShowcaseHeldLevels,
+  } = lookups;
   const [community, heldLevels] = await Promise.all([
-    getShowcaseCommunityCovers(missing),
-    getShowcaseHeldLevels(
+    communityCovers(missing),
+    getHeldLevels(
       models
         .filter((model) => missing.some((cover) => cover.modelId === model.id))
         .map((model) => ({ modelId: model.id, minor: model.minor, sfwOnly: model.sfwOnly }))

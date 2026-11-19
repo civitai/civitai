@@ -267,7 +267,8 @@ export async function prepareModelVersionResponse(
   // `isRedCapableHost` of the request: decides which training datasets are offered.
   redCapable = false,
   // `apiBrowsingLevel` of the request: the showcase's levels, and the level its exclusions resolve at.
-  browsingLevel = sfwBrowsingLevelsFlag
+  browsingLevel = sfwBrowsingLevelsFlag,
+  curate: typeof withCuratedShowcases = withCuratedShowcases
 ) {
   // `availability` and the owner only decide visibility; they are not part of the response.
   const { files, model: modelRow, metrics, vaeId, availability, ...storedVersion } = modelVersion;
@@ -292,10 +293,7 @@ export async function prepareModelVersionResponse(
 
   images ??= await getVersionShowcaseImages([version.id], browsingLevel);
   images = (
-    await withCuratedShowcases(
-      { [version.id]: { images } },
-      showcaseSiteForBrowsingLevel(browsingLevel)
-    )
+    await curate({ [version.id]: { images } }, showcaseSiteForBrowsingLevel(browsingLevel))
   )[version.id].images;
   const shows = await getShowcaseImageFilter({ browsingLevel });
   images = images.filter((image) => (image.nsfwLevel & browsingLevel) !== 0 && shows(image));

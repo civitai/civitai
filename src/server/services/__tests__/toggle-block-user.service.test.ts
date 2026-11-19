@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { toggleHiddenSchema } from '~/server/schema/user-preferences.schema';
 import { userFollowsCache } from '~/server/redis/caches';
@@ -15,13 +16,6 @@ const { declinePlacementsOnBlock } = vi.hoisted(() => ({
 // module would pull the escrow -> Buzz -> prom chain into the test graph, which
 // survives today only because setup.ts happens to mock every link — the trap
 // documented at the top of src/__tests__/setup.ts.
-const showcaseBust = vi.hoisted(() =>
-  vi.fn(async (_userId: number, _ownerId?: number) => undefined)
-);
-vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  bustVersionShowcasesForUser: showcaseBust,
-}));
 vi.mock('~/server/services/placement-moderation.service', () => ({
   declinePlacementsOnBlock,
 }));
@@ -556,14 +550,21 @@ describe('toggleHidden kind=blockedUser — version showcases', () => {
     vi.spyOn(BlockedUsers, 'refreshCache').mockResolvedValue(undefined);
     vi.spyOn(BlockedByUsers, 'refreshCache').mockResolvedValue(undefined);
 
+    // Each author's images, on the other's models only.
+    const showcaseReads = () =>
+      showcaseQueries(dbMock.dbWrite.$queryRaw).map((read) => read.values);
     await block(true);
-    expect(showcaseBust).toHaveBeenCalledTimes(2);
-    expect(showcaseBust).toHaveBeenCalledWith(targetUserId, userId);
-    expect(showcaseBust).toHaveBeenCalledWith(userId, targetUserId);
+    expect(showcaseReads()).toEqual(
+      expect.arrayContaining([
+        [targetUserId, userId],
+        [userId, targetUserId],
+      ])
+    );
+    expect(showcaseReads()).toHaveLength(2);
 
-    showcaseBust.mockClear();
+    dbMock.dbWrite.$queryRaw.mockClear();
     engagement.findUnique.mockResolvedValue({ type: 'Block' });
     await block(false);
-    expect(showcaseBust).toHaveBeenCalledTimes(2);
+    expect(showcaseReads()).toHaveLength(2);
   });
 });

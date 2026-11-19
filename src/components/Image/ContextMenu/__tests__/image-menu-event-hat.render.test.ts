@@ -4,6 +4,7 @@ import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import type { act as actType } from 'react-dom/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { emptyApiTrpcWrapper } from '~/__tests__/empty-api-trpc';
 import type * as ImageUtils from '~/components/Image/image.utils';
 
 const act = (React as unknown as { act: typeof actType }).act;
@@ -22,9 +23,6 @@ const nothing = () => null;
 vi.mock('next/router', () => ({ default: { query: {} } }));
 vi.mock('~/components/Decorations/AddArtFrameMenuItem', () => ({ AddArtFrameMenuItem: nothing }));
 vi.mock('~/components/Profile/AddToShowcaseMenuItem', () => ({ AddToShowcaseMenuItem: nothing }));
-vi.mock('~/components/Model/VersionShowcase/RemoveFromVersionShowcasesMenuItem', () => ({
-  RemoveFromVersionShowcasesMenuItem: nothing,
-}));
 vi.mock('~/components/MenuItems/ToggleSearchableMenuItem', () => ({
   ToggleSearchableMenuItem: nothing,
 }));
@@ -67,6 +65,7 @@ vi.mock('~/components/Image/ImageProvider', () => ({
 }));
 
 const { ImageMenuItems } = await import('~/components/Image/ContextMenu/ImageMenuItems');
+const WithTrpc = await emptyApiTrpcWrapper();
 type MenuImage = React.ComponentProps<typeof ImageMenuItems>['image'];
 
 const image = (over: Partial<MenuImage>) =>
@@ -97,16 +96,20 @@ function hatItem(over: Partial<MenuImage>) {
   act(() =>
     root!.render(
       React.createElement(
-        MantineProvider,
+        WithTrpc,
         null,
         React.createElement(
-          Menu,
-          { opened: true, withinPortal: false },
-          React.createElement(Menu.Target, null, React.createElement('button', null, 'menu')),
+          MantineProvider,
+          null,
           React.createElement(
-            Menu.Dropdown,
-            null,
-            React.createElement(ImageMenuItems, { image: image(over) })
+            Menu,
+            { opened: true, withinPortal: false },
+            React.createElement(Menu.Target, null, React.createElement('button', null, 'menu')),
+            React.createElement(
+              Menu.Dropdown,
+              null,
+              React.createElement(ImageMenuItems, { image: image(over) })
+            )
           )
         )
       )

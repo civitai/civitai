@@ -1,3 +1,4 @@
+import type { withCuratedShowcases } from '~/server/services/version-showcase.service';
 import { deletePostRows } from '@civitai/db-queries/content-deletion';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
 import { kyselyOver } from '~/server/db/prisma-kysely';
@@ -6912,6 +6913,7 @@ export async function getModelsWithVersions({
   ignoreBrowsingAddons,
   ownerUserId,
   publicVersionsOnly,
+  curate,
 }: {
   input: GetAllModelsOutput & { take?: number; skip?: number };
   user?: {
@@ -6926,6 +6928,8 @@ export async function getModelsWithVersions({
   ownerUserId?: number;
   /** See `getModelsRaw`. */
   publicVersionsOnly?: boolean;
+  /** Puts each version's curated showcase in place of its default images. */
+  curate?: typeof withCuratedShowcases;
 }) {
   const { items, nextCursor } = await getModelsRaw({
     input,
@@ -6940,9 +6944,9 @@ export async function getModelsWithVersions({
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
   const paidAccessMap = await getPublicPaidAccessForModelVersions(modelVersionIds);
   // Let's swap to the new cache based method for now...
-  const { withCuratedShowcases } = await import('~/server/services/version-showcase.service');
+  curate ??= (await import('~/server/services/version-showcase.service')).withCuratedShowcases;
   const images = await holdShowcaseImages(
-    await withCuratedShowcases(
+    await curate(
       await getImagesForModelVersionCache(modelVersionIds),
       showcaseSiteForBrowsingLevel(input.browsingLevel ?? sfwBrowsingLevelsFlag)
     ),

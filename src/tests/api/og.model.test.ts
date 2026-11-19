@@ -2,17 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as OgImageHelpers from '~/server/utils/og-image-helpers';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { answerShowcaseQueries } from '~/__tests__/mocks/showcase-queries';
 
 const { fetchImageAsDataUri } = vi.hoisted(() => ({ fetchImageAsDataUri: vi.fn() }));
 vi.mock('~/server/utils/og-image-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof OgImageHelpers>()),
   fetchImageAsDataUri,
-}));
-
-const community = vi.hoisted(() => ({ covers: new Map<string, unknown>() }));
-vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  getShowcaseCommunityCovers: vi.fn(async () => community.covers),
 }));
 
 import handler from '~/pages/api/og';
@@ -260,16 +255,16 @@ describe('/api/og?type=model on a minor or SFW-only model', () => {
 
   describe("with someone else's image featured as the cover", () => {
     const COVER = 90;
+    // Featured in the model's civitai.red showcase, rated PG-13.
     beforeEach(() => {
-      community.covers = new Map([
-        [
-          `1:${COVER}`,
-          {
-            image: { url: 'other-community', nsfwLevel: 2, type: 'image', width: 100, height: 100 },
-            sites: new Set(['red']),
-          },
+      answerShowcaseQueries(dbMock.dbRead.$queryRaw, {
+        rows: [
+          { modelVersionId: 500, modelId: 1, imageId: COVER, site: 'red', source: 'Community' },
         ],
-      ]);
+        community: [
+          { id: COVER, modelVersionId: 500, site: 'red', nsfwLevel: 2, url: 'other-community' },
+        ],
+      });
     });
 
     it('skips it when it is above the gallery level', async () => {

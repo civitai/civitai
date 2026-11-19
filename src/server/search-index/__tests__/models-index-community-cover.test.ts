@@ -8,23 +8,20 @@ import { NsfwLevel } from '~/server/common/enums';
  * of the community showcase stays out of search.
  */
 
-const community = vi.hoisted(() => ({
+const community = {
   covers: new Map<string, { image: object; sites: Set<string> }>(),
   lookup: vi.fn(),
-}));
-vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  getShowcaseCommunityCovers: vi.fn(async (covers: unknown) => {
-    community.lookup(covers);
-    return community.covers;
-  }),
-}));
+};
 
-const heldLevels = vi.hoisted(() => ({ byModel: new Map<number, number>() }));
-vi.mock('~/server/services/model.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  getShowcaseHeldLevels: vi.fn(async () => heldLevels.byModel),
-}));
+const heldLevels = { byModel: new Map<number, number>() };
+// The two lookups, passed in: the model's featured covers, and its held gallery level.
+const lookups = {
+  communityCovers: async (covers: unknown) => {
+    community.lookup(covers);
+    return community.covers as never;
+  },
+  heldLevels: async () => heldLevels.byModel,
+};
 
 const { appendCommunityCoverImages, pickModelIndexImages } = await import(
   '~/server/search-index/models.search-index'
@@ -48,7 +45,11 @@ describe('the search document and a community cover', () => {
     community.covers = new Map([['5:90', { image: featured, sites: new Set(['red']) }]]);
     const images = [owner(1, 10)] as unknown as Images;
 
-    await appendCommunityCoverImages([{ id: 5, coverImageId: 90, sfwCoverImageId: 1 }], images);
+    await appendCommunityCoverImages(
+      [{ id: 5, coverImageId: 90, sfwCoverImageId: 1 }],
+      images,
+      lookups
+    );
 
     expect(community.lookup).toHaveBeenCalledTimes(1);
     expect(community.lookup).toHaveBeenCalledWith([{ modelId: 5, imageId: 90, site: 'red' }]);
@@ -60,7 +61,11 @@ describe('the search document and a community cover', () => {
     community.covers = new Map([['5:90', { image: featured, sites: new Set(['red']) }]]);
     const images = [owner(1, 10)] as unknown as Images;
 
-    await appendCommunityCoverImages([{ id: 5, coverImageId: null, sfwCoverImageId: 90 }], images);
+    await appendCommunityCoverImages(
+      [{ id: 5, coverImageId: null, sfwCoverImageId: 90 }],
+      images,
+      lookups
+    );
 
     expect(images.map((image) => image.id)).toEqual([1]);
   });
@@ -71,11 +76,11 @@ describe('the search document and a community cover', () => {
     const images = [owner(1, 10)] as unknown as Images;
 
     heldLevels.byModel = new Map([[5, 1 | 2]]);
-    await appendCommunityCoverImages([{ id: 5, coverImageId: 90, minor: true }], images);
+    await appendCommunityCoverImages([{ id: 5, coverImageId: 90, minor: true }], images, lookups);
     expect(images.map((image) => image.id)).toEqual([1]);
 
     heldLevels.byModel = new Map();
-    await appendCommunityCoverImages([{ id: 5, coverImageId: 90, minor: false }], images);
+    await appendCommunityCoverImages([{ id: 5, coverImageId: 90, minor: false }], images, lookups);
     expect(images.map((image) => image.id)).toEqual([1, 90]);
   });
 
@@ -88,7 +93,7 @@ describe('the search document and a community cover', () => {
     const featured = { id: 90, modelVersionId: 9, availability: 'Public', authorUsername: 'ann' };
     community.covers = new Map([['5:90', { image: featured, sites: new Set(['red']) }]]);
     const images = [owner(1, 10)] as unknown as Images;
-    await appendCommunityCoverImages([{ id: 5, coverImageId: 90 }], images);
+    await appendCommunityCoverImages([{ id: 5, coverImageId: 90 }], images, lookups);
 
     const picked = pickModelIndexImages({ id: 5, coverImageId: 90 }, versions, images);
     expect(picked.map((image) => image.id)).toEqual([90, 1]);
@@ -105,7 +110,7 @@ describe('the search document and a community cover', () => {
     };
     community.covers = new Map([['5:90', { image: excluded, sites: new Set(['red']) }]]);
     const images = [owner(1, 10)] as unknown as Images;
-    await appendCommunityCoverImages([{ id: 5, coverImageId: 90 }], images);
+    await appendCommunityCoverImages([{ id: 5, coverImageId: 90 }], images, lookups);
 
     const picked = pickModelIndexImages({ id: 5, coverImageId: 90 }, versions, images);
     expect(picked.map((image) => image.id)).toEqual([1]);
@@ -125,7 +130,8 @@ describe('the search document and a community cover', () => {
         { id: 5, coverImageId: 90 },
         { id: 6, coverImageId: 90, minor: true },
       ],
-      images
+      images,
+      lookups
     );
 
     const forModel = (id: number) =>

@@ -14,11 +14,6 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const mockGetImages = vi.hoisted(() => vi.fn());
 const curated = vi.hoisted(() => ({ value: false }));
-vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  withCuratedShowcases: async (byVersion: unknown) => byVersion,
-  hasCuratedShowcase: async () => curated.value,
-}));
 
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -210,7 +205,22 @@ function serve(
 ) {
   showcase = images;
   const version = modelVersion(versionNsfwLevel, sfwName);
-  dbMock.dbRead.$queryRaw.mockResolvedValue([version]);
+  // The version row, and the version showcase's rows: a hidden owner image when the test curates it.
+  dbMock.dbRead.$queryRaw.mockImplementation((async (query: string[]) =>
+    !query.join('').includes('FROM "ModelVersionShowcaseItem" s')
+      ? [version]
+      : curated.value
+      ? [
+          {
+            modelVersionId: VERSION,
+            imageId: 999,
+            site: 'red',
+            source: 'Owner',
+            position: null,
+            excluded: true,
+          },
+        ]
+      : []) as never);
   dbMock.dbRead.modelFile.findFirst.mockResolvedValue({ modelVersion: version });
   dbMock.dbRead.modelFile.findMany.mockResolvedValue([{ modelVersion: version }]);
 }

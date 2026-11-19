@@ -156,7 +156,10 @@ import {
   bustVersionShowcasesForPosts,
   getCarouselShowcaseIds,
 } from '~/server/services/version-showcase.service';
-import { showcaseSiteForDomain } from '~/shared/constants/version-showcase.constants';
+import {
+  carouselSource,
+  showcaseSiteForDomain,
+} from '~/shared/constants/version-showcase.constants';
 import { createLruCache } from '~/server/utils/lru-cache';
 import {
   fetchSharedContestCollectionItems,
@@ -2481,23 +2484,23 @@ const getAllImagesUncaptured = async (
 
   // Hacked this to use the model version image cache instead
   const prioritizeUser = !!prioritizedUserIds?.length;
-  const useModelVersionCache = prioritizeUser && (prefetchedIsFlipt || !!showcaseIds);
-  if (prioritizeUser && useModelVersionCache) {
+  const carousel = carouselSource({
+    prioritizeUser,
+    versionCacheFlag: !!prefetchedIsFlipt,
+    showcaseIds,
+  });
+  const useModelVersionCache = carousel !== 'none' && carousel !== 'live';
+  if (useModelVersionCache) {
     if (cursor) throw throwBadRequestError('Cannot use cursor with prioritizedUserIds');
     if (!modelVersionId)
       throw throwBadRequestError('modelVersionId is required when using prioritizedUserIds');
-
-    if (showcaseIds) {
-      // A curated list can be empty (every image hidden or no longer eligible): serve nothing,
-      // never an unfiltered page.
-      if (!showcaseIds.length) {
-        noteEmptyIdsPage(input, 'prioritized');
-        return { items: [], nextCursor: undefined };
-      }
-      ids = showcaseIds;
-    }
   }
-  if (prioritizeUser && useModelVersionCache && !showcaseIds && modelVersionId) {
+  if (carousel === 'empty') {
+    noteEmptyIdsPage(input, 'prioritized');
+    return { items: [], nextCursor: undefined };
+  }
+  if (carousel === 'curated') ids = showcaseIds!;
+  if (carousel === 'version-cache' && modelVersionId) {
     const cachedData = await imagesForModelVersionsCache.fetch([modelVersionId]);
     const versionData = cachedData[modelVersionId];
     if (!versionData || !versionData.images?.length) {
@@ -2912,7 +2915,8 @@ const getAllImagesUncaptured = async (
   if (cursorClause) AND.push(cursorClause);
   // A post's images can share an index. Appended after getCursor so the cursor stays `i."index"`.
   if (postId && !modelId) orderBy = `${orderBy}, i."id"`;
-  if (showcaseIds) orderBy = `array_position(ARRAY[${showcaseIds.join(',')}]::int[], i."id")`;
+  if (carousel === 'curated')
+    orderBy = `array_position(ARRAY[${showcaseIds!.join(',')}]::int[], i."id")`;
 
   if (prioritizeUser && !useModelVersionCache) {
     // [x]

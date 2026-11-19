@@ -13,7 +13,6 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const mocks = vi.hoisted(() => ({
   entry: undefined as unknown,
   fetchError: null as Error | null,
-  refreshError: null as Error | null,
   communityCovers: new Map<number, { image: { nsfwLevel: number }; sites: Set<string> }>(),
   queueComFaceRecheck: vi.fn(async () => undefined),
   updateModelNsfwLevels: vi.fn(async () => undefined),
@@ -30,9 +29,7 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
       if (mocks.fetchError) throw mocks.fetchError;
       return Object.fromEntries(ids.map((id) => [id, mocks.entry]));
     },
-    refresh: async () => {
-      if (mocks.refreshError) throw mocks.refreshError;
-    },
+    refresh: async () => undefined,
   }),
 }));
 const notify = vi.hoisted(() => vi.fn(async (_args: unknown) => undefined));
@@ -73,13 +70,6 @@ vi.mock('~/server/clickhouse/client', () => ({
     entityChanges = mocks.entityChanges;
   },
 }));
-vi.mock('../../../../event-engine-common/services/metrics', () => ({
-  MetricService: class {
-    fetch = vi.fn();
-  },
-}));
-vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
-vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 const showcase = await import('../version-showcase.service');
 const cover = await import('../model-cover.service');
@@ -102,7 +92,6 @@ beforeEach(() => {
   dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
   mocks.entry = undefined;
   mocks.fetchError = null;
-  mocks.refreshError = null;
   mocks.communityCovers = new Map();
 });
 
@@ -516,20 +505,6 @@ describe('setVersionShowcase: a valid save', () => {
     expect(notify).toHaveBeenCalledTimes(1);
     expect(injected).toBe(1);
   });
-
-  it('notifies before a failed refresh fails the save, since a retry finds the rows saved', async () => {
-    mocks.refreshError = new Error('redis down');
-    await expect(
-      showcase.setVersionShowcase({
-        modelVersionId: VERSION,
-        site: 'red',
-        items: [{ imageId: 77 }],
-        userId: 5,
-        isModerator: false,
-      })
-    ).rejects.toThrow(/redis down/);
-    expect(notify).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe('getCoverImages: a community cover on a model card', () => {
@@ -604,16 +579,6 @@ describe('removeMyImageFromVersionShowcase', () => {
     });
     expect(tombstoneWrites()).toHaveLength(1);
     expect(dbMock.dbWrite.modelVersionShowcaseItem.deleteMany).not.toHaveBeenCalled();
-  });
-
-  it('fails when the showcase can’t be refreshed, so the removal can be retried', async () => {
-    dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: 9 } as never);
-    dbMock.dbWrite.$executeRaw.mockResolvedValue(2 as never);
-    publishedVersion();
-    mocks.refreshError = new Error('redis down');
-    await expect(
-      showcase.removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: 77, userId: 9 })
-    ).rejects.toThrow(/redis down/);
   });
 
   it('says so when the image isn’t featured there', async () => {

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as HatSync from '~/server/events/points/sync';
@@ -92,11 +93,6 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
     if (postServiceLoad.fail) throw new Error('post.service failed to load');
     return refreshShowcases;
   },
-}));
-const showcaseBust = vi.hoisted(() => vi.fn(async (_userId: number) => undefined));
-vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  bustVersionShowcasesForUser: showcaseBust,
 }));
 
 const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
@@ -553,11 +549,12 @@ describe('toggleBan -> version showcases', () => {
       username: 'someone',
       email: null,
     });
+    const showcaseReads = () =>
+      showcaseQueries(dbMock.dbWrite.$queryRaw).map((read) => read.values);
     await call();
-    expect(showcaseBust).toHaveBeenCalledTimes(1);
-    expect(showcaseBust).toHaveBeenCalledWith(USER_ID);
+    expect(showcaseReads()).toEqual([[USER_ID]]);
 
-    showcaseBust.mockClear();
+    dbMock.dbWrite.$queryRaw.mockClear();
     userFindUnique.mockResolvedValue({
       bannedAt: ALREADY_BANNED_AT,
       meta: {},
@@ -565,7 +562,6 @@ describe('toggleBan -> version showcases', () => {
       email: null,
     });
     await call();
-    expect(showcaseBust).toHaveBeenCalledTimes(1);
-    expect(showcaseBust).toHaveBeenCalledWith(USER_ID);
+    expect(showcaseReads()).toEqual([[USER_ID]]);
   });
 });

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
@@ -75,11 +76,6 @@ vi.mock('~/server/search-index/models.search-index', async (importOriginal) => {
     modelsSearchIndex: { ...(actual.modelsSearchIndex as object), queueUpdate: queueModels },
   };
 });
-const bustShowcases = vi.hoisted(() => vi.fn(async (_postIds: number[]) => undefined));
-vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  bustVersionShowcasesForPosts: bustShowcases,
-}));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   bustCacheTag: vi.fn(async () => undefined),
@@ -156,8 +152,9 @@ describe('bustCachesForPosts and the version showcase', () => {
 
     await bustCachesForPosts([1]);
 
-    expect(bustShowcases).toHaveBeenCalledTimes(1);
-    expect(bustShowcases).toHaveBeenCalledWith([1]);
+    const reads = showcaseQueries(dbMock.dbRead.$queryRaw);
+    expect(reads).toHaveLength(1);
+    expect(reads[0].values).toEqual([1]);
   });
 });
 

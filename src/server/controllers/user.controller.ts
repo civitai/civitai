@@ -1,3 +1,4 @@
+import { showcaseOptOutChanged } from '~/shared/constants/version-showcase.constants';
 import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { TRPCError } from '@trpc/server';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
@@ -1748,10 +1749,7 @@ export const setUserSettingHandler = async ({
       (k) => k in restInput && (restSettings as Record<string, unknown>)[k] !== restInput[k]
     );
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
-    if (
-      'hideFromVersionShowcases' in restInput &&
-      !!restSettings.hideFromVersionShowcases !== !!restInput.hideFromVersionShowcases
-    ) {
+    if (showcaseOptOutChanged(restSettings, restInput)) {
       const { bustVersionShowcasesForUser } = await import(
         '~/server/services/version-showcase.service'
       );

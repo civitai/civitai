@@ -38,11 +38,6 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
 }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 // Showcase busts query on their own; they are covered by version-showcase tests.
-vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  bustVersionShowcasesForModels: vi.fn(),
-  bustVersionShowcasesForPosts: vi.fn(),
-}));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
 vi.mock('~/server/metrics', () => ({ modelMetrics: {} }));
@@ -131,6 +126,7 @@ import {
 } from '~/server/services/model.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { withoutShowcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { logToAxiom } from '~/server/logging/client';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -158,9 +154,12 @@ const baseAfter = {
   gallerySettings: { level: 1 },
 };
 
+// The showcase refresh after a flag change reads too; these tests are about the image sync.
+const imageSyncCalls = () => withoutShowcaseQueries(mockDbWrite.$queryRaw);
+
 // $queryRaw is called as a template tag: [strings, ...values].
 function imageUpdateCall() {
-  const [strings, ...values] = mockDbWrite.$queryRaw.mock.calls[0];
+  const [strings, ...values] = imageSyncCalls()[0];
   const query = Prisma.sql(strings as TemplateStringsArray, ...values);
   return { sql: query.sql, text: query.text, values: query.values };
 }
@@ -212,7 +211,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
       where: { modelId: 42 },
       select: { id: true },
     });
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(imageSyncCalls()).toHaveLength(1);
     expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
       ids: [900],
       action: SearchIndexUpdateQueueAction.Update,
@@ -319,7 +318,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     });
 
     expect(mockDbWrite.modelVersion.findMany).not.toHaveBeenCalled();
-    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(imageSyncCalls()).toHaveLength(0);
     expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
     expect(mockBustMvCache).not.toHaveBeenCalled();
   });
@@ -332,7 +331,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
       after: { ...baseAfter, poi: true },
     });
 
-    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(imageSyncCalls()).toHaveLength(0);
     expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
     expect(mockBustMvCache).not.toHaveBeenCalled();
   });
@@ -460,7 +459,7 @@ describe('applyModelFlagSideEffects — public API edge cache', () => {
     });
     expect(mockPurgeShowcaseEdge).toHaveBeenCalledWith(42, [100]);
     expect(mockPurgeShowcaseEdge).toHaveBeenCalledTimes(1);
-    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(imageSyncCalls()).toHaveLength(0);
     // The search document carries the showcase, so it is rebuilt at the new level.
     expect(mockModelsQueueUpdate).toHaveBeenCalledTimes(1);
     expect(mockModelsQueueUpdate).toHaveBeenCalledWith([{ id: 42, action: 'Update' }]);
@@ -562,7 +561,7 @@ describe('applyModelFlagSideEffects — sfwOnly alone', () => {
       before: { ...baseBefore, minor: true },
       after: { ...baseAfter, minor: true, sfwOnly: true },
     });
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(imageSyncCalls()).toHaveLength(1);
   });
 
   it("leaves each image's own minor and poi flags as they are", async () => {
@@ -570,7 +569,7 @@ describe('applyModelFlagSideEffects — sfwOnly alone', () => {
       before: baseBefore,
       after: { ...baseAfter, sfwOnly: true },
     });
-    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(imageSyncCalls()).toHaveLength(0);
     expect(mockCollectionsReindex).toHaveBeenCalledWith([42]);
   });
 });

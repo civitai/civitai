@@ -655,8 +655,8 @@ async function afterShowcaseChange(modelVersionIds: number[], modelIds: number[]
 }
 
 /**
- * After a save or removal. A failed refresh throws, so the caller can retry rather than leave the
- * old showcase served for the cache's hour; the rest is best effort, as the write already committed.
+ * After a save or removal. The cache's refresh drops an entry it can't rebuild, so the next read
+ * rebuilds it; the rest is best effort, as the write already committed.
  */
 async function afterShowcaseWrite(modelVersionId: number, modelId: number) {
   await refreshVersionShowcases([modelVersionId]);
@@ -951,7 +951,7 @@ export async function setVersionShowcase({
     }),
   ]);
 
-  // Before the refresh, which may throw: a retry finds these rows already saved and notifies no one.
+  // Before the refresh: a failure after it would leave the rows saved, and a retry notifies no one.
   const before = new Set(existing.map((row) => row.imageId));
   const added = eligible.filter((image) => allowed.has(image.id) && !before.has(image.id));
   await notifyFeaturedAuthors({ version, actorUserId: userId, images: added });

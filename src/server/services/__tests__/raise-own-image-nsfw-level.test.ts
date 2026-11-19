@@ -8,12 +8,6 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
   updatePostNsfwLevel: updatePostNsfwLevelMock,
 }));
-const bustVersionShowcasesForPosts = vi.hoisted(() => vi.fn());
-vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  bustVersionShowcasesForPosts,
-  getCarouselShowcaseIds: vi.fn(),
-}));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
     fetch = vi.fn();
@@ -22,6 +16,7 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { raiseOwnImageNsfwLevel } from '~/server/services/image.service';
@@ -64,7 +59,9 @@ describe('raiseOwnImageNsfwLevel', () => {
     expect(values).toEqual(expect.arrayContaining([NsfwLevel.X, IMAGE_ID, OWNER, 'Scanned']));
     expect(updatePostNsfwLevelMock).toHaveBeenCalledWith(POST_ID);
     // A community image raised past PG-13 leaves the civitai.com showcases and covers.
-    expect(bustVersionShowcasesForPosts).toHaveBeenCalledWith([POST_ID]);
+    expect(showcaseQueries(dbMock.dbRead.$queryRaw).map((read) => read.values)).toEqual([
+      [POST_ID],
+    ]);
   });
 
   it('reports nothing applied when no row matched (not the owner, locked, lower, or unscanned)', async () => {

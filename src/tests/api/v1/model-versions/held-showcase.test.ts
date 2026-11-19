@@ -19,10 +19,6 @@ const { mockGetVaeFiles, mockGetImages, mockGetPaidAccess, mockHold, mockCurated
     mockCurated: vi.fn(),
   })
 );
-vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  withCuratedShowcases: mockCurated,
-}));
 
 // No privacy row: a version with no privacy inputs.
 vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
@@ -143,7 +139,8 @@ async function prepare(images?: unknown[]) {
     null,
     false,
     false,
-    allBrowsingLevelsFlag
+    allBrowsingLevelsFlag,
+    mockCurated
   );
 }
 

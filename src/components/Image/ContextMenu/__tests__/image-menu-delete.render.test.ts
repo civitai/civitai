@@ -4,6 +4,7 @@ import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import type { act as actType } from 'react-dom/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { emptyApiTrpcWrapper } from '~/__tests__/empty-api-trpc';
 import type * as ImageUtils from '~/components/Image/image.utils';
 
 const act = (React as unknown as { act: typeof actType }).act;
@@ -23,9 +24,6 @@ vi.mock('~/components/Decorations/AddEventDecorationMenuItem', () => ({
   AddEventDecorationMenuItem: nothing,
 }));
 vi.mock('~/components/Profile/AddToShowcaseMenuItem', () => ({ AddToShowcaseMenuItem: nothing }));
-vi.mock('~/components/Model/VersionShowcase/RemoveFromVersionShowcasesMenuItem', () => ({
-  RemoveFromVersionShowcasesMenuItem: nothing,
-}));
 vi.mock('~/components/MenuItems/ToggleSearchableMenuItem', () => ({
   ToggleSearchableMenuItem: nothing,
 }));
@@ -66,6 +64,7 @@ vi.mock('~/components/Image/ImageProvider', () => ({
 }));
 
 const { ImageMenuItems } = await import('~/components/Image/ContextMenu/ImageMenuItems');
+const WithTrpc = await emptyApiTrpcWrapper();
 type MenuProps = React.ComponentProps<typeof ImageMenuItems>;
 
 const image = { id: 145, postId: 900, url: 'img-145', userId: 7 } as MenuProps['image'];
@@ -88,16 +87,20 @@ function clickDelete(props: Partial<MenuProps>) {
   act(() =>
     root!.render(
       React.createElement(
-        MantineProvider,
+        WithTrpc,
         null,
         React.createElement(
-          Menu,
-          { opened: true, withinPortal: false },
-          React.createElement(Menu.Target, null, React.createElement('button', null, 'menu')),
+          MantineProvider,
+          null,
           React.createElement(
-            Menu.Dropdown,
-            null,
-            React.createElement(ImageMenuItems, { image, ...props })
+            Menu,
+            { opened: true, withinPortal: false },
+            React.createElement(Menu.Target, null, React.createElement('button', null, 'menu')),
+            React.createElement(
+              Menu.Dropdown,
+              null,
+              React.createElement(ImageMenuItems, { image, ...props })
+            )
           )
         )
       )
