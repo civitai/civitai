@@ -15,6 +15,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 )
 
@@ -109,14 +110,20 @@ type Config struct {
 	// Node fills on read (user cosmetics, image frames, event decorations) with the Node
 	// lookup's own query instead of falling back. Off restores the fallbacks.
 	ComputeMisses bool
-	// CacheWriteBack is FEED_GO_CACHE_WRITEBACK (default off): write each computed miss back to the
-	// cache cluster exactly as the Node lookup writes it. Off, this service never writes those keys.
-	CacheWriteBack bool
+	// CacheWriteBack is FEED_GO_CACHE_WRITEBACK (default none): the caches whose computed misses are
+	// written back to the cache cluster exactly as the Node lookup writes them, as a comma-separated
+	// list of hydrate.WriteCaches names (hydrate.ParseWriteBack; an unknown name, the old true/false
+	// included, fails Load). A cache not listed is never written by this service.
+	CacheWriteBack hydrate.WriteSet
+	// CacheWriteLogPerMinute is FEED_GO_CACHE_WRITE_LOG_PER_MIN (default 0 = off): `cache write` log
+	// lines per (cache, result) per minute (hydrate.WriteLog).
+	CacheWriteLogPerMinute int
 	// FrameCacheNegative is FEED_GO_FRAME_CACHE_NEGATIVE: the `frame-cache-negative` flag's value
 	// (default off, as Node reads an unknown flag): whether the frame cache's notFound markers are live.
 	FrameCacheNegative bool
-	// PrimaryDatabaseURL is DATABASE_URL, the primary (Node's dbWrite), read only with CacheWriteBack:
-	// the frame and event-decoration miss lookups then read it as Node's do (DESIGN.md §3.1).
+	// PrimaryDatabaseURL is DATABASE_URL, the primary (Node's dbWrite), read only when CacheWriteBack
+	// holds a cache whose lookup reads it (hydrate.PrimaryCaches: the frame, event-decoration,
+	// version-images and model-data lookups then read it as Node's do; DESIGN.md §3.1).
 	PrimaryDatabaseURL string
 
 	// The ClickHouse reader the image metric-hash misses are computed with (DESIGN.md §3.1), from this
@@ -220,9 +227,14 @@ func Load() (*Config, error) {
 		c.ModerationAccountID = n
 	}
 	c.ComputeMisses = boolEnv("FEED_GO_COMPUTE_MISSES", true)
-	c.CacheWriteBack = boolEnv("FEED_GO_CACHE_WRITEBACK", false)
+	writeBack, err := hydrate.ParseWriteBack(os.Getenv("FEED_GO_CACHE_WRITEBACK"))
+	if err != nil {
+		return nil, err
+	}
+	c.CacheWriteBack = writeBack
+	c.CacheWriteLogPerMinute = max(intEnv("FEED_GO_CACHE_WRITE_LOG_PER_MIN", 0), 0)
 	c.FrameCacheNegative = boolEnv("FEED_GO_FRAME_CACHE_NEGATIVE", false)
-	if c.CacheWriteBack {
+	if c.CacheWriteBack.NeedsPrimary() {
 		c.PrimaryDatabaseURL = os.Getenv("DATABASE_URL")
 	}
 	if c.ComputeMisses && os.Getenv("FEED_GO_CLICKHOUSE_HOST") != "" && os.Getenv("FEED_GO_CLICKHOUSE_USERNAME") != "" {
@@ -248,8 +260,9 @@ func Load() (*Config, error) {
 	if c.DatabaseURL == "" {
 		return nil, errors.New("DATAPACKET_DATABASE_RO_URL, DATABASE_REPLICA_URL or DATABASE_URL is required")
 	}
-	if c.CacheWriteBack && c.PrimaryDatabaseURL == "" {
-		return nil, errors.New("FEED_GO_CACHE_WRITEBACK needs DATABASE_URL (the primary the frame and event lookups read)")
+	if c.CacheWriteBack.NeedsPrimary() && c.PrimaryDatabaseURL == "" {
+		return nil, errors.New("FEED_GO_CACHE_WRITEBACK needs DATABASE_URL for " + strings.Join(primaryWrites(c.CacheWriteBack), ",") +
+			" (the primary those lookups read)")
 	}
 	if c.RedisURL == "" || c.RedisSysURL == "" {
 		return nil, errors.New("REDIS_URL and REDIS_SYS_URL are both required")
@@ -420,6 +433,18 @@ func env(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// primaryWrites are the caches of w whose lookups read the primary (hydrate.PrimaryCaches), for the
+// missing-DATABASE_URL error.
+func primaryWrites(w hydrate.WriteSet) []string {
+	out := make([]string, 0, len(hydrate.PrimaryCaches))
+	for _, c := range hydrate.PrimaryCaches {
+		if w[c] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func boolEnv(k string, def bool) bool {

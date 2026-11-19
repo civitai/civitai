@@ -1,6 +1,13 @@
 import { env } from '~/env/server';
 import { delIfValue } from '~/server/redis/atomic';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import {
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  redis,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import { newBlockInstanceId } from '~/server/utils/app-block-ids';
 import {
   getDp1Target,
@@ -35,9 +42,11 @@ const DEV_TUNNEL_SCOPE_MAX_COUNT = 32;
  *
  * Generalizes the mod review sandbox (`apps-pipeline.service.ts` render +
  * `publish-request.service.ts` teardown) from "mod-bound, pending build" to
- * "author-bound, live sish tunnel". No DB migration: the credential/session state
- * is short-TTL and lives entirely in `sysRedis` (like the dev-token rate limiter +
- * the block Buzz cap), keyed under `system:blocks:dev-tunnel:*`.
+ * "author-bound, live sish tunnel". No DB migration: the state is short-TTL, keyed under
+ * `system:blocks:dev-tunnel:*`. The credential, session, host and spend records are in
+ * `sysRedis`; the per-user keys (the (user, block) pointer, the ban index and a start's client
+ * keys) are on the cache cluster, where an evicted one acts as if absent: a lost pointer reads as no
+ * tunnel, and a lost ban-index entry hides that tunnel from a ban until its hard TTL.
  *
  * DARK: every caller is gated by `app-blocks-dev-tunnel` (base off) upstream, so
  * none of this runs in prod until P3 flips the flag. The public `ssh -R` exposure
@@ -74,8 +83,11 @@ const SYS_PREFIX = REDIS_SYS_KEYS.BLOCKS.DEV_TUNNEL;
 const credKey = (fingerprint: string) => `${SYS_PREFIX}:cred:${fingerprint}` as const;
 const sessionKey = (sessionId: string) => `${SYS_PREFIX}:session:${sessionId}` as const;
 const hostKey = (host: string) => `${SYS_PREFIX}:host:${host}` as const;
+// The per-user keys are on the cache cluster, tagged `{<userId>}` so LIST_DEV_TUNNEL, which
+// writes the pointer and the index and reads the cancel mark, runs in one cluster slot.
+const USER_PREFIX = REDIS_KEYS.BLOCKS.DEV_TUNNEL_USER;
 const userBlockKey = (userId: number, blockId: string) =>
-  `${SYS_PREFIX}:user:${userId}:${blockId}` as const;
+  `${USER_PREFIX}:user:{${userId}}:${blockId}` as const;
 /**
  * A SET of the blockIds a user currently has a tunnel for.
  *
@@ -91,16 +103,18 @@ const userBlockKey = (userId: number, blockId: string) =>
  * Carries the same hard-TTL as every other key here, refreshed on each add, so a member
  * missed by teardown cannot outlive the session it names by more than that window.
  */
-const userTunnelIndexKey = (userId: number) => `${SYS_PREFIX}:user-index:${userId}` as const;
+const userTunnelIndexKey = (userId: number) => `${USER_PREFIX}:user-index:{${userId}}` as const;
 const spendKey = (sessionId: string) => `${SYS_PREFIX}:spend:${sessionId}` as const;
 /**
  * A caller's own key for one start (`StartDevTunnelParams.clientKey`): the session that start
  * opened, so a caller that gave up on its answer can still close it (`cancelDevTunnelStart`).
  */
 const clientStartKey = (userId: number, clientKey: string) =>
-  `${SYS_PREFIX}:client-start:${userId}:${clientKey}` as const;
+  `${USER_PREFIX}:client-start:{${userId}}:${clientKey}` as const;
 const clientCancelledKey = (userId: number, clientKey: string) =>
-  `${SYS_PREFIX}:client-cancelled:${userId}:${clientKey}` as const;
+  `${USER_PREFIX}:client-cancelled:{${userId}}:${clientKey}` as const;
+/** One bounded cache-cluster call; throws on a failure, a timeout or an open breaker. */
+const cluster = <T>(fn: string, op: () => Promise<T>) => boundedClusterCall(`devTunnel.${fn}`, op);
 /**
  * How long a start's client key is remembered: well past the moment a caller gives up on a start
  * (`RUNNER_DEV_TUNNEL_START_DEADLINE_MS` here, the runner's start timeout there), and nowhere near
@@ -850,7 +864,9 @@ export const DEV_TUNNEL_START_CANCELLED = 'dev tunnel start cancelled';
  */
 async function isStartCancelled(userId: number, clientKey: string): Promise<boolean> {
   try {
-    const mark = await withSysReadDeadline(sysRedis.get(clientCancelledKey(userId, clientKey)));
+    const mark = await cluster('isStartCancelled', () =>
+      redis.get(clientCancelledKey(userId, clientKey))
+    );
     return mark !== null && mark !== undefined;
   } catch {
     return false;
@@ -940,9 +956,11 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
     sysRedis.set(hostKey(host), sessionId, { EX: DEV_TUNNEL_HARD_SECONDS }),
     ...(clientKey
       ? [
-          sysRedis.set(clientStartKey(params.userId, clientKey), sessionId, {
-            EX: DEV_TUNNEL_CLIENT_KEY_SECONDS,
-          }),
+          cluster('start.clientKey', () =>
+            redis.set(clientStartKey(params.userId, clientKey), sessionId, {
+              EX: DEV_TUNNEL_CLIENT_KEY_SECONDS,
+            })
+          ),
         ]
       : []),
   ]);
@@ -1020,14 +1038,16 @@ async function listDevTunnel(
   session: DevTunnelSessionRecord,
   clientKey?: string
 ): Promise<boolean> {
-  const reply = await sysRedis.eval(LIST_DEV_TUNNEL, {
-    keys: [
-      userBlockKey(session.userId, session.blockId),
-      userTunnelIndexKey(session.userId),
-      ...(clientKey ? [clientCancelledKey(session.userId, clientKey)] : []),
-    ],
-    arguments: [session.sessionId, String(DEV_TUNNEL_HARD_SECONDS), session.blockId],
-  });
+  const reply = await cluster('list', () =>
+    redis.eval(LIST_DEV_TUNNEL, {
+      keys: [
+        userBlockKey(session.userId, session.blockId),
+        userTunnelIndexKey(session.userId),
+        ...(clientKey ? [clientCancelledKey(session.userId, clientKey)] : []),
+      ],
+      arguments: [session.sessionId, String(DEV_TUNNEL_HARD_SECONDS), session.blockId],
+    })
+  );
   return Number(reply) === 1;
 }
 
@@ -1039,10 +1059,8 @@ async function listDevTunnel(
  */
 async function releaseUserBlockPointer(session: DevTunnelSessionRecord): Promise<boolean> {
   try {
-    return await delIfValue(
-      sysRedis,
-      userBlockKey(session.userId, session.blockId),
-      session.sessionId
+    return await cluster('releasePointer', () =>
+      delIfValue(redis, userBlockKey(session.userId, session.blockId), session.sessionId)
     );
   } catch {
     return false;
@@ -1069,7 +1087,9 @@ async function teardownSession(
   // the method), and an index write must never break teardown.
   if (ownedPointer)
     try {
-      await sysRedis.sRem(userTunnelIndexKey(session.userId), session.blockId);
+      await cluster('unlist', () =>
+        redis.sRem(userTunnelIndexKey(session.userId), session.blockId)
+      );
     } catch {
       // best-effort
     }
@@ -1124,15 +1144,17 @@ export async function cancelDevTunnelStart(
 ): Promise<'stopped' | 'not_found' | 'unavailable'> {
   // The mark first, then the read: the order `startDevTunnel` relies on (see its end).
   try {
-    await sysRedis.set(clientCancelledKey(userId, clientKey), '1', {
-      EX: DEV_TUNNEL_CLIENT_KEY_SECONDS,
-    });
+    await cluster('cancel.mark', () =>
+      redis.set(clientCancelledKey(userId, clientKey), '1', {
+        EX: DEV_TUNNEL_CLIENT_KEY_SECONDS,
+      })
+    );
   } catch {
     return 'unavailable';
   }
   let sessionId: unknown;
   try {
-    sessionId = await withSysReadDeadline(sysRedis.get(clientStartKey(userId, clientKey)));
+    sessionId = await cluster('cancel.read', () => redis.get(clientStartKey(userId, clientKey)));
   } catch {
     return 'unavailable';
   }
@@ -1145,7 +1167,7 @@ export async function cancelDevTunnelStart(
  *  blockId). */
 export async function stopDevTunnelForUserBlock(userId: number, blockId: string): Promise<boolean> {
   // The user-block index stores a BARE sessionId string (not JSON).
-  const sessionId = await withSysReadDeadline(sysRedis.get(userBlockKey(userId, blockId))).catch(
+  const sessionId = await cluster('pointer', () => redis.get(userBlockKey(userId, blockId))).catch(
     () => null
   );
   if (!sessionId || typeof sessionId !== 'string') return false;
@@ -1170,7 +1192,7 @@ export async function stopDevTunnelForUserBlock(userId: number, blockId: string)
  */
 export async function listActiveDevTunnelBlockIds(userId: number): Promise<string[]> {
   try {
-    const members = await withSysReadDeadline(sysRedis.sMembers(userTunnelIndexKey(userId)));
+    const members = await cluster('listActive', () => redis.sMembers(userTunnelIndexKey(userId)));
     return Array.isArray(members) ? members.filter((m): m is string => typeof m === 'string') : [];
   } catch {
     return [];
@@ -1183,7 +1205,7 @@ export async function getActiveDevTunnel(
   userId: number,
   blockId: string
 ): Promise<DevTunnelSessionRecord | null> {
-  const sessionId = await withSysReadDeadline(sysRedis.get(userBlockKey(userId, blockId))).catch(
+  const sessionId = await cluster('pointer', () => redis.get(userBlockKey(userId, blockId))).catch(
     () => null
   );
   if (!sessionId || typeof sessionId !== 'string') return null;

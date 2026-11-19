@@ -182,6 +182,19 @@ describe('PostImageDropzone — a pick over the post limit', () => {
     expect(fullReads.map((read) => read.mock.calls.length)).toEqual([1, 1, 0]);
   });
 
+  test('counts uploads still in flight against the limit', async () => {
+    mocks.images = Array.from({ length: POST_IMAGE_LIMIT - 2 }, (_, i) => ({
+      type: 'added',
+      data: { id: i, url: `u${i}` },
+    }));
+    renderDropzone();
+    await chooseFiles(dropzoneInput(), [imageFile('first-0.jpg'), imageFile('first-1.jpg')]);
+    await vi.waitFor(() => expect(mocks.uploadToS3).toHaveBeenCalledTimes(2));
+    await expect
+      .element(page.getByText(`${POST_IMAGE_LIMIT} / ${POST_IMAGE_LIMIT} files`, { exact: true }))
+      .toBeVisible();
+  });
+
   test('shows how many of the post limit are used', async () => {
     mocks.images = Array.from({ length: POST_IMAGE_LIMIT - 2 }, (_, i) => ({
       type: 'added',

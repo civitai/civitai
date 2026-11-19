@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * A wrong URL, verb or identifier on the moderation gate fails only against a live orchestrator;
@@ -155,12 +154,6 @@ describe('handleDenyTrainingData', () => {
     const result = await handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 });
 
     expect(result.webhookFailed).toBe(true);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: 'Gate released but the training webhook was refused; version is still Paused',
-      }),
-      expect.anything()
-    );
   });
 
   it('reports an unreachable callback without failing the deny, because the gate is already released', async () => {

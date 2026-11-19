@@ -57,6 +57,7 @@ describe('deal-files', () => {
       userId: 99,
       isModerator: true,
       canReviewCsam: false,
+      servableLevels: 31,
     });
   });
 

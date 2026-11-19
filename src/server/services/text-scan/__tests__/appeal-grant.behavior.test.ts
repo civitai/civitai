@@ -258,7 +258,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockSetModelMinor.mockReset();
   mockSideEffects.mockReset();
-  redisMock.sysRedis.eval.mockResolvedValue(1 as never);
+  redisMock.redis.eval.mockResolvedValue(1 as never);
   searchMode.value = 'off';
   labelMode.value = 'auto';
   labelMode.beforeRead = undefined;
@@ -914,12 +914,12 @@ describe('resolution safety', () => {
 
   it('refuses a request while another resolution of the same label runs', async () => {
     await setup();
-    redisMock.sysRedis.set.mockResolvedValueOnce(null as never);
+    redisMock.redis.set.mockResolvedValueOnce(null as never);
 
     await expect(resolve('minor', true)).rejects.toThrow(/being resolved/);
 
     expect(mockSetModelMinor).not.toHaveBeenCalled();
-    expect(redisMock.sysRedis.del).not.toHaveBeenCalled();
+    expect(redisMock.redis.del).not.toHaveBeenCalled();
     expect((await stored()).meta.textScanFlags.minor.redetected?.textHash).toBe(NEWER);
   });
 
@@ -928,7 +928,7 @@ describe('resolution safety', () => {
     await resolve('minor', false);
 
     const key = `system:text-scan:redetection-lock:${MODEL_ID}:minor`;
-    const [setKey, token, options] = redisMock.sysRedis.set.mock.calls[0] as unknown as [
+    const [setKey, token, options] = redisMock.redis.set.mock.calls[0] as unknown as [
       string,
       string,
       unknown
@@ -937,21 +937,21 @@ describe('resolution safety', () => {
     expect(options).toEqual({ NX: true, EX: 120 });
     expect(token).not.toBe('1');
     // Compare-and-delete: the script frees the key only while it still holds this request's token.
-    const [script, args] = redisMock.sysRedis.eval.mock.calls[0] as unknown as [
+    const [script, args] = redisMock.redis.eval.mock.calls[0] as unknown as [
       string,
       { keys: string[]; arguments: string[] }
     ];
     expect(script).toContain("GET', KEYS[1]) == ARGV[1]");
     expect(args).toEqual({ keys: [key], arguments: [token] });
-    expect(redisMock.sysRedis.del).not.toHaveBeenCalled();
+    expect(redisMock.redis.del).not.toHaveBeenCalled();
 
     // A second request holds a different token, so it never releases the first's.
-    redisMock.sysRedis.set.mockClear();
-    redisMock.sysRedis.eval.mockClear();
+    redisMock.redis.set.mockClear();
+    redisMock.redis.eval.mockClear();
     await expect(resolve('minor', false)).rejects.toThrow();
-    const secondToken = (redisMock.sysRedis.set.mock.calls[0] as unknown as string[])[1];
+    const secondToken = (redisMock.redis.set.mock.calls[0] as unknown as string[])[1];
     expect(secondToken).not.toBe(token);
-    expect(redisMock.sysRedis.eval).toHaveBeenCalledTimes(1);
+    expect(redisMock.redis.eval).toHaveBeenCalledTimes(1);
   });
 
   it('removes an emptied label entry and the flags object when dismissing on a flagged model', async () => {

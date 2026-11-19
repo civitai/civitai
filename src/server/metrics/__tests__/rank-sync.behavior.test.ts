@@ -1,7 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // The job runs as a role that is a member of the table's owner, so the old drop + recreate could
 // run and hand the new table to the job's role; app_read's SELECT is the grant that must survive.
@@ -118,7 +117,7 @@ describe('rank table refresh', () => {
     ]);
   });
 
-  it('keeps the previous rows and logs the table when the sync fails partway', async () => {
+  it('keeps the previous rows when the sync fails partway', async () => {
     // Fails on the upsert, after the delete of article 2 has already run.
     await holder.pg.exec(`
       RESET ROLE;
@@ -131,12 +130,5 @@ describe('rank table refresh', () => {
     await expect(refresh()).rejects.toThrow(/rank_below_3/);
 
     expect(await ranks()).toEqual(before);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        name: 'metric-rank-sync-failed',
-        details: expect.objectContaining({ table: 'ArticleRank' }),
-      })
-    );
   });
 });

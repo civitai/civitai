@@ -32,6 +32,8 @@ export type TipaltiResyncRow = {
   before: { status: string | null; paymentsEnabled: boolean } | null;
   tipalti: {
     status: string;
+    /** Tipalti's own string, before mapping to ours. Reported only. */
+    rawStatus: string | null;
     isPayable: boolean | null;
     unpayableReasons: string[] | null;
     lastChangeDateTimeUTC: string | null;
@@ -143,6 +145,7 @@ export async function resyncTipaltiPayees({
     const reasons = unpayableReasonsSchema.safeParse(raw.unpayableReasons);
     row.tipalti = {
       status: payee.status,
+      rawStatus: typeof raw.status === 'string' ? raw.status.slice(0, 64) : null,
       isPayable: typeof payee.isPayable === 'boolean' ? payee.isPayable : null,
       // Reported only, never written or passed on: updateByTipaltiAccount emails the user on a 'tax' reason.
       unpayableReasons: reasons.success ? reasons.data : null,

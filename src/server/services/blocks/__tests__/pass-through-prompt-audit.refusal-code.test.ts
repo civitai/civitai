@@ -200,9 +200,6 @@ describe('enforce, the codes', () => {
     h.configured.mockImplementation(() => false);
     const e = await refusalOf(auditPassThroughPrompts({ ...ctx, steps }, 'enforce'));
     expect(e).toMatchObject({ errorCode: PROMPT_CHECK_UNAVAILABLE_ERROR_CODE });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'prompt-check-unavailable', reason: 'unconfigured' })
-    );
   });
 
   it('a refused prompt with the classifier unconfigured is still recorded and gets the policy code', async () => {

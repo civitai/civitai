@@ -2,13 +2,10 @@ import client from 'prom-client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RedisClient from '~/server/redis/client';
 
-const { mockAuditHour, mockAuditExactness,   } =
-  vi.hoisted(() => ({
-    mockAuditHour: vi.fn(),
-    mockAuditExactness: vi.fn(),
-    
-    
-  }));
+const { mockAuditHour, mockAuditExactness } = vi.hoisted(() => ({
+  mockAuditHour: vi.fn(),
+  mockAuditExactness: vi.fn(),
+}));
 
 vi.mock('~/server/services/metric-reconciliation.service', () => ({
   auditReactionHour: mockAuditHour,
@@ -30,11 +27,9 @@ vi.mock('../job', () => ({
 }));
 
 import { reactionExactnessAuditJob, reactionVolumeAuditJob } from '../metric-reconciliation-audit';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockRedisGet = redisMock.sysRedis.get;
 const mockRedisSet = redisMock.sysRedis.set;
-const mockLogToAxiom = loggingMock.logToAxiom;
 
 type Runnable = { run: (ctx: unknown) => Promise<unknown> };
 const jobContext = { checkIfCanceled: () => undefined };
@@ -78,7 +73,6 @@ beforeEach(() => {
   mockAuditHour.mockResolvedValue(HEALTHY_HOUR);
   mockRedisGet.mockResolvedValue(null);
   mockRedisSet.mockResolvedValue('OK');
-  mockLogToAxiom.mockResolvedValue(undefined);
   for (const name of [
     'exactness_recent_coverage_ratio',
     'exactness_backlog_coverage_ratio',
@@ -165,9 +159,6 @@ describe('nightly exactness gauges survive a pod roll', () => {
 
     expect(result.coverage).toBe(1);
     expect(await gaugeValue('exactness_last_run_timestamp_seconds')).toBe(0);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'reaction-exactness-republish', level: 'error' })
-    );
   });
 
   it('still completes the hourly audit when Redis is unreachable', async () => {

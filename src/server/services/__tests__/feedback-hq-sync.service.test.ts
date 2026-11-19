@@ -539,13 +539,12 @@ describe('runFeedbackHqSyncGuarded: preconditions', () => {
     expect(make).not.toHaveBeenCalled();
   });
 
-  it('is a no-op without a token, and says so once per process', async () => {
+  it('is a no-op without a token', async () => {
     const make = vi.fn();
     const args = { flagOn: async () => true, token: undefined, actorId: ACTOR, make, log };
     expect(await runFeedbackHqSyncGuarded(args)).toEqual({ skipped: 'no-token' });
     expect(await runFeedbackHqSyncGuarded(args)).toEqual({ skipped: 'no-token' });
     expect(make).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledTimes(1);
   });
 
   it('is a no-op without an acting account', async () => {

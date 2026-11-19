@@ -947,7 +947,7 @@
     "src/server/jobs/reaction-withdrawal-detection.ts": 1,
     "src/server/jobs/reconcile-nowpayments.ts": 1,
     "src/server/jobs/relabel-build-batch.ts": 1,
-    "src/server/jobs/retry-image-storage-deletes.ts": 1,
+    "src/server/jobs/image-storage-deletes.ts": 1,
     "src/server/jobs/watch-open-nowpayments.ts": 1,
     "src/server/logging/client.ts": 1,
     "src/server/logging/image-render-sample.ts": 2,
