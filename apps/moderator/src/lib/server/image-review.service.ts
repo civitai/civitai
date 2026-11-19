@@ -496,7 +496,7 @@ export async function getReportedImageQueue({
       'i.modelRestricted',
       'i.ingestion',
       'i.blockedFor',
-      sql<boolean>`(i."metadata" -> 'ruleId') IS NOT NULL AND (i."metadata" -> 'accountDeletionPriorIngestion') IS NULL`.as(
+      sql<boolean>`EXISTS (SELECT 1 FROM "ModerationRule" mr WHERE mr.id::text = i."metadata"->>'ruleId' AND mr.action = 'Block') AND (i."metadata" -> 'accountDeletionPriorIngestion') IS NULL`.as(
         'ruleBlocked'
       ),
       'i.userId',

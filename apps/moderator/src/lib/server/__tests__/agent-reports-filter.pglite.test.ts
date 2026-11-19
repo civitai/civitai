@@ -64,6 +64,7 @@ CREATE TABLE "Image" (
   "modelRestricted" BOOLEAN NOT NULL DEFAULT FALSE,
   "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT, "metadata" JSONB
 );
+CREATE TABLE "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT NOT NULL);
 INSERT INTO "User" ("id", "username") VALUES
   (${HUMAN}, 'human'), (${AGENT_A}, 'agent-a'), (${AGENT_B}, 'agent-b'), (10, 'owner');
 INSERT INTO "Post" VALUES (1, 10, 'p');

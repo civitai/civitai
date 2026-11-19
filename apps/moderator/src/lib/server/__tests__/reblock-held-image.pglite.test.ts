@@ -130,6 +130,8 @@ CREATE TABLE "Appeal" (
   "entityRemovedAt" TIMESTAMP(3)
 );
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT NOT NULL);
+INSERT INTO "ModerationRule" ("id", "action") VALUES (5, 'Block'), (6, 'Hold');
 -- Rates a restored image as its tags would: an untagged one would go back to the scanner.
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$
   UPDATE "Image" SET "nsfwLevel" = 1
@@ -525,6 +527,27 @@ describe('a verdict on a report of an image a moderator already removed', () => 
       expect(result).toMatchObject({ notMoved: expect.stringContaining(`#${report(HELD)}`) });
     }
   );
+
+  it('Unaction refuses an image a moderator removed from a Hold rule, whose rule keys stayed on', async () => {
+    const HELD_BY_RULE = 71;
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash", "metadata") VALUES
+        ($1, 7, NULL, 'moderated', 'Blocked', 32, 111, '{"ruleId": 6, "ruleReason": "h"}')`,
+      [HELD_BY_RULE]
+    );
+    await db.query(`INSERT INTO "ImageReport" ("imageId", "reportId") VALUES ($1, $2)`, [
+      HELD_BY_RULE,
+      report(HELD_BY_RULE),
+    ]);
+
+    const result = await verdict('accept', HELD_BY_RULE);
+
+    expect(await row(HELD_BY_RULE)).toMatchObject({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+    });
+    expect(result).toMatchObject({ success: true, closedReportIds: [report(HELD_BY_RULE)] });
+  });
 
   describe('an image an automated moderation rule blocked', () => {
     const RULE_BLOCKED = 70;

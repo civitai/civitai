@@ -72,10 +72,15 @@ const ACCOUNT_DELETION_PRIOR_INGESTION_KEY = 'accountDeletionPriorIngestion';
 const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
 const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
 
+/** Blocked by an automated moderation rule whose action is Block. A Hold rule's keys stay on an image a
+ *  moderator later removed (before moderator blocks dropped them), so the rule's action decides, not the
+ *  key alone. Compared as text, so a malformed `ruleId` reads as no rule rather than failing. */
+const RULE_BLOCKED = sql<boolean>`EXISTS (SELECT 1 FROM "ModerationRule" mr WHERE mr.id::text = "Image"."metadata"->>'ruleId' AND mr.action = 'Block')`;
+
 /** Removed by a moderator, or under an account-deletion grace block, which a report verdict does not lift
  *  either. Not a block by an automated moderation rule (`metadata.ruleId`): a report review is where a rule's
  *  false positive is restored. Never NULL, so `NOT` of it is safe. */
-const REMOVED_BY_MODERATOR = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS NOT DISTINCT FROM ${BLOCKED_REASON_MODERATED} AND (("metadata" -> 'ruleId') IS NULL OR ("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NOT NULL))`;
+const REMOVED_BY_MODERATOR = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS NOT DISTINCT FROM ${BLOCKED_REASON_MODERATED} AND (NOT ${RULE_BLOCKED} OR ("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NOT NULL))`;
 /** `isModerationBlocked` as a condition: a grace block is not one. Remove still blocks a grace-blocked image,
  *  which strips its breadcrumbs, so a later account restore cannot put it back. */
 const MODERATION_BLOCKED = sql<boolean>`(${REMOVED_BY_MODERATOR} AND ("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NULL)`;

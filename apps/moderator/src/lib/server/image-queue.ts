@@ -526,6 +526,7 @@ export const imageQueueActions = {
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
     const refused: number[] = [];
     const removed: number[] = [];
+    const underCsamReview: number[] = [];
     const graceBlocked = new Set<number>();
     // Emails only the appeals this request closed, once per appellant instead of per image.
     const closed = await Promise.all(
@@ -542,8 +543,11 @@ export const imageQueueActions = {
             if (e.graceBlock) graceBlocked.add(imageId);
             return undefined;
           }
-          if (!(e instanceof RemovedImageNotRestorableError || e instanceof CsamReviewImageError))
-            throw e;
+          if (e instanceof CsamReviewImageError) {
+            underCsamReview.push(imageId);
+            return undefined;
+          }
+          if (!(e instanceof RemovedImageNotRestorableError)) throw e;
           refused.push(imageId);
           return undefined;
         })
@@ -571,14 +575,19 @@ export const imageQueueActions = {
       ...(notMoved && { notMoved }),
     };
     // A partial batch moves no other report: the refused images' reports stay open.
-    if (refused.length)
+    if (refused.length || underCsamReview.length)
       return fail(409, {
         ...notice,
         error: [
-          `${imageIds.length - refused.length - removed.length} of ${imageIds.length} accepted.`,
+          `${imageIds.length - refused.length - underCsamReview.length - removed.length} of ${
+            imageIds.length
+          } accepted.`,
           reportIds.length ? `No ${closedReportIds.length ? 'other ' : ''}report was moved.` : '',
-          `Not accepted (${REMOVED_REASON}): ${refused.join(', ')}.`,
-          REMOVED_REMEDY,
+          refused.length ? `Not accepted (${REMOVED_REASON}): ${refused.join(', ')}.` : '',
+          refused.length ? REMOVED_REMEDY : '',
+          underCsamReview.length
+            ? `Not accepted (under CSAM review, left to that queue): ${underCsamReview.join(', ')}.`
+            : '',
         ]
           .filter(Boolean)
           .join(' '),
