@@ -19,7 +19,6 @@ func TestParseInfiniteBaseModels(t *testing.T) {
 		want  []string
 	}{
 		{`{"limit":10}`, nil},
-		{`{"baseModels":null}`, nil},
 		{`{"baseModels":[]}`, []string{}},
 		{`{"baseModels":["Pony"]}`, []string{"Pony"}},
 		// Order, repeats and an empty name as sent; any string (the schema has no enum).
@@ -37,6 +36,7 @@ func TestParseInfiniteBaseModels(t *testing.T) {
 	}
 	for input, want := range map[string]string{
 		`{"baseModels":"Pony"}`:             "input-invalid",
+		`{"baseModels":null}`:               "input-invalid",
 		`{"baseModels":42}`:                 "input-invalid",
 		`{"baseModels":{"0":"Pony"}}`:       "input-invalid",
 		`{"baseModels":["Pony",null]}`:      "input-invalid",

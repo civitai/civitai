@@ -164,20 +164,20 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 		}
 		in.Pending = b
 	}
-	if in.BaseModels, err = baseModelNames(m["baseModels"]); err != nil {
-		return nil, err
+	if v, ok := m["baseModels"]; ok {
+		if in.BaseModels, err = baseModelNames(v); err != nil {
+			return nil, err
+		}
 	}
 	return in, nil
 }
 
 // baseModelNames reads `baseModels` (z.string().array()): a list of strings, kept as sent (order,
 // repeats and empty strings included: getAllImages binds the whole list, the feed query drops the
-// empty ones). Not a list, or an entry that is not a string, is the schema's BAD_REQUEST
-// (input-invalid). An absent or null value is no filter.
+// empty ones). A present value that is not a list (a literal null included: the field is
+// `.optional()`, not `.nullish()`), or an entry that is not a string, is the schema's BAD_REQUEST
+// (input-invalid). The caller skips an absent key, which is no filter.
 func baseModelNames(v any) ([]string, error) {
-	if v == nil {
-		return nil, nil
-	}
 	list, ok := v.([]any)
 	if !ok {
 		return nil, fallback.NewfSafe("input-invalid", "baseModels", "baseModels: %T", v)

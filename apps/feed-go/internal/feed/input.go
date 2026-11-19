@@ -221,8 +221,9 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 		return nil, err
 	}
 	if v, ok := m["include"]; ok && v != nil {
-		// The default is ['cosmetics']; 'meta' is what withMeta adds. Anything else hydrates more
-		// (tags, report, count, metaSelect) and is not ported.
+		// The default is ['cosmetics']; 'meta' is what withMeta adds. Anything else falls back here:
+		// 'tags' and 'metaSelect' hydrate more and are not ported; image.getInfinite removes the
+		// 'count'/'report' it never reads before this runs (withoutUnreadIncludes).
 		list, ok := v.([]any)
 		if !ok {
 			return nil, fallback.New("input-invalid")
