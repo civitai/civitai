@@ -343,6 +343,10 @@ export async function createRealPgHarness(): Promise<Harness> {
   await su.connect();
   await su.query(readFileSync(MIGRATION_UP, 'utf8'));
   await su.query(readFileSync(MIGRATION_APP_PURGE_UP, 'utf8'));
+  // The `doc.record_id` column and its default, as on PGlite and in every environment (the
+  // record export reads it). Its unique index is built CONCURRENTLY, which a multi-statement
+  // query cannot run, and no suite here needs it.
+  await su.query(readFileSync(MIGRATION_RECORD_ID_UP, 'utf8'));
   const open = new Set<Client>();
   // Ends started by release() and not awaited there. close() waits for them before the FORCE drop:
   // a client still closing when its backend is killed gets a FATAL 57P01 with no 'error' listener,
