@@ -10,10 +10,12 @@ import {
 // The services filter by what the domain may be sent; only the router knows the domain. A router
 // that passed the wrong level would leak mature services to the SFW site with every service test green.
 
-const { mockGetMine, mockGetForShop, mockGetFeed } = vi.hoisted(() => ({
+const { mockGetMine, mockGetForShop, mockGetFeed, mockGetById, flags } = vi.hoisted(() => ({
   mockGetMine: vi.fn(),
   mockGetForShop: vi.fn(),
   mockGetFeed: vi.fn(),
+  mockGetById: vi.fn(),
+  flags: { creatorShop: true, creatorServices: true, creatorServicesNext: true },
 }));
 
 vi.mock('~/server/services/creator-service.service', async (importOriginal) => ({
@@ -21,13 +23,14 @@ vi.mock('~/server/services/creator-service.service', async (importOriginal) => (
   getMyServiceOfferings: mockGetMine,
   getShopServiceOfferings: mockGetForShop,
   getServiceOfferingFeed: mockGetFeed,
+  getServiceOfferingById: mockGetById,
 }));
 
 // The flag gate reads `getFeatureFlags(ctx)` (Flipt), not `ctx.features`; turned on here so the
 // call reaches the procedure. The domain is read from `ctx.features`, as in production.
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
-  getFeatureFlags: () => ({ creatorShop: true, creatorServices: true }),
+  getFeatureFlags: () => flags,
 }));
 
 const { creatorServiceRouter } = await import('~/server/routers/creator-service.router');
@@ -51,6 +54,8 @@ beforeEach(() => {
   mockGetMine.mockResolvedValue({ items: [], hiddenOffDomain: 0 });
   mockGetForShop.mockResolvedValue([]);
   mockGetFeed.mockResolvedValue({ items: [] });
+  mockGetById.mockResolvedValue({});
+  flags.creatorServicesNext = true;
 });
 
 describe('creator service router: what the domain may be sent', () => {
@@ -116,4 +121,20 @@ describe('creator service router: what the domain may be sent', () => {
       });
     }
   );
+});
+
+describe('creator service router: one service page', () => {
+  it.each([
+    ['the SFW site', true, sfwBrowsingLevelsFlag],
+    ['civitai.red', false, allBrowsingLevelsFlag],
+  ] as const)('sends what %s may serve', async (_, green, servable) => {
+    await callerOn(green).getById({ id: 3 });
+    expect(mockGetById.mock.calls[0][0]).toMatchObject({ id: 3, viewerId: 7, servable });
+  });
+
+  it('is refused without the creatorServicesNext flag', async () => {
+    flags.creatorServicesNext = false;
+    await expect(callerOn(false).getById({ id: 3 })).rejects.toThrow();
+    expect(mockGetById).not.toHaveBeenCalled();
+  });
 });

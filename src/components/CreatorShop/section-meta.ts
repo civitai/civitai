@@ -10,6 +10,7 @@ import {
 } from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import type { CreatorShopSectionKey } from '~/server/schema/creator-shop.schema';
+import { slugit } from '~/utils/string-helpers';
 import { creatorShopSectionKeys } from '~/server/schema/creator-shop.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
@@ -65,3 +66,21 @@ export const serviceCardId = (offeringId: number) => `service-${offeringId}`;
 /** An offering's card on its seller's storefront. */
 export const serviceStorefrontHref = (username: string, offeringId: number) =>
   `/user/${username}/shop#${serviceCardId(offeringId)}`;
+
+/** An offering's own page. */
+export const servicePageHref = (offeringId: number, title?: string) =>
+  title ? `/services/${offeringId}/${slugit(title)}` : `/services/${offeringId}`;
+
+/** Where a card links: the offering's page behind `creatorServicesNext`, else its storefront card. */
+export const serviceHref = ({
+  username,
+  offering,
+  next,
+}: {
+  username: string;
+  offering: { id: number; title: string };
+  next: boolean;
+}) =>
+  next
+    ? servicePageHref(offering.id, offering.title)
+    : serviceStorefrontHref(username, offering.id);
