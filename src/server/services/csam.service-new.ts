@@ -2782,6 +2782,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
    * Writes the base evidence bundle to disk, then uploads it: `user`, `reportId`, `models`,
    * `modelVersions`, `images`, then one section per `userContentSections` entry.
    *
+   * Paging cost: `Image` has `@@index([userId, id])`, which serves the one large scan. `Model` has no
+   * `userId` index and `ModelVersion`'s `modelId` index is a hash index (equality, no ordering);
+   * both are accepted because a user's model and version counts are small.
+   *
    * Streamed because `JSON.stringify` cannot exceed V8's maximum string length: a bundle past it
    * could never be archived. Rows are written `id ASC`, so a bundle is not byte-comparable with one
    * written before paging.
