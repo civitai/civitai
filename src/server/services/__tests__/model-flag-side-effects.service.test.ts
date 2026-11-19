@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
 
 // Unit tests for applyModelFlagSideEffects — the post-update flag fan-out
 // extracted from upsertModel (model tag/search-index refresh, gallery cache
@@ -153,7 +155,32 @@ const baseAfter = {
 // $queryRaw is called as a template tag: [strings, ...values].
 function imageUpdateCall() {
   const [strings, ...values] = mockDbWrite.$queryRaw.mock.calls[0];
-  return { sql: (strings as string[]).join('?'), values };
+  const query = Prisma.sql(strings as TemplateStringsArray, ...values);
+  return { sql: query.sql, text: query.text, values: query.values };
+}
+
+/** Runs the image UPDATE the call made against real tables holding one image on version 100. */
+async function imageAfterUpdate(image: { minor: boolean; poi: boolean }) {
+  const db = new PGlite();
+  try {
+    await db.exec(`
+      CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
+      CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, minor boolean, poi boolean);
+      INSERT INTO "Post" VALUES (1, 100);
+    `);
+    await db.query('INSERT INTO "Image" VALUES (900, 1, $1, $2)', [image.minor, image.poi]);
+    const { text, values } = imageUpdateCall();
+    const INT4_OID = 23;
+    await db.query(text, values, {
+      paramTypes: values.map((v) => (Number.isInteger(v) ? INT4_OID : 0)),
+    });
+    const { rows } = await db.query<{ minor: boolean; poi: boolean }>(
+      'SELECT minor, poi FROM "Image" WHERE id = 900'
+    );
+    return rows[0];
+  } finally {
+    await db.close();
+  }
 }
 
 afterEach(() => {
@@ -256,6 +283,22 @@ describe('applyModelFlagSideEffects — image propagation', () => {
   it('🔴 requeues the documents showing the images it flagged minor', async () => {
     await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, minor: true } });
     expect(mockQueueImageDocuments).toHaveBeenCalledWith({ minorImageIds: [900] });
+  });
+
+  it("🔴 a poi change on a non-minor model keeps an image's own minor flag", async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, poi: true } });
+    expect(await imageAfterUpdate({ minor: true, poi: false })).toEqual({ minor: true, poi: true });
+  });
+
+  it('a minor model still writes minor onto its images on a poi change (control)', async () => {
+    await applyModelFlagSideEffects({
+      before: { ...baseBefore, minor: true },
+      after: { ...baseAfter, minor: true, poi: true },
+    });
+    expect(await imageAfterUpdate({ minor: false, poi: false })).toEqual({
+      minor: true,
+      poi: true,
+    });
   });
 
   it('does not requeue them for a poi-only change (control)', async () => {

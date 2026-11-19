@@ -2842,8 +2842,12 @@ export async function applyModelFlagSideEffects({
 
   let modelVersionIds: number[] | undefined;
 
-  // The image rows don't carry sfwOnly; a held model always re-syncs them (the value guard makes it a no-op).
+  // A sfwOnly-only change leaves image rows alone: they carry no sfwOnly. A minor model re-syncs
+  // its images on every flag write, so an image added since the last one is flagged too.
   const syncImageFlags = after.minor !== before.minor || poiChanged || after.minor;
+  // An image's own minor flag (set by a scan or a moderator) is written only by a change to the
+  // model's minor flag or by a minor model: a poi-only change on a non-minor model leaves it.
+  const syncMinor = after.minor !== before.minor || after.minor;
   if (minorChanged || poiChanged) {
     modelVersionIds = (
       await dbWrite.modelVersion.findMany({ where: { modelId: id }, select: { id: true } })
@@ -2858,12 +2862,14 @@ export async function applyModelFlagSideEffects({
         ? []
         : await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Image" i
-          SET minor = ${after.minor},
+          SET ${syncMinor ? Prisma.sql`minor = ${after.minor},` : Prisma.empty}
               poi = ${after.poi}
         FROM "Post" p
         WHERE i."postId" = p.id
           AND p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
-          AND (i.minor IS DISTINCT FROM ${after.minor} OR i.poi IS DISTINCT FROM ${after.poi})
+          AND (${
+            syncMinor ? Prisma.sql`i.minor IS DISTINCT FROM ${after.minor} OR` : Prisma.empty
+          } i.poi IS DISTINCT FROM ${after.poi})
         RETURNING i.id
       `;
 
