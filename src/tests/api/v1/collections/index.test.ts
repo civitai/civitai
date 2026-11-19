@@ -551,6 +551,27 @@ describe.each(['list', 'detail'] as const)('public collection cover (%s)', (endp
   });
 });
 
+// The detail endpoint serves public levels only, so an R cover never reaches it.
+describe('child-tagged mature cover (list, nsfw=true)', () => {
+  const endpoint = 'list';
+  const query = { nsfw: 'true' };
+  const rCover = { ...cleanCover, nsfwLevel: NsfwLevel.R };
+
+  it('withholds an R cover carrying a child tag', async () => {
+    const item = await requestCollection(
+      endpoint,
+      { ...rCover, tags: [{ tagId: 5351 }] },
+      { query }
+    );
+    expect(item.coverImage).toBeNull();
+  });
+
+  it('shows the same R cover without a child tag', async () => {
+    const item = await requestCollection(endpoint, { ...rCover, tags: [] }, { query });
+    expect(item.coverImage).toMatchObject({ id: 99, nsfwLevel: NsfwLevel.R });
+  });
+});
+
 describe.each(['list', 'detail'] as const)('held gallery level on the cover (%s)', (endpoint) => {
   const query: Record<string, string> = endpoint === 'list' ? { nsfw: 'true' } : {};
 
