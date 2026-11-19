@@ -90,7 +90,7 @@ import {
   ReviewConsoleSummary,
 } from '~/components/Apps/ReviewConsole';
 // eslint-disable-next-line import/first
-import { createReviewConsoleStore } from '~/components/Apps/reviewConsole';
+import { createReviewConsoleStore } from '~/components/Apps/reviewConsoleStore';
 
 const fetchSpy = vi.spyOn(window, 'fetch');
 

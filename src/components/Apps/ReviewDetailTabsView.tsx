@@ -27,7 +27,7 @@ import {
   ReviewConsolePanel,
   ReviewConsoleProvider,
 } from '~/components/Apps/ReviewConsole';
-import { createReviewConsoleStore } from '~/components/Apps/reviewConsole';
+import { createReviewConsoleStore } from '~/components/Apps/reviewConsoleStore';
 import { ReviewListingMediaLive } from '~/components/Apps/ReviewListingMediaLive';
 import { ReviewOverviewPanel } from '~/components/Apps/ReviewOverviewPanel';
 import {

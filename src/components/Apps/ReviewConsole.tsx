@@ -12,11 +12,11 @@ import {
   type ReviewConsoleEntry,
   type ReviewConsoleState,
   type ReviewConsoleStore,
-} from '~/components/Apps/reviewConsole';
+} from '~/components/Apps/reviewConsoleStore';
 
 /**
  * The review page's CONSOLE view: the app's errors from the review preview, for the moderator's
- * own session (`reviewConsole.ts` holds the rules and says why nothing is stored).
+ * own session (`reviewConsoleStore.ts` holds the rules and says why nothing is stored).
  *
  * 🔴 EVERY STRING HERE IS UNTRUSTED APP OUTPUT, RENDERED AS TEXT. Messages and stacks come from
  * the unapproved app's own code. They only ever reach the DOM as React text children (and the

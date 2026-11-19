@@ -5,7 +5,7 @@ import {
   parseBlockReadySdk,
   REVIEW_CONSOLE_MIN_SDK,
   sdkForwardsReviewErrors,
-} from '~/components/Apps/reviewConsole';
+} from '~/components/Apps/reviewConsoleStore';
 import {
   BLOCK_ERRORS_CAPABILITY,
   BLOCK_HOST_ERROR_REPORTS,
