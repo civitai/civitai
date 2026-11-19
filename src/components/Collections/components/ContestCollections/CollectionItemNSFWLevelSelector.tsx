@@ -1,4 +1,5 @@
-import { SegmentedControl } from '@mantine/core';
+import { SegmentedControl, Text } from '@mantine/core';
+import { useState } from 'react';
 import { useCollection, useMutateCollection } from '~/components/Collections/collection.utils';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
 
@@ -19,6 +20,15 @@ export const CollectionItemNSFWLevelSelector = ({
     updatingCollectionItemNsfwLevel,
     updateCollectionItemNsfwLevelPayload,
   } = useMutateCollection();
+  // The item and level a rescan was started at: the note clears once either changes, e.g. when the
+  // item refetches with the rescan's level.
+  const [rescanStartedAt, setRescanStartedAt] = useState<{
+    collectionItemId: number;
+    nsfwLevel?: number;
+  }>();
+  const rescanning =
+    rescanStartedAt?.collectionItemId === collectionItemId &&
+    rescanStartedAt.nsfwLevel === nsfwLevel;
 
   const handleNSFWLevelChange = (value: string) => {
     updateCollectionItemNsfwLevel(
@@ -27,8 +37,13 @@ export const CollectionItemNSFWLevelSelector = ({
         nsfwLevel: parseInt(value, 10),
       },
       {
-        onSuccess: async () => {
-          onNsfwLevelUpdated?.(value);
+        // The saved level is the higher of the pick and the scan's level. A raise into an NSFW level
+        // is saved once the rescan's checks have run at it, so until then the old level shows.
+        onSuccess: async (res) => {
+          setRescanStartedAt(
+            res?.rescanning ? { collectionItemId, nsfwLevel: res.nsfwLevel } : undefined
+          );
+          onNsfwLevelUpdated?.(String(res?.nsfwLevel ?? value));
         },
       }
     ).catch(() => null);
@@ -41,17 +56,24 @@ export const CollectionItemNSFWLevelSelector = ({
   if (!judgesCanApplyRatings || !permissions?.manage) return null;
 
   return (
-    <SegmentedControl
-      value={nsfwLevel?.toString() ?? undefined}
-      onChange={handleNSFWLevelChange}
-      data={browsingLevels.map((level) => ({
-        value: level.toString(),
-        label: browsingLevelLabels[level],
-      }))}
-      disabled={
-        updatingCollectionItemNsfwLevel &&
-        updateCollectionItemNsfwLevelPayload?.collectionItemId === collectionItemId
-      }
-    />
+    <>
+      <SegmentedControl
+        value={nsfwLevel?.toString() ?? undefined}
+        onChange={handleNSFWLevelChange}
+        data={browsingLevels.map((level) => ({
+          value: level.toString(),
+          label: browsingLevelLabels[level],
+        }))}
+        disabled={
+          updatingCollectionItemNsfwLevel &&
+          updateCollectionItemNsfwLevelPayload?.collectionItemId === collectionItemId
+        }
+      />
+      {rescanning && (
+        <Text size="xs" c="dimmed">
+          Rescanning: try again after the scan finishes.
+        </Text>
+      )}
+    </>
   );
 };

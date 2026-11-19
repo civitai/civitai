@@ -1,3 +1,4 @@
+import { unpack } from 'msgpackr';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { OriginNotAllowedError } from '../errors';
 
@@ -209,13 +210,13 @@ describe('oauthModel.getClient — origin enforcement (parity)', () => {
 });
 
 describe('oauthModel.validateScope — UserRead baseline + allowed-scope gate (parity)', () => {
-  const UserRead = 1;
-  const VaultWrite = 1 << 24;
+  const UserRead = 1n;
+  const VaultWrite = 1n << 24n;
 
   it('forces UserRead into the granted scope even if not requested', async () => {
     const granted = await oauthModel.validateScope(
       { id: 1 } as any,
-      { allowedScopes: 33554431 } as any,
+      { allowedScopes: 33554431n } as any,
       ['0'] // requested nothing
     );
     expect(granted).toEqual([String(UserRead)]);
@@ -230,6 +231,15 @@ describe('oauthModel.validateScope — UserRead baseline + allowed-scope gate (p
     expect(granted).toEqual([String(VaultWrite | UserRead)]);
   });
 
+  it('grants AppsRead and AppDataRead (bits 31, 32) within the client allowlist', async () => {
+    const granted = await oauthModel.validateScope(
+      { id: 1 } as any,
+      { allowedScopes: 6442450945n } as any,
+      ['6442450944']
+    );
+    expect(granted).toEqual(['6442450945']);
+  });
+
   it('rejects a scope outside the client allowlist', async () => {
     const granted = await oauthModel.validateScope(
       { id: 1 } as any,
@@ -241,9 +251,9 @@ describe('oauthModel.validateScope — UserRead baseline + allowed-scope gate (p
 });
 
 describe('oauthModel — client_credentials (the client acting as itself)', () => {
-  const UserRead = 1;
-  const AIServicesWrite = 1 << 15;
-  const Catalog = 1 << 28;
+  const UserRead = 1n;
+  const AIServicesWrite = 1n << 15n;
+  const Catalog = 1n << 28n;
   const ceiling = { allowedScopes: UserRead | AIServicesWrite | Catalog } as any;
   const ccClient = {
     userId: 9,
@@ -365,6 +375,42 @@ describe('oauthModel.saveAuthorizationCode — fail-closed + hashed atomic store
     // arguments[0] is the hash field — must be a sha256 hex, not the raw code.
     expect(opts.arguments[0]).not.toBe('raw-code-value');
     expect(opts.arguments[0]).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('records an impersonation on the code, and nothing for an ordinary one', async () => {
+    const stored = async (user: Record<string, unknown>) => {
+      h.evalCalls.length = 0;
+      await oauthModel.saveAuthorizationCode(mkCode(), { id: 'c1' } as any, user as any);
+      const [, opts] = h.evalCalls[0] as [unknown, { arguments: unknown[] }];
+      return unpack(opts.arguments[1] as Buffer) as Record<string, unknown>;
+    };
+    expect(await stored({ id: 1, impersonation: true })).toMatchObject({ impersonation: true });
+    expect(await stored({ id: 1 })).not.toHaveProperty('impersonation');
+  });
+});
+
+describe('oauthModel.getAuthorizationCode — impersonation marker', () => {
+  it('returns the marker with the code user, and none for an ordinary code', async () => {
+    const read = async (extra: Record<string, unknown>) => {
+      h.selectResults.push({
+        id: 'pub-1',
+        grants: ['authorization_code'],
+        redirectUris: ['https://a.example/cb'],
+      });
+      (h.state.redis as { packed: { hGet: () => Promise<unknown> } }).packed.hGet = () =>
+        Promise.resolve({
+          clientId: 'pub-1',
+          userId: 7,
+          scope: '1',
+          redirectUri: 'https://a.example/cb',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          ...extra,
+        });
+      const code = await oauthModel.getAuthorizationCode('c');
+      return code ? code.user : null;
+    };
+    expect(await read({ impersonation: true })).toEqual({ id: 7, impersonation: true });
+    expect(await read({})).toEqual({ id: 7 });
   });
 });
 

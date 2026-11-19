@@ -1,5 +1,6 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
 import { OLD_DRAFT_LEAD_TEXT, OLD_DRAFT_NOTICE_DAYS } from '~/server/common/draft-reaping';
+import { draftKeptSql } from '~/server/common/draft-keep';
 import { NotificationCategory } from '~/server/common/enums';
 import {
   createNotificationProcessor,
@@ -380,6 +381,8 @@ export const modelNotifications = createNotificationProcessor({
           ) details
         FROM "Model" m
         WHERE m.status IN ('Draft')
+        -- A draft the reaper keeps is not warned.
+        AND NOT ${draftKeptSql('m')}
         AND m."updatedAt" BETWEEN '${lastSent}'::timestamp - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days' AND NOW() - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days'
         AND m."availability" != 'Private'::"Availability"
         -- EXISTS, not a JOIN, but the same semantics as the reaper's INNER
@@ -415,6 +418,19 @@ export const modelNotifications = createNotificationProcessor({
       message: `The hash in the metadata of your resource "${details.modelName}: ${details.versionName}" has been corrected. Please redownload it to ensure that your images report the correct hash going forward.`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}?modelVersionId=${
         details.versionId
+      }`,
+    }),
+  },
+  'model-gallery-post-pinned': {
+    displayName: 'Your post was pinned to a model gallery',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username ?? 'A creator'} pinned your post to the ${
+        details.modelName
+      } gallery`,
+      url: `/models/${details.modelId}/${slugit(details.modelName)}?modelVersionId=${
+        details.modelVersionId
       }`,
     }),
   },

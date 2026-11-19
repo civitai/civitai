@@ -173,6 +173,8 @@ describe('getMyListingForApp — the rate limit is ENFORCED (civitai#4003)', () 
 
     await expect(call()).rejects.toThrow();
 
-    expect(mockHSetWithTTL).not.toHaveBeenCalled();
+    // A refusal may write only the active-limit marker, never the attempt bucket.
+    const writtenKeys = mockHSetWithTTL.mock.calls.map((c: unknown[]) => String(c[1]));
+    expect(writtenKeys.filter((key) => !key.includes('trpc:limit:active:'))).toEqual([]);
   });
 });

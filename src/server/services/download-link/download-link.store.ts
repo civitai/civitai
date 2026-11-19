@@ -1,10 +1,24 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  redis,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
+import { boundedClusterCall, takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 
 /**
- * Redis storage for download links (sysRedis: single node or Sentinel, so MULTI spans keys).
+ * Redis storage for download links, on the cache cluster. Each command touches one key, so no
+ * MULTI or script spans slots: a link is written key by key, its hash first, and deleted key by
+ * key. Every cluster call is bounded by the cluster cache guard and throws on a failure or timeout.
+ *
+ * The cluster can evict a key before its TTL. A lost link hash 404s that link (the client mints
+ * another). A single-link revoke rebuilds the hash from the linkId when the secret is set, so it
+ * needs the `linkid` index only for a link the current secret cannot rebuild. A lost credential-set
+ * entry means a credential revoke misses that link, which its use-time liveness check still refuses.
  *
  * A link's URL carries an `id`; Redis holds only `sha256(id)`. The id is derived from the link's
  * public `linkId` with `DOWNLOAD_LINK_SECRET`, which is what lets a repeat mint return the same URL
@@ -39,8 +53,10 @@ export type StoredDownloadLink = {
   credentialId: string;
   /** The minting client's `secretEpoch`; empty for an ApiKey. */
   credentialEpoch: string;
-  /** null for a public link. */
+  /** null for a public or provider link. */
   onBehalfOfUserId: number | null;
+  /** The provider a provider link serves, fetching as itself; null for any other link. */
+  provider: string | null;
   modelVersionId: number;
   fileId: number;
   workflowId: string;
@@ -48,7 +64,7 @@ export type StoredDownloadLink = {
   mintedAt: number;
   expiresAt: number;
   fetches: number;
-  /** This link's fetch cap, fixed at mint from the file's size. */
+  /** This link's fetch cap, fixed at mint from the file's size. A provider link has none. */
   maxFetches: number;
 };
 
@@ -78,19 +94,43 @@ const linkSecret = () => {
   const secret = env.DOWNLOAD_LINK_SECRET?.trim();
   return secret && secret.length >= MIN_SECRET_LENGTH ? secret : undefined;
 };
+export const linksAreReusable = () => linkSecret() !== undefined;
 
-const linkKey = (hash: string) => `${REDIS_SYS_KEYS.DOWNLOAD_LINK.LINK}:${hash}` as const;
-const linkIdKey = (linkId: string) => `${REDIS_SYS_KEYS.DOWNLOAD_LINK.LINK_ID}:${linkId}` as const;
+const linkKey = (hash: string) => `${REDIS_KEYS.DOWNLOAD_LINK.LINK}:${hash}` as const;
+const linkIdKey = (linkId: string) => `${REDIS_KEYS.DOWNLOAD_LINK.LINK_ID}:${linkId}` as const;
 const credSetKey = (credential: DownloadLinkCredential) =>
-  `${REDIS_SYS_KEYS.DOWNLOAD_LINK.CRED_LINKS}:${credentialKey(credential)}` as const;
+  `${REDIS_KEYS.DOWNLOAD_LINK.CRED_LINKS}:${credentialKey(credential)}` as const;
+type LinkAudience = Pick<StoredDownloadLink, 'onBehalfOfUserId' | 'provider'>;
 export const reuseKey = (
   credential: DownloadLinkCredential,
   fileId: number,
-  onBehalfOfUserId: number | null
+  { onBehalfOfUserId, provider }: LinkAudience
 ) =>
-  `${REDIS_SYS_KEYS.DOWNLOAD_LINK.REUSE}:${credentialKey(credential)}:${fileId}:${
-    onBehalfOfUserId ?? 'public'
+  `${REDIS_KEYS.DOWNLOAD_LINK.REUSE}:${credentialKey(credential)}:${fileId}:${
+    onBehalfOfUserId ?? (provider ? `provider:${provider}` : 'public')
   }` as const;
+
+/**
+ * Until this date a link the cluster does not hold is also looked for in sysRedis, where links
+ * minted before the move were written: read, fetch-counted and revoked there. Past it every such
+ * link has expired (MAX_LINK_TTL_SECONDS); delete the fallback (the `sys*` keys and every branch on
+ * this date) and REDIS_SYS_KEYS.DOWNLOAD_LINK with it. Reuse is never looked up there: a miss
+ * mints a new link.
+ */
+export const DOWNLOAD_LINK_SYS_FALLBACK_UNTIL = new Date('2027-01-15T00:00:00Z');
+const sysFallbackOpen = () => Date.now() < DOWNLOAD_LINK_SYS_FALLBACK_UNTIL.getTime();
+const sysLinkKey = (hash: string) => `${REDIS_SYS_KEYS.DOWNLOAD_LINK.LINK}:${hash}` as const;
+const sysLinkIdKey = (linkId: string) =>
+  `${REDIS_SYS_KEYS.DOWNLOAD_LINK.LINK_ID}:${linkId}` as const;
+const sysCredSetKey = (credential: DownloadLinkCredential) =>
+  `${REDIS_SYS_KEYS.DOWNLOAD_LINK.CRED_LINKS}:${credentialKey(credential)}` as const;
+
+const cluster = <T>(fn: string, op: () => Promise<T>) =>
+  boundedClusterCall(`downloadLink.${fn}`, op);
+
+/** A provider link has no cap, so it is never over. */
+export const isOverFetchCap = (link: StoredDownloadLink, fetches: number) =>
+  !link.provider && !(fetches <= link.maxFetches);
 
 function parseLink(raw: Record<string, string>): StoredDownloadLink | null {
   if (!raw?.linkId || !raw.expiresAt) return null;
@@ -100,6 +140,7 @@ function parseLink(raw: Record<string, string>): StoredDownloadLink | null {
     credentialId: raw.credentialId,
     credentialEpoch: raw.credentialEpoch ?? '',
     onBehalfOfUserId: userId,
+    provider: raw.provider || null,
     modelVersionId: Number(raw.modelVersionId),
     fileId: Number(raw.fileId),
     workflowId: raw.workflowId ?? '',
@@ -111,8 +152,18 @@ function parseLink(raw: Record<string, string>): StoredDownloadLink | null {
   };
 }
 
-const readLinkByHash = async (hash: string) =>
-  parseLink(await sysRedis.hGetAll<string>(linkKey(hash)));
+/** Where the link `hash` is held: the cluster, else (during the fallback) sysRedis. */
+async function findLink(
+  hash: string
+): Promise<{ link: StoredDownloadLink; store: 'cluster' | 'sys' } | null> {
+  const link = parseLink(await cluster('read', () => redis.hGetAll<string>(linkKey(hash))));
+  if (link) return { link, store: 'cluster' };
+  if (!sysFallbackOpen()) return null;
+  const old = parseLink(await withSysReadDeadline(sysRedis.hGetAll<string>(sysLinkKey(hash))));
+  return old ? { link: old, store: 'sys' } : null;
+}
+
+const readLinkByHash = async (hash: string) => (await findLink(hash))?.link ?? null;
 
 export async function createLink(
   input: Omit<
@@ -132,6 +183,7 @@ export async function createLink(
     credentialId: credential.id,
     credentialEpoch: credential.epoch ?? '',
     onBehalfOfUserId: link.onBehalfOfUserId == null ? '' : String(link.onBehalfOfUserId),
+    provider: link.provider ?? '',
     modelVersionId: String(link.modelVersionId),
     fileId: String(link.fileId),
     workflowId: link.workflowId,
@@ -141,30 +193,41 @@ export async function createLink(
     fetches: '0',
     maxFetches: String(link.maxFetches),
   };
-  const multi = sysRedis
-    .multi()
-    .hSet(linkKey(hash), fields)
-    .pExpireAt(linkKey(hash), link.expiresAt)
-    .set(linkIdKey(linkId), hash, { PXAT: link.expiresAt })
-    .sAdd(credSetKey(credential), hash)
-    .expire(credSetKey(credential), MAX_LINK_TTL_SECONDS);
+  // One key per write, the link hash first: every other key names it, so none can point at a link
+  // that was never written. Each MULTI is on one key, so the hash and the set never lack a TTL.
+  // A failure part way leaves a link that cannot be revoked by linkId or by its credential, until
+  // it expires; the mint answers an error, so its URL is never handed out.
+  await cluster('create.link', () =>
+    redis.multi().hSet(linkKey(hash), fields).pExpireAt(linkKey(hash), link.expiresAt).exec()
+  );
+  await cluster('create.linkId', () =>
+    redis.set(linkIdKey(linkId), hash, { PXAT: link.expiresAt })
+  );
+  await cluster('create.credSet', () =>
+    redis
+      .multi()
+      .sAdd(credSetKey(credential), hash)
+      .expire(credSetKey(credential), MAX_LINK_TTL_SECONDS)
+      .exec()
+  );
   // Without the secret a link's URL cannot be rebuilt, so there is nothing to reuse.
   if (secret)
-    multi.set(reuseKey(credential, link.fileId, link.onBehalfOfUserId), hash, {
-      PXAT: link.expiresAt,
-    });
-  await multi.exec();
+    await cluster('create.reuse', () =>
+      redis.set(reuseKey(credential, link.fileId, link), hash, { PXAT: link.expiresAt })
+    );
   return { id, linkId };
 }
 
 /**
- * The live link a repeat mint should return, or null to mint a new one: same credential, file and
- * user, at least `minRemainingMs` left, under the fetch cap, and an id the current secret rebuilds.
+ * The live link a repeat mint should return, or null to mint a new one: same credential, file,
+ * user and provider, at least `minRemainingMs` left, under the fetch cap, and an id the current
+ * secret rebuilds.
  */
 export async function findReusableLink({
   credential,
   fileId,
   onBehalfOfUserId,
+  provider,
   now,
   minRemainingMs,
   maxExpiresAt,
@@ -172,6 +235,7 @@ export async function findReusableLink({
   credential: DownloadLinkCredential;
   fileId: number;
   onBehalfOfUserId: number | null;
+  provider: string | null;
   now: number;
   minRemainingMs: number;
   /** A repeat mint never returns a link that outlives the lifetime it asked for. */
@@ -179,7 +243,9 @@ export async function findReusableLink({
 }): Promise<{ id: string; link: StoredDownloadLink } | null> {
   const secret = linkSecret();
   if (!secret) return null;
-  const hash = await sysRedis.get(reuseKey(credential, fileId, onBehalfOfUserId));
+  const hash = await cluster('findReusable', () =>
+    redis.get(reuseKey(credential, fileId, { onBehalfOfUserId, provider }))
+  );
   if (!hash) return null;
   const link = await readLinkByHash(hash);
   if (
@@ -189,9 +255,10 @@ export async function findReusableLink({
     link.credentialEpoch !== (credential.epoch ?? '') ||
     link.fileId !== fileId ||
     link.onBehalfOfUserId !== onBehalfOfUserId ||
+    link.provider !== provider ||
     link.expiresAt - now < minRemainingMs ||
     link.expiresAt > maxExpiresAt ||
-    !(link.fetches < link.maxFetches)
+    isOverFetchCap(link, link.fetches + 1)
   )
     return null;
   // A rotated secret rebuilds a different id: mint fresh rather than hand back a dead URL.
@@ -209,14 +276,23 @@ if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
 return redis.call('HINCRBY', KEYS[1], 'fetches', 1)
 `;
 
+/** The link `id`, without counting a fetch; null if absent. */
+export const readLink = (id: string) => readLinkByHash(sha256(id));
+
 /** Counts one fetch of the link `id` and returns it with its fetch number, or null if absent. */
 export async function recordFetch(
   id: string
 ): Promise<{ link: StoredDownloadLink; fetch: number } | null> {
   const hash = sha256(id);
-  const fetch = Number(
-    await sysRedis.eval(COUNT_FETCH_SCRIPT, { keys: [linkKey(hash)], arguments: [] })
+  let fetch = Number(
+    await cluster('recordFetch', () =>
+      redis.eval(COUNT_FETCH_SCRIPT, { keys: [linkKey(hash)], arguments: [] })
+    )
   );
+  if (!(fetch > 0) && sysFallbackOpen())
+    fetch = Number(
+      await sysRedis.eval(COUNT_FETCH_SCRIPT, { keys: [sysLinkKey(hash)], arguments: [] })
+    );
   if (!(fetch > 0)) return null;
   const link = await readLinkByHash(hash);
   return link ? { link, fetch } : null;
@@ -227,37 +303,75 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) 
 return 0
 `;
 
-async function deleteLink(hash: string, link: StoredDownloadLink) {
+/** Deletes a link's keys one at a time, the hash first: once it is gone the link no longer opens. */
+async function deleteLink(hash: string, link: StoredDownloadLink, store: 'cluster' | 'sys') {
   const credential = { kind: link.credentialKind, id: link.credentialId };
-  await sysRedis.del([linkKey(hash), linkIdKey(link.linkId)]);
-  await sysRedis.sRem(credSetKey(credential), hash);
-  await sysRedis.eval(DEL_IF_EQUALS_SCRIPT, {
-    keys: [reuseKey(credential, link.fileId, link.onBehalfOfUserId)],
-    arguments: [hash],
-  });
+  if (store === 'sys') {
+    await sysRedis.del(sysLinkKey(hash));
+    await sysRedis.del(sysLinkIdKey(link.linkId));
+    await sysRedis.sRem(sysCredSetKey(credential), hash);
+    return;
+  }
+  await cluster('delete.link', () => redis.del(linkKey(hash)));
+  await cluster('delete.linkId', () => redis.del(linkIdKey(link.linkId)));
+  await cluster('delete.credSet', () => redis.sRem(credSetKey(credential), hash));
+  await cluster('delete.reuse', () =>
+    redis.eval(DEL_IF_EQUALS_SCRIPT, {
+      keys: [reuseKey(credential, link.fileId, link)],
+      arguments: [hash],
+    })
+  );
+}
+
+/**
+ * The link a public `linkId` names. With the secret, its hash is rebuilt from the linkId, so a
+ * revoke does not depend on the `linkid` index: that key is written once and read only here, the
+ * likeliest to be evicted, and losing it would leave the link serving. The index answers for a link
+ * whose id the current secret does not rebuild (minted without one, or before a rotation).
+ */
+async function findLinkById(linkId: string) {
+  const secret = linkSecret();
+  if (secret) {
+    const hash = sha256(deriveId(secret, linkId));
+    const found = await findLink(hash);
+    if (found && found.link.linkId === linkId) return { hash, ...found };
+  }
+  let hash = await cluster('revoke.linkId', () => redis.get(linkIdKey(linkId)));
+  if (!hash && sysFallbackOpen())
+    hash = await withSysReadDeadline(sysRedis.get(sysLinkIdKey(linkId)));
+  if (!hash) return null;
+  const found = await findLink(hash);
+  return found && found.link.linkId === linkId ? { hash, ...found } : null;
 }
 
 /** Revokes one link, only for the credential that minted it. */
 export async function revokeLink(credential: DownloadLinkCredential, linkId: string) {
-  const hash = await sysRedis.get(linkIdKey(linkId));
-  if (!hash) return false;
-  const link = await readLinkByHash(hash);
-  if (!link || link.credentialKind !== credential.kind || link.credentialId !== credential.id)
+  const found = await findLinkById(linkId);
+  if (!found) return false;
+  const { hash } = found;
+  if (found.link.credentialKind !== credential.kind || found.link.credentialId !== credential.id)
     return false;
-  await deleteLink(hash, link);
+  await deleteLink(hash, found.link, found.store);
   return true;
 }
 
 /** Revokes every link a credential minted. */
 export async function revokeCredentialLinks(credential: DownloadLinkCredential) {
-  const hashes = await sysRedis.sMembers<string>(credSetKey(credential));
+  const hashes = new Set(
+    await cluster('revokeAll.members', () => redis.sMembers<string>(credSetKey(credential)))
+  );
+  const sysHashes = sysFallbackOpen()
+    ? await withSysReadDeadline(sysRedis.sMembers<string>(sysCredSetKey(credential)))
+    : [];
+  for (const hash of sysHashes) hashes.add(hash);
   for (const hash of hashes) {
-    const link = await readLinkByHash(hash);
-    if (link) await deleteLink(hash, link);
-    else await sysRedis.del(linkKey(hash));
+    const found = await findLink(hash);
+    if (found) await deleteLink(hash, found.link, found.store);
+    else await cluster('revokeAll.link', () => redis.del(linkKey(hash)));
   }
-  await sysRedis.del(credSetKey(credential));
-  return hashes.length;
+  await cluster('revokeAll.credSet', () => redis.del(credSetKey(credential)));
+  if (sysFallbackOpen()) await sysRedis.del(sysCredSetKey(credential));
+  return hashes.size;
 }
 
 const listed = (list: string[], id: string) => list.some((entry) => entry.trim() === id);
@@ -280,6 +394,12 @@ export const mayMintPublicLinks = (credential: DownloadLinkCredential) =>
     credential.id
   );
 
+/** Also on `DOWNLOAD_LINK_PROVIDER_API_KEY_IDS`: may mint links a provider fetches as itself. */
+export const mayMintProviderLinks = (credential: DownloadLinkCredential) =>
+  credential.kind === 'apikey' &&
+  isAllowlistedMinter(credential) &&
+  listed(env.DOWNLOAD_LINK_PROVIDER_API_KEY_IDS, credential.id);
+
 /**
  * Revokes the links of any allowlisted credential among `credentials`, for the paths that revoke
  * or rotate one. Best-effort: the use-time liveness check refuses them anyway (a rotation through
@@ -297,7 +417,7 @@ export async function revokeLinksOfRevokedCredentials(credentials: DownloadLinkC
         credentialKind: credential.kind,
         credentialId: credential.id,
         error: (error as Error).message,
-      }).catch(() => undefined);
+      });
     }
   }
 }
@@ -313,14 +433,13 @@ export async function takeMintBudget(
   now: number
 ): Promise<{ allowed: boolean; granted: number; retryAfterSeconds: number }> {
   const windowStart = Math.floor(now / 60_000) * 60_000;
-  const key = `${REDIS_SYS_KEYS.DOWNLOAD_LINK.MINT_RATE}:${bucket}:${windowStart}` as const;
-  const [used] = (await sysRedis.multi().incrBy(key, count).expire(key, 120).exec()) as unknown as [
-    number
-  ];
-  // One atomic INCRBY per take, so concurrent takes never grant past the limit between them.
-  const before = Number(used) - count;
+  const key = `${REDIS_KEYS.DOWNLOAD_LINK.MINT_RATE}:${bucket}:${windowStart}` as const;
+  // One atomic INCRBY per take, so concurrent takes never grant past the limit between them. A
+  // failure or timeout throws, refusing the mint.
+  const used = await takeClusterWindowCount('takeMintBudget', key, 120, { by: count });
+  const before = used - count;
   return {
-    allowed: Number(used) <= limit,
+    allowed: used <= limit,
     granted: Math.min(count, Math.max(0, limit - before)),
     retryAfterSeconds: Math.max(1, Math.ceil((windowStart + 60_000 - now) / 1000)),
   };

@@ -2,10 +2,12 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import type { ServiceDealNotice } from '~/server/notifications/creator-service.notifications';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { createMessage, upsertDealChat } from '~/server/services/chat.service';
 import {
+  counterpartyOfferingTitle,
   getDealPartiesWithTitle,
   notifyServiceDeal,
   notifyServiceDealTransition,
@@ -32,9 +34,12 @@ import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms
 import {
   SERVICE_DEAL_ACCEPT_WINDOW_MS,
   SERVICE_DEAL_AUTO_COMPLETE_MS,
+  SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS,
   SERVICE_DEAL_CANCELLATION_RESPONSE_MS,
+  SERVICE_DEAL_DUE_SOON_NOTICE_MS,
   SERVICE_DEAL_DISPUTE_WINDOW_MS,
   SERVICE_DEAL_LATE_CANCEL_AFTER_MS,
+  SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS,
   SERVICE_DEAL_OPEN_STATUSES,
   SERVICE_SFW_MAX_NSFW_LEVEL,
   isMatureServiceLevel,
@@ -45,7 +50,12 @@ import {
   type ServiceDealReasonCode,
 } from '~/shared/constants/creator-services.constants';
 import { Flags } from '~/shared/utils/flags';
-import type { ServiceDealEventType, ServiceDealStatus } from '~/shared/utils/prisma/enums';
+import {
+  ServiceOfferingIngestionStatus,
+  type ServiceDealEventType,
+  type ServiceDealStatus,
+} from '~/shared/utils/prisma/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   dealActions,
   dealActorRole,
@@ -55,7 +65,10 @@ import {
   dealViewerRole,
   nextDealDeadline,
 } from '~/shared/utils/creator-service-deal-view';
-import { dealAcceptedChatLine } from '~/shared/utils/creator-service-deal-chat-line';
+import {
+  dealAcceptedChatLine,
+  dealOverdueCancelledChatLine,
+} from '~/shared/utils/creator-service-deal-chat-line';
 
 /**
  * The Creator Services deal state machine. Every transition is ONE conditional UPDATE whose WHERE
@@ -201,7 +214,7 @@ export async function transitionDeal(t: Transition) {
         message: 'refund after close failed; the sweep will retry',
         dealId: t.dealId,
         error: (error as Error)?.message,
-      }).catch(() => null)
+      })
     );
 
   if (moved)
@@ -258,6 +271,23 @@ const notBlockedBetween = (buyer: Prisma.Sql, seller: Prisma.Sql) => Prisma.sql`
       OR (ue."userId" = ${seller} AND ue."targetUserId" = ${buyer}))
 )`;
 
+/**
+ * `serviceOfferingShowableWhere`, as SQL, but without the viewer's rating cut: the cover only has to
+ * be rated, and the rating is compared through `offeringLevel`. Change the two together.
+ */
+const offeringShowable = Prisma.sql`(o."ingestion" = 'Scanned'::"ServiceOfferingIngestionStatus"
+  AND (o."coverImageId" IS NULL OR EXISTS (
+    SELECT 1 FROM "Image" ci
+    WHERE ci."id" = o."coverImageId" AND ci."ingestion" = 'Scanned'::"ImageIngestionStatus"
+      AND ci."needsReview" IS NULL AND ci."tosViolation" = false AND ci."nsfwLevel" > 0
+  )))`;
+
+// The stored rating with the cover's folded in, so a cover rated since the last recompute counts.
+const offeringLevel = Prisma.sql`LEAST(GREATEST(o."maxNsfwLevel", COALESCE((
+    SELECT ci."nsfwLevel" FROM "Image" ci
+    WHERE ci."id" = o."coverImageId" AND ci."ingestion" = 'Scanned'::"ImageIngestionStatus"
+  ), 0)), ${NsfwLevel.XXX}::int)`;
+
 type OfferingRow = {
   id: number;
   sellerId: number;
@@ -269,6 +299,7 @@ type OfferingRow = {
   deliveryDays: number;
   blocked: boolean;
   sellerOk: boolean;
+  showable: boolean;
   maxNsfwLevel: number;
 };
 
@@ -323,13 +354,15 @@ export async function requestServiceDeal({
       (SELECT count(*)::int FROM "ServiceDeal" d
         WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})) AS "open",
       NOT ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)} AS "blocked",
-      ${sellerInGoodStanding(Prisma.sql`o."sellerId"`)} AS "sellerOk", o."maxNsfwLevel"
+      ${sellerInGoodStanding(Prisma.sql`o."sellerId"`)} AS "sellerOk",
+      ${offeringShowable} AS "showable", ${offeringLevel} AS "maxNsfwLevel"
     FROM "ServiceOffering" o WHERE o."id" = ${offeringId}::int`;
   // A mature service on a domain that does not serve it is hidden there, so it is not found.
   if (
     !offering ||
     offering.status !== 'Active' ||
     !offering.sellerOk ||
+    !offering.showable ||
     !(offering.maxNsfwLevel & servableLevels)
   )
     throw throwNotFoundError('Service not found');
@@ -369,7 +402,7 @@ export async function requestServiceDeal({
         "updatedAt", "maxNsfwLevel")
       SELECT o."id", ${buyerId}::int, o."sellerId", o."price", ${buzzType}::"ServiceBuzzType",
         0, o."revisionsIncluded", o."deliveryDays", o."previewKind", 'Requested'::"ServiceDealStatus",
-        ${requestText}::text, now(), o."maxNsfwLevel"
+        ${requestText}::text, now(), ${offeringLevel}
       FROM "ServiceOffering" o
       WHERE o."id" = ${offeringId}::int
         AND o."status" = 'Active'::"ServiceOfferingStatus"
@@ -378,9 +411,10 @@ export async function requestServiceDeal({
         AND o."deliveryDays" = ${expectedDeliveryDays}::int
         AND o."sellerId" <> ${buyerId}::int
         -- serviceRequestAllowed: SFW always; mature only where served, to a buyer who opted in.
-        AND (o."maxNsfwLevel" <= ${SERVICE_SFW_MAX_NSFW_LEVEL}::int OR (
-          (o."maxNsfwLevel" & ${servableLevels}::int) <> 0
-          AND (o."maxNsfwLevel" & ${consentLevels}::int) <> 0
+        AND ${offeringShowable}
+        AND (${offeringLevel} <= ${SERVICE_SFW_MAX_NSFW_LEVEL}::int OR (
+          (${offeringLevel} & ${servableLevels}::int) <> 0
+          AND (${offeringLevel} & ${consentLevels}::int) <> 0
         ))
         -- One unanswered request per buyer per offering: a retried or doubled submit must not
         -- become a second deal and a second hold. Race-free under the offering lock above.
@@ -464,8 +498,9 @@ export const declineServiceDeal = async ({
 
 /**
  * Only a CONFIRMED hold can be accepted (the migration's `ServiceDeal_held_before_work` refuses
- * the rest too), and not across a block made since the request, and not once a moderator has taken
- * the offering down: a pending request then leaves only by decline, withdraw or expiry, each refunded.
+ * the rest too), and not across a block made since the request, nor while the offering is taken
+ * down or not through its content checks: a pending request then leaves only by decline, withdraw
+ * or expiry, each refunded.
  */
 export async function acceptServiceDeal({ dealId, userId }: { dealId: number; userId: number }) {
   await requireTransition({
@@ -476,20 +511,27 @@ export async function acceptServiceDeal({ dealId, userId }: { dealId: number; us
     event: 'Accepted',
     where: Prisma.sql`"sellerId" = ${userId}::int AND "heldAt" IS NOT NULL
       AND ${notBlockedBetween(Prisma.sql`"buyerId"`, Prisma.sql`"sellerId"`)}
-      AND NOT EXISTS (SELECT 1 FROM "ServiceOffering" o
-        WHERE o."id" = "ServiceDeal"."offeringId" AND o."removedReason" IS NOT NULL)`,
+      AND EXISTS (SELECT 1 FROM "ServiceOffering" o
+        WHERE o."id" = "ServiceDeal"."offeringId" AND o."removedReason" IS NULL
+          AND o."ingestion" = 'Scanned'::"ServiceOfferingIngestionStatus")`,
     set: Prisma.sql`, "acceptedAt" = now(), "dueAt" = now() + make_interval(days => "deliveryDays")`,
   }).catch(async (error) => {
     // The claim above is what refuses it; this only says why, instead of "moved on", which would
     // send the seller back to the same Accept button. Scoped to the seller's own pending request,
     // so it reveals nothing to anyone else and a deal that has moved on still gets "moved on".
-    const [takenDown] = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT o."id" FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
+    const [offering] = await dbWrite.$queryRaw<{ takenDown: boolean; checked: boolean }[]>`
+      SELECT o."removedReason" IS NOT NULL AS "takenDown",
+        o."ingestion" = 'Scanned'::"ServiceOfferingIngestionStatus" AS "checked"
+      FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
       WHERE d."id" = ${dealId}::int AND d."sellerId" = ${userId}::int
-        AND d."status" = 'Requested'::"ServiceDealStatus" AND o."removedReason" IS NOT NULL`;
-    if (takenDown)
+        AND d."status" = 'Requested'::"ServiceDealStatus"`;
+    if (offering?.takenDown)
       throw throwBadRequestError(
         'A moderator removed this service, so this request can only be declined.'
+      );
+    if (offering && !offering.checked)
+      throw throwBadRequestError(
+        'This service is being reviewed, so this request cannot be accepted until that is done.'
       );
     throw error;
   });
@@ -502,7 +544,7 @@ export async function acceptServiceDeal({ dealId, userId }: { dealId: number; us
       message: 'deal chat could not be opened',
       dealId,
       error: (error as Error)?.message,
-    }).catch(() => null)
+    })
   );
 }
 
@@ -520,7 +562,8 @@ async function openDealChat(dealId: number) {
     content: dealAcceptedChatLine({
       dealId,
       sellerName: deal.sellerName,
-      title: deal.title,
+      // The chat is the buyer's too.
+      title: counterpartyOfferingTitle(deal),
     }),
   });
 }
@@ -599,6 +642,29 @@ export const cancelLateServiceDeal = ({ dealId, userId }: { dealId: number; user
       SERVICE_DEAL_LATE_CANCEL_AFTER_MS
     )} <= now()`,
     set: Prisma.sql`, "closeReason" = 'late'`,
+    refund: true,
+  });
+
+const sellerUnavailable = (sellerId: Prisma.Sql) =>
+  Prisma.sql`NOT ${sellerInGoodStanding(sellerId)}`;
+
+/** The seller's state is read in the same statement as the transition, so it cannot change between check and close. */
+export const cancelServiceDealSellerUnavailable = ({
+  dealId,
+  userId,
+}: {
+  dealId: number;
+  userId: number;
+}) =>
+  requireTransition({
+    dealId,
+    from: ['Accepted', 'InRevision'],
+    to: 'Cancelled',
+    actorId: userId,
+    event: 'Cancelled',
+    comment: 'buyer_refund',
+    where: Prisma.sql`"buyerId" = ${userId}::int AND ${sellerUnavailable(Prisma.sql`"sellerId"`)}`,
+    set: Prisma.sql`, "closeReason" = 'buyer_refund'`,
     refund: true,
   });
 
@@ -706,18 +772,29 @@ export const openServiceDealDispute = async ({
 export const assertDealText = (text: string | null | undefined) =>
   throwOnBlockedUserContent(text, { surface: 'creator-service-deal' });
 
-type Timed = { status: ServiceDealStatus; column: string; after: number };
+type Timed = {
+  label: string;
+  statuses: readonly ServiceDealStatus[];
+  /** When the deal's clock started; it runs out `after` later. */
+  clock: Prisma.Sql;
+  after: number;
+  /** A test the index can use, implied by the clock having run out. */
+  narrow?: Prisma.Sql;
+};
+
+const column = (name: string) => Prisma.raw(`"${name}"`);
 
 async function sweep(
-  { status, column, after }: Timed,
+  { label, statuses, clock, after, narrow }: Timed,
   limit: number,
   move: (dealId: number) => Promise<boolean>
 ) {
   const due = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT "id" FROM "ServiceDeal"
-    WHERE "status" = ${status}::"ServiceDealStatus"
-      AND ${Prisma.raw(`"${column}"`)} + ${ms(after)} <= now()
-    ORDER BY ${Prisma.raw(`"${column}"`)}
+    WHERE "status" IN (${statusList(statuses)})
+      ${narrow ? Prisma.sql`AND ${narrow}` : Prisma.empty}
+      AND ${clock} + ${ms(after)} <= now()
+    ORDER BY ${clock}
     LIMIT ${limit}::int`;
 
   let moved = 0;
@@ -728,10 +805,10 @@ async function sweep(
       logToAxiom({
         name: 'creator-service-deal',
         type: 'error',
-        message: `${status} sweep failed`,
+        message: `${label} sweep failed`,
         dealId: id,
         error: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   }
   return { considered: due.length, moved };
@@ -782,16 +859,83 @@ export const autoCancelServiceDeal = (dealId: number) =>
     refund: true,
   });
 
+/**
+ * An undelivered round's clock: the due date, or for a revision the request that opened it, since a
+ * revision keeps the original due date and an on-time delivery must not become an instant refund.
+ * Accepted has no RevisionRequested event, so its clock is the due date.
+ */
+const overdueClock = Prisma.sql`GREATEST("dueAt", (
+  SELECT max(e."createdAt") FROM "ServiceDealEvent" e
+  WHERE e."dealId" = "ServiceDeal"."id" AND e."type" = 'RevisionRequested'::"ServiceDealEventType"))`;
+
+const OVERDUE_DAYS = SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS / 86_400_000;
+
+/**
+ * A seller who never delivers the current round. Under the deal's lock, as `deliverServiceDeal` is,
+ * so the clock's event read sees a revision request that committed while this waited.
+ */
+export async function cancelOverdueServiceDeal(dealId: number) {
+  const moved = await transitionDeal({
+    dealId,
+    from: ['Accepted', 'InRevision'],
+    to: 'Cancelled',
+    actorId: -1,
+    event: 'Cancelled',
+    comment: 'overdue',
+    lock: true,
+    where: Prisma.sql`${overdueClock} + ${ms(SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS)} <= now()`,
+    set: Prisma.sql`, "closeReason" = 'overdue'`,
+    refund: true,
+  });
+  if (moved) await postOverdueChatLine(dealId);
+  return moved;
+}
+
+async function postOverdueChatLine(dealId: number) {
+  try {
+    // Only a delivered round can be sent back, so Accepted always has none used.
+    const [row] = await dbWrite.$queryRaw<{ chatId: number | null; revision: boolean }[]>`
+      SELECT "chatId", "revisionsUsed" > 0 AS "revision" FROM "ServiceDeal"
+      WHERE "id" = ${dealId}::int`;
+    if (!row?.chatId) return;
+    await createMessage({
+      userId: -1,
+      chatId: row.chatId,
+      contentType: 'Markdown',
+      content: dealOverdueCancelledChatLine({ dealId, days: OVERDUE_DAYS, revision: row.revision }),
+    });
+  } catch (error) {
+    // The deal is cancelled and refunded either way.
+    logToAxiom({
+      name: 'creator-service-deal',
+      type: 'error',
+      message: 'overdue chat line could not be posted',
+      dealId,
+      error: (error as Error)?.message,
+    });
+  }
+}
+
 export const expireServiceDeals = ({ limit = 100 } = {}) =>
   sweep(
-    { status: 'Requested', column: 'requestedAt', after: SERVICE_DEAL_ACCEPT_WINDOW_MS },
+    {
+      label: 'Requested',
+      statuses: ['Requested'],
+      clock: column('requestedAt'),
+      after: SERVICE_DEAL_ACCEPT_WINDOW_MS,
+    },
     limit,
     expireServiceDeal
   );
 
 export const autoCompleteServiceDeals = ({ limit = 100 } = {}) =>
   sweep(
-    { status: 'Delivered', column: 'deliveredAt', after: SERVICE_DEAL_AUTO_COMPLETE_MS },
+    {
+      label: 'Delivered',
+      statuses: ['Delivered'],
+      clock: column('deliveredAt'),
+      after: SERVICE_DEAL_AUTO_COMPLETE_MS,
+    },
     limit,
     autoCompleteServiceDeal
   );
@@ -799,13 +943,83 @@ export const autoCompleteServiceDeals = ({ limit = 100 } = {}) =>
 export const autoCancelServiceDeals = ({ limit = 100 } = {}) =>
   sweep(
     {
-      status: 'CancellationRequested',
-      column: 'cancellationRequestedAt',
+      label: 'CancellationRequested',
+      statuses: ['CancellationRequested'],
+      clock: column('cancellationRequestedAt'),
       after: SERVICE_DEAL_CANCELLATION_RESPONSE_MS,
     },
     limit,
     autoCancelServiceDeal
   );
+
+export const cancelOverdueServiceDeals = ({ limit = 100 } = {}) =>
+  sweep(
+    {
+      label: 'Overdue',
+      statuses: ['Accepted', 'InRevision'],
+      clock: overdueClock,
+      after: SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS,
+      narrow: Prisma.sql`"dueAt" <= now() - ${ms(SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS)}`,
+    },
+    limit,
+    cancelOverdueServiceDeal
+  );
+
+type Reminder = {
+  notice: ServiceDealNotice;
+  to: 'buyer' | 'seller';
+  statuses: readonly ServiceDealStatus[];
+  /** When the reminder is due. */
+  at: Prisma.Sql;
+  /** What must still be ahead for the reminder to make sense, if a late run reaches it. */
+  until?: Prisma.Sql;
+};
+
+const reminders: Reminder[] = [
+  {
+    notice: 'autoCompleteSoon',
+    to: 'buyer',
+    statuses: ['Delivered'],
+    at: Prisma.sql`"deliveredAt" + ${ms(
+      SERVICE_DEAL_AUTO_COMPLETE_MS - SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS
+    )}`,
+    until: Prisma.sql`"deliveredAt" + ${ms(SERVICE_DEAL_AUTO_COMPLETE_MS)}`,
+  },
+  {
+    notice: 'dueSoon',
+    to: 'seller',
+    statuses: ['Accepted', 'InRevision'],
+    at: Prisma.sql`"dueAt" - ${ms(SERVICE_DEAL_DUE_SOON_NOTICE_MS)}`,
+    until: Prisma.sql`"dueAt"`,
+  },
+  {
+    notice: 'overdue',
+    to: 'seller',
+    statuses: ['Accepted', 'InRevision'],
+    // The due date, not `overdueClock`: a revision asked for after it starts a new round, not a late one.
+    at: Prisma.sql`"dueAt"`,
+  },
+];
+
+/**
+ * Reminders whose time fell in (since, upTo]. The caller moves `since` to `upTo` after each run, so
+ * each reminder goes out once. The key carries the due time, so a moved due date is a new reminder.
+ */
+export async function remindServiceDeals({ since, upTo }: { since: Date; upTo: Date }) {
+  let sent = 0;
+  for (const { notice, to, statuses, at, until } of reminders) {
+    const due = await dbWrite.$queryRaw<{ id: number; at: Date }[]>`
+      SELECT "id", ${at} AS "at" FROM "ServiceDeal"
+      WHERE "status" IN (${statusList(statuses)})
+        AND ${at} > ${since}::timestamptz AND ${at} <= ${upTo}::timestamptz
+        ${until ? Prisma.sql`AND ${until} > ${upTo}::timestamptz` : Prisma.empty}`;
+    for (const deal of due) {
+      await notifyServiceDeal({ dealId: deal.id, notice, to, key: deal.at.getTime() });
+      sent++;
+    }
+  }
+  return sent;
+}
 
 const dealUserSelect = { id: true, username: true, image: true } as const;
 
@@ -820,6 +1034,27 @@ export async function countOpenDealsByOffering(offeringIds: number[]) {
       AND "status" IN (${OPEN})
     GROUP BY "offeringId"`;
   return new Map(rows.map((row) => [row.offeringId, row.open]));
+}
+
+/** A held offering's text and cover stay with its seller and moderators. */
+function offeringAsSeen(
+  {
+    ingestion,
+    ...offering
+  }: {
+    id: number;
+    title: string;
+    coverImageId: number | null;
+    ingestion: ServiceOfferingIngestionStatus;
+  },
+  seesLive: boolean
+) {
+  if (seesLive || ingestion === ServiceOfferingIngestionStatus.Scanned) return offering;
+  return {
+    ...offering,
+    title: counterpartyOfferingTitle({ ...offering, ingestion }),
+    coverImageId: null,
+  };
 }
 
 export async function getServiceDealView({
@@ -837,7 +1072,9 @@ export async function getServiceDealView({
   const deal = await dbWrite.serviceDeal.findUnique({
     where: { id: dealId },
     include: {
-      offering: { select: { id: true, title: true, coverImageId: true, removedReason: true } },
+      offering: {
+        select: { id: true, title: true, coverImageId: true, removedReason: true, ingestion: true },
+      },
       buyer: { select: dealUserSelect },
       seller: { select: dealUserSelect },
       events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
@@ -847,13 +1084,16 @@ export async function getServiceDealView({
     throw throwNotFoundError('Deal not found');
 
   // From the row, not the session, so a fresh mute shows before the next sign-in.
-  const [viewer] = await dbWrite.$queryRaw<{ muted: boolean }[]>`
-    SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
+  const [viewer] = await dbWrite.$queryRaw<{ muted: boolean; sellerUnavailable: boolean }[]>`
+    SELECT "muted", ${sellerUnavailable(Prisma.sql`${deal.sellerId}::int`)} AS "sellerUnavailable"
+    FROM "User" WHERE "id" = ${userId}::int`;
   const { removedReason, ...offering } = deal.offering;
   const offeringTakenDown = removedReason != null;
+  const seesLiveOffering = isModerator || deal.sellerId === userId;
   const { actions, primaryAction } = dealActions(deal, userId, new Date(), {
     gatedAllowed: servicesEnabled && !viewer?.muted,
     offeringTakenDown,
+    sellerUnavailable: !!viewer?.sellerUnavailable,
   });
   // Decision (briony, 2026-10-15): the seller's moderation status is not the buyer's to see.
   const seesTakedown = isModerator || deal.sellerId === userId;
@@ -866,7 +1106,7 @@ export async function getServiceDealView({
     mature: isMatureServiceLevel(deal.maxNsfwLevel),
     /** A muted viewer can leave the deal with a reason code, but their free text is dropped. */
     viewerMuted: !!viewer?.muted,
-    offering,
+    offering: offeringAsSeen(offering, seesLiveOffering),
     /** Seller and moderators only, and never the reason, which reaches the seller by notification. */
     offeringTakenDown: seesTakedown && offeringTakenDown,
     buyer: deal.buyer,
@@ -952,7 +1192,9 @@ export async function listMyServiceDeals({
     orderBy: { id: 'desc' },
     take: limit + 1,
     include: {
-      offering: { select: { id: true, title: true, coverImageId: true, removedReason: true } },
+      offering: {
+        select: { id: true, title: true, coverImageId: true, removedReason: true, ingestion: true },
+      },
       buyer: { select: dealUserSelect },
       seller: { select: dealUserSelect },
     },
@@ -973,11 +1215,12 @@ export async function listMyServiceDeals({
       status: deal.status,
       disputeResolution: deal.disputeResolution,
       maxNsfwLevel: deal.maxNsfwLevel,
-      offering,
+      offering: offeringAsSeen(offering, role === 'seller'),
       offeringTakenDown: role === 'seller' && removedReason != null,
       counterparty: role === 'buyer' ? deal.seller : deal.buyer,
       price: deal.price,
       buzzType: deal.buzzType,
+      held: !!deal.heldAt,
       revisionsUsed: deal.revisionsUsed,
       revisionsIncluded: deal.revisionsIncluded,
       requestedAt: deal.requestedAt,
@@ -1028,6 +1271,7 @@ export async function resolveServiceDealDispute({
   resolution: ServiceDisputeResolutionInput;
   note?: string | null;
 }): Promise<ResolveServiceDealDisputeResult> {
+  let resolvedEventId: number | undefined;
   const outcome = await dbWrite.$transaction(async (tx) => {
     await lockDeal(tx, dealId);
     const [deal] = await tx.$queryRaw<
@@ -1062,10 +1306,12 @@ export async function resolveServiceDealDispute({
         SET "status" = 'Cancelled'::"ServiceDealStatus", "closedAt" = now(),
             "closeReason" = 'dispute_refund', ${resolved}
         WHERE "id" = ${dealId}::int AND "status" = 'Disputed'::"ServiceDealStatus"`;
-    await tx.$executeRaw`
+    const [event] = await tx.$queryRaw<{ id: number }[]>`
       INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "comment")
       VALUES (${dealId}::int, ${moderatorId}::int, 'DisputeResolved'::"ServiceDealEventType",
-        ${note ?? resolution}::text)`;
+        ${note ?? resolution}::text)
+      RETURNING "id"`;
+    resolvedEventId = event.id;
     await tx.$executeRaw`${recordHumanRulingSql(dealId, moderatorId, resolution)}`;
     if (resolution === 'Refund') await claimRefund(tx, dealId);
     return 'resolved' as const;
@@ -1092,7 +1338,7 @@ export async function resolveServiceDealDispute({
       dealId,
       resolution,
       error: (error as Error)?.message,
-    }).catch(() => null)
+    })
   );
   // The payout claim re-checks the finals and the seller; if it held the deal again, it is back in
   // the queue and the moderator must not be told it was released.
@@ -1100,6 +1346,13 @@ export async function resolveServiceDealDispute({
     SELECT "status"::text AS "status", "disputeReason" AS "reason"
     FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
   if (after?.status === 'Disputed') return { status: 'held-for-review', reason: after.reason };
+  await notifyServiceDeal({
+    dealId,
+    notice: 'disputeResolved',
+    to: 'parties',
+    actorId: moderatorId,
+    key: resolvedEventId,
+  });
   return { status: 'resolved', resolution };
 }
 

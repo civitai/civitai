@@ -231,7 +231,9 @@ describe('publishDueScheduledArticles', () => {
       entityType: 'article',
       entityId: 1,
     });
-    expect(mockQueueUpdate).toHaveBeenCalledExactlyOnceWith([{ id: 1, action: 'Update' }]);
+    expect(mockQueueUpdate).toHaveBeenCalledExactlyOnceWith([{ id: 1, action: 'Update' }], {
+      reason: 'scheduled-publish',
+    });
     expect(mockRefreshCount).toHaveBeenCalledExactlyOnceWith(5);
     expect(mockCreateNotification).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ userId: 5, key: 'article-published-1' })

@@ -121,6 +121,7 @@ function base(over: Partial<ListingDetail> = {}): ListingDetail {
     installCount: 4213,
     openCount: 2718,
     sourceRepoUrl: null,
+    issueTrackerUrl: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
     scopes: [],

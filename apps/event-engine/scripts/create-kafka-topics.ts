@@ -21,8 +21,6 @@ const TOPICS = [
   'postgres.BuzzTip',
   'postgres.CollectionContributor',
   'postgres.CollectionItem',
-  'postgres.Comment',
-  'postgres.CommentV2',
   'postgres.CommentV3',
   'postgres.ImageReaction',
   'postgres.ImageResourceNew',

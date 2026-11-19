@@ -84,7 +84,7 @@ const appeal = (entityId: number) =>
     entityId,
     entityType: EntityType.Image,
     message: 'Please review again.',
-    userId: 602767,
+    userId: 990100013,
     buzzType: 'user',
   });
 

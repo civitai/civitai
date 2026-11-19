@@ -1,5 +1,5 @@
-// Hat Turf's time-varying numbers: sticker supply, its catch-up multiplier, and how many stickerers
-// an image credits. All are step schedules so they can ramp through the event without a deploy (see
+// Hat Turf's time-varying numbers: sticker supply, its catch-up multiplier, how many stickerers
+// an image credits, and how long a sticker counts. All are step schedules so they can ramp through the event without a deploy (see
 // config.ts).
 
 export type TurfStep = { from: Date };
@@ -81,4 +81,35 @@ export function scaleSupply(
     perHour: step.perHour * multiplier,
     cap: Math.floor(step.cap * multiplier + 1e-9),
   }));
+}
+
+/**
+ * How many of a team's stickerers an action on an image it leads credits: the step's `players`
+ * scaled by the team's credit catch-up, never below 1. No step in force credits no one.
+ */
+export function scaleCredited(base: number, multiplier: number) {
+  return base > 0 ? Math.max(1, Math.round(base * multiplier)) : 0;
+}
+
+// A sticker counts for `ttlHours` from when it was placed, or from `rolloutAt` if it was placed
+// before then, so turning expiry on never expires a sticker at once. No `ttlHours`: none expire.
+export type StickerExpiry = { ttlHours?: number; rolloutAt?: Date };
+
+/** When a sticker placed at `createdAt` stops counting; null when stickers do not expire. */
+export function stickerExpiresAt(createdAt: Date, { ttlHours, rolloutAt }: StickerExpiry) {
+  if (!ttlHours || !(ttlHours > 0)) return null;
+  const from = rolloutAt && rolloutAt > createdAt ? rolloutAt : createdAt;
+  return new Date(from.getTime() + ttlHours * HOUR_MS);
+}
+
+/**
+ * The stickers still counting at `now` are those placed after this (stickerExpiresAt > now, as a
+ * bound on createdAt the queries can use). Null when none has expired yet: no expiry, or every
+ * sticker is still inside its fresh lifetime from `rolloutAt`.
+ */
+export function stickerLiveAfter({ ttlHours, rolloutAt }: StickerExpiry, now: Date) {
+  if (!ttlHours || !(ttlHours > 0)) return null;
+  const cutoff = new Date(now.getTime() - ttlHours * HOUR_MS);
+  if (rolloutAt && rolloutAt > cutoff) return null;
+  return cutoff;
 }

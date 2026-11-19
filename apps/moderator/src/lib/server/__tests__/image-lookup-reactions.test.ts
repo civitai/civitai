@@ -29,7 +29,7 @@ beforeEach(() => {
 
 describe('getReactions', () => {
   it('counts the total separately instead of inferring it from the page', async () => {
-    const result = await getReactions(141988541);
+    const result = await getReactions(990100037);
 
     // Two statements: the page, and a COUNT. One would mean the total is the row count in hand — the
     // exact defect the ticket was opened for.
@@ -41,7 +41,7 @@ describe('getReactions', () => {
   });
 
   it('resumes from the last row, never from a row offset', async () => {
-    await getReactions(141988541, {
+    await getReactions(990100037, {
       limit: 100,
       cursor: { createdAt: new Date('2026-09-08T00:00:00Z'), id: 5 },
     });
@@ -63,13 +63,13 @@ describe('getReactions', () => {
   it('reports no next cursor once a page comes back short', async () => {
     // The driver answers with no rows, so this page is shorter than its limit — the end of the set.
     // Handing back a cursor there costs the caller a round trip to learn it is done.
-    const result = await getReactions(141988541, { limit: 100 });
+    const result = await getReactions(990100037, { limit: 100 });
 
     expect(result.nextCursor).toBeNull();
   });
 
   it('does not cap the count query along with the page', async () => {
-    await getReactions(141988541, { limit: 10 });
+    await getReactions(990100037, { limit: 10 });
 
     // A `limit` on the COUNT would make the total max out at the page size — a subtler spelling of
     // reporting the cap as the answer.

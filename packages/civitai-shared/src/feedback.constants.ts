@@ -29,6 +29,10 @@
 // coding agent with an API token. Its rows are deduplicated on a server-computed fingerprint held
 // in `context.server`, so the generic inputs refuse it for the same reason they refuse `app-block`:
 // a row written there would carry no fingerprint and never be counted.
+//
+// `knights` is written by the Knights of New Order app (`apps/knights`, `POST /feedback`), which shares this
+// Postgres and writes its rows directly, not through feedback.create. It applies the same message bound and the same
+// 5/hour numbers, counted over the user's `knights` rows. The generic inputs still accept it.
 export const FEEDBACK_AREAS = [
   'bitdex-image-feed',
   'apps-marketplace',
@@ -36,6 +40,7 @@ export const FEEDBACK_AREAS = [
   'app-block',
   'apps-platform',
   'semantic-image-search',
+  'knights',
   'orchestration',
 ] as const;
 
@@ -64,8 +69,8 @@ export const APPS_PLATFORM_FEEDBACK_AREA: FeedbackArea = 'apps-platform';
  */
 /** The only reporter-sent URL the moderator panel renders as a link. */
 export const PLATFORM_FEEDBACK_DOC_URL_PREFIX = 'https://developer.civitai.com/';
-/** How much of a moderator's public note the readback returns. */
-export const PLATFORM_FEEDBACK_PUBLIC_NOTE_MAX_LENGTH = 300;
+/** Longest public note a moderator can save, and so how much of one the readback returns. */
+export const PLATFORM_FEEDBACK_PUBLIC_NOTE_MAX_LENGTH = 1000;
 /**
  * Which `resolution.fixedIn.component` a reporting client's own version is compared against, to open
  * a regression row. `other` is absent on purpose: its version says nothing about any component we ship.
@@ -95,6 +100,18 @@ export const APP_FEEDBACK_READERS =
  * `*_feedback_app_listing`. A value added here and not there fails the owner's write with a
  * constraint violation; `feedback.schema.test.ts` reads the CHECK back out of the SQL and compares.
  */
+/**
+ * The moderator triage status, `Feedback.status`, as the `Feedback_status_check` CHECK in
+ * `20260813180000_feedback` allows it. Shared so the moderator queue and the main app's triage API
+ * validate one list: a value only one of them accepts is a write the database refuses.
+ */
+export const FEEDBACK_STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'] as const;
+
+export type FeedbackTriageStatus = (typeof FEEDBACK_STATUSES)[number];
+
+/** Longest text one triage API call may append to the moderator-internal `triageNote`. */
+export const FEEDBACK_TRIAGE_NOTE_APPEND_MAX_LENGTH = 2000;
+
 export const FEEDBACK_OWNER_STATUSES = ['acknowledged', 'resolved', 'wont_fix'] as const;
 
 export type FeedbackOwnerStatus = (typeof FEEDBACK_OWNER_STATUSES)[number];
@@ -217,5 +234,22 @@ export const FEEDBACK_NETWORK_URL_MAX_LENGTH = 300;
  * submission on the surface that exists to collect reports.
  */
 export const FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH = 20;
+
+/**
+ * Failed tRPC calls. A batched call fails inside an HTTP 200 response, so the network buffer above
+ * never sees it. Each entry is the procedure path, the tRPC error code and status, and a time:
+ * never the input, never the error message (a message can echo what the user typed).
+ */
+export const FEEDBACK_TRPC_ERROR_MAX_COUNT = 10;
+export const FEEDBACK_TRPC_PATH_MAX_LENGTH = 100;
+/** A procedure path is dotted identifiers (`model.getById`). Anything else is not recorded. */
+export const FEEDBACK_TRPC_PATH_PATTERN = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/;
+/** tRPC codes are SCREAMING_SNAKE (`NOT_FOUND`, `INTERNAL_SERVER_ERROR`). */
+export const FEEDBACK_TRPC_CODE_PATTERN = /^[A-Z_]{1,40}$/;
+
+/** Bounds on the environment the client reports: build id, short device strings, user agent. */
+export const FEEDBACK_BUILD_MAX_LENGTH = 64;
+export const FEEDBACK_DEVICE_TEXT_MAX_LENGTH = 64;
+export const FEEDBACK_USER_AGENT_MAX_LENGTH = 400;
 
 export const feedbackAreaFlagKey = (area: FeedbackArea) => `feedback-area-${area}`;

@@ -62,7 +62,6 @@ vi.mock('~/server/clickhouse/client', () => ({
 
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
@@ -74,13 +73,13 @@ describe('deleteImages', () => {
   });
 
   it('leaves CollectionItem rows to the foreign key cascade', async () => {
-    await deleteImages([1, 2, 3]);
+    await deleteImages([1, 2, 3], { actor: { system: 'test' } });
 
     expect(mockCollectionItemDeleteMany).not.toHaveBeenCalled();
   });
 
   it('still deletes the image rows', async () => {
-    await deleteImages([1, 2, 3]);
+    await deleteImages([1, 2, 3], { actor: { system: 'test' } });
 
     const deletedImages = mockQueryRaw.mock.calls.some(([strings]) =>
       ((strings as unknown as string[]) ?? []).join('?').includes('DELETE FROM "Image"')

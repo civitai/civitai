@@ -4,6 +4,7 @@ import {
   IconBell,
   IconCreditCard,
   IconEye,
+  IconGauge,
   IconLayoutDashboard,
   IconPalette,
   IconShieldLock,
@@ -139,6 +140,14 @@ export const accountSections: AccountSection[] = [
       'tipalti',
       'gift',
     ],
+  },
+  {
+    id: 'usage',
+    path: 'usage',
+    label: 'Usage limits',
+    icon: IconGauge,
+    group: 'access',
+    keywords: ['limits', 'rate limit', 'quota', 'posts per day', 'too many', '429', 'api'],
   },
   {
     id: 'security',

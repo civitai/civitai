@@ -15,43 +15,74 @@ export function ArticleBanner({
   image,
   articleId,
   title,
+  bare,
 }: {
   image: BannerImage;
   articleId: number;
   title: string;
+  /** Just the image under the content guard: no link to image detail and no menu. For a draft share view. */
+  bare?: boolean;
 }) {
   return (
     <div
-      className="relative mb-6 max-h-[28rem] w-full overflow-hidden"
+      // -mt-3 cancels the sub nav's mb-3 so the banner meets it.
+      className="relative -mt-3 mb-6 max-h-[28rem] w-full overflow-hidden"
       style={{ aspectRatio: BANNER_ASPECT }}
       data-testid="article-banner"
     >
       <ImageGuard2 image={image} connectType="article" connectId={articleId}>
-        {(safe) => (
-          <RoutedDialogLink
-            name="imageDetail"
-            state={{ imageId: image.id }}
-            className="block size-full cursor-pointer"
-          >
-            <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-            <ImageContextMenu image={image} noDelete className="absolute right-2 top-2 z-10" />
-            {!safe ? (
-              <div className="relative size-full overflow-hidden">
-                <MediaHash {...image} />
-              </div>
-            ) : (
-              <EdgeMedia
-                src={image.url}
-                className="size-full object-cover"
-                name={image.name}
-                alt={title}
-                type={image.type}
-                width={constants.article.bannerImageWidth}
-                anim={safe}
-              />
-            )}
-          </RoutedDialogLink>
-        )}
+        {(safe) => {
+          const content = (
+            <>
+              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+              {!bare && (
+                <ImageContextMenu image={image} noDelete className="absolute right-2 top-2 z-10" />
+              )}
+              {!safe ? (
+                <div className="relative size-full overflow-hidden">
+                  <MediaHash {...image} />
+                </div>
+              ) : (
+                <>
+                  {image.type === 'image' && (
+                    <EdgeMedia
+                      src={image.url}
+                      name={image.name}
+                      type="image"
+                      width={450}
+                      alt=""
+                      aria-hidden
+                      className="absolute inset-0 size-full scale-110 object-cover opacity-40 blur-2xl"
+                      style={{ maxWidth: 'none' }}
+                    />
+                  )}
+                  <EdgeMedia
+                    src={image.url}
+                    className="absolute inset-0 size-full object-contain"
+                    // Lifts EdgeImage's cap at the requested width; the image is centred over the backdrop.
+                    style={{ maxWidth: 'none' }}
+                    name={image.name}
+                    alt={title}
+                    type={image.type}
+                    width={constants.article.bannerImageWidth}
+                    anim={safe}
+                  />
+                </>
+              )}
+            </>
+          );
+          return bare ? (
+            <div className="relative size-full">{content}</div>
+          ) : (
+            <RoutedDialogLink
+              name="imageDetail"
+              state={{ imageId: image.id }}
+              className="block size-full cursor-pointer"
+            >
+              {content}
+            </RoutedDialogLink>
+          );
+        }}
       </ImageGuard2>
     </div>
   );

@@ -13,6 +13,7 @@ import type {
 } from '~/server/search-index/base.search-index';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { USER_SEARCH_INDEX_ELIGIBILITY } from '~/server/search-index/user-index-eligibility';
+import { fallbackUserImageColumn } from '~/server/services/profile-picture.sql';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 
 import { isDefined } from '~/utils/type-guards';
@@ -217,7 +218,7 @@ export const pullUsersData = async (
           u.username,
           u."deletedAt",
           u."createdAt",
-          u.image
+          ${Prisma.raw(fallbackUserImageColumn)} AS image
         FROM "User" u
         WHERE ${Prisma.join(where, ' AND ')}
       `;

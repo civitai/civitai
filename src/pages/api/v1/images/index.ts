@@ -1,10 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod';
 import { isProd } from '~/env/other';
-import { constants, IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
-import { ImageSort } from '~/server/common/enums';
 import client from 'prom-client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
@@ -18,83 +15,31 @@ import {
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
-import { keysetCursorSchema } from '~/server/schema/base.schema';
+import {
+  beginFeedGoShadowV1Images,
+  captureFeedGoShadowV1Images,
+  feedGoV1ShapeClass,
+  finishFeedGoShadow,
+  type FeedGoShadowSample,
+  type FeedGoV1ShapeInput,
+} from '~/server/trpc/feed-go-shadow';
+import { recordFeedGoV1Shape } from '~/server/prom/feed-go-shadow.metrics';
+import { imagesEndpointSchema } from '~/server/schema/images-endpoint.schema';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
-import { baseModels } from '~/shared/constants/basemodel.constants';
 import {
-  nsfwBrowsingLevelsFlag,
-  NsfwLevelDeprecated,
-  nsfwLevelMapDeprecated,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
-import {
-  booleanString,
-  commaDelimitedEnumArray,
-  commaDelimitedNumberArray,
-  numericString,
-} from '~/utils/zod-helpers';
-import { usernameSchema } from '~/shared/zod/username.schema';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const config = {
   api: {
     responseLimit: false,
   },
 };
-
-// TODO merge with getInfiniteImagesSchema
-const imagesEndpointSchema = z.object({
-  limit: numericString(z.number().min(0).max(200)).default(constants.galleryFilterDefaults.limit),
-  page: numericString().optional(),
-  postId: numericString().optional(),
-  modelId: numericString().optional(),
-  modelVersionId: numericString().optional(),
-  imageId: numericString().optional(),
-  // Batch by id — `?ids=1,2,3`. The one-round-trip replacement for the retired
-  // `GET_IMAGES_BY_IDS` bridge message, which was batch by construction; without
-  // it a 50-cell grid is 50 requests against a rate-limited public API
-  // (civitai/civitai-app-starters#429).
-  //
-  // 🔴 Three properties a caller must not assume away:
-  //   1. RESULTS ARE A SUBSET. An id the viewer may not see and an id that does
-  //      not exist are BOTH simply absent — deliberately indistinguishable. See
-  //      the note above `handleImagesRequest`.
-  //   2. ORDER IS `sort`, NOT REQUEST ORDER. The filter is a SQL
-  //      `i."id" = ANY(...)`; re-key by `item.id` client-side.
-  //   3. `ids` FORCES THE LEGACY DB PATH (image-search.service.ts). Meili feed
-  //      search builds no id filter and would answer with the global feed.
-  // `.min(1)` because an empty array is not a batch — it would fall through
-  // every id clause and return the unfiltered feed.
-  ids: commaDelimitedNumberArray(
-    z.number().int().positive().array().min(1).max(IMAGE_IDS_BATCH_MAX)
-  ).optional(),
-  username: usernameSchema.optional(),
-  userId: numericString().optional(),
-  period: z.enum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
-  sort: z.enum(ImageSort).default(constants.galleryFilterDefaults.sort),
-  nsfw: z
-    .union([z.enum(NsfwLevelDeprecated), booleanString()])
-    .optional()
-    .transform((value) => {
-      if (!value) return undefined;
-      if (typeof value === 'boolean')
-        return value ? nsfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
-      return nsfwLevelMapDeprecated[value] as number;
-    }),
-  browsingLevel: z.coerce.number().optional(),
-  tags: commaDelimitedNumberArray().optional(),
-  cursor: keysetCursorSchema.optional(),
-  type: z.enum(MediaType).optional(),
-  baseModels: commaDelimitedEnumArray([...baseModels]).optional(),
-  withMeta: booleanString().default(false),
-  requiringMeta: booleanString().optional(),
-  flatMeta: booleanString().optional(),
-  withTags: booleanString().default(false),
-});
 
 // Reuse the shared images-search metrics bundle (idempotent registration on the
 // default registry that /api/metrics scrapes). This times the FULL REST handler
@@ -103,6 +48,11 @@ const imagesEndpointSchema = z.object({
 // alongside the search-fn timing without extra cardinality.
 const { requestDurationSeconds } = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
 
+/**
+ * @ported-to-go feed-go · status: shadow · see ports/manifest.json (id: GET /api/v1/images).
+ * Changing this behaviour? Update apps/feed-go/internal/server/server.go, apps/feed-go/internal/feed/v1images.go in the same PR; CI lists every port a PR touches.
+ * Generated by `node scripts/ports/generate.mjs` from ports/manifest.json: edit the manifest, not this block.
+ */
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   // When the long-task LABELS tier is armed, attribute any synchronous event-loop
   // block during this heavy handler to 'rest:/api/v1/images'. That costs one
@@ -159,11 +109,30 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
   let endTimer: (() => void) | undefined;
 
   let releaseSlot: (() => void) | undefined;
+
+  // feed-go shadow (flag `feed-go-shadow-v1-images`, default off): decided after the cheap rejects
+  // and the bulkhead slot (below). A sampled request keeps a reference to the 200 body it writes,
+  // and after the handler its query string, the headers the answer depends on and that body are
+  // POSTed to feed-go's internal compare endpoint from `setImmediate`, never awaited. Never throws.
+  // See `~/server/trpc/feed-go-shadow`. `shape` is this request's class for the shape counter.
+  let shadow: FeedGoShadowSample | undefined;
+  let shape: FeedGoV1ShapeInput | null = null;
+  const ok = (body: unknown) => {
+    if (shadow) captureFeedGoShadowV1Images(shadow, body);
+    return res.status(200).json(body);
+  };
   try {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
+    shape = reqParams.data;
 
-    const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
+    const session = await getApiAuthSession(
+      { req, res },
+      {
+        whenBanned: 'anonymous',
+        scope: { anyOf: [TokenScope.MediaRead, TokenScope.AIServicesRead] },
+      }
+    );
 
     // Handle pagination
     const {
@@ -213,20 +182,34 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
 
     // Timed only for admitted requests (bulkhead 503 returns above, before this).
     endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
+    shadow = beginFeedGoShadowV1Images(req);
 
     // Check if request is from restricted region and override browsing level
     const region = getRegion(req);
     let _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    // Above SFW, the body depends on the caller's region, which the shared cache does not key on.
+    // The range check comes first because Flags works on 32-bit integers and the level is unvalidated.
+    const withinSfw =
+      Number.isInteger(_browsingLevel) &&
+      _browsingLevel >= 0 &&
+      _browsingLevel <= sfwBrowsingLevelsFlag &&
+      Flags.hasFlag(sfwBrowsingLevelsFlag, _browsingLevel);
+    if (!withinSfw) res.setHeader('Cache-Control', 'private, no-store');
     if (isRegionRestricted(region)) _browsingLevel = sfwBrowsingLevelsFlag;
-    // A minor or SFW-only model's images are served only at its gallery's held level.
+    // A minor or SFW-only model's images are served only at its gallery's held level, and a
+    // taken-down model's not at all.
     if (data.modelId || data.modelVersionId || data.postId) {
       // Loaded on demand: the model service's import graph is large and only this branch needs it.
-      const { getHeldGalleryLevel } = await import('~/server/services/model.service');
+      const { getHeldGalleryLevel, isModelGalleryWithheld } = await import(
+        '~/server/services/model.service'
+      );
+      // A taken-down model's images are withheld here from everyone, its owner included.
+      if (await isModelGalleryWithheld(data)) return ok({ items: [], metadata: {} });
       const heldLevel = await getHeldGalleryLevel(data);
       if (heldLevel !== undefined) {
         _browsingLevel = Flags.intersection(_browsingLevel, heldLevel);
         // The search reads 0 as its default level, not as none, so an empty intersection is an empty page.
-        if (!_browsingLevel) return res.status(200).json({ items: [], metadata: {} });
+        if (!_browsingLevel) return ok({ items: [], metadata: {} });
       }
     }
 
@@ -235,11 +218,12 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // browsingLevel UNCHANGED (mapped above from ?nsfw=/?browsingLevel=); the
     // block endpoint passes a server-clamped value. No other lever differs.
     const { items: found, nextCursor } = await runImageSearch(
-      { limit, skip, cursor, type, withMeta, flatMeta, withTags, feedService: true, data },
+      { limit, skip, cursor, type, withMeta, flatMeta, withTags, data },
       { browsingLevel: _browsingLevel, user: session?.user, req }
     );
-    // Images picked by id name no model, so each is held by its own post's model.
-    const items = data.imageId || data.ids?.length ? await withoutHeldImages(found) : found;
+    // Each image is held by its own post's model: a model or version search selects by resource, so
+    // it can return images posted to another model's gallery.
+    const items = await withoutHeldImages(found);
 
     const metadata: Metadata = {
       nextCursor,
@@ -251,7 +235,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     }
     metadata.nextPage = getNextPage({ req, ...metadata });
 
-    res.status(200).json({
+    ok({
       items,
       metadata,
     });
@@ -326,6 +310,8 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // Release the heavy slot as soon as the handler resolves (synchronous
     // serialization — the actual pin cost — is done by now), not on socket close.
     releaseSlot?.();
+    if (shadow) finishFeedGoShadow(shadow, res.statusCode, res);
+    recordFeedGoV1Shape(feedGoV1ShapeClass(req, shape, res.statusCode));
   }
 }
 

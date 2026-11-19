@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import type { ActionIconProps, BadgeProps, ButtonProps } from '@mantine/core';
 import {
   Anchor,
@@ -19,6 +20,7 @@ import {
   IconBolt,
   IconBookmark,
   IconBrandWechat,
+  IconPencil,
   IconBrush,
   IconChevronDown,
   IconChevronUp,
@@ -49,7 +51,7 @@ import { STICKER_REVEAL_PARAM, stickerRevealRequested } from '~/components/Place
 import { useStickerRevealParam } from '~/store/sticker-reveal.store';
 import { env } from '~/env/client';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
-import { AdUnitSide_2, AdUnitSide_3 } from '~/components/Ads/AdUnit';
+import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -68,7 +70,11 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { ReportChapterMenuItem } from '~/components/Storyline/ReportChapterMenuItem';
 import { StorylineChapterRemoveItem } from '~/components/Storyline/StorylineChapterRemoveItem';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
+import { CommentSection } from '~/components/CommentsV3/CommentSection';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { anchorImageIndex } from '~/components/Image/Detail/detail-items';
+import { TextSlideMenu } from '~/components/Image/DetailV2/TextSlideMenu';
+import { trpc } from '~/utils/trpc';
 import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSync';
 import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
 import { ImageDetailPostCard } from '~/components/Image/DetailV2/ImageDetailPostCard';
@@ -96,12 +102,15 @@ import {
 } from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { useSsrDeferredShell } from '~/hooks/useSsrDeferredShell';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { buildImageMediaSchema } from '~/components/Image/DetailV2/image-media-schema';
 import { imageDetailGateLevel } from '~/components/Image/DetailV2/image-detail-gate';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
 import { ImageReactorsPreview } from '~/components/Reaction/ImageReactorsPreview';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -117,6 +126,8 @@ import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
+import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
+import { RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 
 const PREFETCH_THRESHOLD = 5;
 
@@ -147,26 +158,27 @@ const sharedIconProps: IconProps = {
   color: 'white',
 };
 
-export function ImageDetail2() {
+export function ImageDetail2({ deferredSsr }: { deferredSsr?: boolean } = {}) {
   const { images } = useImageDetailContext();
   return (
     <HatTurfDetailProvider images={images}>
-      <ImageDetail2Content />
+      <ImageDetail2Content deferredSsr={deferredSsr} />
     </HatTurfDetailProvider>
   );
 }
 
-function ImageDetail2Content() {
+function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const {
     images,
+    items,
     active,
     close,
     toggleInfo,
     shareUrl,
     connect,
-    navigate,
+    navigateTo,
     loadMore,
     hasMore,
     index,
@@ -197,46 +209,66 @@ function ImageDetail2Content() {
   const videoRef = useRef<EdgeVideoRef | null>(null);
   const adContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const carouselNavigation = useCarouselNavigation({ items: images, initialIndex: index });
+  const carouselNavigation = useCarouselNavigation({ items, initialIndex: index });
 
   const storyline = useStorylineMode();
   // The header's `@max-md`, for the ⋯ menu, which is portaled out of the container.
   const narrowStage = useIsMobile({ breakpoint: 'md' });
-  const isLastImage = getStorylineStep(carouselNavigation.index, images.length, 'next') === 'end';
+  const isLastImage = getStorylineStep(carouselNavigation.index, items.length, 'next') === 'end';
   const navigation = withStorylineNavigation(
     carouselNavigation,
-    images.length,
+    items.length,
     storyline.active ? () => storyline.setEndOpen(true) : undefined,
     storyline.active && storyline.endOpen ? () => storyline.setEndOpen(false) : undefined
   );
 
   const settle = useCarouselUrlSync({
-    images,
+    items,
     index,
-    navigate,
+    navigate: navigateTo,
+    carouselIndex: carouselNavigation.index,
     carouselNavigate: carouselNavigation.navigate,
   });
   const handleSettle = (settledIndex: number) => {
     if (!settle(settledIndex)) return;
     // keep a runway ahead of the viewer so arrow/swipe navigation doesn't
     // dead-end (and loop back) at the edge of the loaded page
-    if (hasMore && settledIndex >= images.length - PREFETCH_THRESHOLD) loadMore();
+    if (hasMore && settledIndex >= items.length - PREFETCH_THRESHOLD) loadMore();
   };
 
-  const image = images[carouselNavigation.index];
+  // On a text slide, `image` is the slide's anchor (the image its URL names) and `text` the slide;
+  // everything about the image itself is left off. With no text items this is `images[index]`.
+  const current = items[carouselNavigation.index];
+  const text = current?.type === 'text' ? current.text : undefined;
+  const anchorItem = items[anchorImageIndex(items, carouselNavigation.index)];
+  const image = anchorItem?.type === 'image' ? anchorItem.image : undefined;
+  const { data: textPost } = trpc.post.get.useQuery({ id: text?.postId ?? 0 }, { enabled: !!text });
+
+  const railChapterIds = useMemo(
+    () =>
+      storyline.active
+        ? items.map((item) =>
+            item.type === 'image'
+              ? storyline.chapterIdOfImage(item.image.id)
+              : storyline.chapterIdOfPost(item.text.postId)
+          )
+        : undefined,
+    [storyline, items]
+  );
 
   // The address bar trails the carousel until it settles, so share the image
   // that's actually on screen rather than whatever the URL still says.
   const imageShareUrl = useMemo(() => {
-    if (!image || images[index]?.id === image.id) return shareUrl;
+    if (!image || text || items[index]?.key === current?.key) return shareUrl;
     const [, queryString] = shareUrl.split('?');
     return queryString ? `/images/${image.id}?${queryString}` : `/images/${image.id}`;
-  }, [shareUrl, image, images, index]);
+  }, [shareUrl, image, text, items, index, current?.key]);
 
   const { collectionItems, post } = useImageContestCollectionDetails(
     { id: image?.id as number },
     { enabled: !!image?.id }
   );
+  const deferredShell = useSsrDeferredShell(deferredSsr);
 
   if (!image) return <NotFound />;
   // Avoid showing POI images to non-mods non owners.
@@ -289,7 +321,7 @@ function ImageDetail2Content() {
   // Save are icon-only circles so the hat button and sticker pill fit beside them.
   const renderLeftImageControls = (withStoryline: boolean) => (
     <>
-      {canRemix && (
+      {canRemix && !text && (
         <RemixMenu image={image} source="remix:image">
           {withStoryline ? (
             <Button {...sharedButtonProps} color="blue" data-activity="remix:image">
@@ -310,7 +342,7 @@ function ImageDetail2Content() {
           )}
         </RemixMenu>
       )}
-      {withStoryline ? (
+      {text ? null : withStoryline ? (
         <Button {...sharedButtonProps} onClick={handleSaveClick}>
           <IconBookmark {...sharedIconProps} />
           <Text size="xs" align="center" fw={500}>
@@ -325,13 +357,14 @@ function ImageDetail2Content() {
       {withStoryline && (
         <StorylineToolbarChip
           imageId={image.id}
-          postId={image.postId ?? null}
+          postId={text?.postId ?? image.postId ?? null}
+          textPostId={text?.postId}
           placement="toolbar"
         />
       )}
-      {image.postId && (
+      {(text?.postId ?? image.postId) && (
         <NextLink
-          href={`/posts/${image.postId}`}
+          href={`/posts/${text?.postId ?? image.postId}`}
           className="hidden @md:block"
           onClick={() => {
             if (videoRef.current) videoRef.current.stop();
@@ -347,7 +380,7 @@ function ImageDetail2Content() {
       )}
       {/* On a phone the Buzz chip in the reaction row is the tip button, unless reactions are
           hidden: the chip goes with them, so the bar keeps a Tip circle. */}
-      {!withStoryline && reactionsHidden && !image.poi && (
+      {!text && !withStoryline && reactionsHidden && !image.poi && (
         // The wrapper is the button; the circle inside it is a plain badge.
         <InteractiveTipBuzzButton
           toUserId={image.user.id}
@@ -361,7 +394,7 @@ function ImageDetail2Content() {
           </Badge>
         </InteractiveTipBuzzButton>
       )}
-      {withStoryline && !image.poi && (
+      {!text && withStoryline && !image.poi && (
         <InteractiveTipBuzzButton toUserId={image.user.id} entityId={image.id} entityType="Image">
           <Badge
             {...sharedBadgeProps}
@@ -380,14 +413,14 @@ function ImageDetail2Content() {
         </InteractiveTipBuzzButton>
       )}
       {/* On a phone the badge is in the top toolbar, by Close, and the hat button is here. */}
-      {withStoryline && !narrowStage && takesHats(image) && (
+      {!text && withStoryline && !narrowStage && takesHats(image) && (
         <HatTurfDetailBadge imageId={image.id} />
       )}
-      {!withStoryline && narrowStage && takesHats(image) && (
+      {!text && !withStoryline && narrowStage && takesHats(image) && (
         <HatTurfDetailControls imageId={image.id} large />
       )}
       {/* Off the reaction row on a phone: beside the reactions it squeezed their counts. */}
-      {!withStoryline && narrowStage && (
+      {!text && !withStoryline && narrowStage && (
         <ReactionSettingsProvider settings={{ buttonStyling: pillStyling(36) }}>
           <StickerPlacementBar imageId={image.id} imageNsfwLevel={image.nsfwLevel} />
         </ReactionSettingsProvider>
@@ -402,27 +435,43 @@ function ImageDetail2Content() {
 
   const mediaSchema = buildImageMediaSchema({ image, title, baseUrl: env.NEXT_PUBLIC_BASE_URL });
 
+  // One `<Gated>` (rating gate and `<head>`) for the full page and for the shell.
+  const gatedProps = {
+    contentNsfwLevel: imageDetailGateLevel(image, forcedBrowsingLevel),
+    bypassRating: isOwner || !!currentUser?.isModerator,
+    meta: {
+      title,
+      images: image,
+      ogEndpoint: `/api/og?type=image&id=${image.id}`,
+      canonical: `/images/${image.id}`,
+      schema: mediaSchema,
+      breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+        { name: isVideo ? 'Videos' : 'Images', path: isVideo ? '/videos' : '/images' },
+        { name: title },
+      ]),
+      // Deindexed on every domain, videos included. The only per-page text is the prompt, which
+      // stays out of search snippets, and indexed safe videos earned effectively no search
+      // traffic over 2.5 months (GSC, Sep 2026). Video results come from the model, post and
+      // article pages that embed the media — don't re-enable this without new evidence.
+      deIndex: true,
+    },
+  };
+
+  // `ssrSignedInSkipPrefetchImages`: getServerSideProps prefetched the image, its contest details
+  // and the hidden preferences (so a deleted, hidden or blocked image is already NotFound above),
+  // so the server renders the gate and `<head>` with a loader in place of the content. The
+  // hydrating render matches it; the content then renders as it does after a client-side
+  // navigation, with the generation data loading in place.
+  if (deferredShell) {
+    return (
+      <Gated {...gatedProps}>
+        <PageLoader />
+      </Gated>
+    );
+  }
+
   return (
-    <Gated
-      contentNsfwLevel={imageDetailGateLevel(image, forcedBrowsingLevel)}
-      bypassRating={isOwner || !!currentUser?.isModerator}
-      meta={{
-        title,
-        images: image,
-        ogEndpoint: `/api/og?type=image&id=${image.id}`,
-        canonical: `/images/${image.id}`,
-        schema: mediaSchema,
-        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
-          { name: isVideo ? 'Videos' : 'Images', path: isVideo ? '/videos' : '/images' },
-          { name: title },
-        ]),
-        // Deindexed on every domain, videos included. The only per-page text is the prompt, which
-        // stays out of search snippets, and indexed safe videos earned effectively no search
-        // traffic over 2.5 months (GSC, Sep 2026). Video results come from the model, post and
-        // article pages that embed the media — don't re-enable this without new evidence.
-        deIndex: true,
-      }}
-    >
+    <Gated {...gatedProps}>
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
       <HatTurfDetailReset imageId={image.id} />
       <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
@@ -442,25 +491,28 @@ function ImageDetail2Content() {
                             className="size-9 rounded-full"
                             data-testid="image-detail-close"
                           />
-                          {narrowStage && takesHats(image) && (
+                          {!text && narrowStage && takesHats(image) && (
                             <HatTurfDetailBadge imageId={image.id} />
                           )}
-                          <ImageGuard2.BlurToggle
-                            {...sharedBadgeProps}
-                            className={clsx('@md:hidden', sharedBadgeProps.className)}
-                          />
+                          {!text && (
+                            <ImageGuard2.BlurToggle
+                              {...sharedBadgeProps}
+                              className={clsx('@md:hidden', sharedBadgeProps.className)}
+                            />
+                          )}
                         </div>
                         {/* One line on a phone: a wrapped row shrinks the image under it. */}
                         <div className="flex flex-1 flex-wrap justify-between gap-1 @max-md:min-w-0 @max-md:flex-nowrap">
                           <div className="flex min-w-0 items-center @md:hidden">
                             <StorylineToolbarChip
                               imageId={image.id}
-                              postId={image.postId ?? null}
+                              postId={text?.postId ?? image.postId ?? null}
+                              textPostId={text?.postId}
                               placement="mobile"
                             />
                           </div>
                           <div className="flex items-center gap-1 @max-md:hidden">
-                            <ImageGuard2.BlurToggle {...sharedBadgeProps} />
+                            {!text && <ImageGuard2.BlurToggle {...sharedBadgeProps} />}
                             {renderLeftImageControls(true)}
                           </div>
 
@@ -474,83 +526,113 @@ function ImageDetail2Content() {
                       </Badge> */}
                             {/* Wraps the ⋯ menu so a download outlives the menu closing. On a phone, Download is in
                                 the menu, and so is Report image. */}
-                            <DownloadImage src={image.url} type={image.type} name={image.name}>
-                              {({ onClick: download, isLoading: downloading, progress }) => (
-                                <>
-                                  <LegacyActionIcon
-                                    {...sharedActionIconProps}
-                                    className={clsx(
-                                      sharedActionIconProps.className,
-                                      '@max-md:hidden'
-                                    )}
-                                    onClick={download}
-                                    loading={downloading && progress === 0}
-                                  >
-                                    {downloading && progress > 0 && (
-                                      <RingProgress
-                                        size={36}
-                                        sections={[{ value: progress, color: 'blue' }]}
-                                        thickness={4}
-                                      />
-                                    )}
-                                    {!downloading && <IconDownload {...sharedIconProps} />}
-                                  </LegacyActionIcon>
-                                  <ShareButton
-                                    url={imageShareUrl}
-                                    title={title}
-                                    collect={{ type: CollectionType.Image, imageId: image.id }}
+                            {text ? (
+                              <>
+                                {textPost && textPost.user.id === currentUser?.id && (
+                                  <NextLink
+                                    href={`/posts/${text.postId}/edit`}
+                                    aria-label="Edit text"
+                                    data-testid="text-slide-edit"
                                   >
                                     <LegacyActionIcon {...sharedActionIconProps}>
-                                      <IconShare3 {...sharedIconProps} />
+                                      <IconPencil {...sharedIconProps} />
                                     </LegacyActionIcon>
-                                  </ShareButton>
-                                  <LoginRedirect reason={'report-content'}>
+                                  </NextLink>
+                                )}
+                                <ShareButton url={imageShareUrl} title={title}>
+                                  <LegacyActionIcon {...sharedActionIconProps}>
+                                    <IconShare3 {...sharedIconProps} />
+                                  </LegacyActionIcon>
+                                </ShareButton>
+                                <TextSlideMenu
+                                  postId={text.postId}
+                                  textId={text.id}
+                                  authorId={textPost?.user.id}
+                                >
+                                  <LegacyActionIcon {...sharedActionIconProps}>
+                                    <IconDotsVertical {...sharedIconProps} />
+                                  </LegacyActionIcon>
+                                </TextSlideMenu>
+                              </>
+                            ) : (
+                              <DownloadImage src={image.url} type={image.type} name={image.name}>
+                                {({ onClick: download, isLoading: downloading, progress }) => (
+                                  <>
                                     <LegacyActionIcon
                                       {...sharedActionIconProps}
                                       className={clsx(
                                         sharedActionIconProps.className,
                                         '@max-md:hidden'
                                       )}
-                                      onClick={handleReportClick}
+                                      onClick={download}
+                                      loading={downloading && progress === 0}
                                     >
-                                      <IconFlag {...sharedIconProps} />
+                                      {downloading && progress > 0 && (
+                                        <RingProgress
+                                          size={36}
+                                          sections={[{ value: progress, color: 'blue' }]}
+                                          thickness={4}
+                                        />
+                                      )}
+                                      {!downloading && <IconDownload {...sharedIconProps} />}
                                     </LegacyActionIcon>
-                                  </LoginRedirect>
-                                  <ImageContextMenu
-                                    image={image}
-                                    additionalMenuItems={
-                                      <>
-                                        {narrowStage && (
-                                          <Menu.Item
-                                            leftSection={<IconDownload size={14} stroke={1.5} />}
-                                            onClick={download}
-                                            disabled={downloading}
-                                            closeMenuOnClick={false}
-                                          >
-                                            {!downloading
-                                              ? 'Download'
-                                              : Number.isFinite(progress) && progress > 0
-                                              ? `Downloading ${Math.round(progress)}%`
-                                              : 'Downloading…'}
-                                          </Menu.Item>
+                                    <ShareButton
+                                      url={imageShareUrl}
+                                      title={title}
+                                      collect={{ type: CollectionType.Image, imageId: image.id }}
+                                    >
+                                      <LegacyActionIcon {...sharedActionIconProps}>
+                                        <IconShare3 {...sharedIconProps} />
+                                      </LegacyActionIcon>
+                                    </ShareButton>
+                                    <LoginRedirect reason={'report-content'}>
+                                      <LegacyActionIcon
+                                        {...sharedActionIconProps}
+                                        className={clsx(
+                                          sharedActionIconProps.className,
+                                          '@max-md:hidden'
                                         )}
-                                        {storyline.active &&
-                                          !isOwner &&
-                                          !!image.postId &&
-                                          storyline.chapterIdOfImage(image.id) !== undefined && (
-                                            <ReportChapterMenuItem postId={image.postId} />
+                                        onClick={handleReportClick}
+                                      >
+                                        <IconFlag {...sharedIconProps} />
+                                      </LegacyActionIcon>
+                                    </LoginRedirect>
+                                    <ImageContextMenu
+                                      image={image}
+                                      additionalMenuItems={
+                                        <>
+                                          {narrowStage && (
+                                            <Menu.Item
+                                              leftSection={<IconDownload size={14} stroke={1.5} />}
+                                              onClick={download}
+                                              disabled={downloading}
+                                              closeMenuOnClick={false}
+                                            >
+                                              {!downloading
+                                                ? 'Download'
+                                                : Number.isFinite(progress) && progress > 0
+                                                ? `Downloading ${Math.round(progress)}%`
+                                                : 'Downloading…'}
+                                            </Menu.Item>
                                           )}
-                                        <StorylineChapterRemoveItem imageId={image.id} />
-                                      </>
-                                    }
-                                  >
-                                    <LegacyActionIcon {...sharedActionIconProps}>
-                                      <IconDotsVertical {...sharedIconProps} />
-                                    </LegacyActionIcon>
-                                  </ImageContextMenu>
-                                </>
-                              )}
-                            </DownloadImage>
+                                          {storyline.active &&
+                                            !isOwner &&
+                                            !!image.postId &&
+                                            storyline.chapterIdOfImage(image.id) !== undefined && (
+                                              <ReportChapterMenuItem postId={image.postId} />
+                                            )}
+                                          <StorylineChapterRemoveItem imageId={image.id} />
+                                        </>
+                                      }
+                                    >
+                                      <LegacyActionIcon {...sharedActionIconProps}>
+                                        <IconDotsVertical {...sharedIconProps} />
+                                      </LegacyActionIcon>
+                                    </ImageContextMenu>
+                                  </>
+                                )}
+                              </DownloadImage>
+                            )}
                           </div>
                         </div>
                         <div className={`@max-md:hidden ${sidebarOpen ? '-mr-3 ml-3' : ''}`}>
@@ -567,18 +649,26 @@ function ImageDetail2Content() {
                       <div className="relative flex min-h-0 flex-1 flex-col">
                         <ImageDetailCarousel
                           images={images}
+                          items={items}
+                          textUserId={textPost?.user.id ?? image.user.id}
                           videoRef={videoRef}
                           connect={connect}
                           onSettle={handleSettle}
                           loop={!storyline.active}
                           {...navigation}
                         />
-                        <StorylineStageOverlay isLastImage={isLastImage} imageId={image?.id} />
+                        <StorylineStageOverlay
+                          isLastImage={isLastImage}
+                          imageId={text ? undefined : image?.id}
+                        />
                       </div>
                       {/* FOOTER */}
                       <div className="flex flex-col gap-3 p-3">
-                        <StorylineChapterDescription imageId={image?.id} />
-                        <div className="flex justify-center">
+                        <StorylineChapterDescription
+                          imageId={image?.id}
+                          textPostId={text?.postId}
+                        />
+                        <div className={clsx('flex justify-center', text && 'hidden')}>
                           <ReactionSettingsProvider
                             settings={{
                               hideReactionCount: false,
@@ -606,6 +696,7 @@ function ImageDetail2Content() {
                           <StorylineChapterRail
                             storyline={storyline}
                             images={images}
+                            chapterIds={railChapterIds}
                             index={carouselNavigation.index}
                             navigate={carouselNavigation.navigate}
                           />
@@ -653,13 +744,27 @@ function ImageDetail2Content() {
                   }`}
                 >
                   <div className="flex items-center gap-1">{renderLeftImageControls(false)}</div>
-                  <LegacyActionIcon
-                    {...sharedActionIconProps}
-                    onClick={toggleInfo}
-                    data-testid="image-detail-chevron"
-                  >
-                    <IconChevron {...sharedIconProps} />
-                  </LegacyActionIcon>
+                  {text ? (
+                    // A text's talk lives in this sheet, so the strip names it.
+                    <Button
+                      variant="light"
+                      size="compact-md"
+                      leftSection={<IconBrandWechat size={16} />}
+                      rightSection={<IconChevron size={16} />}
+                      onClick={toggleInfo}
+                      data-testid="image-detail-chevron"
+                    >
+                      Discussion
+                    </Button>
+                  ) : (
+                    <LegacyActionIcon
+                      {...sharedActionIconProps}
+                      onClick={toggleInfo}
+                      data-testid="image-detail-chevron"
+                    >
+                      <IconChevron {...sharedIconProps} />
+                    </LegacyActionIcon>
+                  )}
                 </div>
                 <ScrollArea className="flex-1 p-3 py-0">
                   <div className="flex flex-col gap-3 py-3 @max-md:pt-0" ref={adContainerRef}>
@@ -679,15 +784,15 @@ function ImageDetail2Content() {
                       tipBuzzEntityId={image.id}
                       tipBuzzEntityType="Image"
                       className="rounded-xl"
-                      tipsEnabled={!image.poi}
+                      tipsEnabled={!image.poi && !text}
                     />
                     {/* Beside, not inside, the creator card: the card's subText sits
                         inside the profile link on the cosmetic-shop card, and an
                         anchor cannot nest in an anchor. */}
-                    <ImagePublishedWithApp imageId={image.id} />
-                    {image.postId && (
+                    {!text && <ImagePublishedWithApp imageId={image.id} />}
+                    {(text?.postId ?? image.postId) && (
                       <EntityCollaboratorList
-                        entityId={image.postId}
+                        entityId={(text?.postId ?? image.postId) as number}
                         entityType={EntityType.Post}
                         creatorCardProps={{
                           className: 'rounded-xl',
@@ -696,7 +801,7 @@ function ImageDetail2Content() {
                         }}
                       />
                     )}
-                    {image.postId && (
+                    {!text && image.postId && (
                       // Durable data-gate: BOTH the `image.get` payload (direct
                       // image-page path) AND the feed payloads (getAllImages /
                       // getAllImagesIndex, the feed-modal path) now carry the
@@ -712,7 +817,7 @@ function ImageDetail2Content() {
                         label="Posted to 3D Model"
                       />
                     )}
-                    {image.needsReview && isOwner && (
+                    {!text && image.needsReview && isOwner && (
                       <AlertWithIcon
                         icon={<IconAlertTriangle />}
                         color="yellow"
@@ -728,7 +833,7 @@ function ImageDetail2Content() {
                           : `This image won't be visible to other users until it's reviewed by our moderators.`}
                       </AlertWithIcon>
                     )}
-                    {['AiNotVerified'].includes(image.blockedFor ?? '') && (
+                    {!text && ['AiNotVerified'].includes(image.blockedFor ?? '') && (
                       <AlertWithIcon
                         icon={<IconAlertTriangle />}
                         color="yellow"
@@ -743,8 +848,25 @@ function ImageDetail2Content() {
                         &ndash; such as the prompt, tools, and resources used.
                       </AlertWithIcon>
                     )}
-                    {isOwner && <OwnerBlockedImageNotice image={image} />}
-                    {image.poi && (
+                    {!text && isOwner && <OwnerBlockedImageNotice image={image} />}
+                    {!text &&
+                      (isOwner || currentUser?.isModerator) &&
+                      'restricted' in image &&
+                      image.restricted === true && (
+                        <AlertWithIcon
+                          icon={<IconAlertTriangle />}
+                          color="orange"
+                          iconColor="orange"
+                          title="Restricted"
+                          radius={0}
+                          px="md"
+                        >
+                          {isOwner
+                            ? `Hidden from everyone else, because ${RESTRICTED_IMAGE_REASON}. You still see it on pages built for you, such as your profile.`
+                            : `Hidden from feeds, galleries and search (its uploader still sees it where the page is built for them), because ${RESTRICTED_IMAGE_REASON}. Moderators can still open it by id.`}
+                        </AlertWithIcon>
+                      )}
+                    {!text && image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
                         <Text>
                           This image was generated with AI and is based on the likeness of a real
@@ -757,36 +879,63 @@ function ImageDetail2Content() {
                     )}
                     {!hideAds && image.id !== 97016897 && <AdUnitSide_2 />}
                     {!hideAds && image.id === 97016897 && <AdUnitOutstream />}
-                    <VotableTags
-                      entityType="image"
-                      entityId={image.id}
-                      canAdd
-                      collapsible
-                      nsfwLevel={image.nsfwLevel}
-                      mediaType={image.type}
-                    />
-                    <ImageDetailPostCard post={post} />
-                    <ImageProcess imageId={image.id} />
-                    <ImageRemixOfDetails imageId={image.id} />
-                    <RemixGalleryCard imageId={image.id} />
-                    <ImageGenerationData imageId={image.id} collapsible />
-                    {/* <ImageRemixesDetails imageId={image.id} /> */}
-                    {/* {!hideAds && <AdUnitSide_3 />} */}
-                    <CollapsibleCard
-                      title="Discussion"
-                      icon={<IconBrandWechat />}
-                      storageKey="discussion"
-                    >
-                      <ImageDetailComments imageId={image.id} userId={image.user.id} />
-                    </CollapsibleCard>
-                    <ImageContestCollectionDetails
-                      key={currentUser?.id}
-                      image={image}
-                      isOwner={isOwner}
-                      isModerator={currentUser?.isModerator}
-                      userId={currentUser?.id}
-                    />
-                    <ImageExternalMeta imageId={image.id} />
+                    {/* `ssr-client-only-sections`: the page is deindexed (see `deIndex` above), so
+                        nothing below is read by search engines, and it is the tail of the sidebar,
+                        so its arrival after hydration moves nothing above it. */}
+                    <ClientOnlySection name="image-detail-sidebar" minHeight={320}>
+                      {text ? (
+                        <>
+                          <ImageDetailPostCard post={textPost} />
+                          <CollapsibleCard
+                            title="Discussion"
+                            icon={<IconBrandWechat />}
+                            storageKey="discussion"
+                          >
+                            {textPost && (
+                              <CommentSection
+                                entityType="postText"
+                                entityId={text.id}
+                                ownerId={textPost.user.id}
+                                title={null}
+                                hideSort
+                                borderless
+                              />
+                            )}
+                          </CollapsibleCard>
+                        </>
+                      ) : (
+                        <>
+                          <VotableTags
+                            entityType="image"
+                            entityId={image.id}
+                            canAdd
+                            collapsible
+                            nsfwLevel={image.nsfwLevel}
+                            mediaType={image.type}
+                          />
+                          <ImageDetailPostCard post={post} />
+                          <ImageProcess imageId={image.id} />
+                          <ImageRemixOfDetails imageId={image.id} />
+                          <RemixGalleryCard imageId={image.id} />
+                          <ImageGenerationData imageId={image.id} collapsible />
+                          <CollapsibleCard
+                            title="Discussion"
+                            icon={<IconBrandWechat />}
+                            storageKey="discussion"
+                          >
+                            <ImageDetailComments imageId={image.id} userId={image.user.id} />
+                          </CollapsibleCard>
+                          <ImageContestCollectionDetails
+                            key={currentUser?.id}
+                            image={image}
+                            isOwner={isOwner}
+                            isModerator={currentUser?.isModerator}
+                            userId={currentUser?.id}
+                          />
+                          <ImageExternalMeta imageId={image.id} />
+                        </>
+                      )}
+                    </ClientOnlySection>
                   </div>
                 </ScrollArea>
               </div>
@@ -804,18 +953,16 @@ function ImageDetailReactions({
 }: {
   image: ReturnType<typeof useImageDetailContext>['images'][number];
 }) {
+  const nudge = useReactionNudgeClass({
+    imageId: image.id,
+    ownerId: image.user.id,
+    reactions: image.reactions,
+  });
   return (
     <Metrics
       entityType="Image"
       entityId={image.id}
-      initial={{
-        likeCount: image.stats?.likeCountAllTime ?? 0,
-        dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
-        heartCount: image.stats?.heartCountAllTime ?? 0,
-        laughCount: image.stats?.laughCountAllTime ?? 0,
-        cryCount: image.stats?.cryCountAllTime ?? 0,
-        tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
-      }}
+      initial={imageStatsToReactionMetrics(image.stats)}
     >
       {(metrics) => (
         <ImageReactorsPreview imageId={image.id} ownerId={image.user.id}>
@@ -828,7 +975,7 @@ function ImageDetailReactions({
             targetUserId={image.user.id}
             disableBuzzTip={image.poi}
             // Wrap, never shrink: a shrunk pill cuts its count off.
-            className="flex-wrap"
+            className={clsx('flex-wrap', nudge)}
           />
         </ImageReactorsPreview>
       )}

@@ -58,6 +58,17 @@ export const bulkReviewKeyAction = (
   return null;
 };
 
+/** `bulkReviewKeyAction`'s J/K, with Enter opening the row under the cursor instead of ticking it. */
+export const listKeyAction = (
+  e: PlainKeyEvent & { onControl: boolean }
+): 'next' | 'previous' | 'open' | null => {
+  if (!isPlainKey(e)) return null;
+  if (e.key === 'k' || e.key === 'K') return 'next';
+  if (e.key === 'j' || e.key === 'J') return 'previous';
+  if (e.key === 'Enter' && !e.onControl) return 'open';
+  return null;
+};
+
 export type ReasonPickerKeyEvent = {
   key: string;
   ctrlKey: boolean;

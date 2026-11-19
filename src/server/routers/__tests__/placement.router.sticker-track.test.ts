@@ -2,13 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as StickerPlacementService from '~/server/services/sticker-placement.service';
 import { encodeStickerTrack } from '~/shared/utils/sticker-track';
 
-const { createStickerPlacement } = vi.hoisted(() => ({
+const { createStickerPlacement, getStickerPlacementTracks } = vi.hoisted(() => ({
   createStickerPlacement: vi.fn(async () => ({ id: 1 })),
+  getStickerPlacementTracks: vi.fn(async () => [{ id: 1, track: {} }]),
 }));
 
 vi.mock('~/server/services/sticker-placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof StickerPlacementService>()),
   createStickerPlacement,
+  getStickerPlacementTracks,
 }));
 
 import {
@@ -50,5 +52,36 @@ describe('placement router — moving stickers sit behind their own flag', () =>
       track,
     });
     expect(createStickerPlacement).toHaveBeenCalledWith(expect.objectContaining({ track }));
+  });
+
+  it('reads no tracks while the flag is off', async () => {
+    const tracks = await placementCaller({
+      features: { stickerVideoTracks: false },
+    }).getStickerTracks({ imageId: 99 });
+
+    expect(tracks).toEqual([]);
+    expect(getStickerPlacementTracks).not.toHaveBeenCalled();
+  });
+
+  it('reads the tracks for that image when the flag is on', async () => {
+    const tracks = await placementCaller({
+      features: { stickerVideoTracks: true },
+    }).getStickerTracks({ imageId: 99 });
+
+    expect(tracks).toHaveLength(1);
+    expect(getStickerPlacementTracks).toHaveBeenCalledWith(
+      expect.objectContaining({ imageId: 99 })
+    );
+  });
+
+  it('reads them for the signed-in viewer, whose pending stickers it includes', async () => {
+    await placementCaller({
+      features: { stickerVideoTracks: true },
+      user: { id: 4242 },
+    }).getStickerTracks({ imageId: 99 });
+
+    expect(getStickerPlacementTracks).toHaveBeenCalledWith(
+      expect.objectContaining({ imageId: 99, viewerId: 4242 })
+    );
   });
 });

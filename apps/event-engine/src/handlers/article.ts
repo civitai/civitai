@@ -12,7 +12,6 @@ export const articleHandler = createEventHandler<Article>({
   processor: async ({ old, current, actions, operation, record }) => {
     // Handle delete operation
     if (operation === 'delete') {
-      actions.feedDelete('Article', record.id)
       current = {...record, status: 'Unpublished'} // Treat deleted as Unpublished for metrics
     }
     if (!old || !current) return
@@ -21,11 +20,8 @@ export const articleHandler = createEventHandler<Article>({
     const states = [current.status, old.status];
     if (!states.includes('Published')) return;
 
-    // If status changed, update feeds and articleCount metric
+    // If status changed, update the articleCount metric
     if (old.status !== current.status) {
-      if (operation !== 'delete')
-        actions.feedUpdate('Article', current.id)
-
       // Track articleCount metric
       const value = current.status === 'Published' ? 1 : -1
       const userMetric = actions.forMetric('User', current.userId).as(current.userId)

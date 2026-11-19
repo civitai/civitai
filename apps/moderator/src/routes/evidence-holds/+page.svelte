@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { enhance } from '$app/forms';
   import { page } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import {
@@ -9,18 +10,32 @@
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { GENERATOR_EVIDENCE_HOLD_REASON } from '@civitai/db-queries/evidence-hold';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { csamReportUrl } from '$lib/entity-url';
   import { dateTime, LINK_CLASS, plural } from '$lib/format';
   import { urlWith } from '$lib/url';
-  import type { PageData } from './$types';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  // The grant wrapper widens ActionData to `{}`; these are the shapes the two actions return.
+  type HoldResult = { scope?: 'place' | 'release' | 'denied'; error?: string; holdId?: number; created?: boolean };
+  const result = $derived(form as HoldResult | null);
+  const formError = $derived(result?.error ?? null);
 
   const DAY_MS = 24 * 60 * 60 * 1000;
 
   const daysLeft = (end: Date) =>
     Math.max(0, Math.ceil((end.getTime() - data.asOf) / DAY_MS));
+
+  // Mirrors what releaseEvidenceHold accepts, so no row offers a release the server refuses.
+  const releasable = (hold: { role: string; reason: string; extendedUntil: Date | null }) =>
+    hold.role === 'manual' &&
+    hold.reason !== GENERATOR_EVIDENCE_HOLD_REASON &&
+    (!hold.extendedUntil || hold.extendedUntil.getTime() <= data.asOf);
 
   const rowEnd = (hold: { releaseAt: Date | null; extendedUntil: Date | null }) => {
     if (!hold.releaseAt) return null;
@@ -52,8 +67,43 @@
     {:else}
       No hold ends within {data.windowDays} days.
     {/if}
-    Read-only: holds are extended and released outside this page.
+    Extensions are recorded outside this page.
   </p>
+
+  <details class="rounded border border-dark-4 p-3">
+    <summary class="cursor-pointer text-sm font-medium text-white">Place a manual hold</summary>
+    <form method="POST" action="?/place" use:enhance class="mt-3 flex flex-wrap items-end gap-3 text-sm">
+      <label class="flex flex-col gap-1">
+        <span class="text-dark-2">User id</span>
+        <Input name="userId" inputmode="numeric" required class="w-32" />
+      </label>
+      <label class="flex min-w-64 flex-1 flex-col gap-1">
+        <span class="text-dark-2">Reason</span>
+        <Input name="reason" required maxlength={500} />
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-dark-2">Held through (optional)</span>
+        <Input name="releaseAt" type="date" class="w-40" />
+      </label>
+      <Button type="submit" size="sm">Place hold</Button>
+    </form>
+    {#if result?.scope === 'place' || (result?.scope === 'denied' && !result.holdId)}
+      <p class="m-0 mt-2 text-sm {formError ? 'text-rose-400' : 'text-dark-2'}">
+        {#if formError}
+          {formError}
+        {:else if result?.holdId}
+          {result.created
+            ? `Hold #${result.holdId} placed.`
+            : `Already held for that reason: hold #${result.holdId}.`}
+        {/if}
+      </p>
+    {/if}
+  </details>
+  {#if result?.scope === 'release'}
+    <p class="m-0 text-sm {formError ? 'text-rose-400' : 'text-dark-2'}">
+      {formError ?? `Hold #${result.holdId} released.`}
+    </p>
+  {/if}
   <nav aria-label="Filter" data-sveltekit-noscroll>
     <LinkTabs items={filters} active={data.endingOnly ? '1' : '0'} />
   </nav>
@@ -105,6 +155,7 @@
                   {@const end = rowEnd(hold)}
                   <li class="flex flex-wrap items-center gap-2">
                     <Badge variant="secondary">{hold.role}</Badge>
+                    <span class="text-dark-2">{hold.reason}</span>
                     {#if hold.csamReportId}
                       <code class="text-dark-2">report #{hold.csamReportId}</code>
                     {/if}
@@ -123,6 +174,20 @@
                         · requested by {hold.extensionRequestedBy ?? '—'} · ref
                         {hold.extensionReference ?? '—'}
                       </span>
+                    {/if}
+                    {#if releasable(hold)}
+                    <form method="POST" action="?/release" use:enhance class="flex items-center gap-1">
+                      <input type="hidden" name="holdId" value={hold.id} />
+                      <Input
+                        name="releaseReason"
+                        required
+                        maxlength={500}
+                        placeholder="Reason to release"
+                        aria-label="Reason to release hold {hold.id}"
+                        class="h-7 w-44 text-xs"
+                      />
+                      <Button type="submit" size="sm" variant="outline">Release</Button>
+                    </form>
                     {/if}
                   </li>
                 {/each}

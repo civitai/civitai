@@ -235,9 +235,12 @@ describe('copyRejectedForTraining', () => {
   });
 
   it.each([
-    ['poi', 'None', 0, 'copied'],
+    ['poi', 'None', 1, 'copied'],
     ['poi', 'Soft', 2, 'copied'],
-    ['realPerson', 'None', null, 'copied'],
+    ['realPerson', 'None', 1, 'copied'],
+    ['realPerson', 'None', null, 'skipped'],
+    ['realPerson', 'None', 0, 'skipped'],
+    ['poi', 'Soft', 0, 'skipped'],
     ['poi', 'Mature', 0, 'skipped'],
     ['poi', 'X', 0, 'skipped'],
     ['poi', null, 0, 'skipped'],
@@ -353,7 +356,7 @@ describe('copyRejectedForTraining', () => {
   it('looks up a missing label, stores it, and copies on it', async () => {
     await record({ appealId: 1, imageId: 101, removalLabel: null });
     await record({ appealId: 2, imageId: 102, removalLabel: null });
-    await record({ appealId: 3, imageId: 103, removalLabel: null });
+    await record({ appealId: 3, imageId: 103, removalLabel: null, aiNsfwLevel: 1 });
     const lookup = vi.fn<RemovalLabelLookup>(
       async () =>
         new Map([
@@ -500,9 +503,6 @@ describe('copyRejectedForTraining', () => {
       ['failed', null],
       ['copied', '2/u-102'],
     ]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', name: 'appeal-training-copy' })
-    );
   });
 
   it('leaves approvals and settled records alone', async () => {
@@ -557,7 +557,7 @@ describe('copyRejectedForTraining', () => {
     expect((await states())[0].state).toBeNull();
   });
 
-  it('does nothing but warn when the training bucket is not configured', async () => {
+  it('does nothing when the training bucket is not configured', async () => {
     await record({ appealId: 1, imageId: 101, removalLabel: null });
     await record({ appealId: 2, imageId: 102, hoursAgo: 30 });
     const lookup = vi.fn<RemovalLabelLookup>(
@@ -571,9 +571,6 @@ describe('copyRejectedForTraining', () => {
       { appealId: 1, removalLabel: null, state: null, key: null },
       { appealId: 2, removalLabel: 'spam', state: null, key: null },
     ]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ type: 'warning', name: 'appeal-training-copy' })
-    );
   });
 });
 
@@ -624,9 +621,29 @@ describe('appealTrainingHeld', () => {
   });
 
   it('holds a rated label only at a level the copy accepts', async () => {
-    await record({ appealId: 1, imageId: 101, removalLabel: 'poi', removalNsfw: 'Soft' });
+    await record({
+      appealId: 1,
+      imageId: 101,
+      removalLabel: 'poi',
+      removalNsfw: 'Soft',
+      aiNsfwLevel: 1,
+    });
     await record({ appealId: 2, imageId: 102, removalLabel: 'poi' });
     await record({ appealId: 3, imageId: 103, removalLabel: 'realPerson', removalNsfw: 'Mature' });
+    await record({
+      appealId: 4,
+      imageId: 104,
+      removalLabel: 'realPerson',
+      removalNsfw: 'None',
+      aiNsfwLevel: null,
+    });
+    await record({
+      appealId: 5,
+      imageId: 105,
+      removalLabel: 'poi',
+      removalNsfw: 'Soft',
+      aiNsfwLevel: 0,
+    });
 
     expect(await held()).toEqual([101]);
   });
@@ -662,7 +679,7 @@ describe('sweepExcludedRecords and the training bucket', () => {
     expect(store.remove).toHaveBeenCalledExactlyOnceWith(['k-101', 'k-102']);
   });
 
-  it('logs a failed object delete and still deletes the records', async () => {
+  it('still deletes the records when an object delete fails', async () => {
     await record({ appealId: 1, imageId: 101, state: 'copied', key: 'k-101' });
     await holder.db.exec(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 101}]')`);
     const store = fakeStore();
@@ -675,9 +692,6 @@ describe('sweepExcludedRecords and the training bucket', () => {
       objects: 0,
     });
     expect(await states()).toEqual([]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', name: 'appeal-training-copy' })
-    );
   });
 
   it('deletes a record whose stored object an excluded image shares, and its copy', async () => {

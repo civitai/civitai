@@ -1,8 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { PageServerLoad } from './$types';
-import { parseQuery } from '$lib/server/query';
-import { MAX_INT4 } from '$lib/server/users.service';
+import { parseQueryKeys } from '$lib/server/query';
 import {
   DEFAULT_REPORT_REASONS,
   DEFAULT_REPORT_STATUSES,
@@ -11,28 +10,18 @@ import {
   reportStatuses,
 } from '$lib/reports';
 import { getReports } from '$lib/server/reports.service';
-import {
-  chatExists,
-  classifySearch,
-  getChatMembers,
-  getUserMessages,
-  getTranscript,
-  searchChats,
-} from '$lib/server/chat-audit.service';
+import { searchChats } from '$lib/server/chat-audit.service';
 import { TABS } from '../tabs';
 import { readerOf } from '$lib/server/chat-read-audit';
 
-// `q` is the search, `chat` is the opened transcript, `rpage` pages the report queue — all in the URL
-// so a moderator can link a colleague straight to a conversation, and so back/forward works through an
-// investigation. The tab is the route.
-//
-// `chat` is bounded to int4: Chat.id is a Postgres integer, and a larger value ERRORS the comparison
-// rather than missing, which took the whole page down with a 500.
 const REPORTS_PER_PAGE = 20;
 
-const querySchema = z.object({
+const searchQuery = z.object({
   q: z.string().trim().catch(''),
-  chat: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
+  spage: z.coerce.number().int().positive().max(10_000).catch(1),
+});
+
+const reportsQuery = z.object({
   rpage: z.coerce.number().int().positive().max(10_000).catch(1),
   // Retool's select1 filtered the report table by status. Hardcoding the open ones made every
   // Actioned/Unactioned chat report unreachable from this page.
@@ -46,6 +35,9 @@ const querySchema = z.object({
     ),
 });
 
+// `parseQueryKeys`, so opening a chat does not rerun the list: a message-text search takes seconds and
+// logs a read of every chat it excerpts.
+//
 // READ-ONLY. Retool's version could ban from the transcript (BANAPI) and write a note (SetNote); both
 // are deliberately not ported. Every username here links to User Lookup, which owns enforcement with
 // the surrounding context, the confirmation step and the audit trail — duplicating it on a second page
@@ -54,12 +46,14 @@ export const load: PageServerLoad = async ({ url, params, locals }) => {
   const tab = params.tab;
   if (!(TABS as readonly string[]).includes(tab)) error(404, 'Unknown tab');
 
-  const { q, chat, rpage, rstatus } = parseQuery(url, querySchema);
+  if (tab === 'chats') {
+    const { q, spage } = parseQueryKeys(url, searchQuery);
+    return { tab, search: await searchChats(readerOf(locals.user), q, spage) };
+  }
 
   if (tab === 'reports') {
-    // The report queue comes from the shared report service rather than a hand-written
-    // ChatReport/Report join. That also means this page and /reports agree on what "open" means — they
-    // previously disagreed, so a report actioned on /reports stayed in this queue forever.
+    const { rpage, rstatus } = parseQueryKeys(url, reportsQuery);
+    // The shared report service, so this page and /reports agree on what "open" means.
     const reports = await getReports({
       type: ReportEntity.Chat,
       statuses: rstatus.length ? rstatus : DEFAULT_REPORT_STATUSES,
@@ -69,7 +63,6 @@ export const load: PageServerLoad = async ({ url, params, locals }) => {
     });
     return {
       tab,
-      chatId: chat ?? null,
       reports: reports.items,
       reportsTotal: reports.totalItems,
       reportsPage: reports.page,
@@ -79,29 +72,5 @@ export const load: PageServerLoad = async ({ url, params, locals }) => {
   }
 
   // Stats and Newest are one client-fetched endpoint; nothing to load here.
-  if (tab !== 'chats') return { tab, chatId: chat ?? null };
-
-  const reader = readerOf(locals.user);
-
-  const [search, exists, transcript, members, userMessages] = await Promise.all([
-    searchChats(reader, q),
-    chat ? chatExists(chat) : false,
-    chat ? getTranscript(reader, chat) : null,
-    chat ? getChatMembers(chat) : null,
-    // Retool's UserDetails: what the account actually SAID, across every chat. The chat list answers
-    // who they talked to; this answers what they said, which is the question when the term was a name.
-    // `getUserMessages` returns null for a non-existent username, which is the same fall-through
-    // `searchChats` applies — so a spam term that looks like a username still lands on content search.
-    q && classifySearch(q.trim()) !== 'chat' ? getUserMessages(reader, q.trim()) : null,
-  ]);
-
-  return {
-    tab,
-    chatId: chat ?? null,
-    chatMissing: !!chat && !exists,
-    search,
-    transcript,
-    members,
-    userMessages,
-  };
+  return { tab };
 };

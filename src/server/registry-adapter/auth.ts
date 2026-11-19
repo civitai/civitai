@@ -1,5 +1,5 @@
 /**
- * The auth extension (civitai-registry `spec/extensions/auth.md` @ 4166f34), as an ORIGIN serves
+ * The registry spec's auth extension, as an ORIGIN serves
  * it, for both bindings:
  *
  *   - The token arrives in request metadata only: `Authorization: Bearer {token}` over HTTP, the
@@ -7,7 +7,8 @@
  *   - No token is anonymous: what anyone may read ({@link ANONYMOUS_PRINCIPAL}).
  *   - A token is verified by the site's own mechanism ({@link VerifyToken}; `auth.live.ts` wires
  *     it). Anything it does not accept, an expired token included, is `invalid_token`.
- *   - Each subscription is streamed what its token may read (`audience.ts`), and its cursor is
+ *   - Each subscription is streamed what its token may read (`audience.ts`), held to the SFW
+ *     rule from a region the site restricts to SFW content, and its cursor is
  *     tied to the token's subject (`subscription.ts`) and, for a document, app, release or
  *     schema stream, to its audience (`doc-feed.ts`, `cursor.ts`).
  *   - A stream never outlives its token: {@link watchPrincipal} ends it with `invalid_token` at
@@ -67,11 +68,21 @@ const expired = (token: VerifiedToken, now: number) =>
  * The principal of a request whose `Authorization` value (HTTP header or gRPC metadata) is
  * `authorization`. Without `verify`, this source accepts no token, so any token is
  * `invalid_token`.
+ *
+ * `regionRestricted` says whether the request is held to SFW content: from a region the site
+ * restricts or blocks, or with no region at all (`request-origin.ts`); its audience is then the
+ * SFW one (`audienceForUser`). It is required, so every caller decides it. It is
+ * asked again at each re-check, with the same answer for the same request until a restriction's
+ * effective date passes, so a re-check compares like with like and a restriction that starts
+ * mid-stream ends the stream with `cursor_expired`.
  */
 export async function authenticate(
   authorization: string | undefined,
   verify: VerifyToken | undefined,
-  now: () => number = Date.now
+  {
+    now = Date.now,
+    regionRestricted,
+  }: { now?: () => number; regionRestricted: () => boolean }
 ): Promise<Principal> {
   if (authorization === undefined || authorization === '') return ANONYMOUS_PRINCIPAL;
   const token = BEARER_RE.exec(authorization)?.[1];
@@ -80,7 +91,9 @@ export async function authenticate(
   const verified = await verify(token);
   if (!verified) throw invalidToken('the token is not active');
   if (expired(verified, now())) throw invalidToken('the token has expired');
-  const audience = audienceForUser(verified.user);
+  const audienceOf = (user: VerifiedToken['user']) =>
+    audienceForUser(user, { regionRestricted: regionRestricted() });
+  const audience = audienceOf(verified.user);
   return {
     subject: verified.subject,
     audience,
@@ -90,7 +103,7 @@ export async function authenticate(
       if (again === null || again.subject !== verified.subject || expired(again, now())) {
         return 'inactive';
       }
-      return audienceForUser(again.user).key === audience.key ? 'active' : 'audience-changed';
+      return audienceOf(again.user).key === audience.key ? 'active' : 'audience-changed';
     },
   };
 }
@@ -98,6 +111,11 @@ export async function authenticate(
 /**
  * How often an open stream's token is re-verified, on average: each wait is drawn from ±20% of
  * it, so streams opened in a burst do not re-check the database in a burst.
+ *
+ * Each open stream re-checks its own token, uncached on purpose: the re-check is what notices a
+ * revocation, a ban or a changed browsing setting, and a per-token cache would have to stay
+ * shorter than this interval to keep that bound, so it saves little and adds a second place for
+ * staleness to hide.
  */
 export const TOKEN_RECHECK_MS = 5 * 60 * 1000;
 const RECHECK_JITTER = 0.2;

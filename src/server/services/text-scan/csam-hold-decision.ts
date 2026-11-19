@@ -12,8 +12,7 @@ import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/ac
 import { unpublishArticleById } from '~/server/services/article.service';
 import { violationMetadata } from '~/server/services/text-scan/public-content';
 import { deleteChatMessage } from '~/server/services/chat.service';
-import { bulkSetCommentTosViolation } from '~/server/services/comment.service';
-import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
+import { requeueBlockedServiceOffering } from '~/server/services/service-offering-moderation.adapter';
 import { bulkSetCommentV3TosViolation } from '~/server/services/commentv3/moderation.service';
 import {
   CSAM_HOLD_POST_UNPUBLISH_REASON,
@@ -25,7 +24,11 @@ import { createStrike } from '~/server/services/strike.service';
 import { clearUserProfileFields, toggleBan } from '~/server/services/user.service';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
 import type { EntityType } from '~/shared/utils/prisma/enums';
-import { ArticleStatus, StrikeReason } from '~/shared/utils/prisma/enums';
+import {
+  ArticleStatus,
+  ServiceOfferingIngestionStatus,
+  StrikeReason,
+} from '~/shared/utils/prisma/enums';
 
 /** What a moderator can do with a pending csam hold. `dismiss` is "do nothing". */
 export const CSAM_HOLD_DECISIONS = [
@@ -36,6 +39,19 @@ export const CSAM_HOLD_DECISIONS = [
   'remove_ban_report',
 ] as const;
 export type CsamHoldDecision = (typeof CSAM_HOLD_DECISIONS)[number];
+
+/**
+ * The reportable category a moderator picks when confirming a csam hold, or `none`. Any category means a
+ * CSAM report is filed in the existing report form; `none` files none.
+ */
+export const CSAM_REPORT_CHOICES = [
+  'enticement',
+  'trafficking',
+  'identifiable_child',
+  'imagery',
+  'none',
+] as const;
+export type CsamReportChoice = (typeof CSAM_REPORT_CHOICES)[number];
 
 const PLAN: Record<CsamHoldDecision, { remove: boolean; strike: boolean; ban: boolean }> = {
   dismiss: { remove: false, strike: false, ban: false },
@@ -52,13 +68,13 @@ const PLAN: Record<CsamHoldDecision, { remove: boolean; strike: boolean; ban: bo
  */
 const REMOVABLE_ENTITY_TYPES = [
   'ChatMessage',
-  'Comment',
-  'CommentV2',
   'CommentV3',
   'UserProfile',
   'Post',
   'Model',
   'Article',
+  'ServiceOffering',
+  'PostText',
 ] as const;
 const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[number] =>
   (REMOVABLE_ENTITY_TYPES as readonly string[]).includes(type);
@@ -84,6 +100,11 @@ type DecideArgs = {
   /** The text hash the moderator reviewed; a rescan may have replaced the held text since. */
   textHash: string;
   decision: CsamHoldDecision;
+  /**
+   * Refused with `dismiss`. Missing on a confirm decided with another hold (a batch never carries one)
+   * or sent by an older moderator app: decided with no choice.
+   */
+  reportChoice?: CsamReportChoice;
   note?: string;
   actor: { id: number; ip?: string };
   tracker: Tracker;
@@ -110,12 +131,6 @@ type HeldRow = {
 async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
   const { entityType, entityId } = hold;
   switch (entityType) {
-    case 'Comment':
-      await bulkSetCommentTosViolation({ ids: [entityId], actor });
-      return;
-    case 'CommentV2':
-      await bulkSetCommentV2TosViolation({ ids: [entityId], actor });
-      return;
     case 'CommentV3':
       await bulkSetCommentV3TosViolation({ ids: [entityId], actor });
       return;
@@ -135,6 +150,9 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
         });
       return;
     }
+    case 'PostText':
+      // Kept, not deleted: the decision's own update holds it from every reader.
+      return;
     case 'Post':
       // Unpublish, not delete: the post and its images stay, and a republish restores it.
       await unpublishPostAsModerator({
@@ -205,6 +223,13 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
       await tracker.article({ type: 'Unpublish', articleId: entityId, nsfw: false });
       return;
     }
+    case 'ServiceOffering':
+      // Hidden, not deleted: the offering and its text stay for the record.
+      await dbWrite.serviceOffering.updateMany({
+        where: { id: entityId, ingestion: { not: ServiceOfferingIngestionStatus.Blocked } },
+        data: { ingestion: ServiceOfferingIngestionStatus.Blocked },
+      });
+      return;
   }
 }
 
@@ -246,14 +271,20 @@ async function strikeAuthor(hold: HeldRow, { actor, holdId }: DecideArgs) {
 const subjectTypeOf = (entityType: string) =>
   `${entityType.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()}_text`;
 
+const REPORT_NEEDS_CATEGORY = 'Filing a report needs a reportable category, not "none".';
+
 /**
  * Applies a moderator's decision to a pending csam hold. The content, strike and ban run first and each is
  * safe to repeat, so the hold is claimed first, and a failure releases the claim and leaves it pending for a retry; the decision and its label-store
  * record are one transaction.
  */
 export async function decideCsamHold(args: DecideArgs) {
-  const { holdId, textHash, decision, note, actor, batched } = args;
+  const { holdId, textHash, decision, reportChoice, note, actor, batched } = args;
   const plan = PLAN[decision];
+  if (decision === 'dismiss' && reportChoice !== undefined)
+    throw throwBadRequestError('A dismissal takes no report choice.');
+  if (decision === 'remove_ban_report' && reportChoice === 'none')
+    throw throwBadRequestError(REPORT_NEEDS_CATEGORY);
 
   const hold = await dbWrite.textScanHold.findFirst({
     where: { id: holdId, label: 'csam' },
@@ -313,10 +344,20 @@ export async function decideCsamHold(args: DecideArgs) {
           meta: {
             ...((hold.meta as Prisma.JsonObject | null) ?? {}),
             decision,
+            ...(reportChoice ? { reportChoice } : {}),
+            // A report counts a confirmed text as reviewed only when decided on its own.
+            reviewedDecision: !batched,
           },
         },
       });
       if (count === 0) throw throwConflictError('Hold already decided or missing.');
+      // A confirm sets the text's held flag and a dismissal clears it, so a confirmed text stays
+      // from readers even when its scan never marked it held.
+      if (hold.entityType === 'PostText')
+        await tx.postText.updateMany({
+          where: { id: hold.entityId },
+          data: { csamHeld: status === 'Confirmed' },
+        });
 
       // Records nothing and returns NULL on bad input rather than raising, so a bad record never undoes the
       // decision; it lands in `label_store.record_failure`.
@@ -348,7 +389,120 @@ export async function decideCsamHold(args: DecideArgs) {
     throw error;
   }
 
+  // A block for this queue files no report, so its dismiss is the way out. The requeue still refuses
+  // while another hold or an undismissed verdict applies; the reconcile job settles what it lets out.
+  if (decision === 'dismiss' && hold.entityType === 'ServiceOffering')
+    await requeueBlockedServiceOffering(hold.entityId).catch((error) =>
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'csam hold dismiss requeue failed',
+        holdId,
+        entityId: hold.entityId,
+        errorName: error instanceof Error ? error.name : typeof error,
+      })
+    );
+
   return { status, entityType: hold.entityType, entityId: hold.entityId, userId: hold.userId };
+}
+
+/**
+ * "Not sure": sends a pending csam hold to the Moderation Lead without deciding it. The hold stays
+ * Pending and records no report choice; `meta.needsLeadReview` puts it on the
+ * holds page's lead-review filter. Refused like a decision when the hold moved on or its text changed.
+ */
+export async function referCsamHoldToLead({
+  holdId,
+  textHash,
+  note,
+  actor,
+}: {
+  holdId: number;
+  textHash: string;
+  note?: string;
+  actor: { id: number };
+}) {
+  const referred = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "TextScanHold"
+    SET "meta" = (CASE WHEN jsonb_typeof("meta") = 'object' THEN "meta" ELSE '{}'::jsonb END)
+      || jsonb_build_object('needsLeadReview', jsonb_strip_nulls(jsonb_build_object(
+           'by', ${actor.id}::int, 'at', now(), 'note', ${note || null}::text)))
+    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Pending' AND "textHash" = ${textHash}
+    RETURNING "id"
+  `;
+  if (!referred.length) throw throwConflictError('Hold already decided, changed or missing.');
+  return { holdId, status: 'Pending' as const };
+}
+
+/**
+ * A moderator confirms that a confirmed csam hold's item went into a CSAM report or a supplemental one,
+ * or takes a wrong mark back (`included: false`). `meta.reportIncluded` takes the hold off the
+ * "Report not filed" queue: for a hold type whose text a report never captures, nothing else can.
+ * Only a confirmed csam hold with a reportable choice can be marked.
+ */
+export async function markCsamHoldReported({
+  holdId,
+  included = true,
+  actor,
+}: {
+  holdId: number;
+  included?: boolean;
+  actor: { id: number };
+}) {
+  const changed = included
+    ? await dbWrite.$queryRaw<{ id: number }[]>`
+        UPDATE "TextScanHold"
+        SET "meta" = "meta"
+          || jsonb_build_object('reportIncluded', jsonb_build_object('by', ${actor.id}::int, 'at', now()))
+        WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Confirmed'
+          AND jsonb_typeof("meta") = 'object' AND "meta" ->> 'reportChoice' <> 'none'
+          AND NOT ("meta" ? 'reportIncluded')
+        RETURNING "id"
+      `
+    : await dbWrite.$queryRaw<{ id: number }[]>`
+        UPDATE "TextScanHold" SET "meta" = "meta" - 'reportIncluded'
+        WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Confirmed'
+          AND jsonb_typeof("meta") = 'object' AND "meta" ? 'reportIncluded'
+        RETURNING "id"
+      `;
+  if (!changed.length)
+    throw throwConflictError(
+      included
+        ? 'Hold not confirmed with a reportable choice, already marked or missing.'
+        : 'Hold not marked or missing.'
+    );
+  return { holdId, reportIncluded: included };
+}
+
+/**
+ * Records the report choice on a confirmed csam hold that has none: one decided alongside another
+ * (a batch never carries the on-screen hold's choice) or by a moderator app that predates the choice.
+ * `meta.reportChoiceSet` records who set it and when. A choice once set is never replaced here.
+ */
+export async function setCsamHoldReportChoice({
+  holdId,
+  reportChoice,
+  actor,
+}: {
+  holdId: number;
+  reportChoice: CsamReportChoice;
+  actor: { id: number };
+}) {
+  const changed = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "TextScanHold"
+    SET "meta" = "meta" || jsonb_build_object(
+      'reportChoice', ${reportChoice}::text,
+      'reportChoiceSet', jsonb_build_object('by', ${actor.id}::int, 'at', now()))
+    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Confirmed'
+      AND jsonb_typeof("meta") = 'object' AND "meta" ->> 'reportChoice' IS NULL
+      AND NOT (${reportChoice}::text = 'none' AND "meta" ->> 'decision' = 'remove_ban_report')
+    RETURNING "id"
+  `;
+  if (!changed.length)
+    throw throwConflictError(
+      'Hold not confirmed, already has a report choice, needs a reportable category, or missing.'
+    );
+  return { holdId, reportChoice };
 }
 
 export const CSAM_HOLD_BATCH_MAX = 50;
@@ -358,6 +512,24 @@ const BATCH_DECISIONS = ['remove', 'dismiss'] as const;
 const holdId = z.coerce.number().int().positive().max(2147483647);
 const textHash = z.string().min(1).max(200);
 const note = z.string().trim().max(500).optional();
+
+export const markCsamHoldReportedInput = z.object({
+  holdId,
+  included: z.boolean().default(true).describe('false takes a mark back.'),
+});
+
+export const setCsamHoldReportChoiceInput = z.object({
+  holdId,
+  reportChoice: z
+    .enum(CSAM_REPORT_CHOICES)
+    .describe('The reportable category, or `none` when nothing in it is reportable.'),
+});
+
+export const referCsamHoldInput = z.object({
+  holdId,
+  textHash,
+  note: note.describe('Moderator-only note for the Moderation Lead.'),
+});
 
 export const resolveCsamHoldInput = z
   .object({
@@ -373,12 +545,26 @@ export const resolveCsamHoldInput = z
       .max(CSAM_HOLD_BATCH_MAX)
       .optional()
       .describe(
-        'Several holds decided as one call and one rate-limit hit, each against its own text hash. Only `remove` and `dismiss`; at most 50.'
+        'Several holds decided as one call and one rate-limit hit, each against its own text hash. Only `remove` and `dismiss`; at most 50. A batch records no report choice: one sent with `holds` is not recorded (and `dismiss` still refuses one).'
       ),
     decision: z.enum(CSAM_HOLD_DECISIONS),
+    reportChoice: z
+      .enum(CSAM_REPORT_CHOICES)
+      .optional()
+      .describe(
+        'Sent with every decision but `dismiss`, and refused with it: the reportable category, or `none`. Left out on a confirm, the decision is recorded with no choice, as before the choice existed.'
+      ),
     note: note.describe('Moderator-only note recorded on the hold.'),
   })
   .superRefine((input, ctx) => {
+    if (input.decision === 'dismiss' && input.reportChoice !== undefined)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['reportChoice'],
+        message: 'A dismissal takes no `reportChoice`.',
+      });
+    if (input.decision === 'remove_ban_report' && input.reportChoice === 'none')
+      ctx.addIssue({ code: 'custom', path: ['reportChoice'], message: REPORT_NEEDS_CATEGORY });
     if ((input.holdId === undefined) === (input.holds === undefined))
       ctx.addIssue({ code: 'custom', message: 'Give exactly one of `holdId` and `holds`.' });
     if (input.holdId !== undefined && input.textHash === undefined)
@@ -412,7 +598,11 @@ export type CsamHoldBatchResult =
     }
   | { holdId: number; ok: false; stale: boolean; error: string };
 
-/** Decides each hold on its own, one after the other: a hold that is stale or refused never stops the rest. */
+/**
+ * Decides each hold on its own, one after the other: a hold that is stale or refused never stops the rest.
+ * Records no report choice: the choice is made per item, so a confirmed hold waits on "Report not filed"
+ * until a moderator sets one.
+ */
 export async function decideCsamHoldBatch({
   holds,
   decision,
@@ -454,7 +644,7 @@ export async function decideCsamHoldBatch({
           holdId: hold.holdId,
           errorName: error instanceof Error ? error.name : typeof error,
           errorCode: (error as { code?: unknown } | null | undefined)?.code,
-        }).catch(() => null);
+        });
       results.push({
         holdId: hold.holdId,
         ok: false,

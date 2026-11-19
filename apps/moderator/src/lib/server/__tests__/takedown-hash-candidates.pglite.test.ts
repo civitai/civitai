@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /** Which models' file hashes the takedown-hash ledger offers, on the real SQL. */
@@ -43,6 +43,9 @@ beforeEach(async () => {
       FROM "Model";
   `);
 });
+
+// A cluster holds its memory until closed; a file of them left open runs a worker out of RAM.
+afterEach(() => pg.close());
 
 describe('getTakedownHashCandidates', () => {
   it('offers taken-down and deleted models, not one kept when its owner was wiped', async () => {

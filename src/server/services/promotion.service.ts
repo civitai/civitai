@@ -157,7 +157,7 @@ type PromotedPostImage = {
   ingestion: ImageIngestionStatus;
   nsfwLevelLocked: boolean;
   nsfwLevelReason: string | null;
-  scanFailureClass: string | null;
+  scanJobs: unknown;
   needsReview: string | null;
   minor: boolean;
   acceptableMinor: boolean;
@@ -175,7 +175,7 @@ async function loadPromotedPost(postId: number) {
   const images = await dbWrite.$queryRaw<PromotedPostImage[]>`
     SELECT i.id, i."nsfwLevel", i.ingestion::text AS ingestion, i."nsfwLevelLocked",
            i.metadata->>'nsfwLevelReason' AS "nsfwLevelReason",
-           i."scanJobs"->'error'->>'failureClass' AS "scanFailureClass",
+           i."scanJobs",
            i."needsReview", i.minor, i."acceptableMinor", i.poi, i."tosViolation"
     FROM "Image" i
     WHERE i."postId" = ${postId}
@@ -234,7 +234,13 @@ async function assertGalleryPromotable({
   if (!modelVersionIds.length)
     throw throwBadRequestError('promotion: that post was not made with this model');
 
-  const tagIds = await tagIdsForImagesCache.fetch(images.map((image) => image.id));
+  // Past this process's L1: this refuses a paid promotion for an image carrying a host-hidden tag,
+  // judged at purchase and at accept and not again while the run serves. A tag edit refreshes Redis
+  // at once, but reaches another process's L1 only when its entry expires.
+  const tagIds = await tagIdsForImagesCache.fetch(
+    images.map((image) => image.id),
+    { bypassLocal: true }
+  );
   const refusal = galleryPromotionRefusal({
     placerId,
     images: images.map((image) => ({
@@ -448,7 +454,7 @@ async function createPromotionPlacement({
         message: 'compensating settle failed; escrow may be held for a rejected promotion',
         placementId: placement.id,
         error: settleError instanceof Error ? settleError.message : String(settleError),
-      }).catch(() => undefined)
+      })
     );
     throw error;
   }

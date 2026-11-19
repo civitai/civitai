@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * PostToolUse hook for Bash: after a call that opened or readied a civitai/civitai PR whose head is
- * in this repo, in a session with `hq` signed in, adds context pointing the session at the
+ * PostToolUse hook for Bash and the GitHub MCP PR tools: after a call that opened or readied a
+ * civitai/civitai PR whose head is in this repo, adds context pointing the session at the
  * `pr-review` skill. Never blocks: any failure exits 0 silent.
  *
  * Wiring only; every decision lives in pr-review-nudge.logic.mjs, which is what tests import.
@@ -10,7 +10,7 @@
 
 import { stdin } from 'process';
 
-import { nudge, nudgeEvent } from './pr-review-nudge.logic.mjs';
+import { hookEvent, nudge } from './pr-review-nudge.logic.mjs';
 
 let input = '';
 
@@ -21,7 +21,7 @@ stdin.on('data', (chunk) => {
 stdin.on('end', () => {
   try {
     const data = JSON.parse(input || '{}');
-    const event = nudgeEvent(data?.tool_input?.command || '', data?.tool_response);
+    const event = hookEvent(data);
     if (event) {
       console.log(
         JSON.stringify({

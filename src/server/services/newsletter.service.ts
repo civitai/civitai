@@ -79,7 +79,7 @@ export async function updateSubscription({
         name: 'newsletter-settings-mirror-failed',
         message: `newsletterSubscriber mirror write failed for user ${userId}`,
         error: safeError(error),
-      }).catch(() => {});
+      });
     }
   }
 }

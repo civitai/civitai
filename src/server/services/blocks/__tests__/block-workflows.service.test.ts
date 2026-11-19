@@ -62,8 +62,9 @@ describe('updateBlockWorkflowStatus', () => {
     const affected = await updateBlockWorkflowStatus({ workflowId: 'wf_1', status: 'succeeded' });
     expect(affected).toBe(1);
     const values = valuesOf(mockExecuteRaw.mock.calls[0]);
-    // UPDATE ... SET status = $1 ... WHERE workflow_id = $2
-    expect(values).toEqual(['succeeded', 'wf_1']);
+    // UPDATE ... SET status = $1 ... WHERE workflow_id = $2 AND status IS DISTINCT FROM $3
+    // (transition-only; the SQL behaviour is pinned in block-workflows.sql.behavior.test.ts).
+    expect(values).toEqual(['succeeded', 'wf_1', 'succeeded']);
   });
 
   it('returns 0 when no row matches (a lost submit-write / non-block workflow)', async () => {

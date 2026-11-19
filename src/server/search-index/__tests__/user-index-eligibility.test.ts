@@ -3,6 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 // Pure string helpers, no module graph — safe to import statically above the vi.mock below.
 import { norm, renderTag, whereClausesOf } from './sql-shape.test-utils';
 
+/** The WHERE clauses of a statement, less the one inside the `image` column's own subquery. */
+const eligibilityClausesOf = (statement: string) =>
+  whereClausesOf(
+    norm(statement).replace(/CASE WHEN \(?EXISTS \(.*?\) THEN NULL ELSE u\.image END/, 'u.image')
+  );
+
 /**
  * WHO BELONGS IN THE USER SEARCH INDEX.
  *
@@ -41,7 +47,6 @@ import { norm, renderTag, whereClausesOf } from './sql-shape.test-utils';
 // a predicate, and the index module pulls `updateDocs` from the same place.
 vi.mock('~/server/meilisearch/client', () => ({
   searchClient: null,
-  metricsSearchClient: null,
   updateDocs: vi.fn(async () => undefined),
 }));
 
@@ -54,7 +59,7 @@ const { buildUsersIndexWhere, prepareUsersBatches, pullUsersData } = await impor
 const { CLEANUP_INDEXES } = await import('~/server/meilisearch/cleanup');
 const { Prisma } = await import('@prisma/client');
 
-const ELIGIBILITY = 'u.id != -1 AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL';
+const ELIGIBILITY = 'u.id != -1 AND u.id != -2 AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL';
 
 /** Drives the real query builders and hands back EVERY statement they issued, in order. */
 async function captureQueries(
@@ -92,7 +97,9 @@ describe('user search index eligibility', () => {
         pullUsersData(ctx as never, { type: 'update', ids: [11, 22] }, 0)
       );
       expect(statements).toHaveLength(1);
-      expect(statements.flatMap(whereClausesOf)).toEqual([`${ELIGIBILITY} AND u.id IN (?,?)`]);
+      expect(statements.flatMap(eligibilityClausesOf)).toEqual([
+        `${ELIGIBILITY} AND u.id IN (?,?)`,
+      ]);
     });
 
     it('a full RANGE scan filters banned accounts', async () => {
@@ -100,7 +107,7 @@ describe('user search index eligibility', () => {
         pullUsersData(ctx as never, { type: 'new', startId: 5, endId: 9 }, 0)
       );
       expect(statements).toHaveLength(1);
-      expect(statements.flatMap(whereClausesOf)).toEqual([
+      expect(statements.flatMap(eligibilityClausesOf)).toEqual([
         `${ELIGIBILITY} AND u.id >= ? AND u.id <= ?`,
       ]);
     });
@@ -111,7 +118,7 @@ describe('user search index eligibility', () => {
       );
       expect(statements).toHaveLength(1);
       // Two sub-selects, and a fix applied to only one of them is the obvious half-fix.
-      expect(statements.flatMap(whereClausesOf)).toEqual([
+      expect(statements.flatMap(eligibilityClausesOf)).toEqual([
         `${ELIGIBILITY} AND u."createdAt" >= ?`,
         `${ELIGIBILITY} AND u."createdAt" >= ?`,
       ]);
@@ -120,7 +127,7 @@ describe('user search index eligibility', () => {
     it('…and so does a full rebuild, which passes no narrowing clause at all', async () => {
       const statements = await captureQueries((ctx) => prepareUsersBatches(ctx as never));
       expect(statements).toHaveLength(1);
-      expect(statements.flatMap(whereClausesOf)).toEqual([ELIGIBILITY, ELIGIBILITY]);
+      expect(statements.flatMap(eligibilityClausesOf)).toEqual([ELIGIBILITY, ELIGIBILITY]);
     });
 
     /**
@@ -163,5 +170,29 @@ describe('user search index eligibility', () => {
       expect(modelsSql).toContain('m.status =');
       expect(modelsSql).not.toContain('bannedAt');
     });
+  });
+});
+
+describe('the accounts the predicate admits, run in Postgres', () => {
+  it('leaves out the system accounts, deleted and banned accounts, and keeps an ordinary one', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const { FEEDBACK_CAPTURE_OWNER_ID } = await import('@civitai/shared/feedback-capture');
+    const db = new PGlite();
+    try {
+      await db.exec(`
+        CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp, "bannedAt" timestamp);
+        INSERT INTO "User" VALUES
+          (-1, NULL, NULL), (${FEEDBACK_CAPTURE_OWNER_ID}, NULL, NULL), (5, NULL, NULL),
+          (6, now(), NULL), (7, NULL, now());
+      `);
+      const where = userSearchIndexEligibilitySql();
+      const { rows } = await db.query<{ id: number }>(
+        `SELECT u.id FROM "User" u WHERE ${where.sql} ORDER BY u.id`,
+        where.values
+      );
+      expect(rows.map((r) => r.id)).toEqual([5]);
+    } finally {
+      await db.close();
+    }
   });
 });

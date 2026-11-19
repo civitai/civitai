@@ -8,7 +8,7 @@ import {
   type TextLabel,
 } from '$lib/automated-text/labels';
 import type { HandOffItem } from '$lib/automated-text/hand-off';
-import { reportEntityLabels, type ReportEntity } from '$lib/reports';
+import { isReportEntity, reportEntityLabels } from '$lib/reports';
 
 // Blind relabel: a labeler gets the token, text, tag and content kind. Confidence, stratum, wave,
 // report/author ids and other labelers' answers stay hidden until a hand-off.
@@ -38,7 +38,7 @@ function toItem(row: {
       row.entity_type === 'chat' || looksLikeChatTranscript(row.text_value)
         ? maskChatSpeakers(row.text_value)
         : row.text_value,
-    entityLabel: reportEntityLabels[row.entity_type as ReportEntity] ?? null,
+    entityLabel: isReportEntity(row.entity_type) ? reportEntityLabels[row.entity_type] : null,
   };
 }
 

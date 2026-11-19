@@ -238,6 +238,36 @@ describe('POST /v1/check: request shape', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  // The tally input is the storage API's update operator (`$inc` / `$mark` / `$unmark`), the op's
+  // own; the pre-operator `{ kind, name, by }` shape is contract drift and must fail closed (400).
+  it.each([
+    ['increment', { $inc: { likes: 2 } }],
+    ['mark', { $mark: 'star' }],
+    ['unmark', { $unmark: 'star' }],
+  ] as const)('answers 200 for %s carrying its own update operator', async (op, tally) => {
+    const res = await post(
+      JSON.stringify(checkBody(ALLOW, { input: { op, after: null, tally } as never }))
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.json().result).toEqual({ allow: true });
+  });
+
+  it.each([
+    ['the pre-operator counter shape', 'increment', { kind: 'counter', name: 'likes', by: 1 }],
+    ['the pre-operator mark shape', 'mark', { kind: 'mark', name: 'star' }],
+    ["another op's operator", 'mark', { $unmark: 'star' }],
+    ['$inc naming two counters', 'increment', { $inc: { likes: 1, plays: 1 } }],
+    ['two operators', 'mark', { $mark: 'star', $unmark: 'star' }],
+    ['no operator on a tally op', 'increment', null],
+    ['an operator on a document write', 'put', { $inc: { likes: 1 } }],
+  ] as const)('refuses 400 bad_request for %s', async (_what, op, tally) => {
+    const res = await post(
+      JSON.stringify(checkBody(ALLOW, { input: { op, after: null, tally } as never }))
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('bad_request');
+  });
+
   it('does not echo document values in a 400 message', async () => {
     const body = checkBody(ALLOW, {
       input: { viewer: { userId: 'secret-value-xyz' as unknown as number } },

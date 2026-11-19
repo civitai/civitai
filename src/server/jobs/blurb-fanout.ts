@@ -34,7 +34,7 @@ export const blurbFanoutJob = createJob(
     // signal; unsupportedBacklog does not, since there's nothing to do about it on any
     // single tick and it would otherwise warn every run forever in steady state.
     if (batchTotal > 0 || counts.unsupportedBacklog) {
-      await logToAxiom({
+      logToAxiom({
         type: 'blurb-fanout',
         name: 'blurb-fanout',
         level: counts.failed > 0 ? 'warn' : 'info',
@@ -42,7 +42,7 @@ export const blurbFanoutJob = createJob(
         ...counts,
         batchLimit: BATCH_LIMIT,
         saturated,
-      }).catch(() => undefined);
+      });
     }
 
     return counts;

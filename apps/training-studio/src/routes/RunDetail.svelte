@@ -13,6 +13,7 @@
     publishUrl,
   } from '$lib/host';
   import { loraBlobAir } from '$lib/train-core';
+  import { publishShareChoice } from '$lib/publish-url-core';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { locationHref } from '$lib/actions/locationHref';
   import { onSignal } from '$lib/signals';
@@ -41,8 +42,10 @@
   import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
   import LossGraph from '$lib/components/LossGraph.svelte';
+  import RunLog from '$lib/components/RunLog.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
+  import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import {
@@ -58,11 +61,11 @@
   import { mediaCount } from '$lib/data/trainingModels';
   import { directDatasetUrl, handoffReuse, isPairDataset, toReuseItems } from '$lib/reuse';
   import { extOfAir } from '$lib/media';
-  import { buildDatasetZip, saveBlob } from '$lib/dataset-zip';
+  import { buildDatasetZip, runZipTrigger, saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
   import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
-  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { MatureRepriceError } from '$lib/mature-charge';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
@@ -97,13 +100,16 @@
   // terminal (ready/published/failed) → it will never arrive.
   const samplesPending = $derived(d.state === 'training');
 
-  // Live updates while training: re-read the run every few seconds so new epochs/samples stream in.
-  // Each tick re-arms after the refetch settles — success or failure, so one bad refetch can't end
-  // polling — and stops once the run leaves 'training' (this effect re-runs and the guard fails) or
-  // the component unmounts.
+  // Live updates while a run is training or held for review: re-read it so new epochs/samples stream
+  // in, and so a held run moves on by itself once reviewed. Every few seconds while training; once a
+  // minute while held, since a hold can last hours. Each tick re-arms after the refetch settles —
+  // success or failure, so one bad refetch can't end polling — and polling stops once the run is in
+  // neither state (this effect re-runs and the guard fails) or the component unmounts.
   const POLL_MS = 5000;
+  const REVIEW_POLL_MS = 60_000;
   $effect(() => {
-    if (!browser || d.state !== 'training') return;
+    if (!browser || (d.state !== 'training' && d.state !== 'review')) return;
+    const every = d.state === 'review' ? REVIEW_POLL_MS : POLL_MS;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
@@ -112,9 +118,9 @@
       } catch {
         // transient refetch failure — keep polling
       }
-      if (!stopped) timer = setTimeout(tick, POLL_MS);
+      if (!stopped) timer = setTimeout(tick, every);
     };
-    timer = setTimeout(tick, POLL_MS);
+    timer = setTimeout(tick, every);
     return () => {
       stopped = true;
       clearTimeout(timer);
@@ -315,7 +321,8 @@
           ext: (item.path && extOfAir(item.path)) || airExt(item.air),
           caption: item.caption,
           load: () => fetchDatasetBlob(item.air),
-        }))
+        })),
+        runZipTrigger(d.settings.training)
       );
       if (!blob) {
         downloadError = "Couldn't fetch the dataset images — nothing to download.";
@@ -487,9 +494,7 @@
   );
   const quote = $derived(continueQuoteState.value ?? null);
 
-  // A mature dataset's continuation is charged in Yellow (beyond a member's Blue) only once the user
-  // ticks this; the server refuses the submit without it. Changing the price or epochs un-ticks it.
-  // The submit's own check can find mature images the quote's missed; its refusal sets this.
+  // The submit's own rating can find mature images the quote missed; its refusal raises this.
   let refusedFurther = $state<{ run: string; count: number } | null>(null);
   const furtherMature = $derived(
     Math.max(
@@ -499,23 +504,13 @@
   );
   const furtherSpend = $derived(
     quote?.cost != null
-      ? nonBlueSpend(quote.cost, buzzMode.value, {
-          mature: furtherMature > 0,
-          member: hostConfig().isPaidMember === true,
-        })
+      ? nonBlueSpend(quote.cost, buzzMode.value, { mature: furtherMature > 0 })
       : null
   );
-  // The run id is in the key so a tick never carries over to another run with the same price.
-  const furtherAckKey = $derived.by(() => {
-    const key = matureAckKey(quote?.cost, furtherSpend?.amount, furtherMature);
-    return key && `${workflowIdKey}:${key}`;
-  });
-  let furtherAckedFor = $state<string | null>(null);
-  const furtherAckMissing = $derived(matureAckMissing(furtherAckedFor, furtherAckKey));
 
   async function doTrainFurther() {
     // Never submit without a shown price — the confirm cost the user sees must be the one that gets charged.
-    if (!publishTarget || continuing || quote?.cost == null || furtherAckMissing) return;
+    if (!publishTarget || continuing || quote?.cost == null) return;
     continuing = true;
     continueError = '';
     try {
@@ -524,13 +519,12 @@
         publishTarget.number,
         Number(furtherEpochs) || 5,
         buzzMode.currencies,
-        furtherAckKey !== null
+        furtherMature
       );
       await navigate({ view: 'run', workflowId: id });
     } catch (err) {
       continueError = err instanceof Error ? err.message : 'Could not start training';
-      if (err instanceof MatureAckRequiredError)
-        refusedFurther = { run: workflowIdKey, count: err.matureCount };
+      if (err instanceof MatureRepriceError) refusedFurther = { run: workflowIdKey, count: err.matureCount };
       else confirming = false;
     } finally {
       continuing = false;
@@ -545,11 +539,30 @@
   const featured = $derived(newestFirst.find((e) => e.id === selectedId) ?? recommended);
 
   const publishEpoch = $derived(featured?.modelUrl ? featured : publishTarget);
+  let ownRights = $state(false);
+  let shareDataset = $state(false);
+  let shareTouched = $state(false);
   const publishLink = $derived.by(() => {
     const toUrl = publishUrl();
     if (!toUrl || !publishEpoch) return null;
-    return hostLink(toUrl({ workflowId: d.workflowId, epoch: publishEpoch.number }));
+    return hostLink(
+      toUrl({
+        workflowId: d.workflowId,
+        epoch: publishEpoch.number,
+        ...publishShareChoice(shareTouched, ownRights, shareDataset),
+      })
+    );
   });
+  const dataPolicyUrl = $derived(hostConfig().dataPolicyUrl);
+  function setOwnRights(next: boolean) {
+    shareTouched = true;
+    ownRights = next;
+    if (!next) shareDataset = false;
+  }
+  function setShareDataset(next: boolean) {
+    shareTouched = true;
+    shareDataset = next;
+  }
 
   // Independent of `publishTarget` so the link outlives the checkpoints' blob retention.
   const modelLink = $derived.by(() => {
@@ -599,7 +612,9 @@
     archiveError = '';
     archiveParts = [];
     showLineage = false;
-    furtherAckedFor = null;
+    ownRights = false;
+    shareDataset = false;
+    shareTouched = false;
   });
 </script>
 
@@ -840,7 +855,25 @@
     {/key}
   {/if}
 
-  {#if d.state === 'failed'}
+  {#if d.state !== 'training' && d.traces.length}
+    {#key d.workflowId}
+      <RunLog traces={d.traces} name={d.name} />
+    {/key}
+  {/if}
+
+  {#if d.state === 'review' || d.state === 'rejected' || d.state === 'unreviewed'}
+    <ReviewStatusPanel
+      kind={d.state}
+      workflowId={d.workflowId}
+      heldSince={d.heldSince}
+    >
+      {#if d.state === 'unreviewed' && d.dataset.length}
+        <Button class="mt-4" variant="outline" onclick={reuseDataset}>
+          <IconRepeat size={14} stroke={2} class="mr-1.5 inline" />Try again with this dataset
+        </Button>
+      {/if}
+    </ReviewStatusPanel>
+  {:else if d.state === 'failed'}
     <div class="rounded-xl border border-red-500/20 bg-red-500/5 p-8 text-center">
       <IconAlertTriangle size={32} stroke={1.75} class="mx-auto text-red-400" />
       <h2 class="mt-3 text-base font-semibold text-white">This training didn't complete</h2>
@@ -1210,7 +1243,7 @@
               {#if confirming}
                 <Button
                   onclick={doTrainFurther}
-                  disabled={continuing || quote?.cost == null || furtherAckMissing}
+                  disabled={continuing || quote?.cost == null}
                 >
                   {#if continuing}Starting…{:else}Confirm{#if quote?.cost != null}
                       <span class="ml-1 inline-flex items-center"
@@ -1245,34 +1278,12 @@
                 pricing…
               {/if}
             </div>
-            {#if furtherAckKey}
-              <div
-                class="flex max-w-sm items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
-              >
-                <Checkbox
-                  id="ack-further-mature"
-                  bind:checked={
-                    () => furtherAckedFor === furtherAckKey,
-                    (v) => (furtherAckedFor = v ? furtherAckKey : null)
-                  }
-                  class="mt-0.5 shrink-0"
-                />
-                <label for="ack-further-mature" class="cursor-pointer">
-                  {furtherMature}
-                  {furtherMature === 1 ? 'image in this dataset is' : 'images in this dataset are'} rated
-                  <strong>mature</strong>.
-                  {#if furtherSpend}
-                    I understand {furtherSpend.uncertain ? 'up to ' : ''}<strong
-                      >{furtherSpend.amount.toLocaleString()} Yellow Buzz</strong
-                    > will be charged.
-                  {:else if buzzMode.blueFirst}
-                    I understand anything beyond my <span class="text-blue-400">Blue</span> Buzz is
-                    charged in <span class="text-yellow-400">Yellow</span> Buzz.
-                  {:else}
-                    I understand it is charged in <span class="text-yellow-400">Yellow</span> Buzz.
-                  {/if}
-                </label>
-              </div>
+            {#if furtherMature > 0 && hostConfig().isPaidMember !== true && buzzMode.blueFirst}
+              <p class="max-w-sm text-xs leading-snug text-dark-2">
+                Without a membership, mature sample images from runs paid with
+                <span class="text-blue-400">Blue</span> Buzz are blurred. Turn off Spend Blue first to
+                pay in <span class="text-yellow-400">Yellow</span> and see them.
+              </p>
             {/if}
           </div>
         </div>
@@ -1297,6 +1308,29 @@
               This run was published as a model on Civitai.
             </p>
           {:else if publishLink && publishEpoch}
+            <div class="flex w-full flex-col gap-2 border-b border-dark-4 pb-3">
+              <label class="inline-flex items-center gap-2 text-sm text-dark-0">
+                <Checkbox bind:checked={() => ownRights, setOwnRights} />
+                I have the right, or the rightholder’s explicit permission, to redistribute these files
+              </label>
+              <label
+                class="inline-flex items-center gap-2 text-sm {ownRights ? 'text-dark-0' : 'text-dark-2'}"
+              >
+                <Checkbox bind:checked={() => shareDataset, setShareDataset} disabled={!ownRights} />
+                Share my dataset with the published model
+              </label>
+              <p class="m-0 text-xs text-dark-2">
+                Shared datasets can be downloaded from the model page once it's published.
+                {#if dataPolicyUrl}
+                  See the <a
+                    href={dataPolicyUrl}
+                    target="_blank"
+                    rel="noopener"
+                    class="text-blue-400 underline">dataset storage policy</a
+                  >.
+                {/if}
+              </p>
+            </div>
             <Button size="sm" {...publishLink}>
               <IconUpload size={14} stroke={2} />Publish a model page
             </Button>

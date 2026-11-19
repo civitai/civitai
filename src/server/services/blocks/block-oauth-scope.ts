@@ -8,12 +8,12 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 export type BlockTokenKind = 'block' | 'oauth';
 
 /** Block-only scopes (apps:storage:*, …) have no OAuth bit and are left to the host. */
-export function oauthScopeBitsFor(scopes: string[]): number {
-  let bits: number = TokenScope.UserRead;
+export function oauthScopeBitsFor(scopes: string[]): bigint {
+  let bits: bigint = TokenScope.UserRead;
   for (const scope of scopes) {
     if (!isKnownBlockScope(scope)) continue;
     const requirement = BLOCK_SCOPE_TO_OAUTH_BIT[scope];
-    if (typeof requirement === 'number') bits |= requirement;
+    if (typeof requirement === 'bigint') bits |= requirement;
   }
   return bits;
 }
@@ -72,4 +72,10 @@ export function manifestCanMintOauthToken(
 
 export function isConsentRequiredError(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === 'consent_required';
+}
+
+/** The hub refused the mint (403 access_denied): a suspended app's client, for one. */
+export function isAppTokenRefusedError(err: unknown): boolean {
+  const e = err as { code?: unknown; status?: unknown } | null;
+  return e?.code === 'access_denied' && e.status === 403;
 }

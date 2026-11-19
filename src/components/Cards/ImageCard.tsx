@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
@@ -7,6 +8,7 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
+import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
@@ -14,9 +16,10 @@ import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
-import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
+import { HatButton } from '~/components/HatTurf/HatButton';
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
 import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
+import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
@@ -68,6 +71,7 @@ function ImageCardContent({ data, hideCreator }: Props) {
           <div className="ml-auto flex flex-col gap-2">
             <ImageContextMenu image={data} />
             <CardRemixButton image={data} />
+            <MoreLikeThisButton image={data} />
           </div>
         </div>
       }
@@ -96,24 +100,23 @@ function ImageCardContent({ data, hideCreator }: Props) {
 
 function ImageCardActionRow({ data }: { data: ImagesInfiniteModel }) {
   const features = useFeatureFlags();
+  const nudge = useReactionNudgeClass({
+    imageId: data.id,
+    ownerId: data.user.id,
+    reactions: data.reactions,
+  });
   const hasMetaButton = features.imageCardInfoButton && data.hasMeta;
 
   return (
     <div className={cardClasses.actions}>
       <div className={cardClasses.actionRow}>
         <Reactions
-          className={cardClasses.reactions}
+          className={clsx(cardClasses.reactions, nudge)}
           entityId={data.id}
           entityType="image"
           reactions={data.reactions}
           metricsUnknown={data.stats?.statsUnknown}
-          metrics={{
-            likeCount: data.stats?.likeCountAllTime,
-            dislikeCount: data.stats?.dislikeCountAllTime,
-            heartCount: data.stats?.heartCountAllTime,
-            laughCount: data.stats?.laughCountAllTime,
-            cryCount: data.stats?.cryCountAllTime,
-          }}
+          metrics={imageStatsToReactionMetrics(data.stats)}
           targetUserId={data.user.id}
           abbreviate
           disableBuzzTip
@@ -131,7 +134,7 @@ function ImageCardActionRow({ data }: { data: ImagesInfiniteModel }) {
         )}
         <div className={cardClasses.tipEnd}>
           {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
-          <HatTurfButton imageId={data.id} />
+          <HatButton imageId={data.id} />
           {hasMetaButton && (
             <ImageMetaPopover2 imageId={data.id} type={data.type}>
               <ThemeIcon className={cardClasses.infoChip} variant="light">

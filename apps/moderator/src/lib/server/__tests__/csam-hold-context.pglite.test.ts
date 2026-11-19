@@ -22,12 +22,7 @@ const { getHoldContexts } = await import('../../../routes/csam/text-holds/hold-c
 
 let db: PGlite;
 
-const hold = (
-  id: number,
-  entityType: string,
-  entityId: number,
-  commentModelId: number | null = null
-) => ({ id, entityType, entityId, commentModelId });
+const hold = (id: number, entityType: string, entityId: number) => ({ id, entityType, entityId });
 
 beforeEach(async () => {
   db = await freshPglite();
@@ -122,17 +117,11 @@ describe('getHoldContexts: profiles', () => {
 });
 
 describe('getHoldContexts: comment parents', () => {
-  const parentOf = async (entityType: string, entityId: number, modelId: number | null = null) =>
-    (await getHoldContexts([hold(1, entityType, entityId, modelId)])).get(1)?.parent;
+  const parentOf = async (entityId: number) =>
+    (await getHoldContexts([hold(1, 'CommentV3', entityId)])).get(1)?.parent;
 
-  it('resolves a legacy comment to its model, with the title and media', async () => {
-    const parent = await parentOf('Comment', 5, 70);
-    expect(parent).toMatchObject({ type: 'model', id: 70, title: 'A model name' });
-    expect(parent?.images).toEqual([]);
-  });
-
-  it('resolves a CommentV2 on a post to its title, videos and stills included', async () => {
-    const parent = await parentOf('CommentV2', 100);
+  it('resolves a comment on a post to its title, videos and stills included', async () => {
+    const parent = await parentOf(100);
     expect(parent).toMatchObject({ type: 'post', id: 90, title: 'A post title', imageTotal: 2 });
     expect(parent?.images.map((i) => [i.url, i.type])).toEqual([
       ['post-clip', 'video'],
@@ -140,25 +129,25 @@ describe('getHoldContexts: comment parents', () => {
     ]);
   });
 
-  it('resolves a CommentV2 on an image to that image, with its minor flag', async () => {
-    const parent = await parentOf('CommentV2', 101);
+  it('resolves a comment on an image to that image, with its minor flag', async () => {
+    const parent = await parentOf(101);
     expect(parent).toMatchObject({ type: 'image', id: 4, title: null, imageTotal: 1 });
     expect(parent?.images[0]).toMatchObject({ url: 'img-parent', minor: true });
   });
 
-  it('resolves a CommentV2 on a model and on an article with its cover and banner', async () => {
-    expect(await parentOf('CommentV2', 102)).toMatchObject({
+  it('resolves a comment on a model and on an article with its cover and banner', async () => {
+    expect(await parentOf(102)).toMatchObject({
       type: 'model',
       id: 70,
       title: 'A model name',
     });
-    const article = await parentOf('CommentV2', 103);
+    const article = await parentOf(103);
     expect(article).toMatchObject({ type: 'article', id: 50, title: 'An article title' });
     expect(article?.images.map((i) => i.url)).toEqual(['art-cover', 'art-banner']);
   });
 
   it('keeps a type with no page we read as a bare reference', async () => {
-    expect(await parentOf('CommentV2', 104)).toEqual({
+    expect(await parentOf(104)).toEqual({
       type: 'bounty',
       id: 33,
       title: null,
@@ -168,18 +157,17 @@ describe('getHoldContexts: comment parents', () => {
   });
 
   it('resolves a reply to the entity it is under', async () => {
-    expect(await parentOf('CommentV2', 105)).toMatchObject({ type: 'post', id: 90 });
+    expect(await parentOf(105)).toMatchObject({ type: 'post', id: 90 });
   });
 
-  it('has no parent for a comment that is gone or a legacy comment without a model', async () => {
-    expect(await parentOf('CommentV2', 106)).toBeNull();
-    expect(await parentOf('Comment', 5, null)).toBeNull();
+  it('has no parent for a comment that is gone', async () => {
+    expect(await parentOf(106)).toBeNull();
   });
 
   it('answers a mixed page in one pass', async () => {
     const contexts = await getHoldContexts([
-      hold(1, 'CommentV2', 100),
-      hold(2, 'CommentV2', 101),
+      hold(1, 'CommentV3', 100),
+      hold(2, 'CommentV3', 101),
       hold(3, 'UserProfile', 10),
       hold(4, 'Post', 90),
     ]);

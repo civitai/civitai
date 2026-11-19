@@ -186,8 +186,8 @@ export function composeBlockExternalId(appBlockId: string, idempotencyKey: strin
  * carries NO client idempotency key (audit 🔴-1).
  *
  * WHY THIS EXISTS. `submitWorkflow` (services/orchestrator/workflows.ts) calls
- * `submitWorkflowWithRetry` with `maxAttempts = 3` and NO per-attempt timeout on
- * the real submit, and that wrapper's own doc is explicit that it adds no
+ * `submitWorkflowWithRetry` with `maxAttempts = 3` (a 5xx, a network failure or a
+ * timed-out attempt is retried) on the real submit, and that wrapper's own doc is explicit that it adds no
  * idempotency key — "the CALLER must set `body.externalId`". So a 502/504 or a
  * dropped socket AFTER the orchestrator already created the workflow and charged
  * makes attempts 2 and 3 create a SECOND and THIRD workflow: up to 3 charges for

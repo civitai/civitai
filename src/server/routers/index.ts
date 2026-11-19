@@ -16,6 +16,8 @@ const routers = {
   appCollaborators: () =>
     import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter),
   appStorage: () => import('~/server/routers/app-storage.router').then((m) => m.appStorageRouter),
+  appHibernation: () =>
+    import('~/server/routers/app-hibernation.router').then((m) => m.appHibernationRouter),
   blockImageUpload: () =>
     import('~/server/routers/block-image-upload.router').then((m) => m.blockImageUploadRouter),
   blockImagePicker: () =>
@@ -33,7 +35,6 @@ const routers = {
   buzz: () => import('./buzz.router').then((m) => m.buzzRouter),
   chat: () => import('./chat.router').then((m) => m.chatRouter),
   collection: () => import('./collection.router').then((m) => m.collectionRouter),
-  comment: () => import('./comment.router').then((m) => m.commentRouter),
   contestScore: () => import('./contest-score.router').then((m) => m.contestScoreRouter),
   commentv3: () => import('./commentv3.router').then((m) => m.commentv3Router),
   common: () => import('~/server/routers/common.router').then((m) => m.commonRouter),
@@ -53,6 +54,8 @@ const routers = {
   model3d: () => import('./model3d.router').then((m) => m.model3dRouter),
   modelFile: () => import('./model-file.router').then((m) => m.modelFileRouter),
   modelVersion: () => import('./model-version.router').then((m) => m.modelVersionRouter),
+  modelVersionGift: () =>
+    import('./model-version-gift.router').then((m) => m.modelVersionGiftRouter),
   notification: () => import('./notification.router').then((m) => m.notificationRouter),
   partner: () => import('./partner.router').then((m) => m.partnerRouter),
   placement: () => import('./placement.router').then((m) => m.placementRouter),
@@ -67,6 +70,26 @@ const routers = {
   resourceReview: () => import('./resourceReview.router').then((m) => m.resourceReviewRouter),
   semanticImageSearch: () =>
     import('./semantic-image-search.router').then((m) => m.semanticImageSearchRouter),
+  imageSearchUpload: () =>
+    import('./image-search-upload.router').then((m) => m.imageSearchUploadRouter),
+  semanticArticleSearch: () =>
+    import('./semantic-article-search.router').then((m) => m.semanticArticleSearchRouter),
+  semanticComicSearch: () =>
+    import('./semantic-comic-search.router').then((m) => m.semanticComicSearchRouter),
+  semanticChallengeSearch: () =>
+    import('./semantic-challenge-search.router').then((m) => m.semanticChallengeSearchRouter),
+  semanticModelSearch: () =>
+    import('./semantic-model-search.router').then((m) => m.semanticModelSearchRouter),
+  semanticModel3DSearch: () =>
+    import('./semantic-model3d-search.router').then((m) => m.semanticModel3DSearchRouter),
+  semanticStorylineSearch: () =>
+    import('./semantic-storyline-search.router').then((m) => m.semanticStorylineSearchRouter),
+  semanticCollectionSearch: () =>
+    import('./semantic-collection-search.router').then((m) => m.semanticCollectionSearchRouter),
+  semanticBountySearch: () =>
+    import('./semantic-bounty-search.router').then((m) => m.semanticBountySearchRouter),
+  semanticCrucibleSearch: () =>
+    import('./semantic-crucible-search.router').then((m) => m.semanticCrucibleSearchRouter),
   signals: () => import('./signals.router').then((m) => m.signalsRouter),
   stickerBook: () => import('./sticker-book.router').then((m) => m.stickerBookRouter),
   stripe: () => import('./stripe.router').then((m) => m.stripeRouter),

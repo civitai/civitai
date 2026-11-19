@@ -268,6 +268,15 @@ export function buildCases(ctx) {
       headers: {},
     },
     {
+      // No token: readyz is not token-gated (see src/pages/api/readyz.ts). Pinned to 200 on both
+      // servers: if the route could not see the warm flag, both would answer 503 and still agree.
+      id: 'probe-readyz',
+      path: '/api/readyz',
+      headers: {},
+      expectStatus: 200,
+      expectBody: '{"ready":true}',
+    },
+    {
       id: 'probe-live-trailing-slash',
       path: '/api/live/?token={WEBHOOK_TOKEN}',
       headers: {},

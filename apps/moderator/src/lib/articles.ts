@@ -34,9 +34,26 @@ export type ArticleMetadata = {
   unpublishedReason?: string | null;
   customMessage?: string | null;
   unpublishedAt?: string | null;
+  unpublishedBy?: number | null;
   /** Written by the main app when a block moves an article to UnpublishedViolation. */
   statusBeforeViolation?: string | null;
 } | null;
+
+/**
+ * Whether a moderator may restore this unpublished article. An Unpublished one only when someone
+ * other than its author unpublished it: one with no `unpublishedBy` predates that key and was its
+ * author's own unpublish too, which only the author may undo.
+ */
+export function canRestoreArticle(article: {
+  status: string;
+  userId: number;
+  metadata: ArticleMetadata;
+}): boolean {
+  if (article.status === ArticleStatus.UnpublishedViolation) return true;
+  if (article.status !== ArticleStatus.Unpublished) return false;
+  const by = article.metadata?.unpublishedBy;
+  return by != null && by !== article.userId;
+}
 
 /**
  * Where a moderator's restore puts the article: the status the block recorded, so a draft goes

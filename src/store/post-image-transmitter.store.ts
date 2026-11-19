@@ -2,7 +2,7 @@ import { faro } from '@grafana/faro-web-sdk';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { isOrchestratorUrl } from '~/server/common/constants';
-import { fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
+import { fetchBlob, fetchBlobAsFile, MEDIA_IDLE_TIMEOUT_MS } from '~/utils/file-utils';
 import { isDefined } from '~/utils/type-guards';
 
 type DataProps = {
@@ -77,7 +77,10 @@ export const orchestratorMediaTransmitter = {
     const results = await Promise.allSettled(
       data.map(async ({ url, meta, generationWorkflowId }) => {
         // requireOk: an expired or refused URL's error body is not an image.
-        const blob = await fetchBlob(url, undefined, { requireOk: true });
+        const blob = await fetchBlob(url, undefined, {
+          requireOk: true,
+          idleTimeoutMs: MEDIA_IDLE_TIMEOUT_MS,
+        });
         if (!blob) throw Object.assign(new Error('no blob'), { name: 'NoBlob' });
         return {
           file: new File([blob], fileNameOf(url), { type: blob.type }),
@@ -123,7 +126,13 @@ function MediaDropzoneData() {
     delete dictionary[url];
     if (!allowExternalUrl && !isOrchestratorUrl(url)) return;
     const filename = url.substring(url.lastIndexOf('/')).split('?')[0];
-    const file = await fetchBlobAsFile(url, filename);
+    // Callers expect undefined on failure (drag-and-drop doesn't catch), so report and absorb it.
+    const file = await fetchBlobAsFile(url, filename, {
+      idleTimeoutMs: MEDIA_IDLE_TIMEOUT_MS,
+    }).catch((e: unknown) => {
+      reportFetchFailure(url, e);
+      return null;
+    });
     if (!file) return;
     return { file, data };
   }

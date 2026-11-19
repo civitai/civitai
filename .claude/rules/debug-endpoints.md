@@ -5,7 +5,7 @@ paths:
 
 # Debug endpoints (`src/pages/api/testing/*`)
 
-`src/pages/api/testing/*.ts` holds hidden debug endpoints. Each is guarded by `WEBHOOK_TOKEN` (via `WebhookEndpoint(...)`, which checks the `?token=` query param) and exposes POST actions for exercising a feature without real money or hand-editing the DB.
+`src/pages/api/testing/*.ts` holds hidden debug endpoints. Each is guarded by `WEBHOOK_TOKEN` (via `WebhookEndpoint(...)`, which accepts the token as the `x-webhook-token` header or the `?token=` query param; the header wins) and exposes POST actions for exercising a feature without real money or hand-editing the DB.
 
 ## Using one
 

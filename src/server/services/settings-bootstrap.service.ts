@@ -1,9 +1,12 @@
 import type { IncomingMessage } from 'http';
+import { siteCookieHeader, siteCookieJar } from '@civitai/auth';
 import { getUserContentSettings } from '~/server/services/user.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getTosMeta } from '~/server/services/content.service';
 import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import { getNavBanners } from '~/server/services/nav-banner.service';
+import { getEventSeeds } from '~/server/services/event-seeds.service';
+import type { EventCosmeticReads } from '~/server/services/event-cosmetic-reads';
 import { getActiveSiteAlerts } from '~/server/services/site-alert.service';
 import { getUserFollows } from '~/server/redis/caches';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
@@ -12,6 +15,9 @@ import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { env } from '~/env/server';
 import { env as clientEnv } from '~/env/client';
 import { logToAxiom } from '~/server/logging/client';
+import { eventViewerOf } from '~/server/events/event-viewer';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
+import { getRequestCredential } from '~/server/auth/request-credential';
 
 /**
  * The per-user settings bootstrap: the session plus every ambient seed a page needs on its
@@ -28,6 +34,8 @@ import { logToAxiom } from '~/server/logging/client';
  */
 
 type AuthArgs = Parameters<typeof getServerAuthSession>[0];
+/** What `getServerAuthSession` records on the request it was given (`req.context`). */
+type SessionCredential = Omit<Parameters<typeof eventViewerOf>[0], 'user'>;
 
 /** What the route answers with, and what a server render is seeded from. */
 export const SETTINGS_BOOTSTRAP_PATH = '/api/user/settings';
@@ -49,7 +57,7 @@ function settle<T, F>(promise: Promise<T>, fallback: F, member: string): Promise
         timeoutMs,
       },
       'settings'
-    ).catch();
+    );
   }).catch(() => fallback);
 }
 
@@ -62,7 +70,11 @@ export async function resolveSettingsBootstrap({ req, res }: AuthArgs) {
   // Deliberately unbounded: failing this open renders a logged-in user anonymous, which
   // `_app`'s hasAuthCookie carve-out exists to avoid.
   const session = await getServerAuthSession({ req, res });
-  return resolveSettingsBootstrapSeeds(req, session);
+  return resolveSettingsBootstrapSeeds(
+    req,
+    session,
+    (req as { context?: SessionCredential }).context ?? null
+  );
 }
 
 /** The bootstrap's `session`: a session with no user fields is "signed out", never a session. */
@@ -76,7 +88,8 @@ export function bootstrapSession(session: Awaited<ReturnType<typeof getServerAut
  */
 export async function resolveSettingsBootstrapSeeds(
   req: AuthArgs['req'],
-  session: Awaited<ReturnType<typeof getServerAuthSession>>
+  session: Awaited<ReturnType<typeof getServerAuthSession>>,
+  credential: SessionCredential | null
 ) {
   // Concurrent, to keep this hot per-bootstrap read off the critical path.
   // EVERY member swallows its own errors: a single rejection fails the whole
@@ -84,6 +97,23 @@ export async function resolveSettingsBootstrapSeeds(
   // session seed and the browsing-settings addons too.
   const domainColor = getRequestDomainColor(req);
   const announcementsDomainColor = getRequestDomainColor({ headers: { host: viewerHost(req) } });
+  // The nav banners and the event seeds both read the viewer's event cosmetic: one read each
+  // per request, not one per member (event-cosmetic-reads.ts).
+  const eventCosmeticReads: EventCosmeticReads = new Map();
+  // The session as this credential may use it: a moderator on a reduced key is not one here.
+  const viewerSession = session?.user
+    ? {
+        ...session,
+        user: withModeratorRightsFor(
+          session.user,
+          getRequestCredential({ context: credential ?? undefined })
+        )!,
+      }
+    : session;
+  const eventUser = session?.user && {
+    ...session.user,
+    isModerator: !!credential && eventViewerOf({ ...credential, user: session.user }).isModerator,
+  };
   const [
     settings,
     tosMeta,
@@ -93,6 +123,7 @@ export async function resolveSettingsBootstrapSeeds(
     liveNow,
     navBanners,
     siteAlerts,
+    eventSeeds,
   ] = await Promise.all([
     // Content-settings view so SSR initialData matches the tRPC getSettings response
     // shape. `undefined` — NOT `{}` — because AppProvider passes this straight to
@@ -149,8 +180,20 @@ export async function resolveSettingsBootstrapSeeds(
     // Seeds `event.getNavBanners` so the nav strip is in the first paint and never shifts
     // the page. Session-only (no cookies), so the anonymous answer is the same for every
     // anonymous caller, as the route's public cache header requires.
-    settle(getNavBanners({ viewer: session?.user }), undefined, 'getNavBanners'),
+    settle(
+      getNavBanners({ viewer: eventUser, reads: eventCosmeticReads }),
+      undefined,
+      'getNavBanners'
+    ),
     settle(getActiveSiteAlerts(), undefined, 'getActiveSiteAlerts'),
+    // Seeds `event.getAccess` and `event.getCosmetic` for the released event decorations, which
+    // every page otherwise asks for once (see event-seeds.service.ts). Session-only, like the
+    // nav banners above.
+    settle(
+      getEventSeeds({ user: eventUser, reads: eventCosmeticReads }),
+      undefined,
+      'getEventSeeds'
+    ),
   ]);
   return {
     settings,
@@ -161,7 +204,8 @@ export async function resolveSettingsBootstrapSeeds(
     liveNow,
     navBanners,
     siteAlerts,
-    session: bootstrapSession(session),
+    eventSeeds,
+    session: bootstrapSession(viewerSession),
   };
 }
 
@@ -229,7 +273,8 @@ function viewerHost(req: AuthArgs['req']): string | undefined {
  *   - URL: always `SETTINGS_BOOTSTRAP_PATH`, never the caller's. `getServerAuthSession` treats a
  *     `?token=` query parameter as an API credential, and a page URL may carry an unrelated one —
  *     it must never replace the cookie viewer.
- *   - Headers and cookies: the caller's, so the session is the caller's.
+ *   - Headers and cookies: the caller's, so the session is the caller's, as the caller's own site reads
+ *     them (the session lookup sees the bootstrap host, not the viewer's).
  *   - Host: the internal bootstrap host by default (`bootstrapHost`), which is what the seeds were
  *     built against. `host` overrides it for a session lookup whose cookie writes reach the browser:
  *     the rolled cookie's Domain is derived from it, so it must be the viewer's own host.
@@ -242,9 +287,15 @@ export function settingsBootstrapRequest(
   { host, context }: { host?: string; context?: Record<string, unknown> } = {}
 ): AuthArgs['req'] {
   // The bootstrap reads only `authorization` and `host` from the headers (plus the parsed cookies).
+  const viewer = request.headers?.host;
+  const cookie = request.headers?.cookie;
   return {
-    headers: { ...request.headers, host: host ?? bootstrapHost() },
-    cookies: request.cookies,
+    headers: {
+      ...request.headers,
+      ...(cookie !== undefined && { cookie: siteCookieHeader(cookie, viewer) }),
+      host: host ?? bootstrapHost(),
+    },
+    cookies: siteCookieJar(request.cookies, viewer),
     url: SETTINGS_BOOTSTRAP_PATH,
     [VIEWER_HOST]: request.headers?.host,
     ...(context ? { context } : {}),
@@ -300,7 +351,7 @@ export async function resolveSettingsBootstrapForRender(
         message: e instanceof Error ? e.message : String(e),
       },
       'settings'
-    ).catch();
+    );
     throw new Error(
       `settings bootstrap failed: ${[name, typeof code === 'string' ? code : undefined]
         .filter(Boolean)

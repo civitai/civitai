@@ -116,7 +116,7 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
           challengeId: ctx.challengeId,
           field: standings.length,
           spent,
-        }).catch(() => undefined);
+        });
       }
       return 0;
     }
@@ -167,7 +167,7 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
           stage: 'close',
           field: eligible.length,
           spent,
-        }).catch(() => undefined);
+        });
         break;
       }
 
@@ -224,7 +224,7 @@ export const rollingSwissEngine: ChallengeJudgingEngine = {
       settleMs: Date.now() - settleStartedAt,
       shortOfBudget,
       minGames: Math.min(...eligible.map((e) => state.games.get(e.imageId) ?? 0)),
-    }).catch(() => undefined);
+    });
 
     await store.replaceStandings(
       ctx.challengeId,
@@ -423,7 +423,7 @@ async function runGroups(
       // The list is capped, so it stops being the count as soon as a whole field fails.
       failedGroupsTruncated: failed > failedGroups.length,
       message: firstError,
-    }).catch(() => undefined);
+    });
   }
   if (writeFailed) {
     // Points at the DATABASE, not the provider: the call was made and billed, and some of the
@@ -440,7 +440,7 @@ async function runGroups(
       writeFailed,
       writeFailedGroups,
       message: firstWriteError,
-    }).catch(() => undefined);
+    });
   }
   if (unloadable) {
     // A group whose images would not load is NOT a group that failed and not one that succeeded.
@@ -452,7 +452,7 @@ async function runGroups(
       challengeId: ctx.challengeId,
       planned: groups.length,
       unloadable,
-    }).catch(() => undefined);
+    });
   }
   if (malformed) {
     logToAxiom({
@@ -461,7 +461,7 @@ async function runGroups(
       challengeId: ctx.challengeId,
       calls,
       malformed,
-    }).catch(() => undefined);
+    });
   }
   return { recorded, calls, planned: groups.length, failed, malformed, writeFailed, unloadable };
 }

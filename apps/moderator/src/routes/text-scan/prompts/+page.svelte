@@ -38,6 +38,16 @@
     {/if}
   </div>
 
+  {#if data.intentCheck && !data.intentCheck.ok}
+    <p
+      class="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+      data-testid="intent-unverified"
+    >
+      Unverified: the live intent text has no passing run against the current base prompt, model
+      and cases. {data.intentCheck.reason}
+    </p>
+  {/if}
+
   <div
     class="grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[13rem_minmax(0,1fr)_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]"
   >

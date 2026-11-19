@@ -133,6 +133,13 @@ export async function freshAppFeedbackDb(): Promise<PGlite> {
   return db;
 }
 
+/** `freshAppFeedbackDb` plus `20270104120000_feedback_app_source_commit`, run as written. */
+export async function freshAppFeedbackSourceDb(): Promise<PGlite> {
+  const db = await freshAppFeedbackDb();
+  await db.exec(migration('20270104120000_feedback_app_source_commit'));
+  return db;
+}
+
 /** A client typed exactly as `$lib/server/db`'s, over the in-process database. */
 export const feedbackKysely = (db: PGlite): Kysely<DB> =>
   new Kysely<DB>({ dialect: pgliteDialect(db) });

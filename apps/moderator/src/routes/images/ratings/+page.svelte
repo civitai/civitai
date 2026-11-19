@@ -4,6 +4,7 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { optimisticEnhancer } from '$lib/form-action';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
+  import MatureRestrictedBadge from '$lib/components/MatureRestrictedBadge.svelte';
   import { browsingLevels, NsfwLevel, getBrowsingLevelLabel } from '@civitai/shared';
   import type { PageData } from './$types';
 
@@ -65,6 +66,7 @@
   {@const reqLevel = highestRequested(item.votes)}
   {@const isActioned = acted.has(item.id)}
   {@const isBlocked = acted.get(item.id) === NsfwLevel.Blocked}
+  <MatureRestrictedBadge restricted={item.modelRestricted} />
   <form method="POST" action="?/setLevel" use:enhance={submit}>
     <input type="hidden" name="id" value={item.id} />
     <div class="grid grid-cols-5 gap-1.5">

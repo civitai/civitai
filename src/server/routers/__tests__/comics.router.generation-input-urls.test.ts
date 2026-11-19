@@ -16,6 +16,7 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlags: () => ({ comicCreator: true }),
 }));
+vi.mock('~/utils/signal-client', () => ({ signalClient: { send: async () => undefined } }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: mocks.getOrchestratorToken,
 }));
@@ -271,6 +272,132 @@ describe('comics generation inputs the server loads', () => {
     expect(mocks.submit).toHaveBeenCalledOnce();
     const sent = (mocks.submit.mock.calls[0][0] as { images: { url: string }[] }).images;
     expect(sent.map((i) => i.url)).toEqual([expect.stringContaining(SOURCE)]);
+  });
+
+  it.each([
+    ['every image of one reference is blocked', 'moderated', true],
+    ['CONTROL: the reference keeps an unblocked image', null, false],
+  ] as const)('iterateGenerate tells the client when %s', async (_, blockedFor, skipped) => {
+    dbMock.dbRead.comicReference.findMany.mockResolvedValue([
+      { id: 5, name: 'A' },
+      { id: 6, name: 'B' },
+    ]);
+    dbMock.dbRead.comicReference.findUnique.mockImplementation((async (args: {
+      where: { id: number };
+    }) =>
+      args.where.id === 5
+        ? { name: 'A', images: [{ image: { id: 1, url: REF, width: 1, height: 1, blockedFor } }] }
+        : {
+            name: 'B',
+            images: [{ image: { id: 2, url: SOURCE, width: 1, height: 1, blockedFor: null } }],
+          }) as never);
+    mocks.submit.mockResolvedValue({ id: 'wf', cost: { total: 0 } });
+    const result = await caller().iterateGenerate({
+      projectId: 11,
+      chapterPosition: 0,
+      prompt: 'p',
+      referenceIds: [5, 6],
+    });
+    expect(result.referenceImagesSkipped).toBe(skipped);
+  });
+
+  describe('the skipped-reference notice', () => {
+    // Alpha's only image is blocked (or not, for the control); Beta always has a usable one.
+    const givenRefs = (alphaBlocked: boolean) => {
+      dbMock.dbRead.comicReference.findMany.mockResolvedValue([
+        { id: 5, name: 'Alpha' },
+        { id: 6, name: 'Beta' },
+      ]);
+      dbMock.dbRead.comicReference.findUnique.mockImplementation((async (args: {
+        where: { id: number };
+      }) => ({
+        name: args.where.id === 5 ? 'Alpha' : 'Beta',
+        images: [
+          {
+            image: {
+              id: args.where.id,
+              url: args.where.id === 5 ? REF : SOURCE,
+              width: 1,
+              height: 1,
+              blockedFor: args.where.id === 5 && alphaBlocked ? 'moderated' : null,
+            },
+          },
+        ],
+      })) as never);
+      mocks.assertUsable.mockResolvedValue(undefined);
+      mocks.submit.mockResolvedValue({ id: 'wf', cost: { total: 0 } });
+      dbMock.dbWrite.comicPanel.create.mockResolvedValue({ id: 1 } as never);
+      dbMock.dbWrite.comicPanel.update.mockResolvedValue({ id: 1, status: 'Generating' } as never);
+      dbMock.dbWrite.comicChapter.create.mockResolvedValue({ projectId: 11, position: 0 } as never);
+      dbMock.dbRead.comicProjectReference.findMany.mockResolvedValue([
+        { referenceId: 5 },
+        { referenceId: 6 },
+      ] as never);
+    };
+    const source = { sourceImageUrl: SOURCE, sourceImageWidth: 512, sourceImageHeight: 512 };
+    const routes = [
+      [
+        'createPanel',
+        (p: string) => caller().createPanel({ projectId: 11, chapterPosition: 0, prompt: p }),
+      ],
+      [
+        'enhancePanel',
+        (p: string) =>
+          caller().enhancePanel({ projectId: 11, chapterPosition: 0, prompt: p, ...source }),
+      ],
+      [
+        'smartCreateChapter',
+        (p: string) =>
+          caller().smartCreateChapter({
+            projectId: 11,
+            referenceIds: [5, 6],
+            panels: [{ prompt: p }],
+          }),
+      ],
+      [
+        'bulkCreatePanels, prompt only',
+        (p: string) =>
+          caller().bulkCreatePanels({ projectId: 11, chapterPosition: 0, panels: [{ prompt: p }] }),
+      ],
+      [
+        'bulkCreatePanels, source and prompt',
+        (p: string) =>
+          caller().bulkCreatePanels({
+            projectId: 11,
+            chapterPosition: 0,
+            panels: [{ prompt: p, ...source }],
+          }),
+      ],
+    ] as const;
+
+    it.each(routes)('%s flags a mentioned reference with no usable image', async (_, run) => {
+      givenRefs(true);
+      expect((await run('@Alpha and @Beta')).referenceImagesSkipped).toBe(true);
+    });
+
+    it.each(routes)(
+      'CONTROL: %s does not flag a usable or unmentioned reference',
+      async (_, run) => {
+        givenRefs(false);
+        expect((await run('@Alpha and @Beta')).referenceImagesSkipped).toBe(false);
+        givenRefs(true);
+        expect((await run('@Beta only')).referenceImagesSkipped).toBe(false);
+      }
+    );
+  });
+
+  // The kill switch is applied inside `submitPresetImageGen` from the user it is handed: a free,
+  // non-moderator caller must arrive as one, or a forced tier or moderator flag is a bypass.
+  it('submits as the signed-in user, for the generation kill switch', async () => {
+    dbMock.dbRead.comicReference.findMany.mockResolvedValue([]);
+    mocks.submit.mockRejectedValue(new Error('stop'));
+    await caller()
+      .iterateGenerate({ projectId: 11, chapterPosition: 0, prompt: 'p' })
+      .catch(() => undefined);
+    expect(mocks.submit).toHaveBeenCalledOnce();
+    const { user } = mocks.submit.mock.calls[0][0] as { user: { tier?: string } };
+    expect(user).toMatchObject({ id: USER_ID, isModerator: false });
+    expect(user.tier ?? 'free').toBe('free');
   });
 
   it("getGenerationCostEstimate reads only the caller's own references", async () => {

@@ -47,7 +47,7 @@ export function HatTurfSectionStats({
       key: 'scoring',
       icon: IconUsers,
       color: 'yellow',
-      label: 'Scoring cap',
+      label: 'Scorers per image',
       value: String(creditedPlayers),
     },
   ];
@@ -79,7 +79,7 @@ export function HatTurfSectionStats({
             >
               {value}
             </Text>
-            <Text size="xs" c="gray.5" lh={1.2} className="max-w-full truncate">
+            <Text size="xs" c="gray.5" lh={1.2} className="max-w-full text-center">
               {label}
             </Text>
           </div>

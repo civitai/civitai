@@ -143,7 +143,7 @@ export function useWhatIfFromStore({
   // Don't estimate a selection the server will refuse.
   const gateBlocked = useDisabledGates(selectionValues).length > 0;
 
-  const { queryResult, preBoost, setPreBoost, download } = usePreBoostWhatIf({
+  const { queryResult, preBoost, setPreBoost, download, boostRequired } = usePreBoostWhatIf({
     revision,
     queryPayload,
     enabled:
@@ -179,6 +179,7 @@ export function useWhatIfFromStore({
     preBoost,
     setPreBoost,
     download,
+    boostRequired,
   };
 }
 

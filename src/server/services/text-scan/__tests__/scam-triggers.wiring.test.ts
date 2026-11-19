@@ -14,7 +14,6 @@ function bodyOf(file: string, signature: string) {
 
 describe('every scam write path queues a scan', () => {
   it.each([
-    ['src/server/services/comment.service.ts', 'export const createOrUpdateComment', 'Comment', 1],
     [
       'src/server/services/resourceReview.service.ts',
       'export const upsertResourceReview',

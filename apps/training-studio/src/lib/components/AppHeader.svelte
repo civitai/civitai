@@ -44,7 +44,6 @@
     </span>
     <div class="whitespace-nowrap font-semibold leading-tight text-white">
       Training Studio
-      <span class="block font-mono text-xs uppercase tracking-widest text-dark-2">Beta</span>
     </div>
   </a>
 

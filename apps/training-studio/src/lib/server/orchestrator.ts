@@ -4,6 +4,7 @@ import { createCivitaiClient } from '@civitai/orchestration-client';
 import { env } from '$env/dynamic/private';
 import * as core from '$lib/orchestrator-core';
 import type { TrainingWhatIfInput } from '$lib/orchestrator-core';
+import type { BlobHead } from '$lib/upload-readiness';
 import type {
   ArchiveKind,
   GenerationItem,
@@ -14,6 +15,20 @@ import type { Media } from '$lib/data/trainingModels';
 
 export { isFlux2 } from '$lib/orchestrator-core';
 export type { TrainingWhatIfInput } from '$lib/orchestrator-core';
+
+/** Raw HEADs of the caller's dataset blobs, or undefined when no endpoint is configured. Never sends a
+ *  workflowId. */
+export function blobHead(token: string): BlobHead | undefined {
+  const endpoint = env.ORCHESTRATOR_ENDPOINT;
+  if (!endpoint) return undefined;
+  return (air, signal) =>
+    fetch(core.consumerBlobUrl(endpoint, air), {
+      method: 'HEAD',
+      headers: { Authorization: `Bearer ${token}` },
+      redirect: 'manual',
+      signal,
+    });
+}
 
 export function orchestratorClient(token: string) {
   return createCivitaiClient({
@@ -59,4 +74,11 @@ export function getRunDataset(
   workflowId: string
 ): Promise<{ air: string; caption: string }[]> {
   return core.getRunDataset(orchestratorClient(token), workflowId);
+}
+
+export function trainingPreview(
+  token: string,
+  input: TrainingWhatIfInput
+): Promise<core.TrainingQuote> {
+  return core.trainingPreview(orchestratorClient(token), input);
 }

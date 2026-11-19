@@ -615,6 +615,16 @@ describe('the character counter', () => {
   });
 });
 
+/**
+ * The browser window the chrome attaches when the modal opens. Its values are this test
+ * browser's; what is pinned here is that it is attached, in the schema's shape.
+ */
+const ENVIRONMENT = expect.objectContaining({
+  browser: expect.objectContaining({ family: expect.any(String) }),
+  os: expect.any(String),
+  viewport: { width: expect.any(Number), height: expect.any(Number) },
+});
+
 describe('keyboard submit', () => {
   test('Ctrl+Enter sends', async () => {
     await openFeedbackModal();
@@ -622,7 +632,11 @@ describe('keyboard submit', () => {
     await userEvent.keyboard('{Control>}{Enter}{/Control}');
     await expectClosedWithToast();
     expect(mocks.createInputs).toStrictEqual([
-      { target: { slug: SLUG }, message: 'quick note', context: { surface: 'page' } },
+      {
+        target: { slug: SLUG },
+        message: 'quick note',
+        context: { surface: 'page', environment: ENVIRONMENT },
+      },
     ]);
   });
 
@@ -699,7 +713,11 @@ describe('submitting', () => {
     await typeAndSend('  the export button 404s  ');
     await expectClosedWithToast();
     expect(mocks.createInputs).toStrictEqual([
-      { target: { slug: SLUG }, message: 'the export button 404s', context: { surface: 'page' } },
+      {
+        target: { slug: SLUG },
+        message: 'the export button 404s',
+        context: { surface: 'page', environment: ENVIRONMENT },
+      },
     ]);
   });
 
@@ -711,7 +729,7 @@ describe('submitting', () => {
       {
         target: { appBlockId: APP_BLOCK_ID },
         message: 'love it',
-        context: { surface: 'slot', modelId: MODEL_ID },
+        context: { surface: 'slot', modelId: MODEL_ID, environment: ENVIRONMENT },
       },
     ]);
   });
@@ -810,7 +828,11 @@ describe('a reused host (app A → app B without remount)', () => {
     await typeAndSend('about app A');
     await expectClosedWithToast();
     expect(mocks.createInputs).toStrictEqual([
-      { target: { slug: 'app-a' }, message: 'about app A', context: { surface: 'page' } },
+      {
+        target: { slug: 'app-a' },
+        message: 'about app A',
+        context: { surface: 'page', environment: ENVIRONMENT },
+      },
     ]);
   });
 });

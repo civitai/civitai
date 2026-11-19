@@ -1,6 +1,7 @@
 import { Container } from '@mantine/core';
 import { useRouter } from 'next/router';
 
+import { submissionIntent, withPaymentIntentKey } from '~/components/Buzz/payment-intent-keys';
 import { ChallengeCreateRequirements } from '~/components/Challenge/ChallengeCreateRequirements';
 import {
   CRUCIBLE_CREATE_DRAFT_KEY,
@@ -79,7 +80,13 @@ export default function CrucibleCreate() {
       });
       return;
     }
-    createCrucibleMutation.mutate({ ...input, coverImage });
+    const payload = { ...input, coverImage };
+    // One key per creation (its content), held across a failure that may have charged the setup
+    // fee or the seed, so creating it again is the same crucible, charged once. The mutation's
+    // onError reports a failure.
+    withPaymentIntentKey(submissionIntent('crucible-create', payload), (idempotencyKey) =>
+      createCrucibleMutation.mutateAsync({ ...payload, idempotencyKey })
+    ).catch(() => undefined);
   };
 
   return (

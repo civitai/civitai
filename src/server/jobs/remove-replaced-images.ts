@@ -113,7 +113,8 @@ export const removeReplacedImages = createJob(
       // call used to do — just late enough that no live cache can still be pointing at it.
       // A held account's images are the exception, and the guard leaves them in place.
       const markerView = await holdMarkerViewExists();
-      const rows = await deleteImages(deletableIds, true, {
+      const rows = await deleteImages(deletableIds, {
+        actor: { system: 'remove-replaced-images' },
         onlyWhere: replacedImageHoldGuard(markerView),
       });
       deleted.push(...rows.map((x) => x.id));
@@ -154,7 +155,7 @@ export const removeReplacedImages = createJob(
       deleted: deleted.length,
       readopted: readopted.size,
       heldAtDelete: held.size,
-    }).catch(() => undefined);
+    });
 
     return { deleted: deleted.length, readopted: readopted.size, heldAtDelete: held.size };
   },

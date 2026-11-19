@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { Alert, Anchor, Badge, Loader, Text, ThemeIcon } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
@@ -19,10 +20,12 @@ import { ElementInView, useElementInView } from '~/components/IntersectionObserv
 import { Metrics } from '~/components/Metrics';
 import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
+import { HatTimeLeft } from '~/components/HatTurf/HatTimeLeft';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
-import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
+import { HatButton } from '~/components/HatTurf/HatButton';
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
 import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
+import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { TwCard } from '~/components/TwCard/TwCard';
@@ -33,6 +36,7 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
@@ -41,6 +45,8 @@ import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
+import { retractedMediaUrl } from '~/components/RetractedMedia/retracted-media';
 import { useStorylineForPost } from '~/components/Storyline/StorylineBatchProvider';
 import { StorylinePill } from '~/components/Storyline/StorylinePill';
 import clsx from 'clsx';
@@ -94,6 +100,7 @@ function ImagesCardContent({
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
   const isScanned = image.ingestion === ImageIngestionStatus.Scanned;
   const isModerator = currentUser?.isModerator;
+  const retractedSrc = features.modRetractedMedia ? retractedMediaUrl(image, currentUser) : null;
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
@@ -157,7 +164,14 @@ function ImagesCardContent({
                   })}
                   className="absolute inset-0"
                 >
-                  {safe ? (
+                  {safe && retractedSrc ? (
+                    <RetractedMedia
+                      src={retractedSrc}
+                      type={image.type}
+                      alt={image.name ?? undefined}
+                      className={clsx(cardClasses.image, 'opacity-30')}
+                    />
+                  ) : safe ? (
                     <EdgeMedia2
                       metadata={image.metadata}
                       src={image.url}
@@ -191,6 +205,12 @@ function ImagesCardContent({
                 {/* Steps clear of an event decoration sitting on the corner. */}
                 <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-[4] flex flex-nowrap items-center gap-1">
                   <HatTurfBadge imageId={image.id} />
+                  {image.turfPlacedAt && (
+                    <HatTimeLeft
+                      placedAt={image.turfPlacedAt}
+                      className="inline-flex h-6 items-center rounded-full bg-black/60 px-2 text-xs font-bold text-white"
+                    />
+                  )}
                   {/* This row's chips take the Hat Turf badge's 24px so they read as one line. */}
                   <ImageGuard2.BlurToggle radius="xl" h={24} style={{ pointerEvents: 'auto' }} />
                   {safe && storyline && (
@@ -270,6 +290,7 @@ function ImagesCardContent({
                         </HoverActionButton>
                       </RemixMenu>
                     )}
+                    <MoreLikeThisButton image={image} />
                     {scheduled && (
                       <Tooltip label="Scheduled">
                         <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
@@ -417,18 +438,16 @@ function ImageReactions({
   const turf = !!useTurfFeed() && safe;
   const inView = useElementInView();
   const oneRow = isImagesCardFooterOneRow(width);
+  const nudge = useReactionNudgeClass({
+    imageId: image.id,
+    ownerId: image.user.id,
+    reactions: image.reactions,
+  });
   return (
     <Metrics
       entityType="Image"
       entityId={image.id}
-      initial={{
-        likeCount: image.stats?.likeCountAllTime ?? 0,
-        dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
-        heartCount: image.stats?.heartCountAllTime ?? 0,
-        laughCount: image.stats?.laughCountAllTime ?? 0,
-        cryCount: image.stats?.cryCountAllTime ?? 0,
-        tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
-      }}
+      initial={imageStatsToReactionMetrics(image.stats)}
       useLive={inView !== false}
     >
       {(metrics) => {
@@ -463,7 +482,8 @@ function ImageReactions({
                   className={clsx(
                     cardClasses.reactions,
                     classes.bar,
-                    oneRow && classes.fitReactions
+                    oneRow && classes.fitReactions,
+                    nudge
                   )}
                   entityId={image.id}
                   entityType="image"
@@ -490,7 +510,7 @@ function ImageReactions({
                 )}
                 <div className={cardClasses.tipEnd}>
                   {showStickerBadge && <StickerPlacementCardBadge imageId={image.id} />}
-                  {turf && <HatTurfButton imageId={image.id} />}
+                  {turf && <HatButton imageId={image.id} />}
                 </div>
               </div>
             </div>

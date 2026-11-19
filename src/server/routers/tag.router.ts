@@ -51,7 +51,13 @@ export const tagRouter = router({
       cacheIt<GetTagsInput & UserPreferencesInput>({
         ttl: 60,
         excludeKeys: ['excludedImageIds', 'excludedUserIds', 'excludedModelIds'],
-        varyBy: (ctx) => ({ adminTags: ctx.features.adminTags }),
+        varyBy: (ctx, input) => ({
+          adminTags: ctx.features.adminTags,
+          ...(input?.modelId && {
+            viewerId: ctx.user?.id ?? null,
+            viewerIsModerator: !!ctx.user?.isModerator,
+          }),
+        }),
       })
     )
     .query(getAllTagsHandler),

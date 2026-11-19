@@ -57,6 +57,10 @@ const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
     lockWrites: 6,
     decision: { kind: 'clears' },
   },
+  'src/server/services/model-com-face-intent.service.ts': {
+    lockWrites: 1,
+    decision: { kind: 'sets' },
+  },
   'src/server/services/text-scan/actions/model-nsfw.ts': {
     lockWrites: 4,
     decision: { kind: 'sets' },

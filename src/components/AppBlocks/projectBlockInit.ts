@@ -29,6 +29,11 @@
  * unit-testable in isolation — see __tests__/projectBlockInit.test.ts.
  */
 import { Flags } from '~/shared/utils/flags';
+import {
+  BLOCK_ERRORS_CAPABILITY,
+  BLOCK_HOST_ERROR_REPORTS,
+  type BlockHostSurface,
+} from './blockInitFragmentGate';
 import type {
   BlockCheckpointInfo,
   BlockInitPayload,
@@ -256,4 +261,18 @@ export function projectBlockInitViewer(context: SlotContext): BlockInitPayload['
     id: source.viewerUserId,
     username: source.viewerUsername ?? null,
   });
+}
+
+/** Capabilities the page host advertises in `BLOCK_INIT`; see `BlockInitPayload.capabilities`. */
+export const PAGE_HOST_CAPABILITIES = ['workflowMedia:v1'];
+
+/**
+ * The page host's `BLOCK_INIT.capabilities` on `surface`: {@link PAGE_HOST_CAPABILITIES}, plus
+ * `blockErrors:v1` where the surface collects the block's non-fatal errors
+ * (`BLOCK_HOST_ERROR_REPORTS`).
+ */
+export function pageHostCapabilities(surface: BlockHostSurface): string[] {
+  return BLOCK_HOST_ERROR_REPORTS[surface]
+    ? [...PAGE_HOST_CAPABILITIES, BLOCK_ERRORS_CAPABILITY]
+    : [...PAGE_HOST_CAPABILITIES];
 }

@@ -14,6 +14,7 @@ import type { TrainingResults } from '~/server/schema/model-file.schema';
 import { normalizeEpochs } from '~/server/services/orchestrator/training/epoch-archive';
 import { resolveTrainingRun } from '~/server/services/orchestrator/training/training-state';
 import { attachmentContentDisposition } from '~/utils/content-disposition';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 
 // Disable body parser size limit and response size limit for large epoch files
 export const config = {
@@ -29,6 +30,7 @@ const schema = z.object({
 
 export default AuthedEndpoint(
   async function downloadTrainingEpoch(req: NextApiRequest, res: NextApiResponse, user) {
+    if (!requireFullScopeSession(req, res)) return;
     const queryResults = schema.safeParse(req.query);
     if (!queryResults.success) {
       return res.status(400).json({ error: 'Invalid parameters' });
@@ -73,7 +75,7 @@ export default AuthedEndpoint(
           data: { modelVersionId, epochNumber, userId: user.id, host: logHostOf(epochUrl) },
         },
         'webhooks'
-      ).catch();
+      );
       return res.status(404).json({ error: 'Epoch download URL not available' });
     }
 

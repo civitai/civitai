@@ -7,19 +7,25 @@ import {
   dealStatusBadge,
   dealQueryError,
   escrowCopy,
+  sellerHeldLine,
   disputeNotice,
   groupEventsByRound,
   isModeratorHold,
   requestSentMessage,
   roundLabel,
   sheetEventText,
+  closeCommentLabel,
   visibleDealActions,
 } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
   resolveServiceDealPage,
   resolveServiceDealsListPage,
 } from '~/components/CreatorShop/Services/deals/deal-pages.server';
-import { dealActions, type DealTimingFields } from '~/shared/utils/creator-service-deal-view';
+import {
+  dealActions,
+  dealVisibleReason,
+  type DealTimingFields,
+} from '~/shared/utils/creator-service-deal-view';
 
 const BUYER = 1;
 const SELLER = 2;
@@ -67,6 +73,12 @@ describe('deal actions with the flag off', () => {
         false
       )
     ).toEqual(['respondCancellation']);
+  });
+
+  it('keeps the cancel and refund available', () => {
+    const d = deal({ status: 'Accepted', dueAt: new Date('2099-01-01T00:00:00Z') });
+    const actions = dealActions(d, BUYER, undefined, { sellerUnavailable: true }).actions;
+    expect(visibleDealActions(actions, { servicesEnabled: false })).toContain('cancelAndRefund');
   });
 
   it('keeps an overdue late cancel available', () => {
@@ -174,6 +186,21 @@ describe('deal page access', () => {
       expect(dealPageState({ isLoading: false, hasDeal: false, error })).toEqual({
         kind: 'error',
       });
+  });
+});
+
+describe('seller held line', () => {
+  it('tells the seller the held amount and the payout timings while the deal is open', () => {
+    for (const status of ['Requested', 'Accepted', 'InRevision', 'Delivered'] as const)
+      expect(sellerHeldLine({ status, held: true, price: 5000 })).toBe(
+        "5,000 Buzz from the buyer is already held in escrow, so the money is there before you start. After you deliver, it's paid to you 48 hours after the buyer accepts, or 120 hours after your latest delivery if they don't respond, unless they report a problem in that time. It goes back to the buyer if the request is declined, withdrawn or expires, or the deal is canceled."
+      );
+  });
+
+  it('says nothing before the hold is confirmed, or once the deal is closed or contested', () => {
+    expect(sellerHeldLine({ status: 'Requested', held: false, price: 5000 })).toBeNull();
+    for (const status of ['Completed', 'Cancelled', 'Disputed', 'CancellationRequested'] as const)
+      expect(sellerHeldLine({ status, held: true, price: 5000 })).toBeNull();
   });
 });
 
@@ -345,7 +372,39 @@ describe('deal list status badge', () => {
   });
 
   it('leaves deals no moderator settled on their status label', () => {
-    expect(dealStatusBadge({ status: 'Cancelled', disputeResolution: null })).toBe('Cancelled');
+    expect(dealStatusBadge({ status: 'Cancelled', disputeResolution: null })).toBe('Canceled');
     expect(dealStatusBadge({ status: 'Completed' })).toBe('Complete');
+  });
+});
+
+describe('close comments on the accountability sheet', () => {
+  it('prints a label, never the raw code the server wrote', () => {
+    const cancelled = (comment: string | null) => ({
+      type: 'Cancelled',
+      actorRole: 'buyer',
+      comment,
+    });
+    expect(sheetEventText(cancelled('withdrawn'), 'buyer', 'Cancelled').comment).toBe(
+      'Request withdrawn by the buyer'
+    );
+    for (const code of Object.keys(closeCommentLabel))
+      expect(
+        sheetEventText({ ...cancelled(code), type: 'Completed' }, 'seller', 'x').comment
+      ).not.toBe(code);
+  });
+
+  // A close code that is also a hold reason reaches the parties as null, so its label never shows.
+  it('shows the parties every close code it has a label for', () => {
+    for (const code of Object.keys(closeCommentLabel))
+      expect(dealVisibleReason(code, false)).toBe(code);
+  });
+
+  it('leaves a typed comment, an unknown code and a code on another event type alone', () => {
+    const ev = (type: string, comment: string | null) => ({ type, actorRole: 'buyer', comment });
+    expect(sheetEventText(ev('Cancelled', 'changed plans'), 'buyer', 'x').comment).toBe(
+      'changed plans'
+    );
+    expect(sheetEventText(ev('Cancelled', null), 'buyer', 'x').comment).toBeNull();
+    expect(sheetEventText(ev('Revision', 'withdrawn'), 'buyer', 'x').comment).toBe('withdrawn');
   });
 });

@@ -13,6 +13,19 @@ export default defineConfig({
   resolve: {
     alias: {
       $lib: path.resolve(path.dirname(fileURLToPath(import.meta.url)), './src/lib'),
+      // Stubs for the `$app` virtual modules, which a jsdom test must resolve before `vi.mock` replaces them.
+      '$app/environment': path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        './src/test/app-stubs/environment.ts'
+      ),
+      '$app/navigation': path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        './src/test/app-stubs/navigation.ts'
+      ),
+      '$app/state': path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        './src/test/app-stubs/state.ts'
+      ),
     },
   },
   test: {

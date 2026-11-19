@@ -111,7 +111,8 @@ export function toGateRuleViews(rules: GateRule[]): GateRuleView[] {
  * audience.
  *   - `hidden`     → removed from the picker.
  *   - `disabled`   → still selectable, badged; generation is refused with the
- *                    standard "currently unavailable" copy.
+ *                    standard "currently unavailable" copy plus the rule's
+ *                    `message`, if any (`gateRefusalText`).
  *   - `memberOnly` → shown greyed and unselectable, the standard members-only UI
  *                    **including the upsell alert + Become-a-member CTA** (same
  *                    as the existing self-hosted memberOnly experience).
@@ -272,6 +273,28 @@ export function gateMessage({ subject, state, message }: SelectionGate): string 
       ? `${GATE_SUBJECT_NOUN[subject]} is only available to members.`
       : `${GATE_SUBJECT_NOUN[subject]} is currently unavailable.`;
   return message ? `${base} ${message}` : base;
+}
+
+/**
+ * The graph nodes' stable refusal text for a gated ecosystem / workflow. API
+ * callers (App Blocks apps included) match on these, so a rule's copy is only
+ * ever APPENDED to them — see `gateRefusalText`.
+ */
+export const ECOSYSTEM_UNAVAILABLE = 'Ecosystem is currently unavailable';
+export const WORKFLOW_UNAVAILABLE = 'Workflow is currently unavailable';
+
+/**
+ * A node refusal: the stable `base` text, then the gating rule's own copy when
+ * it has any. Callers pass the `message` of a `GateResolution`, which
+ * `rulesToStates` leaves unset for `hidden` — so a hidden rule's message can
+ * never reach a refusal, and a shown one only says what this viewer's
+ * generator config (`toGateRuleViews`) already carries.
+ * Deliberately separate from `gateMessage`, the generator UI's copy, which has a
+ * different base text and separator.
+ */
+export function gateRefusalText(base: string, message?: string): string {
+  const extra = message?.trim();
+  return extra ? `${base}. ${extra}` : base;
 }
 
 /**

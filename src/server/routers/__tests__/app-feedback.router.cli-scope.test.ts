@@ -29,13 +29,13 @@ vi.mock('~/server/services/blocks/app-feedback.service', async (importOriginal) 
 const { appFeedbackRouter } = await import('~/server/routers/app-feedback.router');
 
 // Literals, so a renumbered enum fails the sanity test instead of moving every arm with it.
-const FULL = 33554431;
-const SUBMIT = 1 << 25; // 33554432
-const WITH_SUBMIT = 1 | SUBMIT; // UserRead | AppBlocksSubmit
+const FULL = 33554431n;
+const SUBMIT = 1n << 25n; // 33554432
+const WITH_SUBMIT = 1n | SUBMIT; // UserRead | AppBlocksSubmit
 // Scoped tokens that lack the bit: a narrow one, and every ordinary scope but one.
 const WITHOUT_SUBMIT = [
-  ['UserRead|AppBlocksDevTunnel', 1 | (1 << 26)],
-  ['Full minus UserWrite', FULL & ~2],
+  ['UserRead|AppBlocksDevTunnel', 1n | (1n << 26n)],
+  ['Full minus UserWrite', FULL & ~2n],
 ] as const;
 
 const SCOPE_GATE_ERROR = {
@@ -61,7 +61,7 @@ const sessionCtx = (user: User) =>
   } as never);
 
 // A personal API key: moderator procedures take no other bearer credential.
-const tokenCtx = (user: User, tokenScope: number) =>
+const tokenCtx = (user: User, tokenScope: bigint) =>
   ({
     ...(sessionCtx(user) as object),
     apiKeyId: 999,
@@ -175,7 +175,7 @@ describe('appFeedback token-scope gate', () => {
     expect(TokenScope.AppBlocksSubmit).toBe(SUBMIT);
     expect(TokenScope.UserRead | TokenScope.AppBlocksSubmit).toBe(WITH_SUBMIT);
     expect(TokenScope.UserRead | TokenScope.AppBlocksDevTunnel).toBe(WITHOUT_SUBMIT[0][1]);
-    for (const [, mask] of WITHOUT_SUBMIT) expect(mask & SUBMIT).toBe(0);
+    for (const [, mask] of WITHOUT_SUBMIT) expect(mask & SUBMIT).toBe(0n);
   });
 
   // Read off the built router, so an un-annotated procedure reads as `null` rather than being
@@ -184,7 +184,7 @@ describe('appFeedback token-scope gate', () => {
   it('exactly the four procedures a token caller needs require AppBlocksSubmit', () => {
     const procedures = appFeedbackRouter._def.procedures as unknown as Record<
       string,
-      { _def: { meta?: { requiredScope?: number; blockApiKeys?: boolean } } }
+      { _def: { meta?: { requiredScope?: bigint; blockApiKeys?: boolean } } }
     >;
     const ledger = Object.fromEntries(
       Object.entries(procedures).map(([name, p]) => [name, p._def.meta ?? null])
@@ -192,11 +192,11 @@ describe('appFeedback token-scope gate', () => {
     expect(ledger).toEqual({
       getEligibility: null,
       create: null,
-      listForListing: { requiredScope: 33554432 },
+      listForListing: { requiredScope: 33554432n },
       hasAnyForListing: null,
-      setOwnerStatus: { requiredScope: 33554432 },
-      flagAbusive: { requiredScope: 33554432 },
-      countNewForMyListings: { requiredScope: 33554432 },
+      setOwnerStatus: { requiredScope: 33554432n },
+      flagAbusive: { requiredScope: 33554432n },
+      countNewForMyListings: { requiredScope: 33554432n },
       modList: null,
       modCountFlagged: null,
       modSetHidden: null,

@@ -78,8 +78,31 @@ export const listAppListingsSchema = z.object({
    * `app-store-sub-listings` flag. Only the `/apps` store grid asks.
    */
   includeSubListings: z.boolean().optional(),
+  /**
+   * Only this developer's listings: the listing page's "More by this developer" rail and the
+   * profile Apps tab. It narrows the store predicate (`storeEligibilityWhere`), so a listing
+   * is returned exactly when this viewer could find it in the store anyway.
+   */
+  userId: z.number().int().positive().optional(),
+  /**
+   * The store's text search. Read only with the `app-index-search` flag on, where the app index
+   * answers it (`app-index-search.service.ts`); everywhere else it is ignored and the client
+   * filters the loaded grid itself. A page the index answered carries `search: 'index'`.
+   */
+  query: z.string().trim().max(200).optional(),
 });
 export type ListAppListingsInput = z.infer<typeof listAppListingsSchema>;
+
+/** `appListings.getDeveloperTrackRecord` — whose record. */
+export const getDeveloperTrackRecordSchema = z.object({
+  userId: z.number().int().positive(),
+});
+
+/**
+ * A developer's store track record: how many of their listings this viewer could find in the
+ * store, and the counted reviews (recommend + not recommend) on those listings.
+ */
+export type DeveloperTrackRecord = { appCount: number; reviewCount: number };
 
 /**
  * REST-query variant of {@link listAppListingsSchema} for the public
@@ -168,13 +191,15 @@ export type ListingCreatorChip = {
 
 /**
  * Recommend rollup, read from the `AppListingMetric` rollup (P5-populated).
- * `recommendPct` is `null` when there are no reviews yet (metric row absent OR
- * zero counts) so the UI can render "no reviews yet" instead of "0%".
+ * `recommendPct` is `null` when there are too few reviews for a percentage to mean
+ * anything: none at all (metric row absent OR zero counts), or fewer than the minimum
+ * `recommendRollup` applies. The counts are always present, so the UI branches on them:
+ * zero reviews → "No reviews yet", reviews but no pct → the counts, else the pct.
  */
 export type ListingRecommendRollup = {
   recommendedCount: number;
   notRecommendedCount: number;
-  /** up / (up+down) in [0,1], or null when there are no reviews yet. */
+  /** up / (up+down) in [0,1], or null below the minimum review count (incl. zero). */
   recommendPct: number | null;
 };
 
@@ -432,6 +457,13 @@ export type ListingDetailKindData =
       connectClientId: string | null;
     };
 
+/**
+ * The public facts of the GitHub Actions run that submitted a listing's serving version:
+ * `owner/repo`, the tag it ran for and that tag's 40-hex commit. Public repositories only.
+ * See `ListingDetail.actionsRunSource`.
+ */
+export type ListingActionsRunSource = { repository: string; tag: string; sha: string };
+
 /** Full public detail for one approved listing (card fields + gallery + body). */
 export type ListingDetail = {
   id: string;
@@ -527,6 +559,34 @@ export type ListingDetail = {
    * Null while the MANUAL-APPLY migration is outstanding — see `projectListingDetail`.
    */
   sourceRepoUrl: string | null;
+  /**
+   * PUBLIC ISSUE-TRACKER / SUPPORT link ("report a problem here"), or null.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION. A link the AUTHOR chose to publish, moderator-gated on both kinds
+   * like `sourceRepoUrl` (manifest `bugs` re-reviewed on approve for on-site; a MATERIAL patch
+   * field staged on a shadow revision for off-site), and normalised by `validateIssueTrackerUrl`
+   * (https, no credentials, no port, ≤200 chars). ANY host, unlike the source link, which is why
+   * the store renders it `rel="noopener noreferrer nofollow ugc"`.
+   *
+   * DETAIL-ONLY, for the reason `sourceRepoUrl` gives. Null while the manual-apply column is
+   * outstanding (it is read by raw SQL, never selected on the row).
+   */
+  issueTrackerUrl: string | null;
+  /**
+   * The GitHub Actions run that submitted the version this on-site app is serving, or null.
+   * Set only when that run's OIDC token was checked at submit AND its repository was public at
+   * the time; a private repository's name never reaches this DTO. Rendered as the Details row
+   * "Submitted by: GitHub Actions run of <owner/repo> @ <tag> (<sha7>)".
+   *
+   * 🔴 A FACT ABOUT THE SUBMITTING RUN, NOT ABOUT THE BUNDLE. The developer's workflow builds and
+   * uploads the bundle itself, so this does not show the app was built from that commit, and it
+   * is not a security review. No copy built on it may say "verified", "secure" or "built by".
+   * See `github-actions-oidc.service.ts`.
+   *
+   * Optional on the type because the moderator preview builders do not set it; the public detail
+   * read always does (null when there is none).
+   */
+  actionsRunSource?: ListingActionsRunSource | null;
   /**
    * The app's APPROVED scope ids (`AppBlock.approved_scopes`), for the pre-launch
    * permission disclosure. `[]` in THREE cases, and the third is the one readers miss:

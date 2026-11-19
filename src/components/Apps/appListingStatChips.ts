@@ -68,34 +68,34 @@ type StatInput = Pick<
   'recommend' | 'reviewCount' | 'kindData' | 'openCount' | 'installCount'
 >;
 
-/** True when the rollup carries no reviews at all — no percentage, no negative half. */
-function hasNoReviews(detail: Pick<ListingDetail, 'recommend' | 'reviewCount'>): boolean {
-  // Both conditions, matching `buildListingDetailRows`' reviews row: the two fields are
-  // separate scalars off one rollup, and a `0/0` metric row can produce a pct without a
-  // count.
-  return detail.recommend.recommendPct == null || detail.reviewCount === 0;
+/**
+ * True when the rollup carries no reviews at all — no percentage, no negative half.
+ *
+ * 🔴 COUNT-ONLY. `recommendPct == null` no longer means "no reviews": the server also
+ * withholds it below a minimum review count, and those reviews must still be shown.
+ */
+function hasNoReviews(detail: Pick<ListingDetail, 'reviewCount'>): boolean {
+  return detail.reviewCount === 0;
 }
 
 /**
  * The recommend chip's hover copy — the ONLY surface that still renders the recommend
  * percentage and the not-recommended count.
  *
- * With reviews:  `87% recommend (340) · 44 don't`
- * Without:       `No reviews yet`
+ * With a pct:         `87% recommend (340) · 44 don't`
+ * Reviews, no pct:    `4 reviews · 3 recommend · 1 doesn't`
+ * No reviews:         `No reviews yet`
  *
- * The percentage half is delegated to `getRecommendLabel`, the same function the store
- * grid cards render, rather than re-rounded here — a second rounding is exactly the
- * shape that drifts by one at one call site.
+ * The positive half (percentage or counts) is delegated to `getRecommendLabel`, the same
+ * function the store grid cards render, rather than re-derived here — a second rounding
+ * is exactly the shape that drifts by one at one call site.
  */
 export function buildRecommendHoverMessage(
   detail: Pick<ListingDetail, 'recommend' | 'reviewCount'>
 ): string {
-  // The zero copy is `getRecommendLabel`'s own (`recommendPct == null` → "No reviews
-  // yet"), taken from it rather than restated as a second literal that can drift from
-  // the store cards'. The `null` is forced because the OTHER zero shape — a non-null
-  // pct with a zero count — must reach the same branch.
-  if (hasNoReviews(detail))
-    return getRecommendLabel({ ...detail.recommend, recommendPct: null }, detail.reviewCount);
+  // The zero copy is `getRecommendLabel`'s own ("No reviews yet" on a zero count), taken
+  // from it rather than restated as a second literal that can drift from the store cards'.
+  if (hasNoReviews(detail)) return getRecommendLabel(detail.recommend, detail.reviewCount);
 
   const positive = getRecommendLabel(detail.recommend, detail.reviewCount);
   const { notRecommendedCount } = detail.recommend;
@@ -105,7 +105,8 @@ export function buildRecommendHoverMessage(
   // `undefined.toLocaleString()` inside a header chip would unmount the whole page.
   // An absent negative half degrades to the positive half alone; it never throws.
   if (typeof notRecommendedCount !== 'number') return positive;
-  return `${positive} · ${notRecommendedCount.toLocaleString()} don't`;
+  const verb = notRecommendedCount === 1 ? "doesn't" : "don't";
+  return `${positive} · ${notRecommendedCount.toLocaleString()} ${verb}`;
 }
 
 /**

@@ -1,0 +1,35 @@
+{
+  "name": "cf-ip-trimmed",
+  "endpoint": "ping",
+  "request": {
+    "method": "POST",
+    "target": "/api/internal/ping",
+    "headers": {
+      "host": "www.example.test",
+      "referer": "https://www.example.test/models/123/some-slug",
+      "cf-connecting-ip": " 203.0.113.8 "
+    },
+    "body": "{\"ads\":true,\"duration\":12345.9,\"path\":\"/models/123/some-slug\",\"windowWidth\":1920,\"windowHeight\":1080}"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "",
+  "expect": {
+    "status": 200,
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150"
+    },
+    "body": "",
+    "writes": [
+      {
+        "table": "pageViews",
+        "body": "{\"userId\":0,\"memberType\":\"undefined\",\"ip\":\"203.0.113.8\",\"pageId\":\"/models/[id]/[[...slug]]\",\"path\":\"/models/123/some-slug\",\"host\":\"www.example.test\",\"country\":\"undefined\",\"ads\":true,\"duration\":12345,\"windowWidth\":1920,\"windowHeight\":1080}"
+      }
+    ]
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/internal/ping\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"referer\":\"https://www.example.test/models/123/some-slug\",\"cf-connecting-ip\":\" 203.0.113.8 \"},\"body\":\"{\\\"ads\\\":true,\\\"duration\\\":12345.9,\\\"path\\\":\\\"/models/123/some-slug\\\",\\\"windowWidth\\\":1920,\\\"windowHeight\\\":1080}\",\"bodyIsString\":true,\"node\":{\"status\":200,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\"},\"body\":\"\",\"writes\":[{\"table\":\"pageViews\",\"body\":\"{\\\"userId\\\":0,\\\"memberType\\\":\\\"undefined\\\",\\\"ip\\\":\\\"203.0.113.8\\\",\\\"pageId\\\":\\\"/models/[id]/[[...slug]]\\\",\\\"path\\\":\\\"/models/123/some-slug\\\",\\\"host\\\":\\\"www.example.test\\\",\\\"country\\\":\\\"undefined\\\",\\\"ads\\\":true,\\\"duration\\\":12345,\\\"windowWidth\\\":1920,\\\"windowHeight\\\":1080}\"}]}}"
+}

@@ -19,6 +19,7 @@ import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { isFlipt } from '~/server/flipt/client';
 import { fetchUserCreator } from '~/server/services/user-creator.service';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 const flag = vi.mocked(isFlipt);
 const q = vi.mocked(queries);
@@ -42,6 +43,7 @@ const expectedUser = {
   publicSettings: { a: 1 },
   settings: { creatorShop: { enabled: true } },
   excludeFromLeaderboards: true,
+  excludeFromEventPoints: true,
   links: [{ url: 'https://example.com', type: 'Social' }],
   stats: {
     downloadCountAllTime: 31,
@@ -97,6 +99,7 @@ const creatorRow = {
   publicSettings: { a: 1 },
   settings: { creatorShop: { enabled: true } },
   excludeFromLeaderboards: true,
+  flags: UserFlag.DisablePayout | UserFlag.ExcludeFromEventPoints,
   links: [{ url: 'https://example.com', type: 'Social' }],
   rankUserId: USER,
   leaderboardRank: 4,

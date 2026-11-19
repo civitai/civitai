@@ -62,12 +62,13 @@ export const load: PageServerLoad = async ({ params, locals }) => {
   if (!row) throw error(404, 'No such report.');
 
   // The panel's prerequisites, from the one place that decides them — see `feedbackPanelExtras`.
-  const { siblings, knownIssues } = await feedbackPanelExtras(row, locals.grants);
+  const { siblings, knownIssues, captureView } = await feedbackPanelExtras(row, locals.grants);
 
   return {
     row,
     siblings,
     knownIssues,
+    captureView,
     // 🔴 NULL when unset, and the panel renders no link at all in that case. A missing base would
     // otherwise build `undefined/explore`, which looks live and is not.
     grafanaUrl: env.PUBLIC_GRAFANA_URL?.trim() || null,

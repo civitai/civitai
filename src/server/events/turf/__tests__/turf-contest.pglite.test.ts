@@ -4,7 +4,8 @@ import type * as PlacementModeration from '~/server/services/placement-moderatio
 import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import { createLuaRedis, hashTicketFrom } from '~/server/utils/__tests__/redis-lua-harness';
+import { turfKeys } from '~/server/events/turf/turf-map';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
@@ -33,6 +34,12 @@ const EVENT = {
   getTeamCosmetic: async () => 11,
 };
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => [EVENT] }));
+// getTurfStock and getTurfSummaries read through Kysely, not Prisma's `$queryRaw`: both Kysely
+// clients' statements go to the same PGlite (see beforeEach).
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
 const pushTurfCounts = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('~/server/events/turf/turf-watch', async (importOriginal) => ({
   ...(await importOriginal<typeof TurfWatch>()),
@@ -70,7 +77,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (
       id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz,
       "createdAt" timestamptz DEFAULT '2020-01-01', meta jsonb,
-      "excludeFromLeaderboards" boolean DEFAULT false
+      "excludeFromLeaderboards" boolean DEFAULT false, flags int NOT NULL DEFAULT 0
     );
     CREATE TABLE "CreatorMilestone" (key text PRIMARY KEY, threshold numeric);
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz, availability text);
@@ -80,6 +87,11 @@ beforeAll(async () => {
     );
     CREATE TABLE "Collection" (id int PRIMARY KEY, mode text);
     CREATE TABLE "CollectionItem" (id serial PRIMARY KEY, "collectionId" int, "imageId" int);
+    -- contestEntry also reads running flag Crucibles and today's flags.
+    CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
+    CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "eventTags" text[]);
+    CREATE TABLE "CrucibleEntry" (id serial PRIMARY KEY, "crucibleId" int, "imageId" int);
+    CREATE TABLE "FlagDay" (id serial PRIMARY KEY, event text, "startsAt" timestamp(3), "closesAt" timestamp(3), "imageIds" int[]);
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, type text, data jsonb);
     CREATE TABLE "UserCosmetic" ("userId" int, "cosmeticId" int);
     CREATE TABLE "EventCosmeticPlacement" (
@@ -116,12 +128,15 @@ afterAll(async () => db.close());
 
 beforeEach(() => {
   const raw = pgliteRaw(db);
+  kysely.read.mockReset().mockImplementation(raw.queryRaw);
+  kysely.write.mockReset().mockImplementation(raw.queryRaw);
   for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
     client.$queryRaw.mockImplementation(raw.queryRaw as never);
     client.$executeRaw.mockImplementation(raw.executeRaw as never);
   }
-  redisMock.sysRedis.hmGet.mockImplementation((async (_key: string, fields: string[]) =>
-    fields.map(() => counts)) as never);
+  for (const client of [redisMock.redis, redisMock.sysRedis])
+    client.hmGet.mockImplementation((async (_key: string, fields: string[]) =>
+      fields.map(() => counts)) as never);
 });
 
 describe('Hat Turf on contest entries', () => {
@@ -134,10 +149,11 @@ describe('Hat Turf on contest entries', () => {
 
   it('summaries: a hatted image names the team of the hat that protects it', async () => {
     const hat = JSON.stringify({ ownerId: 7, cosmeticId: 11, claimKey: 'k', team: 'Pink' });
-    redisMock.sysRedis.hmGet.mockImplementation((async (key: string, fields: string[]) =>
-      fields.map((field) =>
-        key.endsWith(':hats') ? (field === `Image:${BOOKMARKED}` ? hat : null) : counts
-      )) as never);
+    for (const client of [redisMock.redis, redisMock.sysRedis])
+      client.hmGet.mockImplementation((async (key: string, fields: string[]) =>
+        fields.map((field) =>
+          key.endsWith(':hats') ? (field === `Image:${BOOKMARKED}` ? hat : null) : counts
+        )) as never);
     const { images } = await getTurfSummaries('e', [BOOKMARKED, OTHER], PLACER);
     expect(images[BOOKMARKED]).toMatchObject({ hatted: true, hattedTeam: 'Pink' });
     expect(images[OTHER]).toMatchObject({ hatted: false, hattedTeam: null });
@@ -155,9 +171,10 @@ describe('Hat Turf on contest entries', () => {
     expect((await getTurfStickers('e', BOOKMARKED, PLACER)).stickers[0]?.art).toEqual(art);
     const feed = await getTurfStickersForImages('e', [BOOKMARKED], 5);
     expect(feed[BOOKMARKED]?.[0]?.art).toEqual(art);
-    redisMock.sysRedis.eval.mockImplementation(createLuaRedis(0).eval as never);
-    redisMock.sysRedis.incr.mockResolvedValue(1 as never);
-    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    const lua = createLuaRedis(0);
+    redisMock.redis.eval.mockImplementation(lua.eval as never);
+    redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => 1) as never);
+    redisMock.redis.hGetAll.mockResolvedValue({} as never);
     pushTurfCounts.mockClear();
     await syncTurfImages((await getTurfEvent('e'))!, [BOOKMARKED]);
     const pushed = pushTurfCounts.mock.calls.flatMap((call) => (call as unknown[])[1] as never[]);
@@ -197,9 +214,10 @@ describe('Hat Turf on contest entries', () => {
     ['a sync', async () => syncTurfImages((await getTurfEvent('e'))!, [CONTEST_ENTRY, BOOKMARKED])],
     ['a reconcile', async () => reconcileTurf((await getTurfEvent('e'))!)],
   ])('%s pushes nothing about a contest entry', async (_, run) => {
-    redisMock.sysRedis.eval.mockImplementation(createLuaRedis(0).eval as never);
-    redisMock.sysRedis.incr.mockResolvedValue(1 as never);
-    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    const lua = createLuaRedis(0);
+    redisMock.redis.eval.mockImplementation(lua.eval as never);
+    redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => 1) as never);
+    redisMock.redis.hGetAll.mockResolvedValue({} as never);
     pushTurfCounts.mockClear();
     await run();
     const pushed = pushTurfCounts.mock.calls.flatMap((call) => (call as unknown[])[1] as never[]);
@@ -210,6 +228,63 @@ describe('Hat Turf on contest entries', () => {
     expect(of(BOOKMARKED)?.counts).not.toBeNull();
     expect(of(BOOKMARKED)?.stickers).toHaveLength(1);
     expect(of(CONTEST_ENTRY)).toEqual({ imageId: CONTEST_ENTRY, counts: null, stickers: [] });
+  });
+
+  it("today's flag shows no Turf anywhere until the next swap; an image that isn't a flag keeps its hats", async () => {
+    const flag = BOOKMARKED;
+    const control = 903;
+    await db.exec(`
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (${control}, ${OWNER}, 1);
+      INSERT INTO "EventTurfSticker" (event, "imageId", "userId", team, "cosmeticId", data)
+        VALUES ('e', ${control}, ${PLACER}, 'Blue', 11, '{}');
+      INSERT INTO "FlagDay" (event, "startsAt", "closesAt", "imageIds")
+        VALUES ('e', '2026-11-01', '2099-01-01', '{${flag}}');
+    `);
+    try {
+      expect((await getTurfStickers('e', flag, PLACER)).stickers).toEqual([]);
+      expect(Object.keys(await getTurfStickersForImages('e', [flag, control], 5))).toEqual([
+        String(control),
+      ]);
+      expect((await getTurfSummaries('e', [flag, control], PLACER)).hidden).toEqual({
+        [flag]: true,
+      });
+
+      // Nothing earns on it either: a sync pushes it with no counts and leaves it off the turf map.
+      const lua = createLuaRedis(0);
+      redisMock.redis.eval.mockImplementation(lua.eval as never);
+      redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => 1) as never);
+      pushTurfCounts.mockClear();
+      await syncTurfImages((await getTurfEvent('e'))!, [flag, control]);
+      // The turf map is what reactions pay from: the flag has no entry there, the control does.
+      const map = lua.hash(turfKeys('e').map) ?? {};
+      expect(Object.keys(map)).toContain(`Image:${control}`);
+      expect(Object.keys(map)).not.toContain(`Image:${flag}`);
+      const pushed = pushTurfCounts.mock.calls.flatMap((call) => (call as unknown[])[1] as never[]);
+      const of = (id: number) =>
+        pushed.find((push: { imageId: number }) => push.imageId === id) as
+          | { counts: unknown; stickers: unknown[] | null }
+          | undefined;
+      expect(of(flag)).toEqual({ imageId: flag, counts: null, stickers: [] });
+      expect(of(control)?.counts).not.toBeNull();
+
+      // The next swap moves the flags on: the old flag's hats come back.
+      await db.exec(
+        `INSERT INTO "FlagDay" ("closesAt", event, "startsAt", "imageIds") VALUES ('2099-01-01', 'e', '2026-11-02', '{${OTHER}}')`
+      );
+      expect((await getTurfStickers('e', flag, PLACER)).stickers).toHaveLength(1);
+
+      // A day that has closed hides nothing, even with no swap after it (the race is over).
+      await db.exec(
+        `INSERT INTO "FlagDay" ("closesAt", event, "startsAt", "imageIds") VALUES ('2000-01-01', 'e', '2026-11-03', '{${flag}}')`
+      );
+      expect((await getTurfStickers('e', flag, PLACER)).stickers).toHaveLength(1);
+    } finally {
+      await db.exec(`
+        DELETE FROM "FlagDay";
+        DELETE FROM "EventTurfSticker" WHERE "imageId" = ${control};
+        DELETE FROM "Image" WHERE id = ${control};
+      `);
+    }
   });
 
   it('placing on a contest entry is refused', async () => {

@@ -123,10 +123,25 @@ describe('PageBlockHost — launch origin', () => {
     // Positive control: the router query DOES reach the block — its sub-path.
     expect(init.context?.subPath).toBe('deep/view');
     // STRUCTURAL, not a substring: the context carries exactly the page-shaped key set, so a
-    // new key (a `from`, a `launchOrigin`, a forwarded query) fails here however it is spelt.
+    // new key (a `from`, a `launchOrigin`) fails here however it is spelt. `search` and `hash`
+    // are the forwarded query and fragment, with the host's `from`
+    // pair stripped — asserted directly below, since the router's asPath here is
+    // `…?from=home` and `from=home` is the only query it carries.
     expect(Object.keys(init.context ?? {}).sort()).toEqual(
-      ['entityType', 'slotId', 'slug', 'subPath', 'theme', 'viewerUserId', 'viewerUsername'].sort()
+      [
+        'entityType',
+        'hash',
+        'search',
+        'slotId',
+        'slug',
+        'subPath',
+        'theme',
+        'viewerUserId',
+        'viewerUsername',
+      ].sort()
     );
+    expect(init.context?.search).toBe('');
+    expect(init.context?.hash).toBe('');
     // And nowhere in the whole payload does a `from` / `launchOrigin` key exist, nor any value
     // equal to `home` (the signal's only value) — walked, so nesting cannot hide one.
     const offending: string[] = [];

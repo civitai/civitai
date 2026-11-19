@@ -102,7 +102,7 @@ async function logError(
   error: unknown,
   userRestrictionId?: number
 ) {
-  await logToAxiom({
+  logToAxiom({
     name: 'scam-auto-mute',
     type: 'error',
     message,
@@ -110,7 +110,7 @@ async function logError(
     source,
     userRestrictionId,
     error: (error as Error)?.message ?? String(error),
-  }).catch(() => undefined);
+  });
 }
 
 async function predatesUnmute(
@@ -276,7 +276,7 @@ async function issueScamStrike(userId: number, evidence: ScamEvidence, slot: Slo
       },
     });
     if (strike && voided) {
-      await logToAxiom({
+      logToAxiom({
         name: 'scam-auto-mute',
         type: 'info',
         message: 'strike voided: its case was overturned before the strike landed',
@@ -284,7 +284,7 @@ async function issueScamStrike(userId: number, evidence: ScamEvidence, slot: Slo
         source: evidence.source,
         userRestrictionId: slot.userRestrictionId,
         strikeId: strike.id,
-      }).catch(() => undefined);
+      });
       return null;
     }
     return strike?.id ?? null;

@@ -1,0 +1,270 @@
+name: beacon-go
+
+# apps/beacon-go is a Go module (the browser beacons /api/internal/ping and /api/internal/pulse; see
+# apps/beacon-go/DESIGN.md). It is not a pnpm workspace member, so none of the Node suites see it.
+# This workflow is its only gate, with feed-go.yml's gates: gofmt, vet, the unit tests under -race
+# with a test-count floor and coverage floors, and a build of the binary (job `test`); golangci-lint
+# (`lint`); govulncheck (`vuln`); go.mod tidiness and module checksums (`mod`); and a short run of
+# every fuzz target for a fixed number of executions (`fuzz`). The gate scripts live in apps/beacon-go/ci.
+#
+# The golden tests read testdata/golden (written by testdata/golden/gen.ts from the Node code) and
+# pin the copied pathname list against src/shared/constants/pathname.constants.ts, so a change there
+# runs this workflow too.
+#
+# A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
+# dispatches this workflow when the label is added. A push to `main` is unfiltered.
+on:
+  pull_request:
+    branches: [main, release]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'apps/beacon-go/**'
+      - 'src/shared/constants/pathname.constants.ts'
+      - '.github/workflows/beacon-go.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/beacon-go/**'
+      - 'src/shared/constants/pathname.constants.ts'
+      - '.github/workflows/beacon-go.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beacon-go-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: beacon-go vet + test + build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/beacon-go
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/beacon-go/go.mod
+          cache-dependency-path: apps/beacon-go/go.sum
+
+      - name: gofmt
+        run: |
+          set -euo pipefail
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Not gofmt-formatted (run gofmt -w apps/beacon-go):"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # `-json` so the step below can count the tests that actually ran: a package that silently
+      # compiled to zero tests would otherwise still exit 0. The cover profile feeds the floors below.
+      - name: go test
+        run: |
+          status=0
+          go test -race -count=1 -covermode=atomic -coverprofile=cover.out -json ./... > test.json || status=$?
+          jq -j 'select(.Action=="output") | .Output' test.json
+          exit $status
+
+      - name: Assert the tests ran
+        if: always()
+        run: |
+          set -euo pipefail
+          passed=$(jq -r 'select(.Action=="pass" and .Test!=null) | .Test' test.json | wc -l)
+          failed=$(jq -r 'select(.Action=="fail" and .Test!=null) | .Test' test.json | wc -l)
+          pkgs=$(jq -r 'select(.Action=="pass" and .Test==null) | .Package' test.json | sort -u | wc -l)
+          golden=$(jq -r 'select(.Action=="pass" and .Test!=null and (.Test|startswith("TestGolden/"))) | .Test' test.json | wc -l)
+          echo "passed tests: $passed (golden subtests: $golden), failed tests: $failed, passing packages: $pkgs"
+          # Positive control: a count below these floors means tests stopped being discovered, not that
+          # they passed. Raise the package floor when a package gains its first test, and the golden
+          # floor when fixtures are added.
+          [ "$failed" -eq 0 ]
+          [ "$pkgs" -ge 14 ]
+          [ "$golden" -ge 90 ]
+          [ "$passed" -ge 420 ]
+
+      # Statement coverage of the unit run (each package's own tests), per package and in total,
+      # against the ratchet floors in ci/coverage-floors.txt. A second instrument prints its own total
+      # (`go tool cover -func`) so the script's arithmetic can be cross-checked in the log.
+      - name: Coverage floors
+        run: |
+          set -euo pipefail
+          python3 ci/coverage_gate.py cover.out ci/coverage-floors.txt test.json
+          go tool cover -func=cover.out | tail -n 1
+
+      - name: Upload the coverage profile
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: beacon-go-coverage
+          path: apps/beacon-go/cover.out
+          if-no-files-found: warn
+
+      - name: go build
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/beacon-go ./cmd/beacon-go
+
+  lint:
+    name: beacon-go golangci-lint
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/beacon-go/go.mod
+          cache-dependency-path: apps/beacon-go/go.sum
+
+      # Configuration: apps/beacon-go/.golangci.yml (v2 format, feed-go's linter set). Any finding
+      # fails the step.
+      - name: golangci-lint
+        # golangci/golangci-lint-action v9.3.0
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+        with:
+          version: v2.15.0
+          working-directory: apps/beacon-go
+
+  vuln:
+    name: beacon-go govulncheck
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/beacon-go
+    steps:
+      - uses: actions/checkout@v7
+
+      # The newest 1.26 patch, not go.mod's minimum: the standard library govulncheck checks is the
+      # toolchain's, and the image is built on the golang:1.26 line (apps/beacon-go/Dockerfile).
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          check-latest: true
+          cache-dependency-path: apps/beacon-go/go.sum
+
+      # Exits non-zero when a vulnerability is REACHABLE from this module's code (symbol-level).
+      - name: govulncheck
+        run: |
+          go version
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  mod:
+    name: beacon-go go.mod tidy + verify
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/beacon-go
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/beacon-go/go.mod
+          cache-dependency-path: apps/beacon-go/go.sum
+
+      - name: go mod tidy
+        run: |
+          if ! go mod tidy -diff; then
+            echo "::error::go.mod/go.sum are not tidy (run go mod tidy in apps/beacon-go)"
+            exit 1
+          fi
+      - name: go mod verify
+        run: go mod verify
+
+  # Each fuzz target for a fixed number of executions, one at a time (`-fuzz` takes one target in one
+  # package). A fixed count rather than a fixed time: a time budget makes the engine stop on a
+  # deadline, which it can report as a failure ("context deadline exceeded") with no crasher, and it
+  # made the amount of fuzzing depend on the runner's speed. Their seed corpora (testdata/fuzz plus
+  # the f.Add seeds) also run in the plain `go test` of job `test`. A crasher is written to the
+  # package's testdata/fuzz/<Target>/ and uploaded; commit it as a regression seed with the fix.
+  fuzz:
+    name: beacon-go fuzz
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/beacon-go
+    env:
+      FUZZ_MINIMIZE: 100x
+      # <package dir>:<target>:<executions>. The first step fails when this list and the Fuzz functions
+      # in the module differ in either direction, so a new target cannot go unfuzzed and a renamed
+      # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). Each count is about half
+      # what the target ran in 20 s on a shared runner (the earlier time-based runs), so the job takes
+      # about as long as before.
+      FUZZ_TARGETS: >-
+        internal/auth:FuzzTokenFromCookieHeader:130000
+        internal/auth:FuzzVerify:80000
+        internal/beacon:FuzzCompute:180000
+        internal/beacon:FuzzURLHost:300000
+        internal/hydrate:FuzzUnpack:270000
+        internal/jsvalue:FuzzParse:610000
+        internal/jsvalue:FuzzStringToNumber:600000
+        internal/shadow:FuzzDecode:310000
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/beacon-go/go.mod
+          cache-dependency-path: apps/beacon-go/go.sum
+
+      - name: The fuzz targets are the listed set
+        run: |
+          set -euo pipefail
+          go test -list '^Fuzz' -json ./... \
+            | jq -r 'select(.Action=="output" and (.Output|startswith("Fuzz"))) | (.Package|sub(".*/apps/beacon-go/";"")) + ":" + (.Output|rtrimstr("\n"))' \
+            | sort > "$RUNNER_TEMP/fuzz-found.txt"
+          printf '%s\n' $FUZZ_TARGETS | cut -d: -f1,2 | sort > "$RUNNER_TEMP/fuzz-listed.txt"
+          echo "found $(wc -l < "$RUNNER_TEMP/fuzz-found.txt") fuzz targets, $(wc -l < "$RUNNER_TEMP/fuzz-listed.txt") listed"
+          if ! diff -u "$RUNNER_TEMP/fuzz-listed.txt" "$RUNNER_TEMP/fuzz-found.txt"; then
+            echo "::error::FUZZ_TARGETS in beacon-go.yml and the module's Fuzz functions differ (- listed, + found)"
+            exit 1
+          fi
+          [ -s "$RUNNER_TEMP/fuzz-found.txt" ]
+
+      - name: Fuzz
+        run: |
+          set -o pipefail # the go test status must survive the tee
+          status=0
+          for t in $FUZZ_TARGETS; do
+            IFS=: read -r pkg name count <<< "$t"
+            echo "::group::$pkg:$name ($count executions)"
+            corpus="$pkg/testdata/fuzz/$name"
+            before=$(find "$corpus" -type f 2>/dev/null | sort || true)
+            if ! go test -run '^$' -fuzz "^${name}\$" -fuzztime "${count}x" -fuzzminimizetime "$FUZZ_MINIMIZE" "./$pkg" 2>&1 | tee "$RUNNER_TEMP/fuzz-$name.log"; then
+              status=1
+            fi
+            echo "::endgroup::"
+            after=$(find "$corpus" -type f 2>/dev/null | sort || true)
+            new=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | sed '/^$/d')
+            if [ -n "$new" ]; then
+              echo "::error::$pkg:$name found a crasher, uploaded as beacon-go-fuzz-crashers: $new"
+              status=1
+            elif ! grep -q "^ok " "$RUNNER_TEMP/fuzz-$name.log"; then
+              echo "::error::$pkg:$name failed without writing a crasher (see its log above)"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: beacon-go-fuzz-crashers
+          path: apps/beacon-go/internal/*/testdata/fuzz/
+          if-no-files-found: ignore

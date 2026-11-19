@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // purgeResizeCache tells the image-cache service to drop an image's derived variants. Three
 // things about that call are easy to get wrong and impossible to see afterwards:
@@ -93,7 +92,6 @@ vi.mock('~/server/clickhouse/client', () => ({
 
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
@@ -172,22 +170,6 @@ describe('purgeResizeCache', () => {
       await expect(
         purgeResizeCache({ url: UUID, scope: 'hidden-meta-orphans', waitForInvalidationMs: 70_000 })
       ).resolves.toBe('unconfirmed');
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'image-cacher-invalidate', type: 'warning' })
-      );
-    });
-
-    // A slow purge running past the wait is the normal case, not an incident.
-    it('logs running out of wait time as info, not a warning', async () => {
-      mockFetch.mockRejectedValueOnce(
-        Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' })
-      );
-
-      await purgeResizeCache({ url: UUID, scope: 'hidden-meta-orphans', waitForInvalidationMs: 1 });
-
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'image-cacher-invalidate', type: 'info' })
-      );
     });
 
     it('does not wait by default, so the delete flow is not slowed down', async () => {

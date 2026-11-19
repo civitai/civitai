@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
+import { Prisma } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
@@ -33,7 +37,10 @@ vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
   ...(await importOriginal<typeof HotReads6>()),
   getModelVersionPrivacyRow: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/services/model.service', () => ({ getVaeFiles: vi.fn(async () => []) }));
+vi.mock('~/server/services/model.service', () => ({
+  getVaeFiles: vi.fn(async () => []),
+  holdShowcaseImages: async (byVersion: unknown) => byVersion,
+}));
 vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: vi.fn(async () => []),
 }));
@@ -127,9 +134,34 @@ const VIEWERS = {
   other: { id: 9, isModerator: false },
   owner: { id: OWNER, isModerator: false },
   moderator: { id: 1, isModerator: true },
+  system: { id: constants.system.user.id, isModerator: true },
 } as const;
 type ViewerKey = keyof typeof VIEWERS;
 const HIDDEN_FROM: ViewerKey[] = ['anon', 'no id', 'other'];
+
+// The credential `getServerAuthSession` records on the request for a bearer key.
+const SCOPED_KEY = {
+  tokenScope: TokenScope.ModelsRead,
+  apiKeyId: 1,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey', id: 1 },
+};
+const FULL_KEY = { ...SCOPED_KEY, tokenScope: TokenScope.Full };
+/** Each route on a key: [label, viewer, credential, served]. */
+const ON_A_KEY: [string, ViewerKey, object, boolean][] = [
+  ['the owner on a scoped key', 'owner', SCOPED_KEY, false],
+  ['a moderator on a scoped key', 'moderator', SCOPED_KEY, false],
+  ['the owner on a full-access key', 'owner', FULL_KEY, true],
+  ['a moderator on a full-access key', 'moderator', FULL_KEY, true],
+  [
+    'a moderator on a full-scope app token',
+    'moderator',
+    { ...FULL_KEY, subject: { type: 'oauth', id: 'app' } },
+    false,
+  ],
+  // The internal system account keeps moderator rights on its own keys.
+  ['the system account on its own scoped key', 'system', SCOPED_KEY, true],
+];
 const SHOWN_TO: ViewerKey[] = ['owner', 'moderator'];
 
 beforeEach(() => {
@@ -143,10 +175,26 @@ beforeEach(() => {
 });
 
 describe('GET /api/v1/model-versions/[id]', () => {
-  const lookup = (row: unknown) => {
+  const lookup = (row: unknown, context?: object) => {
     dbMock.dbRead.$queryRaw.mockResolvedValueOnce(row ? [structuredClone(row)] : []);
-    return invoke(versionHandler, { method: 'GET', query: { id: '100' } });
+    return invoke(versionHandler, { method: 'GET', query: { id: '100' }, context });
   };
+
+  it.each(ON_A_KEY)('%s', async (_, viewer, context, served) => {
+    session.user = VIEWERS[viewer] as never;
+    expect((await lookup(FLAGGED, context)).status).toBe(served ? 200 : 404);
+  });
+
+  it.each([
+    ['a scoped key', SCOPED_KEY, true],
+    ['a full-access key', FULL_KEY, false],
+  ])('a moderator on %s reads published versions only', async (_, context, publishedOnly) => {
+    session.user = VIEWERS.moderator as never;
+    await lookup(CONTROL, context);
+    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls.at(-1)!;
+    const query = Prisma.sql(strings as TemplateStringsArray, ...values);
+    expect(query.values.includes('Published')).toBe(publishedOnly);
+  });
 
   it.each(HIDDEN_FROM)('%s gets the response of an unknown version', async (viewer) => {
     session.user = VIEWERS[viewer] as never;
@@ -165,12 +213,17 @@ describe('GET /api/v1/model-versions/[id]', () => {
 });
 
 describe('GET /api/v1/model-versions/by-hash/[hash]', () => {
-  const lookup = (row: unknown) => {
+  const lookup = (row: unknown, context?: object) => {
     dbMock.dbRead.modelFile.findFirst.mockResolvedValueOnce(
       row ? { modelVersion: structuredClone(row) } : null
     );
-    return invoke(byHashHandler, { method: 'GET', query: { hash: 'aaaa' } });
+    return invoke(byHashHandler, { method: 'GET', query: { hash: 'aaaa' }, context });
   };
+
+  it.each(ON_A_KEY)('%s', async (_, viewer, context, served) => {
+    session.user = VIEWERS[viewer] as never;
+    expect((await lookup(FLAGGED, context)).status).toBe(served ? 200 : 404);
+  });
 
   it.each(HIDDEN_FROM)('%s gets the response of an unknown hash', async (viewer) => {
     session.user = VIEWERS[viewer] as never;
@@ -188,14 +241,23 @@ describe('GET /api/v1/model-versions/by-hash/[hash]', () => {
 });
 
 describe('POST /api/v1/model-versions/by-hash (batch)', () => {
-  const lookup = async () => {
+  const lookup = async (context?: object) => {
     dbMock.dbRead.modelFile.findMany.mockResolvedValueOnce([
       { modelVersion: structuredClone(FLAGGED) },
       { modelVersion: structuredClone(CONTROL) },
     ]);
-    const { body } = await invoke(byHashBatchHandler, { method: 'POST', body: ['A'.repeat(64)] });
+    const { body } = await invoke(byHashBatchHandler, {
+      method: 'POST',
+      body: ['A'.repeat(64)],
+      context,
+    });
     return (body as { id: number }[]).map((v) => v.id);
   };
+
+  it.each(ON_A_KEY)('%s', async (_, viewer, context, served) => {
+    session.user = VIEWERS[viewer] as never;
+    expect(await lookup(context)).toEqual(served ? [FLAGGED.id, CONTROL.id] : [CONTROL.id]);
+  });
 
   it.each(HIDDEN_FROM)('%s gets only the unflagged version', async (viewer) => {
     session.user = VIEWERS[viewer] as never;
@@ -209,7 +271,7 @@ describe('POST /api/v1/model-versions/by-hash (batch)', () => {
 });
 
 describe('POST /api/v1/model-versions/by-hash/ids', () => {
-  const lookup = async () => {
+  const lookup = async (context?: object) => {
     dbMock.dbRead.modelFile.findMany.mockResolvedValueOnce([
       {
         modelVersionId: FLAGGED.id,
@@ -235,9 +297,15 @@ describe('POST /api/v1/model-versions/by-hash/ids', () => {
     const { body } = await invoke(byHashIdsHandler, {
       method: 'POST',
       body: ['A'.repeat(64), 'B'.repeat(64)],
+      context,
     });
     return body;
   };
+
+  it.each(ON_A_KEY)('%s', async (_, viewer, context, served) => {
+    session.user = VIEWERS[viewer] as never;
+    expect(((await lookup(context)) as unknown[]).length).toBe(served ? 2 : 1);
+  });
 
   it.each(HIDDEN_FROM)('%s gets only the unflagged entry, nothing else', async (viewer) => {
     session.user = VIEWERS[viewer] as never;

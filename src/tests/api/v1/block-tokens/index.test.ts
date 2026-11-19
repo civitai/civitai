@@ -166,7 +166,7 @@ const RESOLVED_INSTALL = {
     currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
     manifest: { scopes: ['models:read:self'] },
     approvedScopes: ['models:read:self'],
-    app: { allowedScopes: 4 /* TokenScope.ModelsRead */ },
+    app: { allowedScopes: 4n /* TokenScope.ModelsRead */ },
   },
 };
 
@@ -366,7 +366,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['models:read:self', 'block:settings:read'] },
         approvedScopes: ['models:read:self', 'block:settings:read'],
-        app: { allowedScopes: 4 /* ModelsRead bit set */ },
+        app: { allowedScopes: 4n /* ModelsRead bit set */ },
       },
     });
     mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
@@ -390,7 +390,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['models:read:self', 'buzz:read:self'] },
         approvedScopes: ['models:read:self', 'buzz:read:self'],
-        app: { allowedScopes: 4 /* only ModelsRead bit set; BuzzRead missing */ },
+        app: { allowedScopes: 4n /* only ModelsRead bit set; BuzzRead missing */ },
       },
     });
     // Mod session: pass the Phase-2 mint-gate so the scope-allowlist check
@@ -520,7 +520,7 @@ describe('POST /api/v1/block-tokens', () => {
       ...RESOLVED_INSTALL.appBlock,
       manifest: { scopes: ['models:read:self', 'buzz:read:self'] },
       approvedScopes: ['models:read:self', 'buzz:read:self'],
-      app: { allowedScopes: 4 | 65536 /* ModelsRead | BuzzRead */ },
+      app: { allowedScopes: 4n | 65536n /* ModelsRead | BuzzRead */ },
     },
   };
 
@@ -589,7 +589,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['apps:storage:read'] },
         approvedScopes: ['apps:storage:read'],
-        app: { allowedScopes: 4 },
+        app: { allowedScopes: 4n },
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null); // no grant at all
@@ -632,7 +632,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['models:read:self', 'ai:write:budgeted'] },
         approvedScopes: ['models:read:self', 'ai:write:budgeted'],
-        app: { allowedScopes: 4 | 32768 /* ModelsRead | AIServicesWrite */ },
+        app: { allowedScopes: 4n | 32768n /* ModelsRead | AIServicesWrite */ },
       },
     });
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
@@ -658,7 +658,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['models:read:self'] },
         approvedScopes: ['models:read:self'],
-        app: { allowedScopes: 4 },
+        app: { allowedScopes: 4n },
       },
     });
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
@@ -678,7 +678,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['models:read:self', 'buzz:read:self'] },
         approvedScopes: ['models:read:self', 'buzz:read:self'],
-        app: { allowedScopes: 4 | 65536 },
+        app: { allowedScopes: 4n | 65536n },
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
@@ -705,7 +705,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['models:read:self', 'ai:write:budgeted'] },
         approvedScopes: ['models:read:self', 'ai:write:budgeted'],
-        app: { allowedScopes: 4 | 32768 /* ModelsRead | AIServicesWrite */ },
+        app: { allowedScopes: 4n | 32768n /* ModelsRead | AIServicesWrite */ },
       },
     };
 
@@ -824,6 +824,10 @@ describe('POST /api/v1/block-tokens', () => {
       expect(body.maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
       expect(body.effectiveBrowsingLevel).toBe(publicBrowsingLevelsFlag);
       expect(body.effectiveBrowsingLevel).not.toBe(body.maxBrowsingLevel);
+      // 🔴 The signed token carries the same per-viewer level the media gate judges by.
+      expect(mockTokenService.sign).toHaveBeenLastCalledWith(
+        expect.objectContaining({ viewerBrowsingLevel: publicBrowsingLevelsFlag })
+      );
     });
 
     it('red domain + a full-NSFW viewer → the full ceiling (not a blanket clamp)', async () => {

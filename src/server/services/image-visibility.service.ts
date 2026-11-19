@@ -1,9 +1,17 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import {
+  imageNotRestrictedSql,
+  imageReviewedSql,
+  minorMatureImageVisibleSql,
+  notHeldForReviewSql,
+} from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 /**
  * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
@@ -25,6 +33,41 @@ export function imageBlockedForConditions({
 }
 
 /**
+ * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
+ * `"Image" i`. Held, unscanned, unrated, blocked and minor-restricted images are the owner's and
+ * moderators' alone; base-model restricted images are the owner's alone.
+ */
+export function entityImageVisibilityConditions({
+  userId,
+  isModerator,
+}: {
+  userId?: number;
+  isModerator?: boolean;
+}): Prisma.Sql[] {
+  const AND: Prisma.Sql[] = [];
+  if (!isModerator) {
+    AND.push(
+      Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
+        userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
+      })`,
+      userId
+        ? Prisma.sql`(i."nsfwLevel" != 0 OR i."userId" = ${userId})`
+        : Prisma.sql`i."nsfwLevel" != 0`,
+      userId
+        ? Prisma.sql`(${Prisma.join(
+            [Prisma.sql`i."needsReview" IS NULL`, Prisma.sql`i."userId" = ${userId}`],
+            ' OR '
+          )})`
+        : Prisma.sql`(${Prisma.join([Prisma.sql`i."needsReview" IS NULL`], ' OR ')})`
+    );
+  }
+  AND.push(...imageBlockedForConditions({ userId, isModerator }));
+  AND.push(imageNotRestrictedSql({ viewerId: userId }));
+  AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  return AND;
+}
+
+/**
  * Who may fetch a single image by id, as SQL over `"Image" i` with `"Post" p` LEFT JOINed on
  * `i."postId"`. Moderators see everything. An image with a post needs it published and not
  * Private (or the viewer to own it). A postless image needs the viewer to own it, or to be the
@@ -41,8 +84,8 @@ export function imageVisibilityConditions({
   return [
     Prisma.sql`(
       i."needsReview" IS NULL AND ${imageReviewedSql()}
-      -- A manager of the collection the image owner's own post was submitted to.
-      OR p."collectionId" IS NOT NULL AND p."userId" = i."userId" AND EXISTS (
+      -- A manager of the collection the image owner's own post was submitted to, once reviewed.
+      OR p."collectionId" IS NOT NULL AND p."userId" = i."userId" AND ${imageReviewedSql()} AND EXISTS (
         SELECT 1 FROM "CollectionContributor" cc
         WHERE cc."collectionId" = p."collectionId"
           AND cc."userId" = ${userId}
@@ -89,7 +132,17 @@ export function imageVisibilityConditions({
     // mod review) — never serve it by direct id to anyone but the owner. Feeds already
     // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
     Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`,
+    // An unrated image is its owner's and moderators' alone, as in the image feeds.
+    Prisma.sql`(i."nsfwLevel" != 0 OR i."userId" = ${userId})`,
+    // Owner-only, as in the image feeds (`pendingOthersImageConditions`).
+    userId
+      ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
+      : Prisma.sql`(i."acceptableMinor" = FALSE)`,
+    // Not even to the owner (or a collection manager).
+    notHeldForReviewSql(),
+    minorMatureImageVisibleSql({ userId }),
     ...imageBlockedForConditions({ userId }),
+    imageNotRestrictedSql({ viewerId: userId }),
   ];
 }
 
@@ -102,6 +155,7 @@ export async function assertImageVisibleToViewer({
   userId,
   isModerator,
   confirmBlockOnPrimary = false,
+  withSignedOutVerdict = false,
 }: {
   id: number;
   userId?: number;
@@ -111,18 +165,39 @@ export async function assertImageVisibleToViewer({
    * confirm a cache "not blocked" against the primary. Read callers leave it off.
    */
   confirmBlockOnPrimary?: boolean;
+  /**
+   * Also answer whether a signed-out viewer may open it (`visibleSignedOut`), from the same read,
+   * for a caller deciding whether the response may go to a shared cache.
+   */
+  withSignedOutVerdict?: boolean;
 }) {
-  const [visible] = await dbRead.$queryRaw<
-    { id: number; userId: number; nsfwLevel: number; postId: number | null }[]
-  >`
-    SELECT i.id, i."userId", i."nsfwLevel", i."postId"
+  const signedOutVerdict = withSignedOutVerdict
+    ? Prisma.sql`(${Prisma.join([Prisma.sql`TRUE`, ...imageVisibilityConditions({})], ' AND ')})`
+    : Prisma.sql`NULL::boolean`;
+  // Through Kysely over the pg pools, not Prisma's `$queryRaw`: one of the hottest single-image
+  // reads, and the same statement and parameters either way (`queryPrismaSql`). Every column is
+  // int4 or boolean, which both executors parse alike.
+  // An id past int4 names no image: not found, as Prisma answered, rather than a range error.
+  if (!isPgInt4(id)) throw throwNotFoundError();
+  const { kyselyRead } = await loadKyselyDb();
+  const [visible] = await queryPrismaSql<{
+    id: number;
+    userId: number;
+    nsfwLevel: number;
+    postId: number | null;
+    visibleSignedOut: boolean | null;
+  }>(
+    kyselyRead,
+    Prisma.sql`
+    SELECT i.id, i."userId", i."nsfwLevel", i."postId", ${signedOutVerdict} AS "visibleSignedOut"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(
       [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })],
       ' AND '
     )}
-  `;
+  `
+  );
   if (!visible) throw throwNotFoundError();
   if (userId && !isModerator) {
     // Imported here: user.service sits in the image.service import cycle.

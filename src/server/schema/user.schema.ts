@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { EVENT_POINT_POPS } from '~/shared/constants/event-point-pops.constants';
 import { banReasonDetails } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema, paginationSchema } from '~/server/schema/base.schema';
@@ -372,6 +373,10 @@ export const hiddenAppsSettingSchema = z
   });
 
 export const userSettingsSchema = z.object({
+  /** Off hides every event cosmetic (worn hats) and all of Hat Turf, for this viewer only. */
+  showEventCosmetics: z.boolean().optional(),
+  /** Which event-point pops this viewer sees: from their own actions only, or all their points. */
+  eventPointPops: z.enum(EVENT_POINT_POPS).optional(),
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
   navigation: navigationSettingsSchema.optional(),
   userMenu: userMenuSettingsSchema.optional(),
@@ -383,6 +388,11 @@ export const userSettingsSchema = z.object({
   assistantPersonality: userAssistantPersonality.optional(),
   airEmail: z.email().optional(),
   creatorsProgramCodeOfConductAccepted: z.union([z.boolean(), z.date()]).optional(),
+  // Generation licences accepted, by terms key. Written only by `acceptGenerationLicense`, which
+  // stamps the server's time; see `generation-license.constants.ts`.
+  generationLicenseAcceptances: z
+    .record(z.string(), z.object({ version: z.number(), acceptedAt: z.coerce.date() }))
+    .optional(),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),
@@ -552,7 +562,8 @@ export const userOnboardingSchema = z.discriminatedUnion('step', [
     username: usernameInputSchema,
     // `.email()`, not a bare string: this is the only writer of `User.email` that was unvalidated,
     // so a tRPC caller could post `x@!!!` and have it stored verbatim.
-    email: z.string().email(),
+    // Required only when the account has no address yet; the handler enforces that.
+    email: z.string().email().optional(),
   }),
   z.object({ step: z.literal(OnboardingSteps.BrowsingLevels) }),
   z.object({
@@ -644,6 +655,8 @@ export const updateContentSettingsSchema = z.object({
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),
+  showEventCosmetics: z.boolean().optional(),
+  eventPointPops: z.enum(EVENT_POINT_POPS).optional(),
 });
 
 /** A reason a moderator can ban for. A system-only reason is set by its own flow, never by hand. */

@@ -15,8 +15,8 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import HeldMedia from '$lib/components/image-queue/HeldMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import { reportHeldGridView } from '$lib/held-media';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
   import { readCursorTrail, writeCursorTrail, clearPaging, IMAGE_PAGE_PARAM } from '$lib/paging';
@@ -131,7 +131,7 @@
   {#if heldMedia}
     <HeldMedia {item} class="max-h-full max-w-full object-contain" />
   {:else}
-    <EdgeMedia src={item.url} type={item.type} width={450} class="max-h-full max-w-full object-contain" />
+    <CdnOrRetractedMedia {item} class="max-h-full max-w-full object-contain" />
   {/if}
 {/snippet}
 

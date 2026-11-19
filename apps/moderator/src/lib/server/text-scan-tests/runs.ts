@@ -16,6 +16,7 @@ import {
   promptKeyOf,
   type LiveState,
 } from '../../text-scan-tests/baseline';
+import { INTENT_LABELS, isIntentEvalSet } from '../../text-scan-tests/intent-set';
 import {
   ACTIVE_RUN_STATUSES,
   CANCELLABLE_RUN_STATUSES,
@@ -92,6 +93,7 @@ async function record(audit: RunAudit, event: RunAuditEvent) {
 }
 
 export async function setLabels(db: Db, setId: number): Promise<LabLabel[]> {
+  if (isIntentEvalSet(setId)) return [...INTENT_LABELS];
   const rows = await runnableCases(db, setId).select('c.entity_type').distinct().execute();
   return labelsOf(rows.map((r) => r.entity_type as LabEntityType));
 }
@@ -459,6 +461,9 @@ export async function rerunErrors(
   const run = await getRun(deps.db, setId, runId);
   if (!['done', 'cancelled', 'failed'].includes(run.status))
     throw new TestSetError('This run has not finished yet.', 409);
+  // A re-run makes the re-runner the run's owner, and an intent publish counts only its owner's run.
+  if (isIntentEvalSet(setId) && run.run_by !== userId)
+    throw new TestSetError('Only the moderator who started a run on this set can re-run it.', 403);
   if (run.expires_at && new Date(run.expires_at).getTime() < Date.now())
     throw new TestSetError('This draft run has expired. Start a new run.', 409);
   const errors = await deps.db

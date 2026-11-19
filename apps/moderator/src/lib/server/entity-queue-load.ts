@@ -7,6 +7,7 @@ import {
   chatMessageCounts,
   getChatMembers,
   getTranscript,
+  type TranscriptCursor,
   type ChatMemberRow,
 } from './chat-audit.service';
 import { getImagesForCollection, getImagesForConnection } from './bulk-image.service';
@@ -14,6 +15,7 @@ import { articleBody } from './article-body';
 import { cappedText } from './html-to-text';
 import { loadItemReports } from './report-queue-load';
 import { parseQueryKeys } from './query';
+import { toTranscriptCursor, transcriptCursorSchema } from '$lib/chat-transcript-cursor';
 import { usersByIds } from './users.service';
 import { z } from 'zod';
 import type { ModeratorReportRow } from './reports.service';
@@ -41,7 +43,7 @@ const IMAGE_LIMIT = 200;
 export const COLLECTION_IMAGES_PER_PAGE = 60;
 
 // The item's own key, read alone so paging the images reruns only the item, never the queue.
-const itemQuerySchema = z.object({
+const itemQuerySchema = transcriptCursorSchema.extend({
   imgPage: z.coerce.number().int().positive().max(10_000).catch(1),
 });
 /** Characters of a bounty's or entry's text rendered. The site has the rest. */
@@ -259,7 +261,7 @@ async function articleItem(id: number) {
   };
 }
 
-async function chatItem(id: number, locals: App.Locals) {
+async function chatItem(id: number, locals: App.Locals, cursor: TranscriptCursor) {
   // 🔴 A transcript is private messages. Chat Audit is granted deliberately, and reaching the report
   // queue is a different, wider grant — so the queue shows WHO is in the chat, which a ruling needs,
   // and the words only to a moderator who could already read them in Chat Audit. And only for a chat
@@ -282,7 +284,7 @@ async function chatItem(id: number, locals: App.Locals) {
   const canRead = canAccess(locals.user, '/retool/chat-audit');
   const [members, transcript] = await Promise.all([
     getChatMembers(id),
-    canRead ? getTranscript(readerOf(locals.user), id) : null,
+    canRead ? getTranscript(readerOf(locals.user), id, cursor) : null,
   ]);
   // Who the reports are about is worked out on the page (`chatSubject`), over the reports it lists —
   // resolved ones a status filter or a `?report=` link put on screen included, which this read's
@@ -516,20 +518,26 @@ export async function loadEntityItem(
   locals: App.Locals,
   url: URL
 ) {
-  const { imgPage } = parseQueryKeys(url, itemQuerySchema);
+  const query = parseQueryKeys(url, itemQuerySchema);
   const [reports, evidence] = await Promise.all([
     loadItemReports(type, id),
-    itemEvidence(type, id, locals, imgPage),
+    itemEvidence(type, id, locals, query.imgPage, toTranscriptCursor(query)),
   ]);
   return { id, type, reports, evidence };
 }
 
-function itemEvidence(type: EntityQueueType, id: number, locals: App.Locals, imgPage: number) {
+function itemEvidence(
+  type: EntityQueueType,
+  id: number,
+  locals: App.Locals,
+  imgPage: number,
+  cursor: TranscriptCursor
+) {
   switch (type) {
     case 'article':
       return articleItem(id);
     case 'chat':
-      return chatItem(id, locals);
+      return chatItem(id, locals, cursor);
     case 'collection':
       return collectionItem(id, imgPage);
     case 'bounty':

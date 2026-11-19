@@ -2,6 +2,13 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 
+// The image's visibility read (assertImageVisibleToViewer) runs through Kysely, not Prisma's
+// `$queryRaw`: answered by `kysely.read` (see arrangeCollection).
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
+
 const { getCached } = vi.hoisted(() => ({
   getCached: vi.fn(async (): Promise<{ id: number; username: string }[]> => []),
 }));
@@ -38,6 +45,10 @@ function arrangeCollection({
     contributorPermissions,
   };
   mockDbRead.$queryRaw.mockResolvedValue([collectionRow]);
+  // The image, visible and owned by the collection's owner.
+  kysely.read
+    .mockReset()
+    .mockResolvedValue([{ id: IMAGE_ID, userId: OWNER_ID, nsfwLevel: 1, postId: null }]);
   mockDbWrite.collection.update.mockResolvedValue({
     id: COLLECTION_ID,
     image: { id: IMAGE_ID, url: 'abc', ingestion: 'Scanned', type: 'image' },
@@ -84,10 +95,10 @@ describe('updateCollectionCoverImage authorization', () => {
   it('refuses an image whose owner has blocked the manager, even before the cache knows', async () => {
     const BLOCKER = 4_321;
     const collectionRow = arrangeCollection();
-    // The permissions read keeps the collection row; the next read is the image's visibility.
-    mockDbRead.$queryRaw
-      .mockResolvedValueOnce([collectionRow])
-      .mockResolvedValueOnce([{ id: IMAGE_ID, userId: BLOCKER, nsfwLevel: 1, postId: null }]);
+    // The permissions read keeps the collection row; the image's visibility read finds it owned
+    // by the blocker.
+    mockDbRead.$queryRaw.mockResolvedValue([collectionRow]);
+    kysely.read.mockResolvedValue([{ id: IMAGE_ID, userId: BLOCKER, nsfwLevel: 1, postId: null }]);
     mockDbRead.userEngagement.findFirst.mockResolvedValue(null);
     mockDbWrite.userEngagement.findFirst.mockResolvedValue({
       userId: BLOCKER,

@@ -353,7 +353,7 @@ export function TopHats({ standings }: { standings: Standings }) {
   );
 }
 
-/** The people Hat Turf has credited most: ten on a wide page, five on a phone. */
+/** The people Hat Turf has credited most: ten, like the hardest-working hats. */
 export function TopTurfPlayers({ standings }: { standings: Standings }) {
   const teamColor = useTeamColor();
   const top = (standings.topTurfPlayers ?? []).slice(0, 10);
@@ -376,7 +376,7 @@ export function TopTurfPlayers({ standings }: { standings: Standings }) {
               key={`${p.userId}:${p.team}`}
               withBorder
               radius="md"
-              className={`${EVENT_CARD_SURFACE} ${i >= 5 ? 'hidden @md:block' : ''}`}
+              className={EVENT_CARD_SURFACE}
               data-testid="top-turf-player"
             >
               <Group gap="sm" px="sm" py={10} wrap="nowrap">

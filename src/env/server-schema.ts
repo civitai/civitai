@@ -1,8 +1,10 @@
 // @ts-check
 import * as z from 'zod';
 import { zc } from '~/utils/schema-helpers';
+import { isEnvSwitchOn } from '@civitai/shared/env-switch';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 import {
+  commaDelimitedNumberArray,
   commaDelimitedStringArray,
   commaDelimitedStringObject,
   stringToArray,
@@ -61,6 +63,9 @@ export const serverSchema = z
       .regex(HOSTNAME_PATTERN, 'expected a hostname or IPv4 address')
       .optional(),
     APPDATA_DATABASE_PORT: intString(1, 65535).optional(),
+    // App Storage record core (`services/apps/app-record.ts`). OFF by default. On: the record
+    // export (`appStorage.exportMine`); off, that route is NOT_FOUND.
+    APP_RECORD_CORE_ENABLED: zc.booleanString.optional().default(false),
     DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
     DATABASE_POOL_MAX: z.coerce.number().default(20),
     NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
@@ -123,7 +128,22 @@ export const serverSchema = z
     // once written nor any MULTI sub-command — so on a silent half-open a sys read parks
     // (~OS-keepalive minutes) per request without this. Bounds the request handler and
     // fails open. 0 disables it. See redis/sys-read-deadline.ts withSysReadDeadline().
-    REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(2000),
+    // 1000: a 1s bound rarely fires on a healthy store and halves what each read costs while the
+    // store is hung.
+    REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(1000),
+    // Process-wide breakers for the hot request-path reads (redis/sys-read-breaker.ts): one shared by the
+    // reads that opt in with withSysReadBreaker, and one for the session revocation read alone
+    // (withRevocationReadBreaker); these three settings apply to both. After THRESHOLD consecutive failed
+    // reads through one breaker (a timeout or a client/connection error; an error reply from the store does
+    // not count), its reads reject at once instead of waiting out the deadline, until COOLDOWN passes and
+    // one probe read succeeds. Dark by default — while off, they wait on the client as before. Plain
+    // withSysReadDeadline reads never consult either.
+    REDIS_SYS_READ_BREAKER_ENABLED: zc.booleanString.default(false),
+    REDIS_SYS_READ_BREAKER_THRESHOLD: z.coerce.number().int().positive().default(5),
+    REDIS_SYS_READ_BREAKER_COOLDOWN_MS: z.coerce.number().int().positive().default(5000),
+    // On: an upload route answers 503 instead of handing out a key whose issue record could not
+    // be written. Off: the key is handed out and the save-time ownership check decides.
+    UPLOAD_KEY_REFUSE_UNRECORDED: zc.booleanString.default(false),
     // Bound on the sys client's node-redis command queue. The sys client has no
     // socketTimeout, so on a SILENT half-open it is only cleared by OS TCP keepalive
     // (minutes), during which every authenticated request enqueues a MULTI that never
@@ -184,6 +204,25 @@ export const serverSchema = z
     // instrumentCommands() and utils/cache-helpers.ts (fetchThroughCache + createCachedArray
     // fail-open).
     REDIS_CLUSTER_COMMAND_TIMEOUT_MS: z.coerce.number().default(15000),
+
+    // ── CLUSTER CACHE FAST-FAIL (redis/cluster-cache-guard.ts) ────────────────────────
+    // Wall-clock bound on a request-path cluster-cache call wrapped by clusterCacheGuard; a call
+    // that misses it is treated as a cache miss (or the caller's own fallback). On by default: it
+    // only bounds a wait. 0 turns the deadline off (the 15s backstop above then applies).
+    REDIS_CACHE_READ_DEADLINE_MS: z.coerce.number().default(250),
+    // Process-wide breaker over the same calls: after THRESHOLD consecutive failures, guarded calls
+    // fail without touching the client until COOLDOWN passes and one probe succeeds. Dark by
+    // default — while off, every call still goes to the client.
+    REDIS_CACHE_BREAKER_ENABLED: zc.booleanString.default(false),
+    REDIS_CACHE_BREAKER_THRESHOLD: z.coerce.number().int().positive().default(5),
+    REDIS_CACHE_BREAKER_COOLDOWN_MS: z.coerce.number().int().positive().default(5000),
+    // fetchThroughCache: when the origin fetch throws and an expired entry is still cached, answer
+    // with that entry instead of the error — only for callers that opt in (serveStaleOnError: true).
+    // Dark by default.
+    FETCH_THROUGH_CACHE_SERVE_STALE: zc.booleanString.default(false),
+    // Bound on the replication-lag flag read (db/db-lag-helpers.ts). A read that misses it or
+    // fails routes to the replica, which is what a missing flag already does. 0 disables the bound.
+    REPLICATION_LAG_CHECK_TIMEOUT_MS: z.coerce.number().default(200),
 
     // ── CLUSTER CLIENT SELF-HEAL WATCHDOG (FIX #1, the inflight-leak wedge) ──────────
     //
@@ -408,6 +447,8 @@ export const serverSchema = z
     // WEBHOOK_TOKEN. Unset or blank matches nothing.
     PROBE_TOKEN: z.string().optional(),
     SYSTEM_ACCOUNT_KEY_TOKEN: z.string().optional(),
+    // Header token for /api/admin/provider-download-token. Unset: the endpoint refuses everything.
+    PROVIDER_DOWNLOAD_TOKEN_ADMIN_TOKEN: z.string().optional(),
     SYSTEM_ACCOUNT_PROFILE_TOKEN: z.string().optional(),
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
@@ -439,6 +480,26 @@ export const serverSchema = z
     CIVITAI_MODERATION_USER_ID: z
       .union([z.coerce.number().int().positive(), z.literal('')])
       .optional(),
+    // /api/v1/permissions/check answers about a given userId only for that user, a moderator or
+    // these accounts, when PERMISSIONS_CHECK_GATE is on. A malformed list reads as unset.
+    PERMISSIONS_CHECK_SERVICE_USER_IDS: commaDelimitedNumberArray()
+      .default([])
+      .catch([])
+      .transform((ids) => ids.filter((id) => id !== 0)),
+    PERMISSIONS_CHECK_GATE: zc.booleanString.default(false),
+    // How API routes apply the token scope they declare (`getServerAuthSession`'s `scope`): `off`
+    // ignores it, `report` logs each request it would refuse, `enforce` applies it.
+    // Any other value reads as `off`, with a warning when the env is parsed; '' reads as unset.
+    REST_SCOPE_ENFORCE: z
+      .enum(['off', 'report', 'enforce'])
+      .default('off')
+      .catch(({ value }) => {
+        if (value !== '')
+          console.warn(
+            `REST_SCOPE_ENFORCE=${JSON.stringify(value)} is not off, report or enforce; using off.`
+          );
+        return 'off' as const;
+      }),
     // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
     MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
     // Download links (`/api/v1/download-links`, `/api/download/l/<id>`). Only these credentials may
@@ -448,9 +509,15 @@ export const serverSchema = z
     DOWNLOAD_LINK_API_KEY_IDS: commaDelimitedStringArray().default([]),
     DOWNLOAD_LINK_PUBLIC_CLIENT_IDS: commaDelimitedStringArray().default([]),
     DOWNLOAD_LINK_PUBLIC_API_KEY_IDS: commaDelimitedStringArray().default([]),
+    DOWNLOAD_LINK_PROVIDER_API_KEY_IDS: commaDelimitedStringArray().default([]),
     // Derives each link's id from its linkId so a reused link's URL can be rebuilt. Unset or under
     // 32 characters: every mint is a new link.
     DOWNLOAD_LINK_SECRET: z.string().optional(),
+    // Review sheet batches (`POST /api/mod/review-batches`). The list is private; while it is unset
+    // every batch is routed to the held tier.
+    REVIEW_SHEET_BLOCKEDFOR_PATTERNS: z.string().optional(),
+    // The moderator app origin a batch link names; production's when unset.
+    REVIEW_SHEET_ORIGIN: z.string().url().optional(),
     // The least a link's fetch cap can be; large files get more (`linkFetchCap`).
     DOWNLOAD_LINK_MAX_FETCHES: z.coerce.number().int().positive().default(50),
     DOWNLOAD_LINK_MIN_REUSE_SECONDS: z.coerce.number().int().nonnegative().default(7200),
@@ -459,7 +526,8 @@ export const serverSchema = z
       .int()
       .positive()
       .default(6 * 60 * 60),
-    // Mints (reused ones included) per minute.
+    // Mints per minute: on /api/v1/download-links reused ones included, for mini's provider links
+    // fresh ones only.
     DOWNLOAD_LINK_MINT_LIMIT_PER_CREDENTIAL: z.coerce.number().int().positive().default(3000),
     DOWNLOAD_LINK_MINT_LIMIT_PER_USER: z.coerce.number().int().positive().default(120),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
@@ -494,6 +562,12 @@ export const serverSchema = z
     // newest-first (starving the oldest backlog) — a bad hand-tune must fail
     // loudly at boot instead.
     IMAGE_SCANNING_MAX_PER_RUN: z.coerce.number().int().positive().default(1000),
+    // Most scan submits one `ingest-images` run makes, across all its lanes; the rest stay queued
+    // for later runs. Above a small burst they are spaced evenly over the run, so the cron's
+    // in-flight scans stay well below the orchestrator's scan slot, which refuses work when full
+    // rather than queueing it. Sized above an ordinary run's retries, so only a backlog is held
+    // back. Retry capacity is this x 12 per hour; raise it to drain a backlog faster.
+    IMAGE_SCANNING_RETRY_MAX_PER_RUN: z.coerce.number().int().positive().default(200),
     DELIVERY_WORKER_ENDPOINT: z.string().optional(),
     DELIVERY_WORKER_TOKEN: z.string().optional(),
     STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
@@ -531,6 +605,8 @@ export const serverSchema = z
     ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
     ORCHESTRATOR_MODE: z.string().default('dev'),
     ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
+    // The orchestrator's own credential for the mini model-version endpoint's epoch arm. Unset: inert.
+    ORCHESTRATOR_SERVICE_TOKEN: z.string().optional(),
     // Local-dev opt-in for /api/training-studio/host to hand the shared ORCHESTRATOR_ACCESS_TOKEN
     // (the ORCHESTRATOR_MODE=dev arm of getOrchestratorToken) to the browser. Never set in prod.
     ALLOW_DEV_ORCHESTRATOR_TOKEN_PASSTHROUGH: zc.booleanString.optional().default(false),
@@ -544,16 +620,25 @@ export const serverSchema = z
     SEARCH_API_KEY: z.string().optional(),
     // Search-only Meilisearch key (value + uid). With `siteSearchProxy` on, /api/search queries with
     // it (unset = SEARCH_API_KEY); off, it signs per-viewer browser search tokens (unset = browsers
-    // use NEXT_PUBLIC_SEARCH_CLIENT_KEY).
+    // search through /api/search).
     SEARCH_TOKEN_API_KEY: z.string().optional(),
     SEARCH_TOKEN_API_KEY_UID: z.string().optional(),
-    METRICS_SEARCH_HOST: z.url().optional(),
-    METRICS_SEARCH_API_KEY: z.string().optional(),
-    // Semantic image search (docs/features/semantic-image-search.md). Unset = the search page errors.
-    QDRANT_URL: z.url().optional(),
-    QDRANT_API_KEY: z.string().optional(),
+    // The search service in front of Qdrant, behind semantic image search. Unset = the search page errors.
+    SEARCH_SERVICE_URL: z.url().optional(),
+    SEARCH_SERVICE_TOKEN: z.string().optional(),
+    // Set privately; see search-upload-gate.ts.
+    SEARCH_UPLOAD_FACE_ANIME_MIN: z.string().optional(),
+    // Entities whose search updates are forwarded to "Outbox" for the semantic search sync, e.g.
+    // "Article,Comic". Unset = none. Comic needs its OutboxEntity value applied first.
+    SEARCH_OUTBOX_FORWARD: commaDelimitedStringArray().default([]),
     // Candidate image-feed service for shadow comparisons; unset = shadow mode inert.
     FEED_SERVICE_URL: z.url().optional(),
+    // The app index service (apps/app-index-go): `/apps` store text search reads its `/search`
+    // when the `app-index-search` flag is on for the viewer. Unset = the store's database search.
+    APP_INDEX_URL: z.url().optional(),
+    // The fraction (0-1) of index-answered store searches that also read the database grid page,
+    // off the response path, to log how the two result sets compare. 0 = never.
+    APP_INDEX_SEARCH_COMPARE_SAMPLE: z.coerce.number().min(0).max(1).default(0.1),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt
@@ -587,19 +672,13 @@ export const serverSchema = z
     // Traefik's 30s router timeout fires. Default tuned for the image feed
     // hot path (typical P99 ~700ms under healthy load).
     MEILI_CALL_TIMEOUT_MS: z.coerce.number().optional().default(2500),
-    // Server-side deadline for fetchDocumentsAbortable in ms. Distinct from
-    // MEILI_CALL_TIMEOUT_MS — that one wraps SDK calls via withMeili();
-    // this one is the local AbortController timer on the raw fetch path
-    // (image:meili:http span). Generous default (5_000) so healthy
-    // /documents/fetch calls complete cleanly; tunable down at runtime if
-    // the backend tightens up, or up if a brownout needs more headroom
-    // without a code redeploy. Defensive cap: prevents pods from holding
-    // event-loop slots for the Node default (~30s) when -new goes slow.
-    MEILI_FETCH_TIMEOUT_MS: z.coerce.number().optional().default(5000),
     // Per-pod cap on in-flight Meilisearch calls wrapped via withMeili().
     // When saturated, additional calls fail fast with MeiliCallTimeoutError
     // rather than queueing forever and pressuring the event loop.
     MEILI_CALL_CONCURRENCY: z.coerce.number().optional().default(50),
+    // Search-service calls in flight per pod; past it a search gets 429 "Server busy". A safety valve:
+    // one page can need two calls, and the cluster-wide limit belongs in the search service.
+    SEMANTIC_SEARCH_CONCURRENCY: z.coerce.number().int().positive().optional().default(4),
     // Per-backend circuit breaker (see src/server/meilisearch/client.ts). If
     // `MEILI_CIRCUIT_TRIP_THRESHOLD` MeiliCallTimeoutErrors accumulate within
     // `MEILI_CIRCUIT_WINDOW_SECONDS` on a backend, the circuit OPENs and all
@@ -741,6 +820,16 @@ export const serverSchema = z
     // ~116-day timeout) re-introduces the unbounded-park failure the deadline exists
     // to prevent. Any out-of-range value falls back to 5000.
     EXTERNAL_MODERATION_TIMEOUT_MS: z.coerce.number().int().min(100).max(60000).catch(5000),
+    // Fail-closed OFF-switches: ON unless `off`/`0`/`false` (see @civitai/shared/env-switch).
+    PROMPT_CHECK_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
+    BLOCKS_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
+    PRESET_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
+    ONSITE_ENHANCE_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
+    TRAINING_STATUS_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
+    // SESSION_REVOCATION_CACHE: a failed session-revocation read still denies a revocation this process
+    // has already read (@civitai/auth createRevocationCheck `markerCache`); off restores the plain
+    // fail-open, with nothing recorded.
+    SESSION_REVOCATION_CACHE: z.string().optional().transform(isEnvSwitchOn),
     // Dark measurement probe for "would a moderation-result cache pay?". Empty/unset = OFF, and
     // deliberately so: it ships inert, gets armed in config, and the metric's ARMING DATE is then
     // visible as the instant its series appear — which is the only thing that distinguishes "no
@@ -986,6 +1075,15 @@ export const serverSchema = z
     // HQ task.closed -> Known Issues board sync. Standard Webhooks secret (`whsec_…`); unset
     // disables the receiver (503) rather than trusting unsigned deliveries.
     HQ_WEBHOOK_SECRET: z.string().optional(),
+    // Site bug report -> HQ task. The HQ origin (the route is appended) and an intake-scoped
+    // token; if either is unset, reports are saved but not filed.
+    HQ_INTAKE_URL: z.url({ protocol: /^https$/ }).optional(),
+    HQ_INTAKE_TOKEN: z.string().optional(),
+    // HQ -> feedback triage status sync (the `feedback-hq-sync` job): a member's HQ `read` token,
+    // the narrowest HQ issues that reaches its data API (it also reads recordings, so set it ONLY on
+    // the deployment that runs jobs, never on web pods). Unset (or '') the job does nothing and says
+    // so once. Also behind the `feedback-hq-sync` Flipt flag, default off.
+    HQ_FEEDBACK_SYNC_TOKEN: z.string().optional(),
 
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
@@ -1170,6 +1268,14 @@ export const serverSchema = z
     FORGEJO_PUBLIC_URL: z.string().url().default('https://forgejo.civitai.com'),
     FORGEJO_ADMIN_TOKEN: z.string().optional(),
     FORGEJO_WEBHOOK_SECRET: z.string().optional(),
+    // The three Forgejo orgs App Blocks writes to: build (canonical app repos), review (in-review
+    // snapshots) and source (developer git history). Unset = production's orgs. Set ALL THREE or
+    // none, each distinct and none a production org name; PR previews point them at preview-only
+    // orgs that their scoped bot token can write. Read only through
+    // `src/server/services/blocks/forgejo-orgs.ts`, which enforces those rules.
+    FORGEJO_APPS_ORG: z.string().optional(),
+    FORGEJO_REVIEW_ORG: z.string().optional(),
+    FORGEJO_SRC_ORG: z.string().optional(),
     // Client-side abort timeouts for Forgejo API calls. The cheap metadata calls
     // (get repo/version, add collaborator, list tree, branch lookup) are
     // sub-second and use FORGEJO_API_TIMEOUT_MS so an in-cluster reachability
@@ -1200,6 +1306,12 @@ export const serverSchema = z
     // http://<proxy-service>.<namespace>.svc.cluster.local:8088/trigger-review-build
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
+    // Build review previews, serve none (PR previews). A passed review build is recorded on the
+    // request (`preview-failed` with `buildOnly: true`) and nothing is deployed: no apply Job into
+    // APPS_KUBE_NAMESPACE and no shared-server publish. Every function that creates a Job in that
+    // namespace refuses (`assertAppsNamespaceWritable`), and review/agent teardowns do nothing.
+    // Unset (production) changes nothing.
+    APPS_REVIEW_BUILD_ONLY: zc.booleanString.optional().default(false),
     APPS_DOMAIN: z.string().default('civit.ai'),
     // App Assistant's hosted sandbox service, which the browser calls. Server-side so it is read per
     // request and set per environment; a NEXT_PUBLIC_ var would be frozen into the client at build.
@@ -1267,6 +1379,17 @@ export const serverSchema = z
     // for the provisioning Job, BUNDLE_S3_* for the presigned bundle, NEXTAUTH_URL
     // for the callback base) — no parallel infra knobs.
     AGENT_REVIEW_COST_CAP_USD: z.string().default('2'),
+    // Platform-wide ceiling (USD per UTC day) on agent reviews started AUTOMATICALLY when a review
+    // build settles. Past it, automatic starts are refused; a moderator can still start one.
+    AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: z.coerce.number().nonnegative().default(40),
+    // Test-fixture accounts (the CI smoke users of a test environment) whose automatic review
+    // builds get a per-slug budget instead of the per-account one. Set only in test environments;
+    // unset (the default) leaves every account on the per-account budget. A malformed list reads
+    // as unset.
+    APP_REVIEW_AUTO_BUILD_FIXTURE_USER_IDS: commaDelimitedNumberArray()
+      .default([])
+      .catch([])
+      .transform((ids) => ids.filter((id) => id !== 0)),
     // AGENTIC MOD CODE-REVIEW (App Blocks P1) — CONTAINMENT. Base URL the review
     // agent pod POSTs its report to. Set to the IN-CLUSTER civitai-web service URL
     // (e.g. `http://<svc>.<ns>.svc.cluster.local`) so the adversarial report + the
@@ -1308,6 +1431,46 @@ export const serverSchema = z
     APP_FORK_SEED_S3_BUCKET: z.string().optional(),
     APP_FORK_SEED_S3_ACCESS_KEY_ID: z.string().optional(),
     APP_FORK_SEED_S3_SECRET_ACCESS_KEY: z.string().optional(),
+
+    // APP HIBERNATE ("Sleeping" apps) — `src/server/services/app-hibernation/`. All optional:
+    // with any of them unset, every hibernation endpoint answers 503 and nothing is archived.
+    // The feature is also dark behind the `app-hibernate` Flipt flag regardless.
+    //
+    // The archive store: the bucket a sleeping app's workspace zip and its sealed `.env*` blob
+    // are kept in, under `archives/`, with NO lifecycle rule (the objects are the only copy).
+    // APP_ARCHIVE_S3_ENDPOINT is for civitai's own calls (it may be plain http with a port).
+    // APP_ARCHIVE_S3_PUBLIC_ENDPOINT is used ONLY to presign the URLs handed to the sandbox
+    // service: https with no port (anything else counts as unset), and path-style, so a presigned
+    // URL's host is its host. Unset, nothing is presigned and hibernation answers 503; civitai
+    // never presigns on the in-cluster endpoint instead.
+    APP_ARCHIVE_S3_ENDPOINT: z.string().url().optional(),
+    APP_ARCHIVE_S3_PUBLIC_ENDPOINT: z.string().url().optional(),
+    APP_ARCHIVE_S3_BUCKET: z.string().optional(),
+    APP_ARCHIVE_S3_ACCESS_KEY_ID: z.string().optional(),
+    APP_ARCHIVE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+    // The shared secret the sandbox service signs `/api/internal/app-hibernation/*` requests
+    // with (HMAC-SHA256): at least 32 characters. Blank is accepted here so a bare key cannot
+    // stop the app from booting; blank or unset, those endpoints answer 503.
+    APP_HIBERNATION_HMAC_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'APP_HIBERNATION_HMAC_SECRET must be at least 32 characters',
+      })
+      .optional(),
+    // The PREVIOUS signing secret, still accepted while a rotation is under way (set it to the old
+    // value, move the sandbox service to the new one, then clear it). Never used alone: with
+    // APP_HIBERNATION_HMAC_SECRET unset the endpoints answer 503 whatever this holds.
+    APP_HIBERNATION_HMAC_SECRET_PREVIOUS: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'APP_HIBERNATION_HMAC_SECRET_PREVIOUS must be at least 32 characters',
+      })
+      .optional(),
+    // The master keys that wrap each sleeping app's per-archive data key (envelope encryption of
+    // its `.env*` files): comma-separated `<kid>:<base64 of 32 random bytes>`, the CURRENT key
+    // first, then old keys kept only to unwrap. Held by civitai only; never sent to the sandbox
+    // service. Malformed, it counts as unset.
+    APP_ARCHIVE_SECRETS_MASTER_KEYS: z.string().optional(),
 
     // APP DEV TUNNEL (on-site dev via hardened sish tunnel — P1 control plane).
     // ALL optional so envs without the feature still boot; the feature is dark

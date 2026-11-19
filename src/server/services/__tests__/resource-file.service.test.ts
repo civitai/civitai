@@ -146,6 +146,7 @@ describe('resolveResourceFileForUser: served', () => {
       fileId: 10,
       user: { ...sfwViewer, isModerator: false },
       attribution: { caller: 'other', actor: 'user' },
+      redCapable: false,
     });
   });
 
@@ -275,6 +276,29 @@ describe('resolveResourceFileForUser: maturity runs after the download gate', ()
 
   it('a published mature version is served to a viewer whose ceiling allows it', async () => {
     versionFindFirst.mockResolvedValue(version({ nsfwLevel: NsfwLevel.R }));
+    await expect(resolve(matureViewer, { canViewNsfw: true })).resolves.toMatchObject({
+      meta: { fileId: 10 },
+    });
+  });
+});
+
+describe('resolveResourceFileForUser: a mature model', () => {
+  // Answers with the model's nsfw only when the resolver selects it.
+  const matureModel = () =>
+    versionFindFirst.mockImplementation((async (args: {
+      select: { model: { select: Record<string, boolean> } };
+    }) => {
+      const row = version({ nsfwLevel: NsfwLevel.PG });
+      return args.select.model.select.nsfw ? { ...row, model: { ...row.model, nsfw: true } } : row;
+    }) as never);
+
+  it('is FORBIDDEN on a SFW ceiling even when its version is rated PG', async () => {
+    matureModel();
+    await expect(resolve()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('is served to a viewer whose ceiling allows mature content', async () => {
+    matureModel();
     await expect(resolve(matureViewer, { canViewNsfw: true })).resolves.toMatchObject({
       meta: { fileId: 10 },
     });

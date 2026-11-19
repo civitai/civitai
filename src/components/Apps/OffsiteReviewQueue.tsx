@@ -106,7 +106,13 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { withLiveNote } from '~/components/Apps/appListingDetailModActions';
 import type { ReviewSubmitterChip } from '~/components/Apps/unifiedReviewRow';
+import {
+  holdOverrideSatisfied,
+  PublishRequestHoldsPanel,
+  useOpenPublishRequestHolds,
+} from '~/components/Apps/PublishRequestHoldsPanel';
 
 /**
  * /apps/review — the OFF-SITE (external-link) pending review section (W13 P3a).
@@ -360,6 +366,8 @@ export function OffsiteReviewModal({
       <Modal
         stackId="offsite-review"
         returnFocus={false}
+        // The × had no accessible name — a screen reader announced "button".
+        closeButtonProps={{ 'aria-label': 'Close review' }}
         opened={!!request}
         onClose={() => {
           if (busyRef.current) return;
@@ -434,6 +442,9 @@ export function OffsiteReviewModalBody({
   const features = useFeatureFlags();
   const [rejectionReason, setRejectionReason] = useState('');
   const [approvalNotes, setApprovalNotes] = useState('');
+  const openHolds = useOpenPublishRequestHolds(request?.slug);
+  const [holdOverrideReason, setHoldOverrideReason] = useState('');
+  const holdBlocked = !holdOverrideSatisfied(openHolds.length, holdOverrideReason);
   // 'view' shows only the two entry buttons; 'reject' / 'approve' each reveal their
   // own notes textarea + confirm (approve gated behind an explicit "Approve…" click,
   // mirroring reject — so a stray click can't approve with un-reviewed notes).
@@ -891,6 +902,17 @@ export function OffsiteReviewModalBody({
         </RatingMismatchAlert>
       )}
 
+      {!readOnly && (
+        <PublishRequestHoldsPanel
+          slug={request.slug}
+          publishRequestId={request.id}
+          kind="listing"
+          holds={openHolds}
+          overrideReason={holdOverrideReason}
+          onOverrideReasonChange={setHoldOverrideReason}
+          disabled={busy}
+        />
+      )}
       {!readOnly &&
         (actionMode === 'reject' ? (
           <Stack gap="xs">
@@ -1000,9 +1022,15 @@ export function OffsiteReviewModalBody({
                     approvalNotes: approvalNotes.trim() || undefined,
                     contentRating: selectedRating,
                     ...(mediaSplit ? { mediaSplit } : {}),
+                    ...(openHolds.length
+                      ? {
+                          holdOverrideReason: holdOverrideReason.trim(),
+                          holdOverrideIds: openHolds.map((h) => h.id),
+                        }
+                      : {}),
                   })
                 }
-                disabled={busy || splitStateUnknown}
+                disabled={busy || splitStateUnknown || holdBlocked}
                 loading={approveMut.isPending}
                 data-testid="apps-offsite-approve-confirm"
               >
@@ -1470,7 +1498,14 @@ export function OffsiteReportsQueue() {
             <Text size="sm" fw={600}>
               {STANDALONE_KIND_LABEL} listing reports
             </Text>
-            <Badge size="sm" variant="light" color={items.length > 0 ? 'red' : 'gray'}>
+            {/* Red only for PENDING reports — the ones waiting on a moderator. A count of
+                resolved or dismissed history is not an alarm. */}
+            <Badge
+              size="sm"
+              variant="light"
+              color={statusFilter === 'pending' && items.length > 0 ? 'red' : 'gray'}
+              data-testid="apps-reports-count"
+            >
               {items.length}
             </Badge>
           </Group>
@@ -1656,7 +1691,7 @@ function ReportActionModal({
   }
 
   const delistMut = trpc.appListings.delistListing.useMutation({
-    onSuccess: () => afterSuccess('Listing delisted.'),
+    onSuccess: (result) => afterSuccess(withLiveNote('Listing delisted.', result)),
     onError: onError('Delist failed'),
   });
   const relistMut = trpc.appListings.relistListing.useMutation({

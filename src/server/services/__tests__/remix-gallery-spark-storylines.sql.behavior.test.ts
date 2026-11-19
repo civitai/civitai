@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
@@ -19,6 +19,13 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
   getBlockedPairIds,
   HiddenUsers: { getCached: async () => [] },
 }));
+
+// The card reads run through Kysely, not Prisma's `$queryRaw`; their statements go to the fake
+// below (see beforeEach).
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
 
 const { getRemixGalleryCardSummaries } = await import('~/server/services/remix-gallery.service');
 
@@ -82,11 +89,23 @@ afterAll(async () => {
   await db.pg.close();
 });
 
+afterEach(() => {
+  // Through Kysely only: the Prisma query engine is never reached.
+  expect(r.$queryRaw).not.toHaveBeenCalled();
+});
+
 beforeEach(async () => {
   getBlockedPairIds.mockResolvedValue([]);
   const raw = pgliteRaw(db.pg);
-  r.$queryRaw.mockImplementation((async (strings: TemplateStringsArray, ...values: unknown[]) =>
-    strings.join('?').includes('WITH listed AS') ? raw.queryRaw(strings, ...values) : []) as never);
+  // The storyline read runs against PGlite. Every other read (the hosts-with-entries lookup, so the
+  // entry summaries) answers nothing: no host here has a gallery entry.
+  kysely.read
+    .mockReset()
+    .mockImplementation(async (strings: readonly string[], ...values: unknown[]) =>
+      strings.join('?').includes('WITH listed AS')
+        ? raw.queryRaw(strings as TemplateStringsArray, ...values)
+        : []
+    );
   await db.pg.exec(`
     TRUNCATE "User", "Post", "Image", "PlacementSpace", "UserEngagement", "Storyline",
       "StorylineChapter" CASCADE;
@@ -248,6 +267,34 @@ describe('storylines on a host card', () => {
     });
     expect(summaries[HOST].storylines?.count).toBe(5);
     expect(summaries[HOST].storylines?.entries.map((e) => e.storylineId)).toEqual([5, 4, 3, 2]);
+  });
+
+  // Prisma's raw reads answered an id past int4 with no rows; through the pg pools the `int[]` bind
+  // is a range error that fails every card in the batch. Such an id is dropped before it runs.
+  describe('a host id past int4 in the batch', () => {
+    const PAST_INT4 = 2 ** 31;
+    beforeEach(async () => {
+      const { rejectPastInt4 } = await import('~/test-utils/kysely-raw-fake');
+      const raw = pgliteRaw(db.pg);
+      kysely.read.mockImplementation(async (strings: readonly string[], ...values: unknown[]) => {
+        rejectPastInt4(values);
+        return strings.join('?').includes('WITH listed AS')
+          ? raw.queryRaw(strings as TemplateStringsArray, ...values)
+          : [];
+      });
+    });
+
+    it('still lists the storylines of the other hosts', async () => {
+      await story(1, HOST);
+      expect(await listed([HOST, PAST_INT4])).toEqual({ [HOST]: [1] });
+    });
+
+    it('with no other host, asks nothing about storylines', async () => {
+      kysely.read.mockClear();
+      expect(await listed([PAST_INT4])).toEqual({});
+      const asked = kysely.read.mock.calls.map(([strings]) => (strings as string[]).join('?'));
+      expect(asked.filter((sql) => sql.includes('WITH listed AS'))).toEqual([]);
+    });
   });
 
   describe('chapter previews', () => {

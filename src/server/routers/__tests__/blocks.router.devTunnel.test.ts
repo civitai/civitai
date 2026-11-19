@@ -351,13 +351,13 @@ describe('devTunnelDnsReady', () => {
  *                                                 → FORBIDDEN at the scope gate.
  */
 describe('dev-tunnel procs — AppBlocksDevTunnel scope gate', () => {
-  const FULL = 33554431; // TokenScope.Full
-  const NEW_CLI = 1 | (1 << 25) | (1 << 26); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel = 100663297
-  const OLD_CLI = 1 | (1 << 25); // UserRead|AppBlocksSubmit = 33554433 (pre-widen CLI token)
+  const FULL = 33554431n; // TokenScope.Full
+  const NEW_CLI = 1n | (1n << 25n) | (1n << 26n); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel = 100663297
+  const OLD_CLI = 1n | (1n << 25n); // UserRead|AppBlocksSubmit = 33554433 (pre-widen CLI token)
 
   // Ctx for a token-authenticated caller (apiKeyId set) carrying `scope`. isModerator
   // stays true so the author gate is satisfied and the ONLY thing under test is the scope gate.
-  function tokenCtx(userId: number, scope: number) {
+  function tokenCtx(userId: number, scope: bigint) {
     return { ...authedCtx(userId, true), apiKeyId: 999, tokenScope: scope };
   }
 

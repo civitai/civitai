@@ -100,6 +100,9 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     },
     // Fix B4: listMySubmissions' last-event batch is now a raw `DISTINCT ON` query.
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    // The no-type `issue_tracker_url` column is written by raw SQL (the revision apply copies
+    // the shadow's link onto the parent), so the interactive tx needs the raw write surface.
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<number> => 1),
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -1060,6 +1063,18 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     },
   };
 
+  /**
+   * The raw statements against the moderation-event table only. `listMySubmissions` also reads
+   * the listings' trust links by raw SQL (`readListingProblemLinkMaps`), so a bare `$queryRaw`
+   * call count no longer means "the last-event query".
+   */
+  const modEventCalls = () =>
+    mockRead.$queryRaw.mock.calls.filter((c: unknown[]) =>
+      ((c[0] as { strings?: string[] })?.strings ?? [])
+        .join('?')
+        .includes('app_listing_moderation_events')
+    );
+
   it('attaches the latest moderation-event action for a REMOVED listing (owner-unpublish → eligible)', async () => {
     mockRead.appListingPublishRequest.findMany
       .mockResolvedValueOnce([removedRequestRow])
@@ -1072,7 +1087,7 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     const res = await listMySubmissions({ userId: OWNER });
 
     // The raw last-event query is issued exactly once for the removed listing set.
-    expect(mockRead.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(modEventCalls()).toHaveLength(1);
     expect(res.items[0]).toMatchObject({ lastModerationAction: 'owner-unpublish' });
   });
 
@@ -1090,7 +1105,7 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
       .mockResolvedValueOnce([liveRequestRow])
       .mockResolvedValueOnce([]);
     const res = await listMySubmissions({ userId: OWNER });
-    expect(mockRead.$queryRaw).not.toHaveBeenCalled();
+    expect(modEventCalls()).toHaveLength(0);
     expect(res.items[0]).toMatchObject({ lastModerationAction: null });
   });
 
@@ -1127,10 +1142,10 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
         { appListingId: 'apl_removed', action: 'owner-unpublish' },
       ]);
       await listMySubmissions({ userId: OWNER });
-      expect(mockRead.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(modEventCalls()).toHaveLength(1);
       // `Prisma.sql` builds a `Sql` object: `.strings` is the static text, `.values` the
-      // bound parameters. `$queryRaw(Prisma.sql`…`)` passes that object as calls[0][0].
-      const arg = mockRead.$queryRaw.mock.calls[0][0] as {
+      // bound parameters. `$queryRaw(Prisma.sql`…`)` passes that object as the first argument.
+      const arg = modEventCalls()[0][0] as {
         strings: string[];
         values: unknown[];
       };

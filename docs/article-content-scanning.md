@@ -213,12 +213,12 @@ await linkArticleContentImages({
 3. Create missing Image entities (with `ingestion: Pending`, `skipDuplicates` for concurrency)
 4. Upsert ImageConnection records linking images to article
 5. Remove orphaned connections for images no longer in content
-6. Only delete orphaned images if they have no connections to ANY entity
+6. Queue the unlinked images for deletion through `queueImageDeletes`, which keeps any the author does not own or something else still uses
 
 **Optimizations**:
 - **Batch queries**: 50 images → 3 queries (not 150 queries)
 - **Transaction safety**: All-or-nothing atomicity
-- **Orphaned cleanup**: Removes connections for deleted images, safely deletes truly orphaned images
+- **Orphaned cleanup**: Removes connections for deleted images and queues the unused ones for `image-deletes`
 - **Race protection**: `skipDuplicates` handles concurrent saves
 - **Content change detection**: Only processes if content actually changed
 

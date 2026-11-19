@@ -38,10 +38,11 @@ export function createTtlMemo<T>(
   { freeze = false }: { freeze?: boolean } = {}
 ): TtlMemo<T> {
   let cache: { value: T; expiresAt: number } | null = null;
+  // Single-flight: callers arriving while a fetch is pending share it, so an expiry under load is
+  // one fetch, not one per caller.
+  let inflight: Promise<T> | null = null;
 
-  const memo = (async () => {
-    const t = now();
-    if (cache && cache.expiresAt > t) return cache.value;
+  const load = async () => {
     // Await BEFORE assigning: a rejection skips the cache write (fail-open),
     // exactly like getClientConfigCached only caching successful reads.
     const value = await fetcher();
@@ -50,10 +51,22 @@ export function createTtlMemo<T>(
     if (freeze && value !== null && typeof value === 'object') Object.freeze(value);
     cache = { value, expiresAt: now() + ttlMs };
     return value;
+  };
+
+  const memo = (async () => {
+    if (cache && cache.expiresAt > now()) return cache.value;
+    if (!inflight) {
+      const pending = load().finally(() => {
+        if (inflight === pending) inflight = null;
+      });
+      inflight = pending;
+    }
+    return inflight;
   }) as TtlMemo<T>;
 
   memo.clear = () => {
     cache = null;
+    inflight = null;
   };
 
   return memo;

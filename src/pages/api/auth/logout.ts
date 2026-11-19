@@ -6,6 +6,7 @@ import {
   hostDeviceCookieName,
   createSessionTokenClient,
   hubLogoutUrl,
+  hostOnlySite,
   readDeviceId,
   readSessionToken,
 } from '@civitai/auth';
@@ -19,8 +20,7 @@ import { resolveSelfOrigin } from '~/server/auth/oauth-bridge';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
 // Main-app logout for the hub flow. Clears BOTH the hub's civ-token AND the legacy next-auth session cookie
-// (`civitai-token`) — getServerAuthSession's hybrid path falls back to the legacy cookie, so leaving it would
-// keep a legacy-cookie user logged in — plus the orchestrator cookie AND the device cookie (`civ-device`) that
+// (`civitai-token`), which a PR preview still signs in with, plus the orchestrator cookie AND the device cookie (`civ-device`) that
 // gates seamless multi-account switching (HttpOnly, so the client can't clear it; on a shared machine the
 // "switch back without re-login" set would otherwise survive logout). Best-effort revokes the token at the
 // hub, then finishes through the hub's logout. Reached via handleSignOut when the hub is configured. See docs/main-app-auth-cutover.md (B).
@@ -60,7 +60,7 @@ export function buildLogoutCookies(host: string | undefined): string[] {
     // `__Host-` cookies are host-only by definition, so one clear without a Domain covers them.
     ...clearCookie(hostSessionCookieName(true), true, [undefined]),
     ...clearCookie(hostDeviceCookieName(true), true, [undefined]),
-    // every legacy next-auth cookie — the SESSION cookie (the hybrid fallback reads it) AND the ancillary cruft
+    // every legacy next-auth cookie — the SESSION cookie (a preview's test sign-in) AND the ancillary cruft
     // (CSRF / callback-url / OAuth state + PKCE). Single source (clearLegacyCookies) — clears over the
     // registrable domain, so a subdomain logout host doesn't orphan the `.civitai.com` legacy session cookie.
     ...clearLegacyCookies(host),
@@ -76,12 +76,16 @@ export function buildLogoutCookies(host: string | undefined): string[] {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const callbackUrl = safeInternalPath(req.query.callbackUrl, '/');
-  const token = readSessionToken(req.cookies)?.value;
+  // A host-only site never takes a shared-slot token as its session, but still revokes one it holds.
+  const host = req.headers.host;
+  const read = { host, ...(hostOnlySite(host) && { legacyRead: true }) };
+  const token = readSessionToken(req.cookies, read)?.value;
 
   // Always clear THIS spoke's own cookies (registrable domain) + best-effort revoke its token's jti at the hub
   // (stops replay of the just-cleared token; a hub blip must never block logout, so revoke never throws).
   res.setHeader('Set-Cookie', buildLogoutCookies(req.headers.host));
-  if (token) await sessionTokenClient.revoke(token, { deviceId: readDeviceId(req.cookies)?.value });
+  if (token)
+    await sessionTokenClient.revoke(token, { deviceId: readDeviceId(req.cookies, read)?.value });
 
   // Every logout, same-site included, finishes THROUGH the hub: its host-only cookies can only be cleared by a
   // response from the hub's own origin. The hub validates the absolute returnUrl against the trusted-spoke

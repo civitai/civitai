@@ -351,9 +351,12 @@ export const appCollaboratorsRouter = router({
    * owner. Returns an explicit `notPermitted` rather than a zero, so a caller can never
    * read "no access" as "earned nothing".
    *
-   * 🔴 ON-SITE ONLY, returning `unsupportedKind` for an off-site listing.
-   * `BlockBuzzAttribution` is keyed on `appBlockId`, which an off-site listing does not
-   * have — so there is nothing to sum, and a zeroed summary would be a lie.
+   * Returns the app's author-fee earnings and digital-goods sales. The card-purchase
+   * revenue share is recorded but never paid out, so it is not returned.
+   *
+   * 🔴 ON-SITE ONLY, returning `unsupportedKind` for an off-site listing. Both rails are
+   * keyed on `appBlockId`, which an off-site listing does not have — so there is nothing
+   * to sum, and a zeroed summary would be a lie.
    */
   getAppEarnings: appDeveloperProcedure
     .input(getAppEarningsSchema)

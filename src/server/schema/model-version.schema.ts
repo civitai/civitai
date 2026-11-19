@@ -1,3 +1,4 @@
+import { aiToolkitOptionSchema } from '@civitai/shared/training-options';
 import type { ModelVersionTerms, RightsAffirmation } from '@civitai/buzz';
 import type { BaseModelAttestation } from '~/shared/constants/base-model-attestation.constants';
 import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
@@ -83,6 +84,7 @@ export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
 export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
 export const trainingDetailsBaseModelsLtx25 = ['ltx25'] as const;
 export const trainingDetailsBaseModelsMiniMaxH3 = ['minimaxh3'] as const;
+export const trainingDetailsBaseModelsMiniMaxH3Image = ['minimaxh3image'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
 export const trainingDetailsBaseModelsQwen21 = ['qwen21'] as const;
@@ -122,6 +124,7 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsIdeogram4,
   ...trainingDetailsBaseModelsMossImage,
   ...trainingDetailsBaseModelsFlux3Klein,
+  ...trainingDetailsBaseModelsMiniMaxH3Image,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
@@ -159,6 +162,7 @@ export const baseModelToTraningDetailsBaseModelMap: Partial<
 
 // Kohya-style training parameters (used by frontend and as legacy format)
 export const trainingDetailsParams = z.object({
+  ...aiToolkitOptionSchema.shape,
   unetLR: z.number(),
   textEncoderLR: z.number(),
   optimizerType: z.enum(optimizerTypes),
@@ -196,6 +200,7 @@ export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 
 // AI Toolkit training parameters (alternate format for database storage)
 export const aiToolkitTrainingDetailsParams = z.object({
+  ...aiToolkitOptionSchema.shape,
   engine: z.literal('ai-toolkit'),
   ecosystem: z.string(),
   modelVariant: z.string().optional(),
@@ -226,12 +231,24 @@ export const aiToolkitTrainingDetailsParams = z.object({
   maxTrainEpochs: z.number().nullable().optional(),
 });
 
+export const studioKohyaTrainingDetailsParams = trainingDetailsParams.extend({
+  engine: z.literal('kohya'),
+  optimizerType: z.enum([...optimizerTypes, 'AdamW', 'AdamW8bit', 'Lion', 'Lion8bit']),
+  lrScheduler: z.enum([...lrSchedulerTypes, 'constant_with_warmup', 'polynomial']),
+  seed: z.number().int().optional(),
+  fp8Base: z.boolean().optional(),
+  blocksToSwap: z.number().int().optional(),
+  vParameterization: z.boolean().optional(),
+  zeroTerminalSnr: z.boolean().optional(),
+});
+
 // Union type for database storage - supports both formats
 export const trainingDetailsParamsUnion = z.discriminatedUnion('engine', [
   trainingDetailsParams.extend({
-    engine: z.enum(['kohya', 'rapid', 'flux2-dev', 'flux2-dev-edit', 'musubi'] as const),
+    engine: z.enum(['rapid', 'flux2-dev', 'flux2-dev-edit', 'musubi'] as const),
   }),
   aiToolkitTrainingDetailsParams,
+  studioKohyaTrainingDetailsParams,
 ]);
 export type TrainingDetailsParamsUnion = z.infer<typeof trainingDetailsParamsUnion>;
 
@@ -748,4 +765,11 @@ export const mergeVersionsSchema = z.object({
     )
     .optional(),
   appendDescriptions: z.boolean().default(false),
+});
+
+export type RevokeUserEarlyAccessInput = z.infer<typeof revokeUserEarlyAccessSchema>;
+export const revokeUserEarlyAccessSchema = z.object({
+  userId: z.number().int().positive(),
+  modelVersionId: z.number().int().positive(),
+  reason: z.string().trim().min(1).max(500),
 });

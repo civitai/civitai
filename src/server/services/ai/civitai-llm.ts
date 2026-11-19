@@ -2,6 +2,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import type { SimpleMessage } from '~/server/services/ai/openrouter';
 import { describeProviderError } from '~/server/services/ai/provider-error';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export type { SimpleMessage } from '~/server/services/ai/openrouter';
 
@@ -130,7 +131,8 @@ function createCivitaiLLM(endpoint: string, token: string): CivitaiLLM {
       });
     }
 
-    const res = await fetch(url, {
+    const res = await outboundFetch(url, {
+      timeoutMs: 180_000,
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,

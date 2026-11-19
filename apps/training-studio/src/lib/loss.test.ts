@@ -25,11 +25,29 @@ function readingsOf(
 }
 
 describe('recordReadings', () => {
-  it('merges repeat reports of a step, keeping the epoch that first reported it', () => {
+  it('merges repeat reports of a step, keeping its earliest checkpoint', () => {
     const readings = new Map<number, Reading>();
     recordReadings(readings, 2, [{ step: 10, losses: { loss: 0.3 }, lr: 1e-4 }]);
     recordReadings(readings, 3, [{ step: 10, losses: { loss: 0.2, fft_loss: 0.1 }, lr: null }]);
     expect(readings.get(10)).toEqual({ epoch: 2, losses: { loss: 0.2, fft_loss: 0.1 }, lr: 1e-4 });
+  });
+
+  it('corrects checkpoint markers when replayed logs arrive before the original trace', () => {
+    const readings = new Map<number, Reading>();
+    recordReadings(readings, 2, [
+      { step: 10, losses: { loss: 0.3 }, lr: 1e-4 },
+      { step: 20, losses: { loss: 0.1 }, lr: 5e-5 },
+    ]);
+    recordReadings(readings, 1, [{ step: 10, losses: { loss: 0.3 }, lr: 1e-4 }]);
+    const sorted = [...readings.entries()];
+    expect(epochEnds(metricSeries(sorted, 'loss', false), [1, 2])).toEqual([
+      { epoch: 1, step: 10 },
+      { epoch: 2, step: 20 },
+    ]);
+    expect(epochMeans(sorted, 'loss', [1, 2])).toEqual([
+      { epoch: 1, mean: 0.3 },
+      { epoch: 2, mean: 0.1 },
+    ]);
   });
 });
 

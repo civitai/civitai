@@ -1,27 +1,30 @@
-import * as z from 'zod';
-import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import type * as z from 'zod';
+import { COLLECTIONS_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { modelsSearchIndex } from '~/server/search-index';
+import { collectionsSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
-import { booleanString } from '~/utils/zod-helpers';
+import { queueModelsReindexSchema } from '~/server/search-index/queue-models-reindex.schema';
 
-/** The endpoints' query: `dryRun` (default true) queues nothing; `chunkSize` ids per queueUpdate call. */
-export const queueModelsReindexSchema = z.object({
-  dryRun: booleanString().default(true),
-  chunkSize: z.coerce.number().min(1).max(10000).default(1000),
-});
+export { queueModelsReindexSchema };
 
-const QUEUE_ACTION = SearchIndexUpdateQueueAction.Update;
+type QueueAction = SearchIndexUpdateQueueAction.Update | SearchIndexUpdateQueueAction.Delete;
 
-async function readQueuedIds() {
+type ReindexTarget = {
+  indexName: string;
+  index: {
+    queueUpdate: (items: { id: number; action: QueueAction }[]) => Promise<unknown>;
+  };
+};
+
+async function readQueuedIds(indexName: string, action: QueueAction) {
   // readOnly: does NOT append a new bucket or retire the current ones, so calling this cannot
   // consume work the 15-minute sync is about to pick up.
-  const queue = await SearchIndexUpdate.getQueue(MODELS_SEARCH_INDEX, QUEUE_ACTION, true);
+  const queue = await SearchIndexUpdate.getQueue(indexName, action, true);
   return queue.content;
 }
 
 /**
- * Queue models for a models-index rewrite, for the admin backfill endpoints.
+ * Queue models for a models-index rewrite (or deletion), for the admin backfill endpoints.
  *
  * `queueDepthBefore`/`queueDepthAfter` are READ BACK from the queue, not inferred from the call
  * returning: `addToQueue` fails open on a degraded sysRedis (it parks the ids in Postgres and
@@ -35,34 +38,63 @@ async function readQueuedIds() {
  */
 export async function queueModelsReindex(
   modelIds: number[],
-  { dryRun, chunkSize }: z.infer<typeof queueModelsReindexSchema>
+  options: z.infer<typeof queueModelsReindexSchema>,
+  action: QueueAction = SearchIndexUpdateQueueAction.Update
 ) {
-  const before = await readQueuedIds();
+  const { count, ...result } = await queueReindex(
+    { indexName: MODELS_SEARCH_INDEX, index: modelsSearchIndex },
+    modelIds,
+    options,
+    action
+  );
+  return { modelCount: count, ...result };
+}
+
+/** `queueModelsReindex` for the collections index. */
+export async function queueCollectionsReindex(
+  collectionIds: number[],
+  options: z.infer<typeof queueModelsReindexSchema>
+) {
+  const { count, ...result } = await queueReindex(
+    { indexName: COLLECTIONS_SEARCH_INDEX, index: collectionsSearchIndex },
+    collectionIds,
+    options
+  );
+  return { collectionCount: count, ...result };
+}
+
+async function queueReindex(
+  { indexName, index }: ReindexTarget,
+  ids: number[],
+  { dryRun, chunkSize }: z.infer<typeof queueModelsReindexSchema>,
+  action: QueueAction = SearchIndexUpdateQueueAction.Update
+) {
+  const before = await readQueuedIds(indexName, action);
   // Set, not Array.includes: this queue reaches ~211K ids on a large fan-out, and scanning it once
-  // per model is enough to wedge the handler.
+  // per id is enough to wedge the handler.
   const beforeSet = new Set(before);
 
   if (dryRun) {
     return {
       dryRun: true,
-      modelCount: modelIds.length,
+      count: ids.length,
       queueDepthBefore: before.length,
-      alreadyQueued: modelIds.filter((id) => beforeSet.has(id)).length,
+      alreadyQueued: ids.filter((id) => beforeSet.has(id)).length,
     };
   }
 
-  for (let i = 0; i < modelIds.length; i += chunkSize) {
-    const chunk = modelIds.slice(i, i + chunkSize);
-    await modelsSearchIndex.queueUpdate(chunk.map((id) => ({ id, action: QUEUE_ACTION })));
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    await index.queueUpdate(chunk.map((id) => ({ id, action })));
   }
 
-  const after = await readQueuedIds();
+  const after = await readQueuedIds(indexName, action);
   const afterSet = new Set(after);
   return {
     dryRun: false,
-    modelCount: modelIds.length,
+    count: ids.length,
     queueDepthBefore: before.length,
     queueDepthAfter: after.length,
-    landed: modelIds.filter((id) => afterSet.has(id)).length,
+    landed: ids.filter((id) => afterSet.has(id)).length,
   };
 }

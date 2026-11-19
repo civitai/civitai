@@ -9,6 +9,7 @@ import {
   isSecureCookie,
   maybeCreateSessionSigner,
   readSessionToken,
+  IMPERSONATION_MAX_AGE_MS,
   SESSION_LINEAGE_MAX_AGE_MS,
   SESSION_COOKIE_BASE,
   sessionCookieMode,
@@ -134,7 +135,10 @@ export async function mintSession(
     clearImpersonation: opts.clearImpersonation || opts.impersonatedBy != null,
     now,
   });
-  if (opts.impersonatedBy) lineage.impersonatedBy = opts.impersonatedBy;
+  if (opts.impersonatedBy) {
+    lineage.impersonatedBy = opts.impersonatedBy;
+    lineage.impExp = now + IMPERSONATION_MAX_AGE_MS;
+  }
   const token = await getSigner().mintSessionToken(
     { signedAt: now, sub: String(user.id), ...lineage },
     { jti: tokenId, expiresIn: sessionExpiresIn(lineage, now) }
@@ -166,7 +170,7 @@ export async function mintUserSession(user: SessionUser, opts?: MintOptions): Pr
 
 /** The hub session token this request carries, and which slot it was read from. */
 export function readHubSession(cookies: Pick<Cookies, 'get'>): CookieRead | null {
-  return readSessionToken(cookieJar(cookies));
+  return readSessionToken(cookieJar(cookies), { host: null });
 }
 
 /**
@@ -179,7 +183,7 @@ export function readHubSession(cookies: Pick<Cookies, 'get'>): CookieRead | null
 export function setSessionCookie(
   cookies: Cookies,
   token: string,
-  slot: CookieSlot = sessionCookieMode(),
+  slot: CookieSlot = sessionCookieMode(null),
   { roll = false }: { roll?: boolean } = {}
 ): void {
   const clearShared = slot === 'host' && !roll && otherSharedSession(cookies, token);
@@ -203,7 +207,7 @@ export function setSessionCookie(
  * app switched to.
  */
 function otherSharedSession(cookies: Pick<Cookies, 'get'>, token: string): boolean {
-  if (sessionCookieMode() !== 'host' || hostSessionCookieName() === sessionCookieName())
+  if (sessionCookieMode(null) !== 'host' || hostSessionCookieName() === sessionCookieName())
     return false;
   const shared = cookies.get(sessionCookieNameForSlot('shared'));
   return shared !== undefined && !isCopyOf(shared, token);

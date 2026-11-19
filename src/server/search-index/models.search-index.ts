@@ -20,6 +20,7 @@ import {
   modelSearchIndexEligibilitySql,
 } from '~/server/search-index/model-index-eligibility';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 import {
   MODELS_WITHHELD_ATTRIBUTES,
   modelsDisplayedAttributes,
@@ -51,6 +52,7 @@ import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
 import { hasCompleteSfwFace, hoistCoverImage } from '~/shared/utils/model-sfw-face';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 
 const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -175,6 +177,71 @@ type PullDataResult = {
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
   images: ImagesForModelVersions[];
 };
+
+/** A taken-down model's document names none of its images: its cover ids are cleared. */
+export const withheldCoverIds = (model: { mode?: string | null }) =>
+  isModelWithheld(model) ? { coverImageId: null, sfwCoverImageId: null } : {};
+
+/**
+ * The images a model's search document carries: the newest version of each distinct base model
+ * keeps its images, so base-model-filtered cards can show a matching version's cover. The latest
+ * version goes first, so images[0] stays the primary cover. A taken-down model is still listed,
+ * without its images.
+ */
+export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
+  model: {
+    mode?: string | null;
+    coverImageId?: number | null;
+    sfwCoverImageId?: number | null;
+  },
+  modelVersions: { id: number; baseModel: string }[],
+  images: TImage[]
+) {
+  if (isModelWithheld(model)) return [];
+  const coveredBaseModels = new Set<string>();
+  const coveredVersionIds: number[] = [];
+  for (const version of modelVersions) {
+    if (coveredBaseModels.has(version.baseModel)) continue;
+    coveredBaseModels.add(version.baseModel);
+    coveredVersionIds.push(version.id);
+  }
+
+  // The .red cover ahead of the .com one: a .com viewer filters a mature .red cover out and
+  // lands on theirs, while a .red viewer keeps the creator's pick.
+  return [model.sfwCoverImageId, model.coverImageId].reduce(
+    (list, coverId) =>
+      hoistCoverImage(
+        list,
+        list.find((image) => image.id === coverId)
+      ),
+    coveredVersionIds.flatMap((versionId) =>
+      images.filter(
+        (image) =>
+          image.modelVersionId === versionId &&
+          image.availability !== Availability.Unsearchable &&
+          !isTaggedMatureImage(image)
+      )
+    )
+  );
+}
+
+/** The document is shared by every searcher: a held model's showcase at its gallery level. */
+async function holdSearchShowcase<E extends { images: { nsfwLevel: number }[] }>(
+  byVersion: Record<number, E>,
+  models: { id: number; minor: boolean; sfwOnly: boolean; modelVersions: { id: number }[] }[]
+) {
+  const { holdShowcaseImages } = await import('~/server/services/model.service');
+  return holdShowcaseImages(
+    byVersion,
+    new Map(
+      models.flatMap((m) =>
+        m.modelVersions.map(
+          (v) => [v.id, { modelId: m.id, minor: m.minor, sfwOnly: m.sfwOnly }] as const
+        )
+      )
+    )
+  );
+}
 
 const transformData = async ({ models, tags, cosmetics, images }: PullDataResult) => {
   const modelCategories = await getCategoryTags('model');
@@ -367,6 +434,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       return {
         ...model,
+        ...withheldCoverIds(model),
         // All four keys written unconditionally — see the merge argument above. `?? null`
         // and never `?? 0`: a version can legitimately be judged 0 with high confidence,
         // and `?.qualityScore ?? null` keeps that 0 while still clearing an absent label.
@@ -535,32 +603,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         return null;
       }
 
-      // Keep images for the newest version of each distinct base model — not just the
-      // latest version — so base-model-filtered cards can show a matching version's
-      // cover. The latest version goes first, so images[0] stays the primary cover.
-      const coveredBaseModels = new Set<string>();
-      const coveredVersionIds: number[] = [];
-      for (const version of modelVersions) {
-        if (coveredBaseModels.has(version.baseModel)) continue;
-        coveredBaseModels.add(version.baseModel);
-        coveredVersionIds.push(version.id);
-      }
-
-      // The .red cover ahead of the .com one: a .com viewer filters a mature .red cover out and
-      // lands on theirs, while a .red viewer keeps the creator's pick.
-      const modelImages = [model.sfwCoverImageId, model.coverImageId].reduce(
-        (list, coverId) =>
-          hoistCoverImage(
-            list,
-            list.find((image) => image.id === coverId)
-          ),
-        coveredVersionIds.flatMap((versionId) =>
-          images.filter(
-            (image) =>
-              image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
-          )
-        )
-      );
+      const modelImages = pickModelIndexImages(model, modelVersions, images);
 
       return {
         id: model.id,
@@ -600,7 +643,10 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
     modelTagCache.fetch(batchIds),
   ]);
   const modelVersionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
-  const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const imagesCache = await holdSearchShowcase(
+    await imagesForModelVersionsCache.fetch(modelVersionIds),
+    models
+  );
   const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
 
   const { indexReadyRecords, indexRecordsWithImages } = await transformData({
@@ -789,7 +835,14 @@ export const pullModelsData = async (
     for (const versionBatch of versionBatches) {
       tasks.push(async () => {
         logger(`PullData :: Pull images`, batchLogKey);
-        const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch);
+        // bypassLocal reaches the cache's appendFn, which reads each image's tag ids past this
+        // process's L1 (see imagesForModelVersionsCache): the document keeps them until its next
+        // reindex. Only this index builder bypasses; getModelSearchIndexRecords is a request path
+        // (the resource picker) that stores nothing, so it stays on the L1.
+        const imagesCache = await holdSearchShowcase(
+          await imagesForModelVersionsCache.fetch(versionBatch, { bypassLocal: true }),
+          batch
+        );
         const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
         logger(`PullData :: Pulled images`, batchLogKey);
 

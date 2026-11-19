@@ -24,6 +24,11 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(async () => mockDbRead),
   preventModelVersionLagBatch: vi.fn(),
 }));
+const { syncReviewsOfMovedPosts } = vi.hoisted(() => ({ syncReviewsOfMovedPosts: vi.fn() }));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  syncReviewsOfMovedPosts,
+}));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
@@ -39,7 +44,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -132,6 +136,7 @@ import {
   toggleCannotPromote,
 } from '~/server/services/model.service';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
+import { comFaceIntentTextHash } from '~/server/services/model-com-face-intent.service';
 import { Availability, ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -466,6 +471,88 @@ describe('privateModelFromTraining — moderation-owned meta', () => {
     expect(meta.textModeration).toEqual(STORED_MODERATION_META.textModeration);
     expect(meta.declinedReason).toBe('by mod');
     expect(meta).not.toHaveProperty('takenDownAt');
+  });
+});
+
+// The same ruling the model form records: a moderator's unlock here must not be re-locked either.
+describe('privateModelFromTraining — a moderator lifting the nsfw lock', () => {
+  const listingHash = comFaceIntentTextHash({
+    name: storedModel.name,
+    description: storedModel.description,
+    triggerWords: [],
+  });
+  const detection = { detected: true, textHash: listingHash, at: '2026-11-01T00:00:00.000Z' };
+
+  it("overturns the stored detection when the lock lifted is the intent check's own", async () => {
+    mockStored({
+      nsfw: true,
+      lockedProperties: ['nsfw'],
+      meta: { systemNsfwLock: { source: 'com-face-intent', at: 'x' }, comFaceIntent: detection },
+    });
+
+    await privateFromTraining({ user: moderator, nsfw: false, lockedProperties: [] });
+
+    expect(writtenMeta().comFaceIntent).toEqual({
+      ...detection,
+      overturnedAt: expect.any(String),
+    });
+  });
+
+  it('keeps the detection and suppresses only the re-lock when lifting another lock', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+
+    await privateFromTraining({ user: moderator, nsfw: false, lockedProperties: [] });
+
+    expect(writtenMeta().comFaceIntent).toEqual(detection);
+    expect(writtenMeta().comFaceIntentRelockSuppressed).toEqual({
+      textHash: listingHash,
+      at: expect.any(String),
+    });
+  });
+
+  // The private flow refuses a mature save, so the owner's only reach is a lock on a SFW listing.
+  it('neither overturns nor suppresses when the owner sends the lock lifted', async () => {
+    mockStored({ nsfw: false, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+
+    await privateFromTraining({ user: owner, nsfw: false, lockedProperties: [] });
+
+    expect(writtenMeta().comFaceIntent).toEqual(detection);
+    expect(writtenMeta()).not.toHaveProperty('comFaceIntentRelockSuppressed');
+  });
+
+  it('leaves the verdict alone when the lock stays (control)', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+
+    await privateFromTraining({ user: moderator, nsfw: false, lockedProperties: ['nsfw'] });
+
+    expect(writtenMeta().comFaceIntent).toEqual(detection);
+  });
+});
+
+describe('privateModelFromTraining — the returned model', () => {
+  // The write keeps the stored moderation records; the row handed back to the caller must not carry them.
+  it.each([
+    ['an owner', owner],
+    ['a moderator', moderator],
+  ])('leaves moderator-only meta out of the response to %s', async (_, user) => {
+    mockStored({
+      meta: { ...STORED_MODERATION_META, profanityMatches: ['x'], systemNsfwLock: { source: 's' } },
+    });
+
+    const result = (await privateFromTraining({ user, meta: { commentsLocked: true } })) as {
+      meta: object;
+    };
+
+    expect(writtenMeta()).toHaveProperty('minorFlagSnapshot');
+    for (const key of [
+      'minorFlagSnapshot',
+      'textScanFlags',
+      'textModeration',
+      'profanityMatches',
+      'systemNsfwLock',
+    ])
+      expect(result.meta).not.toHaveProperty(key);
+    expect(result.meta).toHaveProperty('commentsLocked', true);
   });
 });
 
@@ -925,12 +1012,30 @@ describe('publishPrivateModel', () => {
     mockPrivateModel({});
 
     await publish(false);
-    const republish = mockDbWrite.$executeRaw.mock.calls.find(([strings]) =>
+    const republish = mockDbWrite.$queryRaw.mock.calls.find(([strings]) =>
       (strings as string[]).join('?').includes('UPDATE "Post"')
     );
     expect(republish).toBeDefined();
     expect((republish![0] as string[]).join('?')).toMatch(/"userId" = \?/);
     expect(republish!.slice(1)).toContain(OWNER_ID);
+  });
+
+  it('releases the reviews of only the posts the publish moved', async () => {
+    mockPrivateModel({});
+    const base = mockDbWrite.$queryRaw.getMockImplementation()!;
+    mockDbWrite.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      Array.isArray(strings) && strings.join('?').includes('UPDATE "Post"')
+        ? Promise.resolve([{ id: 5 }])
+        : base(strings, ...values)) as never);
+
+    await publish(false);
+
+    expect(syncReviewsOfMovedPosts).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ change: 'publish', postIds: [5] })
+    );
   });
 
   it('refuses when one of several versions was taken down after it was read', async () => {

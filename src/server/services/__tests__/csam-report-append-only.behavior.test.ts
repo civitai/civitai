@@ -401,6 +401,43 @@ describe('a sent report', () => {
   });
 });
 
+// The generic details freeze, applied to the attached text a send relied on.
+describe("a sent report's attached text", () => {
+  const captured = {
+    contextText: [
+      { source: 'comment', id: 11, authorId: UNRELATED, text: 'as captured' },
+      { source: 'postDescription', id: 100, authorId: SUBJECT, text: 'the caption' },
+    ],
+  };
+
+  it.each([
+    ['its text rewritten', `jsonb_set(details, '{contextText,0,text}', '"[removed]"')`],
+    ['an entry removed', `jsonb_set(details, '{contextText}', (details->'contextText') - 0)`],
+    ['its author scrubbed', `jsonb_set(details, '{contextText,0,authorId}', 'null')`],
+    ['the whole field dropped', `details - 'contextText'`],
+  ])('refuses %s', async (_case, set) => {
+    const id = await insertReport(30, captured);
+    await expect(
+      db.pg.exec(`UPDATE "CsamReport" SET details = ${set} WHERE id = ${id}`)
+    ).rejects.toThrow('may only gain keys');
+    const { rows } = await db.pg.query<{ details: unknown }>(
+      `SELECT details FROM "CsamReport" WHERE id = $1`,
+      [id]
+    );
+    expect(rows[0].details).toEqual(captured);
+  });
+
+  it('accepts a further captured entry, as any gained key', async () => {
+    const id = await insertReport(30, captured);
+    const added = { source: 'comment', id: 12, authorId: SUBJECT, text: 'added' };
+    await db.pg.query(
+      `UPDATE "CsamReport" SET details = jsonb_set(details, '{contextText}', (details->'contextText') || $2::jsonb) WHERE id = $1`,
+      [id, JSON.stringify([added])]
+    );
+    expect(await audit(id)).toHaveLength(1);
+  });
+});
+
 describe('the fingerprint key', () => {
   it.each([
     [

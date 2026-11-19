@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 
 import {
@@ -72,6 +73,13 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // to a stale allowance; the ENFORCING reserve on the tip path is unaffected).
   const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rateLimit.allowed) {
+    recordBlockClaimsRateLimitRefusal({
+      claims,
+      surface: 'rest',
+      bucket: 'catalog',
+      endpoint: 'tip_allowance',
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
     res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
     return;

@@ -107,6 +107,7 @@ export async function getHeldMysteryBoxes(viewer: Viewer): Promise<HeldMysteryBo
           team,
           tiers,
           listing: null,
+          packListing: null,
           heldBoxItemIds: held.map((item) => item.id.toString()),
         }).then((view) => ({
           ...view,

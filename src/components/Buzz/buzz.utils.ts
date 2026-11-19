@@ -1,3 +1,4 @@
+import { settlePaymentIntentKey, tipIntent } from '~/components/Buzz/payment-intent-keys';
 import { useRouter } from 'next/router';
 import type React from 'react';
 import { useState } from 'react';
@@ -71,10 +72,12 @@ export const useBuzzTransaction = (opts?: {
   const { trackAction } = useTrackEvent();
 
   const tipUserMutation = trpc.buzz.tipUser.useMutation({
-    async onSuccess() {
+    async onSuccess(_, tip) {
+      if (tip.idempotencyKey) settlePaymentIntentKey(tipIntent(tip), tip.idempotencyKey);
       await queryUtils.buzz.getBuzzAccount.invalidate();
     },
-    onError(error) {
+    onError(error, tip) {
+      if (tip.idempotencyKey) settlePaymentIntentKey(tipIntent(tip), tip.idempotencyKey, error);
       showErrorNotification({
         title: 'Looks like there was an error sending your tip.',
         error: new Error(error.message),

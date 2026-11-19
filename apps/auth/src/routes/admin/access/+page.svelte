@@ -7,7 +7,14 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   type FormResult = {
-    action?: 'setMode' | 'setSkipConsent' | 'setTokenRateLimit' | 'moveToSystem' | 'createSystemApp';
+    action?:
+      | 'setMode'
+      | 'setSkipConsent'
+      | 'setTokenRateLimit'
+      | 'moveToSystem'
+      | 'createSystemApp'
+      | 'createServiceClient'
+      | 'rotateServiceSecret';
     success?: boolean;
     error?: string;
     id?: string;
@@ -19,6 +26,14 @@
   // A confidential app moved to the system account gets a new secret, shown once.
   const movedSecret = $derived(f?.action === 'moveToSystem' && f.success ? (f.clientSecret ?? null) : null);
   const createError = $derived(f?.action === 'createSystemApp' ? (f.error ?? null) : null);
+  // A service client's secret, shown once: registered, or rotated.
+  const serviceSecret = $derived(
+    (f?.action === 'createServiceClient' || f?.action === 'rotateServiceSecret') && f.success ? f : null
+  );
+  const serviceError = $derived(
+    f?.action === 'createServiceClient' || f?.action === 'rotateServiceSecret' ? (f.error ?? null) : null
+  );
+  const services = $derived(data.system.filter((c) => c.isService));
 
   const MODE_LABEL: Record<string, string> = {
     open: 'Open — anyone',
@@ -27,7 +42,20 @@
   };
 
   // The last save on this row: one status per app, whichever of its settings was changed.
-  const rowResult = (id: string) => (f?.id === id && f.action !== 'createSystemApp' ? f : null);
+  const rowResult = (id: string) =>
+    f?.id === id &&
+    f.action !== 'createSystemApp' &&
+    f.action !== 'createServiceClient' &&
+    f.action !== 'rotateServiceSecret'
+      ? f
+      : null;
+
+  const confirmRotate =
+    (name: string): SubmitFunction =>
+    ({ cancel }) => {
+      const message = `Give ${name} a new secret?\n\nThe old secret stops working at once. Tokens it already holds stay valid until they expire: to end those, disable it first.`;
+      if (!confirm(message)) cancel();
+    };
 
   // Through use:enhance, which ignores a prevented submit event, so cancelling has to go through its cancel().
   const confirmMove =
@@ -48,7 +76,7 @@
       await update();
     };
 
-  type App = (typeof data.system)[number];
+  type App = Omit<(typeof data.system)[number], 'isService'>;
 </script>
 
 <header class="head">
@@ -78,10 +106,11 @@
   </span>
 {/snippet}
 
-{#snippet appName(c: App)}
+{#snippet appName(c: App, editable = false)}
   <span class="name">
     {c.name}
     {#if c.isVerified}<span class="badge">verified</span>{/if}
+    {#if editable}<a class="edit" href="/admin/access/{c.id}" aria-label="Edit {c.name}">Edit</a>{/if}
     <span class="cid">{c.id}</span>
   </span>
 {/snippet}
@@ -121,7 +150,7 @@
       </div>
       {#each data.system as c (c.id)}
         <div class="row system">
-          {@render appName(c)}
+          {@render appName(c, true)}
           {@render accessForm(c)}
           {#if c.isConfidential}
             <form method="POST" action="?/setSkipConsent" use:enhance={revertToggleOnFailure} class="inline-form">
@@ -216,6 +245,54 @@
       <p class="msg error"><IconAlertTriangle size={15} /> {createError}</p>
     {/if}
     <button type="submit" class="btn primary">Register system app</button>
+  </form>
+</section>
+
+<!-- Service clients -->
+<section class="panel">
+  <h2>Service clients <span class="count">{services.length}</span></h2>
+  <p>
+    A service client gets tokens for a resource as itself, never for a user. What it gets there (scopes, roles
+    and its user id) is set by the resource's <code>services</code> entry in the hub's configuration, not here.
+    Disable it above to end its tokens.
+  </p>
+  {#if serviceSecret}
+    <div class="created">
+      <p class="msg ok">
+        <IconCheck size={15} />
+        {serviceSecret.action === 'createServiceClient' ? `Registered ${serviceSecret.name}.` : 'New secret issued.'}
+      </p>
+      <dl>
+        <dt>Client ID</dt>
+        <dd><code>{serviceSecret.id}</code></dd>
+        <dt><IconKey size={14} /> Client secret</dt>
+        <dd><code>{serviceSecret.clientSecret}</code></dd>
+      </dl>
+      <p class="warn">Copy the secret now. It is shown only once and cannot be recovered.</p>
+    </div>
+  {/if}
+  {#if services.length > 0}
+    <div class="table">
+      {#each services as c (c.id)}
+        <div class="row">
+          {@render appName(c)}
+          <form method="POST" action="?/rotateServiceSecret" use:enhance={confirmRotate(c.name)} class="inline-form">
+            <input type="hidden" name="id" value={c.id} />
+            <button type="submit" class="btn small">New secret</button>
+          </form>
+        </div>
+      {/each}
+    </div>
+  {/if}
+  <form method="POST" action="?/createServiceClient" use:enhance class="create-form">
+    <label>
+      <span>Name</span>
+      <input name="name" required maxlength="100" autocomplete="off" />
+    </label>
+    {#if serviceError}
+      <p class="msg error"><IconAlertTriangle size={15} /> {serviceError}</p>
+    {/if}
+    <button type="submit" class="btn primary">Register service client</button>
   </form>
 </section>
 
@@ -380,6 +457,10 @@
     font-size: 0.72rem;
     color: #6b7177;
     font-family: ui-monospace, monospace;
+  }
+  .edit {
+    font-size: 0.75rem;
+    color: #74a7ff;
   }
   .badge {
     font-size: 0.65rem;

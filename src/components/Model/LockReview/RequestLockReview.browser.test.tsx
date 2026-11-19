@@ -69,11 +69,14 @@ describe('Request review, beside a locked setting', () => {
     expect(mocks.queried.every((opts) => !opts.enabled)).toBe(true);
   });
 
-  test('is not shown while a real-person or minor lock is set, whatever else is locked', async () => {
-    await renderLink(['poi', 'nsfw', 'sfwOnly']);
+  test('is shown beside a real-person or minor lock that is off', async () => {
+    renderWithProviders(
+      <RequestLockReviewLink
+        model={{ ...model(['poi', 'minor', 'nsfw', 'sfwOnly']), poi: false, minor: false }}
+      />
+    );
 
-    expect(page.getByRole('button').elements()).toHaveLength(0);
-    expect(mocks.queried.every((opts) => !opts.enabled)).toBe(true);
+    await expect.element(page.getByRole('button', { name: 'Request review' })).toBeVisible();
   });
 
   test.each([['poi'], ['minor']])(

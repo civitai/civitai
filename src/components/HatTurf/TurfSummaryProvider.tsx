@@ -7,24 +7,36 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useHatTurfFeed } from '~/components/HatTurf/useHatTurfFeed';
 import type { HatTurfFeedArm } from '~/components/HatTurf/useHatTurfFeed';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { applyTurfPush, readTurfPush } from '~/components/HatTurf/hat-turf.utils';
 import type { HatSticker, TurfSummary } from '~/components/HatTurf/hat-turf.utils';
+import {
+  BATCHED_WATCH_REFRESH_MS,
+  BATCHED_WATCH_RETRY_JITTER_MS,
+  BATCHED_WATCH_RETRY_MS,
+  retainTurfWatchHub,
+} from '~/components/HatTurf/turf-watch-hub';
+import type { TurfWatchHub } from '~/components/HatTurf/turf-watch-hub';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
+import { MAX_TURF_IMAGES_PER_MARK, TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
 /** Matches the `imageIds` cap on `turfSummariesSchema`. */
 const SUMMARY_CHUNK = 100;
-/** At most 50 images per mark call. Re-marked every 30s; must stay under TURF_WATCH_TTL_MS. */
-const WATCH_BATCH = 50;
+/** Re-marked on this interval; must stay under TURF_WATCH_TTL_MS. */
 const WATCH_REFRESH_MS = 30_000;
 // Cards mount a few at a time while scrolling; their marks go out together.
 const WATCH_COALESCE_MS = 250;
+// Newly mounted cards wait at least this long after a mark for the next, so a scroll stays under
+// the watch's per-caller rate limit. A change landing during the wait is not pushed to the new
+// card, which shows its page's read.
+const WATCH_MIN_GAP_MS = 2_000;
 // A card that watches again rereads its image's counts when what is drawn is older than this: a
 // change made while nobody watched it was pushed to nobody.
 const CATCH_UP_STALE_MS = 30_000;
@@ -79,7 +91,9 @@ export function TurfSummaryProvider({
   children: React.ReactNode;
 }) {
   const feedGate = useHatTurfFeed();
-  const gate = gateOverride === undefined ? feedGate : gateOverride;
+  // Event cosmetics off: no Hat Turf at all for this viewer, as if they never joined.
+  const shown = useShowEventCosmetics();
+  const gate = !shown ? null : gateOverride === undefined ? feedGate : gateOverride;
   const event = gate?.event;
   const arm = gateOverride === undefined ? feedGate?.arm ?? null : null;
   const utils = trpc.useUtils();
@@ -90,7 +104,13 @@ export function TurfSummaryProvider({
     { enabled: !!event && !!user, staleTime: 30_000 }
   );
   const joined = !!user && stock?.optedIn === true;
+  // Off (or no flags provider): every provider keeps its own marks, as before.
+  const batched = useOptionalFeatureFlags()?.hatTurfBatchedCalls === true;
 
+  // On the feed nothing reads the summaries for a signed-out viewer: the hat button waits for a
+  // stock (signed in only), and the badge and the hat layer for a joined viewer. Image detail passes
+  // its own gate and keeps them: its signed-out badge and panel read `hidden` and `open`.
+  const readsSummaries = !!event && (gateOverride !== undefined || !!user);
   const chunks = useMemo(
     () => (event ? chunkIds(imageIds, SUMMARY_CHUNK) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -98,7 +118,7 @@ export function TurfSummaryProvider({
   );
 
   const summaryQueries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
+    (readsSummaries ? chunks : []).map((chunk) =>
       t.hatTurf.getSummaries({ event: event ?? '', imageIds: chunk }, { staleTime: 30_000 })
     )
   );
@@ -349,7 +369,21 @@ export function TurfSummaryProvider({
       {event && joined && (
         <>
           <TurfPushes onPush={onPush} />
-          <TurfWatcher event={event} watching={watching} version={watchVersion} onAdded={catchUp} />
+          {batched ? (
+            <TurfHubWatcher
+              event={event}
+              watching={watching}
+              version={watchVersion}
+              onAdded={catchUp}
+            />
+          ) : (
+            <TurfWatcher
+              event={event}
+              watching={watching}
+              version={watchVersion}
+              onAdded={catchUp}
+            />
+          )}
         </>
       )}
       {children}
@@ -365,7 +399,10 @@ function TurfPushes({ onPush }: { onPush: (raw: unknown) => void }) {
   return null;
 }
 
-/** New cards are marked at once; the whole set is re-marked on the interval. */
+/**
+ * New cards are marked together after a short wait, and at most once every WATCH_MIN_GAP_MS; the
+ * whole set is re-marked on the interval.
+ */
 function TurfWatcher({
   event,
   watching,
@@ -383,27 +420,29 @@ function TurfWatcher({
   const everMarked = useRef(new Set<number>());
   const send = useCallback(
     (ids: number[]) => {
-      for (let i = 0; i < ids.length; i += WATCH_BATCH)
-        mark({ event, imageIds: ids.slice(i, i + WATCH_BATCH) });
+      for (const imageIds of chunkIds(ids, MAX_TURF_IMAGES_PER_MARK)) mark({ event, imageIds });
     },
     [event, mark]
   );
 
   const flush = useRef<ReturnType<typeof setTimeout>>();
+  const lastFlushSent = useRef(-Infinity);
   useEffect(() => {
     if (flush.current) return;
+    const wait = Math.max(WATCH_COALESCE_MS, lastFlushSent.current + WATCH_MIN_GAP_MS - Date.now());
     flush.current = setTimeout(() => {
       flush.current = undefined;
       const current = [...watching.current.keys()];
       const added = current.filter((id) => !marked.current.has(id));
       marked.current = new Set(current);
       if (added.length) {
+        lastFlushSent.current = Date.now();
         send(added);
         const again = added.filter((id) => everMarked.current.has(id));
         added.forEach((id) => everMarked.current.add(id));
         if (again.length) onAdded(again);
       }
-    }, WATCH_COALESCE_MS);
+    }, wait);
   }, [version, watching, send, onAdded]);
   useEffect(() => () => clearTimeout(flush.current), []);
 
@@ -414,6 +453,73 @@ function TurfWatcher({
     }, WATCH_REFRESH_MS);
     return () => clearInterval(timer);
   }, [watching, send]);
+
+  return null;
+}
+
+/**
+ * TurfWatcher's job done by the page's shared hub: this provider's on-screen ids join the page's one
+ * mark set, so the page sends one mark call per interval (per 50 ids) however many providers it has.
+ * The hub tells every provider of ids marked again, and of every watched id when the page becomes
+ * visible again; each catches up only those its own reads hold and that have gone stale.
+ */
+function TurfHubWatcher({
+  event,
+  watching,
+  version,
+  onAdded,
+}: {
+  event: string;
+  watching: React.MutableRefObject<Map<number, number>>;
+  version: number;
+  onAdded: (imageIds: number[]) => void;
+}) {
+  const utils = trpc.useUtils();
+  const hub = useRef<TurfWatchHub | null>(null);
+  const registered = useRef(new Set<number>());
+  const added = useRef(onAdded);
+  added.current = onAdded;
+
+  // Declared before the sync below, so on mount and on an event change the hub is held by the time
+  // the sync runs in the same commit.
+  useEffect(() => {
+    const held = retainTurfWatchHub({
+      event,
+      send: (input) => utils.client.hatTurf.watch.mutate(input),
+      refreshMs: BATCHED_WATCH_REFRESH_MS,
+      coalesceMs: WATCH_COALESCE_MS,
+      minGapMs: WATCH_MIN_GAP_MS,
+      retryMs: BATCHED_WATCH_RETRY_MS,
+      retryJitterMs: BATCHED_WATCH_RETRY_JITTER_MS,
+    });
+    hub.current = held.hub;
+    const unsubscribe = held.hub.subscribe((ids) => added.current(ids));
+    const mine = registered.current;
+    return () => {
+      mine.forEach((id) => held.hub.release(id));
+      mine.clear();
+      unsubscribe();
+      held.release();
+      hub.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event]);
+
+  useEffect(() => {
+    const current = hub.current;
+    if (!current) return;
+    const onScreen = new Set(watching.current.keys());
+    registered.current.forEach((id) => {
+      if (onScreen.has(id)) return;
+      registered.current.delete(id);
+      current.release(id);
+    });
+    onScreen.forEach((id) => {
+      if (registered.current.has(id)) return;
+      registered.current.add(id);
+      current.retain(id);
+    });
+  }, [event, version, watching]);
 
   return null;
 }

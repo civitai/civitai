@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 const baseUrl = `${env.ORCHESTRATOR_ENDPOINT ?? ''}/v1/manager/consumers/flagged`;
 
@@ -13,7 +14,11 @@ async function orchestratorFetch(path: string, opts?: RequestInit) {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
   };
-  const response = await fetch(url, { ...opts, headers: { ...headers, ...opts?.headers } });
+  const response = await outboundFetch(url, {
+    timeoutMs: 30_000,
+    ...opts,
+    headers: { ...headers, ...opts?.headers },
+  });
   if (!response.ok) throw new FlaggedConsumerFetchError(response.status, response.statusText);
   return response;
 }

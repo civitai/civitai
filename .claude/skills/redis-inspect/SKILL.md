@@ -1,6 +1,6 @@
 ---
 name: redis-inspect
-description: Inspect Redis cache keys, values, and TTLs for debugging. Supports both main cache and system cache. Use for debugging cache issues, checking cached values, and monitoring cache state. Read-only by default.
+description: Inspect Redis keys, values, and TTLs for debugging. Supports both the cache (default) and the system store (`--sys`, durable state, not a cache). Use for debugging cache issues, checking cached values, and monitoring cache state. Read-only by default.
 ---
 
 # Redis Cache Inspector
@@ -35,30 +35,35 @@ node .claude/skills/redis-inspect/query.mjs <command> [options]
 
 | Flag | Description |
 |------|-------------|
-| `--sys` | Use system cache instead of main cache |
+| `--sys` | Use the system store (sysRedis) instead of the cache |
 | `--writable` | Allow write operations (required for del) |
 | `--json` | Output raw JSON |
 | `--limit <n>` | Limit results (default: 100) |
 
-## Cache Types
+## The two stores
 
-The project has two Redis instances:
+The project has two Redis instances. They are not interchangeable: pick by what the data is, not by
+where a similar key already lives.
 
-| Cache | Flag | Env Variable | Purpose |
+| Store | Flag | Env Variable | Purpose |
 |-------|------|--------------|---------|
-| **Main Cache** | (default) | `REDIS_URL` | Regular cache, cluster mode, can be lost |
-| **System Cache** | `--sys` | `REDIS_SYS_URL` | Persistent system values, single node |
+| **Cache** (`redis`, `REDIS_KEYS`) | (default) | `REDIS_URL` | Cached and recomputable data, rate-limit windows. Give every key a TTL; anything here can be lost. |
+| **sysRedis (durable state, not a cache)** (`REDIS_SYS_KEYS`) | `--sys` | `REDIS_SYS_URL` | Existing durable state: revocations, idempotency markers, spend reservations, ledgers, job and game state. Never cached or recomputable data. |
 
-### Main Cache (default)
-Regular application cache. Data here can be regenerated if lost.
-- User sessions
-- Cached queries
-- Temporary data
-- Rate limiting counters
+New durable data goes in Postgres, not in a new sysRedis key. A new `REDIS_SYS_KEYS` entry needs
+explicit sign-off and an entry in the ledger test `packages/civitai-redis/src/__tests__/sys-key-ledger.test.ts`.
+The rule with the helpers to use is in `.claude/rules/server.md`.
 
-### System Cache (--sys)
-Persistent system configuration and state. More critical data.
-- Feature flags
+### Cache (default)
+Data here can be regenerated if lost.
+- Session cache
+- Cached queries (`createCachedObject`, `fetchThroughCache`)
+- Rate-limit windows (the tRPC `rateLimit` middleware)
+- Short-lived locks (`withDistributedLock`)
+
+### sysRedis (--sys)
+State that must survive a cache flush.
+- Feature and system configuration
 - Generation limits/status
 - System permissions
 - Job state
@@ -74,7 +79,7 @@ node .claude/skills/redis-inspect/query.mjs keys "packed:caches:*"
 # Get a value
 node .claude/skills/redis-inspect/query.mjs get "session:data2:123456"
 
-# Check system cache values
+# Check sysRedis values
 node .claude/skills/redis-inspect/query.mjs --sys get "system:features"
 node .claude/skills/redis-inspect/query.mjs --sys hgetall "system:entity-moderation"
 
@@ -105,7 +110,7 @@ node .claude/skills/redis-inspect/query.mjs --sys info
 | `generation:*` | Generation-related cache |
 | `tag:*` | Tag cache |
 
-### System Cache
+### sysRedis
 | Pattern | Description |
 |---------|-------------|
 | `system:*` | System configuration |

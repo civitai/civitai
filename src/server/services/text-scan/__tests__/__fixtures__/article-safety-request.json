@@ -1,0 +1,123 @@
+{
+  "metadata": {
+    "entityType": "Article",
+    "entityId": 5,
+    "emEntityType": "Article",
+    "mode": "active",
+    "externalId": "ts-Article-5-8fe8d2033177afdc5a0fff94-0-0",
+    "labels": [
+      "nsfw",
+      "csam"
+    ],
+    "promptIds": {
+      "base": 1,
+      "nsfw": 78,
+      "csam": 44
+    },
+    "model": "civitai/qwen3.8",
+    "thinking": false,
+    "textHash": "ae73d974891dabe7f50570e8b163d73963fe8de4a1e05f259a43fbbe13f833eb",
+    "inputChars": 65,
+    "inputCut": false,
+    "segments": 1,
+    "scannedChars": 65
+  },
+  "tags": [
+    "text-scan",
+    "Article",
+    "active"
+  ],
+  "externalId": "ts-Article-5-8fe8d2033177afdc5a0fff94-0-0",
+  "currencies": [],
+  "steps": [
+    {
+      "$type": "chatCompletion",
+      "name": "textScan",
+      "input": {
+        "model": "civitai/qwen3.8",
+        "messages": [
+          {
+            "role": "system",
+            "content": "BASE PROMPT\n\n## Label: nsfw\nNSFW DEF\n\n## Label: csam\nCSAM DEF"
+          },
+          {
+            "role": "user",
+            "content": "## Title\nHow I train a LoRA\n\n## Content\nStep one: gather images ."
+          }
+        ],
+        "temperature": 0,
+        "maxTokens": 1024,
+        "chatTemplateKwargs": {
+          "enable_thinking": false
+        },
+        "responseFormat": {
+          "type": "json_schema",
+          "jsonSchema": {
+            "name": "text_scan",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "nsfw": {
+                  "type": "object",
+                  "properties": {
+                    "level": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "pg13",
+                        "r",
+                        "x",
+                        "xxx"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "level",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                },
+                "csam": {
+                  "type": "object",
+                  "properties": {
+                    "detected": {
+                      "type": "boolean"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detected",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "nsfw",
+                "csam"
+              ],
+              "additionalProperties": false
+            },
+            "strict": true
+          }
+        }
+      }
+    }
+  ],
+  "callbacks": [
+    {
+      "url": "http://localhost:3000/api/webhooks/text-scan-result?token=test-webhook-token",
+      "type": [
+        "workflow:succeeded",
+        "workflow:failed",
+        "workflow:expired",
+        "workflow:canceled"
+      ]
+    }
+  ]
+}

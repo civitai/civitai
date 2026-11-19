@@ -415,7 +415,9 @@ export async function autoResolveArticleRatingReview(args: AutoResolveArgs): Pro
 
   // Post-commit (best-effort).
   await articlesSearchIndex
-    .queueUpdate([{ id: args.articleId, action: SearchIndexUpdateQueueAction.Update }])
+    .queueUpdate([{ id: args.articleId, action: SearchIndexUpdateQueueAction.Update }], {
+      reason: 'rating-review',
+    })
     .catch((e) =>
       handleLogError(e, 'article-rating-review-auto-search-index', {
         articleId: args.articleId,
@@ -543,7 +545,7 @@ export async function maybeAutoResolveDisputeAfterScan(articleId: number): Promi
         suggestedLevel: pending.suggestedLevel,
         derivedLevel: gate.derivedLevel,
         entryPoint: 'scan-completion' as AutoApproveEntryPoint,
-      }).catch();
+      });
     } catch (e) {
       if (e instanceof AutoResolveRaceLost) return;
       throw e;
@@ -620,7 +622,7 @@ export async function tryAutoApproveArticleDispute(args: {
       suggestedLevel: args.suggestedLevel,
       derivedLevel: gate.derivedLevel,
       entryPoint: 'submission' as AutoApproveEntryPoint,
-    }).catch();
+    });
     return auto.review;
   } catch (e) {
     if (e instanceof AutoResolveRaceLost)

@@ -74,8 +74,6 @@ export type SiteAppealSubject =
       status: string | null;
       /** The status approving puts it in (`restoreStatus`). */
       restoresTo: string;
-      /** Restore keeps it, so a restored draft still goes live then. */
-      scheduledAt: Date | null;
       ownerBanned: boolean;
       unpublishedReason: string | null;
       customMessage: string | null;
@@ -186,7 +184,6 @@ function missingSubject(category: SiteAppealCategory): SiteAppealSubject {
         title: null,
         status: null,
         restoresTo: ArticleStatus.Published,
-        scheduledAt: null,
         ownerBanned: false,
         ...unpublished,
       };
@@ -288,7 +285,6 @@ async function getSubjects(
         'a.status',
         'a.metadata',
         'a.publishedAt',
-        'a.scheduledAt',
         'u.bannedAt as ownerBannedAt',
       ])
       .where('a.id', 'in', ids)
@@ -299,7 +295,6 @@ async function getSubjects(
         title: a.title,
         status: a.status,
         restoresTo: restoreStatus(a.metadata as ArticleMetadata, a.publishedAt),
-        scheduledAt: a.scheduledAt,
         ownerBanned: a.ownerBannedAt !== null,
         ...unpublishStamp(a.metadata),
       });

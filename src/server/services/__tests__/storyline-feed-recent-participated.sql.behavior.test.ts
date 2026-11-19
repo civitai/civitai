@@ -30,6 +30,7 @@ vi.mock('~/server/services/placement.service', async (importOriginal) => ({
 }));
 
 const { getStorylinesInfinite } = await import('~/server/services/storyline.service');
+const { getBlockedPairIds } = await import('~/server/services/user-preferences.service');
 
 const migration = (name: string) =>
   readFileSync(
@@ -231,5 +232,28 @@ describe('the Participated filter', () => {
       CONTINUED,
       QUIET,
     ]);
+  });
+});
+
+describe("a search's candidate ids", () => {
+  const searchIds = async (ids: number[]) =>
+    (
+      await getStorylinesInfinite({
+        ids,
+        filter: 'all',
+        sort: 'newest',
+        limit: ids.length,
+        viewer: { id: STRANGER },
+        browsingLevel: NsfwLevel.PG,
+      })
+    ).items.map((item) => item.id);
+
+  it('returns only those storylines, under the feed gates', async () => {
+    expect(await searchIds([QUIET, CONTINUED])).toEqual([CONTINUED, QUIET]);
+  });
+
+  it('still leaves out a creator the viewer blocked or who blocked them', async () => {
+    vi.mocked(getBlockedPairIds).mockResolvedValueOnce([OWNER]);
+    expect(await searchIds([QUIET, CONTINUED])).toEqual([]);
   });
 });

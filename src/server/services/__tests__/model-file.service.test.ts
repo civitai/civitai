@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 
 // One local named `mockDbRead` served BOTH clients, and the file drives both sides of a genuine
 // split: `count` (model-file.service:599), `findFirst` (:617) and `findMany` (:36) are dbRead,
@@ -26,6 +27,17 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedArray: () => ({ bust: vi.fn(), fetch: vi.fn() }),
 }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
+const { mockVersionHasStudioDataset } = vi.hoisted(() => ({
+  mockVersionHasStudioDataset: vi.fn(async (_db: unknown, _versionId: number) => false),
+}));
+// "Is a Training Studio version" has its own PGlite coverage (training-data-share.behavior.test.ts).
+vi.mock('~/server/services/training-data-restricted.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingDataRestricted>()),
+  versionHasStudioDataset: mockVersionHasStudioDataset,
+}));
+beforeEach(() => {
+  mockVersionHasStudioDataset.mockImplementation(async () => false);
+});
 
 import * as modelFileService from '~/server/services/model-file.service';
 import {
@@ -470,5 +482,48 @@ describe('createFile / updateFile — renaming a download (overrideName)', () =>
       where: { id: 77 },
       data: { overrideName: '_a_ b.safetensors', metadata: undefined },
     });
+  });
+});
+
+describe('createFile — a second Training Data file on a Training Studio version', () => {
+  /** Whether the file's own version (5) is a Training Studio version. */
+  const studioVersion = (has: boolean) =>
+    mockVersionHasStudioDataset.mockImplementation(
+      async (_db, versionId) => has && versionId === 5
+    );
+  const create = (who: { userId: number; isModerator?: boolean }) =>
+    modelFileService.createFile({
+      name: 'dataset.zip',
+      url: 'https://bucket/training-images/5/dataset.zip',
+      sizeKB: 1,
+      type: 'Training Data',
+      visibility: 'Public',
+      modelVersionId: 5,
+      select: { id: true },
+      ...who,
+    });
+  const createdVisibility = () => mockDbWrite.modelFile.create.mock.calls[0][0].data.visibility;
+
+  beforeEach(() => {
+    mockDbWrite.modelVersion.findFirst.mockResolvedValue({ id: 5 } as never);
+    mockDbWrite.modelFile.create.mockResolvedValue({ id: 78 } as never);
+  });
+
+  it("saves the owner's Public upload as Private", async () => {
+    studioVersion(true);
+    await create({ userId: 1 });
+    expect(createdVisibility()).toBe('Private');
+  });
+
+  it('keeps Public on a version with no Studio dataset', async () => {
+    studioVersion(false);
+    await create({ userId: 1 });
+    expect(createdVisibility()).toBe('Public');
+  });
+
+  it("keeps a moderator's Public upload Public", async () => {
+    studioVersion(true);
+    await create({ userId: 999, isModerator: true });
+    expect(createdVisibility()).toBe('Public');
   });
 });

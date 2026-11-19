@@ -8,8 +8,6 @@ const mocks = vi.hoisted(() => ({ decide: vi.fn() }));
 // Hand-listed: the loop under test never reaches a removal, only the module's imports do.
 vi.mock('~/server/services/article.service', () => ({ unpublishArticleById: vi.fn() }));
 vi.mock('~/server/services/chat.service', () => ({ deleteChatMessage: vi.fn() }));
-vi.mock('~/server/services/comment.service', () => ({ bulkSetCommentTosViolation: vi.fn() }));
-vi.mock('~/server/services/commentsv2.service', () => ({ bulkSetCommentV2TosViolation: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({
   toggleBan: vi.fn(),
   clearUserProfileFields: vi.fn(),
@@ -19,6 +17,9 @@ vi.mock('~/server/services/model.service', () => ({ unpublishModelById: vi.fn() 
 vi.mock('~/server/services/post.service', () => ({ unpublishPostAsModerator: vi.fn() }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: vi.fn() } }));
 vi.mock('~/server/services/text-scan/actions/csam-hold', () => ({ lockCsamHold: vi.fn() }));
+vi.mock('~/server/services/service-offering-moderation.adapter', () => ({
+  requeueBlockedServiceOffering: vi.fn(),
+}));
 
 const {
   CSAM_HOLD_BATCH_MAX,
@@ -57,11 +58,17 @@ describe('decideCsamHoldBatch', () => {
     });
 
     expect(
-      mocks.decide.mock.calls.map(([args]) => [args.holdId, args.textHash, args.decision])
+      mocks.decide.mock.calls.map(([args]) => [
+        args.holdId,
+        args.textHash,
+        args.decision,
+        args.reportChoice,
+        args.batched,
+      ])
     ).toEqual([
-      [2, 'a', 'remove'],
-      [3, 'b', 'remove'],
-      [4, 'c', 'remove'],
+      [2, 'a', 'remove', undefined, true],
+      [3, 'b', 'remove', undefined, true],
+      [4, 'c', 'remove', undefined, true],
     ]);
     expect(results).toEqual([
       { holdId: 2, ok: true, status: 'Confirmed', entityType: 'Model', entityId: 1, userId: 9 },
@@ -103,42 +110,75 @@ describe('resolveCsamHoldInput', () => {
 
   it('keeps the single-hold shape', () => {
     expect(
-      resolveCsamHoldInput.safeParse({ holdId: 1, textHash: 'h1', decision: 'remove_ban' }).success
+      resolveCsamHoldInput.safeParse({
+        holdId: 1,
+        textHash: 'h1',
+        decision: 'remove_ban',
+        reportChoice: 'none',
+      }).success
     ).toBe(true);
-    expect(resolveCsamHoldInput.safeParse({ holdId: 1, decision: 'remove_ban' }).success).toBe(
-      false
-    );
+    expect(
+      resolveCsamHoldInput.safeParse({ holdId: 1, decision: 'remove_ban', reportChoice: 'none' })
+        .success
+    ).toBe(false);
   });
 
   it('accepts a batch of remove or dismiss', () => {
-    for (const decision of ['remove', 'dismiss'])
-      expect(resolveCsamHoldInput.safeParse({ holds: [hold(1)], decision }).success).toBe(true);
+    expect(
+      resolveCsamHoldInput.safeParse({ holds: [hold(1)], decision: 'remove', reportChoice: 'none' })
+        .success
+    ).toBe(true);
+    expect(resolveCsamHoldInput.safeParse({ holds: [hold(1)], decision: 'dismiss' }).success).toBe(
+      true
+    );
   });
 
   it.each(['remove_strike', 'remove_ban', 'remove_ban_report'])(
     'refuses %s on a batch',
     (decision) => {
-      expect(resolveCsamHoldInput.safeParse({ holds: [hold(1)], decision }).success).toBe(false);
+      expect(
+        resolveCsamHoldInput.safeParse({
+          holds: [hold(1)],
+          decision,
+          reportChoice: decision === 'remove_ban_report' ? 'imagery' : 'none',
+        }).success
+      ).toBe(false);
     }
   );
 
   it('caps a batch', () => {
     const holds = (n: number) => Array.from({ length: n }, (_, i) => hold(i + 1));
     expect(
-      resolveCsamHoldInput.safeParse({ holds: holds(CSAM_HOLD_BATCH_MAX), decision: 'remove' })
-        .success
+      resolveCsamHoldInput.safeParse({
+        holds: holds(CSAM_HOLD_BATCH_MAX),
+        decision: 'remove',
+        reportChoice: 'none',
+      }).success
     ).toBe(true);
     expect(
-      resolveCsamHoldInput.safeParse({ holds: holds(CSAM_HOLD_BATCH_MAX + 1), decision: 'remove' })
+      resolveCsamHoldInput.safeParse({
+        holds: holds(CSAM_HOLD_BATCH_MAX + 1),
+        decision: 'remove',
+        reportChoice: 'none',
+      }).success
+    ).toBe(false);
+    expect(
+      resolveCsamHoldInput.safeParse({ holds: [], decision: 'remove', reportChoice: 'none' })
         .success
     ).toBe(false);
-    expect(resolveCsamHoldInput.safeParse({ holds: [], decision: 'remove' }).success).toBe(false);
   });
 
   it('needs exactly one of holdId and holds', () => {
-    expect(resolveCsamHoldInput.safeParse({ decision: 'remove' }).success).toBe(false);
     expect(
-      resolveCsamHoldInput.safeParse({ holdId: 1, holds: [hold(2)], decision: 'remove' }).success
+      resolveCsamHoldInput.safeParse({ decision: 'remove', reportChoice: 'none' }).success
+    ).toBe(false);
+    expect(
+      resolveCsamHoldInput.safeParse({
+        holdId: 1,
+        holds: [hold(2)],
+        decision: 'remove',
+        reportChoice: 'none',
+      }).success
     ).toBe(false);
   });
 });

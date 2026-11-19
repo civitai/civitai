@@ -3,6 +3,11 @@ README.md
 LICENSE
 docker-compose.yml
 node_modules
+**/node_modules
+# Local build output (the registry adapter bundle) and local env files, which can hold secrets.
+# No Dockerfile reads either from the context.
+dist
+.env*
 nginx
 .git
 .gitignore

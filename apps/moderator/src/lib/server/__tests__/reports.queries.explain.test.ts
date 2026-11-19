@@ -67,16 +67,12 @@ describe.skipIf(!h.hasDb)('report queries plan against the real schema', () => {
     await plans();
   });
 
-  // The only fragment that joins Thread to itself, and only these two types emit it.
-  it.each(['comment', 'commentV2'] as const)(
-    'getReports(%s) resolves the deep-link CASE over Thread',
-    async (type) => {
-      await service.getReports({ type, statuses: 'all', reasons: 'all' });
-      const [, page] = h.queries;
-      expect(page.sql).toMatch(/highlight/);
-      await plans();
-    }
-  );
+  it('getReports(commentV3) resolves the comment permalink', async () => {
+    await service.getReports({ type: 'commentV3', statuses: 'all', reasons: 'all' });
+    const [, page] = h.queries;
+    expect(page.sql).toMatch(/'\/comments\/'/);
+    await plans();
+  });
 
   it('getReportCounts — the materialized CTE and every union branch', async () => {
     await service.getReportCounts();

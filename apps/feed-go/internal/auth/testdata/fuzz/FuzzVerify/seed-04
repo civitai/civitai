@@ -1,0 +1,4 @@
+go test fuzz v1
+[]byte("{\"alg\":\"ES256\",\"kid\":\"k1\",\"typ\":\"JWT\"}")
+[]byte("{\"sub\":\"42\",\"iss\":\"https://auth.example.test\",\"impersonatedBy\":1}")
+string("x.y")

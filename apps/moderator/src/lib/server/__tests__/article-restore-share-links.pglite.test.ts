@@ -96,6 +96,7 @@ describe("a moderator's article restore", () => {
   // A share link belongs to the draft. Without this, a link made while the article was unpublished
   // reads it again once the author unpublishes it after the restore.
   it("revokes the restored article's share links, and no other article's", async () => {
+    await db.exec(`UPDATE "Article" SET metadata = '{"unpublishedBy":1}' WHERE id = ${ARTICLE}`);
     expect(await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 })).toEqual({
       ok: true,
     });
@@ -148,21 +149,66 @@ describe("a moderator's article restore", () => {
     expect(await row()).toEqual({ status: 'Published', publishedAt, metadata: {} });
   });
 
-  // A scheduled draft goes back to its author still scheduled: the go-live job publishes it.
-  it('returns a blocked scheduled draft to Draft with its schedule unchanged', async () => {
+  const schedule = async () =>
+    (
+      await db.query<{ scheduledAt: Date | null }>(
+        `SELECT "scheduledAt" FROM "Article" WHERE id = ${ARTICLE}`
+      )
+    ).rows[0].scheduledAt;
+
+  // A schedule that lapsed while the draft was blocked would publish it on the go-live job's next run.
+  it('returns a blocked draft whose schedule has passed to Draft with no schedule', async () => {
     await db.exec(`UPDATE "Article" SET status = 'UnpublishedViolation', "publishedAt" = NULL,
-      "scheduledAt" = '2027-01-01T00:00:00Z',
+      "scheduledAt" = now() - interval '1 day',
       metadata = '{"statusBeforeViolation":"Draft"}' WHERE id = ${ARTICLE}`);
     await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 });
-    const { rows } = await db.query<{
-      status: string;
-      publishedAt: Date | null;
-      scheduledAt: Date;
-    }>(`SELECT status, "publishedAt", "scheduledAt" FROM "Article" WHERE id = ${ARTICLE}`);
-    expect(rows[0]).toEqual({
-      status: 'Draft',
-      publishedAt: null,
-      scheduledAt: new Date('2027-01-01T00:00:00Z'),
+    expect(await row()).toEqual({ status: 'Draft', publishedAt: null, metadata: {} });
+    expect(await schedule()).toBeNull();
+  });
+
+  it('returns a blocked draft scheduled for later to Draft with no schedule', async () => {
+    await db.exec(`UPDATE "Article" SET status = 'UnpublishedViolation', "publishedAt" = NULL,
+      "scheduledAt" = now() + interval '30 days',
+      metadata = '{"statusBeforeViolation":"Draft"}' WHERE id = ${ARTICLE}`);
+    await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 });
+    expect(await schedule()).toBeNull();
+  });
+
+  describe('of an article in Unpublished', () => {
+    const refused = {
+      ok: false,
+      error: 'The author unpublished this article; only they can republish it.',
+    };
+    const unpublishedBy = (metadata: object) =>
+      db.exec(`UPDATE "Article" SET status = 'Unpublished',
+        metadata = '${JSON.stringify(metadata)}' WHERE id = ${ARTICLE}`);
+
+    it('refuses one its author unpublished, and changes nothing', async () => {
+      await unpublishedBy({ unpublishedBy: AUTHOR });
+      const before = await row();
+      expect(await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 })).toEqual(
+        refused
+      );
+      expect(await row()).toEqual(before);
+      expect(await activeLinks()).toEqual([ARTICLE, OTHER_ARTICLE]);
+    });
+
+    // Rows from before `unpublishedBy` was written are author unpublishes too.
+    it('refuses one with no record of who unpublished it', async () => {
+      await unpublishedBy({});
+      const before = await row();
+      expect(await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 })).toEqual(
+        refused
+      );
+      expect(await row()).toEqual(before);
+    });
+
+    it('publishes one a moderator unpublished', async () => {
+      await unpublishedBy({ unpublishedBy: 1 });
+      expect(await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 })).toEqual({
+        ok: true,
+      });
+      expect((await row()).status).toBe('Published');
     });
   });
 

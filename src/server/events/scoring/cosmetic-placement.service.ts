@@ -7,11 +7,12 @@ import {
   TEAM_HOURS_CUT_FIELD,
   utcDay,
 } from '~/server/events/points/keys';
-import { teamAwardsBy } from '~/server/events/scoring/team-awards';
+import { loadTeamAwards } from '~/server/events/scoring/team-awards';
 import type { dbRead, dbWrite } from '~/server/db/client';
 import type { EventScoring, TeamScore } from '~/server/events/base.event';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 export type ScoredEvent = {
   name: string;
@@ -119,7 +120,7 @@ async function readTeamHourly(event: StandingsEvent, fromDay: Date) {
   }
 }
 
-// Banned, deleted and leaderboard-excluded users drop out of the standings (team totals, history and
+// Banned, deleted and event-points-excluded users drop out of the standings (team totals, history and
 // rankings). Their rows stay in the table, so a reversal restores them; per-cosmetic reads below are
 // not filtered. The hourly job passes the primary: it builds this right after writing the day, and
 // a lagging replica would freeze stale numbers into the snapshot for an hour.
@@ -133,7 +134,7 @@ async function computeStandings(event: SettledEvent, db: typeof dbWrite | typeof
       SELECT DISTINCT "userId" FROM "EventCosmeticScoreDaily"
       WHERE event = ${event.name} AND day >= ${fromDay}::date
     )
-      AND (u."bannedAt" IS NOT NULL OR u."deletedAt" IS NOT NULL OR u."excludeFromLeaderboards")
+      AND (u."bannedAt" IS NOT NULL OR u."deletedAt" IS NOT NULL OR (u.flags & ${UserFlag.ExcludeFromEventPoints}::int) <> 0)
   `;
   const hiddenIds = hidden.map((u) => u.id);
   // NOT IN over a subquery is hashed; <> ALL(array) compares every row with the whole array.
@@ -147,7 +148,7 @@ async function computeStandings(event: SettledEvent, db: typeof dbWrite | typeof
   `;
   // Cut where the referee last settled, so the snapshot and the live base count the same awards.
   const liveCut = Number((await sysRedis.get(eventSeasonKeys(event.name, 'live').cut)) ?? 0);
-  const awarded = teamAwardsBy(event, new Date(liveCut * LIVE_BUCKET_MS)).map(
+  const awarded = (await loadTeamAwards(event, new Date(liveCut * LIVE_BUCKET_MS), db)).map(
     ({ team, points, at }) => ({
       team,
       day: new Date(`${utcDay(at)}T00:00:00.000Z`),

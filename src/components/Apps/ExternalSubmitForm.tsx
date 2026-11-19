@@ -808,6 +808,20 @@ function ExternalCreateForm() {
                 data-testid="apps-offsite-submit-source-repo"
               />
 
+              {/* Optional public issue-tracker / support link. Any https host. */}
+              <TextInput
+                label="Issue tracker"
+                description="Where users can report a problem or get help, shown as Support on your app's store page (optional). Any https:// link — e.g. your repository's issues page."
+                placeholder="https://github.com/your-org/your-app/issues"
+                value={values.issueTrackerUrl}
+                onChange={(e) => setField('issueTrackerUrl', e.currentTarget.value)}
+                onKeyDown={handleDetailsKeyDown}
+                error={errors.issueTrackerUrl}
+                maxLength={OFFSITE_SUBMIT_LIMITS.issueTrackerUrlMax}
+                disabled={busy}
+                data-testid="apps-offsite-submit-issue-tracker"
+              />
+
               <Group grow align="flex-start">
                 <Select
                   label="Category"

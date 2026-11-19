@@ -1,5 +1,6 @@
 import { parsePlatformFeedbackVersion } from '@civitai/shared/platform-feedback-version';
 import { sql, type RawBuilder } from '@civitai/db/kysely';
+import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
 // Relative, not `$lib`: imported by the main app's moderator-seam test.
 import {
   PLATFORM_FIXED_IN_COMPONENTS,
@@ -130,4 +131,28 @@ export function platformResolutionContext(
   if (write.kind === 'clear') return sql`${sql.ref('context')} #- '{server,resolution}'`;
   const stored = JSON.stringify(storedPlatformResolution(write, by));
   return sql`jsonb_set(${sql.ref('context')}, '{server,resolution}', ${stored}::jsonb)`;
+}
+
+/**
+ * `context` (or the given expression over it) with `server.changedAt` set to `at`. The moderator
+ * change feed (`platformFeedback.listChanges`) reads this beside `handledAt` and `resolution.at`.
+ * Some writes remove those two times rather than move them: clearing a resolution, or moving a row
+ * back to `new`, which nulls `handledAt`. Only this key then says the row changed. So the triage
+ * writes in `feedback.service.ts` (single-row and bulk) stamp it on every save, a note-only save
+ * included. `linkInTransaction` does not: it only moves `handledAt` forward, which surfaces the row
+ * by itself.
+ *
+ * Touches only the `changedAt` key (see `platformResolutionContext` for why `context` is never
+ * read-modify-written). Decided by the stored row, never the form:
+ * any other area is left as it is, even with a `server` key of its own, and so is an `apps-platform`
+ * row whose `server` is not an object, because `jsonb_set` through a scalar is an error.
+ */
+export function stampPlatformChange(
+  at: Date,
+  context: RawBuilder<unknown> = sql`${sql.ref('context')}`
+): RawBuilder<unknown> {
+  return sql`(CASE WHEN ${sql.ref('area')} = ${APPS_PLATFORM_FEEDBACK_AREA}
+      AND jsonb_typeof((${context})->'server') = 'object'
+    THEN jsonb_set(${context}, '{server,changedAt}', to_jsonb(${at.toISOString()}::text))
+    ELSE ${context} END)`;
 }

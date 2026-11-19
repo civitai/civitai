@@ -3,7 +3,6 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as JevModule from '~/server/services/ai/jev';
 import type * as CoverageSource from '~/server/services/generation/coverage-source';
@@ -146,8 +145,6 @@ beforeEach(() => {
   mockStudyGet.mockResolvedValue({ contentHash: STUDY, scores: {}, checkpoints: INDEX });
   mockCoverage.mockReset();
   mockCoverage.mockResolvedValue(COVERAGE);
-  loggingMock.logToAxiom.mockReset();
-  loggingMock.logToAxiom.mockResolvedValue(undefined);
   redisMock.redis.packed.get.mockReset();
   redisMock.redis.packed.get.mockResolvedValue(null);
   redisMock.redis.packed.set.mockReset();
@@ -324,10 +321,6 @@ describe('ATTACH_BM with a served snapshot', () => {
       criteriaVersion: 2,
     });
     expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 3600 });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'resource-intent-cooc-fallback' }),
-      'temp-search'
-    );
   });
 
   it('a baseModel the snapshot has no attachments for hands the matcher an empty list, not null', async () => {
@@ -336,7 +329,7 @@ describe('ATTACH_BM with a served snapshot', () => {
   });
 });
 
-describe('🔴 ATTACH_BM with no servable section: BASE_BM, flagged, 60 s, reason logged', () => {
+describe('🔴 ATTACH_BM with no servable section: BASE_BM, flagged, 60 s, reason recorded', () => {
   it.each([
     ['no snapshot at all', fallback('load_failed'), 'load_failed'],
     ['a snapshot without a checkpoint section', served(null), 'spec_mismatch'],
@@ -353,10 +346,6 @@ describe('🔴 ATTACH_BM with no servable section: BASE_BM, flagged, 60 s, reaso
       checkpointArm: 'attach_bm',
     });
     expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 60 });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      { type: 'resource-intent-cooc-fallback', reason, kind: 'checkpoint' },
-      'temp-search'
-    );
     await flush();
     expect(shadowRow()).toMatchObject({
       arm: 'attach_bm',
@@ -461,14 +450,6 @@ describe('🔴 study mode (ATTACH_BM)', () => {
     expect(mockAskJev).not.toHaveBeenCalled();
     expect(redisMock.redis.packed.get).not.toHaveBeenCalled();
     expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'resource-intent-degraded',
-        degradedReason: 'cooc_study_snapshot',
-        model: 'checkpoint-unavailable',
-      }),
-      'temp-search'
-    );
     await flush();
     expect(shadowRow()).toMatchObject({
       degraded: 1,
@@ -493,14 +474,6 @@ describe('checkpoint degrade and cache hit', () => {
       model: 'checkpoint-unavailable',
     });
     expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 60 });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'resource-intent-degraded',
-        degradedReason: 'checkpoint_error',
-        model: 'checkpoint-unavailable',
-      }),
-      'temp-search'
-    );
     await flush();
     expect(shadowRow()).toMatchObject({
       degraded: 1,

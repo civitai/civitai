@@ -1,286 +1,155 @@
-import { createHash } from 'crypto';
 import { TRPCError } from '@trpc/server';
-import { env } from '~/env/server';
-import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { getAllImages } from '~/server/services/image.service';
-import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { ImageSort } from '~/server/common/enums';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  anchorBrowsingLevel,
+  beginSemanticAudit,
+  isNonModClampOn,
+  makeRefusalOf,
+  type QueryRefusal,
+  type QueryTracker,
+  queryVerdictLevel,
+  refusedTextCandidates,
+  resolveSemanticBrowsingLevel,
+} from '~/server/services/semantic-query-guard';
+import { withCandidateCache } from '~/server/services/semantic-candidate-cache';
+import type {
+  RefusedCandidates,
+  RefusedSearchPath,
+} from '~/server/services/semantic-search-audit.service';
+import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
+import {
+  collectPage,
+  resolveTagIds,
+  resolveTags,
+  resolveUserIds,
+  searchServiceSource,
+  withTagMatchesFirst,
+  type CandidateFilter,
+  type CandidateSource,
+  type Hydrate,
+  type SearchQuery,
+  viewerExcludedUserIds,
+} from '~/server/services/semantic-search-client';
 
-// The index contract lives in docs/features/semantic-image-search.md; these mirror it.
-const VECTOR_ALIAS = 'images_semantic';
-const EMBED_MODEL = 'wemm-2b';
-const EMBED_DIMENSIONS = 256;
+// The search service's collection name for the image vectors.
+const IMAGE_COLLECTION = 'images';
 
-const QUERY_VECTOR_TTL = 60 * 60 * 24 * 7;
-const CANDIDATE_MULTIPLIER = 3;
-const MAX_HYDRATION_ROUNDS = 3;
-// The ceiling of an `ids` batch on the image fetch path (IMAGE_IDS_BATCH_CAP's reasoning).
-const MAX_HYDRATION_BATCH = 100;
-// Qdrant pays for every skipped candidate on each page, so deep paging is capped.
-export const MAX_CANDIDATE_OFFSET = 2000;
-
-type ModelStamp = { model?: string; dimensions?: number; modelRevision?: string; profile?: string };
 type HydratedImage = Awaited<ReturnType<typeof getAllImages>>['items'][number];
 
-async function qdrantRequest<T>(path: string, body?: unknown): Promise<T> {
-  if (!env.QDRANT_URL)
-    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Semantic search is not set up' });
-  const res = await fetch(`${env.QDRANT_URL}/collections/${VECTOR_ALIAS}${path}`, {
-    method: body ? 'POST' : 'GET',
-    headers: {
-      'content-type': 'application/json',
-      ...(env.QDRANT_API_KEY ? { 'api-key': env.QDRANT_API_KEY } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok)
-    throw new TRPCError({ code: 'BAD_GATEWAY', message: `Vector index error (${res.status})` });
-  const { result } = (await res.json()) as { result: T };
-  return result;
-}
+const searchServiceCandidates = searchServiceSource(IMAGE_COLLECTION, {
+  notFoundMessage: 'Image not found',
+});
 
-let stampCache: { stamp: ModelStamp; at: number } | undefined;
-async function getIndexStamp(): Promise<ModelStamp> {
-  if (stampCache && Date.now() - stampCache.at < 5 * 60 * 1000) return stampCache.stamp;
-  const info = await qdrantRequest<{ config: { metadata?: ModelStamp } }>('');
-  const stamp = info.config.metadata ?? {};
-  stampCache = { stamp, at: Date.now() };
-  return stamp;
-}
-
-/** Whitespace only: case can carry meaning (names, styles), so it reaches the model unchanged. */
-export function normalizeQuery(query: string) {
-  return query.trim().replace(/\s+/g, ' ');
-}
-
-type EmbeddingOutput = ModelStamp & { embedding?: number[]; blob?: { url?: string } };
-
-const EMBED_BLOB_TIMEOUT_MS = 10_000;
-const embeddingFailed = () => new TRPCError({ code: 'BAD_GATEWAY', message: 'Embedding failed' });
-
-/** A float32 embedding blob: EMBED_DIMENSIONS little-endian floats, nothing else. */
-function decodeEmbedding(buffer: ArrayBuffer) {
-  if (buffer.byteLength !== EMBED_DIMENSIONS * 4) throw embeddingFailed();
-  const view = new DataView(buffer);
-  return Array.from({ length: EMBED_DIMENSIONS }, (_, i) => view.getFloat32(i * 4, true));
-}
-
-/**
- * The recipe leaves `embedding` empty when the vector's blob was not readable yet, and returns a
- * signed URL that answers 404 (not written) or 503 (scan pending) until it is.
- */
-async function readEmbeddingBlob(url: string) {
-  const target = new URL(url, env.ORCHESTRATOR_ENDPOINT);
-  const ownHost =
-    !!env.ORCHESTRATOR_ENDPOINT && target.origin === new URL(env.ORCHESTRATOR_ENDPOINT).origin;
-  const headers: Record<string, string> =
-    ownHost && env.ORCHESTRATOR_ACCESS_TOKEN
-      ? { authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}` }
-      : {};
-  const deadline = Date.now() + EMBED_BLOB_TIMEOUT_MS;
-  for (let delay = 50; ; delay = Math.min(delay * 2, 500)) {
-    const remaining = deadline - Date.now();
-    const res = await fetch(target, {
-      headers,
-      signal: AbortSignal.timeout(Math.max(remaining, 500)),
-    }).catch(() => undefined);
-    if (res?.ok) return decodeEmbedding(await res.arrayBuffer());
-    if (!res || (res.status !== 404 && res.status !== 503) || remaining <= delay)
-      throw embeddingFailed();
-    await new Promise((resolve) => setTimeout(resolve, delay));
-  }
-}
-
-async function embedQuery(text: string) {
-  const stamp = await getIndexStamp();
-  if (!stamp.modelRevision)
-    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'The index has no vectors yet' });
-
-  const hash = createHash('sha256').update(text).digest('hex');
-  const key =
-    `${REDIS_KEYS.SEMANTIC_SEARCH.QUERY_VECTOR}:${EMBED_MODEL}:${EMBED_DIMENSIONS}:${stamp.modelRevision}:${stamp.profile}:${hash}` as const;
-  const cached = await redis.packed.get<number[]>(key);
-  if (cached) return cached;
-
-  const { data, error } = await internalOrchestratorClient.post<{ 200: EmbeddingOutput }>({
-    url: '/v2/consumer/recipes/multimodalEmbedding',
-    body: { model: EMBED_MODEL, dimensions: EMBED_DIMENSIONS, precision: 'float32', text },
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (error || !data || !(data.embedding?.length || data.blob?.url)) throw embeddingFailed();
-  // A query vector from another model or profile is meaningless against the index.
-  if (data.modelRevision !== stamp.modelRevision || data.profile !== stamp.profile) {
-    stampCache = undefined;
-    void logToAxiom({
-      name: 'semantic-search:model-mismatch',
-      type: 'error',
-      details: { query: data.modelRevision, queryProfile: data.profile, index: stamp },
-    }).catch(() => undefined);
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message: 'The search model does not match the index',
-    });
-  }
-
-  const vector = data.embedding?.length
-    ? data.embedding
-    : await readEmbeddingBlob(data.blob?.url as string);
-  // An empty or short vector would reach Qdrant as a malformed query, and stay cached.
-  if (vector.length !== EMBED_DIMENSIONS || !vector.every(Number.isFinite)) throw embeddingFailed();
-
-  await redis.packed.set(key, vector, { EX: QUERY_VECTOR_TTL });
-  return vector;
-}
-
-type CandidateFilter = {
-  browsingLevel: number;
-  tagIds?: number[];
-  excludedTagIds?: number[];
-  baseModels?: string[];
-  types?: string[];
-  excludedUserIds?: number[];
-  excludedImageIds?: number[];
-};
-
-export function buildCandidateFilter(f: CandidateFilter) {
-  const must: Record<string, unknown>[] = [
-    {
-      key: 'nsfwLevel',
-      match: { any: Flags.instanceToArray(f.browsingLevel || publicBrowsingLevelsFlag) },
-    },
-  ];
-  // Every listed tag, not any of them: each added tag narrows the results.
-  for (const tagId of f.tagIds ?? []) must.push({ key: 'tagIds', match: { value: tagId } });
-  if (f.baseModels?.length) must.push({ key: 'baseModels', match: { any: f.baseModels } });
-  if (f.types?.length) must.push({ key: 'type', match: { any: f.types } });
-
-  const must_not: Record<string, unknown>[] = [];
-  if (f.excludedTagIds?.length) must_not.push({ key: 'tagIds', match: { any: f.excludedTagIds } });
-  if (f.excludedUserIds?.length)
-    must_not.push({ key: 'userId', match: { any: f.excludedUserIds } });
-  if (f.excludedImageIds?.length) must_not.push({ has_id: f.excludedImageIds });
-
-  return { must, must_not };
-}
-
-export type CandidateSource = (args: {
-  query: number[] | number;
-  filter: ReturnType<typeof buildCandidateFilter>;
-  offset: number;
-  limit: number;
-}) => Promise<number[]>;
-
-const qdrantCandidates: CandidateSource = async ({ query, filter, offset, limit }) => {
-  const { points } = await qdrantRequest<{ points: { id: number | string }[] }>('/points/query', {
-    query,
-    filter,
-    offset,
-    limit,
-    params: { quantization: { rescore: true, oversampling: 2 } },
-    with_payload: false,
-  });
-  return points.map((p) => Number(p.id));
-};
-
-export type Hydrate = (ids: number[]) => Promise<HydratedImage[]>;
-
-/**
- * Pages through ranked candidates, keeping those the image fetch path returns, in candidate order.
- * Qdrant's payload can be stale, so it only proposes: whatever hydration drops never reaches the page.
- */
-export async function collectPage({
-  candidates,
-  hydrate,
-  offset,
-  limit,
-  excluded = new Set(),
-}: {
-  candidates: (offset: number, limit: number) => Promise<number[]>;
-  hydrate: Hydrate;
-  offset: number;
-  limit: number;
-  excluded?: Set<number>;
-}) {
-  const items: HydratedImage[] = [];
-  let position = offset;
-  let exhausted = false;
-
-  for (let round = 0; round < MAX_HYDRATION_ROUNDS && items.length < limit; round++) {
-    const batchSize = Math.min(
-      (limit - items.length) * CANDIDATE_MULTIPLIER,
-      MAX_HYDRATION_BATCH,
-      MAX_CANDIDATE_OFFSET - position
-    );
-    if (batchSize <= 0) {
-      exhausted = true;
-      break;
-    }
-    const ids = await candidates(position, batchSize);
-    const wanted = ids.filter((id) => !excluded.has(id));
-    const byId = new Map((wanted.length ? await hydrate(wanted) : []).map((x) => [x.id, x]));
-
-    let consumed = 0;
-    for (const id of ids) {
-      if (items.length >= limit) break;
-      consumed++;
-      const item = byId.get(id);
-      if (item && !excluded.has(id)) items.push(item);
-    }
-    position += consumed;
-    if (ids.length < batchSize && consumed === ids.length) {
-      exhausted = true;
-      break;
-    }
-  }
-
-  const nextCursor = !exhausted && position < MAX_CANDIDATE_OFFSET ? position : undefined;
-  return { items, nextCursor };
-}
+const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
 
 export async function searchSemanticImages({
   input,
-  user,
+  user: sessionUser,
+  asModerator = false,
+  asOwner = false,
   domain,
-  candidateSource = qdrantCandidates,
+  track,
+  candidateSource = searchServiceCandidates,
+  refuseNarrowing = false,
+  tagMatchesFirst = false,
+  uploadAnchor,
 }: {
   input: SemanticImageSearchInput;
-  user: SessionUser;
+  // Signed out: the site defaults for hidden tags and browsing add-ons.
+  user?: SessionUser;
+  /** The request's views (`credentialViews`): without them the search reads as a plain viewer. */
+  asModerator?: boolean;
+  asOwner?: boolean;
   domain?: DomainColor;
+  track?: QueryTracker;
   candidateSource?: CandidateSource;
+  /** A verdict that would narrow the level refuses instead (the showcase picker's own images). */
+  refuseNarrowing?: boolean;
+  /** A query that names a tag ranks the images carrying it first (the showcase picker). */
+  tagMatchesFirst?: boolean;
+  /**
+   * Search by uploaded image: the upload's scanned level and the URL to embed, from an upload that
+   * passed the scan gate. Replaces `imageId` and `query`.
+   */
+  uploadAnchor?: { nsfwLevel: number; imageUrl: string };
 }) {
-  const [hidden, addonData, blockedTags] = await Promise.all([
-    getAllHiddenForUser({ userId: user.id }),
+  // Every moderator exemption below reads `user.isModerator`, so the viewer carries the view.
+  const user = sessionUser && {
+    ...sessionUser,
+    isModerator: asModerator && !!sessionUser.isModerator,
+  };
+  let browsingLevel = resolveSemanticBrowsingLevel(
+    input.browsingLevel,
+    user,
+    await isNonModClampOn(user)
+  );
+
+  const [hidden, addonData, blockedTags, namedUserIds, namedTagIds] = await Promise.all([
+    getAllHiddenForUser({ userId: user?.id }),
     getBrowsingSettingAddons(),
     getBlockedBrowsingTags(),
+    input.usernames?.length ? resolveUserIds(input.usernames) : undefined,
+    input.tagNames?.length ? resolveTagIds(input.tagNames) : undefined,
   ]);
+  // The feed's user and a typed @user are two filters, so both must hold.
+  const userIds =
+    namedUserIds && input.userIds?.length
+      ? namedUserIds.filter((id) => input.userIds?.includes(id))
+      : namedUserIds ?? (input.userIds?.length ? input.userIds : undefined);
+  if (userIds && !userIds.length) return emptyPage();
   // As the image feed: a tag that cannot be browsed is dropped, and a filter of only such tags is empty.
+  // A named tag that does not exist can match nothing.
+  if (namedTagIds && namedTagIds.length < new Set(input.tagNames).size)
+    return { items: [], nextCursor: undefined, correctedQuery: undefined };
   const strip = stripBlockedTagIds(
-    input.tagIds,
+    [...new Set([...(input.tagIds ?? []), ...(namedTagIds ?? [])])],
     blockedTags.map((t) => t.id)
   );
-  if (strip.emptyResult) return { items: [], nextCursor: undefined };
+  if (strip.emptyResult) return { items: [], nextCursor: undefined, correctedQuery: undefined };
   const tagIds = strip.tagIds;
   // The feed applies these in the browser; here they are applied server-side.
-  const addons = resolveBrowsingSettingsAddons(addonData, input.browsingLevel, {
-    isModerator: user.isModerator,
+  const addonsFor = (level: number) =>
+    resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
+  let addons = addonsFor(browsingLevel);
+  const audit = beginSemanticAudit({
+    index: IMAGE_COLLECTION,
+    viewer: user,
+    query: input.query,
+    firstPage: !input.cursor,
   });
-  const excludedUserIds = [
-    ...new Set(
-      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
-    ),
-  ];
+  const refusalOf = makeRefusalOf({
+    index: 'images_semantic',
+    track,
+    context: () => ({
+      // With refuseNarrowing the verdict is taken at one level, whatever level is asked for.
+      browsingLevel: refuseNarrowing ? allBrowsingLevelsFlag : browsingLevel,
+      disablePoi: addons.disablePoi,
+      isModerator: user?.isModerator,
+    }),
+    audit,
+  });
+  const refusal = input.query ? await refusalOf(input.query, 'query') : false;
+  const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
+  const queryRefused = verdictLevel === 'refuse' || (refuseNarrowing && !!refusal);
+  const refusedPath: RefusedSearchPath =
+    verdictLevel === 'refuse' ? 'refused_query' : 'refused_own_images';
+  if (!queryRefused && verdictLevel !== browsingLevel) {
+    browsingLevel = verdictLevel;
+    addons = addonsFor(browsingLevel);
+  }
+  const excludedUserIds = viewerExcludedUserIds(hidden);
   const hiddenTagIds = hidden.hiddenTags.filter((x) => x.hidden).map((x) => x.id);
   const viewerExcludedTagIds = [...new Set([...addons.excludedTagIds, ...hiddenTagIds])];
   const excludedTagIds = [...new Set([...(input.excludedTagIds ?? []), ...viewerExcludedTagIds])];
@@ -289,54 +158,161 @@ export async function searchSemanticImages({
     .filter((x) => !x.tagId || hiddenTagIds.includes(x.tagId))
     .map((x) => x.id);
 
-  const filter = buildCandidateFilter({
-    browsingLevel: input.browsingLevel,
-    tagIds,
-    excludedTagIds,
-    baseModels: input.baseModels,
-    types: input.types,
-    excludedUserIds,
-    excludedImageIds,
-  });
-
   // The feed's own fetch path decides visibility (publish state, privacy, blocks, moderation,
   // browsing level, hidden users and tags); Qdrant only proposes candidates.
   const fetchVisible = async (
     ids: number[],
-    filters: { tags?: number[]; excludedTagIds: number[] }
+    level: number,
+    filters: {
+      tags?: number[];
+      excludedTagIds: number[];
+      fromPlatform?: boolean;
+      withMeta?: boolean;
+      // Users left out of these results only.
+      alsoExcludedUserIds?: number[];
+    }
   ) => {
+    const { alsoExcludedUserIds = [], ...feedFilters } = filters;
     const { items } = await getAllImages({
       ...getInfiniteImagesSchema.parse({
         ids,
         limit: ids.length,
         sort: ImageSort.Newest,
-        browsingLevel: input.browsingLevel,
-        ...filters,
-        excludedUserIds,
+        browsingLevel: level,
+        ...feedFilters,
+        excludedUserIds: [...excludedUserIds, ...alsoExcludedUserIds],
         disablePoi: addons.disablePoi,
         disableMinor: addons.disableMinor,
         include: ['cosmetics', 'tagIds'],
       }),
       user,
+      asModerator,
+      asOwner,
       domain,
       headers: { src: 'semanticImageSearch' },
     });
     return items;
   };
-  const hydrate: Hydrate = (ids) => fetchVisible(ids, { tags: tagIds, excludedTagIds });
 
   // "More like this" from an image the viewer cannot see would reveal what it resembles.
-  if (input.imageId) {
-    const [anchor] = await fetchVisible([input.imageId], { excludedTagIds: viewerExcludedTagIds });
+  let level = browsingLevel;
+  if (input.imageId && !queryRefused) {
+    const [anchor] = await fetchVisible([input.imageId], browsingLevel, {
+      excludedTagIds: viewerExcludedTagIds,
+    });
     if (!anchor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+    if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
+      level = anchorBrowsingLevel(browsingLevel, anchor.nsfwLevel);
   }
-  const query = input.imageId ?? (await embedQuery(normalizeQuery(input.query ?? '')));
+  if (uploadAnchor) {
+    // An upload is never served, so no visibility check refuses it: refuse a level the viewer
+    // (already capped to the domain) may not see here.
+    if (!Flags.intersects(browsingLevel, uploadAnchor.nsfwLevel))
+      return audit.done(emptyPage(), browsingLevel);
+    if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
+      level = anchorBrowsingLevel(browsingLevel, uploadAnchor.nsfwLevel);
+  }
+  const timed = <T>(stage: 'candidates' | 'hydrate', work: Promise<T>) => {
+    const end = semanticSearchStage().startTimer({ index: IMAGE_COLLECTION, stage });
+    return work.finally(() => end());
+  };
+  // Made On-site and Metadata only are judged from the image's meta, so only hydration applies them.
+  const hydrate: Hydrate<HydratedImage> = (ids) =>
+    timed(
+      'hydrate',
+      fetchVisible(ids, level, {
+        tags: tagIds,
+        excludedTagIds,
+        fromPlatform: input.fromPlatform,
+        withMeta: input.withMeta,
+        // "More like this" without the viewer's own images; the source check above still sees them.
+        alsoExcludedUserIds: input.excludeOwn && user ? [user.id] : undefined,
+      })
+    );
+  // The candidate cache holds nothing per user, and an upload is one user's.
+  const cachedSource = uploadAnchor
+    ? candidateSource
+    : withCandidateCache(IMAGE_COLLECTION, candidateSource, user?.isModerator ? 'mod' : 'user');
 
-  return collectPage({
-    candidates: (offset, limit) => candidateSource({ query, filter, offset, limit }),
+  // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
+  // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
+  const filter: CandidateFilter = {
+    // With refuseNarrowing, candidates are not pre-narrowed to the viewer's level.
+    gate: {
+      kind: 'level',
+      nsfwLevels: Flags.instanceToArray(refuseNarrowing ? allBrowsingLevelsFlag : level),
+    },
+    tagIds,
+    anyOf: { baseModels: input.baseModels, type: input.types },
+    userIds,
+    range: {
+      key: 'sortAt',
+      gte: input.postedAfter?.toISOString(),
+      lte: input.postedBefore?.toISOString(),
+    },
+  };
+
+  const viewer = { isModerator: !!user?.isModerator };
+  // Refused before any search: the audit may run it after the response, for its row only.
+  if (queryRefused)
+    return input.query && !input.imageId
+      ? audit.refused(
+          refusedPath,
+          emptyPage(),
+          browsingLevel,
+          refusedTextCandidates(cachedSource, { text: input.query, filter, viewer })
+        )
+      : audit.done(emptyPage(), browsingLevel, refusedPath);
+  const query: SearchQuery = uploadAnchor
+    ? { imageUrl: uploadAnchor.imageUrl }
+    : input.imageId
+    ? { similarTo: input.imageId }
+    : { text: input.query ?? '' };
+
+  const queryTag =
+    tagMatchesFirst && 'text' in query && query.text.trim()
+      ? (await resolveTags([query.text.trim()])).find(
+          (t) => !blockedTags.some((b) => b.id === t.id)
+        )
+      : undefined;
+  const ranked = queryTag ? withTagMatchesFirst(cachedSource, queryTag.id) : cachedSource;
+
+  let correctedQuery: string | undefined;
+  // Every correction is audited, not only the first: rounds of one page can come from cached blocks
+  // of different ages.
+  const corrections = new Map<string, ReturnType<typeof refusalOf>>();
+  let correctedRefusal: QueryRefusal | undefined;
+  let first: RefusedCandidates | undefined;
+  const page = await collectPage({
+    candidates: async (offset, limit) => {
+      const result = await timed(
+        'candidates',
+        ranked({ query, filter, offset, limit, viewer, sort: input.sort })
+      );
+      audit.candidates(result);
+      first ??= result;
+      // The service embeds its spelling correction, not the text audited above.
+      const corrected = result.correctedQuery;
+      if (!correctedRefusal && corrected !== undefined && corrected !== input.query) {
+        if (!corrections.has(corrected))
+          corrections.set(corrected, refusalOf(corrected, 'correction'));
+        correctedRefusal = (await corrections.get(corrected)) || undefined;
+      }
+      if (correctedRefusal) return [];
+      correctedQuery ??= result.correctedQuery;
+      return result.ids;
+    },
     hydrate,
     offset: input.cursor ?? 0,
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
+  if (correctedRefusal)
+    return audit.refused(
+      'refused_correction',
+      emptyPage(),
+      level,
+      async () => first ?? { ids: [] }
+    );
+  return audit.done({ ...page, correctedQuery }, level);
 }

@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { constants } from '~/server/common/constants';
-import '~/server/services/text-scan/profiles/comment.profile';
-import '~/server/services/text-scan/profiles/comment-v2.profile';
+import '~/server/services/text-scan/profiles/comment-v3.profile';
 import '~/server/services/text-scan/profiles/resource-review.profile';
 import '~/server/services/text-scan/profiles/user.profile';
 import '~/server/services/text-scan/profiles/user-profile.profile';
@@ -154,8 +153,7 @@ describe('scamEligibleAuthors', () => {
 
 describe('scam profiles', () => {
   it.each([
-    ['Comment', ['scam', 'csam']],
-    ['CommentV2', ['scam', 'csam']],
+    ['CommentV3', ['scam', 'csam']],
     ['UserProfile', ['scam', 'csam']],
     ['ResourceReview', ['scam']],
     ['User', ['scam']],
@@ -163,41 +161,36 @@ describe('scam profiles', () => {
     expect(getTextScanProfile(entityType)?.labels).toEqual(labels)
   );
 
-  it.each([
-    ['Comment', 'comment'],
-    ['CommentV2', 'commentV2'],
-  ] as const)(
-    '%s reads the primary, names the author and dates the content by its last edit',
-    async (entityType, model) => {
-      dbMock.dbWrite[model].findMany.mockResolvedValue([
-        {
-          id: 1,
-          userId: 9,
-          updatedAt: EDITED,
-          content: '<p>hello <a href="https://x.example">there</a></p>',
-        },
-      ]);
-      eligible(9);
-      const subject = (await load(entityType, [1])).get(1);
-      expect(subject).toEqual({
-        fields: [{ heading: 'Comment', text: 'hello [link: https://x.example] there' }],
-        declared: {},
+  it('CommentV3 reads live comments on the primary, names the author and dates the content by its last edit', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
+      {
+        id: 1,
         userId: 9,
-        meta: { subjectUserId: 9, contentAt: EDITED.toISOString() },
-      });
-      expect(dbMock.dbRead[model].findMany).not.toHaveBeenCalled();
-    }
-  );
+        updatedAt: EDITED,
+        content: '<p>hello <a href="https://x.example">there</a></p>',
+      },
+    ] as never);
+    eligible(9);
+    const subject = (await load('CommentV3', [1])).get(1);
+    expect(subject).toEqual({
+      fields: [{ heading: 'Comment', text: 'hello [link: https://x.example] there' }],
+      declared: {},
+      userId: 9,
+      meta: { subjectUserId: 9, contentAt: EDITED.toISOString() },
+    });
+    const sql = (dbMock.dbWrite.$queryRaw.mock.calls[0][0] as string[]).join('?');
+    expect(sql).toContain('FROM "CommentV3"');
+    expect(sql).toContain('WHERE id = ANY');
+    expect(sql).toContain('"deletedAt" IS NULL');
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
 
-  it.each([
-    ['Comment', 'comment'],
-    ['CommentV2', 'commentV2'],
-  ] as const)('%s drops an author outside the scam window', async (entityType, model) => {
-    dbMock.dbWrite[model].findMany.mockResolvedValue([
+  it('CommentV3 drops an author outside the scam window', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
       { id: 1, userId: 9, updatedAt: EDITED, content: 'x' },
-    ]);
+    ] as never);
     eligible();
-    expect((await load(entityType, [1])).size).toBe(0);
+    expect((await load('CommentV3', [1])).size).toBe(0);
   });
 
   it('ResourceReview scans details and skips short ones', async () => {

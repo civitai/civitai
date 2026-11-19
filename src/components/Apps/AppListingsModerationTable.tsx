@@ -55,6 +55,7 @@ import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderatio
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { withLiveNote } from '~/components/Apps/appListingDetailModActions';
 
 /**
  * /apps/review — the unified MODERATOR listings management table (W13 post-approval
@@ -418,7 +419,24 @@ export function AppListingsModerationTable({
                       // testid so the display-label assertion can select this badge
                       // STRUCTURALLY — a text search for a category word would also
                       // match the app's name or a status chip.
-                      <Badge size="sm" variant="light" data-testid="apps-listing-mod-category">
+                      <Badge
+                        size="sm"
+                        variant="light"
+                        data-testid="apps-listing-mod-category"
+                        title={marketplaceCategoryLabel(row.category)}
+                        // The category column is narrow by design; the label WRAPS onto a
+                        // second line rather than being cut to "GENER…" by the badge's
+                        // ellipsis.
+                        styles={{
+                          root: { height: 'auto', maxWidth: '100%' },
+                          label: {
+                            whiteSpace: 'normal',
+                            overflow: 'visible',
+                            textOverflow: 'clip',
+                            lineHeight: 1.3,
+                          },
+                        }}
+                      >
                         {marketplaceCategoryLabel(row.category)}
                       </Badge>
                     ) : (
@@ -716,11 +734,11 @@ function ListingModActionModal({
   });
   // On-site reset routes through the block-review re-queue proc (#3165).
   const resetOnsiteMut = trpc.appListings.resetOnsiteListingToPending.useMutation({
-    onSuccess: () => afterSuccess('Listing reset to pending.'),
+    onSuccess: (result) => afterSuccess(withLiveNote('Listing reset to pending.', result)),
     onError: onError('Reset failed'),
   });
   const delistMut = trpc.appListings.delistListing.useMutation({
-    onSuccess: () => afterSuccess('Listing hidden.'),
+    onSuccess: (result) => afterSuccess(withLiveNote('Listing hidden.', result)),
     onError: onError('Hide failed'),
   });
   const relistMut = trpc.appListings.relistListing.useMutation({

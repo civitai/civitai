@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import * as z from 'zod';
 
@@ -143,6 +144,13 @@ export const baseHandler = withAxiom(async function handler(
   const attemptPurchase = async (): Promise<PurchaseOutcome> => {
     const rateLimit = await checkBlockGoodRateLimit(claims.blockInstanceId, buyerUserId);
     if (!rateLimit.allowed) {
+      recordBlockClaimsRateLimitRefusal({
+        claims,
+        surface: 'rest',
+        bucket: 'goods',
+        endpoint: 'goods_purchase',
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      });
       // TRANSIENT: nothing moved, so a retry once the window clears must be able
       // to execute — not cached under the idempotency key.
       res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));

@@ -384,6 +384,13 @@ async function writeTiersAndContents(trx: Trx, boxId: number, draft: BoxDraft) {
     `.execute(trx);
 
   const { newContents, changedContents } = planContentWrites(boxId, draft, contents, tierIdByKey);
+  const wasEnabled = new Map(contents.map((content) => [content.id, content.enabled]));
+  await assertNoneTakenDown(trx, [
+    ...newContents.filter((content) => content.enabled).map((c) => c.rewardDefinitionId),
+    ...changedContents
+      .filter((content) => content.enabled && !wasEnabled.get(content.id))
+      .map((content) => contents.find((row) => row.id === content.id)!.rewardDefinitionId),
+  ]);
   if (newContents.length) await trx.insertInto('BoxContent').values(newContents).execute();
   if (changedContents.length)
     await sql`
@@ -404,6 +411,30 @@ async function writeTiersAndContents(trx: Trx, boxId: number, draft: BoxDraft) {
     .where('boxDefinitionId', '=', boxId)
     .where('id', 'not in', keptTierIds.length ? keptTierIds : [0])
     .execute();
+}
+
+/**
+ * A taken-down cosmetic stays out of every box: the takedown disabled it and refunded its draws, so
+ * enabling it again would sell it anew. Asked only of contents this save adds or turns on, so a save
+ * that touches neither never fails on one.
+ */
+async function assertNoneTakenDown(trx: Trx, rewardDefinitionIds: number[]) {
+  if (!rewardDefinitionIds.length) return;
+  const takenDown = await trx
+    .selectFrom('ItemDefinition as d')
+    .innerJoin('CosmeticShopItem as s', 's.cosmeticId', 'd.cosmeticId')
+    .innerJoin('Cosmetic as c', 'c.id', 'd.cosmeticId')
+    .select('c.name')
+    .distinct()
+    .where('d.id', 'in', rewardDefinitionIds)
+    .where(sql<boolean>`s.meta ? 'takedown'`)
+    .execute();
+  if (takenDown.length)
+    throw new BoxRefusal(
+      `Taken down from the shop, so it can't go in a box: ${takenDown
+        .map((c) => c.name)
+        .join(', ')}.`
+    );
 }
 
 /**

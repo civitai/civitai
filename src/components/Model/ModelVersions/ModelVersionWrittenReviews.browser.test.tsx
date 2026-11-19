@@ -45,8 +45,8 @@ const review = (id: number, details: string) => ({
   user: { id: 100 + id, username: `reviewer${id}`, cosmetics: [], profilePicture: null },
 });
 
-const renderSection = () =>
-  renderWithProviders(<ModelVersionWrittenReviews modelId={1} modelVersionId={2} />);
+const renderSection = (counts: { thumbsUpCount?: number; thumbsDownCount?: number } = {}) =>
+  renderWithProviders(<ModelVersionWrittenReviews modelId={1} modelVersionId={2} {...counts} />);
 const section = () => document.querySelector('[data-testid="model-written-reviews"]');
 
 beforeEach(() => {
@@ -86,5 +86,40 @@ describe('ModelVersionWrittenReviews', () => {
     state.items = [];
     await renderSection();
     expect(section()).toBeNull();
+  });
+
+  test('each card is one link that opens that review’s dialog; there is no Read review footer', async () => {
+    const screen = await renderSection();
+    await expect.element(screen.getByText('Solid.')).toBeVisible();
+    const links = Array.from(
+      document.querySelectorAll<HTMLAnchorElement>(
+        '[data-testid="model-written-review"] a[rel="nofollow"]'
+      )
+    );
+    expect(links).toHaveLength(2);
+    expect(links[0].getAttribute('href')).toContain('dialog=resourceReview');
+    expect(links[0].getAttribute('href')).toContain('reviewId=1');
+    expect(links[1].getAttribute('href')).toContain('reviewId=2');
+    expect(links[0].textContent).toBe('Read review by reviewer1');
+    expect(document.body.textContent).not.toMatch(/Read review(?! by)/);
+  });
+
+  test('the line under the title leads with the rating label, then the share rounded down and the count', async () => {
+    const screen = await renderSection({ thumbsUpCount: 996, thumbsDownCount: 4 });
+    await expect
+      .element(screen.getByTestId('model-written-reviews-summary'))
+      .toHaveTextContent('Overwhelmingly Positive · 99% of 1,000 reviews');
+  });
+
+  test('a single review reads "1 review", not "1 reviews"', async () => {
+    const screen = await renderSection({ thumbsUpCount: 1, thumbsDownCount: 0 });
+    await expect
+      .element(screen.getByTestId('model-written-reviews-summary'))
+      .toHaveTextContent(/100% of 1 review$/);
+  });
+
+  test('with no thumbs on the model, shows no summary line', async () => {
+    await renderSection();
+    expect(document.querySelector('[data-testid="model-written-reviews-summary"]')).toBeNull();
   });
 });

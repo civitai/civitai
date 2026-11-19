@@ -107,6 +107,7 @@ import {
   useFormStateKey,
 } from './store';
 import { switchToMatureSourceAlternative, useFlux3MatureSource } from './useFlux3MatureSource';
+import { useGenerationLicense } from './useGenerationLicense';
 
 // =============================================================================
 // Cost (including tips)
@@ -484,7 +485,14 @@ export function SubmitButton({
   const { selectedType } = useSelectedBuzzType();
   const { color } = useBuzzCurrencyConfig(selectedType);
 
-  const { isError, isLoading: isWhatIfLoading, canEstimateCost, gateBlocked } = useWhatIfContext();
+  const {
+    isError,
+    isLoading: isWhatIfLoading,
+    canEstimateCost,
+    gateBlocked,
+    download,
+    boostRequired,
+  } = useWhatIfContext();
   const totalCost = useTotalGenerationCost(store);
 
   const {
@@ -495,16 +503,20 @@ export function SubmitButton({
   const insufficientBuzz = !isBuzzLoading && totalCost > 0 && balance < totalCost;
   const canGenerate = useGenerationContext((state) => state.canGenerate);
   const matureSource = useFlux3MatureSource(store);
+  const license = useGenerationLicense(store);
 
   const submitBlocked =
     !canGenerate ||
     matureSource.blocked ||
+    license.blocked ||
     gateBlocked ||
     isWhatIfLoading ||
     isBuzzLoading ||
     isError ||
     !canEstimateCost ||
-    insufficientBuzz;
+    insufficientBuzz ||
+    // A required boost not yet priced, or with nothing shown to download: the server refuses both.
+    (boostRequired && download?.boostFee == null);
 
   useEffect(() => {
     setBlockedTarget(running && submitBlocked ? GEN_SUBMIT_TARGET : null);
@@ -927,9 +939,10 @@ export function FormFooter({
 
   // "Generate Anyway" on a flagged prompt submits without the Generate button.
   const matureSource = useFlux3MatureSource(store);
+  const license = useGenerationLicense(store);
 
   const handleSubmit = async (acknowledgedSoftBlock = false) => {
-    if (preparingRemixRef.current || matureSource.blocked) return;
+    if (preparingRemixRef.current || matureSource.blocked || license.blocked) return;
     setSubmitError(undefined);
 
     // One Generator_Submit event per click; validate FIRST so the invalid +

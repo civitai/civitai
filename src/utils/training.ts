@@ -1,11 +1,13 @@
 import type {
   AiToolkitTrainingInput,
   MingAiToolkitTrainingInput,
+  MiniMaxH3ImageAiToolkitTrainingInput,
   Qwen21AiToolkitTrainingInput,
   YuE2AiToolkitTrainingInput,
 } from '@civitai/orchestration-client';
 import type JSZip from 'jszip';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
+import { getTrainingLicenseTerms } from '~/shared/constants/generation-license.constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { getMimeTypeFromExt, MEDIA_TYPE } from '~/shared/constants/mime-types';
@@ -14,19 +16,34 @@ import type {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import { getFileExtension } from '~/utils/string-helpers';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
-/** Training Studio catalog gate (`ModelCard.flagKey`) -> the feature flag that answers it in this
- *  app; the embedded element can't evaluate Flipt itself. A gate missing from this map is hidden
- *  in the embed for everyone. */
+/** Training Studio gate (a `ModelCard.flagKey`, or its Kohya engine's) -> the feature flag that
+ *  answers it in this app; the embedded element can't evaluate Flipt itself. A gate missing from
+ *  this map is hidden in the embed for everyone. */
 export const studioModelFlagFeatures = {
+  'training-studio-kohya': 'trainingStudioKohya',
+  'training-studio-tag-find-replace': 'trainingStudioTagFindReplace',
   'ming-training': 'mingTraining',
   'qwen21-training': 'qwen21Training',
   'yue2-training': 'yue2Training',
   'flux3-klein-training': 'flux3KleinTraining',
   'moss-image-training': 'mossImageTraining',
+  'flux2-klein-training': 'fluxTwoKleinTraining',
   'flux2-klein-edit-training': 'flux2KleinEditTraining',
   'training-studio-audio-training': 'trainingStudioAudioTraining',
+  'krea2-training': 'krea2Training',
+  'boogu-training': 'booguTraining',
+  'mageflow-training': 'mageflowTraining',
+  'ernie-training': 'ernieTraining',
+  'hidream-o1-training': 'hidreamO1Training',
+  'anima-training': 'animaTraining',
+  'minimaxh3-training': 'minimaxh3Training',
+  'minimaxh3-image-training': 'minimaxh3ImageTraining',
+  'zimage-turbo-training': 'zimageturboTraining',
+  'ltx25-training': 'ltx25Training',
+  'ltx23-training': 'ltx23Training',
 } as const satisfies Record<string, FeatureFlagKey>;
 
 export function enabledStudioModelFlags(
@@ -39,11 +56,10 @@ export function enabledStudioModelFlags(
 
 /** Whether a user may generate with UNPUBLISHED training results (epoch checkpoints). The single
  *  definition behind the training-results Generate affordances and the Training Studio embed's
- *  `canGenerateUnpublished` host config — a tier change here must reach all of them at once. */
-export function canGenerateWithEpochs(
-  user: { isMember?: boolean; isModerator?: boolean } | null | undefined
-): boolean {
-  return !!(user?.isMember || user?.isModerator);
+ *  `canGenerateUnpublished` host config — a change here must reach all of them at once. Ownership
+ *  and the epoch window are enforced on the server. */
+export function canGenerateWithEpochs(user: { id?: number } | null | undefined): boolean {
+  return !!user?.id;
 }
 
 /** The Training Studio embed's `isPaidMember` host config. `undefined` = no session to read, which the
@@ -75,6 +91,7 @@ export const trainingBaseModelTypesImage = [
   'qwen21',
   'mossimage',
   'flux3klein',
+  'minimaxh3image',
 ] as const;
 export const trainingBaseModelTypesVideo = [
   'hunyuan',
@@ -115,7 +132,8 @@ export const aiToolkitStepDefault = (baseType: TrainingBaseModelType): number =>
   baseType === 'ming' ||
   baseType === 'qwen21' ||
   baseType === 'yue2' ||
-  baseType === 'minimaxh3'
+  baseType === 'minimaxh3' ||
+  baseType === 'minimaxh3image'
     ? 3000
     : baseType === 'anima'
     ? 1500
@@ -489,6 +507,19 @@ export const trainingModelInfo: {
     aiToolkit: { ecosystem: 'ideogram4' },
   },
   //
+  minimaxh3image: {
+    label: 'Base',
+    pretty: 'MiniMax H3 Image',
+    type: 'minimaxh3image',
+    description: "MiniMax's open-weights H3 image generation and editing model.",
+    air: 'urn:air:minimaxh3image:repository:huggingface:Comfy-Org/MiniMax-H3-Image@892de7cb61df49753bf15145a711154803a355cb.tar',
+    baseModel: 'MiniMax H3 Image',
+    isNew: true,
+    aiToolkit: {
+      ecosystem: 'minimaxh3image' satisfies MiniMaxH3ImageAiToolkitTrainingInput['ecosystem'],
+    },
+  },
+  //
   flux2klein_4b: {
     label: '4B Base',
     pretty: 'Flux.2 Klein 4B Base',
@@ -767,6 +798,7 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   ltx23: 'ltx23',
   ltx25: 'ltx25',
   minimaxh3: 'minimaxh3',
+  minimaxh3image: 'minimaxh3image',
   'hidream-o1': 'hidream-o1',
   anima: 'anima',
   boogu: 'boogu',
@@ -817,6 +849,13 @@ export function getAiToolkitEcosystem(
   return null;
 }
 
+/** The site ecosystem whose licence a catalog entry trains under, when it has one. */
+export function trainingLicenseEcosystem(baseModel: string | undefined): string | undefined {
+  const ecosystem =
+    trainingModelInfo[baseModel as TrainingDetailsBaseModelList]?.aiToolkit?.ecosystem;
+  return getTrainingLicenseTerms(ecosystem)?.ecosystems[0];
+}
+
 /**
  * Get AI Toolkit model variant for a training model
  * Reads from the centralized trainingModelInfo structure
@@ -835,8 +874,8 @@ export function getAiToolkitModelVariant(
 
 /**
  * Map from TrainingBaseModelType to the per-model AI Toolkit feature flag key.
- * Only includes models where AI Toolkit is optional — mandatory models (qwen, zimage,
- * flux2klein, ltx2) are already gated by their own training feature flags.
+ * Only includes models where AI Toolkit is optional — mandatory models are gated by their own
+ * rollout flags (trainingRolloutFlagByType).
  */
 const aiToolkitFlagByBaseType: Partial<Record<TrainingBaseModelType, string>> = {
   sd15: 'aiToolkitSd15',
@@ -892,6 +931,7 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'ltx23',
     'ltx25',
     'minimaxh3',
+    'minimaxh3image',
     'hidream-o1',
     'anima',
     'boogu',
@@ -918,6 +958,7 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'ltx23',
     'ltx25',
     'minimaxh3',
+    'minimaxh3image',
     'hidream-o1',
     'anima',
     'boogu',
@@ -958,6 +999,69 @@ export const isAudioTrainingBaseType = (baseType: TrainingBaseModelType): boolea
   return (trainingBaseModelTypesAudio as readonly string[]).includes(baseType);
 };
 
+/**
+ * The rollout flag of each AI Toolkit-mandatory base type. isAiToolkitEnabled passes those types
+ * whatever the flags say, so every submit path enforces these through trainingRolloutRefusal. The
+ * ACE-Step types have no flag of their own; audioTraining gates them with every audio type.
+ */
+export const trainingRolloutFlagByType = {
+  qwen: 'qwenTraining',
+  ernie: 'ernieTraining',
+  flux2klein: 'fluxTwoKleinTraining',
+  ltx2: 'ltx2Training',
+  ltx23: 'ltx23Training',
+  ltx25: 'ltx25Training',
+  minimaxh3: 'minimaxh3Training',
+  minimaxh3image: 'minimaxh3ImageTraining',
+  'hidream-o1': 'hidreamO1Training',
+  anima: 'animaTraining',
+  boogu: 'booguTraining',
+  krea2: 'krea2Training',
+  mageflow: 'mageflowTraining',
+  ideogram4: 'ideogram4Training',
+  ming: 'mingTraining',
+  qwen21: 'qwen21Training',
+  yue2: 'yue2Training',
+} as const satisfies Partial<Record<TrainingBaseModelType, FeatureFlagKey>>;
+
+// ZImage is one base type with two catalog entries under two flags, told apart by ecosystem.
+const trainingRolloutFlagByEcosystem: Record<string, FeatureFlagKey> = {
+  zimageturbo: 'zimageturboTraining',
+  zimagebase: 'zimagebaseTraining',
+};
+
+/**
+ * Why a run may not be submitted under the user's rollout flags, or null when it may. `types` is
+ * every base type the run trains: the caller-written baseModelType alone can be anything, so pass
+ * the catalog entry's type and the type of the params' AI Toolkit ecosystem with it.
+ */
+export function trainingRolloutRefusal(
+  { types, ecosystem }: { types: readonly TrainingBaseModelType[]; ecosystem?: string },
+  features: Partial<Record<string, boolean>>
+): string | null {
+  const notEnabled = (name: string | undefined) =>
+    `${name ?? 'This base model'} training is not currently enabled.`;
+  const prettyOf = (
+    match: (info: (typeof trainingModelInfo)[keyof typeof trainingModelInfo]) => boolean
+  ) => Object.values(trainingModelInfo).find(match)?.pretty;
+
+  if (types.some(isAudioTrainingBaseType) && !features.audioTraining)
+    return 'Audio training is not currently enabled.';
+  for (const type of types) {
+    if (type === 'zimage') {
+      if (!features.zimageturboTraining && !features.zimagebaseTraining)
+        return notEnabled(prettyOf((info) => info.type === type));
+      continue;
+    }
+    const flag = (trainingRolloutFlagByType as Partial<Record<string, FeatureFlagKey>>)[type];
+    if (flag && !features[flag]) return notEnabled(prettyOf((info) => info.type === type));
+  }
+  const ecosystemFlag = ecosystem ? trainingRolloutFlagByEcosystem[ecosystem] : undefined;
+  if (ecosystemFlag && !features[ecosystemFlag])
+    return notEnabled(prettyOf((info) => info.aiToolkit?.ecosystem === ecosystem));
+  return null;
+}
+
 // Get default engine for base type
 // Pass features to enable feature-flag-driven defaults (e.g. aiToolkitDefaultSd)
 export const getDefaultEngine = (
@@ -966,7 +1070,13 @@ export const getDefaultEngine = (
   features?: Record<string, boolean>,
   opts?: { ignoreDefaultPreference?: boolean }
 ): EngineTypes => {
-  if (baseType === 'ming' || baseType === 'qwen21' || baseType === 'yue2') return 'ai-toolkit';
+  if (
+    baseType === 'ming' ||
+    baseType === 'qwen21' ||
+    baseType === 'yue2' ||
+    baseType === 'minimaxh3image'
+  )
+    return 'ai-toolkit';
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
   if (baseType === 'zimage') return 'ai-toolkit'; // ZImage (Turbo/Base) requires AI Toolkit
   if (baseType === 'ernie') return 'ai-toolkit'; // Ernie requires AI Toolkit
@@ -1162,3 +1272,13 @@ export const formatTrainingValidationError = (
     .filter((line, i, arr) => arr.findIndex((l) => l.message === line.message) === i);
   return lines.length > 0 ? lines : null;
 };
+
+export function isHeldForTrainingReview(
+  status: TrainingStatus | null | undefined,
+  trainingResults: unknown
+): boolean {
+  return (
+    status === TrainingStatus.Paused &&
+    (trainingResults as { heldForReview?: unknown } | null | undefined)?.heldForReview === true
+  );
+}

@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("{\"json\":{\"a.b\":{\"c\":null}},\"meta\":{\"values\":{\"a\\\\.b.c\":[\"undefined\"]},\"v\":1}}")
+[]byte("{\"json\":{\"a.b\":{}},\"meta\":{\"values\":{\"a\\\\.b.c\":[\"undefined\"]},\"v\":1}}")

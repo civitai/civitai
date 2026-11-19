@@ -46,7 +46,6 @@ vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => hubSession.current),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async (id: number) => ({ id, bannedAt: null })) },
 }));
 vi.mock('~/server/http/orchestrator/api-key-spend', async (importOriginal) => ({
@@ -104,6 +103,10 @@ const NOT_CACHED =
 const WORKER_ONLY =
   'touches type Worker rows only; the bearer path never selects that type, so never caches one';
 const LEDGER: Record<string, { count: number; why: string }> = {
+  'src/server/services/blocks/app-block-token-revoke.service.ts': {
+    count: 1,
+    why: NOT_CACHED,
+  },
   'src/server/auth/bearer-token.ts': {
     count: 1,
     why: 'lastUsedAt only; nothing the bearer path decides on. Throttled per key per hour.',

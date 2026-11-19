@@ -1,9 +1,16 @@
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
+import { readCollectionForViewer } from '~/server/services/collection-viewer';
+import { omit } from 'lodash-es';
 import { TRPCError } from '@trpc/server';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
-import { collectedContentReward } from '~/server/rewards';
+import { contentRestriction } from '~/server/common/content-restriction';
+import { OnboardingSteps } from '~/server/common/enums';
+import { isAccountMuted } from '~/server/services/account-standing.service';
+import { Flags } from '~/shared/utils/flags';
+import { collectedContentReward, firstDailyPostReward } from '~/server/rewards';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import type {
   AddCollectionItemInput,
@@ -18,6 +25,7 @@ import type {
   GetCollectionPermissionDetails,
   GetUserCollectionItemsByItemSchema,
   RemoveCollectionItemInput,
+  SetCollectionArchivedInput,
   SetCollectionItemNsfwLevelInput,
   SetItemScoreInput,
   UpdateCollectionCoverImageInput,
@@ -36,6 +44,8 @@ import {
   getCollectionById,
   getCollectionCoverImages,
   getCollectionItemById,
+  createEmptyPermissions,
+  getCollectionEntryCount,
   getCollectionItemCount,
   getCollectionItemsByCollectionId,
   getContributorCount,
@@ -48,6 +58,7 @@ import {
   removeCollectionItem,
   removeContributorFromCollection,
   saveItemInCollections,
+  setCollectionArchived,
   setCollectionItemNsfwLevel,
   setItemScore,
   updateCollectionCoverImage,
@@ -57,12 +68,13 @@ import {
 } from '~/server/services/collection.service';
 import {
   getServableCoverCollectionIds,
+  isCoverWithinBrowsingLevel,
   withServableCovers,
 } from '~/server/services/collection-cover-visibility';
 import { enableCollectionYoutubeSupport } from '~/server/services/collection-youtube.service';
 import type { Collaborator } from '~/server/services/collection-collaborator.service';
 import { getCollectionRoster } from '~/server/services/collection-collaborator.service';
-import { setModelShowcaseCollection } from '~/server/services/model.service';
+import { clearModelShowcaseAfterRemoval } from '~/server/services/model.service';
 import { addPostImage, createPost, deletePost } from '~/server/services/post.service';
 import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
@@ -70,7 +82,11 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { requestServableLevels } from '~/server/utils/browsing-level';
+import { relatedPostsBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
+import {
+  getRequestImageFilter,
+  isCoverShownByBrowsingRules,
+} from '~/server/services/blocked-browsing-tags.service';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -105,15 +121,24 @@ export const getAllCollectionsInfiniteHandler = async ({
         userId: true,
         user: { select: userWithCosmeticsSelect },
         nsfwLevel: true,
-        image: { select: imageSelect },
+        image: { select: { ...imageSelect, tosViolation: true, poi: true, minor: true } },
         mode: true,
         createdAt: true,
         metadata: true,
       },
-      user: ctx.user,
+      user: ctx.user && { ...ctx.user, isModerator: credentialViews(ctx).asModerator },
     });
+    const browsingLevel = relatedPostsBrowsingLevel(ctx, input.browsingLevel);
+    const showsImage = await getRequestImageFilter(ctx, input.browsingLevel);
     // A cover the viewer may not see falls through to the item covers below.
-    const items = await withServableCovers(rows, ctx.user);
+    const coverViewer = credentialViews(ctx).asOwner ? ctx.user : undefined;
+    const items = (await withServableCovers(rows, coverViewer)).map((row) =>
+      row.image &&
+      (!isCoverWithinBrowsingLevel(row.image, browsingLevel) ||
+        !showsImage({ ...row.image, tags: row.image.tags.map((t) => t.tag) }))
+        ? { ...row, image: null }
+        : row
+    );
 
     let nextCursor: number | undefined;
     if (items.length > input.limit) {
@@ -126,6 +151,8 @@ export const getAllCollectionsInfiniteHandler = async ({
     const collectionImages = await getCollectionCoverImages({
       collectionIds: collectionRequiringImages,
       imagesPerCollection: 10, // Some fallbacks
+      browsingLevel,
+      showsImage,
     });
 
     // Get Item Counts
@@ -156,7 +183,7 @@ export const getAllCollectionsInfiniteHandler = async ({
           },
           image: item.image
             ? {
-                ...item.image,
+                ...omit(item.image, 'tosViolation'),
                 meta: item.image.meta as ImageMetaProps | null,
                 tags: item.image.tags.map((t) => t.tag),
               }
@@ -199,9 +226,15 @@ export const getAllUserCollectionsHandler = async ({
         : undefined,
     ]);
 
-    if (!counts) return collections;
+    // The cover carries only the fields its client uses; the blocks route reads the service.
+    const clientCollections = collections.map(({ image, ...collection }) => {
+      if (!image) return { ...collection, image };
+      const { poi, minor, acceptableMinor, tosViolation, ...cover } = image;
+      return { ...collection, image: cover };
+    });
+    if (!counts) return clientCollections;
 
-    return collections.map((collection) => ({
+    return clientCollections.map((collection) => ({
       ...collection,
       pendingReviewCount: counts.byCollection[collection.id] ?? 0,
     }));
@@ -217,27 +250,21 @@ export const getCollectionByIdHandler = async ({
   ctx: Context;
   input: GetByIdInput;
 }) => {
-  const { user } = ctx;
-
   try {
-    const permissions = await getUserCollectionPermissionsById({
-      ...input,
-      userId: user?.id,
-      isModerator: user?.isModerator,
-    });
+    const { permissions, collection } = await readCollectionForViewer(ctx, input.id);
 
-    // If the user has 0 permission over this collection, they have no business asking for it.
-    if (!permissions.read && !permissions.write && !permissions.manage) {
+    // The flags go back empty, as for a missing id, so the answer does not describe the collection.
+    if (!collection) {
       return {
         collection: null,
-        permissions,
+        permissions: createEmptyPermissions(input.id),
         collaborators: [] as Collaborator[],
         pendingReviewCount: 0,
         redPendingReviewCount: 0,
       };
     }
 
-    const collection = await getCollectionById({ input, viewer: ctx.user });
+    const coverShown = await isCoverShownByBrowsingRules(collection.image, ctx);
 
     // The catch covers the roster read alone — the reads above must still surface — because
     // getById backs the whole detail page and every other useCollection consumer.
@@ -249,7 +276,7 @@ export const getCollectionByIdHandler = async ({
             message: error instanceof Error ? error.message : String(error),
             stack: error instanceof Error ? error.stack : undefined,
             collectionId: input.id,
-          }).catch(() => undefined);
+          });
           return [] as Collaborator[];
         })
       : [];
@@ -271,7 +298,11 @@ export const getCollectionByIdHandler = async ({
 
     return {
       // Only an editor needs to know a cover is stored but hidden from them.
-      collection: { ...collection, coverHidden: permissions.manage && collection.coverHidden },
+      collection: {
+        ...collection,
+        image: coverShown ? collection.image : null,
+        coverHidden: permissions.manage && (collection.coverHidden || !coverShown),
+      },
       permissions,
       collaborators,
       pendingReviewCount,
@@ -325,14 +356,11 @@ export const saveItemHandler = async ({
       });
     }
 
-    // Remove collection from model showcase if removed
-    if (input.type === 'Model' && status === 'removed' && input.modelId) {
+    if (input.type === 'Model' && input.modelId && input.removeFromCollectionIds?.length) {
       // letting this run in the background to avoid blocking the response
-      setModelShowcaseCollection({
-        id: input.modelId,
-        collectionId: null,
-        userId: user.id,
-        isModerator: user.isModerator,
+      clearModelShowcaseAfterRemoval({
+        modelId: input.modelId,
+        collectionIds: input.removeFromCollectionIds,
       }).catch((error) =>
         logToAxiom({
           name: 'remove-model-showcase-collection',
@@ -428,6 +456,8 @@ export const upsertCollectionHandler = async ({
         isModerator: user.isModerator,
         isMember: !!user.tier && user.tier !== 'free',
       },
+      // Read without the owner's view, the editor saw a hidden cover as none; an image: null keeps it.
+      coverViewer: credentialViews(ctx).asOwner ? undefined : {},
     });
 
     const [itemId] = [
@@ -523,6 +553,26 @@ export const deleteUserCollectionHandler = async ({
   }
 };
 
+export const setCollectionArchivedHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetCollectionArchivedInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    const { user } = ctx;
+    return await setCollectionArchived({
+      ...input,
+      userId: user.id,
+      isModerator: user.isModerator,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
 export const followHandler = ({
   ctx,
   input,
@@ -577,6 +627,8 @@ export const collectionItemsInfiniteHandler = async ({
     input,
     user: ctx.user,
     coverage: await coverageAudience(ctx.user ?? undefined),
+    requireRead: true,
+    ...credentialViews(ctx),
   });
 
   return {
@@ -584,6 +636,19 @@ export const collectionItemsInfiniteHandler = async ({
     collectionItems: result.items,
   };
 };
+
+export const getCollectionEntryCountHandler = ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) =>
+  getCollectionEntryCount({
+    collectionId: input.id,
+    userId: ctx.user.id,
+    isModerator: ctx.user.isModerator,
+  });
 
 export const updateCollectionItemsStatusHandler = async ({
   input,
@@ -603,6 +668,17 @@ export const updateCollectionItemsStatusHandler = async ({
     throw throwDbError(error);
   }
 };
+
+/**
+ * The account checks post.create's procedure (`guardedProcedure`) runs before it pays this reward.
+ * addSimpleImagePost is a plain protected procedure, so an entry can be accepted from an account
+ * post.create would refuse; such an entry stands but earns nothing.
+ */
+async function canEarnPostReward(user: ProtectedContext['user']) {
+  if (!Flags.hasFlag(user.onboarding, OnboardingSteps.Buzz)) return false;
+  if (contentRestriction(user)) return false;
+  return !(await isAccountMuted(user.id, !!user.muted));
+}
 
 export const addSimpleImagePostHandler = async ({
   input: { collectionId, images },
@@ -682,14 +758,18 @@ export const addSimpleImagePostHandler = async ({
       }
     } catch (error) {
       // The refusal is what the user needs to see; a failed cleanup must not replace it.
-      await deletePost({ id: post.id, isModerator }).catch((rollbackError) =>
+      await deletePost({
+        id: post.id,
+        isModerator,
+        actor: { system: 'add-simple-image-post-rollback' },
+      }).catch((rollbackError) =>
         logToAxiom({
           type: 'error',
           name: 'add-simple-image-post-rollback-failed',
           message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
           postId: post.id,
           collectionId,
-        }).catch(() => undefined)
+        })
       );
       throw error;
     }
@@ -704,6 +784,22 @@ export const addSimpleImagePostHandler = async ({
       },
       permissions,
     });
+
+    // The entry is saved; a reward error must not surface as a failed entry and invite a resubmit.
+    if (post.publishedAt) {
+      await (async () => {
+        if (!(await canEarnPostReward(ctx.user))) return;
+        await firstDailyPostReward.apply({ postId: post.id, posterId: userId }, { ip: ctx.ip });
+      })().catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'add-simple-image-post-reward-failed',
+          message: error instanceof Error ? error.message : String(error),
+          postId: post.id,
+          collectionId,
+        })
+      );
+    }
 
     return { post, permissions, imageIds };
   } catch (error) {
@@ -834,7 +930,7 @@ export const setCollectionItemNsfwLevelHandler = async ({
     if (!permissions.manage)
       throw throwAuthorizationError('You do not have permission to manage this collection.');
 
-    return await setCollectionItemNsfwLevel({ ...input });
+    return await setCollectionItemNsfwLevel({ ...input, userId: user.id });
   } catch (error) {
     throw throwDbError(error);
   }

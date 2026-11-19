@@ -45,6 +45,7 @@ vi.mock('~/server/clickhouse/tracker', () => ({
 const {
   applyHeldRestrictedVerdict,
   applyHeldVerdictLeavingPrivate,
+  applyModelNsfwTextScan,
   applySystemModelNsfwFlag,
   holdLeadAfterSfwOnlyLift,
 } = await import('~/server/services/text-scan/actions/model-nsfw');
@@ -175,7 +176,7 @@ describe('the scan on a restricted model', () => {
     }
   );
 
-  it('rates an SFW-only model at once: SFW-only off, nsfw on and locked, and a lead with what it replaced', async () => {
+  it('rates an SFW-only model at once: SFW-only off, nsfw on (unlocked), and a lead with what it replaced', async () => {
     await seed({ sfwOnly: true, locked: ['category'], meta: { other: 1 } });
     expect(
       await applySystemModelNsfwFlag({ model: scanned({ sfwOnly: true }), source: 'text-scan' })
@@ -184,7 +185,7 @@ describe('the scan on a restricted model', () => {
     expect(after).toMatchObject({
       nsfw: true,
       sfwOnly: false,
-      lockedProperties: ['category', 'nsfw'],
+      lockedProperties: ['category'],
     });
     expect(after.meta.other).toBe(1);
     expect(after.meta.systemNsfwLock).toEqual({ source: 'text-scan', at: expect.any(String) });
@@ -223,7 +224,7 @@ describe('the scan on a restricted model', () => {
     expect(
       await applySystemModelNsfwFlag({ model: scanned({ minor: true }), source: 'text-scan' })
     ).toBe('applied');
-    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: [] });
   });
 
   it('still flips an unrestricted model (positive control)', async () => {
@@ -232,9 +233,146 @@ describe('the scan on a restricted model', () => {
       'applied'
     );
     const after = await row();
-    expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: [] });
     expect(after.meta).not.toHaveProperty('restrictedNsfwVerdict');
     expect(mocks.trackModActivity).not.toHaveBeenCalled();
+  });
+
+  // Without the marker the owner could untick mature, or remove the face, and nothing would rescan it.
+  it('records the verdict as the origin marker on a model already mature', async () => {
+    await seed({ nsfw: true });
+    expect(
+      await applySystemModelNsfwFlag({ model: scanned({ nsfw: true }), source: 'text-scan' })
+    ).toBe('skipped_nsfw');
+    const after = await row();
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: [] });
+    expect(after.meta.systemNsfwLock).toEqual({ source: 'text-scan', at: expect.any(String) });
+  });
+
+  describe('a rescan that reads the text as not mature', () => {
+    const clean = {
+      entityId: MODEL,
+      workflowId: 'wf',
+      textHash: 'h',
+      outcome: {
+        nsfw: { detectedLevel: 2, declaredLevel: 32, raised: false, reason: 'r' },
+        triggeredLabels: [],
+        nsfwLevel: 2,
+      },
+      subject: { fields: [], declared: {} },
+    } as unknown as Parameters<typeof applyModelNsfwTextScan>[0];
+
+    it("drops the scan's own marker, so the owner can change the rating; the rating stays", async () => {
+      await seed({ nsfw: true, meta: { systemNsfwLock: SYSTEM_LOCK, other: 1 } });
+      await applyModelNsfwTextScan(clean);
+      expect(await row()).toMatchObject({ nsfw: true, meta: { other: 1 } });
+      expect((await row()).meta).not.toHaveProperty('systemNsfwLock');
+    });
+
+    it('drops a scan marker an intent lock parked, so lifting that lock does not bring it back', async () => {
+      await seed({
+        nsfw: true,
+        locked: ['nsfw'],
+        meta: {
+          systemNsfwLock: { source: 'com-face-intent', at: 'x' },
+          comFaceIntent: { detected: true, priorSystemNsfwLock: SYSTEM_LOCK },
+        },
+      });
+      await applyModelNsfwTextScan(clean);
+      const { meta } = await row();
+      expect(meta.comFaceIntent).toEqual({ detected: true });
+      expect(meta.systemNsfwLock).toMatchObject({ source: 'com-face-intent' });
+    });
+
+    it.each([
+      ['another check', { meta: { systemNsfwLock: { source: 'com-face-intent', at: 'x' } } }],
+      ['a lock', { locked: ['nsfw'], meta: { systemNsfwLock: SYSTEM_LOCK } }],
+    ])('keeps a marker under %s', async (_, over) => {
+      await seed({ nsfw: true, ...over });
+      await applyModelNsfwTextScan(clean);
+      expect((await row()).meta).toHaveProperty('systemNsfwLock');
+    });
+  });
+
+  // A marker blocks the owner (assertScanRatingKept) only where a clean read can release it.
+  // As on main: the owner's way out of an xguard rating is the lock or rating review.
+  it('locks an xguard rating with its marker, flipped or already mature', async () => {
+    await seed({});
+    expect(
+      await applySystemModelNsfwFlag({ model: scanned(), source: 'xguard-text-moderation' })
+    ).toBe('applied');
+    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect((await row()).meta.systemNsfwLock).toMatchObject({ source: 'xguard-text-moderation' });
+
+    await seed({ nsfw: true });
+    await applySystemModelNsfwFlag({
+      model: scanned({ nsfw: true }),
+      source: 'xguard-text-moderation',
+    });
+    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+  });
+
+  describe('a verdict that lands under a lock', () => {
+    it("is recorded under the listing check's lock, for whoever lifts it", async () => {
+      await seed({
+        nsfw: true,
+        locked: ['nsfw'],
+        meta: {
+          systemNsfwLock: { source: 'com-face-intent', at: '2026-01-01T00:00:00.000Z' },
+          comFaceIntent: { detected: true, textHash: 'h', at: 'x' },
+        },
+      });
+      expect(
+        await applySystemModelNsfwFlag({
+          model: scanned({ nsfw: true, nsfwLevel: 60, lockedProperties: ['nsfw'] }),
+          source: 'xguard-text-moderation',
+        })
+      ).toBe('skipped_locked');
+      expect((await row()).meta.comFaceIntent.laterVerdict).toMatchObject({
+        source: 'xguard-text-moderation',
+      });
+    });
+
+    it("writes nothing under a moderator's lock", async () => {
+      await seed({ nsfw: true, locked: ['nsfw'], meta: { comFaceIntent: { detected: true } } });
+      expect(
+        await applySystemModelNsfwFlag({
+          model: scanned({ nsfw: true, nsfwLevel: 60, lockedProperties: ['nsfw'] }),
+          source: 'text-scan',
+        })
+      ).toBe('skipped_locked');
+      expect((await row()).meta.comFaceIntent).toEqual({ detected: true });
+    });
+  });
+
+  it('locks for a source it does not know, by default', async () => {
+    await seed({});
+    await applySystemModelNsfwFlag({ model: scanned(), source: 'some-later-check' });
+    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+  });
+
+  it('rates a model listed on .com by its face, so removing the face later leaves it mature', async () => {
+    await seed({});
+    expect(
+      await applySystemModelNsfwFlag({
+        model: scanned({ sfwName: 'Safe', sfwCoverImageId: 5, nsfwLevel: 1 }),
+        source: 'text-scan',
+      })
+    ).toBe('applied');
+    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: [] });
+  });
+
+  it("keeps an earlier marker's time, and marks nothing under a moderator's lock", async () => {
+    await seed({ nsfw: true, meta: { systemNsfwLock: SYSTEM_LOCK } });
+    await applySystemModelNsfwFlag({ model: scanned({ nsfw: true }), source: 'text-scan' });
+    expect((await row()).meta.systemNsfwLock).toEqual(SYSTEM_LOCK);
+
+    await seed({ nsfw: true, locked: ['nsfw'] });
+    await applySystemModelNsfwFlag({
+      model: scanned({ nsfw: true, lockedProperties: ['nsfw'] }),
+      source: 'text-scan',
+    });
+    expect((await row()).meta).not.toHaveProperty('systemNsfwLock');
   });
 
   it('keeps a waiting lead as it is on redelivery', async () => {
@@ -447,12 +585,12 @@ describe('applyHeldRestrictedVerdict, after a save unticks minor or POI', () => 
     ['poi', true],
     ['poi', false],
   ] as const)(
-    'applies a lead held as %s (SFW-only %s): nsfw on and locked, with what it replaced; Keep undoes it',
+    'applies a lead held as %s (SFW-only %s): nsfw on (unlocked), with what it replaced; Keep undoes it',
     async (restriction, sfwOnly) => {
       await seed({ sfwOnly, meta: { ...lead(restriction), other: 1 } });
       expect(await applyHeldRestrictedVerdict(MODEL)).toBe('applied');
       const after = await row();
-      expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] });
+      expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: [] });
       expect(after.meta).toMatchObject({
         other: 1,
         systemNsfwLock: { source: 'text-scan', at: expect.any(String) },
@@ -535,7 +673,7 @@ describe('applyHeldRestrictedVerdict, after a save unticks minor or POI', () => 
     await seed({ sfwOnly: true, meta: { restrictedNsfwVerdict: held } });
     expect(await applyHeldRestrictedVerdict(MODEL, { ownerCleared: true })).toBe('applied');
     const after = await row();
-    expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: [] });
     expect(after.meta.restrictedNsfwVerdict).not.toHaveProperty('liftedBy');
   });
 
@@ -568,7 +706,7 @@ describe('a Private model, which must stay SFW-only', () => {
   };
   const expectApplied = async () => {
     const after = await row();
-    expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] });
+    expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: [] });
     expect(after.meta.systemNsfwLock).toMatchObject({ source: 'text-scan' });
     expect(after.meta.restrictedNsfwVerdict.applied.prior).toMatchObject({
       nsfw: false,
@@ -593,6 +731,37 @@ describe('a Private model, which must stay SFW-only', () => {
       await expectApplied();
     }
   );
+
+  // Every source but the text scan keeps the lock, as before this change: here the profanity filter.
+  it('applies a held profanity-filter lead with the nsfw lock and its marker', async () => {
+    await seed({
+      sfwOnly: true,
+      meta: {
+        restrictedNsfwVerdict: {
+          source: 'profanity-filter',
+          at: '2026-11-04T00:00:00.000Z',
+          restriction: 'minor',
+        },
+      },
+    });
+    await makePrivate();
+    await applyHeldRestrictedVerdict(MODEL);
+    expect(await publish()).toBe(true);
+    const after = await row();
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(after.meta.systemNsfwLock).toMatchObject({ source: 'profanity-filter' });
+  });
+
+  it('applies a held lead with no source with the nsfw lock', async () => {
+    await seed({
+      sfwOnly: true,
+      meta: { restrictedNsfwVerdict: { at: '2026-11-04T00:00:00.000Z', restriction: 'minor' } },
+    });
+    await makePrivate();
+    await applyHeldRestrictedVerdict(MODEL);
+    expect(await publish()).toBe(true);
+    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+  });
 
   it('the scan on a model that went Private between submit and callback holds the verdict', async () => {
     await seed({ sfwOnly: true });
@@ -619,7 +788,7 @@ describe('a Private model, which must stay SFW-only', () => {
       })
     ).not.toBe('applied');
     const after = await row();
-    expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: [] });
     expect(after.meta).toEqual(applied);
   });
 
@@ -878,7 +1047,7 @@ describe('a lead kept while the model is still minor or POI', () => {
       await db.query(`UPDATE "Model" SET minor = false, poi = false WHERE id = $1`, [MODEL]);
       expect(await applyHeldRestrictedVerdict(MODEL)).toBe('applied');
       const after = await row();
-      expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] });
+      expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: [] });
       expect(after.meta).not.toHaveProperty('restrictedNsfwVerdictDormant');
       expect(after.meta.restrictedNsfwVerdict).toMatchObject({
         restriction: flag,

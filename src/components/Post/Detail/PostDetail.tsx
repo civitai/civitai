@@ -47,6 +47,8 @@ import {
 import { useQueryImages } from '~/components/Image/image.utils';
 import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { useSsrDeferredShell } from '~/hooks/useSsrDeferredShell';
+import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
 import { PostComments } from '~/components/Post/Detail/PostComments';
 import { PostControls } from '~/components/Post/Detail/PostControls';
 import { PostImages } from '~/components/Post/Detail/PostImages';
@@ -62,7 +64,7 @@ import { toStringList } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { Fragment, useEffect } from 'react';
+import { Fragment, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
@@ -80,7 +82,11 @@ import {
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
-type Props = { postId: number };
+type Props = {
+  postId: number;
+  /** The `ssrSignedInSkipPrefetchPosts` `skip` arm (`~/hooks/useSsrDeferredShell`). */
+  deferredSsr?: boolean;
+};
 
 export function PostDetail(props: Props) {
   return (
@@ -92,13 +98,17 @@ export function PostDetail(props: Props) {
   );
 }
 
-export function PostDetailContent({ postId }: Props) {
+export function PostDetailContent({ postId, deferredSsr }: Props) {
   const colorScheme = useComputedColorScheme('dark');
   const scrollRef = useScrollAreaRef();
   const currentUser = useCurrentUser();
   const searchParams = useSearchParams();
   const { query } = useBrowserRouter();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
+  const postTexts = useMemo(
+    () => post?.texts.map((text) => ({ ...text, postId: post.id })),
+    [post]
+  );
   const {
     collectionItems = [],
     permissions,
@@ -171,9 +181,42 @@ export function PostDetailContent({ postId }: Props) {
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === post?.user.id);
   const sidebarEnabled = true;
+  const deferredShell = useSsrDeferredShell(deferredSsr);
 
   if (postLoading) return <PageLoader />;
   if (!post || isBlocked) return <NotFound />;
+
+  // One `<Gated>` (rating gate, ads and `<head>`) for the full page and for the shell.
+  const gatedProps = {
+    contentNsfwLevel: collectionForcedLevel || post.nsfwLevel,
+    nsfw: post.nsfw,
+    bypassRating: isOwnerOrMod,
+    suppressAds: !post.publishedAt,
+    meta: {
+      title: (post?.title ?? `Image post by ${post?.user.username ?? 'civitai'}`) + ' | Civitai',
+      description:
+        `A post by ${post?.user.username ?? 'civitai'}. ` +
+        (post?.detail ? ' ' + truncate(removeTags(post?.detail ?? ''), { length: 100 }) : ''),
+      keywords: toStringList(post?.tags.map((x) => x.name) ?? []),
+      images,
+      ogEndpoint: `/api/og?type=post&id=${postId}`,
+      canonical: `/posts/${postId}`,
+      deIndex: post?.availability === Availability.Unsearchable,
+    },
+  };
+
+  // `ssrSignedInSkipPrefetchPosts`: getServerSideProps prefetched the post, its contest details and
+  // the hidden preferences (so a missing post or a blocked creator is already NotFound above), so
+  // the server renders the gate and `<head>` with a loader in place of the content. `images` is
+  // still loading here, which leaves the head unchanged: `ogEndpoint` sets its image. The hydrating
+  // render matches it; the content then renders as it does after a client-side navigation.
+  if (deferredShell) {
+    return (
+      <Gated {...gatedProps}>
+        <PageLoader />
+      </Gated>
+    );
+  }
 
   const relatedResource =
     post.modelVersion?.id &&
@@ -405,23 +448,7 @@ export function PostDetailContent({ postId }: Props) {
   const panelClass = 'rounded-md border border-solid border-gray-3 p-3 dark:border-dark-4';
 
   return (
-    <Gated
-      contentNsfwLevel={collectionForcedLevel || post.nsfwLevel}
-      nsfw={post.nsfw}
-      bypassRating={isOwnerOrMod}
-      suppressAds={!post.publishedAt}
-      meta={{
-        title: (post?.title ?? `Image post by ${post?.user.username ?? 'civitai'}`) + ' | Civitai',
-        description:
-          `A post by ${post?.user.username ?? 'civitai'}. ` +
-          (post?.detail ? ' ' + truncate(removeTags(post?.detail ?? ''), { length: 100 }) : ''),
-        keywords: toStringList(post?.tags.map((x) => x.name) ?? []),
-        images,
-        ogEndpoint: `/api/og?type=post&id=${postId}`,
-        canonical: `/posts/${postId}`,
-        deIndex: post?.availability === Availability.Unsearchable,
-      }}
-    >
+    <Gated {...gatedProps}>
       <TrackView entityId={post.id} entityType="Post" type="PostView" />
       <RenderAdUnitOutstream minContainerWidth={1964} />
       <ReactionSettingsProvider
@@ -507,6 +534,9 @@ export function PostDetailContent({ postId }: Props) {
                 <PostImages
                   postId={post.id}
                   images={images}
+                  texts={postTexts}
+                  authorId={post.user.id}
+                  linkedTextId={Number(query.text) || undefined}
                   isLoading={imagesLoading}
                   collectionItems={collectionItems}
                   isOwner={currentUser?.id === post.user.id}
@@ -521,7 +551,13 @@ export function PostDetailContent({ postId }: Props) {
             )}
             <StorylinePostNext postId={post.id} />
             <Stack className="mb-20 mt-6 gap-6 @max-lg:order-4" id="comments" mb={90}>
-              <PostComments postId={postId} userId={post.user.id} />
+              {/* `ssr-client-only-sections`: the server never has the comments (they are not
+                  prefetched, so it renders the composer over a loader), and this is the last
+                  thing in the column on every width, so its arrival moves nothing above it. The
+                  `#comments` anchor stays server-rendered. */}
+              <ClientOnlySection name="post-comments" minHeight={200}>
+                <PostComments postId={postId} userId={post.user.id} />
+              </ClientOnlySection>
             </Stack>
           </div>
           <div className="relative flex w-[336px] flex-col gap-3 @lg:my-3 @max-lg:contents">

@@ -188,7 +188,7 @@ describe('deleteResourceReview', () => {
   });
 
   it('reports an unknown review not found and deletes nothing', async () => {
-    await expect(deleteResourceReview({ id: 999_999 })).rejects.toMatchObject({
+    await expect(deleteResourceReview({ id: 990200014 })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
     expect(await reviewIds()).toHaveLength(3);
@@ -219,7 +219,7 @@ describe('deleteResourceReviews', () => {
   });
 
   it('counts only the reviews it found', async () => {
-    const { count } = await deleteResourceReviews({ ids: [reviewOf(CLEAN), 999_999] });
+    const { count } = await deleteResourceReviews({ ids: [reviewOf(CLEAN), 990200014] });
 
     expect(count).toBe(1);
   });

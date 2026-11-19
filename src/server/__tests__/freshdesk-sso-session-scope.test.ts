@@ -16,7 +16,6 @@ vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: bearer
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => hubSession.current),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/integrations/freshdesk', () => ({
@@ -32,7 +31,7 @@ const handler = (await import('~/pages/api/auth/freshdesk')).default as unknown 
 const SSO_URL = 'https://support.example.test/sso';
 const USER = { id: 4242, username: 'someone', email: 'someone@example.test', bannedAt: null };
 
-const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: number) => ({
+const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: bigint) => ({
   user: USER,
   apiKeyId: 11,
   apiKeyType,
@@ -40,8 +39,8 @@ const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: number) => ({
   tokenScope,
   buzzLimit: null,
 });
-const personalKey = (tokenScope: number) => nonOauthKey('User', tokenScope);
-const oauthToken = (tokenScope: number) => ({
+const personalKey = (tokenScope: bigint) => nonOauthKey('User', tokenScope);
+const oauthToken = (tokenScope: bigint) => ({
   user: USER,
   apiKeyId: 12,
   apiKeyType: 'Access',

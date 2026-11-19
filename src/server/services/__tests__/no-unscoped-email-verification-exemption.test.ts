@@ -56,7 +56,6 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
 const MUST_STAY_GUARDED: Record<string, string[]> = {
   'post.router.ts': ['create', 'createWithImages', 'addImage'],
   'commentv3.router.ts': ['create', 'update'],
-  'comment.router.ts': ['upsert'],
   'model.router.ts': ['upsert'],
   'article.router.ts': ['upsert'],
   'orchestrator.router.ts': ['iterateGenerate'],
@@ -108,6 +107,11 @@ const DERIVED_BASES: Record<string, string> = {
   experimentalProcedure: 'protectedProcedure',
   giftProcedure: 'protectedProcedure',
   guardedPromotionProcedure: 'guardedProcedure',
+  // `image-search-upload.router.ts`: a private upload to search by, never shown or posted.
+  imageSearchUploadProcedure: 'protectedProcedure',
+  // `orchestrator.router.ts` `enhancePrompt`: `orchestratorGuardedProcedure` with the generation
+  // kill switch ahead of the token fetch; the same `guardedProcedure` base it had before.
+  orchestratorEnhanceProcedure: 'guardedProcedure',
   orchestratorGuardedProcedure: 'guardedProcedure',
   orchestratorOwnWorkProcedure: 'protectedProcedure',
   orchestratorProcedure: 'protectedProcedure',
@@ -117,12 +121,16 @@ const DERIVED_BASES: Record<string, string> = {
   // `remix-app.router.ts` `admin.*`: mod-only edits of the remix app rows, and a mod's own test run.
   remixAppAdminProcedure: 'moderatorProcedure',
   remixAppProcedure: 'protectedProcedure',
-  semanticSearchProcedure: 'protectedProcedure',
+  // `semantic-image-search.router.ts`: read-only image search, open to signed-out visitors.
+  semanticSearchProcedure: 'publicProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
   sharedStorageProcedure: 'publicProcedure',
+  // `app-hibernation.router.ts`: listing, waking and deleting the caller's OWN sleeping apps.
+  sleepingAppsProcedure: 'protectedProcedure',
   storylineMemberProcedure: 'protectedProcedure',
   storylineReadProcedure: 'publicProcedure',
+  storylineTextProcedure: 'guardedProcedure',
   storylineWriteProcedure: 'guardedProcedure',
 };
 

@@ -38,6 +38,7 @@ $$ LANGUAGE plpgsql;
 
 
 -- new function so that the transition to using "TagsOnImageNew" can be seemless on deployement
+-- Never below a collection judge's metadata.judgeRating level (unlocked rows only).
 CREATE OR REPLACE FUNCTION update_nsfw_levels_new(image_ids INTEGER[])
 RETURNS VOID AS $$
 BEGIN
@@ -56,16 +57,31 @@ BEGIN
     LEFT JOIN "Tag" t ON t.id = toi."tagId" AND t."nsfwLevel" > 1
     WHERE toi."imageId" = ANY(image_ids) AND NOT toi."disabled"
     GROUP BY toi."imageId"
+  ), floored AS (
+    SELECT
+      il."imageId",
+      GREATEST(
+        il."nsfwLevel",
+        CASE
+          WHEN jsonb_typeof(i."metadata" -> 'judgeRating' -> 'nsfwLevel') = 'number'
+            AND (i."metadata" -> 'judgeRating' -> 'nsfwLevel')::text IN ('1', '2', '4', '8', '16')
+          THEN (i."metadata" -> 'judgeRating' -> 'nsfwLevel')::text::int
+          ELSE 0
+        END
+      ) "nsfwLevel"
+    FROM image_level il
+    JOIN "Image" i ON i.id = il."imageId"
   )
   UPDATE "Image" i SET
-    "nsfwLevel" = il."nsfwLevel",
+    "nsfwLevel" = f."nsfwLevel",
     "needsReview" = CASE
-      WHEN (i."scanJobs"->'hasMinor')::boolean AND il."nsfwLevel" > 1 AND il."nsfwLevel" < 32
+      WHEN i."needsReview" IN ('csam', 'appeal') THEN i."needsReview"
+      WHEN (i."scanJobs"->'hasMinor')::boolean AND f."nsfwLevel" > 1 AND f."nsfwLevel" < 32
         THEN 'minor'
         ELSE i."needsReview"
       END
-  FROM image_level il
-  WHERE il."imageId" = i.id AND NOT i."nsfwLevelLocked" AND il."nsfwLevel" != i."nsfwLevel" AND i.ingestion = 'Scanned' AND "blockedFor" IS NULL;
+  FROM floored f
+  WHERE f."imageId" = i.id AND NOT i."nsfwLevelLocked" AND f."nsfwLevel" != i."nsfwLevel" AND i.ingestion = 'Scanned' AND "blockedFor" IS NULL;
 END;
 $$ LANGUAGE plpgsql;
 ---

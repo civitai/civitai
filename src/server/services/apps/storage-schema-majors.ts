@@ -303,7 +303,8 @@ export function currentCollectionMajors(derivation: MajorDerivation): ReadonlyMa
  * longer allows, {@link migrateSteps}) is every value. So the chain is idempotent per major and
  * never touches a body already in the newer shape.
  *
- * Forward only. Nothing serves through this yet: reads still return the stored body.
+ * Forward only. A read path returns a migrated body only where it calls this; any other read
+ * returns the stored body.
  */
 export function applyMajorChain(
   collection: Pick<CollectionMajors, 'majors' | 'migrations'>,

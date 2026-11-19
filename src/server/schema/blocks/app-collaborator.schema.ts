@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 
 /**
  * App Listing COLLABORATORS — tRPC input schemas.
@@ -106,7 +107,7 @@ export type GetPendingAppTransferInput = z.infer<typeof getPendingAppTransferSch
 
 export const getAppEarningsSchema = z.object({
   appListingId,
-  from: z.string().datetime().optional(),
-  to: z.string().datetime().optional(),
+  from: isoDatetimeCompat().optional(),
+  to: isoDatetimeCompat().optional(),
 });
 export type GetAppEarningsInput = z.infer<typeof getAppEarningsSchema>;

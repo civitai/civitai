@@ -88,7 +88,7 @@ const submit = (domain: 'green' | 'blue' | 'red' = 'blue') =>
     modelVersionId: MODEL_VERSION_ID,
     token: 'tok',
     user: { id: USER_ID, isModerator: false } as never,
-    features: { trainingStepsPricing: true } as never,
+    features: { krea2Training: true, trainingStepsPricing: true } as never,
     domain,
   } as never);
 
@@ -238,7 +238,7 @@ describe('createTrainingWorkflow single submission per version', () => {
       blockedModels: ['krea2'],
     } as never);
 
-    await expect(submit()).rejects.toThrow('blocked from training');
+    await expect(submit()).rejects.toThrow('Krea 2 is temporarily unavailable for training');
     expect(dbMock.dbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
   });
 

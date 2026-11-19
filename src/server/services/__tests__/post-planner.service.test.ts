@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type { Sql } from '@prisma/client/runtime/library';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as PostService from '~/server/services/post.service';
@@ -632,6 +636,7 @@ describe('getScheduledPosts', () => {
     ]);
 
     const result = await getScheduledPosts({
+      servableLevels: allBrowsingLevelsFlag,
       user: OWNER,
       from: new Date(),
       to: new Date(Date.now() + 30 * DAY),
@@ -660,12 +665,17 @@ describe('getScheduledPosts', () => {
   it('scopes the query to the caller and counts the cover scan once', async () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([]);
 
-    await getScheduledPosts({ user: OWNER, from: new Date(), to: new Date(Date.now() + DAY) });
+    await getScheduledPosts({
+      servableLevels: allBrowsingLevelsFlag,
+      user: OWNER,
+      from: new Date(),
+      to: new Date(Date.now() + DAY),
+    });
 
     const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
     const sql = strings.join('?');
     expect(sql).toMatch(/WHERE p\."userId" = \?/);
-    expect(values[0]).toBe(7);
+    expect(values[strings.findIndex((part) => /WHERE p\."userId" = $/.test(part))]).toBe(7);
     expect(sql.match(/FROM "Image"/g)).toHaveLength(1);
     expect(sql).not.toMatch(/"modelVersionId" = \?/);
     expect(sql).not.toMatch(/"PostTag"/);
@@ -675,6 +685,7 @@ describe('getScheduledPosts', () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([]);
 
     await getScheduledPosts({
+      servableLevels: allBrowsingLevelsFlag,
       user: OWNER,
       from: new Date(),
       to: new Date(Date.now() + DAY),
@@ -687,7 +698,7 @@ describe('getScheduledPosts', () => {
         typeof value === 'object' &&
         value !== null &&
         'strings' in value &&
-        value.strings.join('').includes('"PostTag"')
+        (value as Sql).strings.join('').includes('"PostTag"')
     );
     const sql = fragment?.strings.join('?') ?? '';
     expect(sql).toMatch(/AND EXISTS \(/);
@@ -701,6 +712,7 @@ describe('getScheduledPosts', () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([]);
 
     await getScheduledPosts({
+      servableLevels: allBrowsingLevelsFlag,
       user: OWNER,
       from: new Date(),
       to: new Date(Date.now() + DAY),
@@ -709,7 +721,11 @@ describe('getScheduledPosts', () => {
 
     const [, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
     const fragment = values.find(
-      (value): value is Sql => typeof value === 'object' && value !== null && 'strings' in value
+      (value): value is Sql =>
+        typeof value === 'object' &&
+        value !== null &&
+        'strings' in value &&
+        (value as Sql).strings.join('').includes('"modelVersionId"')
     );
     expect(fragment?.strings.join('?')).toMatch(/AND p\."modelVersionId" = \?/);
     expect(fragment?.values).toEqual([30]);
@@ -719,6 +735,7 @@ describe('getScheduledPosts', () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue(Array.from({ length: 1501 }, (_, i) => row(i + 1)));
 
     const result = await getScheduledPosts({
+      servableLevels: allBrowsingLevelsFlag,
       user: OWNER,
       from: new Date(),
       to: new Date(Date.now() + 30 * DAY),
@@ -748,11 +765,25 @@ describe('getPlannerPostDetail', () => {
     ...overrides,
   });
 
+  it('reads the post through the editor at the servable levels it was given', async () => {
+    getPostEditDetail.mockResolvedValue(editDetail());
+
+    await getPlannerPostDetail({ id: 11, user: OWNER, servableLevels: sfwBrowsingLevelsFlag });
+
+    expect(getPostEditDetail).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 11, servableLevels: sfwBrowsingLevelsFlag })
+    );
+  });
+
   it('refuses another user’s post even though the edit loader admits moderators', async () => {
     getPostEditDetail.mockResolvedValue(editDetail({ user: { id: 99 } }));
 
     await expect(
-      getPlannerPostDetail({ id: 11, user: { ...OWNER, isModerator: true } })
+      getPlannerPostDetail({
+        id: 11,
+        user: { ...OWNER, isModerator: true },
+        servableLevels: allBrowsingLevelsFlag,
+      })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(getPostResources).not.toHaveBeenCalled();
   });
@@ -760,12 +791,21 @@ describe('getPlannerPostDetail', () => {
   it('returns the description as plain text and no stats while the post is scheduled', async () => {
     getPostEditDetail.mockResolvedValue(editDetail());
 
-    const detail = await getPlannerPostDetail({ id: 11, user: OWNER });
+    const detail = await getPlannerPostDetail({
+      id: 11,
+      user: OWNER,
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(detail.description).toBe('Hello there & welcome\nSecond');
     expect(detail.description).not.toMatch(/<[a-z]/);
     expect(detail.stats).toBeNull();
     expect(fetchStats).not.toHaveBeenCalled();
+    expect(getPostResources).toHaveBeenCalledWith({
+      id: 11,
+      userId: OWNER.id,
+      isModerator: OWNER.isModerator,
+    });
   });
 
   it('reads live engagement once the post is published', async () => {
@@ -774,7 +814,11 @@ describe('getPlannerPostDetail', () => {
       11: { likeCount: 5, heartCount: 4, laughCount: 2, cryCount: 1, commentCount: 3 },
     });
 
-    const detail = await getPlannerPostDetail({ id: 11, user: OWNER });
+    const detail = await getPlannerPostDetail({
+      id: 11,
+      user: OWNER,
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(detail.stats).toEqual({ reactions: 12, comments: 3 });
   });

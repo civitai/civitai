@@ -27,7 +27,8 @@
 // WHAT A HOOK IS SHOWN: the op, collection, key (pre-generated for a create), the stored data
 // before and the data after (null where there is none), the stored document's metadata (version,
 // author kind and whether the viewer is its author, counters, marks: never another user's id),
-// the tally for a counter or mark, the viewer's user id, the app's blockId and the importer's.
+// the tally as its update operator (`$inc` / `$mark` / `$unmark`, `HookTally`), the viewer's
+// user id, the app's blockId and the importer's.
 // The counters it sees are a snapshot: tallies do not move the version, so they are not pinned.
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import { env } from '~/env/server';
@@ -37,7 +38,11 @@ import {
   recordStorageHookCall,
   type StorageHookCallOutcome,
 } from '~/server/metrics/app-block-runtime.metrics';
-import type { DocStore } from '~/server/services/apps/doc-store';
+import {
+  assertIncrementRequest,
+  assertMarkRequest,
+  type DocStore,
+} from '~/server/services/apps/doc-store';
 import type { StorageAccess } from '~/server/services/apps/doc-store-access';
 import {
   mintHookPass,
@@ -102,9 +107,21 @@ export function hookClientTimeoutMs(timeoutMs: number | undefined): number {
   );
 }
 
-export type HookTally =
-  | { kind: 'counter'; name: string; by: number }
-  | { kind: 'mark'; name: string };
+/**
+ * A tally write as the hook sees it: the storage API's own update operator (`PATCH /:coll/:key`),
+ * whichever route carried it (the deprecated per-tally routes are aliases). Exactly one operator,
+ * the op's own: `$inc` for increment, `$mark` for mark, `$unmark` for unmark.
+ */
+export type HookTally = { $inc: Record<string, number> } | { $mark: string } | { $unmark: string };
+
+/** What the route knows about a tally write: the counter or mark name, and `by` for a counter. */
+export type TallyRequest = { name: string; by?: number };
+
+/** The update operator a hook is shown for one tally op (`HookInput.tally`). */
+export function hookTallyOf(op: 'increment' | 'mark' | 'unmark', t: TallyRequest): HookTally {
+  if (op === 'increment') return { $inc: { [t.name]: t.by ?? 1 } };
+  return op === 'mark' ? { $mark: t.name } : { $unmark: t.name };
+}
 
 /** The hook's single argument (`HookInput` in the runner's `src/contract.ts`). */
 export type HookInput = {
@@ -364,7 +381,8 @@ export type HookGateArgs = {
   key?: string;
   /** The document body after a create or put. */
   after?: Record<string, unknown>;
-  tally?: HookTally;
+  /** For increment, mark and unmark: the counter or mark, and `by` for a counter. */
+  tally?: TallyRequest;
   /** The caller's own `ifVersion` (put, delete). Refused before the hook when it is stale. */
   ifVersion?: number;
   /** An increment that creates the document when it is absent (`write: 'none'`). */
@@ -418,7 +436,19 @@ export async function gateHook(args: HookGateArgs): Promise<HookGrant | null> {
   const { access, coll, op } = args;
   const hook: DeclaredStorageHook | undefined = coll.config.hook;
   if (!hook) return null;
-  if (op === 'mark' && args.tally?.name === REPORT_MARK) return null;
+  // A hooked collection only from here: a collection with no hook leaves the gate above, so its
+  // writes run exactly the checks, in exactly the order, they ran before hooks existed.
+  const tallyOp = op === 'increment' || op === 'mark' || op === 'unmark';
+  let tally: HookTally | null = null;
+  if (tallyOp) {
+    if (!args.tally) throw new Error('doc-store-hook: a tally is required for ' + op);
+    // The store's own request checks, before the hook: an invalid request never reaches a hook.
+    if (op === 'increment') assertIncrementRequest(coll, args.tally.name, args.tally.by ?? 1);
+    else assertMarkRequest(coll, args.tally.name);
+    // The `report` mark is exempt: a hook must never be able to silence moderation reports.
+    if (op === 'mark' && args.tally.name === REPORT_MARK) return null;
+    tally = hookTallyOf(op, args.tally);
+  }
   const { ctx } = access;
   if (ctx.viewerUid === null) throw new DocStoreError('sign_in_required', 'sign in required');
 
@@ -435,7 +465,6 @@ export async function gateHook(args: HookGateArgs): Promise<HookGrant | null> {
   // Nothing for the hook to decide: deleting or tallying a document that does not exist changes
   // nothing (the store answers it, pinned to "still absent"). An increment that would CREATE the
   // document is decided like any other write.
-  const tallyOp = op === 'increment' || op === 'mark' || op === 'unmark';
   if (
     !before &&
     (op === 'delete' || (tallyOp && !(op === 'increment' && args.createsWhenAbsent)))
@@ -467,7 +496,7 @@ export async function gateHook(args: HookGateArgs): Promise<HookGrant | null> {
       before: before ? before.data : null,
       after: op === 'create' || op === 'put' ? args.after ?? null : null,
       doc: before ? docMeta(before) : null,
-      tally: args.tally ?? null,
+      tally,
       viewer: { userId: ctx.viewerUid },
       app: { blockId: access.blockId },
       from: access.importer ?? null,

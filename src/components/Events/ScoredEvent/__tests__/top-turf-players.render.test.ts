@@ -55,16 +55,13 @@ describe('Top turf players', () => {
     expect(el.querySelector('[data-user="999"]')).toBeNull();
   });
 
-  it('shows ten, hiding the last five below the wide layout', () => {
+  it('shows ten at every width, like the hardest-working hats', () => {
     const el = render(
       Array.from({ length: 12 }, (_, i) => ({ userId: i + 1, team: 'Blue', points: 100 - i }))
     );
     const shown = rows(el);
     expect(shown).toHaveLength(10);
-    expect(shown.map((r) => r.className.includes('hidden'))).toEqual([
-      ...Array(5).fill(false),
-      ...Array(5).fill(true),
-    ]);
+    expect(shown.map((r) => r.className.includes('hidden'))).toEqual(Array(10).fill(false));
   });
 
   it('says when turf has not scored, including on a snapshot from before the board existed', () => {

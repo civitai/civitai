@@ -56,7 +56,7 @@ export const NSFW_CAPPED_MESSAGE =
  * Video engines the orchestrator never rates (the provider moderates its own output), so a hold
  * on them never releases. Remove once it writes `nsfwLevel: 'na'` on unscanned outputs.
  */
-const NEVER_RATED_VIDEO_ECOSYSTEMS = new Set(['Grok', 'Kling', 'Veo3', 'Vidu']);
+const NEVER_RATED_VIDEO_ECOSYSTEMS = new Set(['GeminiOmni', 'Grok', 'Kling', 'Veo3', 'Vidu']);
 
 type StepParamsSource = {
   $type?: string;

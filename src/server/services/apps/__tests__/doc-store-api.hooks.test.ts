@@ -45,6 +45,9 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const RUNNER_SECRET = 'storage-hook-runner-test-secret-0123456789abcdef';
 const OFFLINE_FLAG = 'app-blocks-storage-hook-runner-offline';
+const PUBLISH_FLAG = 'app-blocks-storage-publish';
+const UNCHANGED_FLAG = 'app-blocks-storage-unchanged-writes-free';
+const LEVELS_FLAG = 'app-blocks-shared-doc-levels';
 
 const h = vi.hoisted(() => ({
   store: undefined as unknown as DocStore,
@@ -52,6 +55,10 @@ const h = vi.hoisted(() => ({
   /** App block ids the runner-offline flag is on for; `'throw'` makes every Flipt call throw. */
   offline: new Set<string>() as Set<string> | 'throw',
   fliptCalls: [] as { flag: string; entityId?: string; context?: unknown }[],
+  /** Other `isFlipt` flags a test switches on (publish, unchanged writes). */
+  flagsOn: new Set<string>(),
+  /** The content-levels flag as `readFliptBoolean` reads it: off unless a case turns it on. */
+  levels: false,
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => {
@@ -66,7 +73,14 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
       }
       // Shared-data moderation: enforce, so a scan that runs is observable.
       if (flag === 'app-blocks-shared-data-moderation-enforce') return true;
-      return false;
+      return h.flagsOn.has(flag);
+    },
+    readFliptBoolean: async (flag: string, ...rest: unknown[]) => {
+      if (flag === LEVELS_FLAG) return h.levels;
+      return (real.readFliptBoolean as (...a: unknown[]) => Promise<boolean | undefined>)(
+        flag,
+        ...rest
+      );
     },
   };
 });
@@ -106,6 +120,7 @@ vi.mock('~/server/services/apps/storage-import-grant.service', async (importOrig
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { createDocStore } from '~/server/services/apps/doc-store';
 import { DEFAULT_DOC_STORE_LIMITS } from '~/server/services/apps/doc-store.types';
+import { DOC_STORE_SHARED_WRITE_BUDGET } from '~/server/utils/shared-storage-rate-limit';
 import { OnboardingSteps } from '~/server/common/enums';
 import { scanSharedData } from '~/server/services/apps/shared-data-moderation';
 import {
@@ -126,7 +141,7 @@ const CARDS_SRC = `export default function check(input) {
   if (after && typeof after.title === 'string' && after.title.startsWith('DENY'))
     return { allow: false, reason: op + ': title not allowed' };
   if (before && before.locked === true) return { allow: false, reason: op + ': card is locked' };
-  if (tally && tally.kind === 'counter' && tally.by > 1)
+  if (tally && tally.$inc && Object.values(tally.$inc)[0] > 1)
     return { allow: false, reason: op + ': one at a time' };
   return { allow: true };
 }
@@ -155,7 +170,7 @@ type HookIn = {
   before: Record<string, unknown> | null;
   after: Record<string, unknown> | null;
   doc: Record<string, unknown> | null;
-  tally: { kind: string; name: string; by?: number } | null;
+  tally: { $inc: Record<string, number> } | { $mark: string } | { $unmark: string } | null;
   viewer: { userId: number };
   app: { blockId: string };
   from: string | null;
@@ -178,7 +193,7 @@ const DECIDE: Record<string, (i: HookIn) => HookOut> = {
     if (after && typeof after.title === 'string' && after.title.startsWith('DENY'))
       return { allow: false, reason: `${op}: title not allowed` };
     if (before && before.locked === true) return { allow: false, reason: `${op}: card is locked` };
-    if (tally && tally.kind === 'counter' && (tally.by ?? 1) > 1)
+    if (tally && '$inc' in tally && Object.values(tally.$inc)[0] > 1)
       return { allow: false, reason: `${op}: one at a time` };
     return { allow: true };
   },
@@ -207,6 +222,13 @@ const CARD_SCHEMA = {
 };
 
 const SCOPES = ['apps:storage', 'apps:storage:publish'];
+
+/**
+ * The shared-write burst, and one write past it: a run of OVER shared writes meets exactly one 429
+ * when every write spends its token, and none when the refused ones are refunded.
+ */
+const BURST = DOC_STORE_SHARED_WRITE_BUDGET.burst.capacity;
+const OVER = BURST + 1;
 const CONSUMER_SCOPES = ['apps:storage', 'apps:storage:import'];
 
 /** P, the app with the hooks. */
@@ -572,7 +594,7 @@ let harness: Harness;
 let liveStore: DocStore;
 
 beforeAll(async () => {
-  harness = await createPgliteHarness({ rls: true });
+  harness = await createPgliteHarness({ rls: true, docLevels: true });
   liveStore = createDocStore({ db: harness.db, limits: DEFAULT_DOC_STORE_LIMITS });
   h.store = liveStore;
 });
@@ -585,6 +607,8 @@ beforeEach(() => {
   sourceReads = {};
   h.offline = new Set();
   h.fliptCalls = [];
+  h.flagsOn = new Set();
+  h.levels = false;
   h.users.clear();
   for (const id of [V1, V2]) h.users.set(id, user(id));
   stub.mode = 'ok';
@@ -712,6 +736,96 @@ describe.each(['stub', 'real'] as const)('every write op calls the hook (%s runn
     else expect(input.key).toBe(k.U);
   });
 
+  // The hook's `tally` input is the storage API's update operator, the SAME whichever route carried
+  // the write: the document PATCH or the deprecated per-tally alias. A document write has none.
+  const TALLY_ROUTES: [string, string, (k: string) => [string, string, unknown], unknown][] = [
+    [
+      'increment',
+      'POST …/counters/likes',
+      (k) => ['POST', `/cards/${k}/counters/likes`, { by: 1 }],
+      { $inc: { likes: 1 } },
+    ],
+    [
+      'increment',
+      'PATCH $inc',
+      (k) => ['PATCH', `/cards/${k}`, { $inc: { likes: 1 } }],
+      { $inc: { likes: 1 } },
+    ],
+    [
+      'mark',
+      'PUT …/marks/star',
+      (k) => ['PUT', `/cards/${k}/marks/star`, undefined],
+      { $mark: 'star' },
+    ],
+    ['mark', 'PATCH $mark', (k) => ['PATCH', `/cards/${k}`, { $mark: 'star' }], { $mark: 'star' }],
+    [
+      'unmark',
+      'DELETE …/marks/star',
+      (k) => ['DELETE', `/cards/${k}/marks/star`, undefined],
+      { $unmark: 'star' },
+    ],
+    [
+      'unmark',
+      'PATCH $unmark',
+      (k) => ['PATCH', `/cards/${k}`, { $unmark: 'star' }],
+      { $unmark: 'star' },
+    ],
+  ];
+  it.each(TALLY_ROUTES)(
+    '%s via %s: the hook is shown the update operator',
+    async (op, _route, request, expected) => {
+      const { P } = freshApps();
+      const token = await mint(P, V1);
+      const k = await cards(token);
+      if (op === 'unmark') {
+        await call({ token, method: 'PUT', path: `/cards/${k.U}/marks/star` });
+        runner.seen.length = 0;
+      }
+      const [method, p, body] = request(k.U);
+      const r = await call({ token, method, path: p, body });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(runner.seen.map((x) => x.input.op)).toEqual([op]);
+      expect(runner.seen[0].input.tally).toEqual(expected);
+    }
+  );
+
+  it('a document write is shown no tally', async () => {
+    const { P } = freshApps();
+    const token = await mint(P, V1);
+    const k = await cards(token);
+    const r = await call({
+      token,
+      method: 'PUT',
+      path: `/cards/${k.U}`,
+      body: { data: { title: 'u' } },
+    });
+    expect(r.status).toBe(200);
+    expect(runner.seen.map((x) => [x.input.op, x.input.tally])).toEqual([['put', null]]);
+  });
+
+  it('PATCH $inc by 2 is decided from the operator: refused "one at a time", the counter unchanged', async () => {
+    const { P } = freshApps();
+    const token = await mint(P, V1);
+    const k = await cards(token);
+    const r = await call({
+      token,
+      method: 'PATCH',
+      path: `/cards/${k.U}`,
+      body: { $inc: { likes: 2 } },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(403);
+    expect(r.body).toMatchObject({ code: 'hook_rejected', message: 'increment: one at a time' });
+    // Positive control: by 1 is allowed by the same rule.
+    const one = await call({
+      token,
+      method: 'PATCH',
+      path: `/cards/${k.U}`,
+      body: { $inc: { likes: 1 } },
+    });
+    expect(one.status).toBe(200);
+    expect((await read(token, k.U)).counters).toEqual({ likes: 1 });
+  });
+
   it.each(ROWS.map(deny))(
     '$op: refused by the hook, 403 hook_rejected, nothing changes',
     async (row) => {
@@ -765,7 +879,7 @@ describe.each(['stub', 'real'] as const)('every write op calls the hook (%s runn
   it('a hook that fails is the author fault: 403 hook_rejected with a generic reason, refunded', async () => {
     const { P } = freshApps();
     const token = await mint(P, V1);
-    for (let i = 0; i < 11; i++) {
+    for (let i = 0; i < OVER; i++) {
       const r = await call({ token, method: 'POST', path: '/boom', body: { data: { n: i } } });
       expect(r.status, `write ${i + 1}: ${JSON.stringify(r.body)}`).toBe(403);
       expect(r.body).toMatchObject({
@@ -774,7 +888,7 @@ describe.each(['stub', 'real'] as const)('every write op calls the hook (%s runn
         details: { collection: 'boom', cause: 'error' },
       });
     }
-    expect(runner.seen).toHaveLength(11);
+    expect(runner.seen).toHaveLength(OVER);
   });
 
   it('the schema runs first: a schema-invalid write never reaches the hook, a valid denied one does', async () => {
@@ -895,27 +1009,28 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
     ['the runner not configured', async () => setEnv({ STORAGE_HOOK_RUNNER_URL: '' })],
   ];
 
-  it('positive control: with the runner up, 11 allowed shared creates meet exactly one 429 (burst 10)', async () => {
+  it('positive control: with the runner up, OVER allowed shared creates meet exactly one 429 (the burst)', async () => {
+    expect(BURST).toBeGreaterThan(1);
     const { P } = freshApps();
     const token = await mint(P, V1);
     const statuses: number[] = [];
-    for (let i = 0; i < 11; i++) {
+    for (let i = 0; i < OVER; i++) {
       statuses.push(
         (await call({ token, method: 'POST', path: '/cards', body: { data: { title: `c${i}` } } }))
           .status
       );
     }
-    expect(statuses).toEqual([...Array(10).fill(201), 429]);
+    expect(statuses).toEqual([...Array(BURST).fill(201), 429]);
   });
 
   it.each(MODES)(
-    '%s: 11 shared creates, every one 503 with Retry-After 5, no 429, none stored',
+    '%s: OVER shared creates, every one 503 with Retry-After 5, no 429, none stored',
     async (_label, arrange) => {
       await arrange();
       const { P } = freshApps();
       const token = await mint(P, V1);
       const unavailable0 = await hookCalls('unavailable');
-      for (let i = 0; i < 11; i++) {
+      for (let i = 0; i < OVER; i++) {
         const r = await call({
           token,
           method: 'POST',
@@ -929,7 +1044,7 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
         });
         expect(r.headers['retry-after']).toBe('5');
       }
-      expect((await hookCalls('unavailable')) - unavailable0).toBe(11);
+      expect((await hookCalls('unavailable')) - unavailable0).toBe(OVER);
       stub.mode = 'ok';
       setEnv({ STORAGE_HOOK_RUNNER_URL: runner.url });
       expect((await call({ token, method: 'GET', path: '/cards' })).body.items).toEqual([]);
@@ -943,6 +1058,40 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
       expect(after.status).toBe(201);
     }
   );
+
+  it('every request to the runner is HMAC-signed over its exact body bytes', async () => {
+    // A capture server: records the raw request and answers 500 (so the write is refused 503).
+    const captured: { sig: unknown; raw: string }[] = [];
+    const capture = createServer((req: IncomingMessage, res: ServerResponse) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        captured.push({
+          sig: req.headers['x-storage-hook-sig'],
+          raw: Buffer.concat(chunks).toString('utf8'),
+        });
+        res.writeHead(500).end();
+      });
+    });
+    const url = await listen(capture);
+    try {
+      setEnv({ STORAGE_HOOK_RUNNER_URL: url, STORAGE_HOOK_RUNNER_SECRET: RUNNER_SECRET });
+      const { P } = freshApps();
+      const r = await call({
+        token: await mint(P, V1),
+        method: 'POST',
+        path: '/cards',
+        body: { data: { title: 'signed' } },
+      });
+      expect(r.status).toBe(503);
+      expect(captured).toHaveLength(1);
+      expect(captured[0].sig).toBe(hmac(RUNNER_SECRET, captured[0].raw));
+      // Negative control: another secret's signature is not it.
+      expect(captured[0].sig).not.toBe(hmac(`${RUNNER_SECRET}x`, captured[0].raw));
+    } finally {
+      await new Promise<void>((resolve) => capture.close(() => resolve()));
+    }
+  });
 
   it('a tally fails closed too: mark and increment are 503 and change nothing', async () => {
     const { P } = freshApps();
@@ -1118,5 +1267,252 @@ describe('a change between the hook and the write is a version_conflict', () => 
     });
     expect(r.status).toBe(409);
     expect(runner.seen).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Default off: no hook declared → the write path never reaches the hook machinery
+// ---------------------------------------------------------------------------
+
+describe('default off: a collection whose approved manifest declares no hook', () => {
+  let runner: Runner;
+  beforeAll(async () => {
+    runner = await startStubRunner();
+  });
+  afterAll(async () => {
+    await runner?.close();
+  });
+  useRunner(() => runner);
+
+  const OUTCOMES = [
+    'allow',
+    'denied',
+    'error',
+    'timeout',
+    'oom',
+    'stack_overflow',
+    'invalid_result',
+    'unavailable',
+    'offline',
+  ];
+  const allHookCalls = async () => Promise.all(OUTCOMES.map((o) => hookCalls(o)));
+
+  /** Every write op on `plain` (no hook): create, put, both tally routes, delete. */
+  async function everyWrite(token: string): Promise<number[]> {
+    const c = await call({ token, method: 'POST', path: '/plain', body: { data: { t: 'a' } } });
+    const key = c.body.key as string;
+    const statuses = [c.status];
+    for (const [method, p, body] of [
+      ['PUT', `/plain/${key}`, { data: { t: 'b' } }],
+      ['PATCH', `/plain/${key}`, { $mark: 'star' }],
+      ['PATCH', `/plain/${key}`, { $unmark: 'star' }],
+      ['PUT', `/plain/${key}/marks/star`, undefined],
+      ['DELETE', `/plain/${key}/marks/star`, undefined],
+      ['DELETE', `/plain/${key}`, undefined],
+    ] as const) {
+      statuses.push((await call({ token, method, path: p, body })).status);
+    }
+    return statuses;
+  }
+  const LANDED = [201, 200, 200, 200, 200, 200, 200];
+
+  it('every write lands with no runner call, no hook-source read, no offline-flag read and no hook metric', async () => {
+    const { P } = freshApps();
+    const token = await mint(P, V1);
+    const metrics0 = await allHookCalls();
+    expect(await everyWrite(token)).toEqual(LANDED);
+    expect(runner.seen).toHaveLength(0);
+    expect(sourceReads).toEqual({});
+    expect(h.fliptCalls.filter((c) => c.flag === OFFLINE_FLAG)).toEqual([]);
+    expect(await allHookCalls()).toEqual(metrics0);
+    // Positive control, same app and runner: the hooked collection IS decided by its hook.
+    const hooked = await call({
+      token,
+      method: 'POST',
+      path: '/cards',
+      body: { data: { title: 'x' } },
+    });
+    expect(hooked.status).toBe(201);
+    expect(runner.seen).toHaveLength(1);
+  });
+
+  it('with the runner NOT configured, every write still lands; a hooked write is 503 (positive control)', async () => {
+    setEnv({ STORAGE_HOOK_RUNNER_URL: '', STORAGE_HOOK_RUNNER_SECRET: '' });
+    const { P } = freshApps();
+    const token = await mint(P, V1);
+    expect(await everyWrite(token)).toEqual(LANDED);
+    const hooked = await call({
+      token,
+      method: 'POST',
+      path: '/cards',
+      body: { data: { title: 'x' } },
+    });
+    expect(hooked.status).toBe(503);
+    expect(hooked.body.code).toBe('hook_unavailable');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The App Storage features merged since: publish/unpublish, unchanged writes, content levels
+// ---------------------------------------------------------------------------
+
+describe('publish, unpublish, unchanged writes and content levels on a hooked collection', () => {
+  let runner: Runner;
+  beforeAll(async () => {
+    runner = await startStubRunner();
+  });
+  afterAll(async () => {
+    await runner?.close();
+  });
+  useRunner(() => runner);
+
+  it('publish INTO a hooked collection is refused hooked_collection, nothing written; into an unhooked one it lands', async () => {
+    h.flagsOn.add(PUBLISH_FLAG);
+    const { P } = freshApps();
+    const token = await mint(P, V1);
+    const n = await call({
+      token,
+      method: 'POST',
+      path: '/notes',
+      body: { data: { title: 'n1' } },
+    });
+    expect(n.status).toBe(201);
+    const key = n.body.key as string;
+    runner.seen.length = 0;
+    const refused = await call({
+      token,
+      method: 'POST',
+      path: '/_publish/cards',
+      body: { from: 'notes', keys: [key] },
+    });
+    expect(refused.status, JSON.stringify(refused.body)).toBe(400);
+    expect(refused.body).toMatchObject({
+      code: 'invalid_request',
+      details: { reason: 'hooked_collection', collection: 'cards' },
+    });
+    expect((await call({ token, method: 'GET', path: `/cards/${key}` })).status).toBe(404);
+    expect(runner.seen).toHaveLength(0);
+    // Positive control: the same publish into the unhooked shared collection lands.
+    const ok = await call({
+      token,
+      method: 'POST',
+      path: '/_publish/plain',
+      body: { from: 'notes', keys: [key] },
+    });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.created).toEqual([key]);
+    expect((await call({ token, method: 'GET', path: `/plain/${key}` })).status).toBe(200);
+  });
+
+  it('unpublish FROM a hooked collection is refused hooked_collection, the document stays; from an unhooked one it goes', async () => {
+    h.flagsOn.add(PUBLISH_FLAG);
+    const { P } = freshApps();
+    const token = await mint(P, V1);
+    const c = await call({ token, method: 'POST', path: '/cards', body: { data: { title: 'c' } } });
+    const p = await call({ token, method: 'POST', path: '/plain', body: { data: { t: 'p' } } });
+    expect([c.status, p.status]).toEqual([201, 201]);
+    runner.seen.length = 0;
+    const refused = await call({
+      token,
+      method: 'POST',
+      path: '/_unpublish/cards',
+      body: { keys: [c.body.key] },
+    });
+    expect(refused.status, JSON.stringify(refused.body)).toBe(400);
+    expect(refused.body.details).toMatchObject({ reason: 'hooked_collection' });
+    expect((await call({ token, method: 'GET', path: `/cards/${c.body.key}` })).status).toBe(200);
+    expect(runner.seen).toHaveLength(0);
+    const ok = await call({
+      token,
+      method: 'POST',
+      path: '/_unpublish/plain',
+      body: { keys: [p.body.key] },
+    });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.deleted).toEqual([p.body.key]);
+  });
+
+  it('unchanged-writes-free on: an unchanged put to a hooked collection is still decided by the hook', async () => {
+    h.flagsOn.add(UNCHANGED_FLAG);
+    const { P } = freshApps();
+    const token = await mint(P, V1);
+    const c = await call({ token, method: 'POST', path: '/cards', body: { data: { title: 'L' } } });
+    const key = c.body.key as string;
+    const locked = { data: { title: 'L', locked: true } };
+    expect((await call({ token, method: 'PUT', path: `/cards/${key}`, body: locked })).status).toBe(
+      200
+    );
+    runner.seen.length = 0;
+    // The SAME body again: unchanged, but the hook refuses every write to a locked card.
+    const again = await call({ token, method: 'PUT', path: `/cards/${key}`, body: locked });
+    expect(again.status, JSON.stringify(again.body)).toBe(403);
+    expect(again.body).toMatchObject({ code: 'hook_rejected', message: 'put: card is locked' });
+    expect(runner.seen.map((x) => x.input.op)).toEqual(['put']);
+    // Positive control: on the unhooked collection the same unchanged put is answered free, its
+    // version untouched, with no runner call.
+    const p = await call({ token, method: 'POST', path: '/plain', body: { data: { t: 'p' } } });
+    const same = await call({
+      token,
+      method: 'PUT',
+      path: `/plain/${p.body.key}`,
+      body: { data: { t: 'p' } },
+    });
+    expect(same.status).toBe(200);
+    expect(same.body.version).toBe(p.body.version);
+    expect(runner.seen).toHaveLength(1);
+  });
+
+  it('content levels on: a hooked tally on a document the viewer cannot see never lands and never shows the hook its data', async () => {
+    h.levels = true;
+    const { P } = freshApps();
+    const author = await mint(P, V1);
+    const other = await mint(P, V2);
+    const c = await call({
+      token: author,
+      method: 'POST',
+      path: '/cards',
+      body: { data: { title: 'c' } },
+    });
+    expect(c.status).toBe(201);
+    const key = c.body.key as string;
+    // The setup holds: unrated, so hidden from everyone but its author.
+    expect((await call({ token: other, method: 'GET', path: `/cards/${key}` })).status).toBe(404);
+    runner.seen.length = 0;
+    for (const [method, body] of [
+      ['PATCH', { $mark: 'star' }],
+      ['PATCH', { $inc: { likes: 1 } }],
+    ] as const) {
+      const r = await call({ token: other, method, path: `/cards/${key}`, body });
+      expect(r.status, JSON.stringify(r.body)).toBe(409);
+      expect(r.body.code).toBe('version_conflict');
+    }
+    expect(runner.seen).toHaveLength(0);
+    const doc = (await call({ token: author, method: 'GET', path: `/cards/${key}` })).body;
+    expect([doc.counters, doc.marks]).toEqual([{ likes: 0 }, { star: 0 }]);
+  });
+
+  it('content levels off (control): the same tally by the same viewer is decided by the hook and lands', async () => {
+    h.levels = false;
+    const { P } = freshApps();
+    const author = await mint(P, V1);
+    const other = await mint(P, V2);
+    const c = await call({
+      token: author,
+      method: 'POST',
+      path: '/cards',
+      body: { data: { title: 'c' } },
+    });
+    const key = c.body.key as string;
+    runner.seen.length = 0;
+    const r = await call({
+      token: other,
+      method: 'PATCH',
+      path: `/cards/${key}`,
+      body: { $mark: 'star' },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(runner.seen.map((x) => [x.input.op, x.input.tally])).toEqual([
+      ['mark', { $mark: 'star' }],
+    ]);
   });
 });

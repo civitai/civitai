@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
@@ -93,7 +94,11 @@ describe('combinePostEditImageData, shared with the upload path', () => {
       { id: 1, index: 1, tools: [], techniques: [] },
     ] as never);
 
-    const images = await getPostEditImages({ id: 1, user: { id: 1 } as SessionUser });
+    const images = await getPostEditImages({
+      id: 1,
+      user: { id: 1 } as SessionUser,
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(images).toHaveLength(1);
     expect(getImageMetricsObject).not.toHaveBeenCalled();
@@ -130,7 +135,11 @@ describe('getPostEditDetail', () => {
     givenPost(past);
     getImageMetricsObject.mockResolvedValue({ 1: metric(1, 4, 1) });
 
-    const post = await getPostEditDetail({ id: 1, user: owner });
+    const post = await getPostEditDetail({
+      id: 1,
+      user: owner,
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(post.images[0].reactionCount).toBe(5);
   });
@@ -138,7 +147,11 @@ describe('getPostEditDetail', () => {
   it('reads no metrics for a draft', async () => {
     givenPost(null);
 
-    const post = await getPostEditDetail({ id: 1, user: owner });
+    const post = await getPostEditDetail({
+      id: 1,
+      user: owner,
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(post.images[0].reactionCount).toBeUndefined();
     expect(getImageMetricsObject).not.toHaveBeenCalled();

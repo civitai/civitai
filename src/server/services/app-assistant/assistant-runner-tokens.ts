@@ -69,7 +69,7 @@ function parse(pem: string): { privateKey: KeyObject; publicKey: KeyObject } | n
   logToAxiom({
     type: 'app-assistant.runner-signing-key.unusable',
     message: `ASSISTANT_RUNNER_SIGNING_KEY is unusable (${reason}); the runner endpoints answer 503`,
-  }).catch(() => undefined);
+  });
   return null;
 }
 

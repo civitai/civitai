@@ -1,4 +1,4 @@
-import type { IndexOptions, MeiliSearchErrorInfo, Task, MeiliSearch } from 'meilisearch';
+import type { Index, IndexOptions, MeiliSearchErrorInfo, Task, MeiliSearch } from 'meilisearch';
 import { MeiliSearchTimeOutError } from 'meilisearch';
 import { searchClient } from '~/server/meilisearch/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -95,12 +95,27 @@ const onSearchIndexDocumentsCleanup = async ({
   indexName,
   ids,
   client = searchClient,
+  commit,
+  rebuilding,
 }: {
   indexName: string;
   ids?: number[];
   client?: MeiliSearch | null;
+  /**
+   * The checkout `ids` came from, when they came from one: committed before any re-queue, since an
+   * id re-queued before `commit()` can land in the bucket the commit deletes. Always called once,
+   * even when there is no client or index to delete from.
+   */
+  commit?: () => Promise<unknown>;
+  /**
+   * Ids the same run also rebuilds. A failed delete of one of these is re-queued as an Update too,
+   * so the retried delete does not remove the rebuilt document. Every other failed delete goes back
+   * as a Delete only: a rebuild decided by the pull query alone could restore removed content.
+   */
+  rebuilding?: ReadonlySet<number>;
 }) => {
   if (!client) {
+    await commit?.();
     return;
   }
 
@@ -111,12 +126,18 @@ const onSearchIndexDocumentsCleanup = async ({
 
     if (!index) {
       // If for some reason we don't get an index, abort the entire process
+      await commit?.();
       return;
     }
 
-    await index.deleteDocuments(ids);
-    console.log('onSearchIndexDocumentsCleanup :: tasks for deletion has been added');
-
+    await deleteDocumentsOrRequeue({
+      index,
+      indexName,
+      ids,
+      client,
+      beforeWait: commit,
+      rebuilding,
+    });
     return;
   }
 
@@ -141,9 +162,61 @@ const onSearchIndexDocumentsCleanup = async ({
     return;
   }
 
-  await index.deleteDocuments(itemIds);
-  await queuedItemsToDelete.commit();
-  console.log('onSearchIndexDocumentsCleanup :: tasks for deletion has been added');
+  await deleteDocumentsOrRequeue({
+    index,
+    indexName,
+    ids: itemIds,
+    client,
+    beforeWait: () => queuedItemsToDelete.commit(),
+  });
+};
+
+/**
+ * Deletes `ids` and waits for Meilisearch to finish the task. A task that fails, or that the wait
+ * gives up on, puts the ids back on the index's Delete queue (and, for `rebuilding` ids, its Update
+ * queue): once a caller has marked them handled nothing else would retry them. Deleting an id twice
+ * is harmless.
+ */
+const deleteDocumentsOrRequeue = async ({
+  index,
+  indexName,
+  ids,
+  client,
+  beforeWait,
+  rebuilding,
+}: {
+  index: Pick<Index, 'deleteDocuments'>;
+  indexName: string;
+  ids: number[];
+  client: MeiliSearch;
+  beforeWait?: () => Promise<unknown>;
+  rebuilding?: ReadonlySet<number>;
+}) => {
+  const { taskUid } = await index.deleteDocuments(ids);
+  await beforeWait?.();
+  let error: string | undefined;
+  try {
+    const [task] = await waitForTasksWithRetries([taskUid], undefined, client);
+    if (task?.status !== 'succeeded') error = task?.error?.message ?? `status ${task?.status}`;
+  } catch (e) {
+    error = e instanceof Error ? e.message || e.name : String(e);
+  }
+  if (!error) {
+    console.log(`onSearchIndexDocumentsCleanup :: deleted ${ids.length} items`);
+    return;
+  }
+  const queued = await SearchIndexUpdate.queueUpdate({
+    indexName,
+    items: ids.flatMap((id) => [
+      { id, action: SearchIndexUpdateQueueAction.Delete },
+      ...(rebuilding?.has(id) ? [{ id, action: SearchIndexUpdateQueueAction.Update }] : []),
+    ]),
+  });
+  console.error(
+    `onSearchIndexDocumentsCleanup :: ${indexName} :: delete task ${taskUid} did not succeed (${error}); ${
+      queued ? 're-queued' : 'could not re-queue'
+    } ${ids.length} ids`
+  );
 };
 
 const waitForTasksWithRetries = async (
@@ -168,7 +241,7 @@ const waitForTasksWithRetries = async (
     return tasks;
   } catch (e) {
     if (e instanceof MeiliSearchTimeOutError) {
-      return waitForTasksWithRetries(taskUids, remainingRetries - 1);
+      return waitForTasksWithRetries(taskUids, remainingRetries - 1, client);
     }
 
     throw e;
@@ -225,10 +298,8 @@ export const processUserContentRemovalQueue = async () => {
   // One combined filter per index instead of one per user per index
   const mainIndexConfigs = [
     { name: MODELS_SEARCH_INDEX, filter: `user.id IN [${userIdList}]` },
-    // IMAGES_SEARCH_INDEX is omitted deliberately: while it is retired no reset runs, so it has
-    // no filterable attributes and a `user.username` filter errors. Re-add it only in the change
-    // that resets the index — and it can hold documents before then, because
-    // `pages/api/mod/search/images-update.ts` writes to it without consulting `retired`.
+    // The retired images index (`images_v6`) is not here: image search moved to the vector index,
+    // and nothing writes to it any more.
     { name: ARTICLES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
     { name: COLLECTIONS_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
     { name: BOUNTIES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
@@ -241,7 +312,7 @@ export const processUserContentRemovalQueue = async () => {
   ];
 
   // METRICS_IMAGES_SEARCH_INDEX (the feeds index) is omitted: it is retired with the feeds
-  // Meilisearch, and its readers answer without it (see search-index/retired-index-read.ts).
+  // Meilisearch and nothing reads it (see search-index/retired-indexes.ts).
 
   const processIndex = async (indexName: string, filter: string, client: MeiliSearch | null) => {
     if (!client) return;
@@ -256,14 +327,14 @@ export const processUserContentRemovalQueue = async () => {
       await index.deleteDocuments({ filter });
     } catch (error) {
       console.error(`processUserContentRemovalQueue :: Error on ${indexName}:`, error);
-      await logToAxiom({
+      logToAxiom({
         name: 'process-user-content-removal-error',
         type: 'error',
         indexName,
         filter,
         userIds,
         error: error instanceof Error ? error.message : String(error),
-      }).catch();
+      });
     }
   };
 
@@ -271,12 +342,12 @@ export const processUserContentRemovalQueue = async () => {
     ...mainIndexConfigs.map(({ name, filter }) => processIndex(name, filter, searchClient)),
   ]);
 
-  await logToAxiom({
+  logToAxiom({
     name: 'process-user-content-removal-summary',
     type: 'info',
     userCount: entries.length,
     userIds,
-  }).catch();
+  });
 
   console.log(
     `processUserContentRemovalQueue :: Completed batch removal for ${entries.length} users`

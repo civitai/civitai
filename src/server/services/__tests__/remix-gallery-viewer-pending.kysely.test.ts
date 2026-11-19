@@ -58,8 +58,19 @@ vi.mock('~/server/services/free-placement.service', () => ({
   hasUsedFreePlacementOn: vi.fn(),
 }));
 
+// The service loads its Kysely clients on first use; every raw read on this path (the host image,
+// the hosts-with-entries lookup) answers from the fake below, and the pending read is stubbed above.
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
+const ONE_ROW = [{ score: 0, exists: false, count: 0, nsfwLevel: 1, minor: false, showable: true }];
+
 const queries = await import('@civitai/db-queries/hot-reads-3');
-const { kyselyRead, kyselyWrite } = await import('~/server/db/kyselyDb');
+// The clients the service is handed, so the routing checks below compare like with like.
+const { kyselyRead, kyselyWrite } = await (
+  await import('~/server/db/kyselyDb.lazy')
+).loadKyselyDb();
 const { getRemixGalleryVisibility } = await import('~/server/services/remix-gallery.service');
 
 /**
@@ -105,9 +116,12 @@ beforeEach(() => {
   });
   // One row answering every raw read on this path: the has-entries probe, the host image and the
   // submitted images.
-  dbMock.dbRead.$queryRaw.mockResolvedValue([
-    { score: 0, exists: false, count: 0, nsfwLevel: 1, minor: false, showable: true },
-  ]);
+  dbMock.dbRead.$queryRaw.mockResolvedValue(ONE_ROW);
+  kysely.read
+    .mockReset()
+    .mockImplementation(async (strings: readonly string[]) =>
+      strings.join('?').includes('SELECT DISTINCT pl."targetId" AS "hostId"') ? [] : ONE_ROW
+    );
   q.listViewerPendingRemixPlacements.mockResolvedValue([pendingRow] as never);
 });
 

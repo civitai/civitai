@@ -1,7 +1,12 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { buildSearchPageUrl, parseQuery } from '~/components/AutocompleteSearch/autocomplete-query';
+import {
+  buildFeedSearchUrl,
+  buildSearchPageUrl,
+  nextFeedSearchQuery,
+  parseQuery,
+} from '~/components/AutocompleteSearch/autocomplete-query';
 import { buildBrowsingLevelFilters, joinFilterClauses } from '~/components/Search/search-filters';
 import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
 import type { SearchIndexKey } from '~/components/Search/search.types';
@@ -221,5 +226,75 @@ describe('the AutocompleteSearch InstantSearch tree', () => {
   it('routes every /search push through buildSearchPageUrl', () => {
     expect(source.match(/router\.push\(`\/search\/[^`]*`/g) ?? []).toEqual([]);
     expect(source).toContain('buildSearchPageUrl');
+  });
+});
+
+describe('buildFeedSearchUrl', () => {
+  it('lands a search on the feed, with @user as its user filter and #tag words kept', () => {
+    const url = buildFeedSearchUrl('/images', 'red #dragon @someone -#blurry');
+    const params = new URL(url!, 'https://x').searchParams;
+    expect(params.get('query')).toBe('red dragon');
+    expect(params.get('username')).toBe('someone');
+  });
+
+  it('lands an empty search on the bare feed', () => {
+    expect(buildFeedSearchUrl('/models', '')).toBe('/models');
+  });
+});
+
+describe('nextFeedSearchQuery', () => {
+  it("keeps the feed's other filters when the search changes", () => {
+    expect(
+      nextFeedSearchQuery(
+        { baseModels: 'Illustrious', period: 'AllTime', query: 'cat' },
+        'red dragon'
+      )
+    ).toEqual({ baseModels: 'Illustrious', period: 'AllTime', query: 'red dragon' });
+  });
+
+  it("keeps a profile's route username whatever @user token is typed", () => {
+    expect(
+      nextFeedSearchQuery({ username: 'RisingV' }, '@someone red dragon', undefined, true)
+    ).toEqual({ username: 'RisingV', query: 'red dragon' });
+    expect(nextFeedSearchQuery({ username: 'RisingV', query: 'cat' }, '', 'RisingV', true)).toEqual(
+      {
+        username: 'RisingV',
+      }
+    );
+  });
+
+  it('drops only the query when the bar is emptied', () => {
+    expect(nextFeedSearchQuery({ baseModels: 'Illustrious', query: 'cat' }, '')).toEqual({
+      baseModels: 'Illustrious',
+    });
+  });
+
+  it('changes nothing for the query already applied', () => {
+    expect(nextFeedSearchQuery({ query: 'red dragon' }, '  red   dragon ')).toBeNull();
+  });
+
+  it('replaces a "more like this" with a typed query', () => {
+    expect(nextFeedSearchQuery({ similarTo: '42', period: 'AllTime' }, 'red dragon')).toEqual({
+      period: 'AllTime',
+      query: 'red dragon',
+    });
+  });
+});
+
+describe('nextFeedSearchQuery and the user filter', () => {
+  it('drops the user filter the bar set once its @user token is deleted', () => {
+    expect(nextFeedSearchQuery({ query: 'dragon', username: 'alice' }, 'dragon', 'alice')).toEqual({
+      query: 'dragon',
+    });
+    expect(nextFeedSearchQuery({ query: 'dragon', username: 'alice' }, 'castle', 'alice')).toEqual({
+      query: 'castle',
+    });
+  });
+
+  it('keeps a user filter the bar did not set', () => {
+    expect(nextFeedSearchQuery({ query: 'dragon', username: 'alice' }, 'castle')).toEqual({
+      query: 'castle',
+      username: 'alice',
+    });
   });
 });

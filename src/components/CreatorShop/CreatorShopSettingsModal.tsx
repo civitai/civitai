@@ -44,6 +44,7 @@ const sectionLabels: Record<CreatorShopSectionKey, string> = {
   resold: 'From other creators',
   services: 'Services',
   merch: 'Merch (coming soon)',
+  mysteryPacks: 'Mystery packs',
   models: 'Models',
 };
 

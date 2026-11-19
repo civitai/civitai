@@ -186,6 +186,16 @@ describe('feedback schema — context bounds', () => {
       expect(() => parse({ screenshotId: '' })).toThrow();
     });
 
+    // Written by the submit after it checks the capture; a client copy would pass a forged check.
+    it('drops a client-supplied capture row and check', () => {
+      const parsed = parse({
+        screenshotId: UUID_A,
+        screenshotImageId: 123,
+        screenshotCheck: 'not-owner',
+      });
+      expect(parsed.context).toEqual({ screenshotId: UUID_A });
+    });
+
     // Distinct fields, not one array: triage must be able to tell a rendered capture
     // of the reporter's own screen from a file they picked.
     it('is separate from images — both can travel on one submission', () => {
@@ -528,12 +538,13 @@ describe('feedback areas', () => {
     'app-block',
     'apps-platform',
     'semantic-image-search',
+    'knights',
     'orchestration',
   ];
 
   // Both halves hand-typed. Reading the expectation out of FEEDBACK_AREAS would make
   // this test follow any future edit instead of pinning the set.
-  it('are exactly the seven declared surfaces', () => {
+  it('are exactly the eight declared surfaces', () => {
     expect([...FEEDBACK_AREAS]).toEqual(areas);
   });
 

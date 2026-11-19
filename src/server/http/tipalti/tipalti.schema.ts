@@ -54,11 +54,24 @@ export namespace Tipalti {
   // INTERNAL_VALUE is Tipalti's own sentinel for exactly this.
   export const payeeStatusSchema = z.enum(TipaltiStatus).catch(TipaltiStatus.InternalValue);
 
+  // The REST API (GET/POST /payees) spells statuses as its ePayeeStatus enum (ACTIVE, ...), not as
+  // the webhook does; the stored value is the webhook's spelling. INTERNAL_VALUE is the same in both.
+  const restPayeeStatus = new Map<unknown, TipaltiStatus>([
+    ['ACTIVE', TipaltiStatus.Active],
+    ['SUSPENDED', TipaltiStatus.Suspended],
+    ['BLOCKED', TipaltiStatus.Blocked],
+    ['BLOCKED_BY_TIPALTI', TipaltiStatus.BlockedByProvider],
+  ]);
+  const restPayeeStatusSchema = z.preprocess(
+    (status) => restPayeeStatus.get(status) ?? status,
+    payeeStatusSchema
+  );
+
   export type Payee = z.infer<typeof createPayeeResponseSchema>;
   export const createPayeeResponseSchema = z.object({
     id: z.string(),
     refCode: z.string().optional(),
-    status: payeeStatusSchema,
+    status: restPayeeStatusSchema,
     statusChangeDateTimeUTC: z.string().nullish(),
     statusReason: z.string().nullish(),
     isAccountClosed: z.boolean().optional(),

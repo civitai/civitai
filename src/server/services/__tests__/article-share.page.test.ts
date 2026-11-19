@@ -40,6 +40,7 @@ describe('the shared article link page', () => {
     expect(cookie).toContain('Secure');
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('Max-Age=3600');
+    expect(headers.get('referrer-policy')).toBe('no-referrer');
   });
 
   it.each([
@@ -66,7 +67,20 @@ describe('the shared article link page', () => {
       const { headers } = await resolve(key);
       expect(headers.get('cache-control')).toBe('private, no-store');
       expect(headers.get('x-robots-tag')).toBe('noindex, nofollow');
-      expect(headers.get('referrer-policy')).toBe('no-referrer');
+    }
+  );
+
+  it.each([TOKEN, 'not-a-token'])('sends no Referer from the token URL %s', async (key) => {
+    const { headers } = await resolve(key);
+    expect(headers.get('referrer-policy')).toBe('no-referrer');
+  });
+
+  // no-referrer on the rendered page strips Origin from its own tRPC calls, which the API rejects.
+  it.each([String(ARTICLE), 'unavailable'])(
+    'keeps the Referer same-origin on the rendered page %s',
+    async (key) => {
+      const { headers } = await resolve(key);
+      expect(headers.get('referrer-policy')).toBe('same-origin');
     }
   );
 });

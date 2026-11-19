@@ -146,14 +146,13 @@ import {
   getEffectiveCommercialUse,
   getDisplayedBaseModelLicense,
   getEffectiveDifferentLicense,
-  getRestrictedNsfwLevelsForBaseModel,
   hasAdditionalLicensePermissions,
   isNonCommercialBaseModel,
   NOT_COMMERCIALLY_AVAILABLE_LABEL,
   notCommerciallyAvailableMessage,
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { getBaseModelGroup, isMatureRestricted } from '~/shared/constants/basemodel.constants';
 import { SfwOnlyBadge } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -199,7 +198,14 @@ export function ModelVersionDetails(props: Props) {
   return <ModelVersionDetailsContent {...props} />;
 }
 
-function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds = false }: Props) {
+function ModelVersionDetailsContent({
+  model,
+  version,
+  image,
+  onFavoriteClick,
+  ds = false,
+  initialMobile,
+}: Props) {
   useMetricSubscription('ModelVersion', version.id);
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
@@ -243,7 +249,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
     modelVersionId: version.id,
     modelVersion: permissionData,
   });
-  const mobile = useIsMobile();
+  const mobile = useIsMobile({ unmeasured: initialMobile });
 
   // Live metrics for model version stats
   const liveMetrics = useLiveMetrics('ModelVersion', version.id, {
@@ -569,8 +575,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
   const ecosystemSeoPage = getEcosystemSeoPageForKey(getBaseModelGroup(version.baseModel));
   // Base model can restrict mature content (e.g. Ideogram) and/or commercial use.
   // Both are derived per displayed version rather than stored on the model.
-  const baseModelRestrictsMature =
-    getRestrictedNsfwLevelsForBaseModel(version.baseModel).length > 0;
+  const baseModelRestrictsMature = isMatureRestricted(version.baseModel, 'images');
   const onSite = !!version.trainingStatus;
   const showAddendumLicense =
     constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0') &&
@@ -675,6 +680,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
               minor={model.minor}
+              initialMobile={initialMobile}
             />
           )}
           {/* App Blocks: model.sidebar_top slot. Renders publisher-installed and
@@ -1238,7 +1244,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
                       </Link>
                       <Text size="xs" c="dimmed">
                         Collection
-                        {collection.itemCount > 0
+                        {collection.itemCount
                           ? ` - ${collection.itemCount.toLocaleString()} items`
                           : ''}
                       </Text>
@@ -2021,6 +2027,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
               minor={model.minor}
+              initialMobile={initialMobile}
             />
           )}
           {model.description ? (
@@ -2041,6 +2048,8 @@ type Props = {
   onFavoriteClick?: (ctx: { versionId?: number; setTo: boolean }) => void;
   /** `@civitai/components` markup in place of Mantine (`modelPageDesignSystemMarkup`). */
   ds?: boolean;
+  /** Phone layout until the container is measured, from the request's user agent. */
+  initialMobile?: boolean;
 };
 
 function VersionDescriptionModal({ description }: { description: string }) {

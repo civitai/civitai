@@ -11,13 +11,23 @@ import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
+import {
+  getBrowsingLevelLabel,
+  getIsSafeBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 import styles from './common.module.scss';
 
 export const ImagesSearchItem = forwardRef<
   HTMLDivElement,
-  ComboboxItem & { hit: SearchIndexDataMap['images'][number] }
->(({ value, hit, ...props }, ref) => {
+  ComboboxItem & {
+    hit: SearchIndexDataMap['images'][number];
+    /** Without it the row blurs every image above PG-13, as the site search dropdown does. */
+    pickerRow?: boolean;
+    viewerLevel?: number;
+    blurLevels?: number;
+  }
+>(({ value, hit, pickerRow, viewerLevel, blurLevels, ...props }, ref) => {
   const colorScheme = useComputedColorScheme('dark');
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
@@ -40,7 +50,13 @@ export const ImagesSearchItem = forwardRef<
     variant: colorScheme === 'dark' ? 'filled' : 'light',
   };
 
-  const nsfw = !getIsSafeBrowsingLevel(hit.nsfwLevel);
+  const mature = !getIsSafeBrowsingLevel(hit.nsfwLevel);
+  const nsfw = pickerRow
+    ? mature &&
+      (!Flags.intersects(viewerLevel ?? 0, hit.nsfwLevel) ||
+        Flags.hasFlag(blurLevels ?? 0, hit.nsfwLevel))
+    : mature;
+  const ratingBadge = pickerRow && mature;
 
   return (
     <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
@@ -73,6 +89,16 @@ export const ImagesSearchItem = forwardRef<
               left: 0,
             }}
           />
+        )}
+        {ratingBadge && (
+          <Badge
+            size="xs"
+            variant="filled"
+            color="dark"
+            style={{ position: 'absolute', bottom: 2, left: 2 }}
+          >
+            {getBrowsingLevelLabel(hit.nsfwLevel)}
+          </Badge>
         )}
       </Center>
       <Stack gap={8} style={{ flex: '1 !important' }}>

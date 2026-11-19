@@ -1,3 +1,10 @@
+import type { SessionUser } from '~/types/session';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { readCollectionForViewer } from '~/server/services/collection-viewer';
+import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
+import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
+import { filterImagesForViewer } from '~/server/utils/model-getall-images';
 import { Flags } from '~/shared/utils/flags';
 import { getSponsoredModel } from '~/server/services/promotion.service';
 import { sponsoredSlotIndex } from '~/shared/utils/promotion';
@@ -35,6 +42,9 @@ import {
 } from '~/server/services/hot-reads-3.reads';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
+import { isCoverWithinBrowsingLevel } from '~/server/services/collection-cover-visibility';
+import { isCoverShownByBrowsingRules } from '~/server/services/blocked-browsing-tags.service';
 import { getComCoverState } from '~/server/services/model-cover.service';
 import { readModelAssociationTargetsViaKysely } from '~/server/services/hot-reads-6.reads';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
@@ -50,6 +60,7 @@ import {
   emptyTrainingOverlay,
 } from '~/server/services/orchestrator/training/workflow-state';
 import { eventEngine } from '~/server/events';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import {
   getValidCreatorMembershipMap,
   hasValidCreatorMembershipCached,
@@ -115,7 +126,7 @@ import {
 } from '~/server/selectors/model.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
-import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
+import { getCollectionItemCount } from '~/server/services/collection.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
@@ -124,6 +135,7 @@ import {
   getLinkedVaeIds,
   withPairedStrength,
 } from '~/server/services/model-version.service';
+import { getLinkedFileData } from '~/server/services/linked-file-data.service';
 import { getModelVersionCountsByModelId } from '~/server/services/model-version-count.service';
 import {
   copyGallerySettingsToAllModelsByUser,
@@ -151,8 +163,10 @@ import {
   unpublishModelById,
   removedWithOwnerEditError,
   updateModelById,
+  purgeHeldShowcase,
   queueModelEarlyAccessReindex,
   upsertModel,
+  holdShowcaseImages,
 } from '~/server/services/model.service';
 import { getOfficialModelIds } from '~/server/services/resource-select.service';
 import {
@@ -185,6 +199,7 @@ import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import {
   getRequestBrowsingLevel,
+  relatedPostsBrowsingLevel,
   resolveRequestBrowsingLevels,
 } from '~/server/utils/browsing-level';
 import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
@@ -207,7 +222,7 @@ import {
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
-  sfwBrowsingLevelsFlag,
+  modelBrowsingLevelLimit,
 } from '~/shared/constants/browsingLevel.constants';
 import {
   Availability,
@@ -222,15 +237,24 @@ import {
   ModelUploadType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
+import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { failedScanFileWhere } from '~/server/utils/failed-scan';
 import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
+import { notifyNewlyPinnedPosts } from '~/server/services/model-gallery-pin-notify.service';
+import { logToAxiom } from '~/server/logging/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import { withoutRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { isRemovedWithOwner } from '~/server/utils/legal-hold';
+import {
+  trainingDataOwnerView,
+  withoutEpochUrls,
+} from '~/server/services/training-data-restricted.service';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import {
   getResourceData,
   resolveCanGenerateForVersions,
@@ -259,7 +283,8 @@ export const getModelHandler = async ({
       user: ctx.user,
       select: modelWithDetailsSelect,
     });
-    if (!model || !canViewPoiModel(model.poi, model.user.id, ctx.user))
+    const ownerViewer = ownerOrModeratorViewer(ctx);
+    if (!model || !canViewPoiModel(model.poi, model.user.id, ownerViewer))
       throw throwNotFoundError(`No model with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -268,7 +293,7 @@ export const getModelHandler = async ({
     }
 
     const features = ctx.features;
-    const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
+    const isOwner = ownerViewer?.id === model.user.id || !!ownerViewer?.isModerator;
     // The editor needs the stored .red pair; the page shows owners and mods the same face as everyone.
     const editorRead = isOwner && !!forEditor;
     const withSfwFace =
@@ -281,7 +306,7 @@ export const getModelHandler = async ({
 
     const filteredVersions = model.modelVersions.filter((version) =>
       canViewModelVersionStatus({
-        viewer: ctx.user,
+        viewer: ownerViewer,
         ownerId: model.user.id,
         modelStatus: model.status,
         versionStatus: version.status,
@@ -330,7 +355,6 @@ export const getModelHandler = async ({
     );
 
     const metrics = model.metrics[0];
-    const canManage = ctx.user?.id === model.user.id || ctx.user?.isModerator;
     const entityAccess = await hasEntityAccess({
       entityIds: filteredVersions.map((x) => x.id),
       entityType: 'ModelVersion',
@@ -378,23 +402,7 @@ export const getModelHandler = async ({
         )
       ),
     ];
-    const linkedFileDataMap = new Map<
-      number,
-      { name: string; sizeKB: number; type: string; metadata: Record<string, unknown> | null }
-    >();
-    if (allLinkedFileIds.length > 0) {
-      const fileData = await dbRead.modelFile.findMany({
-        where: { id: { in: allLinkedFileIds } },
-        select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
-      });
-      for (const f of fileData)
-        linkedFileDataMap.set(f.id, {
-          name: f.name,
-          sizeKB: f.sizeKB,
-          type: f.type,
-          metadata: f.metadata as Record<string, unknown> | null,
-        });
-    }
+    const linkedFileDataMap = await getLinkedFileData(allLinkedFileIds);
 
     // Creator Controls metric privacy: resolve once per request. Owners/mods bypass;
     // otherwise flags apply only while the owner holds a valid CP membership.
@@ -455,7 +463,7 @@ export const getModelHandler = async ({
       // The list endpoint and public API still push them for backward compat.
       const files = isDownloadable
         ? version.files
-            .filter((x) => x.visibility === 'Public' || canManage)
+            .filter((x) => x.visibility === 'Public' || isOwner)
             .sort((a, b) => {
               const aType = a.type as ModelFileType;
               const bType = b.type as ModelFileType;
@@ -556,9 +564,7 @@ export const getModelHandler = async ({
                 fileName: fileData?.name ?? s.fileName,
                 sizeKB: fileData?.sizeKB,
                 fileType: fileData?.type,
-                fileMetadata: fileData?.metadata as
-                  | { format?: string | null; size?: string | null; fp?: string | null }
-                  | undefined,
+                fileMetadata: fileData?.metadata ?? undefined,
                 isRequired: s.isRequired,
               };
             }),
@@ -581,7 +587,7 @@ export const getModelHandler = async ({
     const matureLockReason = forEditor
       ? await getMatureLockReason({
           model: { ...model, userId: model.user.id },
-          viewerId: ctx.user?.id,
+          viewerId: ownerViewer?.id,
         })
       : null;
 
@@ -675,33 +681,37 @@ export const getModelsInfiniteHandler = async ({
   return getModelsFeed(input, ctx);
 };
 
+/** The options model.getAll reads its rows with, beside its input; the models search uses them too. */
+export async function modelFeedQueryOptions(ctx: Context) {
+  // Serialize-freeze lever: the browse feed is the #1 producer of oversized tRPC
+  // responses. When the DARK `getAllModelImagesSlim` flag is on, cap each model's
+  // images to the SLIM count AND pick the nsfw-biased coverage slice (drives the
+  // browsing-level feed-drop regression of the smaller cap to ~0); OFF ⇒ today's
+  // `GET_ALL_IMAGES_PER_MODEL`, naive first-N. The always-on per-image field trim
+  // applies either way (see model-getall-images).
+  const slim = ctx.features.getAllModelImagesSlim;
+  return {
+    user: ctx.user,
+    heldViewer: isSessionOrFullUserKey(ctx),
+    domain: getRequestBoardDomainColor(ctx.req),
+    imagesPerModel: slim ? GET_ALL_IMAGES_PER_MODEL_SLIM : GET_ALL_IMAGES_PER_MODEL,
+    biasImageSlice: slim,
+    // Flag-gated (#3266 A/B): pass the once-per-request `modelMetricPrivacyReadtime`
+    // value so the feed-hydration path skips the metric-privacy resolution when OFF.
+    metricPrivacyEnabled: !!ctx.features.modelMetricPrivacyReadtime,
+    // model.getAll never edge-caches a signed-in response (skipEdgeCache).
+    eventDecorationViewer: eventViewerOf(ctx),
+    coverage: await coverageAudience(ctx.user ?? undefined),
+  };
+}
+
 /** model.getAll's query, at whatever levels `input` already carries. */
 export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
   try {
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
-    // Serialize-freeze lever: the browse feed is the #1 producer of oversized tRPC
-    // responses. When the DARK `getAllModelImagesSlim` flag is on, cap each model's
-    // images to the SLIM count AND pick the nsfw-biased coverage slice (drives the
-    // browsing-level feed-drop regression of the smaller cap to ~0); OFF ⇒ today's
-    // `GET_ALL_IMAGES_PER_MODEL`, naive first-N. The always-on per-image field trim
-    // applies either way (see model-getall-images).
-    const slim = ctx.features.getAllModelImagesSlim;
-    const imagesPerModel = slim ? GET_ALL_IMAGES_PER_MODEL_SLIM : GET_ALL_IMAGES_PER_MODEL;
-    // Flag-gated (#3266 A/B): pass the once-per-request `modelMetricPrivacyReadtime`
-    // value so the feed-hydration path skips the metric-privacy resolution when OFF.
-    const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
-    const queryOptions = {
-      user: ctx.user,
-      domain: getRequestBoardDomainColor(ctx.req),
-      imagesPerModel,
-      biasImageSlice: slim,
-      metricPrivacyEnabled,
-      // model.getAll never edge-caches a signed-in response (skipEdgeCache).
-      eventDecorationViewer: ctx.user,
-      coverage: await coverageAudience(ctx.user ?? undefined),
-    };
+    const queryOptions = await modelFeedQueryOptions(ctx);
 
     // Hot with a base-model filter leads with the official checkpoints for that base. They are
     // dropped from the main stream on every page, so the cursor never re-emits them, and fetched on
@@ -763,13 +773,14 @@ export const getModelsPagedSimpleHandler = async ({
       name: true,
       nsfw: true,
       meta: true,
-      modelVersions: input.needsReview
-        ? {
-            select: { id: true, name: true, meta: true },
-            where: { meta: { path: ['needsReview'], equals: true } },
-            take: 1,
-          }
-        : false,
+      modelVersions:
+        input.needsReview && ctx.user?.isModerator
+          ? {
+              select: { id: true, name: true, meta: true },
+              where: { meta: { path: ['needsReview'], equals: true } },
+              take: 1,
+            }
+          : false,
     },
   });
 
@@ -882,7 +893,10 @@ export const upsertModelHandler = async ({
       isModerator: ctx.user.isModerator,
       gallerySettings: {
         ...gallerySettings,
-        level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : gallerySettings?.level,
+        level:
+          input.minor || input.sfwOnly
+            ? modelBrowsingLevelLimit({ minor: !!input.minor, sfwOnly: !!input.sfwOnly })
+            : gallerySettings?.level,
       },
       tracker: ctx.track,
     });
@@ -1257,6 +1271,7 @@ export const getDownloadCommandHandler = async ({
       where: { modelId, id: modelVersionId },
       select: {
         id: true,
+        status: true,
         model: {
           select: {
             id: true,
@@ -1296,6 +1311,10 @@ export const getDownloadCommandHandler = async ({
       orderBy: { index: 'asc' },
     });
     if (!modelVersion) throw throwNotFoundError();
+    // Matches the download route: a deleted or taken-down model is moderators-only, and that is
+    // decided before any other refusal.
+    if ((isModelDeleted(modelVersion) || isModelTakenDown(modelVersion)) && !ctx.user?.isModerator)
+      throw throwNotFoundError();
 
     const isOwner = ctx.user?.id === modelVersion.model.userId;
     const isDownloadable =
@@ -1318,7 +1337,9 @@ export const getDownloadCommandHandler = async ({
       throw throwAuthorizationError();
     }
 
-    const { model, files } = modelVersion;
+    const { model } = modelVersion;
+    // The command hands out model files only, to everyone.
+    const files = modelVersion.files.filter((f) => f.type !== 'Training Data');
     const castedFiles = files as Array<
       Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
     >;
@@ -1554,6 +1575,7 @@ export const getMyTrainingModelsHandler = async ({
             id: true,
             name: true,
             status: true,
+            mode: true,
             // `_count: { select: { modelVersions: true } }` intentionally
             // omitted — see getMyDraftModelsHandler: Prisma compiles it to a
             // full-table grouped subquery (~1344ms) instead of pushing the id
@@ -1608,13 +1630,21 @@ export const getMyTrainingModelsHandler = async ({
 
     return {
       ...results,
-      items: results.items.map((item) => ({
-        ...applyTrainingWorkflowOverlay(item, overlay),
-        model: {
-          ...item.model,
-          _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },
-        },
-      })),
+      items: results.items.map((item) => {
+        const version = applyTrainingWorkflowOverlay(item, overlay);
+        const ownerFiles = trainingDataOwnerView(version.files);
+        return {
+          ...version,
+          files:
+            isModelDeletedOrTakenDown(item.model) && !ctx.user.isModerator
+              ? withoutEpochUrls(ownerFiles)
+              : ownerFiles,
+          model: {
+            ...item.model,
+            _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },
+          },
+        };
+      }),
     };
   } catch (error) {
     throw throwDbError(error);
@@ -1934,6 +1964,72 @@ export type AssociatedResourceArticleCardData = Extract<
   AssociatedResourceCardData,
   { resourceType: 'article' }
 >;
+/**
+ * Associated-resource card images: a minor or SFW-only model's showcase held at its gallery level
+ * (its owner and moderators see it whole on a session or full key, as in the gallery), then the
+ * viewer's poi and minor settings, which `getModelsRaw` resolved onto the model input.
+ */
+async function associatedCardImages<
+  I extends {
+    modelVersionId: number;
+    nsfwLevel: number;
+    userId: number;
+    poi?: boolean | null;
+    minor?: boolean | null;
+  }
+>(
+  images: I[],
+  models: {
+    id: number;
+    minor?: boolean;
+    sfwOnly?: boolean;
+    user: { id: number };
+    modelVersions: { id: number }[];
+  }[],
+  opts: {
+    viewer?: SessionUser;
+    exempt: boolean;
+    disablePoi?: boolean;
+    disableMinor?: boolean;
+  }
+) {
+  const exemptViewer = opts.exempt ? opts.viewer : undefined;
+  let shown = images;
+  if (!exemptViewer?.isModerator) {
+    const byVersion: Record<number, { images: I[] }> = {};
+    for (const image of images)
+      (byVersion[image.modelVersionId] ??= { images: [] }).images.push(image);
+    const ownedVersions = new Set(
+      models
+        .filter((model) => exemptViewer && model.user.id === exemptViewer.id)
+        .flatMap((model) => model.modelVersions.map((version) => version.id))
+    );
+    const held = await holdShowcaseImages(
+      byVersion,
+      new Map(
+        models.flatMap((model) =>
+          model.modelVersions.map(
+            (version) =>
+              [
+                version.id,
+                { modelId: model.id, minor: model.minor, sfwOnly: model.sfwOnly },
+              ] as const
+          )
+        )
+      )
+    );
+    shown = Object.entries(held).flatMap(([versionId, entry]) =>
+      ownedVersions.has(Number(versionId)) ? byVersion[Number(versionId)].images : entry.images
+    );
+  }
+  return filterImagesForViewer(shown, {
+    browsingLevel: allBrowsingLevelsFlag,
+    disablePoi: opts.disablePoi,
+    disableMinor: opts.disableMinor,
+    viewer: exemptViewer,
+  });
+}
+
 export const getAssociatedResourcesCardDataHandler = async ({
   input,
   ctx,
@@ -2024,6 +2120,12 @@ export const getAssociatedResourcesCardDataHandler = async ({
           browsingLevel: modelInput.browsingLevel,
         })
       : [];
+    const shownImages = await associatedCardImages(images, models, {
+      viewer: user,
+      exempt: isSessionOrFullUserKey(ctx),
+      disablePoi: modelInput.disablePoi,
+      disableMinor: modelInput.disableMinor,
+    });
 
     const associatedSfwOnly = !!ctx.features.isGreen;
     // `modelVersionAlias` is omitted here: these versions come from
@@ -2082,7 +2184,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
       .map(({ hashes, modelVersions, rank, tagsOnModels, metricPrivacy, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
-        const versionImages = images.filter((i) => i.modelVersionId === version.id);
+        const versionImages = shownImages.filter((i) => i.modelVersionId === version.id);
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) &&
           (modelInput.user || modelInput.username);
@@ -2112,7 +2214,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
             collectedCount: rank?.collectedCountAllTime ?? 0,
             tippedAmountCount: hiddenMetrics.buzz ? null : rank?.tippedAmountCountAllTime ?? 0,
           },
-          images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
+          images: !isModelWithheld(model) ? (versionImages as typeof images) : [],
           canGenerate,
           version,
         };
@@ -2344,6 +2446,8 @@ export const updateGallerySettingsHandler = async ({
   try {
     const { id, gallerySettings } = input;
     const { user: sessionUser } = ctx;
+    let prevPinnedPosts: ModelGallerySettingsSchema['pinnedPosts'];
+    let heldLevelChanged = false;
 
     const updatedModel = await updateModelById({
       id,
@@ -2351,6 +2455,7 @@ export const updateGallerySettingsHandler = async ({
       data: (model) => {
         if (!model || (model.userId !== sessionUser.id && !sessionUser.isModerator))
           throw throwNotFoundError(`No model with id ${id}`);
+        prevPinnedPosts = (model.gallerySettings as ModelGallerySettingsSchema | null)?.pinnedPosts;
 
         // A minor/sfwOnly flag is a moderator decision; an owner must not be able to raise the
         // gallery back above SFW from here. Moderators keep full control.
@@ -2361,16 +2466,49 @@ export const updateGallerySettingsHandler = async ({
               hiddenImages: gallerySettings.hiddenImages,
               users: gallerySettings.hiddenUsers.map(({ id }) => id),
               tags: gallerySettings.hiddenTags.map(({ id }) => id),
-              level: sfwLocked ? sfwBrowsingLevelsFlag : gallerySettings.level,
+              level: sfwLocked ? modelBrowsingLevelLimit(model) : gallerySettings.level,
               pinnedPosts: gallerySettings.pinnedPosts,
             }
           : sfwLocked
-          ? { level: sfwBrowsingLevelsFlag }
+          ? { level: modelBrowsingLevelLimit(model) }
           : null;
+        heldLevelChanged =
+          (model.minor || model.sfwOnly) &&
+          (model.gallerySettings as ModelGallerySettingsSchema | null)?.level !==
+            updatedSettings?.level;
         return { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull };
       },
     });
     await bustModelGallerySettings([id]);
+    if (heldLevelChanged) {
+      // The search document carries the held showcase, so it is rebuilt at the new level.
+      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+      // Not awaited: finding the collections can be slow, and it never throws.
+      void queueModelCollectionsReindex([id]);
+      void queueModelArticlesReindex(id);
+      await purgeHeldShowcase(id);
+    }
+
+    // A moderator's pin on someone else's model is curation, not the creator's credit.
+    if (gallerySettings && updatedModel.userId === sessionUser.id) {
+      await notifyNewlyPinnedPosts({
+        model: { id, name: updatedModel.name },
+        owner: { id: sessionUser.id, username: sessionUser.username },
+        prev: prevPinnedPosts,
+        next: {
+          pinnedPosts: gallerySettings.pinnedPosts,
+          hiddenUserIds: gallerySettings.hiddenUsers.map(({ id }) => id),
+          hiddenImages: gallerySettings.hiddenImages,
+        },
+      }).catch((e) =>
+        logToAxiom({
+          type: 'warning',
+          name: 'model-gallery-post-pinned',
+          message: (e as Error).message,
+          details: { modelId: id },
+        })
+      );
+    }
 
     return { ...updatedModel, gallerySettings };
   } catch (error) {
@@ -2431,7 +2569,13 @@ export async function copyGalleryBrowsingLevelHandler({
   }
 }
 
-export async function getModelCollectionShowcaseHandler({ input }: { input: GetByIdInput }) {
+export async function getModelCollectionShowcaseHandler({
+  ctx,
+  input,
+}: {
+  ctx: Context;
+  input: GetByIdInput;
+}) {
   try {
     const model = await readModelMetaViaKysely(
       await getKyselyWithoutLag('model', input.id),
@@ -2442,7 +2586,20 @@ export async function getModelCollectionShowcaseHandler({ input }: { input: GetB
     const modelMeta = model.meta as ModelMeta | null;
     if (!modelMeta?.showcaseCollectionId) return null;
 
-    const collection = await getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
+    const { permissions, collection: read } = await readCollectionForViewer(
+      ctx,
+      modelMeta.showcaseCollectionId
+    );
+    if (!read) return null;
+
+    const { coverHidden: _coverHidden, ...found } = read;
+    // The cover as collection lists show it to this viewer: within their browsing level and rules.
+    const coverShown =
+      !!found.image &&
+      isCoverWithinBrowsingLevel(found.image, relatedPostsBrowsingLevel(ctx, undefined)) &&
+      (await isCoverShownByBrowsingRules(found.image, ctx));
+    const collection = { ...found, image: coverShown ? found.image : null };
+    if (!canReadCollectionItems(permissions)) return { ...collection, itemCount: null };
     const [itemCount] = await getCollectionItemCount({
       collectionIds: [collection.id],
       status: CollectionItemStatus.ACCEPTED,

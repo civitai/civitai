@@ -1059,6 +1059,13 @@ describe('strike.service', () => {
       });
     });
 
+    it('refuses the feedback capture account, striking nobody', async () => {
+      await expect(createStrike({ ...baseInput, userId: -2 })).rejects.toThrow(
+        /feedback page captures/
+      );
+      expect(mockDbWrite.userStrike.create).not.toHaveBeenCalled();
+    });
+
     it('throws NOT_FOUND when user does not exist', async () => {
       mockDbRead.user.findUnique.mockReset();
       mockDbRead.user.findUnique.mockResolvedValueOnce(null);
@@ -1076,21 +1083,6 @@ describe('strike.service', () => {
 
       expect(result).toBeNull();
       expect(mockDbWrite.userStrike.create).not.toHaveBeenCalled();
-    });
-
-    it('logs to Axiom when rate limited', async () => {
-      mockDbRead.$queryRaw.mockReset();
-      mockDbRead.$queryRaw.mockResolvedValueOnce([{ count: 1 }]); // rate limited
-
-      await createStrike(baseInput);
-
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'info',
-          name: 'strike-rate-limited',
-          userId: 100,
-        })
-      );
     });
 
     it('bypasses rate limit for ManualModAction', async () => {

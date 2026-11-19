@@ -38,7 +38,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => null),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: h.getSessionUserById },
 }));
 // See listing-media-split.approve-request.test.ts: approve lazily loads a module whose body
@@ -267,7 +266,7 @@ describe('approveRequest — App Storage permission hooks', () => {
         appId: 'appblk-hooks',
         repoUrl: null,
         trustTier: 'unverified',
-        app: { allowedScopes: 0, allowedOrigins: [], userId: SUBMITTER },
+        app: { allowedScopes: 0n, allowedOrigins: [], userId: SUBMITTER },
       });
       const approved = { ...manifestPinning(approvedSha), version: '0.9.0' };
       dbMock.dbWrite.appBlock.findFirst.mockResolvedValue({ id: 'ab_hooks', manifest: approved });

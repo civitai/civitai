@@ -42,6 +42,8 @@ export type ChallengeCoverImage = {
   width: number | null;
   height: number | null;
   type: MediaType;
+  /** Set by the edit reads (moderator, and the creator's own), which keep a cover restricted by its base model. */
+  restricted?: boolean;
 };
 
 // Sort options for challenges
@@ -376,6 +378,7 @@ export const getInfiniteChallengesSchema = z.object({
 export type GetChallengeWinnersInput = z.infer<typeof getChallengeWinnersSchema>;
 export const getChallengeWinnersSchema = z.object({
   challengeId: z.number(),
+  browsingLevel: z.number().optional(),
 });
 
 // Query schema for user entry count

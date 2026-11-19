@@ -12,8 +12,17 @@
  */
 export const REGISTRY_NAMESPACE = 'apps.civitai.com';
 
-/** The registry's own schema of schemas: every schema entity claims it. Not ours. */
-export const REGISTRY_SCHEMA_SCHEMA = 'urn:schema:registry:schema@v1';
+/**
+ * The namespace of a URN as the spec defines it: `{ns}` in `urn:{ns}:…`, or in `urn:schema:{ns}:…`
+ * for a schema, with `{ns}` and what follows it non-empty. Null for a string of neither shape.
+ */
+export function urnNamespace(urn: string): string | null {
+  const m = /^urn:(?:schema:)?([^:]+):.+$/.exec(urn);
+  if (!m) return null;
+  // `urn:schema:` alone names no namespace: `schema` is reserved for schemas.
+  if (m[1] === 'schema') return null;
+  return m[1];
+}
 
 /**
  * The schemas of the app, release and runtime entities. This adapter defines them
@@ -29,11 +38,13 @@ export type UrnRef =
   | { kind: 'release'; slug: string; version: string }
   | { kind: 'collection-schema'; slug: string; collection: string; major: number }
   | { kind: 'document'; slug: string; collection: string; key: string }
-  | { kind: 'runtime'; name: string; major: number };
+  | { kind: 'runtime'; name: string; major: number }
+  | { kind: 'service'; name: string; major: number };
 
-// Slug, collection, version and runtime segments never contain `:`, `/` or `@`. A document key
-// (the store's own key shape) may contain `:` but never `/` or `@`, and it is a document URN's
-// last segment, so every URN still parses back unambiguously. Bounded like the store's own names.
+// Slug, collection, version, runtime and service segments never contain `:`, `/` or `@`. A
+// document key (the store's own key shape) may contain `:` but never `/` or `@`, and it is a
+// document URN's last segment, so every URN still parses back unambiguously. Bounded like the
+// store's own names.
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const COLLECTION_RE = /^[a-z][a-z0-9_]{0,31}$/;
 const VERSION_RE = /^[0-9A-Za-z.+-]{1,64}$/;
@@ -73,6 +84,11 @@ export function registryUrn(ref: UrnRef): string {
       )}/${segment(ref.key, KEY_RE, 'key')}`;
     case 'runtime':
       return `urn:${REGISTRY_NAMESPACE}:runtime/${segment(ref.name, SLUG_RE, 'runtime')}@${major(
+        ref.major
+      )}`;
+    // Two segments (`service/{name}@{major}`), so never a document URN, which has three.
+    case 'service':
+      return `urn:${REGISTRY_NAMESPACE}:service/${segment(ref.name, SLUG_RE, 'service')}@${major(
         ref.major
       )}`;
   }

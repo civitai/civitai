@@ -63,6 +63,20 @@ describe("blockWorkflowBodySchema — kind: 'step' PASS-THROUGH arm", () => {
     }
   });
 
+  it('refuses a $type that is not ASCII letters and digits', () => {
+    for (const $type of [
+      'cu\u017ftomComfy',
+      'custom Comfy',
+      'customComfy\u200b',
+      '\uff43omfy',
+      'x_guard_moderation',
+      'xGuard-Moderation',
+      'a.b',
+    ]) {
+      expect(blockWorkflowBodySchema.safeParse(passThroughBody({ $type })).success).toBe(false);
+    }
+  });
+
   it('forwards a non-trivial nested input UNMODIFIED through the parse', () => {
     const input = {
       prompt: 'a cat',

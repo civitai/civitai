@@ -5,7 +5,8 @@
  *
  * The filter is what lets a PR that cannot affect the apps start no app job at all. Its failure
  * mode is silent: a missing entry produces no error, only a skipped run on the one PR that
- * needed it (the unfiltered push run on `main` is the backstop, after the merge). So the list
+ * needed it (push to `main` shares the filter, so the backstop is the next push it matches,
+ * which runs every app suite, and the red lands on that later commit). So the list
  * is re-derived here from the code on every run, and the job fails when the two disagree.
  *
  * What it derives, each the way the app suites actually reach it:

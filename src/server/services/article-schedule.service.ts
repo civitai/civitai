@@ -86,7 +86,9 @@ export async function publishDueScheduledArticles(now: Date) {
         entityType: 'article',
         entityId: id,
       }),
-      articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]),
+      articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }], {
+        reason: 'scheduled-publish',
+      }),
       userArticleCountCache.refresh(userId),
       createNotification({
         userId,
@@ -122,11 +124,11 @@ export async function publishDueScheduledArticles(now: Date) {
   }
 
   if (due.length === GO_LIVE_BATCH)
-    await logToAxiom({
+    logToAxiom({
       name: 'process-scheduled-publishing',
       type: 'warning',
       message: `Scheduled article backlog hit ${GO_LIVE_BATCH}; the rest go live next run`,
-    }).catch(() => undefined);
+    });
 
   return {
     published: published.map((a) => a.id),
@@ -142,5 +144,5 @@ function logGoLiveError(message: string, articleId: number, error: unknown) {
     message: `scheduled article: ${message}`,
     articleId,
     error: (error as Error)?.message,
-  }).catch(() => undefined);
+  });
 }

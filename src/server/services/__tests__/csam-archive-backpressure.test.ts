@@ -166,6 +166,26 @@ vi.mock('~/utils/file-utils', async (importOriginal) => ({
   fetchBlob: (...args: unknown[]) => mockFetchBlob(...args),
 }));
 
+vi.mock('~/server/utils/archive-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  // Short, so the stuck-read test is quick; a second past the abort test's limit, so that test sees the abort.
+  FAILED_ARCHIVE_SETTLE_MS: 2_500,
+}));
+
+// Holds a large original's spool-dir mkdir, as a busy fs threadpool does.
+const spoolMkdir = vi.hoisted(() => ({ delayMs: 0, held: 0 }));
+vi.mock('fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof fsAsync>();
+  const mkdir = (async (dir: string, options?: unknown) => {
+    if (spoolMkdir.delayMs > 0 && String(dir).endsWith('/spool')) {
+      spoolMkdir.held++;
+      await new Promise((resolve) => setTimeout(resolve, spoolMkdir.delayMs));
+    }
+    return real.mkdir(dir, options as never);
+  }) as typeof real.mkdir;
+  return { ...real, mkdir, default: { ...real, mkdir } };
+});
+
 const getObjectKeys: string[] = [];
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -173,9 +193,9 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
     bucket: 'test-images',
     backend: 'backblaze',
     s3: {
-      send: (command: { input: GetObjectInput }) => {
+      send: (command: { input: GetObjectInput }, options?: { abortSignal?: AbortSignal }) => {
         getObjectKeys.push(command.input.Key);
-        return mockGetObject(command.input.Key, command.input);
+        return mockGetObject(command.input.Key, command.input, options?.abortSignal);
       },
     },
   }),
@@ -242,7 +262,11 @@ vi.mock('~/server/services/file.service', async (importOriginal) => ({
 
 let mockFetchBlob: (...args: unknown[]) => unknown = () => null;
 type GetObjectInput = { Key: string; Range?: string; IfMatch?: string };
-let mockGetObject: (key: string, input: GetObjectInput) => Promise<unknown>;
+let mockGetObject: (
+  key: string,
+  input: GetObjectInput,
+  abortSignal?: AbortSignal
+) => Promise<unknown>;
 const mockGetFileForModelVersion: (...args: unknown[]) => unknown = async () => ({
   status: 'not-found',
 });
@@ -299,6 +323,8 @@ beforeEach(() => {
   uploads.clear();
   uploadFailure = undefined;
   getObjectKeys.length = 0;
+  spoolMkdir.delayMs = 0;
+  spoolMkdir.held = 0;
   // A regression to the edge copy must fail here, not reach the network.
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   mockFetchBlob = async () => fakeBlob(IMAGE_BYTES);
@@ -343,7 +369,7 @@ describe('getCsamsToArchive', () => {
   it('leaves reports it cannot archive unstamped and counts them, while the rest archive', async () => {
     const generatorEvidence = {
       id: 11,
-      userId: 707070,
+      userId: 990200007,
       reportedById: 5,
       type: 'GeneratedImage',
       reportSentAt: new Date(),
@@ -357,13 +383,19 @@ describe('getCsamsToArchive', () => {
     };
     const control = {
       id: 12,
-      userId: 717171,
+      userId: 990200008,
       reportedById: 5,
       type: 'Image',
       details: {},
       images: [],
     };
-    const namesNoUrl = { id: 13, userId: 727272, type: 'GeneratedImage', details: {}, images: [] };
+    const namesNoUrl = {
+      id: 13,
+      userId: 990200009,
+      type: 'GeneratedImage',
+      details: {},
+      images: [],
+    };
     dbMock.dbRead.csamReport.findMany.mockResolvedValueOnce([
       generatorEvidence,
       control,
@@ -398,7 +430,7 @@ describe('getCsamsToArchive', () => {
 describe('archiveCsamDataForReport (TrainingData report, training data missing)', () => {
   const report = {
     id: 4545,
-    userId: 919191,
+    userId: 990200012,
     reportedById: 5,
     reportId: 79,
     type: 'TrainingData',
@@ -428,7 +460,7 @@ describe('archiveCsamDataForReport (TrainingData report, training data missing)'
 describe('archiveCsamDataForReport (Image report)', () => {
   const report = {
     id: 4242,
-    userId: 909090,
+    userId: 990200011,
     reportedById: 5,
     reportId: 77,
     type: 'Image',
@@ -722,7 +754,7 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
   // The generated-image path had the identical unbounded-append shape and must be bounded too.
   const report = {
     id: 4343,
-    userId: 808080,
+    userId: 990200010,
     reportedById: 5,
     reportId: 78,
     type: 'GeneratedImage',
@@ -847,9 +879,11 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     expect(line).toMatchObject({
       reportId: report.id,
       expected: IMAGE_COUNT,
-      strikeUrls: IMAGE_COUNT,
-      entries: IMAGE_COUNT - 1,
-      unreadable: 1,
+      payload: expect.objectContaining({
+        strikeUrls: IMAGE_COUNT,
+        entries: IMAGE_COUNT - 1,
+        unreadable: 1,
+      }),
       type: 'error',
     });
     const logged = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
@@ -865,7 +899,10 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
 
     await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
 
-    expect(generatedLine()).toMatchObject({ unreadable: 1, type: 'error' });
+    expect(generatedLine()).toMatchObject({
+      payload: expect.objectContaining({ unreadable: 1 }),
+      type: 'error',
+    });
   });
 
   it('stamps a pass that read nothing once the give-up window has passed', async () => {
@@ -874,7 +911,9 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
 
     expect(stamped()).toBe(true);
-    expect(generatedLine()).toMatchObject({ entries: 0, unreadable: IMAGE_COUNT });
+    expect(generatedLine()).toMatchObject({
+      payload: expect.objectContaining({ entries: 0, unreadable: IMAGE_COUNT }),
+    });
   });
 
   it('archives the blobs the report names when the strikes list is not found', async () => {
@@ -891,9 +930,7 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     expect(stamped()).toBe(true);
     expect(probes.flatMap((p) => p.entryNames)).toEqual(['named-0.jpeg']);
     expect(generatedLine()).toMatchObject({
-      strikesNotFound: true,
-      strikeUrls: 0,
-      entries: 1,
+      payload: expect.objectContaining({ strikesNotFound: true, strikeUrls: 0, entries: 1 }),
       type: 'info',
     });
   });
@@ -970,7 +1007,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
 
   const report = {
     id: 4444,
-    userId: 707070,
+    userId: 990200007,
     reportedById: 5,
     reportId: 79,
     // ExternalLink archives the base bundle and nothing else, which isolates this path.
@@ -1157,25 +1194,19 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     expect(v3.calls[1]).toMatchObject({ afterId: pageSize, take: pageSize });
   });
 
-  it("archives a held user's comments on their own, with the CommentV2 rows CommentV3 lacks", async () => {
+  it("archives a held user's comments on their own", async () => {
     seedDb();
     v3.comments = [
       { id: 1, userId: report.userId, content: 'c1' },
       { id: 2, userId: report.userId, content: 'c2' },
       { id: 3, userId: report.userId + 1, content: 'not theirs' },
     ];
-    dbMock.dbRead.commentV2.findMany.mockResolvedValue([
-      { id: 1, userId: report.userId },
-      { id: 99, userId: report.userId },
-    ] as never);
-
     const result = await archiveUserComments(report.userId);
 
     const archive = JSON.parse(uploads.get('comments.json')!.toString('utf8'));
     expect(archive.userId).toBe(report.userId);
     expect(archive.comments.map((c: { id: number }) => c.id)).toEqual([1, 2]);
-    expect(archive.commentsV2NotInV3.map((c: { id: number }) => c.id)).toEqual([99]);
-    expect(result.comments).toBe(3);
+    expect(result.comments).toBe(2);
   });
 
   it('filters model versions by the COMPLETE set of model ids, not a partially-scanned one', async () => {
@@ -1200,7 +1231,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
 describe('archiveCsamDataForReport (upload failure)', () => {
   const report = {
     id: 4545,
-    userId: 606060,
+    userId: 990200006,
     reportedById: 5,
     reportId: 80,
     type: 'ExternalLink',
@@ -1238,7 +1269,7 @@ describe('archiveCsamDataForReport (upload failure)', () => {
 describe('archiveCsamDataForReport (generated-image report as sent)', () => {
   const report = {
     id: 4747,
-    userId: 606060,
+    userId: 990200006,
     reportedById: 5,
     reportId: 82,
     type: 'GeneratedImage',
@@ -1275,7 +1306,7 @@ describe('archiveCsamDataForReport (generated-image report as sent)', () => {
 describe('archiveCsamDataForReport (unnameable generated-image URL)', () => {
   const report = {
     id: 4646,
-    userId: 505050,
+    userId: 990200005,
     reportedById: 5,
     reportId: 81,
     type: 'GeneratedImage',
@@ -1325,7 +1356,7 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
   const MiB = 1024 * 1024;
   const report = {
     id: 4848,
-    userId: 303030,
+    userId: 990200003,
     reportedById: 5,
     reportId: 83,
     type: 'Image',
@@ -1412,10 +1443,90 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
     ]);
 
     expect(outcome).toBe('synthetic storage outage');
-    // The readers parked on the budget are refused rather than granted once the archive fails.
-    const readAtFailure = bodiesRead;
+    // The reader holding the budget is stopped and those parked on it are refused, so no body is read.
+    expect(bodiesRead).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(bodiesRead).toBe(readAtFailure);
+    expect(bodiesRead).toBe(0);
+  });
+
+  it('starts no read after a failed archive, and leaves its scratch dir removed', async () => {
+    // The original that holds the budget is still creating its spool dir when the archive fails.
+    spoolMkdir.delayMs = 200;
+    const base = mockGetObject;
+    const sends: { key: string; ranged: boolean }[] = [];
+    mockGetObject = async (key, input) => {
+      sends.push({ key, ranged: !!input.Range });
+      if (key === 'big-2')
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      return base(key, input);
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'synthetic storage outage'
+    );
+    // Past the held mkdir, so a read that outlived the archive would have started by now.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // The hold applied: without it this test proves nothing.
+    expect(spoolMkdir.held).toBeGreaterThan(0);
+    expect(fs.existsSync(path.join(csamBaseDir, 'images', String(report.id)))).toBe(false);
+    expect(sends.filter((send) => send.ranged)).toEqual([]);
+  });
+
+  it('rejects promptly when a read in flight is stopped by the failure', async () => {
+    let holderReading!: () => void;
+    const holderStarted = new Promise<void>((resolve) => (holderReading = resolve));
+    const base = mockGetObject;
+    mockGetObject = async (key, input, abortSignal) => {
+      if (key === 'big-2') {
+        // Fails only once another original is mid-read.
+        await holderStarted;
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      }
+      if (!input.Range) return base(key, input);
+      holderReading();
+      // A part that never arrives: only an abort ends it.
+      return new Promise((_, reject) => {
+        if (abortSignal?.aborted) reject(abortSignal.reason);
+        abortSignal?.addEventListener('abort', () => reject(abortSignal.reason));
+      });
+    };
+
+    const outcome = await Promise.race([
+      archiveCsamDataForReport(report as never).then(
+        () => 'resolved',
+        (e: Error) => e.message
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 1_500)),
+    ]);
+
+    expect(outcome).toBe('synthetic storage outage');
+  });
+
+  it('still rejects when a read in flight ignores the stop', async () => {
+    let holderReading!: () => void;
+    const holderStarted = new Promise<void>((resolve) => (holderReading = resolve));
+    const base = mockGetObject;
+    mockGetObject = async (key, input) => {
+      if (key === 'big-2') {
+        await holderStarted;
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      }
+      if (!input.Range) return base(key, input);
+      holderReading();
+      // A part that never arrives, abort or not.
+      return new Promise(() => undefined);
+    };
+
+    const outcome = await Promise.race([
+      archiveCsamDataForReport(report as never).then(
+        () => 'resolved',
+        (e: Error) => e.message
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 4_000)),
+    ]);
+
+    expect(outcome).toBe('synthetic storage outage');
   });
 });
 
@@ -1432,7 +1543,7 @@ describe('archiveCsamDataForReport (Image report, failed read)', () => {
       async (args: { where?: { id?: { gt?: number } } } = {}) =>
         rows.filter((row) => row.id > (args.where?.id?.gt ?? 0))
     );
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 202020 });
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 990200002 });
     dbMock.dbRead.model.findMany.mockResolvedValue([]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
     mockGetObject = async (key) => {
@@ -1445,7 +1556,7 @@ describe('archiveCsamDataForReport (Image report, failed read)', () => {
     await expect(
       archiveCsamDataForReport({
         id: 4949,
-        userId: 202020,
+        userId: 990200002,
         reportedById: 5,
         reportId: 84,
         type: 'Image',
@@ -1456,15 +1567,16 @@ describe('archiveCsamDataForReport (Image report, failed read)', () => {
     // Let any read still queued behind the concurrency limit start, if it is going to.
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    expect(getObjectKeys.length).toBeGreaterThan(1);
-    expect(getObjectKeys.length).toBeLessThanOrEqual(10);
+    const reads = getObjectKeys.filter((key) => key.startsWith('key-'));
+    expect(reads.length).toBeGreaterThan(1);
+    expect(reads.length).toBeLessThanOrEqual(10);
   });
 });
 
 describe('archiveCsamDataForReport (Image report, stored originals)', () => {
   const report = {
     id: 4747,
-    userId: 404040,
+    userId: 990200004,
     reportedById: 5,
     reportId: 82,
     type: 'Image',

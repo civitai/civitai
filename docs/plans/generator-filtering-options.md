@@ -158,8 +158,6 @@ Update the tag generation to include process tags.
 #### 2.4 Video Generation Submissions
 
 **Files:**
-- `src/server/orchestrator/video-upscaler/video-upscaler.ts`
-- `src/server/orchestrator/video-interpolation/video-interpolation.ts`
 - `src/server/orchestrator/video-enhancement/video-enhancement.ts`
 
 Add appropriate `WORKFLOW_TAGS.PROCESS.*` tags to each video workflow submission

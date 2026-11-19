@@ -16,6 +16,9 @@ import { filmLength } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { HatTurfSectionStats } from '~/components/Events/ScoredEvent/HatTurfSectionStats';
 import { HeroBulbs } from '~/components/Events/ScoredEvent/HeroBulbs';
 import { useJoin, useTurfGate } from '~/components/HatTurf/useHatTurf';
+import { useHatTurfFeedPlayer } from '~/components/HatTurf/useHatTurfFeedPlayer';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { useSetFilters } from '~/providers/FiltersProvider';
 
 /** The page anchor articles link to: /events/<event>#hat-turf. */
 export const HAT_TURF_ANCHOR = 'hat-turf';
@@ -84,7 +87,9 @@ export function HatTurfEventSection({
           <Text size="sm" c="gray.4" maw={440}>
             {joined ? "You're in. " : ''}
             Put your team&apos;s hat on any picture to claim it. The more of your team on one
-            picture, the bigger your share.
+            picture, the bigger your share. Hats last 48 hours. Place your team&apos;s hat again
+            once yours expires to keep the picture; points you&apos;ve earned are never taken back.
+            Teams that are behind earn a bigger share on the pictures they lead.
           </Text>
           <div className="mt-0.5">
             <Button
@@ -97,6 +102,9 @@ export function HatTurfEventSection({
             >
               {joined ? 'Leave Hat Turf' : 'Join Hat Turf'}
             </Button>
+            {joined && stock.liveHats > 0 && (
+              <MyLiveHatsLink event={event} count={stock.liveHats} />
+            )}
           </div>
         </div>
         <div className="relative order-first h-[130px] @sm:order-none @sm:h-auto">
@@ -140,5 +148,27 @@ export function HatTurfEventSection({
         )}
       </div>
     </div>
+  );
+}
+
+/** Opens the image feed on the viewer's own live hats, for feed players only, as the feed serves it. */
+function MyLiveHatsLink({ event, count }: { event: string; count: number }) {
+  const player = useHatTurfFeedPlayer();
+  const setImageFilters = useSetFilters('images');
+  if (player?.event !== event) return null;
+  return (
+    <Button
+      component={NextLink}
+      href="/images"
+      size="sm"
+      radius="xl"
+      color="yellow"
+      variant="light"
+      ml="xs"
+      onClick={() => setImageFilters({ hatTurfMine: true })}
+      data-testid="hat-turf-my-hats"
+    >
+      My live hats ({count})
+    </Button>
   );
 }

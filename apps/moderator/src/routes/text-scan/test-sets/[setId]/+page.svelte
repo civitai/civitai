@@ -2,7 +2,7 @@
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import CaseTable from '$lib/components/text-scan-tests/CaseTable.svelte';
-  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+  import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
   import HistoryChart from '$lib/components/text-scan-tests/HistoryChart.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
@@ -12,6 +12,17 @@
 
   const editable = $derived(data.canEdit && !data.set.archivedAt);
   const archive = new FormState({ reset: false, reload: true, onSuccess: null });
+  type Imported = { created: number; updated: number; notFound: number[] };
+  let importRows = $state('');
+  let imported = $state<Imported | null>(null);
+  const importForm = new FormState({
+    reset: false,
+    reload: true,
+    onSuccess: (result) => {
+      imported = (result?.imported as Imported | undefined) ?? null;
+      importRows = '';
+    },
+  });
 </script>
 
 <svelte:head><title>{data.set.name} · Test sets</title></svelte:head>
@@ -45,6 +56,44 @@
 
 <div class="space-y-6">
   <HistoryChart points={data.history} />
+
+  {#if data.isIntentSet}
+    <section class="space-y-2">
+      <h2 class="text-sm font-semibold text-white">Import models</h2>
+      <p class="text-xs text-dark-2">
+        This is the pinned set the civitai.com face intent prompt is tested on. Cases hold each
+        model's listing as the live check reads it. Changing the set needs the intent publish
+        permission.
+      </p>
+      {#if editable}
+        <form method="POST" action="?/importIntent" use:enhance={importForm.enhance} class="space-y-2">
+          <input type="hidden" name="setId" value={data.set.id} />
+          <textarea
+            name="rows"
+            bind:value={importRows}
+            rows="6"
+            class="w-full rounded border border-dark-4 bg-dark-7 p-2 font-mono text-xs text-white"
+            placeholder={'One model per line: <model id> detected|clear|unsure'}
+            aria-label="Models to import"
+          ></textarea>
+          <button
+            type="submit"
+            class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+            disabled={importForm.submitting || !importRows.trim()}
+          >
+            Import
+          </button>
+        </form>
+        {#if importForm.error}<p class="text-sm text-red-300">{importForm.error}</p>{/if}
+        {#if imported}
+          <p class="text-sm text-dark-0">
+            {imported.created} added, {imported.updated} updated{#if imported.notFound.length}
+              · not found: {imported.notFound.join(', ')}{/if}
+          </p>
+        {/if}
+      {/if}
+    </section>
+  {/if}
 
   {#key data.set.id}
     <CaseTable setId={data.set.id} cases={data.cases} {editable} />

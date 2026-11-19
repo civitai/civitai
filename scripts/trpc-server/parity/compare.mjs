@@ -8,6 +8,7 @@
  *   - headers, as a case-insensitive multiset, ignoring only Date, Connection and Keep-Alive
  *   - Set-Cookie: cookie names and attributes; Max-Age/Expires within a tolerance; never values
  *   - body: exact bytes
+ *   - a case's `expectStatus` / `expectBody` / `expectHeaders`, required on BOTH sides
  *
  * Shared state is reset between the two sends of a case (Redis FLUSHALL), so a cache write or a
  * rate-limit counter left by the first server cannot change the second server's answer.
@@ -93,7 +94,8 @@ const env = Object.fromEntries(
 if (!env.NEXTAUTH_SECRET || !env.WEBHOOK_TOKEN)
   fail2('env file has no NEXTAUTH_SECRET/WEBHOOK_TOKEN');
 
-// A legacy session cookie, minted the way tests/preview-auth.setup.ts mints it.
+// A legacy session cookie, minted the way tests/preview-auth.setup.ts mints it. Both targets must run with
+// IS_PREVIEW=true and DATABASE_ENVIRONMENT=non-production: nothing else reads this cookie.
 
 function b64url(buf) {
   return Buffer.from(buf).toString('base64url');
@@ -293,6 +295,17 @@ function compare(c, ra, rb) {
       if (!h.headers.includes(`${name}: ${value}`))
         parts.headers.push(`${side} lacks required ${name}: ${value}`);
     }
+  }
+  // Likewise a case may pin the status and exact body on BOTH sides, for an answer where both
+  // servers agreeing on the wrong value (e.g. both 503) must not pass.
+  for (const [side, r] of [
+    ['A', ra],
+    ['B', rb],
+  ]) {
+    if (c.expectStatus !== undefined && r.status !== c.expectStatus)
+      parts.status.push(`${side} answered ${r.status}, required ${c.expectStatus}`);
+    if (c.expectBody !== undefined && !r.body.equals(Buffer.from(c.expectBody)))
+      parts.body.push(`${side} body ${snippet(r.body)}, required ${c.expectBody}`);
   }
   return parts;
 }

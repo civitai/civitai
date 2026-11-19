@@ -59,6 +59,7 @@ vi.mock('~/components/Image/Detail/ImageDetailProvider', async (importOriginal) 
   ...(await importOriginal<typeof ImageDetailProviderModule>()),
   useImageDetailContext: () => ({
     images: [image],
+    items: [{ type: 'image', key: `img:${image.id}`, image }],
     index: 0,
     active: ctx.active,
     close: () => undefined,

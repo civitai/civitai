@@ -1,8 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import type * as CurrentUser from '~/hooks/useCurrentUser';
 import { box, renderAtViewport } from '../../../../test/geometry-setup';
 import articleBodyClasses from '~/components/RichTextEditor/ArticleBody.module.scss';
+import type { BodyImageGuard } from '~/components/RichTextEditor/GuardedBodyMedia';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
+
+// The guard reads the viewer; a signed-out one is enough to size the media.
+vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
+  ...(await importOriginal<typeof CurrentUser>()),
+  useCurrentUser: () => null,
+}));
 
 const DESKTOP = { width: 1280, height: 800 } as const;
 const PHONE = { width: 375, height: 800 } as const;
@@ -27,6 +35,9 @@ const inlineImage = (src: string, size?: string) => ({
   content: [{ type: 'image', attrs: { src, size: size ?? null } }],
 });
 
+// An article page guards every body image; a PG image is shown, inside the guard's box.
+let imageGuard: BodyImageGuard | undefined;
+
 async function renderArticle(
   nodes: object[],
   viewport: { width: number; height: number } = DESKTOP,
@@ -35,7 +46,11 @@ async function renderArticle(
 ) {
   await renderAtViewport(
     <div style={{ width: column }}>
-      <RenderRichText content={{ type: 'doc', content: nodes }} className={className} />
+      <RenderRichText
+        content={{ type: 'doc', content: nodes }}
+        className={className}
+        imageGuard={imageGuard}
+      />
     </div>,
     viewport
   );
@@ -47,7 +62,14 @@ async function renderArticle(
   return imgs;
 }
 
-describe('article image sizes', () => {
+describe.each([
+  ['', undefined],
+  [' (guarded, as on the article page)', { images: [], nsfwLevel: 1 }],
+])('article image sizes%s', (_label, guard) => {
+  beforeEach(() => {
+    imageGuard = guard;
+  });
+
   it('renders S at a third of the column and Full at the whole column', async () => {
     const wide = await imageUrl(1600, 900);
     const [small, medium, large, full] = await renderArticle([

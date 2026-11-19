@@ -36,12 +36,13 @@ import type {
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import type { SessionScope } from '~/server/auth/session-scope';
 import type { ChatAuditRow } from '~/server/common/chat-audit.constants';
-import { FEED_SHADOW_TABLE, type FeedShadowRow } from '~/server/common/feed-shadow.constants';
 import { CHAT_AUDIT_FLAG } from '~/server/common/chat-audit.constants';
 import type { EntityChangeRow } from '~/server/common/entity-change.constants';
 import { ENTITY_CHANGE_TRACKING_FLAG } from '~/server/common/entity-change.constants';
 import { isFlipt } from '~/server/flipt/client';
+import { backoffDelay } from '~/utils/backoff';
 
 /**
  * Whether the caller waits for the tracker to accept the row.
@@ -336,6 +337,19 @@ export const ActionType = [
   // Fields ride in `details` (migrations/2026-11-04-experiment-exposure-hat-turf-actions.sql).
   'Experiment_Exposure',
   'HatTurf_Action',
+  // App store acquisition funnel (migrations/2026-11-07-app-store-funnel-actions.sql, plus the
+  // tracker restart in migrations/README.md). `AppStore_Action` is client-postable (impression /
+  // card_click / detail_view / cta_click in `details.action`). `App_Visit` is SERVER-ONLY, like
+  // `App_Open`: one row per followed off-site "Visit", written by the `/apps/go/<listingId>`
+  // redirect, so it has no `trackActionSchema` arm.
+  'AppStore_Action',
+  'App_Visit',
+  // App Blocks in-app telemetry, emitted by the two block hosts: an error the viewer saw after the
+  // app loaded, and one row per host session on unmount/pagehide. Same Enum16 hazard as above
+  // (migrations/2026-11-07-app-telemetry-error-session-actions.sql, plus the tracker restart):
+  // until both are applied the tracker drops these rows silently and nothing else changes.
+  'App_Error',
+  'App_Session',
 ] as const;
 
 // Written without ip and userAgent, whoever calls: `actions` has no TTL, and these feed per-user
@@ -343,6 +357,12 @@ export const ActionType = [
 const ACTOR_META_FREE_ACTION_TYPES: ReadonlySet<ActionType> = new Set([
   'Experiment_Exposure',
   'HatTurf_Action',
+  // Store funnel rows (impressions are high-volume) need only the user id. NOT `App_Open` /
+  // `App_Visit`: their counts de-dupe per actor at read time and need the ip fallback.
+  'AppStore_Action',
+  // Operational app telemetry: per-app error and engagement rates need the user id at most.
+  'App_Error',
+  'App_Session',
 ]);
 export type ActionType = (typeof ActionType)[number];
 
@@ -369,6 +389,16 @@ export async function trackWebhookEvent(type: string, payload: string) {
   } catch (error: any) {
     console.error(`Failed to track ${type} webhook to ClickHouse:`, error.message);
   }
+}
+
+/**
+ * Whether `Tracker.send` dispatches at all: a tracker is configured, and a local origin has opted in
+ * (a tunnel on loopback can hide a real one). The one statement of that precondition — the beacon-go
+ * shadow sampler reads it too, since a request whose rows are never sent has nothing to compare.
+ */
+export function trackerSends(): boolean {
+  if (!env.CLICKHOUSE_TRACKER_URL) return false;
+  return outwardTrafficAllowed(env.NEXT_PUBLIC_CIVITAI_LINK, env.NEXT_PUBLIC_LOCAL_TRACKER_ENABLED);
 }
 
 export class Tracker {
@@ -422,12 +452,14 @@ export class Tracker {
   private async fetchSession() {
     if (this.req && this.res) {
       try {
-        await getServerAuthSession({ req: this.req, res: this.res }).then((session) => {
-          this.session = session;
-          this.sessionResolved = true;
-          this.actor.userId = session?.user?.id ?? this.actor.userId;
-          return session;
-        });
+        await getServerAuthSession({ req: this.req, res: this.res, scope: 'defer' }).then(
+          (session) => {
+            this.session = session;
+            this.sessionResolved = true;
+            this.actor.userId = session?.user?.id ?? this.actor.userId;
+            return session;
+          }
+        );
       } catch (e) {
         const error = e as Error;
         logToAxiom(
@@ -445,9 +477,10 @@ export class Tracker {
   }
 
   // The request's session, resolved once and shared with every track() call on this Tracker.
-  public async getSession() {
+  public async getSession(scope?: SessionScope) {
     await this.resolveSession();
-    return this.session;
+    if (scope === undefined || !this.session || !this.req || !this.res) return this.session;
+    return getServerAuthSession({ req: this.req, res: this.res, scope });
   }
 
   constructor(
@@ -492,6 +525,13 @@ export class Tracker {
     }
   }
 
+  /**
+   * Called with every row `send` dispatches, as it is about to be POSTed. Set only by the beacon-go
+   * shadow sampler on a sampled beacon request (`~/server/beacon/beacon-go-shadow`), so the rows Node
+   * wrote can be compared with beacon-go's. Must not throw; the sampler's capture never does.
+   */
+  public onSend?: (table: string, row: object) => void;
+
   private async send(
     table: string,
     data: object | ((args: { session: Session | null; actor: TrackRequest }) => object),
@@ -502,14 +542,12 @@ export class Tracker {
     // same channel rather than raised. `awaitDelivery` callers must still not
     // read it as delivered: `send` returns false, `updateEntityMetric` passes
     // that on, and the row stays queued instead of being stamped counted.
-    if (!env.CLICKHOUSE_TRACKER_URL) return false;
-    // A local origin never reaches a tracker unless opted in: a tunnel on loopback can hide a real one.
-    if (!outwardTrafficAllowed(env.NEXT_PUBLIC_CIVITAI_LINK, env.NEXT_PUBLIC_LOCAL_TRACKER_ENABLED))
-      return false;
+    if (!trackerSends()) return false;
     await this.resolveSession();
 
     const body =
       typeof data === 'function' ? data({ session: this.session, actor: this.actor }) : data;
+    this.onSend?.(table, body);
     const url = `${env.CLICKHOUSE_TRACKER_URL}/track/${table}`;
 
     // Fire-and-forget at the call site, but the inner attempt loop checks
@@ -549,7 +587,8 @@ export class Tracker {
     let failure: Error | null = null;
 
     for (; attempt <= MAX_ATTEMPTS; attempt++) {
-      if (attempt > 1) await sleep(baseDelayMs * 2 ** (attempt - 2) + Math.random() * baseDelayMs);
+      if (attempt > 1)
+        await sleep(backoffDelay(attempt - 2, { baseMs: baseDelayMs, jitterMs: baseDelayMs }));
 
       try {
         const res = await fetch(url, {
@@ -579,7 +618,7 @@ export class Tracker {
               message: `Tracker returned ${res.status}`,
             },
             'clickhouse'
-          ).catch(() => undefined);
+          );
           failure = new Error(`tracker: ${table} rejected with ${res.status}`);
           break;
         }
@@ -602,7 +641,7 @@ export class Tracker {
             message: `Tracker returned ${res.status} after ${attempt} attempts`,
           },
           'clickhouse'
-        ).catch(() => undefined);
+        );
       } catch (e) {
         const error = e as Error;
         failure = error;
@@ -619,7 +658,7 @@ export class Tracker {
             cause: error.cause,
           },
           'clickhouse'
-        ).catch(() => undefined);
+        );
       }
     }
 
@@ -653,7 +692,7 @@ export class Tracker {
           cause: error.cause,
         },
         'clickhouse'
-      ).catch();
+      );
     }
   }
 
@@ -848,6 +887,8 @@ export class Tracker {
     earlyAccess?: boolean;
     time?: Date;
     fileId?: number;
+    /** A per-provider download: the provider whose token fetched the file. */
+    provider?: string;
   }) {
     return this.track('modelVersionEvents', { ...values, ...this.provenance });
   }
@@ -1139,16 +1180,6 @@ export class Tracker {
     return this.trackMany('chatAuditEvents', [row], { skipActorMeta: true });
   }
 
-  // One row per sampled image-feed search compared against the feed service.
-  // trackMany, like entityChanges and chatAudit: a direct insert needs only the
-  // table, where track would need a tracker-service route registered too. The row
-  // carries its own userId, so actor meta would only add ip/userAgent the table
-  // has no column for.
-  public async feedShadow(rows: FeedShadowRow[]) {
-    if (!rows.length) return;
-    return this.trackMany(FEED_SHADOW_TABLE, rows, { skipActorMeta: true });
-  }
-
   // One row per sticker PLACEMENT, matching the consumption rule — a comment
   // with the same sticker three times emits three rows. Append-only history;
   // the authoritative balance is UserCosmetic.remaining in Postgres.
@@ -1175,6 +1206,12 @@ export class Tracker {
     applied: boolean;
     promptTokens: number;
     completionTokens: number;
+    nsfwLevel: number;
+    minorUncertain: -1 | 0 | 1;
+    depictsMinor: -1 | 0 | 1;
+    isPhotorealistic: -1 | 0 | 1;
+    suggestiveStyling: -1 | 0 | 1;
+    sexualContent: -1 | 0 | 1;
   }) {
     return this.track(
       'collectionAiReviewEvents',

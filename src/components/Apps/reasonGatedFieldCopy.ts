@@ -10,10 +10,10 @@
  * maximum silently stopped naming it, which is exactly the state that lets a
  * moderator fill a field the server will reject.
  *
- * 🔴 BEHAVIOUR-PRESERVING BY CONSTRUCTION, and that matters because five pre-existing
- * call sites pass no ceiling at all. `maxLength == null` must render the byte-identical
- * description and error those callers have always rendered; the no-ceiling cases are
- * pinned first in `__tests__/reasonGatedFieldCopy.test.ts` for that reason.
+ * The counter copy is SHARED by every reason-gated field (reset / hide / relist / claim /
+ * purge / the reject panels / the report notes / the owner message), so it changes for all
+ * of them at once — that is the point of it living here. Pinned whole in
+ * `__tests__/reasonGatedFieldCopy.test.ts`.
  */
 
 /** The shared inputs both strings are derived from. `length` is the TRIMMED length. */
@@ -35,8 +35,15 @@ export type ReasonGatedFieldCopyInput = {
  */
 export function reasonGatedFieldDescription(input: ReasonGatedFieldCopyInput): string | undefined {
   if (!input.required) return undefined;
-  const counter = `${input.length}/${input.minLength} characters minimum`;
-  return input.maxLength != null ? `${counter} (max ${input.maxLength})` : counter;
+  /*
+    🔴 A REQUIREMENT, NOT A FRACTION. The counter read "11/3 characters minimum" once the
+    floor was met — a fraction over 100% that says nothing a moderator needs. It now names the
+    floor, and a ✓ says when it is met. With a ceiling the running length is still shown, as
+    the part a moderator approaching the limit actually reads.
+  */
+  const met = input.length >= input.minLength;
+  const floor = `${met ? '✓ ' : ''}${input.minLength}+ characters`;
+  return input.maxLength != null ? `${floor} · ${input.length}/${input.maxLength} max` : floor;
 }
 
 /**

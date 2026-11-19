@@ -68,6 +68,7 @@ vi.mock('~/store/sticker-placement-draft.store', () => ({
       targetImageId: IMAGE_ID,
       trayOpen: true,
       drafts: [],
+      readyPlacements: {},
       closeTray: () => undefined,
       setTray: () => undefined,
       begin: () => undefined,

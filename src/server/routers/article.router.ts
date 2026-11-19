@@ -52,9 +52,14 @@ import {
   upsertArticleHandler,
 } from '~/server/controllers/article.controller';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
+import { logToAxiom } from '~/server/logging/client';
+import { getEventDecorationsForEntity } from '~/server/services/cosmetic.service';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { isArticleServableWhenRestricted } from '~/server/utils/article-region';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getCaller } from '~/server/routers/remix-app.router';
 import {
@@ -98,7 +103,7 @@ export const articleRouter = router({
         sessionUser: ctx?.user,
         include: ['cosmetics'],
         // Uncached per viewer, so a flagged viewer may see decorations before launch.
-        eventDecorationViewer: ctx?.user,
+        eventDecorationViewer: eventViewerOf(ctx),
       })
     ),
   getCivitaiNews: publicProcedure
@@ -113,13 +118,47 @@ export const articleRouter = router({
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getByIdSchema)
-    .query(({ input, ctx }) =>
-      getArticleById({
-        ...input,
-        userId: ctx.user?.id,
-        isModerator: ctx.user?.isModerator,
-      })
-    ),
+    .query(async ({ input, ctx }) => {
+      const [article, eventDecorations] = await Promise.all([
+        getArticleById({
+          ...input,
+          userId: ctx.user?.id,
+          isModerator: ctx.user?.isModerator,
+        }),
+        // The hat the cover wears. A signed-out response is edge-cached for every signed-out
+        // viewer (createContext), so the hat gate must read nothing but the user.
+        // A hat is decoration: its lookup failing must not fail the article.
+        getEventDecorationsForEntity({
+          ids: [input.id],
+          entity: 'Article',
+          viewer: eventViewerOf(ctx),
+        }).catch((error) => {
+          logToAxiom({
+            type: 'error',
+            name: 'article-get-event-decoration',
+            message: (error as Error).message,
+            articleId: input.id,
+          });
+          return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
+        }),
+      ]);
+      // Region-dependent above SFW: a restricted region gets the same NOT_FOUND as a missing article
+      // (as on /api/v1/articles/[id]), its owner and moderators excepted, and the answer stays out of
+      // the edge cache, which does not key on region.
+      if (!isArticleServableWhenRestricted(article)) {
+        // A moderator only on a session or a full-access personal key, as for moderatorProcedure.
+        const viewerMayRead =
+          eventViewerOf(ctx).isModerator || (!!ctx.user && ctx.user.id === article.userId);
+        if (!viewerMayRead && isRegionRestricted(getRegion(ctx.req)))
+          throw throwNotFoundError(`No article with id ${input.id}`);
+        if (ctx.cache) {
+          ctx.cache.edgeTTL = 0;
+          ctx.cache.browserTTL = 0;
+          ctx.cache.staleWhileRevalidate = 0;
+        }
+      }
+      return { ...article, eventDecoration: eventDecorations[article.id] ?? null };
+    }),
   // Deliberately narrower than `getScanStatus`, which is owner/moderator-facing and returns
   // per-image blocked/error detail. This answers only "come back in a minute" for a viewer
   // `getById` just refused, so it must not distinguish Blocked from never-existed.

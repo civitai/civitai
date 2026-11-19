@@ -7,13 +7,13 @@ const { TEXT_SCAN_ENTITY_TYPES } = await import('~/server/services/text-scan/mod
 
 const CSAM_PROFILES: readonly string[] = [
   'ChatMessage',
-  'Comment',
-  'CommentV2',
   'CommentV3',
   'UserProfile',
   'Post',
   'Model',
   'Article',
+  'ServiceOffering',
+  'PostText',
 ];
 
 describe('csam profiles', () => {

@@ -222,7 +222,7 @@ describe('typed text outlives the reload every write issues', () => {
   it('renders every section unconditionally', () => {
     const detail = source('FeedbackDetail.svelte');
     expect(detail).not.toContain('activeTab');
-    expect(detail).toContain('<FeedbackAttachments {context} />');
+    expect(detail).toContain('<FeedbackAttachments {context} {captureView} />');
     expect(detail).toContain('<FeedbackContextPanel');
     expect(detail).toContain('<FeedbackPromote');
   });

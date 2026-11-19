@@ -24,7 +24,8 @@ vi.mock('~/server/clickhouse/client', () => ({
   trackWebhookEvent: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('~/server/http/tipalti/tipalti.caller', () => ({
-  default: async () => ({ validateWebhookEvent }),
+  default: async () => ({}),
+  TipaltiCaller: { validateWebhookEvent },
 }));
 vi.mock('~/server/services/creator-program.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorProgramService>()),
@@ -126,11 +127,15 @@ describe('tipalti webhook endpoint: paymentGroupApproved for a cash withdrawal',
     );
 
   beforeEach(() => {
-    dbMock.dbWrite.cashWithdrawal.findFirst.mockResolvedValue({
-      id: 'abc123-full',
-      userId: 7,
-      metadata: {},
-    });
+    // findCashWithdrawalByRefCode matches the refCode stored on the row.
+    dbMock.dbWrite.cashWithdrawal.findMany.mockResolvedValue([
+      {
+        id: 'abc123-full',
+        userId: 7,
+        status: 'InternalValue',
+        metadata: { paymentRefCode: refCode },
+      },
+    ]);
   });
 
   // Tipalti has already approved; a failed hold read must be visible but not drop the approval.
@@ -153,20 +158,6 @@ describe('tipalti webhook endpoint: paymentGroupApproved for a cash withdrawal',
         refCode,
         message: 'connection reset',
       })
-    );
-  });
-
-  it('still records the approval when the log itself fails', async () => {
-    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockRejectedValue(
-      new Error('connection reset')
-    );
-    loggingMock.logToAxiom.mockRejectedValue(new Error('axiom down'));
-
-    const res = await approve();
-
-    expect(res._status()).toBe(200);
-    expect(updateCashWithdrawal).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'Cleared' })
     );
   });
 });

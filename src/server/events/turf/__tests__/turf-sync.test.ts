@@ -1,9 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { keyHashSlots } from '@civitai/redis/key-slot';
+import { rejectCrossSlot } from '~/__tests__/cluster-slots';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as TurfWatch from '~/server/events/turf/turf-watch';
-import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import { createLuaRedis, hashTicketFrom } from '~/server/utils/__tests__/redis-lua-harness';
 
 const START = new Date('2026-11-01T00:00:00Z');
 const EVENT = {
@@ -55,14 +57,21 @@ const sticker = (imageId: number, userId: number, team: string) => ({
 });
 
 const KEYS = turfKeys('e');
-// sysRedis's EVAL run for real (the write's Lua), and tickets handed out in order.
+// The cache cluster's EVAL run for real (the write's Lua), refusing a script whose keys span hash
+// slots as the cluster does, and tickets handed out in order.
 function realWrite(hashes: Record<string, Record<string, string>> = {}) {
   const lua = createLuaRedis(0);
   for (const [key, fields] of Object.entries(hashes)) lua.setHash(key, fields);
-  redisMock.sysRedis.eval.mockReset().mockImplementation(lua.eval as never);
+  redisMock.redis.eval.mockReset().mockImplementation((async (
+    script: string,
+    options: { keys: string[]; arguments: string[] }
+  ) => {
+    rejectCrossSlot(options.keys);
+    return lua.eval(script, options);
+  }) as never);
   let ticket = 0;
-  redisMock.sysRedis.incr.mockReset().mockImplementation(async () => ++ticket);
-  redisMock.sysRedis.hGetAll
+  redisMock.redis.hIncrBy.mockReset().mockImplementation(hashTicketFrom(lua, () => ++ticket));
+  redisMock.redis.hGetAll
     .mockReset()
     .mockImplementation((async (key: string) => lua.hash(key) ?? {}) as never);
   pushTurfCounts.mockClear();
@@ -75,7 +84,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 const countsOf = (rows: ReturnType<typeof sticker>[]) =>
-  JSON.stringify(computeImageTurf(rows, 25, (t) => (t === 'Blue' ? 11 : 12)).counts);
+  JSON.stringify(
+    computeImageTurf(
+      rows,
+      () => 25,
+      (t) => (t === 'Blue' ? 11 : 12)
+    ).counts
+  );
 
 describe('syncTurfImages', () => {
   it('pushes counts only for the images whose counts changed', async () => {
@@ -90,6 +105,73 @@ describe('syncTurfImages', () => {
     expect(pushTurfCounts).toHaveBeenCalledTimes(1);
     const [, pushed] = pushTurfCounts.mock.calls[0] as unknown as [string, { imageId: number }[]];
     expect(pushed.map((p) => p.imageId)).toEqual([901]);
+  });
+
+  it("🔴 writes through one script on the cache cluster whose keys all share the event's slot", async () => {
+    const event = (await getTurfEvent('e', NOW))!;
+    realWrite();
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
+      sticker(900, 5, 'Blue'),
+      sticker(901, 6, 'Pink'),
+    ]);
+    await syncTurfImages(event, [900, 901], NOW);
+    const [, options] = redisMock.redis.eval.mock.calls[0] as [string, { keys: string[] }];
+    // map, counts, stamp, hatted, total rank and one rank per team.
+    expect(options.keys).toHaveLength(7);
+    expect(keyHashSlots(options.keys)).toHaveLength(1);
+    expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
+  });
+
+  it('🔴 takes its ticket from the stamp hash, so the counter is never lost apart from the stamps', async () => {
+    const event = (await getTurfEvent('e', NOW))!;
+    realWrite();
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([sticker(900, 5, 'Blue')]);
+    await syncTurfImages(event, [900], NOW);
+    expect(redisMock.redis.hIncrBy).toHaveBeenCalledWith(KEYS.stamp, '#ticket', 1);
+  });
+
+  // The cluster evicts the stamp hash (and the ticket counter in it) while a sync's read runs. The
+  // counter restarts at 1; the in-flight write still holds ticket 100.
+  it('🔴 refuses a write whose ticket predates an eviction of the stamp hash, and later writes still land', async () => {
+    const event = (await getTurfEvent('e', NOW))!;
+    const lua = realWrite();
+    let next = 99;
+    lua.setHash(KEYS.stamp, { '#ticket': '99' });
+    redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => ++next));
+    const oldRows = [sticker(900, 5, 'Blue')];
+    const newRows = [sticker(900, 5, 'Blue'), sticker(900, 6, 'Pink'), sticker(900, 7, 'Pink')];
+    const newest = [...newRows, sticker(900, 8, 'Pink')];
+    const slowRead = deferred<typeof oldRows>();
+    dbMock.dbWrite.$queryRaw
+      .mockImplementationOnce((() => slowRead.promise) as never)
+      .mockResolvedValueOnce(newRows)
+      .mockResolvedValueOnce(newest);
+
+    const older = syncTurfImages(event, [900], NOW); // ticket 100, its read held
+    await vi.waitFor(() => expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1));
+    lua.setHash(KEYS.stamp, {}); // evicted: the counter restarts
+    next = 0;
+    await syncTurfImages(event, [900], NOW); // ticket 1
+    slowRead.resolve(oldRows);
+    await older;
+    expect(lua.hash(KEYS.counts)?.['Image:900']).toBe(countsOf(newRows));
+
+    await syncTurfImages(event, [900], NOW); // ticket 2: not held below a stamp of 100
+    expect(lua.hash(KEYS.counts)?.['Image:900']).toBe(countsOf(newest));
+    expect(lua.hash(KEYS.stamp)?.['Image:900']).toBe('2');
+    expect(lua.errors).toEqual([]);
+  });
+
+  it('🔴 reads a stamp above the ticket counter as absent', async () => {
+    const event = (await getTurfEvent('e', NOW))!;
+    const lua = realWrite({ [KEYS.stamp]: { 'Image:900': '500', '#ticket': '3' } });
+    let next = 3;
+    redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => ++next));
+    const rows = [sticker(900, 5, 'Blue')];
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(rows);
+    await syncTurfImages(event, [900], NOW); // ticket 4
+    expect(lua.hash(KEYS.counts)?.['Image:900']).toBe(countsOf(rows));
+    expect(lua.hash(KEYS.stamp)?.['Image:900']).toBe('4');
   });
 
   // Two pods sync one image at once and the older read finishes last. Without the ticket check the
@@ -199,9 +281,16 @@ describe('requestTurfSync', () => {
 
 const visibleOf = (sql: string) =>
   sql.slice(sql.indexOf(' p."publishedAt"'), sql.indexOf('"blockedFor" IS NULL'));
+// The whole contestEntry fragment: the contest check and the running flag Crucible check.
 const contestOf = (sql: string) => {
-  const at = sql.indexOf('EXISTS ( SELECT 1 FROM "CollectionItem"');
-  return at < 0 ? '' : sql.slice(at, sql.indexOf(')', sql.indexOf("'Contest'", at)) + 1);
+  const at = sql.indexOf('(EXISTS ( SELECT 1 FROM "CollectionItem"');
+  if (at < 0) return '';
+  let depth = 0;
+  for (let i = at; i < sql.length; i++) {
+    if (sql[i] === '(') depth++;
+    else if (sql[i] === ')' && --depth === 0) return sql.slice(at, i + 1);
+  }
+  return '';
 };
 const OWNER_ALLOWS_TURF =
   'EXISTS (SELECT 1 FROM "User" ow WHERE ow.id = i."userId" AND ow."bannedAt" IS NULL AND ow."deletedAt" IS NULL AND (ow.settings -> ? ->> ?) IS DISTINCT FROM \'true\')';
@@ -238,8 +327,8 @@ describe('the stickers a turf push carries', () => {
   it('picks each team’s newest first, then the next newest, drawable only, five at most', () => {
     // teamRank 1: Blue 6 (newest, id beats 3 at the same time), Pink 4; then Blue 3, 2, 1; Blue 7 is
     // sixth. Pink 5 is newest of all but not drawable.
-    expect(pickFeedStickers(rows).map((s) => s.id)).toEqual(['6', '4', '3', '2', '1']);
-    expect(pickFeedStickers(rows)[0]).toEqual({
+    expect(pickFeedStickers(rows, 5).map((s) => s.id)).toEqual(['6', '4', '3', '2', '1']);
+    expect(pickFeedStickers(rows, 5)[0]).toEqual({
       id: '6',
       userId: 106,
       team: 'Blue',
@@ -301,7 +390,8 @@ describe('the stickers a turf push carries', () => {
       string,
       { imageId: number; stickers: { id: string }[] }[]
     ];
-    expect(pushed[0].stickers.map((s) => s.id)).toEqual(['6', '4', '3', '2', '1']);
+    // The default cap is TURF_FEED_STICKERS (10): the sixth Blue hat rides along too.
+    expect(pushed[0].stickers.map((s) => s.id)).toEqual(['6', '4', '3', '2', '1', '7']);
   });
 });
 
@@ -310,10 +400,16 @@ describe('reconcileTurf', () => {
     const event = (await getTurfEvent('e', NOW))!;
     const a = { ...sticker(900, 5, 'Blue'), eligible: true };
     const b = { ...sticker(901, 6, 'Pink'), eligible: true };
-    const bCounts = JSON.stringify(computeImageTurf([b], 25, () => 12).counts);
+    const bCounts = JSON.stringify(
+      computeImageTurf(
+        [b],
+        () => 25,
+        () => 12
+      ).counts
+    );
     // After the snapshot, an older sync moved 901: the write differs for both, so both are pushed.
     realWrite({ [KEYS.counts]: { 'Image:901': 'moved since' } });
-    redisMock.sysRedis.hGetAll.mockResolvedValueOnce({ 'Image:901': bCounts }); // 900 changed, 901 not
+    redisMock.redis.hGetAll.mockResolvedValueOnce({ 'Image:901': bCounts }); // 900 changed, 901 not
     dbMock.dbRead.$queryRaw
       .mockResolvedValueOnce([{ imageId: 900 }, { imageId: 901 }])
       .mockResolvedValueOnce([a, b])
@@ -338,10 +434,10 @@ describe('reconcileTurf', () => {
     const event = (await getTurfEvent('e', NOW))!;
     const lua = realWrite();
     const snapshot = deferred<Record<string, string>>();
-    redisMock.sysRedis.hGetAll.mockImplementationOnce((() => snapshot.promise) as never);
+    redisMock.redis.hGetAll.mockImplementationOnce((() => snapshot.promise) as never);
     dbMock.dbRead.$queryRaw.mockReset();
     const reconcile = reconcileTurf(event, NOW); // held at its snapshot, before any read
-    await vi.waitFor(() => expect(redisMock.sysRedis.hGetAll).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(redisMock.redis.hGetAll).toHaveBeenCalledTimes(1));
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(syncRows);
     await syncTurfImages(event, [syncRows[0].imageId], NOW);
     return { lua, reconcile, snapshot };
@@ -373,7 +469,7 @@ describe('reconcileTurf', () => {
     // The stamp outlives the clear, so a sync that read before it cannot bring the image back.
     const stamp = Number(lua.hash(KEYS.stamp)?.['Image:910']);
     expect(stamp).toBeGreaterThan(0);
-    redisMock.sysRedis.incr.mockResolvedValueOnce(stamp - 1);
+    redisMock.redis.hIncrBy.mockResolvedValueOnce(stamp - 1);
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([sticker(910, 5, 'Blue')]);
     await syncTurfImages((await getTurfEvent('e', NOW))!, [910], NOW);
     expect(lua.hash(KEYS.counts)?.['Image:910']).toBeUndefined();

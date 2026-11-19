@@ -7,7 +7,7 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
-  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+  import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { denied } from '$lib/permissions';

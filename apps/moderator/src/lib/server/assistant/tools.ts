@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { TurnSource } from '$lib/assistant/types';
 import type { PermissionId } from '$lib/permissions';
+import type { Page } from './loop';
 import { imageLookupUrl, userLookupUrl, userReportUrl } from '$lib/entity-url';
 import { DEFAULT_REPORT_STATUSES } from '$lib/reports';
 import { getDossier } from '../dossier.service';
@@ -24,6 +25,13 @@ import {
 } from '../reactor-lookup.service';
 import { getBuzzFlows, MAX_BUZZ_DAYS } from '../buzz-flows.service';
 import { getPlacementFlows } from '../placement-flows.service';
+import {
+  getAccountTrainings,
+  lookupTrainings,
+  MAX_TRAINING_ACCOUNTS,
+  MAX_TRAINING_DAYS,
+  MAX_TRAINING_IDS,
+} from '../training-lookup.service';
 import { getShopPurchaseSummary, SHOP_PURCHASE_KINDS } from '../shop-purchases.service';
 import { getCrucibleJudging } from '../crucible-judging.service';
 import {
@@ -144,6 +152,9 @@ const ACCOUNTS_ON_ADDRESS_TIMEOUT_MS = 90_000;
 const EMAILS_NOTE =
   'With the registration-email grant each account also carries `email` and `normalizedEmail` (Gmail dots and +tags removed, lower-cased). Several accounts on one normalizedEmail are one inbox; many accounts on one rare or throwaway domain, or rotating through a few such domains, is a mass-registration tell. Quote an email only as evidence; playbooks and tool requests drop them.';
 
+const PAGE_NOTE =
+  'For the next page, call again with offset = page.nextOffset (null: no more). A result cut for size still sets page.nextOffset to just after the last account shown, so follow it and do not repeat the same offset.';
+
 const userSource = (id: number, username: string | null = null): TurnSource => ({
   ref: `user:${id}`,
   href: userLookupUrl(id),
@@ -204,14 +215,18 @@ const reactionDays = z
 async function linkedOut(
   linked: LinkedAccounts,
   ctx: ToolContext,
-  subject: number | null
+  subject: number | null,
+  offset: number
 ): Promise<ToolResult> {
   const shown = showAddresses(ctx) ? linked : maskLinkedAddresses(linked, ctx.mask);
+  const end = offset + shown.accounts.length;
+  const page: Page = { list: 'accounts', offset, nextOffset: end < shown.matched ? end : null };
   return {
     data: {
       days: shown.days,
       totals: shown.totals,
       matched: shown.matched,
+      page,
       truncated: shown.truncated,
       addresses: shown.addresses.filter((a) => a.accounts > 0),
       accounts: (await withEmails(ctx, shown.accounts)).map((a) => ({
@@ -450,7 +465,9 @@ export const TOOLS = [
   tool({
     name: 'find_linked_accounts',
     description:
-      'Every account that shares an address with this one, by LOGIN (all time) or by REACTION (the window). Sorted strongest link first: an address only these two accounts use beats one hundreds use (a VPN or carrier exit). No cap on how many accounts exist; page with offset. ' +
+      'Every account that shares an address with this one, by LOGIN (all time) or by REACTION (the window). Sorted strongest link first: an address only these two accounts use beats one hundreds use (a VPN or carrier exit). No cap on how many accounts exist: ' +
+      PAGE_NOTE +
+      ' ' +
       EMAILS_NOTE,
     input: z.object({
       userId,
@@ -460,13 +477,13 @@ export const TOOLS = [
     }),
     requires: [LOOKUP, USER_REPORTS],
     run: async ({ userId: id, days, offset, limit }, ctx) =>
-      linkedOut(await getLinkedAccounts(id, { days, offset, limit }), ctx, id),
+      linkedOut(await getLinkedAccounts(id, { days, offset, limit }), ctx, id, offset),
   }),
 
   tool({
     name: 'accounts_on_address',
     description:
-      `Every account seen on IP addresses (an IPv6 address covers its /64), by login (all time) and by reaction (the window), with ban state. Give one \`address\`, or up to ${MAX_BATCH_ADDRESSES} as \`addresses\` to check a list in one call: an account on several of them is listed once, with each address it was seen on, and \`addresses\` in the result gives the count per address. Page with offset; totals are exact. ` +
+      `Every account seen on IP addresses (an IPv6 address covers its /64), by login (all time) and by reaction (the window), with ban state. Give one \`address\`, or up to ${MAX_BATCH_ADDRESSES} as \`addresses\` to check a list in one call: an account on several of them is listed once, with each address it was seen on, and \`addresses\` in the result gives the count per address. Totals are exact. ${PAGE_NOTE} ` +
       EMAILS_NOTE,
     input: z.object({
       address: z.string().min(3).max(60).optional(),
@@ -497,7 +514,7 @@ export const TOOLS = [
         return refuse(
           asked.length === 1 ? 'Not an IP address.' : 'None of these is an IP address.'
         );
-      const out = await linkedOut(linked, ctx, null);
+      const out = await linkedOut(linked, ctx, null, offset);
       // Named back, so a skipped entry is never read as an address with no accounts on it.
       return invalid.length
         ? { ...out, data: { ...(out.data as object), notAddresses: invalid } }
@@ -624,9 +641,9 @@ export const TOOLS = [
   tool({
     name: 'reactors_page',
     description:
-      `Every reactor on this creator over the floor, a page at a time, ranked exactly as reactors_of ranks them (by concentration), with user id breaking ties. Use it when reactors_of's top 20 is not enough: to read the whole list, or to find an account past the top. \`rank\` is each account's place in the full list; \`overFloor\` is how many there are in all; \`nextOffset\` is where the next page starts, null at the end. Ranks past ${REACTOR_PAGE_CAP.toLocaleString(
+      `Every reactor on this creator over the floor, a page at a time, ranked exactly as reactors_of ranks them (by concentration), with user id breaking ties. Use it when reactors_of's top 20 is not enough: to read the whole list, or to find an account past the top. \`rank\` is each account's place in the full list; \`overFloor\` is how many there are in all. ${PAGE_NOTE} Ranks past ${REACTOR_PAGE_CAP.toLocaleString(
         'en-US'
-      )} are not paged: the page reaching that rank comes back short with nextOffset null, and a call starting there is refused. When overFloor is higher, say the list was cut off there rather than that it ends there. The window is the last \`days\` days counted back from each call, so it slides: between two calls a reactor can move, enter or leave, and a page can repeat or skip an account. Keep days and minCount the same across the pages of one list. No address check; use reactors_of for clusters. ` +
+      )} are not paged: the page reaching that rank comes back short with page.nextOffset null, and a call starting there is refused. When overFloor is higher, say the list was cut off there rather than that it ends there. The window is the last \`days\` days counted back from each call, so it slides: between two calls a reactor can move, enter or leave, and a page can repeat or skip an account. Keep days and minCount the same across the pages of one list. No address check; use reactors_of for clusters. ` +
       EMAILS_NOTE,
     input: z.object({
       userId,
@@ -670,13 +687,16 @@ export const TOOLS = [
           minCount,
           overFloor: page.overFloor,
           belowFloor: page.belowFloor,
-          offset,
           ...(pastCap
             ? {
                 refused: `Only the first ${REACTOR_PAGE_CAP} ranks are paged; offset was ${offset}.`,
               }
             : {}),
-          nextOffset: !pastCap && end < page.overFloor && end < REACTOR_PAGE_CAP ? end : null,
+          page: {
+            list: 'actors',
+            offset,
+            nextOffset: !pastCap && end < page.overFloor && end < REACTOR_PAGE_CAP ? end : null,
+          } satisfies Page,
           actors,
         },
         rows: actors.length,
@@ -707,6 +727,47 @@ export const TOOLS = [
         rows: flows.flows.length,
         truncated: flows.truncated,
         sources: [...new Set([...userIds, ...counterparties])].map((id) => userSource(id)),
+      };
+    },
+  }),
+
+  tool({
+    name: 'training_lookup',
+    description: `Training runs by id (1-${MAX_TRAINING_IDS} ids): a workflow id like <account>-<yyyyMMddHHmmss...>[-suffix], or the same with a training_ prefix. Per run: the account that submitted it (from the id), the account charged (payerId) and when, the Buzz legs that paid for it by account type (blue = reward Buzz), Buzz refunded, when its last job finished, and the model version it trained. Each part names its source and a status: found, notFound (read, nothing there), beyondRetention (older than the source keeps) or unreachable (could not be read); none of these means the account ran no trainings. A payerId different from submitterId is a run one account paid for and another submitted. Ids that are not a workflow id come back in invalid and are never looked up.`,
+    input: z.object({
+      trainingIds: z.array(z.string().min(1).max(200)).min(1).max(MAX_TRAINING_IDS),
+    }),
+    requires: [LOOKUP],
+    run: async ({ trainingIds }) => {
+      const found = await lookupTrainings(trainingIds);
+      const accounts = new Set(
+        found.runs.flatMap((r) => [r.submitterId, r.charge.payerId ?? r.submitterId])
+      );
+      return {
+        data: found,
+        rows: found.runs.length,
+        truncated: false,
+        sources: [...accounts].map((id) => userSource(id)),
+      };
+    },
+  }),
+
+  tool({
+    name: 'account_trainings',
+    description: `The training runs a set of accounts paid for (1-${MAX_TRAINING_ACCOUNTS} accounts, up to ${MAX_TRAINING_DAYS} days), newest first, up to 500 runs with truncated set past that. Per run: workflow id, submitter and payer, charged time, Buzz legs by account type (blue = reward Buzz), Buzz refunded, when its last job finished and the model version, each with its source and status as in training_lookup. sharedWith names a listed account that submitted a run another listed account paid for. Runs are found by payer only: a run a listed account submitted and an unlisted one paid for does not appear. unlinkedCharges counts charges with no workflow id (before about 2024-10). reachable false means the ledger could not be read, not that there were no trainings. For matching a training id seen on one account against the trainings of linked accounts.`,
+    input: z.object({
+      userIds: userIdList(MAX_TRAINING_ACCOUNTS),
+      days: z.number().int().min(1).max(MAX_TRAINING_DAYS).default(30),
+    }),
+    requires: [LOOKUP],
+    run: async ({ userIds, days }) => {
+      const found = await getAccountTrainings(userIds, days);
+      const accounts = new Set([...userIds, ...found.runs.map((r) => r.submitterId)]);
+      return {
+        data: found,
+        rows: found.runs.length,
+        truncated: found.truncated,
+        sources: [...accounts].map((id) => userSource(id)),
       };
     },
   }),

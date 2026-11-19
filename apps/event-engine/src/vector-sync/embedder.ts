@@ -36,12 +36,16 @@ const MAX_VIDEO_SIDE = 4096;
 const EMBED_IMAGE_PARAMS = 'anim=false,width=800,optimized=true';
 const TERMINAL = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
+/** The workflow ended without it being its inputs' fault. */
+function looksLikeOutage(workflow: Workflow) {
+  return workflow.status === 'expired' || workflow.status === 'canceled';
+}
+
 /**
- * The workflow ended without it being its inputs' fault: expired or canceled, or failed with no
- * step succeeding across several images. One failed image is that image's own failure.
+ * The orchestrator runs a batch as one job, so one input whose media cannot be downloaded fails
+ * every step in it. Splitting isolates that input; re-submitting the whole batch never would.
  */
-function looksLikeOutage(workflow: Workflow, inputs: number) {
-  if (workflow.status === 'expired' || workflow.status === 'canceled') return true;
+function failedAsOne(workflow: Workflow, inputs: number) {
   return (
     workflow.status === 'failed' &&
     inputs > 1 &&
@@ -65,12 +69,15 @@ function edgeUrl(base: string, key: string, params: string, ext: string) {
   return `${base}/${key}/${params}/${name}${ext}`;
 }
 
+/** The image variant every image embed is made from. */
+const imageEdgeUrl = (base: string, key: string) => edgeUrl(base, key, EMBED_IMAGE_PARAMS, '.jpeg');
+
 /** One builder per media type; a type without one is skipped, not failed. */
 const builders: Partial<Record<ImageRow['type'], (row: ImageRow, opts: BuildOptions) => Built>> = {
   image: (row, { imageLocation }) => ({
     input: {
       id: String(row.id),
-      imageUrl: edgeUrl(imageLocation, row.url, EMBED_IMAGE_PARAMS, '.jpeg'),
+      imageUrl: imageEdgeUrl(imageLocation, row.url),
     },
   }),
   video: (row, { imageLocation, embedVideo }) => {
@@ -100,6 +107,15 @@ export function buildEmbedInput(
   if (/^[a-z]+:/i.test(row.url)) return { skip: 'external-url' };
   const build = builders[row.type];
   return build ? build(row, opts) : { skip: 'unsupported-type' };
+}
+
+/**
+ * The edge URL an image stored as `key` is embedded from, the same variant the image sync sends;
+ * null for an absolute URL, which is not on our CDN.
+ */
+export function imageEmbedUrl(key: string, imageLocation = config.vectorSync.imageLocation) {
+  if (/^[a-z]+:/i.test(key)) return null;
+  return imageEdgeUrl(imageLocation, key);
 }
 
 /** Step names are how results map back to images. */
@@ -475,10 +491,19 @@ export class Embedder {
       };
       accepted.push([Number(input.id), output.embedding, stamp, kind]);
     }
+    if (failedAsOne(workflow, batch.length)) {
+      // Ends at singletons, so it leaves `depth` (the 400 path's split budget) untouched.
+      // A real outage reported as 'failed' costs 2N-1 workflows and ends with all N failed;
+      // reconcile retries them.
+      const mid = Math.ceil(batch.length / 2);
+      await this.embedSplitting(batch.slice(0, mid), call, depth);
+      await this.embedSplitting(batch.slice(mid), call, depth);
+      return;
+    }
     // Retried here, not by the caller, so a batch that keeps failing ends as counted failures
     // (reconcile retries them) rather than a flush that never moves on. Only the unfinished
     // inputs go again; the steps that succeeded are kept below.
-    const outage = failed.length > 0 && looksLikeOutage(workflow, batch.length);
+    const outage = failed.length > 0 && looksLikeOutage(workflow);
     const backoff = Math.min(60_000, 1000 * 2 ** outageRetries) * (0.5 + Math.random() / 2);
     // Bounded by time as well as attempts: one expiry can take the whole 30-minute step timeout.
     const retryOutage =
@@ -497,7 +522,16 @@ export class Embedder {
       );
       call.result.failed.push(...failed.map(Number));
     } else if (failed.length) {
-      logger.warn({ workflow: workflow.id, ids: failed }, 'vector-sync: steps failed to embed');
+      logger.warn(
+        // Alone in its workflow, a failed input is almost always media the orchestrator could not
+        // download (a 404 on an old image).
+        {
+          workflow: workflow.id,
+          ids: failed,
+          ...(batch.length === 1 && { reason: 'media-unavailable' }),
+        },
+        'vector-sync: steps failed to embed'
+      );
       call.result.failed.push(...failed.map(Number));
     }
 

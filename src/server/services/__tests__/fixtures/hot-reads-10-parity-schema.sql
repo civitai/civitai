@@ -47,7 +47,8 @@ CREATE TABLE "hot_reads_10_parity"."Collection" (
   "mode"         "hot_reads_10_parity"."CollectionMode",
   "metadata"     JSONB                                                NOT NULL DEFAULT '{}',
   "availability" "hot_reads_10_parity"."Availability"                 NOT NULL DEFAULT 'Public',
-  "nsfwLevel"    INTEGER                                              NOT NULL DEFAULT 0
+  "nsfwLevel"    INTEGER                                              NOT NULL DEFAULT 0,
+  "archivedAt"   TIMESTAMP(3)
 );
 
 CREATE TABLE "hot_reads_10_parity"."TagsOnCollection" (
@@ -82,6 +83,7 @@ CREATE TABLE "hot_reads_10_parity"."Image" (
   "generationProcess" "hot_reads_10_parity"."ImageGenerationProcess",
   "postId"            INTEGER,
   "needsReview"       TEXT,
+  "modelRestricted"   BOOLEAN                                          NOT NULL DEFAULT false,
   "hideMeta"          BOOLEAN                                          NOT NULL DEFAULT false,
   "scannedAt"         TIMESTAMP(3),
   "ingestion"         "hot_reads_10_parity"."ImageIngestionStatus"     NOT NULL DEFAULT 'Pending',

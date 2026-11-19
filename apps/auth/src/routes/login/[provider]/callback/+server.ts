@@ -22,6 +22,7 @@ import {
   normalizeEmailAddress,
 } from '$lib/server/auth/blocklist';
 import { establishSession } from '$lib/server/auth/session';
+import { readLastMethod, rememberLastMethod } from '$lib/server/auth/last-method';
 import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
 import { blockedEmailDomainSignupsTotal, loginsTotal } from '$lib/server/metrics';
@@ -129,12 +130,14 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   }
 
   // Standard login / signup — the hub sets the session cookie here.
-  const user = await findOrCreateUser(provider.id, profile, scope).catch((e) => {
+  const lastMethod = readLastMethod(cookies);
+  const user = await findOrCreateUser(provider.id, profile, scope, { lastMethod }).catch((e) => {
     if (e instanceof SystemAccountSignInError)
       redirect(302, loginRetry(url.origin, 'SystemAccount', returnUrl));
     throw e;
   });
   await establishSession(cookies, user, { returnUrl });
+  rememberLastMethod(cookies, provider.id);
 
   // Count the successful login AFTER the session is established (best-effort; never blocks the redirect).
   loginsTotal.inc({ provider: provider.id });
@@ -170,7 +173,7 @@ function logCallbackFailure(
     ...(providerError && {
       providerError: /^[a-z_]{1,64}$/.test(providerError) ? providerError : 'unrecognised',
     }),
-  }).catch(() => undefined);
+  });
 }
 
 // Append a query param to a (relative or absolute) returnUrl, preserving any hash.

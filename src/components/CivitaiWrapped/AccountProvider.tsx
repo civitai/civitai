@@ -4,6 +4,7 @@ import { authProxy } from '~/utils/auth-proxy';
 import { useSession } from '~/providers/SessionProvider';
 import { handleSignOut } from '~/utils/auth-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { markAddAccountFlow } from '~/components/Onboarding/new-account-notice';
 import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
 import { createContext, useContext, useEffect, useMemo } from 'react';
@@ -259,6 +260,7 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
     }
     // 2. Not seamlessly switchable (aged out of the device set, or a legacy account whose seamless next-auth
     //    redeem was removed with next-auth) → re-authenticate this account at the hub.
+    markAddAccountFlow();
     window.location.assign(getLoginLink({ returnUrl: cb, reason: 'switch-accounts' }));
   };
 

@@ -144,13 +144,15 @@ async function fetchEdge(
   image: ImageInput,
   passthrough: boolean,
   fetchImpl: typeof fetch,
-  timeoutMs: number
+  timeoutMs: number,
+  cancel?: AbortSignal
 ) {
   let response: Response;
+  const timeout = AbortSignal.timeout(timeoutMs);
   try {
     // A stored full URL is fetched as is, so it must not redirect somewhere we did not vet.
     response = await fetchImpl(getEdgeUrl(image.url, { type: image.type }), {
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: cancel ? AbortSignal.any([cancel, timeout]) : timeout,
       redirect: passthrough ? 'error' : 'follow',
       headers: { 'accept-encoding': 'identity' },
     });
@@ -331,7 +333,8 @@ async function spoolStoredObject(
   image: ImageInput,
   large: LargeStoredObject,
   reserve: Reserve | undefined,
-  onRetry: OnRetry | undefined
+  onRetry: OnRetry | undefined,
+  cancel: AbortSignal | undefined
 ): Promise<SpooledImage> {
   const releaseReservation = reserve ? await reserve(large.size) : noReservation;
   let path: string | undefined;
@@ -340,11 +343,14 @@ async function spoolStoredObject(
     path = join(large.spoolDir, `${randomUUID()}.part`);
     const hash = createHash('sha256');
     // The whole object gets the window one whole-object read had.
-    const deadline = AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS);
+    const timeout = AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS);
+    const deadline = cancel ? AbortSignal.any([cancel, timeout]) : timeout;
     let written = 0;
     const file = await open(path, 'wx');
     try {
       for (let start = 0; start < large.size; start += RANGE_PART_BYTES) {
+        // A storage client may finish a part it was asked to abort; the next part is never started.
+        cancel?.throwIfAborted();
         const end = Math.min(start + RANGE_PART_BYTES, large.size) - 1;
         const part = await withSocketRetry(
           (signal) => readRange(storage, image.url, large, start, end, signal),
@@ -391,6 +397,8 @@ type ReadOriginalOptions = ReadOptions & {
   reserve?: Reserve;
   /** Called before each retry with the attempt that failed. */
   onRetry?: OnRetry;
+  /** Aborting it stops the read at its next request: the caller no longer wants the bytes. */
+  cancel?: AbortSignal;
 };
 
 function readOriginal(image: ImageInput, options: ReadOriginalOptions): Promise<OriginalImageRead>;
@@ -401,7 +409,7 @@ function readOriginal(
 ): Promise<OriginalImageRead | SpooledImage>;
 async function readOriginal(
   image: ImageInput,
-  { reserve, backend, fetchImpl = fetch, onRetry }: ReadOriginalOptions,
+  { reserve, backend, fetchImpl = fetch, onRetry, cancel }: ReadOriginalOptions,
   spoolDir?: string
 ): Promise<OriginalImageRead | SpooledImage> {
   const passthrough = isEdgeUrlPassthrough(image.url);
@@ -410,16 +418,23 @@ async function readOriginal(
     const storage = backend ?? (await getImageUploadBackend());
     const stored = await withSocketRetry(
       (signal) => readStoredObject(storage, image, reserve, spoolDir, signal),
-      onRetry
+      onRetry,
+      cancel
     );
     if (stored && 'large' in stored)
-      return spoolStoredObject(storage, image, stored, reserve, onRetry);
+      return spoolStoredObject(storage, image, stored, reserve, onRetry, cancel);
     if (stored) return stored;
   }
 
   const refused = edgeRefusal(image.url, passthrough);
   if (refused) return refused;
-  const edge = await fetchEdge(image, passthrough, fetchImpl, ORIGINAL_IMAGE_READ_TIMEOUT_MS);
+  const edge = await fetchEdge(
+    image,
+    passthrough,
+    fetchImpl,
+    ORIGINAL_IMAGE_READ_TIMEOUT_MS,
+    cancel
+  );
   if ('source' in edge) return edge;
   const { response, body, declared } = edge;
   let release: () => void = noReservation;

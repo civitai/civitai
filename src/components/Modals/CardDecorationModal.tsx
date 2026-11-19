@@ -1,3 +1,4 @@
+import { EventCosmeticsPreview } from '~/providers/BrowserSettingsProvider';
 import { Button, Center, Grid, Group, Loader, Modal, Paper, Stack } from '@mantine/core';
 import { useEffect } from 'react';
 import { openConfirmModal } from '@mantine/modals';
@@ -261,5 +262,10 @@ export const PreviewCard = ({
       />
     </MasonryCard>
   );
-  return width ? <div style={{ width }}>{card}</div> : card;
+  // The hat being picked shows whatever the viewer's event cosmetics setting.
+  return (
+    <EventCosmeticsPreview>
+      {width ? <div style={{ width }}>{card}</div> : card}
+    </EventCosmeticsPreview>
+  );
 };

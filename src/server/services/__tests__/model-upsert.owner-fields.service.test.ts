@@ -1,3 +1,4 @@
+import { PGlite } from '@electric-sql/pglite';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import type * as ModeModule from '~/server/services/text-scan/mode';
@@ -42,7 +43,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -91,6 +91,8 @@ vi.mock('~/server/services/subscriptions.service', () => ({
 }));
 vi.mock('~/server/services/system-cache', () => ({ getCategoryTags: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({
+  bustUserSettings: vi.fn(),
+  patchUserSettings: vi.fn(),
   deleteBasicDataForUser: vi.fn(),
   getCosmeticsForUsers: vi.fn(),
   getProfilePicturesForUsers: vi.fn(),
@@ -164,13 +166,22 @@ vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal)
 import { MODERATION_FLOW_META_KEYS } from '~/server/utils/minor-flag-meta';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
-import type { ModelUpsertInput } from '~/server/schema/model.schema';
-import { upsertModel } from '~/server/services/model.service';
+import type { ModelMeta, ModelUpsertInput } from '~/server/schema/model.schema';
+import {
+  comFaceIntentTextHash,
+  reusableComFaceIntent,
+} from '~/server/services/model-com-face-intent.service';
+import {
+  copyGallerySettingsToAllModelsByUser,
+  heldGalleryLevel,
+  upsertModel,
+} from '~/server/services/model.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/redis.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { recordedOwnership } from './model-ownership-db';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -457,6 +468,130 @@ describe('comFaceRemoved', () => {
       meta: { comFaceRemoved: sent, hideBuzz: true } as ModelUpsertInput['meta'],
     });
     expect(updateData().meta).toEqual({ comFaceRemoved: MARKER, hideBuzz: true });
+  });
+});
+
+// Lifting the intent check's own lock is a ruling on the intent; lifting any other lock is a ruling on
+// the rating only, which must not clear the face but must not be undone by a re-lock either.
+describe('a moderator lifting the nsfw lock', () => {
+  const words = ['trigger'];
+  const listingHash = comFaceIntentTextHash({
+    name: storedModel.name,
+    description: storedModel.description,
+    triggerWords: words,
+  });
+  const detection = {
+    detected: true,
+    reason: 'r',
+    textHash: listingHash,
+    promptId: 77,
+    at: '2026-11-01T00:00:00.000Z',
+    priorSystemNsfwLock: { source: 'text-scan', at: '2026-10-01T00:00:00.000Z' },
+    laterVerdict: { source: 'xguard-text-moderation', at: '2026-11-02T00:00:00.000Z' },
+  };
+  const intentLock = { source: 'com-face-intent', at: '2026-11-01T00:00:00.000Z' };
+
+  beforeEach(() => {
+    mockDbWrite.modelVersion.findMany.mockImplementation((async (args: {
+      select?: { trainedWords?: boolean };
+    }) => (args.select?.trainedWords ? [{ trainedWords: words }] : [])) as never);
+  });
+
+  const unlock = (edit: { name?: string; description?: string } = {}) =>
+    upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      lockedProperties: [],
+      ...edit,
+    });
+
+  it("overturns the stored detection when the lock lifted is the intent check's own", async () => {
+    mockStored({
+      nsfw: true,
+      lockedProperties: ['nsfw'],
+      meta: { systemNsfwLock: intentLock, comFaceIntent: detection },
+    });
+    await unlock();
+    const meta = updateData().meta as ModelMeta;
+    expect(meta.comFaceIntent).toMatchObject({ detected: true, textHash: listingHash });
+    expect(meta.comFaceIntent?.overturnedAt).toEqual(expect.any(String));
+    expect(meta.comFaceIntent).not.toHaveProperty('priorSystemNsfwLock');
+    expect(meta.comFaceIntent).not.toHaveProperty('laterVerdict');
+    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({
+      detected: false,
+      reason: 'r',
+      promptId: 77,
+    });
+    expect(meta).not.toHaveProperty('comFaceIntentRelockSuppressed');
+  });
+
+  it.each([
+    ['a text-scan lock', { systemNsfwLock: { source: 'text-scan', at: 'x' } }],
+    ['a lock with no system marker', {}],
+  ])('keeps the detection and only suppresses the re-lock when lifting %s', async (_, marker) => {
+    mockStored({
+      nsfw: true,
+      lockedProperties: ['nsfw'],
+      meta: { ...marker, comFaceIntent: detection },
+    });
+    await unlock();
+    const meta = updateData().meta as ModelMeta;
+    expect(meta.comFaceIntent).toEqual(detection);
+    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({
+      detected: true,
+      reason: 'r',
+      promptId: 77,
+    });
+    expect(meta.comFaceIntentRelockSuppressed).toEqual({
+      textHash: listingHash,
+      at: expect.any(String),
+    });
+  });
+
+  // Text the same save writes has never been read by the check: it must be judged, not allowed.
+  it('stores no verdict for text the unlock save also edits', async () => {
+    mockStored({
+      nsfw: true,
+      lockedProperties: ['nsfw'],
+      meta: { systemNsfwLock: intentLock, comFaceIntent: detection },
+    });
+    const edited = { name: 'Renamed', description: 'Rewritten' };
+    await unlock(edited);
+    const editedHash = comFaceIntentTextHash({ ...edited, triggerWords: words });
+    const meta = updateData().meta as ModelMeta;
+    expect(meta.comFaceIntent).toEqual(detection);
+    expect(reusableComFaceIntent(meta, editedHash, 77)).toBeNull();
+  });
+
+  it('keys the re-lock suppression to the text the save leaves', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+    const edited = { name: 'Renamed', description: 'Rewritten' };
+    await unlock(edited);
+    expect((updateData().meta as ModelMeta).comFaceIntentRelockSuppressed?.textHash).toBe(
+      comFaceIntentTextHash({ ...edited, triggerWords: words })
+    );
+  });
+
+  it("writes nothing on an owner's save (control)", async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, lockedProperties: [] });
+    const meta = updateData().meta as ModelMeta;
+    expect(meta.comFaceIntent).toEqual(detection);
+    expect(meta).not.toHaveProperty('comFaceIntentRelockSuppressed');
+  });
+
+  it('writes nothing when the save keeps the lock (control)', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      lockedProperties: ['nsfw'],
+    });
+    const meta = updateData().meta as ModelMeta;
+    expect(meta.comFaceIntent).toEqual(detection);
+    expect(meta).not.toHaveProperty('comFaceIntentRelockSuppressed');
   });
 });
 
@@ -1514,5 +1649,83 @@ describe("a moderator's untick of a text-scan POI flag", () => {
     mockStored(scanFlagged([]));
     await formLift({ poi: true, sfwOnly: true });
     expect(updateData().lockedProperties).toEqual(['nsfw', 'sfwOnly']);
+  });
+});
+
+// RESTRICT sites of the minor content rule in its ceiling form: the gallery level a flagged model
+// is written and served at. Expected values are the levels as they stood before the gates shared
+// the rule (PG and PG-13, flag 3).
+describe('flagged model gallery level', () => {
+  const SFW = 3;
+  const FLAGS = [
+    ['minor', { minor: true }, SFW],
+    ['SFW-only', { sfwOnly: true }, SFW],
+    ['minor and SFW-only', { minor: true, sfwOnly: true }, SFW],
+  ] as const;
+
+  it.each(FLAGS)('a new %s model is written at safe for work', async (_, flags, level) => {
+    await upsert({ userId: MODERATOR_ID, isModerator: true, ...flags });
+    expect((createData().gallerySettings as { level: number }).level).toBe(level);
+  });
+
+  it.each(FLAGS)('a save flagging the model %s writes safe for work', async (_, flags, level) => {
+    mockStored();
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, ...flags });
+    expect((updateData().gallerySettings as { level: number }).level).toBe(level);
+  });
+
+  it.each([
+    [{ minor: true, sfwOnly: false }, undefined, SFW],
+    [{ minor: true, sfwOnly: false }, 0, SFW],
+    [{ minor: true, sfwOnly: false }, 1, 1],
+    [{ minor: true, sfwOnly: false }, 31, SFW],
+    [{ minor: true, sfwOnly: false }, 28, SFW],
+    [{ minor: false, sfwOnly: true }, 2, 2],
+    [{ minor: false, sfwOnly: true }, 28, SFW],
+  ])('a %o model with stored level %s serves %i', (model, stored, served) => {
+    expect(heldGalleryLevel(stored, model)).toBe(served);
+  });
+
+  it('copying gallery settings to every model keeps each flagged model at safe for work', async () => {
+    const pg = new PGlite();
+    await pg.exec(`CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int, minor boolean NOT NULL,
+      "sfwOnly" boolean NOT NULL, "gallerySettings" jsonb)`);
+    const rows = [
+      [1, false, false],
+      [2, true, false],
+      [3, false, true],
+      [4, true, true],
+    ] as const;
+    for (const [id, minor, sfwOnly] of rows)
+      await pg.query(
+        `INSERT INTO "Model" VALUES ($1, ${OWNER_ID}, $2, $3, '{"level": 31}'::jsonb)`,
+        [id, minor, sfwOnly]
+      );
+    const raw = pgliteRaw(pg);
+    mockDbWrite.user.findUnique.mockResolvedValue({ settings: {} } as never);
+    mockDbWrite.model.findMany.mockResolvedValue([] as never);
+    mockDbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+
+    try {
+      await copyGallerySettingsToAllModelsByUser({
+        settings: { level: 28, users: [], tags: [] },
+        userId: OWNER_ID,
+      });
+
+      const { rows: levels } = await pg.query<{ id: number; level: number }>(
+        `SELECT id, ("gallerySettings"->>'level')::int AS level FROM "Model" ORDER BY id`
+      );
+      expect(levels).toEqual([
+        { id: 1, level: 28 },
+        { id: 2, level: SFW },
+        { id: 3, level: SFW },
+        { id: 4, level: SFW },
+      ]);
+    } finally {
+      mockDbWrite.$executeRaw.mockReset();
+      mockDbWrite.user.findUnique.mockReset();
+      mockDbWrite.model.findMany.mockReset();
+      await pg.close();
+    }
   });
 });

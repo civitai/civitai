@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { constants } from '~/server/common/constants';
 import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { LinkType } from '~/shared/utils/prisma/enums';
@@ -114,6 +115,13 @@ export const setShowcaseSectionsSchema = z.object({
     ),
 });
 
+export type AddToShowcaseSectionSchema = z.infer<typeof addToShowcaseSectionSchema>;
+export const addToShowcaseSectionSchema = z.object({
+  sectionId: showcaseSectionSchema.shape.id,
+  entityType: z.enum(showcaseSectionTypes),
+  entityId: z.number().int().positive(),
+});
+
 export type ShowcaseItemSchema = z.infer<typeof showcaseItemSchema>;
 
 export const showcaseItemSchema = z.object({
@@ -140,7 +148,7 @@ export const privacySettingsSchema = z.object({
 export type UserProfileUpdateSchema = z.infer<typeof userProfileUpdateSchema>;
 export const userProfileUpdateSchema = z.object({
   userId: z.number().optional(),
-  showcaseItems: z.array(showcaseItemSchema).optional(),
+  showcaseItems: z.array(showcaseItemSchema).max(constants.profile.showcaseItemsLimit).optional(),
   profileSectionsSettings: z.array(profileSectionSchema).optional(),
   privacySettings: privacySettingsSchema.optional(),
   message: z.string().nullish(),

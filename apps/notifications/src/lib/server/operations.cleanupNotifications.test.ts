@@ -3,16 +3,15 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 // The cleanup sweep with a fake write pool: each `query` call returns the next programmed batch of
 // deleted rows, so the batch loop, the unread filter and the per-user cache bust are all observable
 // without a DB or a redis.
-const { captured, batches, fakePool, calls, logged, failures, logFailures } = vi.hoisted(() => {
+const { captured, batches, fakePool, calls, logged, failures } = vi.hoisted(() => {
   const captured: Array<{ sql: string; params?: unknown[] }> = [];
   const logged: Array<Record<string, unknown>> = [];
   const batches: Array<Array<{ userId: number; viewed: boolean }>> = [];
   // Ordered log of every cache/lag call, so "flagged before busted" is assertable and not assumed.
   const calls: string[] = [];
-  // Errors to throw from the Nth query / log call. Without these the DB and the logger cannot fail
-  // in this suite at all, and anything done to their error paths is unobservable.
+  // Errors to throw from the Nth query. Without these the DB cannot fail in this suite at all, and
+  // anything done to its error path is unobservable.
   const failures: Array<Error | null> = [];
-  const logFailures: Array<Error | null> = [];
   const fakePool = {
     query: async (sql: string, params?: unknown[]) => {
       captured.push({ sql, params });
@@ -22,7 +21,7 @@ const { captured, batches, fakePool, calls, logged, failures, logFailures } = vi
       return { rows, rowCount: rows.length };
     },
   };
-  return { captured, batches, fakePool, calls, logged, failures, logFailures };
+  return { captured, batches, fakePool, calls, logged, failures };
 });
 
 // Two DISTINCT objects: with one fakePool serving both, `notifDbWrite()` and `notifDbRead()` are
@@ -38,8 +37,6 @@ vi.mock('./clients/db', () => ({
 vi.mock('./clients/axiom', () => ({
   logToAxiom: async (data: Record<string, unknown>) => {
     logged.push(data);
-    const failure = logFailures.shift();
-    if (failure) throw failure;
   },
   safeError: (e: unknown) => e,
 }));
@@ -76,7 +73,6 @@ beforeEach(() => {
   calls.length = 0;
   logged.length = 0;
   failures.length = 0;
-  logFailures.length = 0;
   // mockReset, not mockClear: a `mockRejectedValueOnce` queued by one test survives mockClear and
   // would poison the first bust of the next one.
   bustUser.mockReset().mockImplementation(async (userId: number) => {
@@ -165,16 +161,6 @@ describe('cleanupNotifications cache busting', () => {
 
     await expect(cleanupNotifications(before)).rejects.toThrow('connection terminated');
     expect(logged).toHaveLength(0);
-  });
-
-  it('survives a logging outage at the end of a sweep', async () => {
-    // logToAxiom is called without await, so an unhandled rejection here takes the process down
-    // after the deletes have already happened — the caller then sees a transport failure and retries
-    // the whole sweep.
-    batches.push([{ userId: 1, viewed: false }]);
-    logFailures.push(new Error('axiom down'));
-
-    await expect(cleanupNotifications(before)).resolves.toBe(1);
   });
 
   it('never has more than CLEANUP_BUST_CONCURRENCY busts in flight', async () => {

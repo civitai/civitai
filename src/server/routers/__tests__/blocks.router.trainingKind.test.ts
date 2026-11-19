@@ -29,6 +29,7 @@ import type * as MetricsModule from '~/server/metrics/app-block-runtime.metrics'
  */
 
 const h = vi.hoisted(() => ({
+  userSettings: vi.fn(async (_userId?: number): Promise<Record<string, unknown>> => ({})),
   authorize: vi.fn(),
   assertEnabled: vi.fn(async () => undefined),
   trainingFlag: vi.fn(async () => true),
@@ -95,8 +96,13 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/orchestrator/training/training-trigger-word-check', () => ({
   assertTrainingTriggerWordAllowed: (input: { triggerWord: string }) => h.checkTriggerWord(input),
 }));
+// The per-user caps resolver reads the session user; unmocked, it reaches the real redis client.
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: vi.fn(async () => null) },
+}));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
+  getUserSettings: (...a: unknown[]) => h.userSettings(...(a as [])),
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: vi.fn(async () => null),
@@ -164,11 +170,17 @@ import {
   trainingRunKey,
 } from '~/server/services/blocks/block-training-quote.service';
 import { blockTrainingBodySchema } from '~/server/schema/blocks/workflow.schema';
+import { GENERATION_LICENSE_TERMS } from '~/shared/constants/generation-license.constants';
 
-// ── An in-memory sysRedis: get/set (NX/XX/KEEPTTL/EX)/getDel/del/incrBy/decrBy. ──
+// ── An in-memory Redis: get/set (NX/XX/KEEPTTL/EX)/getDel/del/incrBy/decrBy. ──
+// One store behind both clients: the quote and the reservations are in system Redis, the run
+// generation (`system:blocks:training-runs:*`) on the cache cluster. The test that pins the
+// generation's TTL reads it from the cluster client.
 const store = new Map<string, string>();
 function installRedis() {
-  const r = redisMock.sysRedis;
+  for (const r of [redisMock.sysRedis, redisMock.redis]) installRedisOn(r);
+}
+function installRedisOn(r: typeof redisMock.sysRedis) {
   r.get.mockImplementation(async (k: string) => store.get(k) ?? null);
   r.set.mockImplementation(async (k: string, v: string, opts?: { NX?: boolean; XX?: boolean }) => {
     if (opts?.NX && store.has(k)) return null;
@@ -390,6 +402,7 @@ beforeEach(() => {
   h.getActiveDevTunnel.mockImplementation(async () => null);
   h.reserveDevSessionBuzz.mockReset();
   h.buzzAccounts.mockImplementation(async () => ENOUGH_BUZZ);
+  h.userSettings.mockImplementation(async () => ({}));
 });
 afterEach(() => envMock.reset());
 
@@ -805,17 +818,6 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
       expect(h.refundDevSessionBuzz).toHaveBeenCalledWith('s1', 1200);
       // …the claim released (the spent quote is simply gone)…
       await expect(submit(body({ quoteId }))).rejects.toThrow('training quote not found');
-      // …and the refusal is logged as such.
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: 'block-training-submit-failed',
-          outcome: 'refused',
-          quoteId,
-          code: thrown.code,
-          attempt: 1,
-          status,
-        })
-      );
     }
   );
 
@@ -1281,8 +1283,9 @@ describe('training — the run generation is per BODY', () => {
 
   it('a lost generation bump never breaks a paid submit, and the bump carries a TTL', async () => {
     const q = await confirmed();
-    const realIncr = redisMock.sysRedis.incrBy.getMockImplementation()!;
-    redisMock.sysRedis.incrBy.mockImplementation(async (k: string, n: number) => {
+    // The run generation is on the cache cluster.
+    const realIncr = redisMock.redis.incrBy.getMockImplementation()!;
+    redisMock.redis.incrBy.mockImplementation(async (k: string, n: number) => {
       if (k.startsWith('system:blocks:training-runs:')) throw new Error('redis down');
       return realIncr(k, n);
     });
@@ -1290,13 +1293,19 @@ describe('training — the run generation is per BODY', () => {
     expect(out.snapshot.workflowId).toBe(workflowId);
     expect(h.persistSettle).toHaveBeenCalled();
 
-    redisMock.sysRedis.incrBy.mockImplementation(realIncr);
+    redisMock.redis.incrBy.mockImplementation(realIncr);
+    redisMock.redis.expire.mockClear();
     redisMock.sysRedis.expire.mockClear();
     const q2 = await confirmed(body({ triggerWord: 'x2' }));
     await submit(body({ quoteId: q2, triggerWord: 'x2' }));
-    const runsExpire = redisMock.sysRedis.expire.mock.calls.find((c) =>
+    const runsExpire = redisMock.redis.expire.mock.calls.find((c) =>
       String(c[0]).startsWith('system:blocks:training-runs:')
     );
+    expect(
+      redisMock.sysRedis.expire.mock.calls.filter((c) =>
+        String(c[0]).startsWith('system:blocks:training-runs:')
+      )
+    ).toEqual([]);
     expect(runsExpire?.[1]).toBe(TRAINING_RUN_GENERATION_TTL_SECONDS);
     expect(TRAINING_RUN_GENERATION_TTL_SECONDS).toBe(172_800);
   });
@@ -1452,4 +1461,45 @@ describe('training on the shared confirmed-quote path', () => {
       expect(logged).toBe(over);
     }
   );
+});
+
+describe('training SUBMIT — the base model licence', () => {
+  const h3Body = (over: Record<string, unknown> = {}) =>
+    body({ model: 'minimaxh3image', params: { ...PARAMS, ecosystem: 'minimaxh3image' }, ...over });
+  async function confirmedH3Quote() {
+    const { snapshot } = (await estimate(h3Body())) as {
+      snapshot: { trainingQuote: { quoteId: string } };
+    };
+    await consent(snapshot.trainingQuote.quoteId);
+    return snapshot.trainingQuote.quoteId;
+  }
+  beforeEach(() => {
+    h.features.mockImplementation(
+      () =>
+        ({ aiToolkitSdxl: true, trainingStepsPricing: true, minimaxh3ImageTraining: true } as never)
+    );
+  });
+
+  it('refuses a MiniMax H3 Image run whose licence is not accepted, reserving nothing', async () => {
+    const quoteId = await confirmedH3Quote();
+    await expect(submit(h3Body({ quoteId }))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(/Accept the MiniMax-H3-Image licence terms before training/),
+    });
+    expect(h.userSettings).toHaveBeenCalledWith(VIEWER);
+    expect(realSubmits()).toHaveLength(0);
+    expect(h.reserveAppSpend).not.toHaveBeenCalled();
+  });
+
+  it('control: the same run is submitted once the licence is accepted', async () => {
+    const [terms] = GENERATION_LICENSE_TERMS;
+    h.userSettings.mockImplementation(async () => ({
+      generationLicenseAcceptances: {
+        [terms.key]: { version: terms.version, acceptedAt: new Date().toISOString() },
+      },
+    }));
+    const quoteId = await confirmedH3Quote();
+    await submit(h3Body({ quoteId }));
+    expect(realSubmits()).toHaveLength(1);
+  });
 });

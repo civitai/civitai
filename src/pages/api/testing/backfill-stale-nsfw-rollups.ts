@@ -31,6 +31,11 @@
  *                                                  - dryRun=true counts without writing.
  *   verify          - {modelId?}                  Re-run the stored-vs-recomputed comparison; expect 0 mismatches after drain.
  *
+ * `predicate=mature-safe-bit` switches count and enqueue to the opposite drift: a mature model
+ * (nsfw = true) whose Published versions, or whose own level without a civitai.com face, still carry
+ * a safe bit. The nightly check-mature-safe-bit-drift job runs the same predicate, and enqueue has
+ * its cap: over 500 rows it queues nothing (scope it with modelId).
+ *
  * Every write is gated by WEBHOOK_TOKEN. The enqueue action only writes into
  * JobQueue (an ON CONFLICT DO NOTHING insert) — same path the trigger uses —
  * so worst case is re-running an already-queued recompute.
@@ -38,7 +43,13 @@
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  countMatureSafeBitDrift,
+  enqueueMatureSafeBitDrift,
+} from '~/server/services/nsfw-rollup-drift.service';
+import { imageDerivedVersionLevelSql } from '~/server/services/nsfwLevels.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
 
@@ -47,6 +58,7 @@ const actionSchema = z.enum(['count', 'enqueue', 'verify']);
 const schema = z
   .object({
     action: actionSchema,
+    predicate: z.enum(['stale-mature-bit', 'mature-safe-bit']).default('stale-mature-bit'),
     modelId: z.coerce.number().int().positive().optional(),
     limit: z.coerce.number().int().positive().max(50_000).optional(),
     // booleanString, not z.coerce.boolean: this schema is parsed against req.query, where
@@ -57,6 +69,12 @@ const schema = z
   .superRefine((data, ctx) => {
     if (data.action === 'verify' && data.limit !== undefined) {
       ctx.addIssue({ code: 'custom', message: 'verify does not accept limit', path: ['limit'] });
+    }
+    if (data.predicate === 'mature-safe-bit' && data.action === 'verify') {
+      ctx.addIssue({ code: 'custom', message: 'use count for mature-safe-bit', path: ['action'] });
+    }
+    if (data.predicate === 'mature-safe-bit' && data.limit !== undefined) {
+      ctx.addIssue({ code: 'custom', message: 'mature-safe-bit has no limit', path: ['limit'] });
     }
   });
 
@@ -71,6 +89,23 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     return res.status(400).json({ error: 'Invalid request', issues: payload.error.issues });
   }
   const input = payload.data;
+
+  if (input.predicate === 'mature-safe-bit') {
+    if (input.action === 'count' || input.dryRun) {
+      const counts = await countMatureSafeBitDrift(input.modelId);
+      return res.status(200).json({
+        action: input.action,
+        predicate: input.predicate,
+        dryRun: !!input.dryRun,
+        ...counts,
+      });
+    }
+    // Capped like the nightly job: over the cap it queues nothing and says so.
+    const result = await enqueueMatureSafeBitDrift(input.modelId);
+    return res
+      .status(200)
+      .json({ action: 'enqueue', predicate: input.predicate, dryRun: false, ...result });
+  }
 
   switch (input.action) {
     case 'count': {
@@ -139,19 +174,20 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     }
 
     case 'verify': {
-      const modelFilter = input.modelId ? `AND m.id = ${input.modelId}` : '';
+      const modelFilter = input.modelId ? Prisma.sql`AND m.id = ${input.modelId}` : Prisma.empty;
       // LATERAL so the bit_or subquery runs once per row instead of twice
       // (correlated subqueries in both SELECT and WHERE are not deduped by
       // the planner) — keeps verify scans bounded when the cohort is
       // large and the cache is cold.
-      const rows = await dbRead.$queryRawUnsafe<
+      // Non-mature models only: a mature model's versions are stamped, not derived.
+      const rows = await dbRead.$queryRaw<
         {
           modelVersionId: number;
           modelId: number;
           storedNsfwLevel: number;
           recomputedNsfwLevel: number;
         }[]
-      >(`
+      >(Prisma.sql`
         SELECT
           mv.id AS "modelVersionId",
           m.id AS "modelId",
@@ -159,17 +195,11 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           r."recomputed" AS "recomputedNsfwLevel"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
-        JOIN LATERAL (
-          SELECT COALESCE(bit_or(i."nsfwLevel"), 0) AS "recomputed"
-          FROM "Post" p
-          JOIN "Image" i ON i."postId" = p.id
-          WHERE p."modelVersionId" = mv.id
-            AND p."userId" = m."userId"
-            AND p."publishedAt" IS NOT NULL
-            AND i."nsfwLevel" NOT IN (0, 32)
-        ) r ON TRUE
+        JOIN LATERAL (SELECT ${imageDerivedVersionLevelSql} AS "recomputed") r ON TRUE
         WHERE mv.status = 'Published'
           AND m.status = 'Published'
+          AND NOT m.nsfw
+          AND m."userId" != -1
           ${modelFilter}
           AND mv."nsfwLevel" != r."recomputed"
         LIMIT 100

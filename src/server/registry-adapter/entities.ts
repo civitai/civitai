@@ -3,10 +3,11 @@
  * `catalog-source.ts`, so this is the whole mapping from platform rows to registry entities.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
-import { audienceAdmits } from '~/server/registry-adapter/audience';
+import { audienceAdmits, isKnownRating } from '~/server/registry-adapter/audience';
 import type { Entity } from '~/server/registry-adapter/protocol';
 import {
   HEAD_STEP,
+  JSON_SCHEMA_DIALECT,
   collectionSchemaDocuments,
   deriveCollectionMajors,
   exportedCollections,
@@ -18,7 +19,6 @@ import {
   APP_RELEASE_SCHEMA,
   APP_SCHEMA,
   REGISTRY_NAMESPACE,
-  REGISTRY_SCHEMA_SCHEMA,
   SERVICE_SCHEMA,
   parseCollectionSchemaUrn,
   registryUrn,
@@ -27,14 +27,20 @@ import type { UrnRef } from '~/server/registry-adapter/urn';
 import type { AppStorageFeature } from '~/shared/constants/block-storage.constants';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
+/**
+ * The schema stream is the root (registry spec, "Schemas"): JSON Schema 2020-12's own meta-schema,
+ * {@link JSON_SCHEMA_DIALECT}, the `$schema` every schema body declares. Every schema entity claims
+ * it.
+ */
 export const SERVED_SCHEMAS = [
-  REGISTRY_SCHEMA_SCHEMA,
+  JSON_SCHEMA_DIALECT,
   APP_SCHEMA,
   APP_RELEASE_SCHEMA,
   SERVICE_SCHEMA,
 ] as const;
 
 export const RUNTIME_URN = registryUrn({ kind: 'runtime', name: 'iframe', major: 1 });
+export const APP_SEARCH_URN = registryUrn({ kind: 'service', name: 'app-search', major: 1 });
 
 /** One listed app, as the catalog read found it. */
 export type CatalogApp = {
@@ -66,25 +72,32 @@ export type CatalogApp = {
 };
 
 /**
- * The content rating an app entity publishes: the listing's, else its block's. A shared document
- * has none of its own; its app's is its rating (`doc-streams.ts`).
+ * The content rating an app entity publishes: the listing's if known ({@link isKnownRating}),
+ * else the block's if known, else whichever is set (null if neither), which `audienceAdmits`
+ * fails closed on. A shared document has none of its own (`doc-streams.ts`).
  */
-export const appContentRating = (app: Pick<CatalogApp, 'listing' | 'block'>): string | null =>
-  app.listing.contentRating ?? app.block?.contentRating ?? null;
+export const appContentRating = (app: Pick<CatalogApp, 'listing' | 'block'>): string | null => {
+  const listing = app.listing.contentRating;
+  const block = app.block?.contentRating ?? null;
+  if (isKnownRating(listing)) return listing;
+  if (isKnownRating(block)) return block;
+  const set = (r: string | null) => (r !== null && r.trim() !== '' ? r : null);
+  return set(listing) ?? set(block);
+};
 
 export type EntitySets = Map<string, Entity[]>;
 
 /**
- * The entity schemas that carry an app's content, and so its rating: each of their streams is
- * narrowed per audience ({@link readableBy}) and its cursors are bound to the audience
- * (`cursor.ts`). `registry:schema` is one: beside the fixed entity schemas it holds every
- * collection schema, whose URN names its app and whose body is that app's declared schema. The
- * one schema left out, `service`, is the runtime record, which belongs to no app.
+ * The entity schemas that carry an app's content, and so its rating, and are narrowed per
+ * audience (`audience.ts` describes how). The schema stream ({@link JSON_SCHEMA_DIALECT}) is one:
+ * beside the fixed entity schemas it holds every collection schema,
+ * whose URN names its app and whose body is that app's declared schema. The one schema left out,
+ * `service`, holds the runtime record and the app search service, which belong to no app.
  */
 export const RATED_SCHEMAS: ReadonlySet<string> = new Set([
   APP_SCHEMA,
   APP_RELEASE_SCHEMA,
-  REGISTRY_SCHEMA_SCHEMA,
+  JSON_SCHEMA_DIALECT,
 ]);
 
 /** The fixed entity schema documents: on the schema stream, and belonging to no app. */
@@ -110,16 +123,19 @@ function appUrnOf(schema: string, e: Entity): unknown {
 }
 
 /**
- * The entities of `schema` that `audience` may read, from one read of every entity. An app, its
- * releases and its collection schemas carry the rating the app entity publishes
- * ({@link appContentRating}, the rating the document streams narrow by) and are admitted by one
- * predicate over it ({@link audienceAdmits}), so a subscription is sent an app's entities exactly
- * when it is sent its documents. An entity whose app entity is not in the read has no rating to
- * admit, so it is not sent. On the schema stream the fixed entity schemas are sent to everyone.
- * An app's `forkOf` names another app: it is dropped from the body sent to an audience that may
- * not read that app (the entity's `rev` is that body's, so a re-rating of the parent reaches
- * the fork's subscribers as an upsert with or without it). A schema outside
- * {@link RATED_SCHEMAS} is returned whole.
+ * The entities of `schema` that `audience` may read, from one read of every entity: the narrowing
+ * `audience.ts` describes, applied to the catalog. Specific to this function:
+ *   - the rating an app, its releases and its collection schemas are admitted by is the
+ *     `contentRating` of the app entity's body ({@link appContentRating}, the rating the document
+ *     streams narrow by too);
+ *   - an entity whose app entity is not in the read has no rating to admit, so it is not sent;
+ *   - on the schema stream the fixed entity schemas are sent to everyone;
+ *   - an app's `forkOf` names another app: it is dropped from the body sent to an audience that
+ *     may not read that app (the entity's `rev` is that body's, so a re-rating of the parent
+ *     reaches the fork's subscribers as an upsert with or without it, and an entity whose body
+ *     differs per audience has a rev per audience);
+ *   - a schema outside {@link RATED_SCHEMAS} is returned whole.
+ * Pure; the polling adapter memoizes it per read (`createReadableMemo` in `cursor.ts`).
  */
 export function readableBy(sets: EntitySets, schema: string, audience: Audience): Entity[] {
   const all = sets.get(schema) ?? [];
@@ -135,7 +151,7 @@ export function readableBy(sets: EntitySets, schema: string, audience: Audience)
     audienceAdmits(audience, ratings.get(appUrn));
   const readable = all.filter(
     (e) =>
-      (schema === REGISTRY_SCHEMA_SCHEMA && ENTITY_SCHEMA_URNS.has(e.urn)) ||
+      (schema === JSON_SCHEMA_DIALECT && ENTITY_SCHEMA_URNS.has(e.urn)) ||
       admitted(appUrnOf(schema, e))
   );
   if (schema !== APP_SCHEMA) return readable;
@@ -167,6 +183,56 @@ export function runtimeEntity(baseUrl: string): Entity {
 }
 
 /**
+ * The app search service: the app index's `GET {endpoint}?q=&kind=&category=&limit=`, answering
+ * over the app entities anyone may read. The text describes what that endpoint does, so a change
+ * to its matching, filters or defaults changes this body too.
+ */
+export function appSearchEntity(endpoint: string): Entity {
+  return entity(APP_SEARCH_URN, SERVICE_SCHEMA, {
+    name: 'App search',
+    kind: 'search',
+    description:
+      'Finds Civitai apps by name, slug, tagline or creator: every word of q must be a prefix of a word of one of them. SFW apps only. Answers JSON: { results: [{ urn, slug, name, tagline, kind, category, rating, iconUrl, creator }] }, best match first.',
+    reads: APP_SCHEMA,
+    endpoint,
+    parameters: {
+      q: "Words to look for; each must start a word of the app's name, slug, tagline or creator. Every app, by name, unless given.",
+      kind: 'onsite or offsite. Both unless given.',
+      category: 'Only apps of this category.',
+      limit: 'How many results at most, 1 to 50. 20 unless given.',
+    },
+  });
+}
+
+/**
+ * `REGISTRY_ADAPTER_APP_SEARCH_URL`: the app search endpoint to publish, normalized (the URL
+ * parser's `href`: surrounding whitespace dropped, host lower-cased), or undefined when it is
+ * unset or empty (nothing is published). Anything else must be an absolute `https:` URL with no
+ * credentials, query or fragment (a consumer appends its own query to the endpoint); otherwise
+ * this throws, so a misconfigured adapter refuses to start rather than advertise an endpoint a
+ * browser app cannot call.
+ */
+export function parseAppSearchUrl(raw: string | undefined): string | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`REGISTRY_ADAPTER_APP_SEARCH_URL is not a URL: ${JSON.stringify(raw)}`);
+  }
+  if (url.protocol !== 'https:') {
+    throw new Error(`REGISTRY_ADAPTER_APP_SEARCH_URL must be an https: URL, got ${url.protocol}`);
+  }
+  if (url.username !== '' || url.password !== '') {
+    throw new Error('REGISTRY_ADAPTER_APP_SEARCH_URL must not carry credentials');
+  }
+  if (url.search !== '' || url.hash !== '' || /[?#]/.test(url.href)) {
+    throw new Error('REGISTRY_ADAPTER_APP_SEARCH_URL must not carry a query string or fragment');
+  }
+  return url.href;
+}
+
+/**
  * The URN, or null when a segment is out of bounds (the store does not bound every name the
  * URN grammar does). One bad row then drops only its own entity, never the whole catalog.
  */
@@ -183,11 +249,15 @@ function urnOrSkip(ref: UrnRef, onSkip: (reason: string) => void): string | null
  * `features` is the platform's live switch: a collection's schema entities, and its entry in a
  * release's `collections`, are published only while it is exported ({@link exportedCollections},
  * the rule the document streams use). With `registryExport` off, no collection schema is.
+ *
+ * `appSearchUrl` is the public app search endpoint; the app search service entity is published
+ * only when it is set ({@link appSearchEntity}).
  */
 export function buildEntities(
   apps: readonly CatalogApp[],
   opts: {
     baseUrl: string;
+    appSearchUrl?: string;
     onSkip?: (reason: string) => void;
     features?: Readonly<Record<AppStorageFeature, boolean>>;
   }
@@ -196,11 +266,13 @@ export function buildEntities(
   const features = opts.features ?? APP_STORAGE_ENABLED_FEATURES;
   const sets: EntitySets = new Map(SERVED_SCHEMAS.map((s) => [s, [] as Entity[]]));
   const add = (schema: string, e: Entity) => sets.get(schema)!.push(e);
+  // A schema entity: on the schema stream, claiming the root.
+  const addSchema = (urn: string, body: unknown) =>
+    add(JSON_SCHEMA_DIALECT, entity(urn, JSON_SCHEMA_DIALECT, body));
   // The schemas the entities below claim, published by this source whatever the catalog holds.
-  for (const doc of ENTITY_SCHEMA_DOCUMENTS) {
-    add(REGISTRY_SCHEMA_SCHEMA, entity(doc.$id as string, REGISTRY_SCHEMA_SCHEMA, doc));
-  }
+  for (const doc of ENTITY_SCHEMA_DOCUMENTS) addSchema(doc.$id as string, doc);
   add(SERVICE_SCHEMA, runtimeEntity(opts.baseUrl));
+  if (opts.appSearchUrl) add(SERVICE_SCHEMA, appSearchEntity(opts.appSearchUrl));
 
   for (const app of apps) {
     const { listing, block } = app;
@@ -254,7 +326,7 @@ export function buildEntities(
         );
       }
       for (const doc of collectionSchemaDocuments(slug, derivation, exported)) {
-        add(REGISTRY_SCHEMA_SCHEMA, entity(doc.urn, REGISTRY_SCHEMA_SCHEMA, doc.body));
+        addSchema(doc.urn, doc.body);
       }
     }
     for (const e of releases.values()) add(APP_RELEASE_SCHEMA, e);
@@ -288,4 +360,22 @@ export function buildEntities(
     );
   }
   return sets;
+}
+
+/**
+ * {@link buildEntities} once per catalog read: while `readApps` returns the same apps (a shared
+ * read, `sharedRead` in `cursor.ts`), every call returns the same sets, so the polls of every
+ * subscription share one build and one narrowing per audience (`createReadableMemo`). Only the
+ * latest build is held.
+ */
+export function buildEntitiesPerRead(
+  readApps: () => Promise<readonly CatalogApp[]>,
+  opts: Parameters<typeof buildEntities>[1]
+): () => Promise<EntitySets> {
+  let last: { apps: readonly CatalogApp[]; sets: EntitySets } | null = null;
+  return async () => {
+    const apps = await readApps();
+    if (last?.apps !== apps) last = { apps, sets: buildEntities(apps, opts) };
+    return last.sets;
+  };
 }

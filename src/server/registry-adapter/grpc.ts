@@ -1,18 +1,27 @@
 /**
- * The gRPC binding of the source protocol (spec/registry.md @ 4166f34, "Bindings" → "gRPC"):
- * `service Source { rpc Subscribe(SubscribeRequest) returns (stream Event); }`, with the spec's
- * messages verbatim ({@link SOURCE_PROTO}). The subscription itself is the shared core
- * (`subscription.ts`), as for HTTP; this file maps the request in and events and errors out.
+ * The gRPC binding of the registry protocol (the registry spec, "Bindings" → "gRPC"):
+ * `package registry.v1; service Registry { rpc Subscribe(SubscribeRequest) returns (stream Event); }`,
+ * with the spec's messages verbatim ({@link REGISTRY_PROTO}). The subscription itself is the shared
+ * core (`subscription.ts`), as for HTTP; this file maps the request in and events and errors out.
  *
- *   - The spec's proto block declares no `package`, so the method is `/Source/Subscribe`, the
- *     path a stub generated from that block calls.
+ *   - The method is `/registry.v1.Registry/Subscribe` ({@link SUBSCRIBE_PATH}), the path the spec
+ *     names and a stub generated from its proto block calls. The earlier spec's
+ *     `/Source/Subscribe` is not served (UNIMPLEMENTED).
+ *   - `Entity.body` is the body's JSON text as UTF-8 bytes, the text the HTTP binding sends for
+ *     it ({@link jsonBytes}), so a relay can pass it on byte for byte. `Entity.meta` and
+ *     `Event.meta` are bytes too (a JSON object; empty is none): this source sets no `meta`, so it
+ *     sends them empty, which is absent on the wire.
+ *   - `SubscribeRequest.meta` is read as the HTTP binding's `meta` parameter is
+ *     (`protocol.ts`), into the call's origin (`request-origin.ts`).
  *   - An error is its gRPC status (spec "Errors") with a `google.rpc.ErrorInfo` whose `reason` is
- *     the error's name, in `grpc-status-details-bin`.
+ *     the error's name, and no `domain` (the spec defines none), in `grpc-status-details-bin`.
  *   - An idle stream is kept open by HTTP/2 pings ({@link GRPC_KEEPALIVE_MS}).
  *   - Auth (`auth.ts`): the token is the `authorization` metadata (`Bearer {token}`); without one
  *     the call is anonymous. `invalid_token` is UNAUTHENTICATED with an `ErrorInfo` reason
  *     `invalid_token`, before the stream or at the token's expiry / revocation after it; a user
  *     whose ratings changed mid-stream gets OUT_OF_RANGE / `cursor_expired`.
+ *   - A subscription over a cap on open subscriptions (`limits.ts`) is UNAVAILABLE /
+ *     `unavailable`, before the stream.
  *   - A consumer that leaves the call's buffer full for `SLOW_CONSUMER_MS` is ended at once with
  *     an RST_STREAM that clients read as `RESOURCE_EXHAUSTED`, the status of `slow_consumer`
  *     (a status in trailers would queue behind what it never reads; `resetSlowConsumer`).
@@ -23,7 +32,7 @@
  * experimental connection injector and everything else to `node:http`, for nothing an ingress
  * needs: it routes by port anyway, and gRPC needs an h2c backend where SSE needs HTTP/1.1.
  *
- * The messages are parsed from the inline {@link SOURCE_PROTO} text with `protobufjs` at
+ * The messages are parsed from the inline {@link REGISTRY_PROTO} text with `protobufjs` at
  * startup, so the bundle (`scripts/build-registry-adapter.mjs`) loads no `.proto` file at
  * runtime; `@grpc/grpc-js` and `protobufjs` stay external, like every root dependency.
  */
@@ -39,8 +48,21 @@ import {
   watchPrincipal,
   wwwAuthenticate,
 } from '~/server/registry-adapter/auth';
-import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
+import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-adapter/limits';
+import type {
+  Adapter,
+  ErrorCode,
+  RequestMeta,
+  StreamEvent,
+} from '~/server/registry-adapter/protocol';
 import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
+import {
+  clientAddress,
+  peerAddress,
+  regionRestricted,
+  subscriptionRegionLine,
+} from '~/server/registry-adapter/request-origin';
 import type { EventSink } from '~/server/registry-adapter/subscription';
 import {
   SLOW_CONSUMER_MS,
@@ -48,12 +70,13 @@ import {
   drained,
 } from '~/server/registry-adapter/subscription';
 
-/** The spec's proto block, unchanged but for the `syntax` and `import` lines it needs to parse. */
-export const SOURCE_PROTO = `
+/** The spec's proto block, unchanged but for the `syntax` line it needs to parse. */
+export const REGISTRY_PROTO = `
 syntax = "proto3";
-import "google/protobuf/struct.proto";
 
-service Source {
+package registry.v1;
+
+service Registry {
   rpc Subscribe(SubscribeRequest) returns (stream Event);
 }
 
@@ -62,14 +85,15 @@ message SubscribeRequest {
   string cursor = 2;          // empty: from the beginning
   repeated string urns = 3;   // empty: every entity
   string filter = 4;          // a JSON Schema, as JSON; empty: no filter
+  bytes meta = 5;             // a JSON object, as UTF-8; empty: none
 }
 
 message Entity {
   string urn = 1;
   repeated string schemas = 2;
   string rev = 3;
-  google.protobuf.Value body = 4;
-  google.protobuf.Struct meta = 5;
+  bytes body = 4;             // the JSON value, as UTF-8
+  bytes meta = 5;             // a JSON object, as UTF-8; empty: none
 }
 
 message Event {
@@ -80,7 +104,7 @@ message Event {
     End end = 4;
     Progress progress = 6;
   }
-  google.protobuf.Struct meta = 5;
+  bytes meta = 5;             // a JSON object, as UTF-8; empty: none
 }
 
 message Upsert   { Entity entity = 1; string cursor = 2; }
@@ -109,9 +133,7 @@ message ErrorInfo {
 }
 `;
 
-export const SUBSCRIBE_PATH = '/Source/Subscribe';
-/** `ErrorInfo.domain`: the names are the registry protocol's, not this source's. */
-export const ERROR_DOMAIN = 'registry';
+export const SUBSCRIBE_PATH = '/registry.v1.Registry/Subscribe';
 const ERROR_INFO_TYPE_URL = 'type.googleapis.com/google.rpc.ErrorInfo';
 export const GRPC_KEEPALIVE_MS = 15_000;
 const GRPC_KEEPALIVE_TIMEOUT_MS = 10_000;
@@ -119,7 +141,6 @@ const GRPC_KEEPALIVE_TIMEOUT_MS = 10_000;
 /** The spec's Errors table. */
 export const GRPC_STATUS: Record<ErrorCode, grpc.status> = {
   bad_request: grpc.status.INVALID_ARGUMENT,
-  unknown_schema: grpc.status.NOT_FOUND,
   cursor_expired: grpc.status.OUT_OF_RANGE,
   slow_consumer: grpc.status.RESOURCE_EXHAUSTED,
   unavailable: grpc.status.UNAVAILABLE,
@@ -129,17 +150,17 @@ export const GRPC_STATUS: Record<ErrorCode, grpc.status> = {
 
 function loadTypes() {
   const root = new protobuf.Root();
-  for (const file of ['google/protobuf/struct.proto', 'google/protobuf/any.proto']) {
+  for (const file of ['google/protobuf/any.proto']) {
     const json = protobuf.common.get(file);
     if (!json?.nested) throw new Error(`registry-adapter: protobufjs has no ${file}`);
     root.addJSON(json.nested);
   }
-  protobuf.parse(SOURCE_PROTO, root, { keepCase: true });
+  protobuf.parse(REGISTRY_PROTO, root, { keepCase: true });
   protobuf.parse(ERROR_DETAILS_PROTO, root, { keepCase: true });
   root.resolveAll();
   return {
-    request: root.lookupType('SubscribeRequest'),
-    event: root.lookupType('Event'),
+    request: root.lookupType('registry.v1.SubscribeRequest'),
+    event: root.lookupType('registry.v1.Event'),
     status: root.lookupType('google.rpc.Status'),
     errorInfo: root.lookupType('google.rpc.ErrorInfo'),
   };
@@ -147,44 +168,19 @@ function loadTypes() {
 const types = loadTypes();
 
 /**
- * A `google.protobuf.Value` as protobufjs takes and gives it. Its built-in well-known types name
- * their fields in camelCase whatever `keepCase` says (only the field numbers reach the wire).
+ * A body as `Entity.body` carries it: its JSON text, UTF-8. `JSON.stringify`'s, the same text the
+ * HTTP binding sends for it (`serve.ts`), so what JSON cannot hold (a non-finite number, an
+ * `undefined` property) is dropped or `null` alike on both bindings. A body with no JSON at all
+ * (`undefined`) is `null`.
  */
-type PbValue = {
-  nullValue?: number;
-  numberValue?: number;
-  stringValue?: string;
-  boolValue?: boolean;
-  structValue?: { fields?: Record<string, PbValue> };
-  listValue?: { values?: PbValue[] };
-};
-
-/** JSON as a `google.protobuf.Value`, with `JSON.stringify`'s rules for what JSON cannot hold. */
-export function toValue(v: unknown): PbValue {
-  if (typeof v === 'string') return { stringValue: v };
-  if (typeof v === 'boolean') return { boolValue: v };
-  if (typeof v === 'number') return Number.isFinite(v) ? { numberValue: v } : { nullValue: 0 };
-  if (Array.isArray(v)) return { listValue: { values: v.map(toValue) } };
-  if (v !== null && typeof v === 'object') {
-    const fields: Record<string, PbValue> = {};
-    for (const [k, x] of Object.entries(v)) if (x !== undefined) fields[k] = toValue(x);
-    return { structValue: { fields } };
-  }
-  return { nullValue: 0 };
+export function jsonBytes(body: unknown): Buffer {
+  return Buffer.from(JSON.stringify(body) ?? 'null', 'utf8');
 }
 
-export function fromValue(v: PbValue | undefined): unknown {
-  if (!v) return null;
-  if (v.stringValue !== undefined) return v.stringValue;
-  if (v.boolValue !== undefined) return v.boolValue;
-  if (v.numberValue !== undefined) return v.numberValue;
-  if (v.listValue !== undefined) return (v.listValue.values ?? []).map(fromValue);
-  if (v.structValue !== undefined) {
-    return Object.fromEntries(
-      Object.entries(v.structValue.fields ?? {}).map(([k, x]) => [k, fromValue(x)])
-    );
-  }
-  return null;
+/** `Entity.body` as a consumer reads it: the JSON value its bytes hold; `null` when empty. */
+export function fromJsonBytes(bytes: Uint8Array | undefined): unknown {
+  if (!bytes || bytes.length === 0) return null;
+  return JSON.parse(Buffer.from(bytes).toString('utf8'));
 }
 
 /** The wire form of one event. */
@@ -198,7 +194,7 @@ export function encodeEvent(e: StreamEvent): Buffer {
             urn: e.entity.urn,
             schemas: e.entity.schemas,
             rev: e.entity.rev,
-            body: toValue(e.entity.body),
+            body: jsonBytes(e.entity.body),
           },
           cursor: e.cursor,
         },
@@ -223,7 +219,7 @@ export function encodeEvent(e: StreamEvent): Buffer {
 type WireEvent = {
   kind?: 'upsert' | 'delete' | 'live' | 'end' | 'progress';
   upsert?: {
-    entity?: { urn?: string; schemas?: string[]; rev?: string; body?: PbValue };
+    entity?: { urn?: string; schemas?: string[]; rev?: string; body?: Uint8Array };
     cursor?: string;
   };
   delete?: { urn?: string; cursor?: string };
@@ -246,7 +242,7 @@ export function decodeEvent(buf: Uint8Array): StreamEvent | null {
           urn: entity.urn ?? '',
           schemas: entity.schemas ?? [],
           rev: entity.rev ?? '',
-          body: fromValue(entity.body),
+          body: fromJsonBytes(entity.body),
         },
         cursor: w.upsert?.cursor ?? '',
       };
@@ -264,9 +260,16 @@ export function decodeEvent(buf: Uint8Array): StreamEvent | null {
   }
 }
 
-export type WireRequest = { schema: string; cursor: string; urns: string[]; filter: string };
+export type WireRequest = {
+  schema: string;
+  cursor: string;
+  urns: string[];
+  filter: string;
+  meta?: Uint8Array;
+};
 
-export const SOURCE_SERVICE: grpc.ServiceDefinition = {
+/** `registry.v1.Registry`, the spec's service. */
+export const REGISTRY_SERVICE: grpc.ServiceDefinition = {
   Subscribe: {
     path: SUBSCRIBE_PATH,
     requestStream: false,
@@ -293,7 +296,10 @@ export function errorStatus(
   resourceMetadata?: string
 ): Partial<grpc.StatusObject> {
   const info = types.errorInfo
-    .encode(types.errorInfo.fromObject({ reason: code, domain: ERROR_DOMAIN }))
+    // No `domain`: the spec names an error by the `ErrorInfo`'s `reason` alone ("Errors") and
+    // defines no domain for the protocol's names, so none is invented for a consumer to match on.
+    // Left out, not set to '', which protobufjs would still put on the wire.
+    .encode(types.errorInfo.fromObject({ reason: code }))
     .finish();
   const status = types.status
     .encode(
@@ -323,10 +329,12 @@ export function errorInfoOf(
   };
   const detail = status.details.find((d) => d.type_url === ERROR_INFO_TYPE_URL);
   if (!detail) return null;
-  return types.errorInfo.toObject(types.errorInfo.decode(detail.value)) as {
-    reason: string;
-    domain: string;
+  const info = types.errorInfo.toObject(types.errorInfo.decode(detail.value)) as {
+    reason?: string;
+    domain?: string;
   };
+  // An empty field is absent on the wire: this source's `domain` always is.
+  return { reason: info.reason ?? '', domain: info.domain ?? '' };
 }
 
 type Call = grpc.ServerWritableStream<WireRequest, StreamEvent>;
@@ -395,6 +403,19 @@ function openCall(
   };
 }
 
+/**
+ * A call's origin (`request-origin.ts`): its string metadata as headers (the last value of each,
+ * as `authorizationOf` reads it), its request's `meta` and its peer's address.
+ */
+function originOf(call: Call, meta: RequestMeta | undefined): RequestOrigin {
+  const headers: Record<string, string> = {};
+  for (const [name, values] of Object.entries(call.metadata.toJSON())) {
+    const strings = values.filter((v): v is string => typeof v === 'string');
+    if (strings.length > 0) headers[name] = strings[strings.length - 1];
+  }
+  return { headers, meta, remoteAddress: peerAddress(call.getPeer()) };
+}
+
 /** The `authorization` metadata of a call: its last string value. */
 function authorizationOf(call: Call): string | undefined {
   const values = call.metadata
@@ -412,6 +433,12 @@ export function createGrpcServer(
     verifyToken?: VerifyToken;
     resource?: ResourceConfig;
     tokenRecheckMs?: number;
+    /** As for HTTP: the caps (`limits.ts`), the same limiter as the HTTP binding's. */
+    limiter?: SubscriptionLimiter;
+    /** As for HTTP: the site's region rule unless replaced. */
+    regionRestricted?: (origin: RequestOrigin) => boolean;
+    /** As for HTTP: called with one line per subscription once its token is accepted. */
+    onRegion?: (line: string) => void;
   } = {}
 ): grpc.Server {
   const subscribe = createSubscriber(adapter);
@@ -420,11 +447,12 @@ export function createGrpcServer(
     'grpc.keepalive_time_ms': GRPC_KEEPALIVE_MS,
     'grpc.keepalive_timeout_ms': GRPC_KEEPALIVE_TIMEOUT_MS,
   });
-  server.addService(SOURCE_SERVICE, {
+  server.addService(REGISTRY_SERVICE, {
     Subscribe: (call: Call) => {
       const sink = openCall(call, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       const run = async () => {
         let unwatch: (() => void) | undefined;
+        let slot: SubscriptionSlot | undefined;
         try {
           const r = call.request;
           const request = subscribeRequest({
@@ -432,8 +460,17 @@ export function createGrpcServer(
             cursor: r.cursor,
             urns: r.urns,
             filter: r.filter,
+            meta: r.meta,
           });
-          const principal = await authenticate(authorizationOf(call), opts.verifyToken);
+          const origin = originOf(call, request.meta);
+          // The total and per-address caps before the token is verified; per token once it is.
+          slot = opts.limiter?.acquire(clientAddress(origin));
+          const restricted = opts.regionRestricted ?? regionRestricted;
+          const principal = await authenticate(authorizationOf(call), opts.verifyToken, {
+            regionRestricted: () => restricted(origin),
+          });
+          slot?.claim(principal.subject);
+          opts.onRegion?.(subscriptionRegionLine('grpc', origin, restricted));
           unwatch = watchPrincipal(
             principal,
             (err) => sink.fail(errorStatus(err.code, err.message, metadataUrl)),
@@ -461,6 +498,7 @@ export function createGrpcServer(
           call.emit('error', status);
         } finally {
           unwatch?.();
+          slot?.release();
         }
       };
       void run();

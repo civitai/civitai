@@ -2,6 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type * as ModeratorEndpoint from '~/server/utils/moderator-endpoint';
+import type * as CollectionService from '~/server/services/collection.service';
+
+const saveItemInCollections = vi.fn(async (_: unknown) => 'added');
+const collectionPermissions = vi.fn(async (_: unknown) => ({ write: true, manage: false }));
+vi.mock('~/server/services/collection.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CollectionService>()),
+  saveItemInCollections: (args: unknown) => saveItemInCollections(args),
+  getUserCollectionPermissionsById: (args: unknown) => collectionPermissions(args),
+}));
 
 // The moderator routes' auth is not what this file tests: their handlers are called directly.
 vi.mock('~/server/utils/moderator-endpoint', async (importOriginal) => ({
@@ -120,6 +129,106 @@ it('drops the archive stamps, and keeps what was written since, when an owner un
   await changeModelModifierHandler({ input: { id: MODEL, mode: null }, ctx: ctx() });
 
   expect(written()).toEqual({ note: 1, ...WRITTEN_SINCE });
+});
+
+describe('setting the showcase collection', () => {
+  it('adds the model to the collection it shows', async () => {
+    await setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER });
+    expect(saveItemInCollections).toHaveBeenCalledWith({
+      input: expect.objectContaining({
+        collections: [{ collectionId: 9 }],
+        modelId: MODEL,
+        type: 'Model',
+        userId: OWNER,
+      }),
+    });
+    expect(saveItemInCollections).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds with a moderator’s permissions when a moderator sets it', async () => {
+    await setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: 7, isModerator: true });
+    expect(saveItemInCollections).toHaveBeenCalledWith({
+      input: expect.objectContaining({ userId: 7, isModerator: true }),
+    });
+  });
+
+  it('returns a refused add and leaves the showcase unset', async () => {
+    saveItemInCollections.mockRejectedValueOnce(new Error('Collection type mismatch'));
+    await expect(
+      setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER })
+    ).rejects.toThrow('Collection type mismatch');
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  // The locked re-check only guards the meta write; the add runs before it.
+  it('refuses an owner on a model a content wipe kept before adding it anywhere', async () => {
+    for (const db of [dbMock.dbRead, dbMock.dbWrite])
+      db.model.findFirst.mockResolvedValue({ id: MODEL, userId: OWNER, meta: KEPT } as never);
+    await expect(
+      setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(saveItemInCollections).not.toHaveBeenCalled();
+  });
+
+  it('refuses the showcase when the add writes nothing', async () => {
+    saveItemInCollections.mockResolvedValueOnce(null as never);
+    await expect(
+      setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('leaves a model already in the collection alone', async () => {
+    dbMock.dbWrite.collectionItem.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+    await setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER });
+    expect(saveItemInCollections).not.toHaveBeenCalled();
+    expect(written()).toMatchObject({ showcaseCollectionId: 9 });
+  });
+
+  it('refuses a caller with no access the same way whether or not the model is listed', async () => {
+    const refusal = async (listed: boolean) => {
+      dbMock.dbWrite.collectionItem.findFirst.mockResolvedValue(
+        (listed ? { id: 1 } : null) as never
+      );
+      collectionPermissions.mockResolvedValueOnce({ write: false, manage: false });
+      return setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER }).catch(
+        (error: { code: string; message: string }) => ({ code: error.code, message: error.message })
+      );
+    };
+    const notListed = await refusal(false);
+    expect(notListed).toEqual({
+      code: 'BAD_REQUEST',
+      message: 'The model could not be added to that collection',
+    });
+    expect(await refusal(true)).toEqual(notListed);
+    dbMock.dbWrite.collectionItem.findFirst.mockReset();
+    expect(saveItemInCollections).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a collection the model is already in when the owner cannot write to it', async () => {
+    dbMock.dbWrite.collectionItem.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+    // A review-only contributor cannot write straight in, so it cannot pick the showcase either.
+    collectionPermissions.mockResolvedValueOnce({
+      write: false,
+      manage: false,
+      writeReview: true,
+    } as never);
+    await expect(
+      setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(collectionPermissions).toHaveBeenCalledWith({
+      id: 9,
+      userId: OWNER,
+      isModerator: undefined,
+    });
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('adds nothing when the showcase is cleared', async () => {
+    await setModelShowcaseCollection({ id: MODEL, collectionId: null, userId: OWNER });
+    expect(saveItemInCollections).not.toHaveBeenCalled();
+  });
 });
 
 it('stores a cleared showcase as null', async () => {

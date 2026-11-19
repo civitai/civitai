@@ -1,6 +1,6 @@
 name: App suites
 
-# The `apps/*` unit suites and the `apps/*` typecheck, in one job. They lived in lint.yml (the
+# The `apps/*` unit suites and the `apps/*` typecheck, in two parallel jobs. They lived in lint.yml (the
 # `App unit tests` job and the `Typecheck apps` step of `Package unit tests`) and ran on every
 # PR. Moved here so a `paths:` filter can keep them off PRs that cannot change their verdict.
 #
@@ -18,8 +18,7 @@ name: App suites
 # that list on every run of this job and fails when an entry is missing or matches nothing.
 # So when it fails, add the path it names here; do not weaken the scan.
 #
-#   vitest.config.mts + scripts/test-cache/{core,sequencer,load-core}.mjs +
-#   scripts/ci/component-quarantine.mjs
+#   vitest.config.mts + scripts/test-cache/{core,sequencer,load-core}.mjs
 #       `vitest --project 'app:*'` loads the ROOT config (which imports these) before any app
 #       config, and its root-level sequencer applies to the whole run.
 #   scripts/ci/assert-workspace-suites-ran.mjs, scripts/ci/typecheck-apps.mjs,
@@ -59,12 +58,20 @@ name: App suites
 # `types` deliberately omits `labeled`; full-ci.yml dispatches this workflow when the label is
 # added. That first, dispatched run is NOT path-filtered (`paths:` applies to pull_request
 # events only); later pushes are: a PR that touches nothing these suites read starts no PR run
-# here even with the label.
+# here, label or not.
 #
-# ── PUSH TO `main` IS UNFILTERED ─────────────────────────────────────────────────────────────
+# ── PUSH TO `main` USES THE SAME FILTER ────────────────────────────────────────────────────────
 #
-# Every commit on `main` gets a verdict whatever it touched. That is the backstop for a filter
-# entry that is missing: the break shows red on `main` right after the merge, instead of never.
+# `push:` reads the same list as `pull_request:` (the `app-inputs` YAML anchor), so a push to
+# `main` that touches nothing these suites read starts no run. Push used to be unfiltered, as the
+# backstop for a filter entry that is missing. That backstop still holds, later: a push run is
+# never scoped (every app suite runs, see below), so the next push that touches anything in the
+# list goes red on such a break, and scripts/ci/assert-apps-paths-filter.mjs names the missing
+# entry when its scan can see it. What is lost is attribution: the red lands on that later
+# commit, not on the one that caused it.
+#
+# Why: once push runs queued instead of cancelling (#8877), every push run that started reached
+# its end (a pending one is still replaced by a newer push) and this job's push cost doubled. docs/testing/reading-ci-results.md has the measurement.
 #
 # ── ON A PR, THE MODERATOR SUITE RUNS ONLY WHEN SOMETHING IT READS CHANGED ───────────────────
 #
@@ -79,7 +86,8 @@ on:
   pull_request:
     branches: [main, release]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
+    # `push:` below reuses this list (see the header).
+    paths: &app-inputs
       - 'apps/**'
       - 'packages/**'
       - 'package.json'
@@ -94,7 +102,6 @@ on:
       - 'scripts/test-cache/core.mjs'
       - 'scripts/test-cache/sequencer.mjs'
       - 'scripts/test-cache/load-core.mjs'
-      - 'scripts/ci/component-quarantine.mjs'
       - 'scripts/ci/assert-workspace-suites-ran.mjs'
       - 'scripts/ci/typecheck-apps.mjs'
       - 'scripts/ci/assert-apps-paths-filter.mjs'
@@ -105,47 +112,83 @@ on:
       - 'src/components/Account/creator-score-copy.ts'
       - 'src/server/services/crucible-bradley-terry.ts'
       - 'src/server/utils/__tests__/redis-lua-harness.ts'
+      - 'src/server/services/knights/**'
       - 'containers/notification-db/docker-init/**'
   push:
     branches: [main]
+    paths: *app-inputs
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# One group per ref, as in lint.yml: a new push to a PR cancels its in-flight run, and a newer
-# commit on `main` cancels the older one's run (the newest run checks a tree containing every
-# older commit, so `main` keeps a verdict). A `ready_for_review` run shares the PR's group, so
+# One group per ref, as in lint.yml: a new push to a PR cancels its in-flight run. On `main` the
+# group queues instead, for the reason in lint.yml's `concurrency` comment: the running push run
+# finishes and only the newest waiting push runs after it. A `ready_for_review` run shares the PR's group, so
 # it cancels a still-running draft run, which is what we want. Dispatches get their own
 # `dispatch-` groups so one on `main` cannot cancel the push run.
 concurrency:
   group: apps-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
+  # The app typecheck, in its own job so it runs BESIDE the suites instead of before them. In one
+  # job it sat on this workflow's critical path: over 6 green PR runs (2026-11-18) the `Typecheck
+  # apps` step took 169-286 s ahead of a 253-936 s test step, and App suites (p50 ~18m over 3 days)
+  # ran longer than Lint. The cost is one more checkout + install (~1.5 min of runner time, one
+  # more slot of the org's concurrent-job limit) per run. It also ends the shared timeout the
+  # `apps` job's comment describes: a slow test step can no longer cancel the typecheck.
+  apps-typecheck:
+    name: App typecheck
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    # Measured 2026-11-18: step 169-286 s, install ~40 s.
+    timeout-minutes: 20
+    steps:
+      # No submodules, depth 1: the typecheck reads the working tree only (see `apps` below).
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Deliberately ONE step driving a script, not one `pnpm --filter` step per app. Per-app
+      # steps abort at the first red app, so a shared type change that breaks several of them
+      # reports one; and `pnpm --filter <name>` EXITS 0 WHEN THE NAME MATCHES NOTHING (measured,
+      # pnpm 10.28.1 — it prints "No projects matched the filters" and succeeds), so a hardcoded
+      # list of package names is one chance per app for a rename to turn this gate into a green
+      # no-op. The script derives the app set from disk, proves each filter selected a real
+      # package, and collects every failure. See its header.
+      - name: Typecheck apps
+        run: node scripts/ci/typecheck-apps.mjs
+
   apps:
-    # The name earlier comments across the repo cite. Renaming is safe: neither `main` nor
-    # `release` has any required_status_checks (re-verified 2026-10-29), so no merge gate keys
-    # on it.
-    name: App unit tests + typecheck
+    # Renaming is safe: neither `main` nor `release` has any required_status_checks (re-verified
+    # 2026-10-29), so no merge gate keys on it. It was `App unit tests + typecheck` until the
+    # typecheck moved to `apps-typecheck`.
+    name: App unit tests
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
     # The `apps/*` suites had never once run in CI before this job existed (369 tests across
     # five apps then): the root config registered `packages/*/vitest.config.*` as projects and
     # nothing for `apps/*`. And the root `pnpm run typecheck` is bounded by the root tsconfig
-    # `include`, which has no `apps/*` entry, so the typecheck step below is the only one the
-    # apps get.
+    # `include`, which has no `apps/*` entry, so the `apps-typecheck` job above is the only
+    # typecheck the apps get.
     #
     # Not `continue-on-error`: no browser and no Next module graph. A red here does not block a
     # merge (`main` has no required_status_checks); it is a signal someone has to look at.
     #
-    # 🔴 THE TIMEOUT IS SHARED BY BOTH SUITES, AND THAT IS WHAT ONCE CANCELLED THE TYPECHECK. It
-    # left this job when the tests grew into a 15m limit and took a short typecheck down with
-    # them; 16 of 162 runs were cancelled at 15m (2026-10-19/20). Measured over the last 40 green
-    # Lint runs (2026-10-29): test step p50 8.3m / max 8.7m (n=36), typecheck p50 2.6m / max 2.7m
-    # (n=22), install ~40s. So ~12m against 30m. The typecheck runs FIRST so a hung or slow test
-    # step cannot take its verdict with it. Nearly all of the test time is the moderator app's
-    # pglite suites: speed those up or shard this job before raising the limit.
+    # The typecheck used to share this job's timeout, and a test step that grew into a 15m limit
+    # took it down with it: 16 of 162 runs were cancelled at 15m (2026-10-19/20). It now runs in
+    # `apps-typecheck`, so this limit bounds the tests alone (test step 253-936 s over 6 green PR
+    # runs, 2026-11-18). Nearly all of the test time is the moderator app's pglite suites: speed
+    # those up or shard this job before raising the limit.
     timeout-minutes: 30
     # A real Postgres for apps/assistant-runner, whose runs are DBOS workflows. Its *.pg.test.ts
     # files fail in CI without the URL (they skip only outside CI). The suites create and drop their
@@ -188,19 +231,8 @@ jobs:
         id: scope
         run: node scripts/ci/app-suite-scope.mjs --out app-suite-scope.json
 
-      # Deliberately ONE step driving a script, not one `pnpm --filter` step per app. Per-app
-      # steps abort at the first red app, so a shared type change that breaks several of them
-      # reports one; and `pnpm --filter <name>` EXITS 0 WHEN THE NAME MATCHES NOTHING (measured,
-      # pnpm 10.28.1 — it prints "No projects matched the filters" and succeeds), so a hardcoded
-      # list of package names is one chance per app for a rename to turn this gate into a green
-      # no-op. The script derives the app set from disk, proves each filter selected a real
-      # package, and collects every failure. See its header.
-      - name: Typecheck apps
-        run: node scripts/ci/typecheck-apps.mjs
-
-      # `!cancelled()` so a red typecheck does not hide this verdict; gated on the install
-      # rather than on the step above, because tests without `node_modules` would only restate
-      # the install failure.
+      # `!cancelled()` so a red earlier step does not hide this verdict; gated on the install,
+      # because tests without `node_modules` would only restate the install failure.
       #
       # `pnpm exec vitest run` rather than `pnpm run test:apps:run` (queued-check), which in CI is
       # the same command with `--project app:*` fixed in front: vitest keeps a project when ANY
@@ -224,6 +256,25 @@ jobs:
       - name: Assert every app suite actually ran
         if: always()
         run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps --scope app-suite-scope.json
+
+      # PER-TEST TIMINGS, read a few times a day by an external ci-speed job that ranks slow
+      # and flaky tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
+      # own `test-times-` name so no artifact download can match it — lint.yml's `unit-verify`
+      # globs `unit-report-*` and once counted every .json it found. `ignore` when absent: a
+      # missing report is already failed, by name, by this suite's own ledger step.
+      - name: Upload test timings
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.scope.outcome == 'success' }}
+        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
+        continue-on-error: ${{ github.event_name != 'push' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-times-apps-a${{ github.run_attempt }}
+          path: apps-report.json
+          if-no-files-found: ignore
+          retention-days: 8
+          # One artifact per attempt (`-a<run_attempt>`, never overwritten): a failed attempt
+          # and its passing re-run on the same commit is exactly the flake the reader counts.
 
       # Re-derives what the `paths:` filter above must contain and fails on a missing or stale
       # entry. See the header and the script.

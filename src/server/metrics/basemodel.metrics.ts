@@ -3,6 +3,7 @@ import { templateHandler } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh } from '~/server/metrics/metric-helpers';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 
@@ -262,7 +263,8 @@ async function getVersionStatsForBatch(
   }>(
     // MIN(publishedAt), not the model's own publish date and not the newest version: a
     // model's first version in a new ecosystem should read as new in that ecosystem's feed,
-    // and a later version in the same one must not refresh it. Migration 20261012120000.
+    // and a later version in the same one must not refresh it (it earns its own capped credit
+    // in the trigger instead). Migrations 20261012120000 and 20271117190000.
     `-- aggregate version metrics by base model
     SELECT
       mv."modelId",
@@ -304,6 +306,7 @@ async function getReviewStatsForBatch(
       AND mv."status" = 'Published'
       AND r.exclude = false
       AND r."tosViolation" = false
+      AND ${visibleReviewSql('r')}
     GROUP BY mv."modelId", mv."baseModel"`,
     [ids, ids[0], ids[ids.length - 1]]
   );

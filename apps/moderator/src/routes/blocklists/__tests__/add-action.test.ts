@@ -8,6 +8,7 @@ vi.mock('../../../lib/server/blocklist.service', () => ({
   removeBlocklistItems: vi.fn(),
 }));
 
+vi.mock('../../../lib/server/user-actions.service', () => ({ callModEndpoint: vi.fn() }));
 // The load's query parser reaches the database client, which throws at import without an env.
 vi.mock('../../../lib/server/query', () => ({ parseQuery: vi.fn() }));
 
@@ -44,6 +45,20 @@ describe('blocklists add action', () => {
 
   it('saves a multi-word entry on a phrase list', async () => {
     await add('PromptBenignPhrase', 'teen titans');
+    expect(upsertBlocklist).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a POI search rule that matching would strip to nothing', async () => {
+    const result = await add('SemanticSearchPoiRefuse', 'zqvoxpoitoken, 日本語');
+    expect(result).toMatchObject({
+      status: 400,
+      data: { error: expect.stringContaining('"日本語"') },
+    });
+    expect(upsertBlocklist).not.toHaveBeenCalled();
+  });
+
+  it('saves a punctuated POI search rule', async () => {
+    await add('SemanticSearchPoiRefuse', "zq-vox o'poi");
     expect(upsertBlocklist).toHaveBeenCalledOnce();
   });
 });

@@ -1,8 +1,29 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
+import {
+  agentReviewSummaryFromQueueRow,
+  isImpersonationCheckStale,
+  type AgentReviewQueueRow,
+  type AgentReviewSummary,
+} from '~/shared/utils/agent-review-findings';
+import {
+  BUILDING_REVIEW_PREVIEW_STATES,
+  REVIEW_PREVIEW_MAX_AGE_MS,
+  STARTED_REVIEW_BUILD_DETAIL_MARK,
+  type ReviewPreviewState,
+  type StoredReviewPreviewState,
+} from '~/shared/constants/app-review-preview.constants';
+import type {
+  NewPendingSubmission,
+  ReviewPreviewActor,
+} from '~/server/services/blocks/review-autodeploy.service';
 import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { Prisma } from '@prisma/client';
+import type {
+  PriorListing,
+  PriorRuntime,
+} from '~/server/services/blocks/publish-request-finalise.service';
 import { createHash } from 'crypto';
 import { structuredPatch } from 'diff';
 import JSZip from 'jszip';
@@ -21,12 +42,14 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
+import { assertSensitiveScopesJustified } from '~/shared/constants/block-scope.constants';
+// Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest and trims the
+// string fields the validator measures trimmed.
 import {
-  assertSensitiveScopesJustified,
-  deriveOauthBitmaskFromBlockScopes,
-} from '~/shared/constants/block-scope.constants';
-// Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
-import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+  stampCanonicalIframeSrc,
+  trimManifestStringFields,
+} from '~/server/services/blocks/manifest-normalize';
+import { manifestValidationContext } from '~/server/services/blocks/manifest-submit-validation';
 import type { RegistryExportDiff } from '~/shared/constants/block-storage.constants';
 import { registryExportDiff } from '~/shared/constants/block-storage.constants';
 // Zero-runtime-graph helper (its ONLY static import is a type; it DYNAMICALLY imports
@@ -41,6 +64,10 @@ import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-cate
 // AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
 // approveRequest). The mapper VALUE itself is dynamically imported at use.
 import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
+import type {
+  ActionsRunSource,
+  ReviewSourceProvenance,
+} from '~/server/schema/blocks/actions-run-source.schema';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 import type { ListingMediaSplitDecision } from '~/shared/utils/listing-media-split';
 import {
@@ -74,8 +101,10 @@ import {
   appOwnerTermsRefusalMessage,
   AppDeveloperTermsNotAcceptedError,
 } from '~/shared/constants/app-developer-terms.constants';
+import { FORGEJO_REVIEW_ORG } from '~/server/services/blocks/forgejo-orgs';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
+import type { ApproveClaim } from '~/server/services/blocks/publish-request-holds.service';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -102,8 +131,9 @@ import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-run
  * Deferred to Phase 3+:
  *   - Cross-bundle dedup (the bundleSha256 index already supports this
  *     read-side; deferring the dedup write-path until we see the volume).
- *   - Discord notification on new pending request (Phase 6).
- *   - Rate limit per submitter (Phase 6).
+ *
+ * The moderator alert, the automatic review preview and the submit/push rate limits that Phase 6
+ * named live in review-autodeploy.service and submit-rate-limit.
  */
 
 /**
@@ -184,6 +214,14 @@ export type SubmitVersionParams = {
    * asserted DIRTY. `false` and unknown are different answers — never `?? false`.
    */
   sourceDirty?: boolean;
+  /**
+   * A GitHub Actions OIDC token for the submitting run, ALREADY FILTERED BY THE FLAG: the routes
+   * pass it through `actionsOidcTokenForSubmit`, which drops it when
+   * `app-blocks-oidc-verified-submit` is off. Present ⇒ verified before any side effect, and a
+   * token that fails refuses the submit (`GithubActionsOidcRefusal`). Absent ⇒ today's behaviour.
+   * 🔴 A credential: never logged or echoed.
+   */
+  githubOidcToken?: string;
 };
 
 export type SubmitVersionResult = {
@@ -208,6 +246,12 @@ export type SubmitVersionResult = {
    * nothing covers is not a warning: the submit is refused (`StorageMigrationRefusal`).
    */
   storageMigrationWarnings?: string[];
+  /**
+   * Set only when the submit carried a GitHub Actions OIDC token that verified: `true` when the
+   * run's repository, tag and commit were stored on the request, `false` when they could not be
+   * (the manual-apply columns are not there yet). Absent when no token was verified.
+   */
+  actionsRunSourceRecorded?: boolean;
 };
 
 /**
@@ -237,11 +281,6 @@ export type SubmitListingReadiness = {
 };
 
 const MANIFEST_PATH = 'block.manifest.json';
-
-/** Org holding the per-slug in-review snapshot repos a review preview builds
- *  from. Deliberately separate from the canonical build org so commits here
- *  never fire the production build webhook. */
-const REVIEW_REPO_ORG = 'civitai-apps-review';
 
 // Diff threshold: fields that exceed N bytes when serialized are summarised
 // rather than embedded verbatim in the diff so manifestDiffSummary stays
@@ -1077,8 +1116,14 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       import('~/server/utils/app-block-ids'),
       import('~/server/schema/blocks/publish-request.schema'),
     ]);
-  const { bundleBuffer, submittedByUserId, submitterIsModerator, sourceCommit, sourceDirty } =
-    params;
+  const {
+    bundleBuffer,
+    submittedByUserId,
+    submitterIsModerator,
+    sourceCommit,
+    sourceDirty,
+    githubOidcToken,
+  } = params;
 
   const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
   await assertAcceptedAppDeveloperTerms(submittedByUserId);
@@ -1137,7 +1182,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // the targeted rule here via the SAME single-sourced helper the validator
   // uses (DRY; identical message). `assertSensitiveScopesJustified` throws a
   // plain Error, which the CLI route surfaces as a 400 and the web session
-  // route surfaces likewise. Deep validation stays deferred to approve.
+  // route surfaces likewise. The deep validation further down runs this rule too; this call
+  // keeps its message first.
   assertSensitiveScopesJustified(manifest);
 
   // F-E E5 — validate publisher screenshots NOW (fail-fast) so a bundle with a
@@ -1159,12 +1205,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // OauthClient.allowedOrigins. Mirrors how trustTier is server-owned.
   const { env } = await import('~/env/server');
   stampCanonicalIframeSrc(manifest, slug, env.APPS_DOMAIN);
+  trimManifestStringFields(manifest);
 
   // 🔴 Before the pending-conflict check, so a non-owner learns nothing about pending state. One
   // read: the row gated here is the row the request links to below (`appBlockId`).
   const existingApp = await dbRead.appBlock.findFirst({
     where: { blockId: slug },
-    select: { id: true, appId: true, app: { select: { userId: true } } },
+    select: {
+      id: true,
+      appId: true,
+      trustTier: true,
+      app: { select: { userId: true, allowedOrigins: true } },
+    },
   });
   if (existingApp && !submitterIsModerator) {
     const { mayShipAppVersion } = await import('./app-access.service');
@@ -1308,11 +1360,20 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     // for this slug → reuse it (idempotent re-submit), so createDraftListing stays false.
   }
 
-  // Deep manifest validation (contentRating / scopes / iframe.sandbox /
-  // targets / scope subset / iframe.src origin) happens at the
-  // BlockManifestValidator step in the approve flow, when the
-  // OauthClient with allowedOrigins is known. The basic blockId /
-  // version / name shape checks above are the only submit-time gate.
+  // Deep manifest validation (contentRating / scopes / iframe.sandbox / targets / scope subset /
+  // iframe.src origin) — the same check, against the same context, that approve runs, so a
+  // manifest a moderator could never approve is refused to its author now instead of after review.
+  // Approve still runs it again.
+  {
+    const { assertManifestValidAtSubmit } = await import('./manifest-submit-validation');
+    await assertManifestValidAtSubmit({
+      slug,
+      manifest,
+      trustTier: existingApp?.trustTier ?? null,
+      existingAllowedOrigins: existingApp ? existingApp.app?.allowedOrigins ?? [] : null,
+      appsDomain: env.APPS_DOMAIN,
+    });
+  }
 
   // Diff against the previous approved version (if any).
   const previous = await getPreviousApprovedState(slug);
@@ -1354,6 +1415,32 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     });
   }
 
+  // GITHUB ACTIONS OIDC — verified HERE: after the validation gates above and before the first
+  // side effect (the upload), so a refused token leaves nothing behind. The token is present only
+  // when the flag is on (the routes filter it). A token that fails refuses the submit: a bad token
+  // means a broken pipeline, not something to skip silently.
+  //
+  // ⚠ THE ONE-USE `jti` IS SPENT HERE, NOT AT THE END. Verification records it, and the steps
+  // below can still fail after that: the bundle upload, the review-repo push, the request insert
+  // (including the one-pending-per-slug P2002 race) and the repository pin. Each of those leaves
+  // the token spent, so retrying needs a fresh token, i.e. a re-run of the workflow, which is
+  // what requests one. No failure here can leave a token accepted twice.
+  let actionsRunSource: ActionsRunSource | null = null;
+  if (githubOidcToken) {
+    const [{ verifyGithubActionsOidcToken }, { assertActionsRunRepositoryPinned }] =
+      await Promise.all([
+        import('./github-actions-oidc.service'),
+        import('./actions-run-source.service'),
+      ]);
+    actionsRunSource = await verifyGithubActionsOidcToken(githubOidcToken, {
+      manifestVersion: version,
+      sourceCommit,
+    });
+    // The repository this app's verified submits are pinned to (the first one's); a token from
+    // another repository is refused 409. No pin is possible while the columns are missing.
+    await assertActionsRunRepositoryPinned(dbRead, slug, actionsRunSource);
+  }
+
   // Upload bundle to MinIO. PutObject is idempotent on the SHA, so a
   // retry after an upstream error reuses the same key safely.
   const key = await storeBundle(bundleBuffer, bundleSha256);
@@ -1390,7 +1477,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
     await ensureReviewRepo(slug);
     await commitFiles({
-      org: REVIEW_REPO_ORG,
+      org: FORGEJO_REVIEW_ORG,
       slug,
       files: reviewFiles,
       message: `Publish request ${version} bundle (sha ${bundleSha256.slice(0, 12)})`,
@@ -1443,6 +1530,19 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       );
     }
     throw err;
+  }
+
+  // The verified GitHub Actions run, stored on the request it submitted. No-type columns, so a
+  // raw UPDATE after the create rather than a field on it; best-effort (never throws), because the
+  // request row already exists. `false` = not recorded (the manual-apply columns are missing).
+  let actionsRunSourceRecorded: boolean | undefined;
+  if (actionsRunSource) {
+    const { writeActionsRunSource } = await import('./actions-run-source.service');
+    actionsRunSourceRecorded = await writeActionsRunSource(
+      dbWrite,
+      publishRequestId,
+      actionsRunSource
+    );
   }
 
   // FORK PROVENANCE — copy the app's own server-written fork pair (if any) from its block row
@@ -1520,6 +1620,15 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     manifest,
   });
 
+  announceNewPendingRequest({
+    publishRequestId,
+    slug,
+    version,
+    appName: appDisplayName(manifest, slug),
+    submittedByUserId,
+    origin: 'upload',
+  });
+
   return {
     publishRequestId,
     slug,
@@ -1529,6 +1638,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     manifestDiffSummary,
     listing,
     storageMigrationWarnings: storageMigrations.warnings,
+    ...(actionsRunSourceRecorded === undefined ? {} : { actionsRunSourceRecorded }),
   };
 }
 
@@ -1566,7 +1676,7 @@ async function submitListingReadiness(args: {
   try {
     const [
       { dbWrite },
-      { computeListingProblems, floorProblems, listingProblemInput },
+      { computeListingProblems, floorProblems, listingProblemInput, listingProblemLinksFrom },
       { loadListingAssetScansBatch },
     ] = await Promise.all([
       import('~/server/db/client'),
@@ -1633,12 +1743,37 @@ async function submitListingReadiness(args: {
       [{ id: row.id, iconId: row.iconId, coverId: row.coverId }],
       dbWrite
     );
+    // The trust-link nudge. On-site links are manifest-governed and reach the listing only at
+    // approve, so the SUBMITTED manifest is what this submit is about: its `repository` / `bugs`
+    // decide the nudge. The columns are still read, for one thing only — whether each exists
+    // here: a link whose column is absent is reported as unknown (no nudge), never as missing.
+    const kind = row.kind === 'offsite' ? 'offsite' : 'onsite';
+    const [
+      { readListingProblemLinkMaps },
+      { resolveListingIssueTracker, resolveListingSourceRepo },
+    ] = await Promise.all([
+      import('./app-listing-issue-tracker.service'),
+      import('./app-listing-mapper'),
+    ]);
+    const linkMaps = await readListingProblemLinkMaps([row.id], dbWrite);
+    const links =
+      kind === 'onsite'
+        ? {
+            sourceRepoUrl: linkMaps.sourceRepoUrls.has(row.id)
+              ? resolveListingSourceRepo(args.manifest)
+              : undefined,
+            issueTrackerUrl: linkMaps.issueTrackerUrls.has(row.id)
+              ? resolveListingIssueTracker(args.manifest)
+              : undefined,
+          }
+        : listingProblemLinksFrom(row.id, linkMaps);
     const { problems } = computeListingProblems(
       listingProblemInput(row, {
-        kind: row.kind === 'offsite' ? 'offsite' : 'onsite',
+        kind,
         appRating:
           typeof args.manifest.contentRating === 'string' ? args.manifest.contentRating : null,
         assetScans: scans.get(row.id) ?? [],
+        links,
       })
     );
     return {
@@ -2261,6 +2396,8 @@ export async function recordPendingFromPush(args: {
   /** The civitai user who pushed, when the pushing Forgejo account maps to one. */
   pusherUserId?: number | null;
 }): Promise<{ publishRequestId: string }> {
+  // Single sink for every push-recorded manifest.
+  trimManifestStringFields(args.manifest as Record<string, unknown>);
   const [{ dbWrite, dbRead }, { newUlid }] = await Promise.all([
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
@@ -2329,10 +2466,21 @@ export async function recordPendingFromPush(args: {
   // Supersede any OTHER still-pending request for this slug (older sha or a
   // dev submitVersion) so the partial unique index (one pending per slug)
   // doesn't reject the insert and the queue shows the newest unreviewed sha.
+  // The superseded request's review preview and agent go with it, as on a withdraw.
+  const superseded = await dbWrite.appBlockPublishRequest.findMany({
+    where: { slug: args.slug, status: 'pending' },
+    select: { id: true, deployState: true },
+  });
   await dbWrite.appBlockPublishRequest.updateMany({
     where: { slug: args.slug, status: 'pending' },
     data: { status: 'withdrawn' },
   });
+  for (const old of superseded) {
+    if (typeof old.deployState === 'string' && old.deployState.startsWith('preview-')) {
+      void teardownReviewForRequest(old.id);
+    }
+    void teardownAgentReviewForRequest(old.id);
+  }
 
   const publishRequestId = `pubreq_${newUlid()}`;
 
@@ -2415,6 +2563,15 @@ export async function recordPendingFromPush(args: {
   // has its own try/catch + is scoped to status='pending', so it never gates the
   // park and can't clobber a row that was approved/rejected/superseded.
   void enrichPushRequestRow(publishRequestId, args.slug, args.sha).catch(() => undefined);
+
+  announceNewPendingRequest({
+    publishRequestId,
+    slug: args.slug,
+    version: args.version,
+    appName: appDisplayName(args.manifest, args.slug),
+    submittedByUserId: ownerUserId,
+    origin: 'push',
+  });
 
   return { publishRequestId };
 }
@@ -2732,18 +2889,162 @@ async function listingFactsForRequests(
 }
 
 /**
+ * The compact agentic-review summary for a PAGE of requests, for the queue's AI chip — the
+ * latest report per request, reduced IN SQL to its finding severities and scope-trace counts.
+ *
+ * 🔴 ONE QUERY FOR THE WHOLE PAGE, AND NONE OF THE REPORT BODIES. The report's JSON columns
+ * hold the agent's full findings (tens of KB per row); the queue polls every 15 s, so selecting
+ * them for 50 rows to count severities would ship megabytes per tick. `jsonb` is reduced to the
+ * handful of fields `agentReviewDisplay` reads, and every path tolerates a malformed body (an
+ * `{ error }` section, a non-array `findings`), since these columns hold untrusted model output.
+ *
+ * FAIL-SOFT: a failed read returns an empty map, and the rows then carry no summary, which the
+ * queue renders as "AI: not run". A broken chip must never take the queue down with it.
+ */
+async function agentReviewSummariesForRequests(
+  ids: string[]
+): Promise<Map<string, AgentReviewSummary>> {
+  const out = new Map<string, AgentReviewSummary>();
+  if (ids.length === 0) return out;
+  try {
+    const { dbRead } = await import('~/server/db/client');
+    const rows = (await dbRead.$queryRaw`
+      SELECT DISTINCT ON (r.publish_request_id)
+        r.publish_request_id AS "publishRequestId",
+        r.status AS "status",
+        ARRAY(
+          SELECT lower(f->>'severity')
+          FROM jsonb_array_elements(
+            (CASE WHEN jsonb_typeof(r.code_review->'findings') = 'array'
+                  THEN r.code_review->'findings' ELSE '[]'::jsonb END)
+            || (CASE WHEN jsonb_typeof(r.security_audit->'findings') = 'array'
+                  THEN r.security_audit->'findings' ELSE '[]'::jsonb END)
+          ) AS f
+          WHERE jsonb_typeof(f) = 'object'
+        ) AS "severities",
+        (CASE WHEN jsonb_typeof(r.scope_verdicts->'overBroad') = 'array'
+              THEN jsonb_array_length(r.scope_verdicts->'overBroad') ELSE 0 END)::int AS "overBroad",
+        (CASE WHEN jsonb_typeof(r.scope_verdicts->'underDeclared') = 'array'
+              THEN jsonb_array_length(r.scope_verdicts->'underDeclared') ELSE 0 END)::int AS "underDeclared",
+        (SELECT count(*)::int
+           FROM jsonb_array_elements(
+             CASE WHEN jsonb_typeof(r.scope_verdicts->'scopes') = 'array'
+                  THEN r.scope_verdicts->'scopes' ELSE '[]'::jsonb END
+           ) AS sv
+          WHERE jsonb_typeof(sv) = 'object'
+            AND lower(sv->>'justificationAccurate') = 'no') AS "inaccurate",
+        -- Every analysis produced a result: an object slot with no non-null error key.
+        (jsonb_typeof(r.code_review) = 'object'
+          AND jsonb_typeof(r.security_audit) = 'object'
+          AND jsonb_typeof(r.scope_verdicts) = 'object'
+          AND coalesce(jsonb_typeof(r.code_review->'error'), 'null') = 'null'
+          AND coalesce(jsonb_typeof(r.security_audit->'error'), 'null') = 'null'
+          AND coalesce(jsonb_typeof(r.scope_verdicts->'error'), 'null') = 'null') AS "sectionsOk",
+        (CASE WHEN jsonb_typeof(r.security_audit->'impersonationCheck') = 'object'
+              THEN r.security_audit->'impersonationCheck'->>'status' END) AS "impersonationCheck",
+        (CASE WHEN jsonb_typeof(r.security_audit->'impersonationCheck') = 'object'
+              THEN r.security_audit->'impersonationCheck'->>'fingerprint' END) AS "impersonationFingerprint"
+      FROM app_review_agent_reports r
+      WHERE r.publish_request_id = ANY(${ids}::text[])
+      ORDER BY r.publish_request_id, r.started_at DESC
+    `) as Array<AgentReviewQueueRow & { publishRequestId: string }>;
+    // A finding with no severity becomes `unrated` here (not dropped), so it still flags.
+    for (const r of rows) out.set(r.publishRequestId, agentReviewSummaryFromQueueRow(r));
+  } catch (err) {
+    console.error(
+      `[agentReviewSummariesForRequests] summary read failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+  return out;
+}
+
+/**
+ * The impersonation fingerprint of each request's store listing AS IT IS NOW — the same listing,
+ * found the same way, as the check reads (`gatherImpersonationInputs`: the app's on-site listing
+ * by slug; one keyed to another app does not count). One query for the page. FAIL-SOFT to an
+ * empty map: every check then reads stale, which only keeps rows out of the fast lane.
+ */
+async function liveListingFingerprints(
+  db: { appListing: { findMany(args: unknown): Promise<unknown> } },
+  requests: Array<{ id: string; slug: string; appBlockId: string | null }>
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (requests.length === 0) return out;
+  try {
+    const { impersonationFingerprint } = await import('./app-impersonation.logic');
+    const listings = (await db.appListing.findMany({
+      where: {
+        slug: { in: [...new Set(requests.map((r) => r.slug))] },
+        kind: 'onsite',
+        revisionOfId: null,
+      },
+      select: {
+        slug: true,
+        name: true,
+        tagline: true,
+        description: true,
+        iconId: true,
+        coverId: true,
+        appBlockId: true,
+      },
+    })) as Array<{
+      slug: string;
+      name: string;
+      tagline: string | null;
+      description: string | null;
+      iconId: number | null;
+      coverId: number | null;
+      appBlockId: string | null;
+    }>;
+    const bySlug = new Map(listings.map((l) => [l.slug, l]));
+    for (const r of requests) {
+      const l = bySlug.get(r.slug);
+      if (!l || (l.appBlockId && r.appBlockId && l.appBlockId !== r.appBlockId)) continue;
+      out.set(r.id, impersonationFingerprint(l));
+    }
+  } catch (err) {
+    console.error(
+      `[liveListingFingerprints] read failed: ${
+        err instanceof Error ? err.message || err.name : String(err)
+      }`
+    );
+  }
+  return out;
+}
+
+/** The `where` for the on-site PENDING queue — shared by the list and its count. */
+const PENDING_REQUEST_WHERE = { status: 'pending' } as const;
+
+/** How many on-site publish requests are waiting for review (the Pending tab's badge). */
+export async function countPendingRequests(): Promise<number> {
+  const { dbRead } = await import('~/server/db/client');
+  return dbRead.appBlockPublishRequest.count({ where: PENDING_REQUEST_WHERE });
+}
+
+/**
  * Mod queue: paginated list of publish requests in status='pending',
  * oldest first (FIFO). Includes the submitter's basic profile so the
  * review UI doesn't round-trip per row.
  */
-export async function listPendingRequests(opts: ListPendingRequestsOptions = {}) {
+export async function listPendingRequests(
+  opts: ListPendingRequestsOptions & {
+    /**
+     * Attach each row's agentic-review summary (`agentReview`). The router passes the
+     * viewer's `app-blocks-agentic-review` flag here, so a reviewer without the agentic
+     * surface never receives the field and the queue shows no AI chip for them.
+     */
+    includeAgentReview?: boolean;
+  } = {}
+) {
   const [{ dbRead }, { reviewRepoUrl, repoCommitUrl }] = await Promise.all([
     import('~/server/db/client'),
     import('./forgejo.service'),
   ]);
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appBlockPublishRequest.findMany({
-    where: { status: 'pending' },
+    where: PENDING_REQUEST_WHERE,
     orderBy: { submittedAt: 'asc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
@@ -2759,32 +3060,95 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
+      // The client's provenance CLAIM, shown beside the checked Actions run as "claimed".
+      sourceCommit: true,
+      sourceDirty: true,
+      // The review preview lifecycle (`preview-*`) — projected to `previewState` below and
+      // NOT spread as `deployState`, which the queue reads as the APPROVED-row deploy shape.
+      // `deployDetail` is read ONLY for the preview's build-start time (the expiry rule) and
+      // never returned: on a pending row it is the preview detail, which carries no log, but
+      // nothing here needs the rest of it.
+      deployState: true,
+      deployDetail: true,
+      deployUpdatedAt: true,
       submittedBy: { select: reviewUserChipSelect },
     },
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
-  const listingFacts = await listingFactsForRequests(items as ListingJoinSubject[]);
+  const { getOpenHoldCountsBySlug } = await import('./publish-request-holds.service');
+  const { readActionsRunSourcesForRender } = await import('./actions-run-source.service');
+  const [listingFacts, agentSummaries, liveFingerprints, holdCounts, actionsRuns] =
+    await Promise.all([
+      listingFactsForRequests(items as ListingJoinSubject[]),
+      opts.includeAgentReview
+        ? agentReviewSummariesForRequests(items.map((r) => r.id))
+        : Promise.resolve(null),
+      opts.includeAgentReview ? liveListingFingerprints(dbRead, items) : Promise.resolve(null),
+      getOpenHoldCountsBySlug(
+        dbRead,
+        items.map((r) => r.slug)
+      ),
+      readActionsRunSourcesForRender(
+        dbRead,
+        items.map((r) => r.id)
+      ),
+    ]);
+  // The impersonation check is STALE when the listing changed after it ran (a new app's draft
+  // or pending listing is edited in place); a stale check never fast-lanes the row.
+  const withStaleness = (id: string) => {
+    const summary = agentSummaries?.get(id) ?? null;
+    if (!summary) return null;
+    return {
+      ...summary,
+      impersonationStale: isImpersonationCheckStale(
+        summary.impersonationFingerprint,
+        liveFingerprints?.get(id) ?? null
+      ),
+    };
+  };
+  const now = Date.now();
   return {
-    items: items.map((r: (typeof rows)[number]) => ({
-      ...r,
-      ...listingFacts(r.id),
-      // BigInt isn't JSON-serializable through tRPC's default transformer;
-      // surface as a string. UI can format with Intl.NumberFormat.
-      bundleSizeBytes: r.bundleSizeBytes.toString(),
-      // Deep-link into the per-slug Forgejo review repo so mods can
-      // browse the actual code from the review modal.
-      reviewRepoUrl: reviewRepoUrl(r.slug),
-      // PUSH-ORIGINATED requests have no review-org snapshot — link mods to the
-      // CANONICAL repo at the exact pushed sha instead, so they can review the
-      // real code rather than approve blind. Push rows are marked by empty
-      // bundle pointers (recordPendingFromPush writes bundleKey='' AND
-      // bundleSha256=''); bundleSha256 is already in this payload + NOT NULL, so
-      // it's the discriminator here (the fetch paths key off the equivalent
-      // bundleKey since they need the S3 path).
-      pushCommitUrl:
-        !r.bundleSha256 && r.forgejoCommitSha ? repoCommitUrl(r.slug, r.forgejoCommitSha) : null,
-    })),
+    items: items.map(
+      ({
+        deployState,
+        deployDetail,
+        deployUpdatedAt,
+        sourceCommit,
+        sourceDirty,
+        ...r
+      }: (typeof rows)[number]) => ({
+        ...r,
+        ...listingFacts(r.id),
+        sourceProvenance: reviewSourceProvenance(
+          { sourceCommit, sourceDirty },
+          actionsRuns.get(r.id)
+        ),
+        // null: the holds could not be read (shown as unknown, never as clean).
+        openHoldCount: holdCounts ? holdCounts.get(r.slug) ?? 0 : null,
+        // The SAME reported state `getReviewStatus` gives the review page (one rule, including
+        // #8240's expiry from the build's start), so the queue chip and the page agree.
+        previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),
+        // Absent (not null) when the viewer has no agentic surface: the chip is hidden, not
+        // "not run". `null` = the surface is on and this request has no report.
+        ...(agentSummaries ? { agentReview: withStaleness(r.id) } : {}),
+        // BigInt isn't JSON-serializable through tRPC's default transformer;
+        // surface as a string. UI can format with Intl.NumberFormat.
+        bundleSizeBytes: r.bundleSizeBytes.toString(),
+        // Deep-link into the per-slug Forgejo review repo so mods can
+        // browse the actual code from the review modal.
+        reviewRepoUrl: reviewRepoUrl(r.slug),
+        // PUSH-ORIGINATED requests have no review-org snapshot — link mods to the
+        // CANONICAL repo at the exact pushed sha instead, so they can review the
+        // real code rather than approve blind. Push rows are marked by empty
+        // bundle pointers (recordPendingFromPush writes bundleKey='' AND
+        // bundleSha256=''); bundleSha256 is already in this payload + NOT NULL, so
+        // it's the discriminator here (the fetch paths key off the equivalent
+        // bundleKey since they need the S3 path).
+        pushCommitUrl:
+          !r.bundleSha256 && r.forgejoCommitSha ? repoCommitUrl(r.slug, r.forgejoCommitSha) : null,
+      })
+    ),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
 }
@@ -2968,6 +3332,10 @@ export type ApproveRequestParams = {
   approvalNotes?: string;
   /** The moderator's media-split decision for the listing this approve publishes; omitted means `rate-mature`. */
   mediaSplit?: ListingMediaSplitDecision | null;
+  /** Required to approve while the app has open review holds; recorded on each hold. */
+  holdOverrideReason?: string | null;
+  /** The open holds the moderator was shown; an open hold not in this list refuses. */
+  holdOverrideIds?: number[] | null;
 };
 
 export type ApproveRequestResult = {
@@ -2975,6 +3343,12 @@ export type ApproveRequestResult = {
   appBlockId: string;
   forgejoCommitSha: string;
   isFirstVersion: boolean;
+  /** Holds placed after the approve claim expired. When set, the block was re-suspended and
+   * nothing after the final writes ran: no build, no deploy, no approval notice. */
+  lateHoldIds?: number[];
+  /** Set when the live takedown for a late hold left the app serving: the shared static server's
+   * readiness-probe app is never taken down. */
+  liveNote?: string;
 };
 
 /**
@@ -3000,6 +3374,28 @@ export type ApproveRequestResult = {
  * adds a compensation transaction.
  */
 export async function approveRequest(params: ApproveRequestParams): Promise<ApproveRequestResult> {
+  const held: { claim?: ApproveClaim } = {};
+  try {
+    return await approveRequestUnderClaim(params, held);
+  } finally {
+    const { claim } = held;
+    if (claim) {
+      const [{ dbWrite }, { releaseApproveClaim }] = await Promise.all([
+        import('~/server/db/client'),
+        import('./publish-request-holds.service'),
+      ]);
+      await releaseApproveClaim(dbWrite, claim).catch((err) =>
+        // eslint-disable-next-line no-console
+        console.error('[approveRequest] approve claim release failed; it expires on its own', err)
+      );
+    }
+  }
+}
+
+async function approveRequestUnderClaim(
+  params: ApproveRequestParams,
+  held: { claim?: ApproveClaim }
+): Promise<ApproveRequestResult> {
   const [{ dbRead, dbWrite }, { newUlid }, { env }] = await Promise.all([
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
@@ -3025,6 +3421,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // Push-originated requests (git-push webhook) carry an empty bundleKey
       // and this real sha — approve reconstructs the bundle from Forgejo at it.
       forgejoCommitSha: true,
+      // The submitting client's source claim, carried into the approve commit's trailers.
+      sourceCommit: true,
+      sourceDirty: true,
       submittedByUserId: true,
       appBlockId: true,
       // The reviewed file list, which the permission-hook pin below cross-checks with the bytes.
@@ -3035,12 +3434,22 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // the teardown at the end. (deploy_state is null for the common no-preview
       // case, so teardown — and its k8s calls — are skipped entirely.)
       deployState: true,
+      // The preview's detail (its sha and serving mode) for that teardown, read here because
+      // markRequestDeployState below clears it before the teardown runs.
+      deployDetail: true,
     },
   });
   if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (request.status !== 'pending') {
     throw new Error(`cannot approve a request in status ${request.status}`);
   }
+  const { checkHoldsBeforeApprove, claimApprove } = await import('./publish-request-holds.service');
+  const holdDecision = {
+    slug: request.slug,
+    overrideReason: params.holdOverrideReason,
+    shownHoldIds: params.holdOverrideIds,
+  };
+  await checkHoldsBeforeApprove(dbWrite, holdDecision);
   // Captured BEFORE markRequestDeployState below flips deploy_state to a
   // production 'building' value — drives the end-of-flow review teardown.
   const hadReviewPreview =
@@ -3078,6 +3487,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     where: { blockId: request.slug },
     select: {
       id: true,
+      currentVersionSha: true,
       appId: true,
       repoUrl: true,
       trustTier: true,
@@ -3120,6 +3530,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // makes the value the validator (below), the app_blocks.manifest write, and
   // the committed block.manifest.json (step 5) all see consistent.
   stampCanonicalIframeSrc(manifest, request.slug, env.APPS_DOMAIN);
+  trimManifestStringFields(manifest);
 
   // H-4 fix — run the same BlockManifestValidator the git-push webhook
   // runs, BEFORE any DB writes or the Forgejo commit. Without this:
@@ -3142,32 +3553,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   const { BlockManifestValidator } = await import(
     '~/server/services/block-manifest-validator.service'
   );
-  // A1/A3/A4 fix: the OAuth ceiling for an app-block client is the bitmask
-  // DERIVED from the manifest's declared scopes (intersection with the
-  // OAuth-eligible bit set), NOT TokenScope.Full (33554431). Previously the
-  // auto-provisioned client defaulted to all 25 bits, which (a) made it a
-  // Full-scope authorization_code client → account-takeover primitive, and
-  // (b) rendered this very manifest scope gate inert (every manifest scope is
-  // trivially within an all-bits ceiling). Feeding the derived ceiling here
-  // means the validator below enforces a real subset check, and it matches
-  // exactly what we write to OauthClient.allowedScopes in the create.
-  const derivedOauthCeiling = deriveOauthBitmaskFromBlockScopes(manifestScopes);
-  const validationCtx = isFirstVersion
-    ? {
-        allowedScopes: derivedOauthCeiling,
-        allowedOrigins: [`https://${request.slug}.${env.APPS_DOMAIN}`],
-      }
-    : {
-        // On a subsequent version the live client still carries whatever
-        // ceiling the previous approve set. Re-derive from THIS manifest and
-        // union with the existing ceiling so the validator validates against
-        // the ceiling we'll actually persist below (we re-cap allowedScopes to
-        // the derived value on every approve — see the appBlock.update path).
-        allowedScopes: derivedOauthCeiling,
-        allowedOrigins: (existingAppBlock!.app.allowedOrigins ?? []).map((o: string) =>
-          o.toLowerCase()
-        ),
-      };
+  // The derived OAuth ceiling (see manifestValidationContext) is also what the create below writes
+  // to OauthClient.allowedScopes, so the validator enforces the ceiling that is persisted.
+  const validationCtx = manifestValidationContext({
+    slug: request.slug,
+    manifest,
+    existingAllowedOrigins: existingAppBlock ? existingAppBlock.app.allowedOrigins ?? [] : null,
+    appsDomain: env.APPS_DOMAIN,
+  });
+  const derivedOauthCeiling = validationCtx.allowedScopes;
   // APPROVE is a re-validation of the ALREADY-SUBMITTED manifest, not a new
   // submit — exempt ONLY the new sensitive-scope-justification enforcement so a
   // LEGACY pending request (submitted before that rule shipped, sensitive scope
@@ -3175,9 +3569,18 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // here (the H-4 invariant). A post-deploy submission already passed this gate
   // at submit time, and nothing reaches the approve queue without the submit
   // gate first, so skipping the re-check creates no bypass.
+  //
+  // `strictIssueTrackerLink: false` for the same reason: a manifest stored before `bugs` became a
+  // string-only rule must stay approvable. A non-conforming `bugs` is a warning, and the approve's
+  // listing sync publishes no link for it (`resolveListingIssueTracker`).
   const validation = await BlockManifestValidator.validateSubmission(manifest, validationCtx, {
     enforceSensitiveScopeJustification: false,
+    strictIssueTrackerLink: false,
   });
+  if (validation.warnings?.length) {
+    // eslint-disable-next-line no-console
+    console.warn(`[approveRequest] manifest warnings: ${validation.warnings.join('; ')}`);
+  }
   if (!validation.valid) {
     throw new Error(
       `Invalid manifest — cannot approve. The git-push webhook would reject this manifest with the same errors and the build chain would not run. ` +
@@ -3260,7 +3663,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // 🔴 PUBLISH FLOOR. Refuse before anything is written: the listing writes below are
   // log-and-continue, so a refusal there would deploy the app and leave only a log line.
   // Ungated paths: see listing-publish-floor.ts.
-  if (goLive?.firstGoLive) {
+  // A reset listing is exempt (it already went live), except a first version's left by a late
+  // hold: it never went live, and the hold doubted its content after the first check ran.
+  const lateHeldFirstVersion =
+    goLive != null &&
+    !goLive.firstGoLive &&
+    !existingAppBlock?.currentVersionSha &&
+    (await import('./publish-request-holds.service').then((m) =>
+      m.hadLateHold(dbWrite, request.slug)
+    ));
+  if (goLive && (goLive.firstGoLive || lateHeldFirstVersion)) {
     const floor = checkListingMeetsFloor(goLive.listing);
     if (!floor.ok) throw new Error(listingFloorApproveRefusal(floor.missing));
   }
@@ -3286,6 +3698,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     }
   }
 
+  // From here on this approve writes and calls Forgejo, so a hold placed now could not stop it:
+  // the claim makes placing one refuse until the approve ends.
+  held.claim = await dbWrite.$transaction((tx) =>
+    claimApprove(tx, {
+      ...holdDecision,
+      publishRequestId: request.id,
+      actorUserId: params.reviewerUserId,
+    })
+  );
+
   // APP STORAGE SCHEMA MIGRATIONS — the approve gate, LAST among the refusals and still before
   // anything is written (so a refused approve reserves nothing): refused while an earlier run of
   // the app is unfinished on a collection this version touches, or when a plan could not be
@@ -3302,6 +3724,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
 
   let appBlockId: string;
   let repoUrl: string;
+  let priorVersion: PriorRuntime | undefined;
+  // The on-site listing as it was before (3b) writes it, for a late hold to put back.
+  let priorListing: PriorListing | undefined;
 
   if (isFirstVersion) {
     const blockIdError = newBlockIdError(request.slug);
@@ -3446,6 +3871,38 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   } else {
     appBlockId = existingAppBlock.id;
     repoUrl = existingAppBlock.repoUrl ?? '';
+    // What the app runs under now, put back if the final hold check finds a late hold.
+    // primary: the rollback snapshot must match the row this approve is about to overwrite.
+    const prior = await dbWrite.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: {
+        manifest: true,
+        version: true,
+        approvedScopes: true,
+        contentRating: true,
+        renderMode: true,
+        trustTier: true,
+      },
+    });
+    // primary: the scope ceiling restored on a late hold must be the one this approve raises.
+    const client = await dbWrite.oauthClient.findUnique({
+      where: { id: existingAppBlock.appId },
+      select: { allowedScopes: true },
+    });
+    // A late hold must be able to put the ceiling back, so refuse before any write if it can't be
+    // read. (A missing block row fails the update below the same way.)
+    if (!client) {
+      throw new Error(
+        `approve refused: could not read the OAuth client of ${request.slug} to restore on a late hold`
+      );
+    }
+    if (prior) {
+      priorVersion = {
+        block: { ...prior, manifest: prior.manifest as Prisma.InputJsonValue },
+        oauthClientId: existingAppBlock.appId,
+        allowedScopes: client.allowedScopes,
+      };
+    }
     // Subsequent version: refresh manifest + version + approvedScopes
     // on the existing row. currentVersionSha is stamped in step (6) below,
     // right after the Forgejo commit returns the approved sha.
@@ -3550,7 +4007,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // OauthClient owner are mirrored faithfully — important for the transition case
   // where an app approved BEFORE this feature (possibly already curated) has its
   // first listing minted now on a subsequent-version approve.
-  const { mapAppBlockToListing, buildListingScalarSync } = await import('./app-listing-mapper');
+  const { mapAppBlockToListing, buildListingScalarSync, buildListingIssueTrackerSync } =
+    await import('./app-listing-mapper');
   // Is the manual-apply `app_listings.source_repo_url` column there yet? Probed ONCE
   // and threaded into all three write branches below. 🔴 It is deliberately probed
   // rather than assumed: naming a missing column in any of these payloads throws, and
@@ -3562,6 +4020,23 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // on it must land in this block's log-and-continue rather than abort the approve.
     const { isSourceRepoColumnAvailable } = await import('./app-listing-source-repo.service');
     const sourceRepoAvailable = await isSourceRepoColumnAvailable(dbWrite);
+    // The manual-apply `issue_tracker_url` column (manifest `bugs`), probed the same way. It is a
+    // no-type column, so it is never part of the Prisma payloads below: each branch writes it by
+    // raw SQL right after its own write, and only when this says the column exists.
+    const {
+      isIssueTrackerColumnAvailable,
+      writeIssueTrackerBestEffort,
+      writeListingIssueTrackerUrl,
+      writeOnsiteListingIssueTrackerUrlByAppBlock,
+    } = await import('./app-listing-issue-tracker.service');
+    const issueTrackerAvailable = await isIssueTrackerColumnAvailable(dbWrite);
+    // Before any listing write below. A throw is caught by this block's catch (the approve goes
+    // on) and leaves no snapshot, so a late hold drafts the listing rather than restoring it.
+    const { snapshotOnsiteListing } = await import('./publish-request-finalise.service');
+    priorListing = await snapshotOnsiteListing(dbWrite, request.slug, {
+      sourceRepoAvailable,
+      issueTrackerAvailable,
+    });
     // (3b-transition) W13 draft-at-submit — an app SUBMITTED after this feature
     // shipped has a pre-approval on-site DRAFT AppListing (kind='onsite',
     // appBlockId=NULL, status='draft', slug=request.slug) minted at submit, carrying
@@ -3665,6 +4140,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           },
         });
         if (transitioned.count > 0) {
+          const tracker = buildListingIssueTrackerSync({
+            manifest: abForTransition.manifest,
+            issueTrackerAvailable,
+          });
+          if (tracker.write) {
+            await writeIssueTrackerBestEffort(`approve draft ${request.slug}`, () =>
+              writeListingIssueTrackerUrl(dbWrite, draftListing.id, tracker.value)
+            );
+          }
           await recordListingRatingChangeAfterCommit({
             appListingId: draftListing.id,
             slug: request.slug,
@@ -3733,10 +4217,19 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // (don't throw into the already-side-effecting approve flow); the backfill
       // remains the recovery path for such an anomaly.
       if (ab && ab.app && typeof ab.app.userId === 'number') {
-        await dbWrite.appListing.create({
+        const created = await dbWrite.appListing.create({
           data: mapAppBlockToListing(ab as SourceAppBlock, { sourceRepoAvailable }),
           select: { id: true },
         });
+        const tracker = buildListingIssueTrackerSync({
+          manifest: ab.manifest,
+          issueTrackerAvailable,
+        });
+        if (tracker.write && tracker.value !== null && created?.id) {
+          await writeIssueTrackerBestEffort(`approve create ${request.slug}`, () =>
+            writeListingIssueTrackerUrl(dbWrite, created.id, tracker.value)
+          );
+        }
       }
     } else {
       // (3b-sync) MANIFEST-GOVERNED COPY RE-SYNC (subsequent-version approve).
@@ -3796,6 +4289,17 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
               sourceRepoAvailable,
             }),
           });
+          // Re-synced from the manifest on every approved version, like `repository`: removing
+          // `bugs` clears the link.
+          const tracker = buildListingIssueTrackerSync({
+            manifest: ab.manifest,
+            issueTrackerAvailable,
+          });
+          if (tracker.write) {
+            await writeIssueTrackerBestEffort(`approve re-sync ${request.slug}`, () =>
+              writeOnsiteListingIssueTrackerUrlByAppBlock(dbWrite, appBlockId, tracker.value)
+            );
+          }
           if (synced.count === 0) {
             // The replica said a listing exists but the PRIMARY matched no row —
             // replica lag, or the row changed kind between the two reads. Benign
@@ -4125,7 +4629,37 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
 
   // (5) Atomic single-commit replacement of the repo contents on
   // civitai-apps/<slug>. This commit fires the git-push webhook.
-  const commitMessage = `Approved publish request ${request.id} — ${request.slug} v${request.version}`;
+  // The subject is unchanged; trailers map the snapshot to the request and to the developer's
+  // source (approve-provenance.ts). A push-originated request's pushed sha is `Pushed-Commit`,
+  // never `Source-Commit`: the latter is only ever the client's own claim.
+  //
+  // An empty bundleKey is NOT enough to call `forgejoCommitSha` the developer's push: approve
+  // overwrites a request's `forgejoCommitSha` with its own snapshot, and reset-to-pending clones
+  // that approved row (bundleKey '' included) into a new pending request. A sha some approved
+  // request already holds is the platform's own commit, so it is not a `Pushed-Commit`.
+  let pushedCommit: string | null = null;
+  if (!request.bundleKey && request.forgejoCommitSha) {
+    const platformOwn = await dbRead.appBlockPublishRequest.findFirst({
+      where: {
+        slug: request.slug,
+        status: 'approved',
+        forgejoCommitSha: request.forgejoCommitSha,
+        NOT: { id: request.id },
+      },
+      select: { id: true },
+    });
+    if (!platformOwn) pushedCommit = request.forgejoCommitSha;
+  }
+  const { buildApproveCommitMessage } = await import('./approve-provenance');
+  const commitMessage = buildApproveCommitMessage({
+    publishRequestId: request.id,
+    slug: request.slug,
+    version: request.version,
+    sourceCommit: request.sourceCommit,
+    sourceDirty: request.sourceDirty,
+    sourceRepo: (manifest as { repository?: unknown }).repository,
+    pushedCommit,
+  });
   const { sha: forgejoCommitSha } = await commitFiles({
     slug: request.slug,
     files: filesForCommit,
@@ -4137,32 +4671,86 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // publish request. These two writes are the durable proof that THIS sha
   // went through moderator review — the git-push webhook keys its
   // no-trust-on-push gate off `current_version_sha` (and, as a race backstop,
-  // an `approved` publish request with this `forgejoCommitSha`). Any push
+  // an `approved` publish request with this `forgejoCommitSha`). The webhook for
+  // THIS commit usually arrives before these writes; it recognises the commit
+  // from the `Publish-Request` trailer above and the pushing account. Any push
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
-  await dbWrite.appBlock.update({
-    where: { id: appBlockId },
-    data: {
-      currentVersionSha: forgejoCommitSha,
-      // F-E E5 — persist the validated, uploaded screenshot records. Replaces
-      // the prior set on a re-approve (the storeScreenshots keys are stable per
-      // appBlockId+index, so the objects are overwritten in place). An empty
-      // gallery is stored as [] so a re-submit that REMOVES all screenshots
-      // clears the old set rather than leaving stale entries.
-      screenshots: storedScreenshots as object,
-    },
-  });
-  await dbWrite.appBlockPublishRequest.update({
-    where: { id: request.id },
-    data: {
-      status: 'approved',
-      reviewedByUserId: params.reviewerUserId,
-      reviewedAt: new Date(),
+  const { finaliseOnsiteApprove } = await import('./publish-request-finalise.service');
+  const { lateHoldIds, revokedTokens } = await dbWrite.$transaction((tx) =>
+    finaliseOnsiteApprove(tx, {
+      holdDecision,
+      reviewerUserId: params.reviewerUserId,
       approvalNotes: params.approvalNotes,
-      forgejoCommitSha,
+      publishRequestId: request.id,
       appBlockId,
-    },
-  });
+      forgejoCommitSha,
+      screenshots: storedScreenshots as object,
+      priorVersion,
+      priorListing,
+    })
+  );
+  // A held version must not build, deploy or be announced; a moderator clears the hold first.
+  // The suspended block stops only the on-site runtime, so the live pointer comes down too.
+  if (lateHoldIds.length) {
+    // The store listing was put back in the same transaction; drop the cached catalog copy.
+    try {
+      const { bustAppListingCatalogCache } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      await bustAppListingCatalogCache();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] catalog cache bust failed after a late hold (id=${request.id}); ` +
+          `the store self-corrects within CacheTTL.sm: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
+    const { takeDownLiveApp } = await import('./live-unpublish.service');
+    const { liveNote } = await takeDownLiveApp(request.slug).catch(() => ({ liveNote: undefined }));
+    const { forgetRevokedAppTokens } = await import('./app-block-token-revoke.service');
+    await forgetRevokedAppTokens(revokedTokens);
+    return {
+      publishRequestId: request.id,
+      appBlockId,
+      forgejoCommitSha,
+      isFirstVersion,
+      lateHoldIds,
+      liveNote,
+    };
+  }
+
+  // (6a) VERSION TAG — an annotated `v<version>` on the approved commit (or, when that tag
+  // already names another commit, `approved-<request id>`; see decideVersionTag). Runs after the
+  // approval markers are durable and before the build trigger. LOG-AND-CONTINUE: a tag is a
+  // pointer for developers, and a Forgejo error here must never fail an approve whose code is
+  // committed or keep its build from starting.
+  try {
+    const { ensureApprovalTag } = await import('./forgejo.service');
+    const tagged = await ensureApprovalTag({
+      slug: request.slug,
+      version: request.version,
+      publishRequestId: request.id,
+      sha: forgejoCommitSha,
+      message: commitMessage,
+    });
+    if (tagged.status === 'skipped' || tagged.fallbackFrom) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] version tag (slug=${request.slug}, id=${request.id}): ${JSON.stringify(
+          tagged
+        )}`
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] version tag not created (slug=${request.slug}, id=${request.id}); ` +
+        `approve/deploy CONTINUES: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   // (6b) FORK PROVENANCE — if this request carries a parent (server-written onto the REQUEST at
   // creation; 🔴 never read from `manifest`), stamp it onto the block and link this app's store
@@ -4217,11 +4805,12 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // approve supersedes are left to the sweep (`jobs/sweep-review-storage.ts`).
   void teardownReviewStorageForRequest(request.id);
 
-  // (6b) Supersede any OTHER request still 'pending' for this slug. If the
-  // git-push webhook raced ahead of (6) it may have parked a duplicate
-  // pending-review row for THIS approved sha; withdraw it (and any older
-  // pending submission) so the queue reflects that the slug is now approved.
-  // Scoped to NOT touch the row we just approved.
+  // (6b) Supersede any OTHER request still 'pending' for this slug so the queue
+  // reflects that the slug is now approved. Scoped to NOT touch the row we just
+  // approved. This does not stop the webhook from parking this approve's own
+  // commit as a second request, because a row the webhook writes after this
+  // update survives it. The webhook recognises that commit by its
+  // `Publish-Request` trailer and pusher (git-push.ts ownApproveCommitRequest).
   await dbWrite.appBlockPublishRequest.updateMany({
     where: { slug: request.slug, status: 'pending', NOT: { id: request.id } },
     data: { status: 'withdrawn' },
@@ -4280,7 +4869,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // never affect the approve outcome. Gated on `hadReviewPreview` (captured from
   // deploy_state BEFORE markRequestDeployState flipped it to production
   // 'building'), so the common no-preview approve does zero extra DB/k8s work.
-  if (hadReviewPreview) void teardownReviewForRequest(request.id);
+  if (hadReviewPreview) {
+    void teardownReviewForRequest(request.id, { reviewDetail: request.deployDetail });
+  }
   // AGENTIC REVIEW (P1, audit #1) — tear down any review AGENT UNCONDITIONALLY
   // (an agent can run without a sandbox preview). Idempotent no-op otherwise.
   void teardownAgentReviewForRequest(request.id);
@@ -4465,6 +5056,32 @@ export type RetriggerBuildResult = {
   appBlockId: string;
   forgejoCommitSha: string;
 };
+
+/**
+ * No rebuild while the app has an open review hold: after a late hold the app is suspended and
+ * taken down, and rebuilding its last approved version would put it back live.
+ */
+async function assertNoOpenHoldForRetrigger(slug: string): Promise<void> {
+  const { dbWrite } = await import('~/server/db/client');
+  const { getOpenHoldsBySlug } = await import('./publish-request-holds.service');
+  let open: number;
+  try {
+    open = (await getOpenHoldsBySlug(dbWrite, [slug])).length;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[retriggerBuild] hold read failed; refusing to rebuild', err);
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      "Could not read this app's review holds, so its build cannot be re-triggered. Try again, or ask an engineer to check the review-holds tables."
+    );
+  }
+  if (open) {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      "This app has an open review hold, and a moderator must clear it before its build can run. Holds are listed on the app's pending review; if nothing is pending, ask an engineer."
+    );
+  }
+}
 
 /**
  * "APPROVED BUT NOT SUCCESSFULLY BUILT" — the precise, documented definition of a
@@ -4660,6 +5277,8 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
     );
   }
 
+  await assertNoOpenHoldForRetrigger(request.slug);
+
   // (6) Deploy-state gate (see assertRetriggerableDeployState for the definition).
   assertRetriggerableDeployState(
     request.deployState,
@@ -4804,33 +5423,15 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
 // nullable, and a pending request never uses them otherwise.
 // ---------------------------------------------------------------------------
 
-/** Preview lifecycle states (PENDING request's deploy_state). Distinct prefix
- *  from the production DeployState values so the two never collide. */
-export type ReviewPreviewState =
-  | 'preview-building'
-  | 'preview-deploying'
-  | 'preview-live'
-  | 'preview-failed';
-
-/**
- * Global cap on concurrently-active review previews across ALL moderators. Each
- * active preview holds a review Deployment + Service + IngressRoute in the apps
- * namespace, so this bounds the review sandbox's cluster footprint.
- */
-export const MAX_CONCURRENT_REVIEW_PREVIEWS = 5;
-
-/**
- * Active-preview TTL window (ms). Mirrors the `review-sandbox-janitor` CronJob's
- * 6h reap TTL: a preview the janitor has already deleted in k8s — but whose DB
- * row still reads `preview-live`, because the janitor can't write the civitai DB
- * — naturally ages OUT of the active count once its `deployUpdatedAt` is older
- * than this. No k8s call and no janitor coupling needed.
- */
-export const REVIEW_PREVIEW_TTL_MS = 6 * 60 * 60 * 1000;
+/** Preview lifecycle states (PENDING request's deploy_state). Single-sourced with the review UI
+ *  in `app-review-preview.constants`; the `preview-` prefix keeps them apart from the production
+ *  DeployState values. */
+export type { ReviewPreviewState, StoredReviewPreviewState };
 
 /** deploy_state values that count as an ACTIVE review preview. Excludes
  *  `preview-failed` (dead) and `null` (never started). */
-const ACTIVE_REVIEW_PREVIEW_STATES: ReviewPreviewState[] = [
+const ACTIVE_REVIEW_PREVIEW_STATES: StoredReviewPreviewState[] = [
+  'preview-queued',
   'preview-building',
   'preview-deploying',
   'preview-live',
@@ -4846,25 +5447,28 @@ type ActiveReviewPreviewRow = {
 };
 
 /**
- * Fetch the currently-active review-preview rows, oldest-first. The predicate —
- * `status='pending'` AND `deployState IN (building|deploying|live)` AND
- * `deployUpdatedAt > now() - REVIEW_PREVIEW_TTL_MS` — is the SINGLE source of
- * truth shared by the concurrency-cap count and the listActivePreviews query.
+ * Fetch the currently-active review-preview rows, oldest-first: `status='pending'` AND
+ * `deployState IN (queued|building|deploying|live)` AND `deployUpdatedAt` within the preview max
+ * age (`REVIEW_PREVIEW_MAX_AGE_MS`; the exact expiry is {@link isReviewPreviewExpired}). (The
+ * BUILD cap counts a narrower set: `buildSlotHolderWhere` in review-autodeploy.service.)
  * The `status='pending'` + `preview-` prefix filter is load-bearing: deploy_state
  * is SHARED with the production build lifecycle, so an approved row's `building`/
  * `live` value must never be counted here.
  */
-async function findActiveReviewPreviewRows(opts?: {
-  excludePublishRequestId?: string;
-}): Promise<ActiveReviewPreviewRow[]> {
+async function findActiveReviewPreviewRows(): Promise<ActiveReviewPreviewRow[]> {
   const { dbRead } = await import('~/server/db/client');
-  const cutoff = new Date(Date.now() - REVIEW_PREVIEW_TTL_MS);
-  return dbRead.appBlockPublishRequest.findMany({
+  const now = Date.now();
+  const rows = await dbRead.appBlockPublishRequest.findMany({
     where: {
       status: 'pending',
-      deployState: { in: ACTIVE_REVIEW_PREVIEW_STATES },
-      deployUpdatedAt: { gt: cutoff },
-      ...(opts?.excludePublishRequestId ? { id: { not: opts.excludePublishRequestId } } : {}),
+      OR: [
+        // A queued preview holds no resources and never expires (isReviewPreviewExpired).
+        { deployState: 'preview-queued' },
+        {
+          deployState: { in: ACTIVE_REVIEW_PREVIEW_STATES.filter((st) => st !== 'preview-queued') },
+          deployUpdatedAt: { gt: new Date(now - REVIEW_PREVIEW_MAX_AGE_MS) },
+        },
+      ],
     },
     orderBy: { deployUpdatedAt: 'asc' }, // oldest first — the natural teardown-candidate order
     select: {
@@ -4876,19 +5480,16 @@ async function findActiveReviewPreviewRows(opts?: {
       deployUpdatedAt: true,
     },
   });
-}
-
-/**
- * Count active review previews (see {@link findActiveReviewPreviewRows} for the
- * predicate). Global across all mods; drives the concurrency cap. Pass
- * `excludePublishRequestId` to omit a specific request (so a REBUILD of an
- * already-active preview never counts itself against the cap).
- */
-export async function countActiveReviewPreviews(opts?: {
-  excludePublishRequestId?: string;
-}): Promise<number> {
-  const rows = await findActiveReviewPreviewRows(opts);
-  return rows.length;
+  // The DB cutoff is the coarse filter; a preview whose BUILD started past the max age is gone too.
+  return rows.filter(
+    (r) =>
+      !isReviewPreviewExpired(
+        r.deployState as StoredReviewPreviewState,
+        parseReviewDetail(r.deployDetail),
+        r.deployUpdatedAt,
+        now
+      )
+  );
 }
 
 export type ActiveReviewPreview = {
@@ -4901,18 +5502,29 @@ export type ActiveReviewPreview = {
 };
 
 /**
- * List the currently-active review previews (same predicate as the cap count),
- * oldest-first, for the global "Active previews (N / cap)" mod panel. Does NOT
- * mint mr access tokens — per-row token minting on a list poll is wasteful;
+ * List the currently-active review previews, oldest-first, for the global "Active
+ * previews" mod panel, with the platform BUILD cap and how many slots are held now.
+ * Does NOT mint mr access tokens — per-row token minting on a list poll is wasteful;
  * opening a live preview stays in the per-request panel via getReviewStatus.
  */
 export async function listActiveReviewPreviews(): Promise<{
+  /** Concurrent review builds allowed (automatic starts queue past it). */
   cap: number;
+  /** Build slots held right now. */
+  building: number;
   active: ActiveReviewPreview[];
 }> {
-  const rows = await findActiveReviewPreviewRows();
+  const [{ dbRead }, { buildSlotHolderWhere, MAX_CONCURRENT_REVIEW_BUILDS }] = await Promise.all([
+    import('~/server/db/client'),
+    import('./review-autodeploy.service'),
+  ]);
+  const [rows, building] = await Promise.all([
+    findActiveReviewPreviewRows(),
+    dbRead.appBlockPublishRequest.count({ where: buildSlotHolderWhere(new Date()) }),
+  ]);
   return {
-    cap: MAX_CONCURRENT_REVIEW_PREVIEWS,
+    cap: MAX_CONCURRENT_REVIEW_BUILDS,
+    building,
     active: rows.map((r) => ({
       publishRequestId: r.id,
       slug: r.slug,
@@ -4933,8 +5545,29 @@ export type ReviewPreviewDetail = {
   url?: string;
   /** Human-readable failure detail when state is preview-failed. */
   error?: string;
-  /** Mod who started the preview (audit). */
+  /** Who started the preview (audit): `system` for an automatic start at submit. */
+  actor?: 'moderator' | 'system';
+  /** Mod who started the preview (audit), when `actor` is `moderator`. */
   modUserId?: number;
+  /** When an automatic start was queued for a build slot (ISO). */
+  queuedAt?: string;
+  /**
+   * When this build started (ISO), stamped by startClaimedReviewBuild and carried through the
+   * callback's later writes. The preview's resources are created after it (a re-apply recreates
+   * them), so a 14-day expiry counted from here is never later than the janitor's reap.
+   */
+  buildStartedAt?: string;
+  /**
+   * Whether this build's preview was published to the shared static server, recorded by the
+   * build callback when it starts the apply step. The teardown follows it, not the flag's current
+   * value.
+   */
+  sharedServer?: boolean;
+  /**
+   * Set (with state `preview-failed`) when the review build PASSED in a build-only environment
+   * (APPS_REVIEW_BUILD_ONLY, PR previews): the build is recorded and no preview is served.
+   */
+  buildOnly?: boolean;
 };
 
 /** Pack a ReviewPreviewDetail into the deploy_detail string column. */
@@ -4987,10 +5620,10 @@ export function parseReviewDetail(raw: string | null | undefined): ReviewPreview
  */
 export async function markReviewPreviewState(
   publishRequestId: string,
-  state: ReviewPreviewState,
+  state: StoredReviewPreviewState,
   detail: ReviewPreviewDetail,
   opts?: { requireActivePreview?: boolean; expectedSha?: string }
-): Promise<void> {
+): Promise<number> {
   try {
     const { dbWrite } = await import('~/server/db/client');
     const res = await dbWrite.appBlockPublishRequest.updateMany({
@@ -5016,6 +5649,7 @@ export async function markReviewPreviewState(
         `[markReviewPreviewState] no pending request matched (id=${publishRequestId}, state=${state})`
       );
     }
+    return res.count;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(
@@ -5023,12 +5657,16 @@ export async function markReviewPreviewState(
         err instanceof Error ? err.message : String(err)
       }`
     );
+    // -1, not 0: the write failed, so whether the row is still this preview is UNKNOWN. A caller
+    // that acts on "matched no row" (the watcher unpublishes an orphaned preview) must not act.
+    return -1;
   }
 }
 
 export type PreviewRequestParams = {
   publishRequestId: string;
-  modUserId: number;
+  /** Who is starting it, recorded on the preview detail: a moderator, or `system` (automatic). */
+  actor: ReviewPreviewActor;
 };
 
 export type PreviewRequestResult = {
@@ -5077,7 +5715,7 @@ async function reviewRepoAlreadyHoldsTree(
 ): Promise<boolean> {
   try {
     const { listRepoTree } = await import('./forgejo.service');
-    const tree = await listRepoTree(slug, 'main', REVIEW_REPO_ORG);
+    const tree = await listRepoTree(slug, 'main', FORGEJO_REVIEW_ORG);
     if (tree.size !== files.length) return false;
     const seen = new Set<string>();
     for (const file of files) {
@@ -5158,7 +5796,7 @@ async function resolveReviewSourceSha(request: {
   }
 
   const { sha } = await commitFiles({
-    org: REVIEW_REPO_ORG,
+    org: FORGEJO_REVIEW_ORG,
     slug: request.slug,
     files,
     message: `Review source for pushed commit ${request.forgejoCommitSha.slice(0, 12)}`,
@@ -5168,65 +5806,132 @@ async function resolveReviewSourceSha(request: {
 }
 
 /**
- * Start a review preview for a PENDING publish request. Resolves the pending
- * version's source tree (see {@link resolveReviewSourceSha} — the in-review repo
- * HEAD for a ZIP submission, the mirrored push commit for a git-push one),
- * triggers a REVIEW build (separate image + host from production), stamps state
- * `preview-building`, and returns the review URL the UI polls toward. The
- * build-callback (review-build-callback) advances deploying → live, or flips to
- * failed.
+ * A MODERATOR's start of a review preview for a PENDING publish request (the "Start preview" /
+ * "Rebuild preview" button). Claims a build slot — a moderator's start is admitted even when every
+ * slot is held, so it jumps any automatic queue — then starts the build
+ * ({@link startClaimedReviewBuild}). Automatic starts never come through here: they are queued at
+ * submit and claimed by the queue drain in review-autodeploy.service.
  *
- * Throws (BAD_REQUEST upstream) if the request isn't pending or the trigger
- * fails — the router maps it. The whole feature is dark behind the mod-only
- * review-sandbox flag (gated in the router), so this never runs in prod until
- * enabled.
+ * Throws (BAD_REQUEST upstream) if the request isn't pending or the trigger fails — the router
+ * maps it. Gated in the router behind the mod-only review-sandbox flag.
  */
 export async function previewRequest(params: PreviewRequestParams): Promise<PreviewRequestResult> {
-  const [{ dbRead }, { env }] = await Promise.all([
-    import('~/server/db/client'),
-    import('~/env/server'),
-  ]);
-  const { triggerReviewBuild, reviewHost } = await import('./apps-pipeline.service');
-
+  const { dbRead } = await import('~/server/db/client');
   const request = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: params.publishRequestId },
-    // bundleKey + forgejoCommitSha are the ORIGIN discriminator (ZIP upload vs
-    // git push). Without them this cannot tell which repo holds the pending
-    // version's source — see resolveReviewSourceSha.
-    select: { id: true, status: true, slug: true, bundleKey: true, forgejoCommitSha: true },
+    select: { id: true, status: true },
   });
   if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (request.status !== 'pending') {
     throw new Error(`can only preview a pending request (status is ${request.status})`);
   }
 
-  // Global concurrent-preview cap. Count OTHER active previews (exclude THIS
-  // request) so a REBUILD of an already-active preview is never blocked, and a
-  // fresh request is blocked only when MAX others are already active. SOFT cap:
-  // two simultaneous clicks can both pass the count and land at cap+1 — accepted
-  // (no DB lock), same fail-open posture as the block-catalog checkpoint cache
-  // rate limit (checkpoint.service). One extra review env is harmless.
-  const activeOthers = await findActiveReviewPreviewRows({
-    excludePublishRequestId: request.id,
+  const { claimReviewBuildSlot } = await import('./review-autodeploy.service');
+  const claim = await claimReviewBuildSlot({
+    kind: 'request',
+    publishRequestId: request.id,
+    actor: params.actor,
   });
-  if (activeOthers.length >= MAX_CONCURRENT_REVIEW_PREVIEWS) {
-    const slugs = activeOthers.slice(0, 8).map((r) => r.slug);
-    const more =
-      activeOthers.length > slugs.length ? `, +${activeOthers.length - slugs.length} more` : '';
-    throw new Error(
-      `Review preview cap reached (${
-        activeOthers.length
-      }/${MAX_CONCURRENT_REVIEW_PREVIEWS} active): ${slugs.join(
-        ', '
-      )}${more}. Tear down a preview to free a slot.`
+  if (!claim.claimed) {
+    throw new Error(`can only preview a pending request (${params.publishRequestId} changed)`);
+  }
+  return startClaimedReviewBuild(claim.claimed, params.actor, {
+    replacedDeployDetail: claim.replacedDeployDetail,
+  });
+}
+
+/**
+ * A rebuild REPLACES the row's deploy detail, the only record that the old build was published to
+ * the shared static server's review lane, so unpublish from the detail the claim replaced, in
+ * whatever state it was left (a `preview-failed` preview can be published too).
+ *
+ * Only for a detail that RECORDS `sharedServer: true` and a full sha: a per-preview preview, or
+ * one whose serving mode was never recorded (its build never reached the apply step, so nothing
+ * was published), has nothing on the shared server. Unpublishing deletes only
+ * `review/<sha16>/meta.json` in the bucket; a per-preview route for the same host (a same-sha
+ * rebuild with the flag off) is a different backend and outranks the shared review route, so it
+ * is unaffected. Best-effort: it never blocks the rebuild.
+ *
+ * 🔴 NOT FOR THE SAME SHA. Called once the new build's sha is resolved (`newSha`), and skipped when
+ * it equals the replaced one: with the flag on the new build republishes that same
+ * `review/<sha16>/meta.json`, and an unpublish Job landing after that publish would leave the
+ * preview marked live but 404ing, with the callback's replay guard stopping any republish. The
+ * cost, accepted: a same-sha rebuild with the flag OFF leaves the old shared meta in place
+ * (shadowed by the per-preview route, gated, and expired by the bucket lifecycle). `newSha`
+ * undefined (the source could not be resolved, so nothing new will be published) unpublishes.
+ */
+async function unpublishReplacedSharedPreview(
+  request: { id: string; slug: string },
+  replacedDeployDetail: string | null | undefined,
+  newSha: string | undefined
+): Promise<void> {
+  const replaced = parseReviewDetail(replacedDeployDetail);
+  if (replaced.sharedServer !== true || !/^[0-9a-f]{40}$/.test(replaced.sha ?? '')) return;
+  if (newSha !== undefined && replaced.sha === newSha) return;
+  try {
+    const { triggerReviewUnpublish } = await import('./apps-pipeline.service');
+    await triggerReviewUnpublish({
+      slug: request.slug,
+      sha: replaced.sha as string,
+      publishRequestId: request.id,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[previewRequest] unpublish of the replaced shared-server preview failed (id=${
+        request.id
+      }): ${err instanceof Error ? err.message : String(err)}`
     );
   }
+}
+
+/**
+ * Build a review preview for a request that already holds a build slot (its row reads
+ * `preview-building`). Resolves the pending version's source tree (see
+ * {@link resolveReviewSourceSha} — the in-review repo HEAD for a ZIP submission, the mirrored
+ * push commit for a git-push one), triggers a REVIEW build (separate image + host from
+ * production), stamps the sha/host/url onto the row, and returns the review URL the UI polls
+ * toward. The build-callback (review-build-callback) advances deploying → live, or flips to failed.
+ *
+ * Any failure flips the row to `preview-failed` (freeing the slot) and throws.
+ */
+export async function startClaimedReviewBuild(
+  request: { id: string; slug: string; bundleKey: string; forgejoCommitSha: string | null },
+  actor: ReviewPreviewActor,
+  /** A rebuild's claim: the deploy detail it replaced (see unpublishReplacedSharedPreview). */
+  opts: { replacedDeployDetail?: string | null } = {}
+): Promise<PreviewRequestResult> {
+  const { env } = await import('~/env/server');
+  const [{ triggerReviewBuild, reviewHost }, { reviewActorDetail }] = await Promise.all([
+    import('./apps-pipeline.service'),
+    import('./review-autodeploy.service'),
+  ]);
+  const actorDetail = { ...reviewActorDetail(actor), buildStartedAt: new Date().toISOString() };
+  // Every write after the claim requires the row to still be an active preview, so a moderator's
+  // teardown mid-start is not resurrected.
+  const guard = { requireActivePreview: true };
 
   // Resolve the pending version's source tree. ZIP submissions read the
   // in-review repo HEAD (submitVersion pushed it there; one pending per slug);
   // git-push submissions mirror the reviewed commit in first. Build clones +
   // tags at this sha.
-  const sha = await resolveReviewSourceSha(request);
+  let sha: string;
+  try {
+    sha = await resolveReviewSourceSha(request);
+  } catch (err) {
+    await unpublishReplacedSharedPreview(request, opts.replacedDeployDetail, undefined);
+    await markReviewPreviewState(
+      request.id,
+      'preview-failed',
+      {
+        ...actorDetail,
+        error: `could not resolve the review source: ${(err as Error).message}`.slice(0, 240),
+      },
+      guard
+    );
+    throw err;
+  }
+  await unpublishReplacedSharedPreview(request, opts.replacedDeployDetail, sha);
   const host = reviewHost(sha, env.APPS_DOMAIN);
   const url = `https://${host}/${request.slug}`;
 
@@ -5235,14 +5940,14 @@ export async function previewRequest(params: PreviewRequestParams): Promise<Prev
     ''
   )}/api/internal/blocks/review-build-callback`;
 
-  // Mark building BEFORE the trigger so the UI sees state immediately even if the
-  // trigger response is slow; a trigger failure flips it back to failed below.
-  await markReviewPreviewState(request.id, 'preview-building', {
-    sha,
-    host,
-    url,
-    modUserId: params.modUserId,
-  });
+  // Stamp the sha/host/url BEFORE the trigger so the UI sees them immediately even if the
+  // trigger response is slow; a trigger failure flips it to failed below.
+  await markReviewPreviewState(
+    request.id,
+    'preview-building',
+    { sha, host, url, ...actorDetail },
+    guard
+  );
 
   let run: { name: string };
   try {
@@ -5250,17 +5955,22 @@ export async function previewRequest(params: PreviewRequestParams): Promise<Prev
       slug: request.slug,
       sha,
       publishRequestId: request.id,
-      modUserId: params.modUserId,
+      modUserId: actor.kind === 'moderator' ? actor.userId : 'system',
       callbackUrl,
     });
   } catch (err) {
-    await markReviewPreviewState(request.id, 'preview-failed', {
-      sha,
-      host,
-      url,
-      modUserId: params.modUserId,
-      error: `review build trigger failed: ${(err as Error).message}`.slice(0, 240),
-    });
+    await markReviewPreviewState(
+      request.id,
+      'preview-failed',
+      {
+        sha,
+        host,
+        url,
+        ...actorDetail,
+        error: `review build trigger failed: ${(err as Error).message}`.slice(0, 240),
+      },
+      guard
+    );
     throw new Error(`could not start review build: ${(err as Error).message}`);
   }
   await recordRunTriggered('review', request.id, request.slug, sha, run.name);
@@ -5291,6 +6001,45 @@ export type ReviewStatusResult = {
    */
   previewUrl?: string;
 };
+
+/**
+ * Past its maximum age the cluster janitor has reaped the preview's resources, so it is reported
+ * `preview-expired` (the UI offers a rebuild). Counted from the build's start
+ * (`detail.buildStartedAt`), which precedes the resources' creation, so it never reads live after
+ * the janitor's reap; a row written before that field existed falls back to its last state change.
+ * A queued preview holds no resources and never expires.
+ */
+export function isReviewPreviewExpired(
+  state: StoredReviewPreviewState,
+  detail: ReviewPreviewDetail,
+  updatedAt: Date | null,
+  now: number = Date.now()
+): boolean {
+  if (state === 'preview-queued') return false;
+  const started = detail.buildStartedAt ? Date.parse(detail.buildStartedAt) : NaN;
+  const from = Number.isFinite(started) ? started : updatedAt?.getTime();
+  if (from === undefined) return false;
+  return now - from > REVIEW_PREVIEW_MAX_AGE_MS;
+}
+
+/**
+ * The preview state a moderator is SHOWN for a pending request: its stored `preview-*` value, or
+ * `preview-expired` past {@link isReviewPreviewExpired}. `null` when it has no preview. Shared
+ * by `getReviewStatus` (the review page) and `listPendingRequests` (the queue chip), so the two
+ * surfaces cannot disagree about one request.
+ */
+export function reportedReviewPreviewState(
+  deployState: string | null | undefined,
+  deployDetail: string | null | undefined,
+  updatedAt: Date | null,
+  now: number = Date.now()
+): ReviewPreviewState | null {
+  if (typeof deployState !== 'string' || !deployState.startsWith('preview-')) return null;
+  const stored = deployState as StoredReviewPreviewState;
+  return isReviewPreviewExpired(stored, parseReviewDetail(deployDetail), updatedAt, now)
+    ? 'preview-expired'
+    : stored;
+}
 
 /**
  * Poll target for the mod-review UI: returns the current preview lifecycle state
@@ -5326,8 +6075,8 @@ export async function getReviewStatus(opts: {
   if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
   const isPreviewState =
     typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
-  const state = isPreviewState ? (row.deployState as ReviewPreviewState) : null;
   const detail = isPreviewState ? parseReviewDetail(row.deployDetail) : {};
+  const state = reportedReviewPreviewState(row.deployState, row.deployDetail, row.deployUpdatedAt);
 
   let previewUrl: string | undefined;
   if (state === 'preview-live' && opts.modUserId != null && detail.host && detail.url) {
@@ -5425,6 +6174,22 @@ export async function resolveReviewRequestTarget(
 }
 
 /**
+ * The review's provenance block: the client's CLAIM (`source_commit` / `source_dirty`) and the
+ * checked GitHub Actions run, kept as two separate fields so the UI can label them "claimed" and
+ * "verified". Neither is derived from the other.
+ */
+function reviewSourceProvenance(
+  claim: { sourceCommit: string | null; sourceDirty: boolean | null },
+  actionsRun: ActionsRunSource | undefined
+): ReviewSourceProvenance {
+  return {
+    claimedCommit: claim.sourceCommit,
+    claimedDirty: claim.sourceDirty,
+    actionsRun: actionsRun ?? null,
+  };
+}
+
+/**
  * Single-request fetch for the review PAGE. Returns the SAME hydrated shape one
  * item of `listPending/Approved/RejectedRequests` returns (so the extracted
  * `OnsiteReviewModalBody` renders identically to the modal path), plus the
@@ -5461,6 +6226,9 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
+      // The client's provenance CLAIM, shown beside the checked Actions run as "claimed".
+      sourceCommit: true,
+      sourceDirty: true,
       submittedBy: { select: reviewUserChipSelect },
       reviewedBy: { select: reviewUserChipSelect },
     },
@@ -5472,11 +6240,16 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
   // Match the list builders' row mapping exactly (bundle bigint → string,
   // Forgejo review-repo deep link, push-row canonical-commit link, and the
   // slug-joined store-listing facts the review surfaces render).
-  const { status, ...rest } = r;
-  const listingFacts = await listingFactsForRequests([r as ListingJoinSubject]);
+  const { status, sourceCommit, sourceDirty, ...rest } = r;
+  const { readActionsRunSourcesForRender } = await import('./actions-run-source.service');
+  const [listingFacts, actionsRuns] = await Promise.all([
+    listingFactsForRequests([r as ListingJoinSubject]),
+    readActionsRunSourcesForRender(dbRead, [r.id]),
+  ]);
   const request = {
     ...rest,
     ...listingFacts(r.id),
+    sourceProvenance: reviewSourceProvenance({ sourceCommit, sourceDirty }, actionsRuns.get(r.id)),
     bundleSizeBytes: r.bundleSizeBytes.toString(),
     reviewRepoUrl: reviewRepoUrl(r.slug),
     pushCommitUrl:
@@ -5704,7 +6477,7 @@ export async function mintReviewBlockToken(opts: {
       buzzCap: runForReal ? REVIEW_RUN_FOR_REAL_BUZZ_CAP : null,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   return {
     token: result.token,
@@ -5730,7 +6503,15 @@ export async function mintReviewBlockToken(opts: {
  * the decision path: it reads the stored review sha (if any) + deletes the
  * review k8s resources by label selector, swallowing every error.
  */
-export async function teardownReviewForRequest(publishRequestId: string): Promise<void> {
+export async function teardownReviewForRequest(
+  publishRequestId: string,
+  /**
+   * The preview's detail as read before the caller changed the row. approveRequest passes it:
+   * by the time it tears down, markRequestDeployState has cleared the row's detail, and without
+   * the sha the shared-server preview would never be unpublished.
+   */
+  opts: { reviewDetail?: string | null } = {}
+): Promise<void> {
   // MOD REVIEW SANDBOX "run for real" (#2831) — drop the DISPOSABLE preview
   // storage schema (`apprev_<pubreq>`) a mod may have created by running the app
   // for real. Runs FIRST, in its OWN try/catch, so a downstream failure (the
@@ -5768,12 +6549,15 @@ export async function teardownReviewForRequest(publishRequestId: string): Promis
     // has already flipped the (now approved) row's deploy_state to a production
     // 'building' value, so a deploy_state guard would skip the teardown and leak
     // the review env. The label selector is the real safety boundary.
-    const detail = parseReviewDetail(row.deployDetail);
+    const detail = parseReviewDetail(
+      opts.reviewDetail !== undefined ? opts.reviewDetail : row.deployDetail
+    );
     const { deleteReviewResources } = await import('./apps-pipeline.service');
     await deleteReviewResources({
       slug: row.slug,
       sha: detail.sha ?? '',
       publishRequestId,
+      sharedServer: detail.sharedServer,
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -5881,6 +6665,65 @@ export async function teardownReviewStorageForRequest(publishRequestId: string):
 }
 
 /**
+ * A review build finished for a row that is no longer an active preview: release the build slot
+ * it still holds, but only the slot of THAT build: the row's detail must still carry the build's
+ * sha (and, when the caller knows it, its `buildStartedAt`), so an old build's callback or watcher
+ * can never free the slot a newer build of the same request now holds. Two shapes hold one (see buildSlotHolderWhere): a superseded, withdrawn or
+ * decided row still in a building state, and a preview torn down mid-build (no preview, its
+ * started-build detail kept). An active pending preview is never touched. Never throws.
+ */
+export async function releaseSettledBuildSlot(
+  publishRequestId: string,
+  build: { sha: string; buildStartedAt?: string }
+): Promise<void> {
+  try {
+    if (!/^[0-9a-f]{40}$/.test(build.sha)) return;
+    const { dbWrite } = await import('~/server/db/client');
+    await dbWrite.appBlockPublishRequest.updateMany({
+      where: {
+        id: publishRequestId,
+        OR: [
+          { deployState: { in: [...BUILDING_REVIEW_PREVIEW_STATES] }, status: { not: 'pending' } },
+          { deployState: null, deployDetail: { contains: STARTED_REVIEW_BUILD_DETAIL_MARK } },
+        ],
+        AND: [
+          { deployDetail: { contains: `"sha":"${build.sha}"` } },
+          ...(build.buildStartedAt
+            ? [{ deployDetail: { contains: `"buildStartedAt":"${build.buildStartedAt}"` } }]
+            : []),
+        ],
+      },
+      data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[releaseSettledBuildSlot] failed (id=${publishRequestId}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+/** Fire-and-forget queue drain (review-autodeploy.service). Never rejects. */
+function drainReviewQueueSoon(): Promise<unknown> {
+  return import('./review-autodeploy.service')
+    .then((m) => m.drainReviewPreviewQueue())
+    .catch(() => undefined);
+}
+
+/**
+ * Everything that follows a NEW pending request — the moderator alert and the automatic review
+ * preview (review-autodeploy.service). Fire-and-forget: nothing it does can fail or delay the
+ * submit that created the row.
+ */
+function announceNewPendingRequest(sub: NewPendingSubmission): void {
+  void import('./review-autodeploy.service')
+    .then((m) => m.onNewPendingSubmission(sub))
+    .catch(() => undefined);
+}
+
+/**
  * MANUAL teardown of a single review preview (the mod-facing "Tear down"
  * action + the way to free a slot when the concurrency cap is hit). Distinct
  * from teardownReviewForRequest (fired from approve/reject) in that it ALSO
@@ -5920,6 +6763,7 @@ export async function teardownPreview(opts: {
       slug: row.slug,
       sha: detail.sha ?? '',
       publishRequestId: opts.publishRequestId,
+      sharedServer: detail.sharedServer,
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -5933,10 +6777,26 @@ export async function teardownPreview(opts: {
   // Clear the DB regardless of the k8s outcome. Only ever runs when the row was
   // a preview-* state (guarded above), so it can't clobber a production
   // building/live deploy_state.
-  await dbWrite.appBlockPublishRequest.update({
-    where: { id: opts.publishRequestId },
-    data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
-  });
+  if (row.deployState === 'preview-building') {
+    // No preview any more (deploy_state null: the UI shows none, and the callback's
+    // requireActivePreview writes cannot publish or deploy it), but its build is still running.
+    // Only `preview-building`: in `preview-deploying` the build's callback has already run, so
+    // nothing would ever release a slot kept here before the stale window.
+    // The started-build detail is kept, so the row keeps holding its build slot until the build's
+    // callback clears it (releaseSettledBuildSlot) or the stale window passes. deployUpdatedAt is
+    // kept, so that window still counts from the build's last state change.
+    await dbWrite.appBlockPublishRequest.update({
+      where: { id: opts.publishRequestId },
+      data: { deployState: null },
+    });
+  } else {
+    await dbWrite.appBlockPublishRequest.update({
+      where: { id: opts.publishRequestId },
+      data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
+    });
+    // A torn-down queued or live preview held no running build; the queue may move on.
+    void drainReviewQueueSoon();
+  }
 
   return { publishRequestId: row.id, tornDown: true };
 }
@@ -6013,6 +6873,8 @@ export async function backfillPublishRequest(
   if (!manifest || typeof manifest !== 'object') {
     throw new Error(`backfilled bundle for ${params.slug} has no valid block.manifest.json`);
   }
+  // The repo's block.manifest.json keeps the author's padding; the stored row does not.
+  trimManifestStringFields(manifest as Record<string, unknown>);
 
   // Idempotency: if a publish_request for this exact (slug, sha) already
   // exists, return it instead of inserting a duplicate.

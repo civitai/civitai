@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import type { QueryResult } from 'pg';
 import * as z from 'zod';
+import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { queryWithTimeout } from '~/server/db/db-helpers';
 import type {
@@ -27,7 +28,7 @@ export const storedDetectorSchema = z.strictObject({
   clickhouse: z.string().trim().min(1).optional(),
   /** Whether every row carries the moment it was achieved. Undated rows must leave it NULL. */
   dated: z.boolean(),
-  launchedAt: z.iso.datetime().transform((at) => new Date(at)),
+  launchedAt: isoDatetimeCompat().transform((at) => new Date(at)),
   silent: z.literal(true).optional(),
 });
 

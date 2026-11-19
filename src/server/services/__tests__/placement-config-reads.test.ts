@@ -52,6 +52,14 @@ vi.mock('~/server/services/free-placement.service', () => ({
   hasUsedFreePlacementOn: vi.fn(),
 }));
 
+// The host image read runs through Kysely, not Prisma's `$queryRaw`: it gets the same one row (see
+// beforeEach). The hosts-with-entries lookup in front of the has-entries probe finds no placement.
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
+const ONE_ROW = [{ score: 0, exists: false, count: 0, nsfwLevel: 1, minor: false, showable: true }];
+
 const { getPlacementConfig, placementPriceRange } = await import(
   '~/server/services/placement.service'
 );
@@ -96,9 +104,12 @@ beforeEach(() => {
   placementReads.getUserPlacementScore.mockResolvedValue([{ score: 0 }]);
   dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'host-owner' });
   // One row answering every raw read on these paths: the has-entries probe and the host image.
-  dbMock.dbRead.$queryRaw.mockResolvedValue([
-    { score: 0, exists: false, count: 0, nsfwLevel: 1, minor: false, showable: true },
-  ]);
+  dbMock.dbRead.$queryRaw.mockResolvedValue(ONE_ROW);
+  kysely.read
+    .mockReset()
+    .mockImplementation(async (strings: readonly string[]) =>
+      strings.join('?').includes('SELECT DISTINCT pl."targetId" AS "hostId"') ? [] : ONE_ROW
+    );
 });
 
 describe('placement config reads per call', () => {

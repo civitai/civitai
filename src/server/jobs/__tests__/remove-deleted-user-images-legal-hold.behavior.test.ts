@@ -1,3 +1,4 @@
+import { DELETED_ROW_COLUMNS_SQL } from '../../services/__tests__/deleted-row-columns.fixture';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
@@ -109,6 +110,16 @@ beforeAll(async () => {
       'utf8'
     )
   );
+  // The drain asks it whether a post holds held text.
+  await holder.db.exec(
+    readFileSync(
+      path.resolve(
+        __dirname,
+        '../../../../packages/civitai-db-schema/prisma/migrations/20270108093000_post_text/migration.sql'
+      ),
+      'utf8'
+    )
+  );
   // Off, so what stays is the drain's doing: the delete triggers would keep a held owner's rows
   // whatever the drain asked for, and the report trigger would add markers to the report cases.
   await holder.db.exec(`
@@ -117,6 +128,7 @@ beforeAll(async () => {
     ALTER TABLE "CsamReport" DISABLE TRIGGER "CsamReport_evidence_hold";
     INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED}, 'manual', 'review');
   `);
+  await holder.db.exec(DELETED_ROW_COLUMNS_SQL);
 });
 
 beforeEach(async () => {
@@ -142,15 +154,13 @@ beforeEach(async () => {
   vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(execute);
 
   // The row DELETE `deleteImages` runs, with `onlyWhere` composed into it the same way.
-  mockDeleteImages.mockImplementation(
-    async (ids: number[], _updatePosts?: boolean, opts?: { onlyWhere?: Prisma.Sql }) => {
-      if (hooks.beforeDelete) await hooks.beforeDelete(ids);
-      const where = opts?.onlyWhere ? Prisma.sql`AND (${opts.onlyWhere})` : Prisma.empty;
-      const sql = Prisma.sql`DELETE FROM "Image" WHERE id = ANY(${ids}::int[]) ${where} RETURNING id`;
-      const { rows } = await holder.db.query<{ id: number }>(sql.text, sql.values as unknown[]);
-      return rows;
-    }
-  );
+  mockDeleteImages.mockImplementation(async (ids: number[], opts?: { onlyWhere?: Prisma.Sql }) => {
+    if (hooks.beforeDelete) await hooks.beforeDelete(ids);
+    const where = opts?.onlyWhere ? Prisma.sql`AND (${opts.onlyWhere})` : Prisma.empty;
+    const sql = Prisma.sql`DELETE FROM "Image" WHERE id = ANY(${ids}::int[]) ${where} RETURNING id`;
+    const { rows } = await holder.db.query<{ id: number }>(sql.text, sql.values as unknown[]);
+    return rows;
+  });
 
   await holder.db.exec(`
     TRUNCATE "User", "Thread", "Post", "Image", "CsamReport" CASCADE;

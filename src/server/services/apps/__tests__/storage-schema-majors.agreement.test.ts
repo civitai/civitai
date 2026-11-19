@@ -92,10 +92,12 @@ async function adapterMajor(approved: CatalogApprovedRequest[], head: unknown): 
     loadIconUrls: async () => new Map(),
   };
   const apps = await readCatalog(deps);
-  const resolve = resolveFromCatalog(async () => apps, {
-    ...APP_STORAGE_ENABLED_FEATURES,
-    registryExport: true,
-  });
+  // Content levels are not what this compares: the export reads ungated, as it may only in a test.
+  const resolve = resolveFromCatalog(
+    async () => apps,
+    { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true },
+    { requireDocLevels: false }
+  );
   // The family of any published major is the whole family; @v1 always exists.
   const stream = await resolve(V(1));
   if (!stream) throw new Error('the adapter published no cards stream');

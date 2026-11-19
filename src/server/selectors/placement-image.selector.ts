@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 
 /**
  * The host image behind a placement, as every placement surface reads it.
@@ -49,8 +50,7 @@ export const placementImageSelect = Prisma.validator<Prisma.ImageSelect>()({
  * added here does NOT reach the remix gallery and has to be added there too —
  * `acceptableMinor`, the clause this docblock calls out, was already missing
  * from that copy once. The two also differ deliberately today: the SQL copy
- * excludes level 0 and licence-restricted images, and this one leaves those to
- * its caller.
+ * excludes level 0, and this one leaves that to its caller.
  *
  * 🔴 Published is not public. A post inherits its availability from the model
  * version, so it can be published AND private, and nothing on the placement
@@ -76,4 +76,5 @@ export const publishedPlacementImageWhere = (): Prisma.ImageWhereInput => ({
   poi: false,
   needsReview: null,
   acceptableMinor: false,
+  ...imageNotRestrictedWhere(),
 });

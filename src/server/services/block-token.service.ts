@@ -168,6 +168,8 @@ export interface SignBlockTokenInput {
    * (treat absent as SFW), so omit the claim only for that legacy path.
    */
   maxBrowsingLevel?: number;
+  /** The viewer's own level intersected with `maxBrowsingLevel`; see `BlockTokenClaims`. */
+  viewerBrowsingLevel?: number;
   /**
    * DEV-TOKEN marker. Set ONLY by the mod-gated dev-token mint endpoint
    * (`/api/v1/blocks/dev-token`) for the `dev:live` localhost harness. When
@@ -348,6 +350,9 @@ export class BlockTokenService {
     // influence them.
     if (typeof input.maxBrowsingLevel === 'number') {
       claims.maxBrowsingLevel = input.maxBrowsingLevel;
+    }
+    if (typeof input.viewerBrowsingLevel === 'number') {
+      claims.viewerBrowsingLevel = input.viewerBrowsingLevel;
     }
     if (input.domain != null) {
       claims.domain = input.domain;

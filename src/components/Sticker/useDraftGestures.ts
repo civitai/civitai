@@ -73,7 +73,7 @@ export function useDraftGestures(maxScale: number) {
       if (active.mode === 'rotate') {
         const dx = pointerX - current.x * bounds.width;
         const dy = pointerY - current.y * bounds.height;
-        move(active.draftId, { rotation: knobRotation(dx, dy) });
+        move(active.draftId, { rotation: knobRotation(dx, dy, active.knobBelow) });
         return;
       }
 

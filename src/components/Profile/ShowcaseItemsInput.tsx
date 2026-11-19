@@ -134,6 +134,7 @@ export const ShowcaseItemsInput = ({
             supportedIndexes={supportedIndexes}
             onItemSelected={onItemSelected}
             filters={`user.username = ${quoteMeiliValue(username)}`}
+            imageOwner={username}
             dropdownItemLimit={25}
           />
         )}

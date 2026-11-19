@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { StickerTrack, StickerTrackSample } from '~/shared/utils/sticker-track';
 import {
   encodeStickerTrack,
+  momentStickerTrack,
   sampleStickerTrack,
   STICKER_TRACK_MAX_BYTES,
   stickerTrackRefusal,
@@ -175,7 +176,7 @@ describe('stickerTrackRefusal', () => {
     ['a zero capture rate', { ...ok, ms: 0 }, /capture rate/],
     ['a capture rate under the floor', { ...ok, ms: 5 }, /capture rate/],
     ['a capture rate over a second', { ...ok, ms: 2000 }, /capture rate/],
-    ['an unknown version', { ...ok, v: 2 as 1 }, /version/],
+    ['an unknown version', { ...ok, v: 3 as 1 }, /version/],
   ])('refuses %s', (_, track, reason) => {
     expect(stickerTrackRefusal(track)).toMatch(reason);
   });
@@ -185,5 +186,44 @@ describe('stickerTrackRefusal', () => {
     const track = { ...ok, ms: 20, x };
     expect(JSON.stringify(track).length).toBeGreaterThan(STICKER_TRACK_MAX_BYTES);
     expect(stickerTrackRefusal(track)).toMatch(/too long/);
+  });
+});
+
+describe('momentStickerTrack', () => {
+  const at = { x: 0.2, y: 0.7, scale: 0.3, rotation: 15 };
+
+  it('shows only inside its window, and the server accepts it', () => {
+    const track = momentStickerTrack(at, 12000, 1000);
+
+    expect(stickerTrackRefusal(track)).toBeNull();
+    expect(track.show).toEqual([
+      [0, 0],
+      [120, 1],
+      [130, 0],
+    ]);
+    expect(sampleStickerTrack(track, 11900).show).toBe(false);
+    expect(sampleStickerTrack(track, 12000).show).toBe(true);
+    expect(sampleStickerTrack(track, 12900).show).toBe(true);
+    expect(sampleStickerTrack(track, 13000).show).toBe(false);
+  });
+
+  it('holds one pose, so readers of the start pose draw it where it was placed', () => {
+    const track = momentStickerTrack(at, 12000, 1000);
+
+    expect(track.x).toEqual([[0, 0.2]]);
+    expect(sampleStickerTrack(track, 0)).toMatchObject(at);
+    expect(sampleStickerTrack(track, 12500)).toMatchObject(at);
+  });
+
+  it('rounds the start to the nearest capture', () => {
+    expect(momentStickerTrack(at, 12340, 1000).show?.[1]).toEqual([123, 1]);
+    expect(momentStickerTrack(at, 12360, 1000).show?.[1]).toEqual([124, 1]);
+  });
+
+  it('starts visible when pinned to the first frame', () => {
+    expect(momentStickerTrack(at, 0, 500).show).toEqual([
+      [0, 1],
+      [5, 0],
+    ]);
   });
 });

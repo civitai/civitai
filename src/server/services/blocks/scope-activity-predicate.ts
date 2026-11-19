@@ -58,14 +58,22 @@ export const GLOBAL_SCOPE_ACTIVITY_OR: { OR: Prisma.BlockScopeInvocationWhereInp
  *
  * ⚠️ The two existing values are `'app-block'` and `'external-oauth'`. A private-run row is
  * always a block-token row, and an external-OAuth access token can never carry the
- * private-run claim, so the three values stay mutually exclusive by construction.
+ * private-run claim, so the token-population values stay mutually exclusive by construction.
  */
 export const PRIVATE_RUN_INVOCATION_SOURCE = 'private-run';
 
 /**
+ * A row recording something the VIEWER did to an app's permissions in host UI (raising their
+ * daily Buzz limit for it), not a call the app made. Shown on the viewer's own Activity feed;
+ * excluded from every owner aggregate, since an owner learning that viewers changed their
+ * limits is not app usage.
+ */
+export const VIEWER_CONSENT_INVOCATION_SOURCE = 'viewer-consent';
+
+/**
  * The COMPLETE value space of `block_scope_invocations.source`, in one place.
  *
- * 🔴 IT EXISTS SO NOTHING HAS TO WIDEN TO `string` TO EXPRESS THE THIRD VALUE. The writer's
+ * 🔴 IT EXISTS SO NOTHING HAS TO WIDEN TO `string` TO EXPRESS A NEW VALUE. The writer's
  * DTO listed two values while the column had three, and the local that carried the new one
  * was annotated `string` — which drops the only compile-time check on this column, because
  * the row object handed to Prisma is bridge-cast and nothing reads `source` back through a
@@ -74,7 +82,7 @@ export const PRIVATE_RUN_INVOCATION_SOURCE = 'private-run';
  * errors.
  *
  * ⚠️ There is no CHECK constraint behind this, so it is a TypeScript-side claim about what
- * this codebase writes, not a database invariant. A fourth value would need adding here and
+ * this codebase writes, not a database invariant. Another value would need adding here and
  * in the `///` comment on the Prisma model, which is the single source for the generated
  * type docs every future reader of the column sees.
  */
@@ -84,7 +92,8 @@ export type BlockScopeInvocationSource =
 
 /**
  * 🔴 THE SUBSET A CALLER MAY *PASS* — the two token populations that identify themselves,
- * and deliberately NOT the private-run marker.
+ * plus `viewer-consent` (a viewer's own change in host UI), and deliberately NOT the
+ * private-run marker.
  *
  * ⚠️ THIS SPLIT IS A CORRECTION, AND WHAT IT FIXES WAS INTRODUCED BY THE FIX FOR SOMETHING
  * ELSE. The writer's input field was widened from the two live values to the full
@@ -103,7 +112,10 @@ export type BlockScopeInvocationSource =
  * the verified claim — enforced at runtime as well, because a type declaration is not a code
  * path.
  */
-export type BlockScopeInvocationInputSource = 'app-block' | 'external-oauth';
+export type BlockScopeInvocationInputSource =
+  | 'app-block'
+  | 'external-oauth'
+  | typeof VIEWER_CONSENT_INVOCATION_SOURCE;
 
 /**
  * 🔴 THE ONE DEFINITION of "exclude private-run activity", for every OWNER-VISIBLE read of
@@ -154,7 +166,7 @@ export type BlockScopeInvocationInputSource = 'app-block' | 'external-oauth';
  * `userId` ⇒ self-visible ⇒ do not.
  */
 export const OWNER_VISIBLE_INVOCATION_FILTER = {
-  source: { not: PRIVATE_RUN_INVOCATION_SOURCE },
+  source: { notIn: [PRIVATE_RUN_INVOCATION_SOURCE, VIEWER_CONSENT_INVOCATION_SOURCE] },
 } satisfies Prisma.BlockScopeInvocationWhereInput;
 
 /**

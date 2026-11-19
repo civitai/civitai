@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 
 // Redis as the registry sees it: cache entries by key (a bust only marks one stale, so the next
-// read refetches), and the sys keys.
+// read refetches), and the generation key, which is on the cache cluster too.
 const redis = vi.hoisted(() => ({
   cache: new Map<string, { data: unknown; stale: boolean }>(),
-  sys: new Map<string, number>(),
+  generation: new Map<string, { value: string; ex: number | undefined }>(),
 }));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
@@ -27,7 +27,9 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { Prisma } from '@prisma/client';
 import {
+  deleteRemixApp,
   getRegisteredRemixApp,
   getRemixAppRegistry,
   listRemixAppsForAdmin,
@@ -54,12 +56,18 @@ const written = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   redis.cache.clear();
-  redis.sys.clear();
-  redisMock.sysRedis.get.mockImplementation((async (key: string) =>
-    redis.sys.has(key) ? String(redis.sys.get(key)) : null) as never);
-  redisMock.sysRedis.incr.mockImplementation((async (key: string) => {
-    redis.sys.set(key, (redis.sys.get(key) ?? 0) + 1);
-    return redis.sys.get(key);
+  redis.generation.clear();
+  redisMock.redis.get.mockImplementation(
+    (async (key: string) => redis.generation.get(key)?.value ?? null) as never
+  );
+  redisMock.redis.set.mockImplementation((async (
+    key: string,
+    value: string,
+    opts?: { EX?: number; NX?: boolean }
+  ) => {
+    if (opts?.NX && redis.generation.has(key)) return null;
+    redis.generation.set(key, { value, ex: opts?.EX });
+    return 'OK';
   }) as never);
   dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({ id: 'civitai-remix-apps' } as never);
 });
@@ -97,6 +105,24 @@ describe('saveRemixApp', () => {
     expect(dbMock.dbWrite.appBlock.update).not.toHaveBeenCalled();
   });
 
+  it('refuses a new app on video.remix, which no surface shows', async () => {
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(null);
+    await expect(
+      saveRemixApp({ ...pixelArt, slug: 'comic-it', target: 'video.remix' })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.appBlock.create).not.toHaveBeenCalled();
+  });
+
+  it('saves a stored video.remix row on its own slot, so a mod can still edit it', async () => {
+    const video = { ...pixelArt, target: 'video.remix' as const };
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(stored(video, 2) as never);
+    await saveRemixApp({ ...video, name: 'Pixels' });
+    expect(dbMock.dbWrite.appBlock.update).toHaveBeenCalledTimes(1);
+    expect(written().data).toMatchObject({
+      manifest: { targets: [{ slotId: 'video.remix' }] },
+    });
+  });
+
   it('refuses to write before the seed migration has made its client', async () => {
     dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue(null);
     await expect(saveRemixApp(pixelArt)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
@@ -120,6 +146,47 @@ describe('the registry after a mod write', () => {
       getRegisteredRemixApp('pixel-art', { allowDisabled: false })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect((await listRemixAppsForAdmin())[0]).toMatchObject({ slug: 'pixel-art', enabled: false });
+  });
+});
+
+describe('the registry generation', () => {
+  const GENERATION_KEY = 'remix-app:registry-generation';
+
+  it('is a fresh token on the cache cluster after each mod write, with a day-long TTL', async () => {
+    dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([stored(pixelArt, 1)] as never);
+
+    await setRemixAppEnabled({ slug: 'pixel-art', enabled: false });
+    const first = redis.generation.get(GENERATION_KEY);
+    await setRemixAppEnabled({ slug: 'pixel-art', enabled: true });
+    const second = redis.generation.get(GENERATION_KEY);
+
+    expect(first?.ex).toBe(24 * 60 * 60);
+    expect(second?.ex).toBe(24 * 60 * 60);
+    expect(first?.value).not.toBe(second?.value);
+    expect(redisMock.sysRedis.incr).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
+  });
+
+  // The cache cluster can evict the generation key at any time. A reader that finds it gone must
+  // not land on an entry filled before the mod write it lost.
+  it('serves a mod write after the generation key it bumped is evicted', async () => {
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([stored(pixelArt, 1, 'remix')] as never);
+    expect((await getRegisteredRemixApp('pixel-art', { allowDisabled: false })).enabled).toBe(true);
+
+    dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([
+      stored(pixelArt, 1, 'remix_disabled'),
+    ] as never);
+    await setRemixAppEnabled({ slug: 'pixel-art', enabled: false });
+    redis.generation.delete(GENERATION_KEY);
+
+    await expect(
+      getRegisteredRemixApp('pixel-art', { allowDisabled: false })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const minted = redis.generation.get(GENERATION_KEY);
+    expect(minted?.value).toMatch(/^[0-9a-f-]{36}$/);
+    expect(minted?.ex).toBe(24 * 60 * 60);
   });
 });
 
@@ -201,5 +268,79 @@ describe('a refill in flight across a mod write', () => {
     await expect(
       getRegisteredRemixApp('pixel-art', { allowDisabled: false })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('deleteRemixApp', () => {
+  const charcoal = { ...pixelArt, slug: 'test-charcoal' };
+  const row = (status: string, input = charcoal) => ({
+    ...stored(input, 1, status),
+    id: 'ab_rx_test_charcoal_________',
+    blockId: `remix-${input.slug}`,
+  });
+
+  it('deletes a disabled app that is not a built-in default', async () => {
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row('remix_disabled') as never);
+    dbMock.dbWrite.appBlock.deleteMany.mockResolvedValue({ count: 1 });
+    await deleteRemixApp({ slug: 'test-charcoal' });
+    expect(dbMock.dbWrite.appBlock.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'ab_rx_test_charcoal_________', status: 'remix_disabled' },
+    });
+  });
+
+  it('refuses when the app was enabled between the read and the delete', async () => {
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row('remix_disabled') as never);
+    dbMock.dbWrite.appBlock.deleteMany.mockResolvedValue({ count: 0 });
+    await expect(deleteRemixApp({ slug: 'test-charcoal' })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    });
+  });
+
+  it('refuses an enabled app', async () => {
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row('remix') as never);
+    await expect(deleteRemixApp({ slug: 'test-charcoal' })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    });
+    expect(dbMock.dbWrite.appBlock.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses a built-in default, even disabled', async () => {
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row('remix_disabled', pixelArt) as never);
+    await expect(deleteRemixApp({ slug: 'pixel-art' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(dbMock.dbWrite.appBlock.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses a block that is not a remix row', async () => {
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row('approved') as never);
+    await expect(deleteRemixApp({ slug: 'test-charcoal' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(dbMock.dbWrite.appBlock.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('says so when other records still point at the app', async () => {
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row('remix_disabled') as never);
+    dbMock.dbWrite.appBlock.deleteMany.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('fk', { code: 'P2003', clientVersion: 'test' })
+    );
+    await expect(deleteRemixApp({ slug: 'test-charcoal' })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+  });
+
+  it('lists only disabled non-default rows as deletable', async () => {
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([
+      row('remix_disabled'),
+      { ...row('remix'), blockId: 'remix-enabled-one' },
+      row('remix_disabled', pixelArt),
+    ] as never);
+    const listed = await listRemixAppsForAdmin();
+    expect(Object.fromEntries(listed.map((r) => [r.slug, r.deletable]))).toEqual({
+      'test-charcoal': true,
+      'enabled-one': false,
+      'pixel-art': false,
+    });
   });
 });

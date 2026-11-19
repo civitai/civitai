@@ -1,3 +1,4 @@
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import {
   actOnRemixGallerySubmissionSchema,
   declineOutOfBandRemixGallerySubmissionsSchema,
@@ -18,6 +19,7 @@ import {
   getRemixGalleryCardSummariesSchema,
   getStickerPlacementDetailSchema,
   getStickerPlacementsSchema,
+  getStickerTracksSchema,
   placementPriceRangeSchema,
   placementSpaceSchema,
   placerSchema,
@@ -67,6 +69,7 @@ import {
   getStickerPlacementCounts,
   getStickerPlacements,
   getStickerPlacementsAndCounts,
+  getStickerPlacementTracks,
   setStickerCommentHidden,
 } from '~/server/services/sticker-placement.service';
 import {
@@ -283,6 +286,16 @@ export const placementRouter = router({
       })
     ),
 
+  getStickerTracks: publicProcedure.input(getStickerTracksSchema).query(({ input, ctx }) =>
+    ctx.features.stickerVideoTracks
+      ? getStickerPlacementTracks({
+          imageId: input.imageId,
+          viewerId: ctx.user?.id,
+          isModerator: ctx.user?.isModerator,
+        })
+      : []
+  ),
+
   // Derived from the ledger, never from `Placement.status` — that column says a
   // placement was processed, not that anyone was paid.
   getSettlementStates: protectedProcedure
@@ -458,6 +471,7 @@ export const placementRouter = router({
       // preferences — a gallery is other people's content on someone else's
       // page, so it is exactly where a block should still bite.
       user: ctx.user ?? undefined,
+      ...credentialViews(ctx),
     })
   ),
 

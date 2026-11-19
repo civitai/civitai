@@ -63,7 +63,6 @@ vi.mock('~/server/search-index', async (importOriginal) => {
   return {
     ...actual,
     modelsSearchIndex: idx,
-    imagesSearchIndex: idx,
     imagesMetricsSearchIndex: idx,
     articlesSearchIndex: idx,
     collectionsSearchIndex: idx,
@@ -93,6 +92,7 @@ vi.mock('~/server/services/auction.service', async (importOriginal) => ({
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { removeAllContent } from '~/server/services/user.service';
+import { deleteImages } from '~/server/services/image.service';
 import { createDocStore, createDocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
 import {
@@ -177,10 +177,22 @@ async function state(app: string) {
   };
 }
 
-/** The evidence tables the wipe deletes with raw SQL, so each statement carries the legal hold. */
-const MAIN_DB_WIPE = ['Model', 'Image', 'Post', 'Article', 'Comment'];
+/**
+ * The evidence tables the wipe deletes with raw SQL, so each statement carries the legal hold.
+ * Images go through `deleteImages` instead, its guard naming the account.
+ */
+const MAIN_DB_WIPE = ['Model', 'Image', 'Post', 'Article'];
 const rawDeleted = (table: string) =>
-  dbMock.dbWrite.$executeRaw.mock.calls
+  table === 'Image'
+    ? vi
+        .mocked(deleteImages)
+        .mock.calls.some(([, opts]) =>
+          ((opts.onlyWhere as Prisma.Sql | undefined)?.values ?? []).includes(TARGET)
+        )
+    : rawStatementDeleted(table);
+const rawStatementDeleted = (table: string) =>
+  [...dbMock.dbWrite.$executeRaw.mock.calls, ...dbMock.dbWrite.$queryRaw.mock.calls]
+    .filter(([strings]) => Array.isArray(strings))
     .map(([strings, ...values]) =>
       Prisma.sql(strings as unknown as TemplateStringsArray, ...(values as never[]))
     )

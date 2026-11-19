@@ -50,7 +50,13 @@ type WriteMock = {
     findUnique: ReturnType<typeof vi.fn>;
   };
   // On-site delist/relist flip the backing AppBlock's status in the same tx.
-  appBlock: { updateMany: ReturnType<typeof vi.fn> };
+  appBlock: {
+    updateMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+    count: ReturnType<typeof vi.fn>;
+  };
+  // Suspending a block deletes its OAuth client's app tokens in the same tx.
+  apiKey: { findMany: ReturnType<typeof vi.fn>; deleteMany: ReturnType<typeof vi.fn> };
   appListingModerationEvent: {
     create: ReturnType<typeof vi.fn>;
     // republish reads the LATEST event on the primary inside the tx.
@@ -89,7 +95,7 @@ type ReadMock = {
   appCollaborator: { count: ReturnType<typeof vi.fn> };
 };
 
-const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() => {
+const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
   const write: WriteMock = {
     $transaction: vi.fn(),
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
@@ -99,7 +105,20 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
       deleteMany: vi.fn(async () => ({ count: 1 })),
       findUnique: vi.fn(async () => null),
     },
-    appBlock: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    appBlock: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      // Restoring a block reads its slug to check the app's open review holds.
+      findUnique: vi.fn(async () => ({
+        blockId: 'held-app',
+        appId: 'appblk-held-app',
+        status: 'suspended',
+      })),
+      count: vi.fn(async () => 0),
+    },
+    apiKey: {
+      findMany: vi.fn(async () => [{ userId: 7 }, { userId: 7 }, { userId: 8 }]),
+      deleteMany: vi.fn(async () => ({ count: 3 })),
+    },
     appListingModerationEvent: {
       create: vi.fn(async (a: { data: unknown }) => a.data),
       findFirst: vi.fn(async () => null),
@@ -143,7 +162,6 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
     mockRead: read,
     mockWrite: write,
     mockNotify: vi.fn(async () => undefined),
-    mockLogToAxiom: vi.fn(async () => undefined),
     ids: { n: 0 },
   };
 });
@@ -159,14 +177,35 @@ vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) =>
   ...(await importOriginal<typeof AppListingRating>()),
   recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
 }));
-// The on-site relist / owner-republish drift warn is a dynamic import of this module.
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+const { mockRevokeOrchestratorTokens, mockDeleteAuthSubject } = vi.hoisted(() => ({
+  mockRevokeOrchestratorTokens: vi.fn(async (_a: { userId: number }) => undefined),
+  mockDeleteAuthSubject: vi.fn(async (_a: unknown) => undefined),
+}));
+vi.mock('~/server/services/orchestrator/civitai', () => ({
+  revokeCivitaiUserTokens: mockRevokeOrchestratorTokens,
+}));
+vi.mock('~/server/http/orchestrator/api-key-spend', () => ({
+  deleteAuthSubject: mockDeleteAuthSubject,
+}));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingReportId: () => `alrp_test_${++ids.n}`,
   newAppListingModerationEventId: () => `alme_test_${++ids.n}`,
   newAppListingPublishRequestId: () => `alpr_test_${++ids.n}`,
   // claim's seat remediation writes AppOwnershipEvents through `recordOwnershipEvent`.
   newAppOwnershipEventId: () => `aoe_test_${++ids.n}`,
+}));
+// LIVE UNPUBLISH (`app-blocks-live-unpublish`): what the takedown and relist paths hand the shared
+// static server. Its own behaviour (flag, Jobs, readiness list) is pinned in
+// live-unpublish.service.test.ts.
+const live = vi.hoisted(() => ({
+  takeDown: vi.fn(async (_slug: string): Promise<{ liveNote?: string }> => ({})),
+  restore: vi.fn(async (_input: { slug: string; appBlockId: string }) => 'restored' as const),
+}));
+vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
+  takeDownLiveApp: async (slug: string) => (await live.takeDown(slug)) ?? {},
+  restoreLiveAppSoon: (input: { slug: string; appBlockId: string }) => {
+    void Promise.resolve(live.restore(input)).catch(() => undefined);
+  },
 }));
 // Assert owner-notification emission without pulling the notifications client graph.
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
@@ -236,6 +275,15 @@ beforeEach(() => {
   mockWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
   mockWrite.appListing.deleteMany.mockResolvedValue({ count: 1 });
   mockWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+  mockWrite.appBlock.findUnique.mockResolvedValue({
+    blockId: 'held-app',
+    appId: 'appblk-held-app',
+    status: 'suspended',
+  });
+  mockWrite.appBlock.count.mockResolvedValue(0);
+  mockWrite.apiKey.findMany.mockResolvedValue([{ userId: 7 }, { userId: 7 }, { userId: 8 }]);
+  mockWrite.apiKey.deleteMany.mockResolvedValue({ count: 3 });
+  mockWrite.$queryRaw.mockImplementation(async () => []);
   // Default the in-tx purge primary read to a valid offsite listing (overridden
   // per-test where the snapshot status is load-bearing).
   mockWrite.appListing.findUnique.mockResolvedValue(offsiteListing('removed'));
@@ -260,7 +308,6 @@ beforeEach(() => {
   mockWrite.appOwnershipTransfer.updateMany.mockResolvedValue({ count: 0 });
   mockWrite.appOwnershipEvent.create.mockImplementation(async (a: { data: unknown }) => a.data);
   mockNotify.mockResolvedValue(undefined);
-  mockLogToAxiom.mockResolvedValue(undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -296,6 +343,9 @@ describe('delistListing', () => {
     });
     // No linked report → the report table is untouched.
     expect(mockWrite.appListingReport.updateMany).not.toHaveBeenCalled();
+    // No backing block → no token revoke.
+    expect(mockWrite.appBlock.findUnique).not.toHaveBeenCalled();
+    expect(mockWrite.apiKey.deleteMany).not.toHaveBeenCalled();
     // OFF-SITE hide → the owner is notified (post-commit), carrying the reason.
     expect(mockNotify).toHaveBeenCalledTimes(1);
     expect(mockNotify).toHaveBeenCalledWith(
@@ -326,6 +376,9 @@ describe('delistListing', () => {
       where: { id: BLOCK_ID, status: 'approved' },
       data: { status: 'suspended' },
     });
+    expect(mockWrite.apiKey.deleteMany).toHaveBeenCalledWith({
+      where: { clientId: 'appblk-held-app', type: { in: ['Access', 'Refresh'] } },
+    });
     // Still exactly one audit event.
     expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.action).toBe('delist');
@@ -339,6 +392,64 @@ describe('delistListing', () => {
         details: expect.objectContaining({ slug: SLUG, reason: GOOD_REASON }),
       })
     );
+  });
+
+  it('🔴 ON-SITE delist revokes the app tokens through the transaction, not outside it', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    const txApiKey = {
+      findMany: vi.fn(async () => [{ userId: 7 }]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+    };
+    mockWrite.$transaction.mockImplementationOnce(async (cb: (tx: WriteMock) => Promise<unknown>) =>
+      cb({ ...mockWrite, apiKey: txApiKey })
+    );
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(txApiKey.deleteMany).toHaveBeenCalledTimes(1);
+    expect(mockWrite.apiKey.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('ON-SITE delist of an already-suspended block (0-count flip) still revokes its tokens', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    mockWrite.appBlock.updateMany.mockResolvedValueOnce({ count: 0 });
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(mockWrite.apiKey.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 ON-SITE delist drops the orchestrator auth of each token holder, after the commit', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    const order: string[] = [];
+    mockWrite.$transaction.mockImplementationOnce(
+      async (cb: (tx: WriteMock) => Promise<unknown>) => {
+        const out = await cb(mockWrite);
+        order.push('commit');
+        return out;
+      }
+    );
+    mockRevokeOrchestratorTokens.mockImplementation(async ({ userId }: { userId: number }) => {
+      order.push(`orchestrator:${userId}`);
+    });
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(order).toEqual(['commit', 'orchestrator:7', 'orchestrator:8']);
+    // The consent survives a suspension, so its orchestrator subject (and spend window) stays.
+    expect(mockDeleteAuthSubject).not.toHaveBeenCalled();
+  });
+
+  it('a relist drops no orchestrator auth', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('removed'));
+    await relistListing({
+      input: { appListingId: APP_ID, reason: 'appeal upheld' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(mockRevokeOrchestratorTokens).not.toHaveBeenCalled();
   });
 
   /**
@@ -643,6 +754,8 @@ describe('relistListing', () => {
       where: { id: BLOCK_ID, status: 'suspended' },
       data: { status: 'approved' },
     });
+    // Restoring revokes nothing.
+    expect(mockWrite.apiKey.deleteMany).not.toHaveBeenCalled();
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.action).toBe('relist');
   });
 
@@ -1021,7 +1134,7 @@ describe('claimListing', () => {
     mockWrite.user.findUnique.mockResolvedValueOnce(null);
     await expect(
       claimListing({
-        input: { appListingId: APP_ID, targetUserId: 999999, reason: GOOD_REASON },
+        input: { appListingId: APP_ID, targetUserId: 990100026, reason: GOOD_REASON },
         reviewerUserId: REVIEWER,
       })
     ).rejects.toMatchObject({ name: 'OffsiteModerationError', code: 'INVALID_TARGET_USER' });
@@ -1715,6 +1828,10 @@ describe('unpublishOwnListing', () => {
       where: { id: BLOCK_ID, status: 'approved' },
       data: { status: 'suspended' },
     });
+    expect(mockWrite.apiKey.deleteMany).toHaveBeenCalledWith({
+      where: { clientId: 'appblk-held-app', type: { in: ['Access', 'Refresh'] } },
+    });
+    expect(mockRevokeOrchestratorTokens).toHaveBeenCalledWith({ userId: 8 });
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data).toMatchObject({
       action: 'owner-unpublish',
       before: { status: 'approved' },
@@ -1809,6 +1926,70 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
     });
   });
 
+  function openHoldForRepublish() {
+    mockWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('app_publish_request_holds') ? [{ id: 12, slug: 'held-app' }] : []
+    );
+  }
+
+  it('🔴 the owner republishing an on-site app is refused, and the block stays suspended', async () => {
+    openHoldForRepublish();
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
+    );
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
+    const err = await republishOwnListing({
+      input: { appListingId: APP_ID },
+      userId: OWNER,
+    }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+    // 🔴 The owner is told plainly that a moderator hold is on the app, and nothing more.
+    expect((err as Error).message).toBe(
+      "A moderator hold is on this app, so it can't be republished right now. Contact support."
+    );
+    expect((err as Error).message).not.toContain('held-app');
+    expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('once a moderator clears the hold, the same republish restores the app', async () => {
+    mockWrite.$queryRaw.mockImplementation(async () => []);
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
+    );
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).resolves.toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(mockWrite.appBlock.updateMany).toHaveBeenCalledWith({
+      where: { id: BLOCK_ID, status: 'suspended' },
+      data: { status: 'approved' },
+    });
+  });
+
+  it('fails closed when the holds cannot be read', async () => {
+    mockWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (strings.join('?').includes('app_publish_request_holds'))
+        throw new Error('relation "app_publish_request_holds" does not exist');
+      return [];
+    });
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
+    );
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const err = await republishOwnListing({
+        input: { appListingId: APP_ID },
+        userId: OWNER,
+      }).catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+      expect((err as Error).message).not.toMatch(/hold|review|moderat/i);
+      expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+    } finally {
+      quiet.mockRestore();
+    }
+  });
+
   it('🔴 ON-SITE republish FORBIDDEN when the last event is a MOD delist — no listing flip AND no block flip', async () => {
     mockWrite.appListing.findUnique.mockResolvedValueOnce(
       ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
@@ -1822,7 +2003,7 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
 
-  it('ON-SITE republish whose block-restore flip is a 0-count (drift) emits the post-commit warn (observability, mirrors mod relist)', async () => {
+  it('ON-SITE republish whose block-restore flip is a 0-count (drift) still restores the listing', async () => {
     mockWrite.appListing.findUnique.mockResolvedValueOnce(
       ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
     );
@@ -1832,13 +2013,6 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     // The listing is still restored (non-fatal) — visibility IS back.
     expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
-    // …but the block-serve divergence is warned post-commit (best-effort dynamic import).
-    await vi.waitFor(() => expect(mockLogToAxiom).toHaveBeenCalledTimes(1));
-    expect(mockLogToAxiom.mock.calls[0][0]).toMatchObject({
-      type: 'warning',
-      name: 'app-listing-relist-block-drift',
-      details: { appListingId: APP_ID, appBlockId: BLOCK_ID },
-    });
   });
 
   it('🔴 FORBIDDEN when the last event is a MOD delist (takedown-for-cause) — no flip, no event', async () => {
@@ -2538,5 +2712,256 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     );
     expect(relistCall?.[0]?.data).not.toHaveProperty('contentRating');
     expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LIVE UNPUBLISH: every path that suspends a live on-site block also removes it from the shared
+// static server after the takedown commits, and every relist that approves the block again puts it
+// back. The readiness app's store takedown is never refused: only its server-side step is skipped.
+// ---------------------------------------------------------------------------
+const READINESS_NOTE = `${SLUG} keeps serving: it is the static server's readiness app`;
+
+describe('live unpublish on takedown', () => {
+  beforeEach(() => {
+    live.takeDown.mockResolvedValue({});
+  });
+
+  it('ON-SITE mod delist: takes the app down after the delist commits', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(live.takeDown).toHaveBeenCalledWith(SLUG);
+    expect(live.takeDown.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('OFF-SITE mod delist: nothing to take down (no hosted app)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(live.takeDown).not.toHaveBeenCalled();
+  });
+
+  it('the readiness app: the delist SUCCEEDS as a store delist (no FORBIDDEN) and says it keeps serving', async () => {
+    live.takeDown.mockResolvedValue({ liveNote: READINESS_NOTE });
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed', liveNote: READINESS_NOTE });
+    // The store takedown went through in full.
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'removed' } })
+    );
+    expect(mockWrite.appBlock.updateMany).toHaveBeenCalledWith({
+      where: { id: BLOCK_ID, status: 'approved' },
+      data: { status: 'suspended' },
+    });
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.action).toBe('delist');
+  });
+
+  it('a failing live step never fails the delist', async () => {
+    live.takeDown.mockRejectedValue(new Error('k8s down'));
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(live.takeDown).toHaveBeenCalledWith(SLUG);
+  });
+
+  it('ON-SITE owner unpublish: takes the app down after the takedown commits', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValueOnce({
+      userId: OWNER,
+      status: 'approved',
+      kind: 'onsite',
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: BLOCK_ID,
+      externalUrl: null,
+      connectClientId: null,
+    });
+    const res = await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(live.takeDown).toHaveBeenCalledWith(SLUG);
+  });
+
+  it('owner unpublish of the readiness app: unpublished from the store, with the note', async () => {
+    live.takeDown.mockResolvedValue({ liveNote: READINESS_NOTE });
+    mockWrite.appListing.findUnique.mockResolvedValueOnce({
+      userId: OWNER,
+      status: 'approved',
+      kind: 'onsite',
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: BLOCK_ID,
+      externalUrl: null,
+      connectClientId: null,
+    });
+    const res = await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed', liveNote: READINESS_NOTE });
+  });
+
+  it('owner unpublish of someone else’s listing: nothing is taken down', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValueOnce({
+      userId: OWNER + 1,
+      status: 'approved',
+      kind: 'onsite',
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: BLOCK_ID,
+      externalUrl: null,
+      connectClientId: null,
+    });
+    await expect(
+      unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'NOT_OWNED' });
+    expect(live.takeDown).not.toHaveBeenCalled();
+  });
+});
+
+describe('live restore on relist', () => {
+  it('ON-SITE mod relist: re-publishes the app after the relist commits', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('removed'));
+    await relistListing({
+      input: { appListingId: APP_ID, reason: 'appeal upheld' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(live.restore).toHaveBeenCalledTimes(1);
+    expect(live.restore).toHaveBeenCalledWith({ slug: SLUG, appBlockId: BLOCK_ID });
+    expect(live.restore.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('a failing live restore never fails the relist', async () => {
+    live.restore.mockRejectedValueOnce(new Error('k8s down'));
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('removed'));
+    const res = await relistListing({
+      input: { appListingId: APP_ID, reason: 'appeal upheld' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(live.restore).toHaveBeenCalledWith({ slug: SLUG, appBlockId: BLOCK_ID });
+    // The rejection is handled where the restore is started: nothing is left unhandled.
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
+  it('OFF-SITE mod relist: nothing to restore', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    await relistListing({
+      input: { appListingId: APP_ID, reason: 'appeal upheld' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(live.restore).not.toHaveBeenCalled();
+  });
+
+  it('ON-SITE relist whose block was not suspended (drift): the block is not approved, nothing restored', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('removed'));
+    mockWrite.appBlock.updateMany.mockResolvedValueOnce({ count: 0 });
+    await relistListing({
+      input: { appListingId: APP_ID, reason: 'appeal upheld' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(live.restore).not.toHaveBeenCalled();
+  });
+
+  it('a relist that fails its guard restores nothing', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    mockWrite.appListing.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+    expect(live.restore).not.toHaveBeenCalled();
+  });
+
+  function ownerRemovedOnsite() {
+    return {
+      userId: OWNER,
+      status: 'removed',
+      kind: 'onsite',
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: BLOCK_ID,
+      externalUrl: null,
+      connectClientId: null,
+    };
+  }
+
+  // Icon + cover set and matching the recorded baseline, so the republish takes the IMMEDIATE arm
+  // (the same fixture shape as the republish scan-gate tests).
+  // Every mock it reads is re-established here: earlier suites (the rating floor's wire())
+  // leave screenshot and image implementations behind, which would make the live assets
+  // differ from this baseline and route the republish to review.
+  function republishImmediately() {
+    mockWrite.appListing.findUnique.mockResolvedValue(withAssets(ownerRemovedOnsite()));
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockWrite.image.findMany.mockImplementation(injectIngestion({}));
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue(
+      ownerUnpublishEvent(approvedAssets({ iconId: 1, coverId: 2 }))
+    );
+  }
+
+  it('ON-SITE owner republish (immediate): re-publishes the app', async () => {
+    republishImmediately();
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(live.restore).toHaveBeenCalledWith({ slug: SLUG, appBlockId: BLOCK_ID });
+  });
+
+  it('ON-SITE owner republish whose block was not suspended (drift): nothing restored', async () => {
+    republishImmediately();
+    mockWrite.appBlock.updateMany.mockResolvedValueOnce({ count: 0 });
+    await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(live.restore).not.toHaveBeenCalled();
+  });
+
+  it('owner republish FORBIDDEN after a mod delist: nothing restored', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerRemovedOnsite());
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'delist' });
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(live.restore).not.toHaveBeenCalled();
+  });
+});
+
+describe('restoring a block refuses while the app has an open review hold', () => {
+  // Every hold read answers one open hold; every other raw read answers nothing.
+  function openHold() {
+    mockWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('app_publish_request_holds') ? [{ id: 12, slug: 'held-app' }] : []
+    );
+  }
+
+  it('🔴 a moderator relist of an on-site app is refused, and the block stays suspended', async () => {
+    openHold();
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('removed'));
+    await expect(
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(/open review hold/),
+    });
+    expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appBlock.findUnique).toHaveBeenCalledWith({
+      where: { id: BLOCK_ID },
+      select: { blockId: true },
+    });
   });
 });

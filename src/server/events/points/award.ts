@@ -8,7 +8,7 @@ import {
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom } from '~/server/logging/client';
-import { sysRedis } from '~/server/redis/client';
+import { redis, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import {
   COUNT_BASE_MARK,
@@ -21,6 +21,7 @@ import {
   eventSeasonKeys,
   hatField,
   liveBucket,
+  LIVE_BUCKET_TTL_S,
   seasonHatTopicId,
   type EventPointSeason,
   utcDay,
@@ -48,6 +49,14 @@ import {
 
 const DAY_S = 24 * 60 * 60;
 type SeenKey = ReturnType<ReturnType<typeof eventSeasonKeys>['seen']>;
+// A live grant one action made: the event and team it scored for, and the points it added.
+export type EventPointGrant = { event: string; team: string; points: number };
+type AwardFirst = {
+  row: EventPointLedgerRow;
+  seenKey: SeenKey;
+  actor: string;
+  grant?: EventPointGrant;
+};
 // How often an app server reloads the scored events and their weights.
 const STATE_REFRESH_MS = 30 * 1000;
 // How often it applies the hat change log: a hat placed or moved starts earning within this long.
@@ -55,8 +64,6 @@ export const HATS_FOLLOW_MS = 2 * 1000;
 // After a failed refresh, wait this long before trying again, so a persistent failure is not retried
 // by every request on the hot path.
 const REFRESH_RETRY_MS = 10 * 1000;
-// Live buckets outlive the referee's hourly cut by a wide margin.
-const LIVE_TTL_S = 3 * 60 * 60;
 
 export const EVENT_POINTS_LEDGER_TABLE = 'event_point_events';
 
@@ -120,8 +127,14 @@ export function streamIdBefore(a: string, b: string) {
   return am < bm || (am === bm && as < bs);
 }
 
+/** The Hat Turf map's reads (turf-map.ts): the stream and hash `loadTurf` / `followTurf` follow. */
+export type EventPointsTurfRedis = Pick<typeof redis, 'hGetAll' | 'hmGet' | 'xRange' | 'xRevRange'>;
+
 export type EventPointsDeps = {
   redis: EventPointsRedis;
+  // The Hat Turf map's client: the cache cluster in production (turfKeys are cluster keys). Unset,
+  // `redis` answers, for a test that keeps one store.
+  turfRedis?: EventPointsTurfRedis;
   insertLedger: (rows: EventPointLedgerRow[]) => Promise<void>;
   // Scored events whose points are live now: from preview start to the end of finalization.
   loadScoredEvents: (now: Date) => Promise<ScoredEventDef[]>;
@@ -243,10 +256,11 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
   }
 
   // The turf map, loaded and followed exactly as the hat map is (see loadHats and followHats).
+  const turfRedis = deps.turfRedis ?? (deps.redis as unknown as EventPointsTurfRedis);
   async function loadTurf(event: string): Promise<TurfState> {
     const keys = turfKeys(event);
-    const [last] = (await deps.redis.xRevRange(keys.log, '+', '-', { COUNT: 1 })) ?? [];
-    const raw = await deps.redis.hGetAll(keys.map);
+    const [last] = (await turfRedis.xRevRange(keys.log, '+', '-', { COUNT: 1 })) ?? [];
+    const raw = await turfRedis.hGetAll(keys.map);
     const entries = new Map<string, TurfEntry>();
     for (const [key, value] of Object.entries(raw ?? {})) {
       const entry = decodeTurfEntry(value);
@@ -257,13 +271,13 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
 
   async function followTurf(event: string, prev: TurfState): Promise<TurfState> {
     const keys = turfKeys(event);
-    const entries = (await deps.redis.xRange(keys.log, `(${prev.cursor}`, '+')) ?? [];
+    const entries = (await turfRedis.xRange(keys.log, `(${prev.cursor}`, '+')) ?? [];
     if (!entries.length) return prev;
     if (prev.cursor === '0-0') return loadTurf(event);
-    const [first] = (await deps.redis.xRange(keys.log, '-', '+', { COUNT: 1 })) ?? [];
+    const [first] = (await turfRedis.xRange(keys.log, '-', '+', { COUNT: 1 })) ?? [];
     if (first && streamIdBefore(prev.cursor, first.id)) return loadTurf(event);
     const changed = [...new Set(entries.map(({ message }) => message.k))];
-    const values = await deps.redis.hmGet(keys.map, changed);
+    const values = await turfRedis.hmGet(keys.map, changed);
     changed.forEach((key, i) => {
       const entry = values[i] ? decodeTurfEntry(values[i]!) : undefined;
       if (entry) prev.entries.set(key, entry);
@@ -390,10 +404,14 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     // Every first is a fact, whether or not the cap let it score: if an earlier action from the same
     // person is later removed, the referee lets this one count instead. Once marked seen it must reach
     // the ledger, so a Redis error in the live accounting below only costs the live display.
-    const first = { row: ledgerRow(def.name, action, 'add', hat, time), seenKey, actor };
+    const first: AwardFirst = {
+      row: ledgerRow(def.name, action, 'add', hat, time),
+      seenKey,
+      actor,
+    };
     try {
       await expireSeen(def, seenKey, rule, time);
-      await liveGrant(event, action, hat, keys, actor, time);
+      first.grant = await liveGrant(event, action, hat, keys, actor, time);
     } catch (error) {
       deps.logError('redis', 'eventPoints.liveGrant', error);
     }
@@ -438,7 +456,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       claimKey: TURF_CLAIM_KEY,
       team: entry.team,
     };
-    const first = {
+    const first: AwardFirst = {
       row: ledgerRow(def.name, action, 'add', teamHat, time, { type, players }),
       seenKey,
       actor,
@@ -453,7 +471,8 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     if (!marked) return undefined;
     try {
       await expireSeen(def, seenKey, rule, time);
-      if (live) await liveGrantTurf(event, action, teamHat, players, keys, actor, time);
+      if (live)
+        first.grant = await liveGrantTurf(event, action, teamHat, players, keys, actor, time);
     } catch (error) {
       deps.logError('redis', 'eventPoints.turfLiveGrant', error);
     }
@@ -472,10 +491,10 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     keys: ReturnType<typeof eventSeasonKeys>,
     actor: string,
     time: Date
-  ) {
+  ): Promise<EventPointGrant | undefined> {
     const { def } = event;
     const weight = event.weights[action.type] ?? 0;
-    if (weight <= 0) return;
+    if (weight <= 0) return undefined;
     const day = utcDay(time);
     // Settled one by one: a failed cap increment costs only that player's live grant.
     const totals = await Promise.allSettled(
@@ -506,7 +525,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
         .map((g) => deps.redis.hIncrBy(ownerKey, String(g.ownerId), g.grant)),
       ...(sum > 0 ? [deps.redis.hIncrBy(teamKey, teamHat.team, sum)] : []),
     ]);
-    if (sum <= 0) return;
+    if (sum <= 0) return undefined;
     for (const g of granted)
       if (g.grant > 0)
         try {
@@ -518,8 +537,9 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       if (bucketTtlSet.has(key)) continue;
       if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();
       bucketTtlSet.add(key);
-      await deps.redis.expire(key, LIVE_TTL_S);
+      await deps.redis.expire(key, LIVE_BUCKET_TTL_S);
     }
+    return { event: def.name, team: teamHat.team, points: sum };
   }
 
   async function liveGrant(
@@ -529,7 +549,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     keys: ReturnType<typeof eventSeasonKeys>,
     actor: string,
     time: Date
-  ) {
+  ): Promise<EventPointGrant | undefined> {
     const { def } = event;
     const day = utcDay(time);
 
@@ -585,14 +605,23 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
           if (bucketTtlSet.has(key)) continue;
           if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();
           bucketTtlSet.add(key);
-          await deps.redis.expire(key, LIVE_TTL_S);
+          await deps.redis.expire(key, LIVE_BUCKET_TTL_S);
         }
+        return { event: def.name, team: hat.team, points: grant };
       }
     }
+    return undefined;
   }
 
-  /** Returns how many firsts it recorded: 0 when every action was a repeat or did not score. */
-  async function awardEventPoints(actions: EventPointAction[]): Promise<number> {
+  /**
+   * Returns how many firsts it recorded: 0 when every action was a repeat or did not score.
+   * `onGrants` hears the live grants before the ledger insert, so a caller can show them without
+   * waiting on ClickHouse. It is not called when nothing was recorded.
+   */
+  async function awardEventPoints(
+    actions: EventPointAction[],
+    onGrants?: (grants: EventPointGrant[]) => void
+  ): Promise<number> {
     if (!actions.length) return 0;
     try {
       await ensureFresh();
@@ -610,6 +639,12 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
         else if (result.value) firsts.push(result.value);
       }
       if (!firsts.length) return 0;
+      if (onGrants)
+        try {
+          onGrants(firsts.flatMap((f) => (f.grant ? [f.grant] : [])));
+        } catch (error) {
+          deps.logError('push', 'eventPoints.onGrants', error);
+        }
       try {
         await deps.insertLedger(firsts.map((f) => f.row));
         return firsts.length;
@@ -794,6 +829,7 @@ let engine: ReturnType<typeof createEventPointsEngine> | undefined;
 function getEngine() {
   engine ??= createEventPointsEngine({
     redis: sysRedis,
+    turfRedis: redis,
     insertLedger: async (rows) => {
       if (!clickhouse) return;
       await clickhouse.insert({
@@ -806,9 +842,7 @@ function getEngine() {
     now: () => new Date(),
     logError: (kind, fn, error, extra) => {
       if (kind === 'redis') return logSysRedisFailOpen('write-degraded', fn, error, { ...extra });
-      void logToAxiom({ type: 'error', name: 'event-points', fn, error, ...extra }).catch(
-        () => undefined
-      );
+      void logToAxiom({ type: 'error', name: 'event-points', fn, error, ...extra });
     },
     onGrant: markEventPointsDirty,
     selfHeal: healDetached,
@@ -823,9 +857,7 @@ function healDetached(event: string, reason: SelfHealReason) {
   void import('~/server/events/points/self-heal')
     .then(({ healEventPoints }) => healEventPoints(event, reason))
     .catch((error) =>
-      logToAxiom({ type: 'error', name: 'event-points', fn: 'selfHeal', reason, error }).catch(
-        () => undefined
-      )
+      logToAxiom({ type: 'error', name: 'event-points', fn: 'selfHeal', reason, error })
     );
 }
 
@@ -837,9 +869,12 @@ onEventPointsSwitchOn(async () => {
 // Records actions that may earn event points. Never throws and never needs awaiting for
 // correctness; await it only to keep a test deterministic. With the kill switch off, all four are
 // no-ops that touch neither Redis nor ClickHouse.
-export const awardEventPoints = async (actions: EventPointAction[]) => {
+export const awardEventPoints = async (
+  actions: EventPointAction[],
+  onGrants?: (grants: EventPointGrant[]) => void
+) => {
   if (!(await isEventPointsEnabled().catch(() => false))) return 0;
-  return getEngine().awardEventPoints(actions);
+  return getEngine().awardEventPoints(actions, onGrants);
 };
 export const removeEventPoints = async (removals: EventPointRemoval[]) => {
   if (!(await isEventPointsEnabled().catch(() => false))) return;

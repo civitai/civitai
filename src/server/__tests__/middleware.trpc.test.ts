@@ -195,7 +195,7 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     const [subtype, fn, err, extra] = mockLogSysRedisFailOpen.mock.calls[0];
     expect(subtype).toBe('rate-limit-write-degraded');
-    expect(fn).toBe('middleware.trpc.recordAttempt');
+    expect(fn).toBe('rate-limit-bucket.claimRateLimitAttempt');
     expect(err).toBe(synthetic);
     // The extra payload should carry enough to disambiguate the call. The hash
     // key is namespaced by principal kind (`user:` / `ip:`) so the two key
@@ -239,6 +239,8 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
     const next = vi.fn(async () => ({ ok: true }));
     await expect(handler({ ...baseArg, next })).rejects.toBeInstanceOf(TRPCError);
     expect(next).not.toHaveBeenCalled();
-    expect(mockHSetWithTTL).not.toHaveBeenCalled();
+    // A refusal may write only the active-limit marker, never the attempt bucket.
+    const writtenKeys = mockHSetWithTTL.mock.calls.map((call) => String(call[1]));
+    expect(writtenKeys.filter((key) => !key.includes('trpc:limit:active:'))).toEqual([]);
   });
 });

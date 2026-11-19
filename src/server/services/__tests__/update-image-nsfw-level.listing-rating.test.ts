@@ -18,6 +18,12 @@ vi.mock('~/server/services/blocks/app-listing-rating-rederive.service', async (i
   ) => reDerive(...a),
 }));
 
+const bustCachesForPosts = vi.fn(async (_postIds: number | number[]) => undefined);
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  bustCachesForPosts: (postIds: number | number[]) => bustCachesForPosts(postIds),
+}));
+
 vi.mock('~/server/redis/caches', async (importOriginal) => {
   const actual = await importOriginal<typeof Caches>();
   return {
@@ -53,7 +59,6 @@ vi.mock('~/env/server', () => ({
 
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/games/new-order/utils', async (importOriginal) => {
@@ -139,6 +144,39 @@ describe('updateImageNsfwLevel → listing rating re-derive', () => {
     } as never);
 
     expect(reDerive).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateImageNsfwLevel → version showcase cache', () => {
+  it('a moderator’s re-rate refreshes the caches of the image’s post, after the write', async () => {
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({
+      metadata: {},
+      postId: 55,
+      nsfwLevel: NsfwLevel.PG,
+    } as never);
+
+    await updateImageNsfwLevel({
+      id: IMAGE_ID,
+      nsfwLevel: NsfwLevel.X,
+      userId: MOD,
+      isModerator: true,
+    } as never);
+
+    expect(bustCachesForPosts).toHaveBeenCalledWith(55);
+    expect(dbMock.dbWrite.image.update.mock.invocationCallOrder[0]).toBeLessThan(
+      bustCachesForPosts.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('an image with no post has no showcase to refresh', async () => {
+    await updateImageNsfwLevel({
+      id: IMAGE_ID,
+      nsfwLevel: NsfwLevel.X,
+      userId: MOD,
+      isModerator: true,
+    } as never);
+
+    expect(bustCachesForPosts).not.toHaveBeenCalled();
   });
 });
 

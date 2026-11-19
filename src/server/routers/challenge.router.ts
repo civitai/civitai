@@ -28,6 +28,9 @@ import {
   upsertChallengeCategorySchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import type { Context } from '~/server/createContext';
+import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
+import { challengeTextQueryLevel } from '~/server/services/semantic-challenge-search.service';
 import { z } from 'zod';
 import {
   isFlagProtected,
@@ -47,7 +50,7 @@ import {
   getChallengeDetail,
   getChallengeForEdit,
   getChallengeEvents,
-  getChallengeWinners,
+  getVisibleChallengeWinners,
   getCompletedChallengesWithWinners,
   getDailyChallenges,
   getInfiniteChallenges,
@@ -85,9 +88,37 @@ import {
   toggleChallengeNotify,
   getTrackedChallengeIds,
 } from '~/server/services/challenge-engagement.service';
-import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
+import { getJudgeCommentForImage } from '~/server/services/challenge-judge-review.service';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+/**
+ * A text query gets the semantic search's audit: 'refuse', or the level to search at, which is the
+ * request's own unless a minor verdict narrowed it to the safe levels. After such a verdict the
+ * viewer's own challenges are held to every gate too (`ownRowsExempt: false`), even when their level
+ * was already safe.
+ */
+async function guardTextQuery(
+  input: { query?: string; browsingLevel?: number },
+  ctx: Pick<Context, 'features' | 'user' | 'track'>
+): Promise<{ browsingLevel: number | undefined; ownRowsExempt?: false } | 'refuse'> {
+  const query = input.query?.trim();
+  if (!query) return { browsingLevel: input.browsingLevel };
+  const effective = getEffectiveBrowsingLevel({
+    isGreen: ctx.features.isGreen,
+    isLoggedIn: !!ctx.user,
+    requested: input.browsingLevel,
+  });
+  const verdict = await challengeTextQueryLevel({
+    query,
+    level: effective,
+    user: ctx.user,
+    track: ctx.track,
+  });
+  if (verdict === 'refuse') return 'refuse';
+  const browsingLevel = verdict.level === effective ? input.browsingLevel : verdict.level;
+  return verdict.narrowed ? { browsingLevel, ownRowsExempt: false } : { browsingLevel };
+}
 
 // Router definition
 export const challengeRouter = router({
@@ -96,14 +127,17 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteChallengesSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input, ctx }) =>
-      getInfiniteChallenges({
+    .query(async ({ input, ctx }) => {
+      const guard = await guardTextQuery(input, ctx);
+      if (guard === 'refuse') return { items: [], nextCursor: undefined };
+      return getInfiniteChallenges({
         ...input,
+        ...guard,
         currentUserId: ctx.user?.id,
         isGreen: ctx.features.isGreen,
         canAccessUserChallenges: ctx.features.userChallenges,
-      })
-    ),
+      });
+    }),
 
   // Active + next few upcoming daily (System) challenges for the horizontal daily row
   getDaily: publicProcedure
@@ -150,9 +184,13 @@ export const challengeRouter = router({
     .input(getChallengeWinnersSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) =>
-      getChallengeWinners(input.challengeId, {
+      getVisibleChallengeWinners({
+        challengeId: input.challengeId,
+        browsingLevel: input.browsingLevel,
         isGreen: ctx.features.isGreen,
         viewerId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator ?? false,
+        canAccessUserChallenges: ctx.features.userChallenges,
       })
     ),
 
@@ -161,13 +199,17 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCompletedChallengesWithWinnersSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input, ctx }) =>
-      getCompletedChallengesWithWinners({
+    .query(async ({ input, ctx }) => {
+      const guard = await guardTextQuery(input, ctx);
+      if (guard === 'refuse') return { items: [], nextCursor: undefined };
+      return getCompletedChallengesWithWinners({
         ...input,
+        ...guard,
         isGreen: ctx.features.isGreen,
         currentUserId: ctx.user?.id,
-      })
-    ),
+        canAccessUserChallenges: ctx.features.userChallenges,
+      });
+    }),
 
   // Get winner cooldown status for current user on a challenge
   getWinnerCooldownStatus: protectedProcedure

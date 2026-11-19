@@ -610,9 +610,9 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
     renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-hide-alpha-live').click();
     // The live counter is present from the empty state (matches the reject paths' UX).
-    await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     await page.getByTestId('apps-mod-action-reason').fill('ab');
-    await expect.element(page.getByText('2/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
     // The inline too-short error surfaces once something is typed.
     await expect.element(page.getByText('Enter at least 3 characters.')).toBeInTheDocument();
@@ -634,7 +634,7 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
         <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />
       );
       await page.getByTestId(`apps-mod-${action}-${slug}`).click();
-      await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
+      await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
       await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
       await page.getByTestId('apps-mod-action-reason').fill('xy');
       await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();

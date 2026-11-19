@@ -21,7 +21,6 @@ import type {
 } from '~/server/schema/report.schema';
 import { withAdditionalReport } from '~/server/services/report-details';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
@@ -41,31 +40,32 @@ import {
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
-import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { moderationActionEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { addTagVotes } from '~/server/services/tag.service';
 import {
+  handleLogError,
   isPrismaUniqueViolation,
-  throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import {
   AppealStatus,
   BuzzAccountType,
   EntityType,
   ImageEngagementType,
-  ImageIngestionStatus,
   ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import type { Report } from '~/shared/utils/prisma/models';
-import { v3WriteSurfaceSql } from '~/server/services/commentv3/write.service';
 import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
 import {
   APPEAL_ALREADY_PENDING,
   getAppealRefusal,
@@ -76,7 +76,12 @@ import {
 } from '~/shared/utils/appeal';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getModeratedTags } from '~/server/services/system-cache';
-import { LOCK_REVIEW_KIND, type LockReviewContext } from '@civitai/shared/lock-review';
+import {
+  LOCK_REVIEW_KIND,
+  type LockReviewContext,
+  lockReviewRulingMessage,
+  type RequestableLock,
+} from '@civitai/shared/lock-review';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -308,8 +313,6 @@ const validateReportCreation = async ({
 const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.User]: 'user',
   [ReportEntity.Model]: 'model',
-  [ReportEntity.Comment]: 'comment',
-  [ReportEntity.CommentV2]: 'comment',
   [ReportEntity.CommentV3]: 'comment',
   [ReportEntity.Image]: 'image',
   [ReportEntity.ResourceReview]: 'review',
@@ -328,13 +331,12 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.GameFrameGame]: 'gameFrameGame',
   [ReportEntity.Storyline]: 'storyline',
   [ReportEntity.ServiceOffering]: 'serviceOffering',
+  [ReportEntity.PostText]: 'postText',
 };
 
 const reportTypeConnectionMap = {
   [ReportEntity.User]: 'userId',
   [ReportEntity.Model]: 'modelId',
-  [ReportEntity.Comment]: 'commentId',
-  [ReportEntity.CommentV2]: 'commentV2Id',
   [ReportEntity.CommentV3]: 'commentId',
   [ReportEntity.Image]: 'imageId',
   [ReportEntity.ResourceReview]: 'resourceReviewId',
@@ -353,6 +355,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.GameFrameGame]: 'gameFrameGameId',
   [ReportEntity.Storyline]: 'storylineId',
   [ReportEntity.ServiceOffering]: 'serviceOfferingId',
+  [ReportEntity.PostText]: 'postTextId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
@@ -427,9 +430,6 @@ export const createReport = async ({
   if (!data.details) data.details = {};
   (data.details as MixedObject).reportType = reportTypeNameMap[type];
 
-  // only mods can create csam reports
-  if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
-
   // User-only on purpose: reporting your own content is how a creator contests a
   // rating, so this must not widen to other entity types.
   if (type === ReportEntity.User && id === userId)
@@ -472,6 +472,26 @@ export const createReport = async ({
     !(await dbRead.serviceOffering.findUnique({ where: { id }, select: { id: true } }))
   )
     throw throwNotFoundError('That service no longer exists.');
+  // Read here for the author guard; the words it also yields are stamped below the dedupe, as the
+  // announcement's are.
+  const readReportedText = () =>
+    // primary: the author guard, and the text may have been written a moment ago.
+    dbWrite.postText.findUnique({
+      where: { id },
+      select: {
+        postId: true,
+        userId: true,
+        index: true,
+        content: true,
+        post: { select: { userId: true } },
+      },
+    });
+  const reportedText = type === ReportEntity.PostText ? await readReportedText() : null;
+  if (type === ReportEntity.PostText) {
+    if (!reportedText) throw throwNotFoundError('That text no longer exists.');
+    if (reportedText.userId === userId || reportedText.post.userId === userId)
+      throw throwBadRequestError('You cannot report your own text.');
+  }
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
   // An image's or a model's mature-content report casts tag votes, unless its reporter may not vote
@@ -494,12 +514,15 @@ export const createReport = async ({
     type === ReportEntity.GameFrameGame ||
     type === ReportEntity.Storyline ||
     type === ReportEntity.ServiceOffering ||
+    type === ReportEntity.PostText ||
     castsNoTagVotes;
   // Decides who is paid when the report is actioned, so it is the server's, whatever the client sent.
   // Stamped before the dedupe so a folded-in reporter's `additionalReports` entry carries it too.
   const details = data.details as MixedObject;
   if (castsNoTagVotes) details[NO_REPORT_REWARD_KEY] = true;
   else delete details[NO_REPORT_REWARD_KEY];
+  // The server's snapshot of a reported text (stamped below); never one the reporter sent.
+  delete details.postText;
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -508,8 +531,14 @@ export const createReport = async ({
           entityReportId: id,
           reason: data.reason,
           details,
-          // Post NSFW reports were filed Actioned: folding into one would never reach the queue.
-          pendingOnly: castsNoTagVotes || reportsStorylineChapter || foldIntoPendingOnly,
+          // Post NSFW reports were filed Actioned: folding into one would never reach the queue. A
+          // text can be edited after a ruling, so a later report on it is filed afresh, with the words
+          // it is about now.
+          pendingOnly:
+            castsNoTagVotes ||
+            reportsStorylineChapter ||
+            type === ReportEntity.PostText ||
+            foldIntoPendingOnly,
           tx: callerTx,
         })
       : null;
@@ -534,20 +563,24 @@ export const createReport = async ({
     };
   }
 
+  // The words as reported, from the row and never from `details` (the reporter's to write): the
+  // author can still edit or delete the text, and the moderator and a CSAM hold need what was reported.
+  if (reportedText)
+    (data.details as MixedObject).postText = {
+      content: reportedText.content,
+      index: reportedText.index,
+      postId: reportedText.postId,
+    };
+
   let recomputeArticleNsfwLevelId: number | null = null;
 
   const writeReport = async (tx: Prisma.TransactionClient) => {
     // A deleted comment's placeholder keeps its row, so the link below would take it; its old
     // reports were dropped with it. Held `FOR SHARE` until commit, so a delete waits for this report
-    // and drops its link too. A comment on another surface is reported through its old table, whose
-    // removal is what actions and rewards its reports.
+    // and drops its link too.
     if (type === ReportEntity.CommentV3) {
       const [comment] = await tx.$queryRaw<{ id: number }[]>`
-        SELECT id FROM "CommentV3"
-        WHERE id = ${id} AND "deletedAt" IS NULL AND ${Prisma.raw(
-        v3WriteSurfaceSql('"entityType"')
-      )}
-        FOR SHARE
+        SELECT id FROM "CommentV3" WHERE id = ${id} AND "deletedAt" IS NULL FOR SHARE
       `;
       if (!comment) throw throwNotFoundError('That comment no longer exists.');
     }
@@ -561,6 +594,7 @@ export const createReport = async ({
         [type]: {
           create: {
             [reportTypeConnectionMap[type]]: id,
+            ...(reportedText ? { postId: reportedText.postId } : {}),
           },
         },
       },
@@ -660,38 +694,6 @@ export const createReport = async ({
             });
           break;
       }
-
-    if (data.reason === ReportReason.CSAM && type === ReportEntity.Image) {
-      // `userId` is a moderator: only moderators can file CSAM. Already-actioned reports are left
-      // alone so their `statusSetAt` (which drives reporter notifications) is not moved.
-      await dbWrite.report.updateMany({
-        where: {
-          reason: { not: ReportReason.CSAM },
-          status: { not: ReportStatus.Actioned },
-          image: { imageId: id },
-        },
-        data: { status: ReportStatus.Actioned, statusSetAt: new Date(), statusSetBy: userId },
-      });
-      await dbWrite.image.update({
-        where: { id },
-        data: {
-          ingestion: 'Blocked',
-          nsfwLevel: NsfwLevel.Blocked,
-          blockedFor: BlockedReason.CSAM,
-        },
-      });
-      // Right after the block, not after the transaction: the block above goes through dbWrite, so
-      // it autocommits and stands even if a search-index queue below throws, and a refresh placed
-      // after the transaction would then never run. The refresh reads the primary, which already
-      // has the Blocked row. Never throws.
-      await refreshProfilePicturesForImagesLazy([id]);
-      // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): search-index delete (Redis) inside the txn on the rare CSAM-block path. Moving out needs hoisting the CSAM guard post-commit; left for a focused change on this sensitive path.
-      await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-      // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): see above (CSAM-block path).
-      await imagesMetricsSearchIndex.queueUpdate([
-        { id, action: SearchIndexUpdateQueueAction.Delete },
-      ]);
-    }
 
     return createdReport;
   };
@@ -972,6 +974,27 @@ const getAppealPrefix = (userId: number) =>
   `appeal-${userId}-${new Date().getTime()}-${randomUUID().slice(0, 8)}`;
 const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
 
+const APPEAL_FEE = 100;
+
+/**
+ * The appeal fee's external id prefix for one appeal. With the client's key (a uuid, minted once per
+ * appeal and resent on its retries) it is the same on every retry, so the ledger holds one charge
+ * for it. The user comes first, then the appealed entity, so a key can only ever name this user's
+ * fee for this entity. `appeal-k-` keeps it apart from the keyless form (`appeal-<userId>-…`), which
+ * a prefix lookup or refund could otherwise match. Still `appeal-`, so `refundAppealFee` refunds it
+ * by prefix.
+ */
+export function appealFeeTransactionPrefix(
+  userId: number,
+  entityType: EntityType,
+  entityId: number,
+  idempotencyKey: string | undefined
+) {
+  return idempotencyKey
+    ? `appeal-k-${userId}-${entityType}-${entityId}-${idempotencyKey}`
+    : getAppealPrefix(userId);
+}
+
 export async function createEntityAppeal({
   entityId,
   entityType,
@@ -980,6 +1003,7 @@ export async function createEntityAppeal({
   buzzType,
   skipFee,
   context,
+  idempotencyKey,
 }: Omit<CreateEntityAppealInput, 'locks'> & {
   userId: number;
   buzzType: BuzzSpendType;
@@ -987,6 +1011,35 @@ export async function createEntityAppeal({
   context?: LockReviewContext;
 }) {
   let buzzTransactionId: string | null = null;
+
+  const writeAppeal = async (tx: Prisma.TransactionClient, feeTransactionId: string | null) => {
+    switch (entityType) {
+      case EntityType.Image: {
+        // The handler refuses any flagged image off a replica read. This re-checks only the
+        // moderator-only flag, under the row lock, so one set in between is never overwritten.
+        const updated = await tx.$executeRaw`
+          UPDATE "Image" SET "needsReview" = 'appeal', "updatedAt" = now()
+          WHERE id = ${entityId} AND "needsReview" IS DISTINCT FROM 'csam'
+        `;
+        if (!updated) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
+        break;
+      }
+      default:
+        // Do nothing
+        break;
+    }
+
+    return tx.appeal.create({
+      data: {
+        entityId,
+        entityType,
+        appealMessage: message,
+        userId,
+        buzzTransactionId: feeTransactionId,
+        context,
+      },
+    });
+  };
 
   if (!skipFee) {
     // check if user has more than 3 pending or rejected appeal in the last 30 days
@@ -997,18 +1050,75 @@ export async function createEntityAppeal({
     });
 
     if (appealsCount >= 3) {
-      const prefix = getAppealPrefix(userId);
-      const data = await withRetries(() =>
+      const charge = (prefix: string) =>
         createMultiAccountBuzzTransaction({
-          amount: 100,
+          amount: APPEAL_FEE,
           fromAccountId: userId,
           toAccountId: 0,
           type: TransactionType.Appeal,
           fromAccountTypes: [buzzType],
           description: `Appeal fee for ${entityType} ${entityId}`,
           externalTransactionIdPrefix: prefix,
-        })
-      );
+        });
+
+      if (idempotencyKey !== undefined) {
+        // Charged once per appeal across the user's retries, then recorded once under the key's
+        // lock; see chargeByPrefix and recordKeyedCharge. Imported here, not at the top: this
+        // module is in the image.service import cycle, and a static import pulls them into it.
+        const { chargeByPrefix, prefixWasRefunded } = await import(
+          '~/server/services/buzz-keyed-charge'
+        );
+        const {
+          CHARGE_LOCKED_READ,
+          CHARGE_LOCKED_REFUND,
+          recordKeyedCharge,
+          ROUTINE_REFUSAL_REFUND_ATTEMPTS,
+        } = await import('~/server/services/buzz-charge-lock');
+        const prefix = appealFeeTransactionPrefix(userId, entityType, entityId, idempotencyKey);
+        const feeContext = { userId, amount: APPEAL_FEE };
+        await chargeByPrefix(prefix, feeContext, {
+          reusable: true,
+          expected: {
+            amount: APPEAL_FEE,
+            fromAccountId: userId,
+            fromAccountTypes: [buzzType],
+            toAccountId: 0,
+            type: TransactionType.Appeal,
+          },
+          charge: () => charge(prefix),
+          declined: () =>
+            new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'There was an error creating the appeal transaction.',
+            }),
+        });
+        return recordKeyedCharge(prefix, feeContext, {
+          findRecorded: (tx) =>
+            tx.appeal.findFirst({ where: { userId, buzzTransactionId: prefix } }),
+          isRefunded: () => prefixWasRefunded(prefix, feeContext, CHARGE_LOCKED_READ),
+          record: (tx) => writeAppeal(tx, prefix),
+          refund: () =>
+            refundMultiAccountTransaction(
+              {
+                externalTransactionIdPrefix: prefix,
+                description: `Refund appeal fee for ${entityType} ${entityId}`,
+              },
+              CHARGE_LOCKED_REFUND
+            ),
+          // Lost the race on the one-Pending-appeal-per-entity index to a concurrent submit.
+          recordFailed: (error) =>
+            isPrismaUniqueViolation(error)
+              ? new TRPCError({ code: 'BAD_REQUEST', message: APPEAL_ALREADY_PENDING })
+              : error,
+          // Already pending and IMAGE_NOT_APPEALABLE are routine, and a retry is then refused by the
+          // handler before it reaches the charge, so the refund is retried here. Worst case: the
+          // record transaction (45s) plus three refund transactions (31s each) and the pauses, ~140s.
+          refundAttempts: ROUTINE_REFUSAL_REFUND_ATTEMPTS,
+        });
+      }
+
+      const prefix = appealFeeTransactionPrefix(userId, entityType, entityId, undefined);
+      const data = await withRetries(() => charge(prefix));
 
       if (data.transactionCount === 0) {
         throw new Error('There was an error creating the appeal transaction.');
@@ -1019,27 +1129,7 @@ export async function createEntityAppeal({
   }
 
   try {
-    const appeal = await dbWrite.$transaction(async (tx) => {
-      switch (entityType) {
-        case EntityType.Image: {
-          // The handler refuses any flagged image off a replica read. This re-checks only the
-          // moderator-only flag, under the row lock, so one set in between is never overwritten.
-          const updated = await tx.$executeRaw`
-            UPDATE "Image" SET "needsReview" = 'appeal', "updatedAt" = now()
-            WHERE id = ${entityId} AND "needsReview" IS DISTINCT FROM 'csam'
-          `;
-          if (!updated) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
-          break;
-        }
-        default:
-          // Do nothing
-          break;
-      }
-
-      return tx.appeal.create({
-        data: { entityId, entityType, appealMessage: message, userId, buzzTransactionId, context },
-      });
-    });
+    const appeal = await dbWrite.$transaction((tx) => writeAppeal(tx, buzzTransactionId));
 
     return appeal;
   } catch (error) {
@@ -1080,20 +1170,59 @@ export async function createEntityAppeal({
 // URL fall back to a label-only reference.
 export function appealEntityLink(
   entityType: EntityType,
-  entityId: number
+  entityId: number,
+  color?: ColorDomain
 ): { url?: string; label: string } {
+  const base = getBaseUrl(color);
   switch (entityType) {
     case EntityType.Image:
-      return { url: `${getBaseUrl()}/images/${entityId}`, label: `Image #${entityId}` };
+      return { url: `${base}/images/${entityId}`, label: `Image #${entityId}` };
     case EntityType.Model:
-      return { url: `${getBaseUrl()}/models/${entityId}`, label: `Model #${entityId}` };
+      return { url: `${base}/models/${entityId}`, label: `Model #${entityId}` };
     case EntityType.Bounty:
-      return { url: `${getBaseUrl()}/bounties/${entityId}`, label: `Bounty #${entityId}` };
+      return { url: `${base}/bounties/${entityId}`, label: `Bounty #${entityId}` };
     case EntityType.Storyline:
-      return { url: `${getBaseUrl()}/storylines/${entityId}`, label: `Storyline #${entityId}` };
+      return { url: `${base}/storylines/${entityId}`, label: `Storyline #${entityId}` };
     default:
       return { label: `${entityType} #${entityId}` };
   }
+}
+
+/**
+ * Resolves each appealed item's email-link domain: `.red` unless civitai.com serves its rating.
+ * `.red` serves every level, so a missing row or failed read must also land there, not on the request host.
+ */
+async function appealLinkColors(
+  appeals: { entityType: EntityType; entityId: number }[]
+): Promise<(appeal: { entityType: EntityType; entityId: number }) => ColorDomain | undefined> {
+  const rated = [EntityType.Image, EntityType.Model, EntityType.Bounty] as const;
+  const comServable = new Set<string>();
+  await Promise.all(
+    rated.map(async (entityType) => {
+      const ids = [
+        ...new Set(appeals.filter((a) => a.entityType === entityType).map((a) => a.entityId)),
+      ];
+      if (!ids.length) return;
+      const where = { id: { in: ids } };
+      const select = { id: true, nsfwLevel: true } as const;
+      const read: Promise<{ id: number; nsfwLevel: number; nsfw?: boolean }[]> =
+        entityType === EntityType.Image
+          ? dbRead.image.findMany({ where, select })
+          : entityType === EntityType.Model
+          ? dbRead.model.findMany({ where, select })
+          : // A creator's mature mark sends a bounty off .com whatever its images are rated.
+            dbRead.bounty.findMany({ where, select: { ...select, nsfw: true } });
+      const rows = await read.catch(() => []);
+      for (const row of rows)
+        if (!row.nsfw && isRatingWithinCap(row.nsfwLevel, sfwBrowsingLevelsFlag))
+          comServable.add(`${entityType}:${row.id}`);
+    })
+  );
+  return ({ entityType, entityId }) =>
+    !(rated as readonly EntityType[]).includes(entityType) ||
+    comServable.has(`${entityType}:${entityId}`)
+      ? undefined
+      : 'red';
 }
 
 type AppealFeeRef = {
@@ -1342,6 +1471,77 @@ function closeUnreviewedAppeals(limit: number) {
   `;
 }
 
+/**
+ * A Pending appeal on an image dismissed from the CSAM review queue: the review flag stays on, so no
+ * appeals queue lists it. Closed `ROUTED_APPEAL_REVIEW_DAYS` after it was filed, as an unreviewed one;
+ * one `closedSilently` gets no refund and no notice, and one whose owner is deleted no notice.
+ */
+function closeDismissedReviewAppeals(limit: number) {
+  return dbWrite.$queryRaw<(ClaimedOrphan & { closedSilently: boolean; ownerDeleted: boolean })[]>`
+    UPDATE "Appeal"
+    SET status = 'Void'::"AppealStatus", "resolvedReason" = ${
+      OrphanedAppealReason.RemovedBeforeReview
+    },
+      "resolvedAt" = now(), "updatedAt" = now()
+    WHERE id IN (
+      SELECT a.id FROM "Appeal" a
+      JOIN "Image" i ON i.id = a."entityId"
+      WHERE a.status = 'Pending'::"AppealStatus"
+        AND a."entityType" = 'Image'::"EntityType"
+        AND a."createdAt" <= now() - make_interval(days => ${Prisma.raw(
+          String(ROUTED_APPEAL_REVIEW_DAYS)
+        )})
+        AND i."needsReview" = 'csam'
+        AND EXISTS (
+          SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = i.id AND s.outcome = 'Dismissed'
+        )
+      LIMIT ${limit}
+    ) AND status = 'Pending'::"AppealStatus"
+    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId",
+      (
+        EXISTS (
+          SELECT 1 FROM "Image" o WHERE o."userId" = "Appeal"."userId" AND o."blockedFor" = 'CSAM'
+        )
+        OR EXISTS (
+          SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
+          WHERE ur."userId" = "Appeal"."userId" AND r.reason = 'CSAM'
+        )
+      ) AS "closedSilently",
+      EXISTS (
+        SELECT 1 FROM "User" u WHERE u.id = "Appeal"."userId" AND u."deletedAt" IS NOT NULL
+      ) AS "ownerDeleted"
+  `;
+}
+
+/** ModActivity row for a notice not sent. Ids only. */
+export const DEFERRED_NOTICE_WITHHELD_ACTIVITY = 'deferredNoticeWithheld';
+
+/**
+ * Users whose notice is not sent. Read on the primary; a failed read returns all of them. A different
+ * set from `accountHoldSql`'s, on purpose: do not swap one for the other.
+ */
+async function usersWithNoticeWithheld(userIds: number[]): Promise<Set<number>> {
+  if (!userIds.length) return new Set();
+  try {
+    const rows = await dbWrite.$queryRaw<{ userId: number }[]>`
+      SELECT "userId" FROM "CsamReport" WHERE "userId" = ANY(${userIds}::int[])
+      UNION
+      SELECT u.id FROM "CsamReport" c, unnest(${userIds}::int[]) AS u(id)
+      WHERE c.details ->> 'secondaryUserId' = u.id::text
+      UNION
+      SELECT "userId" FROM "EvidenceHold" WHERE "userId" = ANY(${userIds}::int[])
+    `;
+    return new Set(rows.map((r) => r.userId));
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'deferred-notice-withheld-check',
+      message: (e as Error).message,
+    });
+    return new Set(userIds);
+  }
+}
+
 function routeOrphansForReview(ids: number[]) {
   if (!ids.length) return Promise.resolve([] as ClaimedOrphan[]);
   return dbWrite.$queryRaw<ClaimedOrphan[]>`
@@ -1477,7 +1677,8 @@ export async function closeAppealsOnDeletedModel({ modelId }: { modelId: number 
  * refunded, and is told. Any other deleted model closes quietly; a removed image stays Pending,
  * stamped `entityRemovedAt`, for review, and its owner is told; one still unreviewed
  * `ROUTED_APPEAL_REVIEW_DAYS` later is closed, refunded and told. Two cases close quietly, with no
- * notice: a deleted account's appeals, and a deleted model's appeal its owner did not delete.
+ * notice: a deleted account's appeals, and a deleted model's appeal its owner did not delete. An
+ * image dismissed from the CSAM review queue is closed the same way, counted from the filing.
  */
 export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
   const candidates = await dbWrite.$queryRaw<OrphanCandidate[]>`
@@ -1550,11 +1751,42 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
     await notifyOrphanedAppeal(appeal, 'closed-unreviewed', wasRefunded);
   }
 
+  const closedDismissed = await closeDismissedReviewAppeals(limit);
+  // Every refund before anything that can throw: these are Void already, so nothing retries them.
+  const refundedDismissed = new Map<number, boolean>();
+  for (const appeal of closedDismissed)
+    if (!appeal.closedSilently) refundedDismissed.set(appeal.id, await refund(appeal));
+  const told = closedDismissed.filter((a) => !a.closedSilently && !a.ownerDeleted);
+  const withheld = await usersWithNoticeWithheld([...new Set(told.map((a) => a.userId))]);
+  for (const appeal of told) {
+    if (!withheld.has(appeal.userId)) {
+      await notifyOrphanedAppeal(appeal, 'closed-unreviewed', refundedDismissed.get(appeal.id));
+      continue;
+    }
+    await dbWrite.$executeRaw`
+      INSERT INTO "ModActivity" ("userId", "entityType", "entityId", activity)
+      VALUES (NULL, 'image', ${appeal.entityId}, ${DEFERRED_NOTICE_WITHHELD_ACTIVITY})
+      ON CONFLICT DO NOTHING
+    `.catch(() =>
+      logToAxiom({
+        type: 'error',
+        name: 'deferred-effect-failed',
+        imageId: appeal.entityId,
+      })
+    );
+    logToAxiom({
+      type: 'warning',
+      name: 'deferred-notice-withheld',
+      imageId: appeal.entityId,
+    });
+  }
+
   return {
     closedQuietly: closedQuietly.length,
     closedOwnerDeleted: closedOwnerDeleted.length,
     routedForReview: routed.length,
     closedUnreviewed: closedUnreviewed.length,
+    closedDismissedReview: closedDismissed.length,
     refunded,
     refundFailed,
   };
@@ -1575,13 +1807,12 @@ export async function resolveEntityAppeal({
   /** 'flag' leaves a model's pending lock review, which is ruled on by its own path, open. */
   modelAppealKind?: 'flag';
 }) {
-  // An approval never restores an image blocked for CSAM: refused whole, and every appeal stays
-  // Pending. Read on the primary just before the claim, so a CSAM block landing between this read
-  // and the claim is not seen. The only live Image-approval caller is `handleUnblockImages`, after
-  // an explicit unblock.
+  // An approval of an image removed for CSAM or under the review flag is refused whole, and every
+  // appeal stays Pending. One that turns so after this read is reopened by `settleResolvedAppeals`.
   if (entityType === EntityType.Image && status === AppealStatus.Approved && ids.length) {
     const held = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT id FROM "Image" WHERE id = ANY(${ids}::int[]) AND "blockedFor" = ${BlockedReason.CSAM}
+      SELECT id FROM "Image" WHERE id = ANY(${ids}::int[])
+        AND ("blockedFor" = ${BlockedReason.CSAM} OR "needsReview" = 'csam')
     `;
     if (held.length)
       throw throwBadRequestError(
@@ -1649,7 +1880,12 @@ export async function settleResolvedAppeals(
     status,
     resolvedMessage,
     refundBuzz,
-  }: Pick<ResolveAppealInput, 'status' | 'resolvedMessage' | 'refundBuzz'>
+    lockReview,
+  }: Pick<ResolveAppealInput, 'status' | 'resolvedMessage' | 'refundBuzz'> & {
+    /** Set for a model's lock review: the owner's words come from `lockReviewRulingMessage`, not
+     *  `resolvedMessage`. */
+    lockReview?: { unlocked: RequestableLock[]; reason?: string | null; cooldown?: boolean };
+  }
 ) {
   const approved = status === AppealStatus.Approved;
 
@@ -1661,20 +1897,36 @@ export async function settleResolvedAppeals(
   });
   const recipientMap = new Map(recipients.map((u) => [u.id, u]));
 
+  const reopenedIds = new Set<number>();
   for (const appeal of appeals) {
+    let reopened = false;
     switch (appeal.entityType) {
-      case EntityType.Image:
+      case EntityType.Image: {
+        let written = false;
         try {
-          // No moderator-only review-flag guard, unlike the moderator app's twin: a Pending image
-          // appeal cannot sit beside that flag (`createEntityAppeal` refuses, `reportCsamImages`
-          // closes it), so there is nothing here for one to protect.
-          const updated = await dbWrite.image.update({
-            where: { id: appeal.entityId },
-            data: approved
-              ? { needsReview: null, blockedFor: null, ingestion: ImageIngestionStatus.Scanned }
-              : { needsReview: null },
-            select: { postId: true, pHash: true },
-          });
+          // An approval never restores a row removed for CSAM or under the review flag, and a
+          // rejection leaves that flag on.
+          type Written = { postId: number | null; pHash: bigint | null };
+          const [updated] = approved
+            ? await dbWrite.$queryRaw<Written[]>`
+                UPDATE "Image"
+                SET "needsReview" = NULL, "blockedFor" = NULL, ingestion = 'Scanned'
+                WHERE id = ${appeal.entityId}
+                  AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
+                  AND "needsReview" IS DISTINCT FROM 'csam'
+                RETURNING "postId", "pHash"
+              `
+            : await dbWrite.$queryRaw<Written[]>`
+                UPDATE "Image"
+                SET "needsReview" = CASE WHEN "needsReview" = 'csam' THEN "needsReview" END
+                WHERE id = ${appeal.entityId}
+                RETURNING "postId", "pHash"
+              `;
+          written = true;
+          if (!updated) {
+            reopened = approved;
+            break;
+          }
 
           if (approved) {
             // Shared restore path: reset+unlock a Blocked-locked row so the recompute isn't a
@@ -1683,8 +1935,12 @@ export async function settleResolvedAppeals(
             await dropBlockedImageDeleteQueue([appeal.entityId]);
             // An approved appeal means the block was wrong — drop the pHash from the
             // blocked-hash set so re-uploads of the same image aren't auto-blocked (parity
-            // with handleUnblockImages).
-            if (updated.pHash != null) await bulkRemoveBlockedImages([updated.pHash]);
+            // with handleUnblockImages). A hash with a live CSAM entry stays blocked.
+            if (updated.pHash != null)
+              await bulkRemoveBlockedImages([updated.pHash], {
+                step: 'appeal-approve',
+                imageIds: [appeal.entityId],
+              });
           }
 
           await queueImageSearchIndexUpdate({
@@ -1700,13 +1956,37 @@ export async function settleResolvedAppeals(
 
           if (updated.postId) await bustCachesForPosts(updated.postId);
         } catch (e) {
-          // Image may have been deleted — log but continue resolving the appeal
+          // An approval whose image write failed restored nothing, so it is reopened like a refused one.
+          if (approved && !written) reopened = true;
           console.error(`Failed to update image ${appeal.entityId} for appeal ${appeal.id}: ${e}`);
         }
         break;
+      }
       default:
         // Do nothing
         break;
+    }
+    if (reopened) {
+      // Back to Pending, with no refund and no notice: nothing was approved. Skipped even when the
+      // revert fails, which leaves it Approved and logged.
+      reopenedIds.add(appeal.id);
+      const failure = await dbWrite.appeal
+        .updateMany({
+          where: { id: appeal.id, status: AppealStatus.Approved },
+          data: { status: AppealStatus.Pending, resolvedBy: null, resolvedAt: null },
+        })
+        .then(
+          () => undefined,
+          (e: Error) => e.message
+        );
+      logToAxiom({
+        type: 'error',
+        name: 'appeal-approval-not-restored',
+        appealId: appeal.id,
+        imageId: appeal.entityId,
+        ...(failure ? { revertFailed: failure } : {}),
+      });
+      continue;
     }
 
     if ((approved || refundBuzz) && appeal.buzzTransactionId) {
@@ -1741,6 +2021,13 @@ export async function settleResolvedAppeals(
         entityId: appeal.entityId,
         status,
         resolvedMessage,
+        ...(lockReview && {
+          kind: LOCK_REVIEW_KIND,
+          unlocked: lockReview.unlocked,
+          reason: lockReview.reason ?? null,
+          // No date to promise when the ruling started no cooldown.
+          resolvedAt: lockReview.cooldown ? appeal.resolvedAt : null,
+        }),
       },
     });
   }
@@ -1750,11 +2037,13 @@ export async function settleResolvedAppeals(
   // user who appealed several items at once gets a single email.
   const appealsByUser = new Map<number, typeof appeals>();
   for (const appeal of appeals) {
+    if (reopenedIds.has(appeal.id)) continue;
     const list = appealsByUser.get(appeal.userId) ?? [];
     list.push(appeal);
     appealsByUser.set(appeal.userId, list);
   }
 
+  const linkColor = appealsByUser.size ? await appealLinkColors(appeals) : () => undefined;
   for (const [recipientId, userAppeals] of appealsByUser) {
     const recipient = recipientMap.get(recipientId);
     if (!recipient?.email) continue;
@@ -1766,8 +2055,20 @@ export async function settleResolvedAppeals(
       await moderationActionEmail.send({
         to: recipient.email,
         username: recipient.username ?? 'User',
-        kind: approved ? 'appeal-approved' : 'appeal-rejected',
-        items: userAppeals.map((a) => appealEntityLink(a.entityType, a.entityId)),
+        kind: lockReview
+          ? approved
+            ? 'lock-review-approved'
+            : 'lock-review-rejected'
+          : approved
+          ? 'appeal-approved'
+          : 'appeal-rejected',
+        intro:
+          lockReview &&
+          lockReviewRulingMessage(approved, lockReview.unlocked, {
+            reason: lockReview.reason,
+            resolvedAt: lockReview.cooldown ? userAppeals[0].resolvedAt : null,
+          }),
+        items: userAppeals.map((a) => appealEntityLink(a.entityType, a.entityId, linkColor(a))),
       });
     } catch (error) {
       logToAxiom({

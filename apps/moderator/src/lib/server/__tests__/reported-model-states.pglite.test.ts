@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /** What the model report pane reads about a reported model's state, on the real SQL. */
@@ -37,6 +37,9 @@ beforeEach(async () => {
       (3, 'odd meta', 'Published', '"x"');
   `);
 });
+
+// A cluster holds its memory until closed; a file of them left open runs a worker out of RAM.
+afterEach(() => pg.close());
 
 describe('getReportedModelStates', () => {
   it('tells a model kept when its owner was wiped from one taken down', async () => {

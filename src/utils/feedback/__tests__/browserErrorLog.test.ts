@@ -620,3 +620,21 @@ describe('browser error log — buffers', () => {
     expect(readNetworkErrors()).toEqual([]);
   });
 });
+
+describe('browser error log — tRPC logger lines', () => {
+  beforeEach(() => resetBrowserErrorLog());
+
+  it('skips the tRPC logger line and keeps the error beside it', () => {
+    recordConsoleError(
+      '%c << query #10 %cimage.getInfinite%c %O background-color: #3fb0d8; color: white;'
+    );
+    recordConsoleError('%c >> mutation #3 %cimage.create%c %O background-color: #3fb0d8;');
+    recordConsoleError('TypeError: x is undefined');
+    expect(readConsoleErrors()).toEqual([{ message: 'TypeError: x is undefined', count: 1 }]);
+  });
+
+  it('keeps a message that only mentions a query', () => {
+    recordConsoleError('<< query failed for image.getInfinite');
+    expect(readConsoleErrors()).toHaveLength(1);
+  });
+});

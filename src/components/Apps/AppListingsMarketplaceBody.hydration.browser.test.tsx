@@ -128,14 +128,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
 const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+const { FiltersProvider } = await import('~/providers/FiltersProvider');
 
 /** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
 function StoreWithControls() {
   return (
-    <>
+    <FiltersProvider>
       <AppsStoreFeedFilters />
       <AppListingsMarketplaceBody />
-    </>
+    </FiltersProvider>
   );
 }
 const { clearRecentlyOpenedApps } = await import('./recentlyOpenedAppsStore');
@@ -166,6 +167,7 @@ const router = useRouter();
 const SEEDED = { kind: 'offsite', category: 'generation', sort: 'newest', query: 'matrix' };
 
 beforeEach(() => {
+  localStorage.removeItem('apps-store-filters');
   mocks.isClient = false;
   mocks.lastArgs = null;
   mocks.items = [makeCard('a', 'Alpha App'), makeCard('b', 'Bravo App', 'offsite')];

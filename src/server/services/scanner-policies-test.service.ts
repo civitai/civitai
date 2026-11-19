@@ -179,14 +179,14 @@ export async function startRun(args: {
     userId: args.userId,
     state,
   }).catch(async (err) => {
-    await logToAxiom({
+    logToAxiom({
       name: 'scanner-policy-test',
       type: 'error',
       runId,
       datasetId: dataset.id,
       err: String(err),
       stack: (err as Error)?.stack,
-    }).catch(() => undefined);
+    });
     await emitProgress(args.userId, {
       runId,
       phase: 'error',
@@ -295,27 +295,27 @@ export async function handleResultCallback(args: {
   if (!state) {
     // Run state expired or was cleaned up — orchestrator delivered a stale
     // callback. Log + drop.
-    await logToAxiom({
+    logToAxiom({
       name: 'scanner-policy-result',
       type: 'warning',
       message: 'callback for unknown runId',
       runId: args.runId,
       workflowId: args.workflowId,
-    }).catch(() => undefined);
+    });
     return;
   }
 
   const row = state.rows[args.rowIdx];
   const candidate = state.candidates.find((c) => c.id === args.candidateId);
   if (!row || !candidate) {
-    await logToAxiom({
+    logToAxiom({
       name: 'scanner-policy-result',
       type: 'warning',
       message: 'callback row/candidate not found in run state',
       runId: args.runId,
       rowIdx: args.rowIdx,
       candidateId: args.candidateId,
-    }).catch(() => undefined);
+    });
     return;
   }
 
@@ -636,13 +636,13 @@ async function emitProgress(userId: number, data: ScannerPolicyTestProgressData)
       data,
     });
   } catch (err) {
-    await logToAxiom({
+    logToAxiom({
       name: 'scanner-policy-signal',
       type: 'warning',
       userId,
       runId: data.runId,
       err: String(err),
-    }).catch(() => undefined);
+    });
   }
 }
 

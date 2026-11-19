@@ -43,7 +43,7 @@ export async function queueUploadPromptRetry({
       message: 'retries exhausted',
       imageId,
       attempt,
-    }).catch(() => null);
+    });
     return false;
   }
   try {
@@ -64,7 +64,7 @@ export async function queueUploadPromptRetry({
       message: `retry not queued: ${error instanceof Error ? error.message : 'Unknown error'}`,
       imageId,
       attempt,
-    }).catch(() => null);
+    });
     return false;
   }
 }

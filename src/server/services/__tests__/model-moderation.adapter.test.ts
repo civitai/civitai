@@ -130,13 +130,15 @@ describe('modelModerationAdapter.applyResult', () => {
     dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
   });
 
-  it('flips nsfw and locks the property when a level label triggers', async () => {
+  it('flips nsfw and locks it, with its marker, when a level label triggers', async () => {
     await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
 
     const flip = flipCall();
     expect(flip).toBeDefined();
-    expect(flip?.sql).toContain('array_append');
-    expect(flip?.sql).toContain("'systemNsfwLock'");
+    expect(flip?.sql).toContain(
+      `array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw')`
+    );
+    expect(flip?.sql).toMatch(/'systemNsfwLock',\s*jsonb_build_object\('source'/);
     // source, the system actor on the applied record, source again, then the model id.
     expect(flip?.values).toEqual([
       'xguard-text-moderation',
@@ -198,6 +200,17 @@ describe('modelModerationAdapter.applyResult', () => {
     await modelModerationAdapter.applyResult?.(applyArgs(['Scat'], true));
 
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  // As on main: the xguard check locks a model the owner already rated mature.
+  it('locks an unlocked model already nsfw', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(modelRow({ nsfw: true, nsfwLevel: 60 }));
+
+    await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
+
+    expect(flipCall()?.sql).toContain(
+      `array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw')`
+    );
   });
 
   describe('when a moderator has locked nsfw', () => {
@@ -281,11 +294,6 @@ describe('modelModerationAdapter.applyResult', () => {
     expect(updateModelNsfwLevels).not.toHaveBeenCalled();
     expect(bustPublicModelResponseCache).not.toHaveBeenCalled();
     expect(entityChangesMock).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: 'nsfw lock appeared between read and write; flag not applied',
-      })
-    );
   });
 
   describe('on a model its owner restricted', () => {

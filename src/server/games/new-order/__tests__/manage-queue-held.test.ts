@@ -32,7 +32,7 @@ describe('manage-queue insert-in-queue', () => {
 
     expect(await insert('2')).toEqual({
       status: 200,
-      body: { message: 'Not inserted: held for review', heldImageIds: [2] },
+      body: { message: 'Not inserted: held for review or blocked', heldImageIds: [2] },
     });
   });
 

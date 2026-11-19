@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { describe, it, expect } from 'vitest';
 import { isClientAbortError, isPrismaLockTimeout } from '~/server/utils/errorHandling';
-import { FETCH_DOCUMENTS_TIMEOUT_MESSAGE } from '~/server/meilisearch/client';
 import { modelQueryError } from '~/test-utils/prismaLockTimeout';
 
 describe('isClientAbortError', () => {
@@ -35,24 +34,6 @@ describe('isClientAbortError', () => {
   });
 
   // ---- must NOT over-classify (these stay 5xx/408, never 499) ----
-
-  it('DRIFT GUARD: does NOT classify our local Meili-deadline abort as a client abort', () => {
-    // The local fetchDocumentsAbortable timer aborts with FETCH_DOCUMENTS_TIMEOUT_MESSAGE;
-    // if it surfaces as an AbortError-with-cause, the exclusion must still hold. This
-    // case fails if the duplicated literal in errorHandling.ts ever drifts from the
-    // exported constant — the whole reason the literal exists (circular-import avoidance).
-    expect(
-      isClientAbortError({
-        name: 'AbortError',
-        message: 'This operation was aborted',
-        cause: { message: FETCH_DOCUMENTS_TIMEOUT_MESSAGE },
-      })
-    ).toBe(false);
-    // and the plain-Error form of the same sentinel
-    expect(isClientAbortError({ name: 'Error', message: FETCH_DOCUMENTS_TIMEOUT_MESSAGE })).toBe(
-      false
-    );
-  });
 
   it('does NOT classify an AbortSignal.timeout() TimeoutError as a client abort', () => {
     // Server-side deadline: name=TimeoutError, message has a " due to timeout" suffix

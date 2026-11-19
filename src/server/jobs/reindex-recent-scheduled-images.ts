@@ -2,21 +2,15 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
-import { commaDelimitedEnumArray } from '~/utils/zod-helpers';
+import { imagesMetricsSearchIndex } from '~/server/search-index';
 import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 
-// Manual / one-off backfill. Re-syncs the image indexes for scheduled/rescheduled
-// posts whose documents got frozen at the original scheduled time, or were never
-// indexed at all — see https://app.clickup.com/t/868k68g0z (and the earlier
-// modelVersion-only case https://app.clickup.com/t/868jc90r3).
-//
-// The two indexes are broken in different ways, which is why both can be synced:
-//   - metrics_images_v1 takes every image and filters at query time, so a stale doc
-//     carries the wrong sort position (GREATEST(publishedAt, scannedAt, createdAt)).
-//   - images_v6 gates on `p."publishedAt" <= NOW()` at pull time, so a document
-//     enqueued while the post was still future-dated was rejected outright and the
-//     image is simply absent from site search.
+// Manual / one-off backfill. Re-syncs the metrics image index for scheduled/rescheduled
+// posts whose documents got frozen at the original scheduled time — see
+// https://app.clickup.com/t/868k68g0z (and the earlier modelVersion-only case
+// https://app.clickup.com/t/868jc90r3). metrics_images_v1 takes every image and filters at
+// query time, so a stale doc carries the wrong sort position
+// (GREATEST(publishedAt, scannedAt, createdAt)).
 //
 // Targets posts still scheduled in the future (publishedAt > now) — the actively-broken
 // "vanish entirely / surface at the wrong time" cases — plus posts published within the
@@ -26,7 +20,6 @@ import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 //   &days=<lookback>        how far back to reach (default 3)
 //   &limit=<n>              POSTS per run (default 500), not images
 //   &beforeAt=<iso>&beforeId=<postId>   resume cursor; both come back in the result
-//   &indexes=search,metrics which indexes to sync (default both)
 //
 // Paging runs newest-first, so the future-scheduled block comes out before anything already
 // published. Start at `beforeAt=<now>` to skip it and go straight at the published backlog.
@@ -40,7 +33,6 @@ const schema = z
     limit: z.coerce.number().int().positive().max(5000).default(DEFAULT_LIMIT),
     beforeAt: z.coerce.date().optional(),
     beforeId: z.coerce.number().int().nonnegative().optional(),
-    indexes: commaDelimitedEnumArray(['search', 'metrics']).default(['search', 'metrics']),
   })
   // Half a cursor is worse than none: it would silently restart from the newest page and
   // re-walk everything the operator already paged through.
@@ -52,7 +44,7 @@ export const reindexRecentScheduledImages = createJob(
   'reindex-recent-scheduled-images',
   UNRUNNABLE_JOB_CRON,
   async (jobContext) => {
-    const { days, limit, beforeAt, beforeId, indexes } = schema.parse(jobContext.req?.query ?? {});
+    const { days, limit, beforeAt, beforeId } = schema.parse(jobContext.req?.query ?? {});
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
     // 🔴 Page over POSTS on ("publishedAt", id) DESC — never over Image.id.
@@ -112,7 +104,7 @@ export const reindexRecentScheduledImages = createJob(
       `reindex-recent-scheduled-images :: ${posts.length} posts / ${
         images.length
       } images since ${since.toISOString()}`,
-      { indexes, ...cursor, done }
+      { ...cursor, done }
     );
 
     const data = images.map(({ id }) => ({
@@ -120,14 +112,7 @@ export const reindexRecentScheduledImages = createJob(
       action: SearchIndexUpdateQueueAction.Update,
     }));
 
-    if (data.length) {
-      if (indexes.includes('metrics')) {
-        await imagesMetricsSearchIndex.updateSync(data, jobContext);
-      }
-      if (indexes.includes('search')) {
-        await imagesSearchIndex.updateSync(data, jobContext);
-      }
-    }
+    if (data.length) await imagesMetricsSearchIndex.updateSync(data, jobContext);
 
     // `done` lets the operator stop without guessing: a short page is the last one.
     return { posts: posts.length, images: images.length, ...cursor, done };

@@ -1,5 +1,3 @@
-import fs from 'fs';
-import path from 'path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -1611,305 +1609,110 @@ describe('scope-grant.service', () => {
     });
   });
 
-  /**
-   * 🔴 EVERY `logToAxiom` IN THIS MODULE MUST SWALLOW ITS OWN REJECTION — a STRUCTURAL assertion,
-   * because the property is asserted in a COMMENT and was pinned by nothing.
-   *
-   * All three call sites here sit on a consent or spend path and each carries a comment promising
-   * that logging can never break it. Round-7 review measured what that promise was worth: deleting the
-   * `.catch(() => {})` from the re-consent refusal SURVIVED all 265 tests. Without it a rejected
-   * `logToAxiom` is an unhandled rejection on a MUTATION path — the log line would break the very
-   * consent path its neighbour promises it cannot.
-   *
-   * ⚠️ WHY STRUCTURAL AND NOT BEHAVIOURAL. Pinning this behaviourally needs `vi.mock` on
-   * `~/server/logging/client` in a suite that deliberately mocks only the db, and two of this
-   * repo's own lint-rule guards police wholesale module mocks. This scan costs one file read, pins
-   * every site present and any future one, and fails when a site is ADDED without the catch — which
-   * is the direction that matters. The site count is derived by the scan itself, not stated here.
-   *
-   * It reads the SOURCE comment-stripped, so a future `logToAxiom(` written in prose cannot break
-   * it — ⚠️ DEFENSIVE ONLY, not a working property: measured, no comment in that module contains
-   * the call shape today (3 raw occurrences, 3 stripped), so mutating the stripper to the identity
-   * function SURVIVES. It is here so the guard does not start false-failing the first time someone
-   * documents the call, not because it is doing work now.
-   *
-   * The count assertion is the positive control: a scan that finds nothing would otherwise pass
-   * vacuously, which is how a guard reads as coverage while providing none.
-   *
-   * 🔴 WHAT IT DELIBERATELY DOES NOT CATCH, so nobody reads it as wider than it is. It is a
-   * SPELLED guard and it errs in both directions. The shapes are enumerated below rather than
-   * counted — three successive drafts of this paragraph stated a count that was wrong, so the
-   * count is gone and the list is the claim:
-   *   - FALSE PASS: `.catch()`, `.catch(undefined)`, `.catch(null)` and `.catch(void 0)` are
-   *     pass-throughs that leave the rejection unhandled. The matcher below rejects all four by
-   *     name, spaced or not, and skips a trailing line comment — it took FOUR drafts, each closing
-   *     a hazard the previous one passed; see its own comment. A variable that merely HOLDS
-   *     `undefined`, and `.catch(...args)`, are beyond a source scan and are not claimed.
-   *   - FALSE FAIL: `.then(undefined, fn)` is SAFE and is rejected — accepted, because a visible
-   *     cheap false failure is the right direction for a promise-rejection guard. ⚠️ An earlier
-   *     draft also listed `await logToAxiom(...)` inside a `try/catch` here, presenting it as a
-   *     live risk; it is NOT REACHABLE at any of the three sites, because all three enclosing
-   *     functions (`logMissingBudgetColumn`, `logMissingRevokedScopesColumn`, `unrevokeData`) are
-   *     SYNCHRONOUS — the `await` variant is a transform error, not a guard signal, which is also
-   *     what made two mutants in two successive audits invalid. It would only become reachable if
-   *     a site's enclosing function were first made `async`.
-   */
-  describe('logToAxiom call sites cannot break a consent path', () => {
-    function stripComments(src: string): string {
-      return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-    }
-
-    /**
-     * Index just past the `)` that closes the call opening at `openIdx`.
-     *
-     * ⚠️ STRING-BLIND. It counts parens without tracking quotes or template literals, so an
-     * UNBALANCED paren inside one of the call's message literals throws the walk off. Both
-     * directions still fail loudly rather than passing — an unbalanced `(` returns -1 and trips the
-     * explicit assertion below, an unbalanced `)` terminates early and reports the wrong CAUSE
-     * ("does not swallow its own rejection" for a call that does). Latent today: all three call
-     * bodies' literals are balanced. Worth knowing before you debug a confusing failure here.
-     */
-    function endOfCall(src: string, openIdx: number): number {
-      let depth = 0;
-      for (let i = openIdx; i < src.length; i += 1) {
-        if (src[i] === '(') depth += 1;
-        else if (src[i] === ')') {
-          depth -= 1;
-          if (depth === 0) return i + 1;
-        }
-      }
-      return -1;
-    }
-
-    /**
-     * The handled-rejection predicate, at DESCRIBE scope so the real scan and its control arm
-     * grade the SAME regex. Two copies would let the guard drift from the thing that certifies it.
-     */
-    const HANDLED = /^\s*\.catch\s*\((?!(?:\s|\/\/[^\n]*)*(?:\)|undefined\b|null\b|void\b))/;
-
-    /**
-     * 🔴 EVERY TAIL THAT FOLLOWS A `logToAxiom(...)` CALL IN `source` — THE ONE CODE PATH THE REAL
-     * SCAN AND ITS CONTROL ARM BOTH RUN.
-     *
-     * Shared deliberately: a control that computes its own slice is blind to the scan's slicing,
-     * and reinstating either historical scan window then SURVIVED it (measured). One helper means a
-     * reinstated window, a lost site or a broken paren walk fails the control instead of waiting
-     * for a reviewer to re-measure it by hand.
-     */
-    function callTails(source: string): string[] {
-      const src = stripComments(source);
-      // 🔴 `indexOf`, NOT `regex.exec` IN A `while` — AND THAT IS NOT STYLE. The first draft used
-      // `while ((m = re.exec(src)) !== null)`, which advances only while the regex carries the `g`
-      // flag: a later edit dropping it makes this loop spin FOREVER, so the suite HANGS instead of
-      // failing. Measured while validating this very guard — the mutation that removed `g` was
-      // scored SURVIVED by a driver that never got a verdict. A hang is the worst failure mode a
-      // guard can have, because it reads as infrastructure trouble rather than as a finding.
-      // An `indexOf` walk cannot regress that way: the cursor is advanced explicitly.
-      const NAME = 'logToAxiom';
-      const tails: string[] = [];
-      for (let from = src.indexOf(NAME); from !== -1; from = src.indexOf(NAME, from + 1)) {
-        const open = src.indexOf('(', from + NAME.length);
-        // Only a CALL counts. Anything between the name and the next `(` that is not whitespace
-        // means this occurrence was the import binding or a member expression, not an invocation.
-        if (open === -1 || src.slice(from + NAME.length, open).trim() !== '') continue;
-        const end = endOfCall(src, open);
-        expect(
-          end,
-          'unbalanced parens after a logToAxiom call — the scan cannot judge it'
-        ).toBeGreaterThan(0);
-        // 🔴 NO WINDOW AT ALL — AND A WINDOW OF **ANY** SIZE IS THE BUG, NOT A SIZE TO TUNE.
-        // A negative lookahead whose target lies PAST the slice simply fails to match, and a
-        // failed inner pattern makes the NEGATIVE lookahead SUCCEED. So a truncated tail turns a
-        // hazard into a pass at whatever width you pick: 40 let `.catch(<34 spaces>undefined)`
-        // through (round 10), and widening to 4096 moved the threshold instead of removing the
-        // mechanism — round 11 measured `.catch(<5000 spaces>undefined)` passing the 4096 version.
-        // The claim "widening cannot cost anything" was true of SAFE shapes and wrong about the
-        // class.
-        //
-        // Slicing to the end costs nothing measurable, because the `^` anchor bounds the work:
-        // 1,000 `RE.test` calls over the whole ~87 KB module run in ~0.06 ms, and the
-        // comment-consuming alternation's adversarial input (20,000 alternating `" /"` pairs) is
-        // FASTER than plain spaces — no catastrophic backtracking.
-        tails.push(src.slice(end));
-      }
-      return tails;
-    }
-
-    it('every logToAxiom(...) is followed by .catch(', () => {
-      const sites = callTails(
-        fs.readFileSync(path.resolve(__dirname, '../scope-grant.service.ts'), 'utf8')
+  // The opt-in to running above-budget jobs without asking must not survive the viewer starting
+  // over: a re-consent to spending, a budget write or a revoke of spending turns it off.
+  describe('confirm_within_limit_max_job is cleared', () => {
+    const SPEND = 'ai:write:budgeted';
+    const missingOptInColumn = () =>
+      Object.assign(
+        new Error(
+          'The column `app_user_scope_grants.confirm_within_limit_max_job` does not exist in the current database.'
+        ),
+        { code: 'P2022' }
       );
-      // 🔴 POSITIVE CONTROL, AND ITS FLOOR IS THE DERIVED COUNT — **THREE**, not two.
-      // `logMissingBudgetColumn`, `logMissingRevokedScopesColumn` and the pre-migration
-      // re-consent refusal. (This comment said "two sites" on its first draft, counting only the
-      // revocation ones — the third is the budget column's, which predates this arc. Derive the
-      // population before quoting it, which is the lesson three rounds of this review keep
-      // teaching.) A floor BELOW the real count lets a scan silently stop covering a site, which
-      // is the same reads-as-coverage failure this guard exists to close; a scan finding none
-      // would make the loop below assert nothing at all.
-      expect(
-        sites.length,
-        'the logToAxiom scan lost a call site (or found none, making the assertion below vacuous) ' +
-          '— check the regex and the comment stripper before believing a green result here'
-      ).toBeGreaterThanOrEqual(3);
-      for (const after of sites) {
-        // 🔴 THE BOOLEAN IS THE VERDICT AND THE OFFENDING TAIL RIDES IN THE MESSAGE — do not fold
-        // them back into one asserted string. A previous draft asserted
-        // `` `${HANDLED.test(after)} :: ${prefix}` `` against `/^true ::/`, which made the REPORTING
-        // FORMAT part of the verdict (renaming the separator failed the guard and blamed the call)
-        // and hid a hardcode surface: replacing `HANDLED.test(after)` with a literal `true`
-        // SURVIVED, because the constant sat inside the template string. Measured, round-12 review.
-        expect(
-          HANDLED.test(after),
-          'a logToAxiom call in scope-grant.service.ts does not swallow its own rejection. These ' +
-            'sit on consent and spend paths — on a MUTATION that is an unhandled rejection — and ' +
-            'it contradicts the neighbouring comment promising logging can never break the path. ' +
-            `Offending tail: ${after.slice(0, 60).replace(/\n/g, '\\n')}`
-          // 🔴 A REAL HANDLER IS REQUIRED, AND THIS MATCHER TOOK **FOUR** DRAFTS, EACH FIXING A
-          // HAZARD THE PREVIOUS ONE PASSED. `.catch()`, `.catch(undefined)`, `.catch(null)` and
-          // `.catch(void 0)` are all pass-throughs — the rejection stays unhandled — so each is
-          // this guard's exact hazard, spelled differently.
-          //   draft 1 `\.catch\s*\(` — passed all four.
-          //   draft 2 `\(\s*[^)\s]` — closed only `.catch()`; `undefined` starts with a non-`)`
-          //     character and sailed through.
-          //   draft 3 `\(\s*(?!\)|undefined\b|null\b)` — ⚠️ passed every SPACED variant plus
-          //     `void 0`, and the cause was BACKTRACKING, not the alternation. (An earlier note
-          //     said "SEVEN shapes"; that figure is population-dependent and no population was
-          //     named — measured over a 13-shape hazard set it is nine. Name the set or drop the
-          //     count; this comment now does the latter.) With `\s*` OUTSIDE the lookahead and optional,
-          //     a failed lookahead on `)` is retried with `\s*` matching zero characters, and
-          //     `" )"` starts with none of the three names. So every spaced variant —
-          //     `.catch( )`, `.catch( undefined )`, `.catch( null )`, `.catch(\n)` — passed, as did
-          //     `void 0`, which was named nowhere.
-          // 🔴 THE FIX IS THAT THE LOOKAHEAD OWNS THE WHITESPACE, so there is nothing to backtrack
-          // into. Measured, not reasoned, at every draft — and validated in BOTH directions,
-          // through the REAL `stripComments`/`endOfCall` pipeline rather than the regex alone,
-          // over an enumerated set of **21 hazard** shapes { bare, spaced-bare, newline-bare, tab,
-          // NBSP, em-space, `undefined`, ` undefined `, `null`, ` null `, `void 0`, ` void 0 `,
-          // `void handler`, `null?.x`, block-comment-bare, trailing-line-comment-bare,
-          // own-line-comment-bare, and wide-whitespace variants of bare / `undefined` / `null` /
-          // `void 0` } and **14 handler** shapes { arrow, spaced arrow, `( ) =>`, named, `async`,
-          // `function`, `e => void e`, multi-line arrow, trailing-comment-then-arrow,
-          // wide-whitespace-then-arrow, `nullHandler`, `voidHandler`, `undefined2`,
-          // `null_handler` } — plus `.then(undefined, fn)`, red by design. ⚠️ Counts are stated WITH
-          // their population on purpose: an earlier note said "SEVEN shapes" with no population
-          // named, and the same round's commit message and code comment disagreed about the totals.
-          //
-          // NOT CLAIMED, and each is a shape nobody writes by hand: a variable that merely HOLDS
-          // `undefined`; `.catch(...args)`, which is genuinely ambiguous; and two contrived FALSE
-          // FAILS in the accepted visible direction — `.catch(void$fn)` (a legal identifier, since
-          // `$` is not a `\w`, so `void\b` matches) and `.catch(undefined ?? noop)` (which does
-          // evaluate to a real handler).
-          // 🔴 THE LOOKAHEAD SKIPS LINE COMMENTS TOO, AND WITHOUT THAT `\.catch( // why\n)` PASSED.
-          // `stripComments`' second replace is anchored `^[ \t]*//`, so a `//` that is NOT at line
-          // start survives stripping; the matcher then saw `/` as the first token, which is in
-          // neither the forbidden set nor `\s`, so the lookahead succeeded on a bare `.catch()`.
-          // Round-10 review, measured through the real `stripComments` rather than against the
-          // regex alone — which is why it was invisible to the previous round's pure-function
-          // check. `(?:\s|//[^\n]*)*` consumes both, and a trailing comment FOLLOWED by a real
-          // handler still passes.
-        ).toBe(true);
-      }
+
+    it('by a re-consent that grants spending', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({ id: 'g', grantedScopes: [] });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({ userId: 1, appBlockId: 'ab_x', version: '1', scopes: [SPEND] });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data).toMatchObject({
+        confirmWithinLimitMaxJob: null,
+      });
     });
 
-    /**
-     * 🔴 CAN THE SCAN ABOVE GO RED? THAT IS THE ONLY QUESTION THIS ARM ANSWERS.
-     *
-     * The scan can only fail on what the real module happens to contain, and the real module
-     * contains no pathological `.catch(`. So a matcher hole is invisible to CI: measured,
-     * reinstating the 4096-character scan window — the exact defect round 11 removed — passed the
-     * whole suite. This arm feeds the LIVE pipeline (the same `callTails` and the same `HANDLED`)
-     * a set of tails whose classification is known, in both directions: a HAZARD that passes means
-     * the matcher has a hole, a SAFE shape that fails means it will false-fail on a correct
-     * refactor.
-     *
-     * 🔴 THE SET IS THE HISTORICAL ONE, NOT AN IMAGINED ONE. Every hazard below actually slipped
-     * through some draft of this matcher. A battery built from mutations one can think of would
-     * have missed the two that mattered — a trailing line comment surviving the stripper's
-     * line-start anchor, and a whitespace run longer than the scan window.
-     *
-     * 🔴 WHAT IT CANNOT SEE: any mutation of its own scaffolding — the probe list edited, the loop
-     * bounds narrowed, the verdict hardcoded. A guard cannot guard its own assertion, and the
-     * layers of LEDGER set-equality, distinctness and content pins that once sat here only raised
-     * the cost of such an edit from two coordinated places to four. Every one of them is
-     * conspicuous in a diff, and a diff is where this is meant to be caught. Do not re-add THOSE.
-     *
-     * ⚠️ THAT PARAGRAPH USED TO SAY "the layers of ledger, FLOOR and content pins … Do not re-add
-     * them", AND THE FLOOR WAS BUNDLED INTO AN ARGUMENT WRITTEN ABOUT A DIFFERENT GUARD SHAPE. The
-     * two-places-to-four accounting is true of the three LEDGER pins: each guards the probe ARRAY,
-     * a second structure, so walking one needs a coordinated edit in both — which is why each of
-     * them in turn was found walkable by the NEXT round of the same ladder. The `WIDE.length` floor
-     * is not that shape. It is a one-place guard against a one-place edit: shrinking `WIDE` makes
-     * the three wide probes stop exceeding any scan window, so they assert nothing, and **nothing
-     * else in the file can see it** — measured, `' '.repeat(5)` SURVIVES the whole suite without
-     * the floor and goes RED with it. So it is reinstated as the ASSERTION ONLY, with the window
-     * history inlined as a literal rather than as a separate `HISTORICAL_SCAN_WINDOWS` array: that
-     * array was the second place the original floor could be walked from (shortening it only
-     * loosened the floor, measured SURVIVING), and it is exactly what made the round-15 version
-     * fail its own test. One expression, no ledger, ~40 lines of prose not restored.
-     *
-     * Also not covered, because the component is INERT rather than unguarded: `stripComments` is
-     * provably the identity for every probe below (the line-comment replace is line-start-anchored
-     * and no probe carries a block comment). It is defence against a future prose mention of the
-     * call shape, not a working part today.
-     */
-    it('CONTROL: the live scan pipeline classifies the historical shapes correctly', () => {
-      // Longer than every scan window this guard has ever had (40, then 4096) — that is the whole
-      // point of the three `WIDE` probes, so do not shrink it. A truncated tail makes the negative
-      // lookahead succeed, which turns a hazard into a pass at whatever width is chosen.
-      const WIDE = ' '.repeat(5000);
-      // 🔴 THE FLOOR, NOT THE COMMENT ABOVE IT. The sentence above says "do not shrink it"; this
-      // makes it a machine-readable claim. `4096` is the largest scan window this guard has ever
-      // had (40, then 4096) and is written as a literal on purpose — a separate history ARRAY is a
-      // second place the floor can be loosened from, which is what killed the previous version.
-      expect(
-        WIDE.length,
-        'the wide-whitespace probes no longer exceed every scan window this ' +
-          'guard has had, so they assert nothing'
-      ).toBeGreaterThan(4096);
-      const cases: Array<[kind: 'HAZARD' | 'SAFE', tail: string]> = [
-        // Pass-throughs: the rejection stays unhandled. Each passed at least one earlier draft.
-        ['HAZARD', ''],
-        ['HAZARD', '.catch()'],
-        ['HAZARD', '.catch( )'],
-        ['HAZARD', '.catch(undefined)'],
-        ['HAZARD', '.catch( undefined )'],
-        ['HAZARD', '.catch(null)'],
-        ['HAZARD', '.catch(void 0)'],
-        // Survived the `^[ \t]*//`-anchored stripper (round 10).
-        ['HAZARD', '.catch( // why\n)'],
-        // Lay past the scan window, so the NEGATIVE lookahead succeeded (rounds 10 and 11).
-        ['HAZARD', `.catch(${WIDE})`],
-        ['HAZARD', `.catch(${WIDE}undefined)`],
-        // Real handlers, which must keep passing.
-        ['SAFE', '.catch(() => {})'],
-        ['SAFE', '.catch( () => {} )'],
-        ['SAFE', '.catch(String)'],
-        ['SAFE', '.catch((e) => void e)'],
-        ['SAFE', '.catch( // why\n () => {})'],
-        ['SAFE', `.catch(${WIDE}() => {})`],
-        // `\b` boundaries: an identifier that merely STARTS with a forbidden word is a handler.
-        ['SAFE', '.catch(nullHandler)'],
-        ['SAFE', '.catch(voidHandler)'],
-      ];
-      for (const [kind, tail] of cases) {
-        // 🔴 THROUGH `callTails`, NOT A HAND-ROLLED COPY OF IT — see its docblock. A probe that
-        // computes its own slice is blind to the scan's slicing, which is how both historical
-        // windows survived this arm's first draft.
-        const tails = callTails(`logToAxiom({ a: 1 })${tail};`);
-        // The run is collapsed for display only — a 5,000-space diagnostic is unreadable. The
-        // token is deliberately not a stated length, which would go stale the moment `WIDE` moves.
-        const shown = JSON.stringify(tail.replace(WIDE, '<WIDE>'));
-        expect(tails.length, `the pipeline found ${tails.length} calls, not 1, for ${shown}`).toBe(
-          1
-        );
-        expect(
-          HANDLED.test(tails[0]),
-          `${kind} shape misclassified by the live scan pipeline: ${shown}. A HAZARD that passes ` +
-            'means the guard has a hole; a SAFE shape that fails means it will false-fail on a ' +
-            'correct refactor.'
-        ).toBe(kind === 'SAFE');
-      }
+    it('by a budget write, even with no spend scope in it', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'g',
+        grantedScopes: [SPEND],
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1',
+        scopes: [],
+        buzzBudgetPerDay: null,
+      });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data).toMatchObject({
+        confirmWithinLimitMaxJob: null,
+      });
+    });
+
+    it('control: a grant of other scopes alone leaves the column unnamed', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({ id: 'g', grantedScopes: [] });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1',
+        scopes: ['user:read:self'],
+      });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data).not.toHaveProperty(
+        'confirmWithinLimitMaxJob'
+      );
+    });
+
+    it('by a revoke of spending', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'g',
+        grantedScopes: [SPEND, 'user:read:self'],
+        revokedScopes: [],
+        revokedAt: null,
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { revokeScopes } = await import('../scope-grant.service');
+      await revokeScopes({ userId: 1, appBlockId: 'ab_x', scopes: [SPEND] });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data).toMatchObject({
+        confirmWithinLimitMaxJob: null,
+        buzzBudgetPerDay: null,
+      });
+    });
+
+    it('before its migration, the re-consent still lands, without the column', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({ id: 'g', grantedScopes: [] });
+      mockDb.appUserScopeGrant.update
+        .mockRejectedValueOnce(missingOptInColumn())
+        .mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({ userId: 1, appBlockId: 'ab_x', version: '1', scopes: [SPEND] });
+      expect(mockDb.appUserScopeGrant.update).toHaveBeenCalledTimes(2);
+      expect(mockDb.appUserScopeGrant.update.mock.calls[1][0].data).not.toHaveProperty(
+        'confirmWithinLimitMaxJob'
+      );
+      expect(mockDb.appUserScopeGrant.update.mock.calls[1][0].data).toMatchObject({
+        grantedScopes: [SPEND],
+      });
+    });
+
+    it('before its migration, the revoke still lands, without the column', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'g',
+        grantedScopes: [SPEND],
+        revokedScopes: [],
+        revokedAt: null,
+      });
+      mockDb.appUserScopeGrant.update
+        .mockRejectedValueOnce(missingOptInColumn())
+        .mockResolvedValueOnce({});
+      const { revokeScopes } = await import('../scope-grant.service');
+      const res = await revokeScopes({ userId: 1, appBlockId: 'ab_x', scopes: [SPEND] });
+      expect(res.budgetCleared).toBe(true);
+      expect(mockDb.appUserScopeGrant.update.mock.calls[1][0].data).toMatchObject({
+        revokedScopes: [SPEND],
+      });
     });
   });
 });

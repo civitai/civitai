@@ -44,3 +44,8 @@ export const gateBlockUploadImageSchema = z.object({
   imageId: z.number().int().positive(),
 });
 export type GateBlockUploadImageInput = z.infer<typeof gateBlockUploadImageSchema>;
+
+/** `generationSourceUsesScannedRows`: the block token alone, verified by the procedure. */
+export const generationSourceUsesScannedRowsSchema = z.object({
+  blockToken: z.string().min(1),
+});

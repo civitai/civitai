@@ -140,18 +140,30 @@ const {
 // divergence, so a flat "no divergence" line can be told apart from a detector
 // that never ran. Mocked so the outcome label is assertable; the real emitter is
 // fail-soft and would swallow everything silently.
-const { mockRecordStepPriceCheck } = vi.hoisted(() => ({
+const { mockRecordStepPriceCheck, mockRecordSubmitFailure } = vi.hoisted(() => ({
   mockRecordStepPriceCheck: vi.fn(() => undefined),
+  mockRecordSubmitFailure: vi.fn((_label: string, _reason: string) => undefined),
 }));
 // A bare factory, so every symbol the router imports from this module must be listed
 // here or it resolves to `undefined` and the router throws the moment it is called.
 // `recordBlockPostSubjectRefusal` is only reached on the post preamble's unreadable-
 // subject branch, which this suite does not drive — it is listed so that stays true by
 // construction rather than by luck.
-vi.mock('~/server/metrics/app-block-runtime.metrics', () => ({
-  recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
-  recordBlockPostSubjectRefusal: () => undefined,
-}));
+// `submitFailureAppBlockLabel` is the REAL one (it decides the label under test); the emitter is
+// mocked so the (label, reason) pair is assertable.
+vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('~/server/metrics/app-block-runtime.metrics')
+  >();
+  return {
+    recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
+    recordBlockPostSubjectRefusal: () => undefined,
+    recordSucceededWithoutMedia: () => undefined,
+    recordAppBlockSubmitFailure: (label: string, reason: string) =>
+      mockRecordSubmitFailure(label, reason),
+    submitFailureAppBlockLabel: actual.submitFailureAppBlockLabel,
+  };
+});
 
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   getActiveDevTunnel: (...a: unknown[]) => mockGetActiveDevTunnel(...(a as [])),
@@ -512,6 +524,11 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: (...args: unknown[]) => mockResolveCanGenerateForVersions(...args),
   getResourceData: (...args: unknown[]) => mockGetResourceData(...args),
+  // The global generation kill switch, read on every generation submit: on, so it admits.
+  getGenerationStatusState: async () => ({
+    status: { mode: 'enabled', message: null },
+    known: true,
+  }),
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: (...args: unknown[]) => mockGetHighestTierSubscription(...args),
@@ -555,7 +572,7 @@ vi.mock('~/server/services/block-registry.service', () => ({
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     })),
   },
@@ -959,6 +976,10 @@ beforeEach(() => {
 // without this every call here would 404 on a condition none of these tests is about.
 beforeEach(() => {
   dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
+  // Every Civitai version a customComfy step names exists, on a base model apps may use.
+  dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+    where: { id: { in: number[] } };
+  }) => args.where.id.in.map((id) => ({ id, baseModel: 'ZImageTurbo' }))) as never);
 });
 
 describe('blocks.pollWorkflow', () => {
@@ -975,7 +996,9 @@ describe('blocks.pollWorkflow', () => {
           name: 's',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'b', url: 'https://cdn/i.png', available: true }] },
+          output: {
+            images: [{ id: 'b', url: 'https://cdn/i.png', available: true, nsfwLevel: 'pg' }],
+          },
         },
       ],
     });
@@ -1167,6 +1190,63 @@ describe('blocks.cancelWorkflow', () => {
   });
 });
 
+// 🔴 RESTRICTED OUTPUTS ON THE SUBMIT REPLY. The poll / cancel / listing / publish
+// procedures are run end to end with a restricted fixture in
+// `blocks.router.restrictedOutputs.seam.test.ts`; the submit lives here because this
+// suite carries its mocks. A submit reply normally has no output yet, but an
+// orchestrator answering with a finished workflow must not hand the block a restricted
+// url either.
+describe('blocks.submitWorkflow — a restricted output on the reply', () => {
+  const OK = 'https://cdn/submit-ok.png';
+  const SECRET = 'https://cdn/submit-restricted.png';
+
+  it.each([
+    ['an SFW app', undefined, 'ceiling'],
+    ['a mature app', 1 | 2 | 4 | 8 | 16, 'pool'],
+  ] as const)('%s is never handed the restricted url', async (_label, maxBrowsingLevel, reason) => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({
+        buzzBudget: 100,
+        // The viewer's own level matches the domain, so the domain ceiling decides.
+        ...(maxBrowsingLevel ? { maxBrowsingLevel, viewerBrowsingLevel: maxBrowsingLevel } : {}),
+      })
+    );
+    happyVersionLookup();
+    happyUser();
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+      .mockResolvedValueOnce({
+        id: 'wf_real',
+        status: 'succeeded',
+        cost: { total: 25 },
+        allowMatureContent: false,
+        steps: [
+          {
+            $type: 'textToImage',
+            name: 's',
+            status: 'succeeded',
+            metadata: {},
+            output: {
+              images: [
+                { id: 'r', url: SECRET, available: true, nsfwLevel: 'r' },
+                { id: 'p', url: OK, available: true, nsfwLevel: 'pg' },
+              ],
+            },
+          },
+        ],
+      });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    expect(result.snapshot.workflowId).toBe('wf_real');
+    expect(result.snapshot.outputs).toStrictEqual([
+      { restricted: true, reason },
+      { url: OK, nsfwLevel: 'pg' },
+    ]);
+    expect(result.snapshot.imageUrls).toStrictEqual([OK]);
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+  });
+});
+
 // 🔴 THE GUARD THAT DID NOT EXIST, AND ITS ABSENCE WAS MUTATION-PROVEN.
 //
 // `blockAuthorFeeQuotedCounter`'s `surface` label is derived from the
@@ -1347,6 +1427,26 @@ describe('blocks.submitWorkflow', () => {
     });
   });
 
+  it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+    '%s refuses a model on a base model no app may use, before the orchestrator',
+    async (procedure) => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      mockDbRead.modelVersion.findUnique.mockResolvedValue({
+        id: 99,
+        baseModel: 'Flux.2 Klein 9B',
+        modelId: 7,
+        status: 'Published',
+        model: { id: 7, type: 'Checkpoint' },
+      });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller[procedure]({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
   // ---- Item 2 (gen half): idempotency key → orchestrator externalId dedupe ----
   //
   // STEP-1 GATE TEST. Verifies the load-bearing property: a same-key RETRY collapses
@@ -1476,8 +1576,8 @@ describe('blocks.submitWorkflow', () => {
     // NOTHING on real traffic: no shipped client sends one (the SDK has zero
     // occurrences; the live tipping block hand-rolls its POST). Meanwhile the actual
     // double-charge is server-side and unconditional — `submitWorkflow` calls
-    // `submitWorkflowWithRetry` with maxAttempts=3 and no per-attempt timeout on the
-    // real submit, and that wrapper's own doc says it adds NO idempotency key: "the
+    // `submitWorkflowWithRetry` with maxAttempts=3 (5xx, network and timed-out attempts
+    // retried) on the real submit, and that wrapper's own doc says it adds NO idempotency key: "the
     // CALLER must set `body.externalId`". So the server now MINTS one when the client
     // sends none.
     it('🔴 UNKEYED submit MINTS a server-side externalId (a client key is NOT the gate)', async () => {
@@ -2315,7 +2415,7 @@ describe('blocks.submitWorkflow', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
     happySubmit();
@@ -2342,7 +2442,7 @@ describe('blocks.submitWorkflow', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
     happySubmit();
@@ -2958,6 +3058,43 @@ describe('blocks.submitWorkflow', () => {
     expect(String(stamped).split(':')[0]).toBe('textToImage');
   });
 
+  // 🔴 THE PLATFORM-BUILT comfy PATH STAYS OPEN. `comfy` is on the pass-through
+  // denylist (a block may not submit a RAW comfy graph), but img2img/hires on an
+  // SD-family checkpoint is BUILT as a `comfy` step by the generation graph
+  // (`createComfyInput`). That step reaches `submitWorkflow` without passing the
+  // denylist, so this native submit must still go through with `$type: 'comfy'`.
+  it("native kind:'textToImage' that the graph builds as a comfy step is still submitted", async () => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({
+        buzzBudget: 1000,
+        blockInstanceId: 'page_apb_page',
+        ctx: { slotId: 'app.page', entityType: 'none' },
+      })
+    );
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_comfy_native');
+    mockCreateStepsFromGraph.mockResolvedValue({
+      steps: [{ $type: 'comfy', name: 's1', input: { comfyWorkflow: {} } }],
+      workflowMetadata: undefined,
+    });
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({
+      blockToken: 'tok',
+      body: validBody({
+        sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+      }),
+    });
+
+    expect(result.snapshot.workflowId).toBe('wf_comfy_native');
+    const submittedTypes = mockSubmitWorkflow.mock.calls.map(
+      (c) => (c[0] as { body: { steps: Array<{ $type: string }> } }).body.steps[0].$type
+    );
+    expect(submittedTypes.length).toBeGreaterThan(0);
+    expect(submittedTypes.every((t) => t === 'comfy')).toBe(true);
+  });
+
   it('G5: threads the body sharedContentKey (opaque) through to the spend attribution', async () => {
     // The published-content-author key is app-supplied on the BODY and passed
     // OPAQUE to the service (which resolves the author server-side). Assert it
@@ -3534,11 +3671,6 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
     expect(result.snapshot.autoClaim).toBeUndefined();
     // But the workflow still went through to the real submit.
     expect(result.snapshot.workflowId).toBe('wf_real');
-    // And the failure was logged for ops.
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'block-autoclaim-boost', stage: 'apply' }),
-      'webhooks'
-    );
   });
 
   it('does NOT claim and submit still proceeds when precheck (balance lookup) throws', async () => {
@@ -3554,10 +3686,6 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
     expect(mockDailyBoostApply).not.toHaveBeenCalled();
     expect(result.snapshot.autoClaim).toBeUndefined();
     expect(result.snapshot.workflowId).toBe('wf_real');
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'block-autoclaim-boost', stage: 'precheck' }),
-      'webhooks'
-    );
   });
 
   it('does NOT claim when the reward multiplier zeros the award (rewardsIneligible)', async () => {
@@ -3681,7 +3809,7 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
   }
@@ -3779,7 +3907,7 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
@@ -4083,6 +4211,92 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     });
   });
 
+  // ── civitai_app_block_submit_failures_total ──────────────────────────────
+  // The procedure's own middleware records every failed submit, thrown OR returned as a failed
+  // snapshot. Red on origin/main: nothing recorded a submit failure at all.
+  describe('submitWorkflow — failure telemetry', () => {
+    beforeEach(() => {
+      mockRecordSubmitFailure.mockClear();
+    });
+
+    it('records nothing for a successful submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        pageClaims({ buzzBudget: 100, appBlockId: 'apb_tele' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockRecordSubmitFailure).not.toHaveBeenCalled();
+    });
+
+    it('a THROWN ecosystem refusal is recorded as ecosystem_unavailable for the verified app', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        pageClaims({ buzzBudget: 1000, appBlockId: 'apb_tele' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(new Map([[99, { canGenerate: true }]]));
+      // The exact message the generation graph produces for a hidden/disabled ecosystem.
+      mockCreateStepsFromGraph.mockRejectedValueOnce(
+        new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Validation failed: ecosystem: Ecosystem is currently unavailable',
+        })
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['apb_tele', 'ecosystem_unavailable']]);
+    });
+
+    it('a RETURNED insufficient-budget snapshot is recorded as insufficient_buzz', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 5, appBlockId: 'apb_tele' }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      // Resolved, not thrown: a counter that only watched throws would miss this one.
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/insufficient buzz budget/);
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['apb_tele', 'insufficient_buzz']]);
+    });
+
+    it('a failure before the token is verified is labelled unknown', async () => {
+      mockVerifyBlockToken.mockResolvedValue(null);
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['unknown', 'other']]);
+    });
+
+    it('a body the input schema refuses is recorded as validation', async () => {
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: { kind: 'not-a-kind' } as never })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['unknown', 'validation']]);
+    });
+  });
+
   describe('submitWorkflow', () => {
     it('a page token submits when generatable + within budget (no spend bound bypassed)', async () => {
       mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
@@ -4321,7 +4535,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
             status: 'approved',
             manifest: { targets: [{ slotId: 'app.page' }] },
             approvedScopes: ['ai:write:budgeted'],
-            app: { allowedScopes: 33554431 },
+            app: { allowedScopes: 33554431n },
           },
         }
       );
@@ -4604,7 +4818,9 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
       expect(stepArg.input.model.id).toBe(500);
       // The block's input urls go through the generation input check as App Blocks input.
-      expect(stepArg.inputGate).toEqual({ entry: 'appBlocks', isApiCaller: false });
+      expect(stepArg.inputGate).toEqual(
+        expect.objectContaining({ entry: 'appBlocks', isApiCaller: false })
+      );
     });
 
     it('FIX1: non-Checkpoint page body — a LoRA matching the BODY family but NOT the resolved checkpoint is REJECTED', async () => {
@@ -5445,17 +5661,11 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
     return (mockSubmitWorkflow.mock.calls[callIdx][0] as { body: Record<string, unknown> }).body;
   }
 
-  // NOTE: the orchestrator currency VALUES (the BuzzClientAccount-mapped
-  // strings) can't be asserted here — the global test setup mocks
-  // `@civitai/orchestration-client` with a stub `BuzzClientAccount` lacking BLUE/GREEN/YELLOW
-  // (see src/__tests__/setup.ts), so `BuzzTypes.toOrchestratorType` yields
-  // nulls under vitest. The exact SFW→blue/green, mature→blue/yellow,
-  // blue-first ordering is asserted on the pure `BuzzSpendType` strings in
-  // src/server/utils/__tests__/buzz-helpers.test.ts. Here we assert the
-  // ROUTER-level behavior that depends on the derivation: the currency array
-  // is now the 2-element PARITY set (was a 1-element ['yellow'] hardcode), it's
-  // applied at EVERY submit site, and the recorded spend buzzType matches the
-  // domain currency (pure string, unaffected by the client mock).
+  // NOTE: these assert the SHAPE (a 2-element set at every submit site). The global
+  // `@civitai/orchestration-client` mock now carries the real BuzzClientAccount values,
+  // so the exact ORDER is asserted with literal arrays in the
+  // "accountType on kind:'step' bodies" block at the end of this file; the pure
+  // `BuzzSpendType` ordering is in src/server/utils/__tests__/buzz-helpers.test.ts.
   describe('estimateWorkflow currencies (whatIf)', () => {
     it('derives a 2-element parity currency set (was 1-element yellow-only)', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims({ maxBrowsingLevel: SFW_CEILING }));
@@ -5539,12 +5749,9 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
   });
 
   // ---- viewer-picked accountType (money page blocks) ----------------------
-  // The exact reordered orchestrator currency VALUES can't be asserted here
-  // (the global @civitai/orchestration-client mock nulls out BuzzClientAccount, so
-  // toOrchestratorType yields non-comparable values — the ORDERING is asserted
-  // on the pure BuzzSpendType strings in buzz-helpers.test.ts). Here we pin the
-  // ROUTER-level behavior: an ALLOWED / ABSENT pick submits normally, and a
-  // DISALLOWED pick is REJECTED before any orchestrator spend.
+  // Here: an ALLOWED / ABSENT pick submits normally, and a DISALLOWED pick is
+  // REJECTED before any orchestrator spend. The exact reordered `currencies` are
+  // asserted with literal arrays at the end of this file.
   describe('honors body.accountType (preferred-first, domain-clamped)', () => {
     it('absent accountType → submits normally (Auto, both submit sites fire)', async () => {
       mockVerifyBlockToken.mockResolvedValue(
@@ -6143,7 +6350,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     return validClaims({
       ctx: { entityType: 'none', slotId: 'page' },
       appBlockId: 'apb_test',
-      // Comfortably above every per-engine ceiling (zimage 90 default … qwen 180 max).
+      // Comfortably above every per-engine ceiling.
       buzzBudget: 500,
       ...over,
     });
@@ -6205,14 +6412,47 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
-    it('reflects the selected engine in the estimate (qwen-image → 150)', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+    // The submit already refuses a disallowed recipe pick; the estimate priced it.
+    // Kills: an estimate that never resolves the currencies (red before this change).
+    it('a yellow pick on an SFW app is BAD_REQUEST on the estimate, like the submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        ccPageClaims({ domain: 'green', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyUser();
+      await expect(
+        caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: ccBody({
+            params: {
+              prompt: 'a sunset over mountains',
+              engine: 'zimage-turbo',
+              accountType: 'yellow',
+            },
+          }),
+        })
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: "buzz account 'yellow' is not spendable for this app's content rating",
+      });
+    });
+
+    // An invariant guard: an allowed pick still gets the display estimate.
+    it('an allowed pick (yellow on a mature app) still estimates', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        ccPageClaims({ domain: 'red', maxBrowsingLevel: ALL_CEILING })
+      );
       happyUser();
       const result = await caller().estimateWorkflow({
         blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
+        body: ccBody({
+          params: {
+            prompt: 'a sunset over mountains',
+            engine: 'zimage-turbo',
+            accountType: 'yellow',
+          },
+        }),
       });
-      expect(result.snapshot.cost).toEqual({ total: 150 });
+      expect(result.snapshot).toMatchObject({ status: 'pending', cost: { total: 20 } });
     });
 
     it('REJECTS a model token (customComfy is page-only)', async () => {
@@ -6312,6 +6552,38 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
+    it('holds the output to PG-13 when a pinned file is on a base model that restricts mature generation', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ maxBrowsingLevel: 31 }));
+      happyCcResources();
+      happySubmit();
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+        where: { id: { in: number[] } };
+      }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL Turbo' }))) as never);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody(),
+        idempotencyKey: 'cc-key',
+      });
+      expect(mockSubmitWorkflow.mock.calls[0][0].body).toMatchObject({
+        nsfwLevel: 'pg13',
+        allowMatureContent: false,
+      });
+    });
+
+    it('refuses a pinned file on a base model no app may use, before any spend', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+        where: { id: { in: number[] } };
+      }) => args.where.id.in.map((id) => ({ id, baseModel: 'Flux.2 Klein 9B' }))) as never);
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: ccBody(), idempotencyKey: 'cc-key' })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
     it('IDEMPOTENCY (audit 🔴-1): a concurrent claim in-progress → 409 CONFLICT, NO reserve, NO submit', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyCcResources();
@@ -6400,161 +6672,6 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       );
       // never persisted a settle record for a submit that threw.
       expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
-    });
-  });
-
-  // ── v1.1: PER-ENGINE budget ceilings. A cheaper engine reserves/settles LESS
-  // cap AND gets a proportionally tighter step timeout (the timeout is the
-  // physical Buzz cap, so the reservation and the timeout MUST move together).
-  describe('submitWorkflow — per-engine budget ceilings (v1.1)', () => {
-    it('qwen-image reserves 180 on both caps and stamps a 00:03:00 timeout', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      happySubmit();
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
-      });
-      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
-        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
-      );
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 180);
-      expect(mockSubmitWorkflow.mock.calls[0][0].body.steps[0].timeout).toBe('00:03:00');
-      expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
-        expect.objectContaining({ ceiling: 180 })
-      );
-    });
-
-    it('flux2-klein reserves 150 and stamps a 00:02:30 timeout', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      happySubmit();
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'flux2-klein' } }),
-      });
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 150);
-      expect(mockSubmitWorkflow.mock.calls[0][0].body.steps[0].timeout).toBe('00:02:30');
-    });
-
-    // ── Per-engine reserve↔refund SYMMETRY. The refund/rollback tests in the
-    // budget-belt block above only exercise the DEFAULT engine (zimage 90); these
-    // prove a NON-default engine refunds ITS OWN ceiling (qwen 180 / flux2 150),
-    // not the flat 90 — so a cheaper engine can never over-refund and a pricier
-    // one can never under-refund on a deny/throw.
-    it('SYMMETRY: a qwen-image daily-cap breach refunds ITS ceiling (180, not 90) on the pinned key', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      mockSysRedis.incrBy.mockResolvedValue(60000); // reservation pushes over 50k cap
-      const result = await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
-      });
-      expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
-      // The reserved qwen ceiling (180) is refunded — NOT the default 90.
-      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
-        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
-      );
-      expect(mockSysRedis.decrBy).not.toHaveBeenCalledWith(expect.anything(), 90);
-      expect(mockReserveAppSpend).not.toHaveBeenCalled();
-      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
-    });
-
-    it('SYMMETRY: a flux2-klein app-cap breach refunds ITS ceiling (150) on the per-user key', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      mockReserveAppSpend.mockResolvedValue({
-        allowed: false,
-        reason: 'daily',
-        dailyTotal: 9_999_999,
-        velocityCount: 1,
-      });
-      const result = await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'flux2-klein' } }),
-      });
-      expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
-      // The per-user reservation rolled back at flux2's ceiling (150), not 90.
-      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
-        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        150
-      );
-      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
-    });
-
-    it('SYMMETRY: a qwen-image refund-on-throw refunds ITS ceiling (180) on BOTH caps', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
-      await expect(
-        caller().submitWorkflow({
-          blockToken: 'tok',
-          body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
-        })
-      ).rejects.toThrow(/orchestrator down/);
-      // BOTH the per-user daily cap and the per-app aggregate cap refund 180.
-      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
-        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
-      );
-      expect(mockRefundAppSpend).toHaveBeenCalledWith(
-        'system:blocks:app-spend-cap:apb_test:day',
-        180
-      );
-      expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
-    });
-
-    // ── Graph-engine ↔ stamped-timeout end-to-end. Within ONE submit, prove the
-    // engine that drove the BUILT customComfy graph is the SAME engine that drove
-    // the STAMPED step timeout — i.e. the reservation/timeout can't be stamped for
-    // one engine while the graph is another's (safe-by-construction, now asserted).
-    it('END-TO-END: a qwen submit stamps 00:03:00 AND the emitted step input is qwen’s graph + resources', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      happySubmit();
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
-      });
-      const step = mockSubmitWorkflow.mock.calls[0][0].body.steps[0];
-      // Stamped timeout = qwen's ceiling (180s).
-      expect(step.timeout).toBe('00:03:00');
-      // The SAME submit's built graph is qwen's — the GGUF loader is qwen-specific
-      // (zimage/flux2 use UNETLoader), and a qwen resource AIR is in the step input.
-      expect(step.input.workflow['1'].class_type).toBe('GGUFLoaderKJ');
-      expect((step.input.resources as string[]).some((r) => r.includes('Qwen-Image'))).toBe(true);
-      // And it is NOT zimage's graph/resources (guards against a mismatched pairing).
-      expect((step.input.resources as string[]).some((r) => r.includes('z_image_turbo'))).toBe(
-        false
-      );
-    });
-
-    it('the concrete new behavior: at buzzBudget 100, cheap zimage (90) RUNS but qwen (180) is REJECTED', async () => {
-      // Under the old single-180 ceiling this budget gated out EVERY engine; now a
-      // cheaper engine runs under a budget the priciest still can't afford.
-      happyCcResources();
-      happySubmit();
-      // zimage ceiling 90 ≤ 100 → passes the static gate, reserves 90, submits.
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 100 }));
-      const okZimage = await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'zimage-turbo' } }),
-      });
-      expect(okZimage.snapshot.workflowId).toBe('wf_cc_1');
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
-
-      // qwen ceiling 180 > 100 → rejected at the static gate, NO submit.
-      mockSubmitWorkflow.mockClear();
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 100 }));
-      const rejectedQwen = await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
-      });
-      expect(rejectedQwen.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
-      expect(rejectedQwen.snapshot.error).toMatch(/ceiling 180 exceeds budget 100/);
-      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
   });
 
@@ -6931,6 +7048,14 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         'app Buzz limit reached: 60 already spent today by this app on your behalf, ' +
           'this generation may cost up to 90, your limit for this app is 100'
       );
+      // Machine-readable, and marked, so the host may offer the viewer the raise.
+      expect(result.snapshot.errorCode).toBe('daily-limit-exceeded');
+      // The refusal record is a 5-minute flag on the cache cluster.
+      expect(mockRedis.set).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:consent-limit-refused:\d+:/),
+        '100',
+        { EX: 300 }
+      );
       // NOTHING was spent…
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
       // …and BOTH counters were given back — a denial that burned either one would
@@ -7202,9 +7327,9 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
 
     function happyInline() {
       happyUser();
-      mockGetResourceData.mockResolvedValue([
-        { id: 136251, name: 'a lora', canGenerate: true, availability: 'Public' },
-      ]);
+      mockGetResourceData.mockImplementation(async (ids: number[]) =>
+        ids.map((id) => ({ id, name: 'a resource', canGenerate: true, availability: 'Public' }))
+      );
       mockGetHighestTierSubscription.mockResolvedValue(null);
       happySubmit();
     }
@@ -8866,6 +8991,7 @@ describe("step-type registry bridge (kind: 'step')", () => {
           'app Buzz limit reached: 11 already spent today by this app on your behalf, ' +
             'this step costs 1, your limit for this app is 10'
         );
+        expect(result.snapshot.errorCode).toBe('daily-limit-exceeded');
         expect(
           realSubmitCalls(),
           'the free QUOTE may have run; NOTHING may have been SPENT'
@@ -9707,6 +9833,7 @@ describe("step-type registry bridge (kind: 'step')", () => {
         // stricter SFW prompt audit.
         isGreen: true,
         isModerator: true,
+        appOrigin: { appBlockId: 'apb_test', stepType: 'fixture-audited-step' },
       });
     });
 
@@ -9938,7 +10065,9 @@ describe('blocks — #3520 model substitution observability', () => {
             name: 's',
             status: 'succeeded',
             metadata: {},
-            output: { images: [{ id: 'b', url: 'https://cdn/i.png', available: true }] },
+            output: {
+              images: [{ id: 'b', url: 'https://cdn/i.png', available: true, nsfwLevel: 'pg' }],
+            },
           },
         ],
       });
@@ -10387,14 +10516,16 @@ describe('blocks — #3520 model substitution observability', () => {
       $type: 'convertImage',
       name: 'block-step',
       status: 'succeeded',
-      output: { blob: { id: 'b1', url, available: true, width: 797, height: 1024 } },
+      output: {
+        blob: { id: 'b1', url, available: true, width: 797, height: 1024, nsfwLevel: 'pg' },
+      },
     });
     const textToImageStep = (url: string) => ({
       $type: 'textToImage',
       name: 's1',
       status: 'succeeded',
       metadata: {},
-      output: { images: [{ id: 'i1', url, available: true }] },
+      output: { images: [{ id: 'i1', url, available: true, nsfwLevel: 'pg' }] },
     });
     const isWhatIf = (c: unknown[]) =>
       (c[0] as { query?: { whatif?: boolean } } | undefined)?.query?.whatif === true;
@@ -10591,7 +10722,10 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
             {
               $type: opts.body.steps[0].$type,
               name: opts.body.steps[0].name,
-              output: { blobs: [{ url: PT_BLOB_URL, available: true }], note: 'kept' },
+              output: {
+                blobs: [{ url: PT_BLOB_URL, available: true, nsfwLevel: 'pg' }],
+                note: 'kept',
+              },
             },
           ],
           cost: { total: realizedCost },
@@ -10835,6 +10969,98 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         );
       }
     });
+
+    // 🔴 The output-destination rule a multi-step workflow's steps get holds on this arm too.
+    it.each([
+      ['a destination key', { sourceUrl: 'https://a', destinationUrl: 'https://b' }],
+      ['a nested, re-cased destination key', { opts: [{ DestinationURL: 'https://b' }] }],
+    ])('refuses %s on submit and on estimate, before any orchestrator call', async (_l, input) => {
+      for (const call of ['submitWorkflow', 'estimateWorkflow'] as const) {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(5, 5);
+        mockSubmitWorkflow.mockClear();
+        const err = await caller()
+          [call]({ blockToken: 'tok', body: ptBody({ $type: 'transcode', input }) })
+          .then(
+            () => null,
+            (e: unknown) => e
+          );
+        expect(err, call).toMatchObject({
+          code: 'BAD_REQUEST',
+          message: 'a step input may not name an output destination or make its output public',
+        });
+        expect(mockSubmitWorkflow, call).not.toHaveBeenCalled();
+      }
+    });
+
+    it('refuses a chat step asking for image output, before any orchestrator call', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      mockSubmitWorkflow.mockClear();
+      const body = ptBody({
+        $type: 'chatCompletion',
+        input: { messages: [], modalities: ['image'] },
+      });
+      const err = await caller()
+        .submitWorkflow({ blockToken: 'tok', body })
+        .then(
+          () => null,
+          (e: unknown) => e
+        );
+      expect(err).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'a chat step may not generate images',
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    // 🔴 A RAW comfy GRAPH IS REFUSED, under `$type: 'comfy'` or `'customComfy'`.
+    // `workflow.service` delivers a comfy step's `output.blobs` as media and this arm
+    // runs no prompt audit. Platform-built comfy steps (`kind: 'textToImage'`,
+    // `kind: 'customComfy'`) do not pass this guard.
+    it.each(['comfy', 'Comfy', 'customComfy', 'CustomComfy'])(
+      'refuses a raw `%s` step on submit AND estimate, before the orchestrator or any reservation',
+      async (t) => {
+        // `as never`: `ptBody` is a loosely typed fixture; the cast keeps these two
+        // call sites from adding test-file type errors (typecheck-tests ratchet).
+        const calls: Array<[string, () => Promise<unknown>]> = [
+          [
+            'submitWorkflow',
+            () =>
+              caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) as never }),
+          ],
+          [
+            'estimateWorkflow',
+            () =>
+              caller().estimateWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) as never }),
+          ],
+        ];
+        for (const [run, call] of calls) {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          ptQuoting(5, 5);
+          const err = await call().then(
+            () => null,
+            (e: unknown) => e
+          );
+          expect(err, run).toBeInstanceOf(TRPCError);
+          expect((err as TRPCError).code, run).toBe('FORBIDDEN');
+          expect((err as TRPCError).cause, run).toBeInstanceOf(PlatformInternalStepTypeError);
+          expect(((err as TRPCError).cause as PlatformInternalStepTypeError).stepType, run).toBe(t);
+          expect(mockSubmitWorkflow, `${run}: not even the whatif quote`).not.toHaveBeenCalled();
+          expect(mockGetOrchestratorToken, run).not.toHaveBeenCalled();
+          expect(mockReserveAppSpend, run).not.toHaveBeenCalled();
+          expect(
+            mockSysRedis.incrBy.mock.calls.filter((c) =>
+              String(c[0]).startsWith('system:blocks:buzz-cap:')
+            ),
+            run
+          ).toHaveLength(0);
+        }
+      }
+    );
   });
 
   describe('🔴 criterion 3 — `input` reaches the orchestrator UNMODIFIED', () => {
@@ -11732,14 +11958,23 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
       ptQuoting(5, 5);
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ptBody({ $type: 'app-block:app_someone_else' }),
-      });
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'imageGen' }) });
       const tags: string[] = ptRealSubmits()[0][0].body.tags;
       expect(tags).toContain('app-block:app_test');
-      expect(tags).not.toContain('app-block:app_someone_else');
+      expect(tags).not.toContain('imageGen');
       expect(tags).toContain('passthrough');
+    });
+
+    it('refuses a $type shaped like a tag at the wire, before any submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      for (const $type of ['app-block:app_someone_else', 'a:b']) {
+        await expect(
+          caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type }) })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      }
+      expect(ptRealSubmits()).toHaveLength(0);
     });
 
     // civitai-app-starters#541 — `/models/train/from-orchestrator` admits only
@@ -11895,7 +12130,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(stamped).toBe('step:imageBackgroundRemoval');
     });
 
-    it('NAMESPACES a $type that collides with a kind key — never bare `customComfy`', async () => {
+    it('NAMESPACES a $type that collides with a kind key — never bare `training`', async () => {
       // 🔴 THE REASON THE VALUE IS PREFIXED, asserted at the call site the money
       // flows through. `textToImage` is itself a live orchestrator `$type`
       // (measured against `WorkflowStepTemplate.discriminator.mapping`), so a bare
@@ -11906,12 +12141,12 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       ptQuoting(5, 5);
       await caller().submitWorkflow({
         blockToken: 'tok',
-        body: ptBody({ $type: 'customComfy' }),
+        body: ptBody({ $type: 'training' }),
       });
       await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
       const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
-      expect(stamped).toBe('step:customComfy');
-      expect(stamped).not.toBe('customComfy');
+      expect(stamped).toBe('step:training');
+      expect(stamped).not.toBe('training');
     });
 
     // The collision this namespacing was written for is now closed at the door instead:
@@ -11926,21 +12161,6 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'textToImage' }) })
       ).rejects.toThrow(/platform-internal and cannot be submitted by an app block/);
       expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
-    });
-
-    it('DEGRADES to the bare `step` for a wire-legal but unusable $type', async () => {
-      // `$type` is `z.string().min(1).max(64)` with no character class, so `a:b`
-      // PARSES and reaches this submit. A second colon would break the value
-      // grammar, so the subtype is dropped — the row still records that a
-      // pass-through submit happened, which is shallower and never wrong. The
-      // write is fire-and-forget off an already-billed submit, so this must
-      // degrade rather than throw.
-      mockVerifyBlockToken.mockResolvedValue(ptClaims());
-      happyUser();
-      ptQuoting(5, 5);
-      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'a:b' }) });
-      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
-      expect(mockRecordSpendAttribution.mock.calls[0][0].generationType).toBe('step');
     });
 
     it('IDEMPOTENCY: a replayed submit does not double-charge', async () => {
@@ -12606,9 +12826,9 @@ describe('blocks workflow — author-fee price disclosure', () => {
  * `blocks.estimateWorkflowBatch` — the batch twin of `estimateWorkflow`.
  *
  * 🔴 EVERY EXPECTED NUMBER HERE IS A LITERAL, AND THE CELL PRICES ARE PAIRWISE
- * DISTINCT (12, 150, 31, 20). A fixture that priced every cell the same could not
+ * DISTINCT (12, 15, 31, 20). A fixture that priced every cell the same could not
  * see a reply in the wrong ORDER, and a total equal to `n × price` could not see a
- * sum that dropped or repeated a cell. 213 is not a multiple of any of them.
+ * sum that dropped or repeated a cell. 78 is not a multiple of any of them.
  *
  * Three body kinds are mixed on purpose. The `step` and `textToImage` cells are
  * priced by the mocked orchestrator `whatif`, keyed on a marker in the cell's own
@@ -12648,10 +12868,10 @@ describe('blocks.estimateWorkflowBatch', () => {
       output: { format: 'webp', quality: 90 },
     },
   });
-  const comfy = (engine: string) => ({
+  const comfy = (recipe: 'seamless-pano-360' | 'starter-comfy-txt2img') => ({
     kind: 'customComfy' as const,
-    recipe: 'seamless-pano-360',
-    params: { prompt: 'a sunset over mountains', engine },
+    recipe,
+    params: { prompt: 'a sunset over mountains' },
   });
   const caller = () => blocksRouter.createCaller(fakeCtx() as never);
 
@@ -12693,18 +12913,23 @@ describe('blocks.estimateWorkflowBatch', () => {
   it('returns one snapshot per body IN ORDER and a literal aggregate over distinct prices', async () => {
     const result = await caller().estimateWorkflowBatch({
       blockToken: 'tok',
-      bodies: [step('cell-a'), comfy('qwen-image'), txt('cell-c'), comfy('zimage-turbo')],
+      bodies: [
+        step('cell-a'),
+        comfy('starter-comfy-txt2img'),
+        txt('cell-c'),
+        comfy('seamless-pano-360'),
+      ],
     });
     // cell-a is the slowest whatif, so a reply assembled in COMPLETION order would
     // not start with 12.
-    expect(result.snapshots.map((s) => s.cost?.total)).toEqual([12, 150, 31, 20]);
-    expect(result.aggregate).toEqual({ total: 213, pricedCells: 4, cellCount: 4 });
+    expect(result.snapshots.map((s) => s.cost?.total)).toEqual([12, 15, 31, 20]);
+    expect(result.aggregate).toEqual({ total: 78, pricedCells: 4, cellCount: 4 });
   });
 
   it('🔴 a registry step cell with no quote fails on its own, coded, and is not summed', async () => {
     const result = await caller().estimateWorkflowBatch({
       blockToken: 'tok',
-      bodies: [step('cell-boom'), comfy('zimage-turbo')],
+      bodies: [step('cell-boom'), comfy('seamless-pano-360')],
     });
     expect(result.snapshots[0]).toEqual({
       workflowId: 'failed',
@@ -12717,7 +12942,7 @@ describe('blocks.estimateWorkflowBatch', () => {
   });
 
   it('prices each cell exactly as the SINGLE estimate prices that body', async () => {
-    const bodies = [txt('cell-c'), comfy('qwen-image'), step('cell-e')];
+    const bodies = [txt('cell-c'), comfy('starter-comfy-txt2img'), step('cell-e')];
     const batch = await caller().estimateWorkflowBatch({ blockToken: 'tok', bodies });
     const singles = [];
     for (const body of bodies) {
@@ -12728,7 +12953,7 @@ describe('blocks.estimateWorkflowBatch', () => {
     // dark); comfy prices no fee, so its cost stays `{ total }` — as on the single estimate.
     expect(batch.snapshots.map((s) => s.cost)).toEqual([
       { total: 31, authorFee: 0 },
-      { total: 150 },
+      { total: 15 },
       { total: 7, authorFee: 0 },
     ]);
   });
@@ -12807,7 +13032,7 @@ describe('blocks.estimateWorkflowBatch', () => {
   it('NEVER SUBMITS: every orchestrator call is a whatif, and nothing is reserved, recorded or persisted', async () => {
     const result = await caller().estimateWorkflowBatch({
       blockToken: 'tok',
-      bodies: [step('cell-a'), txt('cell-c'), comfy('zimage-turbo'), step('cell-e')],
+      bodies: [step('cell-a'), txt('cell-c'), comfy('seamless-pano-360'), step('cell-e')],
     });
     // The control: all four cells really ran and priced.
     expect(result.aggregate).toEqual({ total: 70, pricedCells: 4, cellCount: 4 });
@@ -12875,7 +13100,7 @@ describe('blocks.estimateWorkflowBatch', () => {
   it('a server fault inside ONE cell is withheld from the block and does not fail the call', async () => {
     const result = await caller().estimateWorkflowBatch({
       blockToken: 'tok',
-      bodies: [txt('cell-boom'), comfy('zimage-turbo')],
+      bodies: [txt('cell-boom'), comfy('seamless-pano-360')],
     });
     expect(result.snapshots[0].status).toBe('failed');
     // The raw upstream text never reaches a third-party block; a reference does.
@@ -12898,7 +13123,7 @@ describe('blocks.estimateWorkflowBatch', () => {
   it('charges ONE catalog token for the call and the CELL COUNT to the cells bucket', async () => {
     await caller().estimateWorkflowBatch({
       blockToken: 'tok',
-      bodies: [step('cell-a'), txt('cell-c'), comfy('zimage-turbo')],
+      bodies: [step('cell-a'), txt('cell-c'), comfy('seamless-pano-360')],
     });
     expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledTimes(1);
     expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith('page_apb_grid');
@@ -12917,7 +13142,7 @@ describe('blocks.estimateWorkflowBatch', () => {
   });
 
   it('16 cells are accepted and a 17th fails the whole call', async () => {
-    const sixteen = Array.from({ length: 16 }, () => comfy('zimage-turbo'));
+    const sixteen = Array.from({ length: 16 }, () => comfy('seamless-pano-360'));
     const ok = await caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: sixteen });
     expect(ok.aggregate).toEqual({ total: 320, pricedCells: 16, cellCount: 16 });
 
@@ -12925,7 +13150,7 @@ describe('blocks.estimateWorkflowBatch', () => {
     await expect(
       caller().estimateWorkflowBatch({
         blockToken: 'tok',
-        bodies: [...sixteen, comfy('zimage-turbo')],
+        bodies: [...sixteen, comfy('seamless-pano-360')],
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockCheckBlockCatalogRateLimit).not.toHaveBeenCalled();
@@ -13060,5 +13285,279 @@ describe('blocks.estimateWorkflowBatch', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * `kind:'textToImage'` source images reach the generation input gate inside the graph build
+ * (`createBlockTextToImageStep` → `createWorkflowStepsFromGraphInput`, `inputGate` entry
+ * `appBlocks`). An own source whose scan has not finished must reach the app as the same failed
+ * snapshot `kind:'step'` and `kind:'workflow'` return (`errorCode: 'source-scan-pending'`), not as
+ * a thrown error the host turns into a code-less failure. The real gate behind that entry is driven
+ * on real rows in `block-generation-source.behavior.test.ts`; here the graph is a mock that refuses
+ * the way the gate does.
+ */
+describe("blocks workflow — kind:'textToImage' source images and the scan gate", () => {
+  const SOURCE = {
+    url: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d/original=true/ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d.jpeg',
+    width: 768,
+    height: 1024,
+  };
+  const pageClaims = () =>
+    validClaims({
+      appBlockId: 'apb_page',
+      blockInstanceId: 'page_apb_page',
+      ctx: { slotId: 'app.page', entityType: 'none' },
+    });
+  const call = (proc: 'estimateWorkflow' | 'submitWorkflow') => {
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const body = validBody({ sourceImages: [SOURCE] });
+    return proc === 'estimateWorkflow'
+      ? caller.estimateWorkflow({ blockToken: 'tok', body })
+      : caller.submitWorkflow({ blockToken: 'tok', body });
+  };
+
+  beforeEach(() => {
+    mockVerifyBlockToken.mockResolvedValue(pageClaims());
+    happyVersionLookup();
+    happyUser();
+    mockSubmitWorkflow.mockResolvedValue({
+      id: '',
+      status: 'succeeded',
+      cost: { total: 12 },
+      steps: [],
+    });
+  });
+
+  it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+    '%s: the graph gates the source on the appBlocks entry',
+    async (proc) => {
+      await call(proc).catch(() => undefined);
+      expect(mockCreateStepsFromGraph).toHaveBeenCalled();
+      const opts = mockCreateStepsFromGraph.mock.calls[0][0] as {
+        input: { images?: Array<{ url: string }> };
+        inputGate: unknown;
+      };
+      // The token's app: the per-app source flags are read for it inside the step builder.
+      expect(opts.inputGate).toEqual({
+        entry: 'appBlocks',
+        isApiCaller: false,
+        appBlockLog: { appBlockId: 'apb_page', stepTypes: 'textToImage' },
+      });
+      expect(opts.input.images?.map((i) => i.url)).toEqual([SOURCE.url]);
+    }
+  );
+
+  it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+    '🔴 %s: a source still being scanned is a failed snapshot with source-scan-pending, before any orchestrator call',
+    async (proc) => {
+      const { APP_SOURCE_PENDING_MESSAGE } = await import(
+        '~/server/services/generation-input-urls'
+      );
+      mockCreateStepsFromGraph.mockRejectedValue(
+        new TRPCError({ code: 'BAD_REQUEST', message: APP_SOURCE_PENDING_MESSAGE })
+      );
+      await expect(call(proc)).resolves.toEqual({
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed',
+          error: APP_SOURCE_PENDING_MESSAGE,
+          errorCode: 'source-scan-pending',
+        },
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+    '%s: any other source refusal still throws, unchanged',
+    async (proc) => {
+      const { GENERATION_IMAGE_UNAVAILABLE_MESSAGE } = await import(
+        '~/server/services/generation-input-urls'
+      );
+      mockCreateStepsFromGraph.mockRejectedValue(
+        new TRPCError({ code: 'BAD_REQUEST', message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE })
+      );
+      await expect(call(proc)).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+});
+
+/**
+ * `accountType` — the Buzz pool tried FIRST — on both `kind:'step'` arms, and the
+ * textToImage ESTIMATE honouring it. Asserted on the `currencies` the orchestrator
+ * receives, as LITERAL arrays (the global client mock carries the real
+ * `BuzzClientAccount` values — see src/__tests__/setup.ts).
+ *
+ * Every pick case expects an order the no-pick default CANNOT produce
+ * (`['yellow','blue']` vs Auto `['blue','yellow']`), so a path that drops the pick
+ * — hardcodes `undefined`, or quotes with its own Auto list — fails here.
+ */
+describe("accountType on kind:'step' bodies and the textToImage estimate", () => {
+  const MATURE = { domain: 'red', maxBrowsingLevel: ALL_CEILING };
+  const SFW = { domain: 'green', maxBrowsingLevel: SFW_CEILING };
+  const PICKS = [
+    { name: 'a mature app, yellow pick', rating: MATURE, pick: 'yellow', want: ['yellow', 'blue'] },
+    { name: 'an SFW app, green pick', rating: SFW, pick: 'green', want: ['green', 'blue'] },
+    { name: 'an SFW app, no pick', rating: SFW, pick: undefined, want: ['blue', 'green'] },
+    { name: 'a mature app, no pick', rating: MATURE, pick: undefined, want: ['blue', 'yellow'] },
+  ] as const;
+  const DISALLOWED = "buzz account 'yellow' is not spendable for this app's content rating";
+
+  const isWhatIf = (c: unknown[]) =>
+    (c[0] as { query?: { whatif?: boolean } } | undefined)?.query?.whatif === true;
+  const currenciesOf = (whatif: boolean) =>
+    mockSubmitWorkflow.mock.calls
+      .filter((c) => isWhatIf(c) === whatif)
+      .map((c) => (c[0] as { body: { currencies?: unknown } }).body.currencies);
+
+  function pageClaims(over: Record<string, unknown> = {}) {
+    return validClaims({
+      ctx: { entityType: 'none', slotId: 'page' },
+      appBlockId: 'apb_test',
+      buzzBudget: 50,
+      ...over,
+    });
+  }
+  function quoting(cost: number) {
+    mockSubmitWorkflow.mockImplementation(
+      async (opts: {
+        query?: { whatif?: boolean };
+        body: { steps?: Array<{ $type: string; name: string }> };
+      }) =>
+        opts?.query?.whatif === true
+          ? { id: 'wf_quote', status: 'unassigned', steps: [], cost: { total: cost } }
+          : {
+              id: 'wf_real',
+              status: 'processing',
+              steps: (opts.body.steps ?? []).map((s) => ({
+                $type: s.$type,
+                name: s.name,
+                output: {},
+              })),
+              cost: { total: cost },
+            }
+    );
+  }
+  const withPick = (b: Record<string, unknown>, pick: string | undefined) =>
+    pick === undefined ? b : { ...b, accountType: pick };
+
+  const ARMS = [
+    {
+      arm: 'registered step',
+      body: () => ({
+        kind: 'step' as const,
+        step: 'convert-image',
+        params: {
+          image: 'https://image.civitai.com/source.png',
+          output: { format: 'webp', quality: 90 },
+        },
+      }),
+    },
+    {
+      arm: 'pass-through step',
+      body: () => ({
+        kind: 'step' as const,
+        $type: 'imageBackgroundRemoval',
+        input: { prompt: 'a cat', params: { seed: 1234 } },
+        maxBuzz: 20,
+      }),
+    },
+  ] as const;
+
+  const caller = () => blocksRouter.createCaller(fakeCtx() as never);
+
+  describe.each(ARMS)('$arm', ({ body }) => {
+    it.each(PICKS)('ESTIMATE — $name quotes with $want', async ({ rating, pick, want }) => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims(rating));
+      happyUser();
+      quoting(4);
+      await caller().estimateWorkflow({
+        blockToken: 'tok',
+        body: withPick(body(), pick) as never,
+      });
+      expect(currenciesOf(true)).toEqual([want]);
+      expect(currenciesOf(false)).toEqual([]);
+    });
+
+    it.each(PICKS)(
+      'SUBMIT — $name sends $want on the quote AND the real submit',
+      async ({ rating, pick, want }) => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaims(rating));
+        happyUser();
+        quoting(4);
+        const result = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body: withPick(body(), pick) as never,
+        });
+        expect(result.snapshot.workflowId).toBe('wf_real');
+        expect(currenciesOf(true)).toEqual([want]);
+        expect(currenciesOf(false)).toEqual([want]);
+      }
+    );
+
+    it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+      '%s — a yellow pick on an SFW app is BAD_REQUEST before any orchestrator call',
+      async (procedure) => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaims(SFW));
+        happyUser();
+        quoting(4);
+        await expect(
+          caller()[procedure]({ blockToken: 'tok', body: withPick(body(), 'yellow') as never })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: DISALLOWED });
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      }
+    );
+  });
+
+  // 🔴 THE ESTIMATE FIX. The textToImage estimate used `resolveBlockCurrencies(isGreen)`
+  // and ignored the pick, so it priced Auto order while the submit drained the pick
+  // first. Red before the fix: the estimate sent `['blue','yellow']`.
+  describe('textToImage — the estimate prices the order the submit drains', () => {
+    it('a mature app, yellow pick: estimate and submit both send [yellow, blue]', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000, ...MATURE }));
+      happyVersionLookup();
+      happyUser();
+      quoting(10);
+      await caller().estimateWorkflow({
+        blockToken: 'tok',
+        body: validBody({ accountType: 'yellow' }),
+      });
+      const estimated = currenciesOf(true);
+      expect(estimated).toEqual([['yellow', 'blue']]);
+
+      mockSubmitWorkflow.mockClear();
+      quoting(10);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: validBody({ accountType: 'yellow' }),
+      });
+      expect(currenciesOf(true)).toEqual(estimated);
+      expect(currenciesOf(false)).toEqual(estimated);
+    });
+
+    it('a yellow pick on an SFW app is refused by the ESTIMATE too, with no orchestrator call', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ ...SFW }));
+      happyVersionLookup();
+      happyUser();
+      quoting(10);
+      await expect(
+        caller().estimateWorkflow({ blockToken: 'tok', body: validBody({ accountType: 'yellow' }) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: DISALLOWED });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('no pick: the estimate keeps the Auto order', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ ...MATURE }));
+      happyVersionLookup();
+      happyUser();
+      quoting(10);
+      await caller().estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(currenciesOf(true)).toEqual([['blue', 'yellow']]);
+    });
   });
 });

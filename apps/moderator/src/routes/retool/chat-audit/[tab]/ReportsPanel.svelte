@@ -14,7 +14,7 @@
   } from '@civitai/ui/components/ui/pagination/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
-  import { chatUrl, urlWith } from '../url';
+  import { OPEN_ROW_CLASS, chatUrl, urlWith } from '../url';
   import type { PageData } from './$types';
 
   let {
@@ -78,7 +78,7 @@
       {#each reports as r (r.id)}
         <li
           class="flex flex-wrap items-baseline gap-x-2 rounded-md px-2 py-1 {r.entityId === chatId
-            ? 'bg-dark-5'
+            ? OPEN_ROW_CLASS
             : ''}"
         >
           <Badge variant={reportStatusVariant(r.status)}>{r.status}</Badge>

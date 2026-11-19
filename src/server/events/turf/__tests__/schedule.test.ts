@@ -5,6 +5,7 @@ import {
   refillStock,
   scaleSupply,
   stepAt,
+  stickerExpiresAt,
 } from '~/server/events/turf/schedule';
 
 // Illustrative numbers, not any event's real schedule.
@@ -138,5 +139,25 @@ describe('refillStock with a catch-up multiplier', () => {
     // 50 x 0.58 is 28.999... in floating point.
     expect(scaleSupply([{ ...ONE[0], cap: 50 }], 0.58)[0].cap).toBe(29);
     expect(scaleSupply([{ ...ONE[0], cap: 50 }], 0.875)[0].cap).toBe(43);
+  });
+});
+
+// What the viewer's own hat counts down to; the server's queries use stickerLiveAfter, the same rule.
+describe('stickerExpiresAt', () => {
+  const placed = at('2030-01-05T00:00:00Z');
+
+  it('is the lifetime after placing', () => {
+    expect(stickerExpiresAt(placed, { ttlHours: 48 })).toEqual(at('2030-01-07T00:00:00Z'));
+  });
+
+  it('runs from the rollout for a sticker placed before it', () => {
+    const rolloutAt = at('2030-01-10T00:00:00Z');
+    expect(stickerExpiresAt(placed, { ttlHours: 48, rolloutAt })).toEqual(
+      at('2030-01-12T00:00:00Z')
+    );
+  });
+
+  it('is null with no lifetime', () => {
+    expect(stickerExpiresAt(placed, {})).toBeNull();
   });
 });

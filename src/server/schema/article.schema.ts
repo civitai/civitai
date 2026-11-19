@@ -1,5 +1,6 @@
 import { ArticleStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
+import { usageLimits } from '~/shared/constants/usage-limits';
 
 import { CacheTTL, constants } from '~/server/common/constants';
 import { ArticleSort, NsfwLevel } from '~/server/common/enums';
@@ -14,43 +15,16 @@ import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 import type { RateLimit } from '~/server/middleware.trpc';
-import { isBetweenToday } from '~/utils/date-helpers';
 import type { ArticleUnpublishReason } from '~/server/common/moderation-helpers';
 import { articleUnpublishReasons } from '~/server/common/moderation-helpers';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
-import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 
 const UnpublishReasons = Object.keys(articleUnpublishReasons) as [
   ArticleUnpublishReason,
   ...ArticleUnpublishReason[]
 ];
 
-export const dailyArticleTiers = [
-  { minScore: 1000, limit: 5 },
-  { minScore: 5000, limit: 10 },
-  { minScore: 10000, limit: 20 },
-];
-
-export const articleRateLimits: RateLimit[] = [
-  {
-    limit: 0,
-    period: CacheTTL.hour,
-    // Users can't create articles if they were created less than 24hrs ago
-    userReq: (user) => !!user.createdAt && isBetweenToday(user.createdAt),
-    errorMessage: 'You need to wait 24 hours after creating your account to create articles.',
-  },
-  {
-    limit: 3,
-    period: CacheTTL.day,
-  },
-  ...dailyArticleTiers.map(
-    ({ minScore, limit }): RateLimit => ({
-      limit,
-      period: CacheTTL.day,
-      userReq: (user) => creatorScoreFromMeta(user.meta) >= minScore,
-    })
-  ),
-];
+export const articleRateLimits = usageLimits('articles.first-day', 'articles.daily');
 
 export const userPreferencesForArticlesSchema = z.object({
   excludedIds: z.array(z.number()).optional(),

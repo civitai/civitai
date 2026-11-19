@@ -44,6 +44,13 @@ export function reportRowActions(input: {
   const actions: ReportRowAction[] = [];
   const listingStatus = input.listingStatus ?? null;
 
+  // 🔴 A DISMISSED report offers NOTHING. Dismissing is the decision "no action warranted";
+  // offering Delist / Claim on that row invited acting on a report already judged unfounded.
+  // The listing's lifecycle actions stay reachable where they belong — Manage listings.
+  // (A RESOLVED report keeps them: resolution usually means the listing was acted on, and
+  // undoing that — relist — starts from the same row.)
+  if (input.reportStatus === 'dismissed') return actions;
+
   if (listingStatus === 'approved') {
     actions.push('delist');
     actions.push('claim');

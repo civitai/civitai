@@ -4,7 +4,10 @@ vi.mock('~/server/events', () => ({ eventEngine: {} }));
 vi.mock('~/server/events/points/sync', () => ({ syncEventHats: vi.fn() }));
 
 const { eventEngineLeaderboardUpdate } = await import('~/server/jobs/event-engine-work');
-const { REFEREE_QUERY_MAX_SECONDS } = await import('~/server/events/points/referee');
+const { LONG_QUERY_REQUEST_TIMEOUT_MS } = await import('~/server/clickhouse/client');
+const { REFEREE_CLICKHOUSE_BUDGET_S, SETTLE_LOCK_S } = await import(
+  '~/server/events/points/referee'
+);
 
 describe('event-engine-leaderboard-update job', () => {
   // The winner is named by the first run after the finalize window closes, so a run every hour.
@@ -14,14 +17,21 @@ describe('event-engine-leaderboard-update job', () => {
 
   // A whole-season referee run can outlast the scheduler's client timeout; releasing the lock on
   // that hang-up would let the retry start a second run beside it.
-  it('holds a 15-minute lock across a scheduler disconnect', () => {
+  it('holds the settle lock across a scheduler disconnect', () => {
     expect(eventEngineLeaderboardUpdate.options).toMatchObject({
-      lockExpiration: 15 * 60,
+      lockExpiration: SETTLE_LOCK_S,
       keepLockOnDisconnect: true,
     });
-    // The referee runs its two ClickHouse queries one after the other, inside this lock.
-    expect(eventEngineLeaderboardUpdate.options.lockExpiration).toBeGreaterThan(
-      2 * REFEREE_QUERY_MAX_SECONDS
-    );
+    // A whole-season settle read ~1.6 s per million ledger rows in November 2026, projecting to
+    // about 22 minutes by the end of a month-long event.
+    expect(REFEREE_CLICKHOUSE_BUDGET_S).toBeGreaterThanOrEqual(30 * 60);
+    expect(SETTLE_LOCK_S - REFEREE_CLICKHOUSE_BUDGET_S).toBeGreaterThanOrEqual(5 * 60);
+    expect(SETTLE_LOCK_S).toBeLessThan(60 * 60);
+  });
+
+  // The referee's ClickHouse client must not drop a settle query on its own: the query's server cap
+  // and its abort, both inside the lock, are what stop it.
+  it("gives the referee's ClickHouse client an idle timeout past the whole lock", () => {
+    expect(LONG_QUERY_REQUEST_TIMEOUT_MS).toBeGreaterThan(SETTLE_LOCK_S * 1000);
   });
 });

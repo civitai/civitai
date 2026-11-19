@@ -6,6 +6,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as SignalClient from '~/utils/signal-client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -16,7 +17,10 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  */
 
 const ch = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query: ch.query } }));
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: { query: ch.query },
+  clickhouseLongQueries: { query: ch.query },
+}));
 const signals = vi.hoisted(() => ({ topicSend: vi.fn(async (..._a: unknown[]) => undefined) }));
 vi.mock('~/utils/signal-client', async (importOriginal) => ({
   ...(await importOriginal<typeof SignalClient>()),
@@ -44,16 +48,20 @@ const {
 } = await import('~/server/events/scoring/cosmetic-placement.service');
 const { runEventPointsReferee } = await import('~/server/events/points/referee');
 const { eventPointsRefereeUsersSql } = await import('~/server/events/points/referee.sql');
+const { isCrucibleTeamAwardRowsSql } = await import('~/server/events/scoring/crucible-team-awards');
 const { eventSeasonKeys, hatTopicId, LIVE_BUCKET_MS, previewTopicId } = await import(
   '~/server/events/points/keys'
 );
 
-const MIGRATIONS = ['20261012130000_event_cosmetic_placement', '20261015120000_event_points'].map(
-  (name) =>
-    path.resolve(
-      __dirname,
-      `../../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
-    )
+const MIGRATIONS = [
+  '20261012130000_event_cosmetic_placement',
+  '20261015120000_event_points',
+  '20270103120000_event_award_result',
+].map((name) =>
+  path.resolve(
+    __dirname,
+    `../../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
+  )
 );
 const db = { pg: null as unknown as PGlite };
 
@@ -88,6 +96,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (
       "id" integer PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3),
       "excludeFromLeaderboards" boolean NOT NULL DEFAULT false,
+      "flags" integer NOT NULL DEFAULT 0,
       "createdAt" timestamp(3) NOT NULL DEFAULT '2020-01-01'
     );
     -- Ids in registration order. The new-account window opens 2026-10-25 00:00: user 2 registered a
@@ -97,6 +106,7 @@ beforeAll(async () => {
       (${BANNED}, now(), NULL, false, '2026-10-24'), (${DELETED}, NULL, now(), false, '2026-10-24'),
       (${EXCLUDED}, NULL, NULL, true, '2026-10-24'), (${DELETED_NEWBIE}, NULL, now(), false, '2026-10-25'),
       (${NEWBIE}, NULL, NULL, false, '2026-10-25 00:00:01'), (8, NULL, NULL, false, '2026-10-30');
+    UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${EXCLUDED};
   `);
   // A multi-statement string runs as one implicit transaction, which CREATE INDEX CONCURRENTLY
   // refuses; it is applied on its own, as the migration says.
@@ -280,7 +290,7 @@ describe('standings', () => {
       day('2026-11-02', 1, 21, 'claimed', 'Yellow', 20),
       day('2026-11-02', 1, 21, 'txn-1', 'Yellow', 4),
       day('2026-11-02', 2, 22, 'claimed', 'Blue', 15),
-      // Hidden from every standing: banned, deleted, leaderboard-excluded.
+      // Hidden from every standing: banned, deleted, excluded from event points.
       day('2026-11-02', BANNED, 23, 'claimed', 'Pink', 100),
       day('2026-11-02', DELETED, 24, 'claimed', 'Green', 200),
       day('2026-11-02', EXCLUDED, 24, 'claimed', 'Green', 300),
@@ -297,6 +307,20 @@ describe('standings', () => {
       { team: 'Pink', score: 0, rank: 3 },
       { team: 'Green', score: 0, rank: 4 },
     ]);
+  });
+
+  // Leaderboard exclusion alone must not hide someone from event standings; see sync.behavior.test.ts.
+  it('counts someone excluded from leaderboards but not from event points', async () => {
+    await db.pg.exec(`UPDATE "User" SET flags = 0 WHERE id = ${EXCLUDED}`);
+    try {
+      await settle();
+      const { teams } = await getEventStandings(event);
+      expect(teams.find((t) => t.team === 'Green')?.score).toBe(300);
+    } finally {
+      await db.pg.exec(
+        `UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${EXCLUDED}`
+      );
+    }
   });
 
   it('ranks cosmetic instances, so two copies of one design score separately', async () => {
@@ -764,6 +788,62 @@ describe('referee snapshot', () => {
     });
   });
 
+  it("adds a crucible entrant's award to the team's base only, never to a hat, owner or count", async () => {
+    // The event the rally award is configured for, and an entrant's judgeable entry.
+    const rally = { ...scored, name: 'birthday2026' };
+    const rallyKeys = eventSeasonKeys(rally.name, 'live');
+    await db.pg.exec(`
+      CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked', 'Error');
+      CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
+      ALTER TABLE "Image"
+        ADD COLUMN "postId" int, ADD COLUMN ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
+        ADD COLUMN "tosViolation" boolean DEFAULT false, ADD COLUMN "needsReview" text,
+        ADD COLUMN "nsfwLevel" int DEFAULT 1,
+        ADD COLUMN "modelRestricted" boolean NOT NULL DEFAULT false;
+      CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz);
+      CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "nsfwLevel" int);
+      CREATE TABLE "CrucibleEntry" (id int PRIMARY KEY, "crucibleId" int, "userId" int, "imageId" int);
+      INSERT INTO "Post" VALUES (9001, '2026-10-01');
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (9001, 2, 9001);
+      INSERT INTO "Crucible" VALUES (77, 'Active', 3);
+      INSERT INTO "CrucibleEntry" VALUES (1, 77, 2, 9001);
+    `);
+    const award = {
+      time: '2026-11-03 10:00:00.000',
+      op: 'add',
+      actorId: 2,
+      entityId: 77,
+      team: 'Blue',
+      sourceId: 'crucibleEntry:1',
+    };
+    const answer = (awards: unknown[]) =>
+      ch.query.mockImplementation(async ({ query }: { query: string }) => ({
+        json: async () =>
+          query === eventPointsRefereeUsersSql
+            ? [involved]
+            : isCrucibleTeamAwardRowsSql(query)
+            ? awards
+            : [refereeRow('2026-11-04', 5), refereeRow('2026-11-05', 3)],
+      }));
+    const bases = () =>
+      Object.fromEntries(
+        (['hat', 'owner', 'count', 'team'] as const).map((scope) => [
+          scope,
+          hashes.get(rallyKeys.base(scope)),
+        ])
+      );
+
+    answer([]);
+    await runEventPointsReferee(rally, 'live', HOURLY);
+    const without = bases();
+    answer([award]);
+    await runEventPointsReferee(rally, 'live', HOURLY);
+    const withAward = bases();
+
+    expect(withAward.team).toEqual({ ...without.team, Blue: '1000' });
+    expect({ ...withAward, team: undefined }).toEqual({ ...without, team: undefined });
+  });
+
   // The engine names the winner on the first final run, so final must reach the result.
   it('reports a run final only once it settles the whole finalize window', async () => {
     expect((await runEventPointsReferee(scored, 'live', HOURLY)).final).toBe(false);
@@ -857,7 +937,7 @@ describe('referee snapshot', () => {
       expect(standings.teams[0]).toEqual({ team: 'Blue', score: 7, rank: 1 });
     });
 
-    it('adds a team award settled by the cut to the live team base and its hour, and to nothing else', async () => {
+    it('adds a team award settled by the cut to the live team base only, never to the hourly chart', async () => {
       answer([hourlyRow('2026-11-05', 8, 'Blue', { 6: 7 })]);
       const award = (team: string, points: number, at: string) => ({
         team,
@@ -882,7 +962,9 @@ describe('referee snapshot', () => {
       expect(hashes.get(keys.base('team'))).toEqual({ Blue: '7', Pink: '100' });
       expect(hashes.get(keys.base('hat'))).toEqual({ '8:28:claimed': '7' });
       expect(hashes.get(keys.base('owner'))).toEqual({ '8': '7' });
-      expect((await chartedHours()).earned).toMatchObject({ Blue: [[30, 7]], Pink: [[33, 100]] });
+      // A Crucible's lump sum would flatten every other hour of the points-per-hour chart.
+      expect((await chartedHours()).earned).toMatchObject({ Blue: [[30, 7]] });
+      expect((await chartedHours()).earned.Pink ?? []).toEqual([]);
 
       // The same awards never reach the preview: testers' totals are their own.
       const preview = { ...awarded, previewFrom: new Date('2026-10-20T00:00:00.000Z') };
@@ -1016,6 +1098,19 @@ describe('referee snapshot', () => {
     expect(newAccountMinId).toBe(NEWBIE);
   });
 
+  // Leaderboard exclusion alone must not stop event points; see sync.behavior.test.ts.
+  it('does not restrict someone excluded from leaderboards but not from event points', async () => {
+    await db.pg.exec(`UPDATE "User" SET flags = 0 WHERE id = ${EXCLUDED}`);
+    try {
+      await runEventPointsReferee(scored, 'live', HOURLY);
+      expect([...refereeParams().restrictedUsers].sort()).toEqual([BANNED, DELETED]);
+    } finally {
+      await db.pg.exec(
+        `UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${EXCLUDED}`
+      );
+    }
+  });
+
   it('restricts no one as new when nobody registered inside the window', async () => {
     await runEventPointsReferee(
       { ...scored, scoring: { ...scored.scoring, newAccountDays: 0 } },
@@ -1032,8 +1127,21 @@ describe('referee snapshot', () => {
     };
     await runEventPointsReferee(scored, 'live', HOURLY);
     expect(refereeParams().restrictedUsers).toEqual([BANNED]);
-    // Two chunks of hidden lookups, then the new-account threshold.
-    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(3);
+    // Two chunks of hidden lookups, the new-account threshold, then the frozen award results.
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(4);
+  });
+
+  it('writes no snapshot and keeps the last base when the award results cannot be read', async () => {
+    const read = dbMock.dbRead.$queryRaw.getMockImplementation();
+    dbMock.dbRead.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('').includes('"EventAwardResult"')
+        ? Promise.reject(new Error('replica down'))
+        : read!(strings, ...values)) as never);
+    await expect(runEventPointsReferee(scored, 'live', HOURLY)).rejects.toThrow('replica down');
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('replaces the recomputed days in one transaction', async () => {

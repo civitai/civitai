@@ -136,7 +136,7 @@ export function declaredStorage(
         errors: parsed.errors.slice(0, 5),
       },
       'app-blocks'
-    ).catch(() => undefined);
+    );
   }
   throw new DocStoreError('service_unavailable', 'storage is temporarily unavailable', {
     retryAfter: 30,

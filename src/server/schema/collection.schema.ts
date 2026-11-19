@@ -80,7 +80,7 @@ export const saveCollectionItemInputSchema = collectionItemSchema
     { error: 'Please pass a valid item type.' }
   );
 
-export const BULK_SAVE_MAX_IMAGES = 100;
+export const BULK_SAVE_MAX_ITEMS = 100;
 export type BulkSaveCollectionItemsInput = z.infer<typeof bulkSaveCollectionItemsInput>;
 export const bulkSaveCollectionItemsInput = z
   .object({
@@ -88,13 +88,31 @@ export const bulkSaveCollectionItemsInput = z
     imageIds: z.coerce
       .number()
       .array()
-      .max(BULK_SAVE_MAX_IMAGES, {
-        error: `You can add up to ${BULK_SAVE_MAX_IMAGES} images at a time`,
+      .max(BULK_SAVE_MAX_ITEMS, {
+        error: `You can add up to ${BULK_SAVE_MAX_ITEMS} images at a time`,
       })
       .optional(),
-    articleIds: z.coerce.number().array().optional(),
-    postIds: z.coerce.number().array().optional(),
-    modelIds: z.coerce.number().array().optional(),
+    articleIds: z.coerce
+      .number()
+      .array()
+      .max(BULK_SAVE_MAX_ITEMS, {
+        error: `You can add up to ${BULK_SAVE_MAX_ITEMS} articles at a time`,
+      })
+      .optional(),
+    postIds: z.coerce
+      .number()
+      .array()
+      .max(BULK_SAVE_MAX_ITEMS, {
+        error: `You can add up to ${BULK_SAVE_MAX_ITEMS} posts at a time`,
+      })
+      .optional(),
+    modelIds: z.coerce
+      .number()
+      .array()
+      .max(BULK_SAVE_MAX_ITEMS, {
+        error: `You can add up to ${BULK_SAVE_MAX_ITEMS} models at a time`,
+      })
+      .optional(),
     tagId: z.coerce.number().nullish(),
   })
   .refine(
@@ -116,6 +134,9 @@ export const getAllUserCollectionsInputSchema = z
     // The model the picker is targeting. Active contests only surface when the user owns it —
     // you can only submit your own models — so this gates the includeActiveContests branch.
     contestModelId: z.number(),
+    // The "Save to collection" picker sets this to drop archived collections; management
+    // surfaces leave it off so the owner can still see and unarchive them.
+    excludeArchived: z.boolean(),
     // Attaches `pendingReviewCount` per collection, for the sidebar badges. Opt-in because the
     // picker in AddToCollectionModal calls this too and draws no badge — and because a caller that
     // renders inside the sidebar must pass the SAME value as the sidebar or the two split into
@@ -256,6 +277,12 @@ export const upsertCollectionInput = z
   })
   .merge(collectionItemSchema);
 
+export type SetCollectionArchivedInput = z.infer<typeof setCollectionArchivedInput>;
+export const setCollectionArchivedInput = z.object({
+  id: z.number(),
+  archived: z.boolean(),
+});
+
 export type UpdateCollectionCoverImageInput = z.infer<typeof updateCollectionCoverImageInput>;
 export const updateCollectionCoverImageInput = z.object({
   id: z.number(),
@@ -315,7 +342,12 @@ export const updateCollectionItemsStatusInput = z
 export type AddSimpleImagePostInput = z.infer<typeof addSimpleImagePostInput>;
 export const addSimpleImagePostInput = z.object({
   collectionId: z.number(),
-  images: z.array(imageInputSchema).min(1, 'At least one image must be uploaded'),
+  images: z
+    .array(imageInputSchema)
+    .min(1, 'At least one image must be uploaded')
+    .max(BULK_SAVE_MAX_ITEMS, {
+      error: `You can upload up to ${BULK_SAVE_MAX_ITEMS} images at a time`,
+    }),
 });
 
 export type GetAllCollectionsInfiniteSchema = z.infer<typeof getAllCollectionsInfiniteSchema>;

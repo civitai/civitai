@@ -59,7 +59,7 @@ vi.mock('~/server/utils/server-domain', () => ({ isHostForColor: () => false }))
 import { cosmeticShopRouter } from '../cosmetic-shop.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-function fakeCtx(user: unknown, tokenScope: number = TokenScope.Full) {
+function fakeCtx(user: unknown, tokenScope: bigint = TokenScope.Full) {
   return {
     acceptableOrigin: true,
     user,
@@ -151,7 +151,7 @@ describe('the cosmetic shop editor reads and section placements are moderator-on
     it(`${read.name} refuses every token missing one bit of Full`, async () => {
       for (let bit = 0; bit < 25; bit++) {
         const caller = cosmeticShopRouter.createCaller(
-          fakeCtx(mod, TokenScope.Full & ~(1 << bit)) as never
+          fakeCtx(mod, TokenScope.Full & ~(1n << BigInt(bit))) as never
         );
         await expect(read.call(caller), `token missing bit ${bit}`).rejects.toMatchObject({
           code: 'FORBIDDEN',

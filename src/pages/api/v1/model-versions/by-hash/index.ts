@@ -1,19 +1,26 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { restOwnerOrModeratorViewer } from '~/server/auth/rest-viewer';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import * as z from 'zod';
 import { isProd } from '~/env/other';
-import { prepareModelVersionResponse } from '~/pages/api/v1/model-versions/[id]';
+import {
+  getVersionShowcaseImages,
+  prepareModelVersionResponse,
+  showcaseVariesByRegion,
+} from '~/pages/api/v1/model-versions/[id]';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { dbRead } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
-import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
   getHiddenModelVersionIds,
   isPrivateModelVersion,
 } from '~/server/services/model-visibility.service';
 import { getPublicPaidAccessForModelVersions } from '~/server/services/paid-access.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
 
 const schema = z
   .array(
@@ -44,19 +51,27 @@ export default PublicEndpoint(
       },
     });
 
-    // Versions the caller may not see are left out, as if their hashes had not matched.
+    const browsingLevel = apiBrowsingLevel(req);
+    // Versions the caller may not see are left out, as if their hashes had not matched: those above
+    // the request's level, as `[id]` refuses them, and those the visibility rules hide.
+    const atLevel = matched.filter((file) => (file.modelVersion.nsfwLevel & browsingLevel) !== 0);
     const hidden = await getHiddenModelVersionIds(
-      matched.map((file) => file.modelVersion),
-      async () => (await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' }))?.user
+      atLevel.map((file) => file.modelVersion),
+      async () =>
+        restOwnerOrModeratorViewer(
+          req,
+          (
+            await getApiAuthSession(
+              { req, res },
+              { whenBanned: 'anonymous', scope: MODEL_VIEW_SCOPE }
+            )
+          )?.user
+        )
     );
-    const files = matched.filter((file) => !hidden.has(file.modelVersion.id));
+    const files = atLevel.filter((file) => !hidden.has(file.modelVersion.id));
 
     const modelVersionIds = [...new Set(files.map((file) => file.modelVersion.id))];
-    const images = await getImagesForModelVersion({
-      modelVersionIds,
-      imagesPerVersion: 10,
-      include: ['meta'],
-    });
+    const images = await getVersionShowcaseImages(modelVersionIds, browsingLevel);
     const paidAccess = await getPublicPaidAccessForModelVersions(modelVersionIds);
 
     // Matches `resModelVersionDetails` in ./[id], which shapes the singular
@@ -66,21 +81,36 @@ export default PublicEndpoint(
     const baseUrl = new URL(
       isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'
     );
-    const showSfwFace = showsSfwFace(apiBrowsingLevel(req));
+    const showSfwFace = showsSfwFace(browsingLevel);
+    const imagesOf = (versionId: number) => images.filter((x) => x.modelVersionId === versionId);
     const modelVersions = await Promise.all(
       files.map((file) =>
         prepareModelVersionResponse(
           file.modelVersion,
           baseUrl,
-          images.filter((x) => x.modelVersionId === file.modelVersion.id),
+          imagesOf(file.modelVersion.id),
           paidAccess[file.modelVersion.id] ?? null,
-          showSfwFace
+          showSfwFace,
+          isRedCapableHost(req.headers.host),
+          browsingLevel
         )
+      )
+    );
+    const variesByRegion = await Promise.all(
+      files.map((file) =>
+        showcaseVariesByRegion(file.modelVersion.nsfwLevel, imagesOf(file.modelVersion.id))
       )
     );
 
     // Only its owner or a moderator is still holding a Private version here.
-    if (files.some((file) => isPrivateModelVersion(file.modelVersion)))
+    if (
+      browsingLevel !== allBrowsingLevelsFlag ||
+      files.some(
+        (file) =>
+          isPrivateModelVersion(file.modelVersion) || file.modelVersion.model.sfwName != null
+      ) ||
+      variesByRegion.some(Boolean)
+    )
       res.setHeader('Cache-Control', 'private, no-store');
     res.status(200).json(modelVersions);
   },

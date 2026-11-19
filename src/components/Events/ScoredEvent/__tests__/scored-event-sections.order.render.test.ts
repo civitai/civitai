@@ -83,8 +83,14 @@ vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: m
 vi.mock('~/components/Events/ScoredEvent/HatCatalogPreview', () => ({
   HatCatalogPreview: marker('catalog'),
 }));
+vi.mock('~/components/HatTurf/EventPointPopsSetting', () => ({
+  EventPointPopsSetting: () => null,
+}));
 vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: marker('rules') }));
 // Its own browser test covers what it shows.
+vi.mock('~/components/Events/ScoredEvent/FlagRaceEventSection', () => ({
+  FlagRaceEventSection: marker('flagRace'),
+}));
 vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({
   HatTurfEventSection: marker('turf'),
 }));
@@ -151,23 +157,25 @@ function sections({
 }
 
 describe('ScoredEventSections order', () => {
-  it('a visitor who has not joined: how it works, the hat catalogue, Hat Turf, then the standings', () => {
+  it('a visitor who has not joined: how it works, the hat catalogue, Hat Turf, the Flag Race, then the standings', () => {
     expect(sections({ joined: false, ended: false })).toEqual([
       'hero',
       'rules',
       'catalog',
       'turf',
+      'flagRace',
       'standings',
       'topHats',
       'turfPlayers',
     ]);
   });
 
-  it('a player: their hats first, then Hat Turf, standings, shop, top hats, rules', () => {
+  it('a player: their hats first, then Hat Turf, the Flag Race, standings, shop, top hats, rules', () => {
     expect(sections({ joined: true, ended: false })).toEqual([
       'hero',
       'hats',
       'turf',
+      'flagRace',
       'standings',
       'shop',
       'topHats',
@@ -181,6 +189,7 @@ describe('ScoredEventSections order', () => {
       'hero',
       'standings',
       'turf',
+      'flagRace',
       'topHats',
       'hats',
     ]);

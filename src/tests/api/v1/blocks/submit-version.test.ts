@@ -51,6 +51,7 @@ const {
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockSubmitVersion,
+  mockIsFlipt,
   mockRedis,
   mockMultiIncr,
   mockWithSysReadDeadline,
@@ -62,19 +63,30 @@ const {
   // withSysReadDeadline must reject it within the deadline → fail closed (503).
   const mockMultiIncr = {
     value: 1,
+    // When set, the count for the counter key the MULTI touched (per-subject buckets).
+    valueForKey: null as ((key: string) => number) | null,
     malformedExec: null as unknown[] | null | false,
     hangExec: false,
   };
-  const multiFactory = () => ({
-    set: vi.fn().mockReturnThis(),
-    incr: vi.fn().mockReturnThis(),
-    exec: vi.fn().mockImplementation(async () => {
-      if (mockMultiIncr.hangExec) return new Promise(() => {}); // never settles
-      return mockMultiIncr.malformedExec !== false
-        ? mockMultiIncr.malformedExec
-        : ['OK', mockMultiIncr.value];
-    }),
-  });
+  const multiFactory = () => {
+    let key = '';
+    const chain = {
+      set: vi.fn((k: string) => {
+        key = k;
+        return chain;
+      }),
+      incr: vi.fn().mockReturnThis(),
+      exec: vi.fn().mockImplementation(async () => {
+        if (mockMultiIncr.hangExec) return new Promise(() => {}); // never settles
+        if (mockMultiIncr.malformedExec !== false) return mockMultiIncr.malformedExec;
+        return [
+          'OK',
+          mockMultiIncr.valueForKey ? mockMultiIncr.valueForKey(key) : mockMultiIncr.value,
+        ];
+      }),
+    };
+    return chain;
+  };
   // Faithful stand-in for the real withSysReadDeadline (sys-read-deadline.ts): race
   // the wrapped promise against a rejecting timer; `<= 0` disables (no-op). A tiny
   // default ms keeps the never-settles tests fast without fake timers.
@@ -94,6 +106,7 @@ const {
     mockIsAppBlocksEnabled: vi.fn(),
     mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockSubmitVersion: vi.fn(),
+    mockIsFlipt: vi.fn(),
     mockRedis: { multi: vi.fn(multiFactory), ttl: vi.fn().mockResolvedValue(60) },
     mockMultiIncr,
     mockWithSysReadDeadline,
@@ -126,10 +139,20 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   submitVersion: mockSubmitVersion,
 }));
+// The GitHub Actions OIDC verifier module is loaded by the route only when a token is sent; its
+// flag read and segment context are the two seams it needs here.
+vi.mock('~/server/flipt/client', () => ({
+  FLIPT_FEATURE_FLAGS: { APP_BLOCKS_OIDC_VERIFIED_SUBMIT: 'app-blocks-oidc-verified-submit' },
+  isFlipt: mockIsFlipt,
+}));
+vi.mock('~/server/services/feature-flags.service', () => ({
+  buildFliptContext: () => ({}),
+}));
 // The schema module is real (we want its actual validation), but it pulls only
 // zod — safe to load.
 
 import handler from '~/pages/api/v1/blocks/submit-version';
+import { GithubActionsOidcRefusal } from '~/server/services/blocks/github-actions-oidc-refusal';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Personal-access (user-type) key: `getSessionFromBearerToken` sets
@@ -178,6 +201,7 @@ const goodBody = { bundleBase64: Buffer.from('zipbytes').toString('base64') };
 beforeEach(() => {
   vi.clearAllMocks();
   mockMultiIncr.value = 1;
+  mockMultiIncr.valueForKey = null;
   mockMultiIncr.malformedExec = false;
   mockMultiIncr.hangExec = false;
   sysDeadline.ms = 50;
@@ -339,6 +363,33 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeaders()['Retry-After']).toBeDefined();
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('F2: 429 when the per-USER limit is spent, even on a fresh key (no widening by minting keys)', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    // The user's bucket is over the limit; this API key's own bucket is fresh.
+    mockMultiIncr.valueForKey = (key) =>
+      key === `system:blocks:submit-rate-limit:user:${MOD_SESSION.user.id}` ? 11 : 1;
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(429);
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('F2: the per-KEY limit still applies alongside the per-user one', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockMultiIncr.valueForKey = (key) =>
+      key === `system:blocks:submit-rate-limit:key:${MOD_SESSION.apiKeyId}` ? 11 : 1;
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(429);
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 
@@ -509,6 +560,22 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     expect((res._getJSONData() as { message: string }).message).toContain('50 MiB');
   });
 
+  it('a deep manifest-validation refusal returns 400 with every validator error', async () => {
+    const { ManifestValidationRefusal } = await import(
+      '~/server/services/blocks/manifest-submit-validation'
+    );
+    const errors = ['iframe.sandbox must be a non-empty string', 'contentRating must be one of g'];
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockSubmitVersion.mockRejectedValueOnce(new ManifestValidationRefusal(errors));
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(400);
+    expect((res._getJSONData() as { manifestErrors: string[] }).manifestErrors).toEqual(errors);
+  });
+
   it('🔴 a permission-hook refusal also returns the structured storageHookErrors', async () => {
     const { StorageHookRefusal } = await import('~/server/services/apps/storage-hooks');
     const problems = [
@@ -635,5 +702,64 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(400);
     expect(res._getJSONData()).toEqual({ message: 'Invalid bundle payload' });
+  });
+
+  // ---------------------------------------------------------------------------
+  // GitHub Actions OIDC token (flag app-blocks-oidc-verified-submit)
+  // ---------------------------------------------------------------------------
+  const OIDC_TOKEN = 'eyJhbGciOiJSUzI1NiJ9.eyJyZXBvIjoicm91dGUtdGVzdCJ9.c2lnLXJvdXRlLTkwMTI';
+
+  it('flag OFF: a sent token is dropped at the route, so the service verifies and writes nothing', async () => {
+    mockIsFlipt.mockResolvedValue(false);
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, githubOidcToken: OIDC_TOKEN },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockIsFlipt.mock.calls[0][0]).toBe('app-blocks-oidc-verified-submit');
+    expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
+    expect(mockSubmitVersion.mock.calls[0][0].githubOidcToken).toBeUndefined();
+    expect(res._getJSONData()).not.toHaveProperty('actionsRunSourceRecorded');
+  });
+
+  it('flag ON: the token reaches the service, and its recorded answer reaches the client', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockSubmitVersion.mockResolvedValueOnce({
+      publishRequestId: 'pubreq_oidc',
+      slug: 'my-block',
+      version: '1.2.3',
+      actionsRunSourceRecorded: true,
+    });
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, githubOidcToken: OIDC_TOKEN },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSubmitVersion.mock.calls[0][0].githubOidcToken).toBe(OIDC_TOKEN);
+    expect(res._getJSONData()).toMatchObject({ actionsRunSourceRecorded: true });
+  });
+
+  it('a token refusal answers with its own status, code and reason, never the token', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockSubmitVersion.mockRejectedValueOnce(
+      new GithubActionsOidcRefusal('repository-mismatch', 'expected acme/route-app', 409)
+    );
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, githubOidcToken: OIDC_TOKEN },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(409);
+    expect(res._getJSONData()).toEqual({
+      message: 'GitHub Actions OIDC token rejected: expected acme/route-app',
+      code: 'github_oidc_token_rejected',
+      reason: 'repository-mismatch',
+    });
+    expect(JSON.stringify(res._getJSONData())).not.toContain(OIDC_TOKEN);
   });
 });

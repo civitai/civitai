@@ -1,7 +1,15 @@
 import { TRPCError } from '@trpc/server';
 import type { ProtectedContext } from '~/server/createContext';
 import type { Tracker } from '~/server/clickhouse/client';
+import type { Context } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
+import {
+  canViewModelVersion,
+  modelVersionVisibilitySelect,
+} from '~/server/services/model-version-visibility.service';
+import { canViewOwnerOnly } from '~/server/utils/poi-model-visibility';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
   HasOfficialFileOfSizeInput,
@@ -21,6 +29,7 @@ import {
   createModelFileScanRequest,
   ModelFileScanSubmissionError,
 } from '~/server/services/orchestrator/orchestrator.service';
+import { submitTrainingDataScanSafe } from '~/server/services/training-data-scan.service';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { isB2Url, parseB2Url, parseKey } from '~/utils/s3-utils';
@@ -129,9 +138,11 @@ function resolveRegistration(args: {
  */
 async function submitInlineScan({
   handler,
+  fileType,
   ...file
 }: {
   fileId: number;
+  fileType: string;
   modelVersionId: number;
   modelId: number;
   modelType: ModelType;
@@ -139,6 +150,14 @@ async function submitInlineScan({
   url: string;
   handler: 'createFileHandler' | 'updateFileHandler';
 }) {
+  // Not awaited: the zip is copied to the orchestrator before it is scanned, which can take minutes.
+  if (fileType === 'Training Data') {
+    void submitTrainingDataScanSafe(
+      { fileId: file.fileId, modelVersionId: file.modelVersionId, url: file.url },
+      handler
+    );
+    return;
+  }
   await createModelFileScanRequest({
     ...file,
     // Skip pre-flight on inline submission: the file just landed and
@@ -171,14 +190,38 @@ async function submitInlineScan({
         stack: err instanceof Error ? err.stack : undefined,
       },
       'webhooks'
-    ).catch();
+    );
   });
 }
 
-export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
+export const getFilesByVersionIdHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
-    const data = await getFilesForModelVersionCache([input.id]);
-    return data[input.id];
+    // The cached list is shared by every viewer, so the version is checked before it is read.
+    const version = await dbRead.modelVersion.findUnique({
+      where: { id: input.id },
+      select: modelVersionVisibilitySelect,
+    });
+    if (!version) return undefined;
+    const viewer = ownerOrModeratorViewer(ctx);
+    const ownerId = version.model.userId;
+    if (!(await canViewModelVersion(version, viewer))) return undefined;
+
+    const data = (await getFilesForModelVersionCache([input.id]))[input.id];
+    if (!data || canViewOwnerOnly(ownerId, viewer)) return data;
+    // Training data keeps its own public view (the router's strip); other non-Public files are
+    // the owner's and moderators'.
+    return {
+      ...data,
+      files: data.files.filter(
+        (file) => file.visibility === 'Public' || file.type === 'Training Data'
+      ),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
@@ -303,6 +346,7 @@ export const createModelFile = async ({
 
     await submitInlineScan({
       fileId: file.id,
+      fileType: createInput.type,
       modelVersionId: file.modelVersion.id,
       modelId: file.modelVersion.modelId,
       modelType: file.modelVersion.model.type,
@@ -402,10 +446,12 @@ export const updateFileHandler = async ({
         )
         .catch(handleLogError);
 
-      // Not awaited: the epoch picker and dataset upload wait on this response, and a failed or slow
-      // submit loses nothing, since scanFilesFallbackJob picks up the unscanned record within minutes.
+      // Not awaited: the epoch picker and dataset upload wait on this response. A failed or slow model
+      // file submit loses nothing, since scanFilesFallbackJob picks up the unscanned record within
+      // minutes; a Training Data zip whose submit failed stays Pending until it is submitted again.
       void submitInlineScan({
         fileId: result.id,
+        fileType: result.type,
         modelVersionId: result.modelVersionId,
         modelId: result.modelVersion.modelId,
         modelType: result.modelVersion.model.type,

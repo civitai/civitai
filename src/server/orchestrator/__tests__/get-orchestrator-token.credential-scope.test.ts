@@ -23,14 +23,7 @@ vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
 }));
 vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL: vi.fn(async () => undefined) }));
 
-const { getOrchestratorToken, __testing: enforcement } = await import(
-  '~/server/orchestrator/get-orchestrator-token'
-);
-const shippedEnforcing = enforcement.isEnforcing();
-
-it('ships logging system-account read keys, refusing none', () => {
-  expect(shippedEnforcing).toBe(false);
-});
+const { getOrchestratorToken } = await import('~/server/orchestrator/get-orchestrator-token');
 const { __testing: perPodCache } = await import('~/server/orchestrator/orchestrator-token-cache');
 const { encodeOwnedToken } = await import('~/server/orchestrator/orchestrator-token-identity');
 
@@ -39,7 +32,7 @@ const WRITE_SCOPE = TokenScopePresets.ReadOnly | TokenScope.AIServicesWrite;
 let meta: unknown = SYSTEM_ACCOUNT_META;
 
 // `sessionMeta` is the session user's copy of the account meta; by default the same as the row.
-function keyCaller(tokenScope: number, opts: { sessionMeta?: unknown } = {}) {
+function keyCaller(tokenScope: bigint, opts: { sessionMeta?: unknown } = {}) {
   const sessionMeta = 'sessionMeta' in opts ? opts.sessionMeta : meta;
   const req = {
     url: '/api/trpc/orchestrator.getStatus?batch=1',
@@ -64,15 +57,13 @@ const cachedStanding = () =>
     data: { muted: false, banned: false, exists: true },
     cachedAt: Date.now(),
   } as never);
-const wouldRefuseLogs = () =>
+const refusedLogs = () =>
   loggingMock.logToAxiom.mock.calls.filter(
-    ([event]) =>
-      (event as { name?: string })?.name === 'orchestrator-token-system-read-would-refuse'
+    ([event]) => (event as { name?: string })?.name === 'orchestrator-token-system-read-refused'
   );
 
 beforeEach(() => {
   vi.clearAllMocks();
-  enforcement.setEnforceSystemReadRefusal(true);
   perPodCache.clear();
   meta = SYSTEM_ACCOUNT_META;
   envMock.set({ ORCHESTRATOR_MODE: 'prod' });
@@ -86,11 +77,12 @@ beforeEach(() => {
   getTemporaryUserApiKey.mockResolvedValue('fresh-token');
 });
 
-describe('the orchestrator token for a system account, when enforcing', () => {
+describe('the orchestrator token for a system account', () => {
   it('is refused to a read-only key, without minting', async () => {
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(refusedLogs()).toHaveLength(1);
     expect(getTemporaryUserApiKey).not.toHaveBeenCalled();
   });
 
@@ -98,14 +90,17 @@ describe('the orchestrator token for a system account, when enforcing', () => {
     // Cached by an earlier call made with a write key.
     redisMock.sysRedis.hGet.mockResolvedValue(null as never);
     await expect(getOrchestratorToken(USER, keyCaller(WRITE_SCOPE))).resolves.toBe('fresh-token');
+    expect(refusedLogs()).toHaveLength(0);
     redisMock.sysRedis.hGet.mockResolvedValue(encodeOwnedToken(USER, 'cached-token') as never);
     await expect(getOrchestratorToken(USER, keyCaller(WRITE_SCOPE))).resolves.toBe('cached-token');
+    expect(refusedLogs()).toHaveLength(0);
     redisMock.sysRedis.hGet.mockClear();
     getTemporaryUserApiKey.mockClear();
 
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(refusedLogs()).toHaveLength(1);
     expect(redisMock.sysRedis.hGet).not.toHaveBeenCalled();
     expect(getTemporaryUserApiKey).not.toHaveBeenCalled();
   });
@@ -117,13 +112,33 @@ describe('the orchestrator token for a system account, when enforcing', () => {
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(refusedLogs()).toHaveLength(1);
+    expect(refusedLogs()[0][0]).toMatchObject({ accountUnreadable: true });
     expect(getTemporaryUserApiKey).not.toHaveBeenCalled();
+  });
+
+  it('logs a refusal with its route and credential kind, without user, key or address', async () => {
+    await expect(
+      getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(refusedLogs()[0][0]).toEqual({
+      name: 'orchestrator-token-system-read-refused',
+      type: 'info',
+      route: '/api/trpc/orchestrator.getStatus',
+      accountUnreadable: false,
+      // The log line carries the scope as a JSON number.
+      tokenScope: Number(TokenScopePresets.ReadOnly),
+      apiKeyType: ApiKeyType.User,
+      client: 'personal-key',
+      clientIdHash: undefined,
+    });
   });
 
   it('is refused when the session copy has no meta', async () => {
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly, { sessionMeta: undefined }))
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(refusedLogs()).toHaveLength(1);
   });
 
   it('is refused when the account marker is stored as a string', async () => {
@@ -131,55 +146,24 @@ describe('the orchestrator token for a system account, when enforcing', () => {
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(refusedLogs()).toHaveLength(1);
   });
 
   it('is issued to a key with AI Services write scope', async () => {
     await expect(getOrchestratorToken(USER, keyCaller(WRITE_SCOPE))).resolves.toBe('fresh-token');
+    expect(refusedLogs()).toHaveLength(0);
   });
 
   it('is issued to a full-scope key', async () => {
     await expect(getOrchestratorToken(USER, keyCaller(TokenScope.Full))).resolves.toBe(
       'fresh-token'
     );
+    expect(refusedLogs()).toHaveLength(0);
   });
 
   it('is issued to server-side calls with no request', async () => {
     await expect(getOrchestratorToken(USER)).resolves.toBe('fresh-token');
-  });
-});
-
-describe('the orchestrator token for a system account, before enforcing', () => {
-  beforeEach(() => enforcement.setEnforceSystemReadRefusal(false));
-
-  it('is issued to a read-only key and logs it, without user, key or address', async () => {
-    await expect(getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))).resolves.toBe(
-      'fresh-token'
-    );
-    const logs = wouldRefuseLogs();
-    expect(logs).toHaveLength(1);
-    expect(logs[0][0]).toEqual({
-      name: 'orchestrator-token-system-read-would-refuse',
-      type: 'info',
-      route: '/api/trpc/orchestrator.getStatus',
-      accountUnreadable: false,
-      tokenScope: TokenScopePresets.ReadOnly,
-      apiKeyType: ApiKeyType.User,
-      client: 'personal-key',
-      clientIdHash: undefined,
-    });
-  });
-
-  it('logs a read-only key when a token is already cached', async () => {
-    redisMock.sysRedis.hGet.mockResolvedValue(encodeOwnedToken(USER, 'cached-token') as never);
-    await expect(getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))).resolves.toBe(
-      'cached-token'
-    );
-    expect(wouldRefuseLogs()).toHaveLength(1);
-  });
-
-  it('does not log a key with AI Services write scope', async () => {
-    await getOrchestratorToken(USER, keyCaller(WRITE_SCOPE));
-    expect(wouldRefuseLogs()).toHaveLength(0);
+    expect(refusedLogs()).toHaveLength(0);
   });
 });
 
@@ -192,6 +176,7 @@ describe('the orchestrator token for an ordinary account', () => {
     await expect(getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))).resolves.toBe(
       'fresh-token'
     );
+    expect(refusedLogs()).toHaveLength(0);
   });
 
   it('is issued to a read-only key without reading the account, when the session copy says ordinary', async () => {
@@ -199,10 +184,12 @@ describe('the orchestrator token for an ordinary account', () => {
     await expect(getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))).resolves.toBe(
       'fresh-token'
     );
+    expect(refusedLogs()).toHaveLength(0);
     expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
   });
 
   it('is issued to a session', async () => {
     await expect(getOrchestratorToken(USER, sessionCaller())).resolves.toBe('fresh-token');
+    expect(refusedLogs()).toHaveLength(0);
   });
 });

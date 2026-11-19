@@ -1,0 +1,104 @@
+<script lang="ts">
+  import '../global.css';
+  import '../motion.css';
+  import { afterNavigate, invalidate } from '$app/navigation';
+  import { page } from '$app/state';
+  import AppHeader from '$lib/AppHeader.svelte';
+  import WhatsNewDialog from '$lib/WhatsNewDialog.svelte';
+  import type { PlayerStatus } from '$lib/server/player-status';
+  import type { WhatsNew } from '$lib/whats-new';
+  import { provideWhatsNew } from '$lib/whats-new-dismiss.svelte';
+  import { provideVotesSent } from '$lib/votes-sent.svelte';
+  import type { LayoutData } from './$types';
+
+  let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
+
+  // A page that loads the player's status (play keeps it live) hands it to the header through page.data; every other page
+  // gets the layout's copy, so the header is the same on each of them.
+  let status = $derived(
+    (page.data.status as PlayerStatus | null | undefined) ?? data.headerStats?.status ?? undefined
+  );
+  // /play reads the votes it has in flight from this context.
+  provideVotesSent();
+  // /play keeps its own live status for the header while it is open, so the layout's copy is as old as the visit. Leaving
+  // refreshes it for the pages that carry no status of their own.
+  afterNavigate(({ from }) => {
+    if (from?.route.id === '/play') void invalidate('knights:header');
+  });
+  // /play fills the viewport exactly: the image stage takes whatever the header and the answer row leave.
+  // The welcome screen is signed-out and brings its own chrome.
+  let bare = $derived(page.route.id === '/');
+  // /home and /play each load "What's new" and answer its `dismissWhatsNew` action; whichever opens first shows it.
+  let whatsNew = $derived(page.data.whatsNew as WhatsNew | null | undefined);
+  const whatsNewDialog = provideWhatsNew({
+    sent: () => !!whatsNew,
+    userId: () => data.userId,
+    path: () => page.url.pathname,
+  });
+  let fit = $derived(page.route.id === '/play');
+</script>
+
+{#if bare}
+  {@render children()}
+{:else}
+  <div class="app" class:fit>
+    <AppHeader
+      player={data.player}
+      userId={data.userId}
+      civitaiUrl={data.civitaiUrl}
+      shopOpen={data.shopOpen}
+      isPlayer={data.isPlayer}
+      feedbackOpen={data.feedbackOpen}
+      {status}
+      recapUnseen={data.recapUnseen}
+      goldPerBuzz={data.goldPerBuzz}
+      ladder={data.ladder}
+      badges={data.badges}
+    />
+    <main>
+      {@render children()}
+    </main>
+  </div>
+  {#if whatsNew && whatsNewDialog.showing}
+    <WhatsNewDialog copy={whatsNew} onclose={whatsNewDialog.close} />
+  {/if}
+{/if}
+
+<style>
+  .app {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+  main {
+    flex: 1 1 auto;
+    width: 100%;
+    max-width: 48rem;
+    margin: 0 auto;
+    padding: 1.5rem 1.5rem 3rem;
+  }
+  .fit {
+    height: 100vh;
+    height: 100dvh;
+  }
+  .fit main {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-width: none;
+    padding: 0;
+    overflow-y: auto;
+  }
+  /* Must match PrimaryNav's tab-bar breakpoint and height. */
+  @media (max-width: 63.9375rem) {
+    .app {
+      padding-bottom: calc(57px + env(safe-area-inset-bottom));
+    }
+  }
+  @media (max-width: 40rem) {
+    main {
+      padding: 1rem 1rem 1.5rem;
+    }
+  }
+</style>

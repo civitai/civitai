@@ -333,6 +333,8 @@ export type EntryImage = {
   id: number;
   url: string;
   nsfwLevel: number;
+  /** Absent in snapshots saved before it was recorded. */
+  modelRestricted?: boolean;
   type: string;
   width: number | null;
   height: number | null;
@@ -433,6 +435,7 @@ export async function loadEntryImages(modelIds: number[]) {
         i.id          AS "id",
         i.url         AS "url",
         i."nsfwLevel" AS "nsfwLevel",
+        i."modelRestricted" AS "modelRestricted",
         i.type::text  AS "type",
         i.width       AS "width",
         i.height      AS "height"

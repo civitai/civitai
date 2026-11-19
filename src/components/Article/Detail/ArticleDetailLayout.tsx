@@ -51,14 +51,16 @@ export function ArticleDetailLayout({
       {banner}
       <Container size="xl" pos="relative">
         {overlay}
-        {/* 46rem reading column + 2rem gap + 20rem sidebar, centred so the title lines up with the body. */}
-        <div className="mx-auto w-full @md:max-w-[68rem]">
+        {/* 46rem reading column + 2rem gap + 26rem sidebar, centred so the title lines up with the body. */}
+        <div className="mx-auto w-full @md:max-w-[74rem]">
           {header}
           <div className="flex flex-col gap-8 @md:flex-row @md:items-start">
             <Stack gap="xs" className="w-full min-w-0 @md:max-w-[46rem] @md:flex-1">
               {body}
             </Stack>
-            <aside className="w-full @md:sticky @md:top-4 @md:w-80 @md:shrink-0">{sidebar}</aside>
+            <aside className="w-full @md:sticky @md:top-4 @md:w-[26rem] @md:shrink-0">
+              {sidebar}
+            </aside>
           </div>
           {comments}
         </div>

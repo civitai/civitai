@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ClickhouseModule from '~/server/clickhouse/client';
 import type * as HarnessModule from '~/server/services/text-scan/harness';
@@ -58,7 +59,9 @@ function call(
 const MOD = 990000123;
 beforeEach(() => {
   vi.clearAllMocks();
-  session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+  session.current = {
+    user: { id: MOD, isModerator: true, bannedAt: null, permissions: ['textScanPromptPublish'] },
+  };
   redisMock.sysRedis.multi.mockImplementation(() => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
@@ -86,6 +89,37 @@ describe('mod/text-scan', () => {
       401
     );
     expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+  });
+
+  it('refuses putPrompt to a moderator without the publish permission, reaching no harness', async () => {
+    session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+    const res = await call({ action: 'putPrompt', key: 'base', content: 'BASE PROMPT', note: 'n' });
+    expect(res.status).toBe(403);
+    expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['putConfig', { action: 'putConfig', config: { thinking: true } }],
+    ['putModes', { action: 'putModes', entityType: 'Model', rollout: { shadow: 100 } }],
+    [
+      'putWebSearchModes',
+      { action: 'putWebSearchModes', entityType: 'Model', rollout: { shadow: 10 } },
+    ],
+    ['putLabelModes', { action: 'putLabelModes', label: 'poi', mode: 'review' }],
+  ])(
+    'refuses %s to a moderator without the publish permission, reaching no harness',
+    async (_, body) => {
+      session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+      const res = await call(body);
+      expect(res.status).toBe(403);
+      expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+    }
+  );
+
+  it('serves other actions to a moderator without the publish permission (control)', async () => {
+    session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+    expect((await call({ action: 'getPrompts' })).status).toBe(200);
+    expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
   });
 
   it('writes a prompt as the signed-in moderator, whatever id the body names', async () => {
@@ -166,12 +200,12 @@ describe('mod/text-scan', () => {
   it('keeps free text out of the audit row', async () => {
     await call({
       action: 'scanTexts',
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'USER TEXT' }] }],
       promptOverrides: { base: 'CANDIDATE PROMPT' },
     });
     const payload = mockAudit.mock.calls[0][0].payload as Record<string, unknown>;
-    expect(payload).toMatchObject({ action: 'scanTexts', entityType: 'Comment' });
+    expect(payload).toMatchObject({ action: 'scanTexts', entityType: 'CommentV3' });
     expect(JSON.stringify(payload)).not.toContain('USER TEXT');
     expect(JSON.stringify(payload)).not.toContain('CANDIDATE PROMPT');
   });
@@ -193,8 +227,13 @@ describe('mod/text-scan', () => {
   });
 
   describe('API keys', () => {
-    const MOD_USER = { id: MOD, isModerator: true, bannedAt: null, permissions: [] };
-    const asApiKey = (tokenScope: number) => {
+    const MOD_USER = {
+      id: MOD,
+      isModerator: true,
+      bannedAt: null,
+      permissions: ['textScanPromptPublish'],
+    };
+    const asApiKey = (tokenScope: bigint) => {
       vi.mocked(getSessionFromBearerToken).mockResolvedValueOnce({
         user: MOD_USER,
         apiKeyId: 1,
@@ -217,7 +256,7 @@ describe('mod/text-scan', () => {
       { action: 'quoteEntities', entityType: 'Post', entityIds: [1] },
       {
         action: 'scanTexts',
-        entityType: 'Comment',
+        entityType: 'CommentV3',
         texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'x' }] }],
       },
     ];
@@ -235,6 +274,160 @@ describe('mod/text-scan', () => {
 
     it.each(actions)('$action serves a session', async (body) => {
       expect((await call(body)).status).toBe(200);
+    });
+  });
+
+  describe('putPrompt for the intent key', () => {
+    const INTENT = 'label:model-com-face-intent';
+    const rows = [
+      { id: 77, content: 'V77', note: null, createdById: 1 },
+      { id: 90, content: 'BY A MODERATOR', note: null, createdById: MOD },
+      { id: 100, content: 'BAD', note: 'holder-revokes:111', createdById: 1 },
+      { id: 111, content: 'V111', note: null, createdById: 1 },
+      { id: 112, content: 'V112', note: 'restore 111 holder-revokes:100', createdById: 1 },
+    ];
+    const as = (permissions: string[]) => {
+      session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions } };
+    };
+    const put = (content: string, key = INTENT) =>
+      call({ action: 'putPrompt', key, content, note: 'n' });
+
+    beforeEach(() => {
+      dbMock.dbWrite.textScanPrompt.findMany.mockResolvedValue(rows);
+      redisMock.sysRedis.get.mockResolvedValue(
+        JSON.stringify({ textScanPromptPublish: [1, MOD], textScanPromptPublishIntent: [1] })
+      );
+    });
+
+    it('refuses new text without the per-key grant, reaching no harness', async () => {
+      as(['textScanPromptPublish']);
+      expect((await put('NEW TEXT')).status).toBe(403);
+      expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+    });
+
+    it('publishes new text with the per-key grant', async () => {
+      as(['textScanPromptPublish', 'textScanPromptPublishIntent']);
+      expect((await put('NEW TEXT')).status).toBe(200);
+      expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves another key to the publish permission alone', async () => {
+      as(['textScanPromptPublish']);
+      expect((await put('NEW TEXT', 'label:nsfw')).status).toBe(200);
+      expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['V111', 'V77', 'V112'])(
+      'restores %s, an unrevoked version by a holder, with the publish permission alone',
+      async (content) => {
+        as(['textScanPromptPublish']);
+        expect((await put(content)).status).toBe(200);
+        expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it.each([
+      ['one changed byte', 'V111 '],
+      ['a version by a non-holder', 'BY A MODERATOR'],
+      ['a version a later note revokes', 'BAD'],
+    ])('refuses %s without the per-key grant', async (_, content) => {
+      as(['textScanPromptPublish']);
+      expect((await put(content)).status).toBe(403);
+      expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+    });
+
+    describe('a lab restore (restore: true)', () => {
+      const restore = (content: string) =>
+        call({ action: 'putPrompt', key: INTENT, content, note: 'n', restore: true });
+
+      it('refuses a revoked version even to a holder', async () => {
+        as(['textScanPromptPublish', 'textScanPromptPublishIntent']);
+        expect((await restore('BAD')).status).toBe(403);
+        expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+      });
+
+      it('restores an unrevoked version for a holder', async () => {
+        as(['textScanPromptPublish', 'textScanPromptPublishIntent']);
+        expect((await restore('V111')).status).toBe(200);
+        expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
+      });
+
+      it('still lets a holder save revoked text as new text', async () => {
+        as(['textScanPromptPublish', 'textScanPromptPublishIntent']);
+        expect((await put('BAD')).status).toBe(200);
+      });
+    });
+
+    it("ignores a revoking note by a non-holder's restore", async () => {
+      dbMock.dbWrite.textScanPrompt.findMany.mockResolvedValue([
+        ...rows,
+        { id: 113, content: 'V77', note: 'restore revokes:111', createdById: MOD },
+      ]);
+      as(['textScanPromptPublish']);
+      expect((await put('V111')).status).toBe(200);
+    });
+
+    it('keeps a version revoked after the revoking holder loses the grant', async () => {
+      // 115 was written by a holder (stamped at write) who no longer holds the grant.
+      dbMock.dbWrite.textScanPrompt.findMany.mockResolvedValue([
+        { id: 77, content: 'V77', note: null, createdById: 1 },
+        { id: 115, content: 'V77', note: 'restore 77 holder-revokes:111', createdById: 2 },
+        { id: 111, content: 'V111', note: null, createdById: 1 },
+      ]);
+      as(['textScanPromptPublish']);
+      expect((await put('V111')).status).toBe(403);
+    });
+
+    it('retires every earlier copy of the revoked text, not only the id named', async () => {
+      dbMock.dbWrite.textScanPrompt.findMany.mockResolvedValue([
+        { id: 120, content: 'DUP', note: null, createdById: 1 },
+        { id: 121, content: 'DUP', note: 'reverted', createdById: 1 },
+        { id: 122, content: 'V122', note: 'holder-revokes:121', createdById: 1 },
+      ]);
+      as(['textScanPromptPublish']);
+      expect((await put('DUP')).status).toBe(403);
+    });
+
+    it("lifts a revocation with a current holder's explicit restore", async () => {
+      dbMock.dbWrite.textScanPrompt.findMany.mockResolvedValue([
+        ...rows,
+        { id: 116, content: 'BAD', note: 'reinstate 100', createdById: 1 },
+      ]);
+      as(['textScanPromptPublish']);
+      expect((await put('BAD')).status).toBe(200);
+    });
+
+    const putNote = (note: string) =>
+      call({ action: 'putPrompt', key: INTENT, content: 'V111', note });
+    const savedNote = () =>
+      (vi.mocked(runTextScanHarnessAction).mock.calls[0][0] as { note?: string }).note;
+
+    it("stamps a holder's revokes note at write time", async () => {
+      as(['textScanPromptPublish', 'textScanPromptPublishIntent']);
+      await putNote('restore 111 revokes:100');
+      expect(savedNote()).toBe('restore 111 holder-revokes:100');
+    });
+
+    it("never stamps a non-holder's note, and strips a stamp it supplies", async () => {
+      as(['textScanPromptPublish']);
+      await putNote('restore 111 revokes:100 Holder-Revokes:77');
+      expect(savedNote()).toBe('restore 111 revokes:100 revokes:77');
+    });
+
+    it.each([
+      'holder-holder-revokes:5',
+      'holder-holder-holder-revokes:5',
+      'HOLDER-holder-revokes:5',
+    ])('never lets a non-holder forge a stamp from %s', async (note) => {
+      as(['textScanPromptPublish']);
+      await putNote(note);
+      expect(savedNote()).not.toMatch(/holder-revokes:/i);
+    });
+
+    it('refuses a restore once its author no longer holds the per-key grant', async () => {
+      redisMock.sysRedis.get.mockResolvedValue(JSON.stringify({ textScanPromptPublishIntent: [] }));
+      as(['textScanPromptPublish']);
+      expect((await put('V111')).status).toBe(403);
     });
   });
 });

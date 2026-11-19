@@ -1,7 +1,8 @@
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { abortableSleep, createPollingAdapter } from '~/server/registry-adapter/cursor';
+import { createPollingAdapter } from '~/server/registry-adapter/cursor';
+import { abortableSleep } from '~/utils/errorHandling';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { composeAdapter } from '~/server/registry-adapter/doc-streams';
@@ -28,7 +29,8 @@ const app = (slug: string, rev: string): Entity => ({
   urn: `urn:apps.civitai.com:app/${slug}`,
   schemas: [APPS],
   rev,
-  body: { slug },
+  // A known rating, so anonymous is sent it (`audience.ts`).
+  body: { slug, contentRating: 'g' },
 });
 
 let server: Server | undefined;

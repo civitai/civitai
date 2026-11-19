@@ -87,6 +87,38 @@ describe('visibility', () => {
   });
 });
 
+describe('a post', () => {
+  const visible = commentSurface('post').assertVisible!;
+  const stranger = { user: { id: 3, isModerator: false } } as never;
+  const anon = { user: undefined } as never;
+
+  it("is not found for a stranger when the post detail rule doesn't show it them", async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-13T00:00:00Z'), toFake: ['Date'] });
+    try {
+      dbMock.dbRead.post.findFirst.mockResolvedValue(null as never);
+      // The post detail rule, for each viewer: published and rated, theirs, or a collection they judge.
+      const { getPostDetailVisibility } = await import('~/server/services/post-detail-visibility');
+      for (const [ctx, user] of [
+        [stranger, { id: 3, isModerator: false }],
+        [anon, undefined],
+      ] as const) {
+        dbMock.dbRead.post.findFirst.mockClear();
+        await expect(visible(7, ctx)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+        expect(dbMock.dbRead.post.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: 7, ...getPostDetailVisibility(user) } })
+        );
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('is readable when the rule finds the post (control)', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ id: 7 } as never);
+    await expect(visible(7, stranger)).resolves.toBeUndefined();
+  });
+});
+
 describe('a comic chapter', () => {
   const stranger = { user: { id: 2, isModerator: false } } as never;
   const owner = { user: { id: 5, isModerator: false } } as never;
@@ -253,5 +285,149 @@ describe('a new comic chapter comment', () => {
     commentSurface('comicChapter').onCreated?.(comment({ parentId: 1 }), member);
     await new Promise((r) => setTimeout(r, 0));
     expect(m.notify).not.toHaveBeenCalled();
+  });
+});
+
+describe('a new storyline text comment', () => {
+  const comment = (over: Record<string, unknown> = {}) =>
+    ({ id: 310, entityId: 50, userId: 2, parentId: null, ...over } as never);
+  const text = (ownerId: number) =>
+    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([
+      { postId: 31, userId: ownerId, title: 'Chapter one', anchorImageId: 10 },
+    ] as never);
+  const created = async (c: never) => {
+    commentSurface('postText').onCreated?.(c, member);
+    await vi.waitFor(() => expect(dbMock.dbRead.$queryRawUnsafe).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  it("tells the post's owner as a post comment, linked to the text slide, deduped with the thread's", async () => {
+    text(5);
+    await created(comment());
+    expect(m.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'new-post-comment', userId: 5, dedupeKey: 'comment:v2:310' })
+    );
+    const { commentNotifications } = await import('~/server/notifications/comment.notifications');
+    const { details } = m.notify.mock.calls[0][0] as unknown as { details: never };
+    // Names the post, not the text, and opens the slide.
+    expect(commentNotifications['new-post-comment'].prepareMessage({ details } as never)).toEqual({
+      message: 'ann commented on your post: "Chapter one"',
+      url: '/images/10?text=50&highlight=310',
+    });
+  });
+
+  it('tells nobody about a text with no image to open it on', async () => {
+    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([
+      { postId: 31, userId: 5, title: 'Chapter one', anchorImageId: null },
+    ] as never);
+    await created(comment());
+    expect(m.notify).not.toHaveBeenCalled();
+  });
+
+  it('tells nobody about the owner’s own comment, or a reply', async () => {
+    text(2);
+    await created(comment());
+    text(5);
+    commentSurface('postText').onCreated?.(comment({ parentId: 1 }), member);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(m.notify).not.toHaveBeenCalled();
+  });
+});
+
+describe('a model', () => {
+  const model = (over: Record<string, unknown> = {}) => ({
+    status: 'Published',
+    userId: 5,
+    locked: false,
+    modelVersions: [{ id: 70 }, { id: 71 }],
+    ...over,
+  });
+  const visible = (ctx: unknown) => commentSurface('model').assertVisible!(3, ctx as never);
+  const writable = (ctx: unknown) => commentSurface('model').assertOpen!(3, ctx as never);
+  const owner = { user: { id: 5, isModerator: false } };
+
+  it('shows a published model to anyone, and an unpublished one to its owner and moderators', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model() as never);
+    await expect(visible({ user: undefined })).resolves.toBeUndefined();
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model({ status: 'Draft' }) as never);
+    await expect(visible(member)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(visible(owner)).resolves.toBeUndefined();
+    await expect(visible(moderator)).resolves.toBeUndefined();
+  });
+
+  it('hides a poi model from everyone but its owner and moderators', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model({ poi: true }) as never);
+    await expect(visible(member)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(visible({ user: undefined })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(visible(owner)).resolves.toBeUndefined();
+    await expect(visible(moderator)).resolves.toBeUndefined();
+  });
+
+  it('keeps a locked model readable', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model({ locked: true }) as never);
+    await expect(visible(member)).resolves.toBeUndefined();
+  });
+
+  it('takes comments on an unlocked model with a published version (control)', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model() as never);
+    await expect(writable(member)).resolves.toBeUndefined();
+    // Two published versions: the older one is open, so access is not checked.
+    expect(m.access).not.toHaveBeenCalled();
+    // The mock answers whatever is asked, so the question itself is the rule: published versions,
+    // the first two in order, which is how a second one is known to exist.
+    expect(dbMock.dbRead.model.findUnique).toHaveBeenCalledWith({
+      where: { id: 3 },
+      select: {
+        locked: true,
+        meta: true,
+        modelVersions: {
+          take: 2,
+          select: { id: true },
+          where: { status: 'Published' },
+          orderBy: { index: 'asc' },
+        },
+      },
+    });
+  });
+
+  it.each([
+    ['a locked model', { locked: true }],
+    ['a model with its comments locked', { meta: { commentsLocked: true } }],
+  ])('refuses a member on %s; a moderator may', async (_, over) => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model(over) as never);
+    await expect(writable(member)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(writable(moderator)).resolves.toBeUndefined();
+  });
+
+  it('refuses a model with no published version', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model({ modelVersions: [] }) as never);
+    await expect(writable(moderator)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('lets a writer with access to a lone published version through, a moderator included', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(
+      model({ modelVersions: [{ id: 70 }] }) as never
+    );
+    await expect(writable(member)).resolves.toBeUndefined();
+    await expect(writable(moderator)).resolves.toBeUndefined();
+    expect(m.access).toHaveBeenLastCalledWith(
+      expect.objectContaining({ entityIds: [70], userId: 9, isModerator: true })
+    );
+  });
+
+  it('checks access to a lone published version, for early access', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(
+      model({ modelVersions: [{ id: 70 }] }) as never
+    );
+    m.access.mockResolvedValueOnce([{ hasAccess: false }]);
+    await expect(writable(member)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(m.access).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: 'ModelVersion',
+        entityIds: [70],
+        userId: 2,
+        isModerator: false,
+      })
+    );
   });
 });

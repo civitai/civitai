@@ -146,4 +146,18 @@ describe('VersionGroupSelector', () => {
     );
     await vi.waitFor(() => expect(buttonLabels()).toEqual([]));
   });
+
+  test('a version shows a New badge until its newUntil date, then none', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const versions: VersionGroup = {
+      options: [
+        { label: 'Old', value: 1, newUntil: new Date(Date.now() - day) },
+        { label: 'Fresh', value: 2, newUntil: new Date(Date.now() + day) },
+      ],
+    };
+    renderWithProviders(
+      <VersionGroupSelector versions={versions} modelId={1} onChange={() => undefined} />
+    );
+    await vi.waitFor(() => expect(buttonLabels()).toEqual(['Old', 'FreshNew']));
+  });
 });

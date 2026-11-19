@@ -7,6 +7,9 @@
 
 type ProfanityData = { profanityMatches?: string[]; profanityEvaluation?: unknown };
 
+/** The moderator-only profanity fields, hidden from and refused from everyone else. */
+export const PROFANITY_META_KEYS = ['profanityMatches', 'profanityEvaluation'] as const;
+
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -19,8 +22,9 @@ export function filterSensitiveProfanityData<T extends ProfanityData>(
   isModerator?: boolean
 ): T {
   if (isModerator || !isObject(obj)) return obj;
-  if (!('profanityMatches' in obj) && !('profanityEvaluation' in obj)) return obj;
-  const { profanityMatches: _matches, profanityEvaluation: _evaluation, ...rest } = obj;
+  if (!PROFANITY_META_KEYS.some((key) => key in obj)) return obj;
+  const rest: Record<string, unknown> = { ...obj };
+  for (const key of PROFANITY_META_KEYS) delete rest[key];
   return rest as T;
 }
 

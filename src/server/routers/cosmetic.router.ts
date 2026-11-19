@@ -56,7 +56,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 // `responseMeta` reads the root. No stale-while-revalidate, so a kill switch clears within the TTL.
 const searchDecorationGate = middleware(async ({ ctx, input, next }) => {
   const { entityType } = input as GetSearchEventDecorationsInput;
-  const decorationEvents = await getVisibleDecorationEvents(entityType, ctx.user);
+  const decorationEvents = await getVisibleDecorationEvents(entityType, eventViewerOf(ctx));
   if (!ctx.cache) return next({ ctx: { decorationEvents } });
   if (await isEveryonesDecorationAnswer(entityType, decorationEvents, ctx.user)) {
     const result = await next({ ctx: { decorationEvents } });
@@ -149,7 +149,11 @@ export const cosmeticRouter = router({
     // A flagged viewer's homepage asks once per block section, about a dozen times a load.
     .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
     .query(({ input, ctx }) =>
-      getViewerEventDecorations({ ids: input.ids, entity: input.entityType, viewer: ctx.user })
+      getViewerEventDecorations({
+        ids: input.ids,
+        entity: input.entityType,
+        viewer: eventViewerOf(ctx),
+      })
     ),
   // The search grids' hats, one call per page of hits. See searchDecorationGate.
   getEventDecorationsForSearch: publicProcedure
@@ -170,7 +174,11 @@ export const cosmeticRouter = router({
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)
     .mutation(({ input, ctx }) =>
-      equipCosmeticToEntity({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+      equipCosmeticToEntity({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: eventViewerOf(ctx).isModerator,
+      })
     ),
   unequipCosmetic: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })

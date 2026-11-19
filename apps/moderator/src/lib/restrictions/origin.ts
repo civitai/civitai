@@ -17,6 +17,8 @@ export type TriggerOrigin = {
     verified: boolean;
     promptMatch: 'identical' | 'edited';
   };
+  /** Submitted through an App Block, so the app may have written the prompt, not the user. */
+  app?: { appBlockId: string; stepType: string };
 };
 
 type OriginInput = {
@@ -32,7 +34,15 @@ export type OriginView = {
   /** `none` is a trigger that is not a generation prompt, so "typed by the user" would be false.
    *  `unrecorded` predates origin tracking, so nothing is known about where the prompt came from.
    *  `incomplete` is a prompt whose origin lookup failed and found nothing, so "typed" would be a guess. */
-  kind: 'remix' | 'legacy-remix' | 'enhancer' | 'typed' | 'unrecorded' | 'incomplete' | 'none';
+  kind:
+    | 'remix'
+    | 'legacy-remix'
+    | 'enhancer'
+    | 'app'
+    | 'typed'
+    | 'unrecorded'
+    | 'incomplete'
+    | 'none';
   label: string;
   verified: boolean;
   match: PromptMatch;
@@ -78,6 +88,17 @@ export function triggerOrigin(trigger: OriginInput): OriginView {
       label: `Prompt enhancer output · ${MATCH_WORDS[promptMatch]}`,
       verified: origin.enhancer.verified === true,
       match: promptMatch,
+      incomplete,
+      alsoEnhancer: false,
+      enhancerVerified: false,
+    };
+  }
+  if (origin?.app) {
+    return {
+      kind: 'app',
+      label: `Submitted by an App Block (${origin.app.appBlockId} · ${origin.app.stepType})`,
+      verified: false,
+      match: 'unknown',
       incomplete,
       alsoEnhancer: false,
       enhancerVerified: false,
@@ -130,6 +151,7 @@ type Tally = {
   unconfirmed: number;
   enhancer: number;
   enhancerUnconfirmed: number;
+  app: number;
   typed: number;
   unrecorded: number;
   /** Prompts whose lookup failed and found nothing. */
@@ -147,6 +169,7 @@ function tally(triggers: readonly OriginInput[]): Tally {
     unconfirmed: 0,
     enhancer: 0,
     enhancerUnconfirmed: 0,
+    app: 0,
     typed: 0,
     unrecorded: 0,
     incomplete: 0,
@@ -158,6 +181,7 @@ function tally(triggers: readonly OriginInput[]): Tally {
     t.total++;
     if (view.incomplete && view.kind !== 'incomplete') t.partial++;
     if (view.kind === 'enhancer') view.verified ? t.enhancer++ : t.enhancerUnconfirmed++;
+    else if (view.kind === 'app') t.app++;
     else if (view.kind === 'typed') t.typed++;
     else if (view.kind === 'unrecorded') t.unrecorded++;
     else if (view.kind === 'incomplete') t.incomplete++;
@@ -186,6 +210,7 @@ export function originSummary(triggers: readonly OriginInput[]): {
     t.unconfirmed && `${t.unconfirmed} remix (unconfirmed)`,
     t.enhancer && `${t.enhancer} enhancer`,
     t.enhancerUnconfirmed && `${t.enhancerUnconfirmed} enhancer (unconfirmed)`,
+    t.app && `${t.app} App Block`,
     t.typed && `${t.typed} typed`,
     t.unrecorded && `${t.unrecorded} not recorded`,
     t.incomplete && `${t.incomplete} incomplete`,
@@ -220,6 +245,7 @@ export function originSummary(triggers: readonly OriginInput[]): {
     [t.unconfirmed, `came from ${remixes} that could not be confirmed`],
     [t.enhancer, 'came from the prompt enhancer'],
     [t.enhancerUnconfirmed, 'matched a prompt enhancer output that could not be confirmed'],
+    [t.app, `${one ? 'was' : 'were'} submitted by an App Block`],
   ];
   const lead = leads.findIndex(([count]) => count > 0);
   const tail = [
@@ -251,6 +277,7 @@ export function originSummary(triggers: readonly OriginInput[]): {
     lead < 3 && t.unconfirmed && `${t.unconfirmed} unconfirmed remix`,
     lead < 4 && t.enhancer && `${t.enhancer} enhancer output`,
     lead < 5 && t.enhancerUnconfirmed && `${t.enhancerUnconfirmed} unconfirmed enhancer output`,
+    lead < 6 && t.app && `${t.app} submitted by an App Block`,
     ...tail,
     t.partial && `${t.partial} origin lookup incomplete`,
   ].filter(Boolean);

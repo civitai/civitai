@@ -9,7 +9,7 @@
 // `appdata.app_id` / `appdata.ns` (set at the top of every transaction in
 // `withTx`) is the second, independent layer.
 //
-// There are THREE exceptions. The first is review maintenance (`purgeReview`, `listReviewAppIds`):
+// There are FOUR exceptions. The first is review maintenance (`purgeReview`, `listReviewAppIds`):
 // statements keyed on `app_id = $1 AND ns LIKE 'rev:%'` (the listing: `ns LIKE 'rev:%'`
 // on `usage_app` and `doc`), run only inside `maintenanceTx`, whose transaction-local
 // `appdata.review_maintenance` setting is what the migration's review policies
@@ -28,6 +28,12 @@
 // `appPurgeTx`, whose transaction-local `appdata.app_purge_id` setting the app-purge migration's
 // policy admits for that ONE app's rows of those two tables, read only. It returns namespaces;
 // the purge of each runs in ordinary `withTx` transactions, like the account wipe.
+//
+// The fourth is the RATER LOOKUP (`findByRatingId`, content levels): one SELECT keyed on
+// `rating_id = $1::int` over `doc`, returning one shared document's address only, run only inside
+// `raterLookupTx`, whose transaction-local `appdata.rater_lookup_id` setting the rating-id
+// migration's policy admits for that ONE row, read only. The rater then reads and rates the
+// document in an ordinary `withTx`, keyed and scoped like any other call.
 //
 // Row-level security does not bind a superuser or BYPASSRLS role, so the store
 // requires its own least-privilege connection (`APPDATA_DATABASE_URL`, see
@@ -53,7 +59,9 @@
 // A collection's declared `schema` it DOES check, on every document write (put and create;
 // counters and marks are not document bodies): `doc-store-schema.ts`. Every write of a body also
 // stamps the schema major the caller passes (`DocCollection.schemaMajor`) into
-// `doc.schema_major`, once that manual-apply column exists (`stampWrittenDoc`); nothing reads it.
+// `doc.schema_major`, once that manual-apply column exists (`stampWrittenDoc`). It is read only by
+// a read path that migrates a body on serve (a caller of `applyMajorChain` in
+// `storage-schema-majors.ts`, which takes the stamped major as `from`); any other read ignores it.
 //
 // Deliberately not supported yet, refused with `invalid_request` so a
 // declaration that uses them fails loudly: `write: 'anyone'`, `ttlSeconds`,
@@ -101,6 +109,7 @@ import { escapeLiteral } from 'pg';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { newUlid } from '~/server/utils/app-block-ids';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
 import {
   spendHookPass,
@@ -111,19 +120,28 @@ import type { StorageHoldings } from '~/shared/utils/app-storage-usage';
 import type {
   AccountWipeNamespaceResult,
   AccountWipeResult,
+  DocAuthor,
   DocCollection,
   DocIndexType,
   DocListQuery,
+  DocLevelGate,
   DocListResult,
+  DocRating,
+  DocRatingStatus,
   DocRecord,
   DocStoreContext,
   DocStoreLimits,
   DocStoreUsage,
+  PublishAction,
+  PublishPreviewEntry,
+  PublishResult,
   QuotaCeiling,
+  UnpublishResult,
 } from '~/server/services/apps/doc-store.types';
 import {
   DEFAULT_DOC_STORE_LIMITS,
   DOC_STORE_BOUNDS as B,
+  DOC_STORE_PUBLISH_BOUNDS,
   DocStoreError,
   DocStoreMigrationPendingError,
   isDocStoreError,
@@ -152,6 +170,12 @@ export type DocStoreDeps = {
   /** The least-privilege appdata pool, or null when it is not configured (→ `storage_disabled`). */
   db: DocStoreDb | null;
   limits?: DocStoreLimits;
+  /**
+   * The per-user ceiling of user `uid`, in place of `limits.userBytes` / `limits.userDocs`.
+   * Production wires the viewer's membership-tier caps (`docStoreUserLimits`); read only for a
+   * charge that adds bytes or documents to that user, never for one that frees them.
+   */
+  userLimits?: (uid: number) => Promise<{ userBytes: number; userDocs: number }>;
   /** Called once, the first time the connected role is found to be superuser or BYPASSRLS. */
   onRefused?: (role: { name: string; superuser: boolean; bypassRls: boolean }) => void;
   /**
@@ -318,8 +342,9 @@ function requireShared(coll: DocCollection, what: string): void {
 
 /**
  * The request checks of an increment: a shared collection, a declared counter, `by` from 1 to
- * {@link B.incrementMax}. Exported so the route runs them before the permission hook (an invalid
- * request never reaches a hook); the store runs them on every increment itself.
+ * {@link B.incrementMax}. Exported so the permission-hook gate (`gateHook`) runs them before it
+ * calls a hook (an invalid request never reaches a hook); the store runs them on every increment
+ * itself.
  */
 export function assertIncrementRequest(coll: DocCollection, counter: string, by: number): void {
   requireShared(coll, 'counters');
@@ -331,7 +356,10 @@ export function assertIncrementRequest(coll: DocCollection, counter: string, by:
   }
 }
 
-/** The request checks of a mark or unmark: a shared collection, a declared mark or `report`. */
+/**
+ * The request checks of a mark or unmark: a shared collection, a declared mark or `report`. The
+ * hook gate runs them before a hook, as for an increment; the store runs them itself.
+ */
 export function assertMarkRequest(coll: DocCollection, name: string): void {
   requireShared(coll, 'marks');
   if (name === REPORT_MARK) return;
@@ -382,6 +410,118 @@ function effectiveIfVersion(
 function assertTallyVersion(ifVersion: number | undefined, current: number): void {
   if (ifVersion !== undefined && ifVersion !== current) {
     throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: current });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Server-side publish: the rules both the route and the store apply
+// ---------------------------------------------------------------------------
+
+/**
+ * The keys of one publish or unpublish: 1 to `DOC_STORE_PUBLISH_BOUNDS.maxKeys`, each a valid
+ * key, none twice. Each refusal is `invalid_request` with a stable `details.reason`. Exported so
+ * the route refuses before it spends any budget; the store runs it again itself.
+ */
+export function assertPublishKeys(keys: unknown): string[] {
+  if (!Array.isArray(keys) || keys.length === 0) {
+    throw invalid('keys must name at least one document', { reason: 'empty_keys' });
+  }
+  if (keys.length > DOC_STORE_PUBLISH_BOUNDS.maxKeys) {
+    throw invalid(`at most ${DOC_STORE_PUBLISH_BOUNDS.maxKeys} keys per call`, {
+      reason: 'too_many_keys',
+      max: DOC_STORE_PUBLISH_BOUNDS.maxKeys,
+    });
+  }
+  const seen = new Set<string>();
+  for (const key of keys) {
+    assertKey(key as string);
+    if (seen.has(key)) throw invalid('a key is named twice', { reason: 'duplicate_key', key });
+    seen.add(key);
+  }
+  return [...seen];
+}
+
+/**
+ * A publish copies from a PRIVATE collection into a SHARED one viewers write (`own`). Anything
+ * else is refused (`invalid_request`, `reason: 'publish_visibility'`, or the shared collection's
+ * own `write_policy`). Exported for the route; the store runs it itself.
+ */
+export function assertPublishPair(from: DocCollection, to: DocCollection): void {
+  assertCollection(from);
+  if (from.config.visibility !== 'private' || to.config.visibility !== 'shared') {
+    throw invalid('publish copies from a private collection into a shared one', {
+      reason: 'publish_visibility',
+    });
+  }
+  assertShareWritable(to);
+  assertNotHooked(to, 'publish');
+}
+
+/**
+ * Publish and unpublish write a whole batch of shared documents in one transaction, and a
+ * permission hook decides ONE write (`doc-store-hook.ts`), so a collection with a `hook` refuses
+ * both (`invalid_request`, `reason: 'hooked_collection'`): its documents are written one at a time
+ * through create / put / delete, each decided by the hook. Refusing is the fail-closed answer; a
+ * batch that skipped the hook would fail open. Exported for the route; the store runs it itself.
+ */
+export function assertNotHooked(coll: DocCollection, what: 'publish' | 'unpublish'): void {
+  if (!coll.config.hook) return;
+  throw invalid(
+    `${what} is not available for a collection with a permission hook; write each document`,
+    { reason: 'hooked_collection', collection: coll.name }
+  );
+}
+
+/**
+ * What a publish does with one key (`PublishAction`). The ONE place this is decided: the route's
+ * pre-read and the store's locked transaction both call it, so what was checked and what is
+ * written cannot be classified apart.
+ */
+export function classifyPublish(
+  viewer: number,
+  source: { hash: string } | undefined,
+  /** The shared row: `author_kind`, `author_uid`, `hidden`, `hash` (`SQL_PUBLISH_TARGETS`). */
+  copy: Record<string, unknown> | undefined
+): PublishAction {
+  if (copy) {
+    const mine = copy.author_kind === 'user' && Number(copy.author_uid) === viewer;
+    // Someone else's copy, hidden or not, is reported the same way: it is not the caller's.
+    if (!mine) return 'not_author';
+    if (copy.hidden === true) return 'hidden';
+  }
+  if (!source) return 'missing';
+  if (!copy) return 'create';
+  return copy.hash === source.hash ? 'unchanged' : 'update';
+}
+
+/** Postgres `deadlock_detected`. */
+const PG_DEADLOCK = '40P01';
+/** How many times a publish or unpublish transaction Postgres aborted as a deadlock is re-run. */
+export const PUBLISH_DEADLOCK_RETRIES = 2;
+
+/**
+ * Run `tx` (a whole transaction) again when Postgres aborted it as a deadlock (40P01), at most
+ * `retries` more times. The aborted attempt rolled back, so a re-run starts from nothing. Out of
+ * retries, the refusal is the store's retryable contention one (`rate_limited`,
+ * `reason: 'contention'`, as for a lock timeout), which the route refunds without a rejection.
+ * Any other error is thrown at once. Exported for its own test.
+ */
+export async function retryOnDeadlock<T>(
+  tx: () => Promise<T>,
+  retries = PUBLISH_DEADLOCK_RETRIES
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await tx();
+    } catch (err) {
+      if ((err as { code?: unknown } | null)?.code !== PG_DEADLOCK) throw err;
+      if (attempt >= retries) {
+        throw new DocStoreError('rate_limited', 'storage is busy; retry', {
+          reason: 'contention',
+          retryAfter: 1,
+        });
+      }
+    }
   }
 }
 
@@ -542,15 +682,46 @@ function indexRowsFor(coll: DocCollection, data: Record<string, unknown>): Index
 const SQL_ROLE_PRIVILEGES = `SELECT r.rolname, r.rolsuper, r.rolbypassrls
   FROM pg_roles r WHERE r.rolname = current_user`;
 
-/** Document columns plus its tallies and the viewer's own marks. `viewerParam` is a placeholder. */
-function docColumns(viewerParam: string): string {
+/**
+ * Document columns plus its tallies and the viewer's own marks. `viewerParam` is a placeholder.
+ * With `rating` (content levels on, `DocStoreContext.levels`), also the document's effective level
+ * and rating status; without it the text is exactly what it was before levels existed.
+ */
+function docColumns(viewerParam: string, rating = false): string {
   return `d.key, d.data, d.version, d.created_at, d.updated_at, d.author_uid, d.author_kind,
     (SELECT jsonb_object_agg(t.kind || ':' || t.name, t.count) FROM appdata.doc_tally t
       WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key AND d.scope_uid = 0) AS tallies,
     (SELECT array_agg(vm.name ORDER BY vm.name) FROM appdata.doc_mark vm
       WHERE vm.app_id = $1 AND vm.ns = $2 AND vm.coll = d.coll AND vm.key = d.key
-        AND vm.user_id = ${viewerParam} AND d.scope_uid = 0) AS viewer_marks`;
+        AND vm.user_id = ${viewerParam} AND d.scope_uid = 0) AS viewer_marks${
+    rating ? RATING_COLUMNS : ''
+  }`;
 }
+
+/**
+ * A document's CURRENT level: the moderator's override when it was given for the document's
+ * current `version`, else the rated level when it was rated at that version, else NULL. A rating
+ * or override for an older version does not count: every rewrite of the body bumps `version` (a
+ * put, a schema migration), so a rating never outlives the content it rated, whoever rewrote it
+ * and whether or not levels were on at the time.
+ */
+const CURRENT_LEVEL = `CASE
+      WHEN d.override_level IS NOT NULL AND d.override_version = d.version THEN d.override_level
+      WHEN d.level IS NOT NULL AND d.rated_version = d.version THEN d.level
+    END`;
+/** Rated (or overridden) for the current version. Never NULL. */
+const RATED_NOW = `(COALESCE(d.rating_status IN ('rated', 'overridden'), false)
+    AND ${CURRENT_LEVEL} IS NOT NULL)`;
+
+/**
+ * The rating a reader is shown: the current level and the status. A rating for an older version
+ * reads as `pending` with no level; a document never rated reads as NULL.
+ */
+const RATING_COLUMNS = `,
+    CASE WHEN ${RATED_NOW} THEN ${CURRENT_LEVEL} END AS rating_level,
+    CASE WHEN ${RATED_NOW} THEN d.rating_status
+      WHEN d.rating_status IS NULL THEN NULL
+      ELSE 'pending' END AS rating_status`;
 
 /**
  * Transaction-local cap on waiting for ANY lock in a store transaction. The case
@@ -571,11 +742,51 @@ const LOCK_TIMEOUT = '3s';
  */
 const VISIBLE = `d.hidden_at IS NULL`;
 
+/**
+ * 🔴 THE content-level predicate: whether document `d` may be returned to the viewer `viewer` whose
+ * own browsing level is `level`, on a token whose domain ceiling is `domain` (SQL placeholders;
+ * `NULL::int` as `viewer` for a read with no viewer, which then never takes the author arm).
+ * Used ONLY while content levels are on (`DocStoreContext.levels`); every statement that returns
+ * shared documents to a reader has a levels twin that ANDs this next to `VISIBLE`, and
+ * `doc-store.levels-ledger.test.ts` fails when a statement that reads documents is added outside
+ * that ledger. ONE definition; never restate it at a call site.
+ *
+ * Visible when any of:
+ * - the document is private (`scope_uid <> 0`): only its owner's key space ever reads it;
+ * - it is a counter document: created empty by an increment, it holds no `data` to rate;
+ * - the viewer is its user author and it is not rated for its current version (never rated,
+ *   `pending`, or rated for an older version): an author always sees what they wrote until it is
+ *   rated;
+ * - it is rated for its current version (`CURRENT_LEVEL`: the override given for this version,
+ *   else the rating given for it) and that level shares a bit with the CAP (the site's bitwise
+ *   browsing-level test). The cap is the domain ceiling for the document's own author
+ *   (their own R document shows on a red-capable host, not on the SFW one, whatever their own
+ *   setting), and the viewer's level for everyone else. A NULL level shares nothing.
+ * So an unrated, `pending` or stale-rated document is hidden from everyone but its author, and a
+ * `Blocked` (32) one from everyone, its author included, since no browsing level includes it.
+ *
+ * COALESCE(…, false): never NULL, so `NOT` of it (the feed's `hidden`) is never NULL either.
+ */
+export function sharedDocLevelVisible(viewer: string, level: string, domain: string): string {
+  const isAuthor = `(d.author_kind = 'user' AND d.author_uid = ${viewer})`;
+  return `COALESCE(d.scope_uid <> 0 OR d.author_kind = 'counter'
+    OR (${isAuthor} AND NOT ${RATED_NOW})
+    OR (${RATED_NOW}
+      AND (${CURRENT_LEVEL}
+        & CASE WHEN ${isAuthor} THEN ${domain} ELSE ${level} END) <> 0), false)`;
+}
+
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 viewer, $6 keys
 const SQL_GET_MANY = `SELECT ${docColumns('$5::int')}
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
     AND d.key = ANY($6::text[]) AND ${VISIBLE}`;
+// Its levels twin. $7 the viewer's level, $8 the token's domain ceiling.
+const SQL_GET_MANY_LEVELS = `SELECT ${docColumns('$5::int', true)}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
+    AND d.key = ANY($6::text[]) AND ${VISIBLE}
+    AND ${sharedDocLevelVisible('$5::int', '$7::int', '$8::int')}`;
 
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key
 const SQL_LOCK_DOC = `SELECT d.version, d.author_uid, d.author_kind, d.size_bytes,
@@ -583,6 +794,40 @@ const SQL_LOCK_DOC = `SELECT d.version, d.author_uid, d.author_kind, d.size_byte
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
   FOR UPDATE`;
+
+// `putIfUnchanged`'s one read: the stored shared document as a write returns it (SQL_STAMP_SEQ's
+// columns), plus what decides whether a put of `$6` would change any stored row:
+// - `hash` / `written_hash`: the SAME content hash a publish compares (`md5` of jsonb's canonical
+//   text, see SQL_PUBLISH_TARGETS), the second taken of `$6::jsonb` exactly as SQL_UPDATE_DOC
+//   would store it;
+// - `index_same`: the document's stored index rows are exactly the rows SQL_SYNC_INDEX would leave
+//   ($8-$11, the same arrays it takes), compared both ways with EXCEPT (NULLs compare equal there).
+// Unlocked: nothing is written on its answer, so the answer is simply as of this read.
+// $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data, $7 viewer, $8 names, $9 v_text,
+// $10 v_num, $11 v_type
+const SQL_UNCHANGED_PROBE_TAIL = `,
+    d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash,
+    md5($6::jsonb::text) AS written_hash,
+    NOT EXISTS (
+      SELECT ix.name, ix.v_text, ix.v_num, ix.v_type FROM appdata.doc_index ix
+        WHERE ix.app_id = $1 AND ix.ns = $2 AND ix.coll = $3 AND ix.scope_uid = $4::int AND ix.key = $5
+      EXCEPT
+      SELECT * FROM unnest($8::text[], $9::text[], $10::float8[], $11::text[])
+    ) AND NOT EXISTS (
+      SELECT * FROM unnest($8::text[], $9::text[], $10::float8[], $11::text[])
+      EXCEPT
+      SELECT ix.name, ix.v_text, ix.v_num, ix.v_type FROM appdata.doc_index ix
+        WHERE ix.app_id = $1 AND ix.ns = $2 AND ix.coll = $3 AND ix.scope_uid = $4::int AND ix.key = $5
+    ) AS index_same
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5`;
+const SQL_UNCHANGED_PROBE = `SELECT ${docColumns('$7::int')}${SQL_UNCHANGED_PROBE_TAIL}`;
+// The same, with its rating (levels on). The writer's own document only: the caller answers with
+// it only when `classifyPublish` says the caller authored it, so no gate.
+const SQL_UNCHANGED_PROBE_LEVELS = `SELECT ${docColumns(
+  '$7::int',
+  true
+)}${SQL_UNCHANGED_PROBE_TAIL}`;
 
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data, $7 writer uid
 const SQL_INSERT_DOC = `INSERT INTO appdata.doc AS d
@@ -602,6 +847,12 @@ const SQL_INSERT_COUNTER_DOC = `INSERT INTO appdata.doc AS d
   VALUES ($1, $2, $3, 0, $4, '{}'::jsonb, 1, 0, $5::int, 'counter', $5::int)
   ON CONFLICT DO NOTHING
   RETURNING d.size_bytes`;
+
+// A shared write while levels are on: the document must be rated again before anyone but its
+// author reads it. The level is cleared; a moderator's override, and when it was last rated, are
+// kept. $1 app, $2 ns, $3 coll, $4 key
+const SQL_RATING_PENDING = `UPDATE appdata.doc d SET rating_status = 'pending', level = NULL
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
 
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data, $7 writer uid
 const SQL_UPDATE_DOC = `UPDATE appdata.doc d
@@ -668,6 +919,13 @@ const SQL_STAMP_SEQ = `UPDATE appdata.doc d SET seq = $6::bigint
 const SQL_STAMP_SEQ_MAJOR = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $8::int
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
   RETURNING ${docColumns('$7::int')}`;
+// The two above, returning the rating too (levels on). The writer's own document: no gate.
+const SQL_STAMP_SEQ_LEVELS = `UPDATE appdata.doc d SET seq = $6::bigint
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
+  RETURNING ${docColumns('$7::int', true)}`;
+const SQL_STAMP_SEQ_MAJOR_LEVELS = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $8::int
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
+  RETURNING ${docColumns('$7::int', true)}`;
 // Whether `appdata.doc.schema_major` exists: fails with undefined_column (42703) until the manual
 // migration is applied. Reads no row. Run under a savepoint, so that failure leaves the write's
 // transaction usable. $1 app, $2 ns
@@ -702,6 +960,17 @@ const SQL_LOOKUP_SHARED_KEY = `SELECT d.coll,
     AND d.key = $4
   ORDER BY d.coll
   LIMIT 2`;
+// Its levels twin: the same `hidden` (a moderator hide only: the lookup stays level-blind, so
+// spend attribution never reads a level), plus the rating, which App Store publishing decides on
+// (`app-sub-listing.service.ts`: an unrated item is refused, a rated one's card inherits its level).
+const SQL_LOOKUP_SHARED_KEY_LEVELS = `SELECT d.coll,
+    CASE WHEN d.author_kind = 'user' THEN d.author_uid END AS author_uid,
+    d.hidden_at IS NOT NULL AS hidden${RATING_COLUMNS}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = ANY($3::text[]) AND d.scope_uid = 0
+    AND d.key = $4
+  ORDER BY d.coll
+  LIMIT 2`;
 
 // REGISTRY FEED (`createDocStoreFeed`): the SHARED documents (`scope_uid = 0`) of one collection
 // of one app namespace, read by seq range, read only. Private documents are never selected: the
@@ -711,6 +980,19 @@ const SQL_LOOKUP_SHARED_KEY = `SELECT d.coll,
 const SQL_FEED_HEAD = `SELECT u.last_seq FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2`;
 // $1 app, $2 ns, $3 coll, $4 after seq (exclusive), $5 up to seq (inclusive), $6 limit
 const SQL_FEED_DOCS_SINCE = `SELECT d.key, d.data, d.version, d.seq, d.hidden_at IS NOT NULL AS hidden
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.seq <= $5::bigint
+  ORDER BY d.seq
+  LIMIT $6::int`;
+// Its levels twin: a document the gate leaves out for the audience's level reads as hidden (a
+// delete in the stream). $7 the audience's level.
+const SQL_FEED_DOCS_SINCE_LEVELS = `SELECT d.key, d.data, d.version, d.seq,
+    (d.hidden_at IS NOT NULL OR NOT ${sharedDocLevelVisible(
+      'NULL::int',
+      '$7::int',
+      '$7::int'
+    )}) AS hidden
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
     AND d.seq > $4::bigint AND d.seq <= $5::bigint
@@ -727,6 +1009,13 @@ const SQL_FEED_TOMBS_SINCE = `SELECT tb.key, tb.seq FROM appdata.doc_tomb tb
 const SQL_FEED_DOCS_ALL = `SELECT d.key, d.data, d.version, d.seq FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
     AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND d.key > $4::text
+  ORDER BY d.key
+  LIMIT $6::int`;
+// Its levels twin. $7 the audience's level.
+const SQL_FEED_DOCS_ALL_LEVELS = `SELECT d.key, d.data, d.version, d.seq FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND d.key > $4::text
+    AND ${sharedDocLevelVisible('NULL::int', '$7::int', '$7::int')}
   ORDER BY d.key
   LIMIT $6::int`;
 // $1 app, $2 ns, $3 coll, $4 key
@@ -961,7 +1250,7 @@ const SQL_APP_PURGE_BATCH = [
 // included — in (scope_uid, key) order after a keyset cursor. Keys only: each document is then
 // re-read under its own lock. $1 app, $2 ns, $3 coll, $4 scope_uid and $5 key of the cursor
 // (exclusive), $6 limit.
-const SQL_MIGRATE_PAGE = `SELECT d.scope_uid, d.key FROM appdata.doc d
+const SQL_MIGRATE_PAGE = `SELECT d.scope_uid, d.key, d.author_uid, d.author_kind FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3
     AND (d.scope_uid, d.key) > ($4::int, $5::text COLLATE "C")
   ORDER BY d.scope_uid, d.key LIMIT $6::int`;
@@ -991,6 +1280,21 @@ const SQL_MIGRATE_DOC = `UPDATE appdata.doc d
 const SQL_VIEWER_PROD_USAGE = `SELECT vu.app_id, vu.bytes, vu.docs FROM appdata.usage_user vu
   WHERE vu.user_id = $1::int AND vu.ns = 'prod' AND vu.docs > 0 AND vu.app_id > $2::text
   ORDER BY vu.app_id LIMIT $3::int`;
+// One page of the documents ONE user owns in one app's production namespace, for their export
+// (`viewerRecords`): their private documents (`scope_uid` = the user) and the visible shared
+// documents they created (`author_kind = 'user'`), the two cells of the record core's owner rule
+// that name a user (`recordOwner` in `app-record.ts`). Never another user's private key space,
+// never a counter or app document, never a document moderation hid. In (coll, scope_uid, key)
+// order after a keyset cursor, whatever the app's status.
+const SQL_VIEWER_RECORDS = `SELECT d.coll, d.scope_uid, d.key, d.data, d.version, d.author_kind,
+    d.author_uid, d.last_writer_uid, d.record_id::text AS record_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2
+    AND (d.scope_uid = $3::int
+      OR (d.scope_uid = 0 AND d.author_kind = 'user' AND d.author_uid = $3::int AND ${VISIBLE}))
+    AND (d.coll, d.scope_uid, d.key) > ($4::text COLLATE "C", $5::int, $6::text COLLATE "C")
+  ORDER BY d.coll, d.scope_uid, d.key
+  LIMIT $7::int`;
 
 // Emptying one viewer's data in one (app, ns), in an ordinary scoped transaction. $1 app, $2 ns,
 // $3 the viewer.
@@ -1066,9 +1370,74 @@ const listMarkedByMe = (name: string, user: string) => `EXISTS (SELECT 1 FROM ap
     WHERE mb.app_id = $1 AND mb.ns = $2 AND mb.coll = d.coll AND mb.key = d.key
       AND mb.name = ${name} AND mb.user_id = ${user})`;
 
+// SERVER-SIDE PUBLISH (`publishCopies`, `unpublishCopies`, `previewPublish`).
+//
+// 🔴 THE OWNER-SCOPE GUARD: a publish reads source documents ONLY from the caller's own private
+// key space, `scope_uid = $4` where $4 is the viewer of the resolved context (never request
+// input), and never from the shared key space (`scope_uid <> 0`). Another user's private document
+// at the same key is not visible to this statement.
+// $1 app, $2 ns, $3 source coll, $4 viewer, $5 keys
+const SQL_PUBLISH_SOURCES = `SELECT d.key, d.data, md5(d.data::text) AS hash
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.scope_uid <> 0
+    AND d.key = ANY($5::text[]) AND ${VISIBLE}`;
+// The shared documents at those keys, whoever wrote them, hidden ones included (the caller
+// decides). `md5(data::text)` is the content hash: jsonb's text form is canonical, so equal
+// content gives an equal hash. $1 app, $2 ns, $3 target coll, $4 keys
+const SQL_PUBLISH_TARGETS = `SELECT d.key, d.author_uid, d.author_kind, d.size_bytes,
+    d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = ANY($4::text[])
+  ORDER BY d.key`;
+// The CALLER'S OWN copies among those keys, locked, in key order. Only the caller's: a publish or
+// unpublish never locks a row another user authored (those are `not_author` from the plain read
+// above), so naming another author's keys cannot hold their documents' locks.
+// $1 app, $2 ns, $3 target coll, $4 keys, $5 viewer
+const SQL_PUBLISH_LOCK_OWN_TARGETS = `SELECT d.key, d.author_uid, d.author_kind, d.size_bytes,
+    d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = ANY($4::text[])
+    AND d.author_kind = 'user' AND d.author_uid = $5::int
+  ORDER BY d.key
+  FOR UPDATE`;
+// The caller's OWN visible copies in the target collection whose key no longer has a private
+// document in the SOURCE collection. Scoped by the source, not by how the copy got there: a copy
+// published from another private collection has no document in this one, so it is a candidate.
+// $1 app, $2 ns, $3 target coll, $4 source coll, $5 viewer, $6 limit
+const SQL_PUBLISH_PRUNE_CANDIDATES = `SELECT d.key FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.author_kind = 'user' AND d.author_uid = $5::int AND ${VISIBLE}
+    AND NOT EXISTS (SELECT 1 FROM appdata.doc p
+      WHERE p.app_id = $1 AND p.ns = $2 AND p.coll = $4 AND p.scope_uid = $5::int AND p.key = d.key)
+  ORDER BY d.key
+  LIMIT $6::int`;
+// `SQL_CHARGE_APP` for a transaction that changes several documents at once: `last_seq` moves
+// by $7, one seq per changed document, and the caller numbers them `last_seq - $7 + 1 …
+// last_seq`. Same ceilings, same row lock.
+// $1 app, $2 ns, $3 Δbytes, $4 Δdocs, $5 byte limit, $6 doc limit, $7 seqs taken
+const SQL_CHARGE_APP_SEQS = `INSERT INTO appdata.usage_app AS u (app_id, ns, bytes, docs, last_seq)
+  SELECT $1, $2, $3::bigint, $4::int, $7::bigint
+  WHERE ($3::bigint <= 0 OR $3::bigint <= $5::bigint) AND ($4::int <= 0 OR $4::int <= $6::int)
+  ON CONFLICT (app_id, ns) DO UPDATE
+  SET bytes = u.bytes + EXCLUDED.bytes, docs = u.docs + EXCLUDED.docs, last_seq = u.last_seq + $7::bigint
+  WHERE (EXCLUDED.bytes <= 0 OR u.bytes + EXCLUDED.bytes <= $5::bigint)
+    AND (EXCLUDED.docs <= 0 OR u.docs + EXCLUDED.docs <= $6::int)
+  RETURNING u.last_seq`;
+
 // ---------------------------------------------------------------------------
 // Row mapping
 // ---------------------------------------------------------------------------
+
+/**
+ * A document row's author as a reader sees it: a counter document is nobody's; an app document,
+ * or one whose author uid is gone, the app's; otherwise the user, marked when it is the viewer.
+ */
+function rowAuthor(row: Record<string, unknown>, viewerUid: number | null): DocAuthor {
+  const authorUid = row.author_uid === null ? null : Number(row.author_uid);
+  if (row.author_kind === 'counter') return { kind: 'counter' };
+  if (row.author_kind === 'app' || authorUid === null) return { kind: 'app' };
+  return { kind: 'user', uid: authorUid, isViewer: authorUid === viewerUid };
+}
 
 function toDocRecord(
   row: Record<string, unknown>,
@@ -1090,26 +1459,38 @@ function toDocRecord(
       else if (kind === 'mark' && name !== REPORT_MARK) marks[name] = Number(v);
     }
   }
-  const authorUid = row.author_uid === null ? null : Number(row.author_uid);
   return {
     key: row.key as string,
     data: row.data as Record<string, unknown>,
     version: Number(row.version),
     createdAt: new Date(row.created_at as string | Date),
     updatedAt: new Date(row.updated_at as string | Date),
-    author:
-      row.author_kind === 'counter'
-        ? { kind: 'counter' }
-        : row.author_kind === 'app' || authorUid === null
-        ? { kind: 'app' }
-        : { kind: 'user', uid: authorUid, isViewer: authorUid === ctx.viewerUid },
+    author: rowAuthor(row, ctx.viewerUid),
     counters,
     marks,
     viewer:
       ctx.viewerUid === null
         ? null
         : { marks: ((row.viewer_marks as string[] | null) ?? []).slice() },
+    ...(ctx.levels ? { rating: toDocRating(row) } : {}),
   };
+}
+
+const RATING_STATUSES: ReadonlySet<string> = new Set<DocRatingStatus>([
+  'pending',
+  'rated',
+  'overridden',
+]);
+
+/** The rating columns (`RATING_COLUMNS`) as a reader sees them. */
+function toDocRating(row: Record<string, unknown>): DocRating {
+  const level =
+    row.rating_level === null || row.rating_level === undefined ? null : Number(row.rating_level);
+  const status =
+    typeof row.rating_status === 'string' && RATING_STATUSES.has(row.rating_status)
+      ? (row.rating_status as DocRatingStatus)
+      : null;
+  return { level, status };
 }
 
 // ---------------------------------------------------------------------------
@@ -1255,6 +1636,16 @@ export function createDocStoreModeration(deps: DocStoreDeps) {
 }
 
 /**
+ * THE RATER (content levels): list the shared documents that need a rating and record one, as a
+ * SEPARATE object from the viewer store, so holding the block-token routes' store gives no path to
+ * writing a rating. Only `doc-store-rater.instance.ts` builds one in production.
+ */
+export function createDocStoreRater(deps: DocStoreDeps) {
+  return buildDocStore(deps).rater;
+}
+export type DocStoreRater = ReturnType<typeof createDocStoreRater>;
+
+/**
  * MAINTENANCE — review-namespace deletion (`purgeReview`, `listReviewAppIds`), account deletion
  * (`wipeAccount`) and app deletion (`purgeApp`) — as a separate object from the viewer store: the
  * first runs with the setting that reaches every `rev:` row of a request, the second with the one
@@ -1337,6 +1728,24 @@ export type ViewerDataEmptyResult = {
   sharedBytes: number;
 };
 
+/** Where a page of `viewerRecords` ends: the last (collection, key space, key) it read. */
+export type ViewerRecordCursor = { coll: string; scopeUid: number; key: string };
+
+/**
+ * One document a user owns, as `viewerRecords` reads it: the record core's source row
+ * (`RecordSourceRow` in `app-record.ts`) with its collection.
+ */
+export type ViewerRecordRow = {
+  coll: string;
+  scopeUid: number;
+  key: string;
+  data: Record<string, unknown>;
+  version: number;
+  author: DocAuthor;
+  lastWriterUid: number | null;
+  recordId: string | null;
+};
+
 /** Where a schema migration's page of documents ends: the last (key space, key) it read. */
 export type MigrationCursor = { scopeUid: number; key: string };
 
@@ -1374,7 +1783,10 @@ export type SharedKeyMatch = {
   collection: string;
   /** Null for a document no user authored (an `app` or `counter` document). */
   authorUid: number | null;
+  /** A moderator hide. Never a level: the lookup is level-blind. */
   hidden: boolean;
+  /** Asked for (`{ rating: true }`, content levels on) only. */
+  rating?: DocRating;
 };
 
 function buildDocStore(deps: DocStoreDeps) {
@@ -1428,10 +1840,13 @@ function buildDocStore(deps: DocStoreDeps) {
   ): Promise<DocStoreQueryResult> {
     const base = [ctx.appId, ctx.ns, coll.name, scope, key, seq, viewer];
     if (coll.schemaMajor === undefined || !(await hasSchemaMajorColumn(c, ctx))) {
-      return c.query(SQL_STAMP_SEQ, base);
+      return c.query(ctx.levels ? SQL_STAMP_SEQ_LEVELS : SQL_STAMP_SEQ, base);
     }
     try {
-      return await c.query(SQL_STAMP_SEQ_MAJOR, [...base, coll.schemaMajor]);
+      return await c.query(ctx.levels ? SQL_STAMP_SEQ_MAJOR_LEVELS : SQL_STAMP_SEQ_MAJOR, [
+        ...base,
+        coll.schemaMajor,
+      ]);
     } catch (err) {
       // The column was dropped after it was found (a rollback of the migration): look again on
       // the next write. This write fails; the next one writes without the stamp.
@@ -1545,6 +1960,25 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
+   * A RATER LOOKUP transaction: no app or namespace bound, and `appdata.rater_lookup_id` set to one
+   * validated rating id — which the rating-id migration's policy admits for the ONE shared `doc`
+   * row carrying it, read only. Transaction-local like every other setting. 🔴 Called by the
+   * rater's `findByRatingId` and `ready` ONLY (pinned by `doc-store.sql-isolation.test.ts`).
+   */
+  async function raterLookupTx<T>(
+    ratingId: number,
+    fn: (c: DocStoreClient) => Promise<T>
+  ): Promise<T> {
+    if (!Number.isSafeInteger(ratingId) || ratingId < 0 || ratingId > 2_147_483_647) {
+      throw new Error('doc-store: malformed rating id');
+    }
+    return runTx(
+      `BEGIN; SELECT set_config('appdata.app_id', '', true), set_config('appdata.ns', '', true), set_config('appdata.rater_lookup_id', '${ratingId}', true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
+      fn
+    );
+  }
+
+  /**
    * Whether this store can serve calls: it has a connection and its role passed the
    * least-privilege check — the SAME two refusals every call makes (`runTx`), so this cannot
    * disagree with them. Reads the role at most until it is settled (one round trip on a cold
@@ -1604,34 +2038,80 @@ function buildDocStore(deps: DocStoreDeps) {
     }
   }
 
-  /** Charge one write: `usage_app` (which also yields the seq), then the caller's `usage_user`. */
+  /**
+   * The per-user ceiling of `uid`: `deps.userLimits` (production: their membership tier's), else
+   * the store-wide `limits`. The one rule the write charge and the `info` figures both apply.
+   */
+  async function viewerLimits(uid: number): Promise<{ userBytes: number; userDocs: number }> {
+    if (deps.userLimits) return deps.userLimits(uid);
+    return { userBytes: limits.userBytes, userDocs: limits.userDocs };
+  }
+
+  /**
+   * The per-user ceilings a write will charge against, resolved BEFORE its transaction opens
+   * (`resolveCeilings`), so the charge never waits on the resolver while holding the app's
+   * usage-row lock that `SQL_CHARGE_APP` takes: the viewer's for a put or an increment, every
+   * owner on the page for a migration. Keyed on the call's context; set at the start of each call.
+   */
+  const preResolvedCeilings = new WeakMap<
+    DocStoreContext,
+    Map<number, { userBytes: number; userDocs: number }>
+  >();
+
+  /** How many users' ceilings `resolveCeilings` looks up at once. */
+  const CEILING_LOOKUP_CONCURRENCY = 10;
+
+  async function resolveCeilings(ctx: DocStoreContext, uids: Iterable<number>): Promise<void> {
+    if (!deps.userLimits) return;
+    const resolved = new Map<number, { userBytes: number; userDocs: number }>();
+    // A migration page can name up to 1,000 owners: look their tiers up a bounded few at a time.
+    await limitConcurrency(
+      [...new Set(uids)].map((uid) => async () => {
+        resolved.set(uid, await viewerLimits(uid));
+      }),
+      CEILING_LOOKUP_CONCURRENCY
+    );
+    preResolvedCeilings.set(ctx, resolved);
+  }
+
+  /**
+   * Charge one write: `usage_app` (which also yields the seq), then the caller's `usage_user`.
+   * `seqs` > 1 charges a transaction that changed that many documents (a publish): the returned
+   * seq is the LAST of `seqs` consecutive ones.
+   */
   async function charge(
     c: DocStoreClient,
     ctx: DocStoreContext,
     app: UsageDelta,
-    user: UserCharge
+    user: UserCharge,
+    seqs = 1
   ): Promise<number> {
     await deps.hooks?.beforeUsageCharge?.();
-    const appRes = await c.query(SQL_CHARGE_APP, [
-      ctx.appId,
-      ctx.ns,
-      app.bytes,
-      app.docs,
-      limits.appBytes,
-      limits.appDocs,
-    ]);
+    const appArgs = [ctx.appId, ctx.ns, app.bytes, app.docs, limits.appBytes, limits.appDocs];
+    const appRes =
+      seqs === 1
+        ? await c.query(SQL_CHARGE_APP, appArgs)
+        : await c.query(SQL_CHARGE_APP_SEQS, [...appArgs, seqs]);
     if (appRes.rows.length === 0) {
       throw new DocStoreError('quota_exceeded', 'app storage quota exceeded', { ceiling: 'app' });
     }
     if (user.bytes !== 0 || user.docs !== 0) {
+      // A charge that only frees passes whatever the ceiling (SQL_CHARGE_USER), so it reads none.
+      // Every charge that adds bytes or documents is to a user resolved before the transaction:
+      // the viewer (put, increment) or, for a migration, the owners on the page — the only
+      // charge to someone other than the caller. The lookup here, under the lock, is a fallback
+      // no call path reaches; it keeps a missed pre-resolution correct, only slower.
+      const ceiling = !(user.bytes > 0 || user.docs > 0)
+        ? limits
+        : preResolvedCeilings.get(ctx)?.get(user.uid) ?? (await viewerLimits(user.uid));
       const res = await c.query(SQL_CHARGE_USER, [
         ctx.appId,
         ctx.ns,
         user.uid,
         user.bytes,
         user.docs,
-        limits.userBytes,
-        limits.userDocs,
+        ceiling.userBytes,
+        ceiling.userDocs,
       ]);
       if (res.rows.length === 0) {
         throw new DocStoreError('quota_exceeded', 'storage quota exceeded', {
@@ -1688,6 +2168,7 @@ function buildDocStore(deps: DocStoreDeps) {
     const indexRows = indexRowsFor(coll, data as Record<string, unknown>);
     const scope = scopeUid(ctx, coll);
     const base = [ctx.appId, ctx.ns, coll.name, scope, key];
+    await resolveCeilings(ctx, [viewer]);
 
     return withTx(ctx, async (c) => {
       // Two passes at most: a concurrent creator of the same key can win the
@@ -1706,6 +2187,7 @@ function buildDocStore(deps: DocStoreDeps) {
           }
           assertMayModify(ctx, coll, existing);
           const res = await c.query(SQL_UPDATE_DOC, [...base, json, viewer]);
+          await markRatingPending(c, ctx, coll, key);
           const delta = Number(res.rows[0].size_bytes) - Number(existing.size_bytes);
           return finishWrite(c, ctx, coll, scope, key, indexRows, {
             app: appDelta(scope, { bytes: delta, docs: 0 }),
@@ -1718,6 +2200,7 @@ function buildDocStore(deps: DocStoreDeps) {
         }
         const ins = await c.query(SQL_INSERT_DOC, [...base, json, viewer]);
         if (ins.rows.length === 0) continue; // lost the race; re-read
+        await markRatingPending(c, ctx, coll, key);
         const size = Number(ins.rows[0].size_bytes);
         return finishWrite(c, ctx, coll, scope, key, indexRows, {
           app: appDelta(scope, { bytes: size, docs: 1 }),
@@ -1728,6 +2211,20 @@ function buildDocStore(deps: DocStoreDeps) {
         currentVersion: null,
       });
     });
+  }
+
+  /**
+   * While levels are on, a shared document whose body this transaction just wrote waits to be
+   * rated again (`SQL_RATING_PENDING`). Off, or a private collection, it sends nothing.
+   */
+  async function markRatingPending(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    coll: DocCollection,
+    key: string
+  ): Promise<void> {
+    if (!ctx.levels || coll.config.visibility !== 'shared') return;
+    await c.query(SQL_RATING_PENDING, [ctx.appId, ctx.ns, coll.name, key]);
   }
 
   async function finishWrite(
@@ -1770,18 +2267,17 @@ function buildDocStore(deps: DocStoreDeps) {
     keys.forEach(assertKey);
     if (keys.length === 0) return [];
     const scope = scopeUid(ctx, coll);
+    const params = [ctx.appId, ctx.ns, coll.name, scope, ctx.viewerUid, [...new Set(keys)]];
     const rows = await withTx(
       ctx,
       async (c) =>
-        (
-          await c.query(SQL_GET_MANY, [
-            ctx.appId,
-            ctx.ns,
-            coll.name,
-            scope,
-            ctx.viewerUid,
-            [...new Set(keys)],
-          ])
+        (ctx.levels
+          ? await c.query(SQL_GET_MANY_LEVELS, [
+              ...params,
+              ctx.levels.viewerLevel,
+              ctx.levels.domainLevel ?? ctx.levels.viewerLevel,
+            ])
+          : await c.query(SQL_GET_MANY, params)
         ).rows
     );
     const byKey = new Map(rows.map((r) => [r.key as string, toDocRecord(r, ctx, coll)]));
@@ -1822,6 +2318,80 @@ function buildDocStore(deps: DocStoreDeps) {
       op: 'create',
       hookPass: opts.hookPass,
     });
+  }
+
+  /**
+   * A shared `put` that would change no stored row, answered without writing: the stored document,
+   * untouched (no version, seq or `updated_at` bump, no index sync, no usage charge, no
+   * `markRatingPending`, so a rating given for its version stands), when ALL of:
+   * - a document is stored at `key` and `classifyPublish` calls it `unchanged` against `data` —
+   *   the ONE rule a publish uses: the caller's own, not hidden, and the same content hash;
+   * - its stored index rows are exactly the rows `indexRowsFor` derives from `data` under the
+   *   collection's CURRENT declaration (an index declared or dropped since, or a value the
+   *   declaration now refuses, is a write that would change or refuse something);
+   * - `opts.ifVersion`, when given, is its current version.
+   * Otherwise `null`, having written nothing; the caller then makes the ordinary write, which
+   * refuses (or writes) exactly as it always did. So a stale `ifVersion`, someone else's or a hidden
+   * document, an absent key, a private collection and a body the store would refuse are all
+   * `null`, never a refusal of their own. A collection with a permission hook is always `null`.
+   *
+   * ONE unlocked read (SQL_UNCHANGED_PROBE), no lock: nothing is written on its answer, so a
+   * concurrent write is simply before or after it, and a body that differs from what the read saw
+   * always goes to the ordinary write. Not refreshed here: the schema-major stamp
+   * (`coll.schemaMajor`), which an ordinary write would re-stamp; revisit if a read path starts
+   * migrating bodies on serve.
+   */
+  async function putIfUnchanged(
+    ctx: DocStoreContext,
+    coll: DocCollection,
+    key: string,
+    data: Record<string, unknown>,
+    opts: { ifVersion?: number } = {}
+  ): Promise<DocRecord | null> {
+    const policy = assertCollection(coll);
+    const viewer = requireViewer(ctx);
+    assertShareWritable(coll, policy);
+    if (coll.config.visibility !== 'shared') return null;
+    // A collection with a permission hook: every put is the hook's to decide, unchanged or not, so
+    // it always takes the ordinary (hooked) write. Answering here would return 200 for a put the
+    // hook refuses.
+    if (coll.config.hook) return null;
+    let json: string;
+    let indexRows: IndexRow[];
+    try {
+      assertKey(key);
+      json = serializeData(data);
+      indexRows = indexRowsFor(coll, data);
+    } catch {
+      // `writeDoc` refuses it, after the caller's budget and scan, as it always has.
+      return null;
+    }
+    const row = await withTx(
+      ctx,
+      async (c) =>
+        (
+          await c.query(ctx.levels ? SQL_UNCHANGED_PROBE_LEVELS : SQL_UNCHANGED_PROBE, [
+            ctx.appId,
+            ctx.ns,
+            coll.name,
+            0,
+            key,
+            json,
+            ctx.viewerUid,
+            indexRows.map((r) => r.name),
+            indexRows.map((r) => r.vText),
+            indexRows.map((r) => r.vNum),
+            indexRows.map((r) => r.type),
+          ])
+        ).rows[0]
+    );
+    if (!row) return null;
+    if (classifyPublish(viewer, { hash: String(row.written_hash) }, row) !== 'unchanged') {
+      return null;
+    }
+    if (row.index_same !== true) return null;
+    if (opts.ifVersion !== undefined && opts.ifVersion !== Number(row.version)) return null;
+    return toDocRecord(row, ctx, coll);
   }
 
   async function remove(
@@ -1898,6 +2468,7 @@ function buildDocStore(deps: DocStoreDeps) {
       opts.ifVersion,
       requireHookPass(ctx, coll, 'increment', key, opts.hookPass)
     );
+    await resolveCeilings(ctx, [viewer]);
     return withTx(ctx, async (c) => {
       const bump = async () =>
         Number(
@@ -2042,6 +2613,16 @@ function buildDocStore(deps: DocStoreDeps) {
     const viewerParam = `${p(ctx.viewerUid)}::int`;
     const joins: string[] = [];
     const conds: string[] = [];
+    // The levels gate, next to `VISIBLE` (in `listBase`).
+    if (ctx.levels) {
+      conds.push(
+        sharedDocLevelVisible(
+          viewerParam,
+          `${p(ctx.levels.viewerLevel)}::int`,
+          `${p(ctx.levels.domainLevel ?? ctx.levels.viewerLevel)}::int`
+        )
+      );
+    }
 
     const where = Object.entries(q.where ?? {});
     if (where.length > B.equalityFilters) {
@@ -2130,7 +2711,7 @@ function buildDocStore(deps: DocStoreDeps) {
     const dir = sort.desc ? 'DESC' : 'ASC';
     const orderBy = sortExpr ? `${sortExpr} ${dir}, ${keyExpr} ${dir}` : `d.key ${dir}`;
     const sql = [
-      `SELECT ${docColumns(viewerParam)}, ${sortValueExpr} AS sort_value`,
+      `SELECT ${docColumns(viewerParam, ctx.levels !== undefined)}, ${sortValueExpr} AS sort_value`,
       listBase(joins.join('\n')),
       ...conds.map((cnd) => `AND ${cnd}`),
       `ORDER BY ${orderBy}`,
@@ -2451,6 +3032,16 @@ function buildDocStore(deps: DocStoreDeps) {
    * schema afterwards — what an `acknowledge` op accepted. `next` is the cursor of the next page,
    * or null when this one was the last.
    */
+  /** Whose per-user usage a migrated document's size change is charged to; null for none. */
+  function migrationOwner(scope: number, row: Record<string, unknown>): number | null {
+    if (scope !== 0) return scope;
+    return (row.author_kind === 'user' || row.author_kind === 'counter') &&
+      row.author_uid !== null &&
+      row.author_uid !== undefined
+      ? Number(row.author_uid)
+      : null;
+  }
+
   async function migrateDocuments(
     appId: string,
     coll: DocCollection,
@@ -2474,7 +3065,17 @@ function buildDocStore(deps: DocStoreDeps) {
           after.key,
           limit,
         ])
-      ).rows.map((r) => ({ scopeUid: Number(r.scope_uid), key: r.key as string }))
+      ).rows.map((r) => ({
+        scopeUid: Number(r.scope_uid),
+        key: r.key as string,
+        owner: migrationOwner(Number(r.scope_uid), r),
+      }))
+    );
+    // Each owner's ceiling, once per page and before any document's transaction: a migration
+    // charges its documents' owners, and must not resolve their tiers under the usage-row lock.
+    await resolveCeilings(
+      ctx,
+      page.flatMap((d) => (d.owner === null ? [] : [d.owner]))
     );
     const result: MigrateDocumentsResult = {
       scanned: 0,
@@ -2483,7 +3084,10 @@ function buildDocStore(deps: DocStoreDeps) {
       failed: 0,
       invalid: 0,
       failures: [],
-      next: page.length < limit ? null : page[page.length - 1],
+      next:
+        page.length < limit
+          ? null
+          : { scopeUid: page[page.length - 1].scopeUid, key: page[page.length - 1].key },
     };
     const stillInvalid = (data: unknown) => {
       try {
@@ -2507,14 +3111,7 @@ function buildDocStore(deps: DocStoreDeps) {
             const indexRows = indexRowsFor(coll, next);
             const res = await c.query(SQL_MIGRATE_DOC, [...base, json]);
             const delta = Number(res.rows[0].size_bytes) - Number(row.size_bytes);
-            const owner =
-              scope !== 0
-                ? scope
-                : (row.author_kind === 'user' || row.author_kind === 'counter') &&
-                  row.author_uid !== null &&
-                  row.author_uid !== undefined
-                ? Number(row.author_uid)
-                : null;
+            const owner = migrationOwner(scope, row);
             await c.query(SQL_SYNC_INDEX, [
               appId,
               ctx.ns,
@@ -2625,6 +3222,45 @@ function buildDocStore(deps: DocStoreDeps) {
     };
   }
 
+  /** One page of the documents `userId` owns in one app, for their export (`SQL_VIEWER_RECORDS`). */
+  async function viewerRecords(
+    userId: number,
+    appId: string,
+    opts: { after?: ViewerRecordCursor | null; limit: number }
+  ): Promise<ViewerRecordRow[]> {
+    assertWipeUserId(userId);
+    if (!Number.isSafeInteger(opts.limit) || opts.limit < 1 || opts.limit > 1000) {
+      throw new Error('doc-store: limit must be 1–1000');
+    }
+    const after = opts.after ?? { coll: '', scopeUid: -1, key: '' };
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: userId };
+    const rows = await withTx(
+      ctx,
+      async (c) =>
+        (
+          await c.query(SQL_VIEWER_RECORDS, [
+            appId,
+            PUBLISHED_NS,
+            userId,
+            after.coll,
+            after.scopeUid,
+            after.key,
+            opts.limit,
+          ])
+        ).rows
+    );
+    return rows.map((r) => ({
+      coll: r.coll as string,
+      scopeUid: Number(r.scope_uid),
+      key: r.key as string,
+      data: r.data as Record<string, unknown>,
+      version: Number(r.version),
+      author: rowAuthor(r, userId),
+      lastWriterUid: r.last_writer_uid === null ? null : Number(r.last_writer_uid),
+      recordId: r.record_id === null || r.record_id === undefined ? null : String(r.record_id),
+    }));
+  }
+
   /**
    * Empty what one viewer holds in one app's PRODUCTION namespace, in ONE scoped transaction:
    *   - always: their private documents (index rows with them), each refunded to their own usage
@@ -2676,10 +3312,392 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
+  // -------------------------------------------------------------------------
+  // Server-side publish
+  // -------------------------------------------------------------------------
+
+  type PublishTargetRow = Record<string, unknown> & { key: string; hash: string };
+  type PublishSourceRow = { key: string; data: Record<string, unknown>; hash: string };
+
+  /**
+   * The shared rows at `keys` in `to`, by key: every author's from a plain read, and with `lock`
+   * the caller's own re-read under `FOR UPDATE` (`SQL_PUBLISH_LOCK_OWN_TARGETS`), so their entries
+   * are the locked rows (and an own row deleted in between is gone). Another author's row is never
+   * locked.
+   */
+  async function readPublishTargets(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    to: DocCollection,
+    viewer: number,
+    keys: string[],
+    lock: boolean
+  ): Promise<Map<string, PublishTargetRow>> {
+    const targets = new Map<string, PublishTargetRow>();
+    const rows = (await c.query(SQL_PUBLISH_TARGETS, [ctx.appId, ctx.ns, to.name, keys])).rows;
+    for (const r of rows) targets.set(r.key as string, r as PublishTargetRow);
+    if (!lock) return targets;
+    const own = (
+      await c.query(SQL_PUBLISH_LOCK_OWN_TARGETS, [ctx.appId, ctx.ns, to.name, keys, viewer])
+    ).rows;
+    const locked = new Map(own.map((r) => [r.key as string, r as PublishTargetRow]));
+    for (const [key, row] of [...targets]) {
+      const mine = row.author_kind === 'user' && Number(row.author_uid) === viewer;
+      if (mine && !locked.has(key)) targets.delete(key);
+    }
+    for (const [key, row] of locked) targets.set(key, row);
+    return targets;
+  }
+
+  async function readPublishRows(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    from: DocCollection,
+    to: DocCollection,
+    viewer: number,
+    keys: string[],
+    lock: boolean
+  ) {
+    const targets = await readPublishTargets(c, ctx, to, viewer, keys, lock);
+    const sources = new Map<string, PublishSourceRow>();
+    const sourceRows = (
+      await c.query(SQL_PUBLISH_SOURCES, [ctx.appId, ctx.ns, from.name, viewer, keys])
+    ).rows;
+    for (const r of sourceRows) sources.set(r.key as string, r as PublishSourceRow);
+    return { targets, sources };
+  }
+
+  /**
+   * What a publish of `keys` from the caller's private `from` into the shared `to` would do now,
+   * key by key in key order, with the private body of every key it would write. The route reads
+   * this to validate and moderate exactly those bodies before `publishCopies`, which re-reads
+   * them under lock and refuses (`source_changed`) any that changed in between.
+   */
+  async function previewPublish(
+    ctx: DocStoreContext,
+    from: DocCollection,
+    to: DocCollection,
+    keys: string[]
+  ): Promise<PublishPreviewEntry[]> {
+    assertPublishPair(from, to);
+    const viewer = requireViewer(ctx);
+    const unique = assertPublishKeys(keys).sort();
+    const { targets, sources } = await withTx(ctx, (c) =>
+      readPublishRows(c, ctx, from, to, viewer, unique, false)
+    );
+    return unique.map((key) => {
+      const source = sources.get(key);
+      const action = classifyPublish(viewer, source, targets.get(key));
+      return action === 'create' || action === 'update'
+        ? { key, action, source: { data: source!.data, hash: source!.hash } }
+        : { key, action };
+    });
+  }
+
+  /**
+   * Copy the caller's private documents at `keys` from `from` into the shared `to`, authored by
+   * the caller, in ONE transaction: every copy lands or none does.
+   *
+   * - Only the caller's own private documents are read (`SQL_PUBLISH_SOURCES`); a key with none is
+   *   skipped as `missing`. A copy someone else authored is skipped as `not_author`, one a
+   *   moderator hid as `hidden`; neither is touched.
+   * - A copy whose content hash equals its source's is `unchanged`: no write, no seq.
+   * - Every copy written must have the content hash the caller checked (`checked`, from
+   *   `previewPublish`); a source that changed since is refused whole as `version_conflict` with
+   *   `reason: 'source_changed'`, and a key the preview did not plan to write (its copy changed:
+   *   another author's copy deleted, the caller's own changed) with `reason: 'target_changed'`, so
+   *   nothing unchecked is ever written.
+   * - Content levels on (`ctx.levels`): every copy it creates or updates is marked pending
+   *   (`markRatingPending`), exactly as a shared put is, so it is hidden from other viewers until
+   *   it is rated again; an unchanged copy keeps its rating.
+   * - `prune`: the caller's own visible copies in `to` whose key has no private document in
+   *   `from` are deleted, at most `limit` per call — including copies the caller published from
+   *   ANOTHER private collection, which have no document in `from`.
+   * - The usage of every change is charged at once (`charge` with one seq per changed document),
+   *   so the per-user and app ceilings refuse the whole publish or none of it.
+   *
+   * LOCKS: only the caller's OWN copies (at `keys` and the prune candidates), in key order, then
+   * any own row a concurrent publish created, in key order, then `usage_app`, then `usage_user`.
+   * Another author's row is read, never locked. That is NOT deadlock-free: two publishes of
+   * overlapping keys can still take two lock orders (one inserts a key the other then waits on,
+   * when a write commits that key between their lock reads), and Postgres aborts one with
+   * 40P01. The whole transaction is then retried (`retryOnDeadlock`, at most
+   * `PUBLISH_DEADLOCK_RETRIES` times); the caller's publish budget is reserved once, outside it.
+   */
+  async function publishCopies(
+    ctx: DocStoreContext,
+    from: DocCollection,
+    to: DocCollection,
+    req: {
+      keys: string[];
+      checked: ReadonlyMap<string, string>;
+      prune?: { limit: number };
+    }
+  ): Promise<PublishResult> {
+    assertPublishPair(from, to);
+    const viewer = requireViewer(ctx);
+    const keys = assertPublishKeys(req.keys).sort();
+    const prune = req.prune;
+    if (prune) {
+      if (!Number.isSafeInteger(prune.limit) || prune.limit < 1) {
+        throw invalid('prune limit must be a positive integer');
+      }
+    }
+    await resolveCeilings(ctx, [viewer]);
+
+    return retryOnDeadlock(() =>
+      withTx(ctx, async (c) => {
+        const result: PublishResult = {
+          created: [],
+          updated: [],
+          unchanged: [],
+          pruned: [],
+          skipped: [],
+          pruneIncomplete: false,
+        };
+        let candidates: string[] = [];
+        if (prune) {
+          candidates = (
+            await c.query(SQL_PUBLISH_PRUNE_CANDIDATES, [
+              ctx.appId,
+              ctx.ns,
+              to.name,
+              from.name,
+              viewer,
+              prune.limit + 1,
+            ])
+          ).rows.map((r) => r.key as string);
+          result.pruneIncomplete = candidates.length > prune.limit;
+          candidates = candidates.slice(0, prune.limit);
+        }
+        const lockKeys = [...new Set([...keys, ...candidates])].sort();
+        const { targets, sources } = await readPublishRows(
+          c,
+          ctx,
+          from,
+          to,
+          viewer,
+          lockKeys,
+          true
+        );
+
+        // Prune first, from the LOCKED rows: still the caller's, visible, with no private source.
+        const pruneKeys = candidates.filter((key) => {
+          const copy = targets.get(key);
+          return (
+            copy !== undefined &&
+            !sources.has(key) &&
+            classifyPublish(viewer, undefined, copy) === 'missing'
+          );
+        });
+        const pruneSet = new Set(pruneKeys);
+
+        let bytes = 0;
+        let docs = 0;
+        const written: string[] = [];
+        for (const key of keys) {
+          const source = sources.get(key);
+          let copy: PublishTargetRow | undefined = targets.get(key);
+          let action = classifyPublish(viewer, source, copy);
+          if (action === 'create') {
+            assertChecked(req.checked, key, source!.hash);
+            const json = serializeData(source!.data);
+            validateDocAgainstCollectionSchema(ctx, to, source!.data);
+            const indexRows = indexRowsFor(to, source!.data);
+            const ins = await c.query(SQL_INSERT_DOC, [
+              ctx.appId,
+              ctx.ns,
+              to.name,
+              0,
+              key,
+              json,
+              viewer,
+            ]);
+            if (ins.rows.length > 0) {
+              const size = Number(ins.rows[0].size_bytes);
+              bytes += size;
+              docs += 1;
+              await markRatingPending(c, ctx, to, key);
+              await syncIndex(c, ctx, to, key, indexRows);
+              result.created.push(key);
+              written.push(key);
+              continue;
+            }
+            // A concurrent writer created it after our read: read it (locked if it is ours) and
+            // decide again.
+            copy = (await readPublishTargets(c, ctx, to, viewer, [key], true)).get(key);
+            if (!copy) {
+              throw new DocStoreError('version_conflict', 'concurrent write; retry', {
+                currentVersion: null,
+                reason: 'concurrent_write',
+                key,
+              });
+            }
+            action = classifyPublish(viewer, source, copy);
+          }
+          if (action === 'update') {
+            assertChecked(req.checked, key, source!.hash);
+            const json = serializeData(source!.data);
+            validateDocAgainstCollectionSchema(ctx, to, source!.data);
+            const indexRows = indexRowsFor(to, source!.data);
+            const res = await c.query(SQL_UPDATE_DOC, [
+              ctx.appId,
+              ctx.ns,
+              to.name,
+              0,
+              key,
+              json,
+              viewer,
+            ]);
+            bytes += Number(res.rows[0].size_bytes) - Number(copy!.size_bytes);
+            await markRatingPending(c, ctx, to, key);
+            await syncIndex(c, ctx, to, key, indexRows);
+            result.updated.push(key);
+            written.push(key);
+          } else if (action === 'unchanged') {
+            result.unchanged.push(key);
+          } else if (action === 'create') {
+            throw new Error('doc-store: publish re-lock classified a present copy as absent');
+          } else if (!(action === 'missing' && pruneSet.has(key))) {
+            // A requested key the prune below deletes is reported there, not as missing.
+            result.skipped.push({ key, reason: action });
+          }
+        }
+
+        for (const key of pruneKeys) {
+          await c.query(SQL_DELETE_DOC, [ctx.appId, ctx.ns, to.name, 0, key]);
+          await c.query(SQL_DELETE_TALLIES, [ctx.appId, ctx.ns, to.name, key]);
+          await c.query(SQL_DELETE_MARKS, [ctx.appId, ctx.ns, to.name, key]);
+          bytes -= Number(targets.get(key)!.size_bytes);
+          docs -= 1;
+          result.pruned.push(key);
+        }
+
+        const changed = written.length + pruneKeys.length;
+        if (changed === 0) return result;
+        const last = await charge(
+          c,
+          ctx,
+          { bytes, docs },
+          { uid: viewer, bytes, docs, ceiling: 'author' },
+          changed
+        );
+        let seq = last - changed;
+        for (const key of written) {
+          seq += 1;
+          await stampWrittenDoc(c, ctx, to, 0, key, seq, viewer);
+        }
+        for (const key of pruneKeys) {
+          seq += 1;
+          await c.query(SQL_TOMBSTONE, [ctx.appId, ctx.ns, to.name, 0, key, seq]);
+        }
+        return result;
+      })
+    );
+  }
+
+  /**
+   * A body about to be written must be the one the caller checked. No checked hash at all means the
+   * preview did not plan to write this key (`target_changed`: its copy changed since); a different
+   * one means the private document changed (`source_changed`).
+   */
+  function assertChecked(checked: ReadonlyMap<string, string>, key: string, hash: string) {
+    const seen = checked.get(key);
+    if (seen === undefined) {
+      throw new DocStoreError('version_conflict', 'a shared copy changed while publishing', {
+        reason: 'target_changed',
+        key,
+      });
+    }
+    if (seen !== hash) {
+      throw new DocStoreError('version_conflict', 'a private document changed while publishing', {
+        reason: 'source_changed',
+        key,
+      });
+    }
+  }
+
+  async function syncIndex(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    coll: DocCollection,
+    key: string,
+    indexRows: IndexRow[]
+  ) {
+    await c.query(SQL_SYNC_INDEX, [
+      ctx.appId,
+      ctx.ns,
+      coll.name,
+      0,
+      key,
+      indexRows.map((r) => r.name),
+      indexRows.map((r) => r.vText),
+      indexRows.map((r) => r.vNum),
+      indexRows.map((r) => r.type),
+    ]);
+  }
+
+  /**
+   * Delete the caller's own shared documents at `keys` in `to`, in ONE transaction. A key with no
+   * visible document is `missing` (a hidden one reads as missing, as `delete` does); one someone
+   * else authored is `not_author` and never touched.
+   */
+  async function unpublishCopies(
+    ctx: DocStoreContext,
+    to: DocCollection,
+    keys: string[]
+  ): Promise<UnpublishResult> {
+    assertCollection(to);
+    requireShared(to, 'unpublish targets');
+    assertShareWritable(to);
+    assertNotHooked(to, 'unpublish');
+    const viewer = requireViewer(ctx);
+    const sorted = assertPublishKeys(keys).sort();
+    return retryOnDeadlock(() =>
+      withTx(ctx, async (c) => {
+        const targets = await readPublishTargets(c, ctx, to, viewer, sorted, true);
+        const result: UnpublishResult = { deleted: [], skipped: [] };
+        let bytes = 0;
+        for (const key of sorted) {
+          const copy = targets.get(key);
+          if (!copy || copy.hidden === true) {
+            result.skipped.push({ key, reason: 'missing' });
+            continue;
+          }
+          if (!(copy.author_kind === 'user' && Number(copy.author_uid) === viewer)) {
+            result.skipped.push({ key, reason: 'not_author' });
+            continue;
+          }
+          await c.query(SQL_DELETE_DOC, [ctx.appId, ctx.ns, to.name, 0, key]);
+          await c.query(SQL_DELETE_TALLIES, [ctx.appId, ctx.ns, to.name, key]);
+          await c.query(SQL_DELETE_MARKS, [ctx.appId, ctx.ns, to.name, key]);
+          bytes += Number(copy.size_bytes);
+          result.deleted.push(key);
+        }
+        const n = result.deleted.length;
+        if (n === 0) return result;
+        const last = await charge(
+          c,
+          ctx,
+          { bytes: -bytes, docs: -n },
+          { uid: viewer, bytes: -bytes, docs: -n, ceiling: 'author' },
+          n
+        );
+        let seq = last - n;
+        for (const key of result.deleted) {
+          seq += 1;
+          await c.query(SQL_TOMBSTONE, [ctx.appId, ctx.ns, to.name, 0, key, seq]);
+        }
+        return result;
+      })
+    );
+  }
+
   const store = {
     get,
     getMany,
     put,
+    putIfUnchanged,
     create,
     delete: remove,
     list,
@@ -2688,7 +3706,11 @@ function buildDocStore(deps: DocStoreDeps) {
     unmark,
     usage,
     limits,
+    viewerLimits,
     isUsable,
+    previewPublish,
+    publishCopies,
+    unpublishCopies,
   };
   /**
    * Shared documents of `appId` under `key` in any of `collections`, production namespace only,
@@ -2698,19 +3720,26 @@ function buildDocStore(deps: DocStoreDeps) {
   async function findSharedByKey(
     appId: string,
     collections: readonly string[],
-    key: string
+    key: string,
+    opts: { rating?: boolean } = {}
   ): Promise<SharedKeyMatch[]> {
     const names = collections.filter((n) => B.collectionName.test(n));
     if (names.length === 0 || !B.key.test(key) || DOT_ONLY_KEY.test(key)) return [];
     const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: null };
+    const params = [ctx.appId, ctx.ns, names, key];
     const rows = await withTx(
       ctx,
-      async (c) => (await c.query(SQL_LOOKUP_SHARED_KEY, [ctx.appId, ctx.ns, names, key])).rows
+      async (c) =>
+        (opts.rating
+          ? await c.query(SQL_LOOKUP_SHARED_KEY_LEVELS, params)
+          : await c.query(SQL_LOOKUP_SHARED_KEY, params)
+        ).rows
     );
     return rows.map((r) => ({
       collection: r.coll as string,
       authorUid: r.author_uid === null || r.author_uid === undefined ? null : Number(r.author_uid),
       hidden: r.hidden === true,
+      ...(opts.rating ? { rating: toDocRating(r) } : {}),
     }));
   }
 
@@ -2753,12 +3782,17 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: string,
     after: number,
     upTo: number,
-    limit: number
+    limit: number,
+    levels?: DocLevelGate
   ): Promise<FeedChangesPage> {
     const ctx = feedCtx(appId, coll);
     const params = [ctx.appId, ctx.ns, coll, feedSeq(after), feedSeq(upTo), feedLimit(limit)];
     return withTx(ctx, async (c) => {
-      const docs = (await c.query(SQL_FEED_DOCS_SINCE, params)).rows;
+      const docs = (
+        levels
+          ? await c.query(SQL_FEED_DOCS_SINCE_LEVELS, [...params, levels.viewerLevel])
+          : await c.query(SQL_FEED_DOCS_SINCE, params)
+      ).rows;
       const tombs = (await c.query(SQL_FEED_TOMBS_SINCE, params)).rows;
       return {
         docs: docs.map((r) => ({
@@ -2779,22 +3813,18 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: string,
     afterKey: string,
     upTo: number,
-    limit: number
+    limit: number,
+    levels?: DocLevelGate
   ): Promise<FeedDocument[]> {
     const ctx = feedCtx(appId, coll);
     if (afterKey !== '' && !B.key.test(afterKey)) throw invalid('feed: malformed key');
+    const params = [ctx.appId, ctx.ns, coll, afterKey, feedSeq(upTo), feedLimit(limit)];
     const rows = await withTx(
       ctx,
       async (c) =>
-        (
-          await c.query(SQL_FEED_DOCS_ALL, [
-            ctx.appId,
-            ctx.ns,
-            coll,
-            afterKey,
-            feedSeq(upTo),
-            feedLimit(limit),
-          ])
+        (levels
+          ? await c.query(SQL_FEED_DOCS_ALL_LEVELS, [...params, levels.viewerLevel])
+          : await c.query(SQL_FEED_DOCS_ALL, params)
         ).rows
     );
     return rows.map((r) => ({
@@ -2829,8 +3859,9 @@ function buildDocStore(deps: DocStoreDeps) {
     lookup: { findSharedByKey },
     feed: { feedHead, feedChanges, feedDocuments, feedWitness },
     moderation: createModeration({ withTx, charge }),
+    rater: createRater({ withTx, charge, raterLookupTx }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },
-    viewerData: { listViewerUsage, viewerHoldings, emptyViewerData, limits },
+    viewerData: { listViewerUsage, viewerHoldings, viewerRecords, emptyViewerData, limits },
   };
 }
 
@@ -2914,7 +3945,7 @@ function connectionUnavailable(err: unknown): unknown {
       message: cause,
     },
     'app-blocks'
-  ).catch(() => undefined);
+  );
   return new DocStoreError('service_unavailable', `storage is temporarily unavailable: ${cause}`, {
     retryAfter: 1,
   });
@@ -2936,7 +3967,7 @@ function connectConfigFault(err: unknown): unknown {
       message: err instanceof Error ? err.message : String(err),
     },
     'app-blocks'
-  ).catch(() => undefined);
+  );
   return err;
 }
 
@@ -3110,6 +4141,61 @@ const SQL_MOD_LOCK = `SELECT d.version, d.seq, d.author_uid, d.size_bytes, d.hid
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
   FOR UPDATE`;
+
+// THE RATER (content levels, build 3; `doc-rater.service.ts`). The shared documents of one
+// collection that are not rated for their current version — never rated (NULL), `pending`, or
+// rated or overridden for an older version (`RATED_NOW` is false) — oldest change first, after a
+// seq cursor. Counter documents hold no `data` to rate, and a hidden one waits for a moderator.
+// Read server-side to be rated; never returned to a viewer. Uses `doc_feed_shared_seq_idx`.
+// $1 app, $2 ns, $3 coll, $4 seq cursor (exclusive), $5 limit
+const SQL_RATER_UNRATED = `SELECT d.key, d.data, d.version, d.seq, d.rating_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.author_kind <> 'counter' AND d.hidden_at IS NULL
+    AND NOT ${RATED_NOW}
+  ORDER BY d.seq
+  LIMIT $5::int`;
+
+// The rater's lock read: the revision its rating is bound to. $1 app, $2 ns, $3 coll, $4 key
+const SQL_RATER_LOCK = `SELECT d.seq, d.author_kind, d.hidden_at IS NOT NULL AS hidden
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
+  FOR UPDATE`;
+
+// Record a rating for the document's CURRENT version and give it the next seq, so a feed reader
+// sees the change. A moderator's override is kept, and wins while it is for this version
+// (`CURRENT_LEVEL`). Returns the level readers now get. $1 app, $2 ns, $3 coll, $4 key,
+// $5 level, $6 seq
+const SQL_RATER_APPLY = `UPDATE appdata.doc d
+  SET level = $5::int, rated_version = d.version, rated_at = now(), seq = $6::bigint,
+    rating_status = CASE WHEN d.override_level IS NOT NULL AND d.override_version = d.version
+      THEN 'overridden' ELSE 'rated' END
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
+  RETURNING ${CURRENT_LEVEL} AS current_level`;
+
+// Whether the rating-id migration (`20261118120000_appdata_doc_rating_id.sql`) is applied: its
+// lookup policy is on `doc`. Until it is, the rater does nothing (`ready`). A catalog read.
+const SQL_RATER_POLICY = `SELECT count(*)::int AS n FROM pg_catalog.pg_policies pp
+  WHERE pp.policyname = 'appdata_rater_lookup' AND pp.tablename = 'doc'`;
+
+// The one shared document a rating id names, by address only. Run only inside `raterLookupTx`,
+// whose policy admits that one row. $1 rating id
+const SQL_RATER_LOOKUP = `SELECT rl.app_id, rl.ns, rl.coll, rl.key FROM appdata.doc rl
+  WHERE rl.rating_id = $1::int AND rl.scope_uid = 0`;
+
+// Give a shared document its rating id the first time it is rated; an existing id is kept.
+// $1 app, $2 ns, $3 coll, $4 key
+const SQL_RATER_ASSIGN_ID = `UPDATE appdata.doc d
+  SET rating_id = COALESCE(d.rating_id, nextval('appdata.doc_rating_id_seq')::int)
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
+  RETURNING d.rating_id`;
+
+// One shared document as the rater reads it to rate it. Read server-side; never returned to a
+// viewer. $1 app, $2 ns, $3 coll, $4 key
+const SQL_RATER_GET = `SELECT d.data, d.version, d.seq, d.author_uid, d.author_kind,
+    d.hidden_at IS NOT NULL AS hidden, d.rating_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
 
 function assertModTarget(collection: string, key: string): void {
   if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
@@ -3372,4 +4458,188 @@ function createModeration({ withTx, charge }: ModerationDeps) {
   }
 
   return { listReported, get, setHidden, dismissReports, delete: remove };
+}
+
+/** A shared document waiting for a rating, as the rater reads it. */
+export type UnratedDoc = {
+  key: string;
+  data: unknown;
+  version: number;
+  /** The revision a rating of this read is bound to (`applyRating`'s `seq`). */
+  seq: number;
+  /** Its rating id, once the rater has given it one. */
+  ratingId: number | null;
+};
+
+export type ApplyRatingResult =
+  | { applied: true; seq: number; currentLevel: number }
+  | { applied: false; reason: 'gone' | 'changed' | 'hidden' | 'counter' };
+
+/** The levels a rating may carry: one NsfwLevel bit (the CHECK `doc_level_bit`). */
+const RATING_LEVEL_BITS = new Set([1, 2, 4, 8, 16, 32]);
+
+/** A shared document's address: what a rating id names. */
+export type RatedDocAddress = { appId: string; ns: string; collection: string; key: string };
+
+/** One shared document as the rater reads it. */
+export type DocForRating = {
+  data: unknown;
+  version: number;
+  /** The revision a rating of this read is bound to (`applyRating`'s `seq`). */
+  seq: number;
+  authorUid: number | null;
+  authorKind: string;
+  hidden: boolean;
+  ratingId: number | null;
+};
+
+const MAX_RATING_ID = 2_147_483_647;
+
+function createRater({
+  withTx,
+  charge,
+  raterLookupTx,
+}: ModerationDeps & {
+  raterLookupTx: <T>(ratingId: number, fn: (c: DocStoreClient) => Promise<T>) => Promise<T>;
+}) {
+  let migrated = false;
+
+  /**
+   * Whether the rating-id migration is applied (its lookup policy exists). Found once and kept;
+   * while absent, asked again on every call, which is once per rater pass.
+   */
+  async function ready(): Promise<boolean> {
+    if (migrated) return true;
+    const n = await raterLookupTx(0, async (c) =>
+      Number((await c.query(SQL_RATER_POLICY)).rows[0]?.n ?? 0)
+    );
+    migrated = n > 0;
+    return migrated;
+  }
+
+  /** The shared document `ratingId` names, or null when no document carries it any more. */
+  async function findByRatingId(ratingId: number): Promise<RatedDocAddress | null> {
+    if (!Number.isSafeInteger(ratingId) || ratingId < 1 || ratingId > MAX_RATING_ID) return null;
+    const row = await raterLookupTx(
+      ratingId,
+      async (c) => (await c.query(SQL_RATER_LOOKUP, [ratingId])).rows[0]
+    );
+    if (!row) return null;
+    return {
+      appId: row.app_id as string,
+      ns: row.ns as string,
+      collection: row.coll as string,
+      key: row.key as string,
+    };
+  }
+
+  /** The shared document's rating id, given on first use; null when the document is gone. */
+  async function assignRatingId(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string
+  ): Promise<number | null> {
+    assertModTarget(collection, key);
+    const row = await withTx(
+      { appId, ns, viewerUid: null },
+      async (c) => (await c.query(SQL_RATER_ASSIGN_ID, [appId, ns, collection, key])).rows[0]
+    );
+    return row ? Number(row.rating_id) : null;
+  }
+
+  /** One shared document as the rater rates it, or null when it is gone. */
+  async function getForRating(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string
+  ): Promise<DocForRating | null> {
+    assertModTarget(collection, key);
+    const row = await withTx(
+      { appId, ns, viewerUid: null },
+      async (c) => (await c.query(SQL_RATER_GET, [appId, ns, collection, key])).rows[0]
+    );
+    if (!row) return null;
+    return {
+      data: row.data,
+      version: Number(row.version),
+      seq: Number(row.seq),
+      authorUid: row.author_uid === null ? null : Number(row.author_uid),
+      authorKind: row.author_kind as string,
+      hidden: row.hidden === true,
+      ratingId: row.rating_id === null ? null : Number(row.rating_id),
+    };
+  }
+  /**
+   * Up to `limit` shared documents of one collection that need a rating, oldest change first,
+   * after the seq cursor `afterSeq` (exclusive; 0 from the start).
+   */
+  async function listUnrated(
+    appId: string,
+    ns: string,
+    collection: string,
+    opts: { afterSeq: number; limit: number }
+  ): Promise<UnratedDoc[]> {
+    if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
+    if (!Number.isSafeInteger(opts.afterSeq) || opts.afterSeq < 0) {
+      throw invalid('afterSeq must be a non-negative integer');
+    }
+    if (!Number.isSafeInteger(opts.limit) || opts.limit < 1 || opts.limit > B.listLimitMax) {
+      throw invalid(`limit must be 1–${B.listLimitMax}`);
+    }
+    const rows = await withTx(
+      { appId, ns, viewerUid: null },
+      async (c) =>
+        (
+          await c.query(SQL_RATER_UNRATED, [appId, ns, collection, opts.afterSeq, opts.limit])
+        ).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      data: r.data,
+      version: Number(r.version),
+      seq: Number(r.seq),
+      ratingId: r.rating_id === null || r.rating_id === undefined ? null : Number(r.rating_id),
+    }));
+  }
+
+  /**
+   * Record `level` as the rating of the shared document `key` — only if it is still at the
+   * revision `seq` the rater read and scanned. Any write since (an edit, a delete and re-create, a
+   * schema migration) moved its seq, so the rating is dropped (`changed`) and the document stays
+   * pending for the next pass; `version` alone cannot tell, as it restarts at 1 on a re-create. The
+   * rating is recorded for the document's current version, takes the next seq (a feed reader sees
+   * it), and a moderator's override for this version still wins.
+   */
+  async function applyRating(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string,
+    opts: { seq: number; level: number }
+  ): Promise<ApplyRatingResult> {
+    assertModTarget(collection, key);
+    if (!RATING_LEVEL_BITS.has(opts.level)) throw invalid('level must be one NsfwLevel bit');
+    if (!Number.isSafeInteger(opts.seq) || opts.seq < 1) throw invalid('malformed seq');
+    const ctx: DocStoreContext = { appId, ns, viewerUid: null };
+    return withTx(ctx, async (c) => {
+      const row = (await c.query(SQL_RATER_LOCK, [appId, ns, collection, key])).rows[0];
+      if (!row) return { applied: false, reason: 'gone' } as const;
+      if (Number(row.seq) !== opts.seq) return { applied: false, reason: 'changed' } as const;
+      if (row.hidden) return { applied: false, reason: 'hidden' } as const;
+      if (row.author_kind === 'counter') return { applied: false, reason: 'counter' } as const;
+      // No bytes move; the charge only takes the next seq under the usage_app lock (LOCK ORDER (2)).
+      const seq = await charge(c, ctx, NO_APP_CHARGE, {
+        uid: 0,
+        bytes: 0,
+        docs: 0,
+        ceiling: 'app',
+      });
+      const out = await c.query(SQL_RATER_APPLY, [appId, ns, collection, key, opts.level, seq]);
+      return { applied: true, seq, currentLevel: Number(out.rows[0].current_level) } as const;
+    });
+  }
+
+  return { ready, findByRatingId, assignRatingId, getForRating, listUnrated, applyRating };
 }

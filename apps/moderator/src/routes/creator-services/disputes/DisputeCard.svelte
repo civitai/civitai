@@ -4,7 +4,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { cn } from '@civitai/ui/utils.js';
-  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+  import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime, num, plural } from '$lib/format';

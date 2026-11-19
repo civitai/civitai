@@ -19,9 +19,10 @@ import type { CsamReportType } from '~/shared/utils/prisma/enums';
 import { IconExternalLink, IconPhoto } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import * as z from 'zod';
 import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
+import { CsamContextTextSelect, noContextSources } from '~/components/Csam/CsamContextTextSelect';
 import { settleShown } from '~/components/Csam/csam-shown';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { Form, InputCheckboxGroup, InputRadioGroup, useForm } from '~/libs/form';
@@ -63,6 +64,7 @@ export function CsamDetailsForm({
   });
 
   const imageIds = useCsamImageSelectStore.getState().getSelected(userId);
+  const [contextSources, setContextSources] = useState(noContextSources);
   const supplemental = trpc.csam.getSupplementalPreview.useQuery(
     { userId, imageIds, supplementalOf: supplementalOf ?? 0 },
     { enabled: !!supplementalOf, retry: false, refetchOnMount: 'always' }
@@ -98,6 +100,10 @@ export function CsamDetailsForm({
           userId,
           details: data,
           supplementalOf,
+          ...(type === 'Image' &&
+            (contextSources.postIds.length > 0 || contextSources.commentIds.length > 0) && {
+              contextSources,
+            }),
         });
       },
     });
@@ -157,6 +163,14 @@ export function CsamDetailsForm({
                 <Input.Wrapper label="Select the resources that you'd like to have referenced in this report">
                   <InputModelVersionSelect name="modelVersionIds" imageIds={imageIds} />
                 </Input.Wrapper>
+              )}
+              {type === 'Image' && (
+                <CsamContextTextSelect
+                  userId={userId}
+                  imageIds={imageIds}
+                  value={contextSources}
+                  onChange={setContextSources}
+                />
               )}
               <Group justify="flex-end">
                 {onPrevious && (

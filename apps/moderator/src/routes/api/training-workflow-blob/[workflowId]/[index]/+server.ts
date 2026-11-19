@@ -53,7 +53,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     workflowId: params.workflowId,
     ownerId: resolved.ownerId,
     index,
-  }).catch(() => {});
+  });
 
   // User-uploaded bytes served from this app's origin: anything but plain media goes out as an opaque
   // download, never as something a browser would render as a document.

@@ -1,6 +1,6 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import type { InfiniteData, Query, QueryClient, QueryKey } from '@tanstack/react-query';
-import { useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useCallback, useEffect, useMemo } from 'react';
@@ -37,7 +37,6 @@ export const useQueryNotifications = (
     { limit: 100, ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      placeholderData: keepPreviousData,
       ...withPlaceholderData(options),
     }
   );
@@ -465,17 +464,53 @@ export async function insertSignalledNotification(
     } catch {}
   }
 
-  // update All + "Category" cache
+  let wasUnread = false;
   for (const filter of listFilters) {
     queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
       filter,
       produce((old) => {
         if (!old || !old.pages || !old.pages.length) return;
-        const firstPage = old.pages[0];
-        firstPage.items.unshift(newUpdated);
+        // A debounced notification is re-surfaced under the same id, so the signal can name a row
+        // the list already holds: move it to the top rather than adding a second one.
+        for (const page of old.pages) {
+          const index = page.items.findIndex((item) => item.id == newUpdated.id);
+          if (index === -1) continue;
+          if (!page.items[index].read) wasUnread = true;
+          page.items.splice(index, 1);
+        }
+        old.pages[0].items.unshift(newUpdated);
       })
     );
   }
+
+  return { wasUnread };
+}
+
+/** The badge bump for a signal: the notification's category and All, each by one. */
+export function applySignalToCounts<T extends NotificationCounts>(
+  old: T | undefined,
+  category: string
+): T {
+  const next = { ...old, all: old?.all ?? 0 } as NotificationCounts;
+  const key = category.toLowerCase();
+  next[key] = (next[key] ?? 0) + 1;
+  next.all++;
+  return next as T;
+}
+
+/**
+ * Applies a notification:new signal to the cache: the row into its lists, and one onto the badge
+ * unless a loaded list already held it unread, since that unread row is already counted.
+ */
+export async function handleNotificationSignal(
+  queryClient: Pick<QueryClient, 'getQueriesData' | 'setQueriesData'>,
+  listKey: QueryKey[number],
+  updated: NotificationGetAllItem,
+  setCounts: (updater: (old: NotificationCounts | undefined) => NotificationCounts) => void,
+  fetchImpl: typeof fetch = fetch
+) {
+  const { wasUnread } = await insertSignalledNotification(queryClient, listKey, updated, fetchImpl);
+  if (!wasUnread) setCounts((old) => applySignalToCounts(old, updated.category));
 }
 
 export const useNotificationSignal = () => {
@@ -484,24 +519,13 @@ export const useNotificationSignal = () => {
 
   const onUpdate = useCallback(
     async (updated: NotificationGetAllItem) => {
-      await insertSignalledNotification(
+      await handleNotificationSignal(
         queryClient,
         getQueryKey(trpc.notification.getAllByUser)[0],
-        updated
+        updated,
+        (updater) =>
+          queryUtils.user.checkNotifications.setData(undefined, (old) => updater(old) as typeof old)
       );
-
-      queryUtils.user.checkNotifications.setData(undefined, (old) => {
-        // Writes two named keys only, so unlike the mark-read updater it cannot
-        // touch a non-category count. The cast is the index access, not a claim
-        // that every key here is a category.
-        const newCounts = { ...old, all: old?.all ?? 0 } as NonNullable<typeof old> &
-          Record<string, number>;
-        newCounts[updated.category.toLowerCase()] =
-          (newCounts[updated.category.toLowerCase()] ?? 0) + 1;
-        newCounts['all']++;
-
-        return newCounts;
-      });
     },
     [queryClient, queryUtils]
   );

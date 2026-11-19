@@ -33,12 +33,14 @@ import type { ComCoverState } from '~/shared/utils/model-sfw-face';
 import {
   COM_COVER_NOT_LISTED_LABEL,
   comCoverStateMessages,
+  COM_FACE_REFUSED_MESSAGE,
   comFaceRemovedMessage,
   isComSafeLevel,
   normalizeSfwFaceText,
   SFW_DESCRIPTION_MAX_LENGTH,
 } from '~/shared/utils/model-sfw-face';
 import { showErrorNotification } from '~/utils/notifications';
+import { ComFaceDisputeAlert } from '~/components/Model/LockReview/ComFaceDisputeAlert';
 import { trpc } from '~/utils/trpc';
 
 type ListingForm = {
@@ -156,6 +158,7 @@ export function ModelListingTabs({
 
           <Tabs.Panel value="com" pt="md">
             {removedAlert}
+            {modelId && <ComFaceDisputeAlert modelId={modelId} />}
             {coverNotListed && (
               <Alert color="yellow" p="xs" mb="md" title={COM_COVER_NOT_LISTED_LABEL}>
                 <Text size="xs">{comCoverStateMessages[coverNotListed]}</Text>
@@ -204,10 +207,15 @@ function ComListing({
     if (name === null) form.setValue('sfwCoverImageId', null, { shouldDirty: true });
   };
 
+  const queryUtils = trpc.useUtils();
   const draftMutation = trpc.model.draftSfwFace.useMutation({
     onSuccess: (draft) => setComContent(draft.sfwName, draft.sfwDescription),
-    onError: (error) =>
-      showErrorNotification({ title: 'Could not draft', error: new Error(error.message) }),
+    onError: (error) => {
+      showErrorNotification({ title: 'Could not draft', error: new Error(error.message) });
+      // A refusal can lock the rating, which brings up the Dispute button.
+      if (modelId && error.message === COM_FACE_REFUSED_MESSAGE)
+        void queryUtils.report.getLockReviewState.invalidate({ id: modelId });
+    },
   });
 
   const handleDraft = () => {

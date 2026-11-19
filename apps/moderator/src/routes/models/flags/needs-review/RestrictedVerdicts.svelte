@@ -6,7 +6,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import ComFaceCard from '$lib/components/ComFaceCard.svelte';
   import { leadComCoverBlurred } from '$lib/com-face';
-  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+  import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import {

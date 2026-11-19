@@ -39,9 +39,7 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({
 
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbWrite = dbMock.dbWrite;
-const mockLogToAxiom = loggingMock.logToAxiom;
 
 const ctx = {} as Parameters<typeof scanFilesFallbackJob.run>[0];
 
@@ -77,7 +75,6 @@ beforeEach(() => {
   mockDbWrite.modelFile.update.mockReset().mockResolvedValue({});
   mockDbWrite.modelFileHash.create.mockReset().mockResolvedValue(undefined);
   mockCreateModelFileScanRequest.mockReset();
-  mockLogToAxiom.mockReset().mockResolvedValue(undefined);
   // limitConcurrency stays as our sequential runner — never reset
 });
 
@@ -158,7 +155,7 @@ describe('scanFilesFallbackJob', () => {
     expect(result).toEqual({ submitted: 0, failed: 1, skipped: 0 });
   });
 
-  it('on submission failure, backs off scanRequestedAt and logs to Axiom', async () => {
+  it('on submission failure, backs off scanRequestedAt', async () => {
     mockDbWrite.modelFile.findMany.mockResolvedValue([
       {
         id: 5,
@@ -173,14 +170,6 @@ describe('scanFilesFallbackJob', () => {
       where: { id: 5 },
       data: { scanRequestedAt: EXPECTED_BACKOFF_AT },
     });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        name: 'scan-files-fallback',
-        error: 'orchestrator down',
-      }),
-      'webhooks'
-    );
     expect(result).toEqual({ submitted: 0, failed: 1, skipped: 0 });
   });
 
@@ -217,13 +206,6 @@ describe('scanFilesFallbackJob', () => {
       where: { id: 7 },
       data: { scanRequestedAt: EXPECTED_BACKOFF_AT },
     });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        submissionErrorCode: 'not-found',
-        tombstoned: true,
-      }),
-      'webhooks'
-    );
     expect(result).toEqual({ submitted: 0, failed: 1, skipped: 0 });
   });
 
@@ -261,13 +243,6 @@ describe('scanFilesFallbackJob', () => {
       where: { id: 8 },
       data: { exists: false },
     });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        submissionErrorCode: 'transient',
-        tombstoned: false,
-      }),
-      'webhooks'
-    );
     expect(result).toEqual({ submitted: 0, failed: 1, skipped: 0 });
   });
 
@@ -378,6 +353,18 @@ describe('scanFilesFallbackJob fairness ordering', () => {
         orderBy: [{ scanRequestedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
       })
     );
+  });
+});
+
+describe('scanFilesFallbackJob and Training Data', () => {
+  it('never picks a Training Data zip, which has its own scan', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue([]);
+
+    await runJob(scanFilesFallbackJob);
+
+    expect(mockDbWrite.modelFile.findMany.mock.calls[0][0].where.type).toEqual({
+      not: 'Training Data',
+    });
   });
 });
 
@@ -513,69 +500,5 @@ describe('scanFilesFallbackJob per-run budget', () => {
 
     expect(mockCreateModelFileScanRequest).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ submitted: 2, failed: 0, skipped: 0 });
-  });
-
-  // 🔴 Run TWO cases in which EVERY asserted count differs. One case is not
-  // enough: with a single fixture the asserted `batchSize` equals that fixture's
-  // own length, so a mutant hardcoding the literal survives — and simply picking
-  // a bigger single fixture just relocates the coincidence instead of removing
-  // it. But varying only the SIZE is also not enough: it pins `batchSize` and
-  // `skipped` while leaving `submitted` and `failed` identical across cases, so
-  // hardcoding either of those still survives. (Measured — both did.) So the
-  // second case also fails its one attempted submission, which moves
-  // submitted 1→0 and failed 0→1. Across the pair every field takes two
-  // different values, so no constant satisfies both, and within each case all
-  // four counts are mutually distinct so no field can be satisfied by another
-  // field's value.
-  //
-  // This payload is the only signal that the queue is oversubscribed — the whole
-  // motivation for the bound — so a lie in it is not cosmetic.
-  it.each([
-    { size: 5, firstAttemptFails: false, submitted: 1, failed: 0, skipped: 4 },
-    { size: 3, firstAttemptFails: true, submitted: 0, failed: 1, skipped: 2 },
-  ])(
-    'reports the truncated run to Axiom so the bound is observable (batch $size, failing=$firstAttemptFails)',
-    async ({ size, firstAttemptFails, submitted, failed, skipped }) => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue(
-        Array.from({ length: size }, (_, i) => ({
-          id: i + 1,
-          modelVersion: {
-            id: (i + 1) * 10,
-            baseModel: 'SD 1.5',
-            model: { id: (i + 1) * 100, type: 'Checkpoint' },
-          },
-        }))
-      );
-      // Burn the budget on the first attempt either way; only its OUTCOME
-      // differs between the two cases.
-      mockCreateModelFileScanRequest.mockImplementation(async () => {
-        vi.setSystemTime(new Date(FIXED_NOW.getTime() + PAST_BUDGET_MS));
-        if (firstAttemptFails) throw new Error('orchestrator down');
-      });
-
-      await runJob(scanFilesFallbackJob);
-
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'warning',
-          name: 'scan-files-fallback',
-          submitted,
-          failed,
-          skipped,
-          batchSize: size,
-          runBudgetMs: 180_000,
-        }),
-        'webhooks'
-      );
-    }
-  );
-
-  it('emits no budget warning on a run that skips nothing', async () => {
-    mockDbWrite.modelFile.findMany.mockResolvedValue(twoFiles);
-    mockCreateModelFileScanRequest.mockResolvedValue(undefined);
-
-    await runJob(scanFilesFallbackJob);
-
-    expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 });

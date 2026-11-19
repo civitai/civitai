@@ -1,4 +1,6 @@
 import { fail, type Actions } from '@sveltejs/kit';
+import { agentReportFilterOf, agentReportWhere } from '$lib/server/agent-reporters';
+import { FEEDBACK_CAPTURE_OWNER_REFUSAL } from '@civitai/shared/feedback-capture';
 import { z } from 'zod';
 import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import {
@@ -15,12 +17,16 @@ import {
   closedAppellants,
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
-  FlagOnlyRemovedError,
+  RemovedImageNotRestorableError,
   AppealRestoreRefusedError,
   APPEAL_RESTORE_REFUSED,
   resolveImageAppeal,
   sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
+import {
+  CSAM_BLOCKLIST_RETRY,
+  CsamBlocklistWriteError,
+} from '$lib/server/image-moderation-effects';
 import { setReportStatus } from '$lib/server/reports.service';
 import { getActorMeta } from '$lib/server/request-meta';
 import { dbRead, dbWrite } from '$lib/server/db';
@@ -29,7 +35,11 @@ import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal
 import { heldRemovalMessage, type HeldRemoval } from '$lib/server/removal-hold';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
 import { ReportStatus } from '$lib/reports';
-import { FLAG_KEPT_THROUGH_BLOCK, type ImageViewSlug } from '$lib/image-review';
+import {
+  FLAG_KEPT_THROUGH_BLOCK,
+  reviewHighlightCategories,
+  type ImageViewSlug,
+} from '$lib/image-review';
 import { violationInputSchema } from '$lib/violations';
 import { parseImageFlagValue } from '$lib/image-flags';
 import { isRatingLevel } from '$lib/nsfw-levels';
@@ -45,12 +55,17 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(10).max(200).catch(100),
   level: z.coerce.number().int().min(0).catch(allBrowsingLevelsWithBlockedFlag),
   userId: int4Id.optional().catch(undefined),
+  captures: z
+    .literal('1')
+    .transform(() => true)
+    .optional()
+    .catch(undefined),
 });
 
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
 
-const FLAG_ONLY_REASON = 'removed, and a review queue cannot put it back';
-const FLAG_ONLY_REMEDY =
+const REMOVED_REASON = 'removed, and a review queue cannot put it back';
+const REMOVED_REMEDY =
   'Dismiss a flagged image from its review queue, or restore the image explicitly. Reload.';
 
 /** `string`, not the union: `blockImage` takes the ClickHouse column's type, and the schema is what
@@ -82,7 +97,8 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
  * `/reports/image` (the reported-image queue, which moved there from `/images/reported`).
  */
 export async function loadImageQueue(view: ImageViewSlug, url: URL) {
-  const { cursor, limit, level, userId } = parseQuery(url, querySchema);
+  const { cursor, limit, level, userId, captures } = parseQuery(url, querySchema);
+  const capturesOnly = captures ?? false;
   const tagIds = parseIds(url.searchParams.get('tags'));
   const excludedTagIds = parseIds(url.searchParams.get('notags'));
 
@@ -99,11 +115,13 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
     // `?report=<id>`: the one report a link names (`reportActionPath`), at any status.
     const reportParam = Number(url.searchParams.get('report'));
     const reportId = Number.isInteger(reportParam) && reportParam > 0 ? reportParam : undefined;
+    const agentFilter = agentReportFilterOf(url);
     const { items, nextCursor } = await getReportedImageQueue({
       browsingLevel: level,
       cursor: reportId ? undefined : cursor,
       limit,
       reportId,
+      agents: reportId ? undefined : agentReportWhere(agentFilter),
     });
     return {
       ...base,
@@ -112,6 +130,8 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       items: await withModel3d(items),
       nextCursor: reportId ? undefined : nextCursor,
       singleReport: reportId ?? null,
+      // `null` hides the control: no agent accounts configured, or a `?report=` view, which runs unfiltered.
+      agentFilter: reportId ? null : agentFilter,
     };
   }
 
@@ -130,11 +150,11 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       browsingLevel: level,
       tagIds,
       excludedTagIds,
+      capturesOnly,
       cursor,
       limit,
     });
-    // The minor queue highlights only minor-relevant categories; other queues highlight the whole prompt.
-    const categories = view === 'minor' ? (['minor', 'young', 'age'] as const) : undefined;
+    const categories = reviewHighlightCategories(view);
     return {
       ...base,
       view,
@@ -144,11 +164,12 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
         items.map(({ prompt, negativePrompt, ...item }) => ({
           ...item,
           promptHighlight: getPromptHighlightSegments(prompt, negativePrompt, {
-            categories: categories ? [...categories] : undefined,
+            categories,
           }),
         }))
       ),
       nextCursor,
+      capturesOnly,
     };
   }
 
@@ -159,6 +180,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
     tagIds,
     excludedTagIds,
     userId: csamUserId,
+    capturesOnly,
     cursor,
     limit,
   });
@@ -183,6 +205,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
     ),
     nextCursor,
     userId: csamUserId ?? null,
+    capturesOnly,
   };
 }
 
@@ -227,9 +250,9 @@ export const imageQueueActions = {
     try {
       await acceptImage({ imageId, removeMinorFlag, userId: locals.user.id });
     } catch (e) {
-      if (e instanceof FlagOnlyRemovedError)
+      if (e instanceof RemovedImageNotRestorableError)
         return fail(409, {
-          error: `This image was ${FLAG_ONLY_REASON}. ${FLAG_ONLY_REMEDY}`,
+          error: `This image was ${REMOVED_REASON}. ${REMOVED_REMEDY}`,
           imageId,
         });
       throw e;
@@ -253,6 +276,8 @@ export const imageQueueActions = {
     const violation = parseViolation(form);
     if (typeof violation === 'string') return fail(400, { error: violation });
 
+    // The block commits even when its CSAM blocklist entry fails; that is reported after the report.
+    let csamBlocklistFailed = false;
     const { held, skipped } = await blockImage({
       imageId,
       userId: locals.user.id,
@@ -260,6 +285,10 @@ export const imageQueueActions = {
       ...getActorMeta(event),
       reportIds: reportId ? [reportId] : undefined,
       skipAppealCheck: !!locals.grants['image.removal.confirm'],
+    }).catch((e: unknown) => {
+      if (!(e instanceof CsamBlocklistWriteError)) throw e;
+      csamBlocklistFailed = true;
+      return { held: undefined, skipped: e.skipped };
     });
     // Not removed, so the report stays open; confirming the hold actions it.
     if (held) return { success: true, imageId, held: heldRemovalMessage([held]) };
@@ -269,6 +298,7 @@ export const imageQueueActions = {
         status: ReportStatus.Actioned,
         userId: locals.user.id,
       });
+    if (csamBlocklistFailed) return fail(502, { error: CSAM_BLOCKLIST_RETRY, imageId });
     return { success: true, imageId };
   },
 
@@ -307,11 +337,12 @@ export const imageQueueActions = {
     if (typeof input === 'string') return fail(400, { error: input });
     const result = await dismissUserFromCsamQueue({ ...input, moderatorId: locals.user.id });
     if (!result.ok)
-      return fail(result.reason === 'unavailable' ? 503 : 409, {
-        error:
-          result.reason === 'unavailable'
-            ? 'Dismissing is not available yet. Nothing was dismissed.'
-            : `User #${input.userId}'s queue changed since it was shown. Nothing was dismissed. Reload.`,
+      return fail({ unavailable: 503, capture: 400, changed: 409 }[result.reason], {
+        error: {
+          unavailable: 'Dismissing is not available yet. Nothing was dismissed.',
+          capture: `${FEEDBACK_CAPTURE_OWNER_REFUSAL} Nothing was dismissed.`,
+          changed: `User #${input.userId}'s queue changed since it was shown. Nothing was dismissed. Reload.`,
+        }[result.reason],
       });
     return {
       success: true,
@@ -434,7 +465,7 @@ export const imageQueueActions = {
           userId: locals.user.id,
           deferAppealEmail: true,
         }).catch((e) => {
-          if (!(e instanceof FlagOnlyRemovedError)) throw e;
+          if (!(e instanceof RemovedImageNotRestorableError)) throw e;
           refused.push(imageId);
           return undefined;
         })
@@ -447,8 +478,8 @@ export const imageQueueActions = {
         error: [
           `${imageIds.length - refused.length} of ${imageIds.length} accepted.`,
           reportIds.length ? 'No report was moved.' : '',
-          `Not accepted (${FLAG_ONLY_REASON}): ${refused.join(', ')}.`,
-          FLAG_ONLY_REMEDY,
+          `Not accepted (${REMOVED_REASON}): ${refused.join(', ')}.`,
+          REMOVED_REMEDY,
         ]
           .filter(Boolean)
           .join(' '),
@@ -474,6 +505,7 @@ export const imageQueueActions = {
       skipAppealCheck: !!locals.grants['image.removal.confirm'],
     };
     const reportsByImage = await reportIdsByImage(reportIds);
+    const csamBlocklistFailed: number[] = [];
     const results = await Promise.all(
       imageIds.map((imageId) =>
         blockImage({
@@ -481,6 +513,10 @@ export const imageQueueActions = {
           userId: locals.user.id,
           ...actor,
           reportIds: reportsByImage.get(imageId),
+        }).catch((e: unknown): Awaited<ReturnType<typeof blockImage>> => {
+          if (!(e instanceof CsamBlocklistWriteError)) throw e;
+          csamBlocklistFailed.push(imageId);
+          return { skipped: e.skipped };
         })
       )
     );
@@ -498,6 +534,8 @@ export const imageQueueActions = {
         .filter((id) => !heldReports.has(id))
         .map((id) => setReportStatus({ id, status: ReportStatus.Actioned, userId: locals.user.id }))
     );
+    if (csamBlocklistFailed.length)
+      return fail(502, { error: CSAM_BLOCKLIST_RETRY, imageIds: csamBlocklistFailed });
     return {
       success: true,
       ...(held.length && {

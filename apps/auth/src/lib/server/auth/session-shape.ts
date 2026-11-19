@@ -148,7 +148,12 @@ export function shapeSessionUser({
     string,
     unknown
   >;
-  const { banDetails: _strippedBanDetails, ...userMeta } = fullMeta;
+  // heldImageCleared is a server-side marker for a review hold, not shown even to the account's owner.
+  const {
+    banDetails: _strippedBanDetails,
+    heldImageCleared: _heldImageCleared,
+    ...userMeta
+  } = fullMeta;
   const banDetails = getUserBanDetails({ meta: userMeta as { banDetails?: BanDetailsMeta } });
 
   // Assemble the @civitai/auth SessionUser contract — full parity with the main app's cached entry.

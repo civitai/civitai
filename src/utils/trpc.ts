@@ -25,9 +25,11 @@ import type { AppRouter } from '~/server/routers';
 import { clientTransformer } from '~/shared/utils/trpc-union-transformer';
 import { isDev } from '~/env/other';
 import { pageRouteHeaders } from '~/utils/page-route-header';
+import { trpcClientHeaders } from '~/utils/trpc-client-headers';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
+import { feedbackErrorLink } from '~/utils/feedback/trpcErrorLink';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 import { BLOCK_TOKEN_QUERY_PROCEDURES } from '~/shared/constants/block-token-transport.constants';
 import {
@@ -35,12 +37,8 @@ import {
   getTrpcUnifiedBatchWindowEnabled,
   registerBatchingApplies,
 } from '~/utils/trpc-batch-window';
-
-type RequestHeaders = {
-  'x-client-date': string;
-  'x-client': string;
-  'x-client-version'?: string;
-};
+import { GO_TRANSPORT_URL, isGoTransportEnabledFor } from '~/utils/trpc-go-transport';
+import { feedTransportTimingLink } from '~/utils/faro/feedTransport';
 
 const url = '/api/trpc';
 
@@ -132,6 +130,11 @@ export function isLargeQuery(op: { type: string; input: unknown }) {
   }
 }
 
+/** Queries whose input carries a private upload's blob URL (`uploadUrl`), kept out of request URLs. */
+export const PRIVATE_URL_QUERY_PROCEDURES: ReadonlySet<string> = new Set([
+  'imageSearchUpload.search',
+]);
+
 /**
  * Whether a query must leave the browser as POST: either its input is too large for a GET URL
  * (`isLargeQuery`), or its procedure is in `BLOCK_TOKEN_QUERY_PROCEDURES` — its input carries a
@@ -140,7 +143,11 @@ export function isLargeQuery(op: { type: string; input: unknown }) {
  */
 export function shouldSendQueryAsPost(op: { type: string; path: string; input: unknown }) {
   if (op.type !== 'query') return false;
-  return BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) || isLargeQuery(op);
+  return (
+    BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) ||
+    PRIVATE_URL_QUERY_PROCEDURES.has(op.path) ||
+    isLargeQuery(op)
+  );
 }
 
 /**
@@ -251,6 +258,11 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'event.getTeamScores',
   'event.getWornHat',
   'generation.checkResourcesCoverage',
+  'hatTurf.getFlagRaceForCollection',
+  'hatTurf.getFlagRaceTotals',
+  'hatTurf.getFlags',
+  'hatTurf.getOpenFlagCrucible',
+  'hatTurf.getPastFlags',
   'hatTurf.getStickersForImages',
   'generation.getStatus',
   'homeBlock.getHomeBlock',
@@ -330,8 +342,9 @@ export const NEVER_BATCH_PROCEDURES: ReadonlySet<string> = new Set([
  *  - we're in an authenticated browser (see `isAuthedBrowser` — anon stays cacheable),
  *  - the procedure is NOT edge-cacheable for authed sessions (see `CACHEABLE_PROCEDURES`),
  *  - the procedure is NOT excluded for a non-caching reason (see `NEVER_BATCH_PROCEDURES`),
- *  - the procedure is NOT a block-token query (see `BLOCK_TOKEN_QUERY_PROCEDURES` — the batch link sends
- *    queries as GET, which would put a block token in the URL),
+ *  - the procedure is NOT a block-token or private-URL query (`BLOCK_TOKEN_QUERY_PROCEDURES`,
+ *    `PRIVATE_URL_QUERY_PROCEDURES` — the batch link sends queries as GET, which would put the
+ *    token or URL in the request URL),
  *  - the caller didn't opt out via `context.skipBatch === true`,
  *  - its encoded input fits the batch link's URL cap (`isTooLargeToBatch` — otherwise it
  *    would trip "Input is too big for a single dispatch"; excluded ops fall to the
@@ -350,8 +363,28 @@ export function shouldBatch(op: {
     !CACHEABLE_PROCEDURES.has(op.path) &&
     !NEVER_BATCH_PROCEDURES.has(op.path) &&
     !BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) &&
+    !PRIVATE_URL_QUERY_PROCEDURES.has(op.path) &&
     op.context.skipBatch !== true &&
     !isTooLargeToBatch(op)
+  );
+}
+
+/**
+ * Send this operation over the Go transport only when ALL hold:
+ *  - it's a `query` for a procedure in `GO_TRANSPORT_PROCEDURES`,
+ *  - THAT procedure's own flag is on for this user (`feedGoTransport` for
+ *    `image.getImagesAsPostsInfinite`, `feedGoTransportModelGetAll` for `model.getAll`,
+ *    `feedGoTransportInfinite` for `image.getInfinite`),
+ *  - we're in an authenticated browser — signed-out responses are edge-cached under the
+ *    `/api/trpc` path, and moving them to another path would trade those hits for origin load,
+ *  - it would leave as a GET (`shouldSendQueryAsPost` false): the Go service answers GETs only.
+ */
+export function shouldUseGoTransport(op: { type: string; path: string; input: unknown }) {
+  return (
+    op.type === 'query' &&
+    isGoTransportEnabledFor(op.path) &&
+    isAuthedBrowser() &&
+    !shouldSendQueryAsPost(op)
   );
 }
 
@@ -369,7 +402,7 @@ function terminatingLink({
   url: string;
   headers: ReturnType<typeof getHeaders>;
 }): TRPCLink<AppRouter> {
-  return splitLink({
+  const defaultLink: TRPCLink<AppRouter> = splitLink({
     condition: shouldBatch,
     true: splitLink({
       // `trpcUnifiedBatchWindow`: both browser clients send through ONE batch link, so the React
@@ -380,6 +413,21 @@ function terminatingLink({
       false: batchStreamLink({ url, headers }),
     }),
     false: httpLinkWithLargeQuerySupport({ url, headers }),
+  });
+  return splitLink({
+    condition: shouldUseGoTransport,
+    true: [
+      feedTransportTimingLink({ transport: 'go', isAuthed: isAuthedBrowser }),
+      httpLink({ transformer: clientTransformer, url: GO_TRANSPORT_URL, headers }),
+    ],
+    false: [
+      feedTransportTimingLink({
+        transport: 'node',
+        isAuthed: isAuthedBrowser,
+        skip: shouldSendQueryAsPost,
+      }),
+      defaultLink,
+    ],
   });
 }
 
@@ -460,11 +508,7 @@ function batchStreamLink({
     maxItems: TRPC_MAX_BATCH_SIZE,
   });
 }
-const headers: RequestHeaders = {
-  'x-client-version': process.env.version,
-  'x-client-date': Date.now().toString(),
-  'x-client': 'web',
-};
+const headers = trpcClientHeaders;
 
 /**
  * Shared QueryClient config. Used by both the per-request server `QueryClient`
@@ -609,6 +653,7 @@ export const trpcVanilla: CreateTRPCClient<AppRouter> = createTRPCClient<AppRout
         (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
         (opts.direction === 'down' && opts.result instanceof Error),
     }),
+    feedbackErrorLink,
     batchWindowLink,
     terminatingLink({ url, headers: getHeaders() }),
   ],
@@ -640,6 +685,7 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<A
             (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
             (opts.direction === 'down' && opts.result instanceof Error),
         }),
+        feedbackErrorLink,
         batchWindowLink,
         terminatingLink({
           url: isClient ? url : `${env.NEXT_PUBLIC_BASE_URL as string}${url}`,

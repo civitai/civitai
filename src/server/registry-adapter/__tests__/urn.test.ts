@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCollectionSchemaUrn, registryUrn } from '~/server/registry-adapter/urn';
+import { parseCollectionSchemaUrn, registryUrn, urnNamespace } from '~/server/registry-adapter/urn';
 
 describe('registryUrn', () => {
   it.each([
@@ -13,6 +13,14 @@ describe('registryUrn', () => {
       'urn:schema:apps.civitai.com:pixel-garden/seed_packs@v3',
     ],
     [{ kind: 'runtime', name: 'iframe', major: 1 }, 'urn:apps.civitai.com:runtime/iframe@1'],
+    [
+      { kind: 'service', name: 'app-search', major: 1 },
+      'urn:apps.civitai.com:service/app-search@1',
+    ],
+    [
+      { kind: 'service', name: 'app-search', major: 12 },
+      'urn:apps.civitai.com:service/app-search@12',
+    ],
     [
       { kind: 'document', slug: 'pixel-garden', collection: 'seed_packs', key: '01J:Ab.c-9' },
       'urn:apps.civitai.com:pixel-garden/seed_packs/01J:Ab.c-9',
@@ -38,8 +46,41 @@ describe('registryUrn', () => {
     { kind: 'app', slug: 'a'.repeat(65) },
     { kind: 'collection-schema', slug: 'pixel-garden', collection: 'c'.repeat(33), major: 1 },
     { kind: 'release', slug: 'pixel-garden', version: '1'.repeat(65) },
+    { kind: 'service', name: 'app/search', major: 1 },
+    { kind: 'service', name: 'app@search', major: 1 },
+    { kind: 'service', name: 'app:search', major: 1 },
+    { kind: 'service', name: 'App-Search', major: 1 },
+    { kind: 'service', name: '', major: 1 },
+    { kind: 'service', name: 's'.repeat(65), major: 1 },
+    { kind: 'service', name: 'app-search', major: 0 },
+    { kind: 'service', name: 'app-search', major: 1.5 },
+    { kind: 'service', name: 'app-search', major: -1 },
   ] as const)('refuses %o', (ref) => {
     expect(() => registryUrn(ref)).toThrow(/registry urn: invalid/);
+  });
+});
+
+describe('service URNs', () => {
+  // A document of an app slugged `service` is `service/{collection}/{key}`: three segments, where a
+  // service URN has two, so neither can spell the other.
+  const segments = (urn: string) => urn.slice('urn:apps.civitai.com:'.length).split('/');
+
+  it('has two segments where a document has three', () => {
+    const service = registryUrn({ kind: 'service', name: 'app-search', major: 1 });
+    const doc = registryUrn({
+      kind: 'document',
+      slug: 'service',
+      collection: 'app_search',
+      key: '1',
+    });
+    expect(segments(service)).toEqual(['service', 'app-search@1']);
+    expect(segments(doc)).toEqual(['service', 'app_search', '1']);
+  });
+
+  it('is not read as a collection schema, and is in the namespace', () => {
+    const urn = registryUrn({ kind: 'service', name: 'app-search', major: 1 });
+    expect(parseCollectionSchemaUrn(urn)).toBeNull();
+    expect(urnNamespace(urn)).toBe('apps.civitai.com');
   });
 });
 
@@ -77,5 +118,22 @@ describe('parseCollectionSchemaUrn', () => {
     'urn:apps.civitai.com:pixel-garden/seed_packs/k1',
   ])('null for %s', (urn) => {
     expect(parseCollectionSchemaUrn(urn)).toBeNull();
+  });
+});
+
+describe('urnNamespace', () => {
+  it.each([
+    ['urn:apps.civitai.com:app/pixel-garden', 'apps.civitai.com'],
+    ['urn:schema:apps.civitai.com:app@v1', 'apps.civitai.com'],
+    ['urn:huggingface:black-forest-labs/FLUX.3-dev@a1b2c3d', 'huggingface'],
+    ['urn:schema:elsewhere.example:model@v1', 'elsewhere.example'],
+    // The reserved `schema` namespace names no origin, and neither does a URN with nothing after it.
+    ['urn:schema:apps.civitai.com', null],
+    ['urn:apps.civitai.com:', null],
+    ['urn::app/x', null],
+    ['https://json-schema.org/draft/2020-12/schema', null],
+    ['pixel-garden', null],
+  ])('%s → %s', (urn, ns) => {
+    expect(urnNamespace(urn)).toBe(ns);
   });
 });

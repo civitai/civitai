@@ -1,10 +1,5 @@
 import { Anchor, Badge, Box, Button, Card, Group, Image, Stack, Text, Title } from '@mantine/core';
-import {
-  IconApps,
-  IconExternalLink,
-  IconPlugConnected,
-  IconSettings,
-} from '@tabler/icons-react';
+import { IconApps, IconExternalLink, IconPlugConnected, IconSettings } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -37,12 +32,6 @@ export interface AppBlockCardProps {
   block: AvailableBlock;
   alreadySubscribed: boolean;
   onOpen: (block: AvailableBlock) => void;
-  /**
-   * Lifetime publisher share for this app, in cents. Rendered as an
-   * "Earning" chip on cards owned by the current user. Undefined =
-   * not owned by the viewer; 0 = owned but no earnings yet (no chip).
-   */
-  ownedEarningCents?: number;
   /**
    * W10 — whether the viewer can open a full-page app (the `appBlocksPages`
    * flag). When true AND the app declares a page (`manifest.hasPage`), an
@@ -130,7 +119,6 @@ export function AppBlockCard({
   block,
   alreadySubscribed,
   onOpen,
-  ownedEarningCents,
   canOpenPage,
   onRecentOpen,
 }: AppBlockCardProps) {
@@ -233,11 +221,6 @@ export function AppBlockCard({
                   </Badge>
                 );
               })()}
-            {ownedEarningCents != null && ownedEarningCents > 0 && (
-              <Badge variant="light" color="green" size="sm">
-                Earning ${(ownedEarningCents / 100).toFixed(2)}
-              </Badge>
-            )}
           </Stack>
         </Group>
         {manifest.description && (

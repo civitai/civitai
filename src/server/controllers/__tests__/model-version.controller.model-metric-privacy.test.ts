@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import type * as VersionChildrenService from '~/server/services/model-version-generation-children.service';
 import type * as PaidAccessService from '~/server/services/paid-access.service';
 import { inheritedMetricPrivacy } from '~/components/Resource/Forms/metric-privacy-hints';
@@ -79,10 +81,10 @@ function project(row: unknown, select: Record<string, unknown>): unknown {
   return out;
 }
 
-const load = (user: { id: number; isModerator?: boolean } | null) =>
+const load = (user: { id: number; isModerator?: boolean } | null, credential = {}) =>
   getModelVersionHandler({
     input: { id: versionRow.id },
-    ctx: { user, features: {}, domain: 'blue' },
+    ctx: { user, features: {}, domain: 'blue', ...credential },
   } as never);
 
 beforeEach(() => {
@@ -111,9 +113,56 @@ describe('modelVersion.getById: the model-level metric privacy the version edito
     expect(model.meta).toEqual({ metricVisibility: { buzz: 'hide' } });
   });
 
+  it('serves the owner on a scoped key no model meta', async () => {
+    const scopedKey = {
+      apiKeyId: 1,
+      apiKeyType: ApiKeyType.User,
+      subject: { type: 'apiKey', id: 1 },
+      tokenScope: TokenScope.ModelsRead,
+    };
+    expect((await load({ id: OWNER_ID }, scopedKey)).model.meta).toBeNull();
+  });
+
   it('serves no model meta to anyone else', async () => {
     expect((await load(null)).model.meta).toBeNull();
     expect((await load({ id: 99 })).model.meta).toBeNull();
+  });
+});
+
+describe('modelVersion.getById: the version files', () => {
+  const FILES = [
+    { id: 1, name: 'public.safetensors', type: 'Model', visibility: 'Public' },
+    { id: 2, name: 'private.safetensors', type: 'Model', visibility: 'Private' },
+    { id: 3, name: 'data.zip', type: 'Training Data', visibility: 'Private' },
+  ];
+  const fileNames = async (user: { id: number; isModerator?: boolean } | null) => {
+    mockGetVersionById.mockImplementation(async ({ select }) => ({
+      ...(project(versionRow, select) as object),
+      files: FILES.map((f) => ({ ...f })),
+    }));
+    const version = await getModelVersionHandler({
+      input: { id: versionRow.id, withFiles: true },
+      ctx: { user, features: {}, domain: 'blue' },
+    } as never);
+    return version.files.map((f: { name: string }) => f.name);
+  };
+
+  it.each([
+    ['a signed-out visitor', null],
+    ['another user', { id: 99 }],
+  ])('gives %s the Public files and training data only', async (_, user) => {
+    expect(await fileNames(user)).toEqual(['public.safetensors', 'data.zip']);
+  });
+
+  it.each([
+    ['the owner', { id: OWNER_ID }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('gives %s every file', async (_, user) => {
+    expect(await fileNames(user)).toEqual([
+      'public.safetensors',
+      'private.safetensors',
+      'data.zip',
+    ]);
   });
 });
 

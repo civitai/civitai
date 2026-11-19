@@ -3,8 +3,8 @@
 // caller (`doc-store-access.ts`), runs the gates the store leaves to its caller — scopes,
 // consent, a collection's `ownedModelVersions` rule (`doc-store-ownership.ts`), the
 // min-trust gate, rate limits, a collection's permission hook (`doc-store-hook.ts`),
-// moderation — calls the store, and presents the result. Every refusal leaves through `sendError`, the one place a `DocStoreError` code
-// becomes an HTTP status.
+// moderation — calls the store, and presents the result. Every refusal leaves through
+// `sendError`, the one place a `DocStoreError` code becomes an HTTP status.
 //
 // PATHS. Collection names match `^[a-z][a-z0-9_]{0,31}$` and keys `[A-Za-z0-9._:-]{1,128}`,
 // so a segment starting with `_` can never be a collection name. Every non-collection
@@ -15,10 +15,24 @@
 //   [c]                              GET    list            POST create
 //   ['_get', c]                      POST   get many  { keys }
 //   [c, key]                         GET    get     PUT put     DELETE delete
-//   [c, key, 'counters', name]       POST   increment
-//   [c, key, 'marks', name]          PUT    mark    DELETE unmark
+//                                    PATCH  one update operator: $inc, $mark or $unmark
+//   [c, key, 'counters', name]       POST   increment         (deprecated: PATCH $inc)
+//   [c, key, 'marks', name]          PUT    mark    DELETE unmark  (deprecated: PATCH $mark/$unmark)
+//   ['_publish', to]                 POST   publish   { from, keys, prune? }
+//   ['_unpublish', to]               POST   unpublish { keys }
+// `_publish` / `_unpublish` exist only while the per-app Flipt flag `app-blocks-storage-publish`
+// is on; off, they answer exactly as an unknown route (see PUBLISH below).
 // `_get` is a POST with a body (not a GET query) because 100 keys of 128 characters do not
 // fit in a URL every proxy accepts.
+//
+// TALLIES AS UPDATE OPERATORS. A counter or a mark is an update operator on the document:
+// `PATCH /:c/:key` with exactly one of `{"$inc":{"<counter>":<by>}}`, `{"$mark":"<name>"}` or
+// `{"$unmark":"<name>"}` (`parseTallyPatch`). The PATCH is TRANSLATED into the per-tally route
+// the deprecated paths match and runs through the very same operation below, so every gate,
+// budget, moderation scan, import rule and reply is one code path for both. A tally never
+// touches a document's `data` or `version`. A PATCH carrying plain fields is refused: a
+// merge-patch of `data` is reserved for later. The deprecated routes answer exactly as before,
+// with `Deprecation` and `Link` headers (`LEGACY_TALLY_HEADERS`); no `Sunset` is set yet.
 //
 // IMPORTS. Every collection route takes an optional `?from=<source blockId>`: the call then runs
 // in that SOURCE app, as the same viewer, through an import the caller's manifest declares
@@ -28,6 +42,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { sessionClient } from '~/server/auth/session-client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { SessionUser } from '~/types/session';
@@ -37,17 +52,28 @@ import type {
   BlockScopeRefusalKind,
 } from '~/server/middleware/block-scope.middleware';
 import {
+  blockClaimsAppLabel,
+  markBlockRequestReadMiss,
   recordDocStoreError,
+  recordDocStoreUnchangedWrite,
+  recordStorageTallyOp,
+  type AppBlockRefusalBucket,
   type DocStoreEndpoint,
+  type StorageTallyOp,
 } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  blockSubjectUserId,
+  recordAppBlockRateLimitRefusal,
+} from '~/server/services/blocks/rate-limit-refusal.service';
 import {
   hasLinkedOAuthAccount,
   sharedWriteTrustRefusal,
 } from '~/server/services/blocks/block-write-trust.service';
 import {
   assertCollection,
-  assertIncrementRequest,
-  assertMarkRequest,
+  assertNotHooked,
+  assertPublishKeys,
+  assertPublishPair,
   assertShareWritable,
   PUBLISHED_NS,
   refuseReportWithdrawal,
@@ -68,11 +94,14 @@ import type {
   DocAuthor,
   DocCollection,
   DocListQuery,
+  DocRatingStatus,
   DocRecord,
   DocStoreErrorCode,
 } from '~/server/services/apps/doc-store.types';
+import { withDocLevelGate } from '~/server/services/apps/doc-levels';
 import {
   DOC_STORE_BOUNDS,
+  DOC_STORE_PUBLISH_BOUNDS,
   DocStoreError,
   REPORT_MARK,
 } from '~/server/services/apps/doc-store.types';
@@ -84,9 +113,18 @@ import {
   scanCounterKey,
   scanSharedData,
   scheduleSharedDataShadow,
+  sharedRefusalField,
+  type SharedDataModerationMode,
   type SharedDataSurface,
+  type SharedRefusalField,
+  type SharedTextHit,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
+import { collectSharedDataLeaves } from '~/server/services/apps/shared-data-leaves';
+import {
+  containsPrivateMediaUrl,
+  valueContainsPrivateMediaUrl,
+} from '~/server/services/apps/shared-private-media-urls';
 import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { rateLimitMetaFor } from '~/server/utils/rate-limit-error';
@@ -95,11 +133,12 @@ import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import {
   checkDocStoreRateLimit,
   DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
+  DOC_STORE_PUBLISH_BUDGET,
   DOC_STORE_READ_RATE_LIMIT_MAX,
   DOC_STORE_REPORT_RATE_LIMIT_MAX,
+  DOC_STORE_SHARED_WRITE_BUDGET,
   DOC_STORE_TALLY_RATE_LIMIT_MAX,
   reserveSharedWrite,
-  SHARED_WRITE_BUDGET,
   type DocStoreRateBucket,
 } from '~/server/utils/shared-storage-rate-limit';
 import {
@@ -115,10 +154,14 @@ import {
 
 /** Every literal path segment, and the one position each may occupy. */
 const GET_MANY_SEGMENT = '_get';
+const PUBLISH_SEGMENT = '_publish';
+const UNPUBLISH_SEGMENT = '_unpublish';
 const COUNTERS_SEGMENT = 'counters';
 const MARKS_SEGMENT = 'marks';
 export const STORAGE_RESERVED_SEGMENTS = [
   { segment: GET_MANY_SEGMENT, position: 0 },
+  { segment: PUBLISH_SEGMENT, position: 0 },
+  { segment: UNPUBLISH_SEGMENT, position: 0 },
   { segment: COUNTERS_SEGMENT, position: 2 },
   { segment: MARKS_SEGMENT, position: 2 },
 ] as const;
@@ -127,9 +170,17 @@ export type StorageRoute =
   | { op: 'info' }
   | { op: 'list' | 'create'; collection: string }
   | { op: 'getMany'; collection: string }
+  // Server-side publish and unpublish into the shared collection `collection` (PUBLISH below).
+  | { op: 'publish' | 'unpublish'; collection: string }
   | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
   | { op: 'increment'; collection: string; key: string; name: string }
-  | { op: 'mark' | 'unmark'; collection: string; key: string; name: string };
+  | { op: 'mark' | 'unmark'; collection: string; key: string; name: string }
+  // An update operator on one document; translated by `parseTallyPatch` before it runs.
+  | { op: 'patch'; collection: string; key: string };
+
+/** A route `run` executes: every route but `patch`, which is translated into one of these first. */
+type OperationRoute = Exclude<StorageRoute, { op: 'patch' }>;
+type TallyRoute = Extract<StorageRoute, { op: 'increment' | 'mark' | 'unmark' }>;
 
 type Match = { route: StorageRoute } | { methods: string[] } | null;
 
@@ -149,11 +200,14 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
       return pick({ GET: { op: 'list', collection: a }, POST: { op: 'create', collection: a } });
     case 2:
       if (a === GET_MANY_SEGMENT) return pick({ POST: { op: 'getMany', collection: b } });
+      if (a === PUBLISH_SEGMENT) return pick({ POST: { op: 'publish', collection: b } });
+      if (a === UNPUBLISH_SEGMENT) return pick({ POST: { op: 'unpublish', collection: b } });
       if (a.startsWith('_')) return null;
       return pick({
         GET: { op: 'get', collection: a, key: b },
         PUT: { op: 'put', collection: a, key: b },
         DELETE: { op: 'delete', collection: a, key: b },
+        PATCH: { op: 'patch', collection: a, key: b },
       });
     case 4:
       if (a.startsWith('_')) return null;
@@ -179,6 +233,8 @@ export function storageEndpointLabel(req: NextApiRequest): DocStoreEndpoint {
   if (op === 'info') return 'storage_info';
   if (op === 'list' || op === 'get' || op === 'getMany') return 'storage_read';
   if (op === 'create' || op === 'put' || op === 'delete') return 'storage_write';
+  if (op === 'publish' || op === 'unpublish') return 'storage_write';
+  // increment, mark, unmark, and `patch` (whose only operators are tallies).
   return 'storage_tally';
 }
 
@@ -267,6 +323,11 @@ function sendEnvelope(
   res.status(status).json(body);
 }
 
+/** True for a document-store READ of a key that does not exist (see `sendError`). */
+export function isDocumentReadMiss(req: NextApiRequest, code: StorageApiCode): boolean {
+  return code === 'not_found' && storageEndpointLabel(req) === 'storage_read';
+}
+
 function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): void {
   if (!(err instanceof DocStoreError)) {
     logToAxiom(
@@ -277,18 +338,92 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
         message: err instanceof Error ? err.message : String(err),
       },
       'app-blocks'
-    ).catch(() => undefined);
+    );
     sendEnvelope(req, res, 500, envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE));
     return;
   }
   const body = envelope(err.code, CLIENT_MESSAGE[err.code] ?? err.message, err.details);
+  // A document GET for a key that does not exist yet is a READ MISS: an app's first read of a key
+  // it has never written lands here by contract. Marked so the per-app REST counter reports it as
+  // `result="not_found"` instead of `client_error`. On `storage_read` this code comes only from the
+  // `get` op; the other `not_found` (an unmatched route) is labelled `storage_info` and stays an
+  // error. The envelope itself, and `doc_store_errors_total{code="not_found"}`, are unchanged.
+  if (isDocumentReadMiss(req, err.code)) markBlockRequestReadMiss(res);
   // Every refusal that names a retry delay (a 429, or a retryable 503) says so in the header.
   const retryAfter = err.details?.retryAfter;
+  // Per-app attribution of the two refusals an app can loop on: a 429 (which limit) and a 409
+  // version conflict (bucket `version_conflict` — not a rate limit, on the same counter so one
+  // query answers "what is this app being refused"). Every document-store refusal leaves through
+  // here, so this is the one place.
+  if (err.code === 'rate_limited' || err.code === 'version_conflict') {
+    recordRefusal(req, err, retryAfter);
+  }
   if (typeof retryAfter === 'number') {
     res.setHeader('Retry-After', String(retryAfter));
     if (err.code === 'rate_limited') body.rateLimit = rateLimitMetaFor(retryAfter);
   }
   sendEnvelope(req, res, STORAGE_ERROR_STATUS[err.code], body);
+}
+
+/**
+ * Whether `app-blocks-storage-unchanged-writes-free` is on for the REQUESTING app: evaluated, like
+ * the publish flag (`isPublishRouteServed`), for the block token's app block id — not the
+ * resolved store context's app, which is the SOURCE app through an import. The free-write counter
+ * is labelled with the same app (`requestAppLabel`). No claims, no flag.
+ */
+async function isUnchangedWriteFree(req: NextApiRequest): Promise<boolean> {
+  const appBlockId = (req as BlockScopedNextApiRequest).blockClaims?.appBlockId;
+  if (!appBlockId) return false;
+  return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE, appBlockId);
+}
+
+/** The `app_block_id` label of the request's verified block claims (`other` without any). */
+function requestAppLabel(req: NextApiRequest): string {
+  const claims = (req as BlockScopedNextApiRequest).blockClaims;
+  return claims ? blockClaimsAppLabel(claims) : 'other';
+}
+
+/** The `details.bucket` of every limiter refusal this route raises. */
+type DocStoreRefusalBucket = DocStoreRateBucket | 'shared-write' | 'publish';
+const DOC_STORE_REFUSAL_BUCKETS: ReadonlySet<string> = new Set<DocStoreRefusalBucket>([
+  'read',
+  'write',
+  'tally',
+  'report',
+  'shared-write',
+  'publish',
+]);
+
+/**
+ * Every `rate_limited` this module raises is built here (pinned by the ledger test), so its
+ * `details.bucket` — what the app receives in its 429, and the metric's `bucket` label — is always
+ * one of `DocStoreRefusalBucket`. The store's own lock-timeout refusals carry `reason:
+ * 'contention'` instead.
+ */
+function rateLimited(message: string, bucket: DocStoreRefusalBucket, retryAfter: number) {
+  return new DocStoreError('rate_limited', message, { bucket, retryAfter });
+}
+
+function refusalBucket(err: DocStoreError): AppBlockRefusalBucket {
+  if (err.code === 'version_conflict') return 'version_conflict';
+  const bucket = err.details?.bucket;
+  if (typeof bucket === 'string' && DOC_STORE_REFUSAL_BUCKETS.has(bucket)) {
+    return bucket as DocStoreRefusalBucket;
+  }
+  return err.details?.reason === 'contention' ? 'contention' : 'unattributed';
+}
+
+function recordRefusal(req: NextApiRequest, err: DocStoreError, retryAfter: unknown): void {
+  const claims = (req as BlockScopedNextApiRequest).blockClaims;
+  recordAppBlockRateLimitRefusal({
+    appBlockId: requestAppLabel(req),
+    surface: 'doc_store',
+    bucket: refusalBucket(err),
+    endpoint: storageEndpointLabel(req),
+    retryAfterSeconds: typeof retryAfter === 'number' ? retryAfter : undefined,
+    userId: claims ? blockSubjectUserId(claims.sub) : null,
+    status: STORAGE_ERROR_STATUS[err.code],
+  });
 }
 
 /**
@@ -344,9 +479,9 @@ export const STORAGE_BODY_LIMIT_BYTES = DOC_STORE_BOUNDS.docBytes + 16 * 1024;
 /** The request body stopped arriving (the client disconnected). Answered quietly. */
 class BodyAbortedError extends Error {}
 
-/** Read and parse a JSON request body; `undefined` when there is none. Only POST and PUT. */
+/** Read and parse a JSON request body; `undefined` when there is none. Only POST, PUT and PATCH. */
 async function readJsonBody(req: NextApiRequest): Promise<unknown> {
-  if (req.method !== 'POST' && req.method !== 'PUT') return undefined;
+  if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') return undefined;
   const tooLarge = () =>
     new DocStoreError('too_large', `request body exceeds ${STORAGE_BODY_LIMIT_BYTES} bytes`, {
       limit: STORAGE_BODY_LIMIT_BYTES,
@@ -384,6 +519,140 @@ function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
     });
   }
   return parsed.data;
+}
+
+// ---------------------------------------------------------------------------
+// Update operators (PATCH)
+// ---------------------------------------------------------------------------
+
+/** The update operators a PATCH may carry, and the tally route each one runs as. */
+const TALLY_OPERATORS = {
+  $inc: 'increment',
+  $mark: 'mark',
+  $unmark: 'unmark',
+} as const satisfies Record<string, TallyRoute['op']>;
+type TallyOperator = keyof typeof TALLY_OPERATORS;
+
+/**
+ * Why a PATCH body was refused, in `details.reason` of an `invalid_request`: one stable value per
+ * refusal, so a client can tell them apart without parsing the message.
+ */
+export type TallyPatchRefusal =
+  | 'empty_patch'
+  | 'unknown_operator'
+  | 'multiple_operators'
+  | 'merge_patch_unsupported'
+  | 'malformed_operator';
+
+const isOperator = (field: string): field is TallyOperator =>
+  Object.prototype.hasOwnProperty.call(TALLY_OPERATORS, field);
+
+const patchRefusal = (
+  reason: TallyPatchRefusal,
+  message: string,
+  extra?: Record<string, unknown>
+) => invalid(message, { reason, ...extra });
+
+/**
+ * A PATCH body → the tally route it runs as, and the body that route's own parser reads. Only the
+ * operator's SHAPE is checked here; every value (`by`, the counter or mark name, a report
+ * withdrawal) is left to the operation, so it is validated by exactly the parser and the store
+ * checks the deprecated routes use, in the same order.
+ *
+ * Refused (`invalid_request`, `details.reason`): no body or `{}` (`empty_patch`); a `$` key that
+ * is not an operator (`unknown_operator`); two operators (`multiple_operators`); plain fields only
+ * (`merge_patch_unsupported`, reserved for a merge-patch of `data`); and every other shape error
+ * (`malformed_operator`): a JSON body that is not an object, an operator beside any other field (a
+ * mark carries no payload, `report` included), `$inc` naming other than exactly one counter, and a
+ * `$mark`/`$unmark` name that is not a string.
+ */
+export function parseTallyPatch(
+  route: { collection: string; key: string },
+  body: unknown
+): { route: TallyRoute; body: unknown } {
+  if (body === undefined) throw patchRefusal('empty_patch', 'PATCH needs an update operator');
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw patchRefusal(
+      'malformed_operator',
+      'PATCH body must be an object holding one update operator'
+    );
+  }
+  const fields = Object.keys(body);
+  if (fields.length === 0) throw patchRefusal('empty_patch', 'PATCH needs an update operator');
+  const unknown = fields.find((f) => f.startsWith('$') && !isOperator(f));
+  if (unknown !== undefined) {
+    throw patchRefusal('unknown_operator', `unknown update operator ${unknown}`, {
+      operator: unknown,
+    });
+  }
+  const operators = fields.filter(isOperator);
+  if (operators.length > 1) {
+    throw patchRefusal('multiple_operators', 'PATCH takes exactly one update operator', {
+      operators,
+    });
+  }
+  if (operators.length === 0) {
+    throw patchRefusal(
+      'merge_patch_unsupported',
+      'PATCH takes an update operator ($inc, $mark or $unmark); to change data, PUT the document'
+    );
+  }
+  const [operator] = operators;
+  if (fields.length > 1) {
+    throw patchRefusal('malformed_operator', `${operator} cannot be combined with other fields`, {
+      operator,
+    });
+  }
+  const value = (body as Record<string, unknown>)[operator];
+  const at = { collection: route.collection, key: route.key };
+  if (operator === '$inc') {
+    const counters =
+      value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? Object.entries(value)
+        : [];
+    if (counters.length !== 1) {
+      throw patchRefusal('malformed_operator', '$inc names exactly one counter: {"<counter>": by}');
+    }
+    const [[name, by]] = counters;
+    // The deprecated route's own body, `{ by }`, read by its own parser in the operation.
+    return { route: { op: 'increment', ...at, name }, body: { by } };
+  }
+  if (typeof value !== 'string') {
+    throw patchRefusal('malformed_operator', `${operator} takes a mark name`, { operator });
+  }
+  // A mark's body is empty on the deprecated route too.
+  return { route: { op: TALLY_OPERATORS[operator], ...at, name: value }, body: undefined };
+}
+
+// The per-tally routes are deprecated as of 2026-11-09T00:00:00Z (RFC 9745 `@<unix-seconds>`).
+export const LEGACY_TALLY_DEPRECATED_AT = '@1794182400';
+
+/**
+ * Sent on every response this handler gives for a deprecated per-tally PATH, whatever the method
+ * (a 405 included). Not on the token middleware's own refusals (401/403/429), which are sent
+ * before the handler runs. No `Sunset`: removal waits for the usage
+ * `civitai_app_block_doc_store_tally_ops_total{route="legacy"}` shows.
+ */
+export const LEGACY_TALLY_HEADERS = {
+  Deprecation: LEGACY_TALLY_DEPRECATED_AT,
+  Link: '<https://developer.civitai.com/apps/guide/storage>; rel="deprecation"',
+} as const;
+
+const TALLY_METRIC_OP: Record<TallyRoute['op'], StorageTallyOp> = {
+  increment: 'inc',
+  mark: 'mark',
+  unmark: 'unmark',
+};
+
+/** A path the deprecated per-tally routes own: `[c, key, 'counters' | 'marks', name]`. */
+function isLegacyTallyPath(segments: readonly string[]): boolean {
+  return (
+    segments.length === 4 && (segments[2] === COUNTERS_SEGMENT || segments[2] === MARKS_SEGMENT)
+  );
+}
+
+function isTallyRoute(route: StorageRoute): route is TallyRoute {
+  return route.op === 'increment' || route.op === 'mark' || route.op === 'unmark';
 }
 
 const LIST_PARAMS = new Set(['sort', 'author', 'markedBy', 'mark', 'keyPrefix', 'limit', 'cursor']);
@@ -448,6 +717,13 @@ export type PresentedDoc = {
   key: string;
   data: Record<string, unknown>;
   version: number;
+  /**
+   * Content levels on only (`doc-levels.ts`): the effective level (NsfwLevel bit; the moderator's
+   * override first) and the rating status, each null when unset. Server-set: nothing an app
+   * writes reaches them. Absent while levels are off, so those responses are unchanged.
+   */
+  level?: number | null;
+  ratingStatus?: DocRatingStatus | null;
   createdAt: string;
   updatedAt: string;
   author: PresentedAuthor;
@@ -489,6 +765,7 @@ async function presentDocs(
           key: d.key,
           data: d.data,
           version: d.version,
+          ...(d.rating ? { level: d.rating.level, ratingStatus: d.rating.status } : {}),
           createdAt: d.createdAt.toISOString(),
           updatedAt: d.updatedAt.toISOString(),
           author: author(d.author),
@@ -616,12 +893,7 @@ async function charge(
   const uid = access.ctx.viewerUid;
   const principal = uid === null ? `ip:${resolveClientIp(req)}` : `u:${uid}`;
   const rl = await checkDocStoreRateLimit(bucket, access.ctx.appId, principal);
-  if (!rl.allowed) {
-    throw new DocStoreError('rate_limited', 'rate limit exceeded', {
-      bucket,
-      retryAfter: rl.retryAfterSeconds,
-    });
-  }
+  if (!rl.allowed) throw rateLimited('rate limit exceeded', bucket, rl.retryAfterSeconds);
 }
 
 const COARSE_CATEGORY = { link: 'link', overflow: 'unreviewable' } as Record<string, string>;
@@ -633,30 +905,86 @@ const COARSE_CATEGORY = { link: 'link', overflow: 'unreviewable' } as Record<str
 type AfterCommit = (committedKey?: string) => void;
 const nothingAfterCommit: AfterCommit = () => undefined;
 
+/** Where `input` carries an orchestrator media link, as a refusal names it, or null. */
+function privateMediaField(input: {
+  data?: Record<string, unknown>;
+  key?: string;
+}): SharedRefusalField | null {
+  if (input.data !== undefined) {
+    const collected = collectSharedDataLeaves(input.data);
+    if ('overflow' in collected) {
+      if (valueContainsPrivateMediaUrl(input.data)) return { field: 'data', fieldKind: 'value' };
+    } else {
+      const leaf = collected.leaves.find((l) => containsPrivateMediaUrl(l.raw));
+      if (leaf) {
+        const hit: SharedTextHit = {
+          category: 'link',
+          matched: 'private_media',
+          label: 'private_media',
+          leaf: { raw: leaf.raw, path: leaf.path, segments: leaf.segments, kind: leaf.kind },
+        };
+        const scan = { leafCount: collected.leaves.length, overflow: null, hits: [hit] };
+        return sharedRefusalField(scan, hit, 'data');
+      }
+    }
+  }
+  if (input.key !== undefined && containsPrivateMediaUrl(input.key))
+    return { field: 'key', fieldKind: 'value' };
+  return null;
+}
+
+function refusePrivateMedia(
+  access: StorageAccess,
+  user: SessionUser,
+  at: SharedRefusalField
+): never {
+  const field = at.field === 'key' ? 'key' : 'data';
+  emitSharedBlockAlert(
+    { appBlockId: access.ctx.appId, uid: user.id },
+    { policy: 'link', category: 'link', field }
+  );
+  throw new DocStoreError('content_rejected', 'content was rejected by moderation', {
+    category: 'link',
+    ...at,
+  });
+}
+
 /**
  * Moderation of one shared write — every string leaf and object key of `data` and, when the app
  * chose it, the document key — in the app's shared-data moderation mode
  * (`resolveSharedDataModerationMode`):
  *
- * - `off`: nothing is scanned or recorded.
+ * - `off`: nothing is scanned or recorded; only an orchestrator media link is refused.
  * - `shadow`: nothing is scanned NOW. The returned `AfterCommit` schedules each scan through
  *   `scheduleSharedDataShadow`, the legacy surface's own shadow path: after the write, off the
- *   request path, recorded with mode `shadow`, never refusing, never alerting. A scanner failure
+ *   request path, recorded with mode `shadow`, never refusing, never alerting (except an
+ *   orchestrator media link, refused as in `off`, with the scans still scheduled). A scanner failure
  *   is logged there and reaches nobody. The caller runs it only once the store has committed, so a
  *   write that fails records nothing.
  * - `enforce`: scanned inline, before the write. A scan that cannot run is refused as retryable
- *   (`moderation_unavailable`); a hit is refused (`content_rejected`) with a coarse category,
- *   never the matched text, and raises the shared block alert.
+ *   (`moderation_unavailable`); a hit is refused (`content_rejected`) with a coarse category and
+ *   the field it sits in (`sharedRefusalField`: a JSON path such as `data.actions[2].text`, or
+ *   `key`), never the matched term or text, and raises the shared block alert.
+ *
+ * `resolvedMode`: the mode the caller already resolved for this app (a publish resolves it once
+ * for all its documents); omitted, it is resolved here.
  */
 async function moderate(
   access: StorageAccess,
   user: SessionUser,
   surface: SharedDataSurface,
   rowKey: string,
-  input: { data?: Record<string, unknown>; key?: string }
+  input: { data?: Record<string, unknown>; key?: string },
+  resolvedMode?: SharedDataModerationMode
 ): Promise<AfterCommit> {
-  const mode = await resolveSharedDataModerationMode(access.ctx.appId);
-  if (mode === 'off') return nothingAfterCommit;
+  const mode = resolvedMode ?? (await resolveSharedDataModerationMode(access.ctx.appId));
+  // Refused in every mode; under `enforce` a minor/POI hit in the same write is refused and
+  // recorded first.
+  const privateMedia = privateMediaField(input);
+  if (mode === 'off') {
+    if (privateMedia) refusePrivateMedia(access, user, privateMedia);
+    return nothingAfterCommit;
+  }
   // Moderators are exempt from the pattern list here exactly as on the legacy surface.
   const scanOpts = { isModerator: user.isModerator };
   const scans: { field: 'data' | 'key'; run: () => Promise<SharedTextScan> }[] = [];
@@ -669,7 +997,7 @@ async function moderate(
     scans.push({ field: 'key', run: () => scanCounterKey(key, scanOpts) });
   }
   if (mode === 'shadow') {
-    return (committedKey = rowKey) => {
+    const schedule: AfterCommit = (committedKey = rowKey) => {
       for (const { run } of scans) {
         scheduleSharedDataShadow(run, {
           appBlockId: access.ctx.appId,
@@ -678,6 +1006,11 @@ async function moderate(
         });
       }
     };
+    if (privateMedia) {
+      schedule();
+      refusePrivateMedia(access, user, privateMedia);
+    }
+    return schedule;
   }
   for (const { field, run } of scans) {
     let scan: SharedTextScan;
@@ -692,7 +1025,7 @@ async function moderate(
           error: err instanceof Error ? err.name : typeof err,
         },
         'block-audit'
-      ).catch(() => undefined);
+      );
       throw new DocStoreError('moderation_unavailable', 'content could not be reviewed right now', {
         retryAfter: 5,
       });
@@ -716,9 +1049,11 @@ async function moderate(
       );
       throw new DocStoreError('content_rejected', 'content was rejected by moderation', {
         category: COARSE_CATEGORY[hit.category] ?? 'blocked',
+        ...sharedRefusalField(scan, hit, field),
       });
     }
   }
+  if (privateMedia) refusePrivateMedia(access, user, privateMedia);
   return nothingAfterCommit;
 }
 
@@ -756,22 +1091,28 @@ function isOurFault(err: unknown): boolean {
 }
 
 /**
- * A shared document write spends the shared write budget: reserved before the write and any
- * inline moderation scan, and given back only if the write does not land. `fn` calls `landed()`
- * the moment the store has committed, so a failure after that (presenting the result) spends the
- * token like any landed write.
+ * A shared document write spends the document store's shared write budget
+ * (`DOC_STORE_SHARED_WRITE_BUDGET`, its own, not the legacy surface's): reserved before the
+ * write and any inline moderation scan, and given back only if the write does not land. `fn`
+ * calls `landed()` the moment the store has committed, so a failure after that (presenting the
+ * result) spends the token like any landed write.
  */
 async function withSharedWriteBudget<T>(
   access: StorageAccess,
   uid: number,
   fn: (landed: () => void) => Promise<T>
 ): Promise<T> {
-  const reservation = await reserveSharedWrite(uid, access.ctx.appId);
+  const reservation = await reserveSharedWrite(
+    uid,
+    access.ctx.appId,
+    DOC_STORE_SHARED_WRITE_BUDGET
+  );
   if (!reservation.allowed) {
-    throw new DocStoreError('rate_limited', 'shared write budget exhausted', {
-      bucket: 'shared-write',
-      retryAfter: reservation.retryAfterSeconds,
-    });
+    throw rateLimited(
+      'shared write budget exhausted',
+      'shared-write',
+      reservation.retryAfterSeconds
+    );
   }
   let hasLanded = false;
   try {
@@ -793,7 +1134,7 @@ type Reply = { status: number; body: unknown };
 async function run(
   req: NextApiRequest,
   body: unknown,
-  route: StorageRoute,
+  route: OperationRoute,
   access: StorageAccess,
   store: DocStore
 ): Promise<Reply> {
@@ -810,7 +1151,12 @@ async function run(
   }
 
   if (route.op === 'info') {
-    const usage = await store.usage(ctx);
+    // The per-viewer figures are the ceiling the store charges this viewer's writes against
+    // (`store.viewerLimits`: in production their membership tier's); the app ceilings are fixed.
+    const [usage, viewerLimits] = await Promise.all([
+      store.usage(ctx),
+      store.viewerLimits(requireViewer(access)),
+    ]);
     const L = store.limits;
     return ok({
       collections: Object.fromEntries(
@@ -820,17 +1166,20 @@ async function run(
         docBytes: DOC_STORE_BOUNDS.docBytes,
         appBytes: L.appBytes,
         appDocs: L.appDocs,
-        viewerBytes: L.userBytes,
-        viewerDocs: L.userDocs,
+        viewerBytes: viewerLimits.userBytes,
+        viewerDocs: viewerLimits.userDocs,
         listLimitMax: DOC_STORE_BOUNDS.listLimitMax,
         getManyMax: DOC_STORE_BOUNDS.getManyMax,
         rate: {
           readsPerMinute: DOC_STORE_READ_RATE_LIMIT_MAX,
+          // The per-viewer `write` bucket: private writes, every DELETE, each publish and
+          // unpublish call, and — only while `app-blocks-storage-unchanged-writes-free` is on for
+          // the app — every shared PUT, changed or not (the field keeps its name).
           privateWritesPerMinute: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
           marksAndCountersPerMinute: DOC_STORE_TALLY_RATE_LIMIT_MAX,
           reportsPerDay: DOC_STORE_REPORT_RATE_LIMIT_MAX,
-          sharedWritesBurst: SHARED_WRITE_BUDGET.burst.capacity,
-          sharedWritesPerDay: SHARED_WRITE_BUDGET.daily.capacity,
+          sharedWritesBurst: DOC_STORE_SHARED_WRITE_BUDGET.burst.capacity,
+          sharedWritesPerDay: DOC_STORE_SHARED_WRITE_BUDGET.daily.capacity,
         },
       },
       usage,
@@ -944,6 +1293,26 @@ async function run(
         return write(null, () => undefined);
       }
       const user = await assertTrusted(uid);
+      // A shared put that would change no stored row is free of the shared-write budget (FLAG:
+      // `app-blocks-storage-unchanged-writes-free`, per app; off, this block is skipped). After
+      // every check above, so it refuses exactly what any write does. Under the flag every shared
+      // put first spends one `write` token (the per-viewer request bucket, never refunded), as a
+      // publish does, so a loop of identical puts is still bounded. Then, when the store says the
+      // put would change nothing (`putIfUnchanged`: the publish rule plus the index rows), the
+      // answer is the stored document as a write returns it — no shared-write token, no
+      // moderation scan, nothing written — counted per app. Anything else (a change, a stale
+      // `ifVersion`, another author's or a hidden document) takes the ordinary write below. A
+      // create always writes a new key, so it is never unchanged.
+      if (putIn && route.op === 'put' && (await isUnchangedWriteFree(req))) {
+        await charge('write', access, req);
+        const stored = await store.putIfUnchanged(ctx, coll, route.key, putIn.data, {
+          ifVersion: putIn.ifVersion,
+        });
+        if (stored) {
+          recordDocStoreUnchangedWrite(requestAppLabel(req));
+          return ok(await presentDoc(stored, decl));
+        }
+      }
       return withSharedWriteBudget(access, uid, (landed) => write(user, landed));
     }
     case 'increment': {
@@ -953,16 +1322,15 @@ async function run(
       // The bucket first: a refused request costs no subject lookup.
       await charge('tally', access, req);
       const user = shared ? await assertTrusted(uid) : null;
-      // The permission hook, before the key scan below (a refusal spends no scan), and only for a
-      // request the store would accept: an invalid one never reaches a hook.
-      assertIncrementRequest(coll, route.name, by ?? 1);
+      // The permission hook, before the key scan below (a refusal spends no scan). It runs the
+      // store's request checks first on a hooked collection; with no hook it returns null at once.
       const grant = await gateHook({
         access,
         coll,
         store,
         op: 'increment',
         key: route.key,
-        tally: { kind: 'counter', name: route.name, by: by ?? 1 },
+        tally: { name: route.name, by: by ?? 1 },
         createsWhenAbsent: decl.write === 'none',
       });
       // Under `write: 'none'` an increment can CREATE a public document under the app's key. The
@@ -991,18 +1359,14 @@ async function run(
       if (shared) await assertTrusted(uid);
       // The permission hook. A `report` is exempt (`gateHook` returns null for it, and the store
       // asks no pass for it): a hook must never be able to silence moderation reports.
-      assertMarkRequest(coll, route.name);
-      const grant =
-        route.op === 'mark' && route.name === REPORT_MARK
-          ? null
-          : await gateHook({
-              access,
-              coll,
-              store,
-              op: route.op,
-              key: route.key,
-              tally: { kind: 'mark', name: route.name },
-            });
+      const grant = await gateHook({
+        access,
+        coll,
+        store,
+        op: route.op,
+        key: route.key,
+        tally: { name: route.name },
+      });
       const opts = { hookPass: grant?.pass };
       const result =
         route.op === 'mark'
@@ -1015,7 +1379,195 @@ async function run(
           : { marked: result.marked, count: result.count }
       );
     }
+    case 'publish':
+      return ok(await runPublish(req, body, access, store, coll));
+    case 'unpublish':
+      return ok(await runUnpublish(req, body, access, store, coll));
   }
+}
+
+// ---------------------------------------------------------------------------
+// PUBLISH — server-side publish and unpublish
+// ---------------------------------------------------------------------------
+//
+// `POST /_publish/:to { from, keys, prune? }` copies the CALLING viewer's own private documents
+// at `keys` from the private `from` into the shared `to`, authored by that viewer: the server
+// reads the data from the viewer's own key space, never from the request. `POST /_unpublish/:to
+// { keys }` deletes the viewer's own copies. What a copy, a skip (`skipped[].reason`) and a prune
+// do, and how the per-user and app ceilings are charged: `publishCopies` / `unpublishCopies`
+// (`doc-store.ts`).
+//
+// Each copy is checked as a shared write is: the target's schema and `ownedModelVersions` rule
+// before any budget, then the moderation scan in the app's mode. Enforce: any hit refuses the
+// WHOLE publish, naming its key; shadow: scanned after commit. An unchanged copy is not scanned.
+// A key list over `DOC_STORE_PUBLISH_BOUNDS.maxKeys`, empty or with a duplicate is refused before
+// anything is spent.
+//
+// Budgets: every publish call first spends one token of the `write` bucket
+// (`DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX`) BEFORE the trust lookup and the source/target reads,
+// never refunded, so even a publish that changes nothing is throttled. It then spends one token of
+// `DOC_STORE_PUBLISH_BUDGET` — never `DOC_STORE_SHARED_WRITE_BUDGET` — given back when the publish
+// does not land or changes nothing.
+//
+// ⚠️ `prune` is scoped by `from`, not by where a copy came from: an app that feeds one shared
+// collection from SEVERAL private collections deletes the other sources' copies when it prunes
+// from one of them.
+//
+// FLAG: `app-blocks-storage-publish`, evaluated per app (entityId = the app block id, no context).
+// Off — the default, and when Flipt is unreachable — both paths answer as an unknown route.
+//
+// PERMISSION HOOKS: a shared collection with a `hook` refuses both publish into it and unpublish
+// from it (`invalid_request`, `reason: 'hooked_collection'`, before anything is charged): a hook
+// decides one write, and a batch that skipped it would fail open (`assertNotHooked`).
+
+/** Whether a matched route is served for this request: everything but publish, or publish with the flag on. */
+async function isPublishRouteServed(req: NextApiRequest, match: Match): Promise<boolean> {
+  if (!match || !('route' in match)) {
+    // A wrong method on a publish path: served only when the route itself would be.
+    const segs = pathSegments(req);
+    if (segs[0] !== PUBLISH_SEGMENT && segs[0] !== UNPUBLISH_SEGMENT) return true;
+  } else if (match.route.op !== 'publish' && match.route.op !== 'unpublish') {
+    return true;
+  }
+  const appBlockId = (req as BlockScopedNextApiRequest).blockClaims?.appBlockId;
+  if (!appBlockId) return false;
+  return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_PUBLISH, appBlockId);
+}
+
+const publishBody = z.strictObject({
+  from: z.string(),
+  keys: z.array(z.string()),
+  prune: z.boolean().optional(),
+});
+const unpublishBody = z.strictObject({ keys: z.array(z.string()) });
+
+/** A refusal raised while handling one key, with that key added to its details. */
+function withKey(err: unknown, key: string): unknown {
+  if (!(err instanceof DocStoreError)) return err;
+  return new DocStoreError(err.code, err.message, { ...err.details, key });
+}
+
+/** A refusal of a publish that lost a race, not a bad request: no rejection token is charged. */
+const PUBLISH_RACE_REASONS: ReadonlySet<unknown> = new Set([
+  'source_changed',
+  'target_changed',
+  'concurrent_write',
+]);
+
+async function runPublish(
+  req: NextApiRequest,
+  body: unknown,
+  access: StorageAccess,
+  store: DocStore,
+  to: DocCollection
+): Promise<unknown> {
+  const { ctx } = access;
+  const uid = requireViewer(access);
+  const input = parseBody(publishBody, body);
+  const keys = assertPublishKeys(input.keys);
+  const from = collectionOf(access, input.from);
+  assertPublishPair(from, to);
+  assertPublishScope(access, to);
+  // The per-call throttle, BEFORE the trust lookup, the source/target reads and the ownership
+  // lookups below: never refunded, so a loop of publishes that change nothing is still bounded.
+  await charge('write', access, req);
+  const user = await assertTrusted(uid);
+
+  // What would be written, read now; every body is checked as a shared write's would be BEFORE
+  // the budget is spent. `publishCopies` re-reads them under lock and refuses any that changed.
+  const preview = await store.previewPublish(ctx, from, to, keys);
+  const toWrite = preview.flatMap((e) => (e.source ? [{ key: e.key, ...e.source }] : []));
+  for (const doc of toWrite) {
+    try {
+      validateDocAgainstCollectionSchema(ctx, to, doc.data);
+      await assertOwnedModelVersions(to.config, doc.data, uid);
+    } catch (err) {
+      throw withKey(err, doc.key);
+    }
+  }
+
+  const reservation = await reserveSharedWrite(uid, ctx.appId, DOC_STORE_PUBLISH_BUDGET);
+  if (!reservation.allowed) {
+    throw rateLimited('publish budget exhausted', 'publish', reservation.retryAfterSeconds);
+  }
+  let landed = false;
+  try {
+    const afterCommit = new Map<string, AfterCommit>();
+    // One mode for the whole publish (two Flipt evaluations), not one per document.
+    const mode = toWrite.length > 0 ? await resolveSharedDataModerationMode(ctx.appId) : undefined;
+    for (const doc of toWrite) {
+      try {
+        afterCommit.set(
+          doc.key,
+          await moderate(access, user, 'update', doc.key, { data: doc.data, key: doc.key }, mode)
+        );
+      } catch (err) {
+        throw withKey(err, doc.key);
+      }
+    }
+    const result = await store.publishCopies(ctx, from, await withSchemaMajor(access, to), {
+      keys,
+      checked: new Map(toWrite.map((d) => [d.key, d.hash])),
+      prune: input.prune ? { limit: DOC_STORE_PUBLISH_BOUNDS.pruneLimit } : undefined,
+    });
+    landed = true;
+    const changed = result.created.length + result.updated.length + result.pruned.length;
+    // Nothing changed: the publish cost nothing, so its token goes back.
+    if (changed === 0) await reservation.release({ rejected: false });
+    for (const key of [...result.created, ...result.updated]) afterCommit.get(key)?.();
+    await syncWithdrawn(ctx, result.pruned, uid);
+    return result;
+  } catch (err) {
+    if (!landed) {
+      // A publish that lost a race is not a bad request: no rejection charge.
+      const race = err instanceof DocStoreError && PUBLISH_RACE_REASONS.has(err.details?.reason);
+      await reservation.release({ rejected: !race && !isOurFault(err) });
+    }
+    throw err;
+  }
+}
+
+async function runUnpublish(
+  req: NextApiRequest,
+  body: unknown,
+  access: StorageAccess,
+  store: DocStore,
+  to: DocCollection
+): Promise<unknown> {
+  const uid = requireViewer(access);
+  const keys = assertPublishKeys(parseBody(unpublishBody, body).keys);
+  if (to.config.visibility !== 'shared') {
+    throw invalid('unpublish removes documents from a shared collection', {
+      reason: 'publish_visibility',
+    });
+  }
+  assertShareWritable(to);
+  // A hooked collection's documents are deleted one at a time, each decided by its hook.
+  assertNotHooked(to, 'unpublish');
+  // Like a delete: `apps:storage` only, no trust gate, the `write` bucket once per call.
+  await charge('write', access, req);
+  const result = await store.unpublishCopies(access.ctx, to, keys);
+  await syncWithdrawn(access.ctx, result.deleted, uid);
+  return result;
+}
+
+/**
+ * The author removed published items: their App Store cards follow, as after a delete. One call
+ * for all of them (at most 500): one parent-listing lookup, updates batched by `itemKey IN (…)`.
+ * `syncStoreItem` never throws (it logs its own failures).
+ */
+async function syncWithdrawn(
+  ctx: StorageAccess['ctx'],
+  keys: readonly string[],
+  uid: number
+): Promise<void> {
+  if (ctx.ns !== PUBLISHED_NS || keys.length === 0) return;
+  await syncStoreItem({
+    appBlockId: ctx.appId,
+    itemKey: keys,
+    change: 'withdrawn',
+    authorUserId: uid,
+  });
 }
 
 function deleteIfVersion(req: NextApiRequest): number | undefined {
@@ -1028,6 +1580,8 @@ function deleteIfVersion(req: NextApiRequest): number | undefined {
 }
 
 const FROM_PARAM = 'from';
+
+const noSuchRoute = () => new DocStoreError('not_found', 'no such storage route');
 
 /** The import selector, or null. Only collection routes take one; `info` refuses it as stray. */
 function importSourceOf(req: NextApiRequest): string | null {
@@ -1044,14 +1598,20 @@ function importSourceOf(req: NextApiRequest): string | null {
  */
 function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
   if (route.op === 'list' || route.op === 'get' || route.op === 'getMany') return 'read';
-  return route.op === 'delete' ? 'delete' : 'author';
+  // `patch` carries only tally operators, each an authoring write like the routes it replaces.
+  // (`publish` / `unpublish` never reach an import: `assertNoStrayQuery` refuses their `from`.)
+  return route.op === 'delete' || route.op === 'unpublish' ? 'delete' : 'author';
 }
 
 /** Query parameters other than the route's own are refused everywhere except a list. */
 function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute): void {
   if (route.op === 'list') return;
   const own = route.op === 'delete' ? ['path', 'ifVersion'] : ['path'];
-  const allowed = route.op === 'info' ? own : [...own, FROM_PARAM];
+  // A publish names its source in the BODY and runs in this app only: no `?from=` import.
+  const allowed =
+    route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
+      ? own
+      : [...own, FROM_PARAM];
   const stray = Object.keys(req.query).find((k) => !allowed.includes(k));
   if (stray) throw invalid(`unknown query parameter ${stray}`);
 }
@@ -1066,7 +1626,17 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
   return async function storageHandler(req: NextApiRequest, res: NextApiResponse) {
     try {
       const match = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
-      if (!match) throw new DocStoreError('not_found', 'no such storage route');
+      if (!match) throw noSuchRoute();
+      // Off for this app, publish and unpublish are not routes at all: the same refusal as any
+      // unknown path, before any other gate (a wrong method's 405 included).
+      if (!(await isPublishRouteServed(req, match))) throw noSuchRoute();
+      // A deprecated per-tally path says so on every response the handler gives, a refusal and a
+      // wrong method's 405 included.
+      if (isLegacyTallyPath(pathSegments(req))) {
+        for (const [name, value] of Object.entries(LEGACY_TALLY_HEADERS)) {
+          res.setHeader(name, value);
+        }
+      }
       if ('methods' in match) {
         res.setHeader('Allow', match.methods.join(', '));
         sendEnvelope(
@@ -1094,8 +1664,17 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
               collection: route.collection,
               op: importOpOf(route),
             });
-      const body = await readJsonBody(req);
-      const reply = await run(req, body, match.route, access, deps.store());
+      const raw = await readJsonBody(req);
+      // A PATCH runs as the tally route its operator names, with that route's own body.
+      const { route: op, body }: { route: OperationRoute; body: unknown } =
+        route.op === 'patch' ? parseTallyPatch(route, raw) : { route, body: raw };
+      if (isTallyRoute(op)) {
+        recordStorageTallyOp(TALLY_METRIC_OP[op.op], route.op === 'patch' ? 'v2' : 'legacy');
+      }
+      // Content levels (`doc-levels.ts`): with the flag on for the app whose documents this
+      // reaches, the store gates every shared read on the token's viewer level.
+      const gated = await withDocLevelGate(access, claims);
+      const reply = await run(req, body, op, gated, deps.store());
       res.status(reply.status).json(reply.body);
     } catch (err) {
       if (err instanceof BodyAbortedError) {

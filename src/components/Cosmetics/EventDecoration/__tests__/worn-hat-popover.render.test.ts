@@ -181,6 +181,10 @@ describe('a hatted feed card', () => {
     expect(dropdown.textContent).toContain('1.2K');
     expect(dropdown.textContent).toContain('56.8k');
     expect(dropdown.textContent).toContain("Scores for Team Blue while it's worn");
+    // Totals are per hat, so a moved hat's figures include what it earned on earlier content.
+    expect(dropdown.querySelector('[data-testid="hat-stats-scope"]')?.textContent).toBe(
+      "This hat's totals from everywhere it has been worn"
+    );
     const link = [...dropdown.querySelectorAll('a')].find((a) =>
       a.textContent?.includes('See the birthday event')
     );
@@ -566,6 +570,7 @@ describe('the popover layout', () => {
     renderCard();
     clickHat();
     expect(popover()!.querySelector('[data-testid="hat-stats"]')).toBeNull();
+    expect(popover()!.querySelector('[data-testid="hat-stats-scope"]')).toBeNull();
     expect(popover()!.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
     expect(livePoints).not.toHaveBeenCalled();
   });

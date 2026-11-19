@@ -260,7 +260,7 @@ async function callTool(
         timer = setTimeout(() => reject(new Error(TIMED_OUT)), tool.timeoutMs ?? TOOL_TIMEOUT_MS);
       }),
     ]);
-    const { json, trimmed } = fitJson(
+    const { json, trimmed, cuts } = fitJson(
       { data: result.data, truncated: result.truncated },
       MAX_TOOL_CHARS
     );
@@ -269,6 +269,7 @@ async function callTool(
       args: parsed.data,
       rows: result.rows,
       truncated: result.truncated || trimmed,
+      ...(cuts.length ? { cutForSize: cuts } : {}),
       ms: now() - started,
       error: null,
       ...(result.emailsShown === undefined ? {} : { emailsShown: result.emailsShown }),
@@ -294,33 +295,62 @@ async function callTool(
   }
 }
 
+/** A list `fitJson` shortened: where it sits in the result, and how many of its items survived. */
+export type SizeCut = { at: string; kept: number; of: number };
+
+/**
+ * A paged list declares itself with `page: { list, offset, nextOffset }` beside it. When that list is
+ * cut for size, `nextOffset` is rewritten to follow the last item kept, so continuing from it skips
+ * nothing and repeats nothing.
+ */
+export type Page = { list: string; offset: number; nextOffset: number | null };
+
 /**
  * About `max` characters of JSON: the longest array is halved (up to 40 times), then the text is cut.
- * Either way the output carries `trimmedForSize`, so the model does not present a slice as the whole.
+ * Either way the output carries `trimmedForSize`: the lists cut, with `kept` of `of`, or `true` when the
+ * text itself was cut.
  */
-export function fitJson(value: unknown, max: number): { json: string; trimmed: boolean } {
+export function fitJson(
+  value: unknown,
+  max: number
+): { json: string; trimmed: boolean; cuts: SizeCut[] } {
   let json = JSON.stringify(value);
-  if (json.length <= max) return { json, trimmed: false };
+  if (json.length <= max) return { json, trimmed: false, cuts: [] };
   const copy = JSON.parse(json) as unknown;
+  const cuts = new Map<unknown[], SizeCut>();
   for (let i = 0; i < 40 && json.length > max; i++) {
     const longest = longestArray(copy);
-    if (!longest || longest.length <= 1) break;
-    longest.length = Math.ceil(longest.length / 2);
-    json = JSON.stringify({ trimmedForSize: true, result: copy });
+    if (!longest || longest.list.length <= 1) break;
+    const { list, at, key, parent } = longest;
+    const cut = cuts.get(list) ?? { at, kept: list.length, of: list.length };
+    list.length = Math.ceil(list.length / 2);
+    cut.kept = list.length;
+    cuts.set(list, cut);
+    const page = (parent as { page?: Page } | null)?.page;
+    if (page && page.list === key) page.nextOffset = page.offset + list.length;
+    json = JSON.stringify({ trimmedForSize: [...cuts.values()], result: copy });
   }
   if (json.length > max)
     json = JSON.stringify({ trimmedForSize: true, result: json.slice(0, max) });
-  return { json, trimmed: true };
+  return { json, trimmed: true, cuts: [...cuts.values()] };
 }
 
-function longestArray(value: unknown): unknown[] | null {
-  let best: unknown[] | null = null;
-  const visit = (v: unknown) => {
+type Found = { list: unknown[]; at: string; key: string; parent: object | null };
+
+function longestArray(value: unknown): Found | null {
+  let best: Found | null = null;
+  let bestSize = -1;
+  const visit = (v: unknown, at: string, key: string, parent: object | null) => {
     if (Array.isArray(v)) {
-      if (!best || JSON.stringify(v).length > JSON.stringify(best).length) best = v;
-      v.forEach(visit);
-    } else if (v && typeof v === 'object') Object.values(v).forEach(visit);
+      const size = JSON.stringify(v).length;
+      if (size > bestSize) {
+        best = { list: v, at, key, parent };
+        bestSize = size;
+      }
+      v.forEach((item, i) => visit(item, `${at}.${i}`, String(i), v));
+    } else if (v && typeof v === 'object')
+      for (const [k, item] of Object.entries(v)) visit(item, at ? `${at}.${k}` : k, k, v);
   };
-  visit(value);
+  visit(value, '', '', null);
   return best;
 }

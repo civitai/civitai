@@ -15,7 +15,6 @@ vi.mock('@civitai/auth', async (importOriginal) => {
     createSessionClient: () => ({ getSessionUser: h.getSessionUser }),
     createSessionTokenClient: () => ({
       refresh: h.refresh,
-      exchangeLegacy: vi.fn(),
       revoke: vi.fn(),
     }),
   };
@@ -133,9 +132,10 @@ describe('sharedSlotNavigationSyncUrl', () => {
   it('sends a shared-slot-only navigation through the sync in host mode', async () => {
     process.env.AUTH_SESSION_COOKIE_MODE = 'host';
     const { sharedSlotNavigationSyncUrl } = await import('../shared-slot-sync');
-    expect(sharedSlotNavigationSyncUrl(nav({ [SHARED]: 't' }))).toBe(
-      `/api/auth/authorize?returnUrl=${encodeURIComponent('/models/1?x=2')}`
-    );
+    expect(sharedSlotNavigationSyncUrl(nav({ [SHARED]: 't' }))).toEqual({
+      location: `/api/auth/authorize?returnUrl=${encodeURIComponent('/models/1?x=2')}`,
+      setCookies: [],
+    });
   });
 
   it('does nothing in shared mode, with a host-only cookie, or for a non-navigation', async () => {

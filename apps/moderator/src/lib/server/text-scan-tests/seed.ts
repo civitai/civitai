@@ -13,6 +13,7 @@ import {
   type Expected,
   type FlagLabel,
 } from '../../text-scan-tests/expected';
+import { isIntentEvalSet } from '../../text-scan-tests/intent-set';
 import { TEST_SET_LIMITS, type Workspace } from '../../text-scan-tests/types';
 import { TestSetError, createSet, upsertCase } from './store';
 import { refreshSetTotals } from './totals';
@@ -243,6 +244,11 @@ export async function importSeed(
     if (existing && existing.workspace !== opts.workspace)
       throw new TestSetError('That set belongs to the other workspace.', 409);
     if (existing?.archived_at) throw new TestSetError('That set is archived.', 409);
+    if (existing && isIntentEvalSet(Number(existing.id)))
+      throw new TestSetError(
+        "The intent set is filled from the lab's import, not this script.",
+        409
+      );
     let setId: number;
     if (existing) setId = Number(existing.id);
     else {

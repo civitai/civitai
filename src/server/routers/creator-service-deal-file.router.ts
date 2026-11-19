@@ -1,3 +1,7 @@
+import { CacheTTL } from '~/server/common/constants';
+import { domainServableLevels } from '~/server/utils/browsing-level';
+import type { RateLimit } from '~/server/middleware.trpc';
+import { rateLimit } from '~/server/middleware.trpc';
 import { guardedProcedure, isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 import {
   requestServiceDealAttachmentSchema,
@@ -23,6 +27,15 @@ import {
 const gated = guardedProcedure.use(isFlagProtected('creatorServices'));
 const attachGated = gated.use(isFlagProtected('creatorServicesAttachments'));
 
+/**
+ * Per user, across deals. The per-deal file cap counts only files still attached, so removing one
+ * frees its place; this bounds how often a place can be refilled.
+ */
+export const serviceDealAttachmentRateLimits: RateLimit[] = [
+  { limit: 30, period: CacheTTL.hour },
+  { limit: 100, period: CacheTTL.day },
+];
+
 export const creatorServiceDealFileRouter = router({
   requestUpload: gated
     .input(requestServiceDealUploadSchema)
@@ -43,6 +56,7 @@ export const creatorServiceDealFileRouter = router({
       deliverServiceDeal({ dealId: input.dealId, userId: ctx.user.id })
     ),
   requestAttachment: attachGated
+    .use(rateLimit(serviceDealAttachmentRateLimits))
     .input(requestServiceDealAttachmentSchema)
     .mutation(({ input, ctx }) =>
       requestServiceDealAttachment({
@@ -71,6 +85,7 @@ export const creatorServiceDealFileRouter = router({
       userId: ctx.user.id,
       isModerator: !!ctx.user.isModerator,
       canReviewCsam: !!ctx.features?.csamReports,
+      servableLevels: domainServableLevels(ctx),
     })
   ),
 });

@@ -98,7 +98,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       name: 'resource-availability-webhook',
       type: 'error',
       message: `cache bust failed: ${String(e)}`,
-    }).catch(() => undefined)
+    })
   );
 
   logToAxiom({
@@ -107,7 +107,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     events: parsed.data.events.length,
     acted: acted.length,
     queued: modelIds.length,
-  }).catch(() => undefined);
+  });
 
   return res.status(200).json({ events: parsed.data.events.length, acted: acted.length });
 }

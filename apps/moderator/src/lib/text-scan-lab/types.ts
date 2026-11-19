@@ -8,15 +8,15 @@ export const LAB_ENTITY_TYPES = [
   'Crucible',
   'Collection',
   'ChatMessage',
-  'Comment',
-  'CommentV2',
+  'CommentV3',
   'ResourceReview',
   'User',
   'UserProfile',
 ] as const;
 export type LabEntityType = (typeof LAB_ENTITY_TYPES)[number];
 
-export type LabLabel = 'nsfw' | 'poi' | 'minor' | 'scam' | 'csam';
+/** `model-com-face-intent` is in no entity type's labels: only the pinned intent set asks for it. */
+export type LabLabel = 'nsfw' | 'poi' | 'minor' | 'scam' | 'csam' | 'model-com-face-intent';
 
 // Mirrors each main-app profile's `labels` (src/server/services/text-scan/profiles/*.profile.ts).
 export const LAB_LABELS: Record<LabEntityType, readonly LabLabel[]> = {
@@ -29,8 +29,7 @@ export const LAB_LABELS: Record<LabEntityType, readonly LabLabel[]> = {
   Crucible: ['nsfw'],
   Collection: ['nsfw'],
   ChatMessage: ['scam'],
-  Comment: ['scam'],
-  CommentV2: ['scam'],
+  CommentV3: ['scam'],
   ResourceReview: ['scam'],
   User: ['scam'],
   UserProfile: ['scam'],
@@ -47,8 +46,7 @@ export const DEFAULT_HEADING: Record<LabEntityType, string> = {
   Crucible: 'Name',
   Collection: 'Name',
   ChatMessage: 'Messages, newest first',
-  Comment: 'Comment',
-  CommentV2: 'Comment',
+  CommentV3: 'Comment',
   ResourceReview: 'Review',
   User: 'Username',
   UserProfile: 'Bio',

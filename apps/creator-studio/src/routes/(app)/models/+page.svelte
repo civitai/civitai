@@ -62,6 +62,7 @@
     IconChevronLeft,
     IconChevronRight,
     IconExternalLink,
+    IconGift,
   } from '@tabler/icons-svelte';
   import { modelUrl, siteModelUrl } from '$lib/model-url';
   import type { PageData } from './$types';
@@ -163,6 +164,8 @@
     { value: 'both', label: 'On both sites' },
     { value: 'com', label: 'Only on civitai.com' },
     { value: 'red', label: 'Only on civitai.red' },
+    { value: 'com-face', label: 'Customized for civitai.com' },
+    { value: 'com-ready', label: 'Can be listed on civitai.com' },
   ];
   const feeOptions = [
     { value: '', label: 'All fees' },
@@ -613,6 +616,21 @@
   </div>
 {/if}
 
+{#if data.comReadyCount > 0 && view.query.site !== 'com-ready'}
+  <div
+    class="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-dark-4 bg-dark-6 px-4 py-3"
+  >
+    <p class="flex-1 text-sm text-dark-1">
+      {data.comReadyCount === 1
+        ? '1 of your mature models is only on civitai.red. Give it a civitai.com version to list it there too.'
+        : `${data.comReadyCount} of your mature models are only on civitai.red. Give them a civitai.com version to list them there too.`}
+    </p>
+    <Button variant="outline" size="sm" onclick={() => navigate({ site: 'com-ready', page: null })}>
+      Show them
+    </Button>
+  </div>
+{/if}
+
 <!-- Search / filter / sort -->
 <div class="mb-4 flex flex-wrap items-center gap-2">
   <form class="flex items-center gap-1" onsubmit={submitSearch}>
@@ -1000,6 +1018,16 @@
                           />
                         </span>
                       </button>
+                      {#if data.giftLinksEnabled && version.paidAccessConfig}
+                        <a
+                          href="/models/gifts/{version.id}"
+                          title="Gift links"
+                          aria-label="Gift links for {version.name}"
+                          class="shrink-0 rounded-md p-1 text-dark-2 hover:bg-dark-6 hover:text-white"
+                        >
+                          <IconGift size={16} />
+                        </a>
+                      {/if}
                     </div>
                   </li>
                 {/each}

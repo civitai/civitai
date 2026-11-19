@@ -22,7 +22,7 @@ export const watchOpenNowpaymentsJob = createJob(
         });
         digestSent = digest.length;
       } catch (e) {
-        await logToAxiom({
+        logToAxiom({
           name: 'watch-open-nowpayments-job',
           type: 'error',
           message: 'Failed to send open-deposit digest',
@@ -39,6 +39,7 @@ export const watchOpenNowpaymentsJob = createJob(
       ...result.counts,
       checked: result.checked,
       closed: result.closed,
+      lateFinished: result.lateFinished,
       lookupFailed: result.lookupFailed,
       digestSent,
       listed: listed.length,

@@ -2,7 +2,6 @@
   import { browser } from '$app/environment';
   import { untrack } from 'svelte';
   import { enhance, deserialize } from '$app/forms';
-  import GenerationOnlyHint from '$lib/components/monetization/GenerationOnlyHint.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
@@ -110,6 +109,7 @@
     usage: CreatorUsageControl;
     updated: number;
     skipped: number;
+    usageSkipped: number;
     failed: number;
   } | null>(null);
 
@@ -334,6 +334,7 @@
           // The action only fails outright when NOTHING succeeded, so a run that skipped or failed most
           // of the selection still lands here and has to say so.
           skipped: Number(d.skippedPublished ?? 0),
+          usageSkipped: Number(d.usageSkipped ?? 0),
           failed: Number(d.failed ?? 0),
         });
         // Selection is deliberately kept: a successful write is exactly what moves rows out of the
@@ -386,7 +387,7 @@
       </Dialog.Header>
 
       <div class="flex flex-col gap-3 py-2">
-        {#if applied.skipped > 0 || applied.failed > 0}
+        {#if applied.skipped > 0 || applied.usageSkipped > 0 || applied.failed > 0}
           <Alert.Root>
             <IconAlertTriangle />
             <Alert.Title>Not everything in your selection changed</Alert.Title>
@@ -395,6 +396,12 @@
                 <p>
                   {applied.skipped} had already been published, so an early-access window couldn't start
                   on {applied.skipped === 1 ? 'it' : 'them'}. Permanent paid access still can.
+                </p>
+              {/if}
+              {#if applied.usageSkipped > 0}
+                <p>
+                  {applied.usageSkipped} kept {applied.usageSkipped === 1 ? 'its' : 'their'} usage control:
+                  set by moderators, or no longer available.
                 </p>
               {/if}
               {#if applied.failed > 0}
@@ -527,9 +534,6 @@
               bind:value={usageControl}
               allowGenerationOnly={caps.canSetGenerationOnly}
             />
-            {#if !caps.canSetGenerationOnly}
-              <GenerationOnlyHint />
-            {/if}
             <p class="text-xs text-dark-2">
               A gated version's price moves to whichever tier survives — no version is left gated
               without a price.

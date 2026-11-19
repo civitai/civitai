@@ -3,7 +3,7 @@ import type { getImageRemovals } from '../user-account.service';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
 import { CONTENT_ROWS, IMAGE_REMOVALS_PATH, USER_REPORTS_PATH } from '$lib/tickets/content-panel';
 import { toVisibleRemovals, type HistoryRemoval } from './history';
-import { capped, section, type CardSection } from './section';
+import { capped, section, type CardSection } from '$lib/server/section';
 
 export type ContentReport = {
   id: number;

@@ -61,7 +61,20 @@ vi.mock('~/components/AppLayout/NotFound', () => ({ NotFound: () => null }));
 vi.mock('~/components/Apps/ReviewBlockPreviewHost', () => ({ ReviewBlockPreviewHost: () => null }));
 vi.mock('~/components/Apps/useReviewPreview', () => ({ useReviewPreview: () => ({}) }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
-vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({ appBlocks: true }) }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ appBlocks: true }),
+}));
+// The page also mounts the decision bar and the "next submission" hook (the full-page preview
+// carries Approve & next / Reject…). Stubbed for the same reason as the rest: the resolver is the
+// unit under test, and their real graphs reach the whole review UI (icons, embeds, tRPC).
+vi.mock('~/components/Apps/ReviewActionBar', () => ({ ReviewActionBar: () => null }));
+vi.mock('~/components/Apps/ReviewDetailView', () => ({ AllCaughtUp: () => null }));
+vi.mock('~/components/Apps/useNextPendingReview', () => ({
+  useNextPendingReview: () => ({ openNext: () => undefined, caughtUp: false }),
+}));
+vi.mock('~/utils/trpc', () => ({
+  trpc: { blocks: { getPublishRequest: { useQuery: () => ({ data: undefined }) } } },
+}));
 
 function makeCtx(
   opts: {

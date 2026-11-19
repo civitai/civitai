@@ -5,6 +5,10 @@ import { createHash } from 'crypto';
 import { dbWrite } from '~/server/db/client';
 import type { AppListingModerationAction } from '~/server/schema/blocks/offsite-moderation.schema';
 import { readListingSourceRepoUrl } from '~/server/services/blocks/app-listing-source-repo.service';
+import {
+  isIssueTrackerColumnAvailable,
+  readListingIssueTrackerUrl,
+} from '~/server/services/blocks/app-listing-issue-tracker.service';
 import { readListingRedSlots } from '~/server/services/blocks/listing-media-split.service';
 import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
 
@@ -58,6 +62,12 @@ async function listingContentFingerprint(db: ModeratorEditDb, listingId: string)
     repoProbe.available && db !== dbWrite
       ? await readListingSourceRepoUrl(listingId, db)
       : repoProbe;
+  // The issue-tracker link (no-type, raw SQL), probed outside the transaction for the same
+  // reason. Appended ONLY when set, so a listing without one fingerprints exactly as it did
+  // before this field existed and a moderator's recorded fingerprint stays valid.
+  const tracker = (await isIssueTrackerColumnAvailable(dbWrite))
+    ? await readListingIssueTrackerUrl(listingId, db)
+    : { available: false, value: null };
   const json = JSON.stringify([
     row.name,
     row.tagline,
@@ -75,6 +85,7 @@ async function listingContentFingerprint(db: ModeratorEditDb, listingId: string)
     red.redIconId,
     red.redCoverId,
     repo.value,
+    ...(tracker.value !== null ? [tracker.value] : []),
   ]);
   return createHash('sha256').update(json).digest('hex');
 }

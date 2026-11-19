@@ -3,9 +3,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import { createLuaRedis, hashTicketFrom } from '~/server/utils/__tests__/redis-lua-harness';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type { Prisma } from '@prisma/client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 /**
  * An owner's "keep Hat Turf off my images", against real rows: their images take no new stickers,
@@ -34,6 +35,12 @@ const EVENT = {
   getTeamCosmetic: async () => 11,
 };
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => [EVENT] }));
+// getTurfStock and getTurfSummaries read through Kysely, not Prisma's `$queryRaw`: both Kysely
+// clients' statements go to the same PGlite (see beforeEach).
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
 // Blocks and suspensions have their own tests; nobody here is blocked.
 vi.mock('~/server/services/placement-moderation.service', () => ({
   assertCanPlace: () => Promise.resolve(),
@@ -78,7 +85,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (
       id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz,
       "createdAt" timestamptz DEFAULT '2020-01-01', meta jsonb,
-      "excludeFromLeaderboards" boolean DEFAULT false
+      "excludeFromLeaderboards" boolean DEFAULT false, flags int NOT NULL DEFAULT 0
     );
     CREATE TABLE "CreatorMilestone" (key text PRIMARY KEY, threshold numeric);
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz, availability text);
@@ -88,6 +95,11 @@ beforeAll(async () => {
     );
     CREATE TABLE "Collection" (id int PRIMARY KEY, mode text);
     CREATE TABLE "CollectionItem" (id serial PRIMARY KEY, "collectionId" int, "imageId" int);
+    -- contestEntry also reads running flag Crucibles and today's flags.
+    CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
+    CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "eventTags" text[]);
+    CREATE TABLE "CrucibleEntry" (id serial PRIMARY KEY, "crucibleId" int, "imageId" int);
+    CREATE TABLE "FlagDay" (id serial PRIMARY KEY, event text, "startsAt" timestamp(3), "closesAt" timestamp(3), "imageIds" int[]);
     CREATE TABLE "EventCosmeticPlacement" (
       id serial PRIMARY KEY, event text NOT NULL, "userId" int NOT NULL, "endedAt" timestamp
     );
@@ -120,6 +132,8 @@ beforeEach(async () => {
       SELECT 'e', id, ${PLACER}, 'Blue', 11, '{}' FROM "Image";
   `);
   const raw = pgliteRaw(db);
+  kysely.read.mockReset().mockImplementation(raw.queryRaw);
+  kysely.write.mockReset().mockImplementation(raw.queryRaw);
   for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
     client.$queryRaw.mockImplementation(raw.queryRaw as never);
     client.$executeRaw.mockImplementation(raw.executeRaw as never);
@@ -128,14 +142,13 @@ beforeEach(async () => {
   dbMock.dbWrite.$transaction.mockRejectedValue(new Error('passed the checks') as never);
   dbMock.dbRead.eventTurfStock.findUnique.mockResolvedValue(null as never);
   lua = createLuaRedis(0);
-  redisMock.sysRedis.eval.mockImplementation(lua.eval as never);
-  redisMock.sysRedis.hmGet.mockImplementation((async (_k: string, keys: string[]) =>
-    keys.map(() => null)) as never);
+  redisMock.redis.eval.mockImplementation(lua.eval as never);
+  for (const client of [redisMock.redis, redisMock.sysRedis])
+    client.hmGet.mockImplementation((async (_k: string, keys: string[]) =>
+      keys.map(() => null)) as never);
   let ticket = 0;
-  redisMock.sysRedis.incr.mockImplementation((async () => ++ticket) as never);
-  redisMock.sysRedis.hGetAll.mockImplementation(
-    (async (key: string) => lua.hash(key) ?? {}) as never
-  );
+  redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => ++ticket) as never);
+  redisMock.redis.hGetAll.mockImplementation((async (key: string) => lua.hash(key) ?? {}) as never);
   pushTurfCounts.mockClear();
 });
 
@@ -198,6 +211,38 @@ describe("an owner's switch: keep Hat Turf off my images", () => {
   });
 });
 
+// Prisma's raw reads answered an id past int4 with no rows; through the pg pools the `int[]` bind is
+// a range error that fails the whole batch. Such an id is dropped before the statement runs.
+describe('an image id past int4 in the batch', () => {
+  const PAST_INT4 = 2 ** 31;
+  beforeEach(async () => {
+    const { rejectPastInt4 } = await import('~/test-utils/kysely-raw-fake');
+    const raw = pgliteRaw(db);
+    kysely.read.mockImplementation(async (strings: readonly string[], ...values: unknown[]) => {
+      rejectPastInt4(values);
+      return raw.queryRaw(strings as TemplateStringsArray, ...values);
+    });
+  });
+
+  it('answers the other ids, and leaves it out', async () => {
+    const { open, mine } = await getTurfSummaries('e', [IMAGES[0], PAST_INT4, IMAGES[1]], PLACER);
+    expect(open).toEqual({ [IMAGES[0]]: true, [IMAGES[1]]: false });
+    expect(mine).toEqual({ [IMAGES[0]]: true, [IMAGES[1]]: true });
+  });
+
+  it('with no other id, answers empty without a statement', async () => {
+    kysely.read.mockClear();
+    await expect(getTurfSummaries('e', [PAST_INT4], PLACER)).resolves.toEqual({
+      team: null,
+      images: {},
+      open: {},
+      mine: {},
+      hidden: {},
+    });
+    expect(kysely.read).not.toHaveBeenCalled();
+  });
+});
+
 describe("a banned or deleted owner's images", () => {
   // Stickers on an image whose owner is later banned or deleted stop counting and drawing.
   it.each([
@@ -209,6 +254,33 @@ describe("a banned or deleted owner's images", () => {
     expect(await countedImages()).toEqual([]);
     // Not blamed on the owner's switch, which they never touched.
     await expect(place(IMAGES[0])).rejects.toThrow("You can't put hat stickers on this image");
+  });
+});
+
+describe("a placer's event-points exclusion", () => {
+  // Decision: leaderboard exclusion and event-points exclusion are separate switches. Before you
+  // put "excludeFromLeaderboards" back into the turf eligibility, note that it would stop every
+  // leaderboard-only placer's stickers from counting.
+  const countedOn = async (imageId: number) => {
+    await syncTurfImages((await getTurfEvent('e'))!, [imageId]);
+    const entry = lua.hash(turfKeys('e').counts)?.[`Image:${imageId}`];
+    return entry ? JSON.parse(entry).counted : undefined;
+  };
+
+  it('a placer with the bit still shows, but counts for nothing', async () => {
+    await db.exec(
+      `UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${PLACER}`
+    );
+    expect(await drawnOn(IMAGES[0])).toBe(1);
+    expect(await countedOn(IMAGES[0])).toEqual({});
+  });
+
+  it('a placer excluded only from leaderboards counts', async () => {
+    // DisablePayout rides along so a predicate testing the wrong bit is caught too.
+    await db.exec(
+      `UPDATE "User" SET "excludeFromLeaderboards" = true, flags = ${UserFlag.DisablePayout} WHERE id = ${PLACER}`
+    );
+    expect(await countedOn(IMAGES[0])).toEqual({ Blue: 1 });
   });
 });
 
@@ -287,7 +359,7 @@ describe('who may use the switch', () => {
   // By the time the sync runs the switch is saved: a failed sync must not report a failed save,
   // which would leave the client stale and a retry with nothing to change.
   it('a failed sync after the switch is saved still reports the change', async () => {
-    redisMock.sysRedis.eval.mockRejectedValue(new Error('redis down') as never);
+    redisMock.redis.eval.mockRejectedValue(new Error('redis down') as never);
     expect((await setTurfOwnerOff('e', OUTSIDER, true)).changed).toBe(true);
     expect((await getTurfStock('e', OUTSIDER)).ownerOff).toBe(true);
   });

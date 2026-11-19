@@ -82,7 +82,7 @@ describe('ago', () => {
 
 describe('modelRef', () => {
   it('groups the digits in threes with narrow no-break spaces', () => {
-    expect(modelRef(1284311)).toBe('#1\u202f284\u202f311');
+    expect(modelRef(990201234)).toBe('#990\u202f201\u202f234');
     expect(modelRef(8030)).toBe('#8\u202f030');
     expect(modelRef(805)).toBe('#805');
   });

@@ -36,6 +36,7 @@ const { mockRunImageSearch, mockIsRegionRestricted, mockGetRegion, mockGetServer
 
 vi.mock('~/server/services/image-search.service', () => ({
   runImageSearch: mockRunImageSearch,
+  withoutHeldImages: async (items: unknown[]) => items,
 }));
 
 vi.mock('~/server/utils/region-blocking', () => ({

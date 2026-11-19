@@ -66,6 +66,10 @@ const LONG_TOKEN_RE = /(?=[A-Za-z0-9_-]*[0-9])(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0
 // A URL embedded in free text (message/stack). Stops at whitespace/quotes/brackets.
 const URL_IN_TEXT_RE = /https?:\/\/[^\s"'<>()\][{}]+/gi;
 
+// A gift claim link carries its code, a live credential, as a path segment; a client-side navigation
+// to one also puts it in the `/_next/data/<build>/gift/<code>.json` fetch.
+const GIFT_CODE_PATH_RE = /\/gift\/[^/?#]+/;
+
 function redactParams(params: URLSearchParams): boolean {
   let changed = false;
   for (const name of [...params.keys()]) {
@@ -91,6 +95,11 @@ export function redactUrl(input: string): string {
     const url = new URL(input, base);
 
     let changed = redactParams(url.searchParams);
+
+    if (GIFT_CODE_PATH_RE.test(url.pathname)) {
+      url.pathname = url.pathname.replace(GIFT_CODE_PATH_RE, `/gift/${REDACTED}`);
+      changed = true;
+    }
 
     // OAuth implicit flow and some magic links carry params in the fragment,
     // e.g. `#access_token=...&state=...`. Treat a `key=value` fragment as a query.

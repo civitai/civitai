@@ -77,8 +77,23 @@ describe('/api/og?type=article image', () => {
   });
 
   it('shows the cover over the banner', async () => {
-    mockArticle({ coverImage: image('cover-key'), bannerImage: banner('Scanned') });
+    mockArticle({
+      coverImage: { ...image('cover-key'), ingestion: 'Scanned', needsReview: null },
+      bannerImage: banner('Scanned'),
+    });
     await render();
     expect(pickedImage()).toBe('cover-key');
+  });
+
+  it.each([
+    ['has not finished scanning', 'Pending', null],
+    ['awaits review', 'Scanned', 'minor'],
+  ])('shows the banner over a cover that %s', async (_, ingestion, needsReview) => {
+    mockArticle({
+      coverImage: { ...image('cover-key'), ingestion, needsReview },
+      bannerImage: banner('Scanned'),
+    });
+    await render();
+    expect(pickedImage()).toBe('banner-key');
   });
 });

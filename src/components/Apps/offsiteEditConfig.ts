@@ -5,7 +5,7 @@ import {
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { SENSITIVE_TOKEN_SCOPES } from '~/shared/constants/token-scope.constants';
-import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import type { UpdateListingPatchInput } from '~/server/schema/blocks/offsite-listing.schema';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 
@@ -83,6 +83,8 @@ export type ListingEditContext = {
      * absent reads exactly like "not set" — see {@link editContextToForm}.
      */
     sourceRepoUrl?: string | null;
+    /** The issue-tracker / support link. OPTIONAL for the reason `sourceRepoUrl` is. */
+    issueTrackerUrl?: string | null;
     /**
      * The author's beta declaration. OPTIONAL on this type so every pre-existing edit
      * context + fixture (all of which predate the field) still type-checks, and absent reads
@@ -112,8 +114,8 @@ export type ListingEditContext = {
    *   - `connectScopeJustifications` — the STORED per-scope rationale (prefill).
    */
   connectClientId?: string | null;
-  connectAllowedScopes?: number | null;
-  connectRequestedScopes?: number | null;
+  connectAllowedScopes?: number | bigint | null;
+  connectRequestedScopes?: number | bigint | null;
   connectScopeJustifications?: Record<string, string> | null;
 };
 
@@ -178,8 +180,8 @@ export function materialEditBlockedReason(
 ): string | null {
   if (!isUnpublishedEdit(ctx)) return null;
   const fields = isOnsiteEdit(ctx)
-    ? 'name, source repository and content rating'
-    : 'name, App URL, source repository and content rating';
+    ? 'name, source repository, issue tracker and content rating'
+    : 'name, App URL, source repository, issue tracker and content rating';
 
   // 🔴 ROLE-AWARE, AND THE DEFAULT IS THE NEUTRAL ONE — see `ListingEditContext.role`.
   // `loadOwnedEditableListing` admits an accepted editor seat, so this copy is read by
@@ -278,7 +280,7 @@ export function scopeDisclosureLockedForEdit(
   // precondition directly: the lock applies in the unpublished state.
   if (!isUnpublishedEdit(ctx)) return false;
   if (ctx.connectClientId == null) return false;
-  return (ctx.connectAllowedScopes ?? 0) !== (ctx.connectRequestedScopes ?? 0);
+  return BigInt(ctx.connectAllowedScopes ?? 0) !== BigInt(ctx.connectRequestedScopes ?? 0);
 }
 
 /**
@@ -301,6 +303,7 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     name: s.name ?? '',
     externalUrl: s.externalUrl ?? '',
     sourceRepoUrl: s.sourceRepoUrl ?? '',
+    issueTrackerUrl: s.issueTrackerUrl ?? '',
     isBeta: s.isBeta === true,
     // 🔴 `s.isBeta === true &&`, not just `?? ''`. This mirrors the rule the server
     // projections apply, so the form's baseline and the wire value agree — otherwise
@@ -325,7 +328,7 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     // drops any non-sensitive (or no-longer-allowed) key — no dangling rationale.
     scopeJustifications: pruneJustificationsToMask(
       ctx.connectScopeJustifications ?? {},
-      derivedScopes & SENSITIVE_TOKEN_SCOPES
+      BigInt(derivedScopes) & SENSITIVE_TOKEN_SCOPES
     ),
   };
 }
@@ -419,9 +422,9 @@ function shallowEqualStringMap(a: Record<string, string>, b: Record<string, stri
 export function buildScalarPatch(
   ctx: ListingEditContext,
   current: OffsiteSubmitFormValues
-): UpdateListingPatch {
+): UpdateListingPatchInput {
   const original = editContextToForm(ctx);
-  const patch: UpdateListingPatch = {};
+  const patch: UpdateListingPatchInput = {};
 
   const name = current.name.trim();
   if (name !== original.name.trim()) patch.name = name;
@@ -449,6 +452,13 @@ export function buildScalarPatch(
   const originalSourceRepoUrl = original.sourceRepoUrl.trim();
   if (sourceRepoUrl !== originalSourceRepoUrl) {
     patch.sourceRepoUrl = sourceRepoUrl.length > 0 ? sourceRepoUrl : null;
+  }
+
+  // Issue tracker / support link — the same rule as the source link: only when retyped, cleared
+  // with `null`, and the canonical comparison is the server's.
+  const issueTrackerUrl = (current.issueTrackerUrl ?? '').trim();
+  if (issueTrackerUrl !== (original.issueTrackerUrl ?? '').trim()) {
+    patch.issueTrackerUrl = issueTrackerUrl.length > 0 ? issueTrackerUrl : null;
   }
 
   // Beta status + note. Emitted ONLY when the author actually changed them, which is what
@@ -515,9 +525,10 @@ export function buildScalarPatch(
       storedSnapshot
     );
     const currentJust = shapeSensitiveJustifications(current.scopeJustifications, derived);
-    const drifted = derived !== storedSnapshot;
+    const drifted = BigInt(derived) !== BigInt(storedSnapshot);
     if (drifted || !shallowEqualStringMap(currentJust, storedJust)) {
-      patch.requestedScopes = derived;
+      // A JSON number on the wire.
+      patch.requestedScopes = Number(derived);
       patch.scopeJustifications = currentJust;
     }
   }
@@ -526,6 +537,6 @@ export function buildScalarPatch(
 }
 
 /** True when the scalar patch has at least one changed field (a save is needed). */
-export function hasScalarChanges(patch: UpdateListingPatch): boolean {
+export function hasScalarChanges(patch: UpdateListingPatchInput): boolean {
   return Object.keys(patch).length > 0;
 }

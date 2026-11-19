@@ -2,6 +2,7 @@ import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { usersSearchIndex } from '~/server/search-index/users.search-index';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
@@ -237,7 +238,7 @@ async function getReviewTasks(ctx: UserMetricContext) {
     SELECT
       "userId" as id
     FROM "ResourceReview"
-    WHERE "createdAt" > ${ctx.lastUpdate}
+    WHERE "createdAt" > ${ctx.lastUpdate} OR "updatedAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -254,6 +255,7 @@ async function getReviewTasks(ctx: UserMetricContext) {
       JOIN "ModelVersion" mv on rr."modelVersionId" = mv.id
       WHERE rr."userId" = ANY($1::int[])
         AND mv.status = 'Published'
+        AND ${visibleReviewSql('rr')}
       GROUP BY rr."userId"`,
       [ids]
     );

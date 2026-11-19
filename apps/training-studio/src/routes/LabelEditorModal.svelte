@@ -5,8 +5,9 @@
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { portalProps } from '$lib/host';
   import type { LabelType } from '$lib/data/trainingModels';
-  import { captionTriggerHit, withTags, type Img } from './trainingFlow';
+  import { canAutoLabelImage, captionTriggerHit, repeatsOf, withTags, type Img } from './trainingFlow';
   import TagEditor from './TagEditor.svelte';
+  import RepeatsStepper from './RepeatsStepper.svelte';
 
   // `editing` is the flow's own image proxy, so mutating its tags/caption here applies live to the grid.
   // `onRelabel` runs the auto-label driver (owned by the parent); `tagVocab` is this dataset's tags for
@@ -20,16 +21,20 @@
     onRelabel,
     position,
     onStep,
+    repeatsEnabled = false,
   }: {
     open: boolean;
     editing: Img | undefined;
     labelMode: LabelType;
     trigger: string;
     tagVocab: string[];
-    onRelabel: (id: number) => void;
+    /** Absent when the host has no auto-label: the Re-run buttons don't render. */
+    onRelabel?: (id: number) => void;
     /** Where `editing` sits in the grid's sequence; `index` is -1 when it isn't in it. */
     position: { index: number; total: number };
     onStep: (delta: -1 | 1) => void;
+    /** The selected models can train per-image repeats: show the Repeats row. */
+    repeatsEnabled?: boolean;
   } = $props();
 
   let newTag = $state('');
@@ -66,8 +71,10 @@
   const suggestions = $derived.by(() => {
     if (!editing) return [];
     const q = newTag.trim().toLowerCase();
-    const have = editing.tags;
-    return tagVocab.filter((t) => !have.includes(t) && (q === '' || t.toLowerCase().includes(q))).slice(0, 8);
+    const have = new Set(editing.tags.map((t) => t.toLowerCase()));
+    return tagVocab
+      .filter((t) => !have.has(t.toLowerCase()) && (q === '' || t.toLowerCase().includes(q)))
+      .slice(0, 8);
   });
 
   // Focus the primary field (tag input / caption textarea) on open — this is a correction surface, the
@@ -100,7 +107,7 @@
   <!-- Only the body scrolls, so the header, Previous/Next and the close ✕ stay on screen. dvh, not vh: mobile
        browser chrome makes vh taller than the visible area. -->
   <Dialog.Content
-    class="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-2xl"
+    class="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-4xl"
     portalProps={portalProps()}
     onkeydown={stepKeydown}
   >
@@ -126,17 +133,19 @@
       <div class="-m-1 min-h-0 overflow-y-auto p-1">
         {#key editing.id}
           {#if labelMode === 'tag'}
-            <div class="grid gap-4 sm:grid-cols-[200px_1fr]" use:autofocusInput>
-              {@render mediaPreview(editing, 'max-h-48 w-full object-cover sm:max-h-none')}
+            <div class="grid gap-4 sm:grid-cols-2" use:autofocusInput>
+              {@render mediaPreview(editing, 'max-h-[60dvh] w-full object-contain')}
               <div>
                 <div class="mb-2 flex items-center justify-between gap-2">
                   <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Tags</span>
                   <div class="flex items-center gap-1">
+                    {#if onRelabel && canAutoLabelImage(editing)}
                     <Button variant="ghost" size="xs" onclick={() => onRelabel(editing.id)} disabled={editing.labeling}>
                       <IconSparkles size={12} stroke={2} class="mr-1 inline" />{editing.labeling
                         ? 'labeling…'
                         : 'Re-run'}
                     </Button>
+                    {/if}
                     {#if editing.tags.length > 0}
                       <Button variant="ghost" size="xs" onclick={clearTags}>Clear all</Button>
                     {/if}
@@ -174,15 +183,17 @@
             </div>
           {:else}
             <div class="flex flex-col gap-3" use:autofocusInput>
-              {@render mediaPreview(editing, 'max-h-72 w-full object-contain')}
+              {@render mediaPreview(editing, 'max-h-[50dvh] w-full object-contain')}
               <div>
                 <div class="mb-2 flex items-center justify-between gap-2">
                   <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Caption</span>
+                  {#if onRelabel && canAutoLabelImage(editing)}
                   <Button variant="ghost" size="xs" onclick={() => onRelabel(editing.id)} disabled={editing.labeling}>
                     <IconSparkles size={12} stroke={2} class="mr-1 inline" />{editing.labeling
                       ? 'labeling…'
                       : 'Re-run'}
                   </Button>
+                  {/if}
                 </div>
                 <Textarea
                   bind:value={editing.caption}
@@ -204,6 +215,18 @@
           {/if}
         {/key}
       </div>
+      {#if repeatsEnabled}
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-dark-4 pt-3">
+          <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Repeats</span>
+          <RepeatsStepper
+            label="Repeats for {editing.name}"
+            bind:value={() => repeatsOf(editing!), (v) => (editing!.repeats = v > 1 ? v : undefined)}
+          />
+          <span class="text-xs text-dark-2">
+            Train this image more often than the rest. Total steps stay the same.
+          </span>
+        </div>
+      {/if}
     {/if}
   </Dialog.Content>
 </Dialog.Root>

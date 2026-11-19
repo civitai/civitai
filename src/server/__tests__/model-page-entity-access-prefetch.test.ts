@@ -72,7 +72,7 @@ const runSsr = async (query: Record<string, string> = {}) => {
   };
 
   const result = await captured.resolver({
-    ctx: { params: { id: String(MODEL_ID), slug: [SLUG] }, query },
+    ctx: { params: { id: String(MODEL_ID), slug: [SLUG] }, query, req: { headers: {} } },
     ssg,
     session: null,
     features: {},

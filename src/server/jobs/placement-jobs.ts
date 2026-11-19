@@ -45,12 +45,12 @@ async function drain<T>(
     if (seen(result) < BATCH) return { runs, hitCap: false };
   }
 
-  await logToAxiom({
+  logToAxiom({
     name: 'placement-jobs',
     type: 'warning',
     message: `${name} hit its batch cap with work remaining`,
     batches: MAX_BATCHES,
-  }).catch(() => null);
+  });
 
   return { runs, hitCap: true };
 }
@@ -323,13 +323,13 @@ export const sweepUncountedPlacementsJob = createJob(
     // An UNDELIVERED defer is the opposite: the sweep could not emit at all, so
     // it counts toward the alarm rather than excusing it.
     if (considered > deferred && counted === 0)
-      await logToAxiom({
+      logToAxiom({
         name: 'placement-jobs',
         type: 'warning',
         message: 'placement-sweep-uncounted claimed work and counted none of it',
         considered,
         undelivered,
-      }).catch(() => null);
+      });
 
     return {
       considered,

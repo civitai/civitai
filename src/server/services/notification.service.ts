@@ -12,8 +12,8 @@ import {
   imageReactionMilestones,
 } from '~/server/notifications/reaction.notifications';
 import {
-  emailNotificationTypeList,
-  isEmailNotificationType,
+  emailOptOutTypeList,
+  isEmailOptOutType,
   isPushableNotificationType,
 } from '~/server/notifications/utils.notifications';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -52,13 +52,20 @@ export type CreateNotificationPendingRow = z.infer<typeof createNotificationPend
 // live in that app now; the monolith keeps only the main-DB `details` enrichment + the
 // UserNotificationSettings writes below.
 
-export const createNotification = async (data: CreateNotificationPendingRow) => {
+/** `throwOnError` rethrows a failed send, after the usual logging, for a caller that must know it failed. */
+export const createNotification = async (
+  data: CreateNotificationPendingRow,
+  { throwOnError = false }: { throwOnError?: boolean } = {}
+) => {
   try {
     await notifications.createNotification(data);
   } catch (e) {
     // Client errors are logged centrally (notifications-request-failed); best-effort, so swallow them and
     // only surface a non-request error (e.g. schema validation).
-    if (e instanceof NotificationsClientError) return;
+    if (e instanceof NotificationsClientError) {
+      if (throwOnError) throw e;
+      return;
+    }
     const error = e as Error;
     logToAxiom(
       {
@@ -70,7 +77,8 @@ export const createNotification = async (data: CreateNotificationPendingRow) => 
         cause: error.cause,
       },
       'notifications'
-    ).catch();
+    );
+    if (throwOnError) throw e;
   }
 };
 
@@ -144,7 +152,7 @@ export const markNotificationsRead = async ({
         message: error.message,
       },
       'notifications'
-    ).catch();
+    );
   }
 };
 
@@ -269,14 +277,17 @@ export const togglePushSetting = async ({
   }
 };
 
-/** The email-capable types this user gets email for: all of them except the ones opted out of. */
+/**
+ * The email-capable types (and the weekly digest) this user gets email for: all of them except the
+ * ones opted out of.
+ */
 export const getUserEmailSettings = async ({ userId }: { userId: number }) => {
   const optOuts = await dbWrite.userEmailNotificationOptOut.findMany({
     where: { userId },
     select: { type: true },
   });
   const off = new Set(optOuts.map((x) => x.type));
-  return emailNotificationTypeList.filter((type) => !off.has(type));
+  return emailOptOutTypeList.filter((type) => !off.has(type));
 };
 
 export const toggleEmailSetting = async ({
@@ -287,7 +298,7 @@ export const toggleEmailSetting = async ({
   if (enabled) {
     await dbWrite.userEmailNotificationOptOut.deleteMany({ where: { userId, type: { in: type } } });
   } else {
-    const invalid = type.filter((t) => !isEmailNotificationType(t));
+    const invalid = type.filter((t) => !isEmailOptOutType(t));
     if (invalid.length > 0)
       throw throwBadRequestError(`Not an email-capable notification type: ${invalid.join(', ')}`);
     await dbWrite.userEmailNotificationOptOut.createMany({

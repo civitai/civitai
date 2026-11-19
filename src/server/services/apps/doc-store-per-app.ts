@@ -41,7 +41,7 @@ export async function readEachApp<A extends { appBlockId: string }, R>(
               error: err instanceof Error ? err.message : String(err),
             },
             'app-blocks'
-          ).catch(() => undefined);
+          );
           return { app, ok: false };
         }
       })

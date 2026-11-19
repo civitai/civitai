@@ -17,6 +17,7 @@ import {
   checkResourcesCoverage,
   getGenerationData,
   getGenerationStatus,
+  getGenerationStatusState,
   getGateRules,
   getGeneratorMessages,
   getGenerationConfig,
@@ -49,7 +50,10 @@ import * as z from 'zod';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
-import { coverageAudience } from '~/server/services/generation/coverage-source';
+import {
+  coverageAudience,
+  generatorAcceptsBoostRequired,
+} from '~/server/services/generation/coverage-source';
 
 export const generationRouter = router({
   getWorkflowDefinitions: publicProcedure
@@ -94,10 +98,14 @@ export const generationRouter = router({
   getStatus: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['generation-status'] }))
-    .query(async () => {
+    .query(async ({ ctx }) => {
+      const { status: read, known } = await getGenerationStatusState();
+      // A cold pod's fail-closed fallback (kill switch unreadable, never read) must not be cached
+      // at the edge: it would be served to everyone for the TTL after the pod recovers.
+      if (!known && ctx.cache) ctx.cache.skip = true;
       // Don't expose the moderator-identity audit stamps on the public,
       // edge-cached endpoint — they're moderator-only (getStatusModerator).
-      const { updatedBy, selfHostedUpdatedBy, ...status } = await getGenerationStatus();
+      const { updatedBy, selfHostedUpdatedBy, ...status } = read;
 
       // Only surface the status message to clients while the gate is actually
       // engaged. The message stays persisted in Redis (so operators don't have
@@ -185,6 +193,9 @@ export const generationRouter = router({
           user: ctx.user,
           withPreview: true,
           browsingLevel: getRequestBrowsingLevel(ctx),
+          // The generator form's own read of the resources it will submit, so it must agree with
+          // the whatIf: an admitted cold checkpoint reads as generatable, not stripped at submit.
+          acceptBoostRequired: generatorAcceptsBoostRequired(input.acceptBoostRequired, ctx),
         })
       ).filter((r) => canViewPoiModel(r.model.poi, r.model.userId, ctx.user))
     ),

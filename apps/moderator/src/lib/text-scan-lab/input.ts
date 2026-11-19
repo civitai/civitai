@@ -6,7 +6,8 @@ const MAX_INT4 = 2_147_483_647;
 
 export type CheckInput =
   | { kind: 'empty' }
-  | { kind: 'entity'; entityType: LabEntityType; ids: number[] }
+  /** `modelPage`: comment ids from model-page links, which name a comment by its old id when it has one. */
+  | { kind: 'entity'; entityType: LabEntityType; ids: number[]; modelPage?: boolean }
   /** A profile link names the account, not its id; the caller resolves it. */
   | { kind: 'user'; username: string }
   | { kind: 'ids'; ids: number[] }
@@ -17,7 +18,8 @@ export type CheckInput =
   /** Links that can't be checked together (different kinds of content, several profiles). */
   | { kind: 'refused'; notice: string };
 
-type UrlMatch = { entityType: LabEntityType; id: number } | { username: string };
+type EntityMatch = { entityType: LabEntityType; id: number; modelPage?: boolean };
+type UrlMatch = EntityMatch | { username: string };
 
 const CIVITAI_HOSTS = new Set(['civitai.com', 'civitai.red', 'civitai.green']);
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
@@ -85,7 +87,7 @@ function matchCivitaiPath(url: URL): UrlMatch | null {
         ? toId(url.searchParams.get('highlight'))
         : null;
     return commentId
-      ? { entityType: 'Comment', id: commentId }
+      ? { entityType: 'CommentV3', id: commentId, modelPage: true }
       : { entityType: 'Model', id: modelId };
   }
   if (root === 'bounties') {
@@ -98,9 +100,10 @@ function matchCivitaiPath(url: URL): UrlMatch | null {
     const id = toId(a);
     return id ? { entityType: 'Bounty', id } : null;
   }
-  if (root === 'comments' && a === 'v2') {
-    const id = toId(b);
-    return id ? { entityType: 'CommentV2', id } : null;
+  // `/comments/<id>` and its older `/comments/v2/<id>` alias, both by the CommentV3 id.
+  if (root === 'comments') {
+    const id = toId(a === 'v2' ? b : a);
+    return id ? { entityType: 'CommentV3', id } : null;
   }
   if (root === 'user' && a && !USER_STATIC_PAGES.has(a)) {
     try {
@@ -155,12 +158,13 @@ export function parseCheckInput(raw: string): CheckInput {
       : { kind: 'refused', notice: SEVERAL_PROFILES };
   }
 
-  const entities = matches as { entityType: LabEntityType; id: number }[];
-  const entityType = entities[0].entityType;
-  if (entities.some((m) => m.entityType !== entityType))
+  const entities = matches as EntityMatch[];
+  const { entityType, modelPage } = entities[0];
+  // Model-page comment ids resolve differently from `/comments/` ids, so the two don't mix.
+  if (entities.some((m) => m.entityType !== entityType || m.modelPage !== modelPage))
     return { kind: 'refused', notice: MIXED_LINKS };
   const list = idList(entities.map((m) => m.id));
   return Array.isArray(list)
-    ? { kind: 'entity', entityType, ids: list }
+    ? { kind: 'entity', entityType, ids: list, ...(modelPage ? { modelPage } : {}) }
     : { kind: 'too-many-ids', count: list.count, max: MAX_INPUT_IDS };
 }

@@ -117,6 +117,7 @@ describe('POST /api/admin/system-account-profile', () => {
 
   it.each([
     'SYSTEM_ACCOUNT_KEY_TOKEN',
+    'PROVIDER_DOWNLOAD_TOKEN_ADMIN_TOKEN',
     'WEBHOOK_TOKEN',
     'WEBHOOK_TOKEN_PREVIOUS',
     'PROBE_TOKEN',

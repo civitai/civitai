@@ -104,7 +104,7 @@ export function MyEventHats({
       )}
 
       {heldBoxes.map((box) => (
-        <MysteryBoxCard key={box.boxDefinitionId} event={event} view={box} color={teamColor} />
+        <MysteryBoxCard key={box.boxDefinitionId} source={{ event }} view={box} color={teamColor} />
       ))}
 
       {/* Equal rows, so the "Get another hat" card is a hat card's size even alone on its row. */}
