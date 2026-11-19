@@ -184,6 +184,10 @@ beforeAll(async () => {
       label TEXT NOT NULL DEFAULT 'csam',
       status TEXT NOT NULL, "decidedAt" TIMESTAMP(3), meta JSONB
     );
+    CREATE TABLE "ChatMessageEdit" (
+      id SERIAL PRIMARY KEY, "messageId" INTEGER NOT NULL, "editorId" INTEGER NOT NULL,
+      "previousContent" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL, secret TEXT
+    );
     CREATE TABLE "ChatMember" (
       id SERIAL PRIMARY KEY, "chatId" INTEGER NOT NULL, "userId" INTEGER NOT NULL,
       status TEXT NOT NULL DEFAULT 'Joined', "leftAt" TIMESTAMP(3)
@@ -405,8 +409,20 @@ describe('the archive text sections', () => {
       const editedAt = new Date(Date.UTC(2026, 9, 2));
       const deletedAt = new Date(Date.UTC(2026, 9, 3));
       await message(10, 5, ME, { content: '', editedAt, deletedAt, referenceMessageId: 1 });
+      // Two edits of message 10 (inserted newest first) and one of message 4 in another chat; an
+      // edit of message 2, in a chat the user is not in, must not appear.
+      await pg.exec(`INSERT INTO "ChatMessageEdit" (id, "messageId", "editorId", "previousContent", "createdAt", secret) VALUES
+        (32, 10, ${ME}, 'second draft', '2026-10-02 10:00', 'x'),
+        (31, 10, ${ME}, 'first draft', '2026-10-02 09:00', 'x'),
+        (33, 4, ${OTHER}, 'their draft', '2026-10-02 11:00', 'x'),
+        (34, 2, ${OTHER}, 'not in scope', '2026-10-02 12:00', 'x')`);
 
+      const sent = queries.length;
       const rows = await read('chatMessages', ME);
+      // Edits are read per page of messages, not for the whole table.
+      const editReads = queries.slice(sent).filter((q) => q.includes('from "ChatMessageEdit"'));
+      expect(editReads.length).toBeGreaterThan(0);
+      for (const q of editReads) expect(q).toMatch(/"messageId" in \(/);
 
       expect(rows.map((r) => [r.chatId, r.id, r.isReportedUser])).toEqual([
         [1, 13, false],
@@ -425,7 +441,26 @@ describe('the archive text sections', () => {
         editedAt,
         deletedAt,
         referenceMessageId: 1,
+        previousVersions: [
+          {
+            id: 31,
+            editorId: ME,
+            previousContent: 'first draft',
+            createdAt: new Date(Date.UTC(2026, 9, 2, 9)),
+          },
+          {
+            id: 32,
+            editorId: ME,
+            previousContent: 'second draft',
+            createdAt: new Date(Date.UTC(2026, 9, 2, 10)),
+          },
+        ],
       });
+      expect(rows.find((r) => r.id === 4)?.previousVersions).toEqual([
+        expect.objectContaining({ id: 33, previousContent: 'their draft' }),
+      ]);
+      expect(rows.find((r) => r.id === 1)?.previousVersions).toEqual([]);
+      expect(JSON.stringify(rows)).not.toContain('not in scope');
       for (const row of rows)
         expect(Object.keys(row).sort()).toEqual(
           [
@@ -438,6 +473,7 @@ describe('the archive text sections', () => {
             'deletedAt',
             'referenceMessageId',
             'isReportedUser',
+            'previousVersions',
           ].sort()
         );
     });

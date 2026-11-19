@@ -57,8 +57,9 @@ type Reader = (db: Db, userId: number, pageSize?: number) => AsyncIterable<unkno
  * Text the reported user wrote, one reader per table, each selecting a fixed column list so a new
  * column never reaches the archive unreviewed. `serviceOfferings` also carries the removal fields a
  * moderator sets, which record why an offering's text was taken down. Rows are written as stored:
- * nothing is recovered from any other store. A profile cleared by a hold decision is the one in-place
- * blank no row records, so `profile` names those decisions in `blankedReasons`.
+ * nothing is recovered from any other store. A profile clear leaves nothing on the row, so `profile`
+ * names the hold decisions that cleared it in `blankedReasons`. A clear from the moderator endpoint
+ * leaves no database record, so an empty list does not prove the profile was never cleared.
  *
  * Each table's owner filter is served by an owner index in the database, some of which the Prisma
  * schema does not declare, except `PostText`, `Question` and `Answer`, which are small.
@@ -283,7 +284,7 @@ export const userContentReaders: { name: string; rows: Reader }[] = [
 ];
 
 /**
- * Every message, from either side and including deleted ones, in each chat the user has a membership
+ * Every message, from either side and including deleted ones, with the text each edit replaced, in each chat the user has a membership
  * row in, whatever its status, in chat then id order. Paged per chat because `ChatMessage` has no
  * index leading with `userId`. The `(chatId, id)` index is partial on undeleted messages, so it
  * cannot serve this read: each page sorts the chat's messages, which only a very long chat feels.
@@ -296,27 +297,51 @@ async function* chatMessages(db: Db, userId: number, pageSize?: number) {
     .orderBy('chatId', 'asc')
     .execute();
   for (const chatId of new Set(memberships.map((m) => m.chatId))) {
-    const rows = flattenPages(
-      scanPagesById(({ afterId, take }) => {
-        let q = db
-          .selectFrom('ChatMessage')
-          .select([
-            'id',
-            'chatId',
-            'userId',
-            'content',
-            'createdAt',
-            'editedAt',
-            'deletedAt',
-            'referenceMessageId',
-          ])
-          .where('chatId', '=', chatId)
-          .orderBy('id', 'asc')
-          .limit(take);
-        if (afterId !== undefined) q = q.where('id', '>', afterId);
-        return q.execute();
-      }, pageSize)
-    );
-    for await (const row of rows) yield { ...row, isReportedUser: row.userId === userId };
+    const pages = scanPagesById(({ afterId, take }) => {
+      let q = db
+        .selectFrom('ChatMessage')
+        .select([
+          'id',
+          'chatId',
+          'userId',
+          'content',
+          'createdAt',
+          'editedAt',
+          'deletedAt',
+          'referenceMessageId',
+        ])
+        .where('chatId', '=', chatId)
+        .orderBy('id', 'asc')
+        .limit(take);
+      if (afterId !== undefined) q = q.where('id', '>', afterId);
+      return q.execute();
+    }, pageSize);
+    for await (const page of pages) {
+      // An edit overwrites `content`; the text it replaced is kept only here.
+      const edits = await db
+        .selectFrom('ChatMessageEdit')
+        .select(['id', 'messageId', 'editorId', 'previousContent', 'createdAt'])
+        .where(
+          'messageId',
+          'in',
+          page.map((m) => m.id)
+        )
+        .orderBy('messageId', 'asc')
+        .orderBy('id', 'asc')
+        .execute();
+      for (const row of page)
+        yield {
+          ...row,
+          isReportedUser: row.userId === userId,
+          previousVersions: edits
+            .filter((e) => e.messageId === row.id)
+            .map(({ id, editorId, previousContent, createdAt }) => ({
+              id,
+              editorId,
+              previousContent,
+              createdAt,
+            })),
+        };
+    }
   }
 }
