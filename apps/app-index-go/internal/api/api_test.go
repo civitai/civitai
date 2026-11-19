@@ -250,3 +250,38 @@ func TestMetricsEndpoint(t *testing.T) {
 		t.Error("a series carries an `endpoint` label")
 	}
 }
+
+// /search allows any origin on every status it answers, so an app iframe can read its errors too;
+// the operational routes never do.
+func TestSearchCORS(t *testing.T) {
+	ready := newServer(t, readyStore(t, app("a", "Apple", "onsite", "generation")))
+	notReady := newServer(t, store.NewMemory())
+	failing := newServer(t, failingStore{store.NewMemory()})
+	cors := func(u string) (int, string) {
+		t.Helper()
+		res, err := http.Get(u) //nolint:noctx,gosec // test: u is the test server URL
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		return res.StatusCode, res.Header.Get("Access-Control-Allow-Origin")
+	}
+	for _, c := range []struct {
+		url  string
+		code int
+	}{
+		{ready.URL + "/search?q=app", http.StatusOK},
+		{ready.URL + "/search?kind=web", http.StatusBadRequest},
+		{notReady.URL + "/search?q=a", http.StatusServiceUnavailable},
+		{failing.URL + "/search", http.StatusInternalServerError},
+	} {
+		if code, h := cors(c.url); code != c.code || h != "*" {
+			t.Errorf("%s: %d %q, want %d \"*\"", c.url, code, h, c.code)
+		}
+	}
+	for _, path := range []string{"/metrics", "/readyz", "/healthz"} {
+		if code, h := cors(ready.URL + path); code != http.StatusOK || h != "" {
+			t.Errorf("%s: %d Access-Control-Allow-Origin %q, want 200 and none", path, code, h)
+		}
+	}
+}

@@ -23,6 +23,10 @@ creator. Results are in relevance order, Postgres `ts_rank` (name above slug and
 creator), then by name; without `q` they are by name. There is one page of at most `limit` results:
 no other sort and no paging. `/search` answers 503 until the index is ready.
 
+Every `/search` response, success or error, carries `Access-Control-Allow-Origin: *`, so an app
+in a sandboxed iframe can call it from the browser: it answers only public listings and takes no
+credentials. `/healthz`, `/readyz` and `/metrics` send no CORS header.
+
 ## Following the stream
 
 - `Upsert` replaces the app's row, `Delete` removes it, `Progress` only moves the cursor. Each stores

@@ -8,6 +8,11 @@
 //
 // Results are in relevance order (store.Query), at most `limit` of them. There is one page: no
 // other sort and no paging, since no caller reads either.
+//
+// Every /search response, success or error, allows any origin (CORS), so an app in a sandboxed
+// iframe can call it straight from the browser: it answers only public listings, takes no
+// credentials and sets no cookies. The other routes send no CORS header: they are for probes
+// and monitoring, not for browsers.
 package api
 
 import (
@@ -84,6 +89,8 @@ type apiError struct {
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	outcome := "ok"
+	// Before any write, so every status (200, 400, 500, 503) carries it.
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	defer func() {
 		s.Metrics.Searches.WithLabelValues(outcome).Inc()
 		s.Metrics.SearchTime.Observe(time.Since(start).Seconds())
