@@ -144,18 +144,19 @@ describe('onSearchIndexDocumentsCleanup when the delete task fails', () => {
     expect(queued.calls).toEqual([]);
   });
 
-  // An id rebuilt later in the same run must be pulled again after the retried delete, or the
-  // retry would delete a document that should exist.
-  it('re-queues each id as an Update too, so the pull decides after the retried delete', async () => {
+  // The pull query alone must not decide a failed delete: it can match content that was removed.
+  it('re-queues a failed delete as a Delete only, unless the run also rebuilds the id', async () => {
     await onSearchIndexDocumentsCleanup({
       indexName: 'idx',
-      ids: [8],
+      ids: [8, 9],
       client: clientWhoseDeleteEnds('failed'),
+      rebuilding: new Set([9]),
     });
     expect(requeuedItems()).toEqual([
       [
         { id: 8, action: SearchIndexUpdateQueueAction.Delete },
-        { id: 8, action: SearchIndexUpdateQueueAction.Update },
+        { id: 9, action: SearchIndexUpdateQueueAction.Delete },
+        { id: 9, action: SearchIndexUpdateQueueAction.Update },
       ],
     ]);
   });

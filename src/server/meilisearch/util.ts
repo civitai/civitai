@@ -96,6 +96,7 @@ const onSearchIndexDocumentsCleanup = async ({
   ids,
   client = searchClient,
   commit,
+  rebuilding,
 }: {
   indexName: string;
   ids?: number[];
@@ -106,6 +107,12 @@ const onSearchIndexDocumentsCleanup = async ({
    * even when there is no client or index to delete from.
    */
   commit?: () => Promise<unknown>;
+  /**
+   * Ids the same run also rebuilds. A failed delete of one of these is re-queued as an Update too,
+   * so the retried delete does not remove the rebuilt document. Every other failed delete goes back
+   * as a Delete only: a rebuild decided by the pull query alone could restore removed content.
+   */
+  rebuilding?: ReadonlySet<number>;
 }) => {
   if (!client) {
     await commit?.();
@@ -123,7 +130,14 @@ const onSearchIndexDocumentsCleanup = async ({
       return;
     }
 
-    await deleteDocumentsOrRequeue({ index, indexName, ids, client, beforeWait: commit });
+    await deleteDocumentsOrRequeue({
+      index,
+      indexName,
+      ids,
+      client,
+      beforeWait: commit,
+      rebuilding,
+    });
     return;
   }
 
@@ -159,11 +173,9 @@ const onSearchIndexDocumentsCleanup = async ({
 
 /**
  * Deletes `ids` and waits for Meilisearch to finish the task. A task that fails, or that the wait
- * gives up on, puts the ids back on the index's queues: once a caller has marked them handled
- * nothing else would retry them. Each goes back as a Delete AND an Update, the doubly-queued case
- * the processor already resolves as delete-then-pull, so an id rebuilt later in the same run (for
- * example unpublished then republished) is pulled again after the retried delete instead of being
- * left deleted. Deleting an id twice is harmless.
+ * gives up on, puts the ids back on the index's Delete queue (and, for `rebuilding` ids, its Update
+ * queue): once a caller has marked them handled nothing else would retry them. Deleting an id twice
+ * is harmless.
  */
 const deleteDocumentsOrRequeue = async ({
   index,
@@ -171,12 +183,14 @@ const deleteDocumentsOrRequeue = async ({
   ids,
   client,
   beforeWait,
+  rebuilding,
 }: {
   index: Pick<Index, 'deleteDocuments'>;
   indexName: string;
   ids: number[];
   client: MeiliSearch;
   beforeWait?: () => Promise<unknown>;
+  rebuilding?: ReadonlySet<number>;
 }) => {
   const { taskUid } = await index.deleteDocuments(ids);
   await beforeWait?.();
@@ -195,7 +209,7 @@ const deleteDocumentsOrRequeue = async ({
     indexName,
     items: ids.flatMap((id) => [
       { id, action: SearchIndexUpdateQueueAction.Delete },
-      { id, action: SearchIndexUpdateQueueAction.Update },
+      ...(rebuilding?.has(id) ? [{ id, action: SearchIndexUpdateQueueAction.Update }] : []),
     ]),
   });
   console.error(

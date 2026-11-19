@@ -638,6 +638,7 @@ export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>
           ids: queuedDeletes.content,
           client: processor.client,
           commit: queuedDeletes.commit,
+          rebuilding: new Set(updatedItems),
         });
       }
 
@@ -764,6 +765,11 @@ export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>
         return true;
       });
       const batches = chunk(dedupedItems, updateSyncChunkSize);
+      const rebuilding = new Set(
+        dedupedItems
+          .filter((i) => actionOf(i) === SearchIndexUpdateQueueAction.Update)
+          .map(({ id }) => id)
+      );
       let totalTasks = 0;
 
       for (const batch of batches) {
@@ -779,6 +785,7 @@ export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>
             indexName,
             ids: deleteIds,
             client: processor.client,
+            rebuilding,
           });
         }
 
