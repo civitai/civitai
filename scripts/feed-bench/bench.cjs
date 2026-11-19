@@ -426,7 +426,14 @@ async function parity(opts) {
   const [refName, refBase] = targets[0];
   const pairsOut = {};
   for (const [name] of targets.slice(1))
-    pairsOut[name] = { compared: 0, bytesEqual: 0, jsonEqual: 0, skipped: 0, examples: [] };
+    pairsOut[name] = {
+      compared: 0,
+      bytesEqual: 0,
+      jsonEqual: 0,
+      valueEqual: 0,
+      skipped: 0,
+      examples: [],
+    };
   for (let k = 0; k < sample; k++) {
     const row = all[Math.floor(k * step)];
     const ref = await get(refBase, row, { keepBody: true, session });
@@ -437,12 +444,7 @@ async function parity(opts) {
         p.skipped++;
         continue;
       }
-      const cmp = lib.compareBodies(ref.body, other.body, { maxDiffs: 5 });
-      p.compared++;
-      if (cmp.bytesEqual) p.bytesEqual++;
-      if (cmp.jsonEqual) p.jsonEqual++;
-      // Paths only: a value can be a username or a URL from the page.
-      else if (p.examples.length < 10) p.examples.push(cmp.diffs.map((d) => d.path));
+      lib.tallyParity(p, lib.compareBodies(ref.body, other.body, { maxDiffs: 5 }));
     }
   }
   console.log(
