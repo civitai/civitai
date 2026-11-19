@@ -12,8 +12,8 @@ export const accentAt = (percent: number) =>
 // ones (gray-6 was 3.2:1), dark-1 on the dark ones (dark-2 was 4.25:1 on the Up next panel's dark-5).
 export const dimmed = 'text-gray-7 dark:text-dark-1';
 
-/** Where a song's creator name leads: their profile, until profiles have a music section. */
-export const songCreatorHref = (username: string) => `/user/${username}`;
+/** Where a song's creator name leads: the music tab of their profile. */
+export const songCreatorHref = (username: string) => `/user/${username}/music`;
 
 // Pencil `VKZHS`: playing and paused bar heights.
 const EQ_HEIGHTS = { playing: [10, 16, 7, 13], paused: [6, 10, 5, 8] };

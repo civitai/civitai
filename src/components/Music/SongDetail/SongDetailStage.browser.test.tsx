@@ -92,7 +92,7 @@ describe('the song stage', () => {
       .toBeInTheDocument();
     await expect
       .element(page.getByRole('link', { name: 'neonwave' }))
-      .toHaveAttribute('href', '/user/neonwave');
+      .toHaveAttribute('href', '/user/neonwave/music');
     await expect.element(page.getByText('· 2:58')).toBeInTheDocument();
     expect(player().current).toBeNull();
   });

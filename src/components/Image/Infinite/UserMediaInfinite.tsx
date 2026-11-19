@@ -84,6 +84,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
   const viewingReactions = section === 'reactions';
 
   const isVideo = type === 'video';
+  const isAudio = type === MediaType.audio;
   const jumpToEmpty = viewingReactions ? undefined : jumpToEmptyMessage(query.jumpTo, sort);
 
   return (
@@ -229,8 +230,9 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                 // Under a jump the feed is empty on one side of a month, not empty.
                 showEmptyCta={isSameUser && !jumpToEmpty}
                 emptyMessage={jumpToEmpty}
-                // Reactions span other creators, and the header bar never filters the videos tab.
-                searchable={!viewingReactions && !isVideo}
+                // Reactions span other creators; the header bar filters only the images tab.
+                searchable={!viewingReactions && !isVideo && !isAudio}
+                songListName={isAudio && !viewingReactions ? user.username ?? undefined : undefined}
               />
             )}
           </Stack>
@@ -256,7 +258,10 @@ function ContentToggle({
       value={value}
       onChange={(v) => onChange(v as ImageSections)}
       data={[
-        { label: `My ${titleCase(type)}s`, value: 'images' }, // will need to fix for "Audios"
+        {
+          label: type === MediaType.audio ? 'My Songs' : `My ${titleCase(type)}s`,
+          value: 'images',
+        },
         { label: 'My Reactions', value: 'reactions' },
       ]}
       className="w-full sm:w-auto"
