@@ -71,7 +71,6 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   });
   const fileUploadContext = useFileUploadContext();
   const uploadSettings = useMediaUploadSettingsContext();
-  // How many more files can be added: a pick past this is cut short.
   // Files accepted but not yet completed. count only includes a file once its upload completes,
   // so without this a slow upload lets later picks pass the limit.
   const [reserved, setReserved] = useState(0);
@@ -80,6 +79,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
     reservedRef.current = Math.max(0, reservedRef.current + delta);
     setReserved(reservedRef.current);
   };
+  // How many more files can be added: a pick past this is cut short.
   const remaining = Math.max(0, uploadSettings.maxItems - count - reserved);
   const canAdd =
     remaining > 0 && !files.some((x) => x.status === 'uploading' || x.status === 'pending');

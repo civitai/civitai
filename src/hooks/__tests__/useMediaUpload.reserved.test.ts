@@ -75,6 +75,10 @@ async function mount() {
   await act(async () => root.render(React.createElement(Harness)));
   return {
     pick: (data: ReturnType<typeof named>) => act(async () => hook.upload(data)),
+    pickTogether: (...picks: ReturnType<typeof named>[]) =>
+      act(async () => {
+        await Promise.all(picks.map((data) => hook.upload(data)));
+      }),
     finish: () => act(async () => releaseUploads()),
     fail: () => act(async () => failUploads()),
     remaining: () => hook.remaining,
@@ -94,6 +98,14 @@ describe('useMediaUpload in-flight reservation', () => {
     await editor.pick(named('a', 15));
     await editor.pick(named('b', 15));
     expect(editor.remaining()).toBe(0);
+    for (let i = 0; i < 25; i++) await editor.finish();
+    expect(editor.completed.filter((x) => x.startsWith('added'))).toHaveLength(20);
+    await editor.unmount();
+  });
+
+  it('counts a pick made in the same tick as an earlier one, before the hook re-renders', async () => {
+    const editor = await mount();
+    await editor.pickTogether(named('a', 15), named('b', 15));
     for (let i = 0; i < 25; i++) await editor.finish();
     expect(editor.completed.filter((x) => x.startsWith('added'))).toHaveLength(20);
     await editor.unmount();
