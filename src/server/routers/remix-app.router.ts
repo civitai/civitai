@@ -39,6 +39,7 @@ import {
   remixAppSlugSchema,
   remixAppSubmitSchema,
   REMIX_REJECT_REASONS,
+  REMIX_REVIEW_STATES,
   USER_REMIX_SLUG,
 } from '~/shared/remix-apps/row.schema';
 import { TRPCError } from '@trpc/server';
@@ -129,6 +130,7 @@ const remixAppAdminRouter = router({
       z.object({
         slug: remixAppSlugSchema,
         sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        seenReview: z.enum(REMIX_REVIEW_STATES),
         decision: z.enum(['approved', 'rejected']),
         mature: z.boolean().optional(),
         reason: z.enum(REMIX_REJECT_REASONS).optional(),

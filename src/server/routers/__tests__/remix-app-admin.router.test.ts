@@ -184,6 +184,7 @@ describe('user app code: submit and review', () => {
   const decision = () => ({
     slug: 'u88-probe',
     sha256: 'a'.repeat(64),
+    seenReview: 'submitted' as const,
     decision: 'approved' as const,
   });
 

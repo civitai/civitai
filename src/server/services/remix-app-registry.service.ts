@@ -32,6 +32,7 @@ import {
   remixAppSlugSchema,
   REMIX_USER_APPS_PER_AUTHOR,
   REMIX_REVIEW_LOG_MAX,
+  type REMIX_REVIEW_STATES,
   type RemixRejectReason,
   type RemixReviewLogEntry,
 } from '~/shared/remix-apps/row.schema';
@@ -585,23 +586,31 @@ const userAppChanged = () =>
 /** Conditional on the manifest read, so a submit that lands in between is never acted on. */
 async function writeUserRemixApp(
   row: { id: string; manifest: unknown },
-  data: Prisma.AppBlockUpdateManyMutationInput
+  data: Prisma.AppBlockUpdateManyMutationInput,
+  /** Runs once the write has committed, before the registry moves on, even if the bump fails. */
+  afterWrite?: () => Promise<void>
 ) {
   const { count } = await dbWrite.appBlock.updateMany({
     where: { id: row.id, manifest: { equals: row.manifest as Prisma.InputJsonValue } },
     data,
   });
   if (!count) throw userAppChanged();
-  await bumpRemixAppRegistry();
+  try {
+    await afterWrite?.();
+  } finally {
+    await bumpRemixAppRegistry();
+  }
 }
 
 /**
- * A mod's decision on a user app's source, refused unless `sha256` is the source stored now. An
- * approval may add the mature engine; a rejection also takes the app out of menus.
+ * A mod's decision on a user app's source, refused unless `sha256` is the source stored now and
+ * `seenReview` its review state, so another mod's decision in between is never overturned unseen.
+ * An approval may add the mature engine; a rejection also takes the app out of menus.
  */
 export async function reviewUserRemixApp({
   slug,
   sha256,
+  seenReview,
   decision,
   mature = false,
   reason,
@@ -610,6 +619,7 @@ export async function reviewUserRemixApp({
 }: {
   slug: string;
   sha256: string;
+  seenReview: (typeof REMIX_REVIEW_STATES)[number];
   decision: 'approved' | 'rejected';
   mature?: boolean;
   reason?: RemixRejectReason;
@@ -622,7 +632,8 @@ export async function reviewUserRemixApp({
       message: 'A rejection takes a reason, and only a rejection does',
     });
   const { row, parsed, manifest: stored, remix } = await readUserRemixApp(slug);
-  if (remixReviewHash({ ...stored, remix }) !== sha256) throw userAppChanged();
+  if (remixReviewHash({ ...stored, remix }) !== sha256 || stored.review !== seenReview)
+    throw userAppChanged();
   const withMature = decision === 'approved' && mature;
   if (withMature && (await authorHasMinorThemedApp(stored.author?.userId ?? 0)))
     throw new TRPCError({
@@ -654,14 +665,35 @@ export async function reviewUserRemixApp({
       ...(note ? { note } : {}),
     }
   );
-  await writeUserRemixApp(row, {
-    manifest,
-    version: manifest.version,
-    contentRating: contentRatingOf(spec),
-    ...(decision === 'rejected' ? { status: REMIX_STATUS.disabled } : {}),
+  const author = stored.author?.userId;
+  await writeUserRemixApp(
+    row,
+    {
+      manifest,
+      version: manifest.version,
+      contentRating: contentRatingOf(spec),
+      ...(decision === 'rejected' ? { status: REMIX_STATUS.disabled } : {}),
+    },
+    reason === 'minor-themed' && author
+      ? () => holdAuthorMatureApps(author, moderatorId, row.id)
+      : undefined
+  );
+  // The review log keeps the latest entries only; this is the durable record of the decision.
+  logToAxiom({
+    name: 'remix-app-registry',
+    type: 'info',
+    message: 'Reviewed a user remix app',
+    payload: { slug, sha256, decision, mature: withMature, reason, moderatorId },
   });
-  if (reason === 'minor-themed' && stored.author)
-    await holdAuthorMatureApps(stored.author.userId, moderatorId, row.id);
+  // A minor-themed reject of a sibling may have committed after the check above read no mark: its
+  // sweep then missed this approval, so this side sweeps, this app included.
+  if (withMature && author && (await authorHasMinorThemedApp(author))) {
+    await holdAuthorMatureApps(author, moderatorId, '');
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This author now has a minor-themed app, so this one went back to review',
+    });
+  }
   return { slug, review: decision, version: runVersion };
 }
 
@@ -669,7 +701,7 @@ const SWEEP_ATTEMPTS = 3;
 
 /**
  * A minor-themed mark sends every other app its author holds on the mature engine back to review,
- * out of menus and on the safe engine only. A row written mid-sweep is re-read and swept again.
+ * out of menus and on the safe engine only. Every row is tried, even after one fails.
  */
 async function holdAuthorMatureApps(authorId: number, moderatorId: number, reviewedId: string) {
   // primary: the approvals to revoke are the ones stored now.
@@ -678,41 +710,57 @@ async function holdAuthorMatureApps(authorId: number, moderatorId: number, revie
     select: remixAppRowSelect,
   });
   // The reviewed row was just written without the mature engine; its stale read here would conflict.
-  for (const first of rows.filter((r) => r.id !== reviewedId)) {
-    let row: RemixAppRow | null = first;
-    for (let attempt = 1; row; attempt++) {
-      const parsed = remixManifestSchema.safeParse(row.manifest);
-      if (!parsed.success || !('source' in parsed.data.remix) || !parsed.data.remix.engine.mature)
-        break;
-      const spec: RemixUserSpec = {
-        ...parsed.data.remix,
-        engine: { safe: parsed.data.remix.engine.safe },
-      };
-      const runVersion = nextRunVersion(row, parsed, spec);
-      const manifest = withReviewLog(
-        { ...parsed.data, version: `${runVersion}.0.0`, remix: spec, review: 'submitted' },
-        { by: moderatorId, action: 'mature-revoked' }
-      );
-      try {
-        await writeUserRemixApp(row, {
-          manifest,
-          version: manifest.version,
-          contentRating: contentRatingOf(spec),
-          status: REMIX_STATUS.disabled,
-        });
-        break;
-      } catch (error) {
-        if (
-          attempt === SWEEP_ATTEMPTS ||
-          !(error instanceof TRPCError && error.code === 'CONFLICT')
-        )
-          throw error;
-        // primary: the write that beat this one.
-        row = await dbWrite.appBlock.findUnique({
-          where: { id: first.id },
-          select: remixAppRowSelect,
-        });
-      }
+  const failed: string[] = [];
+  for (const first of rows.filter((r) => r.id !== reviewedId))
+    await holdMatureApp(first, moderatorId).catch((error) => {
+      failed.push(first.blockId);
+      logToAxiom({
+        name: 'remix-app-registry',
+        type: 'error',
+        message: "Could not send a marked author's mature app back to review",
+        blockId: first.blockId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  if (failed.length)
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: `The decision was saved, but ${failed.length} of the author's other apps could not be sent back to review. Reload and try again.`,
+    });
+}
+
+/** Re-read and retried when another write lands first. */
+async function holdMatureApp(first: RemixAppRow, moderatorId: number) {
+  let row: RemixAppRow | null = first;
+  for (let attempt = 1; row; attempt++) {
+    const parsed = remixManifestSchema.safeParse(row.manifest);
+    if (!parsed.success || !('source' in parsed.data.remix) || !parsed.data.remix.engine.mature)
+      break;
+    const spec: RemixUserSpec = {
+      ...parsed.data.remix,
+      engine: { safe: parsed.data.remix.engine.safe },
+    };
+    const runVersion = nextRunVersion(row, parsed, spec);
+    const manifest = withReviewLog(
+      { ...parsed.data, version: `${runVersion}.0.0`, remix: spec, review: 'submitted' },
+      { by: moderatorId, action: 'mature-revoked' }
+    );
+    try {
+      await writeUserRemixApp(row, {
+        manifest,
+        version: manifest.version,
+        contentRating: contentRatingOf(spec),
+        status: REMIX_STATUS.disabled,
+      });
+      break;
+    } catch (error) {
+      if (attempt === SWEEP_ATTEMPTS || !(error instanceof TRPCError && error.code === 'CONFLICT'))
+        throw error;
+      // primary: the write that beat this one.
+      row = await dbWrite.appBlock.findUnique({
+        where: { id: first.id },
+        select: remixAppRowSelect,
+      });
     }
   }
 }
@@ -803,9 +851,13 @@ export async function deleteRemixApp({ slug }: { slug: string }) {
   });
   let count: number;
   try {
-    // Conditional on the status, so an enable that lands after the read above wins.
+    // Conditional on the row read above, so an enable or a mark that lands after it wins.
     ({ count } = await dbWrite.appBlock.deleteMany({
-      where: { id: row.id, status: REMIX_STATUS.disabled },
+      where: {
+        id: row.id,
+        status: REMIX_STATUS.disabled,
+        manifest: { equals: row.manifest as Prisma.InputJsonValue },
+      },
     }));
   } catch (error) {
     if (isPrismaForeignKeyViolation(error))

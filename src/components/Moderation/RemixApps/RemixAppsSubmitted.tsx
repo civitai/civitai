@@ -55,7 +55,7 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
   const { user } = row;
   // What the mod is reading: a refetch never swaps the code under them, and approval sends its hash.
   const [seen, setSeen] = useState(user);
-  const changed = seen.sha256 !== user.sha256;
+  const changed = seen.sha256 !== user.sha256 || seen.review !== user.review;
   const [mature, setMature] = useState(user.mature);
   const [reason, setReason] = useState<RemixRejectReason | null>(null);
   const [note, setNote] = useState('');
@@ -96,7 +96,7 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
       </Text>
       {changed && (
         <Alert color="yellow">
-          The author changed this app after you opened it.{' '}
+          This app changed after you opened it: a new submit or another moderator&apos;s decision.{' '}
           <Button
             size="compact-xs"
             variant="light"
@@ -158,6 +158,7 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
               review.mutate({
                 slug: row.slug,
                 sha256: seen.sha256,
+                seenReview: seen.review,
                 decision: 'rejected',
                 reason,
                 ...(note.trim() ? { note: note.trim() } : {}),
@@ -172,6 +173,7 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
               review.mutate({
                 slug: row.slug,
                 sha256: seen.sha256,
+                seenReview: seen.review,
                 decision: 'approved',
                 mature: mature && !marked,
               })
