@@ -243,6 +243,12 @@ async function reportIdsByImage(reportIds: number[]): Promise<Map<number, number
   return byImage;
 }
 
+const REPORT_NOT_ON_IMAGE = 'That report is not on this image. Nothing was changed. Reload.';
+/** A verdict moves only a report filed on the image it rules on. */
+async function reportIsOnImage(reportId: number, imageId: number) {
+  return !!(await reportIdsByImage([reportId])).get(imageId)?.includes(reportId);
+}
+
 export function parseResolutionReason(form: FormData, status: ResolutionVerdict<'appeal'>) {
   const input = parseForm(z.object(resolutionReasonFields), form);
   return typeof input === 'string' ? input : checkedResolutionReason('appeal', status, input);
@@ -255,6 +261,8 @@ export const imageQueueActions = {
     if (!imageId) return fail(400, { error: 'Missing image id.' });
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
+    if (reportId && !(await reportIsOnImage(reportId, imageId)))
+      return fail(400, { error: REPORT_NOT_ON_IMAGE, imageId });
 
     try {
       await acceptImage({
@@ -299,6 +307,8 @@ export const imageQueueActions = {
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
+    if (reportId && !(await reportIsOnImage(reportId, imageId)))
+      return fail(400, { error: REPORT_NOT_ON_IMAGE, imageId });
 
     const violation = parseViolation(form);
     if (typeof violation === 'string') return fail(400, { error: violation });

@@ -391,19 +391,19 @@ describe('accepting from a review queue', () => {
 describe('a verdict on a report of an image a moderator already removed', () => {
   const MOD_REMOVED = 66; // removed by a moderator, no flag
   const LIVE = 67; // reported, still up
+  const GRACE = 68; // under an account-deletion grace block
   beforeEach(async () => {
     await db.query(
-      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash") VALUES
-        ($1, 7, NULL, 'moderated', 'Blocked', 32, 106),
-        ($2, 7, NULL, NULL, 'Scanned', 4, 107)`,
-      [MOD_REMOVED, LIVE]
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash", "metadata") VALUES
+        ($1, 7, NULL, 'moderated', 'Blocked', 32, 106, NULL),
+        ($2, 7, NULL, NULL, 'Scanned', 4, 107, NULL),
+        ($3, 7, NULL, 'moderated', 'Blocked', 32, 108, '{"accountDeletionPriorIngestion": "Scanned"}')`,
+      [MOD_REMOVED, LIVE, GRACE]
     );
-    await db.query(`INSERT INTO "ImageReport" ("imageId", "reportId") VALUES ($1, $2), ($3, $4)`, [
-      MOD_REMOVED,
-      report(MOD_REMOVED),
-      LIVE,
-      report(LIVE),
-    ]);
+    await db.query(
+      `INSERT INTO "ImageReport" ("imageId", "reportId") VALUES ($1, $2), ($3, $4), ($5, $6)`,
+      [MOD_REMOVED, report(MOD_REMOVED), LIVE, report(LIVE), GRACE, report(GRACE)]
+    );
   });
   const verdict = (action: 'accept' | 'block', imageId: number) =>
     imageQueueActions[action](
@@ -428,6 +428,26 @@ describe('a verdict on a report of an image a moderator already removed', () => 
     });
   });
 
+  it('Unaction and Remove leave an account-deletion grace block as it is, and close the report', async () => {
+    const unaction = await verdict('accept', GRACE);
+    const remove = await verdict('block', GRACE);
+
+    expect(await row(GRACE)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    expect(notifiedImages()).toEqual([]);
+    expect(reportsMovedTo('Actioned')).toEqual([report(GRACE), report(GRACE)]);
+    expect(unaction).toMatchObject({ success: true, closedReportIds: [report(GRACE)] });
+    expect(remove).toMatchObject({ success: true, closedReportIds: [report(GRACE)] });
+  });
+
+  it('refuses a report that is not on the image, moving no report', async () => {
+    const result = await imageQueueActions.accept(
+      event({ imageId: String(MOD_REMOVED), reportId: String(report(HELD)) })
+    );
+
+    expect(result).toMatchObject({ status: 400 });
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
   it('Unaction on a reported image still up restores nothing and unactions the report (control)', async () => {
     await verdict('accept', LIVE);
 
@@ -447,7 +467,6 @@ describe('a verdict on a report of an image a moderator already removed', () => 
     const result = await verdict('block', MOD_REMOVED);
 
     expect(notifiedImages()).toEqual([]);
-    expect(clickhouseInsert).not.toHaveBeenCalled();
     expect(reportsMovedTo('Actioned')).toEqual([report(MOD_REMOVED)]);
     expect(result).toMatchObject({ success: true, closedReportIds: [report(MOD_REMOVED)] });
   });

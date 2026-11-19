@@ -1518,28 +1518,38 @@ export async function handleBlockImages({
       );
     }
 
-    // A moderator's removal settles the images' open TOS reports and pays their reporters, as
-    // `setTosViolationHandler` does. Held images and those under the review flag keep theirs for the
-    // CSAM queue.
-    if (moderatorId) {
-      const settled = await actionPendingTosReports(
-        ids.filter((id) => !held.has(id) && !underReview.has(id) && !removedForCsam.has(id)),
-        moderatorId
-      );
-      const { reportAcceptedReward } = await rewards();
-      await Promise.allSettled(
-        settled.map((report) =>
-          reportAcceptedReward.apply({ userId: report.userId, reportId: report.id })
-        )
-      );
-    }
-
     if (moderatorId && !!imageIds?.length) {
       await trackModActivity(moderatorId, {
         entityType: 'image',
         entityId: ids,
         activity: 'review',
       });
+    }
+
+    // A moderator's removal settles the images' open TOS reports and pays their reporters, as
+    // `setTosViolationHandler` does. Held images and those under the review flag keep theirs for the
+    // CSAM queue. Only for images a moderator chose: an account-wide removal pays no reporter. Last, and
+    // a failure here leaves the reports Pending for the queue rather than failing a removal that has
+    // already notified the owners.
+    if (moderatorId && !!imageIds?.length) {
+      const settled = await actionPendingTosReports(
+        ids.filter((id) => !held.has(id) && !underReview.has(id)),
+        moderatorId
+      ).catch((e: unknown) => {
+        logToAxiom({
+          type: 'error',
+          name: 'block-images-reports-not-settled',
+          imageIds: ids,
+          error: safeError(e),
+        });
+        return [];
+      });
+      const { reportAcceptedReward } = await rewards();
+      await Promise.allSettled(
+        settled.map((report) =>
+          reportAcceptedReward.apply({ userId: report.userId, reportId: report.id })
+        )
+      );
     }
   });
 

@@ -431,12 +431,15 @@ describe("handleBlockImages and the images' reports", () => {
   const all = [HELD, FLAGGED_LIVE, FLAG_REMOVED, OTHER_REASON, DISMISSED];
   const CSAM_REPORT = 2001;
   const UNACTIONED_REPORT = 2002;
+  const ACTIONED_REPORT = 2003;
   beforeEach(async () => {
     await holder.db.exec(`
       INSERT INTO "Report" (id, "userId", reason, status) VALUES
-        (${CSAM_REPORT}, 9, 'CSAM', 'Pending'), (${UNACTIONED_REPORT}, 9, 'TOSViolation', 'Unactioned');
+        (${CSAM_REPORT}, 9, 'CSAM', 'Pending'), (${UNACTIONED_REPORT}, 9, 'TOSViolation', 'Unactioned'),
+        (${ACTIONED_REPORT}, 9, 'TOSViolation', 'Actioned');
       INSERT INTO "ImageReport" ("imageId", "reportId") VALUES
-        (${OTHER_REASON}, ${CSAM_REPORT}), (${OTHER_REASON}, ${UNACTIONED_REPORT});
+        (${OTHER_REASON}, ${CSAM_REPORT}), (${OTHER_REASON}, ${UNACTIONED_REPORT}),
+        (${OTHER_REASON}, ${ACTIONED_REPORT});
     `);
   });
   const statuses = async () =>
@@ -448,6 +451,8 @@ describe("handleBlockImages and the images' reports", () => {
       ).rows.map((r) => [r.id, r.status])
     );
 
+  // An image under the review flag keeps its reports even once dismissed from the CSAM queue, unlike
+  // `setTosViolationHandler`: a bulk removal leaves every flagged image's reports to that queue.
   it("a moderator's removal actions and rewards the Pending TOS reports of images not held or flagged", async () => {
     await handleBlockImages({ ids: all, moderatorId: 2 });
 
@@ -459,8 +464,34 @@ describe("handleBlockImages and the images' reports", () => {
       [report(DISMISSED)]: 'Pending',
       [CSAM_REPORT]: 'Pending',
       [UNACTIONED_REPORT]: 'Unactioned',
+      [ACTIONED_REPORT]: 'Actioned',
     });
     expect(rewardedReports()).toEqual([report(OTHER_REASON)]);
+  });
+
+  it('a second removal of the same images pays nothing more', async () => {
+    await handleBlockImages({ ids: all, moderatorId: 2 });
+    await handleBlockImages({ ids: [OTHER_REASON], moderatorId: 3 });
+
+    expect(rewardedReports()).toEqual([report(OTHER_REASON)]);
+  });
+
+  it('an account-wide removal moves no report and pays no one', async () => {
+    dbMock.dbRead.image.findMany.mockImplementationOnce(
+      (async () =>
+        (
+          await holder.db.query(
+            `SELECT id, "userId", "pHash", NULL::int AS "postId", "nsfwLevel", "blockedFor", "needsReview"
+           FROM "Image" WHERE "userId" = 7`
+          )
+        ).rows) as never
+    );
+    await handleBlockImages({ userId: 7, moderatorId: 2 });
+
+    expect(await blockedFor(OTHER_REASON)).toBe('moderated');
+
+    expect(await reportStatus(report(OTHER_REASON))).toBe('Pending');
+    expect(rewardedReports()).toEqual([]);
   });
 
   it('a removal with no moderator moves no report', async () => {

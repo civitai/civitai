@@ -23,7 +23,7 @@
   import { csamCaptureReportUrl, csamReportUrl, userLookupUrl } from '$lib/entity-url';
   import type { FeedbackCaptureStamp } from '$lib/server/image-review.service';
   import CsamQueueTabs from './CsamQueueTabs.svelte';
-  import { isFlagOnlyRemaining } from '$lib/image-review';
+  import { FLAG_KEPT_THROUGH_BLOCK, isFlagOnlyRemaining } from '$lib/image-review';
   import { ReportEntity, reportDetailEntries, reportedPlacementId } from '$lib/reports';
   import LastWorked from '$lib/components/report-queue/LastWorked.svelte';
   import StickerPlacementRemove from '$lib/components/report-queue/StickerPlacementRemove.svelte';
@@ -416,9 +416,11 @@
           {#if item.removed}
             <Badge
               class="bg-muted"
-              title={item.blockedFor === 'moderated'
+              title={item.blockedFor === 'moderated' && item.needsReview !== FLAG_KEPT_THROUGH_BLOCK
                 ? 'Already removed by a moderator; acting on this report only closes it.'
-                : `Already removed (${item.blockedFor ?? 'blocked'}).`}>Removed</Badge
+                : `Already removed (${item.needsReview === FLAG_KEPT_THROUGH_BLOCK
+                    ? 'under CSAM review'
+                    : item.blockedFor ?? 'blocked'}).`}>Removed</Badge
             >
           {/if}
           {#if item.report.count > 0}
