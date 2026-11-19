@@ -6,7 +6,15 @@ export type PickedItem = {
     prompt: string;
     options: { value: string; label: string }[];
   };
-  item: { id: string; key: string; src: string; width: number | null; height: number | null };
+  item: {
+    id: string;
+    key: string;
+    src: string;
+    width: number | null;
+    height: number | null;
+    /** The opaque name live drops use for this item (`live-key.ts`). */
+    live: string;
+  };
   banner: { heading: string } | null;
   category: { heading: string } | null;
 };
@@ -169,6 +177,12 @@ export function createItemBuffer({
     },
     drop(key: string) {
       items = items.filter((it) => it.item.item.key !== key);
+    },
+    /** Drops the items whose live key is in `gone`; returns their item keys. */
+    dropLive(gone: ReadonlySet<string>): string[] {
+      const dropped = items.filter((it) => gone.has(it.item.item.live));
+      items = items.filter((it) => !dropped.includes(it));
+      return dropped.map((it) => it.item.item.key);
     },
     clear() {
       items = [];
