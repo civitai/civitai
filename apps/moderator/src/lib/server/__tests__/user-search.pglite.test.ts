@@ -27,8 +27,8 @@ beforeEach(async () => {
       (-1, 'civitai', NULL, NULL),
       (990004992, 'SynthMiner', NULL, NULL),
       (12, 'SynthMinerAlt', NULL, NULL),
-      (13, 'ColaXMiner', NULL, NULL),
-      (14, 'Cola_Miner', NULL, NULL),
+      (13, 'SynthXMiner', NULL, NULL),
+      (14, 'Synth_Miner', NULL, NULL),
       (15, '990004992fan', NULL, NULL),
       (16, 'SynthMinerGone', NULL, '2026-11-01');
   `);
@@ -54,7 +54,7 @@ describe('the grant page user picker', () => {
   });
 
   it('treats an underscore as itself, not as any character', async () => {
-    expect(await names('Cola_')).toEqual(['Cola_Miner']);
+    expect(await names('Synth_')).toEqual(['Synth_Miner']);
   });
 
   it('never offers the system account or a deleted one, and survives an over-long id', async () => {
