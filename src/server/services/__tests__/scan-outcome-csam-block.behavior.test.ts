@@ -481,7 +481,7 @@ const CONTROL = 72;
 /** Never grace-blocked. */
 const PLAIN = 73;
 
-const BREADCRUMBS = `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null}'`;
+const BREADCRUMBS = `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": null}'`;
 
 const graceRow = async (id: number) =>
   (
@@ -493,7 +493,8 @@ const graceRow = async (id: number) =>
     }>(
       `SELECT ingestion, "blockedFor", "nsfwLevel",
         ((metadata -> 'accountDeletionPriorIngestion') IS NOT NULL
-          OR (metadata -> 'accountDeletionPriorBlockedFor') IS NOT NULL) AS breadcrumb
+          OR (metadata -> 'accountDeletionPriorBlockedFor') IS NOT NULL
+          OR (metadata -> 'accountDeletionPriorNeedsReview') IS NOT NULL) AS breadcrumb
       FROM "Image" WHERE id = $1`,
       [id]
     )

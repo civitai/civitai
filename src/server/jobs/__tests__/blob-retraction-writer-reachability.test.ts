@@ -444,9 +444,12 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
 
   // The account-deletion marker strip the moderation block sites now issue.
   if (sql.includes('UPDATE "Image"') && sql.includes('- ?::text')) {
-    // Bindings, in order: the two key names, then the scope (an id array or a userId), then the
-    // first key again for the presence test.
-    const [keyA, keyB, scope] = values as [string, string, number[] | number];
+    // Bindings, in order: the key names (one per `- ?::text` in the SET), then the scope (an id
+    // array or a userId), then the first key again for the presence test.
+    const keyCount = (sql.slice(0, sql.indexOf('WHERE')).match(/- \?::text/g) ?? []).length;
+    const keys = values.slice(0, keyCount) as string[];
+    const [keyA] = keys;
+    const scope = values[keyCount] as number[] | number;
     // 🔴 Which arrow the presence test uses is read out of the STATEMENT, never assumed. The
     // strip's own docstring calls the difference load-bearing, so a fixture that hardcodes one of
     // the two cannot see the other being introduced.
@@ -456,7 +459,6 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
       const scoped = Array.isArray(scope) ? scope.includes(row.id) : row.userId === scope;
       if (!scoped) continue;
       if (!row.metadata || !present(row.metadata)) continue;
-      const keys = [keyA, keyB];
       const next = { ...row.metadata };
       for (const k of keys) delete next[k];
       row.metadata = next;
