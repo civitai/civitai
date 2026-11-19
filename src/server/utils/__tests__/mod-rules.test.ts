@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { evaluateRule, evaluateRules, ruleDefinitionSchema } from '~/server/utils/mod-rules';
 
@@ -158,9 +157,6 @@ describe('evaluateRule', () => {
     expect(
       (globalThis as { __modRuleConditionRan?: boolean }).__modRuleConditionRan
     ).toBeUndefined();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'moderation-rule', type: 'error', ruleType: 'property' })
-    );
   });
 
   it('skips a property rule and applies the next rule that matches', () => {

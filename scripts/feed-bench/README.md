@@ -13,7 +13,7 @@ the same replayed requests, the same rate, identically sized pods, each arm othe
 `node` and `next` run the SAME image: `server.cjs` loads the compiled page module
 `/api/internal/feed-bench` (a 404 under Next) and calls the function its default export carries, so
 both arms run the same build of the same modules, with the same `instrumentation.ts` boot. The
-standalone function's doc lists exactly what it keeps and drops from the tRPC path;
+standalone function's doc lists the steps it keeps and what the tRPC path adds around them;
 `src/server/feed-bench/__tests__/images-as-posts-standalone.parity.test.ts` pins that it answers
 the tRPC route's bytes for feed-go's golden inputs.
 

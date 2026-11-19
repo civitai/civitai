@@ -24,7 +24,11 @@ export function requireIdParam(
   const paths = Array.isArray(pagePath) ? pagePath : [pagePath];
   if (!paths.some((path) => canAccess(locals.user, path)))
     error(403, 'You do not have access to this page.');
+  return parseIdParam(raw, name);
+}
 
+/** A positive int4 id from a route param, or a 400. */
+export function parseIdParam(raw: string | undefined, name: string): number {
   const id = Number(raw);
   if (!Number.isInteger(id) || id <= 0 || id > MAX_INT) error(400, `Bad ${name}.`);
   return id;

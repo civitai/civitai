@@ -7,8 +7,11 @@ import type * as TrpcModule from '~/utils/trpc';
 
 // The real StorylineTextCard and PostImageCards, over a store that really holds the texts: the
 // draft-to-row handoff is what is under test.
-const { store, ui, addText, setText } = vi.hoisted(() => ({
+const { store, ui, addText, setText, editors } = vi.hoisted(() => ({
   ui: { showPreview: false },
+  // Each box's onChange, as the editor holds it: TipTap calls it outside React's event handling, so
+  // two keystrokes can reach the same render's handler.
+  editors: new WeakMap<Element, (html: string) => void>(),
   store: {
     texts: [] as { id: number; index: number; content: string }[],
     listeners: new Set<() => void>(),
@@ -24,11 +27,21 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     const [status, setStatus] = useState('idle');
     return {
       mutate: (input: unknown) => {
+        const result = spy(input);
+        // A promise answers later, as the network does.
+        if (result instanceof Promise) {
+          setStatus('pending');
+          void result.then((data) => {
+            setStatus('success');
+            opts.onSuccess?.(data);
+          });
+          return;
+        }
         setStatus('success');
-        opts.onSuccess?.(spy(input));
+        opts.onSuccess?.(result);
       },
       reset: () => setStatus('idle'),
-      isPending: false,
+      isPending: status === 'pending',
       isSuccess: status === 'success',
       isError: false,
       isIdle: status === 'idle',
@@ -106,7 +119,14 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
 // The real editor is TipTap behind next/dynamic; the card's contract is the HTML it hands back.
 vi.mock('~/components/RichTextEditor/RichTextEditor', () => ({
   RichTextEditor: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
-    <textarea aria-label="Text" value={value} onChange={(e) => onChange(e.target.value)} />
+    <textarea
+      aria-label="Text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      ref={(el) => {
+        if (el) editors.set(el, onChange);
+      }}
+    />
   ),
 }));
 
@@ -187,5 +207,50 @@ describe('PostImageCards: an Add text draft becoming its row', () => {
     expect(store.texts).toHaveLength(20);
     expect(node.isConnected).toBe(true);
     expect(node.value).toBe('Last one');
+  });
+
+  test('an image followed by a text offers one Add text after them, which opens one card', async () => {
+    // The image sits at index 0 and the text after it takes the same index.
+    store.texts = [{ id: 21, index: 0, content: '<p>First</p>' }];
+    addText.mockReset();
+    renderWithProviders(<PostImageCards />);
+
+    const add = page.getByRole('button', { name: 'Add text' });
+    // Before the first item, and after the text: a text added between the image and the text
+    // would sort after the text anyway.
+    await expect.poll(() => add.elements().length).toBe(2);
+    await add.last().click();
+
+    const boxes = page.getByLabelText('Text', { exact: true });
+    await expect.poll(() => boxes.elements().length).toBe(2);
+    const [existing, draft] = boxes.elements() as HTMLTextAreaElement[];
+    expect(existing.value).toBe('<p>First</p>');
+    expect(draft.value).toBe('');
+  });
+
+  test('keystrokes that reach one render while the create is out make one row and keep every word', async () => {
+    store.texts = [{ id: 21, index: 0, content: '<p>First</p>' }];
+    addText.mockReset();
+    setText.mockReset();
+    let answer: (row: { id: number; index: number; content: string }) => void = () => undefined;
+    addText.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    setText.mockImplementation(({ id, content }) => ({ id, content }));
+    renderWithProviders(<PostImageCards />);
+
+    await page.getByRole('button', { name: 'Add text' }).last().click();
+    const boxes = page.getByLabelText('Text', { exact: true });
+    await expect.poll(() => boxes.elements().length).toBe(2);
+    const draft = boxes.elements()[1];
+    const type = editors.get(draft)!;
+    type('<p>S</p>');
+    type('<p>Se</p>');
+    answer({ id: 31, index: 0, content: '' });
+
+    await vi.waitFor(() => expect(setText).toHaveBeenCalledWith({ id: 31, content: '<p>Se</p>' }));
+    expect(addText).toHaveBeenCalledTimes(1);
+    expect(store.texts.map((t) => t.id)).toEqual([21, 31]);
+    // The draft's own box holds the row: still mounted, and no second card for it.
+    expect(draft.isConnected).toBe(true);
+    expect(boxes.elements()).toHaveLength(2);
   });
 });

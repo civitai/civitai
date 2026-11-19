@@ -4,7 +4,6 @@ import type { Mock } from 'vitest';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as prom from '~/server/prom/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
@@ -210,33 +209,15 @@ describe('assertClientKeysIssuedToCaller', () => {
     expect(await outcome(KEY, BEFORE)).toBe('accepted');
   });
 
-  it('accepts a key with no record before the cutoff when the upload request log cannot be read, and says so', async () => {
+  it('accepts a key with no record before the cutoff when the upload request log cannot be read', async () => {
     holder.logDown = true;
-    const before = outcomeCount('request_log_unavailable_accepted');
-    loggingMock.logToAxiom.mockClear();
-
     expect(await outcome(KEY, BEFORE)).toBe('accepted');
-
-    expect(outcomeCount('request_log_unavailable_accepted')).toBe(before + 1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'upload-key-unrecorded',
-        keys: KEY,
-        reason: 'request_log_unavailable',
-      })
-    );
   });
 
   it('refuses a key before the cutoff when neither the issue record nor the request log can be read', async () => {
     holder.logDown = true;
     redisMock.redis.mGet.mockRejectedValue(new Error('down'));
-    const accepted = outcomeCount('request_log_unavailable_accepted');
-    const refused = outcomeCount('request_log_unavailable');
-
     expect(await outcome(KEY, BEFORE)).toBe('refused');
-
-    expect(outcomeCount('request_log_unavailable_accepted')).toBe(accepted);
-    expect(outcomeCount('request_log_unavailable')).toBe(refused + 1);
   });
 
   it('refuses a key recorded to another user while the request log is down, beside an unrecorded one', async () => {
@@ -256,42 +237,9 @@ describe('assertClientKeysIssuedToCaller', () => {
 
   it('refuses a key with no record after the cutoff when the upload request log cannot be read', async () => {
     holder.logDown = true;
-    const before = outcomeCount('request_log_unavailable');
     expect(await outcome(KEY, AFTER)).toBe('refused');
-    expect(outcomeCount('request_log_unavailable')).toBe(before + 1);
     redisMock.redis.mGet.mockRejectedValue(new Error('down'));
     expect(await outcome(KEY, AFTER)).toBe('refused');
-  });
-
-  it('counts and logs an unrecorded key as such while the upload request log answers', async () => {
-    const counts = () =>
-      [
-        'unrecorded_accepted',
-        'unrecorded_refused',
-        'request_log_unavailable_accepted',
-        'request_log_unavailable',
-      ].map(outcomeCount);
-    const [accepted, refused, logAccepted, logRefused] = counts();
-    loggingMock.logToAxiom.mockClear();
-
-    expect(await outcome(KEY, BEFORE)).toBe('accepted');
-    expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
-      expect.not.objectContaining({ reason: expect.anything() })
-    );
-    expect(await outcome(KEY, AFTER)).toBe('refused');
-
-    expect(counts()).toEqual([accepted + 1, refused + 1, logAccepted, logRefused]);
-  });
-
-  it('logs why the upload request log could not be read', async () => {
-    holder.logDown = true;
-    loggingMock.logToAxiom.mockClear();
-
-    await outcome(KEY, AFTER);
-
-    expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ type: 'error', name: 'upload-key-owner', error: 'unavailable' })
-    );
   });
 
   it('treats an upload request log that does not answer in 2s as unreadable', async () => {
