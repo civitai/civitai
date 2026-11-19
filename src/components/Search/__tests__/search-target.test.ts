@@ -9,6 +9,7 @@ import {
   searchSectionFromPath,
   profileFeedSection,
   searchesFeedInPlace,
+  searchSectionFor,
 } from '~/components/Search/search-target';
 
 describe('resolveSearchTarget', () => {
@@ -172,5 +173,33 @@ describe('the bounties feed search', () => {
     expect(searchesFeedInPlace(bountiesOnly, 'bounties', '/bounties')).toBe(true);
     expect(searchesFeedInPlace({}, 'bounties', '/bounties')).toBe(false);
     expect(feedSearchPathname(bountiesOnly, 'bounties')).toBe('/bounties');
+  });
+});
+
+// /videos is the images feed's videos, so the images index searches it, under its own flag.
+describe('the videos feed search', () => {
+  const both = { feedSearch: true, videoFeedSearch: true };
+
+  it('filters /videos in place from the images index only with both flags', () => {
+    expect(searchesFeedInPlace(both, 'images', '/videos')).toBe(true);
+    expect(searchesFeedInPlace(both, 'models', '/videos')).toBe(false);
+    expect(searchesFeedInPlace({ feedSearch: true }, 'images', '/videos')).toBe(false);
+    expect(searchesFeedInPlace({ videoFeedSearch: true }, 'images', '/videos')).toBe(false);
+  });
+
+  it('points the header bar at images on /videos, and leaves other sections alone', () => {
+    expect(searchSectionFor('/videos', both)).toBe('images');
+    expect(searchSectionFor('/videos', { feedSearch: true })).toBe('videos');
+    expect(searchSectionFor('/models', both)).toBe('models');
+  });
+});
+
+describe('page search on tools and downloads', () => {
+  it('gives /tools and /user/downloads the header bar under pageSearch', () => {
+    expect(pageSearchFor({ pageSearch: true }, '/tools')).toEqual({ placeholder: 'Search tools' });
+    expect(pageSearchFor({ pageSearch: true }, '/user/downloads')).toEqual({
+      placeholder: 'Search your downloads',
+    });
+    expect(pageSearchFor({}, '/tools')).toBeUndefined();
   });
 });

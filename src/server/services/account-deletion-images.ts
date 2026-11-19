@@ -12,7 +12,7 @@ import { bustCachesForPosts } from '~/server/services/post.service';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { IMAGE_REVIEW_PRECEDENCE } from '@civitai/shared/image-review-types';
+import { IMAGE_REVIEW_PRECEDENCE, RESTORABLE_REVIEWS } from '@civitai/shared/image-review-types';
 import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import {
   PRIOR_BLOCKED_FOR_KEY,
@@ -29,10 +29,6 @@ const RESTORE_FOLLOWUP_CONCURRENCY = 2;
  * re-claim the same batch forever; 500 x 5000 is well clear of the largest gallery (~785K).
  */
 export const MAX_RESTORE_BATCHES = 5000;
-
-/** A recorded 'csam' is never put back: the block keeps that flag, so one recorded with none left
- *  was dismissed. */
-const RESTORABLE_REVIEWS = IMAGE_REVIEW_PRECEDENCE.filter((review) => review !== 'csam');
 
 /**
  * Drops the 7-day purge `remove-deleted-user-images` armed for this account. That job reads

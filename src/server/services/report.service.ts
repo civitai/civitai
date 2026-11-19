@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
 import { NO_REPORT_REWARD_KEY, reportersWithoutReward } from '@civitai/shared/report-reward';
+import { reviewKeptWhenLiftedSql, withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -1909,12 +1910,15 @@ export async function settleResolvedAppeals(
         let written = false;
         try {
           // An approval never restores a row removed for CSAM or under the review flag, and a
-          // rejection leaves that flag on.
+          // rejection leaves that flag on. On a row an account deletion blocked, an approval settles
+          // the appeal but not a review the deletion recorded, which comes back.
           type Written = { postId: number | null; pHash: bigint | null };
           const [updated] = approved
             ? await dbWrite.$queryRaw<Written[]>`
                 UPDATE "Image"
-                SET "needsReview" = NULL, "blockedFor" = NULL, ingestion = 'Scanned'
+                SET "needsReview" = ${reviewKeptWhenLiftedSql},
+                    "blockedFor" = NULL, ingestion = 'Scanned',
+                    "metadata" = ${withoutGraceMarkersSql()}
                 WHERE id = ${appeal.entityId}
                   AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
                   AND "needsReview" IS DISTINCT FROM 'csam'
