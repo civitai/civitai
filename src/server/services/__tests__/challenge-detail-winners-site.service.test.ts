@@ -272,7 +272,10 @@ describe('getChallengeDetail — the cover read', () => {
       await getChallengeDetail(500, VIEWER, false, false, true);
       expect(dbMock.dbRead.image.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ id: 80, AND: challengeCoverWhere() }),
+          where: expect.objectContaining({
+            id: 80,
+            AND: expect.arrayContaining([challengeCoverWhere()]),
+          }),
         })
       );
     } finally {

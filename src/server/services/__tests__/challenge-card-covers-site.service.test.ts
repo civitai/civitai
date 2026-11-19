@@ -226,13 +226,15 @@ describe.each(Object.keys(paths))('%s', (path) => {
   });
 });
 
-// The card lists read covers through mapChallengeRowsToCards; the event banner has its own read.
+// Every public cover read: the card lists, event challenges, previous winners and event banners.
 const cardPaths = [
   'daily challenges',
   'challenge feed',
   'my challenges',
   'previous winners',
   'event challenge cover',
+  'event banner',
+  'event by id',
 ];
 
 describe.each(cardPaths)('%s — the cover read', (path) => {
@@ -244,7 +246,7 @@ describe.each(cardPaths)('%s — the cover read', (path) => {
       await paths[path]({ isGreen: false, viewerId: VIEWER });
       expect(dbMock.dbRead.image.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ AND: challengeCoverWhere() }),
+          where: expect.objectContaining({ AND: expect.arrayContaining([challengeCoverWhere()]) }),
         })
       );
     } finally {

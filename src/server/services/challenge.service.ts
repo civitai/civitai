@@ -401,8 +401,7 @@ async function mapChallengeRowsToCards(
   const coverImages = await dbRead.image.findMany({
     where: {
       id: { in: coverImageIds },
-      ...imageNotRestrictedWhere({ viewerId: site.viewerId }),
-      AND: challengeCoverWhere(),
+      AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
     },
     select: imageSelect,
   });
@@ -976,8 +975,10 @@ async function buildChallengeDetail(
           ...(forEdit
             ? {}
             : {
-                ...imageNotRestrictedWhere({ viewerId: green?.viewerId }),
-                AND: challengeCoverWhere(),
+                AND: [
+                  imageNotRestrictedWhere({ viewerId: green?.viewerId }),
+                  challengeCoverWhere(),
+                ],
               }),
         },
         select: imageSelect,
@@ -3387,7 +3388,9 @@ async function getEventCoverImages(
   const images = await dbRead.image.findMany({
     where: {
       id: { in: ids },
-      ...(forEdit ? {} : imageNotRestrictedWhere({ viewerId: site.viewerId })),
+      ...(forEdit
+        ? {}
+        : { AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()] }),
     },
     select: imageSelect,
   });
@@ -3538,8 +3541,7 @@ export async function getActiveEvents(
           .findMany({
             where: {
               id: { in: coverImageIds },
-              ...imageNotRestrictedWhere({ viewerId: site.viewerId }),
-              AND: challengeCoverWhere(),
+              AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
             },
             select: imageSelect,
           })
@@ -4454,8 +4456,7 @@ export async function getCompletedChallengesWithWinners(
       ? await dbRead.image.findMany({
           where: {
             id: { in: coverImageIds },
-            ...imageNotRestrictedWhere({ viewerId: currentUserId }),
-            AND: challengeCoverWhere(),
+            AND: [imageNotRestrictedWhere({ viewerId: currentUserId }), challengeCoverWhere()],
           },
           select: imageSelect,
         })
