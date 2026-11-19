@@ -538,10 +538,13 @@ export function filterPreferences<
             hidden.noImages++;
           }
 
+          // `srcs` carry no rating, so they go too once any image is dropped.
+          const dropped = filteredImages.length < mergedImages.length;
           return filteredImages.length || showImageless
             ? {
                 ...x,
                 images: filteredImages,
+                ...(dropped && 'srcs' in x ? { srcs: [] } : {}),
               }
             : null;
         })
