@@ -5,6 +5,7 @@ import {
   isBlockedLevel,
   isExcessiveDownRating,
   levelForExp,
+  mostVotedLevel,
   voteWeight,
 } from './resolution';
 
@@ -171,5 +172,24 @@ describe('voteWeight below the accuracy bar', () => {
     expect(voteWeight({ rank: 'Templar', level: 20, smites: 0, belowBar: true })).toBe(
       Math.round(base * RATING.belowBarFactor * 100) / 100
     );
+  });
+});
+
+describe('mostVotedLevel', () => {
+  it('picks the highest level among those tied for most votes', () => {
+    expect(mostVotedLevel(votes(['2', '4', '4', '4', '4', '8', '8', '8', '8']))).toBe('8');
+  });
+
+  it('counts votes, not weight', () => {
+    expect(mostVotedLevel([...votes(['2', '2', '2'], 0.5), ...votes(['16'], 3)])).toBe('2');
+  });
+
+  it('keeps the most-voted level even when one vote is far higher', () => {
+    expect(mostVotedLevel(votes(['2', '2', '2', '2', '2', '16']))).toBe('2');
+  });
+
+  it("ignores a held player's weight-0 vote", () => {
+    expect(mostVotedLevel([...votes(['4', '8']), ...votes(['4', '4'], 0)])).toBe('8');
+    expect(mostVotedLevel(votes(['4'], 0))).toBeNull();
   });
 });
