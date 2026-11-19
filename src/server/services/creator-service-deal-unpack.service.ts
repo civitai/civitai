@@ -292,6 +292,7 @@ const AUDIO_FORMATS: Record<string, (head: Buffer) => boolean> = {
 const TORCH_ENTRY =
   /^[^/]+\/(data\.pkl|constants\.pkl|attributes\.pkl|version|byteorder|\.format_version|\.storage_alignment|serialization_id|\.data\/(serialization_id|version)|(data|constants)\/\d+|code\/__torch__(\/.+)?\.(py|pkl|py\.debug_pkl)|extra\/.+)$/;
 const TORCH_MAX_ENTRIES = 50_000;
+const TORCH_TENSOR = /^[^/]+\/data\/\d+$/;
 
 async function isTorchArchive(file: ClaimedFinal) {
   const source = s3ZipSource(getS3Client(), await getBucket(), file.s3Key, file.size);
@@ -304,10 +305,12 @@ async function isTorchArchive(file: ClaimedFinal) {
   )
     return false;
   // Unzipped, every entry is a file of its own: none may be something a player or extractor opens.
+  // Tensor bytes are opaque, so a stream is looked for only where a file of one would start.
   return everyEntryHead(
     source,
     TORCH_MAX_ENTRIES,
-    (head) => !['video', 'archive'].includes(sniffEntry(head))
+    (path, head) =>
+      !['video', 'archive'].includes(sniffEntry(head, { tsAnywhere: !TORCH_TENSOR.test(path) }))
   );
 }
 

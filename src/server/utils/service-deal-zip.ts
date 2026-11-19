@@ -174,12 +174,15 @@ const TS_SEARCH_BYTES = 1024;
  * correction), starting anywhere in the first KiB: a player hunts for the sync, so junk before it
  * does not hide the stream.
  */
-function isMpegTs(head: Buffer) {
-  return [188, 192, 204].some((packet) => {
-    for (let start = 0; start < TS_SEARCH_BYTES && start + 3 * packet < head.length; start++)
-      if ([0, 1, 2, 3].every((i) => head[start + i * packet] === 0x47)) return true;
-    return false;
-  });
+function isMpegTs(head: Buffer, anywhere: boolean) {
+  const starts = anywhere ? Array.from({ length: TS_SEARCH_BYTES }, (_, i) => i) : [0, 4];
+  return [188, 192, 204].some((packet) =>
+    starts.some(
+      (start) =>
+        start + 3 * packet < head.length &&
+        [0, 1, 2, 3].every((i) => head[start + i * packet] === 0x47)
+    )
+  );
 }
 
 /** Leading ID3v2 tags read past; a file with more is refused, since what follows is unread. */
@@ -271,12 +274,19 @@ function isOggAudio(head: Buffer) {
 }
 
 /** What the first bytes of an entry are, whatever its name says. */
-export function sniffEntry(head: Buffer): EntryKind | 'video' | 'archive' | 'unscannable' {
+/**
+ * `tsAnywhere: false` looks for a transport stream only where a file of one starts (byte 0, or 4
+ * with a timecode), for bytes that are not a file of their own, such as a checkpoint's tensors.
+ */
+export function sniffEntry(
+  head: Buffer,
+  { tsAnywhere = true } = {}
+): EntryKind | 'video' | 'archive' | 'unscannable' {
   const at = (offset: number, text: string) =>
     head.subarray(offset, offset + text.length).toString('latin1') === text;
   const bytes = (...values: number[]) => values.every((value, i) => head[i] === value);
   // Ahead of the image signatures: a player finds the stream behind any header.
-  if (isMpegTs(head) || id3TagLength(head)) return 'video';
+  if (isMpegTs(head, tsAnywhere) || id3TagLength(head)) return 'video';
   if (
     bytes(0xff, 0xd8, 0xff) ||
     bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a) ||
@@ -386,14 +396,35 @@ export async function listZipPaths(source: ZipSource, max: number) {
 const ENTRY_HEAD_READS = 8;
 const DATA_DESCRIPTOR = 0x08;
 const UNICODE_PATH_FIELD = 0x7075;
-/** A data descriptor's possible lengths: with or without its signature, 32- or 64-bit sizes. */
-const DESCRIPTOR_LENGTHS = [12, 16, 20, 24];
+const ZIP64_FIELD = 0x0001;
+const DESCRIPTOR_SIGNATURE = 0x08074b50;
 
-const hasExtraField = (extra: Buffer, id: number) => {
+/** The data of the extra field `id`, if `extra` has one. */
+const extraField = (extra: Buffer, id: number) => {
   for (let at = 0; at + 4 <= extra.length; at += 4 + extra.readUInt16LE(at + 2))
-    if (extra.readUInt16LE(at) === id) return true;
-  return false;
+    if (extra.readUInt16LE(at) === id)
+      return extra.subarray(at + 4, at + 4 + extra.readUInt16LE(at + 2));
+  return null;
 };
+
+async function readBytes(source: ZipSource, start: number, end: number) {
+  const chunks: Buffer[] = [];
+  for await (const chunk of source.readRange(start, end) as AsyncIterable<Buffer>)
+    chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+
+/** A local header's sizes, from its zip64 field where the header defers to one. */
+function localSizes(local: yauzl.LocalFileHeader) {
+  const zip64 = extraField(local.extraField, ZIP64_FIELD);
+  let { compressedSize: compressed, uncompressedSize: uncompressed } = local;
+  if (zip64 && (compressed === 0xffffffff || uncompressed === 0xffffffff)) {
+    if (zip64.length < 16) return null;
+    uncompressed = Number(zip64.readBigUInt64LE(0));
+    compressed = Number(zip64.readBigUInt64LE(8));
+  }
+  return { compressed, uncompressed, zip64: !!zip64 };
+}
 
 /**
  * Whether every file entry's first bytes (past any ID3v2 tags) pass `accept`, for an archive that
@@ -404,7 +435,7 @@ const hasExtraField = (extra: Buffer, id: number) => {
 export async function everyEntryHead(
   source: ZipSource,
   max: number,
-  accept: (head: Buffer) => boolean
+  accept: (path: string, head: Buffer) => boolean
 ) {
   const zipfile = await openArchive(source);
   // yauzl keeps where the directory starts as its read cursor until the first entry is read.
@@ -432,15 +463,47 @@ export async function everyEntryHead(
           !local.fileName.equals(entry.fileNameRaw) ||
           local.compressionMethod !== entry.compressionMethod ||
           local.generalPurposeBitFlag !== entry.generalPurposeBitFlag ||
-          hasExtraField(local.extraField, UNICODE_PATH_FIELD) ||
+          extraField(local.extraField, UNICODE_PATH_FIELD) ||
           entry.extraFields.some(({ id }) => id === UNICODE_PATH_FIELD)
         )
           throw mismatch();
-        const span = {
-          start: entry.relativeOffsetOfLocalHeader,
-          end: local.fileDataStart + entry.compressedSize,
-          descriptor: (entry.generalPurposeBitFlag & DATA_DESCRIPTOR) !== 0,
-        };
+        // The local header must give the directory's sizes and checksum, or, with a data
+        // descriptor, leave them to it: an extractor that walks the local headers goes by these.
+        const sizes = localSizes(local);
+        const deferred = (entry.generalPurposeBitFlag & DATA_DESCRIPTOR) !== 0;
+        const stated =
+          sizes?.compressed === entry.compressedSize &&
+          sizes.uncompressed === entry.uncompressedSize &&
+          local.crc32 === entry.crc32;
+        const left = sizes?.compressed === 0 && sizes.uncompressed === 0 && local.crc32 === 0;
+        if (!sizes || !(stated || (deferred && left))) throw mismatch();
+        // A deflated entry ends where its stream does, which only inflating all of it would show.
+        if (deferred && entry.compressionMethod !== 0) throw mismatch();
+        const dataEnd = local.fileDataStart + entry.compressedSize;
+        let end = dataEnd;
+        if (deferred) {
+          const descriptor = await readBytes(
+            source,
+            dataEnd,
+            Math.min(dataEnd + 24, directoryStart)
+          );
+          const at =
+            descriptor.length >= 4 && descriptor.readUInt32LE(0) === DESCRIPTOR_SIGNATURE ? 4 : 0;
+          const length = at + (sizes.zip64 ? 20 : 12);
+          if (descriptor.length < length) throw mismatch();
+          const size = (offset: number) =>
+            sizes.zip64
+              ? Number(descriptor.readBigUInt64LE(offset))
+              : descriptor.readUInt32LE(offset);
+          if (
+            descriptor.readUInt32LE(at) !== entry.crc32 ||
+            size(at + 4) !== entry.compressedSize ||
+            size(at + (sizes.zip64 ? 12 : 8)) !== entry.uncompressedSize
+          )
+            throw mismatch();
+          end += length;
+        }
+        const span = { start: entry.relativeOffsetOfLocalHeader, end };
         if (entry.fileName.endsWith('/')) return span;
         // The callback form: yauzl 3.4's promise form of this call opens the entry by its header again.
         const stream = await new Promise<Readable>((resolve, reject) =>
@@ -467,7 +530,7 @@ export async function everyEntryHead(
         } finally {
           stream.destroy();
         }
-        if (!accept(head.bytes())) throw new EntryNotAccepted();
+        if (!accept(entry.fileName, head.bytes())) throw new EntryNotAccepted();
         return span;
       }).catch((error) => {
         failed = true;
@@ -481,19 +544,14 @@ export async function everyEntryHead(
       if (error instanceof EntryNotAccepted) return false;
       throw error;
     }
-    // Entry after entry from the first byte to the directory, each followed by nothing but its
-    // data descriptor, if it has one.
+    // Entry after entry (each with its data descriptor, if it has one) from the first byte to the
+    // directory, with nothing between them.
     let at = 0;
-    let previousDescriptor = false;
     for (const span of spans.filter((s) => s !== null).sort((a, b) => a.start - b.start)) {
-      const gap = span.start - at;
-      if (gap !== 0 && !(at > 0 && previousDescriptor && DESCRIPTOR_LENGTHS.includes(gap)))
-        throw mismatch();
+      if (span.start !== at) throw mismatch();
       at = span.end;
-      previousDescriptor = span.descriptor;
     }
-    const tail = directoryStart - at;
-    if (tail !== 0 && !(previousDescriptor && DESCRIPTOR_LENGTHS.includes(tail))) throw mismatch();
+    if (at !== directoryStart) throw mismatch();
     return true;
   } finally {
     zipfile.close();

@@ -26,8 +26,15 @@ export type FixtureEntry = {
   localExtra?: Buffer;
   /** Extra field written in the directory entry. */
   centralExtra?: Buffer;
-  /** Bytes written after the entry's data that no header accounts for. */
+  /** Bytes written after the entry's data (and its descriptor) that no header accounts for. */
   after?: Buffer;
+  /**
+   * `true` leaves the local header's checksum and sizes to a data descriptor after the data, as
+   * torch writes them; a Buffer is written as the descriptor instead of the true one.
+   */
+  descriptor?: boolean | Buffer;
+  /** Written as the local header's compressed size in place of the real one. */
+  localCompressedSize?: number;
 };
 
 export type FixtureOptions = {
@@ -59,7 +66,7 @@ export function buildZip(entries: FixtureEntry[], options: FixtureOptions = {}) 
     const body = methodCode === 8 ? deflateRawSync(data) : data;
     const name = Buffer.from(entry.name, 'utf8');
     const localName = Buffer.from(entry.localName ?? entry.name, 'utf8');
-    const flags = entry.flags ?? 0;
+    const flags = (entry.flags ?? 0) | (entry.descriptor ? 0x08 : 0);
     const size = entry.declaredSize ?? data.byteLength;
     const compressedSize = entry.declaredCompressedSize ?? body.byteLength;
     const crc = crc32(data);
@@ -70,9 +77,9 @@ export function buildZip(entries: FixtureEntry[], options: FixtureOptions = {}) 
       u16(entry.localMethod ?? methodCode),
       u16(0),
       u16(0x21),
-      u32(crc),
-      u32(compressedSize),
-      u32(size),
+      u32(entry.descriptor ? 0 : crc),
+      u32(entry.localCompressedSize ?? (entry.descriptor ? 0 : compressedSize)),
+      u32(entry.descriptor ? 0 : size),
       u16(localName.byteLength),
       u16(entry.localExtra?.byteLength ?? 0),
       localName,
@@ -102,7 +109,12 @@ export function buildZip(entries: FixtureEntry[], options: FixtureOptions = {}) 
         entry.centralExtra ?? Buffer.alloc(0),
       ])
     );
-    const after = entry.after ?? Buffer.alloc(0);
+    const descriptor = Buffer.isBuffer(entry.descriptor)
+      ? entry.descriptor
+      : entry.descriptor
+      ? Buffer.concat([u32(0x08074b50), u32(crc), u32(compressedSize), u32(size)])
+      : Buffer.alloc(0);
+    const after = Buffer.concat([descriptor, entry.after ?? Buffer.alloc(0)]);
     local.push(header, body, after);
     offset += header.byteLength + body.byteLength + after.byteLength;
   }

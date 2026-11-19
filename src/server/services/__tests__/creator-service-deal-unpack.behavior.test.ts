@@ -1,3 +1,4 @@
+import { crc32 } from 'zlib';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
@@ -300,12 +301,21 @@ const id3Tag = (body: number, footer = false) =>
     footer ? Buffer.concat([Buffer.from('3DI', 'latin1'), Buffer.alloc(7)]) : Buffer.alloc(0),
   ]);
 const MP3_FRAME = () => Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x64]), Buffer.alloc(600)]);
+/** A data descriptor with its signature, carrying the checksum and sizes given. */
+const descriptor = (crc: number, compressed: number, uncompressed: number) => {
+  const bytes = Buffer.alloc(16);
+  bytes.writeUInt32LE(0x08074b50, 0);
+  bytes.writeUInt32LE(crc >>> 0, 4);
+  bytes.writeUInt32LE(compressed, 8);
+  bytes.writeUInt32LE(uncompressed, 12);
+  return bytes;
+};
 const PICKLE = () => Buffer.from([0x80, 0x02, 0x7d, 0x71, 0x00, 0x2e]);
 type TorchEntry = [path: string, data: Buffer, method?: 'store' | 'deflate'];
 /**
  * A checkpoint in torch's zip layout under `root`, plus `entries` under the root and `others` at
- * the paths given, stored unless an entry says otherwise. `overrides` sets header fields of the
- * entry at a path.
+ * the paths given, stored with a data descriptor as torch writes them unless an entry says
+ * otherwise. `overrides` sets header fields of the entry at a path.
  */
 const torchZip = (
   entries: TorchEntry[],
@@ -323,6 +333,7 @@ const torchZip = (
       name,
       data,
       method: method ?? 'store',
+      descriptor: method !== 'deflate',
       ...overrides[name],
     }))
   );
@@ -984,6 +995,53 @@ describe('video by any other name', () => {
     [
       'weights.pt',
       torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/version': { after: Buffer.alloc(16) },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { descriptor: false, localCompressedSize: 10 },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { localCompressedSize: 10 },
+      }),
+      /described differently/,
+    ],
+    ...[
+      descriptor(0, 4096, 4096),
+      descriptor(crc32(Buffer.alloc(4096, 3)), 10, 4096),
+      descriptor(crc32(Buffer.alloc(4096, 3)), 4096, 10),
+    ].map((wrong) => [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { descriptor: wrong },
+      }),
+      /described differently/,
+    ]),
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3), 'deflate']], 'weights', [], {
+        'weights/data/0': { descriptor: true },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([
+        ['data/0', Buffer.alloc(4096, 3)],
+        ['extra/notes', Buffer.concat([Buffer.alloc(100, 3), tsStream(188)])],
+      ]),
+      /\.pt model/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
         'weights/data/0': { flags: 1 },
       }),
       /Password/,
@@ -1062,13 +1120,13 @@ describe('video by any other name', () => {
     ['notes.txt', threeSyncs()],
     ['song.mp3', Buffer.concat([MP3_FRAME(), spacedSyncs(100)])],
     ['weights.pth', torchZip([['data/0', Buffer.alloc(64, 3), 'deflate']])],
-    // A data descriptor after an entry's data is the only gap an archive may have.
+    // Tensor bytes are opaque: a stream is looked for only where a file of one would start.
     [
       'weights.pt',
-      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
-        'weights/version': { flags: 0x08, after: Buffer.alloc(16) },
-        'weights/data/0': { flags: 0x08, after: Buffer.alloc(12) },
-      }),
+      torchZip([
+        ['data/0', Buffer.alloc(4096, 3)],
+        ['data/1', Buffer.concat([Buffer.alloc(100, 3), tsStream(188)])],
+      ]),
     ],
     ['song.wav', Buffer.concat([Buffer.from('RIFF\0\0\0\0WAVEfmt ', 'latin1'), Buffer.alloc(600)])],
     ['song.wav', Buffer.concat([Buffer.from('RF64\0\0\0\0WAVEds64', 'latin1'), Buffer.alloc(600)])],
