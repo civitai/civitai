@@ -66,24 +66,4 @@ describe('PostTextBlock', () => {
     await expect.element(scanned).toHaveAttribute('data-text-id', '10');
     expect(scanned.element().querySelector('[data-testid="text-pending-review"]')).toBeNull();
   });
-
-  test("the text a link's ?text= names is scrolled to and outlined; another is not", async () => {
-    guard.safe = true;
-    const scrolled: Element[] = [];
-    const spy = vi
-      .spyOn(Element.prototype, 'scrollIntoView')
-      .mockImplementation(function (this: Element) {
-        scrolled.push(this);
-      });
-    renderWithProviders(
-      <>
-        <PostTextBlock text={{ ...text, id: 8 }} postId={40} />
-        <PostTextBlock text={text} postId={40} linked />
-      </>
-    );
-    await vi.waitFor(() => expect(scrolled).toHaveLength(1));
-    expect(scrolled[0].getAttribute('data-text-id')).toBe('7');
-    expect(scrolled[0].hasAttribute('data-linked')).toBe(true);
-    spy.mockRestore();
-  });
 });

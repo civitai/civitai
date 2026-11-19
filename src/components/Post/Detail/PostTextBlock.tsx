@@ -40,7 +40,6 @@ export function PostTextBlock({
       style={{ maxWidth: Math.min(MAX_POST_IMAGES_WIDTH, 760) }}
       data-testid="post-text-block"
       data-text-id={text.id}
-      data-linked={linked || undefined}
     >
       <ImageGuardContent
         image={{ id: textGuardId(text.id), nsfwLevel: text.nsfwLevel, userId }}

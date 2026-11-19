@@ -196,8 +196,8 @@ describe('PostImageCards: an Add text draft becoming its row', () => {
     renderWithProviders(<PostImageCards />);
 
     const add = page.getByRole('button', { name: 'Add text' });
-    // Before every item, and after the text: a text added between the image and the text would
-    // sort after the text anyway.
+    // Before the first item, and after the text: a text added between the image and the text
+    // would sort after the text anyway.
     await expect.poll(() => add.elements().length).toBe(2);
     await add.last().click();
 
