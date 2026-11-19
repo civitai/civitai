@@ -71,22 +71,24 @@ function lines(fields: readonly TextScanField[]): string[] {
 }
 
 /**
- * Rate one document at the revision `meta.seq`, whose text (`fields`) was rated `textLevel`: the
- * higher of that and its images' levels. Images not rated yet leave it pending. A revision the
- * document has left is refused (`changed`). A rated App Store card follows.
+ * Rate one document at the revision `meta.seq`, whose text (`fields`) was rated `textLevel` and
+ * whose `data` is that revision's: the higher of that and its images' levels. Images not rated yet
+ * leave it pending. A revision the document has left is refused (`changed`). A rated App Store card
+ * follows.
  */
 export async function rateAppDoc(
   meta: AppDocSubjectMeta,
   fields: readonly TextScanField[],
-  textLevel: number
+  textLevel: number,
+  data: unknown
 ): Promise<RateResult> {
-  const keys = docMediaKeys(lines(fields));
+  const keys = docMediaKeys(lines(fields), data);
   if ('overflow' in keys) {
     // More image references than are read per document: never rated on a subset.
     logToAxiom({ name: 'app-doc-rater', type: 'warning', message: 'too many image references' });
     return { status: 'media-pending' };
   }
-  const media = await resolveDocMediaLevel(keys.keys, keys.urlKeys);
+  const media = await resolveDocMediaLevel(keys.keys, keys.urlKeys, keys.ids);
   if (media.status === 'pending') return { status: 'media-pending' };
   const level = Math.max(textLevel, media.level);
   const applied = await getDocStoreRater().applyRating(
@@ -133,7 +135,13 @@ export async function applyAppDocTextScan(args: {
   const textLevel = textLevelOf(args.outcome);
   if (textLevel === null) return { status: 'no-level' };
   if (await tooLongForOneCall(args.subject.fields)) return { status: 'too-long' };
-  return rateAppDoc(args.subject.meta as AppDocSubjectMeta, args.subject.fields, textLevel);
+  // The subject carries the document's text, not its `data`, which its image ids are read from:
+  // read the document again, and rate it only at the revision the subject was loaded at.
+  const meta = args.subject.meta as AppDocSubjectMeta;
+  const doc = await getDocStoreRater().getForRating(meta.appId, meta.ns, meta.collection, meta.key);
+  if (!doc) return { status: 'gone' };
+  if (doc.seq !== meta.seq) return { status: 'changed' };
+  return rateAppDoc(meta, args.subject.fields, textLevel, doc.data);
 }
 
 /**
@@ -253,7 +261,7 @@ async function rateDoc(
       if (mode !== 'active') return void out.skipped++;
       const level = textLevelOf({ nsfwLevel: row.nsfwLevel });
       if (level === null || (await tooLongForOneCall(fields))) return void out.skipped++;
-      return count(await rateAppDoc(meta, fields, level), out);
+      return count(await rateAppDoc(meta, fields, level, doc.data), out);
     }
   }
   out.acted++;
@@ -269,7 +277,7 @@ async function rateDoc(
   if (scan.reason === 'too-short' && subjectTextLength({ fields, declared: {} }) === 0) {
     if ((await getTextScanMode(APP_DOC_ENTITY_TYPE, ratingId)) !== 'active')
       return void out.skipped++;
-    return count(await rateAppDoc(meta, fields, NsfwLevel.PG), out);
+    return count(await rateAppDoc(meta, fields, NsfwLevel.PG, doc.data), out);
   }
   // `unchanged` (a verdict for this text exists): the next pass reads it from the page's rows.
   out.skipped++;

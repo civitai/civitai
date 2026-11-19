@@ -98,6 +98,12 @@ import {
   rateUnratedDocs,
 } from '~/server/services/apps/doc-rater.service';
 import { loadAppDocSubjects } from '~/server/services/apps/doc-rater-subject';
+import {
+  asImageId,
+  DOC_MEDIA_MAX_KEYS,
+  docMediaKeys,
+  isImageIdKey,
+} from '~/server/services/apps/doc-rating-media';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import type { TextScanOutcome } from '~/server/services/text-scan/types';
 
@@ -116,6 +122,34 @@ const IMG_UNSCANNED = '66666666-7777-4888-9999-aaaaaaaaaaaa';
 const IMG_NO_ROW = '12345678-90ab-4cde-8f01-234567890abc';
 const IMG_FLAGGED = 'abcdef01-2345-4678-89ab-cdef01234567';
 const imageUrl = (key: string) => `https://image.example/abc/${key}/width=450/${key}.jpeg`;
+// Image ids, as an app stores them under an image-id key. Each is distinct from every level bit
+// and from the other ids, so a level can only come from the row the id names.
+const ID_R = 7301;
+const ID_X = 7302;
+const ID_UNSCANNED = 7303;
+const ID_BLOCKED = 7304;
+const ID_PG13 = 7305;
+const ID_NO_ROW = 7399;
+type ImageWhere = {
+  url?: { in: string[] };
+  id?: { in: number[] };
+  OR?: { url?: { in: string[] }; id?: { in: number[] } }[];
+};
+const IMAGE_ROWS: {
+  id: number;
+  url: string;
+  nsfwLevel: number;
+  ingestion: string;
+  needsReview?: string;
+}[] = [
+  { id: ID_R, url: IMG_R, nsfwLevel: 4, ingestion: 'Scanned' },
+  { id: ID_UNSCANNED, url: IMG_UNSCANNED, nsfwLevel: 0, ingestion: 'Pending' },
+  // Scanned at PG, but under moderator review: the site's image gate hides it at every level.
+  { id: 7306, url: IMG_FLAGGED, nsfwLevel: 1, ingestion: 'Scanned', needsReview: 'minor' },
+  { id: ID_X, url: 'key-of-x', nsfwLevel: 8, ingestion: 'Scanned' },
+  { id: ID_BLOCKED, url: 'key-of-blocked', nsfwLevel: 0, ingestion: 'Blocked' },
+  { id: ID_PG13, url: 'key-of-pg13', nsfwLevel: 2, ingestion: 'Scanned' },
+];
 
 let harness: Harness;
 let store: DocStore;
@@ -144,15 +178,13 @@ beforeEach(() => {
     if (h.brokenApps.has(args.where.id)) throw new Error('manifest read failed');
     return { manifest: MANIFEST };
   }) as never);
-  dbMock.dbRead.image.findMany.mockImplementation((async (args: {
-    where: { url: { in: string[] } };
-  }) =>
-    [
-      { url: IMG_R, nsfwLevel: 4, ingestion: 'Scanned' },
-      { url: IMG_UNSCANNED, nsfwLevel: 0, ingestion: 'Pending' },
-      // Scanned at PG, but under moderator review: the site's image gate hides it at every level.
-      { url: IMG_FLAGGED, nsfwLevel: 1, ingestion: 'Scanned', needsReview: 'minor' },
-    ].filter((r) => args.where.url.in.includes(r.url))) as never);
+  dbMock.dbRead.image.findMany.mockImplementation((async (args: { where: ImageWhere }) => {
+    // Either one condition, or an OR of them: a row matches by its url or by its id.
+    const conditions = args.where.OR ?? [args.where];
+    const urls = conditions.flatMap((c) => c.url?.in ?? []);
+    const ids = conditions.flatMap((c) => c.id?.in ?? []);
+    return IMAGE_ROWS.filter((r) => urls.includes(r.url) || ids.includes(r.id));
+  }) as never);
   dbMock.dbWrite.entityModeration.findMany.mockImplementation((async (args: {
     where: { entityId: { in: number[] } };
   }) =>
@@ -428,6 +460,112 @@ describe('🔴 the callback rates the document', () => {
     h.maxInputChars = 20;
     expect(await callback(id, 1)).toEqual({ status: 'too-long' });
     expect((await ratingOf(app, 'b1')).level).toBeNull();
+  });
+});
+
+describe('🔴 numeric image ids under an image-id key count like image keys', () => {
+  it.each([
+    ['imageIds', { imageIds: [ID_PG13, ID_R] }, 4],
+    ['imageId', { imageId: ID_X }, 8],
+    ['image_id, any case', { Image_ID: ID_R }, 4],
+    ['image_ids', { image_ids: [ID_X] }, 8],
+    ['nested deep in the data', { items: [{ card: { imageId: ID_X } }] }, 8],
+    ['a string of digits', { imageIds: [String(ID_X)] }, 8],
+  ])('an id under %s raises the document to its image’s level', async (_, data, level) => {
+    const app = freshApp('RSVIDS');
+    const id = await submitted(app, 'b1', data);
+    expect(await callback(id, 1)).toEqual({ status: 'rated', level });
+    expect((await ratingOf(app, 'b1')).level).toBe(level);
+  });
+
+  it('an image not rated yet leaves it pending', async () => {
+    const app = freshApp('RSVIDPEND');
+    const id = await submitted(app, 'b1', { imageIds: [ID_R, ID_UNSCANNED] });
+    expect(await callback(id, 1)).toEqual({ status: 'media-pending' });
+    expect((await ratingOf(app, 'b1')).level).toBeNull();
+  });
+
+  it('a Blocked image blocks it', async () => {
+    const app = freshApp('RSVIDBLOCK');
+    const id = await submitted(app, 'b1', { imageId: ID_BLOCKED });
+    expect(await callback(id, 1)).toEqual({ status: 'rated', level: 32 });
+  });
+
+  it('an id that names no image leaves it pending, as a key in an image url does', async () => {
+    const app = freshApp('RSVIDNOROW');
+    const id = await submitted(app, 'b1', { imageId: ID_NO_ROW });
+    expect(await callback(id, 1)).toEqual({ status: 'media-pending' });
+  });
+
+  it('a number under any other key is not an image id, however image-like the key', async () => {
+    const app = freshApp('RSVIDOTHER');
+    const id = await submitted(app, 'b1', {
+      id: ID_X,
+      count: ID_X,
+      seed: ID_X,
+      ids: [ID_X],
+      imageCount: ID_X,
+      coverImageId: ID_X,
+      images: [ID_X],
+    });
+    expect(await callback(id, 2)).toEqual({ status: 'rated', level: 2 });
+  });
+
+  it('a value under an image-id key that is not a whole positive id is not an id', async () => {
+    const app = freshApp('RSVIDJUNK');
+    const id = await submitted(app, 'b1', {
+      imageIds: [` ${ID_X}`, `${ID_X}.0`, `-${ID_X}`, `${ID_X}abc`, ID_X + 0.5, -ID_X, 0],
+      imageId: { nested: 'object' },
+    });
+    expect(await callback(id, 2)).toEqual({ status: 'rated', level: 2 });
+  });
+
+  it('keys and ids together: the highest of all of them, either way round', async () => {
+    const app = freshApp('RSVIDMIX');
+    const idHigher = await submitted(app, 'b1', { pic: imageUrl(IMG_R), imageId: ID_X });
+    expect(await callback(idHigher, 1)).toEqual({ status: 'rated', level: 8 });
+    const keyHigher = await submitted(app, 'b2', { pic: imageUrl(IMG_R), imageIds: [ID_PG13] });
+    expect(await callback(keyHigher, 1)).toEqual({ status: 'rated', level: 4 });
+  });
+
+  it('a pass rating from a stored verdict reads the ids too', async () => {
+    const app = freshApp('RSVIDPASS');
+    const id = await submitted(app, 'b1', { imageId: ID_X });
+    await verdictRow(id, { level: 1 });
+    expect(await rateUnratedDocs([app])).toMatchObject({ rated: 1 });
+    expect((await ratingOf(app, 'b1')).level).toBe(8);
+  });
+
+  it('THE image-id keys: these, compared lower-cased, and nothing else', () => {
+    for (const key of ['imageId', 'imageIds', 'image_id', 'image_ids', 'IMAGEID', 'ImageIds'])
+      expect(isImageIdKey(key)).toBe(true);
+    for (const key of ['id', 'ids', 'image', 'images', 'coverImageId', 'imageIdx', 'image-id'])
+      expect(isImageIdKey(key)).toBe(false);
+  });
+
+  it('an id is a whole number from 1 to the largest Image.id, or a string of digits naming one', () => {
+    expect(asImageId(ID_X)).toBe(ID_X);
+    expect(asImageId(String(ID_X))).toBe(ID_X);
+    expect(asImageId(2_147_483_647)).toBe(2_147_483_647);
+    for (const junk of [0, -1, 1.5, 2_147_483_648, '2147483648', '', ' 1', '+1', '1e3', null, true])
+      expect(asImageId(junk)).toBeNull();
+  });
+
+  it('ids and keys share one cap: past it the document is not rated on a subset', () => {
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => 9000 + i);
+    expect(docMediaKeys([], { imageIds: ids(DOC_MEDIA_MAX_KEYS) })).toMatchObject({
+      ids: ids(DOC_MEDIA_MAX_KEYS),
+    });
+    expect(docMediaKeys([], { imageIds: ids(DOC_MEDIA_MAX_KEYS + 1) })).toEqual({
+      overflow: 'too-many',
+    });
+    // One key on top of a full set of ids is one reference too many.
+    expect(docMediaKeys([IMG_R], { imageIds: ids(DOC_MEDIA_MAX_KEYS) })).toEqual({
+      overflow: 'too-many',
+    });
+    expect(docMediaKeys([IMG_R], { imageIds: ids(DOC_MEDIA_MAX_KEYS - 1) })).toMatchObject({
+      keys: [IMG_R],
+    });
   });
 });
 
