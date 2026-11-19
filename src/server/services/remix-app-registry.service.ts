@@ -814,7 +814,6 @@ export async function clearRemixMinorThemed({
   await writeUserRemixApp(row, {
     manifest: withReviewLog(rest, { by: moderatorId, action: 'cleared-minor-themed' }),
   });
-  // Lifts a safety bar; the review log keeps only its latest entries.
   logToAxiom({
     name: 'remix-app-registry',
     type: 'info',

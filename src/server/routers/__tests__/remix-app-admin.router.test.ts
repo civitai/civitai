@@ -20,7 +20,7 @@ const h = vi.hoisted(() => ({
   list: vi.fn(),
   start: vi.fn(),
 }));
-// Kept out of `h`: the first test expects exactly one call of every `h` mock.
+// Not in `h`, whose mocks the first test counts.
 const u = vi.hoisted(() => ({ submit: vi.fn(), review: vi.fn(), clear: vi.fn() }));
 
 vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) => ({
@@ -201,7 +201,6 @@ describe('user app code: submit and review', () => {
       .createCaller(ctx(moderator, both))
       .submit({ ...submission(), authorId: 1 } as never);
     expect(u.submit).toHaveBeenCalledWith(expect.objectContaining({ authorId: moderator.id }));
-    // Nor can a submit carry the server's review fields.
     await remixAppRouter
       .createCaller(ctx(moderator, both))
       .submit({ ...submission(), reviewLog: [], minorThemed: null, review: 'approved' } as never);
@@ -248,5 +247,7 @@ describe('user app code: submit and review', () => {
     expect(h.setEnabled).toHaveBeenCalledWith(
       expect.objectContaining({ slug: 'u88-probe', moderatorId: moderator.id })
     );
+    await as(moderator, on).delete({ slug: 'u88-probe' });
+    expect(h.remove).toHaveBeenCalledWith({ slug: 'u88-probe' });
   });
 });
