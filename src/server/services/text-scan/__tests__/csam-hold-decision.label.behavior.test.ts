@@ -247,7 +247,6 @@ describe("a decision applied to the author's other holds", () => {
       const results = await decideCsamHoldBatch({
         holds: [{ holdId: 13, textHash: 'h13' }],
         decision,
-        reportChoice: decision === 'dismiss' ? undefined : 'none',
         actor: { id: 7 },
         tracker: tracker as never,
       });
