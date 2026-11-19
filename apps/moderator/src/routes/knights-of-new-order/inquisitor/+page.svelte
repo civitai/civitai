@@ -1,7 +1,7 @@
 <script lang="ts">
   import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
   import TriageParamTabs from '$lib/components/triage/TriageParamTabs.svelte';
-  import { IconPhotoOff } from '@tabler/icons-svelte';
+  import { IconMovie, IconPhotoOff } from '@tabler/icons-svelte';
   import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
@@ -43,7 +43,7 @@
     name: row.imageName,
   });
 
-  // The item whose rating key was pressed while it is blocked; cleared by moving to another item.
+  // The last item whose rating key was pressed while it was blocked.
   let refusedItem = $state<number | null>(null);
 
   const actionHref = (action: string) =>
@@ -111,12 +111,17 @@
           onselect={state.select}
         >
           {#snippet coverMedia()}
-            {#if row.media === 'retracted'}
+            <!-- A retracted video is a player; the detail pane draws it. -->
+            {#if row.media === 'retracted' && row.imageType !== 'video'}
               <CdnOrRetractedMedia
                 item={mediaItem(row)}
                 width={96}
                 class="size-full object-cover"
               />
+            {:else if row.media === 'retracted'}
+              <div class="grid size-full place-items-center text-dark-2">
+                <IconMovie size={18} aria-label="Video" />
+              </div>
             {:else}
               <div class="grid size-full place-items-center text-dark-2" title={RETRACTED_REFUSED}>
                 <IconPhotoOff size={18} aria-label={RETRACTED_REFUSED} />
@@ -137,7 +142,10 @@
         <InquisitorDetail
           {row}
           verdict={state.verdict}
-          error={state.error ?? (refusedItem === row.id ? BLOCKED_RATING_REFUSED : undefined)}
+          error={state.error ??
+            (!state.verdict && row.hasBlockMarker && refusedItem === row.id
+              ? BLOCKED_RATING_REFUSED
+              : undefined)}
           submit={state.submit}
           {actionHref}
         />

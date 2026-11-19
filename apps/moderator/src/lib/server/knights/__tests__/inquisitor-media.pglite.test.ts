@@ -27,7 +27,11 @@ vi.mock('../../db', () => ({
   },
 }));
 vi.mock('../../image-nsfw-level', () => ({ updateImageNsfwLevel: vi.fn() }));
-vi.mock('../../blocked-for-patterns', () => ({ blockedForPatterns: () => null }));
+const { patterns } = vi.hoisted(() => ({
+  patterns: { current: null as { signal: RegExp[]; nonMinor: RegExp[] } | null },
+}));
+vi.mock('../../blocked-for-patterns', () => ({ blockedForPatterns: () => patterns.current }));
+vi.mock('../../axiom', () => ({ logToAxiom: vi.fn() }));
 
 const { getInquisitorQueue } = await import('../inquisitor.service');
 
@@ -64,6 +68,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  patterns.current = null;
   await db.exec(TABLES.map((t) => `DELETE FROM "${t}";`).join('\n'));
 });
 
@@ -135,6 +140,20 @@ describe('getInquisitorQueue media', () => {
     ],
     ['a block with no reason', async () => db.query(`UPDATE "Image" SET "blockedFor" = NULL`)],
     [
+      'a second flag on the image',
+      async () => db.query(`UPDATE "Image" SET "acceptableMinor" = true`),
+    ],
+    ['a review flag', async () => db.query(`UPDATE "Image" SET "needsReview" = 'minor'`)],
+    ['another review flag', async () => db.query(`UPDATE "Image" SET "needsReview" = 'csam'`)],
+    [
+      'a block reason that holds it',
+      async () => db.query(`UPDATE "Image" SET "blockedFor" = 'CSAM'`),
+    ],
+    [
+      'a block reason not known to be routine',
+      async () => db.query(`UPDATE "Image" SET "blockedFor" = 'unlisted'`),
+    ],
+    [
       'a report listing another row on its url',
       async () => {
         await db.query(
@@ -159,5 +178,37 @@ describe('getInquisitorQueue media', () => {
     await queued({});
     await mark();
     expect(await media()).toBe('restricted');
+  });
+
+  it('reads block reasons against the configured patterns', async () => {
+    await queued({ blockedFor: 'unlisted' });
+    patterns.current = { signal: [], nonMinor: [/^unlisted$/] };
+    expect(await media()).toBe('retracted');
+  });
+
+  it('marks each item by its own image', async () => {
+    await queued({});
+    await db.query(
+      `INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor", minor) VALUES (990000003, 'key-990000003', 990100004, 'Blocked', 'moderated', true)`
+    );
+    await db.query(
+      `INSERT INTO "KnightsQueueItem" ("id","questionKey","imageId","source","minRank","votesNeeded","priority","status","reason","createdAt")
+       VALUES (990200002, 'knights.image.nsfwLevel', 990000003, 'scan-sample', 'Inquisitor', 5, 2, 'Inquisitor', 'blocked', now() + interval '1 second')`
+    );
+    const queue = await getInquisitorQueue();
+    expect(queue.map((item) => [item.imageId, item.media])).toEqual([
+      [990_000_001, 'retracted'],
+      [990_000_003, 'restricted'],
+    ]);
+  });
+
+  it('restricts every blocked image, and still lists the queue, when the access read fails', async () => {
+    await queued({});
+    await db.exec(`ALTER TABLE "CsamReport" RENAME TO "CsamReportAway"`);
+    try {
+      expect(await media()).toBe('restricted');
+    } finally {
+      await db.exec(`ALTER TABLE "CsamReportAway" RENAME TO "CsamReport"`);
+    }
   });
 });

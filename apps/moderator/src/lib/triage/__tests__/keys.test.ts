@@ -102,6 +102,7 @@ describe('refusedDecisionKey', () => {
   });
 
   it('is null for an enabled decision, a digit past the decisions, and any other key', () => {
+    expect(press('0')).toBeNull();
     expect(press('3')).toBeNull();
     expect(press('4')).toBeNull();
     expect(press('j')).toBeNull();

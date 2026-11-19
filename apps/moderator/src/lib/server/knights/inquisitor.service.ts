@@ -20,6 +20,7 @@ import {
 import { INQUISITOR_FILTERS, type InquisitorFilter } from '$lib/knights/inquisitor-filters';
 import { BLOCKED_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
 import { isRatingLevel } from '$lib/nsfw-levels';
+import { logToAxiom } from '../axiom';
 import { blockedForPatterns } from '../blocked-for-patterns';
 import { dbRead, dbWrite } from '../db';
 import { updateImageNsfwLevel } from '../image-nsfw-level';
@@ -250,6 +251,20 @@ export async function getInquisitorQueue(
  */
 async function blockedImagesAnyModeratorMaySee(imageIds: number[]): Promise<Set<number>> {
   if (imageIds.length === 0) return new Set();
+  try {
+    return await readViewable(imageIds);
+  } catch (e) {
+    // Every blocked row is restricted rather than the whole queue failing to load.
+    void logToAxiom({
+      name: 'inquisitor-media-read-failed',
+      type: 'error',
+      payload: { message: e instanceof Error ? e.message : String(e) },
+    });
+    return new Set();
+  }
+}
+
+async function readViewable(imageIds: number[]): Promise<Set<number>> {
   const rows = await dbWrite
     .selectFrom('Image as i')
     .select(['i.id', 'i.blockedFor'])
