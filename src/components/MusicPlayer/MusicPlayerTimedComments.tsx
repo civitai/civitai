@@ -477,9 +477,7 @@ function ClusterList({
     >
       <div className="flex items-center justify-between gap-3">
         <span className="text-base font-bold text-black dark:text-white">{title}</span>
-        <span className={clsx('shrink-0 text-xs', dimmed)}>
-          {cluster.comments.length} total
-        </span>
+        <span className={clsx('shrink-0 text-xs', dimmed)}>{cluster.comments.length} total</span>
       </div>
       {cluster.comments.map((comment) => (
         <button

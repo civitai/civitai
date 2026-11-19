@@ -23,6 +23,7 @@ vi.mock('~/components/Tours/ToursProvider', async (importOriginal) => ({
   useTourContext: () => ({ running: false, pauseTour: vi.fn(), activeTour: null }),
 }));
 
+import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore } from '~/store/music-player.store';
@@ -287,5 +288,110 @@ describe('the Up next panel', () => {
     await onBar('Repeat').click();
     await onBar('Repeat').click();
     await expect.element(inPanel('Repeat')).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+
+describe('the Up next sheet on a phone', () => {
+  const upNextSheet = () => page.getByRole('dialog', { name: 'Up next' });
+  const inSheet = (name: string) => upNextSheet().getByRole('button', { name, exact: true });
+
+  async function openSheet() {
+    // The app's session wraps the player; the now-playing sheet reads it for the like.
+    await renderWithProviders(
+      <SignedOutSessionProvider>
+        <MusicPlayerBar />
+      </SignedOutSessionProvider>
+    );
+    await onBar('Open now playing').click();
+    await page
+      .getByRole('dialog', { name: 'Now playing' })
+      .getByRole('button', { name: 'Up next', exact: true })
+      .click();
+    await expect.element(upNextSheet()).toBeVisible();
+  }
+
+  beforeEach(async () => {
+    await page.viewport(390, 800);
+  });
+
+  test('opens over the now-playing sheet with the same sections as the desktop panel', async () => {
+    player().playTrack(nowPlaying, {
+      list: { name: 'Night Drive', tracks: [nowPlaying, palm, chrome] },
+    });
+    player().addToUpNext(rain);
+    await openSheet();
+
+    await expect.element(upNextSheet().getByText('QUEUED BY YOU')).toBeVisible();
+    await expect.element(upNextSheet().getByText('NEXT FROM NIGHT DRIVE')).toBeVisible();
+    const rows = upNextSheet()
+      .getByRole('button', { name: /^Play / })
+      .elements()
+      .map((el) => el.textContent?.replace(/artist.*/, ''));
+    expect(rows).toEqual(['Rain on Shibuya', 'Palm Static', 'Chrome Heart']);
+    // On top of the now-playing sheet, once it has slid in.
+    await expect
+      .poll(() => {
+        const { left, top, width, height } = upNextSheet().element().getBoundingClientRect();
+        const hit = document.elementFromPoint(left + width / 2, top + height / 2);
+        return upNextSheet().element().contains(hit);
+      })
+      .toBe(true);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+  });
+
+  test('its rows play, remove and reorder through the player, with remove shown without hover', async () => {
+    player().playTrack(nowPlaying, {
+      list: { name: 'Post', tracks: [nowPlaying, palm, chrome, rain] },
+    });
+    await openSheet();
+
+    const remove = inSheet('Remove Palm Static from up next');
+    expect(getComputedStyle(remove.element()).opacity).toBe('1');
+    await remove.click();
+    expect(titles(player().list)).toEqual(['Chrome Heart', 'Rain on Shibuya']);
+
+    (inSheet('Reorder Rain on Shibuya').element() as HTMLElement).focus();
+    await userEvent.keyboard('{Space}');
+    await userEvent.keyboard('{ArrowUp}');
+    await userEvent.keyboard('{Space}');
+    await vi.waitFor(() =>
+      expect(titles(player().list)).toEqual(['Rain on Shibuya', 'Chrome Heart'])
+    );
+
+    await inSheet('Play Chrome Heart').click();
+    expect(player().current?.title).toBe('Chrome Heart');
+  });
+
+  test('its header shuffles, repeats and clears through the player', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    player().addToUpNext(rain);
+    await openSheet();
+
+    await inSheet('Shuffle').click();
+    expect(player().shuffle).toBe(true);
+    await inSheet('Repeat').click();
+    expect(player().repeat).toBe('all');
+    await inSheet('Clear').click();
+    expect(player().queued).toEqual([]);
+    expect(player().list).toEqual([]);
+    expect(player().playing).toBe(true);
+  });
+
+  test('lists the songs that repeat, shown only', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    player().cycleRepeat();
+    player().next();
+    await openSheet();
+
+    await expect.element(upNextSheet().getByText('REPEATING')).toBeVisible();
+    await expect.element(inSheet('Play Midnight Arcade')).not.toBeInTheDocument();
+  });
+
+  test('closes by Escape back to the now-playing sheet', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    await openSheet();
+    await userEvent.keyboard('{Escape}');
+    await expect.element(upNextSheet()).not.toBeInTheDocument();
+    await expect.element(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible();
   });
 });

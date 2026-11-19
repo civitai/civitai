@@ -43,7 +43,12 @@ vi.mock('~/components/MusicPlayer/MusicPlayerAudio', async (importOriginal) => (
   seekMusicPlayer: mocks.seekMusicPlayer,
 }));
 
-import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
+import {
+  songCovers,
+  songDetails,
+  timedComments,
+} from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
+import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { DialogProvider, useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
@@ -145,7 +150,11 @@ describe('the global player bar', () => {
       // After the render: the provider sets the scheme on mount.
       document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
       try {
-        const rgb = (css: string) => css.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+        const rgb = (css: string) =>
+          css
+            .match(/[\d.]+/g)!
+            .slice(0, 3)
+            .map(Number);
         const lum = (c: number[]) =>
           c
             .map((v) => v / 255)
@@ -355,9 +364,7 @@ describe('the global player bar', () => {
     // this page: it was listened to before, so its waveform is drawn, not a flat line (S18).
     test('starts for a song restored after a page load, while it is still paused', async () => {
       act(() => player().close());
-      act(() =>
-        player().restore({ track: { ...song, url: songUrl }, positionSec: 84 })
-      );
+      act(() => player().restore({ track: { ...song, url: songUrl }, positionSec: 84 }));
       expect(player().playing).toBe(false);
       expect(player().playback?.listenedSec).toBe(0);
       await renderWithProviders(<MusicPlayerBar />);
@@ -400,26 +407,217 @@ describe('the global player bar', () => {
     await button('Next').click();
     expect(player().current?.title).toBe('Palm Static');
   });
+});
 
-  test('below the sm breakpoint shows only the cover, song, play/pause and close', async () => {
+describe('on a phone', () => {
+  // The app's session wraps the player; the sheet reads it for the like.
+  const renderPhone = () =>
+    renderWithProviders(
+      <SignedOutSessionProvider>
+        <MusicPlayerBar />
+      </SignedOutSessionProvider>
+    );
+  const sheet = () => page.getByRole('dialog', { name: 'Now playing' });
+  const inSheet = (name: string) => sheet().getByRole('button', { name, exact: true });
+  const openSheet = async () => {
+    await button('Open now playing').click();
+    await expect.element(sheet()).toBeVisible();
+  };
+  const timedComment = {
+    id: 9,
+    timestampSec: 82,
+    text: 'that bass drop',
+    user: { id: 109, username: 'mira', image: null, profilePicture: null },
+  };
+
+  beforeEach(async () => {
     await page.viewport(390, 800);
-    await renderWithProviders(<MusicPlayerBar />);
+    timedComments.reset();
+    songDetails.reset();
+  });
+
+  test('the mini bar shows the cover, song, comments and play/pause, and no timed comments', async () => {
+    timedComments.served = { [SONG_ID]: [timedComment] };
+    await renderPhone();
     await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();
     await expect.element(page.getByText('neonwave')).toBeInTheDocument();
     await expect.element(page.getByTestId('music-cover-placeholder')).toBeInTheDocument();
-    const names = page
-      .getByRole('region', { name: 'Music player' })
+    const region = page.getByRole('region', { name: 'Music player' });
+    const names = region
       .getByRole('button')
       .elements()
       .map((el) => el.getAttribute('aria-label'));
-    expect(names).toEqual(['Pause', 'Close player']);
+    expect(names).toEqual(['Open now playing', 'Pause']);
+    await expect
+      .element(region.getByRole('link', { name: 'Comments' }))
+      .toHaveAttribute('href', expect.stringContaining(`/images/${SONG_ID}`));
     expect(page.getByRole('slider').elements()).toHaveLength(0);
+    expect(document.querySelector('[data-testid="timed-comment-strip"]')).toBeNull();
+    expect(document.querySelector('[data-testid="timed-comment-label"]')).toBeNull();
     expect(bar().getBoundingClientRect().height).toBe(62);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+  });
 
+  test('tapping the song opens the now-playing sheet; play/pause does not', async () => {
+    await renderPhone();
     await button('Pause').click();
     expect(player().playing).toBe(false);
-    await button('Close player').click();
+    expect(page.getByRole('dialog').elements()).toHaveLength(0);
+
+    await openSheet();
+    // It covers the window, mini bar included.
+    const box = sheet().element().getBoundingClientRect();
+    expect(box.height).toBe(800);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+  });
+
+  test('the sheet shows the song, the list it plays from, and a transport that drives the player', async () => {
+    const palm = { ...song, id: 3, title: 'Palm Static' };
+    player().playTrack(song, { list: { name: 'Synthwave mix', tracks: [song, palm] } });
+    await renderPhone();
+    await openSheet();
+
+    await expect.element(sheet().getByText('Playing from Synthwave mix')).toBeVisible();
+    await expect.element(sheet().getByRole('heading', { name: 'Midnight Arcade' })).toBeVisible();
+    await expect
+      .element(sheet().getByRole('link', { name: 'neonwave' }))
+      .toHaveAttribute('href', '/user/neonwave/music');
+    await expect
+      .element(sheet().getByRole('slider', { name: 'Song progress' }))
+      .toHaveAttribute('aria-valuetext', '1:24 of 3:32');
+
+    await inSheet('Shuffle').click();
+    expect(player().shuffle).toBe(true);
+    await inSheet('Shuffle').click();
+    await inSheet('Repeat').click();
+    expect(player().repeat).toBe('all');
+    await inSheet('Repeat').click();
+    await inSheet('Repeat').click();
+    await inSheet('Pause').click();
+    expect(player().playing).toBe(false);
+    await inSheet('Next').click();
+    expect(player().current?.title).toBe('Palm Static');
+    await expect.element(sheet().getByRole('heading', { name: 'Palm Static' })).toBeVisible();
+  });
+
+  test('closes by its chevron, Escape and a downward swipe, leaving the song playing', async () => {
+    await renderPhone();
+
+    await openSheet();
+    await inSheet('Collapse').click();
+    await expect.element(sheet()).not.toBeInTheDocument();
+
+    await openSheet();
+    await userEvent.keyboard('{Escape}');
+    await expect.element(sheet()).not.toBeInTheDocument();
+
+    await openSheet();
+    const grab = sheet().getByTestId('now-playing-grab').element();
+    const { left, top } = grab.getBoundingClientRect();
+    const pointer = (type: string, y: number) =>
+      grab.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          pointerId: 1,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: left + 20,
+          clientY: y,
+        })
+      );
+    pointer('pointerdown', top + 4);
+    pointer('pointermove', top + 60);
+    pointer('pointermove', top + 160);
+    pointer('pointerup', top + 160);
+    await expect.element(sheet()).not.toBeInTheDocument();
+
+    expect(player().current?.id).toBe(SONG_ID);
+    expect(player().playing).toBe(true);
+  });
+
+  test('a short drag does not close it', async () => {
+    await renderPhone();
+    await openSheet();
+    const grab = sheet().getByTestId('now-playing-grab').element();
+    const { left, top } = grab.getBoundingClientRect();
+    for (const [type, y] of [
+      ['pointerdown', top + 4],
+      ['pointermove', top + 30],
+      ['pointerup', top + 30],
+    ] as const)
+      grab.dispatchEvent(
+        new PointerEvent(type, { bubbles: true, pointerId: 1, clientX: left + 20, clientY: y })
+      );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await expect.element(sheet()).toBeVisible();
+  });
+
+  test('closes the player from the sheet', async () => {
+    await renderPhone();
+    await openSheet();
+    await inSheet('Close player').click();
     expect(player().current).toBeNull();
+    await expect.element(sheet()).not.toBeInTheDocument();
+    expect(bar()).toBeNull();
+  });
+
+  test('the sheet shows the lines around the playhead, the current one set apart', async () => {
+    songDetails.lyrics = {
+      [SONG_ID]: [
+        { t: null, text: '[Verse 1]' },
+        { t: 60_000, text: 'Every high score' },
+        { t: 80_000, text: 'Joystick heartbeat' },
+        { t: 90_000, text: 'Player two' },
+        { t: 100_000, text: 'Game over' },
+      ],
+    };
+    await renderPhone();
+    await openSheet();
+
+    const lyrics = sheet().getByTestId('now-playing-lyrics');
+    await expect.element(lyrics).toBeVisible();
+    const lines = [...lyrics.element().querySelectorAll('p')];
+    expect(lines.map((p) => p.textContent)).toEqual([
+      'Every high score',
+      'Joystick heartbeat',
+      'Player two',
+    ]);
+    const [past, current, next] = lines.map((p) => getComputedStyle(p));
+    expect(lines[1].getAttribute('aria-current')).toBe('true');
+    expect(current.color).not.toBe(past.color);
+    expect(current.color).not.toBe(next.color);
+    expect(parseFloat(current.fontSize)).toBeGreaterThan(parseFloat(next.fontSize));
+  });
+
+  test('the sheet shows no lyrics block for a song without timed lyrics', async () => {
+    songDetails.lyrics = { [SONG_ID]: [{ t: null, text: 'Plain words' }] };
+    await renderPhone();
+    await openSheet();
+    expect(document.querySelector('[data-testid="now-playing-lyrics"]')).toBeNull();
+  });
+
+  test('the bottom row counts the song’s comments, which open the song, beside the like and Up next', async () => {
+    songDetails.images = {
+      [SONG_ID]: {
+        id: SONG_ID,
+        url: 'song-key',
+        type: 'audio',
+        nsfwLevel: 1,
+        // Nothing to remix: the Remix menu's own tests cover it.
+        hasMeta: false,
+        stats: { commentCountAllTime: 56 },
+        reactions: [],
+        user: { id: 2, username: 'neonwave' },
+      },
+    };
+    await renderPhone();
+    await openSheet();
+    await expect
+      .element(sheet().getByRole('link', { name: '56 comments' }))
+      .toHaveAttribute('href', expect.stringContaining(`/images/${SONG_ID}`));
+    await expect.element(inSheet('Up next')).toBeVisible();
+    // Signed out: shown, but it cannot be pressed.
+    await expect.element(inSheet('Like')).toBeDisabled();
+    await expect.element(inSheet('Remix this')).not.toBeInTheDocument();
   });
 });
