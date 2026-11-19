@@ -286,7 +286,10 @@ export const getModelHandler = async ({
       user: ctx.user,
       select: modelWithDetailsSelect,
     });
-    if (!model || !canViewPoiModel(model.poi, model.user.id, ctx.user))
+    // The owner's view (and a moderator's, already withheld from other keys) holds only on a
+    // session or a full-access key; any other key reads as a stranger.
+    const ownerViewer = isSessionOrFullUserKey(ctx) ? ctx.user : undefined;
+    if (!model || !canViewPoiModel(model.poi, model.user.id, ownerViewer))
       throw throwNotFoundError(`No model with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -295,7 +298,7 @@ export const getModelHandler = async ({
     }
 
     const features = ctx.features;
-    const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
+    const isOwner = ownerViewer?.id === model.user.id || !!ownerViewer?.isModerator;
     // The editor needs the stored .red pair; the page shows owners and mods the same face as everyone.
     const editorRead = isOwner && !!forEditor;
     const withSfwFace =
@@ -308,7 +311,7 @@ export const getModelHandler = async ({
 
     const filteredVersions = model.modelVersions.filter((version) =>
       canViewModelVersionStatus({
-        viewer: ctx.user,
+        viewer: ownerViewer,
         ownerId: model.user.id,
         modelStatus: model.status,
         versionStatus: version.status,
@@ -357,7 +360,6 @@ export const getModelHandler = async ({
     );
 
     const metrics = model.metrics[0];
-    const canManage = ctx.user?.id === model.user.id || ctx.user?.isModerator;
     const entityAccess = await hasEntityAccess({
       entityIds: filteredVersions.map((x) => x.id),
       entityType: 'ModelVersion',
@@ -466,7 +468,7 @@ export const getModelHandler = async ({
       // The list endpoint and public API still push them for backward compat.
       const files = isDownloadable
         ? version.files
-            .filter((x) => x.visibility === 'Public' || canManage)
+            .filter((x) => x.visibility === 'Public' || isOwner)
             .sort((a, b) => {
               const aType = a.type as ModelFileType;
               const bType = b.type as ModelFileType;
