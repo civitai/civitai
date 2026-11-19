@@ -2888,6 +2888,24 @@ model KeyValue {
   value Json
 }
 
+// "Already done" markers that must survive a Redis eviction: the moderator DM, headless post and
+// Stripe AIR idempotency keys, behind the `idempotency-keys-pg` flag. RAW SQL ONLY
+// (`idempotency-key.service.ts`). Migration `20271119120000_idempotency_key`, applied by hand;
+// with the flag on and the table missing, each caller refuses rather than act twice.
+// `state` is 'pending' or 'done' (a CHECK constraint in the migration).
+// @no-type
+model IdempotencyKey {
+  scope     String
+  key       String
+  state     String
+  result    Json?
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  expiresAt DateTime @db.Timestamptz(6)
+
+  @@id([scope, key])
+  @@index([expiresAt])
+}
+
 /// Free-text feedback captured from in-product prompts. `area` is a plain
 /// string, not an enum, so adding a feedback surface needs no migration.
 model Feedback {

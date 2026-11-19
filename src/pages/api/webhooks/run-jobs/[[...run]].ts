@@ -100,6 +100,7 @@ import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { cdnAccessReconcile, cdnAccessSync } from '~/server/jobs/cdn-access-sync';
 import { missedNotificationDigest } from '~/server/jobs/missed-notification-digest';
+import { idempotencyKeyPurge } from '~/server/jobs/idempotency-key-purge';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
@@ -233,6 +234,7 @@ export const jobs: Job[] = [
   cdnAccessSync,
   cdnAccessReconcile,
   missedNotificationDigest,
+  idempotencyKeyPurge,
   removeReplacedImages,
   purgeFeedbackCaptures,
   imageStorageDeletes,
