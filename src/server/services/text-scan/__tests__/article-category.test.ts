@@ -308,6 +308,15 @@ describe('handleTextCategoryCallback', () => {
     expect(JSON.stringify(log)).not.toContain('SECRET ARTICLE TEXT');
   });
 
+  it('logs only the length of an answer too long to be a category name', async () => {
+    const prose = 'x'.repeat(41);
+    vi.mocked(getWorkflow).mockResolvedValue(categoryWorkflow(JSON.stringify({ category: prose })));
+    await callback();
+    const log = categoryLog('unusable output; category cleared');
+    expect(log?.payload).toMatchObject({ answer: '41 chars' });
+    expect(JSON.stringify(log)).not.toContain(prose);
+  });
+
   it('logs the finish reason and the off-list name for unusable output', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(
       categoryWorkflow('', {

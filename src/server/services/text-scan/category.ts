@@ -225,9 +225,13 @@ export async function handleTextCategoryCallback(event: { workflowId: string; st
           finishReason,
           contentLength: choice?.message?.content?.length ?? 0,
           parsed: output?.parsed != null,
-          // An off-list name is short; anything longer is cut so prose never reaches the log.
+          // An off-list name is short; anything longer may be prose, so only its length is logged.
           answer:
-            typeof answer?.category === 'string' ? answer.category.slice(0, 60) : typeof answer,
+            typeof answer?.category !== 'string'
+              ? typeof answer
+              : answer.category.length <= 40
+              ? answer.category
+              : `${answer.category.length} chars`,
         },
       });
     }

@@ -4,17 +4,21 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as Backfill from '~/server/services/text-scan/article-category-backfill';
 
-const { select, submit, enabled } = vi.hoisted(() => ({
+const { select, submit, enabled, mode } = vi.hoisted(() => ({
   select: vi.fn(),
   submit: vi.fn(),
   enabled: vi.fn(),
+  mode: vi.fn(),
 }));
 vi.mock('~/server/services/text-scan/article-category-backfill', async (importOriginal) => ({
   ...(await importOriginal<typeof Backfill>()),
   selectUncategorizedArticles: select,
   submitArticleCategoryCalls: submit,
 }));
-vi.mock('~/server/services/text-scan/mode', () => ({ isTextScanEnabled: enabled }));
+vi.mock('~/server/services/text-scan/mode', () => ({
+  isTextScanEnabled: enabled,
+  getTextScanMode: mode,
+}));
 
 const { retryArticleCategories, MAX_CATEGORY_RETRIES, MAX_SUBMITS_PER_RUN } = await import(
   '~/server/jobs/article-category-retry'
@@ -31,6 +35,7 @@ const capLogs = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   enabled.mockResolvedValue(true);
+  mode.mockResolvedValue('active');
   select.mockResolvedValue([]);
   submit.mockImplementation(async (ids: number[]) =>
     ids.map((entityId) => ({ entityId, status: 'submitted' }))
@@ -80,6 +85,15 @@ describe('retryArticleCategories', () => {
     await retryArticleCategories(NOW);
     expect(select.mock.calls.map(([arg]) => arg.afterId)).toEqual([0, 200]);
     expect(submittedIds()).toEqual(page(201).slice(0, MAX_SUBMITS_PER_RUN));
+  });
+
+  it('sends nothing for an article its rollout leaves off, and spends no attempt on it', async () => {
+    select.mockResolvedValueOnce([990000001, 990000002]);
+    mode.mockImplementation(async (_: string, id: number) => (id === 990000001 ? 'off' : 'shadow'));
+    const result = await retryArticleCategories(NOW);
+    expect(submittedIds()).toEqual([990000002]);
+    expect(incrBy).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ outOfRollout: 1 });
   });
 
   it('selects nothing while text scanning is off', async () => {

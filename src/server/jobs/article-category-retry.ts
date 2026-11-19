@@ -7,9 +7,10 @@ import {
   selectUncategorizedArticles,
   submitArticleCategoryCalls,
 } from '~/server/services/text-scan/article-category-backfill';
-import { isTextScanEnabled } from '~/server/services/text-scan/mode';
+import { getTextScanMode, isTextScanEnabled } from '~/server/services/text-scan/mode';
 
-// The live call's callback lands within minutes, so a NULL older than this is a call that failed.
+// The live call's callback lands within minutes, so a NULL this long after the last publish or edit
+// is a call that failed (or, outside the rollout, one never sent: those are skipped).
 const SETTLE_MS = 60 * 60 * 1000;
 export const MAX_CATEGORY_RETRIES = 3;
 // Outlives the 30-day selection window, so a capped article is not retried again.
@@ -42,6 +43,7 @@ export async function retryArticleCategories(now = new Date()) {
   let selected = 0;
   let capped = 0;
   let uncounted = 0;
+  let outOfRollout = 0;
   let afterId = 0;
   for (;;) {
     const ids = await selectUncategorizedArticles({
@@ -54,6 +56,11 @@ export async function retryArticleCategories(now = new Date()) {
     selected += ids.length;
     for (const id of ids) {
       if (due.length >= MAX_SUBMITS_PER_RUN) break;
+      // The live path sends no category call for an article its rollout leaves off.
+      if ((await getTextScanMode('Article', id)) === 'off') {
+        outOfRollout++;
+        continue;
+      }
       const attempts = await recordRetry(id);
       if (attempts === null) uncounted++;
       else if (attempts <= MAX_CATEGORY_RETRIES) due.push(id);
@@ -76,7 +83,7 @@ export async function retryArticleCategories(now = new Date()) {
   const byStatus = countByStatus(
     due.length ? await submitArticleCategoryCalls(due, CONCURRENCY) : []
   );
-  const result = { selected, capped, uncounted, byStatus };
+  const result = { selected, capped, uncounted, outOfRollout, byStatus };
   // `failed` is an existing Axiom field; the other counts are not, so they go under payload.
   const { failed, ...otherStatuses } = byStatus;
   logToAxiom({
@@ -84,7 +91,7 @@ export async function retryArticleCategories(now = new Date()) {
     type: 'info',
     message: 'retry run',
     failed,
-    payload: { selected, capped, uncounted, ...otherStatuses },
+    payload: { selected, capped, uncounted, outOfRollout, ...otherStatuses },
   });
   return result;
 }
