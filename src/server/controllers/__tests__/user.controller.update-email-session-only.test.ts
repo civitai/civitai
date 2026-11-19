@@ -34,7 +34,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.user.findFirst.mockResolvedValue({ email: null });
   dbMock.dbRead.user.findFirst.mockResolvedValue(null);
-  dbMock.dbRead.user.findUnique.mockResolvedValue({ id: USER_ID, profilePicture: null });
+  dbMock.dbWrite.user.findUnique.mockResolvedValue({ id: USER_ID, profilePicture: null });
   dbMock.dbWrite.user.update.mockResolvedValue({ id: USER_ID });
 });
 

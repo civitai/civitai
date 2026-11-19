@@ -135,7 +135,7 @@ const BASELINE: Counts = {
   'src/server/services/article-reframe.service.ts': 1,
   'src/server/services/article-schedule.service.ts': 1,
   'src/server/services/article-share.service.ts': 7,
-  'src/server/services/article.service.ts': 19,
+  'src/server/services/article.service.ts': 14,
   'src/server/services/auction.service.ts': 20,
   'src/server/services/block-registry.service.ts': 11,
   'src/server/services/blocklist.service.ts': 1,
