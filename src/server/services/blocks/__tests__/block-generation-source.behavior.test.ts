@@ -810,10 +810,13 @@ describe('🔴 the deadline bounds the whole request, the fetch included', () =>
   });
 
   it('the budget is the request’s: a call whose budget is already spent writes nothing', async () => {
+    // The budget's own timer never fires here, so a spent budget must be refused without it.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const error = await persist({ budgetMs: 0 }).then(
       () => null,
       (e: unknown) => e
     );
+    vi.useRealTimers();
     expect(error).toMatchObject({ code: 'TIMEOUT' });
     expect(createImage).not.toHaveBeenCalled();
   });
