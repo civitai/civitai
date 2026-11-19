@@ -7,7 +7,7 @@ import { getModeratedTags, getTagRules } from '~/server/services/system-cache';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
 const imageService = () => import('~/server/services/image.service');
@@ -50,7 +50,7 @@ export async function insertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
   });
 
   const levelImageIds = await updateImageNsfwLevels(withTagRules);
-  await queueModelsForImageChildTagChanges({ tagWrites: withTagRules, levelImageIds });
+  await queueDocumentsForImageMinorChanges({ levelImageIds });
   await (
     await imageService()
   ).queueImageSearchIndexUpdate({
@@ -87,7 +87,7 @@ export async function upsertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
   });
 
   const levelImageIds = await updateImageNsfwLevels(withTagRules);
-  await queueModelsForImageChildTagChanges({ tagWrites: withTagRules, levelImageIds });
+  await queueDocumentsForImageMinorChanges({ levelImageIds });
   await (
     await imageService()
   ).queueImageSearchIndexUpdate({
@@ -111,7 +111,7 @@ export async function deleteTagsOnImageNew(args: { imageId: number; tagId: numbe
   });
 
   const levelImageIds = await updateImageNsfwLevels(args);
-  await queueModelsForImageChildTagChanges({ tagWrites: args, levelImageIds });
+  await queueDocumentsForImageMinorChanges({ levelImageIds });
   await (
     await imageService()
   ).queueImageSearchIndexUpdate({
