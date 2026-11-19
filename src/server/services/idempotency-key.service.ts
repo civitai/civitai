@@ -231,7 +231,7 @@ function fromRow(row: Row, marker: boolean) {
 async function claimRow(db: Kysely<DB>, scope: string, key: string, pendingSeconds: number) {
   const { rows } = await sql<{ fence: string }>`
     INSERT INTO "IdempotencyKey" (scope, key, state, "createdAt", "expiresAt")
-    VALUES (${scope}, ${key}, 'pending', now(), now() + make_interval(secs => ${pendingSeconds}))
+    VALUES (${scope}, ${key}, 'pending', now(), now() + ${pendingSeconds}::int * interval '1 second')
     ON CONFLICT (scope, key) DO UPDATE
       SET state = 'pending', result = NULL,
           "createdAt" = EXCLUDED."createdAt", "expiresAt" = EXCLUDED."expiresAt"
@@ -257,7 +257,7 @@ async function upsertDone(
   await sql`
     INSERT INTO "IdempotencyKey" (scope, key, state, result, "createdAt", "expiresAt")
     VALUES (${scope}, ${key}, 'done', ${value}::jsonb, now(),
-            now() + make_interval(secs => ${resultSeconds}))
+            now() + ${resultSeconds}::int * interval '1 second')
     ON CONFLICT (scope, key) DO UPDATE
       SET state = 'done', result = EXCLUDED.result, "expiresAt" = EXCLUDED."expiresAt"`.execute(db);
 }
@@ -276,9 +276,8 @@ function unavailable(scope: IdempotencyScope, error: unknown) {
   logToAxiom({
     name: 'idempotency-key',
     type: 'error',
-    scope,
-    tableMissing,
     message: (error as Error)?.message,
+    payload: { scope, tableMissing },
   });
   return new IdempotencyUnavailableError(scope, tableMissing, error);
 }
@@ -287,7 +286,7 @@ function logSysFailure(scope: IdempotencyScope, op: string, error: unknown) {
   logToAxiom({
     name: 'idempotency-key',
     type: 'warning',
-    scope,
+    payload: { scope },
     message: `sysRedis ${op} failed after the fallback window: ${(error as Error)?.message}`,
   });
 }
