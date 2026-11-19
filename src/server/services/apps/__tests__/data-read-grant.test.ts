@@ -1,33 +1,24 @@
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { decideCollectionRead, type DataReader } from '~/server/services/apps/data-read-grant';
+import {
+  createCollectionReadDecider,
+  type DataReader,
+} from '~/server/services/apps/data-read-grant';
 
 /**
  * The collection-read predicate, directly: each basis (own, grant) and each refusal, reached
  * with a case every earlier check passes. The manifests are parsed for real
- * (`parseManifestStorage`) and the grant rule is the real `importGrantCovers`; only the reads
- * are stubbed: the app rows, the scope ledger, the per-source grant row and the run gate.
+ * (`parseManifestStorage`), and the scope ledger, the per-source grant read and `importGrantCovers`
+ * are the real services over a stubbed database: the app rows, the scope-ledger row and the grant
+ * row. The run gate is passed in.
  *
  * Every id, client and collection is pairwise distinct, and none equals a constant the code
  * names, so a check that compares the wrong pair of values cannot pass by coincidence.
  */
 
-const h = vi.hoisted(() => ({
-  getStorageImportGrant: vi.fn(),
-  getGrantedScopes: vi.fn(),
-  assertRunEnabled: vi.fn(),
-}));
-vi.mock('~/server/services/apps/storage-import-grant.service', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  getStorageImportGrant: h.getStorageImportGrant,
-}));
-vi.mock('~/server/services/blocks/scope-grant.service', () => ({
-  getGrantedScopes: h.getGrantedScopes,
-}));
-vi.mock('~/server/services/blocks/block-token-access.service', () => ({
-  assertAppBlocksEnabledForTokenUser: h.assertRunEnabled,
-}));
+const runGate = vi.fn<(userId: number) => Promise<void>>();
+const decideCollectionRead = createCollectionReadDecider({ assertMayRunApps: runGate });
 
 const USER_ID = 5813;
 const SOURCE_CLIENT = 'oc-src-41d7';
@@ -90,6 +81,14 @@ const reader = (clientId: string): DataReader => ({
 });
 const target = (collection: string) => ({ sourceBlockId: SOURCE_BLOCK, collection });
 
+/** The viewer's scope-ledger row for the consumer: its granted scopes, or no row. */
+let ledgerScopes: string[] | null;
+/** The viewer's per-source grant row for (consumer, source), or none. */
+let grantRow: { collections: string[]; access: 'read' | 'readwrite' } | null;
+/** Each grant-row read's bound values: user, consumer, source. */
+let grantReads: unknown[][];
+const ledgerRead = () => dbMock.dbWrite.appUserScopeGrant.findUnique;
+
 beforeEach(() => {
   ceilingSeen.length = 0;
   rows = [sourceRow(), consumerRow(consumerManifest(['journal']))];
@@ -103,13 +102,21 @@ beforeEach(() => {
     async ({ where }: { where: { appId: string; status: string } }) =>
       rows.filter((r) => r.appId === where.appId && r.status === where.status)
   );
-  h.assertRunEnabled.mockReset().mockResolvedValue(undefined);
-  h.getGrantedScopes
-    .mockReset()
-    .mockResolvedValue(new Set(['apps:storage', 'apps:storage:import']));
-  h.getStorageImportGrant
-    .mockReset()
-    .mockResolvedValue({ collections: ['journal'], access: 'read' });
+  runGate.mockReset().mockResolvedValue(undefined);
+  ledgerScopes = ['apps:storage', 'apps:storage:import'];
+  grantRow = { collections: ['journal'], access: 'read' };
+  grantReads = [];
+  ledgerRead().mockClear();
+  ledgerRead().mockImplementation(async () =>
+    ledgerScopes ? { grantedScopes: ledgerScopes, revokedAt: null, revokedScopes: [] } : null
+  );
+  dbMock.dbWrite.$queryRaw.mockImplementation(
+    async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      if (!strings.join('?').includes('app_storage_import_grants')) return [];
+      grantReads.push(values);
+      return grantRow ? [{ sourceAppBlockId: SOURCE_ID, ...grantRow }] : [];
+    }
+  );
 });
 
 describe('basis own: the reading client is the source app', () => {
@@ -123,9 +130,9 @@ describe('basis own: the reading client is the source app', () => {
       ok: true,
       basis: 'own',
     });
-    expect(h.getGrantedScopes).not.toHaveBeenCalled();
-    expect(h.getStorageImportGrant).not.toHaveBeenCalled();
-    expect(h.assertRunEnabled).toHaveBeenCalledWith(USER_ID);
+    expect(ledgerRead()).not.toHaveBeenCalled();
+    expect(grantReads).toEqual([]);
+    expect(runGate).toHaveBeenCalledWith(USER_ID);
   });
 
   it('refuses an unapproved source', async () => {
@@ -137,7 +144,7 @@ describe('basis own: the reading client is the source app', () => {
   });
 
   it('refuses a user who may not run apps', async () => {
-    h.assertRunEnabled.mockRejectedValue(new TRPCError({ code: 'FORBIDDEN' }));
+    runGate.mockRejectedValue(new TRPCError({ code: 'FORBIDDEN' }));
     expect(await decideCollectionRead(reader(SOURCE_CLIENT), target('journal'))).toEqual({
       ok: false,
       reason: 'apps_disabled',
@@ -168,16 +175,13 @@ describe('basis grant: the reading client is another app importing from the sour
       basis: 'grant',
       source: { id: SOURCE_ID },
     });
-    expect(h.getGrantedScopes).toHaveBeenCalledWith({
-      userId: USER_ID,
-      appBlockId: CONSUMER_ID,
-      db: 'write',
-    });
-    expect(h.getStorageImportGrant).toHaveBeenCalledWith({
-      userId: USER_ID,
-      consumerAppBlockId: CONSUMER_ID,
-      sourceAppBlockId: SOURCE_ID,
-    });
+    // The consent read is the viewer's ledger row for the CONSUMER, on the primary.
+    expect(ledgerRead()).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId_appBlockId: { userId: USER_ID, appBlockId: CONSUMER_ID } },
+      })
+    );
+    expect(grantReads).toEqual([[USER_ID, CONSUMER_ID, SOURCE_ID]]);
     expect(ceilingSeen).toEqual([PLAIN_RATING]);
   });
 
@@ -202,12 +206,12 @@ describe('basis grant: the reading client is another app importing from the sour
       ok: false,
       reason: 'import_not_declared',
     });
-    expect(h.getStorageImportGrant).not.toHaveBeenCalled();
+    expect(grantReads).toEqual([]);
   });
 
   it('refuses a collection the source does not share', async () => {
     rows = [sourceRow(), consumerRow(consumerManifest(['vault']))];
-    h.getStorageImportGrant.mockResolvedValue({ collections: ['vault'], access: 'read' });
+    grantRow = { collections: ['vault'], access: 'read' };
     expect(await decideCollectionRead(reader(CONSUMER_CLIENT), target('vault'))).toEqual({
       ok: false,
       reason: 'not_exportable',
@@ -215,24 +219,24 @@ describe('basis grant: the reading client is another app importing from the sour
   });
 
   it('refuses without the apps:storage:import scope grant', async () => {
-    h.getGrantedScopes.mockResolvedValue(new Set(['apps:storage']));
+    ledgerScopes = ['apps:storage'];
     expect(await decideCollectionRead(reader(CONSUMER_CLIENT), target('journal'))).toEqual({
       ok: false,
       reason: 'import_scope_missing',
     });
-    expect(h.getStorageImportGrant).not.toHaveBeenCalled();
+    expect(grantReads).toEqual([]);
   });
 
   it('refuses when the per-source grant does not cover the import', async () => {
     rows = [sourceRow(), consumerRow(consumerManifest(['journal', 'ledger']))];
     // A row naming only one of the two imported collections.
-    h.getStorageImportGrant.mockResolvedValue({ collections: ['journal'], access: 'read' });
+    grantRow = { collections: ['journal'], access: 'read' };
     expect(await decideCollectionRead(reader(CONSUMER_CLIENT), target('journal'))).toEqual({
       ok: false,
       reason: 'import_not_granted',
     });
     // No row at all.
-    h.getStorageImportGrant.mockResolvedValue(null);
+    grantRow = null;
     expect(await decideCollectionRead(reader(CONSUMER_CLIENT), target('journal'))).toEqual({
       ok: false,
       reason: 'import_not_granted',
@@ -277,8 +281,8 @@ describe('through a verified block token (via)', () => {
       basis: 'grant',
     });
     expect(dbMock.dbRead.appBlock.findMany).not.toHaveBeenCalled();
-    expect(h.getGrantedScopes).not.toHaveBeenCalled();
-    expect(h.assertRunEnabled).not.toHaveBeenCalled();
+    expect(ledgerRead()).not.toHaveBeenCalled();
+    expect(runGate).not.toHaveBeenCalled();
   });
 
   it('refuses the source being the consumer itself, even when its client is the reader', async () => {

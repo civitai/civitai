@@ -23,6 +23,12 @@ describe('the collection-read predicate and the import grants it reads', () => {
     ]);
   });
 
+  it('no production module builds its own predicate (with its own run gate)', () => {
+    expect(
+      importersOf('server/services/apps/data-read-grant', 'createCollectionReadDecider')
+    ).toEqual([]);
+  });
+
   it('getStorageImportGrant is imported by the predicate and the router only', () => {
     expect(importersOf(GRANT_SERVICE, 'getStorageImportGrant')).toEqual([
       ROUTER,

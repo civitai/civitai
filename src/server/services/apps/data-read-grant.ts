@@ -87,6 +87,21 @@ export type CollectionReadDecision =
 
 const refuse = (reason: CollectionReadRefusal): CollectionReadDecision => ({ ok: false, reason });
 
+/** What the predicate runs that is not a database read: the App Blocks run gate. */
+export type CollectionReadDeps = {
+  /** Resolves when `userId` may run apps; throws a `TRPCError` when they may not. */
+  assertMayRunApps: (userId: number) => Promise<void>;
+};
+
+/**
+ * The predicate over `deps`. Production code imports {@link decideCollectionRead}, never this:
+ * the ledger test pins that no production module imports it.
+ */
+export function createCollectionReadDecider(deps: CollectionReadDeps) {
+  return (reader: DataReader, target: CollectionReadTarget, via?: ImportingApp) =>
+    decide(deps, reader, target, via);
+}
+
 /**
  * Whether `reader` may read `target.collection` of the app `target.sourceBlockId`, and on what
  * basis. A refusal is a result; a read that fails (the database) or a manifest that does not parse
@@ -96,7 +111,16 @@ const refuse = (reason: CollectionReadRefusal): CollectionReadDecision => ({ ok:
  * `via`: the consumer as a verified block token resolved it ({@link ImportingApp}). Without it the
  * consumer is resolved from `reader.clientId`, and its consent from the scope ledger.
  */
-export async function decideCollectionRead(
+export const decideCollectionRead: (
+  reader: DataReader,
+  target: CollectionReadTarget,
+  via?: ImportingApp
+) => Promise<CollectionReadDecision> = createCollectionReadDecider({
+  assertMayRunApps: (userId) => assertAppBlocksEnabledForTokenUser(userId),
+});
+
+async function decide(
+  deps: CollectionReadDeps,
   reader: DataReader,
   target: CollectionReadTarget,
   via?: ImportingApp
@@ -117,7 +141,7 @@ export async function decideCollectionRead(
 
   // A verified block token's viewer already passed the run gate (`resolveStorageAccess`).
   if (!via) {
-    const disabled = await runGateRefusal(reader.userId);
+    const disabled = await runGateRefusal(deps, reader.userId);
     if (disabled) return disabled;
   }
 
@@ -177,9 +201,12 @@ export async function decideCollectionRead(
 }
 
 /** The App Blocks run gate on the reader: a refusal, or null when they may run apps. */
-async function runGateRefusal(userId: number): Promise<CollectionReadDecision | null> {
+async function runGateRefusal(
+  deps: CollectionReadDeps,
+  userId: number
+): Promise<CollectionReadDecision | null> {
   try {
-    await assertAppBlocksEnabledForTokenUser(userId);
+    await deps.assertMayRunApps(userId);
     return null;
   } catch (err) {
     if (err instanceof TRPCError) return refuse('apps_disabled');
