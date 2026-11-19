@@ -70,3 +70,33 @@ describe('Tracker.imageUploadRequest', () => {
     expect(migration).toMatch(/TTL\s+toDateTime\(time\)\s*\+\s*INTERVAL\s+12\s+MONTH/);
   });
 });
+
+describe('Tracker.forUser', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => '' }));
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("stamps the named user, and none of the request's IP or user agent", async () => {
+    const req = {
+      headers: { 'cf-connecting-ip': '203.0.113.9', 'user-agent': 'viewer-agent' },
+      socket: {},
+    };
+    const viewer = new Tracker(req as never, {} as never, { user: { id: 42 } } as never);
+    await viewer.forUser(77).prohibitedRequest({ prompt: 'p', negativePrompt: '' });
+    await new Promise((r) => setImmediate(r));
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+    expect(url).toBe('http://tracker.test/track/prohibitedRequests');
+    expect(JSON.parse(init.body)).toMatchObject({
+      userId: 77,
+      ip: 'unknown',
+      userAgent: 'unknown',
+    });
+  });
+});

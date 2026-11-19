@@ -133,7 +133,11 @@ import { toStepMetadata, asResourceValue } from '~/shared/utils/resource.utils';
 import { anyTipEligible } from '~/shared/utils/creator-tip';
 import { randomInt, randomUUID } from 'crypto';
 import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
-import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import {
+  auditPromptServer,
+  type PromptRefusalCause,
+} from '~/server/services/orchestrator/promptAuditing';
+import { TRPCError } from '@trpc/server';
 import { isPromptCheckUnavailable } from '~/server/services/orchestrator/prompt-check-unavailable';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { submitSourceForSurface } from '~/server/services/orchestrator/orchestrator-submit-metrics';
@@ -1903,6 +1907,21 @@ const BOOST_UNAVAILABLE =
  *
  * Note: Generation status check should be done in the router before calling this function.
  */
+/**
+ * A block recorded against someone else (`auditAs`), refused to the submitter without the
+ * account-status tail, which describes that other user's account.
+ */
+function withoutAccountStatus(err: unknown): unknown {
+  if (!(err instanceof TRPCError) || err.code !== 'BAD_REQUEST') return err;
+  const blockedFor = (err.cause as Partial<PromptRefusalCause> | undefined)?.blockedFor;
+  if (!Array.isArray(blockedFor)) return err;
+  return new TRPCError({
+    code: 'BAD_REQUEST',
+    message: `This app's prompt was flagged: ${blockedFor.join(', ')}`,
+    cause: err.cause,
+  });
+}
+
 export async function generateFromGraph({
   input,
   externalCtx,
@@ -1956,9 +1975,17 @@ export async function generateFromGraph({
   const negativePrompt =
     'negativePrompt' in data ? (data.negativePrompt as string | undefined) : undefined;
   const auditUser = auditAs ?? { id: userId, isModerator };
-  // The tracker stamps the submitter on its ClickHouse row, and that table seeds the blocked-prompt
-  // count, so a block recorded against someone else goes without it.
-  const auditTrack = auditUser.id === userId ? track : undefined;
+  const auditsOther = auditUser.id !== userId;
+  // The request's tracker would stamp the submitter on the other user's prohibitedRequests row,
+  // which seeds that user's blocked-prompt count.
+  const auditTrack = auditsOther ? track?.forUser(auditUser.id) : track;
+  // The submitter's own inputs and token: their images are not the other user's evidence, and the
+  // token would look up the submitter's workflows as the prompt's origin.
+  const submitterContext = (inputVideo: string | undefined) =>
+    auditsOther
+      ? {}
+      : { remixOfId, inputImages, inputVideo, sourceImageIds, orchestratorToken: token };
+  const refusalFor = (err: unknown) => (auditsOther ? withoutAccountStatus(err) : err);
   if (!isBlankAuditInput(prompt, negativePrompt)) {
     const promptText = prompt ?? '';
     const inputVideo = (
@@ -1972,11 +1999,7 @@ export async function generateFromGraph({
         isGreen: !!isGreen,
         isModerator: auditUser.isModerator,
         track: auditTrack,
-        remixOfId,
-        inputImages,
-        inputVideo,
-        sourceImageIds,
-        orchestratorToken: token,
+        ...submitterContext(inputVideo),
         acknowledgedSoftBlock,
         // Observability only — see `~/server/prom/external-moderation.metrics`. Reuses the ONE
         // surface→source mapping that already exists for the submit metric rather than inventing a
@@ -2015,7 +2038,7 @@ export async function generateFromGraph({
           }).catch();
         });
       }
-      throw err;
+      throw refusalFor(err);
     }
   }
 
@@ -2040,6 +2063,8 @@ export async function generateFromGraph({
       moderationSource: clampExternalModerationSource(
         submitSourceForSurface(externalCtx.modelSubstitutions?.surface)
       ),
+    }).catch((err) => {
+      throw refusalFor(err);
     });
   }
 

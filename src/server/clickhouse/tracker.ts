@@ -525,6 +525,13 @@ export class Tracker {
     }
   }
 
+  /** A tracker whose rows are about `userId`, not this request's user: no IP or user agent. */
+  public forUser(userId: number) {
+    const tracker = new Tracker();
+    tracker.actor.userId = userId;
+    return tracker;
+  }
+
   /**
    * Called with every row `send` dispatches, as it is about to be POSTed. Set only by the beacon-go
    * shadow sampler on a sampled beacon request (`~/server/beacon/beacon-go-shadow`), so the rows Node

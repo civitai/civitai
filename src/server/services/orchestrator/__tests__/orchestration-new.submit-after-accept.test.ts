@@ -95,6 +95,7 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   createXGuardModerationRequest: vi.fn(async () => undefined),
 }));
 
+import { TRPCError } from '@trpc/server';
 import { generateFromGraph } from '~/server/services/orchestrator/orchestration-new.service';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
@@ -180,7 +181,16 @@ describe('generateFromGraph — a failure after the orchestrator accepted', () =
 
 const VIEWER = 1;
 const AUTHOR = 77;
-const track = { prohibitedRequest: vi.fn() };
+const track = {
+  prohibitedRequest: vi.fn(),
+  forUser: (id: number) => ({ forUserId: id }),
+};
+const flagged = (tail = '') =>
+  new TRPCError({
+    code: 'BAD_REQUEST',
+    message: `Your prompt was flagged: nudity${tail}`,
+    cause: { blockedFor: ['nudity'] },
+  });
 
 function submitAs(auditAs?: { id: number; isModerator: boolean }) {
   return generateFromGraph({
@@ -252,23 +262,40 @@ describe('generateFromGraph — whose prompt the audit records against', () => {
     ]);
   });
 
-  it("with auditAs, records against the author, with the author's moderator flag and no viewer tracker", async () => {
+  it("with auditAs, records against the author, with the author's tracker and moderator flag and none of the viewer's inputs", async () => {
     await submitAs({ id: AUTHOR, isModerator: false });
 
     expect(audit).toHaveBeenCalledTimes(1);
-    expect(audit.mock.calls[0][0]).toMatchObject({ userId: AUTHOR, isModerator: false });
-    expect(audit.mock.calls[0][0].track).toBeUndefined();
+    expect(audit.mock.calls[0][0]).toStrictEqual({
+      prompt: 'a cat',
+      negativePrompt: undefined,
+      userId: AUTHOR,
+      isGreen: false,
+      isModerator: false,
+      track: { forUserId: AUTHOR },
+      acknowledgedSoftBlock: undefined,
+      moderationSource: 'other',
+    });
     // The workflow is still the viewer's: they submitted and they pay.
     expect(submitWorkflow).toHaveBeenCalledTimes(1);
     expect(submitWorkflow.mock.calls[0][0]).toMatchObject({ token: 't' });
   });
 
-  it('with auditAs, a block queues the XGuard review against the author and refuses the submit', async () => {
-    audit.mockRejectedValueOnce(new Error('Your prompt was flagged'));
+  it("with auditAs, a block queues the XGuard review against the author and refuses the viewer without the author's account status", async () => {
+    // POSITIVE CONTROL: the submitter's own block keeps its account-status tail and its XGuard user.
+    audit.mockRejectedValueOnce(flagged('. Your account has been muted.'));
+    await expect(submitAs()).rejects.toThrow(
+      'Your prompt was flagged: nudity. Your account has been muted.'
+    );
+    expect(xguard).toHaveBeenLastCalledWith(expect.objectContaining({ userId: VIEWER }));
 
-    await expect(submitAs({ id: AUTHOR, isModerator: false })).rejects.toThrow('flagged');
+    audit.mockRejectedValueOnce(flagged('. Your account has been muted.'));
+    const err = await submitAs({ id: AUTHOR, isModerator: false }).catch((e: unknown) => e);
 
-    expect(xguard).toHaveBeenCalledWith(expect.objectContaining({ userId: AUTHOR }));
+    expect(err).toBeInstanceOf(TRPCError);
+    expect((err as TRPCError).code).toBe('BAD_REQUEST');
+    expect((err as TRPCError).message).toBe("This app's prompt was flagged: nudity");
+    expect(xguard).toHaveBeenLastCalledWith(expect.objectContaining({ userId: AUTHOR }));
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
