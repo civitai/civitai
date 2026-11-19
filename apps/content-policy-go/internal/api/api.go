@@ -1,9 +1,17 @@
 // Package api is the service's HTTP surface:
 //
+// on the API listener (CONTENT_POLICY_ADDR, Handler):
+//
 //	POST /v1/decide  {context, userId?, country?, region?, isUk?, host?} → a decision (DESIGN.md)
 //	GET  /healthz    the process is up
 //	GET  /readyz     200 once the database answers, 503 before
+//
+// and on the separate metrics listener (CONTENT_POLICY_METRICS_ADDR, MetricsHandler):
+//
 //	GET  /metrics    Prometheus
+//
+// Two listeners so a deployment's network policy can admit Prometheus to /metrics without also
+// admitting it to /v1/decide, which has no authentication of its own (DESIGN.md "Trust model").
 //
 // POST, not GET: the input names a user and where they are, and a query string is written to every
 // access log on the way; a body is not. Nothing here is cacheable by a proxy anyway: the caller keeps
@@ -81,7 +89,7 @@ type Response struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// Handler is the routes.
+// Handler is the API listener's routes. /metrics is not among them: it is MetricsHandler's.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -89,6 +97,13 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("POST /v1/decide", s.decide)
+	return mux
+}
+
+// MetricsHandler is the metrics listener's one route, GET /metrics from s.Gatherer. Nothing else is
+// served there: not /v1/decide, not the probes.
+func (s *Server) MetricsHandler() http.Handler {
+	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", promhttp.HandlerFor(s.Gatherer, promhttp.HandlerOpts{}))
 	return mux
 }
