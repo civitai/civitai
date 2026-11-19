@@ -1134,20 +1134,23 @@ describe('user apps: submit, review and enable', () => {
       expect(writtenIds()).toContain(fine.id);
     });
 
-    it('runs the sweep even when the registry bump after the reject fails', async () => {
+    it('runs the sweep even when the registry bump fails, and reports the sweep, not the cache', async () => {
       const reviewed = userRow('submitted');
       const sibling = matureSibling('other');
       dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(reviewed as never);
       dbMock.dbWrite.appBlock.findMany.mockResolvedValue([reviewed, sibling] as never);
-      redisMock.redis.set.mockRejectedValueOnce(new Error('cluster down'));
-      await reviewUserRemixApp({
-        slug: 'u7-probe',
-        sha256: hashOf(reviewed),
-        seenReview: 'submitted',
-        decision: 'rejected',
-        reason: 'minor-themed',
-        moderatorId: MOD,
-      }).catch(() => undefined);
+      // Every bump fails: the sibling's own, then the reject's.
+      redisMock.redis.set.mockRejectedValue(new Error('cluster down'));
+      await expect(
+        reviewUserRemixApp({
+          slug: 'u7-probe',
+          sha256: hashOf(reviewed),
+          seenReview: 'submitted',
+          decision: 'rejected',
+          reason: 'minor-themed',
+          moderatorId: MOD,
+        })
+      ).rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('was saved') });
       expect(writtenIds()).toEqual([reviewed.id, sibling.id]);
     });
   });

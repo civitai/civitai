@@ -63,7 +63,17 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
   const onError = (error: { message: string }) =>
     showErrorNotification({ title: 'Not saved', error: new Error(error.message) });
   const onSuccess = () => utils.remixApp.admin.list.invalidate();
-  const review = trpc.remixApp.admin.review.useMutation({ onSuccess, onError });
+  const review = trpc.remixApp.admin.review.useMutation({
+    // The mod's own decision is what they saw next; a failure may still have saved one.
+    onSuccess: (result) => {
+      setSeen((s) => ({ ...s, review: result.review }));
+      return onSuccess();
+    },
+    onError: (error) => {
+      onError(error);
+      return onSuccess();
+    },
+  });
   const setEnabled = trpc.remixApp.admin.setEnabled.useMutation({ onSuccess, onError });
   const clearMark = trpc.remixApp.admin.clearMinorThemed.useMutation({ onSuccess, onError });
   const marked = !!user.minorThemed;

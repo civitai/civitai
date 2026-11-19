@@ -595,11 +595,17 @@ async function writeUserRemixApp(
     data,
   });
   if (!count) throw userAppChanged();
+  const failure = await afterWrite?.().then(
+    () => null,
+    (error: unknown) => error ?? new Error('afterWrite failed')
+  );
   try {
-    await afterWrite?.();
-  } finally {
     await bumpRemixAppRegistry();
+  } catch (error) {
+    // The mod needs the sweep's failure more than the cache's.
+    if (!failure) throw error;
   }
+  if (failure) throw failure;
 }
 
 /**
@@ -674,20 +680,27 @@ export async function reviewUserRemixApp({
       contentRating: contentRatingOf(spec),
       ...(decision === 'rejected' ? { status: REMIX_STATUS.disabled } : {}),
     },
-    reason === 'minor-themed' && author
-      ? () => holdAuthorMatureApps(author, moderatorId, row.id)
-      : undefined
+    async () => {
+      // The review log keeps the latest entries only; this is the durable record of the decision.
+      logToAxiom({
+        name: 'remix-app-registry',
+        type: 'info',
+        message: 'Reviewed a user remix app',
+        payload: { slug, sha256, decision, mature: withMature, reason, moderatorId },
+      });
+      if (reason === 'minor-themed' && author)
+        await holdAuthorMatureApps(author, moderatorId, row.id);
+    }
   );
-  // The review log keeps the latest entries only; this is the durable record of the decision.
-  logToAxiom({
-    name: 'remix-app-registry',
-    type: 'info',
-    message: 'Reviewed a user remix app',
-    payload: { slug, sha256, decision, mature: withMature, reason, moderatorId },
-  });
   // A minor-themed reject of a sibling may have committed after the check above read no mark: its
   // sweep then missed this approval, so this side sweeps, this app included.
   if (withMature && author && (await authorHasMinorThemedApp(author))) {
+    logToAxiom({
+      name: 'remix-app-registry',
+      type: 'info',
+      message: 'Sent a mature approval back to review: its author was marked meanwhile',
+      payload: { slug, moderatorId },
+    });
     await holdAuthorMatureApps(author, moderatorId, '');
     throw new TRPCError({
       code: 'FORBIDDEN',
@@ -868,7 +881,10 @@ export async function deleteRemixApp({ slug }: { slug: string }) {
     throw error;
   }
   if (!count)
-    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Disable the app first' });
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'The app is enabled or changed after you opened it. Reload and try again.',
+    });
   await bumpRemixAppRegistry();
 }
 
