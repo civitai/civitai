@@ -294,7 +294,7 @@ describe('generateFromGraph — whose prompt the audit records against', () => {
 
     expect(err).toBeInstanceOf(TRPCError);
     expect((err as TRPCError).code).toBe('BAD_REQUEST');
-    expect((err as TRPCError).message).toBe("This app's prompt was flagged: nudity");
+    expect((err as TRPCError).message).toBe('Your prompt was flagged: nudity');
     expect(xguard).toHaveBeenLastCalledWith(expect.objectContaining({ userId: AUTHOR }));
     expect(submitWorkflow).not.toHaveBeenCalled();
   });

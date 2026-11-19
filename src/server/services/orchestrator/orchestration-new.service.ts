@@ -1917,7 +1917,7 @@ function withoutAccountStatus(err: unknown): unknown {
   if (!Array.isArray(blockedFor)) return err;
   return new TRPCError({
     code: 'BAD_REQUEST',
-    message: `This app's prompt was flagged: ${blockedFor.join(', ')}`,
+    message: `Your prompt was flagged: ${blockedFor.join(', ')}`,
     cause: err.cause,
   });
 }
