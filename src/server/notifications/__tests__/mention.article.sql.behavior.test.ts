@@ -145,6 +145,23 @@ describe('article @mentions', () => {
     expect(await recipients()).toEqual([]);
   });
 
+  // The app stamps these before the row commits and the job takes its cursor before reading the
+  // replica, so a row stamped just before the cursor can first become visible after it.
+  it('an article stamped just before the last run, but not yet visible to it, still notifies', async () => {
+    const justBefore = `'${LAST_SENT}'::timestamp - interval '30 seconds'`;
+    await article([2], { '"publishedAt"': justBefore, '"updatedAt"': justBefore });
+    expect(await recipients()).toEqual([2]);
+  });
+
+  it('a re-scan stamped just before the last run still re-reads the article', async () => {
+    await article([2], {
+      '"publishedAt"': `now() - interval '20 days'`,
+      '"updatedAt"': BEFORE,
+      '"contentScannedAt"': `'${LAST_SENT}'::timestamp - interval '30 seconds'`,
+    });
+    expect(await recipients()).toEqual([2]);
+  });
+
   it('an edit re-reads an article published within the window', async () => {
     await article([2], { '"publishedAt"': `now() - interval '20 days'` });
     expect(await recipients()).toEqual([2]);

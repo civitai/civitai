@@ -30,6 +30,13 @@ const liveCommentCreatedOrEditedSince = (lastSent: string) =>
 
 export const ARTICLE_MENTION_CAP = 10;
 export const ARTICLE_MENTION_EDIT_WINDOW = '30 days';
+/**
+ * How far behind its cursor the article read looks, as for new articles from followed creators: the
+ * app stamps an article before the row commits and the job takes its cursor before reading the
+ * replica, so a row stamped just before a run can first be visible after it. Re-reading is safe for
+ * the same reason edits are.
+ */
+const ARTICLE_MENTION_LOOKBACK = '5 minutes';
 // GREATEST skips NULLs, so a never-scanned article still counts its publish and edit times.
 const ARTICLE_TOUCHED_AT = `GREATEST(a."publishedAt", a."updatedAt", a."contentScannedAt")`;
 
@@ -80,7 +87,7 @@ export const articleMentionsSql = (lastSent: string) => `
         ) am
         -- Matches "Article_mention_scan_idx" exactly (expression and partial predicate), or this is
         -- a seq scan of every article each run.
-        WHERE ${ARTICLE_TOUCHED_AT} > '${lastSent}'
+        WHERE ${ARTICLE_TOUCHED_AT} > '${lastSent}'::timestamp - interval '${ARTICLE_MENTION_LOOKBACK}'
           AND a.status = 'Published'
           AND a.ingestion = 'Scanned'
           AND a."publishedAt" > now() - interval '${ARTICLE_MENTION_EDIT_WINDOW}'
