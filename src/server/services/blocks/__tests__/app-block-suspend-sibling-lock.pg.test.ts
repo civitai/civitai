@@ -32,14 +32,33 @@ const SCHEMA = `
   );
 `;
 
-/** Resolves once both callers arrive, or after `ms` for one that waits alone. */
-function barrier(ms: number) {
+/**
+ * The first suspension to finish its flip waits here until the second one either blocks on a row
+ * lock (what the lock is for) or reaches its own flip too (the race), and reports which.
+ */
+function firstFlipWatch(sql: () => Client) {
   let arrived = 0;
-  let release!: () => void;
-  const both = new Promise<void>((r) => (release = r));
-  return async () => {
-    if (++arrived === 2) release();
-    await Promise.race([both, new Promise((r) => setTimeout(r, ms))]);
+  let sawLockWait: boolean | null = null;
+  return {
+    get sawLockWait() {
+      return sawLockWait;
+    },
+    async afterFlip() {
+      if (++arrived > 1) return;
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && arrived < 2) {
+        const { rows } = await sql().query(
+          `SELECT 1 FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'`,
+          [DB_NAME]
+        );
+        if (rows.length) {
+          sawLockWait = true;
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      sawLockWait = false;
+    },
   };
 }
 
@@ -100,13 +119,14 @@ describe.skipIf(!URL_BASE)('suspending two blocks of one client at once', () => 
 
   it('the second suspension counts the first, so the client loses its token', async () => {
     // Without the lock both flips land before either count, and each sees the other approved.
-    const bothFlipped = barrier(1000);
+    const watch = firstFlipWatch(() => sql);
     const results = await Promise.allSettled([
-      suspend('blk_a', bothFlipped),
-      suspend('blk_b', bothFlipped),
+      suspend('blk_a', () => watch.afterFlip()),
+      suspend('blk_b', () => watch.afterFlip()),
     ]);
 
     expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+    expect(watch.sawLockWait).toBe(true);
     expect(await liveTokens()).toBe(0);
     const statuses = await sql.query('SELECT status FROM app_blocks ORDER BY id');
     expect(statuses.rows.map((r) => r.status)).toEqual(['suspended', 'suspended']);
