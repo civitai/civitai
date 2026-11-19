@@ -13,7 +13,6 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { minimaxH3ImageVersionId } from '~/shared/form-graph/generation/image/minimax-h3-image.graph';
 
-// Training under this base model is a separate, later change.
 describe('MiniMax H3 Image base model', () => {
   const NAME = 'MiniMax H3 Image';
 
@@ -23,9 +22,10 @@ describe('MiniMax H3 Image base model', () => {
     expect(options).toContain(NAME);
   });
 
-  it('is not trainable', () => {
-    expect(getTrainingBaseModels().map((m) => m.name)).not.toContain(NAME);
-    expect(isModelSupported(BM.MiniMaxH3Image, 'training')).toBe(false);
+  it('trains LoRAs only', () => {
+    expect(getTrainingBaseModels().map((m) => m.name)).toContain(NAME);
+    expect(isModelSupported(BM.MiniMaxH3Image, 'training', ModelType.LORA)).toBe(true);
+    expect(isModelSupported(BM.MiniMaxH3Image, 'training', ModelType.Checkpoint)).toBe(false);
   });
 
   it('generates with its own checkpoints and LoRAs, but not H3 video LoRAs', () => {

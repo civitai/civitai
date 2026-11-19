@@ -140,7 +140,7 @@ var profilePictureColumns = []string{"id", "name", "url", "nsfwLevel", "hash", "
 
 // profilePicturesFrom is getProfilePicturesForUsers over the cache's answer got for (unique) ids. The
 // miss path runs the cache's own lookup query on the replica: the user's profile picture, only when it
-// is servable (src/server/services/profile-picture.sql.ts).
+// is servable (servableProfilePictureSql, src/server/services/profile-picture.sql.ts).
 func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[int]Entry) (map[int]superjson.Object, error) {
 	out := make(map[int]superjson.Object, len(ids))
 	for id, e := range got {
@@ -157,7 +157,9 @@ func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[in
 			  AND i.ingestion <> 'Blocked'
 			  AND i."nsfwLevel" != 0
 			  AND (i."needsReview" IS NULL OR i."needsReview" NOT IN ('csam', 'minor'))
-			  AND `+ImageReviewedSQL("i"), miss)
+			  AND `+ImageReviewedSQL("i")+`
+			  AND ((i."nsfwLevel" & 60) = 0 OR NOT i."modelRestricted")
+			  AND NOT `+HasBlockMarkerSQL("i"), miss)
 		if err != nil {
 			return nil, err
 		}
@@ -171,6 +173,13 @@ func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[in
 		}
 	}
 	return out, nil
+}
+
+// HasBlockMarkerSQL is hasBlockMarkerSql(alias) (src/server/common/image-visibility.ts), with its
+// bound values inlined as literals.
+func HasBlockMarkerSQL(alias string) string {
+	a := `"` + alias + `"`
+	return `(` + a + `."ingestion" = 'Blocked'::"ImageIngestionStatus" OR ` + a + `."nsfwLevel" = 32 OR ` + a + `."blockedFor" IS NOT NULL)`
 }
 
 // ImageReviewedSQL is imageReviewedSql(alias) (src/server/common/image-visibility.ts), with its bound

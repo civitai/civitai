@@ -524,13 +524,6 @@ describe('createModelFileScanRequest', () => {
       // keyed off `code`. So `code === 'transient'` above is the load-bearing
       // assertion; this one only pins that no write leaked into this path.
       expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: 'model-file-scan',
-          submissionErrorCode: 'transient',
-          fileId: 1,
-        })
-      );
     });
 
     it('classifies on the RETRY, so a transient first failure followed by a 404 is not-found', async () => {

@@ -17,7 +17,9 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   getActiveTextScanPrompts: mockActivePrompts,
 }));
 
-const { resolveComFaceIntent } = await import('~/server/services/model-sfw-face.service');
+const { assertComFaceAllowed, resolveComFaceIntent } = await import(
+  '~/server/services/model-sfw-face.service'
+);
 const { comFaceIntentTextHash } = await import('~/server/services/model-com-face-intent.service');
 
 const MODEL_ID = 41;
@@ -127,5 +129,92 @@ describe('an allowed verdict', () => {
         payload: { promptId: PROMPT_B },
       })
     );
+  });
+});
+
+describe('a lock added for a detection', () => {
+  const lockLine = () =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([line]) => line as Record<string, unknown>)
+      .filter((line) => line.message === 'locked');
+
+  it('writes one log line with its promptId and nothing else about the model', async () => {
+    storeModel({ detected: false, promptId: PROMPT_A });
+    activeIntentPrompt(PROMPT_B);
+    await resolve();
+    expect(writes.lock).toHaveBeenCalledTimes(1);
+    expect(lockLine()).toEqual([
+      {
+        type: 'info',
+        name: 'model-com-face-intent',
+        message: 'locked',
+        payload: { promptId: PROMPT_B },
+      },
+    ]);
+  });
+
+  it('writes none when the lock was not added', async () => {
+    storeModel({ detected: false, promptId: PROMPT_A });
+    activeIntentPrompt(PROMPT_B);
+    writes.lock.mockResolvedValueOnce(false);
+    await resolve();
+    expect(lockLine()).toEqual([]);
+  });
+});
+
+describe('a refusal at save', () => {
+  it('writes one log line with its promptId and nothing else about the model', async () => {
+    await expect(assertComFaceAllowed({ ...listing })).rejects.toThrow();
+    const lines = loggingMock.logToAxiom.mock.calls
+      .map(([line]) => line as Record<string, unknown>)
+      .filter((line) => line.message === 'refused at save');
+    expect(lines).toEqual([
+      {
+        type: 'info',
+        name: 'model-com-face-intent',
+        message: 'refused at save',
+        payload: { promptId: PROMPT_B },
+      },
+    ]);
+  });
+});
+
+describe('a stored detection reused under the active prompt', () => {
+  const linesFor = (message: string) =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([line]) => line as Record<string, unknown>)
+      .filter((line) => line.message === message);
+
+  it("logs the lock it adds with the stored verdict's promptId", async () => {
+    storeModel({ detected: true, promptId: PROMPT_B });
+    activeIntentPrompt(PROMPT_B);
+    await resolve();
+    expect(mockPreview).not.toHaveBeenCalled();
+    expect(writes.lock).toHaveBeenCalledTimes(1);
+    expect(linesFor('locked')).toEqual([
+      expect.objectContaining({ payload: { promptId: PROMPT_B } }),
+    ]);
+  });
+
+  it("logs a refusal of an intent-locked model with the stored verdict's promptId", async () => {
+    const comFaceIntent = { textHash, at: '2026-11-01T00:00:00.000Z', detected: true };
+    storeModel(
+      {},
+      {
+        lockedProperties: ['nsfw'],
+        meta: {
+          comFaceIntent: { ...comFaceIntent, promptId: PROMPT_B },
+          systemNsfwLock: { source: 'com-face-intent' },
+        },
+      }
+    );
+    activeIntentPrompt(PROMPT_B);
+    await expect(
+      assertComFaceAllowed({ modelId: MODEL_ID, userId: OWNER_ID, ...listing })
+    ).rejects.toThrow();
+    expect(mockPreview).not.toHaveBeenCalled();
+    expect(linesFor('refused at save')).toEqual([
+      expect.objectContaining({ payload: { promptId: PROMPT_B } }),
+    ]);
   });
 });

@@ -24,16 +24,8 @@
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
   import { votesSent } from '$lib/votes-sent.svelte';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
-  import {
-    DISMISS_FAILED,
-    closeNotice,
-    dismissFailedOn,
-    noticeKey,
-    noticeShowing,
-    settleNotice,
-    syncNotice,
-    type NoticeState,
-  } from './level-notice';
+  import { dismissible } from '$lib/optimistic-dismiss.svelte';
+  import { noticeKey } from './level-notice';
   import { closeGuide, guideShowing, openGuide, settleGuide, type GuideState } from './guide-dialog';
   import {
     MAX_EXCLUDED,
@@ -82,6 +74,12 @@
   let reasonItem = $state<string | null>(null);
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
+  // The ruling toast floats over the image stage; it is only an alert, so the answers stay live under it.
+  const rulingNotice = dismissible(
+    () => (data.notices.length > 0 ? data.notices.map((notice) => notice.key).join(' ') : null),
+    { noticeFailed: true }
+  );
+  const careerReset = dismissible(() => (data.resetNotice ? 'reset' : null), { resetNoticeFailed: true });
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   const whatsNew = whatsNewView();
   // Votes posted in the background that the page's data does not hold yet; the Watch and the header count them at once.
@@ -95,17 +93,11 @@
     inFlight.landedOn = null;
     inFlight.goldless = 0;
   });
-  let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
+  // The level card and the rank-up dialog; `showing` decides whether one is drawn, while the `noticeShown` fields keep
+  // following `levelNotice`, the server's notice, so an answer given right after "Onward" still records the card it appeared with.
+  const progress = dismissible(() => (data.progress ? noticeKey(data.progress) : null), { progressFailed: true });
+  let dialogOpen = $derived(whatsNew.showing || guideOpen || (data.progress?.kind === 'rank' && progress.showing));
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
-  // Whether the card is drawn; the `noticeShown` fields keep following `levelNotice`, the server's notice, so an answer
-  // given right after "Onward" still records the card it appeared with.
-  const notice = $state<NoticeState>({ closed: null, failed: null });
-  let sentNotice = $derived(data.progress?.kind === 'level' ? noticeKey(data.progress) : null);
-  $effect(() => {
-    const key = sentNotice;
-    untrack(() => syncNotice(notice, key));
-  });
-  let levelToastShowing = $derived(noticeShowing(sentNotice, notice));
 
   // Header-menu dialogs (feedback, restart career) don't set `dialogOpen`; the reason picker is this page's own.
   const headerDialogOpen = () =>
@@ -223,22 +215,6 @@
       } finally {
         submitting = false;
         picked = null;
-      }
-    };
-  };
-
-  // Not through `submitting`: the answers stay live while the dismissal is in flight.
-  const submitDismissProgress: SubmitFunction = () => {
-    const key = sentNotice;
-    if (key) closeNotice(notice, key);
-    return async ({ result, update }) => {
-      const stored = result.type === 'success' || result.type === 'redirect';
-      if (key) settleNotice(notice, key, stored);
-      // An unanswered post would otherwise render the error page over the round.
-      if (result.type === 'error') {
-        await applyAction({ type: 'failure', status: 500, data: { message: DISMISS_FAILED, progressFailed: true } });
-      } else {
-        await update();
       }
     };
   };
@@ -632,28 +608,32 @@
 
 {#snippet questionTools()}
   <div class="qtools">
-    {#if !yesNo}
-      <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
-        <Icon name="book-open" size={16} />Guide
-      </button>
-    {/if}
+    <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
+      <Icon name="book-open" size={16} />Guide
+    </button>
     {@render soundToggle()}
   </div>
 {/snippet}
 
-{#snippet ruling()}
-  {#if data.notices.length > 0}
-    <RulingToast notices={data.notices} message={form?.noticeFailed ? form.message : null} {submitting} {submit} />
+{#snippet ruling(anchored: boolean)}
+  <!-- Not drawn under a dialog, so its auto-hide never runs unseen. -->
+  {#if rulingNotice.showing && !dialogOpen}
+    <RulingToast
+      notices={data.notices}
+      message={form?.noticeFailed && rulingNotice.failed ? form.message : null}
+      submit={rulingNotice.submit}
+      {anchored}
+    />
   {/if}
 {/snippet}
 
 {#snippet levelToast(floating: boolean)}
-  {#if levelNotice && levelToastShowing}
+  {#if levelNotice && progress.showing}
     <LevelToast
       level={levelNotice.milestoneLevel ?? levelNotice.level}
       xpToNext={(levelNotice.milestoneLevel ?? levelNotice.level) === data.status.level ? data.status.xpForNextLevel - data.status.xpIntoLevel : null}
-      message={form?.progressFailed && dismissFailedOn(notice, sentNotice) ? form.message : null}
-      submit={submitDismissProgress}
+      message={form?.progressFailed && progress.failed ? form.message : null}
+      submit={progress.submit}
       {floating}
       milestone={levelNotice.milestone ?? null}
       gold={levelNotice.levelGold ?? 0}
@@ -662,12 +642,11 @@
 {/snippet}
 
 <div class="play">
-  {#if data.resetNotice}
+  {#if careerReset.showing}
     <ResetNotice
       smites={data.status.maxSmites}
-      message={form?.resetNoticeFailed ? form.message : null}
-      {submitting}
-      {submit}
+      message={form?.resetNoticeFailed && careerReset.failed ? form.message : null}
+      submit={careerReset.submit}
     />
   {:else}
   {#if data.mode === 'queue' && data.apprenticeMeter}
@@ -706,9 +685,7 @@
 
   <div class="body">
   <div class="main">
-  {#if data.notices.length > 0 && !rulingInStage}
-    <div class="rulingwrap">{@render ruling()}</div>
-  {/if}
+  {#if !rulingInStage}{@render ruling(false)}{/if}
 
   {#if data.mode === 'queue' && data.resetPending}
     <p class="notice flat" role="alert">Your career is being reset. Return in a moment.</p>
@@ -724,7 +701,6 @@
         </p>
         {@render questionTools()}
       </div>
-      {@render ruling()}
       <div class="stagewrap">
         {#key `${apprentice.item.kind}:${apprentice.item.referenceId}`}
           <ImageStage
@@ -735,6 +711,7 @@
           />
         {/key}
         {@render levelToast(true)}
+        {@render ruling(true)}
       </div>
       <div class="controls" class:yesno={yesNo}>
         <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
@@ -813,7 +790,6 @@
       <span class="vh" role="status" aria-live="polite"
         >{shown.banner ? `New questions: ${shown.banner.heading}` : ''}</span
       >
-      {@render ruling()}
       <div class="stagewrap">
         {#key shown.item.key}
           {@const itemKey = shown.item.key}
@@ -827,6 +803,7 @@
           />
         {/key}
         {@render levelToast(true)}
+        {@render ruling(true)}
         {#if note}
           <p class="nudge" class:sticky>
             <span role="status">{note}</span>
@@ -851,9 +828,9 @@
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
-        {#if !yesNo}
-          <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
-        {/if}
+        <span class="rowtool">
+          <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
+        </span>
         <span class="rowtool">{@render soundToggle()}</span>
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
@@ -888,12 +865,13 @@
 {#if guideOpen}
   <GuideDialog
     guide={data.ratingGuide}
+    scrollToRules={yesNo}
     first={data.showGuide}
     message={form?.guideFailed ? form.message : null}
     {submitting}
     submit={submitGuide}
   />
-{:else if data.progress?.kind === 'rank'}
+{:else if data.progress?.kind === 'rank' && progress.showing}
   <RankUpDialog
     rank={data.progress.rank}
     level={data.progress.level}
@@ -901,9 +879,8 @@
     goldMultiplier={data.progress.goldMultiplier}
     previous={data.progress.previous}
     badge={data.badges.large[data.progress.rank]}
-    message={form?.progressFailed ? form.message : null}
-    {submitting}
-    {submit}
+    message={form?.progressFailed && progress.failed ? form.message : null}
+    submit={progress.submit}
   />
 {/if}
 
@@ -930,13 +907,6 @@
     overflow-y: auto;
   }
 
-  .rulingwrap {
-    box-sizing: border-box;
-    width: 100%;
-    max-width: 1056px;
-    margin: 0 auto;
-    padding: 8px 28px 0;
-  }
   /* The stage and whatever floats over it (the level-up toast). */
   .stagewrap {
     position: relative;
@@ -1275,9 +1245,6 @@
       gap: 8px;
       min-height: 10rem;
       padding: 4px 16px max(8px, env(safe-area-inset-bottom));
-    }
-    .rulingwrap {
-      padding: 4px 16px 0;
     }
     .eyebrow {
       font-size: 12px;

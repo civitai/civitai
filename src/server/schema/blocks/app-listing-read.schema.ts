@@ -84,6 +84,12 @@ export const listAppListingsSchema = z.object({
    * is returned exactly when this viewer could find it in the store anyway.
    */
   userId: z.number().int().positive().optional(),
+  /**
+   * The store's text search. Read only with the `app-index-search` flag on, where the app index
+   * answers it (`app-index-search.service.ts`); everywhere else it is ignored and the client
+   * filters the loaded grid itself. A page the index answered carries `search: 'index'`.
+   */
+  query: z.string().trim().max(200).optional(),
 });
 export type ListAppListingsInput = z.infer<typeof listAppListingsSchema>;
 

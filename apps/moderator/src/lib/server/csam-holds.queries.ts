@@ -1,7 +1,18 @@
 // No `$app/*` imports: the sidebar counts import this, and the node suites that load them cannot
 // resolve `$app/server`.
-import { sql } from 'kysely';
+import { createHash } from 'node:crypto';
+import { sql, type RawBuilder } from 'kysely';
 import type { CsamHoldSort, CsamHoldStatusFilter } from '$lib/csam-holds/hold-filters';
+import { CSAM_REPORTABLE_CHOICES } from '$lib/csam-holds/report-choice';
+import {
+  heldTextHas,
+  holdVersionTextHits,
+  publicVersionTextHit,
+  type StoredVersionTextHit,
+  type VersionTextHit,
+  type VersionTextHitState,
+  type VersionTextHitText,
+} from '$lib/csam-holds/version-text-hits';
 import { PREVIEW_COUNT_CAP } from '$lib/minor-flags/model-detail';
 import { dbRead } from './db';
 import { escapeLike } from './like';
@@ -33,6 +44,14 @@ export type CsamHoldRow = {
   decidedByUsername: string | null;
   decisionNote: string | null;
   decision: string | null;
+  /** The report choice recorded with a confirm: a reportable category, or `none`. */
+  reportChoice: string | null;
+  /** A pending hold a moderator sent to the Moderation Lead ("Not sure"), with when. */
+  leadReviewAt: string | null;
+  /** When a moderator confirmed the held item went into a CSAM report or a supplemental. */
+  reportIncludedAt: string | null;
+  /** Confirmed alongside another hold, so no choice was made for this item: a moderator sets one. */
+  needsReportChoice: boolean;
   /** Held again with new text after a moderator ruled on this entity. */
   redetected: boolean;
   priorHoldId: number | null;
@@ -49,6 +68,10 @@ export type CsamHoldRow = {
   otherPendingByAuthor: number;
   /** Other pending holds by the same author in the same chat; 0 for any hold that is not a chat message. */
   otherPendingInChat: number;
+  /** For a Model hold from the civitai.com version-text check: which version names or trigger words were flagged. */
+  versionTextHits: VersionTextHit[] | null;
+  /** The positions describe held text a later scan replaced, so they are not shown. */
+  versionTextHitsStale: boolean;
 };
 
 export type CsamHoldSearch = { id: number } | { username: string };
@@ -70,7 +93,52 @@ export type CsamHoldQuery = {
   author?: number;
 };
 
-const STATUS_COLUMN = { pending: 'Pending', removed: 'Confirmed', dismissed: 'Dismissed' } as const;
+const STATUS_COLUMN = {
+  pending: 'Pending',
+  'lead-review': 'Pending',
+  removed: 'Confirmed',
+  'report-not-filed': 'Confirmed',
+  dismissed: 'Dismissed',
+} as const;
+
+// A report covers a hold only when it captured that item's text; one on the author about something
+// else never does.
+const ITEM_SOURCE: Record<string, string> = {
+  PostText: 'postText',
+  CommentV3: 'comment',
+  Post: 'postDescription',
+};
+const itemSourceCase = sql.raw(
+  `CASE h."entityType" ${Object.entries(ITEM_SOURCE)
+    .map(([type, source]) => `WHEN '${type}' THEN '${source}'`)
+    .join(' ')} END`
+);
+// Judged by capture time, not the report's: a filing folds into the author's older unsent report, so
+// a capture or re-file from before this decision can sit in a report created after it, and an item
+// edited and held again keeps its id. A filing whose text equals the item's latest capture adds no
+// entry and is recorded in `identicalRefiles` instead, so a re-file after the decision covers too.
+// Compared as text against the decision in the same form, so a malformed time can never throw and
+// fail the whole queue. The only writer stores `toISOString()`; a value not in that shape covers
+// nothing. A well-formed impossible date (31 November) still compares as text; none is ever written.
+const afterDecision = (iso: RawBuilder<unknown>) => sql<boolean>`CASE
+  WHEN ${iso} ~ '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9][.][0-9]{3}Z$'
+  THEN ${iso} >= to_char(h."decidedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  ELSE false END`;
+const reportCoversHold = sql<boolean>`CASE
+  WHEN ${itemSourceCase} IS NULL THEN false
+  ELSE (jsonb_typeof(r.details -> 'contextText') = 'array'
+    AND r.details -> 'contextText' @> jsonb_build_array(
+      jsonb_build_object('source', ${itemSourceCase}, 'id', h."entityId"))
+    AND EXISTS (
+      SELECT 1 FROM jsonb_array_elements(r.details -> 'contextText') c
+      WHERE c ->> 'source' = ${itemSourceCase} AND c -> 'id' = to_jsonb(h."entityId")
+        AND ${afterDecision(sql`c ->> 'capturedAt'`)}))
+  OR (jsonb_typeof(r.details -> 'identicalRefiles') = 'array'
+    AND EXISTS (
+      SELECT 1 FROM jsonb_array_elements(r.details -> 'identicalRefiles') f
+      WHERE f ->> 'item' = ${itemSourceCase} || ':' || h."entityId"
+        AND ${afterDecision(sql`f ->> 'at'`)}))
+  END`;
 
 const csamHolds = ({
   status,
@@ -86,6 +154,17 @@ const csamHolds = ({
     .leftJoin('User as u', 'u.id', 'h.userId')
     .where('h.label', '=', 'csam');
   if (status !== 'all') query = query.where('h.status', '=', STATUS_COLUMN[status]);
+  if (status === 'lead-review') query = query.where(sql<boolean>`h.meta ? 'needsLeadReview'`);
+  // A hold decided alongside another has no choice until a moderator sets one. A confirm on its own
+  // without a choice came from a moderator app that predates it, and stays off.
+  if (status === 'report-not-filed')
+    query = query
+      .where(
+        sql<boolean>`(h.meta ->> 'reportChoice' IN (${sql.join([...CSAM_REPORTABLE_CHOICES])})
+          OR (h.meta ->> 'reportChoice' IS NULL AND h.meta -> 'reviewedDecision' = 'false'::jsonb))`
+      )
+      .where(sql<boolean>`NOT (h.meta ? 'reportIncluded')`)
+      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM "CsamReport" r WHERE ${reportCoversHold})`);
   if (author !== undefined) query = query.where('h.userId', '=', author);
   if (search && 'id' in search)
     query = query.where((eb) =>
@@ -213,6 +292,10 @@ export async function listCsamHolds({
     const {
       chatId,
       decision,
+      reportChoice,
+      needsLeadReview,
+      reportIncluded,
+      reviewedDecision,
       kind,
       priorHoldId,
       messageIds,
@@ -220,7 +303,11 @@ export async function listCsamHolds({
       previous,
       ruledBefore,
       textUpdatedAt,
+      comVersionTextHits,
+      comVersionTextHoldHash,
     } = (meta ?? {}) as {
+      comVersionTextHoldHash?: unknown;
+      comVersionTextHits?: unknown;
       textUpdatedAt?: unknown;
       previous?: unknown;
       ruledBefore?: unknown;
@@ -228,6 +315,10 @@ export async function listCsamHolds({
       messageIds?: unknown;
       senderId?: unknown;
       decision?: unknown;
+      reportChoice?: unknown;
+      needsLeadReview?: { at?: unknown } | null;
+      reportIncluded?: { at?: unknown } | null;
+      reviewedDecision?: unknown;
       kind?: unknown;
       priorHoldId?: unknown;
     };
@@ -251,9 +342,105 @@ export async function listCsamHolds({
       messageIds: chatMessageIds(messageIds),
       senderId: typeof senderId === 'number' ? senderId : null,
       decision: typeof decision === 'string' ? decision : null,
+      reportChoice: typeof reportChoice === 'string' ? reportChoice : null,
+      leadReviewAt: typeof needsLeadReview?.at === 'string' ? needsLeadReview.at : null,
+      reportIncludedAt: typeof reportIncluded?.at === 'string' ? reportIncluded.at : null,
+      needsReportChoice:
+        row.status === 'Confirmed' &&
+        typeof reportChoice !== 'string' &&
+        reviewedDecision === false,
+      ...listVersionTextHits(
+        row.entityType,
+        { comVersionTextHits, comVersionTextHoldHash },
+        row.textHash
+      ),
     };
   });
   return { items, hasMore: rows.length > limit };
+}
+
+function listVersionTextHits(entityType: string, meta: unknown, textHash: string) {
+  if (entityType !== 'Model') return { versionTextHits: null, versionTextHitsStale: false };
+  const { hits, stale } = holdVersionTextHits(meta, textHash);
+  return { versionTextHits: hits?.map(publicVersionTextHit) ?? null, versionTextHitsStale: stale };
+}
+
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
+/**
+ * The current version names and trigger words a Model hold's meta points at, read only from the
+ * hold's own model, each compared with what was flagged. Null when the hold is missing, not a Model
+ * hold, or names no positions; `stale` when the positions describe held text since replaced.
+ */
+export async function getHoldVersionTexts(
+  holdId: number
+): Promise<{ hits: VersionTextHitText[] } | { stale: true } | null> {
+  const hold = await dbRead
+    .selectFrom('TextScanHold')
+    .select(['entityId', 'text', 'textHash', 'meta'])
+    .where('id', '=', holdId)
+    .where('label', '=', 'csam')
+    .where('entityType', '=', 'Model')
+    .executeTakeFirst();
+  if (!hold) return null;
+  const { hits, stale } = holdVersionTextHits(hold.meta, hold.textHash);
+  if (stale) return { stale: true };
+  if (!hits) return null;
+
+  const versions = await dbRead
+    .selectFrom('ModelVersion')
+    .select(['id', 'name', 'trainedWords'])
+    .where('modelId', '=', hold.entityId)
+    .execute();
+  const byId = new Map(versions.map((version) => [version.id, version]));
+  // Where each current value sits, so a flagged value the owner moved is found, not reported gone.
+  const positions: { hash: string; text: string; at: VersionTextHit }[] = versions.flatMap(
+    (version) =>
+      [
+        ...(version.name !== null
+          ? [{ text: version.name, at: { versionId: version.id, field: 'name' as const } }]
+          : []),
+        ...(version.trainedWords ?? []).map((text, index) => ({
+          text,
+          at: { versionId: version.id, field: 'trainedWords' as const, index },
+        })),
+      ].map((position) => ({ ...position, hash: sha256(position.text) }))
+  );
+  const movedTo = (hit: StoredVersionTextHit) =>
+    positions
+      .filter((position) => position.hash === hit.hash)
+      .sort(
+        (a, b) =>
+          Number(b.at.versionId === hit.versionId) - Number(a.at.versionId === hit.versionId)
+      )[0];
+  return {
+    hits: hits.map((hit) => {
+      const version = byId.get(hit.versionId);
+      const text =
+        (hit.field === 'name' ? version?.name : version?.trainedWords?.[hit.index]) ?? null;
+      const state: VersionTextHitState =
+        text === null
+          ? 'gone'
+          : hit.hash
+          ? sha256(text) === hit.hash
+            ? 'unchanged'
+            : 'edited'
+          : heldTextHas(hold.text, hit.field, text)
+          ? 'in-held-text'
+          : 'not-in-held-text';
+      if (hit.hash && state !== 'unchanged') {
+        const moved = movedTo(hit);
+        if (moved)
+          return {
+            ...publicVersionTextHit(hit),
+            text: moved.text,
+            state: 'moved' as const,
+            movedTo: moved.at,
+          };
+      }
+      return { ...publicVersionTextHit(hit), text, state };
+    }),
+  };
 }
 
 export type AuthorHoldSummary = {

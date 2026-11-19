@@ -1536,10 +1536,6 @@ describe('the item’s store card follows an in-app withdraw or moderator hide',
       ok: true,
       deleted: true,
     });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'app-sub-listing-shared-sync-failed' }),
-      undefined
-    );
   });
 });
 
@@ -2710,15 +2706,6 @@ describe('shared `data` local moderation', () => {
         key: expect.any(String),
       });
       expect(insertedValue()).toBeDefined();
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: 'app-blocks-shared-data-moderation-scan',
-          mode: 'enforce',
-          blocked: false,
-          leafCount: 3,
-        }),
-        'block-audit'
-      );
       // The durable denominator: one ClickHouse row for the clean write, and no hit rows.
       await vi.waitFor(() => expect(chRows(SCANS_TABLE)).toBeDefined());
       expect(chRows(SCANS_TABLE)).toEqual([

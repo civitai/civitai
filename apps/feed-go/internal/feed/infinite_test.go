@@ -111,7 +111,7 @@ func TestInfiniteOwnScopeAndPath(t *testing.T) {
 		{InfiniteInput{PostID: 1}, true},
 		{InfiniteInput{Input: Input{ModelID: 2}}, true},
 		{InfiniteInput{Input: Input{ModelID: 2, ModelVersionID: 3}}, false},
-		{InfiniteInput{UserID: 4, Tags: []int{1}}, false},
+		{InfiniteInput{UserID: 4, Input: Input{Tags: []int{1}}}, false},
 	} {
 		if got := c.in.dbPath(); got != c.want {
 			t.Errorf("dbPath(%+v) = %v, want %v", c.in, got, c.want)

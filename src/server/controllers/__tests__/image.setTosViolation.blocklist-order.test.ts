@@ -16,10 +16,11 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   addBlockedImage: svc.addBlockedImage,
   queueImageSearchIndexUpdate: svc.queueImageSearchIndexUpdate,
-  writeModeratorBlock: vi.fn(async () => ({
+  writeModeratorBlock: vi.fn(async (ids: number[]) => ({
     held: new Set(),
     underReview: new Set(),
     removedForCsam: new Set(),
+    pHashes: new Map(ids.map((id) => [id, BigInt(123)])),
   })),
   updateImageReportStatusByReason: vi.fn(async () => []),
   invalidateManyImageExistence: vi.fn(async () => undefined),

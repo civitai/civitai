@@ -8,7 +8,8 @@ import {
 /**
  * A user's `profilePicture`, read through Prisma's nested select (`simpleUserSelect` and every copy
  * of it), comes back as `null` unless `servableProfilePicture` serves it: Scanned, rated, not
- * under an owner-hidden review hold and not restricted by its base model. Stricter than `servableProfilePictureSql`,
+ * under an owner-hidden review hold, not restricted by its base model and carrying no block
+ * marker. Stricter than `servableProfilePictureSql`,
  * which also admits moderator-locked ratings.
  * `User.profilePicture` is the only relation of that name, so the match is by key: a spread or
  * hand-built copy of the select is caught too. A sibling `image` (`User.image`) follows the same
@@ -29,7 +30,13 @@ const READ_OPERATIONS = [
 const PICTURE_KEY = 'profilePicture';
 
 type Args = Record<string, unknown>;
-const CHECKED_FIELDS = ['ingestion', 'needsReview', 'nsfwLevel', 'modelRestricted'] as const;
+const CHECKED_FIELDS = [
+  'ingestion',
+  'needsReview',
+  'nsfwLevel',
+  'modelRestricted',
+  'blockedFor',
+] as const;
 type CheckedField = (typeof CHECKED_FIELDS)[number];
 type Leaf = { added: CheckedField[] };
 type Plan = Map<string, Plan | Leaf>;
@@ -117,10 +124,15 @@ export function applyProfilePicturePlan(result: unknown, plan: Plan): void {
       !servableProfilePicture(
         picture as { ingestion: string | null; nsfwLevel: number | null },
         picture.needsReview as string | null,
-        picture.modelRestricted as boolean | null
+        picture.modelRestricted as boolean | null,
+        picture.blockedFor as string | null
       )
     ) {
-      if (typeof result.image === 'string') result.image = fallbackUserImage(result.image, picture);
+      if (typeof result.image === 'string')
+        result.image = fallbackUserImage(
+          result.image,
+          picture as Parameters<typeof fallbackUserImage>[1]
+        );
       result[key] = null;
     } else for (const field of node.added) delete picture[field];
   }

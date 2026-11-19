@@ -52,6 +52,8 @@ export function studioServerCalls(
   StudioBackend,
   | 'submitTraining'
   | 'datasetRating'
+  | 'pendingLicenses'
+  | 'acceptLicense'
   | 'continueQuote'
   | 'continueRun'
   | 'editImageSubmit'
@@ -76,6 +78,17 @@ export function studioServerCalls(
       const res = await server('/api/dataset-rating', postJson({ blobIds }));
       if (!res.ok) throw new Error(`Dataset rating failed (${res.status})`);
       return (await res.json()) as DatasetRatingCount;
+    },
+
+    pendingLicenses: async () => {
+      const res = await server('/api/license');
+      if (!res.ok) throw new Error(await messageOf(res, 'Could not check the model licence.'));
+      return ((await res.json()) as { pending: string[] }).pending;
+    },
+
+    acceptLicense: async (ecosystem) => {
+      const res = await server('/api/license', postJson({ ecosystem }));
+      if (!res.ok) throw new Error(await messageOf(res, 'Could not accept the licence.'));
     },
 
     continueQuote: async (workflowId, fromEpoch, addEpochs, currencies) => {

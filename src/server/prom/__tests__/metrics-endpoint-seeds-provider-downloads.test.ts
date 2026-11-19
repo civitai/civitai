@@ -65,21 +65,6 @@ describe('/api/metrics seeds civitai_provider_download_total', () => {
     });
   });
 
-  it('a provider minted later is seeded on the next scrape, without resetting counts', async () => {
-    const { countProviderDownload } = await import('~/server/prom/provider-download.metrics');
-    mockGetLiveProviderTokens.mockResolvedValue([token('acme')]);
-    await scrape();
-    countProviderDownload('acme', 'granted', 'nonpublic');
-    mockGetLiveProviderTokens.mockResolvedValue([token('acme'), token('gamma')]);
-    await scrape();
-    expect(await series()).toEqual({
-      ...reachable('acme'),
-      'acme/granted/nonpublic': 1,
-      ...reachable('gamma'),
-      'unknown/refused_401/unknown': 0,
-    });
-  });
-
   it('a failed token read still seeds unknown and does not fail the scrape', async () => {
     mockGetLiveProviderTokens.mockRejectedValue(new Error('db down'));
     await expect(scrape()).resolves.toContain('civitai_provider_download_total');

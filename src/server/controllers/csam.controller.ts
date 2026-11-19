@@ -24,7 +24,11 @@ import { reportedUserIdsOf, snapshotCsamContextText } from '~/server/services/cs
 import { createSupplementalCsamReport } from '~/server/services/csam-supplemental.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
 import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
-import { bulkAddBlockedImages } from '~/server/services/image.service';
+import {
+  bulkAddBlockedImages,
+  HeldMediaCopyError,
+  logCsamBlocklistNoHash,
+} from '~/server/services/image.service';
 import { bulkSetReportStatus, csamReportRewardExclusions } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
 import {
@@ -46,6 +50,10 @@ export async function createCsamReportHandler({
 
 export const CSAM_BLOCKLIST_FAILED_MESSAGE =
   'The report was filed and the account removed. Writing the image hashes to the blocklist failed and has been logged. Do not file again.';
+/** The blocklist entry landed but its review copy did not. An operator repairs it with the reconcile
+ *  script (scripts/oneoffs/reconcile-held-media-blocked-hashes.ts). */
+export const CSAM_HELD_MEDIA_COPY_FAILED_MESSAGE =
+  'The report was filed and the account removed. The blocklist entry was written, but its review copy failed and has been logged for repair. Do not file the report again.';
 
 /** The report plus everything it triggers. Split from the tRPC handler so `/api/mod/csam/*` can reach
  *  it with the acting moderator's id rather than a fabricated tRPC context. */
@@ -84,11 +92,17 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   // hold that up.
   // A supplemental writes only for an Image report, as on main.
   const writesBlocklist = !!imageIds.length && (!supplementalOf || type === 'Image');
-  const blocklistHashes = writesBlocklist
-    ? (await dbWrite.image.findMany({ where: { id: { in: imageIds } }, select: { pHash: true } }))
-        .map((img) => img.pHash)
-        .filter(isDefined)
+  const blocklistImages = writesBlocklist
+    ? await dbWrite.image.findMany({
+        where: { id: { in: imageIds } },
+        select: { id: true, pHash: true },
+      })
     : [];
+  const blocklistHashes = blocklistImages.map((img) => img.pHash).filter(isDefined);
+  logCsamBlocklistNoHash(
+    blocklistImages.filter((img) => !img.pHash).map((img) => img.id),
+    'csam-report'
+  );
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
     const imageReports = await dbWrite.imageReport.findMany({
@@ -174,13 +188,14 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     });
   } catch (error) {
     // The report id is what the missing write is redone from. No hashes.
+    const failedStore = error instanceof HeldMediaCopyError ? error.store : 'blocklist';
     logToAxiom({
       name: 'csam-report',
       type: 'error',
       message: 'CSAM blocklist write failed',
       userId,
       error: (error as Error)?.message,
-      payload: { reportedById, csamReportId: report.id, imageCount: imageIds.length },
+      payload: { reportedById, csamReportId: report.id, imageCount: imageIds.length, failedStore },
     });
     if (removalError) throw error;
     blocklistError = error;
@@ -237,7 +252,13 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   }
   // A 503 so the message reaches the moderator (a 500's is replaced); it must stop a re-file,
   // which can create a second report.
-  if (blocklistError) throwServiceUnavailableError(CSAM_BLOCKLIST_FAILED_MESSAGE, blocklistError);
+  if (blocklistError)
+    throwServiceUnavailableError(
+      blocklistError instanceof HeldMediaCopyError
+        ? CSAM_HELD_MEDIA_COPY_FAILED_MESSAGE
+        : CSAM_BLOCKLIST_FAILED_MESSAGE,
+      blocklistError
+    );
 
   // Reported and removed either way; the caller decides how loudly to say the run is still open.
   return { denyFailed, denyBookkeepingFailed, strikesReviewFailed };

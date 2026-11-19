@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -57,6 +58,7 @@ describe('deal-files', () => {
       userId: 99,
       isModerator: true,
       canReviewCsam: false,
+      servableLevels: 31,
     });
   });
 
@@ -204,6 +206,7 @@ describe('deal-file-url', () => {
       isModerator: true,
       moderatorFetch: true,
       canReviewCsam: false,
+      servableLevels: allBrowsingLevelsFlag,
     });
     expect(service.getServiceDealFileDownloadUrl).toHaveBeenCalledWith(expect.anything(), tracker);
   });

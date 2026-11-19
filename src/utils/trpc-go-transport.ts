@@ -1,5 +1,6 @@
 /**
- * State for the Go-transport flags (`feedGoTransport`, `feedGoTransportModelGetAll`), kept out of
+ * State for the Go-transport flags (`feedGoTransport`, `feedGoTransportModelGetAll`,
+ * `feedGoTransportInfinite`), kept out of
  * `~/utils/trpc` so the provider that writes them does not import the tRPC client module (component
  * tests mock that module with a fixed export list) — the same split as `~/utils/trpc-batch-window`.
  *
@@ -15,6 +16,7 @@
  */
 let feedGoTransportEnabled = false;
 let feedGoTransportModelGetAllEnabled = false;
+let feedGoTransportInfiniteEnabled = false;
 
 /**
  * Procedure → whether its flag is on. Each procedure has its OWN flag, so one can be turned on (or
@@ -25,6 +27,7 @@ let feedGoTransportModelGetAllEnabled = false;
 const GO_TRANSPORT_FLAGS: Readonly<Record<string, () => boolean>> = {
   'image.getImagesAsPostsInfinite': () => feedGoTransportEnabled,
   'model.getAll': () => feedGoTransportModelGetAllEnabled,
+  'image.getInfinite': () => feedGoTransportInfiniteEnabled,
 };
 
 /** Procedures a Go-transport flag can move (whichever flag is on). */
@@ -56,4 +59,9 @@ export function setFeedGoTransportEnabled(enabled: boolean) {
 /** `feedGoTransportModelGetAll`: `model.getAll`. */
 export function setFeedGoTransportModelGetAllEnabled(enabled: boolean) {
   feedGoTransportModelGetAllEnabled = enabled;
+}
+
+/** `feedGoTransportInfinite`: `image.getInfinite`. */
+export function setFeedGoTransportInfiniteEnabled(enabled: boolean) {
+  feedGoTransportInfiniteEnabled = enabled;
 }

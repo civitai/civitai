@@ -86,6 +86,7 @@ function eligibleReferences(
     .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
     .where('r.questionKey', '=', questionKey)
     .where('q.active', '=', true)
+    .where('img.userId', 'is distinct from', userId)
     .$if(exclude.length > 0, (qb) => qb.where('r.id', 'not in', exclude))
     .where((eb) =>
       eb.not(
@@ -426,12 +427,55 @@ export async function readHiddenNotices(db: Executor, playerId: number): Promise
   });
 }
 
-export async function dismissHiddenNotices(db: Executor, playerId: number, now: Date) {
-  await db
+/** One notice the toast showed, as its `key` names it (`${itemId}:${createdAt ms}`). */
+export type ShownNotice = { itemId: number; createdAt: Date };
+
+const MAX_NOTICE_KEYS = 20;
+const INT4_MAX = 2_147_483_647;
+
+/** The posted keys of the notices a toast showed; malformed ones are skipped, and at most `MAX_NOTICE_KEYS` are read. */
+export function parseNoticeKeys(keys: readonly string[]): ShownNotice[] {
+  const shown: ShownNotice[] = [];
+  for (const key of keys.slice(0, MAX_NOTICE_KEYS)) {
+    const match = /^(-?\d{1,10}):(\d{1,15})$/.exec(key);
+    if (!match) continue;
+    const itemId = Number(match[1]);
+    const createdAt = new Date(Number(match[2]));
+    if (Math.abs(itemId) > INT4_MAX || Number.isNaN(createdAt.getTime())) continue;
+    shown.push({ itemId, createdAt });
+  }
+  return shown;
+}
+
+/**
+ * Marks the player's notices seen. Given the ones a toast showed, only those: a check graded after the toast was drawn
+ * stays unseen for the next one. Without them (a page from before keys were sent), every unseen notice, as before.
+ */
+export async function dismissHiddenNotices(
+  db: Executor,
+  playerId: number,
+  now: Date,
+  shown?: ShownNotice[]
+) {
+  if (shown && shown.length === 0) return;
+  let update = db
     .updateTable('KnightsVote')
     .set({ noticedAt: utc(now) })
     .where('playerId', '=', playerId)
     .where('consequence', 'is not', null)
-    .where('noticedAt', 'is', null)
-    .execute();
+    .where('noticedAt', 'is', null);
+  if (shown) {
+    // The key carries milliseconds; the column may hold finer, so it is compared at the key's precision.
+    update = update.where((eb) =>
+      eb.or(
+        shown.map((notice) =>
+          eb.and([
+            eb('itemId', '=', notice.itemId),
+            eb(sql`date_trunc('milliseconds', "createdAt")`, '=', utc(notice.createdAt)),
+          ])
+        )
+      )
+    );
+  }
+  await update.execute();
 }

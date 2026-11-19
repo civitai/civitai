@@ -101,7 +101,8 @@ beforeAll(async () => {
   await db.exec(`CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP);
     CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
       "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
-      "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER);
+      "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
+      "poi" BOOLEAN NOT NULL DEFAULT false, "minor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER);
     CREATE TABLE "Cosmetic" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "type" TEXT NOT NULL, "data" JSONB,
       "createdById" INTEGER, "flags" INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE "CosmeticShopItem" ("id" INTEGER PRIMARY KEY, "cosmeticId" INTEGER REFERENCES "Cosmetic"("id") ON DELETE CASCADE,

@@ -5,14 +5,16 @@ import (
 	"net/http/pprof"
 )
 
-// PublicMux is the public listener's routes: the gallery procedure, and `model.getAll` — computed only
+// PublicMux is the public listener's routes: the gallery procedure, `model.getAll` — computed only
 // with ServeModelGetAll (FEED_GO_SERVE_MODEL_GETALL), else every request there is proxied to the Node
-// app (ServeModelGetAllHTTP). Nothing else. It never carries a debug route, whatever the pprof toggle
+// app (ServeModelGetAllHTTP) — and `image.getInfinite`, the same behind ServeInfinite
+// (FEED_GO_SERVE_INFINITE; ServeInfiniteHTTP). Nothing else. It never carries a debug route, whatever the pprof toggle
 // says.
 func PublicMux(s *Server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/api/trpc/"+Procedure, s)
 	mux.HandleFunc("/api/trpc/"+ProcedureModelGetAll, s.ServeModelGetAllHTTP)
+	mux.HandleFunc("/api/trpc/"+ProcedureInfinite, s.ServeInfiniteHTTP)
 	return mux
 }
 

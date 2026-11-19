@@ -1,3 +1,4 @@
+import { blockMarkerText } from '@civitai/db-queries/profile-picture-clear';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
@@ -87,7 +88,8 @@ const CARD_COLUMNS = `${STATE_COLUMNS}, u.username, m.name, m.track, m.threshold
 const CARD_JOINS = `
   LEFT JOIN "Cosmetic" c ON c.id = m."cosmeticId"
   LEFT JOIN "Image" i ON i.id = u."profilePictureId"
-    AND i.ingestion = 'Scanned' AND NOT i."tosViolation" AND i."needsReview" IS NULL`;
+    AND i.ingestion = 'Scanned' AND NOT i."tosViolation" AND i."needsReview" IS NULL
+    AND NOT ${blockMarkerText('i')}`;
 
 /**
  * A creator's crossings that may be put on show, each with whether the owner shows its badge on their

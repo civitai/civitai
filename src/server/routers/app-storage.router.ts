@@ -1,9 +1,12 @@
 import { TRPCError } from '@trpc/server';
+import { env } from '~/env/server';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
   appStorageForAppSchema,
   emptyMyAppStorageSchema,
+  exportMyAppRecordsSchema,
 } from '~/server/schema/app-storage.schema';
+import { appRecordConfig } from '~/server/services/apps/app-record';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { protectedProcedure, router } from '~/server/trpc';
 
@@ -51,6 +54,26 @@ export const appStorageRouter = router({
       );
       return emptyMyAppStorage(ctx.user.id, input.appBlockId, {
         includeShared: input.includeShared,
+      });
+    }),
+
+  /**
+   * One page of every record the user owns, across apps, as record-core objects
+   * (`exportMyAppRecords`). NOT_FOUND while the record core is switched off.
+   */
+  exportMine: appStorageUserProcedure
+    .meta({ blockApiKeys: true })
+    .input(exportMyAppRecordsSchema)
+    .use(rateLimit({ limit: 120, period: 60 * 60 }))
+    .query(async ({ ctx, input }) => {
+      const config = appRecordConfig(env);
+      if (!config) throw new TRPCError({ code: 'NOT_FOUND' });
+      const { exportMyAppRecords } = await import(
+        '~/server/services/apps/doc-store-viewer-usage.service'
+      );
+      return exportMyAppRecords(config, ctx.user.id, {
+        cursor: input.cursor ?? null,
+        limit: input.limit,
       });
     }),
 });

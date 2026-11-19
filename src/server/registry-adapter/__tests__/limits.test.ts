@@ -42,7 +42,14 @@ let verified = 0;
 const verifyToken = async (token: string) => {
   verified++;
   return token.startsWith('user-')
-    ? { subject: `${token}/client:a`, user: { showNsfw: false }, expiresAt: null }
+    ? {
+        subject: `${token}/client:a`,
+        clientId: 'a',
+        scope: 0n,
+        actor: null,
+        user: { showNsfw: false },
+        expiresAt: null,
+      }
     : null;
 };
 

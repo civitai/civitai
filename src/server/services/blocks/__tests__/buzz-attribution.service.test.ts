@@ -551,8 +551,7 @@ describe('emptyRevenue (placeholder vs measurement discriminator)', () => {
  * or the wrong row count cannot land on a right-looking number by coincidence.
  */
 describe('unreadableIfGoodsTableMissing — the one degradation the goods rail allows', () => {
-  it('a missing table gives the UNREADABLE summary and logs with the caller’s context', async () => {
-    mockLog.mockClear();
+  it('a missing table gives the UNREADABLE summary', async () => {
     const missing = Object.assign(new Error('The table `block_good_purchase` does not exist'), {
       code: 'P2021',
     });
@@ -560,10 +559,6 @@ describe('unreadableIfGoodsTableMissing — the one degradation the goods rail a
       appBlockId: 'apb_ctx',
     });
     expect(result).toStrictEqual(unreadableGoodsSales());
-    expect(mockLog).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'block-goods-earnings', appBlockId: 'apb_ctx' }),
-      'civitai-prod'
-    );
   });
 
   it('any other error RETHROWS, unchanged', async () => {

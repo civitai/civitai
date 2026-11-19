@@ -585,6 +585,7 @@ describe('optimizer learning-rate coupling', () => {
     'hunyuan',
     'ltx',
     'minimaxh3',
+    'minimaxh3image',
     'ming',
     'qwen21',
     'yue2',

@@ -110,11 +110,14 @@ export function isRedCapableHost(host: string | null | undefined): boolean {
   return !!host && isHostForColor(host, 'red');
 }
 
-/** Mature content ratings (App Blocks). Everything else is SFW. */
-const MATURE_CONTENT_RATINGS = new Set(['r', 'x']);
+/**
+ * Mature content ratings (App Blocks). Everything else is SFW. `xxx` is carried only by App Store
+ * item cards (content levels), never by an app; it is mature wherever a rating is checked.
+ */
+const MATURE_CONTENT_RATINGS = new Set(['r', 'x', 'xxx']);
 
 /**
- * True iff the rating is mature (r/x). FAIL-CLOSED on ambiguity in the OPPOSITE
+ * True iff the rating is mature (r/x/xxx). FAIL-CLOSED on ambiguity in the OPPOSITE
  * direction is the caller's job: an unknown/missing/empty rating returns
  * `false` (SFW) here, which is safe because `contentRating` is a REQUIRED,
  * validated manifest field (`block-manifest-validator.service.ts`) stored on

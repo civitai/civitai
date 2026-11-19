@@ -68,7 +68,7 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
   },
   {
     ecosystemId: ECO.MAI,
-    name: 'MAI-Image-2.5',
+    name: 'MAI Image',
     maker: 'Microsoft',
     modelId: 2673730,
     goodAt:

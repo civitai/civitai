@@ -82,7 +82,8 @@ beforeAll(async () => {
      CREATE TABLE "Image" (
        id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
-       ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer
+       ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer,
+       poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false
      );`
   );
   await pg.exec(migration('20261210120000_knights_v2_tables'));
@@ -157,7 +158,7 @@ describe('enqueueKnightsItems', () => {
 
   it('refuses an image with no post, or whose post is gone, when the caller requires a post, and queues drafts and scheduled posts', async () => {
     await pg.exec(`
-      INSERT INTO "Post" (id, "publishedAt") VALUES (10, '2026-01-01'), (20, NULL), (30, '2027-01-01');
+      INSERT INTO "Post" (id, "publishedAt") VALUES (10, '2026-01-01'), (20, NULL), (30, '2026-12-13 07:00');
       UPDATE "Image" SET "postId" = 20 WHERE id = 2;
       UPDATE "Image" SET "postId" = 30 WHERE id = 3;
       UPDATE "Image" SET "postId" = 10 WHERE id = 4;
@@ -183,6 +184,44 @@ describe('enqueueKnightsItems', () => {
       { imageId: 5, outcome: 'refused', reason: 'no-post' },
     ]);
     expect((await items()).map((i) => i.imageId)).toEqual([2, 3, 4]);
+  });
+
+  it('refuses a post scheduled to publish after the item would close unvoted (144h after queueing), when the caller requires a post', async () => {
+    // NOW is 2026-12-11 10:00 UTC, so an item queued now is open until 2026-12-17 10:00 at the latest.
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt") VALUES
+        (10, '2026-12-17 10:00:00'), (20, '2026-12-17 10:01:00'), (30, '2026-12-14 21:00'), (40, '2027-01-02 03:00');
+      UPDATE "Image" SET "postId" = 10 WHERE id = 1;
+      UPDATE "Image" SET "postId" = 20 WHERE id = 2;
+      UPDATE "Image" SET "postId" = 30 WHERE id = 3;
+      UPDATE "Image" SET "postId" = 40 WHERE id = 4;
+    `);
+    const enqueue = (options: { requirePost?: boolean }) =>
+      enqueueKnightsItems(
+        db,
+        {
+          source: 'scan-sample',
+          questionKey: Q,
+          items: [1, 2, 3, 4].map((imageId) => ({ imageId, priority: 1 as const })),
+        },
+        NOW,
+        options
+      );
+
+    expect(await enqueue({ requirePost: true })).toMatchObject([
+      { imageId: 1, outcome: 'enqueued' },
+      { imageId: 2, outcome: 'refused', reason: 'publishes-after-expiry' },
+      { imageId: 3, outcome: 'enqueued' },
+      { imageId: 4, outcome: 'refused', reason: 'publishes-after-expiry' },
+    ]);
+    expect((await items()).map((i) => i.imageId)).toEqual([1, 3]);
+    // A caller that does not require a post (the moderator endpoint passes servableOnly instead) is not refused.
+    expect((await enqueue({})).map((o) => o.outcome)).toEqual([
+      'duplicate',
+      'enqueued',
+      'duplicate',
+      'enqueued',
+    ]);
   });
 
   it('still queues an unpublished image for a caller that does not ask (intake)', async () => {

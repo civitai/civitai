@@ -4,6 +4,7 @@ import type {
   EventPointLedgerRow,
   EventPointsDeps,
   EventPointsRedis,
+  EventPointsTurfRedis,
 } from '~/server/events/points/award';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
@@ -1003,6 +1004,22 @@ describe('Hat Turf', () => {
   });
 
   beforeEach(() => fake.setTurf(EVENT.name, 'Image:200', encodeTurfEntry(TURF)));
+
+  it('🔴 reads the turf map from its own client (the cache cluster), not the hat store', async () => {
+    // The hat store holds no turf map; only the turf client does.
+    const turfStore = fakeRedis();
+    turfStore.setClock(() => now.getTime());
+    turfStore.setTurf(EVENT.name, 'Image:200', encodeTurfEntry(TURF));
+    fake = fakeRedis();
+    fake.setClock(() => now.getTime());
+    build({
+      turfRedis: turfStore.redis as unknown as EventPointsTurfRedis,
+      loadScoredEvents: async () => [turfEvent('live')],
+    });
+    await engine.awardEventPoints([view(22)]);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({ claimKey: 'turf', players: [21, 23] });
+  });
 
   it('live: one ledger row credits every listed player but the viewer, each as a hat owner', async () => {
     build({ loadScoredEvents: async () => [turfEvent('live')] });

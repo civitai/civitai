@@ -14,6 +14,7 @@ How a new model gets from nothing to generatable. That covers a new ecosystem, a
 | 5 | Gate rule that hides it from non-mods | Redis `generation:gate-rules:by-id` | `generation-gate-rules` (`add`) or `/moderator/generation-config` | always |
 | 6 | Generation support, in both generator lanes | constants, graphs, handlers | `add-generation-support` | always |
 | 7 | Prompt-enhancement guide | orchestrator prompt-analysis service | `add-prompt-enhancement-guide` | new ecosystem (image/video only) |
+| 7b | Launch covers made by each new version, straight through the orchestrator (no deploy; spends Buzz) | `~/Downloads/launch-covers/<Version name> (<versionId>)/` | `covers.mjs` in `onboard-generator-model` (`whatif`, then `submit`) | always |
 | — | **Deploy**, then mods test on the live generator | | `generator-launch` (`check`) | |
 | 8 | Launch: publish, then remove the gate | | a human, following `generator-launch` (`launch`) | |
 

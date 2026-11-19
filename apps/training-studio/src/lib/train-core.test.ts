@@ -267,6 +267,45 @@ describe('the trigger word check', () => {
   });
 });
 
+describe('the base model licence check', () => {
+  const h3Image = (): TrainingRunInput => ({
+    ...baseRun(),
+    ecosystem: 'minimaxh3image',
+    batchSize: 1,
+    textEncoderLr: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  });
+
+  it('asks about a licensed model once, before submitting any run', async () => {
+    const events: unknown[] = [];
+    const check = async (input: unknown) => void events.push(input);
+    submitWorkflow
+      .mockImplementationOnce(async () => (events.push('submit'), { data: { id: 'wf-7' } }))
+      .mockImplementationOnce(async () => (events.push('submit'), { data: { id: 'wf-8' } }));
+    await submitTrainingBatch(client, [h3Image(), { ...h3Image(), steps: 999 }], {
+      checkText: check,
+    });
+    expect(events).toEqual([
+      { triggerWord: baseRun().trigger },
+      { licenseEcosystem: 'minimaxh3image' },
+      'submit',
+      'submit',
+    ]);
+  });
+
+  it('a licence not yet accepted stops the whole batch, so nothing is charged', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    const refuse = async (input: Parameters<TrainingTextCheck>[0]) => {
+      if ('licenseEcosystem' in input) throw new TrainingTextRefusedError('Accept the licence.');
+    };
+    await expect(
+      submitTrainingBatch(client, [baseRun(), h3Image()], { checkText: refuse })
+    ).rejects.toBeInstanceOf(TrainingTextRefusedError);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+});
+
 describe('keep-training currencies', () => {
   const sourceRun = {
     data: {
@@ -336,6 +375,28 @@ describe('keep-training currencies', () => {
       TrainingTextRefusedError
     );
     expect(refuse).toHaveBeenCalledWith({ triggerWord: 'mystyle' });
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it("checks the licence of the source run's model again, and submits nothing when it is not accepted", async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        steps: [
+          {
+            ...sourceRun.data.steps[0],
+            input: { ...sourceRun.data.steps[0].input, ecosystem: 'minimaxh3image' },
+          },
+        ],
+      },
+    });
+    const calls = submitWorkflow.mock.calls.length;
+    const refuse = vi.fn(async (input: Parameters<TrainingTextCheck>[0]) => {
+      if ('licenseEcosystem' in input) throw new TrainingTextRefusedError('Accept the licence.');
+    });
+    await expect(continueTraining(client, opts, { checkText: refuse })).rejects.toBeInstanceOf(
+      TrainingTextRefusedError
+    );
+    expect(refuse).toHaveBeenCalledWith({ licenseEcosystem: 'minimaxh3image' });
     expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 
@@ -1616,39 +1677,33 @@ describe('dataset maturity under the v2 rating', () => {
     });
   const lastBody = () => submitWorkflow.mock.calls.at(-1)![0].body;
 
-  describe.each([1, 2, 3, 4])('mature from level %i', (level) => {
-    it('a clothed dataset the upload rating called mature, rated below the level, trains unconfirmed', async () => {
+  // The main app decides mature at the user's level (its service test covers levels); this counts its verdicts.
+  describe('a stored verdict', () => {
+    const level = 2;
+    it('a clothed dataset the upload rating called mature, rated not mature, trains unconfirmed', async () => {
       uploadRatings({ 'outfit-1': 'R', 'outfit-2': 'X' });
       submitWorkflow.mockResolvedValueOnce({ data: { id: `wf-sfw-${level}` } });
       const rating = ratingAt(level, {
-        'outfit-1': { s: level - 1, r: false },
-        'outfit-2': { s: 0, r: false },
+        'outfit-1': { mature: false },
+        'outfit-2': { mature: false },
       });
       await submitWith(rating, { items: items('outfit-1', 'outfit-2') });
       expect(lastBody().currencies).toEqual(['blue', 'green']);
     });
 
-    it('a nude image rated at the level is mature', async () => {
+    it('a nude image rated mature is mature', async () => {
       uploadRatings({ 'nude-1': 'PG' });
       const calls = submitWorkflow.mock.calls.length;
-      const rating = ratingAt(level, { 'nude-1': { s: level, r: false } });
+      const rating = ratingAt(level, { 'nude-1': { mature: true } });
       await expect(submitWith(rating, { items: items('nude-1') })).rejects.toMatchObject({
         matureCount: 1,
       });
       expect(submitWorkflow.mock.calls.length).toBe(calls);
     });
 
-    it('a restricted image is mature whatever its level', async () => {
-      uploadRatings({ 'r-1': 'PG' });
-      const rating = ratingAt(level, { 'r-1': { s: 0, r: true } });
-      await expect(submitWith(rating, { items: items('r-1') })).rejects.toBeInstanceOf(
-        MatureRepriceError
-      );
-    });
-
     it('an unrated image is counted from its upload rating', async () => {
       uploadRatings({ 'rated-1': 'R', 'unrated-2': 'R' });
-      const rating = ratingAt(level, { 'rated-1': { s: 0, r: false } });
+      const rating = ratingAt(level, { 'rated-1': { mature: false } });
       await expect(
         submitWith(rating, { items: items('rated-1', 'unrated-2') })
       ).rejects.toMatchObject({ matureCount: 1 });
@@ -1667,7 +1722,7 @@ describe('dataset maturity under the v2 rating', () => {
 
   it("never uses a stored rating for a blob this caller's HEAD could not read", async () => {
     uploadRatings({ 'theirs-1': null });
-    const read = vi.fn(async () => new Map([['theirs-1', { s: 4, r: true }]]));
+    const read = vi.fn(async () => new Map([['theirs-1', { mature: true }]]));
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-theirs' } });
     // Counted as the upload path counts a failed HEAD (not mature), not by the shared cache's entry.
     await submitWith(ratingAt(1, {}, read), { items: items('theirs-1') });
@@ -1701,7 +1756,7 @@ describe('dataset maturity under the v2 rating', () => {
       { workflowId: 'wf-src-v2', fromEpoch: 10, addEpochs: 2 },
       {
         checkText,
-        datasetRating: ratingAt(2, { 'spicy-2': { s: 1, r: false }, 'safe-1': { s: 0, r: false } }),
+        datasetRating: ratingAt(2, { 'spicy-2': { mature: false }, 'safe-1': { mature: false } }),
       }
     );
     expect('allowMatureContent' in lastBody()).toBe(false);
@@ -1729,7 +1784,7 @@ describe('dataset maturity under the v2 rating', () => {
   it('a dataset v2 rates mature, priced as mature, is charged Blue then Yellow with no unlock', async () => {
     uploadRatings({ 'nude-1': 'PG' });
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-priced-v2' } });
-    await submitWith(ratingAt(1, { 'nude-1': { s: 4, r: false } }), {
+    await submitWith(ratingAt(1, { 'nude-1': { mature: true } }), {
       items: items('nude-1'),
       ...pricedMature,
     });
@@ -1740,7 +1795,7 @@ describe('dataset maturity under the v2 rating', () => {
   it('a dataset priced as mature that v2 rates below the level keeps Green', async () => {
     uploadRatings({ 'outfit-1': 'X' });
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-priced-sfw' } });
-    await submitWith(ratingAt(2, { 'outfit-1': { s: 1, r: false } }), {
+    await submitWith(ratingAt(2, { 'outfit-1': { mature: false } }), {
       items: items('outfit-1'),
       ...pricedMature,
     });
@@ -1788,10 +1843,9 @@ describe('dataset maturity under the v2 rating', () => {
 
     it('a count made at one setting, or without the rating, is not reused for another', async () => {
       uploadRatings({ 'q-1': 'R' });
-      const stored = { 'q-1': { s: 2, r: false } };
       expect(await quote('wf-q-set', undefined)).toBe(1);
-      expect(await quote('wf-q-set', ratingAt(4, stored))).toBe(0);
-      expect(await quote('wf-q-set', ratingAt(1, stored))).toBe(1);
+      expect(await quote('wf-q-set', ratingAt(4, { 'q-1': { mature: false } }))).toBe(0);
+      expect(await quote('wf-q-set', ratingAt(1, { 'q-1': { mature: true } }))).toBe(1);
     });
 
     it('a count with unrated images is made again once they are rated', async () => {
@@ -1799,7 +1853,7 @@ describe('dataset maturity under the v2 rating', () => {
       const stored: Record<string, StoredRating> = {};
       const rating = ratingAt(4, stored);
       expect(await quote('wf-q-warm', rating)).toBe(1);
-      stored['q-1'] = { s: 0, r: false };
+      stored['q-1'] = { mature: false };
       expect(await quote('wf-q-warm', rating)).toBe(0);
     });
   });
@@ -1809,7 +1863,7 @@ describe('dataset maturity under the v2 rating', () => {
     // Mature by its upload rating, not by v2: only the rating gets it past the mature check.
     const sfw = () => {
       uploadRatings({ 'sfw-1': 'R' });
-      return ratingAt(1, { 'sfw-1': { s: 0, r: false } });
+      return ratingAt(1, { 'sfw-1': { mature: false } });
     };
 
     it('the trigger word check', async () => {
@@ -1889,7 +1943,7 @@ describe('dataset maturity under the v2 rating', () => {
             checkText: async () => {
               throw new TrainingTextRefusedError('blocked');
             },
-            datasetRating: ratingAt(1, { 'sfw-1': { s: 0, r: false } }),
+            datasetRating: ratingAt(1, { 'sfw-1': { mature: false } }),
           }
         )
       ).rejects.toBeInstanceOf(TrainingTextRefusedError);

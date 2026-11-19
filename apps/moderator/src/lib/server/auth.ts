@@ -1,6 +1,7 @@
 import { env } from '$env/dynamic/private';
 import {
   createRevocationCheck,
+  createSlotTally,
   createSpokeGuard,
   isModerationAccountUser,
   type SessionRegistryRedis,
@@ -46,4 +47,10 @@ export function admitsModerator(user: {
   return true;
 }
 
-export const guard = createSpokeGuard({ require: admitsModerator, isRevoked });
+export const guard = createSpokeGuard({
+  require: admitsModerator,
+  isRevoked,
+  onSessionSlot: createSlotTally((counts) => {
+    void logToAxiom({ name: 'session-cookie-slot', type: 'info', payload: counts });
+  }),
+});

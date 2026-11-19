@@ -1,7 +1,15 @@
 import { TRPCError } from '@trpc/server';
 import type { ProtectedContext } from '~/server/createContext';
 import type { Tracker } from '~/server/clickhouse/client';
+import type { Context } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
+import {
+  canViewModelVersion,
+  modelVersionVisibilitySelect,
+} from '~/server/services/model-version-visibility.service';
+import { canViewOwnerOnly } from '~/server/utils/poi-model-visibility';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
   HasOfficialFileOfSizeInput,
@@ -186,10 +194,34 @@ async function submitInlineScan({
   });
 }
 
-export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
+export const getFilesByVersionIdHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
-    const data = await getFilesForModelVersionCache([input.id]);
-    return data[input.id];
+    // The cached list is shared by every viewer, so the version is checked before it is read.
+    const version = await dbRead.modelVersion.findUnique({
+      where: { id: input.id },
+      select: modelVersionVisibilitySelect,
+    });
+    if (!version) return undefined;
+    const viewer = ownerOrModeratorViewer(ctx);
+    const ownerId = version.model.userId;
+    if (!(await canViewModelVersion(version, viewer))) return undefined;
+
+    const data = (await getFilesForModelVersionCache([input.id]))[input.id];
+    if (!data || canViewOwnerOnly(ownerId, viewer)) return data;
+    // Training data keeps its own public view (the router's strip); other non-Public files are
+    // the owner's and moderators'.
+    return {
+      ...data,
+      files: data.files.filter(
+        (file) => file.visibility === 'Public' || file.type === 'Training Data'
+      ),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
