@@ -229,11 +229,13 @@ describe('the public sibling reads of a version', () => {
       modelStatus = 'Published',
       poi = false,
       publishedAt = versionStatus === 'Published' ? new Date(0) : null,
+      availability = 'Public',
     }: {
       versionStatus?: string;
       modelStatus?: string;
       poi?: boolean;
       publishedAt?: Date | null;
+      availability?: string;
     } = {}
   ) => ({
     id,
@@ -241,7 +243,9 @@ describe('the public sibling reads of a version', () => {
     baseModel: 'SD 1.5',
     status: versionStatus,
     publishedAt,
+    availability,
     model: {
+      availability: 'Public',
       id: 1,
       name: 'm',
       sfwName: null,
@@ -433,6 +437,53 @@ describe('the public sibling reads of a version', () => {
       serveRows([]);
       expect(await license('other')).toBe('NOT_FOUND');
       expect(await goal('other')).toBe('NOT_FOUND');
+    });
+
+    describe('a Private version', () => {
+      // The availability read behind the grant check, then the viewer's grants.
+      const grants = (granted: boolean) => {
+        serveRows([row(100, { availability: 'Private' }), row(101)]);
+        dbMock.dbRead.$queryRaw.mockResolvedValue([
+          {
+            entityId: 100,
+            userId: OWNER,
+            availability: 'Private',
+            publishedAt: new Date(0),
+            status: 'Published',
+          },
+        ]);
+        dbMock.dbWrite.$queryRaw.mockResolvedValue(
+          granted ? [{ entityId: 100, hasAccess: true, permissions: 1, meta: {} }] : []
+        );
+      };
+
+      it('reads as missing to a signed-in user with no grant, and to a signed-out visitor', async () => {
+        grants(false);
+        for (const viewer of ['other', 'anon'] as const) {
+          expect(await runStrategies(viewer)).toEqual([]);
+          expect(await prompts(viewer)).toEqual([]);
+          expect(await owner(viewer)).toBe('NOT_FOUND');
+          expect(await batch(viewer)).toEqual([101]);
+          expect(await license(viewer)).toBe('NOT_FOUND');
+          expect(await goal(viewer)).toBe('NOT_FOUND');
+        }
+      });
+
+      it('is served to a signed-in user holding a grant', async () => {
+        grants(true);
+        expect(await runStrategies('other')).toEqual(STRATEGIES);
+        expect(await prompts('other')).toEqual(PROMPTS);
+        expect(await owner('other')).toBe('served');
+        expect(await batch('other')).toEqual([100, 101]);
+        expect(await license('other')).toBe('served');
+        expect(await goal('other')).toBe('served');
+      });
+
+      it('is served to its owner without a grant', async () => {
+        grants(false);
+        expect(await runStrategies('owner')).toEqual(STRATEGIES);
+        expect(await batch('owner')).toEqual([100, 101]);
+      });
     });
   });
 });

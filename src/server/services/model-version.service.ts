@@ -41,9 +41,9 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
-  canViewModelVersionRow,
-  modelVersionViewSelect,
-} from '~/server/common/model-version-visibility';
+  filterViewableModelVersions,
+  modelVersionVisibilitySelect,
+} from '~/server/services/model-version-visibility.service';
 import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   getDbWithoutLag,
@@ -260,7 +260,7 @@ export const getVersionsByIds = async ({
 }: {
   ids: number[];
   browsingLevel?: number;
-  viewer: Parameters<typeof canViewModelVersionRow>[1];
+  viewer: Parameters<typeof filterViewableModelVersions>[1];
 }) => {
   if (ids.length === 0) return [];
   const showSfwFace = showsSfwFace(browsingLevel);
@@ -268,37 +268,31 @@ export const getVersionsByIds = async ({
   const results = await dbRead.modelVersion.findMany({
     where: { id: { in: ids } },
     select: {
-      id: true,
+      ...modelVersionVisibilitySelect,
       name: true,
       baseModel: true,
-      status: true,
-      publishedAt: true,
       model: {
         select: {
+          ...modelVersionVisibilitySelect.model.select,
           id: true,
           name: true,
           sfwName: true,
           minor: true,
           sfwOnly: true,
-          userId: true,
-          status: true,
-          poi: true,
         },
       },
     },
   });
 
-  return results
-    .filter((v) => canViewModelVersionRow(v, viewer))
-    .map((v) => ({
-      id: v.id,
-      name: v.name,
-      baseModel: v.baseModel,
-      modelId: v.model.id,
-      modelName: resolveModelFace(v.model, showSfwFace).name,
-      minor: v.model.minor,
-      sfwOnly: v.model.sfwOnly,
-    }));
+  return (await filterViewableModelVersions(results, viewer)).map((v) => ({
+    id: v.id,
+    name: v.name,
+    baseModel: v.baseModel,
+    modelId: v.model.id,
+    modelName: resolveModelFace(v.model, showSfwFace).name,
+    minor: v.model.minor,
+    sfwOnly: v.model.sfwOnly,
+  }));
 };
 
 export const getDefaultModelVersion = async ({

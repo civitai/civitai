@@ -1,9 +1,6 @@
 import type { Prisma } from '@prisma/client';
-import {
-  canViewModelVersionRow,
-  canViewModelVersionStatus,
-  modelVersionViewSelect,
-} from '~/server/common/model-version-visibility';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { dbRead } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
@@ -18,7 +15,7 @@ export const modelVersionVisibilitySelect = {
   status: true,
   publishedAt: true,
   availability: true,
-  model: { select: { userId: true, status: true, availability: true } },
+  model: { select: { userId: true, status: true, availability: true, poi: true } },
 } satisfies Prisma.ModelVersionSelect;
 
 type VisibilityRow = {
@@ -26,10 +23,10 @@ type VisibilityRow = {
   status: ModelStatus;
   publishedAt: Date | null;
   availability: Availability;
-  model: { userId: number; status: ModelStatus; availability: Availability };
+  model: { userId: number; status: ModelStatus; availability: Availability; poi: boolean | null };
 };
 
-type Viewer = { id: number; isModerator?: boolean | null };
+type Viewer = { id: number; isModerator?: boolean | null } | null | undefined;
 
 const isPrivate = (version: VisibilityRow) =>
   version.model.availability === Availability.Private ||
@@ -59,13 +56,15 @@ export async function filterViewableModelVersions<T extends VisibilityRow>(
       })
     )
       continue;
-    if (viewer.isModerator || viewer.id === ownerId || !isPrivate(version)) viewable.add(version);
-    else needGrant.push(version);
+    if (!canViewPoiModel(version.model.poi, ownerId, viewer)) continue;
+    if (viewer?.isModerator || viewer?.id === ownerId || !isPrivate(version)) viewable.add(version);
+    // A signed-out viewer holds no grants.
+    else if (viewer) needGrant.push(version);
   }
 
   // Only private rows reach this: hasEntityAccess also refuses paid-gated versions to
   // non-purchasers, which is a usage gate, not a visibility one.
-  if (needGrant.length && checkGrants) {
+  if (viewer && needGrant.length && checkGrants) {
     const access = await hasEntityAccess({
       entityType: 'ModelVersion',
       entityIds: needGrant.map((v) => v.id),
@@ -83,17 +82,14 @@ export async function canViewModelVersion(version: VisibilityRow, viewer: Viewer
   return (await filterViewableModelVersions([version], viewer)).length > 0;
 }
 
-/** The ids in `ids` the viewer may see (`canViewModelVersionRow`); a missing id is left out. */
-export const getViewableModelVersionIds = async (
-  ids: number[],
-  viewer: Parameters<typeof canViewModelVersionRow>[1]
-) => {
+/** The ids in `ids` the viewer may see (`filterViewableModelVersions`); a missing id is left out. */
+export const getViewableModelVersionIds = async (ids: number[], viewer: Viewer) => {
   if (ids.length === 0) return new Set<number>();
   // One id reads as its owner's own read does, so a version just saved is not missing.
   const db = ids.length === 1 ? await getDbWithoutLag('modelVersion', ids[0]) : dbRead;
   const rows = await db.modelVersion.findMany({
     where: { id: { in: ids } },
-    select: { id: true, ...modelVersionViewSelect },
+    select: modelVersionVisibilitySelect,
   });
-  return new Set(rows.filter((row) => canViewModelVersionRow(row, viewer)).map((row) => row.id));
+  return new Set((await filterViewableModelVersions(rows, viewer)).map((row) => row.id));
 };

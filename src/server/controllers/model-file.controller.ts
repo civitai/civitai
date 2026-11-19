@@ -6,9 +6,9 @@ import { dbRead } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
 import {
-  canViewModelVersionRow,
-  modelVersionViewSelect,
-} from '~/server/common/model-version-visibility';
+  canViewModelVersion,
+  modelVersionVisibilitySelect,
+} from '~/server/services/model-version-visibility.service';
 import { canViewOwnerOnly } from '~/server/utils/poi-model-visibility';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
@@ -202,17 +202,15 @@ export const getFilesByVersionIdHandler = async ({
   ctx: Context;
 }) => {
   try {
-    // The cached list is every file of the version, for every viewer. A version the viewer may not
-    // see returns undefined, as a missing one does, before the cache read; only the per-file
-    // filter below runs on the cached list.
+    // The cached list is shared by every viewer, so the version is checked before it is read.
     const version = await dbRead.modelVersion.findUnique({
       where: { id: input.id },
-      select: modelVersionViewSelect,
+      select: modelVersionVisibilitySelect,
     });
     if (!version) return undefined;
     const viewer = ownerOrModeratorViewer(ctx);
     const ownerId = version.model.userId;
-    if (!canViewModelVersionRow(version, viewer)) return undefined;
+    if (!(await canViewModelVersion(version, viewer))) return undefined;
 
     const data = (await getFilesForModelVersionCache([input.id]))[input.id];
     if (!data || canViewOwnerOnly(ownerId, viewer)) return data;
