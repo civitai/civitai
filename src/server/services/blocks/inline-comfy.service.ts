@@ -833,12 +833,10 @@ export async function assertViewerEntitledToInlineResources(opts: {
     }
   }
 
-  // Private / epoch resources require an active subscription. Ported from the
-  // onsite belt; NOT covered by `getResourceData`.
-  const hasPrivateOrEpoch = resources.some(
-    (r) => r.availability === Availability.Private || !!r.epochDetails
-  );
-  if (hasPrivateOrEpoch && !opts.user.isModerator) {
+  // Private resources require an active subscription; epochs need only ownership. Mirrors
+  // the onsite belt; NOT covered by `getResourceData`.
+  const hasPrivate = resources.some((r) => r.availability === Availability.Private);
+  if (hasPrivate && !opts.user.isModerator) {
     const subscription = await getHighestTierSubscription(opts.user.id);
     if (!subscription) {
       throw new TRPCError({

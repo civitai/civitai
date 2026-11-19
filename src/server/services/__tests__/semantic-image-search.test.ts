@@ -265,6 +265,26 @@ describe('a stale index cannot surface a hidden image', () => {
     expect(items.map((x) => x.id)).toEqual([5, 7]);
   });
 
+  it('leaves the viewer\'s own images out of "more like this" when asked, but still finds the source', async () => {
+    const asked: { ids: number[]; excludedUserIds?: number[] }[] = [];
+    h.fakeGetAllImages = async (args) => {
+      asked.push(args as { ids: number[]; excludedUserIds?: number[] });
+      return visibleOnly(new Set([5, 6, 7]))(args as { ids: number[] });
+    };
+    const { source } = rankedSource([5, 6, 7]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: 6, excludeOwn: true }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    const anchorCheck = asked.find((call) => call.ids.length === 1 && call.ids[0] === 6);
+    const results = asked.find((call) => call.ids.includes(5));
+    expect(anchorCheck).toBeDefined();
+    expect(anchorCheck?.excludedUserIds ?? []).not.toContain(VIEWER.id);
+    expect(results?.excludedUserIds).toContain(VIEWER.id);
+  });
+
   // The image query has no per-viewer hidden-image filter, so this one is the search's own job.
   it('drops images the viewer hid, and those hidden through a tag they still hide', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([108, 109, 110, 111]));
@@ -948,6 +968,49 @@ describe('the query audit and the browsing level', () => {
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ searchPath: 'refused_correction', resultIds: [] }),
+      expect.any(Function)
+    );
+  });
+
+  it('refuses, and records as the own-images path, a verdict that would narrow the own-images search', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery(),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        wordVerdict: 'minor',
+        searchPath: 'refused_own_images',
+        resultIds: [],
+      }),
+      expect.any(Function)
+    );
+  });
+
+  it('records the own-images path for a refused own-images search from an image', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery({ imageId: 101 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ searchPath: 'refused_own_images', resultIds: [] })
+    );
   });
 
   it('audits a correction that changes between hydration rounds of one page', async () => {
@@ -1165,6 +1228,67 @@ describeSemanticAuditContract({
   narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
   refuse: () => h.includesInappropriate.mockReturnValue('poi'),
   ownCache: true,
+});
+
+describe('the showcase picker ranks images tagged with the query first', () => {
+  const TAG = 900;
+  // The model ranks lookalikes (1, 2) above the images carrying the rare tag (7, 3).
+  function taggedIndex() {
+    const calls: Parameters<CandidateSource>[0][] = [];
+    const source: CandidateSource = async (args) => {
+      calls.push(args);
+      const excluded = new Set(args.filter.excludedIds ?? []);
+      const pool = args.filter.tagIds?.includes(TAG)
+        ? [7, 3]
+        : [1, 2, 7, 3, 4].filter((id) => !excluded.has(id));
+      return { ids: pool.slice(args.offset, args.offset + args.limit) };
+    };
+    return { source, calls };
+  }
+  const picker = (source: CandidateSource, tagMatchesFirst: boolean) =>
+    searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ query: 'Tiefling', imageId: undefined, userIds: [VIEWER.id], limit: 25 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+      tagMatchesFirst,
+    });
+
+  beforeEach(() => {
+    h.fakeGetAllImages = visibleOnly(new Set([1, 2, 3, 4, 7]));
+  });
+
+  it('puts the tagged images ahead of the semantic ranking', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: TAG, name: 'tiefling' }]);
+    const { source } = taggedIndex();
+    const { items } = await picker(source, true);
+    expect(items.map((x) => x.id)).toEqual([7, 3, 1, 2, 4]);
+  });
+
+  // Control: the same index without the option is the model's order.
+  it('is the semantic ranking without the option', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: TAG, name: 'tiefling' }]);
+    const { source, calls } = taggedIndex();
+    const { items } = await picker(source, false);
+    expect(items.map((x) => x.id)).toEqual([1, 2, 7, 3, 4]);
+    expect(calls.some((call) => call.filter.tagIds?.includes(TAG))).toBe(false);
+  });
+
+  it('keeps the viewer filter on the tagged pass', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: TAG, name: 'tiefling' }]);
+    const { source, calls } = taggedIndex();
+    await picker(source, true);
+    const tagged = calls.find((call) => call.filter.tagIds?.includes(TAG));
+    expect(tagged?.filter.userIds).toEqual([VIEWER.id]);
+  });
+
+  it('does not order by a tag that cannot be browsed', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: 601, name: 'not browsable' }]);
+    const { source, calls } = taggedIndex();
+    await picker(source, true);
+    expect(calls.some((call) => call.filter.tagIds?.includes(601))).toBe(false);
+  });
 });
 
 describe('search by uploaded image', () => {

@@ -49,7 +49,6 @@ import {
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { queueScanSampleForKnights } from '~/server/services/knights/sources';
-import { isSearchUploadRow } from '~/server/services/search-upload-rows';
 import { classifyImageScanFailure } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import {
@@ -240,7 +239,6 @@ export async function logPerceptualHashMatch({
       type: 'info',
       message: 'Image pHash matched a blocked image',
       imageId,
-      pHash: pHash.toString(),
       source: log.source,
     },
     'webhooks'
@@ -763,13 +761,8 @@ export async function resolveScanOutcome({
     toUpdate.blockedFor = BlockedReason.CSAM;
     toUpdate.nsfwLevel = scanLevel = NsfwLevel.Blocked;
   }
-  // A CSAM block is decided only in a moderator's CSAM review, so its owner gets no rule notice. A
-  // search upload is never shown, so its uploader gets no rule notice either.
-  if (
-    ruleBlocked &&
-    toUpdate.blockedFor !== BlockedReason.CSAM &&
-    !isSearchUploadRow(image.metadata)
-  )
+  // A CSAM block is decided only in a moderator's CSAM review, so its owner gets no rule notice.
+  if (ruleBlocked && toUpdate.blockedFor !== BlockedReason.CSAM)
     await notifyImageAutoBlocked({
       imageId: image.id,
       userId: image.userId,
@@ -1258,13 +1251,7 @@ export async function applyIngestionSideEffects({
         });
       }
 
-      if (
-        !reviewKey &&
-        image.type === 'image' &&
-        image.userId !== FEEDBACK_CAPTURE_OWNER_ID &&
-        // Never served (no post), but it would count toward the Knights intake cap.
-        !isSearchUploadRow(image.metadata)
-      ) {
+      if (!reviewKey && image.type === 'image' && image.userId !== FEEDBACK_CAPTURE_OWNER_ID) {
         if (await isV1KnightsLive())
           await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
         await queueScanSampleForKnights({ imageId: image.id, nsfw: audit.nsfw });

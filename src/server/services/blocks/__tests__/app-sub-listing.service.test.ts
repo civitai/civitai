@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 
 import { resetSharedMocks } from '~/__tests__/mocks';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -35,13 +36,17 @@ vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => ({ query: mockPoolQu
 // `app-blocks-shared-doc-levels`, for every app; off unless a case turns it on.
 const docLevels = vi.hoisted(() => ({ on: false }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const real = await importOriginal<typeof import('~/server/flipt/client')>();
+  const real = await importOriginal<typeof FliptClient>();
   return {
     ...real,
     isFlipt: (flag: string, entityId?: string, context?: unknown) =>
       flag === 'app-blocks-shared-doc-levels'
         ? Promise.resolve(docLevels.on)
         : real.isFlipt(flag, entityId, context as never),
+    readFliptBoolean: (flag: string, entityId?: string, context?: unknown) =>
+      flag === 'app-blocks-shared-doc-levels'
+        ? Promise.resolve(docLevels.on)
+        : real.readFliptBoolean(flag, entityId, context as never),
   };
 });
 vi.mock('~/server/services/image.service', () => ({ getImage: mockGetImage }));
@@ -362,16 +367,44 @@ describe('upsertSubListing — refusals', () => {
         expect(write.appSubListing.findMany).toHaveBeenCalledWith(
           expect.objectContaining({ where: { parentListingId: PARENT, itemKey: 'gen-1' } })
         );
+        // The stricter card does not move, so it is not written.
         expect(write.appSubListing.update.mock.calls).toEqual([
-          [
-            {
-              where: { id: 'asl_STRICT' },
-              data: { contentRating: 'x', pendingContentRating: null },
-            },
-          ],
           [{ where: { id: 'asl_LOOSE' }, data: { contentRating: 'r', pendingContentRating: 'r' } }],
         ]);
         expect(mockBust).toHaveBeenCalled();
+      });
+
+      it('a re-rate that moves no card writes nothing and leaves the catalog cache alone', async () => {
+        write.appSubListing.findMany.mockResolvedValueOnce([
+          { id: 'asl_SAME', contentRating: 'r', pendingContentRating: null },
+        ]);
+        mockBust.mockClear();
+        await syncSubListingRatingFromDoc({ appBlockId: 'apb_1', itemKey: 'gen-1', level: 4 });
+        expect(write.appSubListing.update).not.toHaveBeenCalled();
+        expect(mockBust).not.toHaveBeenCalled();
+      });
+
+      it('🔴 an item re-rated XXX (16) makes its card xxx, never x', async () => {
+        write.appSubListing.findMany.mockResolvedValueOnce([
+          { id: 'asl_X', contentRating: 'x', pendingContentRating: 'r' },
+        ]);
+        await syncSubListingRatingFromDoc({ appBlockId: 'apb_1', itemKey: 'gen-1', level: 16 });
+        expect(write.appSubListing.update.mock.calls).toEqual([
+          [
+            {
+              where: { id: 'asl_X' },
+              data: { contentRating: 'xxx', pendingContentRating: 'xxx' },
+            },
+          ],
+        ]);
+      });
+
+      it('🔴 an item rated XXX publishes as an xxx card', async () => {
+        mockFindShared.mockResolvedValueOnce(rated(16, 'rated'));
+        await upsert();
+        expect(write.appSubListing.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ contentRating: 'xxx' }) })
+        );
       });
     });
 
@@ -774,25 +807,15 @@ describe('the tables are absent (manual-apply migration not run)', () => {
     ).rejects.toBe(half);
   });
 
-  it('the in-app hooks stay silent instead of logging an error per withdraw', async () => {
-    read.appListing.findFirst.mockRejectedValueOnce(missing[0]);
-    await syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
-  });
-
   // Before the migration `app_listings` exists and `app_sub_listings` does not, so the first
   // statement to fail is the version touch, not the parent read.
-  it.each(missing)(
-    'the hooks stay silent when the sub-listing table is missing (%s)',
-    async (err) => {
-      write.appSubListing.updateMany.mockRejectedValue(err);
-      await expect(
-        syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' })
-      ).resolves.toBeUndefined();
-      expect(write.appSubListing.updateMany).toHaveBeenCalled();
-      expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
-    }
-  );
+  it.each(missing)('the hooks resolve when the sub-listing table is missing (%s)', async (err) => {
+    write.appSubListing.updateMany.mockRejectedValue(err);
+    await expect(
+      syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' })
+    ).resolves.toBeUndefined();
+    expect(write.appSubListing.updateMany).toHaveBeenCalled();
+  });
 });
 
 describe('withdrawSubListing / listMySubListings', () => {

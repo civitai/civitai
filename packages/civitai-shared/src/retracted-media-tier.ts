@@ -1,4 +1,5 @@
 import { heldImageSql, heldUserSql, reviewSuspectImageSql } from './held-media';
+import { BAN_REASONS_ALWAYS_REMOVING_MEDIA, heldUrlSql, MINOR_UNPUBLISH_REASONS } from './held-url';
 import { blockedForSignal, type BlockedForPatterns } from './review-batch';
 
 /**
@@ -8,16 +9,33 @@ import { blockedForSignal, type BlockedForPatterns } from './review-batch';
  *   a block with no reason or a reason `blockedForSignal` reads as a signal, or an owner named on a
  *   report or held.
  * Held media (`heldImageSql`) and an image under an evidence hold are never served here; the
- * held-media route serves the first.
+ * held-media route serves the first. With `cdnLeg`, a scanned image is also eligible while the image
+ * CDN has retracted its url, unless the url is held (`heldUrlSql`) or another image row, a moderator
+ * delete or a shop takedown shares it.
  */
 export type RetractedTier = 'plain' | 'suspect';
 
-/** Whether this route may serve the "Image" row aliased `image` at all, to anyone: it is blocked,
- *  not held media, and not under an evidence hold. */
-export function retractedImageWhereSql(image: string): string {
+/** Whether this route may serve the "Image" row aliased `image` at all, to anyone: it is blocked
+ *  (or, with `cdnLeg`, scanned with its url retracted and not held), not held media, and not under
+ *  an evidence hold. */
+export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+  const eligible = cdnLeg
+    ? `(${image}.ingestion = 'Blocked' OR (
+      ${image}.ingestion = 'Scanned'
+      AND EXISTS (
+        SELECT 1 FROM "ImageCdnAccess" ca WHERE ca.url = ${image}."url" AND ca.state = 'Retracted'
+      )
+      AND NOT ${heldUrlSql(`${image}."url"`)}
+      -- Bytes are per url, the tier per row: another row's signal would not reach this one, so the
+      -- url must be this row's alone, with no deleted or taken-down copy behind it either.
+      AND NOT EXISTS (SELECT 1 FROM "Image" so WHERE so.url = ${image}."url" AND so.id <> ${image}.id)
+      AND NOT EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" sd WHERE sd.url = ${image}."url")
+      AND NOT EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" st WHERE st.url = ${image}."url")
+    ))`
+    : `${image}.ingestion = 'Blocked'`;
   return `(
-    ${image}.ingestion = 'Blocked'
+    ${eligible}
     -- NULL for an image with no review flag or block reason, so COALESCE before the NOT.
     AND NOT COALESCE(${heldImageSql(image)}, false)
     AND NOT EXISTS (SELECT 1 FROM "EvidenceHoldImage" rh WHERE rh."imageId" = ${image}.id)
@@ -28,10 +46,31 @@ export function retractedImageWhereSql(image: string): string {
  *  Postgres. `blockedFor` text is read by `retractedTier` against the private patterns. */
 export function retractedSuspectSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+  const minorReasons = MINOR_UNPUBLISH_REASONS.map((r) => `'${r}'`).join(', ');
+  const minorBans = BAN_REASONS_ALWAYS_REMOVING_MEDIA.map((r) => `'${r}'`).join(', ');
   return `COALESCE((
-    ${image}."blockedFor" IS NULL
+    -- A block with no reason. An image that is not blocked has no reason by construction.
+    (${image}."blockedFor" IS NULL AND ${image}.ingestion = 'Blocked')
     OR ${reviewSuspectImageSql(image)}
     OR ${heldUserSql(`${image}."userId"`)}
+    -- A scanned image is here only because its url was retracted: a minor reason on its post or
+    -- model, or a minor-safety ban of its owner, is a signal that its own flags may not carry.
+    OR (${image}.ingestion = 'Scanned' AND (
+      EXISTS (
+        SELECT 1 FROM "Post" sp
+        LEFT JOIN "ModelVersion" smv ON smv.id = sp."modelVersionId"
+        LEFT JOIN "Model" smo ON smo.id = smv."modelId"
+        WHERE sp.id = ${image}."postId" AND (
+          sp.metadata ->> 'unpublishedReason' IN (${minorReasons})
+          OR smv.meta ->> 'unpublishedReason' IN (${minorReasons})
+          OR smo.meta ->> 'unpublishedReason' IN (${minorReasons})
+        )
+      )
+      OR EXISTS (
+        SELECT 1 FROM "User" su
+        WHERE su.id = ${image}."userId" AND su.meta -> 'banDetails' ->> 'reasonCode' IN (${minorBans})
+      )
+    ))
   ), false)`;
 }
 

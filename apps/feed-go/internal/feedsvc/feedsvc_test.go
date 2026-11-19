@@ -65,6 +65,19 @@ func TestMapQueries(t *testing.T) {
 			want: "levels=1%2C2&tags=77%2C77%2C5&excludedTags=9901&userIds=1001&excludePoi=1&viewerId=1001&sort=newest&limit=50",
 		},
 		{
+			// `tools` after the POI exclusion and before the post ids; the positive ids only, in order,
+			// repeats kept (feed-shadow's `ints`, no dedupe).
+			name: "tools on a post completion",
+			q: Query{BrowsingLevel: 1, ExcludedTagIDs: []int{9901}, ModelVersionID: 9, DisablePoi: true, ViewerID: 1003,
+				PostIDs: []int{7001}, Tools: []int{42, 0, -3, 42, 41}, Sort: "Most Reactions", Limit: 2},
+			want: "levels=1&excludedTags=9901&versionIds=9&excludePoi=1&viewerId=1003&tools=42%2C42%2C41&postIds=7001&sort=reactions&limit=2",
+		},
+		{
+			name: "tools of only non-positive ids send no tools",
+			q:    Query{BrowsingLevel: 1, ModelVersionID: 9, Tools: []int{0, -1}, Sort: "Newest", Limit: 10},
+			want: "levels=1&versionIds=9&sort=newest&limit=10",
+		},
+		{
 			name: "the Blocked bit is a feed level",
 			q:    Query{BrowsingLevel: 32 | 4, ModelVersionID: 2, Sort: "Oldest", Limit: 10, CursorText: "0"},
 			want: "levels=4%2C32&versionIds=2&sort=oldest&limit=10",

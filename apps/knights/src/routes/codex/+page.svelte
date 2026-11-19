@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
+  import QuestionRules from '$lib/QuestionRules.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
   import RestartCareerDialog from '$lib/RestartCareerDialog.svelte';
   import { count, formatDate } from '$lib/format';
@@ -273,7 +274,7 @@
 
   <section id="fervor" aria-labelledby="fervor-title">
     <p class="kicker">05 · Fervor &amp; leaderboard</p>
-    <h2 id="fervor-title" class="with-icon"><Icon name="sparkles" size={26} />Fervor: your week in the Order</h2>
+    <h2 id="fervor-title" class="with-icon"><Icon name="sparkles" size={26} />Fervor: your last {facts.fervor.windowDays} days in the Order</h2>
     <div class="formula">
       <p class="small-caps">Fervor =</p>
       <p class="expr">correct judgments × {facts.fervor.scale} × accuracy²</p>
@@ -315,6 +316,7 @@
       <RatingGuide guide={facts.ratingGuide.slice(0, half)} />
       <RatingGuide guide={facts.ratingGuide.slice(half)} />
     </div>
+    <div class="question-rules"><QuestionRules /></div>
   </section>
 
   {#if data.swornIn}
@@ -526,6 +528,9 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 2.5rem;
+  }
+  .question-rules {
+    margin-top: 2.5rem;
   }
 
   .rule {

@@ -115,6 +115,12 @@ const batchOf = (
 const existingPosts = (dates: Date[]) =>
   dbMock.dbWrite.$queryRaw.mockResolvedValue(dates.map((publishedAt) => ({ publishedAt })));
 
+/** The ids each `deleteImageRows` / `deletePostRows` call on `table` was given. */
+const deletesFrom = (table: 'Image' | 'Post') =>
+  dbMock.dbWrite.$queryRaw.mock.calls
+    .filter(([strings]) => (strings as string[]).join('?').includes(`DELETE FROM "${table}"`))
+    .map(([, ids]) => ids);
+
 const nothingWritten = () => {
   expect(createPost).not.toHaveBeenCalled();
   expect(addImage).not.toHaveBeenCalled();
@@ -276,8 +282,8 @@ describe('scheduleBatch', () => {
 
     await scheduleBatch({ input: batchOf([at(2)]), ctx: ctxFor() });
 
-    expect(dbMock.dbWrite.image.deleteMany).toHaveBeenCalledWith({ where: { postId: 100 } });
-    expect(dbMock.dbWrite.post.delete).toHaveBeenCalledWith({ where: { id: 100 } });
+    expect(deletesFrom('Image')).toEqual([[1000]]);
+    expect(deletesFrom('Post')).toEqual([[100]]);
     expect(removePost).not.toHaveBeenCalled();
   });
 
@@ -293,8 +299,10 @@ describe('scheduleBatch', () => {
     expect(announceReviewsInBackground).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ reviewIds: [77] })
     );
-    const capture = dbMock.dbWrite.$queryRaw.mock.invocationCallOrder.at(-1)!;
-    expect(capture).toBeLessThan(dbMock.dbWrite.post.delete.mock.invocationCallOrder[0]);
+    const { calls, invocationCallOrder } = dbMock.dbWrite.$queryRaw.mock;
+    const order = (match: string) =>
+      invocationCallOrder[calls.findIndex(([s]) => (s as string[]).join('?').includes(match))];
+    expect(order('"releasedAt" IS NULL')).toBeLessThan(order('DELETE FROM "Post"'));
   });
 
   it('masks a server-side failure message', async () => {
@@ -441,7 +449,7 @@ describe('scheduleBatch', () => {
       message: 'Images can have at most 3 checkpoints.',
     });
     expect(updatePost).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.post.delete).toHaveBeenCalledWith({ where: { id: 100 } });
+    expect(deletesFrom('Post')).toEqual([[100]]);
   });
 
   it('deletes the post that failed mid-chunk, keeps the ones before it and stops', async () => {
@@ -462,8 +470,10 @@ describe('scheduleBatch', () => {
     });
     expect(createPost).toHaveBeenCalledTimes(2);
     expect(removePost).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.image.deleteMany).toHaveBeenCalledWith({ where: { postId: 101 } });
-    expect(dbMock.dbWrite.post.delete).toHaveBeenCalledWith({ where: { id: 101 } });
+    expect(dbMock.dbWrite.image.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { postId: 101 } })
+    );
+    expect(deletesFrom('Post')).toEqual([[101]]);
     expect(updatePost).toHaveBeenCalledTimes(1);
     expect(updatePost.mock.calls[0][0].input.id).toBe(100);
   });
@@ -485,12 +495,15 @@ describe('scheduleBatch', () => {
 
   it('still reports the failure when the compensating delete throws', async () => {
     updatePost.mockRejectedValueOnce(new TRPCError({ code: 'BAD_REQUEST', message: 'nope' }));
-    dbMock.dbWrite.post.delete.mockRejectedValueOnce(new Error('delete failed'));
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: string[]) => {
+      if (strings.join('?').includes('DELETE FROM "Post"')) throw new Error('delete failed');
+      return [];
+    }) as never);
 
     const result = await scheduleBatch({ input: batchOf([at(2)]), ctx: ctxFor() });
 
     expect(result).toEqual({ created: [], failedAt: 0, message: 'nope' });
-    expect(dbMock.dbWrite.post.delete).toHaveBeenCalledWith({ where: { id: 100 } });
+    expect(deletesFrom('Post')).toEqual([[100]]);
   });
 });
 

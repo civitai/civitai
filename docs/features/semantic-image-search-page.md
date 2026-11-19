@@ -112,28 +112,25 @@ index to the viewer's follows, and bookmarks, hidden and collection to their art
 ## Search by uploaded image
 
 `/search/by-image` (and a file dropped on the Images search bar) finds images like one the viewer
-uploads. Signed in only, session only (no API keys), behind `imageSearchUpload` (Flipt
-`image-search-upload`, mods by default) on top of `moreLikeThis`. Nothing about an upload is put
-in the URL, so a search by upload cannot be shared.
+uploads. Signed in only, session only (no API keys), behind `imageSearchUpload` (dark: Flipt
+`image-search-upload` is its only switch) on top of `moreLikeThis`. Nothing about an upload is
+put in the URL, so a search by upload cannot be shared.
 
-1. The browser uploads the file as a consumer blob; `imageSearchUpload.prepare` copies it into a
-   private, unposted Image row marked with the `searchUploadAppId` metadata key. The normal
-   ingestion scan runs on it, on the imageScanning lane.
+1. The browser uploads the file as a consumer blob. `imageSearchUpload.prepare` submits an
+   orchestrator workflow with one `imageScanning` step on the blob and keeps the upload as a cache
+   record for an hour: owner, blob id and workflow id, never the blob's URL. Nothing is written to
+   the database; the orchestrator expires the blob, as it does for generator uploads.
 2. `imageSearchUpload.status` (polled) reports `pending`, `ready` or `refused`. The scan gate
-   (`search-upload-gate.ts`) passes only a row that meets the conditions an indexed image must meet
-   (less the post), whose blob the orchestrator did not refuse, and, for non-moderators, that passes
-   a further scan-gate check whose setting is private config. A refusal says only "This image can't
-   be used for search."; the uploader gets no notification and the row is in no review queue other
-   than the minor and CSAM queues, which treat it as they would a posted image.
-3. `imageSearchUpload.search` re-checks the gate on every page, refuses an upload above the
-   viewer's levels, caps results at the upload's level like "More like this", and asks the search
-   service's `POST /v1/similar` with the image's URL. Hydration is the normal fetch path.
-4. `search-upload-sweep` deletes an upload an hour after it was written once its scan passed or
-   failed (a day, if the scan never answered), flag on or off. It never takes a held or flagged row,
-   and it skips its run until the `Image_searchUpload_idx` partial index exists.
+   (`search-upload-gate.ts`) reads the workflow and the blob's own verdict. It refuses a scan that
+   failed, or has not answered within ten minutes, and any block or age flag, for moderators too.
+   For non-moderators it applies a further check whose setting is private config. A refusal says
+   only "This image can't be used for search." and is logged with ids only.
+3. `imageSearchUpload.search` takes the upload id and the blob URL, re-checks the gate on every
+   page, refuses an upload above the viewer's levels, caps results at the upload's level like "More
+   like this", and asks the search service's `POST /v1/similar` with the blob URL. Hydration is
+   the normal fetch path.
 
-Limits: per user 10 uploads per 10 minutes and 50 per day, one unscanned upload at a time, and a
-site-wide daily cap that refuses when its counter cannot be read.
+Limits: per user 10 uploads per 10 minutes and 50 per day (the router's limits, which moderators skip), plus 100 uploads and 1,000 search pages per day that count moderators too and refuse when their counter cannot be read; one unscanned upload at a time; and a site-wide daily upload cap that also refuses when its counter cannot be read.
 
 ## Feedback and logging
 

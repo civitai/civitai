@@ -377,6 +377,7 @@ import {
 // undiagnosable — it is not a cosmetic emit.
 import {
   recordBlockPostSubjectRefusal,
+  recordBlockUnlockChargedNotReleased,
   recordStepPriceCheck,
   type AppBlockPostSurface,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -15558,6 +15559,7 @@ async function outputUnlockDeps(opts: {
       }),
     acquireLock: () => acquireOutputUnlockLock(workflowId),
     warnChargedNotReleased: (entry) => {
+      recordBlockUnlockChargedNotReleased(entry.readBackFailed);
       logToAxiom({
         type: 'warning',
         name: 'app-block-unlock-charged-not-released',

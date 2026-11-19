@@ -13,15 +13,12 @@ import { FEEDBACK_CAPTURE_METADATA_KEY } from '@civitai/shared/feedback-capture'
  *  - `blockSharedUploadAppId`: a viewer-picked upload the app asked to SHARE with its other viewers
  *    (`persistBlockUploadImage` via `blockImageUpload.persist { share: true }`). Read by the
  *    cross-user gated read only; not postable.
- *  - `searchUploadAppId`: an image the viewer uploaded to search by (`prepareSearchUpload`).
- *    Private, never posted or shared.
  */
 export const BLOCK_PROVENANCE_METADATA_KEYS = [
   'blockPublishedAppId',
   'blockUploadedAppId',
   'blockGenerationSourceAppId',
   'blockSharedUploadAppId',
-  'searchUploadAppId',
 ] as const;
 
 export type BlockProvenanceMetadataKey = (typeof BLOCK_PROVENANCE_METADATA_KEYS)[number];
@@ -99,18 +96,6 @@ export const BLOCK_GENERATION_SOURCE_APP_ID_META_KEY =
  */
 export const BLOCK_GENERATION_SOURCE_REF_META_KEY = 'blockGenerationSourceRef' as const;
 
-/**
- * Marks a search-by-upload row (`imageSearchUpload` procedures). Not an App Blocks app: the value is
- * always {@link SEARCH_UPLOAD_APP_ID}, because `createImage` needs an appId with a provenance key.
- * Its readers are the owner-bound upload status and search, the scan's face write and the sweep.
- */
-export const SEARCH_UPLOAD_APP_ID_META_KEY =
-  'searchUploadAppId' as const satisfies BlockProvenanceMetadataKey;
-export const SEARCH_UPLOAD_APP_ID = 'search-upload';
-
-/** The face detections the scan wrote on a search-upload row, before its verdict. */
-export const SEARCH_UPLOAD_FACE_SCAN_META_KEY = 'searchUploadFaceScan';
-
 /** The provenance keys a post-from-app `published` source accepts. */
 export const BLOCK_POSTABLE_APP_ID_META_KEYS = [
   BLOCK_PUBLISHED_APP_ID_META_KEY,
@@ -124,12 +109,10 @@ export const JUDGE_RATING_METADATA_KEY = 'judgeRating';
  * Other server-owned `Image.metadata` keys, dropped from client input the same way:
  *  - `feedbackCapture`: the report a page capture belongs to (`createImage`'s `feedbackCapture`).
  *  - `judgeRating`: see `JUDGE_RATING_METADATA_KEY`.
- *  - `searchUploadFaceScan`: see `SEARCH_UPLOAD_FACE_SCAN_META_KEY`.
  */
 export const OTHER_SERVER_OWNED_IMAGE_METADATA_KEYS = [
   FEEDBACK_CAPTURE_METADATA_KEY,
   JUDGE_RATING_METADATA_KEY,
-  SEARCH_UPLOAD_FACE_SCAN_META_KEY,
 ] as const;
 
 const isServerOwnedMetadataKey = (key: string) =>

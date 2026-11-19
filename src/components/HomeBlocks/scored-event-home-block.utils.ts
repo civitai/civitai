@@ -6,6 +6,8 @@ import type { EventPromo } from '~/shared/constants/nav-banner.constants';
 // and the block stay independent. The first close collapses the block to a bar; the bar's close hides it.
 export const eventHomeBlockCollapseId = (event: string) => `home:event:${event}:collapsed`;
 export const eventHomeBlockDismissId = (event: string) => `home:event:${event}`;
+/** Key for the Flag Race row's dismiss and collapse ids, distinct from the event's own so the two hide independently. */
+export const flagRaceHomeKey = (event: string) => `${event}:flags`;
 
 export type EventHomeBlockDisplay = 'full' | 'collapsed' | 'hidden';
 export function eventHomeBlockDisplay(event: string, dismissed: string[]): EventHomeBlockDisplay {

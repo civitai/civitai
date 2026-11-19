@@ -49,4 +49,4 @@ CREATE TABLE IF NOT EXISTS "UserNotificationDigest" (
 --
 --   SELECT count(*), max("lastSentAt") FROM "UserNotificationDigest";
 --
--- grows by `emailed` + `skipped.first-pass` rows (or moves their `lastSentAt`).
+-- grows by `skipped.first-pass` rows; `emailed` users move their existing row's `lastSentAt` instead.

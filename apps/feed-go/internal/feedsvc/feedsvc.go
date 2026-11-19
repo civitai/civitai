@@ -90,6 +90,8 @@ type Query struct {
 	// `generation`); Pending is `pending: true` (UNSUPPORTED_FLAGS, after `requiringMeta`).
 	HasPrioritizedUserIDs bool
 	Pending               bool
+	// Tools is the input's `tools` as sent; the positive ids are sent, in order and with repeats.
+	Tools []int
 }
 
 // Refusal is why a Query cannot be sent to the feed. Rejected refusals are answered by Node with a
@@ -324,6 +326,10 @@ func Map(q Query) (string, *Refusal) {
 		if q.ViewerID != 0 {
 			p.set("viewerId", strconv.Itoa(q.ViewerID))
 		}
+	}
+	// `tools` after the POI exclusion (and the unported baseModels) and before the post ids.
+	if tools := positive(q.Tools); len(tools) > 0 {
+		p.set("tools", join(tools))
 	}
 	if len(postIDs) > 0 {
 		p.set("postIds", join(uniq(postIDs)))

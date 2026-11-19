@@ -3,6 +3,7 @@ import { withAxiom } from '@civitai/next-axiom';
 import bundlAnalyzer from '@next/bundle-analyzer';
 import { createRequire } from 'module';
 import { STATIC_ASSET_CACHE_RULES } from './src/shared/constants/static-asset-cache-rules.mjs';
+import { feedGoRewrites } from './src/shared/constants/feed-go-rewrites.mjs';
 const require = createRequire(import.meta.url);
 const packageJson = require('./package.json');
 
@@ -383,12 +384,13 @@ export default defineNextConfig(
     // path; see `feedGoTransport`).
     // One exact source per procedure in `GO_TRANSPORT_PROCEDURES`, never a wildcard: a wildcard would
     // make `/api/trpc-go/*` an alias of the whole tRPC API. src/utils/__tests__/trpc-go-transport.test.ts
-    // pins that this list and that set agree.
+    // pins that this list and that set agree. In local dev `pnpm dev` (scripts/dev-feed-go) sets
+    // FEED_GO_LOCAL_URL and these go to a local feed-go instead (see feed-go-rewrites.mjs).
     rewrites: async () =>
-      ['image.getImagesAsPostsInfinite', 'model.getAll'].map((procedure) => ({
-        source: `/api/trpc-go/${procedure}`,
-        destination: `/api/trpc/${procedure}`,
-      })),
+      feedGoRewrites({
+        localUrl: process.env.FEED_GO_LOCAL_URL,
+        nodeEnv: process.env.NODE_ENV,
+      }),
     redirects: async () => {
       // Note: the .red-host support-portal bounce is implemented as a
       // Cloudflare Redirect Rule on the civitai.red zone. Config lives at

@@ -3,7 +3,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import {
+  createLuaRedis,
+  hashTicketFrom,
+  type LuaRedis,
+} from '~/server/utils/__tests__/redis-lua-harness';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { eventPointKeys, eventSeasonKeys } from '~/server/events/points/keys';
 import { turfConfigKey } from '~/server/events/turf/config';
@@ -117,25 +121,26 @@ beforeEach(async () => {
   }
   redisMock.sysRedis.get.mockImplementation((async (key: string) =>
     key === turfConfigKey('e') ? override : null) as never);
-  redisMock.sysRedis.hmGet.mockImplementation((async (key: string, fields: string[]) =>
-    key === teamBase
-      ? fields.map(() => '1000')
-      : fields.map((field) => redis.hash(key)?.[field] ?? null)) as never);
-  redisMock.sysRedis.smIsMember.mockImplementation((async (key: string, members: string[]) => {
+  for (const client of [redisMock.redis, redisMock.sysRedis])
+    client.hmGet.mockImplementation((async (key: string, fields: string[]) =>
+      key === teamBase
+        ? fields.map(() => '1000')
+        : fields.map((field) => redis.hash(key)?.[field] ?? null)) as never);
+  redisMock.redis.smIsMember.mockImplementation((async (key: string, members: string[]) => {
     const set = new Set(redis.set(key) ?? []);
     return members.map((m) => set.has(m));
   }) as never);
-  redisMock.sysRedis.sMembers.mockImplementation(
+  redisMock.redis.sMembers.mockImplementation(
     (async (key: string) => redis.set(key) ?? []) as never
   );
-  redisMock.sysRedis.zRange.mockImplementation((async (key: string) =>
+  redisMock.redis.zRange.mockImplementation((async (key: string) =>
     Object.keys(redis.zset(key) ?? {})) as never);
-  redisMock.sysRedis.eval.mockImplementation(redis.eval as never);
-  redisMock.sysRedis.incr.mockImplementation((async () => (clock += 1)) as never);
-  redisMock.sysRedis.hGetAll.mockImplementation(
+  redisMock.redis.eval.mockImplementation(redis.eval as never);
+  redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(redis, () => (clock += 1)) as never);
+  redisMock.redis.hGetAll.mockImplementation(
     (async (key: string) => redis.hash(key) ?? {}) as never
   );
-  redisMock.sysRedis.xAdd.mockResolvedValue('0-1' as never);
+  redisMock.redis.xAdd.mockResolvedValue('0-1' as never);
 });
 
 const newImage = async () => {
@@ -245,8 +250,11 @@ describe('the turf write keeps the feed indexes', () => {
   it('a stale write changes no index', async () => {
     const image = await imageWith(1, 0);
     await sync(image);
-    // A later ticket already landed for the image.
-    redis.setHash(keys.stamp, { [`Image:${image}`]: String(Number.MAX_SAFE_INTEGER) });
+    // A later ticket already landed for the image: the counter and the image's stamp are past the
+    // ticket this sync took before it.
+    const newer = String(clock + 1_000_000);
+    redis.setHash(keys.stamp, { [`Image:${image}`]: newer, '#ticket': newer });
+    redisMock.redis.hIncrBy.mockResolvedValueOnce((clock += 1) as never);
     await sticker(image, 2);
     await sync(image);
     expect(total()).toEqual({ [image]: turfRankScore(1, image) });
@@ -313,7 +321,7 @@ describe('reading the ranks', () => {
 describe("reading the viewer's own hats", () => {
   const VIEWER = 1;
   beforeEach(() => {
-    redisMock.sysRedis.zmScore.mockImplementation((async (key: string, members: string[]) =>
+    redisMock.redis.zmScore.mockImplementation((async (key: string, members: string[]) =>
       members.map((m) => redis.zset(key)?.[m] ?? null)) as never);
   });
   const readMine = async (limit: number, sort?: 'most' | 'fewest', teams?: string[]) => {
@@ -470,7 +478,7 @@ describe('the Show filters', () => {
     const turfed = await imageWith(1, 0);
     await sync(turfed);
     const e = await event();
-    redisMock.sysRedis.smIsMember.mockRejectedValueOnce(new Error('redis down'));
+    redisMock.redis.smIsMember.mockRejectedValueOnce(new Error('redis down'));
     expect([...(await turfHiddenIds(e, [turfed], { turf: true, worn: true }))]).toEqual([]);
   });
 });

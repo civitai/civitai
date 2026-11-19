@@ -169,6 +169,8 @@ function readGame(value: unknown): KnightsGameSettings | undefined {
 export const KNIGHTS_SOURCES_DEFAULT_RATES = { sfwRate: 1, nsfwRate: 0.3 } as const;
 
 export const KNIGHTS_SOURCES_DEFAULT_MAX_OPEN = 5000;
+/** The highest open-item cap the moderator Config page accepts. */
+export const KNIGHTS_SOURCES_MAX_OPEN_LIMIT = 1_000_000;
 
 export const knightsSourcesMaxOpen = (config: KnightsSourcesConfig): number =>
   config.maxOpen ?? KNIGHTS_SOURCES_DEFAULT_MAX_OPEN;

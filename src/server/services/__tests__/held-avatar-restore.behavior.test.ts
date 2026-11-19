@@ -13,6 +13,8 @@ const db = {
     const sql = Prisma.sql(strings, ...(values as never[]));
     return pg.query(sql.text, sql.values as unknown[]).then((r) => r.rows);
   },
+  $queryRawUnsafe: (text: string, ...values: unknown[]) =>
+    pg.query(text, values).then((r) => r.rows),
 } as never;
 
 const marker = (pictureId: unknown) => JSON.stringify({ heldImageCleared: { pictureId } });
@@ -127,5 +129,66 @@ describe('a cleared User.image after its hold lifts', () => {
     expect((await user(5)).image).toBeNull();
     // The user moved on to another picture of their own: nothing restored, marker dropped.
     expect(await user(6)).toEqual({ image: null, meta: {} });
+  });
+});
+
+describe('a User.image naming a blocked profile picture', () => {
+  it('is cleared and marked for each block marker, and nothing else is', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevel", "blockedFor") VALUES
+        (1, 'key-1', 1, 'Blocked', 1, NULL),
+        (2, 'key-2', 2, 'Scanned', 32, NULL),
+        (3, 'key-3', 3, 'Rescan', 1, 'tos'),
+        (4, 'key-4', 4, 'Blocked', 1, NULL),
+        (5, 'key-5', 5, 'Scanned', 1, NULL),
+        (6, 'key-6', 6, 'Blocked', 1, NULL),
+        (7, '', 7, 'Blocked', 1, NULL);
+      INSERT INTO "User" VALUES
+        (1, 1, 'https://cdn.example/KEY-1/width=96', '{"keep": true}'),
+        (2, 2, 'key%2d2', NULL),
+        (3, 3, 'key-3', '{}'),
+        (4, 4, 'legacy-other', '{}'),
+        (5, 5, 'key-5', '{}'),
+        (6, 6, 'key-6', '{}'),
+        (7, 7, 'any-value', '{}');
+    `);
+    expect((await clearHeldUserImages(db, [1, 2, 3, 4, 5, 7])).sort()).toEqual([1, 2, 3, 4, 7]);
+    expect(await user(1)).toEqual({
+      image: null,
+      meta: { keep: true, heldImageCleared: { pictureId: 1 } },
+    });
+    expect(await user(2)).toEqual({ image: null, meta: { heldImageCleared: { pictureId: 2 } } });
+    expect(await user(3)).toEqual({ image: null, meta: { heldImageCleared: { pictureId: 3 } } });
+    // A value naming another key, an unblocked picture, and a user not passed are kept.
+    expect(await user(4)).toEqual({ image: 'legacy-other', meta: {} });
+    expect(await user(5)).toEqual({ image: 'key-5', meta: {} });
+    expect(await user(6)).toEqual({ image: 'key-6', meta: {} });
+    // A picture with an empty url names nothing.
+    expect(await user(7)).toEqual({ image: 'any-value', meta: {} });
+  });
+
+  it('comes back once the block lifts, and not while any marker survives', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor") VALUES (1, 'key-1', 1, 'Blocked', 'tos');
+      INSERT INTO "User" VALUES (1, 1, 'key-1', '{}');
+    `);
+    await clearHeldUserImages(db, [1]);
+    await pg.exec(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 1`);
+    expect(await restoreClearedUserImages(db, [1])).toEqual([]);
+    expect(await user(1)).toEqual({ image: null, meta: { heldImageCleared: { pictureId: 1 } } });
+    await pg.exec(`UPDATE "Image" SET "blockedFor" = NULL WHERE id = 1`);
+    expect(await restoreClearedUserImages(db, [1])).toEqual([1]);
+    expect(await user(1)).toEqual({ image: 'key-1', meta: {} });
+  });
+});
+
+describe("a cleared User.image whose picture is not the user's own", () => {
+  it("is never restored from another user's servable image", async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, "userId") VALUES (1, 'key-other', 2);
+      INSERT INTO "User" VALUES (1, 1, NULL, '${marker(1)}');
+    `);
+    expect(await restoreClearedUserImages(db, [1])).toEqual([]);
+    expect((await user(1)).image).toBeNull();
   });
 });

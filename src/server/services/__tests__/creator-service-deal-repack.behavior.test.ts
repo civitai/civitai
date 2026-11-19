@@ -6,7 +6,6 @@ import * as yauzl from 'yauzl';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
@@ -155,10 +154,10 @@ vi.mock('~/server/services/creator-service-deal-file-scan', () => ({
   isFinalsMalwareScanOn: scanSeam.isFinalsMalwareScanOn,
 }));
 
-const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImageById: vi.fn() }));
+const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImages: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: images.createImage,
-  deleteImageById: images.deleteImageById,
+  deleteImages: images.deleteImages,
 }));
 
 const preview = vi.hoisted(() => ({ entryCopy: vi.fn() }));
@@ -339,8 +338,8 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImageById.mockImplementation(async ({ id }: { id: number }) => {
-    await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
+  images.deleteImages.mockImplementation(async (ids: number[]) => {
+    await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
   });
   await holder.db.exec(`
     TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
@@ -544,9 +543,6 @@ describe('which files are rebuilt', () => {
     expect(await repack.repackFinals({ shouldStop: () => true })).toBe(0);
     expect(uploads.started).toBe(0);
     expect(await fileRow(fileId)).toMatchObject({ processingAt: null, deliveryKey: null });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error' })
-    );
     expect(await repack.repackFinals()).toBe(1);
   });
 

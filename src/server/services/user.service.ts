@@ -76,6 +76,9 @@ import {
 } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { listModelEngagements } from '@civitai/db-queries/model';
+import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
+import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { contestBannedAtSql, contestBannedSql } from '~/server/services/contest-ban';
 import {
@@ -455,8 +458,9 @@ export const getUsers = async ({
 export const getUserById = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>({
   id,
   select,
-}: GetByIdInput & { select: TSelect }) => {
-  return dbRead.user.findUnique({
+  db = dbRead,
+}: GetByIdInput & { select: TSelect; db?: typeof dbRead }) => {
+  return db.user.findUnique({
     where: { id },
     select,
   });
@@ -1993,9 +1997,20 @@ export const removeAllContent = async ({
       afterCommentsV3Deleted(await dbWrite.$transaction((tx) => deleteCommentsV3(tx, batch)));
     }
     await dbWrite.$executeRaw`DELETE FROM "Article" WHERE id IN (${owned('Article')})`;
-    await dbWrite.$executeRaw`DELETE FROM "Post" WHERE id IN (${owned(
-      'Post'
-    )} AND NOT ${postHoldsHeldTextSql(Prisma.raw('o.id'))})`;
+    const content = kyselyOver(dbWrite);
+    const actor: DeleteActor = actorUserId
+      ? { id: actorUserId, isModerator: true }
+      : { system: 'remove-all-content' };
+    const postIds = await dbWrite.$queryRaw<{ id: number }[]>`${owned('Post')}`;
+    await deletePostRows(content, {
+      ids: postIds.map((p) => p.id),
+      actor,
+      where: fromPrismaSql(
+        Prisma.sql`"userId" = ${id} AND ${unlessHeld} AND NOT ${postHoldsHeldTextSql(
+          Prisma.raw('"Post".id')
+        )}`
+      ),
+    });
     const formerOwnerHeld = heldModelIdsSql(
       Prisma.sql`SELECT om.id FROM "Model" om WHERE om."userId" = ${id}`,
       markerView
@@ -2036,15 +2051,23 @@ export const removeAllContent = async ({
     // Rows, storage objects and caches; then any image uploaded since the list was read.
     await deleteImages(
       images.map((i) => i.id),
-      true,
       {
+        actor,
         onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}`,
         moderatorDelete: true,
       }
     );
-    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id IN (
-      ${owned('Image')} AND NOT ${captureImageKeptSql('o')}
-    )`;
+    const lateImageIds = await dbWrite.$queryRaw<{ id: number }[]>`${owned('Image')}`;
+    await deleteImages(
+      lateImageIds.map((i) => i.id),
+      {
+        actor,
+        onlyWhere: Prisma.sql`"userId" = ${id} AND ${unlessHeld} AND NOT ${captureImageKeptSql(
+          '"Image"'
+        )}`,
+        moderatorDelete: true,
+      }
+    );
     await refreshProfilePicturesForUsers([id]);
 
     // A hold that landed mid-wipe stopped the deletes above without an error.
@@ -2447,8 +2470,9 @@ function logProfilePictureRefreshError(error: unknown, meta: Record<string, unkn
 /**
  * Re-reads these users' cached profile pictures after a write changed or removed one, and refreshes
  * their sessions, whose shape carries the picture's url. For a user whose picture is under an
- * owner-hidden hold, a `User.image` naming it is cleared first (`clearHeldUserImages`); once the hold
- * lifts it is put back (`restoreClearedUserImages`). Either way their basic-user cache entry and
+ * owner-hidden hold or carries a block marker, a `User.image` naming it is cleared first
+ * (`clearHeldUserImages`); once the picture is servable again it is put back
+ * (`restoreClearedUserImages`). Either way their basic-user cache entry and
  * search document are refreshed too. The event engine's copy of the
  * picture is busted as well. Never throws: the write it follows has committed, and a moderation
  * action must not fail on a cache refill.

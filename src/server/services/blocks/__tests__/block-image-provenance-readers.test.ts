@@ -48,7 +48,6 @@ const KEY_LITERALS = new Set([
   'blockUploadedAppId',
   'blockGenerationSourceAppId',
   'blockSharedUploadAppId',
-  'searchUploadAppId',
   ...POST_ONLY_LITERALS,
 ]);
 
@@ -85,7 +84,6 @@ const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
   'src/shared/utils/block-provenance-metadata.ts#BLOCK_POSTABLE_APP_ID_META_KEYS': 'declaration',
   'src/shared/utils/block-provenance-metadata.ts#BLOCK_SHARED_UPLOAD_APP_ID_META_KEY':
     'declaration',
-  'src/shared/utils/block-provenance-metadata.ts#SEARCH_UPLOAD_APP_ID_META_KEY': 'declaration',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage': 'writer',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage':
     'writer',

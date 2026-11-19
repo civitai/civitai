@@ -67,6 +67,7 @@ import {
   offersImageSearch,
   resolveSearchTarget,
   feedSearchPathname,
+  pageSearchFor,
   profileFeedSection,
   searchSectionFromPath,
   searchesFeedInPlace,
@@ -87,6 +88,7 @@ import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
 import { usePathname } from 'next/navigation';
+import { PageSearchBar } from '~/components/AutocompleteSearch/PageSearchBar';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import { useBenignPhrases } from '~/hooks/useBenignPhrases';
@@ -150,7 +152,7 @@ const targetData = [
   { value: 'comics', label: 'Comics' },
 ] as const;
 
-const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
+const IndexSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const features = useFeatureFlags();
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>('models');
@@ -274,6 +276,24 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   );
 });
 
+IndexSearch.displayName = 'IndexSearch';
+
+/** The header bar: a plain search of the page on pages that search their own content, else the index search. */
+const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>((props, ref) => {
+  const features = useFeatureFlags();
+  const page = pageSearchFor(features, useRouter().pathname);
+  if (!page) return <IndexSearch {...props} ref={ref} />;
+  return (
+    <PageSearchBar
+      ref={ref}
+      placeholder={page.placeholder}
+      className={props.className}
+      variant={props.variant}
+      onClear={props.onClear}
+      onSubmit={props.onSubmit}
+    />
+  );
+});
 AutocompleteSearchInner.displayName = 'AutocompleteSearchInner';
 
 export const AutocompleteSearch = withSearchBrowsingScope(AutocompleteSearchInner);

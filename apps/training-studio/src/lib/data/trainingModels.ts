@@ -1,3 +1,4 @@
+import { aiToolkitOptionSupport, type AiToolkitOptions } from '@civitai/shared/training-options';
 import type {
   MingAiToolkitTrainingInput,
   MiniMaxH3ImageAiToolkitTrainingInput,
@@ -1795,6 +1796,7 @@ export const versionPriceKey = (cardType: string, versionKey: string): string =>
  *  dataset) is hidden with its reason, and `minSnrGamma` is declared only on the SD-family inputs.
  *  Mirrors the per-model `overrides` in `src/components/Training/Form/TrainingParams.tsx`. */
 export type ExtraParamField =
+  | keyof AiToolkitOptions
   | 'shuffleTokens'
   | 'keepTokens'
   | 'minSnrGamma'
@@ -1802,6 +1804,10 @@ export type ExtraParamField =
   | 'flipAugmentation';
 
 export const EXTRA_PARAM_FIELDS: ExtraParamField[] = [
+  'lrWarmupSteps',
+  'captionDropoutRate',
+  'rankDropout',
+  'trainConv',
   'shuffleTokens',
   'keepTokens',
   'minSnrGamma',
@@ -1849,8 +1855,19 @@ export function extraParamDefaults(
 export function extraParamCapabilities(
   card: ModelCard,
   version: ModelVersionInfo,
-  labelMode: LabelType
+  labelMode: LabelType,
+  {
+    engine = version.engine ?? 'ai-toolkit',
+    lrScheduler = '',
+    steps = 0,
+  }: { engine?: string; lrScheduler?: string; steps?: number } = {}
 ): Record<ExtraParamField, ExtraParamCapability> {
+  const support = aiToolkitOptionSupport({
+    engine,
+    ecosystem: version.ecosystem,
+    lrScheduler,
+    steps,
+  });
   const image = card.media === 'image';
   const tagOnly = {
     supported: labelMode === 'tag',
@@ -1858,6 +1875,25 @@ export function extraParamCapabilities(
   };
   const imageOnly = { supported: image, reason: `Not used when training on ${card.media}.` };
   return {
+    lrWarmupSteps: {
+      supported: support.lrWarmupSteps,
+      reason: 'Warmup is available with constant learning rate only.',
+      bound: { min: 0, max: Math.min(10000, steps), step: 1 },
+    },
+    captionDropoutRate: {
+      supported: support.captionDropoutRate,
+      reason: 'Caption dropout is unavailable for this model.',
+      bound: { min: 0, max: 1, step: 0.01 },
+    },
+    rankDropout: {
+      supported: support.rankDropout,
+      reason: 'Requires AI Toolkit.',
+      bound: { min: 0, max: 0.99, step: 0.01 },
+    },
+    trainConv: {
+      supported: support.trainConv,
+      reason: 'Convolution training is available for SD 1.5 and SDXL-family AI Toolkit runs only.',
+    },
     shuffleTokens: tagOnly,
     keepTokens: { ...tagOnly, bound: { min: 0, max: 3, step: 1 } },
     minSnrGamma: {
@@ -1867,5 +1903,22 @@ export function extraParamCapabilities(
     },
     noiseOffset: { ...imageOnly, bound: { min: 0, max: 1, step: 0.01 } },
     flipAugmentation: imageOnly,
+  };
+}
+
+export function trainingLearningRates(
+  ecosystem: string,
+  optimizer = '',
+  lr?: number,
+  textEncoderLr?: number
+) {
+  const prodigy = isProdigy(optimizer);
+  return {
+    lr: prodigy && lr !== undefined ? 1 : lr,
+    textEncoderLr: teTrainingUnsupportedReason(ecosystem)
+      ? 0
+      : prodigy && textEncoderLr !== undefined && textEncoderLr > 0
+      ? 1
+      : textEncoderLr,
   };
 }

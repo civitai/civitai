@@ -8,7 +8,7 @@ import { CrucibleJudgeNextButton } from '~/components/Crucible/CrucibleJudgeNext
 import { CruciblesInfinite } from '~/components/Crucible/CruciblesInfinite';
 import { UserCrucibleWelcome } from '~/components/Crucible/UserCrucibleWelcome';
 import { FeaturedCrucibleHero } from '~/components/Crucible/FeaturedCrucibleHero';
-import { FeedSearchInput, useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
+import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
 import { SortFilter } from '~/components/Filters/SortFilter';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
@@ -66,7 +66,6 @@ function CruciblesPage() {
               Discover Crucibles
             </Text>
             <Group gap={8} wrap="nowrap">
-              {semanticCrucibleSearch && <FeedSearchInput placeholder="Search crucibles" />}
               {/* Search results come in rank order, so a sort would do nothing. */}
               {!(semanticCrucibleSearch && query) && <SortFilter type="crucibles" />}
               <CrucibleFiltersDropdown />

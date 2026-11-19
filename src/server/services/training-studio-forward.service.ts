@@ -1,3 +1,4 @@
+import { siteCookieHeader } from '@civitai/auth';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { pickSessionCookies } from '~/server/utils/session-cookies';
 import { trainingStudioUrl } from '~/utils/training-studio-url';
@@ -33,9 +34,14 @@ export function studioOrigin(value = trainingStudioUrl()): string {
   return url.origin;
 }
 
-/** Only the session cookies from a `Cookie` header, as the browser sent them; empty when none. */
-export const sessionCookiesOf = (cookieHeader: string | undefined): string =>
-  pickSessionCookies(cookieHeader) ?? '';
+/**
+ * Only the session cookies from a `Cookie` header, as the browser sent them, that the request's site reads;
+ * empty when none.
+ */
+export const sessionCookiesOf = (
+  cookieHeader: string | undefined,
+  host: string | undefined
+): string => pickSessionCookies(siteCookieHeader(cookieHeader ?? '', host)) ?? '';
 
 export type StudioForwardResult = { status: number; body: unknown };
 

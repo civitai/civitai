@@ -302,6 +302,50 @@ func TestIntegrationInfiniteScopes(t *testing.T) {
 	}
 }
 
+// getAllImages' `tools` clause against the real schema: an image holding EVERY listed tool (order
+// and repeats in the list do not matter), never one with no tool row, and the cache policy of the
+// query it joins unchanged. Tool ids live in 2_102_0xx.
+func TestIntegrationToolsFilter(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedImages(t, pool)
+	integtest.Exec(t, pool, `
+		DELETE FROM "ImageTool" WHERE "imageId" BETWEEN 2101000 AND 2101999;
+		INSERT INTO "ImageTool" ("imageId", "toolId") VALUES
+		  (2101001, 2102001), (2101001, 2102002),
+		  (2101002, 2102002),
+		  (2101003, 2102003), (2101003, 2102002), (2101003, 2102001),
+		  (2101009, 2102004);`)
+	mod := ImagesQuery{IDs: integAllIDs, Limit: 20, IsModerator: true, BrowsingLevel: browsing.AllLevels}
+	for _, c := range []struct {
+		name  string
+		tools []int
+		want  []int
+	}{
+		// Positive control: without the filter the moderator sees all nine.
+		{"no tools", nil, []int{2101009, 2101008, 2101007, 2101006, 2101005, 2101004, 2101003, 2101002, 2101001}},
+		{"one tool", []int{2102002}, []int{2101003, 2101002, 2101001}},
+		{"all of two", []int{2102001, 2102002}, []int{2101003, 2101001}},
+		{"all of three, out of order", []int{2102003, 2102001, 2102002}, []int{2101003}},
+		{"a repeated tool", []int{2102002, 2102002}, []int{2101003, 2101002, 2101001}},
+		{"a tool and one nobody holds with it", []int{2102004, 2102001}, []int{}},
+		{"a zero id (bound as sent)", []int{0}, []int{}},
+	} {
+		q := mod
+		q.Tools = c.tools
+		if got := integIDs(integRun(t, pool, q)); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+	// On a version gallery the query stays cached under the version's tag.
+	version := ImagesQuery{ModelVersionID: 2101601, Limit: 20, IsModerator: true, BrowsingLevel: browsing.AllLevels, Tools: []int{2102001}}
+	if b := version.Build(); b.CacheTTL != 10*time.Minute || !reflect.DeepEqual(b.CacheTags, []string{"images-modelVersion:2101601"}) {
+		t.Fatalf("version gallery with tools: CacheTTL %v tags %v, want 10m / [images-modelVersion:2101601]", b.CacheTTL, b.CacheTags)
+	}
+	if got, want := integIDs(integRun(t, pool, version)), []int{2101001}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("version gallery with tools = %v, want %v (2101009 used the version but holds another tool)", got, want)
+	}
+}
+
 func TestIntegrationImagesQueryModelScopes(t *testing.T) {
 	pool := integtest.Postgres(t)
 	integSeedImages(t, pool)

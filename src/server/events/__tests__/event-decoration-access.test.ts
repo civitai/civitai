@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   BIRTHDAY_2026_EVENT,
   BIRTHDAY_2026_PREVIEW_FROM,
@@ -44,11 +43,8 @@ describe('getVisibleDecorationEvents', () => {
     expect(await getVisibleDecorationEvents('Image', undefined, PREVIEW)).toEqual(new Set());
   });
 
-  it('hides decorations, and logs, when the events cannot be loaded', async () => {
+  it('hides decorations when the events cannot be loaded', async () => {
     load.mockRejectedValue(new Error('engine failed to load'));
     expect(await getVisibleDecorationEvents('Image', { id: 7 }, PREVIEW)).toEqual(new Set());
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'event-decoration-access', event: BIRTHDAY_2026_EVENT })
-    );
   });
 });

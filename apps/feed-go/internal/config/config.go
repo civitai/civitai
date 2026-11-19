@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 )
 
@@ -26,16 +28,17 @@ type Config struct {
 	// DATAPACKET_DATABASE_RO_URL, else DATABASE_REPLICA_URL.
 	DatabaseURL string
 
-	RedisURL         string // cache cluster (REDIS_URL)
-	RedisSysURL      string // system redis (REDIS_SYS_URL): revocation registry, browsing addons
-	RedisCluster     bool   // REDIS_URL is a cluster
-	CacheKeyPrefix   string // CACHE_KEY_NAMESPACE + ":" outside production
-	ImageQueryCache  bool   // IMAGE_QUERY_CACHING
-	AuthIssuer       string // AUTH_JWT_ISSUER
-	AuthJWKSURI      string // AUTH_JWKS_URI
-	AuthRequireIat0  bool   // AUTH_REQUIRE_IAT0
-	AuthCookieMode   string // AUTH_SESSION_COOKIE_MODE: host | shared (default)
-	AuthLegacyRead   bool   // AUTH_LEGACY_READ (default true): read the shared-slot cookie
+	RedisURL         string            // cache cluster (REDIS_URL)
+	RedisSysURL      string            // system redis (REDIS_SYS_URL): revocation registry, browsing addons
+	RedisCluster     bool              // REDIS_URL is a cluster
+	CacheKeyPrefix   string            // CACHE_KEY_NAMESPACE + ":" outside production
+	ImageQueryCache  bool              // IMAGE_QUERY_CACHING
+	AuthIssuer       string            // AUTH_JWT_ISSUER
+	AuthJWKSURI      string            // AUTH_JWKS_URI
+	AuthRequireIat0  bool              // AUTH_REQUIRE_IAT0
+	AuthCookieMode   string            // AUTH_SESSION_COOKIE_MODE: host | shared (default)
+	AuthLegacyRead   bool              // AUTH_LEGACY_READ (default true): read the shared-slot cookie
+	AuthSiteModes    map[string]string // AUTH_SESSION_COOKIE_MODE_BY_SITE: registrable domain -> host | shared
 	SysReadTimeout   time.Duration
 	FallbackURL      string // FEED_GO_FALLBACK_URL: the Node app, for everything not served here
 	Hosts            browsing.HostColors
@@ -107,14 +110,20 @@ type Config struct {
 	// Node fills on read (user cosmetics, image frames, event decorations) with the Node
 	// lookup's own query instead of falling back. Off restores the fallbacks.
 	ComputeMisses bool
-	// CacheWriteBack is FEED_GO_CACHE_WRITEBACK (default off): write each computed miss back to the
-	// cache cluster exactly as the Node lookup writes it. Off, this service never writes those keys.
-	CacheWriteBack bool
+	// CacheWriteBack is FEED_GO_CACHE_WRITEBACK (default none): the caches whose computed misses are
+	// written back to the cache cluster exactly as the Node lookup writes them, as a comma-separated
+	// list of hydrate.WriteCaches names (hydrate.ParseWriteBack; an unknown name, the old true/false
+	// included, fails Load). A cache not listed is never written by this service.
+	CacheWriteBack hydrate.WriteSet
+	// CacheWriteLogPerMinute is FEED_GO_CACHE_WRITE_LOG_PER_MIN (default 0 = off): `cache write` log
+	// lines per (cache, result) per minute (hydrate.WriteLog).
+	CacheWriteLogPerMinute int
 	// FrameCacheNegative is FEED_GO_FRAME_CACHE_NEGATIVE: the `frame-cache-negative` flag's value
 	// (default off, as Node reads an unknown flag): whether the frame cache's notFound markers are live.
 	FrameCacheNegative bool
-	// PrimaryDatabaseURL is DATABASE_URL, the primary (Node's dbWrite), read only with CacheWriteBack:
-	// the frame and event-decoration miss lookups then read it as Node's do (DESIGN.md §3.1).
+	// PrimaryDatabaseURL is DATABASE_URL, the primary (Node's dbWrite), read only when CacheWriteBack
+	// holds a cache whose lookup reads it (hydrate.PrimaryCaches: the frame, event-decoration,
+	// version-images and model-data lookups then read it as Node's do; DESIGN.md §3.1).
 	PrimaryDatabaseURL string
 
 	// The ClickHouse reader the image metric-hash misses are computed with (DESIGN.md §3.1), from this
@@ -130,6 +139,11 @@ type Config struct {
 	// metrics lookup, at most half of RequestBudget. Past it the page falls back. The lookup also holds
 	// it under Node's own budget (hydrate's metricsTimeoutMax), whatever this says.
 	ClickHouseTimeout time.Duration
+	// MetricsLockWait is FEED_GO_METRICS_LOCK_WAIT_MS (default 500): how long the metrics lookup waits
+	// on a populate lock another process holds before the page falls back (`metrics-miss-failed`). It
+	// bounds only that wait, not this service's own ClickHouse read (ClickHouseTimeout). Unset, zero,
+	// negative or not an integer is the default, as for every FEED_GO_*_MS variable.
+	MetricsLockWait time.Duration
 	// ClickHouseMaxInFlight is FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT (default 4): the ClickHouse reads one
 	// pod sends at once; a read past it falls back at once (`metrics-miss-failed`).
 	ClickHouseMaxInFlight int
@@ -164,6 +178,7 @@ func Load() (*Config, error) {
 		AuthRequireIat0:  boolEnv("AUTH_REQUIRE_IAT0", false),
 		AuthCookieMode:   env("AUTH_SESSION_COOKIE_MODE", "shared"),
 		AuthLegacyRead:   boolEnv("AUTH_LEGACY_READ", true),
+		AuthSiteModes:    SiteModes(os.Getenv("AUTH_SESSION_COOKIE_MODE_BY_SITE")),
 		FallbackURL:      os.Getenv("FEED_GO_FALLBACK_URL"),
 		CreatorPromotion: os.Getenv("FEED_GO_CREATOR_PROMOTIONS"),
 		LazyPostImages:   boolEnv("FEED_GO_LAZY_POST_IMAGES", true),
@@ -212,9 +227,14 @@ func Load() (*Config, error) {
 		c.ModerationAccountID = n
 	}
 	c.ComputeMisses = boolEnv("FEED_GO_COMPUTE_MISSES", true)
-	c.CacheWriteBack = boolEnv("FEED_GO_CACHE_WRITEBACK", false)
+	writeBack, err := hydrate.ParseWriteBack(os.Getenv("FEED_GO_CACHE_WRITEBACK"))
+	if err != nil {
+		return nil, err
+	}
+	c.CacheWriteBack = writeBack
+	c.CacheWriteLogPerMinute = max(intEnv("FEED_GO_CACHE_WRITE_LOG_PER_MIN", 0), 0)
 	c.FrameCacheNegative = boolEnv("FEED_GO_FRAME_CACHE_NEGATIVE", false)
-	if c.CacheWriteBack {
+	if c.CacheWriteBack.NeedsPrimary() {
 		c.PrimaryDatabaseURL = os.Getenv("DATABASE_URL")
 	}
 	if c.ComputeMisses && os.Getenv("FEED_GO_CLICKHOUSE_HOST") != "" && os.Getenv("FEED_GO_CLICKHOUSE_USERNAME") != "" {
@@ -223,6 +243,7 @@ func Load() (*Config, error) {
 		c.ClickHousePassword = os.Getenv("FEED_GO_CLICKHOUSE_PASSWORD")
 	}
 	c.ClickHouseTimeout = min(time.Duration(positiveIntEnv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", 2000))*time.Millisecond, c.RequestBudget/2)
+	c.MetricsLockWait = time.Duration(positiveIntEnv("FEED_GO_METRICS_LOCK_WAIT_MS", 500)) * time.Millisecond
 	c.ClickHouseMaxInFlight = positiveIntEnv("FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", 4)
 	c.AllowedOriginHosts = AllowedOriginHosts(c.Hosts, list(os.Getenv("TRPC_ORIGINS")), os.Getenv("NEXTAUTH_URL"))
 	c.Tracing = tracing.FromEnv(os.Getenv)
@@ -239,8 +260,9 @@ func Load() (*Config, error) {
 	if c.DatabaseURL == "" {
 		return nil, errors.New("DATAPACKET_DATABASE_RO_URL, DATABASE_REPLICA_URL or DATABASE_URL is required")
 	}
-	if c.CacheWriteBack && c.PrimaryDatabaseURL == "" {
-		return nil, errors.New("FEED_GO_CACHE_WRITEBACK needs DATABASE_URL (the primary the frame and event lookups read)")
+	if c.CacheWriteBack.NeedsPrimary() && c.PrimaryDatabaseURL == "" {
+		return nil, errors.New("FEED_GO_CACHE_WRITEBACK needs DATABASE_URL for " + strings.Join(primaryWrites(c.CacheWriteBack), ",") +
+			" (the primary those lookups read)")
 	}
 	if c.RedisURL == "" || c.RedisSysURL == "" {
 		return nil, errors.New("REDIS_URL and REDIS_SYS_URL are both required")
@@ -251,25 +273,75 @@ func Load() (*Config, error) {
 	return c, nil
 }
 
-// CookieNames returns the session cookie names to read, in the order getHubSession reads them.
-func (c *Config) CookieNames() []string {
+// CookieNames returns the session cookie names to read on a request to reqHost, in the order the main app
+// reads them.
+func (c *Config) CookieNames(reqHost string) []string {
 	secure := strings.HasPrefix(c.AuthIssuer, "https://")
 	if !secure {
 		return []string{"civ-token"}
 	}
+	mode, legacyRead := c.ModeFor(reqHost)
 	shared, host := "__Secure-civ-token", "__Host-civ-token"
 	var names []string
-	if c.AuthCookieMode == "host" {
+	if mode == "host" {
 		names = append(names, host)
-		if c.AuthLegacyRead {
+		if legacyRead {
 			names = append(names, shared)
 		}
 		return names
 	}
-	if c.AuthLegacyRead {
+	if legacyRead {
 		names = append(names, shared)
 	}
 	return append(names, host)
+}
+
+// SiteModes parses AUTH_SESSION_COOKIE_MODE_BY_SITE as siteCookieMode (packages/civitai-auth) does: comma-separated
+// `<registrable domain>:<host|shared>` entries; an entry with any other mode is ignored.
+func SiteModes(v string) map[string]string {
+	out := map[string]string{}
+	if v == "" {
+		return out
+	}
+	for _, entry := range strings.Split(v, ",") {
+		parts := strings.Split(entry, ":")
+		if len(parts) < 2 {
+			continue
+		}
+		site, mode := strings.ToLower(strings.TrimSpace(parts[0])), strings.TrimSpace(parts[1])
+		if site != "" && (mode == "host" || mode == "shared") {
+			out[site] = mode
+		}
+	}
+	return out
+}
+
+var ipv4 = regexp.MustCompile(`^\d+\.\d+\.\d+\.\d+$`)
+
+// registrableDomain is registrableDomain (packages/civitai-auth) of a Host header: its last two labels, port
+// ignored; "" for localhost and IPs.
+func registrableDomain(host string) string {
+	h := strings.ToLower(strings.Split(host, ":")[0])
+	if h == "" || h == "localhost" || ipv4.MatchString(h) {
+		return ""
+	}
+	parts := strings.Split(h, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.Join(parts[len(parts)-2:], ".")
+}
+
+// ModeFor is sessionCookieMode(host) and legacyCookieReadEnabled(host): a site listed in
+// AUTH_SESSION_COOKIE_MODE_BY_SITE takes its own mode (a `host` site never reads the shared slot), any other
+// AUTH_SESSION_COOKIE_MODE and AUTH_LEGACY_READ.
+func (c *Config) ModeFor(host string) (mode string, legacyRead bool) {
+	if site := registrableDomain(host); site != "" {
+		if m, ok := c.AuthSiteModes[site]; ok {
+			return m, m == "shared"
+		}
+	}
+	return c.AuthCookieMode, c.AuthLegacyRead
 }
 
 // AllowedOriginHosts builds the origin allow-list the app's isAcceptableOrigin checks: the server
@@ -361,6 +433,18 @@ func env(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// primaryWrites are the caches of w whose lookups read the primary (hydrate.PrimaryCaches), for the
+// missing-DATABASE_URL error.
+func primaryWrites(w hydrate.WriteSet) []string {
+	out := make([]string, 0, len(hydrate.PrimaryCaches))
+	for _, c := range hydrate.PrimaryCaches {
+		if w[c] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func boolEnv(k string, def bool) bool {

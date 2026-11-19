@@ -259,7 +259,7 @@ func TestResolveRefusesTheModerationAccountBySub(t *testing.T) {
 	tok := sign(t, k, "ES256", claims)
 	r := &Resolver{
 		Verifier:            &Verifier{Issuer: issuer, JWKSURL: srv.URL, Now: func() time.Time { return now }},
-		CookieNames:         []string{"civ-token"},
+		CookieNames:         FixedCookieNames("civ-token"),
 		ModerationAccountID: 9131,
 		// Sessions is nil: reaching the session-cache read would panic, so a pass proves the refusal
 		// happens on the token's sub, before any lookup.
@@ -326,5 +326,19 @@ func TestResolveReportsTheCookieAndClaims(t *testing.T) {
 	}
 	if iat, ok := u.Claims.IssuedAt(); !ok || iat == 0 {
 		t.Fatalf("iat %v %v", iat, ok)
+	}
+}
+
+// The cookie names come from the request's own host, so each site reads in its own mode.
+func TestResolverReadsNamesForRequestHost(t *testing.T) {
+	var asked string
+	r := &Resolver{CookieNames: func(host string) []string { asked = host; return nil }}
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/trpc/x", nil)
+	req.Host = "civitai.red"
+	if _, err := r.Resolve(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if asked != "civitai.red" {
+		t.Fatalf("CookieNames asked for %q, want civitai.red", asked)
 	}
 }

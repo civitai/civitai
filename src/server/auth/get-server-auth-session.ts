@@ -3,7 +3,13 @@ import type { ParsedUrlQuery } from 'node:querystring';
 // FINAL-CLEANUP: `Session` is the app-wide session return type; replace it with a first-party type when the
 // `next-auth` dependency is dropped. This is the only remaining next-auth reference here, and it's type-only.
 import type { Session } from '~/types/session';
-import { legacySessionCookieName, readDeviceId, readSessionToken, rollSlot } from '@civitai/auth';
+import {
+  legacySessionCookieName,
+  readDeviceId,
+  readSessionToken,
+  rollSlot,
+  sessionCookieMode,
+} from '@civitai/auth';
 import { env } from '~/env/server';
 import { matchWebhookToken } from '~/server/utils/webhook-token';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -89,9 +95,10 @@ async function resolveSession(req: AuthRequest, res: AuthResponse): Promise<Sess
   const hub = await getHubSession(req).catch(() => null);
   if (hub) {
     req.context.session = hub;
-    const civ = readSessionToken(req.cookies);
-    const slot = civ && rollSlot(civ);
-    const device = readDeviceId(req.cookies)?.value;
+    const host = req.headers.host;
+    const civ = readSessionToken(req.cookies, { host });
+    const slot = civ && rollSlot(civ, sessionCookieMode(host));
+    const device = readDeviceId(req.cookies, { host })?.value;
     if (civ && slot) {
       await maybeRollHubCookie(civ.value, device, res, req.headers.host, slot, req.cookies);
     }

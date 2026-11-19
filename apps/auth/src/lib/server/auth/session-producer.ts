@@ -1,5 +1,9 @@
 import { isRefusedModerationAccount } from './moderation-account';
 import { sql } from 'kysely';
+import {
+  servablePictureSql,
+  userImageNamesPicture,
+} from '@civitai/db-queries/profile-picture-clear';
 import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { env } from '$env/dynamic/private';
@@ -30,12 +34,13 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.name',
       'User.email',
       'User.emailVerified',
-      // The legacy `User.image` follows the same holds when it names the profile picture.
+      // The legacy `User.image` is left out when it names the profile picture, so that picture reaches
+      // the session only through `profilePicture`, which admits it once it is servable: a wider rule than
+      // the main app's `fallbackUserImageColumn`, since this image is also the OAuth userinfo picture.
       sql<string | null>`CASE WHEN EXISTS (
-        SELECT 1 FROM "Image" held
-        WHERE held.id = "User"."profilePictureId"
-          AND held."needsReview" IN ('csam', 'minor')
-          AND strpos(replace(lower("User".image), '%2d', '-'), lower(held.url)) > 0
+        SELECT 1 FROM "Image" i
+        WHERE i.id = "User"."profilePictureId"
+          AND ${sql.raw(userImageNamesPicture('i', '"User"'))}
       ) THEN NULL ELSE "User".image END`.as('image'),
       'User.createdAt',
       'User.isModerator',
@@ -56,16 +61,11 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.meta',
       jsonObjectFrom(
         eb
-          .selectFrom('Image')
-          .select(['Image.url'])
-          .whereRef('Image.id', '=', 'User.profilePictureId')
-          // The main app's owner-hidden review holds: not shown even to the picture's owner.
-          .where((w) =>
-            w.or([
-              w('Image.needsReview', 'is', null),
-              w('Image.needsReview', 'not in', ['csam', 'minor']),
-            ])
-          )
+          .selectFrom('Image as i')
+          .select(['i.url'])
+          .whereRef('i.id', '=', 'User.profilePictureId')
+          // Only a servable picture is shown, even to its owner.
+          .where(servablePictureSql())
       ).as('profilePicture'),
       jsonObjectFrom(
         eb

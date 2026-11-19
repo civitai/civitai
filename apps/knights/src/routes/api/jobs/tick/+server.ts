@@ -12,7 +12,11 @@ import { settleHiddenChecks } from '$lib/server/hidden/settle';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { isJobRequest } from '$lib/server/jobs-auth';
 import { metrics, type TickFailureStep } from '$lib/server/metrics';
-import { applyPendingResolutions, escalateExpired } from '$lib/server/queue/queue.service';
+import {
+  applyPendingResolutions,
+  closeModeratorRuledItems,
+  escalateExpired,
+} from '$lib/server/queue/queue.service';
 import { settleFinalItems } from '$lib/server/progression/progression';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { resetDeps } from '$lib/server/smites/runtime';
@@ -37,6 +41,9 @@ export const POST: RequestHandler = async ({ request }) => {
   const escalation = await settle('escalation', () => escalateExpired(db, { now: new Date() }));
   const writeBacks = await settle('rating write-back', () =>
     applyPendingResolutions(db, queueDeps)
+  );
+  const moderatorRuled = await settle('moderator-ruled sweep', () =>
+    closeModeratorRuledItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
   );
   const progression = await settle('progression', () =>
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
@@ -97,6 +104,7 @@ export const POST: RequestHandler = async ({ request }) => {
   if (
     !escalation.ok ||
     !writeBacks.ok ||
+    !moderatorRuled.ok ||
     !progression.ok ||
     !hidden.ok ||
     !yesNo.ok ||
@@ -110,6 +118,7 @@ export const POST: RequestHandler = async ({ request }) => {
   }
   const itemFailures: Record<TickFailureStep, number> = {
     writeback: writeBacks.value.failed ?? 0,
+    moderator_ruled: moderatorRuled.value.failed,
     payout: progression.value.failed,
     yesno: yesNo.value.failed,
     reset: resets.value.failed,
@@ -128,6 +137,7 @@ export const POST: RequestHandler = async ({ request }) => {
   return json({
     ...escalation.value,
     ...writeBacks.value,
+    moderatorRuled: moderatorRuled.value.closed,
     settledVotes: progression.value.votes,
     hiddenChecksGraded: hidden.value.graded,
     yesNoClosed: yesNo.value.unplayable + yesNo.value.stale,

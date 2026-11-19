@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import type { VideoUpscalerInput } from '@civitai/orchestration-client';
 import { cachedFactory, defineGraph } from 'form-graph';
+import { enumDef } from '../../defs';
 import type { GenerationCtx } from '~/shared/generation/context';
 import { clampCorrect, optionFallback, VIDEO, sliderDef } from '../defs';
 import {
@@ -19,7 +21,12 @@ const interpolationFactorOutput = z.number().int().min(2).max(4);
  */
 
 const MAX_OUTPUT_RESOLUTION = 2560;
-const UPSCALE_MULTIPLIERS = [2, 3] as const;
+const UPSCALE_MULTIPLIERS = {
+  relayvsr: [2, 4],
+  flashvsr: [2, 3],
+} as const satisfies Record<NonNullable<VideoUpscalerInput['model']>, readonly number[]>;
+type VideoUpscaler = keyof typeof UPSCALE_MULTIPLIERS;
+const ALL_UPSCALE_MULTIPLIERS: readonly number[] = Object.values(UPSCALE_MULTIPLIERS).flat();
 
 const MAX_OUTPUT_FPS = 120;
 const INTERPOLATION_MULTIPLIERS = [2, 3, 4] as const;
@@ -39,8 +46,8 @@ export type ScaleFactorOption = {
   targetHeight: number;
 };
 
-const SCALE_FACTOR_MIN = Math.min(...UPSCALE_MULTIPLIERS);
-const SCALE_FACTOR_MAX = Math.max(...UPSCALE_MULTIPLIERS);
+const SCALE_FACTOR_MIN = Math.min(...ALL_UPSCALE_MULTIPLIERS);
+const SCALE_FACTOR_MAX = Math.max(...ALL_UPSCALE_MULTIPLIERS);
 const SCALE_FACTOR_INPUT = z.coerce
   .number()
   .int()
@@ -49,12 +56,15 @@ const SCALE_FACTOR_INPUT = z.coerce
   .optional();
 // Keyed on the largest factor the source allows, not its raw size: the size is
 // request-supplied, and a cache keyed on it would grow without bound on the server.
-const scaleFactorOutput = cachedFactory((ceiling: number | null) =>
+const scaleFactorOutput = cachedFactory((model: VideoUpscaler, ceiling: number | null) =>
   z
     .number()
     .int()
     .min(SCALE_FACTOR_MIN)
     .max(SCALE_FACTOR_MAX)
+    .refine((val) => (UPSCALE_MULTIPLIERS[model] as readonly number[]).includes(val), {
+      message: 'Scale factor is not supported by the selected upscaler',
+    })
     .refine((val) => ceiling == null || val <= ceiling, {
       message: `Scale factor would exceed maximum output resolution of ${MAX_OUTPUT_RESOLUTION}px`,
     })
@@ -62,36 +72,45 @@ const scaleFactorOutput = cachedFactory((ceiling: number | null) =>
 
 export const videoUpscale = defineGraph<GenerationCtx>()
   .field('video', VIDEO)
-  .field('scaleFactor', ({ video }) => {
+  .field(
+    'videoUpscaler',
+    enumDef({
+      options: [
+        { label: 'RelayVSR', value: 'relayvsr' },
+        { label: 'FlashVSR', value: 'flashvsr' },
+      ] satisfies { label: string; value: VideoUpscaler }[],
+    })
+  )
+  .field('scaleFactor', ({ video, videoUpscaler }) => {
     const width = video?.metadata?.width;
     const height = video?.metadata?.height;
     const maxDimension = width && height ? Math.max(width, height) : undefined;
+    const multipliers = UPSCALE_MULTIPLIERS[videoUpscaler];
 
-    const options: ScaleFactorOption[] = UPSCALE_MULTIPLIERS.map((multiplier) => ({
+    const options: ScaleFactorOption[] = multipliers.map((multiplier) => ({
       value: multiplier,
       label: `x${multiplier}`,
       disabled: maxDimension ? multiplier * maxDimension > MAX_OUTPUT_RESOLUTION : false,
       targetWidth: width ? multiplier * width : 0,
       targetHeight: height ? multiplier * height : 0,
     }));
-    const defaultValue = options.find((o) => !o.disabled)?.value ?? UPSCALE_MULTIPLIERS[0];
+    const defaultValue = options.find((o) => !o.disabled)?.value ?? multipliers[0];
     const canUpscale = maxDimension
-      ? maxDimension * Math.min(...UPSCALE_MULTIPLIERS) <= MAX_OUTPUT_RESOLUTION
+      ? maxDimension * Math.min(...multipliers) <= MAX_OUTPUT_RESOLUTION
       : true;
 
     return {
       input: SCALE_FACTOR_INPUT,
       output: scaleFactorOutput(
+        videoUpscaler,
         maxDimension && maxDimension > 0
           ? Math.min(Math.floor(MAX_OUTPUT_RESOLUTION / maxDimension), SCALE_FACTOR_MAX)
           : null
       ),
       default: defaultValue,
-      // remembered per source size: a factor picked for a smaller video would
-      // otherwise stick as a trusted value on a larger one and fail the
-      // refine (dead submit). Scope, not correct — the parse boundary must
-      // REFUSE an over-ceiling raw value rather than clamping it.
-      scope: maxDimension != null ? String(maxDimension) : undefined,
+      // Scope keeps a factor from a different model/source from blocking submit;
+      // raw requests must still refuse unsupported or over-ceiling factors.
+      scope: `${videoUpscaler}:${maxDimension ?? 'unknown'}`,
       meta: {
         options,
         canUpscale,

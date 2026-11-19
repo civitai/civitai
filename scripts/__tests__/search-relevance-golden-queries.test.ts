@@ -33,6 +33,32 @@ describe('defineGoldenSet', () => {
     ).toThrow(/targets models/);
   });
 
+  it.each([
+    ['no term groups', []],
+    ['an empty term group', [['fox'], []]],
+  ])('refuses a subject with %s', (_, expectTerms) => {
+    expect(() =>
+      defineGoldenSet([
+        { id: 's', kind: 'subject', text: 'foxy paladin', expectTerms, k: 10, targets: ['images'] },
+      ])
+    ).toThrow(/empty term group/);
+  });
+
+  it('refuses a subject on models', () => {
+    expect(() =>
+      defineGoldenSet([
+        {
+          id: 's',
+          kind: 'subject',
+          text: 'gremmy',
+          expectTerms: [['gremmy']],
+          k: 10,
+          targets: ['models'],
+        },
+      ])
+    ).toThrow(/targets images only/);
+  });
+
   it('refuses a duplicated id', () => {
     expect(() =>
       defineGoldenSet([
