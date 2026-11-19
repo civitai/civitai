@@ -23,7 +23,7 @@ vi.mock('~/server/auth/bearer-token', () => ({
   getBearerTokenUser: getBearerTokenUserMock,
 }));
 
-import { authenticate, wwwAuthenticate } from '~/server/registry-adapter/auth';
+import { authenticate } from '~/server/registry-adapter/auth';
 import type { VerifiedToken, VerifyToken } from '~/server/registry-adapter/auth';
 import {
   createHubJwtVerifier,
@@ -32,10 +32,17 @@ import {
   scopeBitsAssumingUnknownIsAll,
   scopeGrantBits,
 } from '~/server/registry-adapter/auth.jwt';
-import { createCivitaiTokenVerifier } from '~/server/registry-adapter/auth.live';
+import {
+  createCivitaiTokenVerifier,
+  verifyOpaqueCivitaiToken,
+} from '~/server/registry-adapter/auth.live';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
-import { ALL_SCOPES, TokenScope } from '~/shared/constants/token-scope.constants';
+import {
+  ALL_SCOPES,
+  TokenScope,
+  TokenScopePresets,
+} from '~/shared/constants/token-scope.constants';
 
 const ISSUER = 'https://auth.test';
 const RESOURCE = 'https://apps.test';
@@ -408,19 +415,6 @@ describe('scopeGrantBits and hasScope (does the token HOLD a scope)', () => {
   });
 });
 
-describe('wwwAuthenticate', () => {
-  it('names the needed scope for insufficient_scope, and omits it otherwise', () => {
-    expect(
-      wwwAuthenticate('insufficient_scope', 'needs data', 'https://apps.test/meta', 'AppDataRead')
-    ).toBe(
-      'Bearer error="insufficient_scope", error_description="needs data", scope="AppDataRead", resource_metadata="https://apps.test/meta"'
-    );
-    expect(wwwAuthenticate('invalid_token', 'expired')).toBe(
-      'Bearer error="invalid_token", error_description="expired"'
-    );
-  });
-});
-
 describe('routeVerifyToken', () => {
   const OPAQUE: VerifiedToken = {
     subject: 'user:9/client:opaque-client',
@@ -498,6 +492,39 @@ describe('a hub token through authenticate', () => {
       async () => new Response(JSON.stringify(hubJwks), { status: 200 })
     );
     expect(await principal.recheck!()).toBe('active');
+  });
+});
+
+describe('verifyOpaqueCivitaiToken', () => {
+  const session = (tokenScope: bigint) => ({
+    user: { id: 6127, showNsfw: true, browsingLevel: 15 },
+    apiKeyType: ApiKeyType.Access,
+    subject: { type: 'oauth', id: 'opaque-app-3c58' },
+    tokenScope,
+    expiresAt: null,
+  });
+
+  it('names the OAuth client, no actor, and the scope the key stores', async () => {
+    getSessionFromBearerTokenMock.mockResolvedValue(
+      session(TokenScope.AppsRead | TokenScope.AppDataRead)
+    );
+    const verified = await verifyOpaqueCivitaiToken('9e8d7c6b5a4f3e2d');
+    expect(verified).toMatchObject({
+      subject: 'user:6127/client:opaque-app-3c58',
+      clientId: 'opaque-app-3c58',
+      actor: null,
+      scope: TokenScope.AppsRead | TokenScope.AppDataRead,
+    });
+    expect(hasScope(verified!, 'AppDataRead')).toBe(true);
+  });
+
+  it('🔴 a Full key does not hold AppDataRead (Full is the legacy bits only)', async () => {
+    getSessionFromBearerTokenMock.mockResolvedValue(session(TokenScopePresets.Full));
+    const verified = await verifyOpaqueCivitaiToken('9e8d7c6b5a4f3e2d');
+    expect(verified?.scope).toBe(TokenScopePresets.Full);
+    expect(hasScope(verified!, 'AppDataRead')).toBe(false);
+    // Control: the same key holds a scope Full does include.
+    expect(hasScope(verified!, 'ModelsRead')).toBe(true);
   });
 });
 

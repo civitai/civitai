@@ -191,19 +191,14 @@ export function watchPrincipal(
   return stop;
 }
 
-/**
- * The `WWW-Authenticate` value of an auth error sent before a stream starts (RFC 6750, RFC 9728).
- * `scope`, for an `insufficient_scope` answer, names the scopes the request needs (RFC 6750 §3).
- */
+/** The `WWW-Authenticate` value of an auth error sent before a stream starts (RFC 6750, RFC 9728). */
 export function wwwAuthenticate(
   code: ErrorCode,
   message: string,
-  resourceMetadataUrl?: string,
-  scope?: string
+  resourceMetadataUrl?: string
 ): string {
   const quote = (s: string) => `"${s.replace(/["\\]/g, '')}"`;
   const params = [`error=${quote(code)}`, `error_description=${quote(message)}`];
-  if (scope) params.push(`scope=${quote(scope)}`);
   if (resourceMetadataUrl) params.push(`resource_metadata=${quote(resourceMetadataUrl)}`);
   return `Bearer ${params.join(', ')}`;
 }

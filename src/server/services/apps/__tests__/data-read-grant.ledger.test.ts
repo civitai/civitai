@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { importersOf, srcImports } from './import-ledger';
+import { importersOf, reExportsOf, srcImports } from './import-ledger';
 
 /**
  * Who may decide a collection read, and who may read the per-source import grants it rests on.
@@ -67,6 +67,30 @@ describe('the collection-read predicate and the import grants it reads', () => {
       `importGrantCovers used in blocks.router.ts outside ${LISTING_PROCEDURE}`
     ).toEqual([]);
     expect(uses.getStorageImportGrant).toEqual([]);
+  });
+
+  it('no module re-exports the predicate, its factory or the grant reads', () => {
+    const passesOn = (module: string, names: string[]) =>
+      reExportsOf(module).filter(
+        (r) => r.names === 'all' || r.names.some((n) => names.includes(n))
+      );
+    expect(
+      passesOn('server/services/apps/data-read-grant', [
+        'decideCollectionRead',
+        'createCollectionReadDecider',
+      ])
+    ).toEqual([]);
+    expect(passesOn(GRANT_SERVICE, ['getStorageImportGrant', 'importGrantCovers'])).toEqual([]);
+  });
+
+  it('POSITIVE CONTROL: the re-export scan sees a real re-export', () => {
+    // doc-store-access.ts re-exports declaredStorage from doc-store-declared.ts.
+    expect(reExportsOf('server/services/apps/doc-store-declared')).toEqual([
+      {
+        file: 'server/services/apps/doc-store-access.ts',
+        names: ['declaredCollections', 'declaredStorage'],
+      },
+    ]);
   });
 
   it('POSITIVE CONTROL: the ledger sees the router import the grant service', () => {
