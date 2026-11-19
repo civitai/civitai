@@ -115,7 +115,6 @@ describe('platform/arch → release asset', () => {
     for (const r of runs) {
       expect(r).not.toMatch(/--clobber|gh release (upload|edit|delete)/);
     }
-    // The create step refuses an existing release before it creates one.
     const create = runs.find((r) => r.includes('gh release create'));
     expect(create).toBeDefined();
     expect(create).not.toMatch(/if\s+!\s*gh release view/);
