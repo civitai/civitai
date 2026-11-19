@@ -84,9 +84,4 @@ TTL day + INTERVAL 400 DAY;
 --
 -- ── Before arming the flag ──────────────────────────────────────────────
 -- Time the job's statement (hotRankSnapshotSql) with EXPLAIN (ANALYZE, BUFFERS) on the replica; it
--- must stay well inside the job's 60 s read timeout. The measured figures are in the PR that added
--- this file.
-
--- ── Actuals ───────────────────────────────────────────────────────────────
--- Not yet applied. After night one, record counts and overlap rates in the PR or the plan; no
--- model ids.
+-- must stay well inside the job's 60 s read timeout.
