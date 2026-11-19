@@ -215,4 +215,24 @@ describe('the post owner on a narrower credential', () => {
     });
     expect(scoped).toEqual(MISSING);
   });
+
+  it("reads a published post's private contest collection as a stranger", async () => {
+    postIs({});
+    collectionPrivate = true;
+    expect(await detailsFor(SELF)).not.toEqual(MISSING);
+    const scoped = await getPostContestCollectionDetailsHandler({
+      input: { id: POST_ID },
+      ctx: { user: SELF, ...scopedKey } as never,
+    });
+    expect(scoped).toEqual(MISSING);
+  });
+
+  it('judges the post images without the owner view', async () => {
+    postIs({});
+    await getPostContestCollectionDetailsHandler({
+      input: { id: POST_ID },
+      ctx: { user: SELF, ...scopedKey } as never,
+    });
+    expect(m.visibleIds).toHaveBeenLastCalledWith(expect.objectContaining({ userId: undefined }));
+  });
 });

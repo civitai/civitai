@@ -665,7 +665,7 @@ export async function getMyEventHatPlacementStats({
 }
 
 type PlaceableUser = { id: number; isModerator?: boolean };
-/** Whether the caller's own hidden covers are shown: only on a session or a full-access key. */
+/** Set by the router from the credential; false shows covers as a stranger sees them. */
 type CoverViews = { asOwner?: boolean };
 const PLACEABLE_TYPES: CosmeticEntity[] = [
   CosmeticEntity.Image,

@@ -2576,7 +2576,7 @@ export const getPostContestCollectionDetails = async ({
 }: GetByIdInput & {
   userId?: number;
   isModerator?: boolean;
-  /** The owner's view: only on a session or a full-access key. */
+  /** Set by the caller from credentialViews(ctx).asOwner. */
   ownerView?: boolean;
 }) => {
   const post = await dbRead.post.findUnique({

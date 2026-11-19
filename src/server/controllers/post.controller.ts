@@ -957,7 +957,6 @@ export const getPostContestCollectionDetailsHandler = async ({
 }) => {
   try {
     const views = credentialViews(ctx);
-    // Owner and moderator rights only on a session or a full-access key: otherwise read as signed out.
     const viewer = views.asOwner ? ctx.user : undefined;
     const visible = await assertPostVisibleToViewer({ ...input, user: viewer }).catch((e) => {
       if (e instanceof TRPCError && e.code === 'NOT_FOUND') return null;
