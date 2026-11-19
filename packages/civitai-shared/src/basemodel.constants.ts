@@ -4290,12 +4290,10 @@ export const baseModelRecords: BaseModelRecord[] = [
 export const baseModelById = new Map(baseModelRecords.map((m) => [m.id, m]));
 export const baseModelByName = new Map(baseModelRecords.map((m) => [m.name, m]));
 
-/** Grouped select data for base model multi-select inputs, grouped by ecosystem family */
-export const baseModelSelectData = (() => {
-  const activeModels = baseModelRecords.filter((m) => !m.hidden);
+function groupBaseModelSelectData(records: BaseModelRecord[]) {
   const groupMap = new Map<string, { value: string; label: string }[]>();
 
-  for (const model of activeModels) {
+  for (const model of records) {
     const ecosystem = ecosystemById.get(model.ecosystemId);
     const family = ecosystem?.familyId ? ecosystemFamilyById.get(ecosystem.familyId) : undefined;
     const groupName = family?.name ?? ecosystem?.displayName ?? model.name;
@@ -4305,7 +4303,18 @@ export const baseModelSelectData = (() => {
   }
 
   return Array.from(groupMap.entries()).map(([group, items]) => ({ group, items }));
-})();
+}
+
+/** Grouped select data for base model multi-select inputs, grouped by ecosystem family */
+export const baseModelSelectData = groupBaseModelSelectData(
+  baseModelRecords.filter((m) => !m.hidden)
+);
+
+/**
+ * `baseModelSelectData` plus the hidden bases, for filtering images: a hidden base has no uploads,
+ * but images made with it (generation-only bases such as Nano Banana, or retired ones) still exist.
+ */
+export const imageBaseModelSelectData = groupBaseModelSelectData(baseModelRecords);
 
 export function getEcosystem(baseModel: string) {
   const model = baseModelByName.get(baseModel);

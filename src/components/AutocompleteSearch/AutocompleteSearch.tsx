@@ -69,7 +69,7 @@ import {
   feedSearchPathname,
   pageSearchFor,
   profileFeedSection,
-  searchSectionFromPath,
+  searchSectionFor,
   searchesFeedInPlace,
 } from '~/components/Search/search-target';
 import {
@@ -170,7 +170,7 @@ const IndexSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref)
   // their pick — so the category selector would only ever "work" when it picked what the URL
   // already said.
   const pathname = usePathname();
-  const currentSection = searchSectionFromPath(pathname) || 'models';
+  const currentSection = searchSectionFor(pathname, features) || 'models';
   // Default only: an explicit selector pick is not routed through here (see resolveSearchTarget).
   const imageSearchOn = offersImageSearch(features);
   const searchTarget = resolveSearchTarget(

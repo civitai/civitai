@@ -194,6 +194,7 @@ export type GameSettingsChanges = {
 const KILL_SWITCHES = [
   'shopDisabled',
   'conversionDisabled',
+  'signalsDisabled',
 ] as const satisfies KnightsGameSettingKey[];
 
 const rangeError = (key: KnightsGameSettingKey) => {

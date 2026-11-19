@@ -15,6 +15,7 @@ import {
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useScrollMargin } from '~/hooks/useScrollMargin';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { DownloadHistoryItem } from '~/server/services/download.service';
 import { trpc } from '~/utils/trpc';
 
@@ -23,6 +24,7 @@ const ITEM_GAP = 8; // Gap between items
 
 export default function Downloads() {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
   const scrollAreaRef = useScrollAreaRef();
   const listRef = useRef<HTMLDivElement>(null);
@@ -104,6 +106,7 @@ export default function Downloads() {
             filters={filters}
             availableOptions={availableOptions}
             onFiltersChange={setFilters}
+            hideSearch={!!features.pageSearch}
           />
         )}
       </Group>

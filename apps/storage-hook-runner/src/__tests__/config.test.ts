@@ -20,6 +20,18 @@ describe('poolSizeFromCpuMax (cgroup v2 cpu.max)', () => {
 describe('loadConfig', () => {
   const secret = 's'.repeat(32);
 
+  it('trims the secret: a trailing newline or surrounding spaces are not part of it', () => {
+    for (const raw of [`${secret}\n`, `${secret}\r\n`, `  ${secret}\t`]) {
+      expect(loadConfig({ STORAGE_HOOK_RUNNER_SECRET: raw }).secret).toBe(secret);
+    }
+  });
+
+  it('a secret under 32 characters after trimming is refused', () => {
+    expect(() => loadConfig({ STORAGE_HOOK_RUNNER_SECRET: `${'s'.repeat(31)}\n` })).toThrow(
+      'STORAGE_HOOK_RUNNER_SECRET must be at least 32 chars'
+    );
+  });
+
   it('POOL_SIZE overrides the default', () => {
     expect(loadConfig({ STORAGE_HOOK_RUNNER_SECRET: secret, POOL_SIZE: '3' }).poolSize).toBe(3);
   });
