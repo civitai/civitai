@@ -187,6 +187,37 @@ describe('what settlement does with each row (resolveHolds in hold.ts)', () => {
   });
 });
 
+describe('the page limit', () => {
+  it('cuts the holding list at the limit and says more match', async () => {
+    await review(1, 'open', null);
+    await review(2, 'escalated', '2026-11-03');
+    await review(3, 'withheld', '2026-11-04');
+
+    const cut = await listPayoutReviews('holding', { now: NOW, limit: 2 });
+    const whole = await listPayoutReviews('holding', { now: NOW, limit: 3 });
+
+    expect([cut.items.length, cut.hasMore]).toEqual([2, true]);
+    expect([whole.items.length, whole.hasMore]).toEqual([3, false]);
+  });
+
+  it('fills the cleared list from payable creators only, however many are filtered out', async () => {
+    // 7 is banned and 8 held by an older review: neither may use up a slot.
+    await db.exec(`UPDATE "User" SET "bannedAt" = '2026-11-01' WHERE id = 7`);
+    await review(7, 'cleared', '2026-11-19T10:00:00');
+    await review(8, 'open', null, '2026-09');
+    await review(8, 'cleared', '2026-11-19T11:00:00');
+    await review(1, 'cleared', '2026-11-18');
+    await review(4, 'cleared', '2026-11-17');
+
+    const fits = await listPayoutReviews('cleared', { now: NOW, limit: 2 });
+    await review(5, 'cleared', '2026-11-16');
+    const cut = await listPayoutReviews('cleared', { now: NOW, limit: 2 });
+
+    expect([fits.items.map((r) => r.userId), fits.hasMore]).toEqual([[1, 4], false]);
+    expect([cut.items.map((r) => r.userId), cut.hasMore]).toEqual([[1, 4], true]);
+  });
+});
+
 describe('lastSettlementAt', () => {
   it.each([
     ['2026-11-19T12:00:00Z', '2026-11-15T00:00:00.000Z'],
