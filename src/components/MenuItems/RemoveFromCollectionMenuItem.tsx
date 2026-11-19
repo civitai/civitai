@@ -1,12 +1,13 @@
 import { Menu } from '~/components/MantineOverlays';
 import { IconTrash } from '@tabler/icons-react';
+import type { CollectionType } from '~/shared/utils/prisma/enums';
 import { useMutateCollection } from '~/components/Collections/collection.utils';
 
-export function RemoveFromCollectionMenuItem({ collectionId, itemId }: Props) {
+export function RemoveFromCollectionMenuItem({ collectionId, itemId, type }: Props) {
   const { removeCollectionItem } = useMutateCollection();
 
   const handleRemoval = async () => {
-    removeCollectionItem({ collectionId, itemId });
+    removeCollectionItem({ collectionId, itemId, type });
   };
 
   return (
@@ -23,4 +24,4 @@ export function RemoveFromCollectionMenuItem({ collectionId, itemId }: Props) {
   );
 }
 
-type Props = { collectionId: number; itemId: number };
+type Props = { collectionId: number; itemId: number; type: CollectionType };
