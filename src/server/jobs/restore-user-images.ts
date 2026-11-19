@@ -42,7 +42,8 @@ export const restoreUserImages = createJob(
     for (const userId of pending.slice(0, RESTORE_USERS_PER_RUN)) {
       // Re-deletion or a ban is terminal for this entry, not a state to wait out: the grace block is
       // once more correct. `restoreUser` re-queues a re-deleted account it restores again; a ban
-      // leaves the images hidden after an unban too, until a moderator unblocks them.
+      // leaves the images hidden after an unban too, until a moderator unblocks them
+      // (`handleUnblockImages`).
       if (!(await isRestored(userId))) {
         await clearPendingImageRestore(userId);
         dropped++;

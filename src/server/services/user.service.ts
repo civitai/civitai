@@ -1463,6 +1463,15 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   if (isShared && !isReservedModerationUsername(username))
     throw throwBadRequestError('The shared moderation account keeps its reserved username.');
 
+  // A ban or a second restore since the checks above: the guarded writes below match no row.
+  const refuseIfBannedMeanwhile = (error: unknown): never => {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
+      throw throwBadRequestError(
+        `User ${id} was banned or restored meanwhile; unban the account before restoring it`
+      );
+    throw error;
+  };
+
   // Make sure the username and email aren't claimed by some other user since the closure.
   const conflict = await dbWrite.user.findFirst({
     where: { id: { not: id }, OR: [{ username }, { email }] },
@@ -1536,19 +1545,28 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     restoredModelIds = orphans.map((m) => m.id);
 
     if (restoredModelIds.length > 0) {
-      const [updated] = await dbWrite.$transaction([
-        dbWrite.model.updateMany({
-          where: { id: { in: restoredModelIds }, userId: -1 },
-          data: { userId: id },
-        }),
-        dbWrite.$executeRaw(
-          recordModelOwnershipSql({
-            where: Prisma.sql`m.id = ANY(${restoredModelIds}::int[]) AND m."userId" = ${id}`,
-            userId: id,
-            reason: 'restore',
-          })
-        ),
-      ]);
+      const [, updated] = await dbWrite
+        .$transaction([
+          // Locks the account and re-checks it, so a ban landing since the check above refuses
+          // the reclaim instead of handing models to a banned account its ban never unpublished.
+          dbWrite.user.update({
+            where: { id, deletedAt: { not: null }, bannedAt: null },
+            data: { deletedAt: user.deletedAt },
+            select: { id: true },
+          }),
+          dbWrite.model.updateMany({
+            where: { id: { in: restoredModelIds }, userId: -1 },
+            data: { userId: id },
+          }),
+          dbWrite.$executeRaw(
+            recordModelOwnershipSql({
+              where: Prisma.sql`m.id = ANY(${restoredModelIds}::int[]) AND m."userId" = ${id}`,
+              userId: id,
+              reason: 'restore',
+            })
+          ),
+        ])
+        .catch(refuseIfBannedMeanwhile);
       modelsRestored = updated.count;
     }
   }
@@ -1569,21 +1587,15 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   // list that moved since would make some accounts unrestorable.
   // The state is re-checked by the write itself: a ban landing after the check above rolls back
   // the whole restore, purge disarm included.
-  try {
-    await dbWrite.$transaction([
+  await dbWrite
+    .$transaction([
       dbWrite.user.update({
         where: { id, deletedAt: { not: null }, bannedAt: null },
         data: { deletedAt: null, username, email, meta },
       }),
       disarmAccountDeletionImagePurge(id),
-    ]);
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
-      throw throwBadRequestError(
-        `User ${id} was banned or restored meanwhile; unban the account before restoring it`
-      );
-    throw error;
-  }
+    ])
+    .catch(refuseIfBannedMeanwhile);
   await forgetGenerationToken(id);
 
   // The account is restored at this point: a throw would read as a failed restore, and a retry is refused.

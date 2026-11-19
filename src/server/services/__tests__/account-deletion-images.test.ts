@@ -1,3 +1,4 @@
+import { PGlite } from '@electric-sql/pglite';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockResetNsfwLevel, mockDropDeleteQueue, mockQueueSearchIndex, mockBustCachesForPosts } =
@@ -85,6 +86,7 @@ const METADATA_MINUS = /^"metadata"(\s*-\s*\?::text)+$/;
 const SCOPED_ON_BREADCRUMB = /"metadata"->>\?::text IS NOT NULL/;
 const CLAIMS_BY_ID = /^WHERE\s+id IN \(\s*SELECT i\.id\s+FROM "Image" i\s+WHERE\s/;
 const BOUNDED_CLAIM = /^LIMIT \?\s*\)\s*$/;
+const OWNER_CHECK = /^\s*\(SELECT [^()]*\([^()]*\)[^()]* FROM "User" u WHERE u\.id = \?\)\s*$/;
 const ENUM_RANGE = /\(SELECT unnest\(enum_range\(NULL::"ImageIngestionStatus"\)\)::text\)/;
 
 const CASE_EXPR = /^CASE\s+WHEN\s+([\s\S]+?)\s+THEN\s+([\s\S]+?)\s+ELSE\s+([\s\S]+?)\s+END$/;
@@ -158,12 +160,8 @@ function applyRestoreUpdate(sql: string, values: unknown[]) {
       return (row: ImageRow) => row.metadata[args[0] as string] != null;
     if (/^\s*i\."metadata"->>\?::text IN /.test(clause) && ENUM_RANGE.test(clause))
       return (row: ImageRow) => INGESTION_STATUSES.includes(row.metadata[args[0] as string]);
-    if (
-      /^\s*\(SELECT COALESCE\(u\."deletedAt", u\."bannedAt"\) IS NULL FROM "User" u WHERE u\.id = \?\)\s*$/.test(
-        clause
-      )
-    )
-      return (row: ImageRow) => row.userId === args[0] && ownerLive;
+    // What the owner check means is pinned against Postgres below; here it only gates the claim.
+    if (OWNER_CHECK.test(clause)) return (row: ImageRow) => row.userId === args[0] && ownerLive;
     throw new Error(`unrecognized reversal predicate: ${clause.trim()}`);
   });
 
@@ -467,6 +465,37 @@ describe('unblockAccountDeletionImages', () => {
     expect(claimedPerPass).toEqual([RESTORE_BATCH_SIZE, 0]);
     expect(result.unblocked).toBe(RESTORE_BATCH_SIZE);
     expect(images.filter((row) => row.ingestion === 'Blocked')).toHaveLength(3);
+  });
+
+  it('claims only for an owner that is neither deleted nor banned, in Postgres', async () => {
+    await unblockAccountDeletionImages(7);
+    const sql = (mockDbWrite.$queryRaw.mock.calls[0][0] as unknown as string[]).join('?');
+    const where = sql.slice(
+      sql.indexOf('WHERE', sql.indexOf('FROM "Image" i')) + 5,
+      sql.lastIndexOf('LIMIT')
+    );
+    const check = where.split(/\s+AND\s+/).find((clause) => OWNER_CHECK.test(clause));
+    expect(check, 'the claim carries no owner check').toBeDefined();
+
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
+      INSERT INTO "User" VALUES (1, NULL, NULL), (2, now(), NULL), (3, NULL, now()), (4, now(), now());
+    `);
+    const live = async (id: number) =>
+      (
+        await db.query<{ live: boolean | null }>(`SELECT ${check!.replace('?', '$1')} AS live`, [
+          id,
+        ])
+      ).rows[0].live === true;
+    expect(await Promise.all([1, 2, 3, 4, 5].map(live))).toEqual([
+      true,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    await db.close();
   });
 
   it('skips a row whose breadcrumb is not a real ingestion status and restores the rest', async () => {

@@ -34,7 +34,6 @@ vi.mock('~/server/events/points/sync', async (importOriginal) => ({
   syncOwnerEventHats: vi.fn(),
 }));
 
-import { disarmAccountDeletionImagePurge } from '~/server/services/account-deletion-images';
 import { restoreUser } from '~/server/services/user.service';
 
 const USER_ID = 7;
@@ -107,12 +106,11 @@ describe('restoreUser and a banned account', () => {
   it('refuses a banned account and leaves its images hidden', async () => {
     deleted(new Date('2026-07-27T00:00:00Z'));
     await expect(restore('back')).rejects.toThrow(/is banned; unban the account/);
-    expect(disarmAccountDeletionImagePurge).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
-  it('rolls the restore back when a ban lands before its write', async () => {
+  it('refuses, in the purge-disarm transaction, when a ban lands before the write', async () => {
     deleted(null);
     dbMock.dbWrite.user.update.mockRejectedValueOnce(
       new Prisma.PrismaClientKnownRequestError('No record found', {
@@ -122,8 +120,34 @@ describe('restoreUser and a banned account', () => {
     );
     await expect(restore('back')).rejects.toThrow(/banned or restored meanwhile/);
     expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ id: USER_ID, bannedAt: null }) })
+      expect.objectContaining({
+        where: expect.objectContaining({ id: USER_ID, deletedAt: { not: null }, bannedAt: null }),
+      })
     );
+    // The guarded write and the purge disarm commit or roll back together.
+    expect(dbMock.dbWrite.$transaction.mock.calls[0][0]).toHaveLength(2);
+  });
+
+  it('refuses the model reclaim, in its transaction, when a ban lands before it', async () => {
+    deleted(null);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 501 }]);
+    dbMock.dbWrite.user.update.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('No record found', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+    await expect(
+      restoreUser({ id: USER_ID, username: 'back', email: 'back@x.com', restoreModels: true })
+    ).rejects.toThrow(/banned or restored meanwhile/);
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: USER_ID, deletedAt: { not: null }, bannedAt: null }),
+      })
+    );
+    // The re-check, the reclaim and its ownership record commit or roll back together.
+    expect(dbMock.dbWrite.$transaction.mock.calls[0][0]).toHaveLength(3);
   });
 
   it('restores an account that is not banned', async () => {
