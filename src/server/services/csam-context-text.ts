@@ -418,9 +418,13 @@ export function foldContextText(
   const capture = (c: CsamContextText) => JSON.stringify([c.source, c.id, c.text]);
   const stored = new Set(merged.map(capture));
   const seen = new Set(stored);
+  const heard = new Set<string>();
   for (const c of added ?? []) {
     if (seen.has(capture(c))) {
-      if (stored.has(capture(c))) onIdentical?.(c);
+      if (stored.has(capture(c)) && !heard.has(capture(c))) {
+        heard.add(capture(c));
+        onIdentical?.(c);
+      }
       continue;
     }
     seen.add(capture(c));

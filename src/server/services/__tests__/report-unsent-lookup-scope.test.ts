@@ -207,6 +207,37 @@ describe('unsent-report lookup', () => {
     );
   });
 
+  it('keeps earlier identical re-files when another is recorded', async () => {
+    const held = {
+      source: 'comment',
+      id: 11,
+      text: 'same words',
+      capturedAt: '2026-10-08T14:05:00.000Z',
+    };
+    const earlier = { filedById: 99, at: '2026-10-10T00:00:00.000Z', item: 'comment:11' };
+    const first = seed({
+      userId: 101,
+      images: [{ id: 1 }],
+      details: { contextText: [held], identicalRefiles: [earlier] },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'Image',
+      imageIds: [2],
+      details: { contextText: [{ ...held, capturedAt: '2026-10-12T09:00:00.000Z' }] } as never,
+    });
+
+    expect(rows.find((r) => r.id === first.id)!.details).toEqual({
+      contextText: [held],
+      identicalRefiles: [
+        earlier,
+        { filedById: MOD, at: '2026-10-12T09:00:00.000Z', item: 'comment:11' },
+      ],
+    });
+  });
+
   it('a filing diverted to a report of its own records no identical re-file', async () => {
     vi.mocked(logToAxiom).mockClear();
     const held = {

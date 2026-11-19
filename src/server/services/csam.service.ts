@@ -182,7 +182,6 @@ function foldDetails(
     ...identical.map((c) => ({ filedById, at: c.capturedAt, item: `${c.source}:${c.id}` })),
   ];
   if (refiles.length) folded.identicalRefiles = refiles;
-  else delete folded.identicalRefiles;
   const generatedImages = foldGeneratedImages(prior.generatedImages, next.generatedImages);
   if (generatedImages) folded.generatedImages = generatedImages;
   const nextEvidence = (next as Record<string, unknown>).generatorEvidence;

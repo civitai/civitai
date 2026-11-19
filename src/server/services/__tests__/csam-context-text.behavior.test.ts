@@ -311,6 +311,12 @@ describe('fold', () => {
     expect(foldContextText([], twice, (c) => heard.push(c))).toEqual([twice[0]]);
     // A repeat within one filing is not a re-file of text the report held.
     expect(heard).toEqual([]);
+    // The report's own text captured twice in one filing is heard once.
+    const heardOnce: CsamContextText[] = [];
+    foldContextText([first], [capture(7, 'same words', 12), capture(7, 'same words', 12)], (c) =>
+      heardOnce.push(c)
+    );
+    expect(heardOnce).toHaveLength(1);
   });
 
   it('keeps the same text on another item or source as its own capture', () => {
