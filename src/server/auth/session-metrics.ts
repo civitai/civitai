@@ -12,6 +12,7 @@
 // module owns the prom-client wiring.
 import type { CookieSlot, RefreshFailure, RevocationDegradedVerdict } from '@civitai/auth';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
+import { isHostForColor } from '~/server/utils/server-domain';
 
 // `identity` = token cookie path (getSessionUser); `identity-by-id` = API-key/OAuth by-userId read
 // (getSessionUserById); `hub-write` = the invalidate/refresh/invalidateAll hub writes; `jwks` = ES256 verify
@@ -158,8 +159,7 @@ export function observeSessionRollFailed(reason: RefreshFailure): void {
 
 // --- Session cookie slot ------------------------------------------------------------------------------------
 
-const SESSION_COOKIE_SITES = ['green', 'blue', 'red', 'other'] as const;
-type SessionCookieSite = (typeof SESSION_COOKIE_SITES)[number];
+const SITE_COLORS = ['green', 'blue', 'red'] as const;
 
 const cookieSlotCounter = registerCounterWithLabels({
   name: 'session_cookie_slot_total',
@@ -168,12 +168,11 @@ const cookieSlotCounter = registerCounterWithLabels({
     'the cookie slot it was read from (host | shared).',
   labelNames: ['site', 'slot'] as const,
 });
-for (const site of SESSION_COOKIE_SITES)
+for (const site of [...SITE_COLORS, 'other'])
   for (const slot of ['host', 'shared'] as const) cookieSlotCounter.inc({ site, slot }, 0);
 
-export function observeSessionCookieSlot(site: string | undefined, slot: CookieSlot): void {
-  const bounded: SessionCookieSite = SESSION_COOKIE_SITES.includes(site as SessionCookieSite)
-    ? (site as SessionCookieSite)
-    : 'other';
-  cookieSlotCounter.inc({ site: bounded, slot });
+export function observeSessionCookieSlot(host: string | undefined, slot: CookieSlot): void {
+  const h = host?.toLowerCase();
+  const site = (h && SITE_COLORS.find((color) => isHostForColor(h, color))) || 'other';
+  cookieSlotCounter.inc({ site, slot });
 }

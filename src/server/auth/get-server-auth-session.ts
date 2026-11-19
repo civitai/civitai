@@ -13,7 +13,6 @@ import {
 import { env } from '~/env/server';
 import { matchWebhookToken } from '~/server/utils/webhook-token';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { getSessionFromBearerToken } from './bearer-token';
 import { applySessionScope, type SessionScope } from './session-scope';
 import { refuseModerationAccountSession } from './moderation-account';
@@ -99,7 +98,7 @@ async function resolveSession(req: AuthRequest, res: AuthResponse): Promise<Sess
     req.context.session = hub;
     const host = req.headers.host;
     const civ = readSessionToken(req.cookies, { host });
-    if (civ) observeSessionCookieSlot(getRequestDomainColor(req), civ.slot);
+    if (civ) observeSessionCookieSlot(host, civ.slot);
     const slot = civ && rollSlot(civ, sessionCookieMode(host));
     const device = readDeviceId(req.cookies, { host })?.value;
     if (civ && slot) {

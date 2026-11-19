@@ -80,8 +80,6 @@ const NON_CREDENTIAL_MODULES: Record<string, string> = {
   'env/server.ts': 'environment config; reads nothing off the request',
   'server/auth/session-metrics.ts':
     'counts a session by the cookie slot the entry point already read; takes no request',
-  'server/utils/server-domain.ts':
-    'maps the Host header to a site color for a metric label; identifies nobody',
   'server/auth/session-scope.ts':
     'narrows a session already resolved, from the credential the entry point recorded on req.context; reads req.url only to name the route in a log',
 };
