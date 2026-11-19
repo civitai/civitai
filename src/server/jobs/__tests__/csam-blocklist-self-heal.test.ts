@@ -47,6 +47,7 @@ const {
 type Newest = { reason: string; disabled: boolean };
 
 /** One blocklist and Postgres copy, held in memory; every image listed and still removed. */
+/** `blocklist` holds what NEWEST_ROWS_SQL returns: only hashes that have ever had a CSAM row. */
 function world(rows: { id: number; pHash: string }[], blocklist: Record<string, Newest> = {}) {
   const pg = new Set<string>();
   const still = new Set(rows.map((r) => r.id));
@@ -94,6 +95,7 @@ describe('healCsamBlocklist', () => {
       writes: true,
       candidates: 5,
       notCsamEver: 1,
+      csamMergedAway: 0,
       pgGap: 1,
       disabled: 1,
       otherReason: 1,
@@ -115,7 +117,7 @@ describe('healCsamBlocklist', () => {
   });
 
   // Decision: a newer row of another reason is counted, never written over.
-  it('never writes over a newer row of another reason', async () => {
+  it('never writes over a newer row of another reason on a hash that had a CSAM entry', async () => {
     const w = world([{ id: 5, pHash: '55' }], blocklist);
 
     const counts = await healCsamBlocklist({ writes: true }, w.deps);
@@ -146,14 +148,26 @@ describe('healCsamBlocklist', () => {
     expect(counts.healed).toBe(0);
   });
 
-  it('does not write an entry for a hash whose row landed after the classification', async () => {
+  // Decision: a hash absent from the read that has a Postgres copy once had a CSAM entry, lost to a
+  // merge under a newer row. That newer row may be an unblocklist, so it is never written.
+  it('never writes a hash whose CSAM entry a merge replaced', async () => {
+    const w = world([{ id: 1, pHash: '11' }]);
+    w.pg.add('11');
+
+    const counts = await healCsamBlocklist({ writes: true }, w.deps);
+
+    expect(w.added).toEqual([]);
+    expect(counts).toMatchObject({ csamMergedAway: 1, notCsamEver: 0, healed: 0 });
+  });
+
+  it('does not write an entry for a hash whose CSAM row landed after the classification', async () => {
     const w = world([{ id: 1, pHash: '11' }]);
     const classify = w.deps.readNewest;
     let reads = 0;
     w.deps.readNewest = async (hashes) =>
       ++reads === 1
         ? classify(hashes)
-        : hashes.map((hash) => ({ hash, reason: 'TOS', disabled: false }));
+        : hashes.map((hash) => ({ hash, reason: 'CSAM', disabled: true }));
 
     const counts = await healCsamBlocklist({ writes: true }, w.deps);
 
@@ -335,6 +349,18 @@ describe('the job as scheduled, against its boundaries', () => {
     );
   });
 
+  // Ruling A: a reported image's hash with only non-CSAM rows is absent from the restricted read,
+  // and gets the CSAM entry its block would have written.
+  it('heals a reported hash that has only rows of other reasons', async () => {
+    boundary.flagOn = true;
+    boundary.chRows = [];
+
+    const counts = await runCsamBlocklistSelfHeal();
+
+    expect(counts).toMatchObject({ notCsamEver: 1, otherReason: 0, healed: 1 });
+    expect(boundary.inserts).toHaveLength(1);
+  });
+
   // Decision: no hash value travels to ClickHouse, not even as a bound parameter, so none can land in
   // its query log or a request log. Don't "optimise" this into a WHERE hash IN (...) filter.
   it('sends no hash value to ClickHouse, on the classification or the re-check', async () => {
@@ -347,7 +373,7 @@ describe('the job as scheduled, against its boundaries', () => {
     expect(boundary.chQueries).toHaveLength(2);
     for (const query of boundary.chQueries) {
       expect(query).not.toContain(HASH);
-      // Restricted on the server, so ~2k rows come back rather than the whole table.
+      // Restricted on the server, so only hashes that ever had a CSAM row come back.
       expect(query).toContain(
         "WHERE hash IN (SELECT hash FROM blocked_images WHERE reason = 'CSAM')"
       );

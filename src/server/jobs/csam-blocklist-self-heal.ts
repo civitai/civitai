@@ -46,6 +46,8 @@ export type HealCounts = {
   candidates: number;
   /** Never had a CSAM row: no row at all, or only rows of other reasons. Healed. */
   notCsamEver: number;
+  /** Had a CSAM entry (it has a Postgres copy) that a merge replaced. Counted, never written. */
+  csamMergedAway: number;
   pgGap: number;
   disabled: number;
   otherReason: number;
@@ -76,19 +78,24 @@ export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: H
     (hashes.length ? await deps.readNewest(hashes) : []).map((row) => [row.hash, row])
   );
 
-  const notCsamEver: string[] = [];
+  const absent: string[] = [];
   const liveCsam: string[] = [];
   let disabled = 0;
   let otherReason = 0;
   for (const hash of hashes) {
     const row = newest.get(hash);
-    if (!row) notCsamEver.push(hash);
+    if (!row) absent.push(hash);
     else if (row.disabled) disabled++;
     else if (row.reason === 'CSAM') liveCsam.push(hash);
     else otherReason++;
   }
-  const copied = new Set(liveCsam.length ? await deps.readPgCsam(liveCsam) : []);
+  const looked = [...liveCsam, ...absent];
+  const copied = new Set(looked.length ? await deps.readPgCsam(looked) : []);
   const pgGap = liveCsam.filter((hash) => !copied.has(hash));
+  // Absent from the read but with a Postgres copy: it had a CSAM entry that a newer row replaced when
+  // the table merged. Its newest row is unknown (it may be an unblocklist), so it is never written.
+  const csamMergedAway = absent.filter((hash) => copied.has(hash)).length;
+  const notCsamEver = absent.filter((hash) => !copied.has(hash));
 
   const queue = [
     ...notCsamEver.map((hash) => ({ hash, copyOnly: false })),
@@ -104,8 +111,8 @@ export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: H
       )
     );
     const ready = batch.filter(({ hash }) => still.has(hash));
-    // Read again just before the write, so a row that landed since (a newer TOS block, say) wins: an
-    // entry only where there is still no row, a copy only where the entry is still live.
+    // Read again just before the write: an entry only where the hash still has no CSAM row (one
+    // written or disabled since wins), a copy only where the entry is still live.
     const now = new Map((await deps.readNewest(ready.map((b) => b.hash))).map((r) => [r.hash, r]));
     const live = (hash: string) => {
       const row = now.get(hash);
@@ -122,6 +129,7 @@ export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: H
     writes,
     candidates: hashes.length,
     notCsamEver: notCsamEver.length,
+    csamMergedAway,
     pgGap: pgGap.length,
     disabled,
     otherReason,
@@ -142,6 +150,7 @@ export const NEWEST_ROWS_SQL = `SELECT toString(hash) AS hash, tupleElement(newe
   tupleElement(newest, 2) AS disabled
 FROM (
   SELECT hash, ${NEWEST_BLOCKLIST_ROW_SQL} AS newest FROM blocked_images
+  -- Not filtered on disabled: an unblocklisted hash must stay in the set, or it reads as never listed.
   WHERE hash IN (SELECT hash FROM blocked_images WHERE reason = 'CSAM') GROUP BY hash
 )`;
 
