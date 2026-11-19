@@ -186,7 +186,9 @@ const rawDeleted = (table: string) =>
   table === 'Image'
     ? vi
         .mocked(deleteImages)
-        .mock.calls.some(([, opts]) => (opts.onlyWhere?.values ?? []).includes(TARGET))
+        .mock.calls.some(([, opts]) =>
+          ((opts.onlyWhere as Prisma.Sql | undefined)?.values ?? []).includes(TARGET)
+        )
     : rawStatementDeleted(table);
 const rawStatementDeleted = (table: string) =>
   [...dbMock.dbWrite.$executeRaw.mock.calls, ...dbMock.dbWrite.$queryRaw.mock.calls]

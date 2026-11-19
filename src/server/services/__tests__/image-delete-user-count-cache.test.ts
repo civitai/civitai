@@ -165,7 +165,7 @@ describe('deleteImages — one image', () => {
       { id: IMAGE_ID, action: SearchIndexUpdateQueueAction.Delete },
     ]);
     // The post-commit finish busts the (empty) list of deleted rows' owners: no owner is named.
-    expect(bustSpy.mock.calls.flatMap(([ids]) => [ids].flat())).toEqual([]);
+    expect(bustSpy.mock.calls.flatMap(([ids]: unknown[]) => [ids].flat())).toEqual([]);
   });
 
   it('does not treat any other delete failure as a removed row', async () => {
@@ -185,7 +185,7 @@ describe('deleting a custom video thumbnail', () => {
   // calls are counted here.
   const parentRefreshes = () =>
     thumbnailRefreshSpy.mock.calls.filter(
-      ([ids]) => ids === 900 || (Array.isArray(ids) && ids.includes(900))
+      ([ids]: unknown[]) => ids === 900 || (Array.isArray(ids) && ids.includes(900))
     );
   it('refreshes the parent video’s thumbnail entry on a single delete', async () => {
     deleteReturns({
@@ -233,8 +233,10 @@ describe('deleting a custom video thumbnail', () => {
 
     expect(parentRefreshes()).toEqual([[[900]]]);
 
-    const deleteCall = mockDbWrite.$queryRaw.mock.calls.find(([strings]: [string[]]) =>
-      Array.from(strings).join('?').includes('DELETE FROM "Image"')
+    const deleteCall = mockDbWrite.$queryRaw.mock.calls.find((call) =>
+      Array.from(call[0] as string[])
+        .join('?')
+        .includes('DELETE FROM "Image"')
     ) as [string[]];
     expect(Array.from(deleteCall[0]).join('?')).toMatch(/RETURNING[^;]*"parentId"/);
   });
@@ -268,8 +270,10 @@ describe('deleteImages — bulk', () => {
     expect(bustSpy).toHaveBeenCalledWith([OWNER_ID, OTHER_OWNER_ID]);
 
     // The fixture rows supply userId regardless, and the $queryRaw type annotation can't catch a dropped column.
-    const deleteCall = mockDbWrite.$queryRaw.mock.calls.find(([strings]: [string[]]) =>
-      Array.from(strings).join('?').includes('DELETE FROM "Image"')
+    const deleteCall = mockDbWrite.$queryRaw.mock.calls.find((call) =>
+      Array.from(call[0] as string[])
+        .join('?')
+        .includes('DELETE FROM "Image"')
     ) as [string[]];
     expect(Array.from(deleteCall[0]).join('?')).toMatch(/RETURNING[^;]*"userId"/);
   });

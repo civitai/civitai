@@ -448,7 +448,9 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     expect(
       vi
         .mocked(deleteImages)
-        .mock.calls.some(([, opts]) => (opts.onlyWhere?.values ?? []).includes(TARGET)),
+        .mock.calls.some(([, opts]) =>
+          ((opts.onlyWhere as Prisma.Sql | undefined)?.values ?? []).includes(TARGET)
+        ),
       'Image'
     ).toBe(true);
     for (const table of ['Model', 'Post', 'Article']) {

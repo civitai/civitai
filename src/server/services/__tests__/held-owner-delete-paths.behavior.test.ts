@@ -318,7 +318,9 @@ describe('an owner deleting their post keeps shop artwork only for a plain image
   const ownerDelete = () =>
     deletePost({ id: postOf(PLAIN), actor: { id: PLAIN, isModerator: false } });
   const reportLookup = (answer: () => unknown) => {
-    const base = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+    const base = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation() as (
+      ...args: unknown[]
+    ) => unknown;
     vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(((
       strings: TemplateStringsArray,
       ...values: unknown[]

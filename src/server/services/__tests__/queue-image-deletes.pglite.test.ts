@@ -193,7 +193,7 @@ describe('queueImageDeletes', () => {
       expect(await queued()).toEqual([{ entityId: 1, data: { moderatorDelete: true } }]);
     });
 
-    it.each([
+    it.each<[string, () => Promise<unknown>]>([
       ['under CSAM review', () => addImage(1, { needsReview: 'csam' })],
       ['blocked for CSAM', () => addImage(1, { blockedFor: 'CSAM' })],
       [
@@ -212,7 +212,7 @@ describe('queueImageDeletes', () => {
               await addImage(1);
               await pg.exec(`INSERT INTO "CsamReport" (images) VALUES ('${images}')`);
             },
-          ] as const
+          ] as [string, () => Promise<unknown>]
       ),
     ])('skips an image %s', async (_, setup) => {
       await setup();
