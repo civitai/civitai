@@ -300,9 +300,11 @@ describe('the minted credential is still returned to an allowed caller', () => {
 });
 
 describe('an impersonation, through the real AuthedEndpoint', () => {
-  const assistantRoutes = routes.filter((r) => r.path.startsWith('/api/apps/assistant/'));
+  const appRoutes = routes.filter(
+    (r) => r.path.startsWith('/api/apps/assistant/') || r.path === '/api/training-studio/host'
+  );
 
-  it.each(assistantRoutes)('$name mints nothing for an impersonation', async (route) => {
+  it.each(appRoutes)('$name mints nothing for an impersonation', async (route) => {
     hubSession.current = { user: USER, impersonatedBy: 9 };
     const { status, body } = await call(route);
     expect(status).toBe(403);
