@@ -3,6 +3,7 @@ import { Box, Center, Chip, Group, Loader, SegmentedControl, Stack } from '@mant
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
+import clsx from 'clsx';
 import React from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SortFilter } from '~/components/Filters';
@@ -15,6 +16,7 @@ import type { ImageSections } from '~/components/Image/image.utils';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { songTextDimmed } from '~/components/Music/song-styles';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -77,6 +79,11 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
     { enabled: !!profileUsername && profileUsername !== constants.system.user.username }
   );
 
+  const { data: overview } = trpc.userProfile.overview.useQuery(
+    { username: profileUsername },
+    { enabled: !!profileUsername && type === MediaType.audio }
+  );
+
   // currently not showing any content if the username is undefined
   if (!profileUsername) return <NotFound />;
 
@@ -100,6 +107,12 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
           <Stack gap="xs">
             <Group gap={8} justify="space-between">
               <Group gap={8}>
+                {isAudio && overview && (
+                  // Pencil `nYcQM`.
+                  <span className={clsx('text-[13px]', songTextDimmed)}>
+                    {overview.audioCount} {overview.audioCount === 1 ? 'song' : 'songs'}
+                  </span>
+                )}
                 {isSameUser && (
                   <ContentToggle
                     size="xs"

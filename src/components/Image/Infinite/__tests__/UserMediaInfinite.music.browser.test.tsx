@@ -21,6 +21,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     'userProfile.get': {
       useQuery: () => ({ data: { id: 7, username: 'Alice' }, isLoading: false }),
     },
+    'userProfile.overview': {
+      useQuery: (_input: unknown, opts?: { enabled?: boolean }) => ({
+        data: opts?.enabled === false ? undefined : { audioCount: 34 },
+      }),
+    },
   }),
 }));
 // What the profile asks its feed for; the feed itself is covered by the ImagesInfinite tests.
@@ -65,10 +70,16 @@ describe('the profile music tab', () => {
     await expect.poll(() => state.feed?.songListName).toBe('My Reactions');
   });
 
+  test("shows the creator's song count above the songs", async () => {
+    renderWithProviders(<UserMediaInfinite type={MediaType.audio} />);
+    await expect.element(page.getByText('34 songs')).toBeVisible();
+  });
+
   test('the images tab names no song list', async () => {
     renderWithProviders(<UserMediaInfinite type={MediaType.image} />);
 
     await expect.poll(() => state.feed?.filters.userId).toBe(7);
     expect(state.feed?.songListName).toBeUndefined();
+    expect(page.getByText(/\d+ songs?$/).query()).toBeNull();
   });
 });

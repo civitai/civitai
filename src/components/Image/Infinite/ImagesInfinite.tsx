@@ -1,7 +1,7 @@
 import { useRouter } from 'next/router';
 import { Button, Center, Group, Loader, LoadingOverlay, Text } from '@mantine/core';
 import { getQueryKey } from '@trpc/react-query';
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -24,6 +24,8 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { getImagesSpanMaxHeight } from '~/components/Image/Infinite/images-span';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
+import { VirtualList } from '~/components/MasonryColumns/VirtualList';
+import { SONG_CARD_TEXT_HEIGHT, SONG_COVER_RATIO } from '~/components/Music/song-card.constants';
 import { FeedSongCoversProvider, SongListNameProvider } from '~/components/Music/FeedSongList';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -48,6 +50,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { backoffDelay } from '~/utils/backoff';
 
+const SONG_CARD_COVER = { width: 1000, height: 1000 * SONG_COVER_RATIO };
 // Stable, so a feed without the music flag reads no covers and re-renders nothing for them.
 const NO_IMAGES: ImageGetInfinite = [];
 const SEARCH_RETRY_MAX_ATTEMPTS = 10;
@@ -71,8 +74,11 @@ type ImagesInfiniteProps = {
   filters?: ImagesQueryParamSchema & Partial<Pick<GetInfiniteImagesInput, 'hubExcludedSources'>>;
   showEof?: boolean;
   renderItem?: React.ComponentType<MasonryRenderItemProps<ImageGetInfinite[number]>>;
-  /** Draw the items as a plain list of these instead of the masonry grid. */
-  listItem?: React.ComponentType<{ data: ImageGetInfinite[number]; index: number }>;
+  /** Draw the items as a virtualized list of fixed-height rows instead of the masonry grid. */
+  listItem?: {
+    render: React.ComponentType<{ data: ImageGetInfinite[number]; index: number }>;
+    height: number;
+  };
   /** What Up next calls the list a song in this feed plays from. */
   songListName?: string;
   filterType?: 'images' | 'videos';
@@ -132,7 +138,7 @@ function ImagesFeed({
   filters: filterOverrides = {},
   showEof = false,
   renderItem: MasonryItem,
-  listItem: ListItem,
+  listItem,
   songListName,
   filterType = 'images',
   showAds,
@@ -145,6 +151,9 @@ function ImagesFeed({
   ...imageProviderProps
 }: ImagesInfiniteProps & { feedSearch?: FeedSearch }) {
   const features = useFeatureFlags();
+  // The Song Card has one shape, so every song in the grid gets the same height.
+  const isSongCard = (data: ImageGetInfinite[number]) =>
+    !MasonryItem && !!features.music && data.type === MediaType.audio;
   const imageFilters = useImageFilters(filterType);
   const {
     query: rawSearchQuery,
@@ -354,21 +363,27 @@ function ImagesFeed({
           <SongListNameProvider name={songListName}>
             <FeedSongCoversProvider images={features.music ? images : NO_IMAGES}>
               <ImagesProvider images={images} {...imageProviderProps}>
-                {ListItem ? (
-                  <div className="flex flex-col">
-                    {images.map((image, index) => (
-                      <ListItem key={image.id} data={image} index={index} />
-                    ))}
-                  </div>
+                {listItem ? (
+                  <VirtualList
+                    data={images}
+                    itemHeight={listItem.height}
+                    itemId={(image) => image.id}
+                    render={listItem.render}
+                  />
                 ) : (
                   <MasonryColumnsVirtual
                     data={images}
                     imageDimensions={(data) => {
+                      if (isSongCard(data)) return SONG_CARD_COVER;
                       const width = data?.width ? data.width : 450;
                       const height = data?.height ? data.height : 450;
                       return { width, height };
                     }}
-                    adjustHeight={(args) => adjustImagesCardHeight(args, !!MasonryItem)}
+                    adjustHeight={(args, data) =>
+                      isSongCard(data)
+                        ? args.height + SONG_CARD_TEXT_HEIGHT
+                        : adjustImagesCardHeight(args, !!MasonryItem)
+                    }
                     maxItemHeight={600}
                     render={MasonryItem ?? ImagesCardMemoized}
                     itemId={(data) => data.id}

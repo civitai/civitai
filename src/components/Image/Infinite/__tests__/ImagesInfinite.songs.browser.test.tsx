@@ -1,6 +1,7 @@
 import '@mantine/core/styles.layer.css';
 import '~/styles/globals.css';
 import type { ComponentType, ReactNode } from 'react';
+import { useRef } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -10,7 +11,19 @@ import type * as ImageFeedSearch from '~/components/Image/Infinite/useImageFeedS
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as Trpc from '~/utils/trpc';
 
-const feed = vi.hoisted(() => ({ images: [] as unknown[], provided: [] as unknown[] }));
+const feed = vi.hoisted(() => ({
+  images: [] as unknown[],
+  provided: [] as unknown[],
+  masonry: undefined as
+    | {
+        imageDimensions: (data: unknown) => { width: number; height: number };
+        adjustHeight: (
+          args: { imageRatio: number; width: number; height: number },
+          data: unknown
+        ) => number;
+      }
+    | undefined,
+}));
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
@@ -70,15 +83,24 @@ vi.mock('~/components/MasonryColumns/MasonryColumnsVirtual', () => ({
   MasonryColumnsVirtual: ({
     data,
     render: Item,
+    ...sizing
   }: {
     data: { id: number }[];
     render: ComponentType<{ data: unknown; height: number }>;
+    imageDimensions: (data: unknown) => { width: number; height: number };
+    adjustHeight: (
+      args: { imageRatio: number; width: number; height: number },
+      data: unknown
+    ) => number;
   }) => (
-    <div data-testid="masonry">
-      {data.map((d) => (
-        <Item key={d.id} data={d} height={360} />
-      ))}
-    </div>
+    (feed.masonry = sizing),
+    (
+      <div data-testid="masonry">
+        {data.map((d) => (
+          <Item key={d.id} data={d} height={360} />
+        ))}
+      </div>
+    )
   ),
 }));
 vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
@@ -91,7 +113,9 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
 
 import { ImagesInfiniteContent } from '~/components/Image/Infinite/ImagesInfinite';
 import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
-import { SongRow } from '~/components/Music/SongRow';
+import { SONG_ROW_HEIGHT, SongRow } from '~/components/Music/SongRow';
+import { SONG_CARD_TEXT_HEIGHT, SONG_COVER_RATIO } from '~/components/Music/song-card.constants';
+import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
 import type { MusicList } from '~/store/music-player.store';
 import { useMusicPlayerStore } from '~/store/music-player.store';
@@ -109,6 +133,19 @@ const song = (id: number, title: string) => ({
 const songs = [song(1, 'Midnight Arcade'), song(2, 'Palm Static'), song(3, 'Chrome Heart')];
 
 const playFromList = vi.fn<(list: MusicList) => void>();
+const SONG_ROWS = { render: SongRow, height: SONG_ROW_HEIGHT };
+
+// The page's scroll container, which the list view virtualizes against.
+function ScrollArea({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  return (
+    <ScrollAreaContext.Provider value={{ ref: ref as React.RefObject<HTMLDivElement> }}>
+      <div ref={ref} style={{ height: 600, overflowY: 'auto' }}>
+        {children}
+      </div>
+    </ScrollAreaContext.Provider>
+  );
+}
 
 beforeEach(() => {
   useMusicPlayerStore.getState().close();
@@ -138,8 +175,18 @@ describe('songs in an image feed', () => {
 
   test('the list view draws the same items as rows, playing from the same list', async () => {
     await renderWithProviders(
-      <ImagesInfiniteContent listItem={SongRow} songListName="All music" />
+      <ScrollArea>
+        <ImagesInfiniteContent listItem={SONG_ROWS} songListName="All music" />
+      </ScrollArea>
     );
+    await expect
+      .poll(() =>
+        page
+          .getByRole('listitem')
+          .elements()
+          .map((row) => row.textContent?.slice(0, 1))
+      )
+      .toEqual(['1', '2', '3']);
     await expect.element(page.getByText('Chrome Heart')).toBeInTheDocument();
     expect(page.getByTestId('masonry').query()).toBeNull();
     await page.getByRole('button', { name: 'Play Palm Static' }).click();
@@ -148,10 +195,40 @@ describe('songs in an image feed', () => {
 
   test("one covers read serves every song in the list, the feed's other items left out", async () => {
     feed.images = [songs[0], { id: 50, type: 'image', user: { id: 9 } }, songs[1], songs[2]];
-    await renderWithProviders(<ImagesInfiniteContent listItem={SongRow} songListName="All music" />);
+    await renderWithProviders(
+      <ScrollArea>
+        <ImagesInfiniteContent listItem={SONG_ROWS} songListName="All music" />
+      </ScrollArea>
+    );
     await expect.element(page.getByText('Chrome Heart')).toBeInTheDocument();
     expect(new Set(songCovers.requests.map((ids) => JSON.stringify(ids)))).toEqual(
       new Set([JSON.stringify([1, 2, 3])])
     );
+  });
+
+  test('the list view renders only the rows near the viewport of a long list', async () => {
+    feed.images = Array.from({ length: 300 }, (_, i) => song(i + 1, `Song ${i + 1}`));
+    await renderWithProviders(
+      <ScrollArea>
+        <ImagesInfiniteContent listItem={SONG_ROWS} songListName="All music" />
+      </ScrollArea>
+    );
+    await expect.element(page.getByText('Song 1', { exact: true })).toBeInTheDocument();
+    expect(page.getByRole('listitem').elements().length).toBeLessThan(40);
+    expect(page.getByText('Song 300', { exact: true }).query()).toBeNull();
+  });
+
+  test('the grid gives every song the Song Card shape, whatever the file reports', async () => {
+    await renderWithProviders(<ImagesInfiniteContent songListName="All music" />);
+    await expect.poll(() => feed.masonry).toBeDefined();
+    const { imageDimensions, adjustHeight } = feed.masonry!;
+    const sized = (data: unknown, width: number) => {
+      const { width: w, height: h } = imageDimensions(data);
+      const height = (h / w) * width;
+      return adjustHeight({ imageRatio: width / height, width, height }, data);
+    };
+    const wide = { ...songs[0], width: 1920, height: 1080 };
+    expect(sized(wide, 213)).toBeCloseTo(200 + SONG_CARD_TEXT_HEIGHT);
+    expect(sized(songs[1], 320)).toBeCloseTo(320 * SONG_COVER_RATIO + SONG_CARD_TEXT_HEIGHT);
   });
 });

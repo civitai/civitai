@@ -1,4 +1,5 @@
-import { Group, Stack, Title } from '@mantine/core';
+import { Title } from '@mantine/core';
+import clsx from 'clsx';
 import { SortFilter } from '~/components/Filters/SortFilter';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageFilters, useImageQueryParams } from '~/components/Image/image.utils';
@@ -6,7 +7,8 @@ import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { SongRow } from '~/components/Music/SongRow';
+import { SONG_ROW_HEIGHT, SongRow } from '~/components/Music/SongRow';
+import { songTextBright } from '~/components/Music/song-styles';
 import { SongViewToggle, useSongFeedView } from '~/components/Music/SongViewToggle';
 import { TagChipRow } from '~/components/Tags/TagChipRow';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -15,6 +17,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 const ALL_MUSIC = 'All music';
+const SONG_ROWS = { render: SongRow, height: SONG_ROW_HEIGHT };
 // Stands for a `?tags=` the chips cannot show (several tags), so neither All nor a genre lights up.
 const UNLISTED_TAGS = 'unlisted';
 
@@ -45,8 +48,12 @@ export function MusicFeedPage() {
         canonical="/music"
       />
       <MasonryContainer>
-        <Stack gap="md">
-          <Title order={1} className="text-5xl font-bold">
+        {/* Pencil `JzhET` (1440) and `hiEzh` (390): sections 48px apart, 22px on a phone. */}
+        <div className="flex flex-col gap-[22px] sm:gap-12">
+          <Title
+            order={1}
+            className={clsx('text-4xl font-extrabold sm:text-5xl sm:font-bold', songTextBright)}
+          >
             Music
           </Title>
           <TagChipRow
@@ -55,26 +62,29 @@ export function MusicFeedPage() {
             onSelect={(item) => replace({ tags: item.id === activeId ? [] : [item.id as number] })}
             onClear={() => replace({ tags: [] })}
             loading={isLoading}
+            variant="outline"
           />
-          <Group justify="space-between" gap="xs" wrap="nowrap">
-            <Title order={2} className="text-2xl font-bold">
-              {listName}
-            </Title>
-            <Group gap={8} wrap="nowrap">
-              <SongViewToggle value={view} onChange={setView} />
-              <SortFilter type="images" />
-              <MediaFiltersDropdown filterType="images" hideMediaTypes size="compact-sm" isFeed />
-            </Group>
-          </Group>
-          <IsClient>
-            <ImagesInfinite
-              filters={{ ...filters, types: [MediaType.audio] }}
-              listItem={view === 'list' ? SongRow : undefined}
-              songListName={listName}
-              showEof
-            />
-          </IsClient>
-        </Stack>
+          <section className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Title order={2} className={clsx('text-3xl font-bold', songTextBright)}>
+                {listName}
+              </Title>
+              <div className="flex flex-wrap items-center gap-2">
+                <SongViewToggle value={view} onChange={setView} />
+                <SortFilter type="images" />
+                <MediaFiltersDropdown filterType="images" hideMediaTypes size="compact-sm" isFeed />
+              </div>
+            </div>
+            <IsClient>
+              <ImagesInfinite
+                filters={{ ...filters, types: [MediaType.audio] }}
+                listItem={view === 'list' ? SONG_ROWS : undefined}
+                songListName={listName}
+                showEof
+              />
+            </IsClient>
+          </section>
+        </div>
       </MasonryContainer>
     </>
   );

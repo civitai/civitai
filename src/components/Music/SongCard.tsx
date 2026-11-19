@@ -1,5 +1,4 @@
-import { IconMessageCircle, IconThumbUp } from '@tabler/icons-react';
-import clsx from 'clsx';
+import { IconMessage, IconThumbUp } from '@tabler/icons-react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import {
@@ -7,14 +6,15 @@ import {
   FeedSongPlayButton,
   useFeedSongCover,
 } from '~/components/Music/FeedSongList';
-import { dimmed, SongArt, songCreatorHref } from '~/components/MusicPlayer/MusicPlayerParts';
+import { songTextBright, songTextDimmed } from '~/components/Music/song-styles';
+import { SongArt, songCreatorHref } from '~/components/MusicPlayer/MusicPlayerParts';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { TwCard } from '~/components/TwCard/TwCard';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { readSongGenre } from '~/shared/constants/song-genres';
 import { formatPlaybackTime } from '~/utils/audio-player';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import clsx from 'clsx';
 
 export const UNTITLED_SONG = 'Untitled song';
 
@@ -34,8 +34,8 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
   const genre = readSongGenre(data.metadata);
   const cover = useFeedSongCover(data.id);
   return (
-    <TwCard className="border" style={{ height }}>
-      <div className="relative min-h-0 flex-1">
+    <div className="flex flex-col gap-2" style={{ height }}>
+      <div className="relative aspect-[213/200] w-full shrink-0 overflow-hidden rounded-[14px]">
         <RoutedDialogLink
           name="imageDetail"
           state={{ imageId: data.id }}
@@ -44,49 +44,55 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
         >
           <SongArt url={cover?.url} width={320} iconSize={48} className="size-full" />
         </RoutedDialogLink>
-        <FeedSongPlayButton
-          song={data}
-          title={title}
-          size={40}
-          className="absolute bottom-2 left-2 z-[4] shadow-md"
-        />
-        <span className="absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-0.5 text-xs font-semibold text-white">
-          {formatPlaybackTime(track.durationSec)}
-        </span>
+        <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center justify-between">
+          <FeedSongPlayButton
+            song={data}
+            title={title}
+            size={40}
+            iconSize={18}
+            variant="disc"
+            className="pointer-events-auto"
+          />
+          <span className="mr-[9px] rounded-[10px] bg-black/60 px-2 py-[3px] text-[11px] font-semibold leading-[13px] text-white">
+            {formatPlaybackTime(track.durationSec)}
+          </span>
+        </div>
         <div className="absolute right-2 top-2 z-[4]">
           <ImageContextMenu image={data} leadingMenuItems={<FeedSongMenuItems song={data} />} />
         </div>
       </div>
-      <div className="flex flex-col gap-0.5 p-3">
-        <RoutedDialogLink
-          name="imageDetail"
-          state={{ imageId: data.id }}
-          className="truncate text-[17px] font-bold leading-snug text-black dark:text-white"
-        >
-          {title}
-        </RoutedDialogLink>
+      <RoutedDialogLink
+        name="imageDetail"
+        state={{ imageId: data.id }}
+        className={clsx('truncate text-[17px] font-bold leading-5', songTextBright)}
+      >
+        {title}
+      </RoutedDialogLink>
+      <span className="min-h-4 truncate text-[13px] leading-4">
         {data.user.username && (
           <NextLink
             href={songCreatorHref(data.user.username)}
-            className={clsx('truncate text-[13px] hover:underline', dimmed)}
+            className={clsx('hover:underline', songTextDimmed)}
           >
             {data.user.username}
           </NextLink>
         )}
-        {genre && <span className={clsx('truncate text-xs', dimmed)}>{genre}</span>}
-        <div className={clsx('mt-1 flex items-center gap-3 text-xs', dimmed)}>
-          <SongStat
-            icon={<IconThumbUp size={14} />}
-            count={data.stats?.likeCountAllTime ?? 0}
-            label="likes"
-          />
-          <SongStat
-            icon={<IconMessageCircle size={14} />}
-            count={data.stats?.commentCountAllTime ?? 0}
-            label="comments"
-          />
-        </div>
+      </span>
+      <span className={clsx('min-h-[15px] truncate text-xs italic leading-[15px]', songTextDimmed)}>
+        {genre ?? ''}
+      </span>
+      <div className={clsx('flex items-center gap-2.5 text-xs leading-[15px]', songTextDimmed)}>
+        <SongStat
+          icon={<IconThumbUp size={12} />}
+          count={data.stats?.likeCountAllTime ?? 0}
+          label="likes"
+        />
+        <SongStat
+          icon={<IconMessage size={12} />}
+          count={data.stats?.commentCountAllTime ?? 0}
+          label="comments"
+        />
       </div>
-    </TwCard>
+    </div>
   );
 }

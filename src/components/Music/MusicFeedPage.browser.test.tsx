@@ -68,9 +68,7 @@ const render = () =>
     </FiltersProvider>
   );
 const chip = (name: string) => page.getByRole('button', { name, exact: true });
-// Mantine draws each segment's radio off-screen behind its label, so the label takes the click.
-const pickView = async (name: string) =>
-  (page.getByRole('radio', { name }).element() as HTMLInputElement).labels?.[0].click();
+const pickView = (name: string) => page.getByRole('radio', { name }).click();
 const lastReplace = () => vi.mocked(Router.replace).mock.calls.at(-1)?.[0] as { query: object };
 
 beforeEach(() => {

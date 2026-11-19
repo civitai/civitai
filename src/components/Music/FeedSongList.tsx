@@ -1,4 +1,4 @@
-import { IconPlayerPauseFilled, IconPlayerPlayFilled } from '@tabler/icons-react';
+import { IconPlayerPause, IconPlayerPlay } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { createContext, useCallback, useContext } from 'react';
@@ -63,22 +63,30 @@ export function useFeedSongList() {
   );
 }
 
-/** The play / pause control of a song in a feed (Civitai primary, as on the post page). */
+/**
+ * The play / pause control of a song in a feed: a white disc with a dark icon on the Song Card
+ * (Pencil `AECSM`), a bare white icon over the dimmed cover in a Song Row (`VQ3N0`).
+ */
 export function FeedSongPlayButton({
   song,
   title,
   size,
+  iconSize,
+  variant,
   className,
 }: {
   song: SongImage;
   title: string;
   size: number;
+  iconSize: number;
+  variant: 'disc' | 'bare';
   className?: string;
 }) {
   const getList = useFeedSongList();
   const isCurrent = useMusicPlayerStore((s) => s.current?.id === song.id);
   const playing = useMusicPlayerStore((s) => s.current?.id === song.id && s.playing);
   const label = playing ? 'Pause' : 'Play';
+  const Icon = playing ? IconPlayerPause : IconPlayerPlay;
   return (
     <Tooltip label={label}>
       <button
@@ -92,15 +100,14 @@ export function FeedSongPlayButton({
         }}
         style={{ width: size, height: size }}
         className={clsx(
-          'flex shrink-0 items-center justify-center rounded-full bg-[var(--mantine-primary-color-filled)] text-[var(--mantine-primary-color-contrast)] transition-transform hover:scale-105',
+          'flex shrink-0 items-center justify-center',
+          variant === 'disc'
+            ? 'rounded-full bg-white text-dark-8 transition-transform hover:scale-105'
+            : 'rounded bg-black/50 text-white',
           className
         )}
       >
-        {playing ? (
-          <IconPlayerPauseFilled size={size / 2} />
-        ) : (
-          <IconPlayerPlayFilled size={size / 2} />
-        )}
+        <Icon size={iconSize} />
       </button>
     </Tooltip>
   );
