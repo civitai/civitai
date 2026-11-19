@@ -68,6 +68,9 @@ type ImagesQuery struct {
 	// Tools is the input's `tools`: only images whose ImageTool rows hold every one of these tool ids
 	// (an image with no tool row never matches). Not personalized: the query keeps its cache policy.
 	Tools []int
+	// BaseModels is image.getInfinite's `baseModels`, as sent: only images with an ImageResourceNew row
+	// whose ModelVersion's `baseModel` is one of them. Not personalized: the query keeps its cache policy.
+	BaseModels []string
 }
 
 // Built is the SQL for one page plus its caching policy.
@@ -261,6 +264,16 @@ func (q *ImagesQuery) Build() Built {
       WHERE it."imageId" = i.id
       GROUP BY it."imageId"
       HAVING array_agg(it."toolId" ORDER BY it."toolId") @> `+a.add(q.Tools)+`::integer[]
+    )`)
+	}
+	if len(q.BaseModels) > 0 {
+		// getAllImagesUncaptured's `baseModels` clause, in Node's clause order (it follows `tools` and
+		// `techniques` there), its RIGHT JOIN kept so the plan is Node's. The list is bound as sent
+		// (Node inlines it into `IN (…)`): `= ANY` keeps the same rows, an empty name included.
+		and = append(and, `EXISTS (
+      SELECT 1 FROM "ModelVersion" mv
+      RIGHT JOIN "ImageResourceNew" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
+      WHERE mv."baseModel" = ANY(`+a.add(q.BaseModels)+`::text[])
     )`)
 	}
 
