@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { Prisma } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
@@ -133,6 +134,7 @@ const VIEWERS = {
   other: { id: 9, isModerator: false },
   owner: { id: OWNER, isModerator: false },
   moderator: { id: 1, isModerator: true },
+  system: { id: constants.system.user.id, isModerator: true },
 } as const;
 type ViewerKey = keyof typeof VIEWERS;
 const HIDDEN_FROM: ViewerKey[] = ['anon', 'no id', 'other'];
@@ -151,6 +153,14 @@ const ON_A_KEY: [string, ViewerKey, object, boolean][] = [
   ['a moderator on a scoped key', 'moderator', SCOPED_KEY, false],
   ['the owner on a full-access key', 'owner', FULL_KEY, true],
   ['a moderator on a full-access key', 'moderator', FULL_KEY, true],
+  [
+    'a moderator on a full-scope app token',
+    'moderator',
+    { ...FULL_KEY, subject: { type: 'oauth', id: 'app' } },
+    false,
+  ],
+  // The internal system account keeps moderator rights on its own keys.
+  ['the system account on its own scoped key', 'system', SCOPED_KEY, true],
 ];
 const SHOWN_TO: ViewerKey[] = ['owner', 'moderator'];
 
