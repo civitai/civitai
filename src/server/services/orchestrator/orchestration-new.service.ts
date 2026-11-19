@@ -207,6 +207,11 @@ export type GenerationContext = {
   acknowledgedSoftBlock?: boolean;
   /** Stored as `metadata.remixRun`; user-writable afterwards, like the rest of the metadata. */
   remixRun?: Record<string, unknown>;
+  /**
+   * Whose prompt this is when it is not the submitter's (a user remix app passes its author): a
+   * block, its count, mute and review are recorded against this user, never the submitter.
+   */
+  auditAs?: { id: number; isModerator: boolean };
 };
 
 /** Options for submitting a generation */
@@ -1922,6 +1927,7 @@ export async function generateFromGraph({
   acceptBoostRequired,
   inputGate,
   remixRun,
+  auditAs,
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
   await assertGraphInputsUsable(data, userId, inputGate);
@@ -1949,6 +1955,10 @@ export async function generateFromGraph({
   // `auditPromptServer` applies — not the prompt alone.
   const negativePrompt =
     'negativePrompt' in data ? (data.negativePrompt as string | undefined) : undefined;
+  const auditUser = auditAs ?? { id: userId, isModerator };
+  // The tracker stamps the submitter on its ClickHouse row, and that table seeds the blocked-prompt
+  // count, so a block recorded against someone else goes without it.
+  const auditTrack = auditUser.id === userId ? track : undefined;
   if (!isBlankAuditInput(prompt, negativePrompt)) {
     const promptText = prompt ?? '';
     const inputVideo = (
@@ -1958,10 +1968,10 @@ export async function generateFromGraph({
       await auditPromptServer({
         prompt: promptText,
         negativePrompt,
-        userId,
+        userId: auditUser.id,
         isGreen: !!isGreen,
-        isModerator,
-        track,
+        isModerator: auditUser.isModerator,
+        track: auditTrack,
         remixOfId,
         inputImages,
         inputVideo,
@@ -1994,7 +2004,7 @@ export async function generateFromGraph({
           entityType: 'prompt',
           positivePrompt: promptText,
           negativePrompt,
-          userId,
+          userId: auditUser.id,
           recordForReview: true,
         }).catch((e) => {
           logToAxiom({
@@ -2019,10 +2029,10 @@ export async function generateFromGraph({
   if ((musicDescription && musicDescription.trim()) || (lyrics && lyrics.trim())) {
     await auditPromptServer({
       prompt: [musicDescription, lyrics].filter((v) => v && v.trim()).join('\n'),
-      userId,
+      userId: auditUser.id,
       isGreen: !!isGreen,
-      isModerator,
-      track,
+      isModerator: auditUser.isModerator,
+      track: auditTrack,
       acknowledgedSoftBlock,
       // Same population as the prompt audit above — the ACE Audio creative fields go through the
       // same auditor on the same submission, so they must carry the same label or the `generate`

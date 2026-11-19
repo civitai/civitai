@@ -168,3 +168,21 @@ describe('preset size tables', () => {
     }
   );
 });
+
+describe('submitPresetImageGen — auditAs', () => {
+  it("hands the author to the graph's prompt audit, and the submitter stays the user", async () => {
+    const auditAs = { id: 77, isModerator: false };
+    await submitPresetImageGen({
+      prompt: 'a cat',
+      aspectRatio: '1:1',
+      modelConfig,
+      user,
+      token: 'tok',
+      currencies: [],
+      tags: [],
+      auditAs,
+    });
+
+    expect(mockGenerateFromGraph.mock.calls[0][0]).toMatchObject({ userId: 42, auditAs });
+  });
+});

@@ -96,6 +96,8 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
 }));
 
 import { generateFromGraph } from '~/server/services/orchestrator/orchestration-new.service';
+import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { getWorkflowCapability } from '~/shared/generation/workflow-capability';
 
 const CHECKPOINT_ID = getWorkflowCapability('Qwen', 'txt2img')?.defaultModelId as number;
@@ -173,5 +175,106 @@ describe('generateFromGraph — a failure after the orchestrator accepted', () =
     expect(reply.id).toBe(WORKFLOW_ID);
     // Success-shaped: the queue card can be built from it (steps array present).
     expect(Array.isArray(reply.steps)).toBe(true);
+  });
+});
+
+const VIEWER = 1;
+const AUTHOR = 77;
+const track = { prohibitedRequest: vi.fn() };
+
+function submitAs(auditAs?: { id: number; isModerator: boolean }) {
+  return generateFromGraph({
+    input: {
+      workflow: 'txt2img',
+      ecosystem: 'Qwen',
+      model: { id: CHECKPOINT_ID },
+      resources: [],
+      prompt: 'a cat',
+      sampler: 'Euler',
+      steps: 25,
+      quantity: 1,
+      priority: 'low',
+    },
+    externalCtx: {
+      limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
+      user: { isMember: true, tier: 'bronze' },
+      flags: {},
+      selfHostedDisabledEcosystems: [],
+      selfHostedMode: 'enabled',
+      gateRules: [],
+    },
+    userId: VIEWER,
+    isModerator: true,
+    track,
+    token: 't',
+    experimental: false,
+    externalId: 'k',
+    auditAs,
+  } as never);
+}
+
+/**
+ * `auditAs`: a user remix app's prompt is its author's text, so a block must count against the
+ * author, not the viewer who pressed the button.
+ */
+describe('generateFromGraph — whose prompt the audit records against', () => {
+  const audit = vi.mocked(auditPromptServer);
+  const xguard = vi.mocked(createXGuardModerationRequest);
+  beforeEach(() => {
+    audit.mockReset().mockResolvedValue(undefined);
+    xguard.mockClear();
+  });
+
+  // 🔴 A system app (and every other caller) passes no `auditAs`. This pins the WHOLE audit call,
+  // not a field of it, so any change to what those callers send fails here. It passed unchanged
+  // against the code before `auditAs` existed.
+  it('without auditAs, audits as the submitter exactly as before', async () => {
+    await submitAs();
+
+    expect(audit.mock.calls).toStrictEqual([
+      [
+        {
+          prompt: 'a cat',
+          negativePrompt: undefined,
+          userId: VIEWER,
+          isGreen: false,
+          isModerator: true,
+          track,
+          remixOfId: undefined,
+          inputImages: undefined,
+          inputVideo: undefined,
+          sourceImageIds: [],
+          orchestratorToken: 't',
+          acknowledgedSoftBlock: undefined,
+          moderationSource: 'other',
+        },
+      ],
+    ]);
+  });
+
+  it("with auditAs, records against the author, with the author's moderator flag and no viewer tracker", async () => {
+    await submitAs({ id: AUTHOR, isModerator: false });
+
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(audit.mock.calls[0][0]).toMatchObject({ userId: AUTHOR, isModerator: false });
+    expect(audit.mock.calls[0][0].track).toBeUndefined();
+    // The workflow is still the viewer's: they submitted and they pay.
+    expect(submitWorkflow).toHaveBeenCalledTimes(1);
+    expect(submitWorkflow.mock.calls[0][0]).toMatchObject({ token: 't' });
+  });
+
+  it('with auditAs, a block queues the XGuard review against the author and refuses the submit', async () => {
+    audit.mockRejectedValueOnce(new Error('Your prompt was flagged'));
+
+    await expect(submitAs({ id: AUTHOR, isModerator: false })).rejects.toThrow('flagged');
+
+    expect(xguard).toHaveBeenCalledWith(expect.objectContaining({ userId: AUTHOR }));
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('keeps the tracker when the author is the submitter (an author running their own app)', async () => {
+    await submitAs({ id: VIEWER, isModerator: false });
+
+    expect(audit.mock.calls[0][0]).toMatchObject({ userId: VIEWER, isModerator: false, track });
   });
 });

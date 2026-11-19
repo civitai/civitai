@@ -6,6 +6,7 @@ import {
   buildGenerationContext,
   generateFromGraph,
   whatIfFromGraph,
+  type GenerateOptions,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { env } from '~/env/server';
@@ -315,6 +316,7 @@ export async function submitPresetImageGen(
     externalId?: string;
     sourceProvenance?: string[];
     remixRun?: Record<string, unknown>;
+    auditAs?: GenerateOptions['auditAs'];
   }
 ) {
   const {
@@ -330,6 +332,7 @@ export async function submitPresetImageGen(
     externalId,
     sourceProvenance,
     remixRun,
+    auditAs,
   } = args;
   const input = graphInputOf(args, false);
 
@@ -365,6 +368,7 @@ export async function submitPresetImageGen(
     externalId,
     sourceProvenance,
     remixRun,
+    auditAs,
     inputGate: 'checked-by-caller',
   });
 }
