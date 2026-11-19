@@ -297,6 +297,26 @@ describe('fold', () => {
     expect(foldContextText(undefined, undefined)).toBeUndefined();
   });
 
+  it('adds an item changed back to an earlier text, and skips text equal to its latest capture', () => {
+    const a = capture(7, 'text A', 8);
+    const b = capture(7, 'text B', 10);
+    const aAgain = capture(7, 'text A', 12);
+    const heard: CsamContextText[] = [];
+    expect(foldContextText([a, b], [aAgain], (c) => heard.push(c))).toEqual([a, b, aAgain]);
+    expect(heard).toEqual([]);
+
+    const latestAgain = capture(7, 'text B', 12);
+    expect(foldContextText([a, b], [latestAgain], (c) => heard.push(c))).toEqual([a, b]);
+    expect(heard).toEqual([latestAgain]);
+  });
+
+  it('judges the latest capture by capture time, not by place in the list', () => {
+    const b = capture(7, 'text B', 10);
+    const a = capture(7, 'text A', 8);
+    expect(foldContextText([b, a], [capture(7, 'text A', 12)])).toHaveLength(3);
+    expect(foldContextText([b, a], [capture(7, 'text B', 12)])).toHaveLength(2);
+  });
+
   it('adds a capture whose text differs only in whitespace', () => {
     const first = capture(7, 'same words', 8);
     const spaced = capture(7, 'same  words ', 12);

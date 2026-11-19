@@ -404,10 +404,10 @@ export function reportedUserIdsOf(userId: number, details: unknown) {
 }
 
 /**
- * Merges a filing's captures into a report's. Every earlier capture is kept as it was. A capture of an
- * item already in the report is added as its own entry when its text differs in any way, so an item
- * edited and captured again keeps both texts; the same text captured again adds nothing, and
- * `onIdentical` hears each capture the report already held.
+ * Merges a filing's captures into a report's. Every earlier capture is kept as it was. A capture is
+ * added as its own entry unless its text equals the item's latest capture, so an item edited, or
+ * edited and changed back, keeps each text in order; `onIdentical` hears once each capture whose text
+ * equals the latest one the report already held.
  */
 export function foldContextText(
   prior: unknown,
@@ -415,20 +415,26 @@ export function foldContextText(
   onIdentical?: (capture: CsamContextText) => void
 ) {
   const merged = Array.isArray(prior) ? [...(prior as CsamContextText[])] : [];
-  const capture = (c: CsamContextText) => JSON.stringify([c.source, c.id, c.text]);
-  const stored = new Set(merged.map(capture));
-  const seen = new Set(stored);
+  const item = (c: CsamContextText) => `${c.source}:${c.id}`;
+  const latest = new Map<string, { capture: CsamContextText; stored: boolean }>();
+  const consider = (c: CsamContextText, stored: boolean) => {
+    const current = latest.get(item(c));
+    if (!current || c.capturedAt >= current.capture.capturedAt)
+      latest.set(item(c), { capture: c, stored });
+  };
+  for (const c of merged) consider(c, true);
   const heard = new Set<string>();
   for (const c of added ?? []) {
-    if (seen.has(capture(c))) {
-      if (stored.has(capture(c)) && !heard.has(capture(c))) {
-        heard.add(capture(c));
+    const current = latest.get(item(c));
+    if (current && current.capture.text === c.text) {
+      if (current.stored && !heard.has(item(c))) {
+        heard.add(item(c));
         onIdentical?.(c);
       }
       continue;
     }
-    seen.add(capture(c));
     merged.push(c);
+    consider(c, false);
   }
   return merged.length ? merged : undefined;
 }
