@@ -878,3 +878,72 @@ describe('account deletion', () => {
     expect(await removed(held.finalId)).toBe(false);
   });
 });
+
+describe('the purge record', () => {
+  const record = async (fileId: number) =>
+    (
+      await q<{ etag: string | null; purgedAt: Date }>(
+        `SELECT etag, "purgedAt" FROM "ServiceDealFilePurge" WHERE "fileId" = $1`,
+        [fileId]
+      )
+    )[0];
+  /** One deal whose final has an archive, and an attachment that is not a candidate. */
+  const archived = async () => {
+    const deal = await closedDeal('Cancelled', 40);
+    await q(`UPDATE "ServiceDealFile" SET "deliveryKey" = 'k/archive' WHERE id = $1`, [
+      deal.finalId,
+    ]);
+    await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Failed' WHERE id = $1`, [
+      deal.attachmentId,
+    ]);
+    await sweep();
+    return deal;
+  };
+
+  it("keeps an earlier run's pending record when a hold lands before the retry's first delete", async () => {
+    const { finalId } = await archived();
+    s3.purgeObjectVersions.mockResolvedValueOnce({ versionsDeleted: 0, remaining: 1 });
+    await purge();
+    expect(await record(finalId)).toBeDefined();
+    // After the retry's claim and before its first delete.
+    s3.send.mockImplementationOnce(async () => {
+      await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${SELLER})`);
+      return { ETag: '"abc123"' };
+    });
+    await purge();
+    expect(s3.purgeObjectVersions).toHaveBeenCalledOnce();
+    expect(await kept(finalId)).toBe(true);
+    expect(await record(finalId)).toBeDefined();
+  });
+
+  it('stamps the time the purge finished, and fills an etag the first run could not read', async () => {
+    const { finalId } = await archived();
+    s3.send.mockRejectedValueOnce(new Error('HEAD failed'));
+    s3.purgeObjectVersions.mockResolvedValueOnce({ versionsDeleted: 0, remaining: 1 });
+    await purge();
+    expect(await record(finalId)).toMatchObject({ etag: null });
+    await q(`UPDATE "ServiceDealFilePurge" SET "purgedAt" = now() - interval '1 day'`);
+    await purge();
+    expect(await kept(finalId)).toBe(false);
+    const done = await record(finalId);
+    expect(done.etag).toBe('abc123');
+    expect(Date.now() - new Date(done.purgedAt).getTime()).toBeLessThan(60_000);
+  });
+
+  it('drops its own record when it fails before deleting anything', async () => {
+    const { finalId } = await archived();
+    // The HEAD runs just before the record is written; the hold read after it then fails.
+    s3.send.mockImplementationOnce(async () => {
+      await q(`ALTER TABLE "Appeal" RENAME TO "AppealGone"`);
+      return { ETag: '"abc123"' };
+    });
+    try {
+      await expect(purge()).rejects.toThrow();
+    } finally {
+      await q(`ALTER TABLE "AppealGone" RENAME TO "Appeal"`);
+    }
+    expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
+    expect(await kept(finalId)).toBe(true);
+    expect(await record(finalId)).toBeUndefined();
+  });
+});
