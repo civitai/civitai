@@ -2,9 +2,7 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
 import { NO_REPORT_REWARD_KEY, reportersWithoutReward } from '@civitai/shared/report-reward';
-import { REVIEWS_KEPT_ON_APPEAL_APPROVAL } from '@civitai/shared/image-review-types';
-import { withoutGraceMarkersSql } from '~/server/common/image-visibility';
-import { PRIOR_NEEDS_REVIEW_KEY } from '~/server/utils/image-removal-mode';
+import { reviewKeptWhenLiftedSql, withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -1914,10 +1912,7 @@ export async function settleResolvedAppeals(
           const [updated] = approved
             ? await dbWrite.$queryRaw<Written[]>`
                 UPDATE "Image"
-                SET "needsReview" = CASE
-                      WHEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${REVIEWS_KEPT_ON_APPEAL_APPROVAL}::text[])
-                      THEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
-                    END,
+                SET "needsReview" = ${reviewKeptWhenLiftedSql},
                     "blockedFor" = NULL, ingestion = 'Scanned',
                     "metadata" = ${withoutGraceMarkersSql()}
                 WHERE id = ${appeal.entityId}

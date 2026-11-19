@@ -186,7 +186,11 @@ beforeEach(async () => {
     ...v: unknown[]
   ) => {
     const flat = Prisma.sql(strings, ...(v as never[]));
-    if (!/"CsamQueueSetAside"|SELECT id FROM "Image"|RETURNING "postId", "pHash"/.test(flat.text))
+    if (
+      !/"CsamQueueSetAside"|SELECT id FROM "Image"|RETURNING "postId", "pHash"|'ruleReason'/.test(
+        flat.text
+      )
+    )
       return [];
     return (await run(flat)).rows;
   }) as never);
@@ -215,7 +219,9 @@ beforeEach(async () => {
   }) as never);
 });
 
-const { handleBlockImages, reportCsamImages } = await import('~/server/services/image.service');
+const { handleBlockImages, handleUnblockImages, reportCsamImages } = await import(
+  '~/server/services/image.service'
+);
 const { setTosViolationHandler } = await import('~/server/controllers/image.controller');
 const { resolveEntityAppeal } = await import('~/server/services/report.service');
 
@@ -750,5 +756,31 @@ describe('approving an appeal on an image an account deletion blocked', () => {
       ingestion: 'Scanned',
       metadata: { keep: 1 },
     });
+  });
+});
+
+describe('an explicit unblock of an image an account deletion blocked', () => {
+  it.each([
+    ['minor', 'minor'],
+    ['appeal', null],
+  ])('a recorded %s leaves the review flag %s, and the breadcrumbs go', async (review, flag) => {
+    await holder.db.query(
+      `UPDATE "Image" SET metadata = jsonb_build_object(
+         'accountDeletionPriorIngestion', 'Scanned',
+         'accountDeletionPriorBlockedFor', NULL,
+         'accountDeletionPriorNeedsReview', $2::text,
+         'keep', 1)
+       WHERE id = $1`,
+      [DECIDED, review]
+    );
+
+    await handleUnblockImages({ ids: [DECIDED], moderatorId: 2 } as never);
+
+    const { rows } = await holder.db.query<{
+      needsReview: string | null;
+      ingestion: string;
+      metadata: unknown;
+    }>(`SELECT "needsReview", ingestion, metadata FROM "Image" WHERE id = $1`, [DECIDED]);
+    expect(rows[0]).toEqual({ needsReview: flag, ingestion: 'Scanned', metadata: { keep: 1 } });
   });
 });
