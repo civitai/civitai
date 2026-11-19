@@ -5,6 +5,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import * as refreshAlert from '~/server/services/profile-picture-refresh-alert';
 
 /**
  * Avatars are gated in the browser on the profile picture's `nsfwLevel` and `ingestion`, and the hot
@@ -18,16 +19,15 @@ const refreshPicture = vi.fn(async (_ids: number | number[]) => undefined);
 const refreshBasic = vi.fn(async (_ids: number | number[]) => undefined);
 const queueUserUpdate = vi.fn(async (_items: unknown[]) => undefined);
 const clearImages = vi.fn(async (_db: unknown, _ids: number[]) => [] as number[]);
-const restoreImages = vi.fn(async (_db: unknown, _ids: number[]) => [] as number[]);
-const dropMarkers = vi.fn(async (_db: unknown, _ids: number[]) => undefined);
 const pictureLookup = vi.fn();
+const alertStep = vi
+  .spyOn(refreshAlert, 'alertRefreshStepFailure')
+  .mockImplementation(() => undefined);
 
 vi.mock('~/server/services/held-image-keys', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   clearHeldUserImages: (db: unknown, ids: number[]) => clearImages(db, ids),
-  restoreClearedUserImages: (db: unknown, ids: number[]) => restoreImages(db, ids),
-  dropStaleHeldImageMarkers: (db: unknown, ids: number[]) => dropMarkers(db, ids),
-  // The lookup's SQL runs against Postgres in held-avatar-restore.behavior.test.ts; here it answers
+  // The lookup's SQL runs against Postgres in held-avatar-clear.behavior.test.ts; here it answers
   // from the same user fake as the profile pictures.
   getPictureUserIds: async (db: typeof dbMock.dbWrite, ids: number[]) => {
     pictureLookup(db, ids);
@@ -193,17 +193,44 @@ describe('a bulk picture refresh', () => {
     expect(queueUserUpdate).toHaveBeenCalledWith([{ id: 4, action: 'Update' }]);
   });
 
-  it('refreshes a user whose cleared User.image a lifted hold put back', async () => {
+  it('refreshes the picture cache but not the basic-user entry of a user the clear did not touch', async () => {
     const { refreshProfilePicturesForUsers } = await import('../user.service');
     clearImages.mockResolvedValueOnce([]);
-    restoreImages.mockResolvedValueOnce([9]);
 
     await refreshProfilePicturesForUsers([9]);
 
-    expect(restoreImages).toHaveBeenCalledWith(expect.anything(), [9]);
-    expect(dropMarkers).toHaveBeenCalledWith(expect.anything(), [9]);
+    expect(refreshPicture).toHaveBeenCalledWith([9]);
+    expect(refreshBasic).not.toHaveBeenCalled();
+    expect(queueUserUpdate).not.toHaveBeenCalled();
+  });
+
+  it('🔴 alerts a failed step by name and still runs the steps after it', async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockResolvedValueOnce([9]);
+    refreshPicture.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(refreshProfilePicturesForUsers([9])).resolves.toBeUndefined();
+
+    expect(alertStep).toHaveBeenCalledWith('picture-cache');
+    expect(alertStep).toHaveBeenCalledTimes(1);
     expect(refreshBasic).toHaveBeenCalledWith([9]);
-    expect(queueUserUpdate).toHaveBeenCalledWith([{ id: 9, action: 'Update' }]);
+  });
+
+  it('🔴 alerts a failed session refresh as the session step', async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockResolvedValueOnce([]);
+    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('session store down'));
+
+    await expect(refreshProfilePicturesForUsers([9])).resolves.toBeUndefined();
+
+    expect(alertStep.mock.calls).toEqual([['session']]);
+  });
+
+  it('alerts nothing when every step succeeds (control)', async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockResolvedValueOnce([9]);
+    await refreshProfilePicturesForUsers([9]);
+    expect(alertStep).not.toHaveBeenCalled();
   });
 
   it('refreshes every session, never more than the cap at once', async () => {

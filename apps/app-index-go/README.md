@@ -23,6 +23,16 @@ creator. Results are in relevance order, Postgres `ts_rank` (name above slug and
 creator), then by name; without `q` they are by name. There is one page of at most `limit` results:
 no other sort and no paging. `/search` answers 503 until the index is ready.
 
+Every `/search` response, success or error, carries `Access-Control-Allow-Origin: *`, so an app
+in a sandboxed iframe can call it from the browser: it answers only public listings and takes no
+credentials. `OPTIONS /search` answers a CORS preflight (204, `GET`, `Access-Control-Max-Age`).
+`/healthz`, `/readyz` and `/metrics` send no CORS header.
+
+A 200 from `/search` is `Cache-Control: public, max-age=0, s-maxage=30`: a shared cache in front
+of the service may hold it for 30 s and absorb repeated searches, while browsers revalidate every
+time. Every other response, errors included, is `no-store`. A CDN only applies this to `/search`
+once it treats the path as cacheable: the TTL lives here, and the CDN rule only opts the path in.
+
 ## Following the stream
 
 - `Upsert` replaces the app's row, `Delete` removes it, `Progress` only moves the cursor. Each stores
