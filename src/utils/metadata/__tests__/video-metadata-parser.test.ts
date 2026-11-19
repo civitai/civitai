@@ -4,7 +4,7 @@ import { getVideoMetadata, VideoMetadataParser } from '~/utils/metadata';
 
 const encoder = new TextEncoder();
 
-function concat(...parts: Uint8Array[]): Uint8Array {
+function concat(...parts: Uint8Array[]) {
   const result = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
   let offset = 0;
   for (const part of parts) {
@@ -14,7 +14,7 @@ function concat(...parts: Uint8Array[]): Uint8Array {
   return result;
 }
 
-function uint32(value: number): Uint8Array {
+function uint32(value: number) {
   return new Uint8Array([
     (value >>> 24) & 0xff,
     (value >>> 16) & 0xff,
@@ -23,17 +23,13 @@ function uint32(value: number): Uint8Array {
   ]);
 }
 
-function uint64(value: number): Uint8Array {
+function uint64(value: number) {
   const result = new Uint8Array(8);
   new DataView(result.buffer).setBigUint64(0, BigInt(value));
   return result;
 }
 
-function mp4Box(
-  type: string | Uint8Array,
-  payload = new Uint8Array(),
-  extended = false
-): Uint8Array {
+function mp4Box(type: string | Uint8Array, payload = new Uint8Array(), extended = false) {
   const typeBytes = typeof type === 'string' ? encoder.encode(type) : type;
   if (extended) {
     return concat(uint32(1), typeBytes, uint64(payload.length + 16), payload);
@@ -92,7 +88,7 @@ const ebmlIds = {
   tagString: new Uint8Array([0x44, 0x87]),
 };
 
-function ebmlSize(value: number, width?: number): Uint8Array {
+function ebmlSize(value: number, width?: number) {
   const sizeWidth =
     width ?? Array.from({ length: 8 }, (_, i) => i + 1).find((x) => value < 2 ** (7 * x) - 1);
   if (!sizeWidth) throw new Error('fixture value is too large');
@@ -106,11 +102,11 @@ function ebmlSize(value: number, width?: number): Uint8Array {
   return result;
 }
 
-function ebmlElement(id: Uint8Array, payload = new Uint8Array(), sizeWidth?: number): Uint8Array {
+function ebmlElement(id: Uint8Array, payload = new Uint8Array(), sizeWidth?: number) {
   return concat(id, ebmlSize(payload.length, sizeWidth), payload);
 }
 
-function simpleTag(name: string, value: string, nested?: Uint8Array): Uint8Array {
+function simpleTag(name: string, value: string, nested?: Uint8Array) {
   return ebmlElement(
     ebmlIds.simpleTag,
     concat(
