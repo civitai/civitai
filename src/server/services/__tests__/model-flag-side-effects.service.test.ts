@@ -222,10 +222,10 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     const { sql, values } = imageUpdateCall();
     expect(sql).toContain('UPDATE "Image"');
     expect(sql).toContain('RETURNING i.id');
-    // minor, poi, the version-id list, then minor/poi again for the value guard — the
-    // image ids are never parameters.
-    expect(values.slice(0, 2)).toEqual([true, true]);
-    expect(values).toHaveLength(5);
+    // whether minor is written, minor, poi, the version-id list, then minor/poi again for the
+    // value guard — the image ids are never parameters.
+    expect(values.slice(1, 3)).toEqual([true, true]);
+    expect(values).toHaveLength(6);
   });
 
   it('skips rows whose flags already match so a re-toggle does not rewrite the gallery', async () => {
@@ -237,7 +237,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     const { sql, values } = imageUpdateCall();
     expect(sql).toContain('i.minor IS DISTINCT FROM');
     expect(sql).toContain('i.poi IS DISTINCT FROM');
-    expect(values.slice(3)).toEqual([true, false]);
+    expect(values.slice(4)).toEqual([true, false]);
   });
 
   it('writes minor: false when a model is unflagged', async () => {
@@ -246,7 +246,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
       after: { ...baseAfter, minor: false, poi: false },
     });
 
-    expect(imageUpdateCall().values.slice(0, 2)).toEqual([false, false]);
+    expect(imageUpdateCall().values.slice(1, 3)).toEqual([false, false]);
   });
 
   it('binds minor and poi to their own values, not each other, when they differ', async () => {
@@ -256,7 +256,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     });
 
     const { sql, values } = imageUpdateCall();
-    expect(values.slice(0, 2)).toEqual([true, false]);
+    expect(values.slice(1, 3)).toEqual([true, false]);
     expect(sql).toContain('FROM "Post"');
     expect(sql).toContain('modelVersionId');
   });

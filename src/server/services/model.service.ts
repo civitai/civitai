@@ -2862,7 +2862,7 @@ export async function applyModelFlagSideEffects({
         ? []
         : await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Image" i
-          SET ${syncMinor ? Prisma.sql`minor = ${after.minor},` : Prisma.empty}
+          SET minor = CASE WHEN ${syncMinor} THEN ${after.minor} ELSE i.minor END,
               poi = ${after.poi}
         FROM "Post" p
         WHERE i."postId" = p.id
