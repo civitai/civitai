@@ -244,7 +244,6 @@ describe('feed_transport measurement: transport tag follows the link the request
   });
 
   it('measures exactly these procedures at these rates, each a Go-transport procedure', () => {
-    // Adding a procedure or raising a rate is a production change: pin the whole map.
     expect([...FEED_TRANSPORT_SAMPLE_RATES].sort(([a], [b]) => a.localeCompare(b))).toEqual([
       ['image.getImagesAsPostsInfinite', 1],
       ['image.getInfinite', 0.1],
@@ -255,10 +254,6 @@ describe('feed_transport measurement: transport tag follows the link the request
   });
 });
 
-/**
- * Sampling: `image.getInfinite` at 0.1, decided per request by `Math.random() < 0.1` on whichever
- * arm the request leaves on. The draws are literals chosen either side of the rate and at it.
- */
 describe('feed_transport measurement: sampling', () => {
   it('image.getInfinite sampled out (draw 0.5) records nothing on EITHER arm', async () => {
     browser(true);
