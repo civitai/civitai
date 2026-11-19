@@ -225,13 +225,16 @@ describe('verifyAvatar shares the ingestion allowlist predicate', () => {
     expect(mockUpdateUserById).not.toHaveBeenCalled();
   });
 
-  it('still accepts a real avatar url and a CF Images UUID', async () => {
+  it('still accepts a real avatar url, and refuses a CF Images UUID as a new image', async () => {
     await setAvatar('https://cdn.discordapp.com/avatars/123/abc.png');
     expect(mockUpdateUserById).toHaveBeenCalled();
 
+    // An upload key reaches `User.image` only through `profilePicture`.
     mockUpdateUserById.mockClear();
-    await setAvatar('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
-    expect(mockUpdateUserById).toHaveBeenCalled();
+    await expect(setAvatar('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')).rejects.toThrow(
+      'Invalid avatar URL'
+    );
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
   });
 
   it('keeps the current picture when the form re-sends its `user.image` fallback', async () => {

@@ -55,9 +55,11 @@ export type Audience = {
   allowed: MatureRatingsAllowed;
 };
 
+// An audience records only `r` and `x`: it cannot say whether its user admits XXX, so `xxx`
+// fails closed (`audienceDocLevel` likewise leaves XXX out).
 const audienceOf = (allowed: MatureRatingsAllowed): Audience => ({
   key: `m${allowed.r ? 'r' : ''}${allowed.x ? 'x' : ''}`,
-  allowed,
+  allowed: { ...allowed, xxx: false },
 });
 
 /** No token: what anyone may read (browsing level PG, so no mature rating). */
