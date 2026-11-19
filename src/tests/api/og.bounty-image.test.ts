@@ -83,6 +83,20 @@ beforeAll(async () => {
   }
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
+  // Answered from the same rows, so a card that goes back to a Prisma read with a looser filter
+  // picks the image that filter lets through and fails the cases below, rather than finding none.
+  (
+    dbMock.dbRead.imageConnection.findFirst as unknown as ReturnType<typeof vi.fn>
+  ).mockImplementation(
+    async ({ where }: { where: { entityId: number; image?: Record<string, unknown> } }) => {
+      const row = rows.find(
+        (r) =>
+          r.bountyId === where.entityId &&
+          Object.entries(where.image ?? {}).every(([k, v]) => r[k as keyof typeof r] === v)
+      );
+      return row ? { image: row } : null;
+    }
+  );
 });
 
 beforeEach(() => {
