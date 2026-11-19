@@ -42,7 +42,10 @@ function recordingAdapter(seen: (Audience | undefined)[]): Adapter {
       // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
       return { cursor: 'c1.snapshot-cursor', entities: [one] };
     },
-    changes: async () => (async function* () {})(),
+    changes: async () =>
+      (async function* () {
+        // No changes: the stream ends after the snapshot.
+      })(),
   };
 }
 
