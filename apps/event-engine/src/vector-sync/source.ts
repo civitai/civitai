@@ -5,8 +5,6 @@ export type ImagePayload = {
   nsfwLevel: number;
   tagIds: number[];
   baseModels: string[];
-  /** The model versions the image was made with. Its payload index is created by hand, not in `bootstrap`. */
-  modelVersionIds: number[];
   type: string;
   userId: number;
   postId: number;
@@ -33,7 +31,7 @@ export async function getImageRowsInRange(pg: Pool, lo: number, hi: number): Pro
 
 export async function getPayloads(pg: Pool, rows: ImageRow[]): Promise<Map<number, ImagePayload>> {
   const ids = rows.map((r) => r.id);
-  const [tags, resources] = ids.length
+  const [tags, baseModels] = ids.length
     ? await Promise.all([
         pg.query<{ imageId: number; tagIds: number[] }>(
           `SELECT "imageId", array_agg("tagId" ORDER BY "tagId") AS "tagIds"
@@ -41,9 +39,8 @@ export async function getPayloads(pg: Pool, rows: ImageRow[]): Promise<Map<numbe
            GROUP BY "imageId"`,
           [ids]
         ),
-        pg.query<{ imageId: number; baseModels: string[]; modelVersionIds: number[] }>(
-          `SELECT ir."imageId", array_agg(DISTINCT mv."baseModel") AS "baseModels",
-             array_agg(DISTINCT mv.id ORDER BY mv.id) AS "modelVersionIds"
+        pg.query<{ imageId: number; baseModels: string[] }>(
+          `SELECT ir."imageId", array_agg(DISTINCT mv."baseModel") AS "baseModels"
            FROM "ImageResourceNew" ir JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
            WHERE ir."imageId" = ANY($1::int[])
            GROUP BY ir."imageId"`,
@@ -52,7 +49,7 @@ export async function getPayloads(pg: Pool, rows: ImageRow[]): Promise<Map<numbe
       ])
     : [{ rows: [] }, { rows: [] }];
   const tagMap = new Map(tags.rows.map((r) => [r.imageId, r.tagIds]));
-  const resourceMap = new Map(resources.rows.map((r) => [r.imageId, r]));
+  const baseModelMap = new Map(baseModels.rows.map((r) => [r.imageId, r.baseModels]));
 
   return new Map(
     rows.map((row) => [
@@ -60,8 +57,7 @@ export async function getPayloads(pg: Pool, rows: ImageRow[]): Promise<Map<numbe
       {
         nsfwLevel: row.nsfwLevel,
         tagIds: tagMap.get(row.id) ?? [],
-        baseModels: resourceMap.get(row.id)?.baseModels ?? [],
-        modelVersionIds: resourceMap.get(row.id)?.modelVersionIds ?? [],
+        baseModels: baseModelMap.get(row.id) ?? [],
         type: row.type,
         userId: row.userId,
         // Only eligible rows get a payload, and eligibility requires a post.
