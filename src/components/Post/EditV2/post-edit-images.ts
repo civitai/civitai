@@ -1,6 +1,6 @@
 import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
 
-/** One tile per saved image: a repeat of the same image id is dropped, the first stays in place. */
+/** Only saved ('added') images are deduped; in-progress tiles have no stable id yet. */
 export function dedupeAddedImages(images: ControlledImage[]): ControlledImage[] {
   const seen = new Set<number>();
   return images.filter((image) => {
