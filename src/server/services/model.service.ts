@@ -1,3 +1,5 @@
+import { deletePostRows } from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
@@ -173,6 +175,7 @@ import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
   queueImageSearchIndexUpdate,
+  deleteImages,
 } from '~/server/services/image.service';
 import {
   assertBaseModelAttestations,
@@ -2580,198 +2583,147 @@ const holdUnconfirmed = (e: unknown): never => {
   throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
 };
 
+const PERMA_DELETE_ACTOR = { system: 'perma-delete-model' } as const;
+
 export const permaDeleteModelById = async ({
   id,
 }: GetByIdInput & {
   userId: number;
 }) => {
-  // Populated inside the tx so the snapshot is consistent with the cascade.
-  let modelFileUrls: string[] = [];
-  // Version ids captured inside the tx (before the cascade removes them) so the
-  // post-commit storage-resolver deregister can reach every reaped version.
-  let versionIds: number[] = [];
-
-  // Resolved BEFORE the tx, not inside it and not after: `CollectionItem` cascades
-  // from `Model`, `Post` AND `Image` — all three of which this transaction destroys —
-  // so post-commit there is nothing left to read, and a
-  // failed statement inside a Postgres tx aborts the whole tx — this bookkeeping read
-  // must never be able to take the delete down with it. The resolver is non-throwing,
-  // so a failure costs the reindex, not the deletion.
+  // Read before anything goes: `CollectionItem` cascades from `Model`, `Post` AND `Image`, so
+  // afterwards there is nothing left to read. The resolver is non-throwing, so a failure costs the
+  // reindex, not the deletion.
   const collectionsToRebuild = await getCollectionIdsForModelCascade({ modelId: id });
 
-  const deletionResult = await dbWrite.$transaction(
-    async (tx) => {
-      // Snapshot ModelFile URLs inside the tx — read before the cascade nukes the rows.
-      modelFileUrls = (
-        await tx.modelFile.findMany({
-          where: { modelVersion: { modelId: id } },
-          select: { url: true },
-        })
-      ).map((f) => f.url);
+  // A hold is refused up front, so nothing goes; the model's DELETE checks again.
+  const [held] = await dbWrite.$queryRaw<{ held: boolean }[]>`
+    SELECT ${modelDataHeldSql(Prisma.sql`${id}::int`, true)} AS held
+  `.catch(holdUnconfirmed);
+  if (held?.held !== false)
+    throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
 
-      const model = await tx.model.findUnique({
-        where: { id },
-        select: {
-          id: true,
-          userId: true,
-          nsfwLevel: true,
-          modelVersions: { select: { id: true } },
-        },
-      });
-      if (!model) return { deletedModel: null, imagesToDelete: [] };
+  // primary: these reads pick what the deletes below remove.
+  const model = await dbWrite.model.findUnique({
+    where: { id },
+    select: { id: true, userId: true, nsfwLevel: true, modelVersions: { select: { id: true } } },
+  });
+  if (!model) throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
+  // The ModelFile urls and version ids, read before the cascade removes them, for the storage
+  // cleanup and the storage-resolver deregister after the delete.
+  const versionIds = model.modelVersions.map((version) => version.id);
+  // primary: read just before the cascade removes the rows.
+  const modelFiles = await dbWrite.modelFile.findMany({
+    where: { modelVersion: { modelId: id } },
+    select: { url: true },
+  });
+  const modelFileUrls = modelFiles.map((f) => f.url);
+  // primary: picks the posts the delete below removes.
+  const posts = await dbWrite.post.findMany({
+    where: { userId: model.userId, modelVersionId: { in: versionIds } },
+    select: { id: true },
+  });
+  const postIds = posts.map((post) => post.id);
+  const imageIds = postIds.length
+    ? (
+        await dbWrite.$queryRaw<{ id: number }[]>`
+          SELECT id FROM "Image" WHERE "postId" = ANY(${postIds}::int[])`
+      ).map((image) => image.id)
+    : [];
 
-      versionIds = model.modelVersions.map(({ id }) => id);
+  // Images, then posts, then the model: no transaction, so a step that fails leaves the ones after
+  // it, which a retry deletes.
+  await deleteImages(imageIds, { actor: PERMA_DELETE_ACTOR, updatePosts: false });
+  await deletePostRows(kyselyOver(dbWrite), { ids: postIds, actor: PERMA_DELETE_ACTOR });
+  const [deletedModel] = await dbWrite.$queryRaw<
+    { id: number; userId: number; nsfwLevel: number }[]
+  >`
+    WITH ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT ${id}::int`), true)}
+    DELETE FROM "Model" m
+    WHERE m.id = ${id}
+      AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
+    RETURNING m.id, m."userId", m."nsfwLevel"
+  `.catch(holdUnconfirmed);
+  if (!deletedModel) {
+    // Gone already, by a concurrent delete, is not a hold.
+    // primary: tells a delete that just missed from a hold.
+    const stillThere = await dbWrite.model.findUnique({ where: { id }, select: { id: true } });
+    if (!stillThere) throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
+    throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
+  }
 
-      // Get posts to find associated images
-      const posts = await tx.post.findMany({
-        where: {
-          userId: model.userId,
-          modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
-        },
-        select: { id: true },
-      });
-      const postIds = posts.map((post) => post.id);
-
-      // Get images to delete and queue search index updates
-      let imagesToDelete: { id: number }[] = [];
-      if (postIds.length > 0) {
-        imagesToDelete = await tx.image.findMany({
-          where: { postId: { in: postIds } },
-          select: { id: true },
-        });
-
-        const doomedImages = Prisma.sql`SELECT i.id FROM "Image" i WHERE i."postId" = ANY(${postIds}::int[])`;
-        await tx.$executeRaw`DELETE FROM "Image" WHERE id IN (${doomedImages})`;
-      }
-
-      const doomedPosts = Prisma.sql`SELECT p.id FROM "Post" p
-        WHERE p."userId" = ${model.userId} AND p."modelVersionId" = ANY(${versionIds}::int[])`;
-      await tx.$executeRaw`DELETE FROM "Post" WHERE id IN (${doomedPosts})`;
-
-      // Checked in the DELETE itself, so a hold placed during this transaction still stops it, and
-      // the rollback restores the posts and images.
-      const [deletedModel] = await tx.$queryRaw<
-        { id: number; userId: number; nsfwLevel: number }[]
-      >`
-        WITH ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT ${id}::int`), true)}
-        DELETE FROM "Model" m
-        WHERE m.id = ${id}
-          AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
-        RETURNING m.id, m."userId", m."nsfwLevel"
-      `.catch(holdUnconfirmed);
-      if (!deletedModel) {
-        // Gone already, by a concurrent delete, is not a hold. Thrown either way: nothing this
-        // transaction deleted passed a hold check, so it must not commit.
-        const stillThere = await tx.model.findUnique({ where: { id }, select: { id: true } });
-        if (!stillThere)
-          throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
-        throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
-      }
-      return { deletedModel, imagesToDelete };
-    },
-    { maxWait: 10000, timeout: 30000 }
-  );
-
-  const { deletedModel, imagesToDelete } = deletionResult;
-
-  if (deletedModel) {
-    // Each post-commit step is independently best-effort. The DB tx already
-    // committed, so a downstream failure in bid cleanup or search-index
-    // queueing must NOT shortcut the S3 cleanup — otherwise we leak orphan
-    // objects in B2/R2 every time one of these auxiliary services hiccups.
+  // Each step after the deletes is independently best-effort. The rows are
+  // gone, so a downstream failure in bid cleanup or search-index
+  // queueing must NOT shortcut the S3 cleanup — otherwise we leak orphan
+  // objects in B2/R2 every time one of these auxiliary services hiccups.
+  try {
+    await deleteBidsForModel({ modelId: deletedModel.id });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-perma-delete-bids',
+      message: `Failed to delete bids for model ${id}`,
+      error,
+    });
+  }
+  try {
+    await modelsSearchIndex.queueUpdate([
+      { id: deletedModel.id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-perma-delete-search-index',
+      message: `Failed to queue search index update for model ${id}`,
+      error,
+    });
+  }
+  // Rebuild the collections that held this model, its posts or its gallery images,
+  // using the snapshot read before the deletes — the membership rows cascaded away with
+  // them, so this is the only remaining record of which documents went stale.
+  // `enqueueCollectionRebuild` never throws by contract; wrapped so a broken contract
+  // cannot skip the S3 and storage-resolver cleanup below.
+  try {
+    await enqueueCollectionRebuild({
+      ...collectionsToRebuild,
+      source: 'model-perma-delete',
+    });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-perma-delete-collection-search-index',
+      message: `Failed to queue collection search index update for model ${id}`,
+      // `logToAxiom` stringifies its payload, and a bare Error serialises to `{}`.
+      error: safeError(error),
+    });
+  }
+  // Clean up S3 objects for all deleted ModelFiles (admin-triggered, latency-tolerant → await).
+  if (modelFileUrls.length > 0) {
     try {
-      await deleteBidsForModel({ modelId: deletedModel.id });
+      await deleteModelFileObjects(modelFileUrls);
     } catch (error) {
       logToAxiom({
         type: 'error',
-        name: 'model-perma-delete-bids',
-        message: `Failed to delete bids for model ${id}`,
+        name: 'model-perma-delete-s3-objects',
+        message: `Failed to delete S3 objects for model ${id}`,
         error,
       });
     }
+  }
+  // After the deletes: deregister storage-resolver file_locations for every version
+  // this model owned. For a tiered file the real backend object is keyed by
+  // file_locations.path (not the stale ModelFile.url the S3 cleanup used), and
+  // the surviving row keeps that object whitelisted against the dereference-
+  // quarantine sweep — a permanent leak. Best-effort + never throws.
+  if (versionIds.length > 0) {
     try {
-      await modelsSearchIndex.queueUpdate([
-        { id: deletedModel.id, action: SearchIndexUpdateQueueAction.Delete },
-      ]);
+      await deregisterFileLocationsBatch(versionIds);
     } catch (error) {
       logToAxiom({
         type: 'error',
-        name: 'model-perma-delete-search-index',
-        message: `Failed to queue search index update for model ${id}`,
+        name: 'model-perma-delete-deregister-file-locations',
+        message: `Failed to deregister file locations for model ${id}`,
         error,
       });
-    }
-    if (imagesToDelete.length > 0) {
-      try {
-        await queueImageSearchIndexUpdate({
-          ids: imagesToDelete.map((img) => img.id),
-          action: SearchIndexUpdateQueueAction.Delete,
-        });
-      } catch (error) {
-        logToAxiom({
-          type: 'error',
-          name: 'model-perma-delete-image-search-index',
-          message: `Failed to queue image search index update for model ${id}`,
-          error,
-        });
-      }
-    }
-    // Rebuild the collections that held this model, its posts or its gallery images,
-    // using the pre-tx snapshot — the membership rows cascaded away with the delete,
-    // so this is the only remaining record of which documents went stale.
-    // `enqueueCollectionRebuild` is non-throwing by contract, but wrapped anyway so
-    // this step matches its siblings above rather than resting the S3 and
-    // storage-resolver cleanup below on another module keeping that promise.
-    //
-    // ⚠️ This catch is therefore UNREACHABLE through the real callee, and no test
-    // pins it: removing the try/catch entirely leaves the suite green, measured. It is
-    // defence-in-depth against the contract being broken later, not covered behaviour.
-    // Exercising it would mean mocking collection-media-index in a suite that
-    // deliberately runs the real one so its payload assertions mean something.
-    try {
-      await enqueueCollectionRebuild({
-        ...collectionsToRebuild,
-        source: 'model-perma-delete',
-      });
-    } catch (error) {
-      logToAxiom({
-        type: 'error',
-        name: 'model-perma-delete-collection-search-index',
-        message: `Failed to queue collection search index update for model ${id}`,
-        // `logToAxiom` JSON.stringifies its payload and a bare Error serialises to
-        // `{}`. The siblings above predate that finding; this one does not.
-        error: safeError(error),
-      });
-    }
-    // Clean up S3 objects for all deleted ModelFiles (admin-triggered, latency-tolerant → await).
-    if (modelFileUrls.length > 0) {
-      try {
-        await deleteModelFileObjects(modelFileUrls);
-      } catch (error) {
-        logToAxiom({
-          type: 'error',
-          name: 'model-perma-delete-s3-objects',
-          message: `Failed to delete S3 objects for model ${id}`,
-          error,
-        });
-      }
-    }
-    // Post-commit: deregister storage-resolver file_locations for every version
-    // this model owned. For a tiered file the real backend object is keyed by
-    // file_locations.path (not the stale ModelFile.url the S3 cleanup used), and
-    // the surviving row keeps that object whitelisted against the dereference-
-    // quarantine sweep — a permanent leak. Best-effort + never throws.
-    if (versionIds.length > 0) {
-      try {
-        await deregisterFileLocationsBatch(versionIds);
-      } catch (error) {
-        logToAxiom({
-          type: 'error',
-          name: 'model-perma-delete-deregister-file-locations',
-          message: `Failed to deregister file locations for model ${id}`,
-          error,
-        });
-      }
     }
   }
 
@@ -4103,8 +4055,10 @@ async function assertScanRatingKept({
   modelId,
   before,
   data,
+  db,
 }: {
   modelId: number;
+  db?: Prisma.TransactionClient;
   before: {
     nsfw: boolean;
     name: string;
@@ -4151,7 +4105,7 @@ async function assertScanRatingKept({
   if (after('nsfw')) return;
   // A row already not mature (an older one): only removing the face that listed it.
   if (!before.nsfw && (faceAfter || !hasFace(before))) return;
-  if (await moderatorRuledNsfwSince(modelId, ratedAt)) return;
+  if (await moderatorRuledNsfwSince(modelId, ratedAt, { db })) return;
   throw throwBadRequestError(SCAN_RATING_KEPT_MESSAGE);
 }
 
@@ -4546,7 +4500,7 @@ export const upsertModel = async (
           enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
           // The scan's rating has no lock to enforce here: a rating that landed since the read
           // above is held by its guard, judged again on this row.
-          await assertScanRatingKept({ modelId: id, before: locked, data });
+          await assertScanRatingKept({ modelId: id, before: locked, data, db: tx });
           const profanityRefusal = profanityDetected
             ? profanityRatingRefusal(locked, locked.lockedProperties, data)
             : null;

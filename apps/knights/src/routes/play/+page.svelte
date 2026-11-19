@@ -830,9 +830,10 @@
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
-        {#if !yesNo}
-          <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
-        {/if}
+        <!-- Hidden, not removed, on yes/no: its slot keeps Skip from shifting. -->
+        <span class="rowtool" class:held={yesNo}>
+          <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
+        </span>
         <span class="rowtool">{@render soundToggle()}</span>
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
@@ -1200,6 +1201,9 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+  }
+  .rowtool.held {
+    visibility: hidden;
   }
   .quiet.guide {
     color: var(--io-gold);

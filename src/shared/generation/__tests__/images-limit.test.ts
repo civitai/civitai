@@ -159,6 +159,7 @@ const NON_DEFAULT_LIMITS: Array<[string, string, number, number]> = [
   ['LTXV25', 'img2vid', 1, 2],
   ['LTXV25', 'img2vid:first-last', 1, 2],
   ['MageFlow', 'img2img:edit', 1, 3],
+  ['MAI', 'img2img:edit', 1, 5],
   ['Ming', 'img2img:edit', 1, 3],
   ['MiniMaxH3', 'img2vid', 1, 2],
   ['MiniMaxH3', 'img2vid:first-last', 1, 2],

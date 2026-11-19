@@ -49,7 +49,7 @@ describe('purge-feedback-captures', () => {
   it('deletes the expired captures through the guard, and counts what the guard skipped', async () => {
     expect(await run()).toMatchObject({ deleted: 1, skippedByGuard: 1, kept: 1, keptReview: 1 });
     expect(deleteImages).toHaveBeenCalledTimes(1);
-    const [ids, , opts] = deleteImages.mock.calls[0];
+    const [ids, opts] = deleteImages.mock.calls[0];
     expect(ids).toEqual([1, 2]);
     expect(opts.onlyWhere.sql).toContain('"Image"."createdAt" <');
   });
