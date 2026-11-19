@@ -23,7 +23,9 @@ const s3 = vi.hoisted(() => ({
 const flipt = vi.hoisted(() => ({ retentionOn: true }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
-  isFlipt: vi.fn(async () => flipt.retentionOn),
+  isFlipt: vi.fn(
+    async (flag: string) => flag === 'service-deal-file-retention' && flipt.retentionOn
+  ),
 }));
 vi.mock('~/utils/s3-utils', () => ({
   getBucket: async () => 'bucket',
