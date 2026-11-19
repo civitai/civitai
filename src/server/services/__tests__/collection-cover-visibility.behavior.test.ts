@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 import type * as UserService from '~/server/services/user.service';
@@ -398,7 +399,7 @@ describe('getUserCollectionsWithPermissions', () => {
     );
     vi.mocked(dbMock.dbRead.image.findMany).mockImplementation((async (args: {
       where: { id: { in: number[] } };
-    }) => args.where.id.in.map((id) => ({ id }))) as never);
+    }) => args.where.id.in.map((id) => ({ id, tags: [] }))) as never);
     vi.mocked(dbMock.dbRead.tagsOnCollection.findMany).mockResolvedValue([]);
     vi.mocked(dbMock.dbRead.user.findMany).mockResolvedValue([]);
 
@@ -419,12 +420,44 @@ describe('getUserCollectionsWithPermissions', () => {
     });
     vi.mocked(dbMock.dbRead.image.findMany).mockImplementation((async (args: {
       where: { id: { in: number[] } };
-    }) => args.where.id.in.map((id) => ({ id }))) as never);
+    }) => args.where.id.in.map((id) => ({ id, tags: [] }))) as never);
     vi.mocked(dbMock.dbRead.tagsOnCollection.findMany).mockResolvedValue([]);
     vi.mocked(dbMock.dbRead.user.findMany).mockResolvedValue([]);
 
     const rows = await getUserCollectionsWithPermissions({ input: { userId: VIEWER } as never });
     expect(rows.map((r) => r.image?.id ?? null)).toEqual([VIEWER_REMOVED]);
+  });
+
+  it('withholds a child-tagged R cover, on an owned and a contributed collection alike', async () => {
+    const CHILD_TAG = 5351;
+    userCollections.splice(
+      0,
+      userCollections.length,
+      { id: 65, userId: OWNER, imageId: PUBLISHED },
+      { id: 66, userId: STRANGER, imageId: PUBLISHED },
+      { id: 67, userId: STRANGER, imageId: STRANGER_UPLOAD }
+    );
+    const tagsByImage: Record<number, number[]> = {
+      [PUBLISHED]: [CHILD_TAG],
+      [STRANGER_UPLOAD]: [],
+    };
+    vi.mocked(dbMock.dbRead.image.findMany).mockImplementation((async (args: {
+      where: { id: { in: number[] } };
+    }) =>
+      args.where.id.in.map((id) => ({
+        id,
+        nsfwLevel: NsfwLevel.R,
+        tags: (tagsByImage[id] ?? []).map((tagId) => ({ tag: { id: tagId } })),
+      }))) as never);
+    vi.mocked(dbMock.dbRead.tagsOnCollection.findMany).mockResolvedValue([]);
+    vi.mocked(dbMock.dbRead.user.findMany).mockResolvedValue([]);
+
+    const rows = await getUserCollectionsWithPermissions({ input: { userId: OWNER } as never });
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.image?.id ?? null]))).toEqual({
+      65: null,
+      66: null,
+      67: STRANGER_UPLOAD,
+    });
   });
 });
 

@@ -751,7 +751,11 @@ export const getUserCollectionsWithPermissions = async <
       ...collection,
       isOwner: collection.userId === userId,
       ownerUsername: ownerUsernames.get(collection.userId) ?? null,
-      image: images.find((i) => i.id === collection.imageId),
+      image: images.find(
+        (i) =>
+          i.id === collection.imageId &&
+          !isWithheldMatureCover({ nsfwLevel: i.nsfwLevel, tags: i.tags.map(({ tag }) => tag.id) })
+      ),
       tags: collectionTags
         .filter((t) => t.collectionId === collection.id)
         .map((t) => ({

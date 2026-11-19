@@ -35,6 +35,7 @@ const IMAGE = {
   tosViolation: true,
   scanJobs: { workflowId: 'wf', lastFailure: { reason: 'x' } },
   pHash: BigInt(1),
+  tags: [],
 };
 
 const pick = (row: Record<string, unknown>, select?: Record<string, unknown>) =>
