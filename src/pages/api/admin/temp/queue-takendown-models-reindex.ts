@@ -16,9 +16,8 @@ import { ModelModifier } from '~/shared/utils/prisma/enums';
 /**
  * Queue every taken-down model for deletion from the models index (`target=models`, the default),
  * or the collections showing taken-down models' images for a collections-index rewrite
- * (`target=collections`). A taken-down model is not index-eligible, so the nightly cleanup would
- * delete its document too, but only when its pass reaches the models index; this removes the
- * existing ones at the next 15-minute sync.
+ * (`target=collections`). The nightly cleanup would also delete these, but later; this removes them
+ * at the next sync.
  *
  * Hidden admin route. Guarded by WEBHOOK_TOKEN via `?token=` query param.
  *

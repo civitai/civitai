@@ -2296,9 +2296,7 @@ export const updateModelById = async ({
   if (written && 'mode' in written) {
     const writtenMode =
       written.mode && typeof written.mode === 'object' ? written.mode.set : written.mode;
-    // A takedown removes the model from search at once (the indexer only writes eligible models,
-    // so an Update would leave the document until the nightly cleanup); any other change of mode
-    // rewrites it, which re-adds a model leaving TakenDown.
+    // Update would not remove a taken-down model's document: the indexer only writes eligible models.
     await modelsSearchIndex.queueUpdate([
       {
         id,
