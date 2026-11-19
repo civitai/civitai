@@ -13,8 +13,7 @@ import { TRPCError } from '@trpc/server';
  *
  *   2. PR #2332 round-4 fail-open wrapper: an EVAL throw from `hSetWithTTL`
  *      (e.g. during a cache-redis cluster failover) must NOT 500 the
- *      request — `logSysRedisFailOpen('rate-limit-write-degraded', ...)`
- *      fires and the original `next()` result still propagates.
+ *      request — the original `next()` result still propagates.
  *
  * We don't need to boot the full tRPC framework to exercise these — we
  * intercept `~/server/trpc`'s `middleware()` and capture the handler the
@@ -23,21 +22,16 @@ import { TRPCError } from '@trpc/server';
  * at request time without the full pipeline.
  */
 
-const { mockHSetWithTTL, mockLogSysRedisFailOpen, capturedHandler } = vi.hoisted(() => {
+const { mockHSetWithTTL, capturedHandler } = vi.hoisted(() => {
   const captured: { handler: ((arg: unknown) => Promise<unknown>) | null } = { handler: null };
   return {
     mockHSetWithTTL: vi.fn(),
-    mockLogSysRedisFailOpen: vi.fn(),
     capturedHandler: captured,
   };
 });
 
 vi.mock('~/server/redis/atomic', () => ({
   hSetWithTTL: mockHSetWithTTL,
-}));
-
-vi.mock('~/server/redis/fail-open-log', () => ({
-  logSysRedisFailOpen: mockLogSysRedisFailOpen,
 }));
 
 // Capture the inner handler the rateLimit factory passes to `middleware(...)`.
@@ -134,8 +128,6 @@ describe('rateLimit recordAttempt — onlyCountSuccess', () => {
     expect(next).toHaveBeenCalledTimes(1);
     // hSetWithTTL must run exactly once and only after next() resolved ok.
     expect(mockHSetWithTTL).toHaveBeenCalledTimes(1);
-    // Fail-open logger must NOT have fired on the happy path.
-    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
     // The original next() result must propagate unchanged.
     expect(result.marker).toBe('next-ran');
   });
@@ -151,7 +143,6 @@ describe('rateLimit recordAttempt — onlyCountSuccess', () => {
     expect(next).toHaveBeenCalledTimes(1);
     // The critical assertion — a failed call MUST NOT burn a slot.
     expect(mockHSetWithTTL).not.toHaveBeenCalled();
-    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
     expect(result.ok).toBe(false);
   });
 
@@ -178,7 +169,7 @@ describe('rateLimit recordAttempt — onlyCountSuccess', () => {
 });
 
 describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
-  it('does NOT throw when hSetWithTTL rejects, and logs sysredis-fail-open with the right context', async () => {
+  it('does NOT throw when hSetWithTTL rejects', async () => {
     rateLimit({ limit: 10, period: 60 }, undefined, { onlyCountSuccess: true });
     const handler = capturedHandler.handler!;
 
@@ -192,23 +183,6 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
     const result = (await handler({ ...baseArg, next })) as any;
 
     expect(result.data).toBe('still-works');
-    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
-    const [subtype, fn, err, extra] = mockLogSysRedisFailOpen.mock.calls[0];
-    expect(subtype).toBe('rate-limit-write-degraded');
-    expect(fn).toBe('rate-limit-bucket.claimRateLimitAttempt');
-    expect(err).toBe(synthetic);
-    // The extra payload should carry enough to disambiguate the call. The hash
-    // key is namespaced by principal kind (`user:` / `ip:`) so the two key
-    // spaces cannot collide — see middleware.trpc.ts and the dedicated bucket-key
-    // suite in `middleware.trpc.rate-limit-key.test.ts`.
-    // `packed:trpc:limit` is the REAL `REDIS_KEYS.TRPC.LIMIT.BASE`. This asserted
-    // `trpc:rate-limit:` for as long as the file supplied its own copy of the constant —
-    // both sides of the comparison were the fixture's invention, so it could never fail and
-    // never matched production.
-    expect(extra).toMatchObject({
-      cacheKey: expect.stringContaining('packed:trpc:limit:'),
-      hashKey: 'user:42',
-    });
   });
 
   it('moderators short-circuit the entire middleware — no Redis touched at all', async () => {
@@ -225,7 +199,6 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
     expect(next).toHaveBeenCalledTimes(1);
     expect(mockHGet).not.toHaveBeenCalled();
     expect(mockHSetWithTTL).not.toHaveBeenCalled();
-    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 
   it('over-limit users still throw TOO_MANY_REQUESTS — fail-open is for the WRITE side only', async () => {

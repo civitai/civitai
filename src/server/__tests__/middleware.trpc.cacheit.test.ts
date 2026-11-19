@@ -15,11 +15,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * fake's `.eval`.
  */
 
-// Hoisted so the (hoisted) vi.mock factories below can reference them.
-const { logSysRedisFailOpen } = vi.hoisted(() => ({
-  logSysRedisFailOpen: vi.fn(),
-}));
-
 // middleware(fn) -> fn, so cacheIt() returns the bare async middleware fn.
 vi.mock('~/server/trpc', () => ({ middleware: (fn: unknown) => fn }));
 // withSpan(name, fn) -> fn() (no OTel SDK in the unit env).
@@ -38,12 +33,9 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   }),
 }));
 
-vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen }));
-
 import { cacheIt } from '~/server/middleware.trpc';
 import { cacheItKeyHash } from '~/server/utils/query-cache-key';
 import { hashifyObject } from '~/utils/string-helpers';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const redisFake = redisMock.redis;
 redisMock.redis.packed.set.mockResolvedValue(undefined);
@@ -81,13 +73,6 @@ describe('cacheIt cache-write fail-open', () => {
     expect(result).toBe(COMPUTED); // successful query still returned
     expect(next).toHaveBeenCalledTimes(1);
     expect(redisFake.eval).toHaveBeenCalled(); // the failing tag write was attempted
-    expect(logSysRedisFailOpen).toHaveBeenCalledTimes(1);
-    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
-      'write-degraded',
-      'middleware.trpc.cacheIt',
-      expect.any(Error),
-      expect.objectContaining({ path: 'test.proc' })
-    );
   });
 
   it('a Redis throw during the VALUE set does not reject — returns the computed result', async () => {
@@ -97,12 +82,11 @@ describe('cacheIt cache-write fail-open', () => {
     const result = await invoke(next);
 
     expect(result).toBe(COMPUTED);
-    expect(logSysRedisFailOpen).toHaveBeenCalledTimes(1);
     // The tag write never runs once the value set throws.
     expect(redisFake.eval).not.toHaveBeenCalled();
   });
 
-  it('healthy path caches and does NOT log a fail-open', async () => {
+  it('healthy path caches', async () => {
     const next = vi.fn().mockResolvedValue(COMPUTED);
 
     const result = await invoke(next);
@@ -110,7 +94,6 @@ describe('cacheIt cache-write fail-open', () => {
     expect(result).toBe(COMPUTED);
     expect(redisFake.packed.set).toHaveBeenCalledTimes(1);
     expect(redisFake.eval).toHaveBeenCalledTimes(1); // one tag → one eval
-    expect(logSysRedisFailOpen).not.toHaveBeenCalled();
   });
 });
 

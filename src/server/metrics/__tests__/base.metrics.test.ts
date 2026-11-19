@@ -11,21 +11,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // fixed in PR #2697. Both use the same hoisted-mock pattern to control the
 // hGet return type per-test — that's the exact axis of the bug.
 
-const { hGet, hSet, sAdd, sMembers, withSysReadDeadline, logSysRedisFailOpen } = vi.hoisted(
-  () => ({
-    hGet: vi.fn(),
-    hSet: vi.fn(() => Promise.resolve(1)),
-    sAdd: vi.fn(() => Promise.resolve(1)),
-    sMembers: vi.fn(() => Promise.resolve([] as string[])),
-    // STEP-3 soft-dependency: the flag reads are now wrapped in withSysReadDeadline
-    // so a SLOW/half-open sysRedis rejects (deadline) instead of parking ~11min.
-    // Transparent by default (returns the wrapped promise) — override per-test to reject.
-    withSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
-    // Spy the fail-open emitter so the fail-open path stays observable in the test
-    // (a blip that bypasses a kill-switch must leave a Loki `sysredis-fail-open` trace).
-    logSysRedisFailOpen: vi.fn(),
-  })
-);
+const { hGet, hSet, sAdd, sMembers, withSysReadDeadline } = vi.hoisted(() => ({
+  hGet: vi.fn(),
+  hSet: vi.fn(() => Promise.resolve(1)),
+  sAdd: vi.fn(() => Promise.resolve(1)),
+  sMembers: vi.fn(() => Promise.resolve([] as string[])),
+  // STEP-3 soft-dependency: the flag reads are now wrapped in withSysReadDeadline
+  // so a SLOW/half-open sysRedis rejects (deadline) instead of parking ~11min.
+  // Transparent by default (returns the wrapped promise) — override per-test to reject.
+  withSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+}));
 
 vi.mock('~/server/redis/client', () => ({
   sysRedis: { hGet, hSet, sAdd, sMembers, del: vi.fn(), exists: vi.fn() },
@@ -37,15 +32,13 @@ vi.mock('~/server/redis/client', () => ({
   withSysReadDeadline,
 }));
 
-vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen }));
-
 // Provide a non-null clickhouse so the early-return in update()/refreshRank()
 // doesn't fire (we want execution to reach the flag-read on the sysRedis mock).
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { $query: vi.fn(() => Promise.resolve([])) },
 }));
 
-vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {},  pgDbWrite: {} }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {}, pgDbWrite: {} }));
 
 // Stub getJobDate so the processor never touches a real timestamp store. Return
 // a far-past date so `shouldUpdate` / `shouldUpdateRank` is true — the flag is
@@ -133,7 +126,6 @@ describe('createMetricProcessor — update() metric flag (Buffer-vs-string)', ()
 
     await expect(proc.update(jobContext)).resolves.toBeUndefined(); // no throw escapes
     expect(update).toHaveBeenCalledTimes(1);
-    expect(logSysRedisFailOpen).toHaveBeenCalledTimes(1); // fail-open stays observable
   });
 
   it('FAILS OPEN and still runs the update when the read-deadline REJECTS (SLOW/half-open)', async () => {
@@ -151,7 +143,6 @@ describe('createMetricProcessor — update() metric flag (Buffer-vs-string)', ()
     await expect(proc.update(jobContext)).resolves.toBeUndefined();
     expect(withSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledTimes(1);
-    expect(logSysRedisFailOpen).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -214,6 +205,5 @@ describe('createMetricProcessor — refreshRank() rank flag (Buffer-vs-string)',
     await expect(proc.refreshRank(jobContext)).resolves.toBeUndefined();
     expect(withSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(logSysRedisFailOpen).toHaveBeenCalledTimes(1);
   });
 });

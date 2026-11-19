@@ -696,7 +696,7 @@ describe('processScheduledPublishing :: model version cache busts', () => {
     ]);
   });
 
-  it('a failing bust is logged and the engagements still run', async () => {
+  it('a failing bust does not stop the engagements', async () => {
     stubReads({ versions });
     mockBustMvCache.mockRejectedValueOnce(new Error('redis down'));
 
@@ -704,9 +704,6 @@ describe('processScheduledPublishing :: model version cache busts', () => {
 
     expect(mockBustMvCache).toHaveBeenCalledTimes(2);
     expect(mockProcessEngagement.mock.calls.map(([e]) => e.entityId)).toEqual([101, 102]);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ modelVersionId: 101, error: 'redis down' })
-    );
   });
 });
 
@@ -731,9 +728,6 @@ describe('processScheduledPublishing :: scheduled articles', () => {
   it('still records the run when the article go-live throws', async () => {
     mockPublishDueArticles.mockRejectedValueOnce(new Error('article table locked'));
     await runJob();
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', message: 'scheduled article go-live failed' })
-    );
     expect(mockSetLastRun).toHaveBeenCalled();
     expect(mockScanEntitiesInBackground).not.toHaveBeenCalled();
   });

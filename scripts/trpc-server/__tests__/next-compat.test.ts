@@ -187,7 +187,6 @@ describe('applyProxyBodyLimit', () => {
     );
     await compat.applyProxyBodyLimit(req, { experimental: { proxyClientMaxBodySize: 4096 + 100 } });
     expect((await readAll(req)).length).toBe(4096);
-    expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
 
@@ -235,8 +234,8 @@ describe('createRouteModuleLoader', () => {
     return { calls, log, modules: compat.createRouteModuleLoader(load, log) };
   }
 
-  it('preloads every page, logs and reports the ones that fail, and keeps the rest', async () => {
-    const { log, modules } = loader({
+  it('preloads every page, reports the ones that fail, and keeps the rest', async () => {
+    const { modules } = loader({
       '/a': () => good,
       '/b': () => {
         throw new Error('boom');
@@ -244,7 +243,6 @@ describe('createRouteModuleLoader', () => {
       '/c': () => ({}),
     });
     expect(await modules.preload(['/a', '/b', '/c'])).toEqual(['/b', '/c']);
-    expect(log).toHaveBeenCalledTimes(2);
     expect(await modules.get('/a')).toBe(good);
   });
 

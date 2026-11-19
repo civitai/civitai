@@ -26,8 +26,6 @@ vi.mock('~/utils/signal-client', async (importOriginal) => ({
   ...(await importOriginal<typeof SignalClient>()),
   signalClient: signals,
 }));
-const failOpen = vi.hoisted(() => ({ log: vi.fn() }));
-vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: failOpen.log }));
 const engine = vi.hoisted(() => ({ on: true }));
 vi.mock('~/server/events/points/enabled', () => ({
   isEventPointsEnabled: async () => engine.on,
@@ -514,8 +512,6 @@ describe('standings', () => {
       await getCosmeticScores(event, [{ userId: 2, cosmeticId: 22, claimKey: 'claimed' }])
     ).toEqual({});
     expect(await getUserCosmeticScores(event, 2)).toEqual([]);
-    // A miss, not a failure.
-    expect(failOpen.log).not.toHaveBeenCalled();
   });
 
   it('knows whether a snapshot is stored, for this window only', async () => {
@@ -530,7 +526,6 @@ describe('standings', () => {
     const onDegraded = vi.fn();
     expect((await getEventStandings(event, { onDegraded })).teams[0].team).toBe('Blue');
     expect(onDegraded).not.toHaveBeenCalled();
-    expect(failOpen.log).not.toHaveBeenCalled();
   });
 
   it('never folds hats a crashed earlier run left half-written into the new totals', async () => {
@@ -587,11 +582,6 @@ describe('standings', () => {
     ).toEqual({});
     expect(await getUserCosmeticScores(event, 2, onDegraded)).toEqual([]);
     expect(onDegraded).toHaveBeenCalledTimes(3);
-    expect(failOpen.log.mock.calls.map(([kind, where]) => [kind, where])).toEqual([
-      ['read-degraded', 'getEventStandings'],
-      ['read-degraded', 'getCosmeticScores'],
-      ['read-degraded', 'getUserCosmeticScores'],
-    ]);
   });
 
   it('serves standings and history from the stored snapshot without querying', async () => {

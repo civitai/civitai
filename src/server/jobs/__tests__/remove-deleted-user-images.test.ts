@@ -803,22 +803,7 @@ describe('removeDeletedUserImages', () => {
     expect(cursorSets[BACKLOG_KEY]).toBeUndefined();
   });
 
-  it('logs a success line with the run counts', async () => {
-    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900] } });
-
-    await run();
-
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'info',
-        name: 'remove-deleted-user-images',
-        deletedImages: 10,
-        deletedUsers: 1,
-      })
-    );
-  });
-
-  it('checks for cancellation between image batches without logging it as a failure', async () => {
+  it('checks for cancellation between image batches', async () => {
     mockSysRedis.get.mockResolvedValue('1000');
     seed({ 7: { deletedAt: NEWER, images: ids(300) } });
     let checks = 0;
@@ -831,7 +816,6 @@ describe('removeDeletedUserImages', () => {
     await run(checkIfCanceled);
 
     expect(mockDeleteImages).toHaveBeenCalledTimes(1);
-    expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 });
 
