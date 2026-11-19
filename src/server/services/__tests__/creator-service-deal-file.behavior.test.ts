@@ -1,5 +1,8 @@
 import { readFileSync } from 'fs';
-import { SERVICE_PREVIEW_OVER_LEVEL_REASON } from '~/shared/constants/creator-services.constants';
+import {
+  SERVICE_FINAL_VIDEO_MAX_BYTES,
+  SERVICE_PREVIEW_OVER_LEVEL_REASON,
+} from '~/shared/constants/creator-services.constants';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -913,6 +916,20 @@ describe('who can download what', () => {
         delivered: true,
       })
     ).toMatchObject({ key: DELIVERY_KEY });
+  });
+
+  it('refuses a video Final over the video size cap, whatever the client allowed', async () => {
+    const dealId = await accepted();
+    const video = { kind: 'Final', fileName: 'clip.mp4', mimeType: 'video/mp4' };
+    await expect(
+      upload(dealId, { ...video, size: SERVICE_FINAL_VIDEO_MAX_BYTES + 1 })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringMatching(/video cannot be more/),
+    });
+    await expect(
+      upload(dealId, { ...video, size: SERVICE_FINAL_VIDEO_MAX_BYTES })
+    ).resolves.toBeTruthy();
   });
 
   it('serves a video preview as before: only video Finals carry the scanned-version gate', async () => {

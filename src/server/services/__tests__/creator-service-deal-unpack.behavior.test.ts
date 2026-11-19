@@ -165,6 +165,7 @@ const { PreviewRejectedError } = await import('~/server/utils/service-deal-previ
 const {
   SERVICE_FINAL_OVER_LEVEL_REASON,
   SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
+  SERVICE_FINAL_VIDEO_MAX_BYTES,
   SERVICE_FINAL_VIDEO_TOO_LONG,
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
   SERVICE_FINAL_SCAN_MAX_ATTEMPTS,
@@ -2213,6 +2214,19 @@ describe('a video Final', () => {
       failReason: SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
     });
     expect(images.createImage).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stored video over the size cap before reading it', async () => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, 'clip.mp4', CLIP);
+    await q(`UPDATE "ServiceDealFile" SET size = $1 WHERE id = $2`, [
+      SERVICE_FINAL_VIDEO_MAX_BYTES + 1,
+      fileId,
+    ]);
+    serveClip();
+    await unpack.unpackFinals({ probeVideo: probe.video });
+    expect((await fileRow(fileId)).failReason).toMatch(/too large/);
+    expect(s3.uploadImageBufferToStore).not.toHaveBeenCalled();
   });
 
   it('refuses, without retrying or copying, a video whose container cannot be read', async () => {

@@ -72,6 +72,12 @@ const SOUND_FORMATS = new Set([
   'sowt',
   'twos',
   'ipcm',
+  'samr',
+  'raw ',
+  'in24',
+  'in32',
+  'fl32',
+  'ac-4',
 ]);
 const MAX_REORDER_FRAMES = 8;
 type Box = { type: string; body: number; end: number };
@@ -113,6 +119,7 @@ function children(b: Uint8Array, box: Box | undefined) {
       return found?.[0];
     },
     all: (type: string) => byType.get(type) ?? [],
+    types: () => [...byType.keys()],
     has: (type: string) => byType.has(type),
   };
 }
@@ -123,6 +130,44 @@ function table(b: Uint8Array, box: Box, at: number, size: number) {
   if (at + 4 + count * size > box.end) throw new Malformed();
   visit(count);
   return { count, start: at + 4 };
+}
+
+/**
+ * Whether every sample is shown within the timing table's span, give or take a few frames (or a
+ * second): its decode time plus its composition offset. Both tables are run-length, walked together.
+ */
+function shownWithinTiming(
+  b: Uint8Array,
+  timing: { count: number; start: number },
+  offsets: { count: number; start: number },
+  ticks: number,
+  samples: number,
+  timescale: number
+) {
+  const tolerance = Math.max(timescale, samples ? (MAX_REORDER_FRAMES * ticks) / samples : 0);
+  let run = -1;
+  let left = 0;
+  let delta = 0;
+  let decode = 0;
+  for (let i = 0; i < offsets.count; i++) {
+    let count = u32(b, offsets.start + i * 8);
+    const offset = i32(b, offsets.start + i * 8 + 4);
+    while (count > 0) {
+      while (left === 0) {
+        if (++run >= timing.count) return false;
+        left = u32(b, timing.start + run * 8);
+        delta = u32(b, timing.start + run * 8 + 4);
+      }
+      visit();
+      const step = Math.min(count, left);
+      const lastDecode = decode + (step - 1) * delta;
+      if (lastDecode + offset > ticks + tolerance || decode + offset < -tolerance) return false;
+      decode += step * delta;
+      count -= step;
+      left -= step;
+    }
+  }
+  return true;
 }
 
 /** mvhd and mdhd share a layout: version, then (32 or 64 bit) times, timescale, duration. */
@@ -140,6 +185,13 @@ function mp4Lengths(b: Uint8Array): number[] | null {
   if (top.has('moof') || top.has('meta')) return null;
   const moovBox = top.one('moov');
   if (!moovBox) return null;
+  // Every byte is a sample, a structure read here, or counted as padding: a box no player shows is
+  // a place to carry anything.
+  const PARSED_TOP = ['ftyp', 'moov', 'mdat', 'free', 'skip'];
+  for (const type of top.types())
+    if (!PARSED_TOP.includes(type)) for (const box of top.all(type)) pad(box.end - box.body);
+  const mdatBytes = top.all('mdat').reduce((sum, box) => sum + (box.end - box.body), 0);
+  let sampleBytes = 0;
   // Cover art is a picture a player shows that the scan never sees.
   if (Buffer.from(b.subarray(moovBox.body, moovBox.end)).includes('covr')) return null;
   const moov = children(b, moovBox);
@@ -149,11 +201,17 @@ function mp4Lengths(b: Uint8Array): number[] | null {
   if (!movie.timescale) return null;
   const lengths = [movie.duration / movie.timescale];
 
+  for (const type of moov.types())
+    if (type !== 'mvhd' && type !== 'trak' && type !== 'free' && type !== 'skip')
+      for (const box of moov.all(type)) pad(box.end - box.body);
   const traks = moov.all('trak');
   if (!traks.length) return null;
   let videoTracks = 0;
   for (const trakBox of traks) {
     const trak = children(b, trakBox);
+    for (const type of trak.types())
+      if (!['tkhd', 'edts', 'mdia', 'free', 'skip'].includes(type))
+        for (const box of trak.all(type)) pad(box.end - box.body);
     const tkhd = trak.one('tkhd');
     if (!tkhd) return null;
     const tv1 = b[tkhd.body] === 1;
@@ -201,30 +259,40 @@ function mp4Lengths(b: Uint8Array): number[] | null {
     const timing = table(b, stts, stts.body + 4, 8);
     let samples = 0;
     let ticks = 0;
-    let longestFrame = 0;
     for (let i = 0; i < timing.count; i++) {
       const count = u32(b, timing.start + i * 8);
-      const delta = u32(b, timing.start + i * 8 + 4);
       samples += count;
-      ticks += count * delta;
-      longestFrame = Math.max(longestFrame, delta);
+      ticks += count * u32(b, timing.start + i * 8 + 4);
     }
     // Samples the timing table does not cover would still be played.
     if (stsz.body + 12 > stsz.end || samples !== u32(b, stsz.body + 8)) return null;
+    const sampleSize = u32(b, stsz.body + 4);
+    if (sampleSize) sampleBytes += sampleSize * samples;
+    else {
+      const sizes = table(b, stsz, stsz.body + 8, 4);
+      for (let i = 0; i < sizes.count; i++) sampleBytes += u32(b, sizes.start + i * 4);
+    }
     // A composition offset can show a sample well after the timing table ends.
     const ctts = stbl.one('ctts');
-    if (ctts) {
-      const offsets = table(b, ctts, ctts.body + 4, 8);
-      for (let i = 0; i < offsets.count; i++) {
-        // Encoders reorder a few frames; more could show a frame well past the timing table.
-        const offset = Math.abs(i32(b, offsets.start + i * 8 + 4));
-        if (offset > Math.max(media.timescale, MAX_REORDER_FRAMES * longestFrame)) return null;
-      }
-    }
+    if (
+      ctts &&
+      !shownWithinTiming(
+        b,
+        timing,
+        table(b, ctts, ctts.body + 4, 8),
+        ticks,
+        samples,
+        media.timescale
+      )
+    )
+      return null;
     lengths.push(ticks / media.timescale);
   }
   // Which of two video tracks a player or the scan picks is not this code's to decide.
   if (videoTracks !== 1) return null;
+  // Sample bytes the tables do not account for are bytes no player shows.
+  if (sampleBytes > mdatBytes) return null;
+  pad(mdatBytes - sampleBytes);
   return lengths;
 }
 // #endregion
@@ -241,6 +309,11 @@ const EBML = {
   trackType: 0x83,
   trackTimecodeScale: 0x23314f,
   codecId: 0x86,
+  trackNumber: 0xd7,
+  referenceBlock: 0xfb,
+  chapters: 0x1043a770,
+  editionEntry: 0x45b9,
+  editionFlagOrdered: 0x45dd,
   attachments: 0x1941a469,
   cluster: 0x1f43b675,
   timecode: 0xe7,
@@ -323,8 +396,10 @@ function float(b: Uint8Array, start: number, end: number) {
 }
 
 /** A block's timestamp relative to its cluster: after the track number, a signed 16-bit value. */
-function blockOffset(b: Uint8Array, body: number) {
+function blockOffset(b: Uint8Array, body: number, tracks: Set<number>) {
   const track = vint(b, body, true);
+  // A block for a track Tracks never declared is data no player is told how to show.
+  if (!tracks.has(track.value)) throw new Malformed();
   const at = body + track.length;
   if (at + 2 > b.length) throw new Malformed();
   const raw = (b[at] << 8) | b[at + 1];
@@ -352,6 +427,7 @@ function matroskaLengths(b: Uint8Array): number[] | null {
   let infos = 0;
   let trackLists = 0;
   let videoTracks = 0;
+  const declaredTracks = new Set<number>();
   let offset = segment.body;
   while (offset < segmentEnd) {
     const el = element(b, offset);
@@ -368,20 +444,27 @@ function matroskaLengths(b: Uint8Array): number[] | null {
           base = uint(b, part.body, part.end);
         } else if (part.id === EBML.simpleBlock) {
           if (base === undefined) return null;
-          last = Math.max(last ?? -Infinity, base + blockOffset(b, part.body));
+          last = Math.max(last ?? -Infinity, base + blockOffset(b, part.body, declaredTracks));
         } else if (part.id === EBML.blockGroup) {
           if (base === undefined) return null;
           const group = sized(b, part.body, part.end);
           const block = only(group, EBML.block);
           const duration = only(group, EBML.blockDuration);
+          for (const field of group)
+            if (
+              field.id !== EBML.block &&
+              field.id !== EBML.blockDuration &&
+              field.id !== EBML.referenceBlock
+            )
+              pad(field.end - field.body);
           if (block)
             last = Math.max(
               last ?? -Infinity,
               base +
-                blockOffset(b, block.body) +
+                blockOffset(b, block.body, declaredTracks) +
                 (duration ? uint(b, duration.body, duration.end) : 0)
             );
-        }
+        } else if (part.id !== EBML_VOID) pad(part.end - part.body);
         o = part.end;
       }
       offset = o;
@@ -391,6 +474,16 @@ function matroskaLengths(b: Uint8Array): number[] | null {
     // Only what a Segment holds: another Segment or EBML document inside is video never read.
     if (!SEGMENT_CHILDREN.has(el.id) && el.id !== EBML_VOID && el.id !== EBML_CRC) return null;
     if (el.id === EBML.attachments) return null;
+    // Ordered chapters can play one stretch many times over; other unread elements count as padding.
+    if (el.id === EBML.chapters) {
+      for (const edition of sized(b, el.body, el.end)) {
+        const ordered =
+          edition.id === EBML.editionEntry &&
+          only(sized(b, edition.body, edition.end), EBML.editionFlagOrdered);
+        if (ordered && uint(b, ordered.body, ordered.end) !== 0) return null;
+      }
+    }
+    if (el.id !== EBML.info && el.id !== EBML.tracks && el.id !== EBML_VOID) pad(el.end - el.body);
     if (el.id === EBML.info) {
       if (++infos > 1) return null;
       const fields = sized(b, el.body, el.end);
@@ -415,6 +508,9 @@ function matroskaLengths(b: Uint8Array): number[] | null {
         // A track time scale stretches every block time on that track.
         const trackScale = only(fields, EBML.trackTimecodeScale);
         if (trackScale && float(b, trackScale.body, trackScale.end) !== 1) return null;
+        const number = only(fields, EBML.trackNumber);
+        if (!number) return null;
+        declaredTracks.add(uint(b, number.body, number.end));
       }
     }
     offset = el.end;

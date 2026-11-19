@@ -207,7 +207,14 @@ export const ebml = (id: number, body: Buffer | 'none', size?: 'unknown') => {
 export const WEBM_VIDEO_TRACKS = () =>
   ebml(
     0x1654ae6b,
-    ebml(0xae, Buffer.concat([ebml(0x83, Buffer.from([1])), ebml(0x86, Buffer.from('V_VP9'))]))
+    ebml(
+      0xae,
+      Buffer.concat([
+        ebml(0xd7, Buffer.from([1])),
+        ebml(0x83, Buffer.from([1])),
+        ebml(0x86, Buffer.from('V_VP9')),
+      ])
+    )
   );
 /**
  * A webm whose Info claims `declared` seconds (none when undefined) and whose clusters hold one
