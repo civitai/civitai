@@ -43,7 +43,7 @@ const BASELINE: Counts = {
   'src/server/integrations/moderation.ts': 1,
   'src/server/jobs/announcement-media-check.ts': 1,
   'src/server/jobs/process-vault-items.ts': 1,
-  'src/server/jobs/retry-image-storage-deletes.ts': 1,
+  'src/server/jobs/image-storage-deletes.ts': 1,
   'src/server/routers/blocks.router.ts': 1,
   'src/server/services/blocks/apps-pipeline.service.ts': 5,
   'src/server/services/blocks/block-image-upload.service.ts': 2,

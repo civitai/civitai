@@ -135,10 +135,16 @@ model StorageObjectDeleteQueue {   // name TBD
 
 All of these stop touching S3 and rely on the trigger+job instead:
 
-- Images: `deleteImageFromS3` and its callers — `deleteImageById` and `deleteImages` in
-  [image.service.ts](../src/server/services/image.service.ts), the S3 loop at the end of `deletePost` in
-  [post.service.ts](../src/server/services/post.service.ts), the blocked-image path in
-  [image-ingestion.ts](../src/server/jobs/image-ingestion.ts).
+- Images: **done**, on `JobQueue` rather than a trigger. Every image delete, except one passing `keepStoredFiles`, queues its stored file as an
+  `ImageStorageDelete` row in the same statement that deletes the row (`deleteImageRows` in
+  `@civitai/db-queries/content-deletion`, called by each app's `deleteImages`), and [image-storage-deletes](../src/server/jobs/image-storage-deletes.ts) drains it every
+  minute. The one inline path left is a takedown's retracting delete in
+  [image-ingestion.ts](../src/server/jobs/image-ingestion.ts), which runs in a job and needs each outcome.
+  Images a parent stops using (a bounty entry or article delete, an article edit, in either app) go through
+  `queueImageDeletes`, which queues as `ImageDelete` rows, in the parent's transaction, only the owner's images
+  that nothing else uses (no post, no other relation in `IMAGE_USES`, not shop artwork; and not reported or blocked, or for a moderator's delete not reported for CSAM);
+  [image-deletes](../src/server/jobs/image-deletes.ts) deletes them every minute, keeps those of a held owner,
+  and retries a row whose delete fails.
 - Model files: `deleteModelFileObject(s)` — [model-file.service.ts:172](../src/server/services/model-file.service.ts#L172),
   [:256](../src/server/services/model-file.service.ts#L256),
   [model-version.service.ts:865](../src/server/services/model-version.service.ts#L865),
@@ -186,8 +192,8 @@ Status legend: ✅ reclaimed · ⚠️ reclaimed but fragile (silent-orphan risk
 
 | Object | S3 on delete | DB-tracked | Mechanism | Status |
 | --- | --- | --- | --- | --- |
-| Cover image | yes | `Image` row + `Article.coverId` | `deleteImageById` → [deleteImageFromS3](../src/server/services/image.service.ts#L345) | ⚠️ |
-| Content images (embedded in body) | only *truly orphaned* (no remaining `ImageConnection` to any entity) | `Image` rows + `ImageConnection` | `deleteImageById` | ⚠️ |
+| Cover image | yes | `Image` row + `Article.coverId` | `deleteImages` → queued `ImageStorageDelete` | ✅ |
+| Content images (embedded in body) | only the author's images nothing else uses (`queueImageDeletes`) | `Image` rows + `ImageConnection` | queued `ImageDelete` → `deleteImages` → queued `ImageStorageDelete` | ✅ |
 | Attachments (`File` rows) | **no** | `File` row (`entityType='Article'`) until deleted | `tx.file.deleteMany` — **row only** | ❌ |
 
 **Findings:**
@@ -198,11 +204,9 @@ Status legend: ✅ reclaimed · ⚠️ reclaimed but fragile (silent-orphan risk
    `tx.file.deleteMany(...)` and stop. The object at `File.url` is left in the bucket with no DB row referencing
    it → unreclaimable orphan. `File` has **no** refcount guard, grace period, or cleanup job.
 
-2. **Image deletes are synchronous best-effort with swallowed errors.** `deleteImageFromS3` is refcount-guarded
-   (`otherImagesWithSameUrl`) and prod-only, but wrapped in `catch { /* do nothing */ }` — and it runs *after*
-   the `Image` row is already deleted. Any S3 failure (or the process dying mid-`deleteImageById`) silently
-   orphans the object, with no reconciliation pass to catch it. This is the durability trap the outbox model
-   is meant to close.
+2. **Image deletes are queued (closed).** The stored file is queued in the same transaction that deletes the
+   `Image` row, so a committed delete always leaves its file queued, and a failed delete stays queued for the
+   next run.
 
 @ai:* Attachments look like the cleanest first target for the outbox pattern — a `File.deletedAt` marker + a
 refcount-guarded purge job mirroring `purge-replaced-files`. Confirm which bucket attachments live in
