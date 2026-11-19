@@ -352,6 +352,11 @@ function ImagesFeed({
       countdownActive={countdownActive}
       isInitialLoad={imagesCount === 0}
       slow={isSlow}
+      noun={
+        computedFilters.types?.length === 1 && computedFilters.types[0] === MediaType.audio
+          ? 'songs'
+          : undefined
+      }
     />
   );
 

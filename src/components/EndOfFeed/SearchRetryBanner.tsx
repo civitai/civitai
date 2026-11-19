@@ -35,6 +35,8 @@ type SearchRetryBannerProps = {
   // slow copy and reframes the countdown as time until abort instead of time
   // until retry.
   slow?: boolean;
+  /** What the feed holds, plural and lower case: "images" by default, "songs" on music feeds. */
+  noun?: string;
 };
 
 export function SearchRetryBanner({
@@ -47,8 +49,9 @@ export function SearchRetryBanner({
   countdownActive = true,
   isInitialLoad = false,
   slow = false,
+  noun: items = 'images',
 }: SearchRetryBannerProps) {
-  const noun = isInitialLoad ? 'images' : 'more images';
+  const noun = isInitialLoad ? items : `more ${items}`;
   const exhausted = attempt > maxAttempts;
   const [remainingMs, setRemainingMs] = useState(delayMs);
   const firedRef = useRef(false);
@@ -164,7 +167,7 @@ export function SearchRetryBanner({
           <Group gap={8}>
             <Text size="sm" fw={600}>
               {slow
-                ? `${isInitialLoad ? 'Images' : 'More images'} are taking longer than usual`
+                ? `${noun.charAt(0).toUpperCase()}${noun.slice(1)} are taking longer than usual`
                 : effectiveCountdownActive
                 ? `Couldn't load ${noun} yet`
                 : 'Retrying now — hang tight'}
