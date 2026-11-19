@@ -92,7 +92,6 @@ export function searchesFeedInPlace(
 ) {
   // /services has no search index, so there only the bar's default target (`models`) filters it.
   if (pathname === '/services') return !!features.servicesFeedSearch && index === 'models';
-  // /videos is the images feed's videos: the images index answers it.
   if (pathname === '/videos')
     return !!features.videoFeedSearch && !!features.feedSearch && index === 'images';
   const feed = FEED_SEARCH[index as keyof typeof FEED_SEARCH];

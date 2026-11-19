@@ -22,7 +22,6 @@ export const getServerSideProps = createServerSideProps({
 
 function ToolsPage() {
   const features = useFeatureFlags();
-  // The header bar's search of this page (pageSearch): a name or company match.
   const searchText = useFeedSearchQuery();
   const query = features.pageSearch ? searchText : undefined;
 

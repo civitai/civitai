@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// The /tools page's search (the header bar under pageSearch) is the list's `query`: a name or
-// company match. It was in the schema but never reached the query.
+// The /tools page's search (the header bar under pageSearch) is the list's `query`.
 
 import { getAllTools } from '~/server/services/tool.service';
 

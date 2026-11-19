@@ -30,7 +30,6 @@ function VideosPage() {
               filters={{ ...filters, types: ['video'] }}
               showEof
               showAds
-              // The header bar's search, from the images index narrowed to videos.
               searchable={!!features.videoFeedSearch}
             />
           </IsClient>
