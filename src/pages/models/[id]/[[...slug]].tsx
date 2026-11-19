@@ -1284,6 +1284,9 @@ export default function ModelDetailsV2({
                               key="add-to-showcase"
                               entityType="Model"
                               entityId={model.id}
+                              // Sections hold only the caller's own models; a moderator here keeps
+                              // the top-showcase add.
+                              offerSections={isCreator}
                             />
                           )}
                           {/* The model itself, so its showcase images are not the nearest thing to hat. */}

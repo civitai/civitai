@@ -106,9 +106,14 @@ describe('userProfile.addToShowcaseSection', () => {
     expect(addHandler).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses a type other than Image before the handler runs', async () => {
+  it.each(['Model', 'Article'] as const)('passes a %s to the handler', async (entityType) => {
+    await flagOn().addToShowcaseSection({ ...input, entityType });
+    expect(addHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a type no section holds before the handler runs', async () => {
     await expect(
-      flagOn().addToShowcaseSection({ ...input, entityType: 'Model' } as never)
+      flagOn().addToShowcaseSection({ ...input, entityType: 'Post' } as never)
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(addHandler).not.toHaveBeenCalled();
   });
