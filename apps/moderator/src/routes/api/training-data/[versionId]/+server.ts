@@ -40,7 +40,9 @@ export const GET: RequestHandler = async ({ params, locals, fetch }) => {
   if (!resolved.ok) {
     console.error('[training-data] resolve failed', resolved.error);
     // The resolver only serves live datasets, so a failure on an all-purged version is expected.
-    if (await allTrainingDataPurged(versionId)) error(410, 'Training data was purged.');
+    // A failed read keeps the resolver's own 502 rather than replacing it with a bare 500.
+    if (await allTrainingDataPurged(versionId).catch(() => false))
+      error(410, 'Training data was purged.');
     error(502, resolved.error);
   }
 

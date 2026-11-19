@@ -2,14 +2,12 @@
   import { browser } from '$app/environment';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { IconDownload } from '@tabler/icons-svelte';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
   import TrainingDataSheet from '$lib/components/TrainingDataSheet.svelte';
+  import ModelPreviewFileRow from '$lib/components/ModelPreviewFileRow.svelte';
   import type { LightboxItem } from '$lib/lightbox';
-  import { bytes, dateTime } from '$lib/format';
-  import { previewFileControl } from '$lib/model-preview-file';
+  import { dateTime } from '$lib/format';
   import type { ModelPreview } from '$lib/server/model-preview.service';
   import { SSR_PENDING } from '$lib/ssr-pending';
 
@@ -64,20 +62,6 @@
       type: i.type,
       caption: `${i.type === 'video' ? 'Video' : 'Image'} #${i.id}${i.blocked ? ' · already removed' : ''}`,
     }));
-
-  // Clean files say nothing: a column of "Success" badges would bury the one that is not.
-  const scanState = (f: { pickleScan: string; virusScan: string }) => {
-    if (f.pickleScan === 'Danger' || f.virusScan === 'Danger')
-      return {
-        label: f.virusScan === 'Danger' ? 'Virus detected' : 'Unsafe pickle',
-        class: 'border-red-500/40 bg-red-500/15 text-red-300',
-      };
-    const amber = 'border-amber-500/40 bg-amber-500/10 text-amber-300';
-    if (f.pickleScan === 'Error' || f.virusScan === 'Error') return { label: 'Scan failed', class: amber };
-    if (f.pickleScan !== 'Success' || f.virusScan !== 'Success')
-      return { label: 'Not scanned yet', class: amber };
-    return null;
-  };
 
   const reportSummary = (byStatus: Record<string, number>) =>
     Object.entries(byStatus)
@@ -173,47 +157,16 @@
             {#if v.files.length}
               <ul class="divide-y text-xs">
                 {#each v.files as file (file.id)}
-                  {@const flagged = scanState(file)}
-                  {@const control = previewFileControl(file)}
-                  <li class="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1.5">
-                    <span class="min-w-0 flex-1 truncate font-mono" title={file.name}>{file.name}</span>
-                    <span class="text-muted-foreground">
-                      {file.type}{file.format ? ` · ${file.format}` : ''} · {bytes(file.sizeKB)}
-                    </span>
-                    {#if control.kind === 'purged'}
-                      <Badge variant="outline">{control.label}</Badge>
-                    {:else if file.visibility !== 'Public'}
-                      <Badge variant="outline">{file.visibility}</Badge>
-                    {/if}
-                    {#if flagged}<Badge class={flagged.class}>{flagged.label}</Badge>{/if}
-                    {#if control.kind === 'view'}
-                      {#if canViewTrainingData}
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          class="h-6 px-2 text-xs"
-                          onclick={() => {
-                            trainingVersion = { id: v.id, title: `Training data · ${v.name}` };
-                            trainingOpen = true;
-                          }}
-                        >
-                          View
-                        </Button>
-                      {/if}
-                    {:else if control.kind === 'download'}
-                      <!-- The site's own download route, by file id, on the moderator's civitai.com
-                           session — so the file they get is the one listed, scan state and all. -->
-                      <a
-                        href={`${civitaiUrl}/api/download/models/${v.id}?fileId=${file.id}`}
-                        class="link inline-flex items-center"
-                        aria-label={`Download ${file.name}`}
-                        title="Download from Civitai"
-                      >
-                        <IconDownload size={14} />
-                      </a>
-                    {/if}
-                  </li>
+                  <ModelPreviewFileRow
+                    {file}
+                    versionId={v.id}
+                    {civitaiUrl}
+                    {canViewTrainingData}
+                    onview={() => {
+                      trainingVersion = { id: v.id, title: `Training data · ${v.name}` };
+                      trainingOpen = true;
+                    }}
+                  />
                 {/each}
               </ul>
             {:else}

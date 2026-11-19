@@ -128,6 +128,11 @@ describe('GET /api/training-data/[versionId] on a purged dataset', () => {
     expect(await status(400)).toBe(502);
   });
 
+  it('keeps the resolver 502 when the purged check itself fails', async () => {
+    dbHandle.current = null;
+    expect(await status(200)).toBe(502);
+  });
+
   it('streams a live dataset the resolver serves, though a purged one sits beside it', async () => {
     callModEndpoint.mockResolvedValue({
       ok: true,
