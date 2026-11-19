@@ -51,3 +51,29 @@ const appIndexSearchCounter = registerInstrumentationMetric(
 export function recordAppIndexSearch(source: AppIndexSearchSource, reason: AppIndexSearchReason) {
   appIndexSearchCounter.inc({ source, reason });
 }
+
+/** The app entity fields the index returns that map onto a store card, compared per result. */
+export const APP_INDEX_COMPARED_FIELDS = ['name', 'tagline', 'iconUrl', 'rating'] as const;
+export type AppIndexComparedField = (typeof APP_INDEX_COMPARED_FIELDS)[number];
+
+const FIELD_DIFFS = 'civitai_app_index_search_field_diffs_total';
+
+// One increment per index result whose field differs from the store card the database hydrated
+// for the same slug, by field. Differences with a known cause (see `compareIndexFields`) are not
+// counted here. Counts only: no values.
+const fieldDiffsCounter = registerInstrumentationMetric(
+  FIELD_DIFFS,
+  () =>
+    new client.Counter({
+      name: FIELD_DIFFS,
+      help:
+        'App index search results whose name, tagline, iconUrl or rating differs from the ' +
+        'database-hydrated store card for the same slug (unexplained differences only), by field.',
+      labelNames: ['field'],
+      registers: [instrumentationRegistry],
+    })
+);
+
+export function recordAppIndexSearchFieldDiffs(field: AppIndexComparedField, count: number) {
+  if (count > 0) fieldDiffsCounter.inc({ field }, count);
+}

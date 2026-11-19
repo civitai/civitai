@@ -12,9 +12,12 @@ const h = vi.hoisted(() => ({
   listAvailableListings: vi.fn(),
   listStoreListingsBySlugs: vi.fn(),
   recordAppIndexSearch: vi.fn(),
+  recordAppIndexSearchFieldDiffs: vi.fn(),
 }));
-vi.mock('~/server/prom/app-index-search.metrics', () => ({
+vi.mock('~/server/prom/app-index-search.metrics', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   recordAppIndexSearch: h.recordAppIndexSearch,
+  recordAppIndexSearchFieldDiffs: h.recordAppIndexSearchFieldDiffs,
 }));
 
 const { listStoreGrid: listStoreGridWith, APP_INDEX_SEARCH_TIMEOUT_MS } = await import(
@@ -30,14 +33,59 @@ const listStoreGrid = (...args: Parameters<typeof listStoreGridWith>) =>
 
 const INDEX_URL = 'http://app-index.invalid/base/';
 
-function card(slug: string, name: string, tagline: string | null = null): ListingCard {
-  return { id: `al_${slug}`, slug, name, tagline } as unknown as ListingCard;
+type CardFields = {
+  slug: string;
+  name: string;
+  tagline: string | null;
+  iconUrl: string | null;
+  contentRating: string | null;
+};
+
+function card(f: CardFields): ListingCard {
+  return { id: `al_${f.slug}`, ...f } as unknown as ListingCard;
+}
+
+// What the database hydrates (and the user sees) for each slug.
+const ALPHA: CardFields = {
+  slug: 'alpha',
+  name: 'Alpha Pixel',
+  tagline: null,
+  iconUrl: 'https://cdn.invalid/alpha.png',
+  contentRating: 'g',
+};
+const BETA: CardFields = {
+  slug: 'beta',
+  name: 'Beta',
+  tagline: 'pixel tools',
+  iconUrl: null,
+  contentRating: 'PG',
+};
+const DELTA: CardFields = {
+  slug: 'delta',
+  name: 'Delta',
+  tagline: 'draws things',
+  iconUrl: 'https://cdn.invalid/delta.png',
+  contentRating: 'g',
+};
+
+type IndexResult = { slug: string; name: string; tagline: string; iconUrl: string; rating: string };
+
+/** The index's copy of a card, identical field for field (the index answers '' for none). */
+function indexed(f: CardFields, over: Partial<IndexResult> = {}): IndexResult {
+  return {
+    slug: f.slug,
+    name: f.name,
+    tagline: f.tagline ?? '',
+    iconUrl: f.iconUrl ?? '',
+    rating: f.contentRating ?? '',
+    ...over,
+  };
 }
 
 const DB_ITEMS: StoreGridItem[] = [
-  card('alpha', 'Alpha Pixel'),
-  card('beta', 'Beta', 'pixel tools'),
-  card('gamma', 'Gamma'),
+  card(ALPHA),
+  card(BETA),
+  card({ ...DELTA, slug: 'gamma', name: 'Gamma', tagline: null }),
   {
     id: 'asl_1',
     cardType: 'sub-listing',
@@ -59,13 +107,25 @@ const SFW_OPTS = { redCapable: false, scope: 'full' as const, viewerBrowsingLeve
 
 let fetchCalls: string[];
 let logLines: string[];
+let hydrated: Map<string, ListingCard>;
 
-function stubIndex(reply: () => Promise<Response> | Response) {
+type IndexReply = () => Promise<Response> | Response;
+function stubIndex(reply: IndexReply) {
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     fetchCalls.push(url);
     expect(init.signal).toBeInstanceOf(AbortSignal);
     return reply();
   });
+}
+function indexAnswers(results: IndexResult[]) {
+  stubIndex(() => Response.json({ results }));
+}
+
+/** The field_diffs counter calls with a non-zero count, as `field:count`. */
+function fieldDiffCalls(): string[] {
+  return h.recordAppIndexSearchFieldDiffs.mock.calls
+    .filter((c: unknown[]) => (c[1] as number) > 0)
+    .map((c: unknown[]) => `${String(c[0])}:${String(c[1])}`);
 }
 
 beforeEach(() => {
@@ -75,26 +135,25 @@ beforeEach(() => {
   h.listAvailableListings.mockReset().mockResolvedValue(DB_PAGE);
   // Hydration returns the cards of the slugs it is given, in that order (the real read keeps
   // the given order: `idsInSlugOrder`).
-  const bySlug = new Map<string, ListingCard>();
-  for (const c of [card('alpha', 'Alpha Pixel'), card('beta', 'Beta'), card('delta', 'Delta')]) {
-    bySlug.set(c.slug, c);
-  }
+  hydrated = new Map<string, ListingCard>();
+  for (const f of [ALPHA, BETA, DELTA]) hydrated.set(f.slug, card(f));
   h.listStoreListingsBySlugs.mockReset().mockImplementation(async (slugs: string[]) =>
     slugs.flatMap((s): ListingCard[] => {
-      const c = bySlug.get(s);
+      const c = hydrated.get(s);
       return c ? [c] : [];
     })
   );
   h.recordAppIndexSearch.mockReset();
+  h.recordAppIndexSearchFieldDiffs.mockReset();
   vi.spyOn(console, 'info').mockImplementation((...args: unknown[]) => {
     logLines.push(String(args[0]));
   });
-  stubIndex(() =>
-    Response.json({
-      results: [{ slug: 'delta' }, { slug: 'beta' }, { slug: 'unlisted' }, { slug: 'alpha' }],
-      next: null,
-    })
-  );
+  indexAnswers([
+    indexed(DELTA),
+    indexed(BETA, { rating: 'pg' }),
+    { slug: 'unlisted', name: 'Unlisted', tagline: '', iconUrl: '', rating: 'g' },
+    indexed(ALPHA),
+  ]);
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -112,6 +171,7 @@ describe('listStoreGrid', () => {
     expect(fetchCalls).toEqual([]);
     expect(h.listStoreListingsBySlugs).not.toHaveBeenCalled();
     expect(h.recordAppIndexSearch).not.toHaveBeenCalled();
+    expect(h.recordAppIndexSearchFieldDiffs).not.toHaveBeenCalled();
     expect(logLines).toEqual([]);
   });
 
@@ -127,11 +187,11 @@ describe('listStoreGrid', () => {
     expect(h.recordAppIndexSearch).not.toHaveBeenCalled();
   });
 
-  it('flag on, SFW viewer: the index answers, in its order, through the store gates', async () => {
+  it('flag on, SFW viewer: the index answers, in its order, with database cards', async () => {
     const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
 
     expect(fetchCalls).toEqual([
-      'http://app-index.invalid/base/search?q=pixel&sort=relevance&limit=48&kind=onsite&category=generation',
+      'http://app-index.invalid/base/search?q=pixel&limit=48&kind=onsite&category=generation',
     ]);
     // The index's order, not the database page's (alpha, beta, gamma).
     expect(h.listStoreListingsBySlugs).toHaveBeenCalledWith(
@@ -139,21 +199,89 @@ describe('listStoreGrid', () => {
       INPUT,
       SFW_OPTS
     );
+    // The cards are the database's, never built from the index's fields.
     expect(res).toEqual({
-      items: [card('delta', 'Delta'), card('beta', 'Beta'), card('alpha', 'Alpha Pixel')],
+      items: [card(DELTA), card(BETA), card(ALPHA)],
       nextCursor: undefined,
       search: 'index',
     });
     expect(h.recordAppIndexSearch).toHaveBeenCalledWith('index', 'ok');
+    // Identical fields (BETA's rating differs only in case): no field counter moves.
+    expect(fieldDiffCalls()).toEqual([]);
     // db: alpha (name) and beta (tagline) contain "pixel"; the sub-listing is not a listing.
     // overlap: beta and alpha; dropped: "unlisted", which the store gates did not return.
     expect(logLines).toEqual([
-      'app-index-search: q_len=5 index=3 db=2 overlap=2 dropped=1 source=index reason=ok',
+      'app-index-search: q_len=5 index=3 db=2 overlap=2 dropped=1 source=index reason=ok ' +
+        'field_diffs=name:0,tagline:0,iconUrl:0,rating:0 field_expected=iconUrl:0,rating:0',
     ]);
     expect(logLines[0]).not.toContain('pixel');
   });
 
-  type IndexReply = () => Promise<Response> | Response;
+  // The index's copy of DELTA differs from the database card on exactly one field.
+  it.each<[string, Partial<IndexResult>, string]>([
+    ['name', { name: 'Delta Renamed Upstream' }, 'name:1,tagline:0,iconUrl:0,rating:0'],
+    ['tagline', { tagline: 'a stale upstream tagline' }, 'name:0,tagline:1,iconUrl:0,rating:0'],
+    [
+      'iconUrl (another icon)',
+      { iconUrl: 'https://cdn.invalid/delta-previous.png' },
+      'name:0,tagline:0,iconUrl:1,rating:0',
+    ],
+    ['iconUrl (none in the index)', { iconUrl: '' }, 'name:0,tagline:0,iconUrl:1,rating:0'],
+    ['rating', { rating: 'pg13' }, 'name:0,tagline:0,iconUrl:0,rating:1'],
+  ])('a different %s is counted as a diff of that field only', async (field, over, counts) => {
+    indexAnswers([indexed(DELTA, over), indexed(BETA), indexed(ALPHA)]);
+    const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
+    expect(res.items).toEqual([card(DELTA), card(BETA), card(ALPHA)]);
+    expect(fieldDiffCalls()).toEqual([`${field.split(' ')[0]}:1`]);
+    expect(logLines).toEqual([
+      'app-index-search: q_len=5 index=3 db=2 overlap=2 dropped=0 source=index reason=ok ' +
+        `field_diffs=${counts} field_expected=iconUrl:0,rating:0`,
+    ]);
+    expect(logLines[0]).not.toContain(Object.values(over)[0] || '\u0000');
+  });
+
+  it.each<[string, CardFields, IndexResult, boolean, string]>([
+    [
+      'an icon the viewer level hides on the card',
+      { ...DELTA, iconUrl: null },
+      indexed(DELTA),
+      false,
+      'iconUrl:1,rating:0',
+    ],
+    [
+      'the red-host icon override on a red-capable request',
+      { ...DELTA, iconUrl: 'https://cdn.invalid/delta-red-override.png' },
+      indexed(DELTA),
+      true,
+      'iconUrl:1,rating:0',
+    ],
+    [
+      'a listing rating the registry does not publish',
+      { ...DELTA, contentRating: null },
+      indexed(DELTA, { rating: 'pg' }),
+      false,
+      'iconUrl:0,rating:1',
+    ],
+  ])('%s is expected, not a diff', async (_, dbCard, idx, redCapable, expected) => {
+    hydrated.set('delta', card(dbCard));
+    indexAnswers([idx]);
+    await listStoreGrid(INPUT, { ...SFW_OPTS, redCapable }, { indexSearch: true });
+    expect(fieldDiffCalls()).toEqual([]);
+    expect(logLines[0]).toContain(
+      `field_diffs=name:0,tagline:0,iconUrl:0,rating:0 field_expected=${expected}`
+    );
+  });
+
+  it('two different icons off a red-capable host are a diff, not an override', async () => {
+    hydrated.set(
+      'delta',
+      card({ ...DELTA, iconUrl: 'https://cdn.invalid/delta-red-override.png' })
+    );
+    indexAnswers([indexed(DELTA)]);
+    await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
+    expect(fieldDiffCalls()).toEqual(['iconUrl:1']);
+  });
+
   it.each<[string, IndexReply, AppIndexSearchReason]>([
     ['a 500', () => new Response('{"error":"internal"}', { status: 500 }), 'error'],
     [
@@ -163,7 +291,7 @@ describe('listStoreGrid', () => {
     ],
     [
       'a body that is not a search response',
-      () => Response.json({ results: [{ name: 'x' }] }),
+      () => Response.json({ results: [{ slug: 'x' }] }),
       'bad_response',
     ],
     ['a body that is not JSON', () => new Response('<html>'), 'bad_response'],
@@ -180,8 +308,10 @@ describe('listStoreGrid', () => {
     expect(fetchCalls).toHaveLength(1);
     expect(h.listStoreListingsBySlugs).not.toHaveBeenCalled();
     expect(h.recordAppIndexSearch).toHaveBeenCalledWith('db_fallback', reason);
+    expect(h.recordAppIndexSearchFieldDiffs).not.toHaveBeenCalled();
     expect(logLines).toEqual([
-      `app-index-search: q_len=5 index=0 db=2 overlap=0 dropped=0 source=db_fallback reason=${reason}`,
+      'app-index-search: q_len=5 index=0 db=2 overlap=0 dropped=0 source=db_fallback ' +
+        `reason=${reason} field_diffs=none field_expected=none`,
     ]);
   });
 
