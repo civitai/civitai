@@ -125,7 +125,6 @@ describePg('app-token mint vs a suspension, on two real connections', () => {
 
     const minting = mint();
     minting.catch(() => undefined);
-    // The mint is parked on the suspension's row lock, not reading around it.
     expect(await waitForBackend('Lock')).toBe(true);
     await suspender.query('COMMIT');
 
@@ -158,6 +157,27 @@ describePg('app-token mint vs a suspension, on two real connections', () => {
 
     expect(deleted.rowCount).toBe(1);
     expect(await liveTokens()).toBe(0);
+  });
+
+  it('a mint and an id-ordered multi-row suspension wait on each other without deadlocking', async () => {
+    await admin.query(
+      `INSERT INTO app_blocks VALUES ('b1', $1, 'approved'), ('b2', $1, 'approved')`,
+      [CLIENT]
+    );
+    // The main app's writers lock every row of the client FOR UPDATE in id order: here it holds b1.
+    await suspender.query('BEGIN');
+    await suspender.query(`SELECT id FROM app_blocks WHERE id = 'b1' FOR UPDATE`);
+
+    const minting = mint();
+    minting.catch(() => undefined);
+    expect(await waitForBackend('Lock')).toBe(true);
+    // The mint waits on b1 holding nothing, so the suspension can take b2 and finish.
+    await suspender.query(`SELECT id FROM app_blocks WHERE id = 'b2' FOR UPDATE`);
+    await suspender.query(`UPDATE app_blocks SET status = 'suspended' WHERE id = 'b1'`);
+    await suspender.query('COMMIT');
+
+    // b2 is still approved, so the client keeps minting.
+    await expect(minting).resolves.toMatchObject({ accessToken: expect.any(String) });
   });
 
   it.each([

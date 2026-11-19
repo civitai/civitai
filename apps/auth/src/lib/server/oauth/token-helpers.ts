@@ -146,7 +146,6 @@ export async function createAppAccessToken(
   return { accessToken, expiresAt };
 }
 
-/** The client backs an app block that is suspended, and no block of it is approved. */
 export class AppBlockSuspendedError extends Error {
   constructor() {
     super('app block suspended');
