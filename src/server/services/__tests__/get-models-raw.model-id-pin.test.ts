@@ -66,16 +66,17 @@ describe('getModelsRaw official-checkpoint pin ids', () => {
 });
 
 /**
- * A taken-down model is its owner's and moderators' alone on the site's feeds (model.getAll, profile
- * tabs, showcase sections). The public v1 API keeps listing it with its images dropped, as its docs
- * say; that is `includeWithheld`, which only `getModelsWithVersions` (the v1 path) sets.
- * The predicate's own semantics are pinned in model-withheld.sql.behavior.test.ts.
+ * A taken-down model is its owner's and moderators' alone, except on the public v1 API, which keeps
+ * listing it (`includeWithheld`). Predicate semantics are pinned in model-withheld.sql.behavior.test.ts.
  */
 
 const TAKEN_DOWN =
   /"mode" IS DISTINCT FROM \$(\d+)::"ModelModifier" OR \(\$(\d+)::boolean AND mm\."userId" = \$(\d+)\) OR \$(\d+)::boolean/;
 
-async function withheldFeedSql(user?: { id: number; isModerator?: boolean }, includeWithheld?: boolean) {
+async function withheldFeedSql(
+  user?: { id: number; isModerator?: boolean },
+  includeWithheld?: boolean
+) {
   capturedQueries.length = 0;
   await getModelsRaw({
     input: { browsingLevel: 1, take: 10, sort: 'Newest' } as never,

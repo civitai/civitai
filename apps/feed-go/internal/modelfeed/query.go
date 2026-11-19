@@ -313,8 +313,8 @@ func (q *PageQuery) Build() (SQL, error) {
 	if !q.Archived {
 		and = append(and, `(`+p+`."mode" IS NULL OR `+p+`."mode" != 'Archived'::"ModelModifier")`)
 	}
-	// modelNotWithheldSql (src/server/utils/model-withheld.ts): a taken-down model is its owner's
-	// and moderators' alone. Node binds signedIn and isModerator; their constant arms are folded here.
+	// Port of modelNotWithheldSql (src/server/utils/model-withheld.ts): a taken-down model is its
+	// owner's and moderators' alone.
 	if !q.IsModerator {
 		withheld := `(` + p + `."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier"`
 		if q.ViewerID != 0 {

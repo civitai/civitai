@@ -382,7 +382,7 @@ func TestBuildTakenDown(t *testing.T) {
 		want string // "" = no clause
 	}{
 		{"signed out", PageQuery{}, `(mm."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier")`},
-		// The viewer is bound last ($3 after the level and the limit), renumbering nothing else.
+		// The viewer is bound last, renumbering nothing else.
 		{"signed in", PageQuery{ViewerID: 7}, `(mm."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier" OR mm."userId" = $3)`},
 		{"moderator", PageQuery{ViewerID: 8, IsModerator: true}, ""},
 	} {
