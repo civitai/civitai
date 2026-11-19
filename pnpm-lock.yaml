@@ -1359,6 +1359,9 @@ importers:
       '@tabler/icons-svelte':
         specifier: ^3.28.1
         version: 3.44.0(svelte@5.56.3(@typescript-eslint/types@8.60.1))
+      '@tanstack/svelte-virtual':
+        specifier: 3.13.12
+        version: 3.13.12(svelte@5.56.3(@typescript-eslint/types@8.60.1))
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
@@ -5367,6 +5370,11 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
       react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  '@tanstack/svelte-virtual@3.13.12':
+    resolution: {integrity: sha512-SsOinCktvpMFbdSW61X6jeUNaJvD1tmt30AFVSLe1FQxGxjdPkZo0gAsoVPqM9FFZqidvvXQ4gpadDaTz/yGxA==}
+    peerDependencies:
+      svelte: ^3.48.0 || ^4.0.0 || ^5.0.0
 
   '@tanstack/table-core@8.20.5':
     resolution: {integrity: sha512-P9dF7XbibHph2PFRz8gfBKEXEY/HJPOhym8CHmjF8y3q5mWpKx9xtZapXQUWCgkqvsK0R46Azuz+VaxD4Xl+Tg==}
@@ -16635,6 +16643,11 @@ snapshots:
       '@tanstack/virtual-core': 3.13.12
       react: 18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)
       react-dom: 18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
+
+  '@tanstack/svelte-virtual@3.13.12(svelte@5.56.3(@typescript-eslint/types@8.60.1))':
+    dependencies:
+      '@tanstack/virtual-core': 3.13.12
+      svelte: 5.56.3(@typescript-eslint/types@8.60.1)
 
   '@tanstack/table-core@8.20.5': {}
 
