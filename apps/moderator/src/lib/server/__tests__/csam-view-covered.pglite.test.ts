@@ -104,9 +104,13 @@ beforeAll(async () => {
       (203, 'key-203', 603, 'Blocked', 'moderated', false, NULL, NULL), -- listed, report pending
       (204, 'key-204', 604, 'Blocked', 'moderated', false, NULL, NULL), -- under an evidence hold
       (205, 'key-205', 605, 'Blocked', 'moderated', false, 'csam', NULL), -- held media
-      (206, 'key-206', 606, 'Blocked', 'moderated', false, NULL, ${LISTED_PHASH}); -- listed pHash
-    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (204), (113), (115), (916), (306);
-    INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId") VALUES (916, 'key-116', 616);
+      (206, 'key-206', 606, 'Blocked', 'moderated', false, NULL, ${LISTED_PHASH}), -- listed pHash
+      (207, 'key-207', 607, 'Blocked', 'moderated', false, NULL, NULL), -- url shared with 217, held
+      (217, 'key-207', 617, 'Blocked', 'moderated', false, NULL, NULL),
+      (208, 'key-208', 608, 'Blocked', 'moderated', false, NULL, NULL); -- a held moderator delete on its url
+    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (204), (113), (115), (916), (306), (217), (918);
+    INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId") VALUES
+      (916, 'key-116', 616), (918, 'key-208', 618);
 
     -- The CDN-refusal leg: scanned, its url retracted. One fact each.
     INSERT INTO "Image" (id, url, "userId", ingestion) VALUES
@@ -223,8 +227,12 @@ describe('who', () => {
     expect(await held(id)).toBeNull();
   });
 
-  it('blocked 204 under an evidence hold is never covered', async () => {
-    expect(await retracted(204)).toBeNull();
+  it.each([
+    [204, 'under an evidence hold'],
+    [207, 'its url carries an image under an evidence hold'],
+    [208, 'its url carries an evidence-held moderator delete'],
+  ])('blocked %i is never covered: %s', async (id) => {
+    expect(await retracted(id)).toBeNull();
   });
 
   it('an image neither route holds is not covered', async () => {
