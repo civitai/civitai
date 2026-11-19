@@ -1041,6 +1041,10 @@ describe('video by any other name', () => {
       ['extra/cover', JPEG_BYTES()],
       ['extra/scan.tif', Buffer.concat([Buffer.from('II*\0', 'latin1'), Buffer.alloc(40)])],
       ['data/1', PNG_BYTES()],
+      ['data/1', Buffer.concat([Buffer.from('II*\0', 'latin1'), Buffer.alloc(40)])],
+      ['extra/cover.svg', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>')],
+      ['extra/cover.jxl', Buffer.from([0xff, 0x0a, 0, 0, 0, 0])],
+      ['extra/clip.mp4', Buffer.alloc(64)],
     ].map(([path, bytes]): [string, Buffer, RegExp] => [
       'weights.pt',
       torchZip([
@@ -1179,6 +1183,20 @@ describe('video by any other name', () => {
       ),
     ],
     // Tensor bytes are opaque: a stream is looked for only where a file of one would start.
+    [
+      'weights.pt',
+      torchZip([
+        ['data/0', Buffer.alloc(4096, 3)],
+        ['data/1', Buffer.concat([Buffer.from([0, 0, 1, 0]), Buffer.alloc(4096)])],
+      ]),
+    ],
+    [
+      'weights.pt',
+      torchZip([
+        ['constants.pkl', PICKLE()],
+        ['constants/0', Buffer.concat([Buffer.from([0, 0, 1, 0]), Buffer.alloc(4096)])],
+      ]),
+    ],
     [
       'weights.pt',
       torchZip([

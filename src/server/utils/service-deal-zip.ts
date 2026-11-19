@@ -115,6 +115,17 @@ const UNSCANNABLE_IMAGE_EXTENSIONS = [
   'jxl',
 ] as const;
 
+/** Whether a path is named as a picture, a video or an archive, whatever its bytes are. */
+export const isMediaName = (path: string) => {
+  const extension = extensionOf(path);
+  return [
+    SERVICE_ZIP_IMAGE_EXTENSIONS,
+    UNSCANNABLE_IMAGE_EXTENSIONS,
+    SERVICE_ZIP_VIDEO_EXTENSIONS,
+    SERVICE_ZIP_ARCHIVE_EXTENSIONS,
+  ].some((list) => isIn(list, extension));
+};
+
 /** Why a path cannot be unpacked safely, or null. Backslashes count as separators. */
 export function pathRefusal(rawPath: string) {
   const path = rawPath.replace(/\\/g, '/');

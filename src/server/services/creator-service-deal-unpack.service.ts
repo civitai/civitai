@@ -24,6 +24,7 @@ import {
   listZipPaths,
   MAX_ID3_TAGS,
   everyEntryHead,
+  isMediaName,
   sniffEntry,
   SNIFF_BYTES,
   ZipRejectedError,
@@ -292,7 +293,10 @@ const AUDIO_FORMATS: Record<string, (head: Buffer) => boolean> = {
 const TORCH_ENTRY =
   /^[^/]+\/(data\.pkl|constants\.pkl|attributes\.pkl|version|byteorder|\.format_version|\.storage_alignment|serialization_id|\.data\/(serialization_id|version)|(data|constants)\/\d+|code\/__torch__(\/.+)?\.(py|pkl|py\.debug_pkl)|extra\/.+)$/;
 const TORCH_MAX_ENTRIES = 50_000;
-const TORCH_TENSOR = /^[^/]+\/data\/\d+$/;
+/** Tensor storage: torch.save's data/N and torch.jit.save's constants/N. */
+const TORCH_TENSOR = /^[^/]+\/(data|constants)\/\d+$/;
+/** An icon's header, which tensor bytes (a zero then a one) can start with. */
+const ICON_LIKE = Buffer.from([0, 0, 1, 0]);
 
 async function isTorchArchive(file: ClaimedFinal) {
   const source = s3ZipSource(getS3Client(), await getBucket(), file.s3Key, file.size);
@@ -309,9 +313,13 @@ async function isTorchArchive(file: ClaimedFinal) {
   // stream is looked for only where a file of one would start, and only the image formats a
   // viewer opens are refused.
   return everyEntryHead(source, TORCH_MAX_ENTRIES, (path, head) => {
+    if (isMediaName(path)) return false;
     const tensor = TORCH_TENSOR.test(path);
     const kind = sniffEntry(head, { tsAnywhere: !tensor });
-    return kind === 'other' || (tensor && kind === 'unscannable');
+    return (
+      kind === 'other' ||
+      (tensor && kind === 'unscannable' && head.subarray(0, 4).equals(ICON_LIKE))
+    );
   });
 }
 
