@@ -304,9 +304,7 @@ describe('addToShowcaseSection — models', () => {
 });
 
 describe('addToShowcaseSection — articles', () => {
-  // Pending and Rescan are accepted on purpose: the section's article feed shows other viewers
-  // only Scanned articles (pinned in article-showcase-pending.behavior.test.ts), so a fresh
-  // article shows up once its scan clears. Refusing them would block adding one just published.
+  // Pending and Rescan are accepted on purpose; see article-showcase-pending.behavior.test.ts.
   it.each(['servable', 'pending', 'rescan'] as const)(
     'puts the owner’s %s article first in an Articles section',
     async (variant) => {

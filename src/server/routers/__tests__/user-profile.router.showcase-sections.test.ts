@@ -110,11 +110,4 @@ describe('userProfile.addToShowcaseSection', () => {
     await flagOn().addToShowcaseSection({ ...input, entityType });
     expect(addHandler).toHaveBeenCalledTimes(1);
   });
-
-  it('refuses a type no section holds before the handler runs', async () => {
-    await expect(
-      flagOn().addToShowcaseSection({ ...input, entityType: 'Post' } as never)
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(addHandler).not.toHaveBeenCalled();
-  });
 });

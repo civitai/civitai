@@ -97,6 +97,7 @@ const renderMenuItem = (
           entityId={IMAGE}
           offerSections={offerSections}
         />
+        <Menu.Item>Sibling</Menu.Item>
       </Menu.Dropdown>
     </Menu>
   );
@@ -172,7 +173,8 @@ describe('Add to Showcase on an article', () => {
     state.profileShowcases = flag;
     state.user = profileWith(sections);
     renderMenuItem('Article');
-    await expect.element(page.getByRole('button', { name: 'menu' })).toBeInTheDocument();
+    // The sibling proves the dropdown has mounted before the absence is read.
+    await expect.element(page.getByRole('menuitem', { name: 'Sibling' })).toBeInTheDocument();
     expect(page.getByRole('menuitem', { name: 'Add to Showcase' }).elements()).toHaveLength(0);
   });
 });
