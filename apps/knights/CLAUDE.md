@@ -69,7 +69,7 @@ SQL on PGlite.
 `signalsDisabled` kill switch is off; without it the page works exactly as before. An item that leaves a stage (vote,
 escalation, close, moderator ruling in the tick) is announced on `knights-queue:<stage>` by an opaque `liveKey` (HMAC of the
 id, `live-key.ts`; topics are subscribable by anyone signed in, so never an id); every served item carries one, a hidden
-check a never-announced one. The page drops it from the buffer, or swaps the item on screen. Voters of an item that became
+check a never-announced one. The page drops it from the buffer; the item on screen stays up, locked under a "Settled by the Order" card until the player moves on. Voters of an item that became
 final get a private `knights-player` stats snapshot, taken only under `acceptsStats` (`lib/live-events.ts`) so stats never
 dip. Detail: [`docs/features/knights-live-updates.md`](../../docs/features/knights-live-updates.md).
 
