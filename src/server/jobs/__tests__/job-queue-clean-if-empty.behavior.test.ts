@@ -12,6 +12,8 @@ const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 type Raw = ReturnType<typeof pgliteRaw>;
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
   pgliteRaw(holder.db).executeRaw(...a)) as never);
+dbMock.dbWrite.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>) =>
+  pgliteRaw(holder.db).queryRaw(...a)) as never);
 
 const job = jobQueueJobs.find((j) => j.name === 'job-queue-clean-if-empty')!;
 const runJob = () => job.run({} as Parameters<typeof job.run>[0]).result;
@@ -28,7 +30,10 @@ beforeAll(async () => {
     CREATE TABLE "ModelVersion" (
       "id" integer PRIMARY KEY, "modelId" integer NOT NULL, "status" "ModelStatus" NOT NULL
     );
-    CREATE TABLE "Post" ("id" integer PRIMARY KEY, "userId" integer NOT NULL, "modelVersionId" integer);
+    CREATE TABLE "Post" (
+      "id" integer PRIMARY KEY, "userId" integer NOT NULL, "modelVersionId" integer,
+      "nsfwLevel" integer NOT NULL DEFAULT 0
+    );
     CREATE TABLE "Image" (
       "id" integer PRIMARY KEY, "postId" integer REFERENCES "Post"(id), "userId" integer,
       "needsReview" text, "blockedFor" text

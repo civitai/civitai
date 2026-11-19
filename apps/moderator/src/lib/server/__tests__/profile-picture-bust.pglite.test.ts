@@ -5,7 +5,6 @@ import {
   SET_ASIDE_TABLE_SQL,
 } from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
-import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -16,6 +15,7 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
  * has to evict that user's entry, and must not fail the action when the eviction fails.
  */
 
+const MODERATOR = { id: 1, isModerator: true };
 const { dbHandle, del, hSet, syncSearchIndexBulk } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   del: vi.fn(async (_keys: string[]) => 0),
@@ -58,21 +58,12 @@ vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
 vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
-vi.mock('../storage', () => ({
-  getStorage: () => ({
-    deleteObject: vi.fn(async () => undefined),
-    purgeObjectVersions: vi.fn(async () => ({ versionsDeleted: 1, remaining: 0 })),
-  }),
-}));
 
 const { blockImage, acceptImage } = await import('../image-moderation.service');
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
-const { deleteImageRows, finishImageDeletes } = await import('../image-deletion');
+const { deleteImages: deleteModeratorImages } = await import('../image-deletion');
 const { bustProfilePictures } = await import('../profile-picture-cache');
-const deleteImages = async (ids: number[]) =>
-  finishImageDeletes(
-    await (dbHandle.current as Kysely<DB>).transaction().execute((trx) => deleteImageRows(trx, ids))
-  );
+const deleteImages = (ids: number[]) => deleteModeratorImages(ids, MODERATOR);
 
 const SCHEMA = `
 CREATE TABLE "Image" (
@@ -103,7 +94,12 @@ CREATE TABLE "CsamReport" (
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+CREATE TYPE "JobQueueType" AS ENUM (
+  'BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync', 'ImageDelete'
+);
+CREATE TABLE "JobQueue" ("type" "JobQueueType", "entityType" "EntityType", "entityId" INTEGER,
+  "data" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Model3D" (
   "id" INTEGER PRIMARY KEY,
