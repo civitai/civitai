@@ -8,6 +8,9 @@ import { ServiceCardAnchor } from '~/components/CreatorShop/Storefront/ServiceCa
 import { SectionHeader } from '~/components/CreatorShop/Storefront/SectionHeader';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { scrollIfHashed } from '~/utils/scroll-if-hashed';
+
+const scrollToServices = scrollIfHashed(`#${storefrontSectionId('services')}`);
 
 export function ServicesSection({
   ownerUserId,
@@ -38,7 +41,12 @@ export function ServicesSection({
   const allOpenDealsLoaded = !hasNextPage && hiddenOffDomain === 0;
 
   return (
-    <Stack gap="md" id={storefrontSectionId('services')} className="scroll-mt-20">
+    <Stack
+      ref={scrollToServices}
+      gap="md"
+      id={storefrontSectionId('services')}
+      className="scroll-mt-20"
+    >
       <SectionHeader
         icon={sectionIcons.services}
         title="Services"

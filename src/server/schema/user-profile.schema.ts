@@ -30,6 +30,7 @@ export const ProfileSectionTypeDef = {
   Shop: 'shop',
   OnSale: 'onSale',
   CreatorJourney: 'creatorJourney',
+  Recent: 'recent',
 } as const;
 
 export type ProfileSectionType = (typeof ProfileSectionTypeDef)[keyof typeof ProfileSectionTypeDef];
@@ -41,6 +42,9 @@ export type CustomShowcaseKey = `custom:${string}`;
 export const customShowcaseKey = (id: string) =>
   `${customShowcaseKeyPrefix}${id}` as CustomShowcaseKey;
 
+export const profileSectionWidths = ['full', 'half'] as const;
+export type ProfileSectionWidth = (typeof profileSectionWidths)[number];
+
 export const profileSectionSchema = z.object({
   // A custom showcase section is placed by `custom:<ShowcaseSection.id>`.
   key: z.union([
@@ -50,6 +54,7 @@ export const profileSectionSchema = z.object({
     ),
   ]),
   enabled: z.boolean(),
+  width: z.enum(profileSectionWidths).optional(),
 });
 
 export const showcaseSectionTypes = ['Model', 'Article', 'Image'] as const;

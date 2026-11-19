@@ -7,6 +7,7 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
+import type { AspectRatioImageCardProps } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
 import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
@@ -33,7 +34,7 @@ export function ImageCard(props: Props) {
   );
 }
 
-function ImageCardContent({ data, hideCreator }: Props) {
+function ImageCardContent({ data, hideCreator, aspectRatio }: Props) {
   const { getImages, ...context } = useImagesContext();
   const features = useFeatureFlags();
   // Called unconditionally: inside the `??` below it would sit after a
@@ -43,6 +44,7 @@ function ImageCardContent({ data, hideCreator }: Props) {
   return (
     <AspectRatioImageCard
       image={data}
+      aspectRatio={aspectRatio}
       // The owner's own cosmetic wins; the remix frame is only a fallback.
       cosmetic={data.cosmetic?.data ?? (remix.any ? REMIX_FRAME : undefined)}
       eventDecoration={data.eventDecoration?.data}
@@ -152,4 +154,5 @@ type Props = {
   data: ImagesInfiniteModel;
   /** For a gallery of one creator's images (their own profile), where the name repeats on every card. */
   hideCreator?: boolean;
+  aspectRatio?: AspectRatioImageCardProps<'imageDetail'>['aspectRatio'];
 };

@@ -15,6 +15,8 @@ import {
 } from '~/components/Profile/profile.utils';
 import { CustomShowcaseSection } from '~/components/Profile/Sections/CustomShowcaseSection';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import sectionClasses from '~/components/Profile/ProfileSection.module.css';
+import clsx from 'clsx';
 
 import type { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
@@ -74,7 +76,7 @@ function ProfileOverview() {
   const { data: userOverview } = trpc.userProfile.overview.useQuery({ username });
 
   useMilestoneLanding(user);
-  const { profileShowcases } = useFeatureFlags();
+  const { profileShowcases, profileRedesign } = useFeatureFlags();
   const showcaseSections = useMemo(
     () => (profileShowcases ? user?.profile?.showcaseSections ?? [] : []),
     [profileShowcases, user]
@@ -87,8 +89,8 @@ function ProfileOverview() {
         : getAllAvailableProfileSections(
             user.profile?.profileSectionsSettings as ProfileSectionSchema[],
             showcaseSections
-          ).filter((section) => section.enabled),
-    [user, showcaseSections]
+          ).filter((section) => section.enabled && (profileRedesign || section.key !== 'recent')),
+    [user, showcaseSections, profileRedesign]
   );
 
   if (isLoading) {
@@ -107,6 +109,7 @@ function ProfileOverview() {
     overview: userOverview,
     userWithProfile: user,
     showcaseSections,
+    withRecentSection: profileRedesign,
   });
 
   return (
@@ -138,37 +141,53 @@ function ProfileOverview() {
           </Stack>
         </Stack>
       ) : (
-        <Stack gap={0}>
+        <SectionsContainer panels={profileRedesign}>
           {sections.map((section) => {
             const showcase = getShowcaseSectionByKey(section.key, showcaseSections);
-            if (showcase)
-              return (
-                <CustomShowcaseSection
-                  key={section.key}
-                  section={showcase}
-                  user={{ ...user, username: user.username as string }}
-                />
-              );
+            const Section = showcase
+              ? undefined
+              : ProfileSectionComponent[section.key as ProfileSectionType];
+            // Useful if we remove a section :)
+            if (!showcase && !Section) return null;
 
-            const Section = ProfileSectionComponent[section.key as ProfileSectionType];
-
-            if (!Section) {
-              // Useful if we remove a section :)
-              return null;
-            }
-
-            return (
-              <Section
-                key={section.key}
-                // Keep typescript happy.
+            const content = showcase ? (
+              <CustomShowcaseSection
+                section={showcase}
                 user={{ ...user, username: user.username as string }}
               />
+            ) : (
+              Section && (
+                <Section
+                  // Keep typescript happy.
+                  user={{ ...user, username: user.username as string }}
+                />
+              )
+            );
+
+            if (!profileRedesign)
+              return <React.Fragment key={section.key}>{content}</React.Fragment>;
+
+            return (
+              <div
+                key={section.key}
+                className={clsx(
+                  sectionClasses.panelCell,
+                  section.width === 'half' && sectionClasses.panelCellHalf
+                )}
+              >
+                {content}
+              </div>
             );
           })}
-        </Stack>
+        </SectionsContainer>
       )}
     </>
   );
+}
+
+function SectionsContainer({ panels, children }: { panels: boolean; children: React.ReactNode }) {
+  if (panels) return <div className={sectionClasses.panelLayout}>{children}</div>;
+  return <Stack gap={0}>{children}</Stack>;
 }
 
 export default Page(ProfileOverview, {
