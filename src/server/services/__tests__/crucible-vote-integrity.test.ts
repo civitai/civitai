@@ -12,7 +12,7 @@ import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { dismissJudgingPairSchema, submitVoteSchema } from '~/server/schema/crucible.schema';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as CrucibleEloService from '~/server/services/crucible-elo.service';
-import { rejectCrossSlot } from './crucible-cross-slot';
+import { rejectCrossSlot } from '~/__tests__/cluster-slots';
 
 const processVote = vi.fn();
 

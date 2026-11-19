@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { RECORD_VOTED_PAIR_SCRIPT } from '~/server/services/crucible.service';
 import { getAnchorVotesKey, getVotedPairsKey } from '~/server/services/crucible-redis-keys';
 import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
-import { keyHashSlot, rejectCrossSlot } from './crucible-cross-slot';
+import { keyHashSlot } from '@civitai/redis/key-slot';
+import { rejectCrossSlot } from '~/__tests__/cluster-slots';
 
 /**
  * RECORD_VOTED_PAIR_SCRIPT itself, run in Lua (wasmoon) over an in-memory Redis. The vote-path

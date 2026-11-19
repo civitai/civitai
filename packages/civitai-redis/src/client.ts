@@ -2265,31 +2265,22 @@ export function createRedisClients(options: CreateRedisClientsOptions = {}): Red
 // data otherwise goes in Postgres. A placement next to an existing key here is not a justification.
 export const REDIS_SYS_KEYS = {
   DOWNLOAD_LINK: {
-    // `dl:link:<sha256(id)>` — hash of one download link (credential, user, version, file, expiresAt,
-    // fetches). The raw id is never stored.
+    // Download links written before they moved to the cluster (REDIS_KEYS.DOWNLOAD_LINK): read,
+    // fetch-counted and revoked here only as the fallback for those links. Remove with that
+    // fallback, after DOWNLOAD_LINK_SYS_FALLBACK_UNTIL in
+    // src/server/services/download-link/download-link.store.ts.
     LINK: 'dl:link',
-    // `dl:linkid:<linkId>` → the link's hash key, for revoking one link by its public linkId.
     LINK_ID: 'dl:linkid',
-    // `dl:reuse:<credential>:<fileId>:<userId|public>` → the hash key of the link a repeat mint returns.
-    REUSE: 'dl:reuse',
-    // `dl:links:cred:<credential>` — set of the hash keys a credential minted, for revoking them all.
     CRED_LINKS: 'dl:links:cred',
   },
   APP: {
+    // Review batches written before they moved to the cluster (REDIS_KEYS.APP.REVIEW_BATCH): read by
+    // the moderator app only as the fallback for those batches. Remove with that fallback, after
+    // REVIEW_BATCH_SYS_FALLBACK_UNTIL in apps/moderator/src/lib/server/review-batch.ts.
+    REVIEW_BATCH: 'app:review-batch',
     // Per-app page-access overrides (`app:page-access:${app}`) — a JSON path→role map mirroring the
     // AppPageAccess table, read on every gated request so the gate doesn't hit Postgres per hit.
     PAGE_ACCESS: 'app:page-access',
-    // `app:review-batch:<sha256(batchId)>` — one review-sheet batch, plain JSON. Written by the
-    // main app's mint, read by the moderator app's sign-in and batch routes.
-    REVIEW_BATCH: 'app:review-batch',
-    // `app:review-batch-key:<keyId>` — set of the live batch hashes one moderator API key minted.
-    REVIEW_BATCH_KEY: 'app:review-batch-key',
-    // `app:review-batch-idem:<keyId>:<sha256(idempotencyKey)>` — the hash of the batch that key last
-    // minted under that idempotency key, so a repeat revokes it; `…-lock:…` holds a mint in flight.
-    REVIEW_BATCH_IDEM: 'app:review-batch-idem',
-    REVIEW_BATCH_IDEM_LOCK: 'app:review-batch-idem-lock',
-    // `app:review-sheet:session:<sha256(token)>` — one general-tier review sheet session.
-    REVIEW_SHEET_SESSION: 'app:review-sheet:session',
     // The case engine's send brake: present = no case notice is sent. JSON { by, at, reason }.
     CASES_SENDS_PAUSED: 'app:cases:sends-paused',
     // `app:cases:send-running:<batchId>` — one batch's run lock, held by its send or its export (never both).
@@ -2414,15 +2405,11 @@ export const REDIS_SYS_KEYS = {
     // day (`system:blocks:listing-check-spend:${YYYY-MM-DD}`): the only record of listing-check
     // model spend; the daily agent-review budget reads it, so it must survive eviction.
     LISTING_CHECK_SPEND: 'system:blocks:listing-check-spend',
-    // Live app pointer on the shared static server, per app slug. TAKEDOWN
-    // (`...:${slug}`, no TTL) is set to 'attempted' when this platform starts a live unpublish or
-    // restore for the app (the evidence a relist restores on), upgraded to 'confirmed' when an
-    // unpublish succeeded, and cleared when its pointer is written back (a restore or a deploy). LOCK
-    // (`...:${slug}`, SET NX EX) serialises the pointer Jobs of one app; DIRTY (`...:${slug}`)
-    // asks the lock holder to look at the app again before it lets go.
+    // Live app pointer on the shared static server, per app slug (`...:${slug}`, no TTL): set to
+    // 'attempted' when this platform starts a live unpublish or restore for the app (the evidence a
+    // relist restores on), upgraded to 'confirmed' when an unpublish succeeded, and cleared when its
+    // pointer is written back (a restore or a deploy). Its lock and dirty mark are in REDIS_KEYS.
     LIVE_POINTER_TAKEDOWN: 'system:blocks:live-pointer-takedown',
-    LIVE_POINTER_LOCK: 'system:blocks:live-pointer-lock',
-    LIVE_POINTER_DIRTY: 'system:blocks:live-pointer-dirty',
     /**
      * Per-user (fallback per-IP) rate-limit counter for the dev/preview
      * block-token mint (`/api/v1/blocks/dev-token`). Same `SET NX EX` + `INCR`
@@ -2457,13 +2444,6 @@ export const REDIS_SYS_KEYS = {
      * source `submitVersion` reads a fork's provenance from (`app-fork-start.service.ts`).
      */
     FORK_SESSION: 'system:blocks:fork-session',
-    /**
-     * SOURCE REPOS — one writer at a time per source repo, keyed
-     * `system:blocks:source-repo-lock:${slug}`. `SET NX EX` (60 s) around an App Assistant save or
-     * a backfill seed, so two saves of one app never race each other into a spurious conflict
-     * (`app-source-repo.service.ts`). Released by its holder; the TTL frees a dead holder's lock.
-     */
-    SOURCE_REPO_LOCK: 'system:blocks:source-repo-lock',
     /**
      * APP HIBERNATE — one-time wake tickets, keyed `system:blocks:hibernation-wake-ticket:${sha256
      * of the ticket}` (the ticket itself is never stored). JSON: the user, the app and the archive
@@ -2642,13 +2622,11 @@ export const REDIS_SYS_KEYS = {
     // The training-studio app's cached per-model "from" price map (packed JSON), quoted from the
     // orchestrator `whatif`. Shared across pods so the ~21 estimate calls run once per TTL, not per load.
     STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
-    // Items the Training Studio auto-labelled per user per UTC day (system-paid), key :<userId>:<yyyy-mm-dd>.
-    STUDIO_AUTO_LABEL_DAILY: 'training:studio-auto-label-daily',
-    // Training Studio's v2 image rating per dataset blob (packed), key :<raterModel>:<blobId lowercased>.
-    // Blobs are immutable.
+    // Training Studio's v2 image rating per dataset blob (packed), key :<raterModel>:<blobId
+    // lowercased>. Written to the cluster now (REDIS_KEYS.TRAINING.STUDIO_DATASET_RATING); read here
+    // only as the fallback for ratings written before the move. Remove with that fallback, after
+    // DATASET_RATING_SYS_FALLBACK_UNTIL in apps/training-studio/src/lib/server/dataset-rating.ts.
     STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
-    // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
-    STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
     // Training Studio dataset blobs already sent to the v2 rater, key :<raterModel>:<blobId lowercased>,
     // so a failed or unanswered rating is not sent again on every view.
     STUDIO_DATASET_RATING_SENT: 'training:studio-dataset-rating-sent',
@@ -2998,12 +2976,6 @@ export const REDIS_SYS_KEYS = {
       Structure: set of Clavata keys
      */
     CLAVATA_CUTOVER: 'system:text-scan:clavata-cutover',
-    /*
-      Use: one moderator resolution of a re-detected poi/minor label at a time, per model and label
-        (`resolveTextScanRedetection`). Expires on its own if the process dies mid-ruling.
-      Structure: string, set NX with EX, key suffix = "<modelId>:<label>"
-     */
-    REDETECTION_LOCK: 'system:text-scan:redetection-lock',
   },
   CONTENT: {
     /*
@@ -3027,16 +2999,11 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
-  MEMBERSHIP_EXTEND: {
-    // Per-member lock around a moderator's Stripe membership extension (guards + write + checks).
-    LOCK: 'membership-extend:lock',
-  },
   HEADLESS_POST: {
     IDEMPOTENCY: 'headless-post:idempotency',
   },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
-    SEND_LOCK: 'message-as-civitai:send-lock',
   },
   CRUCIBLE: {
     ELO: 'crucible:elo',
@@ -3051,16 +3018,6 @@ export const REDIS_SYS_KEYS = {
     JUDGES: 'crucible:judges',
     USER_VOTES: 'crucible:user-votes',
     JUDGING_SESSION: 'crucible:judging-session',
-  },
-  REGISTRY_ADAPTER: {
-    // The content-addressed served state a registry cursor names —
-    // `system:registry-adapter:snapshot:${digest}`. TTL refreshed on every resume; evicting one
-    // only expires that cursor (the consumer re-snapshots).
-    SNAPSHOT: 'system:registry-adapter:snapshot',
-    // The newest snapshot digests of one stream, newest first — list
-    // `system:registry-adapter:stream-states:${truncated sha256 of the stream schema}`. Digests
-    // that fall off it are deleted, which bounds what one stream keeps; same TTL as the snapshots.
-    STREAM_STATES: 'system:registry-adapter:stream-states',
   },
 } as const;
 
@@ -3188,6 +3145,28 @@ const REDIS_KEYS_UNPREFIXED = {
      * the upload is swept as an orphan.
      */
     HIBERNATION_ATTEMPT: 'system:blocks:hibernation-attempt',
+    /**
+     * SOURCE REPOS — one writer at a time per source repo, keyed
+     * `system:blocks:source-repo-lock:${slug}`. `SET NX EX` around an App Assistant save or a
+     * backfill seed, so two saves of one app never race each other into a spurious conflict
+     * (`app-source-repo.service.ts`). Released by its holder; the TTL frees a dead holder's lock.
+     */
+    SOURCE_REPO_LOCK: 'system:blocks:source-repo-lock',
+    // Per app slug (`...:${slug}`): LOCK (SET NX EX) serialises the live pointer Jobs of one app;
+    // DIRTY asks the lock holder to look at the app again before it lets go. The takedown mark
+    // beside them is durable and stays in REDIS_SYS_KEYS.
+    LIVE_POINTER_LOCK: 'system:blocks:live-pointer-lock',
+    LIVE_POINTER_DIRTY: 'system:blocks:live-pointer-dirty',
+    /**
+     * APP DEV TUNNEL — the per-user keys of a dev tunnel, all tagged `{<userId>}` so the script
+     * that lists a tunnel (`LIST_DEV_TUNNEL`, dev-tunnel.service.ts) runs in one slot:
+     * `...:user:{<userId>}:<blockId>` (the user's live session for that block),
+     * `...:user-index:{<userId>}` (the blocks a ban must find), and a start's client key,
+     * `...:client-start:{<userId>}:<clientKey>` / `...:client-cancelled:{<userId>}:<clientKey>`.
+     * Every key carries a TTL. The session, credential, host and spend records stay in
+     * REDIS_SYS_KEYS.BLOCKS.DEV_TUNNEL.
+     */
+    DEV_TUNNEL_USER: 'system:blocks:dev-tunnel',
   },
   DOWNLOAD: {
     COUNT: 'download:count',
@@ -3205,6 +3184,15 @@ const REDIS_KEYS_UNPREFIXED = {
   DOWNLOAD_LINK: {
     // `dl:mint-rate:<cred|user>:<id>:<minute>`: fixed-window mint counters.
     MINT_RATE: 'dl:mint-rate',
+    // `dl:link:<sha256(id)>` — hash of one download link (credential, user, version, file, expiresAt,
+    // fetches). The raw id is never stored.
+    LINK: 'dl:link',
+    // `dl:linkid:<linkId>` → the link's hash key, for revoking one link by its public linkId.
+    LINK_ID: 'dl:linkid',
+    // `dl:reuse:<credential>:<fileId>:<userId|public>` → the hash key of the link a repeat mint returns.
+    REUSE: 'dl:reuse',
+    // `dl:links:cred:<credential>` — set of the hash keys a credential minted, for revoking them all.
+    CRED_LINKS: 'dl:links:cred',
   },
   USER: {
     BASE: 'user',
@@ -3244,6 +3232,13 @@ const REDIS_KEYS_UNPREFIXED = {
     // quota (set of step names), key :<workflowId>. Lost early, a later poll gives those items
     // back again: at most one workflow's failed items, and only to today's quota.
     STUDIO_AUTO_LABEL_RELEASED: 'training:studio-auto-label-released',
+    // Items the Training Studio auto-labelled per user per UTC day (system-paid), key :<userId>:<yyyy-mm-dd>.
+    STUDIO_AUTO_LABEL_DAILY: 'training:studio-auto-label-daily',
+    // Training Studio's v2 image rating per dataset blob (packed), key :<raterModel>:<blobId lowercased>.
+    // Blobs are immutable.
+    STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
+    // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
+    STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
   },
   OAUTH: {
     AUTHORIZATION_CODES: 'packed:oauth:authorization-codes',
@@ -3288,6 +3283,18 @@ const REDIS_KEYS_UNPREFIXED = {
     // `app:held-sheet:session:<sha256(token)>` — one held-media sheet session, sliding idle expiry.
     // A lost session (eviction included) signs the sheet out; the moderator signs in again.
     HELD_SHEET_SESSION: 'app:held-sheet:session',
+    // `app:review-batch:<sha256(batchId)>` — one review-sheet batch, plain JSON. Written by the
+    // main app's mint, read by the moderator app's sign-in and batch routes.
+    REVIEW_BATCH: 'app:review-batch',
+    // `app:review-batch-key:<keyId>` — set of the live batch hashes one moderator API key minted.
+    REVIEW_BATCH_KEY: 'app:review-batch-key',
+    // `app:review-batch-idem:<keyId>:<sha256(idempotencyKey)>` — the hash of the batch that key last
+    // minted under that idempotency key, so a repeat revokes it; `…-lock:…` holds a mint in flight.
+    REVIEW_BATCH_IDEM: 'app:review-batch-idem',
+    REVIEW_BATCH_IDEM_LOCK: 'app:review-batch-idem-lock',
+    // `app:review-sheet:session:{<sha256(token)>}` — one general-tier review sheet session, and
+    // `…:batches` beside it, the batches it holds. Tagged so one DEL ends both.
+    REVIEW_SHEET_SESSION: 'app:review-sheet:session',
   },
   IMAGE_UPLOAD: {
     // Chunked upload-relay session — hash `system:image-upload:relay-session:${sessionId}` holding
@@ -3541,6 +3548,11 @@ const REDIS_KEYS_UNPREFIXED = {
     BASE: 'event', // special case
     EVENT_CLEANUP: 'eventCleanup',
     CACHE: 'packed:event',
+    // An event's Hat Turf state, `event-turf:{<event>}:<part>` (turfKeys in
+    // src/server/events/turf/turf-map.ts): every part shares the event's tag, because one script
+    // writes the map, counts, stamps and feed indexes together. No TTL: the every-5-minute
+    // reconcile (reconcileAllTurf) rebuilds all of it from Postgres.
+    TURF: 'event-turf',
   },
   COSMETICS: {
     IDS: 'cosmeticIds',
@@ -3649,6 +3661,30 @@ const REDIS_KEYS_UNPREFIXED = {
       Structure: string '1' set NX with a TTL, key = `text-scan:missing-prompt-logged:${promptKey}`.
      */
     MISSING_PROMPT_LOGGED: 'text-scan:missing-prompt-logged',
+    /*
+      Use: one moderator resolution of a re-detected poi/minor label at a time, per model and label
+        (`resolveTextScanRedetection`). Expires on its own if the process dies mid-ruling.
+      Structure: string, set NX with EX, key suffix = "<modelId>:<label>"
+     */
+    REDETECTION_LOCK: 'system:text-scan:redetection-lock',
+  },
+  MEMBERSHIP_EXTEND: {
+    // Per-member lock around a moderator's Stripe membership extend, cancel or re-sync.
+    LOCK: 'membership-extend:lock',
+  },
+  MESSAGE_AS_CIVITAI: {
+    // Per-target lock: one moderator send to a user at a time.
+    SEND_LOCK: 'message-as-civitai:send-lock',
+  },
+  REGISTRY_ADAPTER: {
+    // The content-addressed served state a registry cursor names —
+    // `system:registry-adapter:snapshot:${digest}`. TTL refreshed on every resume; a lost one
+    // only expires that cursor (the consumer re-snapshots).
+    SNAPSHOT: 'system:registry-adapter:snapshot',
+    // The newest snapshot digests of one stream, newest first — list
+    // `system:registry-adapter:stream-states:${truncated sha256 of the stream schema}`. Digests
+    // that fall off it are deleted, which bounds what one stream keeps; same TTL as the snapshots.
+    STREAM_STATES: 'system:registry-adapter:stream-states',
   },
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',

@@ -124,6 +124,20 @@ describe('client_credentials grant', () => {
     });
   });
 
+  it('refuses an app block’s client for client_credentials and refresh_token, even with the grants', async () => {
+    h.client = confidentialClient({ id: 'appblk-some-app' });
+    const cc = await token(CATALOG, SECRET, { client_id: 'appblk-some-app' });
+    expect(cc.body.error).toBe('invalid_client');
+
+    const refresh = await token(null, SECRET, {
+      client_id: 'appblk-some-app',
+      grant_type: 'refresh_token',
+      refresh_token: 'civ_oauth_refresh',
+    });
+    expect(refresh.body.error).toBe('invalid_client');
+    expect(h.inserts).toHaveLength(0);
+  });
+
   it('grants only UserRead when no scope is requested', async () => {
     const res = await token(null);
     expect(res.status).toBe(200);
