@@ -401,7 +401,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // document `pending`, and every read of that app's shared documents by anyone but their author
   // leaves out the unrated ones and those above the viewer's level (`doc-levels.ts`). Needs the
   // manual migration `20261116120000_appdata_doc_levels.sql` first. Same evaluation as the two
-  // above (entityId = the app block id, NO context). DEFAULT-OFF.
+  // above (entityId = the app block id, NO context). Off when the key reads `false`, but 🔴 NOT
+  // default-off: read with `readFliptBoolean`, an UNREADABLE flag (Flipt unreachable with no
+  // snapshot, or a missing key) counts as ON, so levels fail closed (`isSharedDocLevelsOn`). The key
+  // must exist in flag state (enabled: false) before the code that reads it serves traffic.
   APP_BLOCKS_SHARED_DOC_LEVELS = 'app-blocks-shared-doc-levels',
   // OPERATOR HOLD on App Storage schema-migration runs: while on for an app, its reserved runs stay
   // `pending` (the start at approve and the resume job both skip them) and keep counting as open for
@@ -455,6 +458,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // is the safe failure. Off, the hourly path does nothing at all and the nightly
   // one runs its diff as a dry run for visibility.
   METRIC_REACTION_REPAIR = 'metric-reaction-repair',
+  // Arms the nightly Hot rank snapshot into ClickHouse. A missing key reads as off; add the key ON
+  // only after the snapshot tables exist.
+  MODEL_HOT_RANK_SNAPSHOT = 'model-hot-rank-snapshot',
   // Lets the auto-feature job top up the Featured Images collection from the featured
   // collections pool. Default-off, and the job's config carries its own `dryRun` on top,
   // so the homepage cannot change until both are deliberately turned on.
@@ -465,6 +471,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
+  /** Turns on the deal-file retention sweep; off, or missing, it marks nothing for deletion. */
+  SERVICE_DEAL_FILE_RETENTION = 'service-deal-file-retention',
   // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts, which also
   // still handles an `enforce-anon` variant should the flag define one.
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
@@ -758,6 +766,9 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // five-minute tick, so the cache saves nothing measurable and the staleness is
   // all cost at the moment someone is trying to turn it off.
   FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
+  // The off switch for the deal-file retention sweep, which deletes user files: a flip must reach
+  // the next run.
+  FLIPT_FEATURE_FLAGS.SERVICE_DEAL_FILE_RETENTION,
   // The App Block media brake: a flip must reach the next media fetch.
   FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE,
   // Evaluated once per user in a pass over every user, each entity once a week: cached entries
@@ -834,6 +845,9 @@ export const getFliptVariant = flipt.getVariant;
 export const getFliptVariantDetailSync = flipt.getVariantDetailSync;
 export const getFliptBoolean = flipt.getBoolean;
 export const isFliptSync = flipt.isEnabledSync;
+// `null` when the flag could not be read (Flipt unreachable with no snapshot, or an unknown key),
+// for a gate that must fail CLOSED; `isFlipt` answers `false` for both. Honors local overrides.
+export const readFliptBoolean = flipt.readBoolean;
 export const ensureFliptInitialized = flipt.ensureInitialized;
 // Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
 // caches (no `this`), so unbinding here is safe — same as the accessors above.

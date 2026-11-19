@@ -137,6 +137,7 @@ import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor'
 import { providerFetchSpikeMonitorJob } from '~/server/jobs/provider-fetch-spike-monitor';
 import { userActivityRollupJob } from '~/server/jobs/user-activity-rollup';
 import { userPopulationSnapshotJob } from '~/server/jobs/user-population-snapshot';
+import { modelHotRankSnapshotJob } from '~/server/jobs/model-hot-rank-snapshot';
 import { metricReconciliationJobs } from '~/server/jobs/metric-reconciliation-audit';
 import { reconcileWildcardSetsJob } from '~/server/jobs/reconcile-wildcard-sets';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
@@ -167,8 +168,10 @@ import { notificationCursorMonitor } from '~/server/jobs/notification-cursor-mon
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
+import { appDocRaterJob } from '~/server/jobs/app-doc-rater';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
 import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
+import { articleCategoryRetryJob } from '~/server/jobs/article-category-retry';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
 import { serviceOfferingIngestionReconcile } from '~/server/jobs/service-offering-ingestion-reconcile';
 import { articleContentLinkHold } from '~/server/jobs/article-content-link-hold';
@@ -280,6 +283,7 @@ export const jobs: Job[] = [
   providerFetchSpikeMonitorJob,
   userActivityRollupJob,
   userPopulationSnapshotJob,
+  modelHotRankSnapshotJob,
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,
@@ -355,9 +359,11 @@ export const jobs: Job[] = [
   creatorBoxPayoutSweepJob,
   mysteryBoxOverPoolRefundsJob,
   retryFailedTextModeration,
+  appDocRaterJob,
   textScanRetention,
   textScanChatWindowsJob,
   textScanNewUsersJob,
+  articleCategoryRetryJob,
   articleIngestionReconcile,
   serviceOfferingIngestionReconcile,
   articleContentLinkHold,

@@ -4054,8 +4054,10 @@ async function assertScanRatingKept({
   modelId,
   before,
   data,
+  db,
 }: {
   modelId: number;
+  db?: Prisma.TransactionClient;
   before: {
     nsfw: boolean;
     name: string;
@@ -4102,7 +4104,7 @@ async function assertScanRatingKept({
   if (after('nsfw')) return;
   // A row already not mature (an older one): only removing the face that listed it.
   if (!before.nsfw && (faceAfter || !hasFace(before))) return;
-  if (await moderatorRuledNsfwSince(modelId, ratedAt)) return;
+  if (await moderatorRuledNsfwSince(modelId, ratedAt, { db })) return;
   throw throwBadRequestError(SCAN_RATING_KEPT_MESSAGE);
 }
 
@@ -4497,7 +4499,7 @@ export const upsertModel = async (
           enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
           // The scan's rating has no lock to enforce here: a rating that landed since the read
           // above is held by its guard, judged again on this row.
-          await assertScanRatingKept({ modelId: id, before: locked, data });
+          await assertScanRatingKept({ modelId: id, before: locked, data, db: tx });
           const profanityRefusal = profanityDetected
             ? profanityRatingRefusal(locked, locked.lockedProperties, data)
             : null;

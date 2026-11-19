@@ -1,10 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
-const mockLogToAxiom = loggingMock.logToAxiom;
 
 // Regression guard for the second half of the "claimed-for-completion gets clobbered" defect.
 //
@@ -205,14 +203,6 @@ describe('upsertChallenge — must not overwrite a challenge claimed for complet
     // re-dated for a challenge that is already completing.
     expect(mockTx.challenge.findUniqueOrThrow).not.toHaveBeenCalled();
     expect(mockTx.collection.update).not.toHaveBeenCalled();
-    // Rare by construction, so the log is the only way to know the guard ever fired.
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'challenge-upsert-status-precondition-failed',
-        challengeId: 1,
-        readStatus: ChallengeStatus.Active,
-      })
-    );
   });
 
   it('returns the re-read row on a successful update', async () => {

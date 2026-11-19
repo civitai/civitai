@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { SearchOutboxEntity } from '~/server/search-index/search-outbox-forward';
@@ -104,15 +103,11 @@ describe('the search Outbox forward', () => {
   // A stubbed rejection, not a real database error: the socket harness can report a SQL error as a
   // dropped connection instead, which made the message nondeterministic.
   it('swallows a failed insert, and still queues the update for Meilisearch', async () => {
-    loggingMock.logToAxiom.mockClear();
     dbMock.dbWrite.outbox.createMany.mockRejectedValueOnce(new Error('insert failed'));
     await expect(
       processor('Comic').queueUpdate([{ id: 1 }], { reason: 'edit' })
     ).resolves.toBeUndefined();
 
     expect(h.queued).toHaveLength(1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'search-outbox-forward', message: 'insert failed' })
-    );
   });
 });

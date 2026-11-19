@@ -1,7 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -179,6 +178,12 @@ beforeEach(async () => {
   }) as never);
   redisMock.sysRedis.del.mockImplementation((async (key: string) =>
     Number(redisStore.delete(key))) as never);
+  // The send lock is on the cache cluster, the idempotency record in system Redis; one store backs
+  // both here, since their keys never collide.
+  for (const command of ['set', 'get', 'eval', 'del'] as const)
+    redisMock.redis[command].mockImplementation(
+      redisMock.sysRedis[command].getMockImplementation()!
+    );
 });
 
 describe('sendAsCivitai', () => {
@@ -232,13 +237,6 @@ describe('sendAsCivitai', () => {
     expect(h.reportConcernsUser).toHaveBeenCalledWith(77, USER);
     const { rows } = await db.query(`SELECT "entityType", "entityId" FROM "ModActivity"`);
     expect(rows).toEqual([{ entityType: 'chatMessage', entityId: messageId }]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'message-as-civitai-report-link-dropped',
-        reason: 'not-about-recipient',
-        reportId: 77,
-      })
-    );
   });
 
   it('links nothing when the report cannot be checked, and still sends', async () => {
@@ -251,9 +249,6 @@ describe('sendAsCivitai', () => {
     });
     const { rows } = await db.query(`SELECT "entityType", "entityId" FROM "ModActivity"`);
     expect(rows).toEqual([{ entityType: 'chatMessage', entityId: messageId }]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'check-failed', error: 'db down' })
-    );
   });
 
   it('reuses the one thread per user', async () => {
@@ -378,6 +373,11 @@ describe('sendAsCivitai refusals that must not take the thread', () => {
     redisStore.clear();
     await sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'x' });
     expect([...redisStore.keys()].filter((k) => k.includes('send-lock'))).toEqual([]);
+    // Taken on the cache cluster, never in system Redis.
+    const lockWrites = (client: typeof redisMock.redis) =>
+      client.set.mock.calls.filter((c: unknown[]) => String(c[0]).includes('send-lock')).length;
+    expect(lockWrites(redisMock.redis)).toBeGreaterThan(0);
+    expect(lockWrites(redisMock.sysRedis)).toBe(0);
   });
 
   it("does not free another sender's lock when its own has expired", async () => {

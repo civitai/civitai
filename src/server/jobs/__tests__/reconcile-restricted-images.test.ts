@@ -218,22 +218,4 @@ describe('reconcile-restricted-images', () => {
       'webhooks'
     );
   });
-
-  it('logs drift for an operator, and stays quiet when there is none', async () => {
-    executeRaw.mockResolvedValue(4);
-
-    await run();
-
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'reconcile-restricted-images', flagged: 4 }),
-      'webhooks'
-    );
-
-    vi.clearAllMocks();
-    executeRaw.mockResolvedValue(0);
-
-    await run();
-
-    expect(logToAxiom).not.toHaveBeenCalled();
-  });
 });

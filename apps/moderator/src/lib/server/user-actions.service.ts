@@ -14,6 +14,7 @@ import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
 import { purgeWarning } from '$lib/purge-result';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
+import type { PayoutReviewAction } from '$lib/payout-review';
 import type {
   MembershipCancelPreview,
   MembershipCancelResult,
@@ -358,6 +359,25 @@ export const readModEndpoint = (
     label,
     auth: 'session',
     timeoutMs,
+  });
+
+/** The pre-payout review's decision route. It is a session `ModEndpoint` under `/api/admin/`, which
+ *  `callModEndpoint` cannot reach; it checks the row's `version` and records the session user. */
+export const decidePayoutReview = (body: {
+  id: number;
+  userId: number;
+  period: string;
+  action: PayoutReviewAction;
+  version: number;
+  note: string;
+  askRef?: string;
+}): Promise<JsonResult> =>
+  postJson({
+    path: '/api/admin/creator-program-payout-review',
+    body,
+    label: 'Payout review decision',
+    auth: 'session',
+    timeoutMs: 30_000,
   });
 
 /** `callModEndpoint` for work that outlives its request, with a cookie read earlier by `requestCookie`. */

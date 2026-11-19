@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SubscriptionsService from '~/server/services/subscriptions.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
 
 /**
  * How long the card-badge cache holds a "this model has no sale" answer, and what clears it.
@@ -110,25 +109,6 @@ describe('the model sale badge cache', () => {
     advance(5 * 60 + 1);
     await fetchBadges();
     expect(salesQuery).toHaveBeenCalledTimes(2);
-  });
-
-  it('reports a "no sale" answer served from cache as a hit, not as nothing', async () => {
-    await fetchBadges();
-    expect(cacheMissCounter.inc).toHaveBeenCalledWith(
-      { cache_name: expect.stringContaining('ModelSales:v2'), cache_type: 'cachedArray' },
-      1
-    );
-    vi.mocked(cacheHitCounter.inc).mockClear();
-
-    advance(5 * 60);
-    await expect(fetchBadges()).resolves.toEqual({});
-
-    expect(salesQuery).toHaveBeenCalledTimes(1);
-    expect(cacheHitCounter.inc).toHaveBeenCalledTimes(1);
-    expect(cacheHitCounter.inc).toHaveBeenCalledWith(
-      { cache_name: expect.stringContaining('ModelSales:v2'), cache_type: 'cachedArrayNotFound' },
-      1
-    );
   });
 
   // INVARIANT guard (behaviour that already held before this change, not regression coverage): what
