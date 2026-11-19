@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { challengeCoverWhere } from '~/server/common/image-visibility';
 import type * as DailyChallengeUtils from '~/server/games/daily-challenge/daily-challenge.utils';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import type * as UserService from '~/server/services/user.service';
@@ -222,5 +223,32 @@ describe.each(Object.keys(paths))('%s', (path) => {
   ])('withholds a cover with %s on the mature site', async (_, nsfwLevel, image) => {
     images(nsfwLevel, image);
     expect(await paths[path]({ isGreen: false, viewerId: VIEWER })).toBeNull();
+  });
+});
+
+// The card lists read covers through mapChallengeRowsToCards; the event banner has its own read.
+const cardPaths = [
+  'daily challenges',
+  'challenge feed',
+  'my challenges',
+  'previous winners',
+  'event challenge cover',
+];
+
+describe.each(cardPaths)('%s — the cover read', (path) => {
+  it('asks only for covers every viewer may be shown, as challengeCoverWhere states it', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-06-01T00:00:00Z'));
+    try {
+      images(NsfwLevel.PG);
+      await paths[path]({ isGreen: false, viewerId: VIEWER });
+      expect(dbMock.dbRead.image.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ AND: challengeCoverWhere() }),
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

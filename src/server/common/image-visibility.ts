@@ -9,11 +9,14 @@ import {
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { Availability, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
-import { minorContentRestrictedSql } from '~/server/utils/minor-content-gate.sql';
+import {
+  minorContentNotRestrictedWhere,
+  minorContentRestrictedSql,
+} from '~/server/utils/minor-content-gate.sql';
 import { OWNER_HIDDEN_REVIEWS, isHeldForReview } from '~/server/common/owner-hidden-reviews';
 
 export { KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview };
@@ -193,6 +196,31 @@ export const imageNotRestrictedWhere = ({
     { nsfwLevel: { notIn: nsfwBrowsingLevelsArray } },
     { modelRestricted: false },
     ...(isUploaderId(viewerId) ? [{ userId: viewerId }] : []),
+  ],
+});
+
+/**
+ * A challenge cover every viewer may be shown: unheld, not a ToS removal, rated and not Blocked,
+ * outside the minor content rule, and, when it has a post, in a published, non-Private one.
+ */
+export const challengeCoverWhere = (): Prisma.ImageWhereInput => ({
+  AND: [
+    { needsReview: null },
+    { tosViolation: false },
+    { acceptableMinor: false },
+    { nsfwLevel: { notIn: [0, NsfwLevel.Blocked] } },
+    minorContentNotRestrictedWhere(),
+    {
+      OR: [
+        { postId: null },
+        {
+          post: {
+            publishedAt: { lt: new Date() },
+            availability: { not: Availability.Private },
+          },
+        },
+      ],
+    },
   ],
 });
 

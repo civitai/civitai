@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { challengeCoverWhere } from '~/server/common/image-visibility';
 import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
 import type * as DailyChallengeUtils from '~/server/games/daily-challenge/daily-challenge.utils';
 import type * as UserService from '~/server/services/user.service';
@@ -257,5 +258,25 @@ describe('getChallengeDetail — cover image', () => {
     ['a block reason', NsfwLevel.X, { blockedFor: 'tos' }],
   ])('withholds a cover with %s on the mature site', async (_, nsfwLevel, image) => {
     expect(await cover(nsfwLevel, VIEWER, false, completedSystemChallenge, image)).toBeNull();
+  });
+});
+
+describe('getChallengeDetail — the cover read', () => {
+  it('asks only for a cover every viewer may be shown, as challengeCoverWhere states it', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-06-01T00:00:00Z'));
+    try {
+      mockGetChallengeById.mockResolvedValue({ ...completedSystemChallenge, coverImageId: 80 });
+      dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+      dbMock.dbRead.image.findFirst.mockResolvedValue(null as never);
+      await getChallengeDetail(500, VIEWER, false, false, true);
+      expect(dbMock.dbRead.image.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: 80, AND: challengeCoverWhere() }),
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
