@@ -1595,8 +1595,13 @@ describe('closeModeratorRuledItems', () => {
     await vote(2, id, '8');
     await lockImage(pg, 10, { reason: 'Moderator review', level: 4 });
     const before = { right: await exp(1), wrong: await exp(2) };
+    const moved = vi.fn();
 
-    expect(await sweep()).toEqual({ closed: 1, failed: 0 });
+    expect(await closeModeratorRuledItems(db, { now: NOW, moved })).toEqual({
+      closed: 1,
+      failed: 0,
+    });
+    expect(moved).toHaveBeenCalledWith([{ id, status: 'Open', minRank: 'Knight' }]);
     expect(await itemRow(id)).toMatchObject({
       status: 'Closed',
       reason: 'moderator-ruled',
@@ -1659,8 +1664,14 @@ describe('closeModeratorRuledItems', () => {
     });
     await lockImage(pg, 10, { reason: 'Moderator review', level: 1 });
     const before = await exp(1);
+    const moved = vi.fn();
 
-    expect(await sweep()).toEqual({ closed: 1, failed: 0 });
+    // Players were never served it, so the live queue must not be told an Open item left.
+    expect(await closeModeratorRuledItems(db, { now: NOW, moved })).toEqual({
+      closed: 1,
+      failed: 0,
+    });
+    expect(moved).toHaveBeenCalledWith([{ id, status: 'Inquisitor', minRank: 'Inquisitor' }]);
     expect(await itemRow(id)).toMatchObject({
       status: 'Closed',
       reason: 'moderator-ruled',
