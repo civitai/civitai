@@ -77,6 +77,8 @@ import {
   seedAppBlockMediaMetrics,
 } from '~/server/metrics/app-block-runtime.metrics';
 import { refreshDocStoreEnabled } from '~/server/services/apps/doc-store.instance';
+// The App Blocks source gate's host-source and accepted-class counters, at 0 for every label pair.
+import { seedAppBlockSourceMetrics } from '~/server/prom/app-block-source.metrics';
 // Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
 // as zeros rather than as an absent series on every pod that has not received a callback.
 import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
@@ -236,6 +238,7 @@ const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
   await seedAppBlockSharedStorageMetrics();
   seedAppBlockDocStoreMetrics();
   seedAppBlockMediaMetrics();
+  seedAppBlockSourceMetrics();
   await refreshDocStoreEnabled();
   await seedProviderDownloadMetrics();
 
