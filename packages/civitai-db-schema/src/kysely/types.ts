@@ -5938,6 +5938,14 @@ export type ServiceDealFileEntry = {
   failReason: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type ServiceDealFilePurge = {
+  id: Generated<number>;
+  fileId: number;
+  dealId: number;
+  size: number;
+  etag: string | null;
+  purgedAt: Generated<Timestamp>;
+};
 export type ServiceDealTransaction = {
   id: Generated<number>;
   dealId: number;
@@ -7336,6 +7344,7 @@ export type DB = {
   ServiceDealEvent: ServiceDealEvent;
   ServiceDealFile: ServiceDealFile;
   ServiceDealFileEntry: ServiceDealFileEntry;
+  ServiceDealFilePurge: ServiceDealFilePurge;
   ServiceDealTransaction: ServiceDealTransaction;
   ServiceDisputeReview: ServiceDisputeReview;
   ServiceOffering: ServiceOffering;

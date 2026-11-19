@@ -27,12 +27,14 @@ import {
   finalsCopy,
   sellerFileStatus,
   serviceDealDownloadHref,
+  showsRetentionNotice,
   sortPicked,
   previewAccept,
   uploadSlotsLeft,
 } from '~/components/CreatorShop/Services/deals/deal-files';
 import {
   isVideoPreviewMime,
+  SERVICE_DEAL_FILE_RETENTION_NOTICE,
   SERVICE_FINAL_VIDEO_HELP,
 } from '~/shared/constants/creator-services.constants';
 import { DEAL_FRESHNESS } from '~/components/CreatorShop/Services/deals/deal.util';
@@ -72,6 +74,11 @@ export function DealFilesPanel({ deal }: { deal: ServiceDealView }) {
     <Paper withBorder radius="md" p="md">
       <Stack gap="md">
         <Text fw={600}>Delivery</Text>
+        {showsRetentionNotice(deal.status) && files.length > 0 && (
+          <Text size="xs" c="dimmed">
+            {SERVICE_DEAL_FILE_RETENTION_NOTICE}
+          </Text>
+        )}
         {canUpload && <SellerUploader deal={deal} files={files} />}
         {deal.viewerRole === 'buyer' ? (
           <BuyerFiles deal={deal} files={files} />

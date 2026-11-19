@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 /**
  * The download route is thin: it must send an allowed user to a signed URL, answer every refusal
@@ -13,6 +17,8 @@ const service = vi.hoisted(() => ({
 vi.mock('~/server/services/creator-service-deal-file.service', () => service);
 const flags = vi.hoisted(() => ({ getFeatureFlags: vi.fn(() => ({ csamReports: false })) }));
 vi.mock('~/server/services/feature-flags.service', () => flags);
+const domain = vi.hoisted(() => ({ red: vi.fn((_host?: string) => true) }));
+vi.mock('~/server/utils/server-domain', () => ({ isRedCapableHost: domain.red }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   AuthedEndpoint: (handler: unknown) => handler,
 }));
@@ -91,6 +97,7 @@ describe('download route', () => {
       userId: 7,
       isModerator: false,
       canReviewCsam: false,
+      servableLevels: allBrowsingLevelsFlag,
     });
   });
 
@@ -106,6 +113,7 @@ describe('download route', () => {
       userId: 9,
       isModerator: true,
       canReviewCsam: false,
+      servableLevels: allBrowsingLevelsFlag,
     });
   });
 
@@ -135,4 +143,18 @@ describe('download route', () => {
       expect(service.resolveServiceDealFileDownload).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('what the domain may be sent', () => {
+  it.each([
+    [false, sfwBrowsingLevelsFlag],
+    [true, allBrowsingLevelsFlag],
+  ])('a red-capable host (%s) passes the matching levels', async (red, levels) => {
+    domain.red.mockReturnValueOnce(red);
+    service.resolveServiceDealFileDownload.mockResolvedValue(null);
+    await call('12');
+    expect(service.resolveServiceDealFileDownload).toHaveBeenCalledWith(
+      expect.objectContaining({ servableLevels: levels })
+    );
+  });
 });

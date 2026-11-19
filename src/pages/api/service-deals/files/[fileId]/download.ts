@@ -6,7 +6,7 @@ import {
   resolveServiceDealFileDownload,
 } from '~/server/services/creator-service-deal-file.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -31,8 +31,10 @@ export default AuthedEndpoint(async function downloadServiceDealFile(req, res, u
     userId: user.id,
     isModerator: !!user.isModerator,
     canReviewCsam: !!getFeatureFlags({ user, req }).csamReports,
-    servableLevels:
-      getRequestDomainColor(req) === 'green' ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag,
+    // Only a red host is sent R and above; any other, an unknown one included, gets the SFW levels.
+    servableLevels: isRedCapableHost(req.headers.host)
+      ? allBrowsingLevelsFlag
+      : sfwBrowsingLevelsFlag,
   });
   if (!target) return res.status(404).json({ error: 'Not found' });
 

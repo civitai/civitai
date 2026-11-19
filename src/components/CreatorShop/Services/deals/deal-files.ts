@@ -98,6 +98,10 @@ export function uploadRefusal(
 export const canAttachInStatus = (status: ServiceDealStatus) =>
   status === 'Requested' || status === 'Accepted' || status === 'InRevision';
 
+/** A closed deal's files are on the retention clock, so its parties are told when they go. */
+export const showsRetentionNotice = (status: ServiceDealStatus) =>
+  status === 'Declined' || status === 'Expired' || status === 'Cancelled' || status === 'Completed';
+
 /** How many more files the buyer may attach to the deal, across all rounds. */
 export const attachmentSlotsLeft = (files: DealFileFacts[]) =>
   Math.max(
