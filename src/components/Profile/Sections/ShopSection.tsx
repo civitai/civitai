@@ -9,6 +9,7 @@ import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOf
 import {
   serviceStorefrontHref,
   storefrontSectionKeys,
+  storefrontShowsServices,
 } from '~/components/CreatorShop/section-meta';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -139,7 +140,7 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
   const loading = isLoading || (!!features.creatorServices && servicesLoading);
   if (!loading && !hasItems) return null;
   const hasCosmetics = !!shop && shop.featured.length + shop.cosmetics.length > 0;
-  const showServices = servicesShown && offerings.length > 0;
+  const showServices = storefrontShowsServices(shop, offerings.length, features);
 
   return (
     <div ref={ref} className={classes.profileSection}>
