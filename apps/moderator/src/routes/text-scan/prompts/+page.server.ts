@@ -27,10 +27,10 @@ export const load: PageServerLoad = async ({ url }) => {
 export const actions: Actions = {
   try: async ({ request, locals }) => runTry(readerOf(locals.user), await request.formData()),
 
-  save: requiresGrant('textScan.prompt.publish', async ({ request }) => {
+  save: requiresGrant('textScan.prompt.publish', async ({ request, locals }) => {
     const input = parseForm(saveSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { error: input });
-    return savePrompt(input);
+    return savePrompt(input, locals.user.id);
   }),
 
   restore: requiresGrant('textScan.prompt.publish', async ({ request }) => {

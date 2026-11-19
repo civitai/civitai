@@ -3,7 +3,16 @@ import { z } from 'zod';
 import { int4Id } from '$lib/server/query';
 import { promptKeyName } from '$lib/text-scan-lab/labels';
 import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
-import { LabHarnessError, StalePromptError, putPrompt } from './harness-client';
+import { getModeratorDb } from '$lib/server/moderator-db';
+import { checkIntentPublish, INTENT_PROMPT_KEY } from '$lib/server/text-scan-tests/publish-gate';
+import { INTENT_PUBLISH_PERMISSION } from '$lib/text-scan-tests/intent-set';
+import {
+  LabHarnessError,
+  StalePromptError,
+  getPrompts,
+  holdsMainPermission,
+  putPrompt,
+} from './harness-client';
 import { getVersion } from './version';
 
 const baseIdField = z
@@ -64,8 +73,33 @@ async function put(
   }
 }
 
-export const savePrompt = (input: z.infer<typeof saveSchema>) =>
-  put(input.key, input.content, { note: input.note, baseId: input.baseId });
+/** New intent text needs a passing run first (`checkIntentPublish`); a restore does not. */
+async function intentGate(content: string, userId: number) {
+  if (!(await holdsMainPermission(INTENT_PUBLISH_PERMISSION)))
+    return fail(403, {
+      error: `Publishing ${promptKeyName(INTENT_PROMPT_KEY)} needs the intent publish grant.`,
+    });
+  let live: Awaited<ReturnType<typeof getPrompts>>;
+  try {
+    live = await getPrompts();
+  } catch (e) {
+    if (e instanceof LabHarnessError)
+      return fail(502, {
+        error: `Could not load the live prompts (${e.message}); it was not saved.`,
+      });
+    throw e;
+  }
+  const check = await checkIntentPublish(getModeratorDb(), { content, userId, live });
+  return check.ok ? null : fail(409, { error: check.reason });
+}
+
+export async function savePrompt(input: z.infer<typeof saveSchema>, userId: number) {
+  if (input.key === INTENT_PROMPT_KEY) {
+    const refused = await intentGate(input.content, userId);
+    if (refused) return refused;
+  }
+  return put(input.key, input.content, { note: input.note, baseId: input.baseId });
+}
 
 /** Saves an old version's text as a new version; the text is read by id, never taken from the client. */
 export async function restorePrompt(input: z.infer<typeof restoreSchema>) {
