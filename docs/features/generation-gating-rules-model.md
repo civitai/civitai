@@ -66,7 +66,7 @@
   orchestrator's cached mini answers for the versions the rule named before and after,
   and for alias versions whose target it names by id or ecosystem
   (`clearOrchestratorForGateChange`). A failed clear is shown to the moderator; saving
-  again retries it. Clearing every version of a named ecosystem needs orchestrator
+  the rule again retries it. Clearing every version of a named ecosystem needs orchestrator
   support and is not done yet, so an ecosystem rule reaches existing cached answers
   only when the orchestrator next refreshes them; the moderator is told which ecosystems.
 - **Pickers** — `BaseModelInput` / `WorkflowPicker` read one per-item state;

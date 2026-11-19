@@ -36,14 +36,14 @@ const warnIfNotCleared = ({
     showWarningNotification({
       title: 'Orchestrator not updated',
       message:
-        'The rule is saved, but the API may follow the old rule until its cache refreshes. Save the rule again to retry.',
+        'The change is stored, but generation through the API may follow the old rule until its cache refreshes. Saving the rule (or re-creating a deleted one and deleting it again) retries.',
     });
   else if (orchestrator.ecosystemsNotCleared.length)
     showWarningNotification({
       title: 'Ecosystems reach the API later',
       message: `Generation through the API follows this rule for ${orchestrator.ecosystemsNotCleared.join(
         ', '
-      )} as cached models refresh, which can take up to 12 hours.`,
+      )} once the orchestrator refreshes those models, not right away.`,
     });
 };
 import { trpc } from '~/utils/trpc';
