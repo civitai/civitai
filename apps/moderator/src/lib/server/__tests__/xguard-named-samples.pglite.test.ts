@@ -15,6 +15,7 @@ import {
   REFUSED_PROMPT_HASH_SQL,
 } from '../xguard-named-samples';
 import { domainForSource } from '../../../../xguard-lab/labels';
+import { resolveMode } from '../../../../xguard-lab/eval-core';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LAB_SCHEMA = readFileSync(join(HERE, '../../../../xguard-lab/schema.sql'), 'utf8');
@@ -179,7 +180,7 @@ describe('importNamedSamples', () => {
     }
   });
 
-  it('writes only sources the AI rater reads as prompts, blind or not', async () => {
+  it('writes only sources the AI rater and the evaluator read as prompts, blind or not', async () => {
     const refused = [{ hash: '3', date: '2026-11-15' }];
     await importNamedSamples(
       { batch: 'plain', generated: ['1'], refused },
@@ -195,6 +196,7 @@ describe('importNamedSamples', () => {
 
     expect(sources).toEqual(['named', 'prohibitedRequests', 'xguardPromptResults']);
     expect(sources.map(domainForSource)).toEqual(['prompt', 'prompt', 'prompt']);
+    expect(sources.map((s) => resolveMode([s]))).toEqual(['prompt', 'prompt', 'prompt']);
   });
 
   it('blind: stores rows in a seeded shuffle, the same for the same seed', async () => {
