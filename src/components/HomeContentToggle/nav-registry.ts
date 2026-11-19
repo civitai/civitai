@@ -132,6 +132,13 @@ export const navRegistry: NavRegistryEntry[] = [
     visible: (ctx) => ctx.features.cosmeticShop,
     classes: ['tabRainbow'],
   },
+  {
+    key: 'services',
+    url: '/services',
+    defaultGroup: 'more',
+    // The `/services` page's own SSR gate.
+    visible: (ctx) => !!ctx.features.creatorShop && !!ctx.features.creatorServices,
+  },
 
   /**
    * Promotable user-menu destinations. They stay in the user menu as well — the sub nav is an
