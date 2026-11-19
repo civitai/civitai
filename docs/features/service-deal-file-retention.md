@@ -1,0 +1,14 @@
+# Creator Services: deal file retention
+
+> Deal files are deleted 30 days after a deal is declined, expires or is canceled, and 90 days after a completed deal's dispute window ends. Download anything you want to keep.
+
+That line is shown beside the files, and the buyer's attachments, on any closed deal: declined, expired, canceled or completed (`SERVICE_DEAL_FILE_RETENTION_NOTICE`).
+
+- **Windows:** `SERVICE_DEAL_FILE_RETENTION_CLOSED_MS` and `SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS`, never counted from before `SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT` (2026-11-25), so files on deals that closed before the notice shipped get their full window from then.
+- **Which files:** all of a deal's files, meaning the seller's previews and finals and the buyer's attachments.
+- **The clock:** it starts at the close (for a completed deal, at the end of its dispute window), once the deal's Buzz has settled. A later dispute ruling or takedown restarts it. A report on the offering, filed or handled, changes only how long removed files are kept for moderators: a full window after it.
+- **Holds:** expired files leave the parties' view on schedule either way. A deal whose parties or offering are under a legal or moderation hold keeps those files for moderators until the hold clears, and only then are they deleted; a file a party deletes on such a deal is kept the same way. The rules are `dealFilesHeld` in `src/server/services/creator-service-deal-file-retention.ts`, and the purge reads them again before each delete.
+- **Switch:** the Flipt flag `service-deal-file-retention` turns the sweep and the account-deletion marking on. While it is off or missing, neither marks anything; a file a party deletes themselves is still removed.
+- **How:** `markExpiredDealFiles` runs in the `creator-service-unpack` job and marks expired files removed, as a party's own delete does; a removed preview's public copy goes at once. `purgeRemovedFiles` then, once any download link handed out before the removal has expired, deletes every stored version of the upload, a zip's rebuilt archive and a published preview's copy, and after that the row. A file whose scan failed, or is still running, stays for moderators; an upload never completed and a preview its scan never reached are deleted like the rest.
+- **Record:** `ServiceDealFilePurge` keeps the file id, deal id, size, the upload's storage ETag and the deletion time. It keeps no name and no content. It is written before any object is deleted and never removed: a record whose file row still exists is a purge tried, which a later run finishes and stamps.
+- **Account deletion:** when the deletion also removes the account's other content (not a restorable one), `deleteUser` marks the user's own uploads to closed, settled deals removed at once; held ones are kept, as above. On a deal still open or unsettled, theirs and the other party's files keep the deal's clock.

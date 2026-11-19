@@ -18,6 +18,21 @@ export const SERVICE_DEAL_AUTO_COMPLETE_MS = 72 * HOUR;
 /** Between completion and payout, so a buyer can report final files that are missing or broken. */
 export const SERVICE_DEAL_DISPUTE_WINDOW_MS = 48 * HOUR;
 
+/** A declined, expired or canceled deal's files are deleted this long after it closed. */
+export const SERVICE_DEAL_FILE_RETENTION_CLOSED_MS = 30 * 24 * HOUR;
+/** A completed deal's files are deleted this long after its dispute window ended. */
+export const SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS = 90 * 24 * HOUR;
+
+/** No deal file's retention clock starts before this, so files on deals that closed before the notice shipped get their full window from then. */
+export const SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT = new Date('2026-11-25T00:00:00Z');
+
+const days = (ms: number) => ms / (24 * HOUR);
+export const SERVICE_DEAL_FILE_RETENTION_NOTICE = `Deal files are deleted ${days(
+  SERVICE_DEAL_FILE_RETENTION_CLOSED_MS
+)} days after a deal is declined, expires or is canceled, and ${days(
+  SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS
+)} days after a completed deal's dispute window ends. Download anything you want to keep.`;
+
 /**
  * When an unconfirmed hold is looked up. Longer than the Buzz call timeout, so a write that was
  * still in flight when the request gave up has landed (or failed) by then.
@@ -135,7 +150,7 @@ export const SERVICE_FINAL_EXTENSIONS = [
   'yml',
   'csv',
 ] as const;
-/** Why a preview rated above its deal's content level was refused. Shown to the seller only. */
+/** Why a preview rated above its deal's content level was refused. Shown to the seller and to moderators. */
 export const SERVICE_PREVIEW_OVER_LEVEL_REASON =
   "This preview is rated above this deal's content level.";
 

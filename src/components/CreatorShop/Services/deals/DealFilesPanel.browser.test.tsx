@@ -118,3 +118,27 @@ describe('Deliver on the seller panel', () => {
     await expect.element(deliver()).toBeEnabled();
   });
 });
+
+describe('the deletion notice', () => {
+  const closed = (status: string) =>
+    ({
+      id: 7,
+      status,
+      viewerRole: 'seller',
+      revisionsUsed: 0,
+      previewKind: 'Image',
+    } as unknown as ServiceDealView);
+
+  test('shows on a cancelled deal that still has files', async () => {
+    mocks.files = [file('Final')];
+    renderWithProviders(<DealFilesPanel deal={closed('Cancelled')} />);
+    await expect.element(page.getByText(/Deal files are deleted/)).toBeInTheDocument();
+  });
+
+  test('is absent while the deal is still open', async () => {
+    mocks.files = [file('Final')];
+    renderWithProviders(<DealFilesPanel deal={closed('Accepted')} />);
+    await expect.element(page.getByText('Delivery')).toBeInTheDocument();
+    await expect.element(page.getByText(/Deal files are deleted/)).not.toBeInTheDocument();
+  });
+});
