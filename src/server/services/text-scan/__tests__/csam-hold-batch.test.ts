@@ -59,11 +59,17 @@ describe('decideCsamHoldBatch', () => {
     });
 
     expect(
-      mocks.decide.mock.calls.map(([args]) => [args.holdId, args.textHash, args.decision])
+      mocks.decide.mock.calls.map(([args]) => [
+        args.holdId,
+        args.textHash,
+        args.decision,
+        args.reportChoice,
+        args.batched,
+      ])
     ).toEqual([
-      [2, 'a', 'remove'],
-      [3, 'b', 'remove'],
-      [4, 'c', 'remove'],
+      [2, 'a', 'remove', 'none', true],
+      [3, 'b', 'remove', 'none', true],
+      [4, 'c', 'remove', 'none', true],
     ]);
     expect(results).toEqual([
       { holdId: 2, ok: true, status: 'Confirmed', entityType: 'Model', entityId: 1, userId: 9 },
