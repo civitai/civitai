@@ -754,10 +754,10 @@ export async function resolveScanOutcome({
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
   // Decided on the row, so a stored CSAM block holds whatever this scan loaded or decided.
   const csamBlocked = Prisma.raw(`"blockedFor" = '${BlockedReason.CSAM}'`);
-  // A block outlives an account restore (every write that lands drops the breadcrumbs); anything
-  // else leaves a grace-blocked row as it is.
   const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
         ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END`;
+  // A write that lands drops the grace breadcrumbs, so its block outlives a restore; a lift skips a
+  // grace-blocked row, and one a ban or hold keeps.
   const lifting = toUpdate.ingestion !== ImageIngestionStatus.Blocked;
   let rowsWritten: number | undefined;
   await writeWithNsfwAxes(
@@ -795,8 +795,7 @@ export async function resolveScanOutcome({
     axesTarget
   );
   if (!blocking && rowsWritten === 0) {
-    // Skipped as grace-blocked, or blocked by a ban or hold since the read: the hash is still kept (a later block reads it), and the outcome is
-    // the row as it stands, so no Scanned effects run.
+    // The hash is kept anyway: a later block reads it. The outcome is the row as it stands.
     await dbWrite.$executeRaw`
       UPDATE "Image" SET "pHash" = COALESCE(${pHash ?? null}, "pHash") WHERE id = ${image.id}
     `.catch((error: Error) => {

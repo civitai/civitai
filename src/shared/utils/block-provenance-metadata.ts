@@ -1,4 +1,5 @@
 import { FEEDBACK_CAPTURE_METADATA_KEY } from '@civitai/shared/feedback-capture';
+import { GRACE_MARKER_KEYS } from '~/server/utils/image-removal-mode';
 
 /**
  * `Image.metadata` keys that record which App Block app produced an image. They are
@@ -109,10 +110,12 @@ export const JUDGE_RATING_METADATA_KEY = 'judgeRating';
  * Other server-owned `Image.metadata` keys, dropped from client input the same way:
  *  - `feedbackCapture`: the report a page capture belongs to (`createImage`'s `feedbackCapture`).
  *  - `judgeRating`: see `JUDGE_RATING_METADATA_KEY`.
+ *  - the account-deletion grace breadcrumbs: see `GRACE_MARKER_KEYS`.
  */
 export const OTHER_SERVER_OWNED_IMAGE_METADATA_KEYS = [
   FEEDBACK_CAPTURE_METADATA_KEY,
   JUDGE_RATING_METADATA_KEY,
+  ...GRACE_MARKER_KEYS,
 ] as const;
 
 const isServerOwnedMetadataKey = (key: string) =>

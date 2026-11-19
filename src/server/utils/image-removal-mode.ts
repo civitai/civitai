@@ -18,3 +18,10 @@ export const PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
  * rows it hides. A row written before this key existed has none, and the restore leaves its flag.
  */
 export const PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
+
+/** Every grace-block breadcrumb key: stripped together, and never accepted from a client. */
+export const GRACE_MARKER_KEYS = [
+  PRIOR_INGESTION_KEY,
+  PRIOR_BLOCKED_FOR_KEY,
+  PRIOR_NEEDS_REVIEW_KEY,
+] as const;

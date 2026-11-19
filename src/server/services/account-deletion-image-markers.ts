@@ -1,9 +1,5 @@
+import { hasGraceMarkerSql, withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
-import {
-  PRIOR_BLOCKED_FOR_KEY,
-  PRIOR_INGESTION_KEY,
-  PRIOR_NEEDS_REVIEW_KEY,
-} from '~/server/utils/image-removal-mode';
 
 /**
  * 🔴 Strips the grace-block breadcrumbs off rows a MODERATION path is blocking right now.
@@ -37,24 +33,19 @@ export async function clearAccountDeletionImageMarkers(
 ) {
   // Two statements rather than one with an interpolated predicate: the scope of a destructive
   // UPDATE stays literal in the source, so neither shape can be widened by a value.
-  //
-  // `("metadata" -> key) IS NOT NULL` and not `->>`: for a JSON null the arrow returns the JSON
-  // null (not SQL NULL) while the double-arrow returns SQL NULL, so `->>` would walk past a
-  // breadcrumb spelled `null` and leave it in place. Same divergence that made the two readers of
-  // this key disagree; here the wider reading is the correct one — strip whatever is there.
   if (target.ids !== undefined) {
     if (!target.ids.length) return 0;
     return dbWrite.$executeRaw`
       UPDATE "Image"
-      SET "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
+      SET "metadata" = ${withoutGraceMarkersSql()}
       WHERE id = ANY(${target.ids})
-        AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL
+        AND ${hasGraceMarkerSql}
     `;
   }
   return dbWrite.$executeRaw`
     UPDATE "Image"
-    SET "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
+    SET "metadata" = ${withoutGraceMarkersSql()}
     WHERE "userId" = ${target.userId}
-      AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL
+      AND ${hasGraceMarkerSql}
   `;
 }

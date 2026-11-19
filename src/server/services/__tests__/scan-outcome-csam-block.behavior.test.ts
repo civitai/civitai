@@ -469,11 +469,10 @@ describe('a scan of an image with a locked rating', () => {
   });
 });
 
-/**
- * An account deleted with the grace option has its images blocked with breadcrumbs, and a restore
- * puts back whatever the breadcrumbs recorded. A block written over a grace block in the meantime
- * must outlive that restore; a write that would lift a grace block leaves the row alone.
- */
+// An account deleted with the grace option has its images blocked with breadcrumbs, and a restore
+// puts back whatever the breadcrumbs recorded. A block written over a grace block in the meantime
+// must outlive that restore; a write that would lift a grace block leaves the row alone.
+
 /** Grace-blocked, then written to by the writer under test. */
 const GRACED = 71;
 /** Grace-blocked and left alone: the restore must put it back, or the restore never ran. */
