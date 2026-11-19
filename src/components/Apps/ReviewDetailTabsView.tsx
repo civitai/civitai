@@ -369,10 +369,8 @@ function ReviewDetailTabsViewWithConsole({
   selection: NonNullable<OnsiteReviewSelection>;
 }) {
   /**
-   * The page session's app console: the review preview's error reports, in memory only. One per
-   * mount — and `ReviewDetailView` is keyed on the request id, so another submission starts
-   * empty. A STORE rather than state: a report re-renders only what reads it (the tab's count,
-   * the Overview line, the Console panel), never the tabs with their diff tables.
+   * The page session's app console, one per mount. A STORE rather than state: as state, every
+   * report would re-render the tabs with their diff tables.
    */
   const [reviewConsole] = useState(createReviewConsoleStore);
   return (

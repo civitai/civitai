@@ -67,6 +67,27 @@ export function decideChoice(cast: WeightedAnswer[], rule: DecisionRule): Decisi
   return votes.length >= rule.maxVotes ? { kind: 'split' } : { kind: 'pending' };
 }
 
+/**
+ * The level a rating that reached no consensus at its last stage is re-rated to: the answer with the most votes, counted (not
+ * weighted, unlike `decideChoice`), a tie going to the highest level. A held player's weight-0 vote is not counted. Null with no
+ * counted vote.
+ */
+export function mostVotedLevel(cast: WeightedAnswer[]): string | null {
+  const counts = new Map<string, number>();
+  for (const vote of cast) {
+    if (vote.weight > 0) counts.set(vote.answer, (counts.get(vote.answer) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [answer, count] of counts) {
+    if (count > bestCount || (count === bestCount && Number(answer) > Number(best))) {
+      best = answer;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
 // Levels are bit flags, so a "step" is a power of two.
 export function isExcessiveDownRating(current: number, winner: number): boolean {
   if (current <= 0 || winner <= 0 || winner >= current) return false;

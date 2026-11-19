@@ -1,12 +1,19 @@
 import { Alert, Badge, Button, Card, CopyButton, Group, Stack, Text } from '@mantine/core';
 import { IconAlertOctagon, IconCheck, IconCopy, IconTerminal2 } from '@tabler/icons-react';
-import { createContext, useContext, useSyncExternalStore, type ReactNode } from 'react';
+import {
+  createContext,
+  memo,
+  useContext,
+  useMemo,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import {
   formatReviewConsoleLog,
   orderReviewConsoleEntries,
   reviewConsoleCounts,
   reviewConsoleEntryLabel,
-  reviewConsoleFrameLabel,
+  reviewConsoleFrameLabels,
   reviewConsoleSdkNotice,
   type ReviewConsoleEntry,
   type ReviewConsoleState,
@@ -17,9 +24,8 @@ import {
  * The review page's CONSOLE view: the app's errors from the review preview, for the moderator's
  * own session (`reviewConsoleStore.ts` holds the rules and says why nothing is stored).
  *
- * 🔴 EVERY STRING HERE IS UNTRUSTED APP OUTPUT, RENDERED AS TEXT. Messages and stacks come from
- * the unapproved app's own code. They only ever reach the DOM as React text children (and the
- * clipboard as a string): no `dangerouslySetInnerHTML`, no markdown, no linkifying.
+ * 🔴 EVERY STRING HERE IS UNTRUSTED APP OUTPUT, from the unapproved app's own code: render it as
+ * React text only — never `dangerouslySetInnerHTML`, markdown or linkifying.
  */
 
 const ReviewConsoleContext = createContext<ReviewConsoleStore | null>(null);
@@ -113,7 +119,8 @@ export function ReviewConsoleSummary({ onOpen }: { onOpen?: () => void }) {
   );
 }
 
-function EntryRow({
+/** Memoised: entries are immutable, so a row whose entry and label are unchanged skips a render. */
+const EntryRow = memo(function EntryRow({
   entry,
   frameLabel,
 }: {
@@ -179,7 +186,7 @@ function EntryRow({
       )}
     </Stack>
   );
-}
+});
 
 /**
  * The Console tab: a fatal crash first with its reason, then every other report; a Copy log
@@ -188,7 +195,9 @@ function EntryRow({
  */
 export function ReviewConsolePanel() {
   const state = useReviewConsoleState();
-  const ordered = orderReviewConsoleEntries(state.entries);
+  const ordered = useMemo(() => orderReviewConsoleEntries(state.entries), [state.entries]);
+  const frameLabels = useMemo(() => reviewConsoleFrameLabels(state.entries), [state.entries]);
+  const log = useMemo(() => formatReviewConsoleLog(state, frameLabels), [state, frameLabels]);
   const { total } = reviewConsoleCounts(state.entries);
   const sdkNotice = reviewConsoleSdkNotice(state.sdk);
 
@@ -199,7 +208,7 @@ export function ReviewConsolePanel() {
           Errors the app reports while it runs in the preview, for this session only. Nothing here
           is saved.
         </Text>
-        <CopyButton value={formatReviewConsoleLog(state)}>
+        <CopyButton value={log}>
           {({ copied, copy }) => (
             <Button
               size="compact-xs"
@@ -241,7 +250,7 @@ export function ReviewConsolePanel() {
             <EntryRow
               key={entry.id}
               entry={entry}
-              frameLabel={reviewConsoleFrameLabel(state.entries, entry)}
+              frameLabel={frameLabels.get(entry.frame) ?? null}
             />
           ))}
         </Stack>

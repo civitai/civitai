@@ -78,14 +78,29 @@ async function lookup(
     versionStatus = 'Published',
     modelStatus = 'Published',
     publishedAt = versionStatus === 'Published' ? new Date(0) : null,
-  }: { versionStatus?: string; modelStatus?: string; publishedAt?: Date | null } = {}
+    availability = 'Public',
+    modelAvailability = 'Public',
+  }: {
+    versionStatus?: string;
+    modelStatus?: string;
+    publishedAt?: Date | null;
+    availability?: string;
+    modelAvailability?: string;
+  } = {}
 ) {
   mockGetVersionById.mockResolvedValue({
     id: 100,
     status: versionStatus,
     publishedAt,
+    availability,
     recommendedResources: [],
-    model: { id: 1, poi, status: modelStatus, user: { id: OWNER } },
+    model: {
+      id: 1,
+      poi,
+      status: modelStatus,
+      availability: modelAvailability,
+      user: { id: OWNER },
+    },
   });
   const outcome = await getModelVersionHandler({
     input: { id: 100 },
@@ -498,4 +513,49 @@ describe('the public sibling reads of a version', () => {
       });
     });
   });
+});
+
+describe('getModelVersionHandler, Private availability', () => {
+  // The availability read behind the grant check, then the viewer's grants.
+  const grant = (granted: boolean) => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      {
+        entityId: 100,
+        userId: OWNER,
+        availability: 'Private',
+        publishedAt: new Date(0),
+        status: 'Published',
+      },
+    ]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue(
+      granted ? [{ entityId: 100, hasAccess: true, permissions: 1, meta: {} }] : []
+    );
+  };
+  const PRIVATE = [
+    ['a Private version', { availability: 'Private' }],
+    ['a version of a Private model', { modelAvailability: 'Private' }],
+  ] as const;
+
+  it.each(PRIVATE)('%s is not found for a signed-in viewer without a grant', async (_, opts) => {
+    grant(false);
+    expect(await lookup('other', false, {}, opts)).toBe('not-found');
+  });
+
+  it.each(PRIVATE)('%s is served to a viewer with a grant', async (_, opts) => {
+    grant(true);
+    expect(await lookup('other', false, {}, opts)).toBe('served');
+  });
+
+  it.each(PRIVATE)('%s is not found when signed out', async (_, opts) => {
+    grant(true);
+    expect(await lookup('anon', false, {}, opts)).toBe('not-found');
+  });
+
+  it.each<ViewerKey>(['owner', 'moderator'])(
+    'a Private version is served to the %s without a grant',
+    async (viewer) => {
+      grant(false);
+      expect(await lookup(viewer, false, {}, { availability: 'Private' })).toBe('served');
+    }
+  );
 });

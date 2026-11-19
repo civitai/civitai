@@ -4,7 +4,9 @@
  *
  * The index holds only the SFW audience, so only viewers it can answer completely are routed to
  * it (`viewerNotRoutable`). It answers slugs; users only ever see cards the database hydrated for
- * those slugs through the store's own gates. Any index failure serves the database path.
+ * those slugs through the store's own gates. Sub-listing cards are not in the index: with them on
+ * the page, an index answer adds the matching ones from the database page (`withSubListingCards`).
+ * Any index failure serves the database path.
  */
 import * as z from 'zod';
 import { env } from '~/env/server';
@@ -20,11 +22,14 @@ import type {
   ListAppListingsInput,
   ListingCard,
   StoreGridItem,
+  SubListingCard,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { matureRatingsAllowed } from '~/server/services/blocks/app-listing-store-gate';
 import type { ListAvailableListingsOpts } from '~/server/services/blocks/app-listing.service';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
+import { isSubListingCard } from '~/shared/constants/app-sub-listing.constants';
 import { isOffsiteContentRating } from '~/shared/constants/browsingLevel.constants';
+import { storeGridCardMatches } from '~/shared/utils/store-grid-search';
 
 /** How long a store search waits for the index before serving the database path. */
 export const APP_INDEX_SEARCH_TIMEOUT_MS = 300;
@@ -101,6 +106,33 @@ export async function listStoreGrid(
   return { ...page, indexSearchRoutable };
 }
 
+/** What `appListings.listAvailable` knows about the request beyond its input. */
+export type StoreGridViewer = Omit<ListAvailableListingsOpts, 'includeSubListings'> & {
+  /** The viewer's feature flags (`ctx.features`). */
+  features: { appStoreSubListings?: boolean; appIndexSearch?: boolean } | undefined;
+};
+
+/**
+ * `listStoreGrid`'s arguments for one `appListings.listAvailable` request: the one place the
+ * request's opt-ins meet the viewer's flags, so the combination is testable without the router.
+ *
+ * Sub-listing cards need the caller's opt-in AND the `app-store-sub-listings` flag: a
+ * `ListingCard`-only caller (the related rail) must never receive a `SubListingCard` just because
+ * the viewer has the flag.
+ */
+export function storeGridRequest(
+  input: ListAppListingsInput,
+  { features, ...opts }: StoreGridViewer
+): [ListAvailableListingsOpts, { indexSearch: boolean }] {
+  return [
+    {
+      ...opts,
+      includeSubListings: input.includeSubListings === true && !!features?.appStoreSubListings,
+    },
+    { indexSearch: !!features?.appIndexSearch },
+  ];
+}
+
 /**
  * Why this viewer's searches cannot go to the index, or null when they can. Each condition is one
  * where the index could leave out a listing the database grid shows this viewer.
@@ -112,8 +144,8 @@ export function viewerNotRoutable(opts: ListAvailableListingsOpts): AppIndexSear
   if (mature.r || mature.x || mature.xxx) return 'mature_viewer';
   // A tester or moderator floor admits listings that are not public.
   if ((opts.floor ?? 'public') !== 'public') return 'unsupported_viewer';
-  // Sub-listing cards are not apps; the index has none.
-  if (opts.includeSubListings === true) return 'sub_listings';
+  // Sub-listing cards (`includeSubListings`) do not make a viewer unroutable: the index has none,
+  // so an index answer takes them from the database page (`searchThroughIndex`).
   return null;
 }
 
@@ -155,7 +187,12 @@ async function searchThroughIndex(
   // it settles. An unsampled request reads the database only if the index fails, so its fallback
   // costs the index's failure (at most APP_INDEX_SEARCH_TIMEOUT_MS) plus the database read, and a
   // successful one reads no grid page at all.
-  const sampled = Math.random() < env.APP_INDEX_SEARCH_COMPARE_SAMPLE;
+  //
+  // With sub-listing cards on the page (`includeSubListings`), every request reads the database
+  // page beside the index call: an index answer needs that page's sub-listing cards
+  // (`withSubListingCards`), so it waits for max(index, database) rather than the sum.
+  const withSubListings = opts.includeSubListings === true;
+  const sampled = withSubListings || Math.random() < env.APP_INDEX_SEARCH_COMPARE_SAMPLE;
   const early = sampled ? reads.listAvailableListings(input, opts) : null;
   // Handled where it is used; this only keeps an early rejection from being reported as
   // unhandled while the index call is in flight.
@@ -174,6 +211,19 @@ async function searchThroughIndex(
     cards = await reads.listStoreListingsBySlugs(slugs, input, opts);
   } catch {
     return fallBack(dbPage(), query, 'error');
+  }
+  let items: StoreGridItem[] = cards;
+  if (early && withSubListings) {
+    let db: StoreGridPage;
+    try {
+      db = await early;
+    } catch {
+      // The database page this answer needs failed. Serving the index's apps alone would hide
+      // every sub-listing card as if none matched, so the request is the database path's: one
+      // fresh read of the full page, whose own failure is the request's error, as with the flag off.
+      return fallBack(reads.listAvailableListings(input, opts), query, 'error');
+    }
+    items = withSubListingCards(cards, db.items, query);
   }
   const r: Report = {
     query,
@@ -196,8 +246,31 @@ async function searchThroughIndex(
   } else {
     logLine(r);
   }
-  // An index answer is one page, in the index's relevance order, with no cursor to a next one.
-  return { items: cards, nextCursor: undefined, search: 'index' };
+  // An index answer is one page with no cursor to a next one: the index's apps in its relevance
+  // order, then any sub-listing cards (`withSubListingCards`).
+  return { items, nextCursor: undefined, search: 'index' };
+}
+
+/**
+ * An index answer's page with sub-listing cards: the index's app cards, in its relevance order,
+ * then the sub-listing cards of the database page `dbItems` that match `query`, in that page's
+ * order.
+ *
+ * The sub-listing cards are exactly the ones the database path shows this viewer for the same
+ * search on its first page: the same read (`listAvailableListings`, with every gate it applies)
+ * narrowed by the same rule the client filters that page with (`storeGridCardMatches`). Apps come
+ * first because they are the index's ranked answer; relevance and the grid's sort key share no
+ * scale, so the two lists are not interleaved.
+ */
+function withSubListingCards(
+  cards: ListingCard[],
+  dbItems: readonly StoreGridItem[],
+  query: string
+): StoreGridItem[] {
+  const subListings = dbItems.filter(
+    (item): item is SubListingCard => isSubListingCard(item) && storeGridCardMatches(item, query)
+  );
+  return [...cards, ...subListings];
 }
 
 async function fallBack(
@@ -307,15 +380,16 @@ function isTimeout(err: unknown): boolean {
   return err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
 }
 
-/** The slugs of a page's listing cards whose name or tagline contains the query (the client rule). */
+/**
+ * The slugs of a page's listing cards that match the query (the client rule). Listing cards only,
+ * so the comparison sets the index's apps against the database's apps: sub-listing cards are
+ * never in the index, and the ones an answer carries come from this same page.
+ */
 function matchingSlugs(items: StoreGridItem[], query: string): Set<string> {
-  const q = query.toLowerCase();
   const out = new Set<string>();
   for (const item of items) {
-    if (!('slug' in item)) continue;
-    if (item.name.toLowerCase().includes(q) || (item.tagline ?? '').toLowerCase().includes(q)) {
-      out.add(item.slug);
-    }
+    if (isSubListingCard(item)) continue;
+    if (storeGridCardMatches(item, query)) out.add(item.slug);
   }
   return out;
 }
