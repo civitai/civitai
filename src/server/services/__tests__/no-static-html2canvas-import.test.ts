@@ -78,6 +78,11 @@ const retiredStatic = staticFor(RETIRED);
 const retiredDynamic = dynamicFor(RETIRED);
 
 const files = walk(SRC);
+// Every pattern below names RETIRED (a prefix of DEPENDENCY), so only files containing it can match.
+const candidates = files
+  .map((file) => ({ file, raw: readFileSync(file, 'utf8') }))
+  .filter(({ raw }) => raw.includes(RETIRED))
+  .map(({ file, raw }) => ({ file, source: stripComments(raw) }));
 
 describe(`🔴 ${DEPENDENCY} is code-split out of the main bundle`, () => {
   it('the scan actually reached the source tree', () => {
@@ -144,9 +149,9 @@ describe(`🔴 ${DEPENDENCY} is code-split out of the main bundle`, () => {
   });
 
   it('no file under src/ imports it statically', () => {
-    const offenders = files.filter((file) =>
-      staticReference.test(stripComments(readFileSync(file, 'utf8')))
-    );
+    const offenders = candidates
+      .filter(({ source }) => staticReference.test(source))
+      .map(({ file }) => file);
 
     expect(
       offenders.map((f) => path.relative(SRC, f)),
@@ -159,10 +164,9 @@ describe(`🔴 ${DEPENDENCY} is code-split out of the main bundle`, () => {
     // Not merely "not static": the package is no longer in package.json, so a
     // dynamic import of it is a runtime failure rather than a bundle-size problem —
     // which is how the capture broke in the first place. Both forms are offences.
-    const offenders = files.filter((file) => {
-      const source = stripComments(readFileSync(file, 'utf8'));
-      return retiredStatic.test(source) || retiredDynamic.test(source);
-    });
+    const offenders = candidates
+      .filter(({ source }) => retiredStatic.test(source) || retiredDynamic.test(source))
+      .map(({ file }) => file);
 
     expect(
       offenders.map((f) => path.relative(SRC, f)),
@@ -187,9 +191,9 @@ describe(`🔴 ${DEPENDENCY} is code-split out of the main bundle`, () => {
     //   - captureScreenshot.color4.browser.test.tsx is deliberately NOT here: it
     //     goes through `captureConsentedScreenshot`, so it exercises the PRODUCTION
     //     loader rather than reaching past it.
-    const dynamicUsers = files
-      .filter((file) => dynamicReference.test(stripComments(readFileSync(file, 'utf8'))))
-      .map((f) => path.relative(SRC, f))
+    const dynamicUsers = candidates
+      .filter(({ source }) => dynamicReference.test(source))
+      .map(({ file }) => path.relative(SRC, file))
       .sort();
 
     expect(dynamicUsers).toEqual(
