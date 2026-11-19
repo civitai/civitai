@@ -21,7 +21,9 @@ import type { FlagSummary } from '~/server/events/turf/turf.service';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import classes from './FlagRacePanel.module.scss';
 
-export const ART =
+/** The race art's image id, for a smaller tile of it elsewhere. */
+export const ART_ID = '5064a196-aa66-4c07-bb2a-f3f2ccbacef1';
+const ART =
   'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/5064a196-aa66-4c07-bb2a-f3f2ccbacef1/width=900,optimized=true/5064a196-aa66-4c07-bb2a-f3f2ccbacef1.jpeg';
 const RULES_ARTICLE = '/articles/38657';
 export const HOWTO_DISMISSED_KEY = 'flag-race-howto-dismissed';
@@ -52,7 +54,7 @@ export function FlagRacePanel({
 }: {
   event: string;
   summary: FlagSummary;
-  /** The home row passes this: an X at the panel's corner, clear of the flags' own menus. */
+  /** Renders a collapse X; omit to hide it. */
   onCollapse?: () => void;
 }) {
   const teamColor = useTeamColor();

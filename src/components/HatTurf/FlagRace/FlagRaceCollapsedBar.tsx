@@ -2,9 +2,10 @@ import type { ReactNode } from 'react';
 import { ActionIcon, Badge, Button, Group, Text } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { FALLBACK_COLOR } from '~/components/HatTurf/hat-turf.utils';
-import { ART, FlagRacePanel } from '~/components/HatTurf/FlagRace/FlagRacePanel';
+import { ART_ID, FlagRacePanel } from '~/components/HatTurf/FlagRace/FlagRacePanel';
 import flagClasses from '~/components/HatTurf/FlagRace/FlagRacePanel.module.scss';
 import { useNavBannersDismissed } from '~/components/AppLayout/NavAnnouncementSlot/nav-banners-dismissed';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
@@ -90,11 +91,9 @@ function FlagRaceCollapsedBar({
       data-testid="flag-race-collapsed"
     >
       <HeroBulbs colors={colors} count={22} />
-      <img
-        src={ART}
-        alt=""
-        className="relative z-[3] h-10 w-[60px] shrink-0 rounded-lg object-cover"
-      />
+      <div className="relative z-[3] h-10 w-[60px] shrink-0 overflow-hidden rounded-lg">
+        <EdgeMedia src={ART_ID} width={160} className="size-full object-cover" alt="" />
+      </div>
       <Text size="sm" className="relative z-[3] min-w-0 flex-1 truncate">
         <b>Flag Race</b> ·{' '}
         {summary.closed
