@@ -104,6 +104,8 @@ func CodeOf(err error) Code {
 type Request struct {
 	Schema string
 	Cursor string
+	// Token, when set, is this subscription's bearer token, in place of Client.Token.
+	Token string
 }
 
 // MaxLine bounds one SSE line. The largest app entity is a few KiB.
@@ -187,8 +189,12 @@ func (c *Client) Subscribe(ctx context.Context, req Request) (*Stream, error) {
 		return nil, &Error{Code: BadRequest, Message: err.Error()}
 	}
 	hr.Header.Set("Accept", "text/event-stream")
-	if c.Token != "" {
-		hr.Header.Set("Authorization", "Bearer "+c.Token)
+	token := c.Token
+	if req.Token != "" {
+		token = req.Token
+	}
+	if token != "" {
+		hr.Header.Set("Authorization", "Bearer "+token)
 	}
 	if c.UserAgent != "" {
 		hr.Header.Set("User-Agent", c.UserAgent)
