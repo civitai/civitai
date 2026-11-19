@@ -12,12 +12,8 @@ import {
   fallbackUserImageColumn,
   servableProfilePictureSql,
 } from '~/server/services/profile-picture.sql';
-import {
-  clearHeldUserImages,
-  dropStaleHeldImageMarkers,
-  getPictureUserIds,
-  restoreClearedUserImages,
-} from '~/server/services/held-image-keys';
+import { clearHeldUserImages, getPictureUserIds } from '~/server/services/held-image-keys';
+import { alertRefreshStepFailure } from '~/server/services/profile-picture-refresh-alert';
 import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
@@ -2489,11 +2485,10 @@ function logProfilePictureRefreshError(error: unknown, meta: Record<string, unkn
  * Re-reads these users' cached profile pictures after a write changed or removed one, and refreshes
  * their sessions, whose shape carries the picture's url. For a user whose picture is under an
  * owner-hidden hold or carries a block marker, a `User.image` naming it is cleared first
- * (`clearHeldUserImages`); once the picture is servable again it is put back
- * (`restoreClearedUserImages`). Either way their basic-user cache entry and
- * search document are refreshed too. The event engine's copy of the
- * picture is busted as well. Never throws: the write it follows has committed, and a moderation
- * action must not fail on a cache refill.
+ * (`clearHeldUserImages`), and their basic-user cache entry and search document are refreshed too.
+ * The event engine's copy of the picture is busted as well. Never throws: the write it follows has
+ * committed, and a moderation action must not fail on a cache refill. A failed step is logged and
+ * alerted (`alertRefreshStepFailure`).
  */
 export async function refreshProfilePicturesForUsers(userIds: number[]) {
   const ids = [...new Set(userIds)];
@@ -2503,25 +2498,20 @@ export async function refreshProfilePicturesForUsers(userIds: number[]) {
       await run();
     } catch (error) {
       logProfilePictureRefreshError(error, { userIds: ids.join(','), step: name });
+      alertRefreshStepFailure(name);
     }
   };
   let heldIds: number[] = [];
   await step('clear-image', async () => {
     heldIds = await clearHeldUserImages(dbWrite, ids);
   });
-  let restoredIds: number[] = [];
-  await step('restore-image', async () => {
-    restoredIds = await restoreClearedUserImages(dbWrite, ids);
-  });
-  await step('drop-stale-markers', () => dropStaleHeldImageMarkers(dbWrite, ids));
-  const imageChangedIds = [...heldIds, ...restoredIds];
   await step('picture-cache', () => profilePictureCache.refresh(ids));
   await step('event-engine-cache', () => bustEventEngineProfilePictures(redis, ids));
-  if (imageChangedIds.length) {
-    await step('basic-cache', () => userBasicCache.refresh(imageChangedIds));
+  if (heldIds.length) {
+    await step('basic-cache', () => userBasicCache.refresh(heldIds));
     await step('search-index', () =>
       usersSearchIndex.queueUpdate(
-        imageChangedIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+        heldIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       )
     );
   }
@@ -2532,6 +2522,7 @@ export async function refreshProfilePicturesForUsers(userIds: number[]) {
         await refreshSession(id, { sendSignal: false, caller: 'profile' });
       } catch (error) {
         logProfilePictureRefreshError(error, { userIds: String(id) });
+        alertRefreshStepFailure('session');
       }
     }),
     PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY

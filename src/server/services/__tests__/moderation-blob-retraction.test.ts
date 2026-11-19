@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { fakeVersionedBucket } from '~/__tests__/mocks/fake-versioned-bucket';
+import { fakeVersionedBucket } from '@civitai/storage/testing/fake-versioned-bucket';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
