@@ -17,8 +17,10 @@ import {
   buildZip,
   JPEG_BYTES,
   MP4_BYTES,
+  mp4Clip,
   PNG_BYTES,
   symlinkAttributes,
+  webmClip,
   type FixtureEntry,
 } from '~/server/utils/__tests__/zip-fixture';
 
@@ -162,6 +164,7 @@ const orchestrator = await import('@civitai/orchestration-client');
 const { PreviewRejectedError } = await import('~/server/utils/service-deal-preview');
 const {
   SERVICE_FINAL_OVER_LEVEL_REASON,
+  SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
   SERVICE_FINAL_VIDEO_TOO_LONG,
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
   SERVICE_FINAL_SCAN_MAX_ATTEMPTS,
@@ -2002,19 +2005,19 @@ describe('the finals malware scan', () => {
 
 describe('a video Final', () => {
   const probe = { video: vi.fn() };
-  const CLIP = MP4_BYTES();
+  const CLIP = mp4Clip({ seconds: 10 });
   /** Serves the clip whole as version ver1, and its head bytes to a ranged read. */
-  const serveClip = (etag = '"v1"') =>
+  const serveClip = (etag = '"v1"', clip: Buffer = CLIP) =>
     s3.send.mockImplementation(async (command: { input: { Range?: string } }) =>
       command.input.Range
-        ? body(CLIP.subarray(0, 16))
-        : { ...body(CLIP), ETag: etag, VersionId: 'ver1' }
+        ? body(clip.subarray(0, 16))
+        : { ...body(clip), ETag: etag, VersionId: 'ver1' }
     );
-  const videoFinal = async (limit: number) => {
+  const videoFinal = async (limit: number, clip: Buffer = CLIP, name = 'clip.mp4') => {
     const dealId = await accepted();
     await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = $1`, [limit]);
-    const fileId = await final(dealId, 'clip.mp4', CLIP);
-    serveClip();
+    const fileId = await final(dealId, name, clip);
+    serveClip('"v1"', clip);
     expect(await unpack.unpackFinals({ probeVideo: probe.video })).toBe(1);
     return { dealId, fileId };
   };
@@ -2148,13 +2151,50 @@ describe('a video Final', () => {
 
   it('refuses a video longer than the scan covers, and drops its copy unscanned', async () => {
     probe.video.mockResolvedValue({ width: 640, height: 360, duration: 50.5 });
-    const { fileId } = await videoFinal(4);
+    const { fileId } = await videoFinal(4, mp4Clip({ seconds: 50.5 }));
     expect(await fileRow(fileId)).toMatchObject({
       scanStatus: 'Failed',
       failReason: SERVICE_FINAL_VIDEO_TOO_LONG,
     });
     expect(images.createImage).not.toHaveBeenCalled();
     expect(s3.deleteObject).toHaveBeenCalledWith('image-store', 'scan-key-1', expect.anything());
+  });
+
+  it.each([
+    ['an mp4', () => mp4Clip({ seconds: 60, headerSeconds: 20 }), 'clip.mp4'],
+    [
+      'a webm of unknown-size clusters',
+      () => webmClip({ declared: 20, blocks: [0, 30, 60], unknownSize: true }),
+      'clip.webm',
+    ],
+  ])('refuses %s whose header claims 20 s over 60 s of stream', async (_n, clip, name) => {
+    // The orchestrator's probe reads the header, so it agrees with the claim.
+    probe.video.mockResolvedValue({ width: 640, height: 360, duration: 20 });
+    const { fileId } = await videoFinal(4, clip(), name);
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: SERVICE_FINAL_VIDEO_TOO_LONG,
+    });
+    expect(images.createImage).not.toHaveBeenCalled();
+    expect(s3.deleteObject).toHaveBeenCalledWith('image-store', 'scan-key-1', expect.anything());
+  });
+
+  it('refuses a short video whose stated and real lengths disagree', async () => {
+    const { fileId } = await videoFinal(4, mp4Clip({ seconds: 30, headerSeconds: 10 }));
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
+    });
+    expect(images.createImage).not.toHaveBeenCalled();
+  });
+
+  it('refuses, without retrying or copying, a video whose container cannot be read', async () => {
+    const { fileId } = await videoFinal(4, MP4_BYTES());
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: expect.stringMatching(/could not be read/),
+    });
+    expect(s3.uploadImageBufferToStore).not.toHaveBeenCalled();
   });
 
   it('refuses a video whose length cannot be read', async () => {
@@ -2175,9 +2215,10 @@ describe('a video Final', () => {
 
   it('takes a video of exactly 50 seconds, and a .webm as video/webm', async () => {
     probe.video.mockResolvedValue({ width: 640, height: 360, duration: 50 });
+    const clip = webmClip({ declared: 50, blocks: [0, 25, 49.96] });
     const dealId = await accepted();
-    const fileId = await final(dealId, 'clip.webm', CLIP);
-    serveClip();
+    const fileId = await final(dealId, 'clip.webm', clip);
+    serveClip('"v1"', clip);
     await unpack.unpackFinals({ probeVideo: probe.video });
     expect((await fileRow(fileId)).failReason).toBeNull();
     expect(images.createImage).toHaveBeenCalledWith(

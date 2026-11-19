@@ -132,6 +132,8 @@ export const SERVICE_FINAL_VIDEO_MAX_BYTES = 200 * 1024 * 1024;
 export const SERVICE_FINAL_VIDEO_HELP = `Videos: .mp4 or .webm, up to ${SERVICE_FINAL_VIDEO_MAX_SECONDS} seconds and ${
   SERVICE_FINAL_VIDEO_MAX_BYTES / (1024 * 1024)
 } MB, uploaded as the video file itself.`;
+export const SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR =
+  "This video's stated length doesn't match what it contains. Export it again and upload the new file.";
 export const SERVICE_FINAL_VIDEO_TOO_LONG = `Videos over ${SERVICE_FINAL_VIDEO_MAX_SECONDS} seconds can't be delivered yet: they can't be checked in full.`;
 export const SERVICE_FINAL_VIDEO_IN_ZIP =
   "Video can't be delivered inside a .zip. Upload the video file directly.";

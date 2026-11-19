@@ -18,6 +18,7 @@ import {
   recordFinalScanResult,
 } from '~/server/services/creator-service-deal-file.service';
 import { probeVideoDimensions } from '~/server/services/video-dimensions';
+import { readVideoLengths } from '~/server/utils/video-lengths';
 import { buildEntryScanCopy, PreviewRejectedError } from '~/server/utils/service-deal-preview';
 import {
   openZip,
@@ -33,6 +34,7 @@ import {
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
   SERVICE_FINAL_VIDEO_EXTENSIONS,
   SERVICE_FINAL_VIDEO_MAX_BYTES,
+  SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
   SERVICE_FINAL_VIDEO_MAX_SECONDS,
   SERVICE_FINAL_VIDEO_TOO_LONG,
   SERVICE_FINAL_SCAN_MAX_ATTEMPTS,
@@ -318,6 +320,8 @@ async function unpackImage(file: ClaimedFinal) {
 }
 
 const VIDEO_UNREADABLE = 'This video could not be read. Upload an MP4 or WebM file.';
+/** Header, samples and probe may differ by about a frame; more is a file claiming one length and holding another. */
+const VIDEO_LENGTH_TOLERANCE_SECONDS = 1;
 
 /**
  * A video Final has a single entry: the video itself, scanned whole. The scan copy is the exact
@@ -344,6 +348,9 @@ async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDime
   const original = Buffer.from(await object.Body.transformToByteArray());
   if (sniffEntry(original.subarray(0, 16)) !== 'video')
     throw new ZipRejectedError(VIDEO_UNREADABLE);
+  // The header's length is the writer's claim; the samples are what plays. Both are measured.
+  const lengths = readVideoLengths(original);
+  if (!lengths) throw new ZipRejectedError(VIDEO_UNREADABLE);
 
   const mimeType = fileExtension(file.fileName) === 'webm' ? 'video/webm' : 'video/mp4';
   let scanKey = entry.scanKey;
@@ -365,10 +372,17 @@ async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDime
     await failEntry(file.id, 0, VIDEO_UNREADABLE);
     throw new ZipRejectedError(VIDEO_UNREADABLE);
   }
-  if (probed.duration > SERVICE_FINAL_VIDEO_MAX_SECONDS) {
+  const all = [probed.duration, ...lengths];
+  const refusal =
+    Math.max(...all) > SERVICE_FINAL_VIDEO_MAX_SECONDS
+      ? SERVICE_FINAL_VIDEO_TOO_LONG
+      : Math.max(...all) - Math.min(...all) > VIDEO_LENGTH_TOLERANCE_SECONDS
+      ? SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR
+      : undefined;
+  if (refusal) {
     await dropCopy();
-    await failEntry(file.id, 0, SERVICE_FINAL_VIDEO_TOO_LONG);
-    throw new ZipRejectedError(SERVICE_FINAL_VIDEO_TOO_LONG);
+    await failEntry(file.id, 0, refusal);
+    throw new ZipRejectedError(refusal);
   }
   await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile"
