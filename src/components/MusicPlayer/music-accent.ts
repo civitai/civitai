@@ -49,6 +49,8 @@ const toHex = (rgb: number[]) => `#${rgb.map((c) => c.toString(16).padStart(2, '
 const MIN_LUMINANCE = 0.17;
 const MAX_LUMINANCE = 0.27;
 const MAX_SATURATION = 0.85;
+// Below this the cover is greyish: its accent would read like the player's dimmed "off" controls.
+const MIN_SATURATION = 0.25;
 // The wash's second colour stays inside the artwork's hues: the same hue, turned a little and darker.
 const SECOND_HUE_SHIFT = -12;
 const SECOND_LIGHTNESS = 0.7;
@@ -67,7 +69,8 @@ function withLuminance(hsl: { h: number; s: number; l: number }, target: number)
 /**
  * The global player's accent from a cover's blurhash: its average colour, held to a lightness and
  * saturation that stay readable on the player's card in dark and light, plus a second colour for
- * the wash. Null for a missing or invalid hash, so the caller falls back to the Civitai primary.
+ * the wash. Null for a missing or invalid hash or a greyish cover, so the caller falls back to the
+ * Civitai primary.
  */
 export function musicAccentFromHash(hash: string | null | undefined): MusicAccent | null {
   if (!hash || !isBlurhashValid(hash).result) return null;
@@ -75,6 +78,7 @@ export function musicAccentFromHash(hash: string | null | undefined): MusicAccen
   const average = [value >> 16, (value >> 8) & 255, value & 255];
 
   let hsl = rgbToHsl(average);
+  if (hsl.s < MIN_SATURATION) return null;
   hsl = { ...hsl, s: Math.min(hsl.s, MAX_SATURATION) };
   const lum = luminance(hslToRgb(hsl));
   if (lum < MIN_LUMINANCE) hsl = withLuminance(hsl, MIN_LUMINANCE);
@@ -130,11 +134,7 @@ export function blend(fg: string, bg: string, alpha: number) {
  * scheme's `surface`, under a tint of the accent at `tint` alpha when the text sits on one. Pair
  * with `ACCENT_TEXT`.
  */
-export function accentTextVars(
-  accent: string,
-  surface: { light: string; dark: string },
-  tint = 0
-) {
+export function accentTextVars(accent: string, surface: { light: string; dark: string }, tint = 0) {
   return {
     '--accent-text-light': readableAccent(accent, blend(accent, surface.light, tint)),
     '--accent-text-dark': readableAccent(accent, blend(accent, surface.dark, tint)),
@@ -142,4 +142,5 @@ export function accentTextVars(
 }
 
 /** Sets `--accent-text` to the scheme's colour from `accentTextVars`. */
-export const ACCENT_TEXT = '[--accent-text:var(--accent-text-light)] dark:[--accent-text:var(--accent-text-dark)]';
+export const ACCENT_TEXT =
+  '[--accent-text:var(--accent-text-light)] dark:[--accent-text:var(--accent-text-dark)]';

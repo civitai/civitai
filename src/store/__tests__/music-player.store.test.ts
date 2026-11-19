@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MusicTrack } from '~/store/music-player.store';
-import { createMusicPlayerStore, MUSIC_PLAYER_PREFERENCES_KEY } from '~/store/music-player.store';
+import {
+  createMusicPlayerStore,
+  MUSIC_PLAYER_PREFERENCES_KEY,
+  repeatingAfterUpNext,
+} from '~/store/music-player.store';
 
 const track = (id: number, durationSec = 200): MusicTrack => ({
   id,
@@ -276,6 +280,37 @@ describe('shuffle and repeat', () => {
     expect(get().current?.id).toBe(a.id);
     expect(get().playing).toBe(true);
     expect(ids(get().list)).toEqual([b.id, c.id]);
+  });
+
+  it('repeat all on the last song of a list wraps to the first and stays on', () => {
+    const { get } = setup();
+    get().playFromList({ name: 'artist', tracks: [a, b], index: 0 });
+    get().cycleRepeat();
+    get().cycleRepeat();
+    get().cycleRepeat();
+    get().cycleRepeat();
+    expect(get().repeat).toBe('all');
+    get().next();
+    expect(get().current?.id).toBe(b.id);
+    expect(ids(repeatingAfterUpNext(get()))).toEqual([a.id, b.id]);
+
+    get().ended();
+    expect(get().current?.id).toBe(a.id);
+    expect(get().repeat).toBe('all');
+    expect(ids(get().list)).toEqual([b.id]);
+    expect(repeatingAfterUpNext(get())).toEqual([]);
+  });
+
+  it('shows nothing repeating while Up next still has songs, or with repeat off', () => {
+    const { get } = setup();
+    get().playFromList({ name: 'artist', tracks: [a, b], index: 0 });
+    get().cycleRepeat();
+    expect(repeatingAfterUpNext(get())).toEqual([]);
+    get().cycleRepeat();
+    get().cycleRepeat();
+    get().next();
+    expect(get().repeat).toBe('off');
+    expect(repeatingAfterUpNext(get())).toEqual([]);
   });
 
   it('repeat one replays the song when it ends, as a new playback', () => {
