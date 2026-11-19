@@ -170,10 +170,12 @@ export const mp4Clip = ({
         box(
           'mdia',
           box('mdhd', words(0, 0, 0, 1000, claimed, 0)),
+          box('hdlr', words(0, 0), Buffer.from('vide', 'latin1'), Buffer.alloc(12)),
           box(
             'minf',
             box(
               'stbl',
+              box('stsd', words(0, 1), box('avc1', Buffer.alloc(8))),
               box('stts', words(0, 1, 1, Math.round(seconds * 1000))),
               box('stsz', words(0, 4, 1))
             )
@@ -201,6 +203,12 @@ export const ebml = (id: number, body: Buffer | 'none', size?: 'unknown') => {
   const content = body === 'none' ? Buffer.alloc(0) : body;
   return Buffer.concat([idBytes, ebmlSize(size ?? content.length), content]);
 };
+/** A Tracks element of one VP9 video track. */
+export const WEBM_VIDEO_TRACKS = () =>
+  ebml(
+    0x1654ae6b,
+    ebml(0xae, Buffer.concat([ebml(0x83, Buffer.from([1])), ebml(0x86, Buffer.from('V_VP9'))]))
+  );
 /**
  * A webm whose Info claims `declared` seconds (none when undefined) and whose clusters hold one
  * block at each of `blocks` (seconds). Clusters are of unknown size when `unknownSize`.
@@ -233,7 +241,11 @@ export const webmClip = ({
   });
   return Buffer.concat([
     ebml(0x1a45dfa3, ebml(0x4282, Buffer.from('webm'))),
-    ebml(0x18538067, Buffer.concat([info, ...clusters]), unknownSize ? 'unknown' : undefined),
+    ebml(
+      0x18538067,
+      Buffer.concat([info, WEBM_VIDEO_TRACKS(), ...clusters]),
+      unknownSize ? 'unknown' : undefined
+    ),
   ]);
 };
 export const symlinkAttributes = () => (0o120777 << 16) >>> 0;

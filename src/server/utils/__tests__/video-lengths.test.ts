@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { ebml, mp4Box, mp4Clip, mp4Words, webmClip } from '~/server/utils/__tests__/zip-fixture';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  ebml,
+  mp4Box,
+  mp4Clip,
+  mp4Words,
+  WEBM_VIDEO_TRACKS,
+  webmClip,
+} from '~/server/utils/__tests__/zip-fixture';
 import { readVideoLengths } from '~/server/utils/video-lengths';
 
 const FIXTURES = join(__dirname, '../../../utils/metadata/__tests__/fixtures/video');
@@ -65,7 +72,7 @@ describe('readVideoLengths', () => {
   it('reads a movie padded with a great many boxes in good time', () => {
     const padding = Buffer.concat(Array(400_000).fill(mp4Box('free')));
     const started = Date.now();
-    readVideoLengths(Buffer.concat([clip, padding]));
+    expect(readVideoLengths(Buffer.concat([clip, padding]))).toContain(10);
     expect(Date.now() - started).toBeLessThan(1_500);
   });
 
@@ -120,7 +127,21 @@ describe('readVideoLengths, on what a player could show and it would not measure
   const stts = (seconds: number) => B('stts', w(0, 1, 1, Math.round(seconds * 1000)));
   const trak = (
     seconds: number,
-    { handler = 'vide', stbl = [stts(seconds)], edits = [] as Buffer[], samples = 1 } = {}
+    {
+      handler = 'vide',
+      format = handler === 'soun' ? 'mp4a' : 'avc1',
+      stbl = [stts(seconds)],
+      edits = [] as Buffer[],
+      samples = 1,
+      noHandler = false,
+    }: {
+      handler?: string;
+      format?: string;
+      stbl?: Buffer[];
+      edits?: Buffer[];
+      samples?: number;
+      noHandler?: boolean;
+    } = {}
   ) =>
     B(
       'trak',
@@ -129,8 +150,18 @@ describe('readVideoLengths, on what a player could show and it would not measure
       B(
         'mdia',
         B('mdhd', w(0, 0, 0, 1000, seconds * 1000, 0)),
-        B('hdlr', w(0, 0), Buffer.from(handler, 'latin1'), Buffer.alloc(12)),
-        B('minf', B('stbl', ...stbl, B('stsz', w(0, 4, samples))))
+        ...(noHandler
+          ? []
+          : [B('hdlr', w(0, 0), Buffer.from(handler, 'latin1'), Buffer.alloc(12))]),
+        B(
+          'minf',
+          B(
+            'stbl',
+            B('stsd', w(0, 1), B(format, Buffer.alloc(8))),
+            ...stbl,
+            B('stsz', w(0, 4, samples))
+          )
+        )
       )
     );
   const movie = (traks: Buffer[], extra: Buffer[] = []) =>
@@ -141,6 +172,15 @@ describe('readVideoLengths, on what a player could show and it would not measure
     ]);
   const elst = (...entries: [number, number][]) =>
     B('edts', B('elst', w(0, entries.length, ...entries.flatMap(([d, t]) => [d, t, 0x10000]))));
+
+  it('takes a slow clip whose encoder reorders a few frames', () => {
+    // 1 fps with B-frames: five frames of reordering is five seconds.
+    const slow = trak(10, {
+      stbl: [B('stts', w(0, 1, 10, 1000)), B('ctts', w(0, 1, 10, 5000))],
+      samples: 10,
+    });
+    expect(readVideoLengths(movie([slow]))).toContain(10);
+  });
 
   it('reads a plain one-track movie (the control for the cases below)', () => {
     expect(readVideoLengths(movie([trak(10)]))).toEqual([10, 10, 10, 10]);
@@ -166,9 +206,33 @@ describe('readVideoLengths, on what a player could show and it would not measure
       () => movie([trak(10)], [B('udta', B('meta', w(0), B('ilst', B('covr', w(0)))))]),
     ],
     [
-      'a composition offset past a second',
-      () => movie([trak(10, { stbl: [stts(10), B('ctts', w(0, 1, 1, 5000))] })]),
+      'a composition offset of many frames',
+      () =>
+        movie([
+          trak(10, {
+            stbl: [B('stts', w(0, 1, 300, 33)), B('ctts', w(0, 1, 1, 5000))],
+            samples: 300,
+          }),
+        ]),
     ],
+    [
+      'a composition offset of many frames back',
+      () =>
+        movie([
+          trak(10, {
+            stbl: [B('stts', w(0, 1, 300, 33)), B('ctts', w(1, 1, 1, -5000 >>> 0))],
+            samples: 300,
+          }),
+        ]),
+    ],
+    ['a subtitle track', () => movie([trak(10), trak(10, { handler: 'subp', format: 'mp4s' })])],
+    ['a track with no handler', () => movie([trak(10), trak(10, { noHandler: true })])],
+    [
+      'a sound track holding video',
+      () => movie([trak(10), trak(10, { handler: 'soun', format: 'avc1' })]),
+    ],
+    ['no video track', () => movie([trak(10, { handler: 'soun' })])],
+    ['a top-level meta box', () => Buffer.concat([movie([trak(10)]), B('meta', w(0))])],
     ['a second moov', () => Buffer.concat([movie([trak(10)]), B('moov')])],
   ])('refuses an mp4 with %s', (_n, bytes) => {
     expect(readVideoLengths(bytes())).toBeNull();
@@ -188,11 +252,25 @@ describe('readVideoLengths, on what a player could show and it would not measure
       Buffer.concat([ebml(0xe7, tc), ebml(0xa3, Buffer.from([0x81, 0, 0, 0x80, 0]))])
     );
   };
-  const track = (type: number, extra: Buffer[] = []) =>
-    ebml(0xae, Buffer.concat([ebml(0x83, Buffer.from([type])), ...extra]));
+  const track = (type: number, extra: Buffer[] = [], codec = type === 1 ? 'V_VP9' : 'A_OPUS') =>
+    ebml(
+      0xae,
+      Buffer.concat([ebml(0x83, Buffer.from([type])), ebml(0x86, Buffer.from(codec)), ...extra])
+    );
   const tracks = (...entries: Buffer[]) => ebml(0x1654ae6b, Buffer.concat(entries));
+  /** A webm Segment of these children, with one video track unless they bring their own Tracks. */
   const webm = (...children: Buffer[]) =>
-    Buffer.concat([head, ebml(0x18538067, Buffer.concat(children))]);
+    Buffer.concat([
+      head,
+      ebml(
+        0x18538067,
+        Buffer.concat(
+          children.some((c) => c.readUInt32BE(0) === 0x1654ae6b)
+            ? children
+            : [WEBM_VIDEO_TRACKS(), ...children]
+        )
+      ),
+    ]);
   const one = Buffer.alloc(8);
   one.writeDoubleBE(1);
   const ten = Buffer.alloc(4);
@@ -237,6 +315,57 @@ describe('readVideoLengths, on what a player could show and it would not measure
       () => webm(info(10_000), ebml(0x1941a469, Buffer.alloc(4)), cluster(0), cluster(10_000)),
     ],
     [
+      'a picture subtitle track',
+      () =>
+        webm(
+          info(10_000),
+          tracks(track(1), track(0x11, [], 'S_HDMV/PGS')),
+          cluster(0),
+          cluster(10_000)
+        ),
+    ],
+    [
+      'a track with no type',
+      () =>
+        webm(
+          info(10_000),
+          tracks(track(1), ebml(0xae, ebml(0x86, Buffer.from('V_VP9')))),
+          cluster(0),
+          cluster(10_000)
+        ),
+    ],
+    [
+      'an audio track holding video',
+      () =>
+        webm(info(10_000), tracks(track(1), track(2, [], 'V_VP9')), cluster(0), cluster(10_000)),
+    ],
+    [
+      'no tracks',
+      () =>
+        Buffer.concat([
+          head,
+          ebml(0x18538067, Buffer.concat([info(10_000), cluster(0), cluster(10_000)])),
+        ]),
+    ],
+    [
+      'a second Segment inside an unknown-size one',
+      () =>
+        Buffer.concat([
+          head,
+          ebml(
+            0x18538067,
+            Buffer.concat([
+              info(5000),
+              WEBM_VIDEO_TRACKS(),
+              cluster(0),
+              cluster(5000),
+              ebml(0x18538067, cluster(600_000)),
+            ]),
+            'unknown'
+          ),
+        ]),
+    ],
+    [
       'a cluster with two timecodes',
       () => {
         const block = ebml(0xa3, Buffer.from([0x81, 0, 0, 0x80, 0]));
@@ -249,5 +378,140 @@ describe('readVideoLengths, on what a player could show and it would not measure
     ],
   ])('refuses a webm with %s', (_n, bytes) => {
     expect(readVideoLengths(bytes())).toBeNull();
+  });
+});
+
+describe('readVideoLengths, at its bounds', () => {
+  const w = mp4Words;
+  const B = mp4Box;
+  const clip = mp4Clip({ seconds: 10 });
+  const head = ebml(0x1a45dfa3, ebml(0x4282, Buffer.from('webm')));
+  const info = (ms: number) => {
+    const f = Buffer.alloc(8);
+    f.writeDoubleBE(ms);
+    return ebml(
+      0x1549a966,
+      Buffer.concat([ebml(0x2ad7b1, Buffer.from([0x0f, 0x42, 0x40])), ebml(0x4489, f)])
+    );
+  };
+  /** A webm Segment of these children, with one video track unless they bring their own Tracks. */
+  const webm = (...children: Buffer[]) =>
+    Buffer.concat([
+      head,
+      ebml(
+        0x18538067,
+        Buffer.concat(
+          children.some((c) => c.readUInt32BE(0) === 0x1654ae6b)
+            ? children
+            : [WEBM_VIDEO_TRACKS(), ...children]
+        )
+      ),
+    ]);
+  const timecode = (ms: number) => ebml(0xe7, Buffer.from([ms >> 16, (ms >> 8) & 0xff, ms & 0xff]));
+  const block = (id = 0xa1) => ebml(id, Buffer.from([0x81, 0, 0, 0x80, 0]));
+  const blockDuration = (ms: number) =>
+    ebml(0x9b, Buffer.from([ms >> 16, (ms >> 8) & 0xff, ms & 0xff]));
+  const group = (...parts: Buffer[]) => ebml(0xa0, Buffer.concat(parts));
+  const cluster = (...parts: Buffer[]) => ebml(0x1f43b675, Buffer.concat(parts));
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('refuses a file once its parse runs past the deadline', () => {
+    expect(readVideoLengths(clip)).not.toBeNull();
+    vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(10_000);
+    expect(readVideoLengths(clip)).toBeNull();
+  });
+
+  it('counts a BlockGroup and its duration toward the length', () => {
+    expect(
+      readVideoLengths(webm(info(10), cluster(timecode(0), group(block(), blockDuration(60_000)))))
+    ).toEqual([0.01, 60]);
+  });
+
+  it.each([
+    [
+      'a BlockGroup with two blocks',
+      () => webm(info(10), cluster(timecode(0), group(block(), block()))),
+    ],
+    [
+      'a BlockGroup with two durations',
+      () =>
+        webm(
+          info(10),
+          cluster(timecode(0), group(block(), blockDuration(1), blockDuration(60_000)))
+        ),
+    ],
+    [
+      'a block before its cluster timecode',
+      () => webm(info(10), cluster(block(0xa3), timecode(0))),
+    ],
+    [
+      'a Block that runs past its BlockGroup',
+      () => {
+        const hidden = ebml(0xa3, Buffer.from([0x81, 0, 0x10, 0x80, 0]));
+        const overrun = ebml(0xa1, Buffer.concat([Buffer.from([0x81, 0, 0, 0x80]), hidden]));
+        const size = Buffer.alloc(8);
+        size.writeBigUInt64BE(BigInt(overrun.length - hidden.length));
+        size[0] = 0x01;
+        // The group's size stops before `hidden`, which its Block claims.
+        const groupBytes = Buffer.concat([Buffer.from([0xa0]), size, overrun]);
+        return webm(info(10), cluster(timecode(0), groupBytes));
+      },
+    ],
+    [
+      'a megabyte of Void',
+      () =>
+        webm(
+          info(10_000),
+          ebml(0xec, Buffer.alloc(1024 * 1024)),
+          cluster(timecode(0), block(0xa3))
+        ),
+    ],
+    ['a megabyte in a free box', () => Buffer.concat([clip, B('free', Buffer.alloc(1024 * 1024))])],
+  ])('refuses %s', (_n, bytes) => {
+    expect(readVideoLengths(bytes())).toBeNull();
+  });
+
+  it('takes the padding an encoder writes', () => {
+    expect(readVideoLengths(Buffer.concat([clip, B('free', Buffer.alloc(1024))]))).toContain(10);
+    expect(
+      readVideoLengths(
+        webm(info(10_000), ebml(0xec, Buffer.alloc(1024)), cluster(timecode(10_000), block(0xa3)))
+      )
+    ).toEqual([10, 10]);
+  });
+
+  const stts = B('stts', w(0, 1, 1, 10_000));
+  const trak = (...extra: Buffer[]) =>
+    B(
+      'trak',
+      B('tkhd', w(0, 0, 0, 1, 0, 10_000), Buffer.alloc(60)),
+      ...extra.filter((x) => x.toString('latin1', 4, 8) === 'edts'),
+      B(
+        'mdia',
+        B('mdhd', w(0, 0, 0, 1000, 10_000, 0)),
+        B('hdlr', w(0, 0), Buffer.from('vide', 'latin1'), Buffer.alloc(12)),
+        B(
+          'minf',
+          B(
+            'stbl',
+            B('stsd', w(0, 1), B('avc1', Buffer.alloc(8))),
+            stts,
+            ...extra.filter((x) => x.toString('latin1', 4, 8) === 'ctts'),
+            B('stsz', w(0, 4, 1))
+          )
+        )
+      )
+    );
+  const movie = (t: Buffer) =>
+    Buffer.concat([
+      B('ftyp', Buffer.from('isom', 'latin1'), w(0x200)),
+      B('moov', B('mvhd', w(0, 0, 0, 1000, 10_000), Buffer.alloc(80)), t),
+      B('mdat', Buffer.alloc(4)),
+    ]);
+
+  it('takes an empty edit followed by one media edit', () => {
+    const edits = B('edts', B('elst', w(0, 2, 500, 0xffffffff, 0x10000, 9_500, 0, 0x10000)));
+    expect(readVideoLengths(movie(trak(edits)))).toContain(10);
   });
 });
