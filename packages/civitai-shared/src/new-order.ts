@@ -45,55 +45,7 @@ export type KnightsSourcesConfig = {
   yesNoShare?: number;
   /** Knights game tuning saved on the moderator Config page. Absent when nothing is stored. */
   game?: KnightsGameSettings;
-  ruleGuide?: KnightsRuleGuide;
 };
-
-/** A set is a title with notes, a bullet list (mild to severe), or both. */
-export type KnightsRuleSet = { title: string; notes?: string; points: string[] };
-export type KnightsRuleGuide = { intro?: string; sets: KnightsRuleSet[] };
-
-/** Shared by the Config-page validator and the Knights reader; change both together via this object. */
-export const KNIGHTS_RULE_GUIDE_LIMITS = {
-  intro: 600,
-  sets: 6,
-  title: 60,
-  notes: 600,
-  points: 10,
-  point: 300,
-} as const;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  !!value && typeof value === 'object' && !Array.isArray(value);
-
-/** A trimmed, non-empty string within `max`, else undefined. */
-const readText = (value: unknown, max: number) => {
-  if (typeof value !== 'string') return undefined;
-  const text = value.trim();
-  return text && text.length <= max ? text : undefined;
-};
-
-function readRuleSet(value: unknown): KnightsRuleSet | undefined {
-  if (!isRecord(value)) return undefined;
-  const title = readText(value.title, KNIGHTS_RULE_GUIDE_LIMITS.title);
-  if (!title) return undefined;
-  const points = (Array.isArray(value.points) ? value.points : [])
-    .flatMap((point) => readText(point, KNIGHTS_RULE_GUIDE_LIMITS.point) ?? [])
-    .slice(0, KNIGHTS_RULE_GUIDE_LIMITS.points);
-  const notes = readText(value.notes, KNIGHTS_RULE_GUIDE_LIMITS.notes);
-  if (!points.length && !notes) return undefined;
-  return { title, ...(notes ? { notes } : {}), points };
-}
-
-/** Keeps the usable sets, points and intro; undefined when no set is usable. */
-export function readRuleGuide(value: unknown): KnightsRuleGuide | undefined {
-  if (!isRecord(value) || !Array.isArray(value.sets)) return undefined;
-  const sets = value.sets
-    .flatMap((set) => readRuleSet(set) ?? [])
-    .slice(0, KNIGHTS_RULE_GUIDE_LIMITS.sets);
-  if (!sets.length) return undefined;
-  const intro = readText(value.intro, KNIGHTS_RULE_GUIDE_LIMITS.intro);
-  return { ...(intro ? { intro } : {}), sets };
-}
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
@@ -253,7 +205,6 @@ export function readKnightsSourcesConfig(raw: string | Buffer | null): {
     const maxOpen = readCap(config.maxOpen);
     const yesNoShare = readShare(config.yesNoShare);
     const game = readGame(config.game);
-    const ruleGuide = readRuleGuide(config.ruleGuide);
     return {
       stored: true,
       config: {
@@ -264,7 +215,6 @@ export function readKnightsSourcesConfig(raw: string | Buffer | null): {
         ...(maxOpen === undefined ? {} : { maxOpen }),
         ...(yesNoShare === undefined ? {} : { yesNoShare }),
         ...(game === undefined ? {} : { game }),
-        ...(ruleGuide === undefined ? {} : { ruleGuide }),
       },
     };
   } catch {

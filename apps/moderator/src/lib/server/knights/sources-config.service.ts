@@ -5,13 +5,10 @@ import {
   KNIGHTS_GAME_SETTING_KEYS,
   KNIGHTS_GAME_SETTINGS,
   KNIGHTS_NSFW_LEVEL_QUESTION,
-  KNIGHTS_RULE_GUIDE_LIMITS,
   KNIGHTS_SOURCES_MAX_OPEN_LIMIT,
   readKnightsSourcesConfig,
   type KnightsGameSettingKey,
   type KnightsGameSettings,
-  type KnightsRuleGuide,
-  type KnightsRuleSet,
   type KnightsSourcesConfig,
 } from '@civitai/shared/new-order';
 import { dbRead, dbWrite } from '../db';
@@ -98,8 +95,7 @@ const same = (a: KnightsSourcesConfig, b: KnightsSourcesConfig) =>
   a.nsfwRate === b.nsfwRate &&
   a.maxOpen === b.maxOpen &&
   a.yesNoShare === b.yesNoShare &&
-  sameGame(a.game, b.game) &&
-  JSON.stringify(a.ruleGuide ?? null) === JSON.stringify(b.ruleGuide ?? null);
+  sameGame(a.game, b.game);
 
 /** Sets the key only while it still holds what was read (ARGV[1] '0': absent; '1': equal to ARGV[2]). 1 when written. */
 const COMPARE_AND_SET = `local current = redis.call('get', KEYS[1])
@@ -171,7 +167,7 @@ export async function saveSourcesConfig(input: unknown, moderatorId: number): Pr
   if (!checked.ok) return checked;
 
   return updateSourcesConfig(moderatorId, (before) => {
-    const { game, ruleGuide } = before.config;
+    const { game } = before.config;
     const maxOpen = checked.config.maxOpen ?? before.config.maxOpen;
     const yesNoShare = checked.clearYesNoShare
       ? undefined
@@ -185,7 +181,6 @@ export async function saveSourcesConfig(input: unknown, moderatorId: number): Pr
         ...(maxOpen === undefined ? {} : { maxOpen }),
         ...(yesNoShare === undefined ? {} : { yesNoShare }),
         ...(game === undefined ? {} : { game }),
-        ...(ruleGuide === undefined ? {} : { ruleGuide }),
       },
     };
   });
@@ -257,74 +252,6 @@ export async function saveGameSettings(
 
     const { game: _previous, ...rest } = before.config;
     return { ok: true, config: { ...rest, ...(Object.keys(next).length ? { game: next } : {}) } };
-  });
-}
-
-const LIMITS = KNIGHTS_RULE_GUIDE_LIMITS;
-
-function text(
-  value: unknown,
-  label: string,
-  max: number,
-  required: boolean
-): { ok: true; value: string } | { ok: false; error: string } {
-  if (value !== undefined && value !== null && typeof value !== 'string')
-    return { ok: false, error: `${label} must be text.` };
-  const trimmed = typeof value === 'string' ? value.trim() : '';
-  if (required && !trimmed) return { ok: false, error: `${label} is missing.` };
-  if (trimmed.length > max)
-    return { ok: false, error: `${label} is longer than ${max} characters.` };
-  return { ok: true, value: trimmed };
-}
-
-/** Refuses anything readRuleGuide would drop, so what a moderator saves is what players see. */
-export function validateRuleGuideInput(
-  input: unknown
-): { ok: true; guide: KnightsRuleGuide | null } | { ok: false; error: string } {
-  if (input === null) return { ok: true, guide: null };
-  if (!input || typeof input !== 'object' || Array.isArray(input))
-    return { ok: false, error: 'No rule guide was sent.' };
-  const value = input as Record<string, unknown>;
-  if (!Array.isArray(value.sets)) return { ok: false, error: 'The rule sets are missing.' };
-  if (!value.sets.length) return { ok: true, guide: null };
-  if (value.sets.length > LIMITS.sets)
-    return { ok: false, error: `There can be at most ${LIMITS.sets} rule sets.` };
-
-  const intro = text(value.intro, 'The intro', LIMITS.intro, false);
-  if (!intro.ok) return intro;
-
-  const sets: KnightsRuleSet[] = [];
-  for (const [i, raw] of value.sets.entries()) {
-    const where = `Set ${i + 1}`;
-    const set = (raw ?? {}) as Record<string, unknown>;
-    const title = text(set.title, `${where}'s title`, LIMITS.title, true);
-    if (!title.ok) return title;
-    const notes = text(set.notes, `${where}'s notes`, LIMITS.notes, false);
-    if (!notes.ok) return notes;
-    const rawPoints = set.points ?? [];
-    if (!Array.isArray(rawPoints)) return { ok: false, error: `${where}'s points must be a list.` };
-    if (rawPoints.length > LIMITS.points)
-      return { ok: false, error: `${where} can have at most ${LIMITS.points} points.` };
-    const points: string[] = [];
-    for (const [j, rawPoint] of rawPoints.entries()) {
-      const point = text(rawPoint, `${where}, point ${j + 1}`, LIMITS.point, true);
-      if (!point.ok) return point;
-      points.push(point.value);
-    }
-    if (!points.length && !notes.value)
-      return { ok: false, error: `${where} needs notes or at least one point.` };
-    sets.push({ title: title.value, ...(notes.value ? { notes: notes.value } : {}), points });
-  }
-  return { ok: true, guide: { ...(intro.value ? { intro: intro.value } : {}), sets } };
-}
-
-export async function saveRuleGuide(input: unknown, moderatorId: number): Promise<SaveOutcome> {
-  const checked = validateRuleGuideInput(input);
-  if (!checked.ok) return checked;
-
-  return updateSourcesConfig(moderatorId, (before) => {
-    const { ruleGuide: _previous, ...rest } = before.config;
-    return { ok: true, config: { ...rest, ...(checked.guide ? { ruleGuide: checked.guide } : {}) } };
   });
 }
 

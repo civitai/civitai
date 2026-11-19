@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { save, saveGame, saveRules, requireAccess } = vi.hoisted(() => ({
+const { save, saveGame, requireAccess } = vi.hoisted(() => ({
   save: vi.fn(),
   saveGame: vi.fn(),
-  saveRules: vi.fn(),
   requireAccess: vi.fn(),
 }));
 
@@ -13,7 +12,6 @@ vi.mock('$lib/server/knights/sources-config.service', () => ({
   getSourcesSettings: vi.fn(),
   saveSourcesConfig: save,
   saveGameSettings: saveGame,
-  saveRuleGuide: saveRules,
 }));
 vi.mock('$lib/server/access', () => ({ requireAccess }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
@@ -295,42 +293,5 @@ describe('Knights of New Order config access', () => {
     denied();
     await expect(load(formEvent({}) as never)).rejects.toThrow('forbidden');
     expect(requireAccess).toHaveBeenCalledWith({ id: 77 }, '/knights-of-new-order/config');
-  });
-});
-
-describe('Knights of New Order rule guide action', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  const guide = { sets: [{ title: 'T', points: ['Point one'] }] };
-
-  it('saves the posted guide as the acting moderator', async () => {
-    saveRules.mockResolvedValueOnce({ ok: true, changed: true });
-    expect(await actions.rules(formEvent({ ruleGuide: JSON.stringify(guide) }))).toEqual({
-      success: true,
-      changed: true,
-    });
-    expect(saveRules).toHaveBeenCalledWith(guide, 77);
-  });
-
-  it('passes a cleared guide as null', async () => {
-    saveRules.mockResolvedValueOnce({ ok: true, changed: true });
-    await actions.rules(formEvent({ ruleGuide: 'null' }));
-    expect(saveRules).toHaveBeenCalledWith(null, 77);
-  });
-
-  it.each([
-    ['no field', {}],
-    ['a field that is not JSON', { ruleGuide: '{nope' }],
-  ])('refuses %s without saving', async (_label, fields) => {
-    expect(await actions.rules(formEvent(fields))).toMatchObject({ status: 400 });
-    expect(saveRules).not.toHaveBeenCalled();
-  });
-
-  it('shows the service error when the guide is refused', async () => {
-    saveRules.mockResolvedValueOnce({ ok: false, error: 'Set 1 needs at least one level.' });
-    expect(await actions.rules(formEvent({ ruleGuide: JSON.stringify(guide) }))).toMatchObject({
-      status: 400,
-      data: { error: 'Set 1 needs at least one level.' },
-    });
   });
 });

@@ -316,9 +316,7 @@
       <RatingGuide guide={facts.ratingGuide.slice(0, half)} />
       <RatingGuide guide={facts.ratingGuide.slice(half)} />
     </div>
-    {#if data.ruleGuide}
-      <div class="question-rules"><QuestionRules rules={data.ruleGuide} /></div>
-    {/if}
+    <div class="question-rules"><QuestionRules /></div>
   </section>
 
   {#if data.swornIn}
