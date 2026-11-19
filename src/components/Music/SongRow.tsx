@@ -74,12 +74,13 @@ export const SongRow = memo(function SongRow({
           {genre && ` · ${genre}`}
         </span>
       </div>
-      {plays !== undefined && (
-        <span className={clsx('shrink-0 text-xs tabular-nums', songTextDimmed)}>
+      {/* The row's own gap between plays and duration. */}
+      <span
+        className={clsx('flex shrink-0 items-center gap-3.5 text-xs tabular-nums', songTextDimmed)}
+      >
+        {plays !== undefined && (
           <SongStat icon={<IconHeadphones size={14} />} count={plays} label="plays" />
-        </span>
-      )}
-      <span className={clsx('shrink-0 text-xs tabular-nums', songTextDimmed)}>
+        )}
         {formatPlaybackTime(track.durationSec)}
       </span>
       <ImageContextMenu image={data} leadingMenuItems={<FeedSongMenuItems song={data} />} />

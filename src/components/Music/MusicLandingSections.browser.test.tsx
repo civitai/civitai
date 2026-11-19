@@ -91,7 +91,7 @@ const song = (id: number, tagIds: number[] = []) =>
     user: { id: 100 + id, username: `artist${id}` },
     stats: { likeCountAllTime: 0, commentCountAllTime: 0 },
   } as unknown as ImagesInfiniteModel);
-const catalog = Array.from({ length: 12 }, (_, i) => song(i + 1, i % 2 ? [SYNTHWAVE] : []));
+const catalog = Array.from({ length: 40 }, (_, i) => song(i + 1, i % 2 ? [SYNTHWAVE] : []));
 const byId = (id: number) => catalog[id - 1];
 
 const playFromList = vi.fn<(list: MusicList) => void>();
@@ -150,6 +150,21 @@ describe('Rising this week', () => {
     expect(titles()).toEqual(['Song 4', 'Song 2']);
   });
 
+  test('without a genre reads only the top 25 ids', async () => {
+    server.rising = Array.from({ length: 40 }, (_, i) => 40 - i);
+    await renderWithProviders(<RisingSection />);
+    await expect.element(heading('Rising this week')).toBeVisible();
+    expect(server.imageReads.at(-1)?.filters.ids).toEqual(server.rising.slice(0, 25));
+  });
+
+  test('with a genre picked reads every id, since the genre filters after', async () => {
+    server.rising = Array.from({ length: 40 }, (_, i) => 40 - i);
+    await renderWithProviders(<RisingSection tags={[SYNTHWAVE]} />);
+    await expect.element(heading('Rising this week')).toBeVisible();
+    expect(server.imageReads.at(-1)?.filters.ids).toEqual(server.rising);
+    expect(titles()).toHaveLength(7);
+  });
+
   test('is hidden when no song was played this week', async () => {
     await renderWithProviders(<RisingSection />);
     expect(page.getByRole('heading').elements()).toHaveLength(0);
@@ -176,6 +191,15 @@ describe('Recently played', () => {
 
     await expect.element(heading('Recently played')).toBeVisible();
     expect(titles()).toEqual(['Song 5', 'Song 2', 'Song 7']);
+  });
+
+  test('drops a song the image feed no longer serves (removed)', async () => {
+    useMusicPlayerStore.setState({ recentlyPlayed: [5, 2, 7] });
+    server.catalog = catalog.filter((s) => s.id !== 2);
+    await renderWithProviders(<RecentlyPlayedSection />);
+
+    await expect.element(heading('Recently played')).toBeVisible();
+    expect(titles()).toEqual(['Song 5', 'Song 7']);
   });
 
   test('is hidden when nothing was played', async () => {
@@ -210,6 +234,9 @@ describe('with the music flag off', () => {
     );
 
     expect(page.getByRole('heading').elements()).toHaveLength(0);
+    // Both sections asked, so the checks below cannot pass on no reads at all.
+    expect(server.risingReads.length).toBeGreaterThan(0);
+    expect(server.imageReads.length).toBeGreaterThan(0);
     expect(server.risingReads.every((read) => read.enabled === false)).toBe(true);
     expect(server.imageReads.every((read) => read.enabled === false)).toBe(true);
   });

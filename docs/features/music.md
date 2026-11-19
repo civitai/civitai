@@ -23,7 +23,7 @@ are not found, and no music nav entry, chip or tab shows).
 | `/music` (`MusicFeedPage`) | Title, genre chips, Recently played, Rising this week, then the "All music" feed: the image feed (`ImagesInfinite`) with `types: ['audio']`, so sort, period and the Filters panel are the images feed's (and share its saved choices). Linked from the header's content nav.                                                                                                |
 | Genre chips                | "All" plus each genre of `SONG_GENRES` that has its mirrored tag (`songGenreTagName`); a genre no song was published under has no tag yet and gets no chip. Single-select, writing `?tags=<tag id>` (ids from `image.getSongGenreTags`); "All" clears it. A `?tags=` link that is not one genre lights no chip and "All" still clears it. |
 | Recently played | The last 12 different songs this browser started in the player, newest first, kept in the player's saved preferences (per browser, not per account) and shown as Song Cards in one sideways-scrolling row. Hidden when there are none. |
-| Rising this week | The songs with the most plays today and the 6 days before, ties newest first, owners' and moderators' plays included; one list for everyone (`image.getRisingSongs`, refreshed every 10 minutes). The top 7 show as one large tile and six; with a genre chip picked, that genre's only. Hidden when no song has a play in the window. |
+| Rising this week | The songs with the most plays today and the 6 days before, ties newest first, owners' and moderators' plays included; one list for everyone (`image.getRisingSongs`, refreshed every 10 minutes), narrowed on the server to the songs the viewer may open. The top 7 show as one large tile and up to six, laid out with no empty cell when there are fewer; without a genre chip only the top 25 ids are read, with one picked every id is, and that genre's songs show. Hidden when no song has a play in the window. |
 | Card / list view           | A grid / list switch beside the sort, kept per browser. Card: the Song Card. List: a Song Row per song (index, cover, title, "creator · genre", length, menu).                                                                                                                                                                            |
 | Song Card (`SongCard`)     | Any song in an image feed renders as one: cover, play button, length, title, creator, genre, plays, likes and comments.                                                                                                                                                                                                                          |
 | Media filter               | The Filters panel's Media type section offers Audio beside Image and Video.                                                                                                                                                                                                                                                               |
@@ -48,7 +48,7 @@ hidden user or with a hidden tag) drops out.
 
 Play counts (`image.getSongPlays`) are the songs' counted plays (see `entity-metrics.md`), only for
 songs the viewer can open. A count cached before plays were read shows no number until it
-refreshes (within the hour).
+until the count is next refreshed.
 
 ## Song detail view
 

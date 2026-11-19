@@ -2,13 +2,13 @@ import { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { musicAccentFromHash } from '~/components/MusicPlayer/music-accent';
 import type { PlayerSongCover } from '~/server/services/post.service';
+import {
+  MAX_SONG_IDS_PER_READ,
+  SONG_LIST_STALE_MS,
+  useSongListReads,
+} from '~/components/MusicPlayer/useSongListReads';
 import { Flags } from '~/shared/utils/flags';
-import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
-
-// The most ids `image.getSongCovers` takes in one read.
-const MAX_COVER_IDS = 100;
-const COVER_STALE_MS = 5 * 60 * 1000;
 
 /**
  * The covers the player may show for `songIds`, by song id. The server returns only clean covers the
@@ -17,10 +17,10 @@ const COVER_STALE_MS = 5 * 60 * 1000;
  */
 export function useMusicPlayerCovers(songIds: number[]) {
   const browsingLevel = useBrowsingLevelDebounced();
-  const ids = songIds.slice(0, MAX_COVER_IDS);
+  const ids = songIds.slice(0, MAX_SONG_IDS_PER_READ);
   const { data } = trpc.image.getSongCovers.useQuery(
     { ids },
-    { staleTime: COVER_STALE_MS, enabled: ids.length > 0 }
+    { staleTime: SONG_LIST_STALE_MS, enabled: ids.length > 0 }
   );
   return useMemo(() => shownCovers(data ?? [], browsingLevel), [data, browsingLevel]);
 }
@@ -32,31 +32,17 @@ function shownCovers(covers: PlayerSongCover[], browsingLevel: number) {
   return shown;
 }
 
-/**
- * `useMusicPlayerCovers` for a list of any length (a feed): one read per 100 songs, chunked in
- * arrival order so a page appended to the list leaves the earlier chunks' reads alone.
- */
+/** `useMusicPlayerCovers` for a list of any length (a feed), read in chunks. */
 export function useSongListCovers(songIds: number[]) {
   const browsingLevel = useBrowsingLevelDebounced();
-  const chunks = useMemo(
-    () => chunkIds(songIds, MAX_COVER_IDS),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- unstable array; its join is the key
-    [songIds.join(',')]
-  );
-  const queries = trpc.useQueries((t) =>
-    chunks.map((ids) =>
-      t.image.getSongCovers(
-        { ids },
-        // The growing last chunk keeps its covers on screen while its longer read loads.
-        { staleTime: COVER_STALE_MS, placeholderData: (previous) => previous }
-      )
-    )
-  );
-  const covers = queries.flatMap((query) => query.data ?? []);
+  const chunks = useSongListReads('getSongCovers', songIds);
   return useMemo(
-    () => shownCovers(covers, browsingLevel),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- queries unstable; their data is the key
-    [browsingLevel, ...queries.map((query) => query.data)]
+    () =>
+      shownCovers(
+        chunks.flatMap((data) => data ?? []),
+        browsingLevel
+      ),
+    [chunks, browsingLevel]
   );
 }
 

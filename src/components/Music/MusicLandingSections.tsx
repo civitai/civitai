@@ -1,6 +1,6 @@
 import { Title } from '@mantine/core';
 import clsx from 'clsx';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { useMemo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { useQueryImages } from '~/components/Image/image.utils';
@@ -28,18 +28,15 @@ import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 import { trpc } from '~/utils/trpc';
 
-export const RISING_LIST_NAME = 'Rising this week';
-export const RECENTLY_PLAYED_LIST_NAME = 'Recently played';
 // Pencil `CnGl0`: one large tile and six.
 const RISING_TILES = 7;
+// Enough ranked ids to fill the tiles after the feed drops the ones the viewer may not see; with a
+// genre picked every id is read, since the genre filters after.
+const RISING_READ_WITHOUT_GENRE = 25;
 const RECENT_CARD_HEIGHT =
   Math.round(MUSIC_FEED_COLUMN_WIDTH * SONG_COVER_RATIO) + SONG_CARD_TEXT_HEIGHT;
 
-/**
- * `ids` read through the image feed, so a song the viewer may not see (removed, blocked, held,
- * outside their browsing level, by a hidden user or with a hidden tag) drops out; the rest keep
- * the order of `ids`, at most `max` of them.
- */
+/** `ids` read through the image feed, which drops songs the viewer may not see; the rest keep the order of `ids`, at most `max`. */
 function useSongsInOrder({
   ids,
   tags,
@@ -96,15 +93,15 @@ function SongSection({
   );
 }
 
-/** The viewer's last songs started in this browser, newest first; hidden when there are none. */
+/** The viewer's last songs started in this browser, newest first. */
 export function RecentlyPlayedSection() {
   const features = useFeatureFlags();
   const ids = useMusicPlayerStore((s) => s.recentlyPlayed);
   const { songs } = useSongsInOrder({ ids, max: ids.length, enabled: !!features.music });
   if (!songs.length) return null;
   return (
-    <SongSection title={RECENTLY_PLAYED_LIST_NAME} songs={songs}>
-      {/* Pencil `sOs9H`, as Song Cards: one row, scrolling sideways. */}
+    <SongSection title="Recently played" songs={songs}>
+      {/* Pencil `sOs9H` */}
       <div className="-mx-1 flex gap-4 overflow-x-auto px-1 pb-1">
         {songs.map((song) => (
           <div key={song.id} className="shrink-0" style={{ width: MUSIC_FEED_COLUMN_WIDTH }}>
@@ -116,29 +113,59 @@ export function RecentlyPlayedSection() {
   );
 }
 
-// Pencil `CnGl0` (1440): the large tile spans both rows; the six beside it fill two rows of
-// 380/210/270 and 210/380/270 (columns 210 + 150 + 210 + 270). `hiEzh` (390): two columns, the
-// large tile two rows tall.
-const TILE_PLACEMENT = ['row-span-2', 'md:col-span-2', '', '', '', 'md:col-span-2', ''];
+// Pencil `CnGl0` (1440) and `hiEzh` (390): the large tile spans both rows. With fewer than six
+// small tiles the columns and spans change so no cell is left empty.
+const RISING_DESKTOP_COLUMNS: Record<number, string> = {
+  0: '1fr',
+  1: '440fr 900fr',
+  2: '440fr 900fr',
+  3: '440fr 450fr 450fr',
+  4: '440fr 450fr 450fr',
+  5: '440fr 210fr 150fr 210fr 270fr',
+  6: '440fr 210fr 150fr 210fr 270fr',
+};
+// By small-tile count, the wide (two-column) small tiles at desktop width.
+const RISING_DESKTOP_WIDE: Record<number, number[]> = { 3: [2], 5: [0, 3, 4], 6: [0, 4] };
 
-/** The songs with the most plays this week; hidden when none was played. */
+/** Each tile's grid placement (phone, then `md:`) for `count` songs, filling every cell. */
+export function risingTilePlacement(count: number): string[] {
+  const small = count - 1;
+  // Phone: two columns; a small tile left alone in the last row takes both.
+  const phoneWide = (i: number) => i >= 2 && i === small - 1 && small % 2 === 1;
+  return Array.from({ length: count }, (_, index) => {
+    if (index === 0) return small === 0 ? 'col-span-2 row-span-2 md:col-span-1' : 'row-span-2';
+    const i = index - 1;
+    const desktopWide = RISING_DESKTOP_WIDE[small]?.includes(i) ?? false;
+    return clsx(
+      small === 1 && 'row-span-2',
+      phoneWide(i) && 'col-span-2',
+      desktopWide && 'md:col-span-2',
+      phoneWide(i) && !desktopWide && 'md:col-span-1'
+    );
+  });
+}
+
+/** The songs with the most plays this week. */
 export function RisingSection({ tags }: { tags?: number[] }) {
   const features = useFeatureFlags();
-  const { data: ids = [] } = trpc.image.getRisingSongs.useQuery(undefined, {
+  const { data: rising = [] } = trpc.image.getRisingSongs.useQuery(undefined, {
     enabled: !!features.music,
   });
+  const ids = useMemo(
+    () => (tags?.length ? rising : rising.slice(0, RISING_READ_WITHOUT_GENRE)),
+    [rising, tags?.length]
+  );
   const { songs } = useSongsInOrder({ ids, tags, max: RISING_TILES, enabled: !!features.music });
+  const placement = risingTilePlacement(songs.length);
   if (!songs.length) return null;
   return (
-    <SongSection title={RISING_LIST_NAME} songs={songs}>
-      <div className="grid auto-rows-[84px] grid-cols-2 gap-2 md:grid-cols-[440fr_210fr_150fr_210fr_270fr] md:grid-rows-[210px_210px] md:gap-5">
+    <SongSection title="Rising this week" songs={songs}>
+      <div
+        className="grid auto-rows-[84px] grid-cols-2 gap-2 md:grid-rows-[210px_210px] md:gap-5 md:[grid-template-columns:var(--rising-columns)]"
+        style={{ '--rising-columns': RISING_DESKTOP_COLUMNS[songs.length - 1] } as CSSProperties}
+      >
         {songs.map((song, index) => (
-          <RisingTile
-            key={song.id}
-            song={song}
-            large={index === 0}
-            className={TILE_PLACEMENT[index]}
-          />
+          <RisingTile key={song.id} song={song} large={index === 0} className={placement[index]} />
         ))}
       </div>
     </SongSection>

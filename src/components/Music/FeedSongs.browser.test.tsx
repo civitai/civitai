@@ -6,10 +6,16 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type * as Trpc from '~/utils/trpc';
 
-const feed = vi.hoisted(() => ({ images: [] as unknown[] }));
+const feed = vi.hoisted(() => ({ images: [] as unknown[], music: true }));
+
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
+  useFeatureFlags: () => ({ music: feed.music }),
+}));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
@@ -33,7 +39,7 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
 }));
 
 import { FeedSongsProvider, SongListNameProvider } from '~/components/Music/FeedSongList';
-import { songPlays } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
+import { songCovers, songPlays } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
 import { SongCard } from '~/components/Music/SongCard';
 import { SongRow } from '~/components/Music/SongRow';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
@@ -58,6 +64,8 @@ const realPlayFromList = useMusicPlayerStore.getState().playFromList;
 
 beforeEach(() => {
   useMusicPlayerStore.getState().close();
+  feed.music = true;
+  songCovers.reset();
   songPlays.reset();
   useMusicPlayheadStore.setState({ currentTime: 0, duration: 0 });
   playFromList.mockReset();
@@ -213,5 +221,16 @@ describe('the Song Row', () => {
     songPlays.served = { 1: 12400 };
     await renderWithProviders(<SongRow data={songs[0]} index={0} />);
     await expect.element(page.getByLabelText('12400 plays')).toHaveTextContent('12.4k');
+  });
+
+  test('with the music flag off, reads no play count', async () => {
+    feed.music = false;
+    songPlays.served = { 1: 12400 };
+    await renderWithProviders(<SongRow data={songs[0]} index={0} />);
+    await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();
+    // The row's own cover read went out, so the row did read; only plays are held back.
+    expect(songCovers.requests.length).toBeGreaterThan(0);
+    expect(songPlays.requests).toEqual([]);
+    expect(page.getByLabelText(/plays$/).elements()).toHaveLength(0);
   });
 });

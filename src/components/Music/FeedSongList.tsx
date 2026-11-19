@@ -28,7 +28,7 @@ export function SongListNameProvider({ name, children }: { name?: string; childr
 const SongCoversContext = createContext<Map<number, PlayerSongCover> | null>(null);
 const SongPlaysContext = createContext<Record<number, number> | null>(null);
 
-/** One cover read and one play-count read for every song in `images`, shared by its cards. */
+/** Reads covers and play counts once for the songs in `images`. */
 export function FeedSongsProvider({
   images,
   children,
