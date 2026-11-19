@@ -481,7 +481,7 @@ const CONTROL = 72;
 /** Never grace-blocked. */
 const PLAIN = 73;
 
-const BREADCRUMBS = `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null}'`;
+const BREADCRUMBS = `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": null}'`;
 
 const graceRow = async (id: number) =>
   (
@@ -493,7 +493,8 @@ const graceRow = async (id: number) =>
     }>(
       `SELECT ingestion, "blockedFor", "nsfwLevel",
         ((metadata -> 'accountDeletionPriorIngestion') IS NOT NULL
-          OR (metadata -> 'accountDeletionPriorBlockedFor') IS NOT NULL) AS breadcrumb
+          OR (metadata -> 'accountDeletionPriorBlockedFor') IS NOT NULL
+          OR (metadata -> 'accountDeletionPriorNeedsReview') IS NOT NULL) AS breadcrumb
       FROM "Image" WHERE id = $1`,
       [id]
     )
@@ -515,6 +516,51 @@ const restore = async () => {
     'the restore did not revert the untouched grace block'
   ).toMatchObject(RESTORED);
 };
+
+describe('a restore and the recorded review flag, on the real statement', () => {
+  it('puts back a recorded minor hold over any flag set since but csam, and nothing else', async () => {
+    const crumbs = (review: string) =>
+      `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": "${review}"}'`;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", metadata) VALUES
+        (81, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')}),
+        (82, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('minor')}),
+        (83, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('poi')}),
+        (84, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('not-a-review')}),
+        (85, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('csam')}),
+        (86, ${OWNER}, 'Blocked', 'moderated', 32, 'appeal', ${crumbs('minor')}),
+        (87, ${OWNER}, 'Blocked', 'moderated', 32, 'csam', ${crumbs('minor')}),
+        (88, ${OTHER_OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')});
+      UPDATE "User" SET "deletedAt" = now() WHERE id = ${OTHER_OWNER};
+    `);
+    await unblockAccountDeletionImages(OTHER_OWNER);
+    // An account deleted again keeps its grace block.
+    expect(
+      (await holder.db.query<{ ingestion: string }>(`SELECT ingestion FROM "Image" WHERE id = 88`))
+        .rows[0]
+    ).toEqual({ ingestion: 'Blocked' });
+
+    await unblockAccountDeletionImages(OWNER);
+
+    const { rows } = await holder.db.query<{
+      id: number;
+      needsReview: string | null;
+      ingestion: string;
+    }>(`SELECT id, "needsReview", ingestion FROM "Image" WHERE id BETWEEN 81 AND 87 ORDER BY id`);
+    // Control: every row was restored, so the review flags below are the restore's doing.
+    expect(rows.map((row) => row.ingestion)).toEqual(Array(7).fill('Scanned'));
+    expect(rows.map((row) => [row.id, row.needsReview])).toEqual([
+      [81, 'minor'],
+      // A recorded minor hold beats a flag set since; a current csam one is kept.
+      [82, 'minor'],
+      [83, null],
+      [84, null],
+      [85, null],
+      [86, 'minor'],
+      [87, 'csam'],
+    ]);
+  });
+});
 
 describe('the account-deletion grace block', () => {
   beforeEach(async () => {
