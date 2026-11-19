@@ -404,6 +404,19 @@ describe('handleBlockImages over held and other images', () => {
     expect(noHashLogs()).toEqual([]);
   });
 
+  it('writes the CSAM entry from the row when the replica read has no hash yet', async () => {
+    const replica = dbMock.dbRead.image.findMany.getMockImplementation()!;
+    dbMock.dbRead.image.findMany.mockImplementationOnce((async (args: never) =>
+      ((await replica(args)) as { id: number }[]).map((row) =>
+        row.id === HELD ? { ...row, pHash: null } : row
+      )) as never);
+
+    await handleBlockImages({ ids: all, include: ['phash-block'] });
+
+    expect(blocklistReasons()['201']).toBe('CSAM');
+    expect(noHashLogs()).toEqual([]);
+  });
+
   it('a CSAM removal with no hash on the row still blocks, and logs only its id and step', async () => {
     await holder.db.exec(`UPDATE "Image" SET "pHash" = NULL WHERE id = ${HELD}`);
 

@@ -238,6 +238,28 @@ describe('a re-block of a removed, held image', () => {
     expect(blocklistEntries()).toEqual([[{ hash: HASH, reason: 'CSAM' }]]);
   });
 
+  it('a first block passes on the hash read under the block when the replica has none yet', async () => {
+    const lagging = await freshPglite();
+    await lagging.exec(SCHEMA);
+    await lagging.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash")
+        VALUES ($1, 7, 'csam', 'CSAM', 'Scanned', 4, NULL)`,
+      [FLAGGED]
+    );
+    spies.replica.current = new Kysely({ dialect: pgliteDialect(lagging) });
+    try {
+      await blockImage({ imageId: FLAGGED, userId: 2, skipAppealCheck: true });
+    } finally {
+      spies.replica.current = null;
+      await lagging.close();
+    }
+
+    expect(spies.applyBlockSideEffects).toHaveBeenCalledWith(
+      expect.objectContaining({ pHash: HASH }),
+      expect.anything()
+    );
+  });
+
   it('a re-block with no hash on the row still succeeds, writes no entry, and logs only its id and step', async () => {
     await pg.query('UPDATE "Image" SET "pHash" = NULL WHERE id = $1', [REMOVED]);
 

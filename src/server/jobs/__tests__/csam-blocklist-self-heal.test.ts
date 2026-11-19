@@ -207,9 +207,10 @@ describe('the candidate SQL, on real Postgres', () => {
         (2, 7, 'Blocked', 'CSAM', 202),                  -- the account's other image: sweep
         (3, 7, 'Scanned', NULL, 203),                    -- listed, block overturned
         (4, 7, 'Blocked', 'moderated', 204),             -- listed, re-labelled
-        (5, 7, 'Blocked', 'CSAM', 205);                  -- listed as an object
+        (5, 7, 'Blocked', 'CSAM', 205),                  -- listed as an object
+        (6, 7, 'Blocked', 'CSAM', NULL);                 -- listed, no hash yet
       INSERT INTO "CsamReport" ("userId", images) VALUES
-        (7, '[1, 3, 4, "abc", 1234567890123456789]'), (7, '[{"id": 5}]');
+        (7, '[1, 3, 4, 6, "abc", 9999999999999999999]'), (7, '[{"id": 5}]');
     `);
   });
 
@@ -222,7 +223,7 @@ describe('the candidate SQL, on real Postgres', () => {
   });
 
   it('re-reads on the write only the ids still removed for CSAM', async () => {
-    expect(await query(STILL_BLOCKED_SQL, [[1, 3, 4]])).toEqual([
+    expect(await query(STILL_BLOCKED_SQL, [[1, 3, 4, 6]])).toEqual([
       { id: 1, pHash: '-4276845791567733103' },
     ]);
   });
