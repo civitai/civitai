@@ -670,6 +670,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_degraded_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true, "feed_go_fallback_proxy_errors_total": true,
+		// Sessions are resolved once per request, before any endpoint's compute.
+		"feed_go_session_cookie_slot_total": true,
 		// Hydration is shared by both endpoints: the cache-miss counter is per cache, not per endpoint.
 		"feed_go_cache_miss_total": true}
 	checked := 0

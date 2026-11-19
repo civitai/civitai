@@ -105,6 +105,7 @@ func run(log *slog.Logger) error {
 		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, OnReadError: readErrors.Report},
 		Sessions:            &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix},
 		CookieNames:         cfg.CookieNames,
+		OnSlot:              func(slot string) { metrics.SessionCookieSlot.WithLabelValues(slot).Inc() },
 		ModerationAccountID: cfg.ModerationAccountID,
 	}
 	engine := &beacon.Engine{

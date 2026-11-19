@@ -30,6 +30,8 @@ type Resolver struct {
 	// CookieNames gives the session cookie names to look for on a request to a host (e.g.
 	// `__Secure-civ-token`, `__Host-civ-token`): a site's cookie mode picks them.
 	CookieNames func(host string) []string
+	// OnSlot, when set, is told the cookie slot ("host" | "shared", see CookieSlot) of each session it resolves.
+	OnSlot func(slot string)
 	// SessionReadTimeout bounds the session-cache read (400ms in session-client.ts).
 	SessionReadTimeout time.Duration
 	// ModerationAccountID is CIVITAI_MODERATION_USER_ID (0 = unset): the shared moderation account,
@@ -58,7 +60,7 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 		return nil, fallback.New("bearer-token")
 	}
 	cookie := req.Header.Get("Cookie")
-	var token string
+	var token, tokenCookie string
 	found := 0
 	var names []string
 	if r.CookieNames != nil {
@@ -67,7 +69,7 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 	for _, name := range names {
 		if t := TokenFromCookieHeader(cookie, name); t != "" {
 			found++
-			token = t
+			token, tokenCookie = t, name
 		}
 	}
 	if found > 1 {
@@ -94,6 +96,9 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 	// getHubSession: refused by the resolved user's id or username.
 	if IsModerationAccount(u.ID, u.Username, r.ModerationAccountID) {
 		return nil, nil
+	}
+	if r.OnSlot != nil {
+		r.OnSlot(CookieSlot(tokenCookie))
 	}
 	return u, nil
 }
@@ -138,4 +143,13 @@ func SessionUserFrom(id int, m map[string]any) (*SessionUser, error) {
 // FixedCookieNames is a CookieNames that gives the same names for every host.
 func FixedCookieNames(names ...string) func(string) []string {
 	return func(string) []string { return names }
+}
+
+// CookieSlot is the slot a session cookie name belongs to: "host" for the host-only `__Host-` name, else
+// "shared". Without the secure prefixes (dev) both slots share one name, which counts as "shared".
+func CookieSlot(name string) string {
+	if strings.HasPrefix(name, "__Host-") {
+		return "host"
+	}
+	return "shared"
 }
