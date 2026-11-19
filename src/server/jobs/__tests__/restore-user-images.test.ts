@@ -343,6 +343,35 @@ describe('restoreUserImages', () => {
       expect(refreshPictures).toHaveBeenCalledWith([8]);
     });
 
+    it('leaves out an account banned after its unblock ran', async () => {
+      users = [restored(7), restored(8)];
+      pendingSet = ['7', '8'];
+      mockUnblock.mockImplementationOnce(async () => {
+        users[0] = { id: 7, deletedAt: null, bannedAt: new Date('2026-07-29T00:00:00Z') };
+        return { unblocked: 3, stillBlocked: 0, skipped: 0, drained: true };
+      });
+
+      await run();
+
+      expect(refreshPictures).toHaveBeenCalledWith([8]);
+    });
+
+    it('drops the entry of an account deleted again mid-reversal, whose claim then finds nothing', async () => {
+      users = [restored(7)];
+      pendingSet = ['7'];
+      mockUnblock.mockImplementationOnce(async () => {
+        users[0] = { id: 7, deletedAt: new Date('2026-07-29T00:00:00Z') };
+        return { unblocked: 0, stillBlocked: 0, skipped: 0, drained: true };
+      });
+
+      const result = await run();
+
+      // A later restore queues it again; until then the grace block is correct.
+      expect(pendingSet).toEqual([]);
+      expect(result).toMatchObject({ finished: 1, dropped: 0 });
+      expect(refreshPictures).not.toHaveBeenCalled();
+    });
+
     it('clears a worklist entry only after the refresh ran', async () => {
       users = [restored(7)];
       pendingSet = ['7'];
