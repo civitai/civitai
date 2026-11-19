@@ -49,8 +49,16 @@ export function clearKnightsSourcesConfigCache() {
   slowCountLoggedUntil = 0;
 }
 
-/** Called from the image-scan result path; must never block it. */
+/** Called from the image-scan result path; must never block it. A read that times out counts as off. */
 export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
+  return (await readKnightsSourcesConfig()) ?? OFF;
+}
+
+/**
+ * The switch, or null when the read timed out: unknown, not off. A failed read throws. The publish sweep keeps its cursor
+ * on null instead of moving past a window it never sampled.
+ */
+export async function readKnightsSourcesConfig(): Promise<KnightsSourcesConfig | null> {
   if (cached && cached.expiresAt > Date.now()) return cached.config;
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -63,7 +71,7 @@ export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
       timedOut,
     ]);
     // Don't cache the timeout: it would turn sampling off for a full TTL.
-    if (raw === TIMED_OUT) return OFF;
+    if (raw === TIMED_OUT) return null;
     const config = parseKnightsSourcesConfig(raw);
     cached = { config, expiresAt: Date.now() + CONFIG_TTL_MS };
     return config;

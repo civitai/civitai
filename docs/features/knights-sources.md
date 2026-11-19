@@ -21,11 +21,15 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
 - Sampling happens once the post is live. A scan result samples its image only when the post is already published (`publishedAt` set and not in
   the future; otherwise `unpublished`). Posts that go live later are sampled by the `knights-publish-sampling` job
   (`src/server/jobs/knights-publish-sampling.ts`, every minute; `sampleNewlyLivePostsForKnights` in `src/server/services/knights/sampling.ts`):
-  it reads posts whose `publishedAt` fell between its last run and a minute ago, whatever set it (an owner's publish, a scheduled date
-  arriving, a model, version or collection publish), at most 200 posts per run and never more than six hours back. Their scanned still images
-  (rated, not Blocked, not held) go through the same enqueue, rates and `maxOpen` cap as a scan sample, with the same `scan-sample` source; an
-  image not scanned yet is left to its scan. The SFW/NSFW split there is `Image.nsfwLevel` above the SFW levels, as the scan splits it. Its
-  cursor is the job's own date (`getJobDate`), moved only after a run completes.
+  it reads posts published after its cursor and up to a minute ago, whatever set `publishedAt` (an owner's publish, a scheduled date
+  arriving, a model, version or collection publish), at most 200 per run in `(publishedAt, id)` order, so posts sharing one instant drain
+  across runs. It also re-reads the posts published in the 15 minutes behind its cursor (up to 2000), since a scheduled publish stamps the
+  scheduled time and an owner's publish stamps before it commits, so a post can land behind a cursor that has passed it. Never more than six
+  hours back. Their scanned still images (`servableImageContent` in `@civitai/db/knights`) go through the same enqueue and rates as a scan
+  sample, with the same `scan-sample` source; an image not scanned yet is left to its scan. The SFW/NSFW split there is `Image.nsfwLevel`
+  above the SFW levels, as the scan splits it. The cursor (`{ publishedAt, postId }`) is a `KeyValue` row, `knights-publish-sampling:cursor`,
+  stored only after a run completes; a run that could not read the sources switch in time stores nothing, so the window is retried, while
+  a switch that is off moves the cursor on.
 - Each image is sampled at most once (`oncePerImage`): an image that ever had a rating item, in any status, is not queued again by either
   sampler, so a rescan or a republished post never re-queues it (a republish restores the old `publishedAt`, outside the job's window
   anyway). The draw is fixed per image (`knightsSampleDraw`, a hash of the image id compared with the pool's rate), so a scan and the job,
@@ -35,8 +39,9 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   than that many rating items players can be served are open at the Knight stage (`countOpenServableKnightItems` in `@civitai/db/knights`: items whose image is a draft, scheduled, deleted, held, or flagged poi/minor cannot be judged and do not count; yes/no questions share the queue table but are not counted either). Owner ratings always enqueue. The main app counts them up to
   `maxOpen + 1` on the `(status, minRank, ...)` index and caches the count in process for 60 s. One count runs at a time; a scan waits at
   most 500 ms for it and is not throttled when it is slower, and the count still fills the cache when it lands. A failed count does not
-  throttle, is not cached, and pauses counting for 10 s. The publish job counts once per run instead, uncached; a run over the cap queues
-  nothing and moves on, as a capped scan does, and a failed count fails the run, which the next run retries. The moderator Config page edits the three fields above, the open-item cap `maxOpen` (a blank box keeps the stored cap; whole
+  throttle, is not cached, and pauses counting for 10 s. The publish job counts once per run instead, uncached, after dropping images that
+  already had an item, and queues at most as many as keep the count within `maxOpen`; the rest are dropped as a capped scan is, and a failed
+  count fails the run, which the next run retries. The moderator Config page edits the three fields above, the open-item cap `maxOpen` (a blank box keeps the stored cap; whole
   numbers up to `KNIGHTS_SOURCES_MAX_OPEN_LIMIT`), and the optional
   `yesNoShare` (0-1, Knights' yes/no question share, see [yes/no questions](knights-yesno-questions.md)); a save there keeps the stored game settings, and keeps a stored `yesNoShare` when its box is left blank. Its "Reset" button
   removes a stored `yesNoShare` (audited like any save), so Knights falls back to `KNIGHTS_YESNO_SHARE`. The same page edits

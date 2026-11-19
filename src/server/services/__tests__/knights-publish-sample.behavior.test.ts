@@ -6,7 +6,9 @@ import { parseKnightsSourcesConfig } from '@civitai/shared/new-order';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
 import {
   knightsSampleDraw,
+  runKnightsPublishSampling,
   sampleNewlyLivePostsForKnights,
+  type PublishSampleCursor,
 } from '~/server/services/knights/sampling';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -91,8 +93,15 @@ describe('knightsSampleDraw', () => {
 });
 
 describe('sampleNewlyLivePostsForKnights', () => {
+  const at = (publishedAt: Date, postId = 0): PublishSampleCursor => ({ publishedAt, postId });
+  const run = (
+    cursor: PublishSampleCursor | null,
+    fields: Record<string, unknown> = {},
+    { postLimit, now = NOW }: { postLimit?: number; now?: Date } = {}
+  ) =>
+    sampleNewlyLivePostsForKnights(db, { cursor, now, config: config(fields), postLimit });
   const sweep = (since: Date, fields: Record<string, unknown> = {}, postLimit?: number) =>
-    sampleNewlyLivePostsForKnights(db, { since, now: NOW, config: config(fields), postLimit });
+    run(at(since), fields, { postLimit });
 
   it('queues the scanned still images of posts that went live since the last run, and nothing else', async () => {
     await post(1, minutesAgo(5)); // live in the window
@@ -101,12 +110,16 @@ describe('sampleNewlyLivePostsForKnights', () => {
     await images(1, [14], { nsfwLevel: 0, ingestion: 'Pending' }); // not scanned yet
     await images(1, [15], { nsfwLevel: 32 }); // Blocked
     await images(1, [16], { nsfwLevel: 8 }); // NSFW: priority 2
+    await images(1, [17, 18, 19]);
     await pg.query(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 12`);
+    await pg.query(`UPDATE "Image" SET poi = true WHERE id = 17`);
+    await pg.query(`UPDATE "Image" SET minor = true WHERE id = 18`);
+    await pg.query(`UPDATE "Image" SET "blockedFor" = 'tos' WHERE id = 19`);
     await post(2, null); // draft
     await images(2, [21]);
     await post(3, new Date(NOW.getTime() + 60 * 60_000)); // scheduled for later
     await images(3, [31]);
-    await post(4, minutesAgo(30)); // live before the last run
+    await post(4, minutesAgo(30)); // live before the last run's overlap
     await images(4, [41]);
 
     const result = await sweep(minutesAgo(10), { sfwRate: 1, nsfwRate: 1 });
@@ -117,7 +130,7 @@ describe('sampleNewlyLivePostsForKnights', () => {
     ]);
     expect(result).toMatchObject({ posts: 1, enqueued: 2, capped: false });
     // Nothing more was due, so the next run starts where this window ended, a minute behind the clock.
-    expect(result.cursor).toEqual(minutesAgo(1));
+    expect(result.cursor).toEqual(at(minutesAgo(1)));
   });
 
   it('leaves a post published within the last minute to the next run', async () => {
@@ -127,13 +140,43 @@ describe('sampleNewlyLivePostsForKnights', () => {
     const first = await sweep(minutesAgo(10), { sfwRate: 1 });
     expect(await queued()).toEqual([]);
 
-    const second = await sampleNewlyLivePostsForKnights(db, {
-      since: first.cursor,
-      now: new Date(NOW.getTime() + 60_000),
-      config: config({ sfwRate: 1 }),
-    });
+    const second = await run(first.cursor, { sfwRate: 1 }, { now: new Date(NOW.getTime() + 60_000) });
     expect(second.enqueued).toBe(1);
     expect((await queued()).map((i) => i.imageId)).toEqual([11]);
+  });
+
+  it('catches a post whose publishedAt lands behind the cursor, within the overlap it re-reads', async () => {
+    const first = await sweep(minutesAgo(10), { sfwRate: 1 });
+    expect(first.cursor).toEqual(at(minutesAgo(1)));
+    // A scheduled publish stamps the scheduled time, and commits after the run that passed it.
+    await post(1, minutesAgo(3));
+    await images(1, [11]);
+    // Behind the overlap: never seen.
+    await post(2, minutesAgo(20));
+    await images(2, [21]);
+
+    const second = await run(first.cursor, { sfwRate: 1 });
+
+    expect(second.enqueued).toBe(1);
+    expect((await queued()).map((i) => i.imageId)).toEqual([11]);
+  });
+
+  it('drains a group of posts sharing one publish instant that is larger than the batch', async () => {
+    const instant = minutesAgo(5);
+    for (const id of [1, 2, 3, 4, 5]) {
+      await post(id, instant);
+      await images(id, [id * 10]);
+    }
+
+    let cursor: PublishSampleCursor | null = at(minutesAgo(10));
+    const cursors: PublishSampleCursor[] = [];
+    for (let runs = 0; runs < 10 && cursors.at(-1)?.publishedAt.getTime() !== minutesAgo(1).getTime(); runs++) {
+      cursor = (await run(cursor, { sfwRate: 1 }, { postLimit: 2 })).cursor;
+      cursors.push(cursor);
+    }
+
+    expect(cursors).toEqual([at(instant, 2), at(instant, 4), at(minutesAgo(1))]);
+    expect((await queued()).map((i) => i.imageId)).toEqual([10, 20, 30, 40, 50]);
   });
 
   it('draws each image once: the same images are picked on every run, and only that share of each pool', async () => {
@@ -182,7 +225,7 @@ describe('sampleNewlyLivePostsForKnights', () => {
     ]);
   });
 
-  it('queues nothing while more servable Knight-stage items are open than maxOpen', async () => {
+  it('fills the queue only up to maxOpen servable Knight-stage items, counting again as it goes', async () => {
     await post(9, new Date('2020-01-01T00:00:00Z'));
     await images(9, [91, 92]);
     for (const imageId of [91, 92])
@@ -192,14 +235,15 @@ describe('sampleNewlyLivePostsForKnights', () => {
         [imageId]
       );
     await post(1, minutesAgo(5));
-    await images(1, [11]);
+    await images(1, [11, 12, 13, 14, 15]);
 
-    const capped = await sweep(minutesAgo(10), { sfwRate: 1, maxOpen: 1 });
-    expect(capped).toMatchObject({ capped: true, enqueued: 0 });
+    const full = await sweep(minutesAgo(10), { sfwRate: 1, maxOpen: 2 });
+    expect(full).toMatchObject({ capped: true, enqueued: 0 });
     expect((await queued()).map((i) => i.imageId)).toEqual([91, 92]);
 
-    const atCap = await sweep(minutesAgo(10), { sfwRate: 1, maxOpen: 2 });
-    expect(atCap).toMatchObject({ capped: false, enqueued: 1 });
+    const room = await sweep(minutesAgo(10), { sfwRate: 1, maxOpen: 4 });
+    expect(room).toMatchObject({ capped: true, enqueued: 2 });
+    expect((await queued()).map((i) => i.imageId)).toEqual([11, 12, 91, 92]);
   });
 
   it('does nothing while the sources are off, and still moves past the window', async () => {
@@ -207,14 +251,14 @@ describe('sampleNewlyLivePostsForKnights', () => {
     await images(1, [11]);
 
     const result = await sampleNewlyLivePostsForKnights(db, {
-      since: minutesAgo(10),
+      cursor: at(minutesAgo(10)),
       now: NOW,
       config: parseKnightsSourcesConfig(null),
     });
 
     expect(await queued()).toEqual([]);
     expect(result).toMatchObject({ posts: 0, enqueued: 0 });
-    expect(result.cursor).toEqual(minutesAgo(1));
+    expect(result.cursor).toEqual(at(minutesAgo(1)));
   });
 
   it('reads a bounded batch of posts per run and resumes after the last one it read', async () => {
@@ -226,27 +270,75 @@ describe('sampleNewlyLivePostsForKnights', () => {
     const first = await sweep(minutesAgo(20), { sfwRate: 1 }, 2);
     expect(first.posts).toBe(2);
     expect((await queued()).map((i) => i.imageId)).toEqual([10, 20]);
+    expect(first.cursor).toEqual(at(minutesAgo(8), 2));
 
-    // Each full batch starts again at its last post, in case more share that instant, so it moves one post short.
-    let cursor = first.cursor;
-    let runs = 1;
-    while (cursor.getTime() < minutesAgo(1).getTime() && runs < 10) {
-      cursor = (await sweep(cursor, { sfwRate: 1 }, 2)).cursor;
-      runs++;
-    }
-    expect(runs).toBe(5);
-    expect(cursor).toEqual(minutesAgo(1));
+    const second = await run(first.cursor, { sfwRate: 1 }, { postLimit: 2 });
+    const third = await run(second.cursor, { sfwRate: 1 }, { postLimit: 2 });
+    expect(second.cursor).toEqual(at(minutesAgo(6), 4));
+    expect(third.cursor).toEqual(at(minutesAgo(1)));
     expect((await queued()).map((i) => i.imageId)).toEqual([10, 20, 30, 40, 50]);
   });
 
-  it('never reaches further back than six hours, however old the last run is', async () => {
+  it('never reaches further back than six hours, with no cursor or an old one', async () => {
     await post(1, minutesAgo(60 * 7));
     await images(1, [11]);
     await post(2, minutesAgo(60 * 5));
     await images(2, [21]);
 
+    await run(null, { sfwRate: 1 });
     await sweep(new Date(0), { sfwRate: 1 });
 
     expect((await queued()).map((i) => i.imageId)).toEqual([21]);
+  });
+});
+
+describe('runKnightsPublishSampling', () => {
+  const store = (initial: PublishSampleCursor | null) => {
+    const saved: PublishSampleCursor[] = [];
+    return {
+      saved,
+      loadCursor: async () => initial,
+      saveCursor: async (cursor: PublishSampleCursor) => {
+        saved.push(cursor);
+      },
+    };
+  };
+  const start = { publishedAt: minutesAgo(10), postId: 0 };
+
+  it('keeps the cursor when the sources switch could not be read, so the window is retried', async () => {
+    await post(1, minutesAgo(5));
+    await images(1, [11]);
+    const cursor = store(start);
+
+    const result = await runKnightsPublishSampling(db, {
+      now: NOW,
+      readConfig: async () => null,
+      ...cursor,
+    });
+
+    expect(result).toEqual({ skipped: 'config-unreadable' });
+    expect(cursor.saved).toEqual([]);
+    expect(await queued()).toEqual([]);
+  });
+
+  it('moves the cursor past the window when the sources are off, and samples from it when on', async () => {
+    await post(1, minutesAgo(5));
+    await images(1, [11]);
+    const off = store(start);
+    await runKnightsPublishSampling(db, {
+      now: NOW,
+      readConfig: async () => parseKnightsSourcesConfig(null),
+      ...off,
+    });
+    expect(off.saved).toEqual([{ publishedAt: minutesAgo(1), postId: 0 }]);
+
+    const on = store(start);
+    await runKnightsPublishSampling(db, {
+      now: NOW,
+      readConfig: async () => config({ sfwRate: 1 }),
+      ...on,
+    });
+    expect(on.saved).toEqual([{ publishedAt: minutesAgo(1), postId: 0 }]);
+    expect((await queued()).map((i) => i.imageId)).toEqual([11]);
   });
 });

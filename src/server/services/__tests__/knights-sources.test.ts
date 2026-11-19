@@ -16,6 +16,7 @@ const {
   parseKnightsSourcesConfig,
   queueOwnerRatingForKnights,
   queueScanSampleForKnights,
+  readKnightsSourcesConfig,
 } = await import('~/server/services/knights/sources');
 const { knightsSampleDraw } = await import('~/server/services/knights/sampling');
 
@@ -157,6 +158,17 @@ describe('the switch read', () => {
     await queued;
 
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('tells a switch that is off from one that could not be read in time', async () => {
+    vi.useFakeTimers();
+    redisMock.sysRedis.get.mockReturnValueOnce(new Promise(() => undefined));
+    const unread = readKnightsSourcesConfig();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await unread).toBeNull();
+
+    configured({ enabled: false });
+    expect(await readKnightsSourcesConfig()).toMatchObject({ enabled: false });
   });
 
   it('does not remember a timed-out read as off, so the next scan reads Redis again', async () => {
