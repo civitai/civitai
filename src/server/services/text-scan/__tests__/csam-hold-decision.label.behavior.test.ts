@@ -41,10 +41,6 @@ beforeAll(async () => {
       'utf8'
     )
   );
-  // Recorded through the `$executeRaw` mock; its SQL is pinned in csam-text-retention.pglite.test.ts.
-  await db.pg.exec(
-    `CREATE FUNCTION post_text_sync_csam_hold(text_id INTEGER) RETURNS void AS $$ BEGIN END $$ LANGUAGE plpgsql`
-  );
 });
 afterAll(async () => {
   await db.pg.close();
@@ -183,59 +179,33 @@ describe('the csam hold decision record, against the real label store', () => {
         textHash: 'h',
         meta: null,
       });
-      dbMock.dbWrite.$executeRaw.mockClear();
-      dbMock.dbWrite.textScanHold.updateMany.mockClear();
+      dbMock.dbWrite.postText.updateMany.mockReset().mockResolvedValue({ count: 1 });
     });
 
-    /** The text's held state is recomputed from its holds in the decision's transaction. */
-    const syncs = () =>
-      dbMock.dbWrite.$executeRaw.mock.calls
-        .filter(([strings]) =>
-          (strings as readonly string[]).join('?').includes('post_text_sync_csam_hold')
-        )
-        .map(([, id]) => id);
+    it('is released by a dismissal', async () => {
+      await decide('dismiss');
+      expect(dbMock.dbWrite.postText.updateMany).toHaveBeenCalledWith({
+        where: { id: 31 },
+        data: { csamHeld: false },
+      });
+    });
 
-    it.each(['dismiss', 'remove', 'remove_ban'] as const)(
-      'recomputes its held state after a %s decision',
+    it.each(['remove', 'remove_ban'] as const)(
+      'is held from readers by a %s decision, even if its scan never marked it held',
       async (decision) => {
         await decide(decision);
-        expect(syncs()).toEqual([31]);
+        expect(dbMock.dbWrite.postText.updateMany).toHaveBeenCalledWith({
+          where: { id: 31 },
+          data: { csamHeld: true },
+        });
       }
     );
 
-    it("recomputes after the hold's own status is written", async () => {
-      await decide('remove');
-      const syncAt = dbMock.dbWrite.$executeRaw.mock.calls.findIndex(([strings]) =>
-        (strings as readonly string[]).join('?').includes('post_text_sync_csam_hold')
-      );
-      const [holdWrite] = dbMock.dbWrite.textScanHold.updateMany.mock.invocationCallOrder.slice(-1);
-      expect(syncAt).toBeGreaterThanOrEqual(0);
-      expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[syncAt]).toBeGreaterThan(
-        holdWrite
-      );
-    });
-
-    it.each([
-      ['refuses a batched "none" and leaves the text pending, with no clock', 'none', false],
-      ['decides a batched reportable choice', 'imagery', true],
-    ] as const)('%s', async (_, reportChoice, decided) => {
-      const run = decideCsamHold({
-        holdId: 12,
-        textHash: 'h',
-        decision: 'remove',
-        reportChoice,
-        actor: { id: 7 },
-        tracker: tracker as never,
-        batched: true,
-      });
-      if (decided) await run;
-      else await expect(run).rejects.toThrow(/its own report choice/);
-      expect(syncs()).toEqual(decided ? [31] : []);
-      expect(dbMock.dbWrite.textScanHold.updateMany).toHaveBeenCalledTimes(decided ? 1 : 0);
-    });
-
     it('stays held when removed, its content kept', async () => {
       await decide('remove');
+      expect(dbMock.dbWrite.postText.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { csamHeld: false } })
+      );
       expect(dbMock.dbWrite.postText.delete).not.toHaveBeenCalled();
       // The control: the removal was decided and recorded.
       expect(await labels()).toEqual([

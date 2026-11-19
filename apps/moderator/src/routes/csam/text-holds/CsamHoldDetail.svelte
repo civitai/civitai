@@ -595,7 +595,7 @@
               <legend class="mb-2 text-sm font-medium text-dark-0">{CSAM_REPORT_QUESTION}</legend>
               <RadioGroup name="report-choice" class="gap-2" bind:value={reportChoice}>
                 {#each reportChoicesFor(confirming) as choice (choice)}
-                  {@const copy = reportChoiceCopy(choice, row.entityType)}
+                  {@const copy = reportChoiceCopy(choice)}
                   <div class="flex items-start gap-2">
                     <RadioGroupItem value={choice} id="report-choice-{choice}" class="mt-0.5" />
                     <Label for="report-choice-{choice}" class="flex flex-col gap-0.5 font-normal">

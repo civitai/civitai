@@ -50,7 +50,6 @@ import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { giftMembershipArming } from '~/server/jobs/gift-membership-arming';
 import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-block-attributions';
 import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
-import { purgeConfirmedCsamTextJob } from '~/server/jobs/purge-confirmed-csam-text';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
@@ -318,7 +317,6 @@ export const jobs: Job[] = [
   sweepStaleAgentReviewsJob,
   cosmeticPerceptualHashSweepJob,
   purgeReviewSnapshotsJob,
-  purgeConfirmedCsamTextJob,
   sweepReviewStorageJob,
   drainReviewPreviewQueueJob,
   runStorageMigrationsJob,

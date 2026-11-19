@@ -40,15 +40,7 @@ const CSAM_REPORT_CHOICE_COPY: Record<CsamReportChoice, { title: string; body: s
   },
 };
 
-/** Only a held PostText is deleted after its retention; other hold types keep their content as before. */
-const NONE_RETENTION =
-  'The text stays hidden and undeletable for 1 year from today, then it is deleted, unless an appeal, a law-enforcement request or a register hold is open.';
-
-/** The copy for a choice on a hold of this entity type. */
-export function reportChoiceCopy(choice: CsamReportChoice, entityType: string) {
-  const copy = CSAM_REPORT_CHOICE_COPY[choice];
-  if (choice !== 'none' || entityType !== 'PostText') return copy;
-  return { ...copy, body: `${copy.body} ${NONE_RETENTION}` };
-}
+/** The copy for a choice. */
+export const reportChoiceCopy = (choice: CsamReportChoice) => CSAM_REPORT_CHOICE_COPY[choice];
 
 export const CSAM_REPORT_NOT_SURE = "Not sure? Don't pick None. Send it to the Moderation Lead.";

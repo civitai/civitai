@@ -5272,7 +5272,7 @@ export type PostText = {
    */
   refused: Generated<boolean>;
   /**
-   * Set by a CSAM verdict and held for review. Cleared only when no csam hold on it is pending or confirmed, never by a scan.
+   * Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
    */
   csamHeld: Generated<boolean>;
   /**

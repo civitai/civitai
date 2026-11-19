@@ -11304,7 +11304,7 @@ model PostText {
   nsfwLevel Int      @default(0)
   /// The text scan refused it (poi / minor): never shown to readers. A clean, current verdict clears it.
   refused   Boolean  @default(false)
-  /// Set by a CSAM verdict and held for review. Cleared only when no csam hold on it is pending or confirmed, never by a scan.
+  /// Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
   csamHeld  Boolean  @default(false)
   /// A moderator refused it from a report: `refused` stays set until a moderator restores it, and no
   /// scan verdict lifts it.

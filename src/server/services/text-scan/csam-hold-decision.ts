@@ -42,7 +42,7 @@ export type CsamHoldDecision = (typeof CSAM_HOLD_DECISIONS)[number];
 
 /**
  * The reportable category a moderator picks when confirming a csam hold, or `none`. Any category means a
- * CSAM report is filed in the existing report form; `none` starts a held PostText's one-year retention.
+ * CSAM report is filed in the existing report form; `none` files none.
  */
 export const CSAM_REPORT_CHOICES = [
   'enticement',
@@ -268,8 +268,6 @@ async function strikeAuthor(hold: HeldRow, { actor, holdId }: DecideArgs) {
 const subjectTypeOf = (entityType: string) =>
   `${entityType.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()}_text`;
 
-const BATCH_NONE_NEEDS_OWN_DECISION =
-  'A storyline text needs its own report choice, so it stays held for its own decision.';
 const REPORT_NEEDS_CATEGORY = 'Filing a report needs a reportable category, not "none".';
 
 /**
@@ -305,10 +303,6 @@ export async function decideCsamHold(args: DecideArgs) {
   if (!hold || hold.status !== 'Pending')
     throw throwConflictError('Hold already decided or missing.');
   if (hold.textHash !== textHash) throw throwConflictError(STALE_HOLD_MESSAGE);
-  // "none" starts a deletion clock on a held PostText, so a moderator chooses it for each one: a batch
-  // leaves the text held and pending for its own decision.
-  if (batched && reportChoice === 'none' && hold.entityType === 'PostText')
-    throw throwBadRequestError(BATCH_NONE_NEEDS_OWN_DECISION);
 
   if (plan.remove && !isRemovable(hold.entityType))
     throw throwBadRequestError(
@@ -358,10 +352,13 @@ export async function decideCsamHold(args: DecideArgs) {
         },
       });
       if (count === 0) throw throwConflictError('Hold already decided or missing.');
-      // Held while any of the text's csam holds is pending or confirmed, so a confirmed text stays from
-      // readers even when its scan never marked it held.
+      // A confirm sets the text's held flag and a dismissal clears it, so a confirmed text stays
+      // from readers even when its scan never marked it held.
       if (hold.entityType === 'PostText')
-        await tx.$executeRaw`SELECT post_text_sync_csam_hold(${hold.entityId}::int)`;
+        await tx.postText.updateMany({
+          where: { id: hold.entityId },
+          data: { csamHeld: status === 'Confirmed' },
+        });
 
       // Records nothing and returns NULL on bad input rather than raising, so a bad record never undoes the
       // decision; it lands in `label_store.record_failure`.
@@ -412,7 +409,7 @@ export async function decideCsamHold(args: DecideArgs) {
 
 /**
  * "Not sure": sends a pending csam hold to the Moderation Lead without deciding it. The hold stays
- * Pending, records no report choice and starts no retention; `meta.needsLeadReview` puts it on the
+ * Pending and records no report choice; `meta.needsLeadReview` puts it on the
  * holds page's lead-review filter. Refused like a decision when the hold moved on or its text changed.
  */
 export async function referCsamHoldToLead({
