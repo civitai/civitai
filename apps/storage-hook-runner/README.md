@@ -26,7 +26,9 @@ missing fields are a 400):
 | `timeoutMs`  | number, optional                                                   | clamped to [1, 500]; default 50                                                                                           |
 | `input`      | object                                                             | the hook's argument, below; `input.op`, `input.collection` and `input.app.blockId` must match `op`, `collection`, `appId` |
 
-`input` (every key present; `null` where there is nothing):
+`input` (every key present; `null` where there is nothing). A `tally` that is not exactly the
+op's own operator (`$inc` naming one counter, `$mark`, `$unmark`), or one on a document write,
+is a 400 `bad_request`:
 
 ```ts
 {
@@ -35,7 +37,10 @@ missing fields are a 400):
   before: Json | null,               // stored data before the write
   after: Json | null,                // data after the write (null for delete and tally ops)
   doc: Record<string, unknown> | null, // stored doc metadata (version, author kind, counters, marks)
-  tally: { kind: 'counter', name, by } | { kind: 'mark', name } | null,
+  // the storage API's update operator (PATCH /:coll/:key), whichever route carried it:
+  // { $inc: { <counter>: by } } for increment, { $mark: name } for mark,
+  // { $unmark: name } for unmark; null for create, put and delete
+  tally: { $inc: Record<string, number> } | { $mark: string } | { $unmark: string } | null,
   viewer: { userId: number },
   app: { blockId: string },
   from: string | null,               // importing app's blockId on an imported write
@@ -114,7 +119,7 @@ One self-contained ES module whose **default export** is a synchronous function:
 ```js
 export default function check({ op, before, after, tally }) {
   if (before && before.locked) return { allow: false, reason: `${op}: card is locked` };
-  if (tally && tally.kind === 'counter' && tally.by > 1)
+  if (tally && tally.$inc && Object.values(tally.$inc)[0] > 1)
     return { allow: false, reason: 'one at a time' };
   return { allow: true };
 }

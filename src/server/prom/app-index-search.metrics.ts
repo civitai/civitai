@@ -21,9 +21,6 @@ export const APP_INDEX_SEARCH_REASONS = [
   // Not routed: the viewer's audience floor is above `public` (testers, moderators), so the
   // database grid may show them listings the anonymous registry audience does not carry.
   'unsupported_viewer',
-  // Not routed: the grid mixes in sub-listing cards (`app-store-sub-listings`), which the index
-  // does not hold.
-  'sub_listings',
   // Not routed: a developer-filtered or paged request, which the index cannot answer.
   'unsupported_input',
   // The index call timed out (APP_INDEX_SEARCH_TIMEOUT_MS).

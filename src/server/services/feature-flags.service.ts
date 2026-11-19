@@ -579,6 +579,8 @@ const featureFlags = createFeatureFlags({
   // Search v3 on pages that filter their own list (PAGE_SEARCH in search-target.ts): the header bar
   // writes the page's ?query= and the page filters by it, instead of a search box of its own.
   pageSearch: { availability: [], fliptKey: 'search-v3-pages' },
+  // Only takes effect with `feedSearch` on too.
+  videoFeedSearch: { availability: [], fliptKey: 'video-feed-search' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
   // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step; Flipt
   // unreachable keeps it.

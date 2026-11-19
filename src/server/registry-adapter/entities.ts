@@ -72,7 +72,8 @@ export type CatalogApp = {
 };
 
 /**
- * The content rating an app entity publishes: the listing's if known ({@link isKnownRating}),
+ * The content rating an app entity publishes: the listing's if known ({@link isKnownRating},
+ * `xxx` included, so a listing rated `xxx` is published as `xxx` and never as its block's rating),
  * else the block's if known, else whichever is set (null if neither), which `audienceAdmits`
  * fails closed on. A shared document has none of its own (`doc-streams.ts`).
  */

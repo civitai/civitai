@@ -4,7 +4,7 @@ An open queue item waits at one stage (Knight, Templar or Paladin) for `KNIGHTS_
 
 ## Rule 1: stages nobody can serve are skipped
 
-An item is never handed to a stage nobody can serve. On every escalation, whatever the reason, the item goes to the next stage after its own that has an eligible player at that rank or higher (`nextStaffedRank`), or to the Inquisitors when none does. A higher rank can judge a lower stage (`canVote`), so with only Paladins an item leaving the Knight stage goes to the Templar stage, where Paladins serve it; with no Templars and no Paladins it goes straight to the Inquisitors.
+An item is never handed to a stage nobody can serve. On every escalation, whatever the reason, the item goes to the next stage after its own that has an eligible player at that rank or higher (`nextStaffedRank`), or, when none does, it has reached the end of the path (rule 4). A higher rank can judge a lower stage (`canVote`), so with only Paladins an item leaving the Knight stage goes to the Templar stage, where Paladins serve it; with no Templars and no Paladins the Knight stage is the end of the path.
 
 Eligible means a `NewOrderPlayer` who voted within the last 14 days (`ACTIVE_PLAYER_DAYS`) and is not waiting on a career reset (`SMITES.max` active smites, the same bar `insertVote` refuses at). Idle accounts do not make a rank count. `staffedRanks` reads this once per tick (at most one query per rank, top down), and once per split vote.
 
@@ -20,7 +20,19 @@ An item that still has no counted vote at its current stage once its extension i
 
 An item at a stage nobody can serve is not extended. It is handed up as rule 1 says when a later stage is served, and expires when that hand-up would reach the Inquisitors with no counted vote at its stage.
 
-The tick response carries `escalated`, `toInquisitor`, `extended` and `expired`; each expiry also counts as `knights_escalations_total{reason="expired"}`.
+The tick response carries `escalated`, `toInquisitor`, `extended`, `expired` and `rerated`; each expiry also counts as `knights_escalations_total{reason="expired"}`.
+
+## Rule 4: a split at the end of the path is re-rated
+
+A rating item that leaves its stage without agreement (a split at the stage maximum, or a lapsed window with votes) and has no staffed stage after it does not go to the Inquisitors. It resolves on its own (`rerate` in `queue.service.ts`):
+
+- The level is the answer with the most counted votes (weight > 0) at the item's current stage, counted, not weighted; a tie goes to the highest level (`mostVotedLevel` in `resolution.ts`). One PG-13, four R and four X give X; mostly PG-13 with one XXX gives PG-13. The stage consensus itself keeps its weighted rule (`decideChoice`).
+- Rating down is allowed: the pushed-down check guards a consensus, not a re-rate. A Blocked pick goes to the Inquisitors as `escalationReason = 'blocked'`, as a Blocked consensus does.
+- A lapsed window re-rates only when the stage has at least its quorum of counted votes (`votesNeededAt`: Knight 4, Templar 3, Paladin 2); with fewer it closes as `expired` (rule 3's close), unless those votes pick Blocked: that goes to the Inquisitors as `blocked` at any count.
+- The item becomes `Resolved` with `reason = 'no-consensus-rerate'`, `resolvedFromLevel` the image's level, and the latest counted voter who gave the level as the write-back's actor. Every vote on it, at any stage, becomes `inconclusive`: no gold and no correct-answer XP, only the XP each vote earned when cast. Judgment history shows the player's own answer and no resolved level.
+- It is written back like any settled rating (below), so a moderator lock, a block or a moved level reroutes it the same way: a moderator's level grades the votes against it, a block or a moved level sends it to the Inquisitors with its votes pending again.
+
+A rating item never reaches the Inquisitors as `no-consensus` any more; another choice question still does. Each re-rate counts as `knights_escalations_total{reason="no-consensus-rerate"}`. The items already waiting as `no-consensus` before this rule are settled by hand with `apps/knights/scripts/backfill-no-consensus-rerate/` (`dry-run.sql`, then `apply.sql`), which leaves each one as this rule would.
 
 ## Items Knights can never serve
 
