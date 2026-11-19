@@ -188,6 +188,12 @@ const queuedImageText = (alias: string) =>
 const movableImageText = `(
   SELECT i.id FROM "Image" i
   WHERE ${ownImageNamedByUserImage('i')} AND ${servablePictureText} AND NOT ${queuedImageText('i')}
+    -- Another of the user's rows stored under the same key, held or blocked, withholds the file.
+    AND NOT EXISTS (
+      SELECT 1 FROM "Image" twin
+      WHERE twin."userId" = i."userId" AND twin.url = i.url AND twin.id <> i.id
+        AND ${heldOrBlockedText('twin')}
+    )
   ORDER BY i.id LIMIT 1
 )`;
 
@@ -235,13 +241,21 @@ const CLEAR_USER_IMAGE_KEYS_SQL = `
     END
   FROM target t
   WHERE u.id = t.id
-  RETURNING u.id, t.image AS "previousImage", t."profilePictureId" AS "previousPictureId",
+  RETURNING u.id,
+    -- Withheld where the key names a held or blocked own image: the response must not hand it out.
+    CASE WHEN EXISTS (
+      SELECT 1 FROM "Image" i WHERE ${ownImageNamedByUserImage('i', 't')} AND ${heldOrBlockedText(
+  'i'
+)}
+    ) THEN NULL ELSE t.image END AS "previousImage",
+    t."profilePictureId" AS "previousPictureId",
     u."profilePictureId" AS "pictureId"
 `;
 
 export type ClearedUserImageKeyRow = {
   id: number;
-  previousImage: string;
+  /** Null where the key names a held or blocked own image. */
+  previousImage: string | null;
   previousPictureId: number | null;
   pictureId: number | null;
 };
@@ -249,7 +263,8 @@ export type ClearedUserImageKeyRow = {
 /**
  * Of `userIds`, empties each `User.image` that holds an upload key, in one statement. A user with no
  * profile picture whose key names an own image `movableImageText` accepts gets that image as their
- * picture instead of losing the avatar. Returns the previous values, the only copy of them.
+ * picture instead of losing the avatar. Returns the previous values, the only copy of them, except a
+ * key naming a held or blocked own image, which is withheld.
  */
 export const clearUserImageKeysStatement = (userIds: number[]) => ({
   sql: CLEAR_USER_IMAGE_KEYS_SQL,

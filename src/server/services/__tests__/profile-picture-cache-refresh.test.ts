@@ -216,6 +216,16 @@ describe('a bulk picture refresh', () => {
     expect(refreshBasic).toHaveBeenCalledWith([9]);
   });
 
+  it('🔴 alerts a failed session refresh as the session step', async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockResolvedValueOnce([]);
+    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('session store down'));
+
+    await expect(refreshProfilePicturesForUsers([9])).resolves.toBeUndefined();
+
+    expect(alertStep.mock.calls).toEqual([['session']]);
+  });
+
   it('alerts nothing when every step succeeds (control)', async () => {
     const { refreshProfilePicturesForUsers } = await import('../user.service');
     clearImages.mockResolvedValueOnce([9]);

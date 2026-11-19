@@ -8,6 +8,8 @@ import { clearUserImageKeys, userImageKeyPlan } from '~/server/services/held-ima
 import { refreshProfilePicturesForUsers } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
+const COUNT_CAP = 10_000;
+
 const schema = z.object({
   mode: z.enum(['dry', 'run', 'verify']).default('dry'),
   limit: z.coerce.number().int().min(1).max(100).default(100),
@@ -34,7 +36,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'mode=run needs POST' });
 
   if (mode !== 'run') {
-    const rows = await userImageKeyPlan(dbRead, limit);
+    // Reads every match (the population is small); `limit` bounds only a run.
+    const rows = await userImageKeyPlan(dbRead, COUNT_CAP);
     if (mode === 'verify') return res.status(200).json({ mode, remaining: rows.length });
     return res.status(200).json({
       mode,
@@ -51,16 +54,28 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     planned.map((row) => row.id)
   );
   const ids = cleared.map((row) => row.id);
+  // The update has committed: a failed refresh is reported, never allowed to lose `previous`.
+  const refreshErrors: string[] = [];
+  const attempt = async (name: string, run: () => Promise<unknown>) => {
+    try {
+      await run();
+    } catch {
+      refreshErrors.push(name);
+    }
+  };
   if (ids.length) {
-    await userBasicCache.refresh(ids);
-    await usersSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    await attempt('basic-cache', () => userBasicCache.refresh(ids));
+    await attempt('search-index', () =>
+      usersSearchIndex.queueUpdate(
+        ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      )
     );
-    await refreshProfilePicturesForUsers(ids);
+    await attempt('profile-pictures', () => refreshProfilePicturesForUsers(ids));
   }
   return res.status(200).json({
     mode,
     cleared: cleared.length,
+    refreshErrors,
     moved: cleared.filter((row) => row.pictureId !== row.previousPictureId).length,
     previous: cleared,
   });

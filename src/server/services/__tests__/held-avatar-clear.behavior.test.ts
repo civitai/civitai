@@ -187,7 +187,8 @@ describe('the one-off clean-up of User.image keys', () => {
         (5, NULL, '${KEY(5)}', NULL),
         (6, NULL, '${KEY(6)}', NULL),
         (7, NULL, 'https://avatars.githubusercontent.com/u/1?v=4', NULL),
-        (8, NULL, NULL, NULL);
+        (8, NULL, NULL, NULL),
+        (0, NULL, '${KEY(4)}', NULL);
     `);
 
   it('plans every key in any form, and which own image each could move to', async () => {
@@ -221,8 +222,10 @@ describe('the one-off clean-up of User.image keys', () => {
       { id: 6, previousPictureId: null, pictureId: null },
     ]);
     expect(cleared.find((row) => row.id === 3)?.previousImage).toBe(KEY(3));
+    // User 5's key names their held image: withheld.
+    expect(cleared.find((row) => row.id === 5)?.previousImage).toBeNull();
     const { rows } = await pg.query<{ id: number; image: string | null }>(
-      'SELECT id, image FROM "User" ORDER BY id'
+      'SELECT id, image FROM "User" WHERE id > 0 ORDER BY id'
     );
     expect(rows.map((row) => row.image)).toEqual([
       null,
@@ -237,6 +240,28 @@ describe('the one-off clean-up of User.image keys', () => {
     // A second run finds nothing.
     expect(await userImageKeyPlan(db, 100)).toEqual([]);
     expect(await clearUserImageKeys(db, [1, 2, 3, 4, 5, 6, 7, 8])).toEqual([]);
+  });
+
+  it('🔴 does not move a picture whose file another own row holds under a hold or block', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, "userId", "needsReview") VALUES
+        (1, '${KEY(9)}', 1, NULL),
+        (2, '${KEY(9)}', 1, 'minor');
+      INSERT INTO "User" VALUES (1, NULL, '${KEY(9)}', NULL);
+    `);
+    const [row] = await clearUserImageKeys(db, [1]);
+    expect(row).toMatchObject({ id: 1, pictureId: null });
+    // The key names a held own image, so its value is withheld from the result.
+    expect(row.previousImage).toBeNull();
+  });
+
+  it('moves it once no twin is held (control)', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, "userId") VALUES (1, '${KEY(9)}', 1), (2, '${KEY(9)}', 1);
+      INSERT INTO "User" VALUES (1, NULL, '${KEY(9)}', NULL);
+    `);
+    const [row] = await clearUserImageKeys(db, [1]);
+    expect(row).toMatchObject({ id: 1, pictureId: 1, previousImage: KEY(9) });
   });
 
   it('touches only the users given (control)', async () => {

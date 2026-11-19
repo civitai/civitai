@@ -34,7 +34,7 @@ const RAW_UPDATE =
 const RAW_SET_IMAGE = /(?:^|,|\bSET\b|\s)(?:\w+\.)?"?image"?\s*=(?!\s*NULL\b)/i;
 const RAW_INSERT = /INSERT\s+INTO\s+(?:public\.)?"User"\s*\(([^)]*)\)/gi;
 const KYSELY =
-  /\.(?:updateTable|insertInto)\(\s*['"]User['"]\s*\)[\s\S]{0,400}?\.(?:set|values)\(\s*\{([\s\S]{0,600}?)\}\s*\)/g;
+  /\.(?:updateTable|insertInto)\(\s*['"]User(?:\s+as\s+\w+)?['"]\s*\)([\s\S]{0,600}?)\.(?:where|returning|execute\w*|onConflict)\(/g;
 const PRISMA =
   /\.user\.(?:update|updateMany|upsert|create|createMany)\(\s*\{([\s\S]{0,800}?)\}\s*\)/g;
 const UPDATE_USER_BY_ID = /\bupdateUserById\(\s*\{([\s\S]{0,600}?)\}\s*\)/g;
@@ -47,7 +47,10 @@ export function imageWrites(source: string): string[] {
   for (const [match, columns] of source.matchAll(RAW_INSERT))
     if (/(?<![\w"])"?image"?(?![\w"])/.test(columns))
       found.push(match.replace(/\s+/g, ' ').slice(0, 80));
-  for (const pattern of [KYSELY, PRISMA, UPDATE_USER_BY_ID])
+  for (const [match, body] of source.matchAll(KYSELY))
+    if (/\.(?:set|values)\(/.test(body) && IMAGE_KEY.test(body))
+      found.push(match.replace(/\s+/g, ' ').slice(0, 80));
+  for (const pattern of [PRISMA, UPDATE_USER_BY_ID])
     for (const [match, body] of source.matchAll(pattern))
       if (IMAGE_KEY.test(body)) found.push(match.replace(/\s+/g, ' ').slice(0, 80));
   return found;
@@ -97,6 +100,14 @@ describe('writes of User.image', () => {
     expect(
       imageWrites('dbWrite.user.update({ where: { id }, data: { profileImage: x } })')
     ).toEqual([]);
+  });
+
+  it('known gaps: a write whose object is built elsewhere, and SQL outside TypeScript', () => {
+    // A variable `data` argument is not read; the profile save's refusal and review cover it.
+    expect(
+      imageWrites('const data = { image: url }; dbWrite.user.update({ where: { id }, data })')
+    ).toEqual([]);
+    // Migrations (.sql) are not scanned; a database constraint is the check there.
   });
 
   it('scans every tree that writes "User"', () => {
