@@ -1,6 +1,7 @@
 import {
   clearHeldUserImages,
   dropStaleHeldImageMarkers,
+  pictureUserIds,
   restoreClearedUserImages,
 } from '@civitai/db-queries/profile-picture-clear';
 import { bustEventEngineProfilePictures, REDIS_KEYS } from '@civitai/redis';
@@ -12,18 +13,12 @@ import { dbWrite } from './db';
 import { getRedis } from './redis';
 import { syncSearchIndexBulk } from './search-index';
 
-/** The users whose profile picture is one of `imageIds`. Read before a delete: the relation is set null. */
+/** `pictureUserIds` on `db`. Read before a delete: the relation is set null. */
 export async function profilePictureUserIds(
   imageIds: number[],
   db: Kysely<DB> = dbWrite
 ): Promise<number[]> {
-  if (!imageIds.length) return [];
-  const rows = await db
-    .selectFrom('User')
-    .select('id')
-    .where('profilePictureId', 'in', imageIds)
-    .execute();
-  return rows.map((x) => x.id);
+  return pictureUserIds(db, imageIds);
 }
 
 // The main app and the event engine each cache a user's profile picture for a day, and avatars are

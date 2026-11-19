@@ -11,6 +11,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // the env and submodule stubs image.service needs to import at all.
 
 const capturedInserts: Array<{ table: string; values: any[] }> = [];
+/** Each insert's `clickhouse_settings`, in insert order. */
+const insertSettings: unknown[] = [];
 const capturedQueries: string[] = [];
 let queryResult: any[] = [];
 /** What the CSAM-entry lookup returns; every other query gets `queryResult`. */
@@ -75,9 +77,10 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 fakeClickhouse.client = makePermissive({
-  insert: async (args: { table: string; values: any[] }) => {
+  insert: async (args: { table: string; values: any[]; clickhouse_settings?: unknown }) => {
     if (insertFails?.(args)) throw new Error(insertMessage);
     capturedInserts.push({ table: args.table, values: args.values });
+    insertSettings.push(args.clickhouse_settings);
   },
   $query: (strings: TemplateStringsArray, ...values: unknown[]) => {
     const query = Array.isArray(strings)
@@ -274,6 +277,20 @@ describe('a hash with a CSAM entry keeps it', () => {
     await addBlockedImage({ hash: HASH, reason: 'TOS' as any });
 
     expect(capturedInserts).toHaveLength(0);
+  });
+
+  it('a CSAM row is inserted synchronously and a TOS row keeps the async default', async () => {
+    insertSettings.length = 0;
+
+    await bulkAddBlockedImages({
+      data: [
+        { hash: HASH, reason: 'CSAM' as any },
+        { hash: OTHER, reason: 'TOS' as any },
+      ],
+    });
+
+    expect(capturedInserts.map(({ values }) => values[0]?.reason)).toEqual(['CSAM', 'TOS']);
+    expect(insertSettings).toEqual([{ async_insert: 0 }, undefined]);
   });
 
   it('a CSAM block still lands on it', async () => {

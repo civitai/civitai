@@ -24,7 +24,11 @@ import { reportedUserIdsOf, snapshotCsamContextText } from '~/server/services/cs
 import { createSupplementalCsamReport } from '~/server/services/csam-supplemental.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
 import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
-import { bulkAddBlockedImages, HeldMediaCopyError } from '~/server/services/image.service';
+import {
+  bulkAddBlockedImages,
+  HeldMediaCopyError,
+  logCsamBlocklistNoHash,
+} from '~/server/services/image.service';
 import { bulkSetReportStatus, csamReportRewardExclusions } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
 import {
@@ -88,11 +92,17 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   // hold that up.
   // A supplemental writes only for an Image report, as on main.
   const writesBlocklist = !!imageIds.length && (!supplementalOf || type === 'Image');
-  const blocklistHashes = writesBlocklist
-    ? (await dbWrite.image.findMany({ where: { id: { in: imageIds } }, select: { pHash: true } }))
-        .map((img) => img.pHash)
-        .filter(isDefined)
+  const blocklistImages = writesBlocklist
+    ? await dbWrite.image.findMany({
+        where: { id: { in: imageIds } },
+        select: { id: true, pHash: true },
+      })
     : [];
+  const blocklistHashes = blocklistImages.map((img) => img.pHash).filter(isDefined);
+  logCsamBlocklistNoHash(
+    blocklistImages.filter((img) => !img.pHash).map((img) => img.id),
+    'csam-report'
+  );
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
     const imageReports = await dbWrite.imageReport.findMany({

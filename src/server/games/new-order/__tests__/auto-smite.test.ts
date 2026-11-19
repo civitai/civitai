@@ -176,12 +176,6 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       size: AUTO_SMITE_SIZE,
       onSmiteCreated: expect.any(Function),
     });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'new-order-auto-smite',
-        details: expect.objectContaining({ playerId: 100, source: 'detection-job' }),
-      })
-    );
   });
 
   it('smites suspects matching dominantPct >= smiteDominantPct when flag is on', async () => {

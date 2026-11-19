@@ -37,10 +37,15 @@ const userinfo: RequestHandler = async ({ request }) => {
   const now = new Date();
   const apiKey = await db
     .selectFrom('ApiKey')
-    .select(['userId', 'tokenScope', 'tokenScopeWide'])
-    .where('key', '=', hash)
-    .where('type', '=', 'Access')
-    .where((eb) => eb.or([eb('expiresAt', '>=', now), eb('expiresAt', 'is', null)]))
+    .innerJoin('User', 'User.id', 'ApiKey.userId')
+    .select(['ApiKey.userId', 'ApiKey.tokenScope', 'ApiKey.tokenScopeWide'])
+    .where('ApiKey.key', '=', hash)
+    .where('ApiKey.type', '=', 'Access')
+    .where((eb) => eb.or([eb('ApiKey.expiresAt', '>=', now), eb('ApiKey.expiresAt', 'is', null)]))
+    // A banned or deleted owner's token reads as invalid, as at introspection. The session user is cached
+    // for hours, so it can't be relied on to notice a deletion.
+    .where('User.deletedAt', 'is', null)
+    .where('User.bannedAt', 'is', null)
     .executeTakeFirst();
 
   const tokenScope = apiKey ? apiKeyRowScope(apiKey) : null;

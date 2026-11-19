@@ -151,6 +151,7 @@ import { birthday2026IdleHatNudge } from '~/server/jobs/birthday2026-idle-hat-nu
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
+import { csamBlocklistSelfHeal } from '~/server/jobs/csam-blocklist-self-heal';
 import { poiHashSweep } from '~/server/jobs/poi-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
@@ -159,10 +160,6 @@ import { trainingDataScanHealJob } from '~/server/jobs/training-data-scan-heal';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
 import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
 import { comFaceRecheckJob } from '~/server/jobs/com-face-recheck';
-import {
-  comFaceVersionTextJob,
-  comFaceVersionTextSweepJob,
-} from '~/server/jobs/com-face-version-text';
 import { comFaceIntentDisputesJob } from '~/server/jobs/com-face-intent-disputes';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
@@ -257,8 +254,6 @@ export const jobs: Job[] = [
   searchIndexCleanupJob,
   searchIndexQueueDrainJob,
   comFaceRecheckJob,
-  comFaceVersionTextJob,
-  comFaceVersionTextSweepJob,
   comFaceIntentDisputesJob,
   processRewards,
   rewardsDailyReset,
@@ -346,6 +341,7 @@ export const jobs: Job[] = [
   retroactiveHashBlocking,
   minorHashSweep,
   poiHashSweep,
+  csamBlocklistSelfHeal,
   ...creatorProgramJobs,
   handleAuctions,
   refreshAuctionCache,

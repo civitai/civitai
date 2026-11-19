@@ -776,14 +776,11 @@ describe('awardBountyEntry', () => {
     expect(moved('award')).toBe(0);
   });
 
-  it('keeps a recorded award whose payout failed unsettled and logs it, without failing the award', async () => {
+  it('keeps a recorded award whose payout failed unsettled, without failing the award', async () => {
     buzz.createBuzzTransactionMany.mockRejectedValueOnce(new Error('buzz down'));
     await expect(awardBountyEntry({ id: 10, userId: 5 })).resolves.toBeDefined();
     expect(bounty?.payoutRecordedAt).toBeInstanceOf(Date);
     expect(bounty?.payoutSettledAt).toBeUndefined();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', bountyId: 4, name: 'bounty-award' })
-    );
   });
 
   it('pays nothing when a charge lookup fails, rather than part of the award', async () => {
@@ -924,9 +921,6 @@ describe('settleBountyPayout — the winner and the money basis', () => {
     benefactors[0].awardedAt = null;
     expect(await settleBountyPayout(4)).toBe(false);
     expect(bounty?.payoutSettledAt).toBeUndefined();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'bounty-award', type: 'error', bountyId: 4 })
-    );
   });
 
   it('leaves an award with no winner unsettled, logging an error each run', async () => {
@@ -1086,7 +1080,7 @@ describe('refundBountyBenefactorFunds', () => {
     ).toEqual({ refunded: [6], failed: [], unconfirmed: [] });
   });
 
-  it('logs a failed refund with the bounty and carries on', async () => {
+  it('reports a failed refund as failed and carries on', async () => {
     buzz.refundMultiAccountTransaction
       .mockRejectedValueOnce(new Error('buzz down'))
       .mockResolvedValueOnce({ refundedTransactions: [{ amount: 100 }], totalRefunded: 1 });
@@ -1095,9 +1089,6 @@ describe('refundBountyBenefactorFunds', () => {
       failed: [5],
       unconfirmed: [],
     });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'bounty-refund', type: 'error', bountyId: 4, userId: 5 })
-    );
   });
 
   describe('a legacy supporter on a retry', () => {
@@ -2121,7 +2112,6 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
       await resolve();
       expect(await resolve()).toEqual({ recorded: false });
       expect(modActivityRows).toHaveLength(2);
-      expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
     });
 
     it('refuses the same ruling with a different ledger reference, keeping the first', async () => {

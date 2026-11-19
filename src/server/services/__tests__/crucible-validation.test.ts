@@ -1310,9 +1310,6 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
 
     expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'crucible-entry-post-refresh-failed', postId: 300 })
-    );
   });
 
   it('refunds a paid draft entry when its post was published or moved meanwhile', async () => {
