@@ -19,8 +19,6 @@
   import { autoLabelAvailable, pickModel } from '$lib/host';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import StickySummary from '$lib/components/StickySummary.svelte';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import {
     KOHYA_FLAG_KEY,
     MEDIA_OPTIONS,
@@ -35,7 +33,6 @@
     type ModelCard,
   } from '$lib/data/trainingModels';
   import {
-    CUSTOM_VERSION_KEY,
     MAX_RUNS,
     cardFromPrice,
     isCustom,
@@ -445,24 +442,16 @@
 
 {#snippet rowEnginePicker(run: Run, index: number)}
   {#if kohyaEnabled && runSupportsKohya(run)}
-    <div
-      class="mt-2.5 flex gap-2"
-      role="radiogroup"
-      tabindex="-1"
+    <studio-chip-group
+      class="mt-2.5"
       aria-label={`Run ${index + 1} training engine`}
-      onkeydown={radioKeydown}
-    >
-      {#each [{ value: 'ai-toolkit', label: 'AI Toolkit' }, { value: 'kohya', label: 'Kohya' }] as engine (engine.value)}
-        <Button
-          variant={runEngine(run) === engine.value ? 'default' : 'outline'}
-          size="sm"
-          role="radio"
-          aria-checked={runEngine(run) === engine.value}
-          tabindex={runEngine(run) === engine.value ? 0 : -1}
-          onclick={() => pickEngine(engine.value, index)}
-        >{engine.label}</Button>
-      {/each}
-    </div>
+      data={[
+        { value: 'ai-toolkit', label: 'AI Toolkit' },
+        { value: 'kohya', label: 'Kohya' },
+      ]}
+      value={runEngine(run)}
+      onchange={(e: Event) => pickEngine((e.currentTarget as StudioChipGroup).value, index)}
+    ></studio-chip-group>
   {/if}
 {/snippet}
 
@@ -513,31 +502,24 @@
      when it offers one (the embed's resource-select modal). -->
 {#snippet customAirInput(run: Run, runIndex: number)}
   <div class="mt-2.5">
-    <label
-      for={`custom-air-${run.id}`}
-      class="font-mono text-xs uppercase tracking-wider text-dark-2"
-    >
-      Civitai model AIR
-    </label>
-    <div class="mt-1 flex items-center gap-2">
-      <Input
-        id={`custom-air-${run.id}`}
+    <div class="flex items-end gap-2">
+      <civitai-text-input
+        class="min-w-0 flex-1"
+        label="Civitai model AIR"
         value={run.customAir ?? ''}
-        oninput={(e) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
         placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
-        class="min-w-0 flex-1 font-mono text-xs"
-      />
+        oninput={(e: Event) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
+      ></civitai-text-input>
       {#if pickModel()}
-        <Button
+        <civitai-button
           variant="outline"
           size="sm"
-          class="shrink-0"
           disabled={pickingRunId !== null}
           onclick={() => browseModel(run)}
         >
-          <IconSearch size={13} stroke={2} class="mr-1 inline" />
+          <span slot="left"><IconSearch size={13} stroke={2} /></span>
           {pickingRunId === run.id ? 'Browsing…' : 'Browse models'}
-        </Button>
+        </civitai-button>
       {/if}
     </div>
     <p class="mt-1 text-xs leading-snug text-dark-2">
@@ -714,9 +696,9 @@
                  the model name to "MiniMax …". -->
             {#if card.flag}
               <div class="mt-1 {dim}">
-                <span class="inline-flex items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
-                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{:else if card.flag === 'new'}<IconSparkles size={10} stroke={2.5} />{/if}{card.flag}
-                </span>
+                <civitai-badge variant="filled" size="sm">
+                  {#if card.flag === 'recommended'}<IconStarFilled size={8} class="mr-0.5 inline" />{:else if card.flag === 'new'}<IconSparkles size={10} stroke={2.5} class="mr-0.5 inline" />{/if}{card.flag}
+                </civitai-badge>
               </div>
             {/if}
             {#if down}
@@ -802,31 +784,21 @@
           </div>
           {#if versions.length > 1}
             <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
-            <div
-              class="mt-1.5 flex flex-wrap gap-2"
-              role="radiogroup"
+            <studio-chip-group
+              class="mt-1.5"
               aria-label={`${card.name} version`}
-            >
-              {#each versions as v (v.key)}
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={primary.versionKey === v.key}
-                  disabled={!!versionDown(card, v.key) && primary.versionKey !== v.key}
-                  title={versionDown(card, v.key) ? UNAVAILABLE_LABEL : undefined}
-                  onclick={() => pickVersion(0, v.key)}
-                  class="rounded border px-3 py-1.5 text-left transition disabled:cursor-not-allowed disabled:opacity-40
-                    {primary.versionKey === v.key
-                    ? 'border-primary bg-primary/10'
-                    : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
-                    {v.key === CUSTOM_VERSION_KEY ? 'border-dashed' : ''}"
-                >
-                  <div class="flex items-center gap-2">
-                    <span class="text-[12.5px] font-bold text-dark-0">{v.label}</span>
-                  </div>
-                </button>
-              {/each}
-            </div>
+              data={versions.map((v) => {
+                const down = !!versionDown(card, v.key);
+                return {
+                  value: v.key,
+                  label: v.label,
+                  disabled: down && primary.versionKey !== v.key,
+                  title: down ? UNAVAILABLE_LABEL : undefined,
+                };
+              })}
+              value={primary.versionKey}
+              onchange={(e: Event) => pickVersion(0, (e.currentTarget as StudioChipGroup).value)}
+            ></studio-chip-group>
           {/if}
           {#if isCustom(primary)}
             {@render customAirInput(primary, 0)}
@@ -908,27 +880,21 @@
                 {/if}
               </div>
               {@render rowEnginePicker(r, ri)}
-              <div class="mt-2.5 flex flex-wrap gap-2" role="radiogroup" aria-label={`Run ${ri + 1} version`}>
-                {#each versionOptions(card, enabledFlags, runEngine(r)) as v (v.key)}
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={r.versionKey === v.key}
-                    disabled={!!versionDown(card, v.key) && r.versionKey !== v.key}
-                    title={versionDown(card, v.key) ? UNAVAILABLE_LABEL : undefined}
-                    onclick={() => pickVersion(ri, v.key)}
-                    class="rounded border px-3 py-1.5 text-left transition disabled:cursor-not-allowed disabled:opacity-40
-                      {r.versionKey === v.key
-                      ? 'border-primary bg-primary/10'
-                      : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
-                      {v.key === CUSTOM_VERSION_KEY ? 'border-dashed' : ''}"
-                  >
-                    <div class="flex items-center gap-2">
-                      <span class="text-[12.5px] font-bold text-dark-0">{v.label}</span>
-                    </div>
-                  </button>
-                {/each}
-              </div>
+              <studio-chip-group
+                class="mt-2.5"
+                aria-label={`Run ${ri + 1} version`}
+                data={versionOptions(card, enabledFlags, runEngine(r)).map((v) => {
+                  const down = !!versionDown(card, v.key);
+                  return {
+                    value: v.key,
+                    label: v.label,
+                    disabled: down && r.versionKey !== v.key,
+                    title: down ? UNAVAILABLE_LABEL : undefined,
+                  };
+                })}
+                value={r.versionKey}
+                onchange={(e: Event) => pickVersion(ri, (e.currentTarget as StudioChipGroup).value)}
+              ></studio-chip-group>
               {#if isCustom(r)}
                 {@render customAirInput(r, ri)}
               {/if}
