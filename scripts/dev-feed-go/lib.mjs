@@ -63,16 +63,102 @@ export function verifyChecksum(buf, sumsText, asset) {
 }
 
 /**
- * FEED_GO_LOCAL: unset/`auto` = the pinned binary, else `go build` when Go is installed; `binary` /
- * `source` = only that; `off` = no feed-go (today's behaviour). Anything else is treated as `off`
- * with a warning: a typo must not start a service nobody asked for.
+ * FEED_GO_LOCAL: unset/`auto` = the pinned release binary, else `go build` when Go is installed;
+ * `source` = always `go build` this checkout; `off` = no feed-go (today's behaviour). Anything else
+ * is treated as `off` with a warning: a typo must not start a service nobody asked for.
  */
 export function resolveMode(value) {
   const v = (value ?? '').trim().toLowerCase();
   if (v === '' || v === 'auto') return { mode: 'auto' };
-  if (v === 'binary' || v === 'source') return { mode: v };
+  if (v === 'source') return { mode: 'source' };
   if (v === 'off' || v === '0' || v === 'false') return { mode: 'off' };
-  return { mode: 'off', warning: `unknown FEED_GO_LOCAL=${value} (auto|binary|source|off)` };
+  return { mode: 'off', warning: `unknown FEED_GO_LOCAL=${value} (auto|source|off)` };
+}
+
+/**
+ * Whether this run starts feed-go, and what Next's environment gains. Only a run that starts
+ * feed-go gets FEED_GO_LOCAL_URL (the proxy) and the Go-transport Flipt overrides; `off`, or Next's
+ * port already taken (Next would move to another port while feed-go's fallback and the proxy still
+ * named this one), leaves Next's environment exactly as it was. `proxyUrl` is the proxy's origin.
+ */
+export function planLaunch({ mode, portFree, port, appEnv, proxyUrl }) {
+  if (mode === 'off') return { startFeedGo: false, nextEnv: {} };
+  if (!portFree) {
+    return {
+      startFeedGo: false,
+      nextEnv: {},
+      message: `not started: port ${port} is in use, so Next would move to another port; free it or pass -p <port>`,
+    };
+  }
+  /** @type {Record<string, string>} */
+  const nextEnv = { FEED_GO_LOCAL_URL: proxyUrl };
+  const overrides = mergeFliptOverrides(appEnv.FLIPT_LOCAL_OVERRIDES);
+  if (overrides !== (appEnv.FLIPT_LOCAL_OVERRIDES ?? '')) nextEnv.FLIPT_LOCAL_OVERRIDES = overrides;
+  return { startFeedGo: true, nextEnv };
+}
+
+/**
+ * Polls feed-go's health. Until the first healthy answer it polls every `pollMs` and gives up
+ * (`onGaveUp`) after `startupMs`; once it has been healthy it never gives up: every change is reported
+ * (`onChange(true|false)`), polling every `steadyMs` while healthy and `pollMs` while not, so a
+ * recovered feed-go is routed to again. It stops when `isAlive()` is false or `stop()` is called.
+ * `markUnhealthy()` is the proxy's report of a failed hop. `schedule` / `now` are injectable.
+ */
+export function createHealthMonitor({
+  probe,
+  onChange,
+  onGaveUp = () => {},
+  isAlive = () => true,
+  now = Date.now,
+  schedule = (fn, ms) => {
+    setTimeout(fn, ms).unref();
+  },
+  startupMs = 60_000,
+  pollMs = 1000,
+  steadyMs = 5000,
+}) {
+  let healthy = false;
+  let everHealthy = false;
+  let stopped = false;
+  let started = 0;
+  const set = (ok) => {
+    if (ok === healthy) return;
+    healthy = ok;
+    if (ok) everHealthy = true;
+    onChange(ok);
+  };
+  const tick = async () => {
+    if (stopped || !isAlive()) return;
+    let ok = false;
+    try {
+      ok = await probe();
+    } catch {
+      ok = false;
+    }
+    if (stopped || !isAlive()) return;
+    set(ok);
+    if (!everHealthy && now() - started >= startupMs) {
+      stopped = true;
+      onGaveUp();
+      return;
+    }
+    schedule(tick, healthy ? steadyMs : pollMs);
+  };
+  return {
+    start() {
+      started = now();
+      return tick();
+    },
+    stop() {
+      stopped = true;
+    },
+    markUnhealthy() {
+      set(false);
+    },
+    get healthy() {
+      return healthy;
+    },
+  };
 }
 
 /**
@@ -276,29 +362,56 @@ async function fetchBuffer(fetchImpl, url, timeoutMs) {
  * The loopback proxy `FEED_GO_LOCAL_URL` names. Next's rewrite sends `/api/trpc-go/<p>` here as
  * `/api/trpc/<p>` (Host = this proxy, x-forwarded-host = the browser's host). It restores the
  * browser's Host (feed-go and Next both read the domain color from it) and sends the request to
- * feed-go while `feedGo()` returns its address, else — and whenever feed-go cannot be reached — to
- * Next's own `/api/trpc/<p>`, which is today's behaviour. `onFeedGoError` hears a failed feed-go hop.
+ * feed-go while `feedGo()` returns its address, else to Next's own `/api/trpc/<p>`, which is today's
+ * behaviour. A GET/HEAD (idempotent) is also re-sent to Next when feed-go cannot be reached
+ * (`onFeedGoError`) or answers 5xx (`onFeedGo5xx(status)`); any other method is not replayed.
  */
-export function createFeedGoProxy({ next, feedGo, onFeedGoError = () => {} }) {
+export function createFeedGoProxy({
+  next,
+  feedGo,
+  onFeedGoError = () => {},
+  onFeedGo5xx = () => {},
+}) {
   return http.createServer((req, res) => {
     const headers = { ...req.headers };
     if (headers['x-forwarded-host']) headers.host = headers['x-forwarded-host'];
-    const toNext = () => forward(req, res, next, headers, () => fail(res));
+    let sentToNext = false;
+    const toNext = () => {
+      if (sentToNext) return;
+      sentToNext = true;
+      forward(req, res, next, headers, () => fail(res));
+    };
     const target = feedGo();
     if (!target) return toNext();
     const replayable = req.method === 'GET' || req.method === 'HEAD';
-    forward(req, res, target, headers, (err) => {
-      onFeedGoError(err);
-      if (replayable && !res.headersSent) toNext();
-      else fail(res);
-    });
+    forward(
+      req,
+      res,
+      target,
+      headers,
+      (err) => {
+        if (sentToNext) return;
+        onFeedGoError(err);
+        if (replayable && !res.headersSent) toNext();
+        else fail(res);
+      },
+      (up) => {
+        if (!replayable || (up.statusCode ?? 0) < 500) return false;
+        up.resume();
+        onFeedGo5xx(up.statusCode);
+        toNext();
+        return true;
+      }
+    );
   });
 }
 
-function forward(req, res, { host, port }, headers, onError) {
+/** `intercept(upstreamResponse)` returning true takes the response over (nothing is written). */
+function forward(req, res, { host, port }, headers, onError, intercept = () => false) {
   const upstream = http.request(
     { host, port, method: req.method, path: req.url, headers },
     (up) => {
+      if (intercept(up)) return;
       res.writeHead(up.statusCode ?? 502, up.headers);
       up.pipe(res);
     }

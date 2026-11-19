@@ -37,17 +37,20 @@ feed-go gets only the variables it reads from the app's own `.env` chain (databa
 Redis URLs, the auth hub's issuer and JWKS, the domain and region settings and any `FEED_GO_*` you
 set), loopback listeners on free ports, and the local Next as its fallback. Next's
 `/api/trpc-go/<procedure>` rewrite then points at a loopback proxy that hands each request to feed-go
-while its `/healthz` answers, and to Next's own `/api/trpc/<procedure>` otherwise, so with feed-go
-missing, broken or exited the app behaves exactly as it did without it. In dev the launcher also
+while its `/healthz` answers (re-checked for as long as it runs, so a recovered feed-go is used
+again), and to Next's own `/api/trpc/<procedure>` otherwise; a GET feed-go answers with a 5xx is
+re-sent to Next too. So with feed-go missing, broken or exited the app behaves exactly as it did
+without it. In dev the launcher also
 switches the client's Go-transport flags on (`FLIPT_LOCAL_OVERRIDES` gets
 `feed-go-transport=on,feed-go-transport-model-getall=on` unless you name either key yourself), so a
 signed-in gallery feed actually reaches feed-go. feed-go is read-only here (write-back off) and answers
 nothing it has not ported, so what you see is still Node's answer for everything else.
 
-`FEED_GO_LOCAL` (real env or `.env`) picks the mode: unset or `auto` (binary, else `go build`),
-`binary`, `source` (always build this directory: use it when changing the Go code), or `off`
+`FEED_GO_LOCAL` (real env or `.env`) picks the mode: unset or `auto` (release binary, else
+`go build`), `source` (always build this directory: use it when changing the Go code), or `off`
 (`next dev` alone, today's behaviour; a `FEED_GO_LOCAL_URL` you set yourself, e.g. to a feed-go in
-Docker, is then left in place).
+Docker, is then left in place). If Next's port (`-p`, `PORT`, else 3000) is already taken, feed-go
+is skipped for that run, since Next would move to another port.
 
 Troubleshooting: every launcher line starts with `[feed-go]`.
 
@@ -56,8 +59,11 @@ Troubleshooting: every launcher line starts with `[feed-go]`.
 | `… ready; /api/trpc-go → feed-go`               | serving                                                                                                                                       |
 | `download of feed-go-v<x.y.z> failed: HTTP 404` | no release binaries for that tag yet (a maintainer runs the `feed-go release binaries` workflow on it); install Go or set `FEED_GO_LOCAL=off` |
 | `checksum mismatch …; refusing to run it`       | the download does not match `SHA256SUMS`; nothing was written. Retry; if it persists, report it                                               |
+| `not started: port <n> is in use …`             | something already listens on Next's port; free it or pass `-p <port>` (or use the dev-server daemon, which picks a free one)                  |
 | `not started: the app env has no …`             | the named variables are missing from your `.env` (values are never printed)                                                                   |
-| `exited (…)` / `unhealthy (…)`                  | feed-go stopped answering; `/api/trpc-go` is served by Next until `pnpm dev` restarts                                                         |
+| `unhealthy; … until it recovers`                | `/api/trpc-go` is served by Next until `/healthz` answers again                                                                               |
+| `exited (…)`                                    | feed-go stopped; `/api/trpc-go` is served by Next until `pnpm dev` restarts                                                                   |
+| `answered 5xx; re-sent to Next`                 | feed-go failed one request; Next answered it                                                                                                  |
 
 You are editing Node's `image.getImagesAsPostsInfinite` and see no change while signed in? That
 request is answered by feed-go: run with `FEED_GO_LOCAL=off`, or set

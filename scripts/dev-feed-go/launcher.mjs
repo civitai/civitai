@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // `pnpm dev`: `next dev` plus a local feed-go (apps/feed-go) behind /api/trpc-go.
 //
-// - FEED_GO_LOCAL (real env or .env): unset/auto | binary | source | off. `off` runs `next dev` alone,
-//   exactly as before (and leaves any FEED_GO_LOCAL_URL you set yourself in place).
+// - FEED_GO_LOCAL (real env or .env): unset/auto | source | off. `off` runs `next dev` alone,
+//   exactly as before (and leaves any FEED_GO_LOCAL_URL you set yourself in place). So does a
+//   Next port that is already taken (Next would move to another port; lib.mjs planLaunch).
 // - Otherwise a loopback proxy starts first and Next starts at once with FEED_GO_LOCAL_URL pointing
 //   at it (next.config.mjs rewrites /api/trpc-go/<p> there). The proxy sends each request to feed-go
 //   while feed-go is healthy, else to Next's own /api/trpc/<p>: if feed-go never comes up, or dies,
@@ -20,14 +21,16 @@ import net from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { isPortFree } from '../../.claude/skills/dev-server/scripts/port-probe.mjs';
 import {
   buildFeedGoEnv,
   createFeedGoProxy,
-  mergeFliptOverrides,
+  createHealthMonitor,
   missingRequired,
   nextPort,
   OS_VARS,
   parseVersion,
+  planLaunch,
   readAppEnv,
   resolveBinary,
   resolveMode,
@@ -45,22 +48,29 @@ if (warning) log(warning);
 const nextEnv = { ...process.env };
 let feedGoProc = null;
 let feedGoTarget = null; // { host, port } while healthy
-let healthy = false;
+let monitor = null;
 let proxy = null;
 let shuttingDown = false;
 
 if (mode !== 'off') {
   const port = nextPort(args, process.env);
-  proxy = createFeedGoProxy({
-    next: { host: 'localhost', port },
-    feedGo: () => feedGoTarget,
-    onFeedGoError: () => setHealthy(false, 'unreachable'),
-  });
-  const proxyPort = await listen(proxy);
-  nextEnv.FEED_GO_LOCAL_URL = `http://127.0.0.1:${proxyPort}`;
-  const overrides = mergeFliptOverrides(appEnv.FLIPT_LOCAL_OVERRIDES);
-  if (overrides !== (appEnv.FLIPT_LOCAL_OVERRIDES ?? '')) nextEnv.FLIPT_LOCAL_OVERRIDES = overrides;
-  startFeedGo(port).catch((err) => log(`not started (${err.message}); Next serves /api/trpc-go`));
+  const portFree = await isPortFree(port);
+  let proxyUrl = '';
+  if (portFree) {
+    proxy = createFeedGoProxy({
+      next: { host: 'localhost', port },
+      feedGo: () => feedGoTarget,
+      onFeedGoError: () => monitor?.markUnhealthy(),
+      onFeedGo5xx: (status) => log(`answered ${status}; re-sent to Next`),
+    });
+    proxyUrl = `http://127.0.0.1:${await listen(proxy)}`;
+  }
+  const plan = planLaunch({ mode, portFree, port, appEnv, proxyUrl });
+  if (plan.message) log(plan.message);
+  Object.assign(nextEnv, plan.nextEnv);
+  if (plan.startFeedGo) {
+    startFeedGo(port).catch((err) => log(`not started (${err.message}); Next serves /api/trpc-go`));
+  }
 }
 
 const nextBin = createRequire(join(root, 'package.json')).resolve('next/dist/bin/next');
@@ -98,10 +108,10 @@ async function startFeedGo(port) {
     return;
   }
 
-  const cacheDir = appEnv.FEED_GO_CACHE_DIR || join(root, 'node_modules/.cache/feed-go');
+  const cacheDir = join(root, 'node_modules/.cache/feed-go');
   let bin = null;
   let label = '';
-  if (mode === 'auto' || mode === 'binary') {
+  if (mode === 'auto') {
     const r = await resolveBinary({
       version,
       platform: process.platform,
@@ -111,7 +121,7 @@ async function startFeedGo(port) {
     if (r.ok) [bin, label] = [r.path, `v${version} (release binary, ${r.source})`];
     else log(r.reason);
   }
-  if (!bin && (mode === 'source' || mode === 'auto')) {
+  if (!bin) {
     if (hasGo()) {
       bin = await buildFromSource(version, cacheDir);
       label = `v${version}-dev (built from apps/feed-go)`;
@@ -129,47 +139,29 @@ async function startFeedGo(port) {
   prefix(feedGoProc.stderr);
   feedGoProc.on('error', (err) => log(`could not run ${bin}: ${err.message}`));
   feedGoProc.on('exit', (code, signal) => {
+    monitor?.stop();
     feedGoTarget = null;
     if (!shuttingDown) {
       log(`exited (${signal ?? `code ${code}`}); Next serves /api/trpc-go until pnpm dev restarts`);
     }
   });
-  watchHealth(internalPort, { host: '127.0.0.1', port: addrPort }, label);
-}
-
-function setHealthy(next, why, target, label) {
-  if (next === healthy) return;
-  healthy = next;
-  feedGoTarget = next ? target : null;
-  if (next) {
-    log(`${label} ready; /api/trpc-go → feed-go (FEED_GO_LOCAL=off to use Node only)`);
-  } else if (!shuttingDown) {
-    log(`unhealthy (${why}); /api/trpc-go → Next until it recovers`);
-  }
-}
-
-function watchHealth(internalPort, target, label) {
-  const deadline = Date.now() + 60_000;
-  const tick = async () => {
-    if (shuttingDown || !feedGoProc || feedGoProc.exitCode !== null) return;
-    let ok = false;
-    try {
-      const res = await fetch(`http://127.0.0.1:${internalPort}/healthz`, {
-        signal: AbortSignal.timeout(2000),
-      });
-      ok = res.ok;
-    } catch {
-      ok = false;
-    }
-    if (ok) setHealthy(true, '', target, label);
-    else if (healthy) setHealthy(false, 'healthz failed');
-    else if (Date.now() > deadline) {
-      log('no healthy /healthz within 60s; Next serves /api/trpc-go');
-      return;
-    }
-    setTimeout(tick, healthy ? 5000 : 1000).unref();
-  };
-  tick();
+  const target = { host: '127.0.0.1', port: addrPort };
+  monitor = createHealthMonitor({
+    probe: async () =>
+      (
+        await fetch(`http://127.0.0.1:${internalPort}/healthz`, {
+          signal: AbortSignal.timeout(2000),
+        })
+      ).ok,
+    isAlive: () => !shuttingDown && feedGoProc?.exitCode === null,
+    onChange: (ok) => {
+      feedGoTarget = ok ? target : null;
+      if (ok) log(`${label} ready; /api/trpc-go → feed-go (FEED_GO_LOCAL=off to use Node only)`);
+      else if (!shuttingDown) log('unhealthy; /api/trpc-go → Next until it recovers');
+    },
+    onGaveUp: () => log('no healthy /healthz within 60s; Next serves /api/trpc-go'),
+  });
+  monitor.start();
 }
 
 function hasGo() {

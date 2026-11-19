@@ -12,11 +12,13 @@ import {
   assetName,
   buildFeedGoEnv,
   createFeedGoProxy,
+  createHealthMonitor,
   expectedSha256,
   mergeFliptOverrides,
   missingRequired,
   nextPort,
   parseVersion,
+  planLaunch,
   readAppEnv,
   releaseUrls,
   resolveBinary,
@@ -79,6 +81,21 @@ describe('platform/arch → release asset', () => {
       expect(wf).toContain(target);
     }
     expect(wf).toContain('sha256sum feed-go-v* > SHA256SUMS');
+  });
+  it('the release is create-only, and only the non-PR publish job can write', () => {
+    const wf = readFileSync(join(REPO, '.github/workflows/feed-go-release.yml'), 'utf8');
+    // No path that replaces or adds assets to an existing release.
+    expect(wf).not.toMatch(/--clobber|gh release upload|gh release edit|gh release delete/);
+    expect(wf).toContain('gh release create "$TAG"');
+    // An existing release fails the job before create.
+    expect(wf).toMatch(/if gh release view "\$TAG"[^\n]*\n[^\n]*::error::[^\n]*\n\s*exit 1/);
+    // Exactly one `contents: write`, in the publish job, which never runs on a pull_request.
+    expect(wf.match(/contents: write/g)).toHaveLength(1);
+    const publish = wf.slice(wf.indexOf('\n  publish:'));
+    expect(publish).toContain('contents: write');
+    expect(publish).toContain("github.event_name != 'pull_request'");
+    expect(wf.slice(0, wf.indexOf('\n  publish:'))).not.toContain('contents: write');
+    expect(wf).toContain('persist-credentials: false');
   });
 });
 
@@ -218,14 +235,19 @@ describe('FEED_GO_LOCAL', () => {
     expect(resolveMode('false')).toEqual({ mode: 'off' });
     expect(resolveMode('0')).toEqual({ mode: 'off' });
   });
-  it('selects binary or source', () => {
-    expect(resolveMode('binary')).toEqual({ mode: 'binary' });
+  it('selects source', () => {
     expect(resolveMode('source')).toEqual({ mode: 'source' });
+  });
+  it('has no binary-only mode any more (treated as unknown, so off)', () => {
+    expect(resolveMode('binary')).toEqual({
+      mode: 'off',
+      warning: 'unknown FEED_GO_LOCAL=binary (auto|source|off)',
+    });
   });
   it('treats an unknown value as off, with a warning', () => {
     expect(resolveMode('of')).toEqual({
       mode: 'off',
-      warning: 'unknown FEED_GO_LOCAL=of (auto|binary|source|off)',
+      warning: 'unknown FEED_GO_LOCAL=of (auto|source|off)',
     });
   });
 });
@@ -352,6 +374,136 @@ describe("Next's port", () => {
   });
 });
 
+describe('what a run gives Next (planLaunch)', () => {
+  const PROXY = 'http://127.0.0.1:45001';
+  it('off: no feed-go, Next env untouched (no proxy URL, no Flipt overrides)', () => {
+    expect(
+      planLaunch({ mode: 'off', portFree: true, port: 3000, appEnv: {}, proxyUrl: PROXY })
+    ).toEqual({
+      startFeedGo: false,
+      nextEnv: {},
+    });
+  });
+  it("Next's port taken: no feed-go, Next env untouched, one line naming the port", () => {
+    expect(
+      planLaunch({ mode: 'auto', portFree: false, port: 3011, appEnv: {}, proxyUrl: '' })
+    ).toEqual({
+      startFeedGo: false,
+      nextEnv: {},
+      message:
+        'not started: port 3011 is in use, so Next would move to another port; free it or pass -p <port>',
+    });
+  });
+  it('auto and source: start feed-go; Next gets the proxy URL and the Flipt overrides', () => {
+    for (const mode of ['auto', 'source']) {
+      expect(
+        planLaunch({ mode, portFree: true, port: 3000, appEnv: {}, proxyUrl: PROXY }),
+        mode
+      ).toEqual({
+        startFeedGo: true,
+        nextEnv: {
+          FEED_GO_LOCAL_URL: PROXY,
+          FLIPT_LOCAL_OVERRIDES: 'feed-go-transport=on,feed-go-transport-model-getall=on',
+        },
+      });
+    }
+  });
+  it('leaves FLIPT_LOCAL_OVERRIDES alone when the developer already named both keys', () => {
+    const appEnv = {
+      FLIPT_LOCAL_OVERRIDES: 'feed-go-transport=off,feed-go-transport-model-getall=on',
+    };
+    expect(
+      planLaunch({ mode: 'auto', portFree: true, port: 3000, appEnv, proxyUrl: PROXY }).nextEnv
+    ).toEqual({
+      FEED_GO_LOCAL_URL: PROXY,
+    });
+  });
+  it('the launcher checks the port before it starts Next (seam: launcher.mjs order)', () => {
+    const src = readFileSync(join(REPO, 'scripts/dev-feed-go/launcher.mjs'), 'utf8');
+    const probe = src.indexOf('await isPortFree(port)');
+    expect(probe).toBeGreaterThan(-1);
+    expect(probe).toBeLessThan(src.indexOf('spawn(process.execPath, [nextBin'));
+  });
+});
+
+/** A health monitor driven by hand: each `step()` runs the next scheduled poll, advancing time. */
+function monitorHarness(results: boolean[], extra: { isAlive?: () => boolean } = {}) {
+  let t = 0;
+  const queue: { fn: () => Promise<void>; ms: number }[] = [];
+  const changes: boolean[] = [];
+  let gaveUp = 0;
+  const m = createHealthMonitor({
+    probe: async () => results.shift() ?? false,
+    onChange: (ok: boolean) => changes.push(ok),
+    onGaveUp: () => gaveUp++,
+    now: () => t,
+    schedule: (fn: () => Promise<void>, ms: number) => queue.push({ fn, ms }),
+    startupMs: 60_000,
+    pollMs: 1000,
+    steadyMs: 5000,
+    ...extra,
+  });
+  return {
+    m,
+    changes,
+    queue,
+    gaveUp: () => gaveUp,
+    now: () => t,
+    async step() {
+      const next = queue.shift();
+      if (!next) return false;
+      t += next.ms;
+      await next.fn();
+      return true;
+    },
+  };
+}
+
+describe('feed-go health monitoring', () => {
+  it('healthy → unhealthy → healthy: reports each change and keeps polling past the startup window', async () => {
+    // 1 healthy, then 90 failed polls (90 s, well past the 60 s startup window), then healthy again.
+    const h = monitorHarness([true, ...Array(90).fill(false), true]);
+    await h.m.start();
+    expect(h.changes).toEqual([true]);
+    expect(h.queue[0].ms).toBe(5000);
+    for (let i = 0; i < 91; i++) expect(await h.step()).toBe(true);
+    expect(h.now()).toBeGreaterThan(60_000);
+    expect(h.gaveUp()).toBe(0);
+    expect(h.changes).toEqual([true, false, true]);
+    expect(h.m.healthy).toBe(true);
+    expect(h.queue).toHaveLength(1); // still polling
+  });
+
+  it('never healthy within 60 s: gives up once, reports no change, stops polling', async () => {
+    const h = monitorHarness([]);
+    await h.m.start();
+    while (await h.step());
+    expect(h.gaveUp()).toBe(1);
+    expect(h.changes).toEqual([]);
+    expect(h.m.healthy).toBe(false);
+    expect(h.now()).toBe(60_000);
+  });
+
+  it('a failed proxy hop marks it unhealthy at once; the next healthy poll routes to it again', async () => {
+    const h = monitorHarness([true, true]);
+    await h.m.start();
+    h.m.markUnhealthy();
+    expect(h.changes).toEqual([true, false]);
+    await h.step();
+    expect(h.changes).toEqual([true, false, true]);
+  });
+
+  it('stops when feed-go is no longer alive', async () => {
+    let alive = true;
+    const h = monitorHarness([true, true, true], { isAlive: () => alive });
+    await h.m.start();
+    alive = false;
+    await h.step();
+    expect(h.queue).toHaveLength(0);
+    expect(h.changes).toEqual([true]);
+  });
+});
+
 describe('the /api/trpc-go dev proxy', () => {
   type Hit = { who: string; path: string; host: string };
   const servers: http.Server[] = [];
@@ -432,5 +584,113 @@ describe('the /api/trpc-go dev proxy', () => {
     expect(await get(proxyPort, PATH)).toBe('next');
     expect(hits).toEqual([{ who: 'next', path: PATH, host: 'civitai-dev.blue:3000' }]);
     expect(onFeedGoError).toHaveBeenCalledTimes(1);
+  });
+
+  const statusServer = async (who: string, status: number, hits: Hit[]) =>
+    listen(
+      http.createServer((req, res) => {
+        hits.push({ who, path: req.url!, host: req.headers.host! });
+        res.statusCode = status;
+        res.end(who);
+      })
+    );
+  const send = (port: number, method: string, path: string) =>
+    new Promise<{ status: number; body: string }>((done, fail) => {
+      const r = http.request(
+        {
+          host: '127.0.0.1',
+          port,
+          path,
+          method,
+          headers: { 'x-forwarded-host': 'civitai-dev.blue:3000' },
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (d) => (body += d));
+          res.on('end', () => done({ status: res.statusCode!, body }));
+        }
+      );
+      r.on('error', fail);
+      r.end(method === 'POST' ? '{}' : undefined);
+    });
+
+  it('re-sends a GET that feed-go answers 5xx to Next, and says so; a 4xx is passed through', async () => {
+    const hits: Hit[] = [];
+    const nextPort = await upstream('next', hits);
+    const goPort = await statusServer('feed-go', 503, hits);
+    const onFeedGo5xx = vi.fn();
+    const proxyPort = await listen(
+      createFeedGoProxy({
+        next: { host: '127.0.0.1', port: nextPort },
+        feedGo: () => ({ host: '127.0.0.1', port: goPort }),
+        onFeedGo5xx,
+      })
+    );
+    expect(await send(proxyPort, 'GET', PATH)).toEqual({ status: 200, body: 'next' });
+    expect(hits.map((x) => x.who)).toEqual(['feed-go', 'next']);
+    expect(hits[1]).toEqual({ who: 'next', path: PATH, host: 'civitai-dev.blue:3000' });
+    expect(onFeedGo5xx).toHaveBeenCalledWith(503);
+
+    const hits4: Hit[] = [];
+    const go4 = await statusServer('feed-go', 404, hits4);
+    const proxy4 = await listen(
+      createFeedGoProxy({
+        next: { host: '127.0.0.1', port: nextPort },
+        feedGo: () => ({ host: '127.0.0.1', port: go4 }),
+      })
+    );
+    expect(await send(proxy4, 'GET', PATH)).toEqual({ status: 404, body: 'feed-go' });
+    expect(hits4.map((x) => x.who)).toEqual(['feed-go']);
+  });
+
+  it('does not replay a POST that feed-go answers 5xx', async () => {
+    const hits: Hit[] = [];
+    const nextPort = await upstream('next', hits);
+    const goPort = await statusServer('feed-go', 500, hits);
+    const onFeedGo5xx = vi.fn();
+    const proxyPort = await listen(
+      createFeedGoProxy({
+        next: { host: '127.0.0.1', port: nextPort },
+        feedGo: () => ({ host: '127.0.0.1', port: goPort }),
+        onFeedGo5xx,
+      })
+    );
+    expect(await send(proxyPort, 'POST', PATH)).toEqual({ status: 500, body: 'feed-go' });
+    expect(hits.map((x) => x.who)).toEqual(['feed-go']);
+    expect(onFeedGo5xx).not.toHaveBeenCalled();
+  });
+
+  it('routes to feed-go only while the health monitor says healthy (monitor + proxy together)', async () => {
+    const hits: Hit[] = [];
+    const nextPort = await upstream('next', hits);
+    const goPort = await upstream('feed-go', hits);
+    let target: { host: string; port: number } | null = null;
+    // Wired as launcher.mjs does: the monitor's onChange is the only writer of the target.
+    const results = [false, true, false];
+    let t = 0;
+    const queue: (() => Promise<void>)[] = [];
+    const mon = createHealthMonitor({
+      probe: async () => results.shift() ?? false,
+      onChange: (ok: boolean) => {
+        target = ok ? { host: '127.0.0.1', port: goPort } : null;
+      },
+      now: () => t,
+      schedule: (fn: () => Promise<void>, ms: number) => {
+        queue.push(async () => {
+          t += ms;
+          await fn();
+        });
+      },
+    });
+    const proxyPort = await listen(
+      createFeedGoProxy({ next: { host: '127.0.0.1', port: nextPort }, feedGo: () => target })
+    );
+    await mon.start(); // not yet healthy
+    expect(await get(proxyPort, PATH)).toBe('next');
+    await queue.shift()!(); // healthy
+    expect(await get(proxyPort, PATH)).toBe('feed-go');
+    await queue.shift()!(); // unhealthy again
+    expect(await get(proxyPort, PATH)).toBe('next');
+    expect(hits.map((x) => x.who)).toEqual(['next', 'feed-go', 'next']);
   });
 });
