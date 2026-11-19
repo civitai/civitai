@@ -12,8 +12,8 @@ const READER_CONTEXT = JSON.stringify({
   core: { decode_identity_assertions: false },
 });
 
-// shortcut: the reader shares one wasm instance on the request thread. A trap can leave it broken
-// until the pod restarts, and a hung read is only cut off here. A worker thread would fix both.
+// shortcut: one shared wasm instance, read on the request thread. Move reads to a worker thread
+// if verify shows up in latency or error rates.
 const READ_TIMEOUT_MS = 10_000;
 
 function loadC2pa() {
