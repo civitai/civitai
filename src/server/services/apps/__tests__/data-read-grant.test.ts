@@ -1,6 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  decideCollectionRead,
+  type DataReader,
+} from '~/server/services/apps/data-read-grant';
 
 /**
  * The collection-read predicate, directly: each basis (own, grant) and each refusal, reached
@@ -18,7 +22,7 @@ const h = vi.hoisted(() => ({
   assertRunEnabled: vi.fn(),
 }));
 vi.mock('~/server/services/apps/storage-import-grant.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/services/apps/storage-import-grant.service')>()),
+  ...(await importOriginal<object>()),
   getStorageImportGrant: h.getStorageImportGrant,
 }));
 vi.mock('~/server/services/blocks/scope-grant.service', () => ({
@@ -27,9 +31,6 @@ vi.mock('~/server/services/blocks/scope-grant.service', () => ({
 vi.mock('~/server/services/blocks/block-token-access.service', () => ({
   assertAppBlocksEnabledForTokenUser: h.assertRunEnabled,
 }));
-
-const { decideCollectionRead } = await import('~/server/services/apps/data-read-grant');
-type DataReader = import('~/server/services/apps/data-read-grant').DataReader;
 
 const USER_ID = 5813;
 const SOURCE_CLIENT = 'oc-src-41d7';
