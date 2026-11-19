@@ -42,6 +42,21 @@ describe('buildRumExperimentAttributes', () => {
     expect(other.exp_feed_go_transport_model_get_all).toBe('true');
   });
 
+  it('carries the image.getInfinite transport cohort under its exact Loki field name', () => {
+    // A wire string: the image.getInfinite Go-vs-Node RUM comparison splits on
+    // `session_attr_exp_feed_go_transport_infinite`. Its own flag, independent of the other two.
+    const on = buildRumExperimentAttributes({
+      feedGoTransport: false,
+      feedGoTransportModelGetAll: false,
+      feedGoTransportInfinite: true,
+    });
+    expect(on.exp_feed_go_transport_infinite).toBe('true');
+    expect(on.exp_feed_go_transport).toBe('false');
+    expect(on.exp_feed_go_transport_model_get_all).toBe('false');
+    const off = buildRumExperimentAttributes({ feedGoTransport: true });
+    expect(off.exp_feed_go_transport_infinite).toBe('false');
+  });
+
   it('treats a missing flag as off ("false"), never undefined/absent', () => {
     const attrs = buildRumExperimentAttributes({});
     expect(attrs.exp_gen_tab_defer_view).toBe('false');
