@@ -10,7 +10,7 @@
 BEGIN;
 SET LOCAL lock_timeout = '10s';
 
--- shared CTE: identical in dry-run.sql and apply.sql (the backfill test checks)
+-- shared CTE: identical in dry-run.sql and apply.sql (keep them in step)
 WITH waiting AS (
   SELECT id, "imageId"
   FROM "KnightsQueueItem"

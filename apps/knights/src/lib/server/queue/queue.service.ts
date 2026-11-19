@@ -489,11 +489,9 @@ async function escalate(
 }
 
 /**
- * A rating with no consensus at the last stage anyone serves is re-rated instead of going to the Inquisitors: to the level most
- * of that stage's counted votes gave (`mostVotedLevel`), down as well as up, so the pushed-down check does not apply. A Blocked
- * pick is a moderator's decision and goes to the Inquisitors, as a Blocked consensus does. Every vote on the item is set aside
- * (`inconclusive`, so XP at cast only), and the item is left `Resolved` and unwritten for `settleResolved`, the write-back every
- * settled rating takes. The caller sends only an item with a counted vote at its stage.
+ * Re-rates a no-consensus rating to its most-voted level, down as well as up (the pushed-down check is skipped). A Blocked pick
+ * goes to the Inquisitors. Leaves the item Resolved and unwritten for `settleResolved`; the caller guarantees a counted vote at
+ * its stage.
  */
 async function rerate(
   trx: Transaction<DB>,
@@ -1058,9 +1056,8 @@ export async function applyPendingResolutions(
 }
 
 /**
- * Moves items whose stage window lapsed. An item with votes is handed up to the next stage someone can serve; at the end of the path
- * a rating is re-rated (`rerate`) when its stage has at least its quorum of counted votes (`votesNeededAt`), else closes as `expired`,
- * unless those votes pick Blocked, which goes to the Inquisitors as `blocked` either way.
+ * Moves items whose stage window lapsed. An item with votes is handed up to the next stage someone can serve. At the end of the
+ * path a rating is re-rated, or closes as `expired` below quorum (a Blocked pick goes to the Inquisitors).
  * An item with no counted vote (a held player's weighs 0; an earlier stage's does not count) at its stage may have had no one to answer
  * it, so it gets one more window at the same stage, until two stage windows after it entered the stage. After that it closes as
  * `expired`: unvoted overflow must not become moderator work. At a stage nobody serves there is no extension; such an item is handed up

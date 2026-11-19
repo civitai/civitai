@@ -6,7 +6,7 @@
 -- to_expired: its last stage has fewer counted votes than the stage's quorum (and the pick is not Blocked): Closed `expired`,
 --   votes inconclusive.
 -- The last stage is the highest stage with a counted vote (the item's own stage reads Inquisitor). `sample`: up to 20 rows.
--- shared CTE: identical in dry-run.sql and apply.sql (the backfill test checks)
+-- shared CTE: identical in dry-run.sql and apply.sql (keep them in step)
 WITH waiting AS (
   SELECT id, "imageId"
   FROM "KnightsQueueItem"

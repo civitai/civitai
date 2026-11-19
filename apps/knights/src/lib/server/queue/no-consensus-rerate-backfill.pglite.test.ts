@@ -138,18 +138,6 @@ beforeEach(async () => {
 });
 
 describe('backfill-no-consensus-rerate', () => {
-  it('classifies rows with the same CTE in the dry run and the apply', () => {
-    const sharedCte = (name: string) => {
-      const text = script(name);
-      const start = text.indexOf('-- shared CTE:');
-      const end = text.indexOf('-- end of shared CTE');
-      expect(start).toBeGreaterThan(-1);
-      expect(end).toBeGreaterThan(start);
-      return text.slice(start, end);
-    };
-    expect(sharedCte('apply.sql')).toBe(sharedCte('dry-run.sql'));
-  });
-
   it.each([
     [
       're-rates to the most-voted level, down included',

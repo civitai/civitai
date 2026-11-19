@@ -2217,6 +2217,42 @@ describe('no consensus at the end of the path', () => {
     expect(applyConsensus).not.toHaveBeenCalled();
   });
 
+  it('still hands a non-rating question to the Inquisitors as no-consensus, split or lapsed, and writes nothing', async () => {
+    for (let u = 1; u <= 4; u++) await active(u, 'Paladin');
+    await image(10, 4);
+    await image(11, 4);
+    const split = await item(10, { minRank: 'Paladin', question: 'knights.test.bool' });
+    const answers = ['yes', 'no', 'yes', 'no'];
+    for (let i = 0; i < 3; i++) await vote(i + 1, split, answers[i]);
+    expect((await vote(4, split, answers[3])).status).toBe('inquisitor');
+    // One vote, below the Paladin quorum: a rating would close as expired.
+    const lapsed = await item(11, {
+      minRank: 'Paladin',
+      question: 'knights.test.bool',
+      expires: PAST,
+    });
+    await vote(1, lapsed, 'yes');
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 0,
+      toInquisitor: 1,
+      extended: 0,
+      expired: 0,
+      rerated: 0,
+    });
+
+    for (const id of [split, lapsed]) {
+      expect(await itemRow(id)).toMatchObject({
+        status: 'Inquisitor',
+        minRank: 'Inquisitor',
+        escalationReason: 'no-consensus',
+        reason: null,
+        resolvedValue: null,
+      });
+      expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
+    }
+    expect(applyConsensus).not.toHaveBeenCalled();
+  });
+
   it('closes a lapsed stage below its quorum as expired, with no write-back', async () => {
     for (let u = 1; u <= 2; u++) await active(u, 'Templar');
     await image(10, 8);
