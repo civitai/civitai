@@ -26,7 +26,7 @@ import {
 } from '~/server/schema/user-profile.schema';
 import { publishedImageWhere } from '~/server/selectors/image.selector';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { ImageIngestionStatus, ModelModifier } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { servableProfilePicture } from '~/server/services/profile-picture.servable';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
@@ -290,8 +290,6 @@ export const assertShowcaseItemsOwned = async ({
   if (addedItems.some((item) => !allowedTypes.includes(item.entityType)))
     throw throwBadRequestError(`Only ${allowedTypes.join(', ')} items can be added to a showcase`);
 
-  if (isModerator) return;
-
   const idsOf = (entityType: ShowcaseItemSchema['entityType']) => [
     ...new Set(
       addedItems.filter((item) => item.entityType === entityType).map((item) => item.entityId)
@@ -300,6 +298,18 @@ export const assertShowcaseItemsOwned = async ({
   const imageIds = idsOf('Image');
   const modelIds = idsOf('Model');
   const articleIds = idsOf('Article');
+
+  // Moderators included: a taken-down model is shown to no visitor, so it never joins a showcase.
+  if (
+    modelIds.length &&
+    // primary: a takedown moments ago must already be refused.
+    (await dbWrite.model.count({
+      where: { id: { in: modelIds }, mode: ModelModifier.TakenDown },
+    }))
+  )
+    throw throwBadRequestError('A taken-down model cannot be showcased');
+
+  if (isModerator) return;
 
   // Primary, not replica: an image posted moments ago is the one most likely to be showcased.
   const [ownedImages, ownedModels, ownedArticles] = await Promise.all([
@@ -493,7 +503,8 @@ export const updateUserProfile = async ({
   if (profile.showcaseItems)
     await assertShowcaseItemsOwned({
       userId,
-      isModerator,
+      // A moderator may curate another user's showcase, never fill their own with others' items.
+      isModerator: isModerator && sessionUserId !== userId,
       showcaseItems: profile.showcaseItems,
       currentShowcaseItems: (current.profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
     });

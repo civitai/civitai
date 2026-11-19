@@ -1,4 +1,5 @@
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
+import { modelNotWithheldSql } from '~/server/utils/model-withheld';
 import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -292,7 +293,6 @@ import {
   ImageIngestionStatus,
   JobQueueType,
   MediaType,
-  ModelModifier,
   NewOrderRankType,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
@@ -5515,12 +5515,14 @@ export const getEntityCoverImage = async ({
   // A mature image on a restricted base model is its uploader's alone.
   const baseModelAllowed = imageNotRestrictedSql({ viewerId: signedIn ? viewerId : null });
 
-  // A taken-down model's images are its owner's and moderators' alone. Also true with no model
-  // (a NULL mode), so the image and post arms keep images on no model version.
-  const modelNotWithheld = Prisma.sql`(
-    m.mode IS DISTINCT FROM ${ModelModifier.TakenDown}::"ModelModifier"
-    OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
-  )`;
+  // A taken-down model's images are its owner's and moderators' alone.
+  const modelNotWithheld = modelNotWithheldSql({
+    mode: Prisma.raw('m.mode'),
+    ownerId: Prisma.raw('m."userId"'),
+    signedIn,
+    viewerId,
+    isModerator,
+  });
 
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.

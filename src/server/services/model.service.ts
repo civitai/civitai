@@ -1,4 +1,5 @@
 import { deletePostRows } from '@civitai/db-queries/content-deletion';
+import { modelNotWithheldSql } from '~/server/utils/model-withheld';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
@@ -547,6 +548,7 @@ export const getModelsRaw = async ({
   eventDecorationViewer,
   faceBrowsingLevel,
   coverage,
+  includeWithheld,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -595,6 +597,12 @@ export const getModelsRaw = async ({
    * audience-blind answer.
    */
   coverage?: CoverageAudience;
+  /**
+   * Keep taken-down models listed for every viewer: the public v1 API documents them as listed
+   * with images dropped. Everywhere else they are their owner's and moderators' alone. A sibling
+   * of `input` so it can never arrive from parsed query params.
+   */
+  includeWithheld?: boolean;
 }) => {
   // Ahead of every early empty return below, including the Meilisearch no-hits one: the point of
   // throwing rather than falling back is that the misuse is legible, and an empty page hides it.
@@ -794,6 +802,17 @@ export const getModelsRaw = async ({
   if (!archived) {
     AND.push(
       Prisma.sql`(${pSql}."mode" IS NULL OR ${pSql}."mode" != ${ModelModifier.Archived}::"ModelModifier")`
+    );
+  }
+  if (!includeWithheld) {
+    AND.push(
+      modelNotWithheldSql({
+        mode: Prisma.sql`${pSql}."mode"`,
+        ownerId: Prisma.raw('mm."userId"'),
+        signedIn: !!userId,
+        viewerId: userId,
+        isModerator,
+      })
     );
   }
 
@@ -6870,6 +6889,8 @@ export async function getModelsWithVersions({
     ignoreBrowsingAddons,
     ownerUserId,
     publicVersionsOnly,
+    // Only the public v1 API calls this, which keeps taken-down models listed.
+    includeWithheld: true,
   });
 
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
