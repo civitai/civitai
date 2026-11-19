@@ -88,16 +88,28 @@ describe('platform/arch → release asset', () => {
   // request must never get a token that can publish. Read structurally, so a reformat stays green.
   it('the release is create-only, and only the non-PR publish job can write', () => {
     type Step = { uses?: string; run?: string; with?: Record<string, unknown> };
-    type Job = { if?: string; permissions?: Record<string, string>; steps?: Step[] };
+    type Perms = string | Record<string, string> | undefined;
+    type Job = { if?: string; permissions?: Perms; steps?: Step[] };
     const wf = parse(readFileSync(join(REPO, '.github/workflows/feed-go-release.yml'), 'utf8')) as {
-      permissions?: Record<string, string>;
+      permissions?: Perms;
       jobs: Record<string, Job>;
     };
-    expect(wf.permissions?.contents).not.toBe('write');
-    const writers = Object.entries(wf.jobs)
-      .filter(([, j]) => j.permissions?.contents === 'write')
-      .map(([name]) => name);
-    expect(writers).toEqual(['publish']);
+    // Every permissions block is an explicit map of read/none, except publish's contents: write.
+    // A string form (write-all, read-all) or a job with no block (which inherits the top level) is
+    // refused, so no other job, and no new one, can get a write token.
+    const grants = (perms: Perms, where: string) => {
+      expect(typeof perms, `${where} permissions must be a map`).toBe('object');
+      return Object.entries(perms as Record<string, string>);
+    };
+    for (const [scope, level] of grants(wf.permissions, 'top-level')) {
+      expect(['read', 'none'], `top-level ${scope}`).toContain(level);
+    }
+    for (const [name, job] of Object.entries(wf.jobs)) {
+      for (const [scope, level] of grants(job.permissions, name)) {
+        if (name === 'publish' && scope === 'contents') expect(level).toBe('write');
+        else expect(['read', 'none'], `${name} ${scope}`).toContain(level);
+      }
+    }
     expect(wf.jobs.publish.if).toContain("github.event_name != 'pull_request'");
 
     const runs = Object.values(wf.jobs).flatMap((j) => (j.steps ?? []).map((s) => s.run ?? ''));
@@ -108,6 +120,7 @@ describe('platform/arch → release asset', () => {
     // The create step refuses an existing release before it creates one.
     const create = runs.find((r) => r.includes('gh release create'));
     expect(create).toBeDefined();
+    expect(create).not.toMatch(/if\s+!\s*gh release view/);
     const view = create!.indexOf('gh release view');
     expect(view).toBeGreaterThan(-1);
     expect(view).toBeLessThan(create!.indexOf('gh release create'));
@@ -441,8 +454,8 @@ describe('what a run gives Next (planLaunch)', () => {
     });
   });
   // If Next started first it would take the port, isPortFree would then always say "taken", and
-  // feed-go would silently never start for anyone. planLaunch covers the decision; this pins that
-  // the launcher asks before it spawns Next.
+  // feed-go would never start for anyone (only a misleading "port is in use" line). planLaunch
+  // covers the decision; this pins that the launcher asks before it spawns Next.
   it('the launcher checks the port before it starts Next (seam: launcher.mjs order)', () => {
     const src = readFileSync(join(REPO, 'scripts/dev-feed-go/launcher.mjs'), 'utf8');
     const probe = src.indexOf('await isPortFree(port)');
