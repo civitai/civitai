@@ -99,7 +99,7 @@ func TestOfficialModelsRefreshWritesUnderTheLock(t *testing.T) {
 		entry bool
 	}{{"absent", false}, {"expired", true}} {
 		t.Run(c.name, func(t *testing.T) {
-			e := newOfficialEnv(&MissCompute{WriteBack: true})
+			e := newOfficialEnv(&MissCompute{WriteBack: AllWrites()})
 			if c.entry {
 				e.putEntry(time.Hour)
 			}
@@ -129,7 +129,7 @@ func TestOfficialModelsLockHeld(t *testing.T) {
 			want  []OfficialModel
 		}{{"expired entry", true, cachedList}, {"no entry", false, []OfficialModel{}}} {
 			t.Run(c.name, func(t *testing.T) {
-				e := newOfficialEnv(&MissCompute{WriteBack: writeBack})
+				e := newOfficialEnv(&MissCompute{WriteBack: writeSet(writeBack)})
 				if c.entry {
 					e.putEntry(time.Hour)
 				}
@@ -201,7 +201,7 @@ func TestOfficialModelsWithoutComputation(t *testing.T) {
 // page), nothing written, the lock released; counted as an error.
 func TestOfficialModelsLookupFailure(t *testing.T) {
 	obs := &observed{}
-	e := newOfficialEnv(&MissCompute{WriteBack: true, Observe: obs.observe})
+	e := newOfficialEnv(&MissCompute{WriteBack: AllWrites(), Observe: obs.observe})
 	e.fail = true
 	_, err := e.run(context.Background())
 	if got := fallback.Reason(err); got != "official-models-miss-failed" {
@@ -215,7 +215,7 @@ func TestOfficialModelsLookupFailure(t *testing.T) {
 
 // A cache read that fails is fetchThroughCache's fail-open path: the replica answers.
 func TestOfficialModelsReadFailureFetches(t *testing.T) {
-	e := newOfficialEnv(&MissCompute{WriteBack: true})
+	e := newOfficialEnv(&MissCompute{WriteBack: AllWrites()})
 	e.r.Err = testkit.ErrDown
 	got, err := e.run(context.Background())
 	if err != nil || !reflect.DeepEqual(got, fromReplica) || e.queries != 1 {
@@ -251,7 +251,7 @@ func TestOfficialModelsMalformedEntry(t *testing.T) {
 // even with write-back on: no lock, no write, not observed.
 func TestOfficialModelsUnderPresence(t *testing.T) {
 	obs := &observed{}
-	e := newOfficialEnv(&MissCompute{WriteBack: true, Observe: obs.observe})
+	e := newOfficialEnv(&MissCompute{WriteBack: AllWrites(), Observe: obs.observe})
 	rec := &PresenceProbe{}
 	got, err := e.run(WithPresence(context.Background(), rec))
 	if err != nil || !reflect.DeepEqual(got, fromReplica) {

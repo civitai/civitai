@@ -2,6 +2,7 @@ import { PGlite, type Transaction } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { logToAxiom } from '~/server/logging/client';
 import type * as RedisCaches from '~/server/redis/caches';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -71,7 +72,7 @@ beforeAll(async () => {
       "imageId" int NOT NULL, "modelVersionId" int NOT NULL, strength real, detected boolean,
       PRIMARY KEY ("imageId", "modelVersionId")
     );
-    CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, "modelRestricted" boolean NOT NULL DEFAULT false);
+    CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, "modelRestricted" boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 4);
     -- What get_image_resources() would derive from each image's meta.
     CREATE TABLE detected_resources (
       id int, modelversionid int, name text, hash text, strength real, detected boolean
@@ -162,7 +163,7 @@ describe('createImageResources', () => {
 describe('flagImagesOnRestrictedVersions', () => {
   beforeEach(() =>
     db.exec(`
-      INSERT INTO "Image" VALUES (1, 7, false), (2, 7, false), (3, NULL, false), (4, 8, true);
+      INSERT INTO "Image" VALUES (1, 7, false, 4), (2, 7, false, 1), (3, NULL, false, 4), (4, 8, true, 4);
       INSERT INTO "ImageResourceNew" VALUES
         (1, ${RESTRICTED_VERSION}, NULL, false), (2, ${RESTRICTED_VERSION}, NULL, false),
         (3, ${OPEN_VERSION}, NULL, false), (4, ${RESTRICTED_VERSION}, NULL, false);
@@ -175,7 +176,7 @@ describe('flagImagesOnRestrictedVersions', () => {
       imageIds: [1, 3, 4],
     });
 
-    expect(result).toEqual({ flagged: 1, postIds: [7] });
+    expect(result).toEqual({ flagged: 1, postIds: [7], imageIds: [1], matureImageIds: [1] });
     expect(await restrictedIds()).toEqual([1, 4]);
   });
 
@@ -184,15 +185,73 @@ describe('flagImagesOnRestrictedVersions', () => {
       {
         flagged: 2,
         postIds: [7],
+        imageIds: [1, 2],
+        // Image 2 is PG: restricted, but not hidden by the restriction.
+        matureImageIds: [1],
       }
     );
     expect(await restrictedIds()).toEqual([1, 2, 4]);
+  });
+
+  it('takes the images it flags out of the image queues', async () => {
+    dbMock.dbWrite.$queryRaw.mockClear();
+    await flagImagesOnRestrictedVersions({ modelVersionIds: [RESTRICTED_VERSION], imageIds: [1] });
+    // Not awaited by the write path, so wait for the queue removal it starts.
+    await vi.waitFor(() => {
+      const thumbnailRefresh = dbMock.dbWrite.$queryRaw.mock.calls.find((call) =>
+        (call[0] as unknown as string[]).join('').includes("'parentId'")
+      );
+      const values = (thumbnailRefresh ?? [])
+        .slice(1)
+        .flatMap((v) => ((v as { values?: unknown[] })?.values ?? [v]) as unknown[]);
+      expect(values).toContain(1);
+    });
+  });
+
+  it('logs, by count, an image queue removal that fails twice, and still returns the flag result', async () => {
+    const real = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation(((...call: unknown[]) =>
+      (call[0] as string[]).join('').includes("'parentId'")
+        ? Promise.reject(new Error('db down'))
+        : real(...(call as Parameters<typeof real>))) as never);
+    const result = await flagImagesOnRestrictedVersions({
+      modelVersionIds: [RESTRICTED_VERSION],
+      imageIds: [1],
+    });
+    await vi.waitFor(() =>
+      expect(logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Image queue removal failed', failedBatches: 1 }),
+        'webhooks'
+      )
+    );
+    dbMock.dbWrite.$queryRaw.mockImplementation(real);
+    expect(result).toMatchObject({ flagged: 1, imageIds: [1] });
+  });
+
+  it('keeps a PG image the restriction does not hide in the image queues on the write path', async () => {
+    dbMock.dbWrite.$queryRaw.mockClear();
+    await flagImagesOnRestrictedVersions({
+      modelVersionIds: [RESTRICTED_VERSION],
+      imageIds: [1, 2],
+    });
+    await vi.waitFor(() => {
+      const refresh = dbMock.dbWrite.$queryRaw.mock.calls.find((call) =>
+        (call[0] as unknown as string[]).join('').includes("'parentId'")
+      );
+      const values = (refresh ?? [])
+        .slice(1)
+        .flatMap((v) => ((v as { values?: unknown[] })?.values ?? [v]) as unknown[]);
+      expect(values).toContain(1);
+      expect(values).not.toContain(2);
+    });
   });
 
   it('leaves images alone when none of the versions are restricted', async () => {
     expect(await flagImagesOnRestrictedVersions({ modelVersionIds: [OPEN_VERSION] })).toEqual({
       flagged: 0,
       postIds: [],
+      imageIds: [],
+      matureImageIds: [],
     });
     expect(await restrictedIds()).toEqual([4]);
   });
@@ -202,6 +261,6 @@ describe('flagImagesOnRestrictedVersions', () => {
 
     await expect(
       flagImagesOnRestrictedVersions({ modelVersionIds: [RESTRICTED_VERSION], imageIds: [1] })
-    ).resolves.toEqual({ flagged: 0, postIds: [] });
+    ).resolves.toEqual({ flagged: 0, postIds: [], imageIds: [], matureImageIds: [] });
   });
 });

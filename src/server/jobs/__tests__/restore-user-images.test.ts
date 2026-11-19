@@ -3,8 +3,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const {
   mockDbWrite,
   mockUnblock,
-  mockLogToAxiom,
-  mockSafeError,
   mockSysRedis,
   mockResetNsfwLevel,
   mockQueueSearchIndex,
@@ -12,8 +10,6 @@ const {
 } = vi.hoisted(() => ({
   mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
   mockUnblock: vi.fn(),
-  mockLogToAxiom: vi.fn(async () => undefined),
-  mockSafeError: vi.fn((e: unknown) => ({ message: (e as Error).message })),
   mockSysRedis: { sAdd: vi.fn(), sMembers: vi.fn(), sRem: vi.fn() },
   mockResetNsfwLevel: vi.fn(async () => undefined),
   mockQueueSearchIndex: vi.fn(async () => undefined),
@@ -21,10 +17,6 @@ const {
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbWrite, dbWrite: mockDbWrite }));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: mockLogToAxiom,
-  safeError: mockSafeError,
-}));
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSysRedis,
   REDIS_SYS_KEYS: { SYSTEM: { PENDING_IMAGE_RESTORES: 'system:pending-image-restores' } },
@@ -42,7 +34,7 @@ vi.mock('~/server/services/account-deletion-images', async (importOriginal) => {
 });
 vi.mock('~/server/jobs/job', () => ({ createJob: (_n: string, _c: string, fn: unknown) => fn }));
 
-import { restoreUserImages, RESTORE_USERS_PER_RUN } from '~/server/jobs/restore-user-images';
+import { runRestoreUserImages, RESTORE_USERS_PER_RUN } from '~/server/jobs/restore-user-images';
 
 /**
  * The suite stands in a tiny in-memory Postgres and Redis for the job. The owner gate is
@@ -52,35 +44,46 @@ import { restoreUserImages, RESTORE_USERS_PER_RUN } from '~/server/jobs/restore-
  * the real `readPendingImageRestores`/`clearPendingImageRestore`, so an id is only gone from it
  * because the job removed it.
  */
-type UserRow = { id: number; deletedAt: Date | null };
+type UserRow = { id: number; deletedAt: Date | null; bannedAt?: Date | null };
 
 let users: UserRow[] = [];
 let pendingSet: (string | Buffer)[] = [];
 
 const EXISTS_SELECT = /SELECT EXISTS\s*\(([\s\S]*?)\)\s*AS\s+"?(\w+)"?/;
 
+const BATCH_SELECT = /^\s*SELECT u\.id FROM "User" u WHERE ([\s\S]*)$/;
+
+// Every predicate is applied, and one this does not recognise is rejected rather than assumed,
+// so a gate that widens its scope cannot pass by relying on the harness to narrow it back.
+function parseOwnerPredicates(where: string, values: unknown[]) {
+  const params = [...values];
+  return where.split(/\s+AND\s+/).map((clause) => {
+    const args = params.splice(0, (clause.match(/\?/g) ?? []).length);
+    if (/^\s*u\.id = \?/.test(clause)) return (row: UserRow) => row.id === args[0];
+    if (/^\s*u\.id = ANY\(\?\)/.test(clause))
+      return (row: UserRow) => (args[0] as number[]).includes(row.id);
+    if (/^\s*u\."deletedAt" IS NOT NULL/.test(clause))
+      return (row: UserRow) => row.deletedAt != null;
+    if (/^\s*u\."deletedAt" IS NULL/.test(clause)) return (row: UserRow) => row.deletedAt == null;
+    if (/^\s*u\."bannedAt" IS NULL/.test(clause)) return (row: UserRow) => row.bannedAt == null;
+    throw new Error(`unrecognized owner-gate predicate: ${clause.trim()}`);
+  });
+}
+
 function evaluateOwnerGate(sql: string, values: unknown[]) {
+  const batch = BATCH_SELECT.exec(sql);
+  if (batch) {
+    const predicates = parseOwnerPredicates(batch[1], values);
+    return users.filter((row) => predicates.every((holds) => holds(row))).map(({ id }) => ({ id }));
+  }
+
   const match = EXISTS_SELECT.exec(sql);
   if (!match) throw new Error(`unexpected read: ${sql}`);
 
   const [, body, alias] = match;
   if (!/FROM "User" u/.test(body)) throw new Error(`the gate must read "User": ${body}`);
 
-  const params = [...values];
-  // Every predicate is applied, and one this does not recognise is rejected rather than assumed,
-  // so a gate that widens its scope cannot pass by relying on the harness to narrow it back.
-  const predicates = body
-    .slice(body.indexOf('WHERE') + 5)
-    .split(/\s+AND\s+/)
-    .map((clause) => {
-      const args = params.splice(0, (clause.match(/\?/g) ?? []).length);
-      if (/^\s*u\.id = \?/.test(clause)) return (row: UserRow) => row.id === args[0];
-      if (/^\s*u\."deletedAt" IS NOT NULL/.test(clause))
-        return (row: UserRow) => row.deletedAt != null;
-      if (/^\s*u\."deletedAt" IS NULL/.test(clause)) return (row: UserRow) => row.deletedAt == null;
-      throw new Error(`unrecognized owner-gate predicate: ${clause.trim()}`);
-    });
-
+  const predicates = parseOwnerPredicates(body.slice(body.indexOf('WHERE') + 5), values);
   return [{ [alias]: users.some((row) => predicates.every((holds) => holds(row))) }];
 }
 
@@ -104,9 +107,10 @@ beforeEach(() => {
   mockUnblock.mockResolvedValue({ unblocked: 3, stillBlocked: 0, skipped: 0, drained: true });
 });
 
-type RunResult = { pending: number; finished: number; unblocked: number; reDeleted: number };
+type RunResult = { pending: number; finished: number; unblocked: number; dropped: number };
 
-const run = () => (restoreUserImages as unknown as () => Promise<RunResult>)();
+const refreshPictures = vi.fn(async (_userIds: number[]) => undefined);
+const run = (): Promise<RunResult> => runRestoreUserImages(refreshPictures);
 
 const restored = (id: number): UserRow => ({ id, deletedAt: null });
 
@@ -146,7 +150,18 @@ describe('restoreUserImages', () => {
     // reclaims it; `restoreUser` re-adds it if the account genuinely comes back.
     expect(mockSysRedis.sRem).toHaveBeenCalledWith('system:pending-image-restores', '7');
     expect(pendingSet).toEqual([]);
-    expect(result).toMatchObject({ reDeleted: 1, finished: 0 });
+    expect(result).toMatchObject({ dropped: 1, finished: 0 });
+  });
+
+  it('drops an account banned since its restore instead of reversing it', async () => {
+    users = [{ id: 7, deletedAt: null, bannedAt: new Date('2026-07-29T00:00:00Z') }];
+    pendingSet = ['7'];
+
+    const result = await run();
+
+    expect(mockUnblock).not.toHaveBeenCalled();
+    expect(pendingSet).toEqual([]);
+    expect(result).toMatchObject({ dropped: 1, finished: 0 });
   });
 
   it('does not query again for an account it dropped as re-deleted', async () => {
@@ -157,7 +172,7 @@ describe('restoreUserImages', () => {
     const second = await run();
 
     expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(second).toMatchObject({ pending: 0, reDeleted: 0 });
+    expect(second).toMatchObject({ pending: 0, dropped: 0 });
   });
 
   it('still takes on the accounts behind one it drops as re-deleted', async () => {
@@ -169,7 +184,7 @@ describe('restoreUserImages', () => {
     // The drop is a `continue`, so getting it wrong strands every account queued behind it.
     expect(mockUnblock).toHaveBeenCalledWith(8);
     expect(pendingSet).toEqual([]);
-    expect(result).toMatchObject({ reDeleted: 1, finished: 1 });
+    expect(result).toMatchObject({ dropped: 1, finished: 1 });
   });
 
   it('drops the account off the worklist once its reversal drains', async () => {
@@ -210,10 +225,11 @@ describe('restoreUserImages', () => {
     pendingSet = ['7'];
 
     await run();
+    const readsAfterFirst = mockDbWrite.$queryRaw.mock.calls.length;
     const second = await run();
 
     expect(mockUnblock).toHaveBeenCalledTimes(1);
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(readsAfterFirst);
     expect(second).toMatchObject({ pending: 0, finished: 0, unblocked: 0 });
   });
 
@@ -237,7 +253,9 @@ describe('restoreUserImages', () => {
     await run();
 
     // Unfiltered, `NaN` is carried all the way into the gate's parameter list on every run.
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    const params = mockDbWrite.$queryRaw.mock.calls.flatMap(([, ...values]) => values).flat();
+    expect(params).toContain(7);
+    expect(params).not.toContainEqual(NaN);
     expect(mockUnblock).toHaveBeenCalledWith(7);
   });
 
@@ -251,9 +269,6 @@ describe('restoreUserImages', () => {
     expect(mockUnblock).toHaveBeenCalledWith(8);
     // The failure stays queued, and the account behind it is not stranded by it.
     expect(pendingSet).toEqual(['7']);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'restore-user-images', userId: 7 })
-    );
   });
 
   it('caps how many accounts a single run takes on', async () => {
@@ -265,5 +280,87 @@ describe('restoreUserImages', () => {
 
     expect(mockUnblock).toHaveBeenCalledTimes(RESTORE_USERS_PER_RUN);
     expect(pendingSet).toHaveLength(5);
+  });
+
+  describe('the profile-picture refresh after an unblock', () => {
+    it('refreshes, once after the loop, every account that had images unblocked', async () => {
+      users = [restored(7), restored(8)];
+      pendingSet = ['7', '8'];
+
+      await run();
+
+      // The grace block cleared a User.image naming one of these images; the refresh restores it.
+      expect(refreshPictures).toHaveBeenCalledTimes(1);
+      expect(refreshPictures).toHaveBeenCalledWith([7, 8]);
+    });
+
+    it('also refreshes after a pass cut short by its batch ceiling', async () => {
+      users = [restored(7)];
+      pendingSet = ['7'];
+      mockUnblock.mockResolvedValueOnce({
+        unblocked: 500,
+        stillBlocked: 0,
+        skipped: 0,
+        drained: false,
+      });
+
+      await run();
+
+      expect(refreshPictures).toHaveBeenCalledWith([7]);
+    });
+
+    it('leaves out an account deleted again, and keeps a drained one and one whose reversal threw', async () => {
+      users = [
+        restored(7),
+        { id: 8, deletedAt: new Date('2026-07-29T00:00:00Z') },
+        restored(9),
+        restored(10),
+      ];
+      pendingSet = ['7', '8', '9', '10'];
+      mockUnblock
+        .mockResolvedValueOnce({ unblocked: 0, stillBlocked: 0, skipped: 0, drained: true })
+        .mockRejectedValueOnce(new Error('deadlock detected'));
+
+      await run();
+
+      // 7 unblocked nothing this run but drained: a crash after an earlier run's unblock is caught here.
+      expect(refreshPictures).toHaveBeenCalledTimes(1);
+      // 9's reversal threw after batches that may have committed.
+      expect(refreshPictures).toHaveBeenCalledWith([7, 9, 10]);
+    });
+
+    it('leaves out an account deleted again after its unblock ran', async () => {
+      users = [restored(7), restored(8)];
+      pendingSet = ['7', '8'];
+      mockUnblock.mockImplementationOnce(async () => {
+        users[0] = { id: 7, deletedAt: new Date('2026-07-29T00:00:00Z') };
+        return { unblocked: 3, stillBlocked: 0, skipped: 0, drained: true };
+      });
+
+      await run();
+
+      // Its new grace block clears the picture; a refresh now would put it back.
+      expect(refreshPictures).toHaveBeenCalledWith([8]);
+    });
+
+    it('clears a worklist entry only after the refresh ran', async () => {
+      users = [restored(7)];
+      pendingSet = ['7'];
+      let pendingAtRefresh: string[] = [];
+      refreshPictures.mockImplementationOnce(async () => {
+        pendingAtRefresh = pendingSet.map(decoded);
+      });
+
+      await run();
+
+      expect(pendingAtRefresh).toEqual(['7']);
+      expect(pendingSet).toEqual([]);
+    });
+
+    it('refreshes nothing on a run that unblocks nothing', async () => {
+      await run();
+
+      expect(refreshPictures).not.toHaveBeenCalled();
+    });
   });
 });

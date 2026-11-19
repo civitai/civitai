@@ -18,6 +18,7 @@ import {
   getServableProfilePictures,
   type RawQueryClient,
 } from '~/server/services/profile-picture.sql';
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
 import { heldUserSql } from '@civitai/shared/held-media';
 import {
@@ -234,7 +235,7 @@ async function pullComics(db: RawQueryClient, filters: Prisma.Sql[]) {
           'id', u.id,
           'username', u.username,
           'deletedAt', u."deletedAt",
-          'image', u.image,
+          'image', ${Prisma.raw(fallbackUserImageColumn)},
           'profilePictureId', u."profilePictureId"
         ) "user"
       FROM "User" u

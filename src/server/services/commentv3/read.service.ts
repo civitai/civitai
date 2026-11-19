@@ -1,3 +1,4 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { sql } from 'kysely';
 import type { RawBuilder } from 'kysely';
 import { constants } from '~/server/common/constants';
@@ -97,7 +98,7 @@ const PINNED_AT = sql`(CASE WHEN c."deletedAt" IS NULL THEN c."pinnedAt" END)`;
 
 const COLUMNS = sql`c.id, c."parentId", c."replyToId", c.depth, c.content, c."createdAt", c."updatedAt",
   ${PINNED_AT} AS "pinnedAt", c.hidden, c."tosViolation", c.locked, c."reactionCount", c."deletedAt", c."userId",
-  u.username, u."deletedAt" AS "userDeletedAt", u.image AS "userImage"`;
+  u.username, u."deletedAt" AS "userDeletedAt", ${sql.raw(fallbackUserImageColumn)} AS "userImage"`;
 
 /** Whether a row's ToS state and author let this viewer see it. `alias` names the CommentV3 row. */
 const allowedTo = (v: CommentV3Viewer, alias: string) => {

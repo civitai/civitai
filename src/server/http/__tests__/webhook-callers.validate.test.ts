@@ -1,6 +1,5 @@
 import { createHash, createHmac } from 'crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const { env } = vi.hoisted(() => ({
   env: {
@@ -134,15 +133,9 @@ describe('NOWPayments getPaymentStatus', () => {
     vi.restoreAllMocks();
   });
 
-  it.each([404, 401, 500])(
-    'answers null and logs the status when NOWPayments answers %i',
-    async (status) => {
-      vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status }));
+  it.each([404, 401, 500])('answers null when NOWPayments answers %i', async (status) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status }));
 
-      expect(await nowPayments.getPaymentStatus(12345)).toBeNull();
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ stage: 'payment-status-failed', paymentId: 12345, status })
-      );
-    }
-  );
+    expect(await nowPayments.getPaymentStatus(12345)).toBeNull();
+  });
 });

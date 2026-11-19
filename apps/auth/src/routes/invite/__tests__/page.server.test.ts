@@ -40,6 +40,12 @@ vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
 vi.mock('$lib/server/metrics', () => ({ loginsTotal: { inc: vi.fn() } }));
 
 import { actions, load } from '../+page.server';
+import { SystemAccountSignInError } from '$lib/server/auth/users';
+import { lastMethodCookieName } from '$lib/server/auth/last-method';
+
+const cookies = { get: vi.fn(), set: vi.fn() };
+const lastMethodWrites = () =>
+  cookies.set.mock.calls.filter(([name]) => name === lastMethodCookieName());
 
 async function accept(token = 'raw-token') {
   const body = new FormData();
@@ -48,7 +54,7 @@ async function accept(token = 'raw-token') {
   try {
     return await actions.default({
       request,
-      cookies: {},
+      cookies,
       url: new URL('https://auth.civitai.com/invite'),
     } as never);
   } catch (e) {
@@ -74,9 +80,12 @@ describe('accepting an invite', () => {
     const result = await accept();
     expect(result).toMatchObject({ status: 303, location: INVITE.returnUrl });
     expect(mocks.consumeInviteToken).toHaveBeenCalledWith('raw-token');
-    expect(mocks.findOrCreateUserByEmail).toHaveBeenCalledWith(INVITE.email, { allowCreate: true });
+    expect(mocks.findOrCreateUserByEmail).toHaveBeenCalledWith(INVITE.email, {
+      allowCreate: true,
+      lastMethod: null,
+    });
     expect(mocks.establishSession).toHaveBeenCalledWith(
-      {},
+      cookies,
       { id: 42 },
       {
         returnUrl: INVITE.returnUrl,
@@ -118,6 +127,25 @@ describe('accepting an invite', () => {
     expect(await accept()).toMatchObject({ status: 403 });
     expect(mocks.consumeInviteToken).not.toHaveBeenCalled();
     expect(mocks.establishSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('remembering the sign-in method', () => {
+  it('records email once the session is established', async () => {
+    await accept();
+    expect(lastMethodWrites().map(([, value]) => value)).toEqual(['email']);
+  });
+
+  it('records nothing when the session cannot be established', async () => {
+    mocks.establishSession.mockRejectedValue(new Error('refused'));
+    expect(await accept()).toMatchObject({ message: 'refused' });
+    expect(lastMethodWrites()).toEqual([]);
+  });
+
+  it('records nothing when the account may not sign in', async () => {
+    mocks.findOrCreateUserByEmail.mockRejectedValue(new SystemAccountSignInError());
+    expect(await accept()).toMatchObject({ status: 403 });
+    expect(lastMethodWrites()).toEqual([]);
   });
 });
 

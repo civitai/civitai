@@ -27,6 +27,7 @@
     parseAiToolkitOptions,
   } from '@civitai/shared/training-options';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
+  import { getTrainingLicenseTerms } from '@civitai/shared/generation-license';
   import { isAbort, uploadFile } from '$lib/upload';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
@@ -168,6 +169,51 @@
   // Green (membership) Buzz can't pay for NSFW training, so spending it requires an explicit attestation.
   let attestSfw = $state(false);
   const needsAttestation = $derived(buzzMode.value === 'green');
+
+  const runLicenses = $derived([
+    ...new Map(
+      selection.runs.flatMap((run) => {
+        const ecosystem = runVersion(run).ecosystem;
+        const terms = getTrainingLicenseTerms(ecosystem);
+        return terms ? [[terms.key, { ecosystem, terms }] as const] : [];
+      })
+    ).values(),
+  ]);
+  const licenseStatus = debouncedQuote(
+    () =>
+      runLicenses.length > 0 && backend().pendingLicenses
+        ? runLicenses.map((license) => license.ecosystem).join()
+        : null,
+    () =>
+      backend()
+        .pendingLicenses!()
+        .then(
+          (pending) => ({ pending }),
+          () => ({ pending: null })
+        ),
+    0
+  );
+  // Unknown (a failed check) asks nothing here: the submit's own refusal names the licence.
+  const licensesToAccept = $derived(
+    runLicenses.filter((license) => licenseStatus.value?.pending?.includes(license.ecosystem))
+  );
+  const checkingLicenses = $derived(
+    runLicenses.length > 0 && !!backend().pendingLicenses && licenseStatus.value === undefined
+  );
+  let acceptingLicense = $state(false);
+  let licenseError = $state('');
+  async function acceptLicense(ecosystem: string) {
+    acceptingLicense = true;
+    licenseError = '';
+    try {
+      await backend().acceptLicense!(ecosystem);
+      licenseStatus.retry();
+    } catch (e) {
+      licenseError = e instanceof Error ? e.message : 'Could not accept the licence.';
+    } finally {
+      acceptingLicense = false;
+    }
+  }
   $effect(() => {
     if (!needsAttestation) attestSfw = false;
   });
@@ -523,6 +569,8 @@
       (needsAttestation && !attestSfw) ||
       !!imagesProblem ||
       uploadingImage ||
+      checkingLicenses ||
+      licensesToAccept.length > 0 ||
       holdsStart(readiness)
   );
   const readinessNote = $derived(
@@ -1109,6 +1157,38 @@
         </label>
       </div>
     {/if}
+
+    {#each licensesToAccept as { ecosystem, terms } (terms.key)}
+      <div
+        role="note"
+        class="mt-3 flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
+      >
+        <span class="font-semibold text-dark-0">{terms.title}</span>
+        <span>{terms.intro}</span>
+        <ul class="list-disc pl-5">
+          {#each terms.restrictions as line (line)}
+            <li>{line}</li>
+          {/each}
+        </ul>
+        <span>
+          Read the
+          <a href={terms.licenseUrl} target="_blank" rel="noopener noreferrer" class="underline">
+            {terms.licenseName}</a
+          >.
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={acceptingLicense}
+          onclick={() => acceptLicense(ecosystem)}
+        >
+          I agree to these terms
+        </Button>
+        {#if licenseError}
+          <span class="text-red-400">{licenseError}</span>
+        {/if}
+      </div>
+    {/each}
 
     <Button
       class="mt-4 w-full"

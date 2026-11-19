@@ -1,4 +1,6 @@
 import { Paper } from '@mantine/core';
+import clsx from 'clsx';
+import { useEffect, useRef } from 'react';
 import type { DetailText } from '~/components/Image/Detail/detail-items';
 import { textGuardId } from '~/components/Image/Detail/detail-items';
 import { BlurredText, TextPendingReview } from '~/components/Image/DetailV2/BlurredText';
@@ -12,17 +14,29 @@ export function PostTextBlock({
   text,
   postId,
   userId,
+  linked,
 }: {
   text: DetailText;
   postId: number;
   userId?: number;
+  /** The text the page's `?text=` names: scrolled into view and outlined. */
+  linked?: boolean;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (linked) ref.current?.scrollIntoView({ block: 'center' });
+  }, [linked]);
+
   return (
     <Paper
+      ref={ref}
       radius="md"
       shadow="md"
       mx="auto"
-      className="relative w-full overflow-hidden p-6 md:p-10"
+      className={clsx(
+        'relative w-full overflow-hidden p-6 md:p-10',
+        linked && 'outline outline-2 outline-blue-5'
+      )}
       style={{ maxWidth: Math.min(MAX_POST_IMAGES_WIDTH, 760) }}
       data-testid="post-text-block"
       data-text-id={text.id}

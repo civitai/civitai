@@ -10,6 +10,9 @@ import {
   type Dialect,
 } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { generateSecretHash } from '@civitai/auth/secret-hash';
+import { TokenScope } from '@civitai/auth/token-scope';
+import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 
 /**
  * The app-builder grant, at the ONE place it is derived: the hub's session producer, run for real
@@ -22,7 +25,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * that ignores the status or keys on the wrong user.
  */
 
-const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
+const { dbHandle } = vi.hoisted(() => {
+  // The real token hash needs a salt; the userinfo case looks its ApiKey up by that hash.
+  vi.stubEnv('NEXTAUTH_SECRET', 'pglite-test-secret');
+  return { dbHandle: { current: null as unknown } };
+});
 vi.mock('../../db/db', () => ({
   get db() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
@@ -32,6 +39,7 @@ vi.mock('../../db/db', () => ({
 vi.mock('../../redis', () => ({ getRedis: () => null, getSysRedis: () => null }));
 
 const { produceSessionUser } = await import('../session-producer');
+const { GET: userinfo } = await import('../../../../routes/api/auth/oauth/userinfo/+server');
 
 const MIGRATION = join(
   __dirname,
@@ -53,7 +61,13 @@ const PRELUDE = `
   );
   CREATE TABLE "Image" (
     "id" INTEGER PRIMARY KEY, "url" TEXT, "needsReview" TEXT, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
-    "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "blockedFor" TEXT
+    "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "blockedFor" TEXT,
+    "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false, "metadata" JSONB NOT NULL DEFAULT '{}',
+    "scanJobs" JSONB, "modelRestricted" BOOLEAN NOT NULL DEFAULT false, "userId" INTEGER
+  );
+  CREATE TABLE "ApiKey" (
+    "key" TEXT PRIMARY KEY, "userId" INTEGER, "type" TEXT, "expiresAt" TIMESTAMP,
+    "tokenScope" INTEGER NOT NULL, "tokenScopeWide" BIGINT
   );
   CREATE TABLE "UserReferral" ("id" INTEGER PRIMARY KEY, "userId" INTEGER);
   CREATE TABLE "Product" ("id" TEXT PRIMARY KEY, "metadata" JSONB);
@@ -230,5 +244,141 @@ describe('produceSessionUser — a blocked profile picture', () => {
       [BUILDER]
     );
     expect((await produceSessionUser(BUILDER))?.image).toBeUndefined();
+  });
+});
+
+describe('produceSessionUser — an unscanned profile picture', () => {
+  const NAMING = 'https://cdn.example/PIC.JPG/width=96';
+  const picture = async (ingestion: string, nsfwLevel: number, image: string) => {
+    await pg.query(
+      `INSERT INTO "Image" ("id", "url", "ingestion", "nsfwLevel") VALUES (1, 'pic.jpg', $1, $2)`,
+      [ingestion, nsfwLevel]
+    );
+    await pg.query(`UPDATE "User" SET "profilePictureId" = 1, "image" = $2 WHERE "id" = $1`, [
+      BUILDER,
+      image,
+    ]);
+  };
+
+  it('🔴 a Pending picture, with User.image naming it, is not the session image', async () => {
+    await picture('Pending', 0, NAMING);
+    expect((await produceSessionUser(BUILDER))?.image).toBeUndefined();
+  });
+
+  it('the same picture once Scanned is the session image (control)', async () => {
+    await picture('Scanned', 1, NAMING);
+    expect((await produceSessionUser(BUILDER))?.image).toBe('pic.jpg');
+  });
+
+  it('🔴 a Pending picture leaves a User.image that names another picture', async () => {
+    await picture('Pending', 0, 'legacy.jpg');
+    expect((await produceSessionUser(BUILDER))?.image).toBe('legacy.jpg');
+  });
+
+  it.each([
+    { state: 'Pending at a rated level', set: `"ingestion" = 'Pending'`, image: undefined },
+    { state: 'Scanned but unrated', set: `"nsfwLevel" = 0`, image: undefined },
+    {
+      state: 'mature on a restricted model',
+      set: `"nsfwLevel" = 4, "modelRestricted" = true`,
+      image: undefined,
+    },
+    { state: 'PG on a restricted model', set: `"modelRestricted" = true`, image: 'pic.jpg' },
+    {
+      state: 'locked, Pending',
+      set: `"ingestion" = 'Pending', "nsfwLevelLocked" = true`,
+      image: 'pic.jpg',
+    },
+    {
+      state: 'locked, Error',
+      set: `"ingestion" = 'Error', "nsfwLevelLocked" = true`,
+      image: 'pic.jpg',
+    },
+    {
+      state: 'locked, Error from a Knights vote',
+      set: `"ingestion" = 'Error', "nsfwLevelLocked" = true,
+       "metadata" = jsonb_build_object('nsfwLevelReason', '${KNIGHTS_VOTE_NSFW_LEVEL_REASON}')`,
+      image: undefined,
+    },
+    {
+      state: 'locked, Error from a permanent scan failure',
+      set: `"ingestion" = 'Error', "nsfwLevelLocked" = true,
+       "scanJobs" = '{"error": {"failureClass": "permanent"}}'`,
+      image: undefined,
+    },
+  ])('a picture $state gives the session image $image', async ({ set, image }) => {
+    await picture('Scanned', 1, NAMING);
+    await pg.query(`UPDATE "Image" SET ${set} WHERE "id" = 1`);
+    expect((await produceSessionUser(BUILDER))?.image).toBe(image);
+  });
+
+  describe('the OAuth userinfo picture claim', () => {
+    const TOKEN = 'civitai_userinfo_test';
+    const claims = async () => {
+      await pg.query(
+        `INSERT INTO "ApiKey" ("key", "userId", "type", "tokenScope") VALUES ($1, $2, 'Access', $3)`,
+        [generateSecretHash(TOKEN), BUILDER, TokenScope.UserRead]
+      );
+      const response = await userinfo({
+        request: new Request('https://auth.civitai.com/api/auth/oauth/userinfo', {
+          headers: { authorization: `Bearer ${TOKEN}` },
+        }),
+      } as never);
+      expect(response.status).toBe(200);
+      return (await response.json()) as { picture?: string | null };
+    };
+
+    it('🔴 is absent for a Pending picture', async () => {
+      await picture('Pending', 0, NAMING);
+      expect((await claims()).picture ?? null).toBeNull();
+    });
+
+    it('is the url of a Scanned picture (control)', async () => {
+      await picture('Scanned', 1, NAMING);
+      expect((await claims()).picture).toBe('pic.jpg');
+    });
+  });
+});
+
+describe("produceSessionUser — a User.image naming another of the user's own images", () => {
+  const OLD_KEY = '3f6e2a10-9b4c-4d7e-8a21-6c0b5d9e1f42';
+  const staleKey = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${OLD_KEY.toUpperCase()}/width=96`;
+  // The profile picture is still scanning, so the session falls back to User.image.
+  const seed = async (oldImage: string, image: string, owner = BUILDER) => {
+    await pg.query(
+      `INSERT INTO "Image" ("id", "url", "ingestion", "nsfwLevel", "userId") VALUES
+         (1, 'pic.jpg', 'Pending', 0, $1), (2, $2, 'Scanned', 1, $3)`,
+      [BUILDER, OLD_KEY, owner]
+    );
+    await pg.query(`UPDATE "Image" SET ${oldImage} WHERE "id" = 2`);
+    await pg.query(`UPDATE "User" SET "profilePictureId" = 1, "image" = $2 WHERE "id" = $1`, [
+      BUILDER,
+      image,
+    ]);
+  };
+
+  it.each([
+    ['blocked', `"blockedFor" = 'tos'`],
+    ['held', `"needsReview" = 'csam'`],
+    ['unscanned', `"ingestion" = 'Pending', "nsfwLevel" = 0`],
+  ])('🔴 is not the session image when that image is %s', async (_state, set) => {
+    await seed(set, staleKey);
+    expect((await produceSessionUser(BUILDER))?.image).toBeUndefined();
+  });
+
+  it('is the session image when that image is servable (control)', async () => {
+    await seed(`"nsfwLevel" = 1`, staleKey);
+    expect((await produceSessionUser(BUILDER))?.image).toBe(staleKey);
+  });
+
+  it("is the session image when the blocked image is another user's (owner-scoped)", async () => {
+    await seed(`"blockedFor" = 'tos'`, staleKey, NEIGHBOUR);
+    expect((await produceSessionUser(BUILDER))?.image).toBe(staleKey);
+  });
+
+  it('leaves an external avatar url, even with a blocked upload in the history', async () => {
+    const external = 'https://avatars.githubusercontent.com/u/1?v=4';
+    await seed(`"blockedFor" = 'tos'`, external);
+    expect((await produceSessionUser(BUILDER))?.image).toBe(external);
   });
 });

@@ -46,6 +46,7 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../image-moderation-effects', () => ({
   applyBlockSideEffects,
+  writeBlockBlocklistEntry: vi.fn(async () => undefined),
   applyAcceptSideEffects: vi.fn(async () => undefined),
   applyVisibilitySideEffects: vi.fn(async () => undefined),
   refundAppealFee: vi.fn(async () => undefined),

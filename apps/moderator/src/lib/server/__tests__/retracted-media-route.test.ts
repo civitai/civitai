@@ -27,6 +27,12 @@ vi.mock('$lib/server/retracted-media', () => ({
   retractedMediaEnabled: () => enabled.on,
 }));
 vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
+// Off here; the covered view's routes are csam-view-routes.test.ts.
+vi.mock('$lib/server/csam-view', () => ({
+  COVERED_REFUSED: 'covered-refused',
+  coveredViewEnabled: () => false,
+  getCoveredRetractedMedia: vi.fn(),
+}));
 vi.mock('$lib/server/held-media', () => ({
   HELD_MEDIA_PAGE: '/images/csam',
   recordHeldServe: () => undefined,

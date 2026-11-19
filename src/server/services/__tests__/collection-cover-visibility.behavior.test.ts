@@ -470,7 +470,11 @@ describe('upsertCollection with no cover sent', () => {
     replica.stale = false;
   });
 
-  const edit = async (storedCover: number, isModerator = false) => {
+  const edit = async (
+    storedCover: number,
+    isModerator = false,
+    coverViewer?: { id?: number; isModerator?: boolean }
+  ) => {
     vi.mocked(dbMock.dbWrite.collection.findUnique).mockResolvedValue({
       id: COLLECTION,
       name: 'old',
@@ -497,6 +501,7 @@ describe('upsertCollection with no cover sent', () => {
         isModerator,
         isMember: true,
       } as never,
+      coverViewer,
     });
     expect(dbMock.dbWrite.collection.update).toHaveBeenCalledTimes(1);
     return vi.mocked(dbMock.dbWrite.collection.update).mock.calls[0]?.[0]?.data?.image;
@@ -512,6 +517,10 @@ describe('upsertCollection with no cover sent', () => {
 
   it("removes the editor's own hidden image when they clear it", async () => {
     expect(await edit(OWNER_REMOVED)).toEqual({ disconnect: true });
+  });
+
+  it("keeps the editor's own hidden image when they read it without the owner's view", async () => {
+    expect(await edit(OWNER_REMOVED, false, {})).toBeUndefined();
   });
 
   it('lets staff remove a hidden cover', async () => {

@@ -5,6 +5,8 @@ import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as RegionBlocking from '~/server/utils/region-blocking';
 import { buildSearchRules } from '~/server/meilisearch/search-token';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 const { mockGetServerAuthSession, mockGetFeatureFlagsLazy, mockRateLimit, mockRegionBlocked } =
   vi.hoisted(() => ({
@@ -42,7 +44,7 @@ vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
 const decodeRules = (token: string) =>
   JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8')).searchRules;
 
-async function requestToken(query: Record<string, string> = {}, headers = {}) {
+async function requestToken(query: Record<string, string> = {}, headers = {}, context?: object) {
   const res = {
     statusCode: 200,
     status: vi.fn().mockReturnThis(),
@@ -59,6 +61,7 @@ async function requestToken(query: Record<string, string> = {}, headers = {}) {
     cookies: {},
     query,
     socket: { remoteAddress: '10.0.0.1' },
+    context,
   } as unknown as NextApiRequest;
   // The wrapper swaps response methods on entry; keep the spies from before the call.
   const spies = {
@@ -154,6 +157,26 @@ describe('GET /api/search/token where the site caps nothing', () => {
       buildSearchRules({ ...moderator, browsingLevelCap: null })
     );
   });
+
+  it.each([
+    ['a scoped key', TokenScope.ModelsRead, false],
+    ['a full-access key', TokenScope.Full, true],
+  ])(
+    'gives a moderator on %s moderator rules only when it is full access',
+    async (_, tokenScope, asModerator) => {
+      mockGetServerAuthSession.mockResolvedValue({ user: moderator });
+      const context = {
+        tokenScope,
+        apiKeyId: 1,
+        apiKeyType: ApiKeyType.User,
+        subject: { type: 'apiKey', id: 1 },
+      };
+      const { body } = await requestToken({}, {}, context);
+      expect(decodeRules(body.token)).toEqual(
+        buildSearchRules({ ...moderator, isModerator: asModerator, browsingLevelCap: null })
+      );
+    }
+  );
 
   it('answers { token: null } while no signing key is configured', async () => {
     mockGetServerAuthSession.mockResolvedValue({ user: signedIn });

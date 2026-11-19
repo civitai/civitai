@@ -5904,6 +5904,12 @@ export type ServiceDealFile = {
   deliverySize: number | null;
   repackedAt: Timestamp | null;
   /**
+   * A video Final only: the ETag and version of the held object its scan copy was made from. A
+   * download refuses unless the object still has them, and serves that version.
+   */
+  scannedEtag: string | null;
+  scannedVersionId: string | null;
+  /**
    * An Attachment only: when the buyer confirmed the rights and likeness attestations for it.
    */
   attestedAt: Timestamp | null;
@@ -5931,6 +5937,14 @@ export type ServiceDealFileEntry = {
   scanStatus: Generated<ServiceDealFileScanStatus>;
   failReason: string | null;
   createdAt: Generated<Timestamp>;
+};
+export type ServiceDealFilePurge = {
+  id: Generated<number>;
+  fileId: number;
+  dealId: number;
+  size: number;
+  etag: string | null;
+  purgedAt: Generated<Timestamp>;
 };
 export type ServiceDealTransaction = {
   id: Generated<number>;
@@ -7330,6 +7344,7 @@ export type DB = {
   ServiceDealEvent: ServiceDealEvent;
   ServiceDealFile: ServiceDealFile;
   ServiceDealFileEntry: ServiceDealFileEntry;
+  ServiceDealFilePurge: ServiceDealFilePurge;
   ServiceDealTransaction: ServiceDealTransaction;
   ServiceDisputeReview: ServiceDisputeReview;
   ServiceOffering: ServiceOffering;

@@ -2,8 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ImageService from '~/server/services/image.service';
 import type * as UserService from '~/server/services/user.service';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
-const { getUserCosmetics } = vi.hoisted(() => ({ getUserCosmetics: vi.fn() }));
+const { getUserCosmetics, getEntityCoverImage } = vi.hoisted(() => ({
+  getUserCosmetics: vi.fn(),
+  getEntityCoverImage: vi.fn(async () => []),
+}));
 
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
@@ -11,7 +16,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
-  getEntityCoverImage: vi.fn(async () => []),
+  getEntityCoverImage,
 }));
 
 import { getUserCosmeticsHandler } from '~/server/controllers/user.controller';
@@ -116,5 +121,24 @@ describe('user.getCosmetics', () => {
       [1, true, false],
       [2, false, true],
     ]);
+  });
+});
+
+describe('user.getCosmetics cover viewer', () => {
+  const user = { id: VIEWER, isModerator: true };
+  const scopedKey = {
+    apiKeyId: 9,
+    apiKeyType: ApiKeyType.User,
+    subject: { type: 'apiKey', id: 9 },
+    tokenScope: TokenScope.UserRead,
+  };
+  it.each([
+    ['a session', {}, user],
+    ['a full-access key', { ...scopedKey, tokenScope: TokenScope.Full }, user],
+    ['a scoped key', scopedKey, undefined],
+  ])('reads worn-on covers on %s as the right viewer', async (_label, credential, viewer) => {
+    getUserCosmetics.mockResolvedValue({ cosmetics: [] });
+    await getUserCosmeticsHandler({ ctx: { user, ...credential } as unknown as Ctx });
+    expect(getEntityCoverImage).toHaveBeenLastCalledWith(expect.objectContaining({ viewer }));
   });
 });

@@ -1,9 +1,10 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   clearHeldUserImages,
   dropStaleHeldImageMarkers,
+  getPictureUserIds,
   restoreClearedUserImages,
 } from '~/server/services/held-image-keys';
 
@@ -19,8 +20,7 @@ const db = {
 
 const marker = (pictureId: unknown) => JSON.stringify({ heldImageCleared: { pictureId } });
 
-beforeEach(async () => {
-  await pg?.close();
+beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
@@ -33,6 +33,7 @@ beforeEach(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int, image text, meta jsonb);
   `);
 });
+beforeEach(() => pg.exec('TRUNCATE "Image", "User"'));
 afterAll(() => pg.close());
 
 const user = async (id: number) =>
@@ -190,5 +191,104 @@ describe("a cleared User.image whose picture is not the user's own", () => {
     `);
     expect(await restoreClearedUserImages(db, [1])).toEqual([]);
     expect((await user(1)).image).toBeNull();
+  });
+});
+
+describe("a User.image naming another of the user's own images", () => {
+  const OLD_KEY = '3f6e2a10-9b4c-4d7e-8a21-6c0b5d9e1f42';
+  // Upper-case and CDN-wrapped, as a stored url may be; the match lowercases it.
+  const staleKey = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${OLD_KEY.toUpperCase()}/width=96`;
+  const seed = async (oldImage: string, image: string, owner = 1, storedUrl = OLD_KEY) =>
+    pg.exec(`
+      INSERT INTO "Image" (id, url, "userId") VALUES (1, 'key-1', 1);
+      INSERT INTO "Image" (id, url, "userId") VALUES (2, '${storedUrl}', ${owner});
+      UPDATE "Image" SET ${oldImage} WHERE id = 2;
+      INSERT INTO "User" VALUES (1, 1, '${image}', NULL);
+    `);
+
+  it.each([
+    ['held', `"needsReview" = 'minor'`],
+    ['blocked', `"blockedFor" = 'tos'`],
+    ['at the Blocked level', `"nsfwLevel" = 32`],
+  ])('🔴 is cleared, with no marker, when that image is %s', async (_state, set) => {
+    await seed(set, staleKey);
+    expect(await clearHeldUserImages(db, [1])).toEqual([1]);
+    expect(await user(1)).toEqual({ image: null, meta: null });
+    // Nothing puts it back: it is not the profile picture.
+    await pg.exec(`UPDATE "Image" SET "needsReview" = NULL, "blockedFor" = NULL, "nsfwLevel" = 1`);
+    expect(await restoreClearedUserImages(db, [1])).toEqual([]);
+    expect((await user(1)).image).toBeNull();
+  });
+
+  it('is left when that image is neither held nor blocked (control)', async () => {
+    await seed(`"nsfwLevel" = 1`, staleKey);
+    expect(await clearHeldUserImages(db, [1])).toEqual([]);
+    expect((await user(1)).image).toBe(staleKey);
+  });
+
+  it('leaves an external avatar url, even with a held upload in the history', async () => {
+    const external = 'https://avatars.githubusercontent.com/u/1?v=4';
+    await seed(`"needsReview" = 'minor'`, external);
+    expect(await clearHeldUserImages(db, [1])).toEqual([]);
+    expect((await user(1)).image).toBe(external);
+  });
+
+  it('🔴 brings its owner into the refresh for a change to that image', async () => {
+    await seed(`"nsfwLevel" = 1`, staleKey);
+    expect(await getPictureUserIds(db, [2])).toEqual([1]);
+  });
+
+  it('brings in no one for an image their User.image does not name (control)', async () => {
+    await seed(`"nsfwLevel" = 1`, 'https://avatars.githubusercontent.com/u/1?v=4');
+    expect(await getPictureUserIds(db, [2])).toEqual([]);
+    // The profile picture's own user is still found.
+    expect(await getPictureUserIds(db, [1])).toEqual([1]);
+  });
+  it.each([
+    ['an upper-case stored url', staleKey, OLD_KEY.toUpperCase()],
+    ['an encoded dash in User.image', staleKey.replace(/-/g, '%2D'), OLD_KEY],
+  ])('🔴 is cleared for %s', async (_form, image, storedUrl) => {
+    await seed(`"needsReview" = 'minor'`, image, 1, storedUrl);
+    expect(await clearHeldUserImages(db, [1])).toEqual([1]);
+    expect((await user(1)).image).toBeNull();
+  });
+
+  it("is left when the held image is another user's (owner-scoped)", async () => {
+    await seed(`"needsReview" = 'minor'`, staleKey, 2);
+    expect(await clearHeldUserImages(db, [1])).toEqual([]);
+    expect((await user(1)).image).toBe(staleKey);
+  });
+});
+
+describe('a profile picture with a twin row under the same key', () => {
+  const TWIN_KEY = '8d2c4b6a-1e3f-4a5b-9c7d-0e1f2a3b4c5d';
+  const seedTwin = async (twin: string) =>
+    pg.exec(`
+      INSERT INTO "Image" (id, url, "userId", "needsReview") VALUES (1, '${TWIN_KEY}', 1, 'minor');
+      INSERT INTO "Image" (id, url, "userId") VALUES (2, '${TWIN_KEY}', 1);
+      UPDATE "Image" SET ${twin} WHERE id = 2;
+      INSERT INTO "User" VALUES (1, 1, '${TWIN_KEY}', '{}');
+    `);
+
+  it('🔴 keeps the restore marker when the twin is held too', async () => {
+    await seedTwin(`"needsReview" = 'minor'`);
+    expect(await clearHeldUserImages(db, [1])).toEqual([1]);
+    expect(await user(1)).toEqual({ image: null, meta: { heldImageCleared: { pictureId: 1 } } });
+  });
+
+  it('🔴 is not restored while the twin is still held', async () => {
+    await seedTwin(`"needsReview" = 'minor'`);
+    await clearHeldUserImages(db, [1]);
+    await pg.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = 1`);
+    expect(await restoreClearedUserImages(db, [1])).toEqual([]);
+    expect((await user(1)).image).toBeNull();
+  });
+
+  it('is restored once the twin is clean too (control)', async () => {
+    await seedTwin(`"needsReview" = 'minor'`);
+    await clearHeldUserImages(db, [1]);
+    await pg.exec(`UPDATE "Image" SET "needsReview" = NULL`);
+    expect(await restoreClearedUserImages(db, [1])).toEqual([1]);
+    expect((await user(1)).image).toBe(TWIN_KEY);
   });
 });

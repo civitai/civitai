@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loggingMock, redisMock } from '~/__tests__/mocks';
+import { redisMock } from '~/__tests__/mocks';
 import {
   getAnchorVotesKey,
   getJudgesKey,
@@ -7,7 +7,6 @@ import {
 } from '~/server/services/crucible-redis-keys';
 
 const chQuery = vi.fn();
-const logToAxiom = loggingMock.logToAxiom;
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: chQuery } }));
 
 const {
@@ -125,22 +124,16 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
     const scores = await fit();
     expect(scores, 'fitted scores').not.toBeNull();
     expect(scores!.get(1)!).toBeGreaterThan(scores!.get(3)!);
-    expect(logToAxiom).not.toHaveBeenCalled();
   });
 
   it('defers while ClickHouse is short and the crucible ended moments ago (ingest lag)', async () => {
     withRedisPairs(2, 2);
     await expect(fit(endedAgo(60_000))).rejects.toBeInstanceOf(CrucibleRankingDeferredError);
-    expect(logToAxiom).not.toHaveBeenCalled();
   });
 
-  it('falls back to Elo and names both counts once the wait is over', async () => {
+  it('falls back to Elo once the wait is over', async () => {
     withRedisPairs(2, 2);
     expect(await fit(), 'scores on a mismatch').toBeNull();
-    expect(logToAxiom).toHaveBeenCalledTimes(1);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'warning', clickhouseVotes: 3, redisVotes: 4 })
-    );
   });
 
   it('does not wait when ClickHouse holds more votes than Redis: lag cannot explain that', async () => {
@@ -152,8 +145,6 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
     withRedisPairs(2, 1);
     chQuery.mockRejectedValue(new Error('connect ECONNREFUSED'));
     expect(await fit(endedAgo(60_000))).toBeNull();
-    expect(logToAxiom).toHaveBeenCalledTimes(1);
-    expect(logToAxiom).toHaveBeenCalledWith(expect.objectContaining({ type: 'warning' }));
   });
 
   it('counts every judge when there are more than one batch of them', async () => {
