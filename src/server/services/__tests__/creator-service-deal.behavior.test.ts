@@ -97,12 +97,20 @@ vi.mock('~/server/services/creator-service-deal-file-access', async (importOrigi
 }));
 
 // The job's own context is irrelevant here; only which sweeps it runs is.
+const jobDates = vi.hoisted(() => new Map<string, Date>());
 vi.mock('~/server/jobs/job', () => ({
   createJob: (name: string, cron: string, fn: (e: unknown) => Promise<unknown>) => ({
     name,
     cron,
     run: () => fn({ checkIfCanceled: () => undefined }),
   }),
+  getJobDate: async (key: string, fallback = new Date(0)) =>
+    [
+      jobDates.get(key) ?? fallback,
+      async (date = new Date()) => {
+        jobDates.set(key, date);
+      },
+    ] as const,
 }));
 
 const deals = await import('~/server/services/creator-service-deal.service');
@@ -2926,7 +2934,8 @@ describe('a held offering on its deals', () => {
     notifications.createNotification.mockClear();
     await deals.declineServiceDeal({ dealId: id, userId: SELLER });
 
-    expect(titlesSentTo(BUYER)).toEqual(['Service under review']);
+    // The decline and the refund.
+    expect(titlesSentTo(BUYER)).toEqual(['Service under review', 'Service under review']);
     const buyer = await viewAs(id, 'Blocked', BUYER);
     expect(buyer.view).toEqual({ id: 1, title: 'Service under review', coverImageId: null });
     expect(buyer.listed).toEqual({ id: 1, title: 'Service under review', coverImageId: null });
@@ -3051,7 +3060,10 @@ describe('site notifications', () => {
     await expect(deals.declineServiceDeal({ dealId: id, userId: BUYER })).rejects.toEqual(conflict);
     expect(sent()).toEqual([]);
     await deals.declineServiceDeal({ dealId: id, userId: SELLER });
-    expect(sent()).toEqual([[BUYER, 'service-deal-declined', `/services/deals/${id}`]]);
+    expect(sent()).toEqual([
+      [BUYER, 'service-deal-declined', `/services/deals/${id}`],
+      [BUYER, 'service-deal-refunded', `/services/deals/${id}`],
+    ]);
   });
 
   it('tells the buyer once when the request expires, and nobody before it does', async () => {
@@ -3063,7 +3075,10 @@ describe('site notifications', () => {
     await age(id, 'requestedAt', 49);
     await deals.expireServiceDeals();
     await deals.expireServiceDeals();
-    expect(sent()).toEqual([[BUYER, 'service-deal-expired', `/services/deals/${id}`]]);
+    expect(sent()).toEqual([
+      [BUYER, 'service-deal-expired', `/services/deals/${id}`],
+      [BUYER, 'service-deal-refunded', `/services/deals/${id}`],
+    ]);
   });
 
   it('tells the buyer about each delivery once, and nobody when delivery is refused', async () => {
@@ -3167,25 +3182,153 @@ describe('site notifications', () => {
     expect(sent()).toEqual([[SELLER, 'service-deal-paid-out', `/services/deals/${id}`]]);
   });
 
-  it('stays silent on withdrawals, cancellation answers and dispute resolution', async () => {
+  const details = () =>
+    notifications.createNotification.mock.calls.map(([n]) => [n.userId, n.details]);
+
+  it('tells the seller when the buyer withdraws, then the buyer once the refund lands', async () => {
+    const { id } = await request();
+    reset();
+    await deals.withdrawServiceDeal({ dealId: id, userId: BUYER });
+    expect(sent()).toEqual([
+      [SELLER, 'service-deal-cancelled', `/services/deals/${id}`],
+      [BUYER, 'service-deal-refunded', `/services/deals/${id}`],
+    ]);
+    expect(details()[0][1]).toMatchObject({ requestedBy: 'buyer' });
+  });
+
+  it('tells the buyer about the refund, and nobody about a cancel no party made', async () => {
+    const id = await accepted();
+    await q(`UPDATE "ServiceDeal" SET "dueAt" = now() - interval '8 days' WHERE id = $1`, [id]);
+    await deals.cancelOverdueServiceDeals();
+    expect((await deal(id)).status).toBe('Cancelled');
+    expect(sent()).toEqual([[BUYER, 'service-deal-refunded', `/services/deals/${id}`]]);
+  });
+
+  it('tells the party who asked to cancel how the other answered', async () => {
     const agreed = await accepted();
-    const disputed = await accepted();
-    const withdrawn = (await request()).id;
-    for (const id of [agreed, disputed])
-      await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+    const declined = await accepted();
+    for (const id of [agreed, declined])
+      await deals.requestServiceDealCancellation({ dealId: id, userId: SELLER, reason: 'r' });
     reset();
 
-    await deals.withdrawServiceDeal({ dealId: withdrawn, userId: BUYER });
-    await deals.respondServiceDealCancellation({ dealId: agreed, userId: SELLER, agree: true });
-    await deals.respondServiceDealCancellation({ dealId: disputed, userId: SELLER, agree: false });
+    await deals.respondServiceDealCancellation({ dealId: agreed, userId: BUYER, agree: true });
+    await deals.respondServiceDealCancellation({ dealId: declined, userId: BUYER, agree: false });
+    expect(sent()).toEqual([
+      [SELLER, 'service-deal-cancellation-accepted', `/services/deals/${agreed}`],
+      [BUYER, 'service-deal-refunded', `/services/deals/${agreed}`],
+      [SELLER, 'service-deal-cancellation-declined', `/services/deals/${declined}`],
+    ]);
+    expect(details()[0][1]).toMatchObject({ requestedBy: 'buyer' });
+  });
+
+  it('tells the seller when the buyer disputes, and both parties how moderators resolved it', async () => {
+    const refunded = await delivered();
+    const released = await delivered();
+    for (const id of [refunded, released]) {
+      await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+      reset();
+      await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'broken' });
+      expect(sent()).toEqual([[SELLER, 'service-deal-disputed', `/services/deals/${id}`]]);
+    }
+    reset();
+
     await deals.resolveServiceDealDispute({
-      dealId: disputed,
+      dealId: refunded,
       moderatorId: STRANGER,
       resolution: 'Refund',
       note: 'n',
     });
-    expect((await deal(disputed)).status).toBe('Cancelled');
-    expect(sent()).toEqual([]);
+    await deals.resolveServiceDealDispute({
+      dealId: released,
+      moderatorId: STRANGER,
+      resolution: 'Release',
+      note: 'n',
+    });
+    expect(sent()).toEqual([
+      [BUYER, 'service-deal-refunded', `/services/deals/${refunded}`],
+      [BUYER, 'service-deal-dispute-resolved', `/services/deals/${refunded}`],
+      [SELLER, 'service-deal-dispute-resolved', `/services/deals/${refunded}`],
+      [SELLER, 'service-deal-paid-out', `/services/deals/${released}`],
+      [BUYER, 'service-deal-dispute-resolved', `/services/deals/${released}`],
+      [SELLER, 'service-deal-dispute-resolved', `/services/deals/${released}`],
+    ]);
+    const resolved = notifications.createNotification.mock.calls
+      .map(([n]) => n)
+      .filter((n) => n.type === 'service-deal-dispute-resolved');
+    expect(resolved.map((n) => n.details.resolution)).toEqual([
+      'Refund',
+      'Refund',
+      'Release',
+      'Release',
+    ]);
+    // Both parties of one deal are told under their own keys, so neither replaces the other.
+    expect(new Set(resolved.map((n) => n.key)).size).toBe(4);
+  });
+
+  describe('reminders', () => {
+    const HOUR = 3_600_000;
+    const at = (hoursFromNow: number) => new Date(Date.now() + hoursFromNow * HOUR);
+    const remind = (sinceHours: number, upToHours = 0) =>
+      deals.remindServiceDeals({ since: at(sinceHours), upTo: at(upToHours) });
+
+    it('tells the buyer once, 48 hours after delivery, that it completes on its own', async () => {
+      const id = await delivered();
+      await age(id, 'deliveredAt', 47);
+      await remind(-1);
+      expect(sent()).toEqual([]);
+
+      await age(id, 'deliveredAt', 49);
+      await remind(-2);
+      await remind(0, 0.1);
+      expect(sent()).toEqual([[BUYER, 'service-deal-auto-complete-soon', `/services/deals/${id}`]]);
+    });
+
+    it('tells the seller once a day before the due date, and once when it passes', async () => {
+      const id = await accepted();
+      await q(`UPDATE "ServiceDeal" SET "dueAt" = now() + interval '25 hours' WHERE id = $1`, [id]);
+      await remind(-1);
+      expect(sent()).toEqual([]);
+
+      await q(`UPDATE "ServiceDeal" SET "dueAt" = now() + interval '23 hours' WHERE id = $1`, [id]);
+      await remind(-2);
+      await remind(0, 0.1);
+      expect(sent()).toEqual([[SELLER, 'service-deal-due-soon', `/services/deals/${id}`]]);
+      reset();
+
+      await q(`UPDATE "ServiceDeal" SET "dueAt" = now() - interval '30 minutes' WHERE id = $1`, [
+        id,
+      ]);
+      await remind(-1);
+      await remind(0, 0.1);
+      expect(sent()).toEqual([[SELLER, 'service-deal-overdue', `/services/deals/${id}`]]);
+    });
+
+    it('skips a due-soon reminder a late run reaches after the due date', async () => {
+      const id = await accepted();
+      await q(`UPDATE "ServiceDeal" SET "dueAt" = now() - interval '1 hour' WHERE id = $1`, [id]);
+      await remind(-30);
+      expect(sent()).toEqual([[SELLER, 'service-deal-overdue', `/services/deals/${id}`]]);
+    });
+
+    it('reminds once from the deals job, however often it runs', async () => {
+      jobDates.clear();
+      const id = await accepted();
+      await q(`UPDATE "ServiceDeal" SET "dueAt" = now() - interval '30 minutes' WHERE id = $1`, [
+        id,
+      ]);
+      await creatorServiceDealsJob.run({});
+      await creatorServiceDealsJob.run({});
+      expect(sent()).toEqual([[SELLER, 'service-deal-overdue', `/services/deals/${id}`]]);
+    });
+
+    it('reminds nobody about a deal that has moved on', async () => {
+      const id = await delivered();
+      await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+      reset();
+      await age(id, 'deliveredAt', 49);
+      await remind(-2);
+      expect(sent()).toEqual([]);
+    });
   });
 
   it('keeps a committed move when the notification cannot be sent', async () => {

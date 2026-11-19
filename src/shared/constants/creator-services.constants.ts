@@ -15,6 +15,10 @@ export const SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS = 7 * 24 * HOUR;
 export const SERVICE_DEAL_CANCELLATION_RESPONSE_MS = 48 * HOUR;
 /** A delivery the buyer neither accepts nor sends back completes on its own after this. */
 export const SERVICE_DEAL_AUTO_COMPLETE_MS = 72 * HOUR;
+/** The buyer is reminded this long before an unanswered delivery completes on its own. */
+export const SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS = 24 * HOUR;
+/** The seller is reminded this long before the due date. */
+export const SERVICE_DEAL_DUE_SOON_NOTICE_MS = 24 * HOUR;
 /** Between completion and payout, so a buyer can report final files that are missing or broken. */
 export const SERVICE_DEAL_DISPUTE_WINDOW_MS = 48 * HOUR;
 

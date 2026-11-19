@@ -126,4 +126,24 @@ describe('deal push backfill', () => {
     expect(await pushTypes(2)).toEqual(['service-deal-accepted']);
     expect(await pushTypes(3)).toEqual([]);
   });
+
+  it('gives the later deal notices to subscribers who still take deal push, once', async () => {
+    const later = () => db.pg.exec(migration('20271119130000_deal_notice_push_backfill'));
+    await db.pg.exec(`
+      INSERT INTO "PushSubscription" ("userId") VALUES (1), (2), (3), (4);
+      INSERT INTO "UserPushSetting" VALUES
+        (1, 'service-deal-accepted'),
+        (2, 'new-mention'),
+        (3, 'service-deal-accepted'), (3, 'service-deal-refunded'),
+        (5, 'service-deal-accepted');
+    `);
+    await later();
+    await later();
+
+    expect((await pushTypes(1)).filter((t) => t !== 'service-deal-accepted')).toHaveLength(9);
+    // Deal push turned off, a choice already made about the new notices, and no subscription.
+    expect(await pushTypes(2)).toEqual(['new-mention']);
+    expect(await pushTypes(3)).toEqual(['service-deal-accepted', 'service-deal-refunded']);
+    expect(await pushTypes(5)).toEqual(['service-deal-accepted']);
+  });
 });

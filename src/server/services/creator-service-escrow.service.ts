@@ -475,6 +475,7 @@ async function holdRefundShortfall(dealId: number, heldAmount: number) {
  */
 export async function refundDeal(dealId: number) {
   await claimRefund(dbWrite, dealId);
+  let settled = false;
   const paid = await runDealLeg(
     dealId,
     'Refund',
@@ -517,8 +518,11 @@ export async function refundDeal(dealId: number) {
         throw new Error(`creator service escrow: refund moved nothing for deal ${dealId}`);
       return result.externalTransactionIdPrefix ?? serviceDealTransactionId(dealId, 'refund');
     },
-    (tx) => markSettled(tx, dealId, 'Refunded')
+    async (tx) => {
+      settled = await markSettled(tx, dealId, 'Refunded');
+    }
   );
+  if (settled) await notifyServiceDeal({ dealId, notice: 'refunded', to: 'buyer' });
   return paid !== null;
 }
 

@@ -3,6 +3,14 @@ import { NotificationCategory } from '~/server/common/enums';
 import { getServiceOfferingTakedownReason } from '~/server/common/moderation-helpers';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import type { NotificationProcessor } from '~/server/notifications/base.notifications';
+import {
+  SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS,
+  SERVICE_DEAL_DUE_SOON_NOTICE_MS,
+  SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS,
+} from '~/shared/constants/creator-services.constants';
+
+const DAY = 24 * 60 * 60 * 1000;
+const hours = (value: number) => value / (60 * 60 * 1000);
 
 export const serviceDealNotificationTypes = {
   requested: 'service-deal-requested',
@@ -14,14 +22,25 @@ export const serviceDealNotificationTypes = {
   cancellationRequested: 'service-deal-cancellation-requested',
   completed: 'service-deal-completed',
   paidOut: 'service-deal-paid-out',
+  disputed: 'service-deal-disputed',
+  disputeResolved: 'service-deal-dispute-resolved',
+  cancellationAccepted: 'service-deal-cancellation-accepted',
+  cancellationDeclined: 'service-deal-cancellation-declined',
+  cancelled: 'service-deal-cancelled',
+  refunded: 'service-deal-refunded',
+  autoCompleteSoon: 'service-deal-auto-complete-soon',
+  dueSoon: 'service-deal-due-soon',
+  overdue: 'service-deal-overdue',
 } as const;
 export type ServiceDealNotice = keyof typeof serviceDealNotificationTypes;
 
 export type ServiceDealNotificationDetails = {
   dealId: number;
   offeringTitle: string;
-  /** Who asked, for a cancellation request. */
+  /** The party who moved the deal, when a party did. */
   requestedBy?: 'buyer' | 'seller';
+  /** How moderators settled a dispute. */
+  resolution?: 'Release' | 'Refund';
 };
 
 const dealNotification = (
@@ -102,5 +121,63 @@ export const creatorServiceNotifications = createNotificationProcessor({
   [serviceDealNotificationTypes.paidOut]: dealNotification(
     'Services: You were paid for a deal',
     ({ offeringTitle }) => `Your Buzz for "${offeringTitle}" has been paid out.`
+  ),
+  [serviceDealNotificationTypes.disputed]: dealNotification(
+    'Services: A deal was disputed',
+    ({ offeringTitle, requestedBy }) =>
+      `The ${
+        requestedBy ?? 'other party'
+      } opened a dispute on the deal for "${offeringTitle}". Moderators will review it.`
+  ),
+  [serviceDealNotificationTypes.disputeResolved]: dealNotification(
+    'Services: A dispute was resolved',
+    ({ offeringTitle, resolution }) =>
+      `Moderators resolved the dispute on the deal for "${offeringTitle}". ${
+        resolution === 'Release'
+          ? 'The Buzz goes to the seller.'
+          : 'The Buzz goes back to the buyer.'
+      }`
+  ),
+  [serviceDealNotificationTypes.cancellationAccepted]: dealNotification(
+    'Services: Your cancellation was accepted',
+    ({ offeringTitle, requestedBy }) =>
+      `The ${
+        requestedBy ?? 'other party'
+      } agreed to cancel the deal for "${offeringTitle}". The buyer's Buzz is being returned.`
+  ),
+  [serviceDealNotificationTypes.cancellationDeclined]: dealNotification(
+    'Services: Your cancellation was declined',
+    ({ offeringTitle, requestedBy }) =>
+      `The ${
+        requestedBy ?? 'other party'
+      } declined to cancel the deal for "${offeringTitle}". Moderators will review it.`
+  ),
+  [serviceDealNotificationTypes.cancelled]: dealNotification(
+    'Services: A deal was canceled',
+    ({ offeringTitle, requestedBy }) =>
+      `The ${requestedBy ?? 'other party'} canceled the deal for "${offeringTitle}".`
+  ),
+  [serviceDealNotificationTypes.refunded]: dealNotification(
+    'Services: You were refunded',
+    ({ offeringTitle }) => `Your Buzz for "${offeringTitle}" was returned to you.`
+  ),
+  [serviceDealNotificationTypes.autoCompleteSoon]: dealNotification(
+    'Services: Your order completes soon',
+    ({ offeringTitle }) =>
+      `Your order for "${offeringTitle}" completes on its own in ${hours(
+        SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS
+      )} hours. Review it or ask for a revision before then.`
+  ),
+  [serviceDealNotificationTypes.dueSoon]: dealNotification(
+    'Services: A deal is due soon',
+    ({ offeringTitle }) =>
+      `Your deal for "${offeringTitle}" is due in ${hours(SERVICE_DEAL_DUE_SOON_NOTICE_MS)} hours.`
+  ),
+  [serviceDealNotificationTypes.overdue]: dealNotification(
+    'Services: A deal is past due',
+    ({ offeringTitle }) =>
+      `Your deal for "${offeringTitle}" is past due. Deliver it, or it cancels and refunds the buyer in ${
+        SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS / DAY
+      } days.`
   ),
 });
