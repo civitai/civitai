@@ -153,6 +153,7 @@ export const POST: RequestHandler = async ({ request }) => {
     moderatorRuled: moderatorRuled.value.closed,
     unservable: unservable.value.unservable,
     publishesAfterExpiry: unservable.value.publishesAfterExpiry,
+    unpublishedDrafts: unservable.value.unpublishedDrafts,
     settledVotes: progression.value.votes,
     hiddenChecksGraded: hidden.value.graded,
     yesNoClosed: yesNo.value.unplayable + yesNo.value.stale,
