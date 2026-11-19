@@ -20,6 +20,7 @@ import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL, SYSTEM_USER_ID } fr
 import { createAppAccessToken, createOAuthTokenPair } from './token-helpers';
 import { OriginNotAllowedError } from './errors';
 import { redirectUriMatches } from './redirect-uri';
+import { isAppBlockOauthClientId } from './block-guard';
 import { firstPartyClientForOrigin, originOf } from './first-party';
 import {
   apiKeyRowScope,
@@ -59,6 +60,8 @@ export const oauthModel = {
     clientSecret: string | null,
     request?: Request
   ): Promise<Client | false> {
+    // An app block's client mints only through the internal app-token route, never a grant here.
+    if (isAppBlockOauthClientId(clientId)) return false;
     const client = await db
       .selectFrom('OauthClient')
       .selectAll()

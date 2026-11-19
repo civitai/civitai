@@ -63,6 +63,9 @@ export const serverSchema = z
       .regex(HOSTNAME_PATTERN, 'expected a hostname or IPv4 address')
       .optional(),
     APPDATA_DATABASE_PORT: intString(1, 65535).optional(),
+    // App Storage record core (`services/apps/app-record.ts`). OFF by default, and nothing calls it
+    // yet.
+    APP_RECORD_CORE_ENABLED: zc.booleanString.optional().default(false),
     DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
     DATABASE_POOL_MAX: z.coerce.number().default(20),
     NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
