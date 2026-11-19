@@ -428,15 +428,28 @@ describe('a verdict on a report of an image a moderator already removed', () => 
     });
   });
 
-  it('Unaction and Remove leave an account-deletion grace block as it is, and close the report', async () => {
+  it('Unaction leaves an account-deletion grace block as it is and closes the report', async () => {
     const unaction = await verdict('accept', GRACE);
-    const remove = await verdict('block', GRACE);
 
     expect(await row(GRACE)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
-    expect(notifiedImages()).toEqual([]);
-    expect(reportsMovedTo('Actioned')).toEqual([report(GRACE), report(GRACE)]);
+    expect(reportsMovedTo('Actioned')).toEqual([report(GRACE)]);
     expect(unaction).toMatchObject({ success: true, closedReportIds: [report(GRACE)] });
-    expect(remove).toMatchObject({ success: true, closedReportIds: [report(GRACE)] });
+  });
+
+  // A grace block is reversible: an account restore reads its breadcrumbs and un-blocks the image.
+  it('Remove on a grace-blocked image writes a real block, clearing what an account restore reads', async () => {
+    const remove = await verdict('block', GRACE);
+
+    const { metadata } = (
+      await db.query<{ metadata: Record<string, unknown> | null }>(
+        `SELECT metadata FROM "Image" WHERE id = $1`,
+        [GRACE]
+      )
+    ).rows[0];
+    expect(metadata?.accountDeletionPriorIngestion).toBeUndefined();
+    expect(notifiedImages()).toEqual([`/images/${GRACE}`]);
+    expect(reportsMovedTo('Actioned')).toEqual([report(GRACE)]);
+    expect(remove).not.toHaveProperty('alreadyRemoved');
   });
 
   it('refuses a report that is not on the image, moving no report', async () => {
@@ -446,6 +459,51 @@ describe('a verdict on a report of an image a moderator already removed', () => 
 
     expect(result).toMatchObject({ status: 400 });
     expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('Unaction on an image under the review flag, even dismissed, is refused and moves no report', async () => {
+    const DISMISSED = 69;
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash") VALUES
+        ($1, 7, 'csam', 'moderated', 'Blocked', 32, 109)`,
+      [DISMISSED]
+    );
+    await db.query(
+      `INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES ($1, 'Dismissed')`,
+      [DISMISSED]
+    );
+    await db.query(`INSERT INTO "ImageReport" ("imageId", "reportId") VALUES ($1, $2)`, [
+      DISMISSED,
+      report(DISMISSED),
+    ]);
+
+    const result = await verdict('accept', DISMISSED);
+
+    expect(result).toMatchObject({ status: 409 });
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('Remove refuses a report that is not on the image, moving no report', async () => {
+    const result = await imageQueueActions.block(
+      event({ imageId: String(OTHER_REASON), reportId: String(report(HELD)) })
+    );
+
+    expect(result).toMatchObject({ status: 400 });
+    expect(notifiedImages()).toEqual([]);
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it("a bulk Unaction with a held image closes the removed one's report and moves no other", async () => {
+    const result = await imageQueueActions.bulkAccept(
+      event({
+        imageIds: [MOD_REMOVED, FLAG_ONLY].join(','),
+        reportIds: [report(MOD_REMOVED), report(FLAG_ONLY)].join(','),
+      })
+    );
+
+    expect(reportsMovedTo('Actioned')).toEqual([report(MOD_REMOVED)]);
+    expect(reportsMovedTo('Unactioned')).toEqual([]);
+    expect(result).toMatchObject({ status: 409, data: { closedReportIds: [report(MOD_REMOVED)] } });
   });
 
   it('Unaction on a reported image still up restores nothing and unactions the report (control)', async () => {

@@ -74,6 +74,9 @@ const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview
 /** Removed by a moderator, or under an account-deletion grace block, which a report verdict does not lift
  *  either. Never NULL, so `NOT` of it is safe. */
 const REMOVED_BY_MODERATOR = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS NOT DISTINCT FROM ${BLOCKED_REASON_MODERATED})`;
+/** `isModerationBlocked` as a condition: a grace block is not one. Remove still blocks a grace-blocked image,
+ *  which strips its breadcrumbs, so a later account restore cannot put it back. */
+const MODERATION_BLOCKED = sql<boolean>`(${REMOVED_BY_MODERATOR} AND ("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NULL)`;
 
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
@@ -256,13 +259,15 @@ export async function acceptImage({
     .executeTakeFirst();
   if (!updated) {
     if (restoreRemoved) throw new ImageNotRestoredError(imageId);
-    // A held image is the CSAM queue's, not closed from here.
+    // An image under the review flag, dismissed or not, is the CSAM queue's, not closed from here.
     if (keepModeratorRemoved) {
       const removed = await dbWrite
         .selectFrom('Image')
         .select('id')
         .where('id', '=', imageId)
-        .where(sql<boolean>`${REMOVED_BY_MODERATOR} AND ${HELD_IMAGE} IS NOT TRUE`)
+        .where(
+          sql<boolean>`${REMOVED_BY_MODERATOR} AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
+        )
         .executeTakeFirst();
       if (removed) throw new ModeratorRemovedImageError(imageId);
     }
@@ -406,13 +411,15 @@ export async function blockImage({
     .where('id', '=', imageId)
     .executeTakeFirst();
   if (!img) return {};
-  // A held image goes on to the block below, which leaves its reports to the CSAM queue.
+  // An image under the review flag goes on to the block below, which decides its reports as before.
   if (skipModeratorRemoved) {
     const removed = await dbWrite
       .selectFrom('Image')
       .select('id')
       .where('id', '=', imageId)
-      .where(sql<boolean>`${REMOVED_BY_MODERATOR} AND ${HELD_IMAGE} IS NOT TRUE`)
+      .where(
+        sql<boolean>`${MODERATION_BLOCKED} AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
+      )
       .executeTakeFirst();
     if (removed) return { alreadyRemoved: true };
   }
@@ -454,7 +461,7 @@ export async function blockImage({
       // second time. Decided here, not off the replica read above.
       .where(NOT_FLAG_ONLY_REMAINING)
       // Decided again in the statement, for a block that landed since the check above.
-      .$if(skipModeratorRemoved, (qb) => qb.where(sql<boolean>`NOT ${REMOVED_BY_MODERATOR}`))
+      .$if(skipModeratorRemoved, (qb) => qb.where(sql<boolean>`NOT ${MODERATION_BLOCKED}`))
       .returning('id')
       .executeTakeFirst();
     // A statement of its own, after the UPDATE took the row lock: one that waited on a dismissal

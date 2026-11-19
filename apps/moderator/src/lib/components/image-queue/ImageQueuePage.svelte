@@ -417,7 +417,7 @@
             <Badge
               class="bg-muted"
               title={item.blockedFor === 'moderated' && item.needsReview !== FLAG_KEPT_THROUGH_BLOCK
-                ? 'Already removed by a moderator; acting on this report only closes it.'
+                ? 'Already removed: Unaction will not restore it, and either verdict closes this report.'
                 : `Already removed (${item.needsReview === FLAG_KEPT_THROUGH_BLOCK
                     ? 'under CSAM review'
                     : item.blockedFor ?? 'blocked'}).`}>Removed</Badge
