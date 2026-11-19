@@ -752,6 +752,14 @@ export async function bulkSetReportStatus({
 }) {
   if (!ids.length) return [];
 
+  // Banned or deleted reporters, read before the status moves: a failure here leaves every report
+  // where it was, rather than actioned with nobody paid. On the primary: a ban from moments ago may
+  // not have reached a replica.
+  const removedIds =
+    status === ReportStatus.Actioned && !rewardRemovedReporters
+      ? await removedReporterIds(ids)
+      : new Set<number>();
+
   // One guarded statement on the primary, as the moderator app's `setReportStatus` writes it: a
   // report another path has already moved to `status` matches nothing, so it is not rewritten and
   // its reporters are not paid a second time. Who is paid comes from the rows this changed.
@@ -778,18 +786,6 @@ export async function bulkSetReportStatus({
 
   // If we're actioning reports, we need to reward the users who reported them
   if (status === ReportStatus.Actioned) {
-    const reporterIds = [...new Set(reports.flatMap((r) => [r.userId, ...r.alsoReportedBy]))];
-    // The primary: a ban from moments ago may not have reached a replica.
-    const removed = rewardRemovedReporters
-      ? []
-      : await dbWrite.user.findMany({
-          where: {
-            id: { in: reporterIds },
-            OR: [{ bannedAt: { not: null } }, { deletedAt: { not: null } }],
-          },
-          select: { id: true },
-        });
-    const removedIds = new Set(removed.map((user) => user.id));
     const prepReports = reports.map((report) => {
       const excluded = [...noRewardFor(report.id), ...reportersWithoutReward(report)];
       return {
@@ -809,6 +805,23 @@ export async function bulkSetReportStatus({
     );
   }
   return reports.map((r) => r.id);
+}
+
+/** The banned or deleted reporters of these reports, filers and co-reporters. */
+async function removedReporterIds(reportIds: number[]) {
+  const reports = await dbWrite.$queryRaw<{ userId: number; alsoReportedBy: number[] }[]>`
+    SELECT "userId", "alsoReportedBy" FROM "Report" WHERE id = ANY(${reportIds}::int[])
+  `;
+  const reporterIds = [...new Set(reports.flatMap((r) => [r.userId, ...r.alsoReportedBy]))];
+  if (!reporterIds.length) return new Set<number>();
+  const removed = await dbWrite.user.findMany({
+    where: {
+      id: { in: reporterIds },
+      OR: [{ bannedAt: { not: null } }, { deletedAt: { not: null } }],
+    },
+    select: { id: true },
+  });
+  return new Set(removed.map((user) => user.id));
 }
 
 // #region [helpers]

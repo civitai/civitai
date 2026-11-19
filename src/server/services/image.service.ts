@@ -1544,6 +1544,7 @@ export async function handleBlockImages({
       ).catch((e: unknown) =>
         logToAxiom({
           type: 'error',
+          // Raised before any report moved, so they are all still Pending.
           name: 'block-images-reports-not-settled',
           imageIds: ids,
           error: safeError(e),

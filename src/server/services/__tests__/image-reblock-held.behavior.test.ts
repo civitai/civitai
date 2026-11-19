@@ -541,6 +541,15 @@ describe("handleBlockImages and the images' reports", () => {
     expect(rows[0].metadata).toEqual({ other: 1 });
   });
 
+  it('a failed banned-reporter lookup leaves the reports Pending and pays nobody', async () => {
+    dbMock.dbWrite.user.findMany.mockRejectedValue(new Error('connection lost') as never);
+
+    await expect(handleBlockImages({ ids: all, moderatorId: 2 })).resolves.toBeDefined();
+
+    expect(await reportStatus(report(OTHER_REASON))).toBe('Pending');
+    expect(rewardedReports()).toEqual([]);
+  });
+
   it('a second removal of the same images pays nothing more', async () => {
     await handleBlockImages({ ids: all, moderatorId: 2 });
     await handleBlockImages({ ids: [OTHER_REASON], moderatorId: 3 });
