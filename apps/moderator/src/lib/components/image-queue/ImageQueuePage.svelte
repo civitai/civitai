@@ -45,6 +45,8 @@
       held?: string;
       imageId?: number;
       heldImageIds?: number[];
+      alreadyRemoved?: string;
+      closedReportIds?: number[];
     } | null;
   } = $props();
 
@@ -70,6 +72,10 @@
     const held = new Set(form.heldImageIds ?? (form.imageId ? [form.imageId] : []));
     for (const item of untrack(() => data.items))
       if (held.has(item.id)) acted.set(keyOfItem(item), 'Held for confirmation');
+  });
+  // A report on an image a moderator already removed is closed, not ruled on: its card says so.
+  $effect(() => {
+    for (const id of form?.closedReportIds ?? []) acted.set(id, 'Closed: already removed');
   });
   // imageId → appeal resolution message (bound to each appeal card's textarea).
   const messages = new SvelteMap<number, string>();
@@ -189,6 +195,15 @@
   >
     {form.held}
     <a href="/images/re-removals" class="link ml-1">Open Re-removals</a>
+  </div>
+{/if}
+
+{#if form?.alreadyRemoved}
+  <div
+    class="mb-3 rounded-md border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm text-sky-200"
+    role="status"
+  >
+    {form.alreadyRemoved}
   </div>
 {/if}
 
@@ -398,6 +413,14 @@
       <div class="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
         <div class="flex items-center justify-between gap-2">
           <span class="font-semibold text-amber-400">{item.report.reason}</span>
+          {#if item.removed}
+            <Badge
+              class="bg-muted"
+              title={item.blockedFor === 'moderated'
+                ? 'Already removed by a moderator; acting on this report only closes it.'
+                : `Already removed (${item.blockedFor ?? 'blocked'}).`}>Removed</Badge
+            >
+          {/if}
           {#if item.report.count > 0}
             <span class="shrink-0 text-muted-foreground">+{item.report.count} others</span>
           {/if}

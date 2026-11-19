@@ -18,6 +18,7 @@ import {
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
   RemovedImageNotRestorableError,
+  ModeratorRemovedImageError,
   AppealRestoreRefusedError,
   APPEAL_RESTORE_REFUSED,
   resolveImageAppeal,
@@ -65,6 +66,14 @@ const querySchema = z.object({
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
 
 const REMOVED_REASON = 'removed, and a review queue cannot put it back';
+/** A verdict on a report never restores or re-removes an image a moderator already removed: it closes
+ *  the report as actioned and leaves the image as it is. */
+const alreadyRemovedNotice = (imageIds: number[]) =>
+  `Already removed by a moderator, so left as it is: ${imageIds
+    .map((id) => `#${id}`)
+    .join(', ')}. ${
+    imageIds.length === 1 ? 'Its report was' : 'Their reports were'
+  } closed as actioned.`;
 const REMOVED_REMEDY =
   'Dismiss a flagged image from its review queue, or restore the image explicitly. Reload.';
 
@@ -248,8 +257,26 @@ export const imageQueueActions = {
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
 
     try {
-      await acceptImage({ imageId, removeMinorFlag, userId: locals.user.id });
+      await acceptImage({
+        imageId,
+        removeMinorFlag,
+        userId: locals.user.id,
+        keepModeratorRemoved: !!reportId,
+      });
     } catch (e) {
+      if (e instanceof ModeratorRemovedImageError && reportId) {
+        await setReportStatus({
+          id: reportId,
+          status: ReportStatus.Actioned,
+          userId: locals.user.id,
+        });
+        return {
+          success: true,
+          imageId,
+          alreadyRemoved: alreadyRemovedNotice([imageId]),
+          closedReportIds: [reportId],
+        };
+      }
       if (e instanceof RemovedImageNotRestorableError)
         return fail(409, {
           error: `This image was ${REMOVED_REASON}. ${REMOVED_REMEDY}`,
@@ -278,17 +305,18 @@ export const imageQueueActions = {
 
     // The block commits even when its CSAM blocklist entry fails; that is reported after the report.
     let csamBlocklistFailed = false;
-    const { held, skipped } = await blockImage({
+    const { held, skipped, alreadyRemoved } = await blockImage({
       imageId,
       userId: locals.user.id,
       ...violation,
       ...getActorMeta(event),
       reportIds: reportId ? [reportId] : undefined,
       skipAppealCheck: !!locals.grants['image.removal.confirm'],
+      skipModeratorRemoved: !!reportId,
     }).catch((e: unknown) => {
       if (!(e instanceof CsamBlocklistWriteError)) throw e;
       csamBlocklistFailed = true;
-      return { held: undefined, skipped: e.skipped };
+      return { held: undefined, skipped: e.skipped, alreadyRemoved: undefined };
     });
     // Not removed, so the report stays open; confirming the hold actions it.
     if (held) return { success: true, imageId, held: heldRemovalMessage([held]) };
@@ -299,6 +327,13 @@ export const imageQueueActions = {
         userId: locals.user.id,
       });
     if (csamBlocklistFailed) return fail(502, { error: CSAM_BLOCKLIST_RETRY, imageId });
+    if (alreadyRemoved && reportId)
+      return {
+        success: true,
+        imageId,
+        alreadyRemoved: alreadyRemovedNotice([imageId]),
+        closedReportIds: [reportId],
+      };
     return { success: true, imageId };
   },
 
@@ -456,6 +491,7 @@ export const imageQueueActions = {
     const reportIds = parseIds(form.get('reportIds'));
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
     const refused: number[] = [];
+    const removed: number[] = [];
     // Emails only the appeals this request closed, once per appellant instead of per image.
     const closed = await Promise.all(
       imageIds.map((imageId) =>
@@ -464,7 +500,12 @@ export const imageQueueActions = {
           removeMinorFlag,
           userId: locals.user.id,
           deferAppealEmail: true,
+          keepModeratorRemoved: reportIds.length > 0,
         }).catch((e) => {
+          if (e instanceof ModeratorRemovedImageError) {
+            removed.push(imageId);
+            return undefined;
+          }
           if (!(e instanceof RemovedImageNotRestorableError)) throw e;
           refused.push(imageId);
           return undefined;
@@ -472,24 +513,38 @@ export const imageQueueActions = {
       )
     );
     await sendBulkAppealEmails(closedAppellants(imageIds, closed), true);
-    // Which report belongs to which image is not posted, so a partial batch moves no report.
+    const reportsByImage = removed.length ? await reportIdsByImage(reportIds) : new Map();
+    const closedReportIds = removed.flatMap((id) => reportsByImage.get(id) ?? []);
+    await Promise.all(
+      closedReportIds.map((id) =>
+        setReportStatus({ id, status: ReportStatus.Actioned, userId: locals.user.id })
+      )
+    );
+    const notice = closedReportIds.length
+      ? { alreadyRemoved: alreadyRemovedNotice(removed), closedReportIds }
+      : {};
+    // Which report belongs to which image is not posted, so a partial batch moves no other report.
     if (refused.length)
       return fail(409, {
+        ...notice,
         error: [
-          `${imageIds.length - refused.length} of ${imageIds.length} accepted.`,
-          reportIds.length ? 'No report was moved.' : '',
+          `${imageIds.length - refused.length - removed.length} of ${imageIds.length} accepted.`,
+          reportIds.length ? `No ${closedReportIds.length ? 'other ' : ''}report was moved.` : '',
           `Not accepted (${REMOVED_REASON}): ${refused.join(', ')}.`,
           REMOVED_REMEDY,
         ]
           .filter(Boolean)
           .join(' '),
       });
+    const closedSet = new Set(closedReportIds);
     await Promise.all(
-      reportIds.map((id) =>
-        setReportStatus({ id, status: ReportStatus.Unactioned, userId: locals.user.id })
-      )
+      reportIds
+        .filter((id) => !closedSet.has(id))
+        .map((id) =>
+          setReportStatus({ id, status: ReportStatus.Unactioned, userId: locals.user.id })
+        )
     );
-    return { success: true };
+    return { success: true, ...notice };
   },
 
   bulkBlock: async (event) => {
@@ -513,6 +568,7 @@ export const imageQueueActions = {
           userId: locals.user.id,
           ...actor,
           reportIds: reportsByImage.get(imageId),
+          skipModeratorRemoved: reportIds.length > 0,
         }).catch((e: unknown): Awaited<ReturnType<typeof blockImage>> => {
           if (!(e instanceof CsamBlocklistWriteError)) throw e;
           csamBlocklistFailed.push(imageId);
@@ -536,8 +592,14 @@ export const imageQueueActions = {
     );
     if (csamBlocklistFailed.length)
       return fail(502, { error: CSAM_BLOCKLIST_RETRY, imageIds: csamBlocklistFailed });
+    const removed = imageIds.filter((_, i) => results[i].alreadyRemoved);
+    const closedReportIds = removed.flatMap((id) => reportsByImage.get(id) ?? []);
     return {
       success: true,
+      ...(closedReportIds.length && {
+        alreadyRemoved: alreadyRemovedNotice(removed),
+        closedReportIds,
+      }),
       ...(held.length && {
         held: heldRemovalMessage(held),
         heldImageIds: held.map((h) => h.imageId),

@@ -71,6 +71,9 @@ const ACCOUNT_DELETION_PRIOR_INGESTION_KEY = 'accountDeletionPriorIngestion';
 const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
 const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
 
+/** `isModerationBlocked` as a condition; never NULL, so `NOT` of it is safe. */
+const MODERATION_BLOCKED = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS NOT DISTINCT FROM ${BLOCKED_REASON_MODERATED} AND ("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NULL)`;
+
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
   await invalidateThumbnails(imageId);
@@ -150,6 +153,13 @@ export class RemovedImageNotRestorableError extends Error {
   }
 }
 
+/** A verdict on a report refused to restore an image a moderator already removed. */
+export class ModeratorRemovedImageError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} was already removed by a moderator`);
+  }
+}
+
 /** An explicit restore that left the image removed: it is lifted only through its own review. */
 export class ImageNotRestoredError extends Error {
   constructor(readonly imageId: number) {
@@ -170,11 +180,15 @@ export async function acceptImage({
   userId,
   deferAppealEmail = false,
   restoreRemoved = false,
+  keepModeratorRemoved = false,
 }: {
   imageId: number;
   removeMinorFlag?: boolean;
   userId: number;
   deferAppealEmail?: boolean;
+  /** A verdict on a report: an image a moderator removed stays removed, and this throws
+   *  `ModeratorRemovedImageError`. */
+  keepModeratorRemoved?: boolean;
   /** An explicit unblock. Review queues leave it off, so an image removed with only the review flag
    *  left cannot come back live from one; they throw `RemovedImageNotRestorableError` instead. Not even
    *  this lifts a CSAM block: it throws `ImageNotRestoredError`. */
@@ -226,6 +240,7 @@ export async function acceptImage({
     .where('id', '=', imageId)
     .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
     .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
+    .$if(keepModeratorRemoved, (qb) => qb.where(sql<boolean>`NOT ${MODERATION_BLOCKED}`))
     // Only a minor-queue accept reads the flag back. A subquery in RETURNING reads the statement's
     // snapshot, so `wasMinor` is the value this update replaced, from the primary, not the replica.
     .returning([
@@ -240,6 +255,16 @@ export async function acceptImage({
     .executeTakeFirst();
   if (!updated) {
     if (restoreRemoved) throw new ImageNotRestoredError(imageId);
+    // A held image is the CSAM queue's, not closed from here.
+    if (keepModeratorRemoved) {
+      const removed = await dbWrite
+        .selectFrom('Image')
+        .select('id')
+        .where('id', '=', imageId)
+        .where(sql<boolean>`${MODERATION_BLOCKED} AND ${HELD_IMAGE} IS NOT TRUE`)
+        .executeTakeFirst();
+      if (removed) throw new ModeratorRemovedImageError(imageId);
+    }
     throw new RemovedImageNotRestorableError(imageId);
   }
   await dropBlockedImageDeleteQueue(imageId);
@@ -342,6 +367,7 @@ export async function blockImage({
   reportIds,
   source = 'moderator.block',
   skipAppealCheck = false,
+  skipModeratorRemoved = false,
 }: {
   imageId: number;
   userId: number;
@@ -355,10 +381,15 @@ export async function blockImage({
   source?: string;
   /** The actor may confirm re-removals themselves, or this IS the confirmation. */
   skipAppealCheck?: boolean;
+  /** A verdict on a report: an image a moderator already removed is not blocked again (no second owner
+   *  notice); the result says `alreadyRemoved` and the caller only actions the report. */
+  skipModeratorRemoved?: boolean;
 }): Promise<{
   held?: HeldRemoval;
   /** `HELD_IMAGE`: the caller leaves its reports open. */
   skipped?: true;
+  /** `skipModeratorRemoved` left it as it was. */
+  alreadyRemoved?: true;
 }> {
   const img = await dbRead
     .selectFrom('Image')
@@ -374,6 +405,16 @@ export async function blockImage({
     .where('id', '=', imageId)
     .executeTakeFirst();
   if (!img) return {};
+  // A held image goes on to the block below, which leaves its reports to the CSAM queue.
+  if (skipModeratorRemoved) {
+    const removed = await dbWrite
+      .selectFrom('Image')
+      .select('id')
+      .where('id', '=', imageId)
+      .where(sql<boolean>`${MODERATION_BLOCKED} AND ${HELD_IMAGE} IS NOT TRUE`)
+      .executeTakeFirst();
+    if (removed) return { alreadyRemoved: true };
+  }
 
   if (!skipAppealCheck) {
     const { held } = await holdRemovals(
@@ -411,6 +452,8 @@ export async function blockImage({
       // Already removed with only the review flag left: blocking again would only notify the uploader a
       // second time. Decided here, not off the replica read above.
       .where(NOT_FLAG_ONLY_REMAINING)
+      // Decided again in the statement, for a block that landed since the check above.
+      .$if(skipModeratorRemoved, (qb) => qb.where(sql<boolean>`NOT ${MODERATION_BLOCKED}`))
       .returning('id')
       .executeTakeFirst();
     // A statement of its own, after the UPDATE took the row lock: one that waited on a dismissal
@@ -460,7 +503,8 @@ export async function blockImage({
           throw e;
         }
       );
-    return state?.held ? { skipped: true } : {};
+    if (state?.held) return { skipped: true };
+    return skipModeratorRemoved ? { alreadyRemoved: true } : {};
   }
   const blocked = state!;
   await keepPendingAppealFlag(imageId);

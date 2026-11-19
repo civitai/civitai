@@ -388,6 +388,100 @@ describe('accepting from a review queue', () => {
   });
 });
 
+describe('a verdict on a report of an image a moderator already removed', () => {
+  const MOD_REMOVED = 66; // removed by a moderator, no flag
+  const LIVE = 67; // reported, still up
+  beforeEach(async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash") VALUES
+        ($1, 7, NULL, 'moderated', 'Blocked', 32, 106),
+        ($2, 7, NULL, NULL, 'Scanned', 4, 107)`,
+      [MOD_REMOVED, LIVE]
+    );
+    await db.query(`INSERT INTO "ImageReport" ("imageId", "reportId") VALUES ($1, $2), ($3, $4)`, [
+      MOD_REMOVED,
+      report(MOD_REMOVED),
+      LIVE,
+      report(LIVE),
+    ]);
+  });
+  const verdict = (action: 'accept' | 'block', imageId: number) =>
+    imageQueueActions[action](
+      event({ imageId: String(imageId), reportId: String(report(imageId)) })
+    );
+  const reportsMovedTo = (status: string) =>
+    setReportStatus.mock.calls
+      .map(([a]) => a)
+      .filter((a) => a.status === status)
+      .map((a) => a.id);
+
+  it('Unaction leaves it removed and closes the report as actioned', async () => {
+    const result = await verdict('accept', MOD_REMOVED);
+
+    expect(await row(MOD_REMOVED)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    expect(reportsMovedTo('Actioned')).toEqual([report(MOD_REMOVED)]);
+    expect(reportsMovedTo('Unactioned')).toEqual([]);
+    expect(result).toMatchObject({
+      success: true,
+      closedReportIds: [report(MOD_REMOVED)],
+      alreadyRemoved: expect.stringContaining('Already removed by a moderator'),
+    });
+  });
+
+  it('Unaction on a reported image still up restores nothing and unactions the report (control)', async () => {
+    await verdict('accept', LIVE);
+
+    expect(await row(LIVE)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+    expect(reportsMovedTo('Unactioned')).toEqual([report(LIVE)]);
+  });
+
+  it('Unaction on a held image is refused as before and moves no report', async () => {
+    const result = await verdict('accept', FLAG_ONLY);
+
+    expect(result).toMatchObject({ status: 409 });
+    expect(await row(FLAG_ONLY)).toMatchObject({ ingestion: 'Blocked', needsReview: 'csam' });
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('Remove does not block it again: no second notice or blocklist write, the report actioned', async () => {
+    const result = await verdict('block', MOD_REMOVED);
+
+    expect(notifiedImages()).toEqual([]);
+    expect(clickhouseInsert).not.toHaveBeenCalled();
+    expect(reportsMovedTo('Actioned')).toEqual([report(MOD_REMOVED)]);
+    expect(result).toMatchObject({ success: true, closedReportIds: [report(MOD_REMOVED)] });
+  });
+
+  it('a bulk Unaction closes its report and still unactions and restores the others', async () => {
+    const result = await imageQueueActions.bulkAccept(
+      event({
+        imageIds: [MOD_REMOVED, OTHER_REASON].join(','),
+        reportIds: [report(MOD_REMOVED), report(OTHER_REASON)].join(','),
+      })
+    );
+
+    expect(await row(MOD_REMOVED)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    expect(await row(OTHER_REASON)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+    expect(reportsMovedTo('Actioned')).toEqual([report(MOD_REMOVED)]);
+    expect(reportsMovedTo('Unactioned')).toEqual([report(OTHER_REASON)]);
+    expect(result).toMatchObject({ success: true, closedReportIds: [report(MOD_REMOVED)] });
+  });
+
+  it('a bulk Remove notifies only the owner of the image not yet removed, and actions both reports', async () => {
+    await imageQueueActions.bulkBlock(
+      event({
+        imageIds: [MOD_REMOVED, OTHER_REASON].join(','),
+        reportIds: [report(MOD_REMOVED), report(OTHER_REASON)].join(','),
+      })
+    );
+
+    expect(notifiedImages()).toEqual([`/images/${OTHER_REASON}`]);
+    expect(reportsMovedTo('Actioned').sort()).toEqual(
+      [report(MOD_REMOVED), report(OTHER_REASON)].sort()
+    );
+  });
+});
+
 describe('a bulk appeal approval over an image blocked for CSAM and another', () => {
   it(
     'restores the other image and leaves the held one removed with its appeal pending',

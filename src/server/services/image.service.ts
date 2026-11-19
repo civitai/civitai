@@ -287,7 +287,6 @@ import {
 import type {
   DomainColor,
   ModelType,
-  ReportReason,
   ReviewReactions,
   CollectionItemStatus,
 } from '~/shared/utils/prisma/enums';
@@ -302,6 +301,7 @@ import {
   JobQueueType,
   MediaType,
   NewOrderRankType,
+  ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import {
@@ -369,6 +369,7 @@ import {
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
 const model3dService = () => import('~/server/services/model3d.service');
+const rewards = () => import('~/server/rewards');
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -1517,6 +1518,22 @@ export async function handleBlockImages({
       );
     }
 
+    // A moderator's removal settles the images' open TOS reports and pays their reporters, as
+    // `setTosViolationHandler` does. Held images and those under the review flag keep theirs for the
+    // CSAM queue.
+    if (moderatorId) {
+      const settled = await actionPendingTosReports(
+        ids.filter((id) => !held.has(id) && !underReview.has(id) && !removedForCsam.has(id)),
+        moderatorId
+      );
+      const { reportAcceptedReward } = await rewards();
+      await Promise.allSettled(
+        settled.map((report) =>
+          reportAcceptedReward.apply({ userId: report.userId, reportId: report.id })
+        )
+      );
+    }
+
     if (moderatorId && !!imageIds?.length) {
       await trackModActivity(moderatorId, {
         entityType: 'image',
@@ -1661,6 +1678,23 @@ export const updateImageReportStatusByReason = ({
       AND i."imageId" = ${id}
       AND r.reason = ${reason}::"ReportReason"
     RETURNING id, "userId"
+  `;
+};
+
+/** Actions the Pending TOS reports on these images; returns the reports it moved. */
+export const actionPendingTosReports = async (ids: number[], actorId: number) => {
+  if (!ids.length) return [];
+  return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
+    UPDATE "Report" r SET
+      status = ${ReportStatus.Actioned}::"ReportStatus",
+      "statusSetAt" = now(),
+      "statusSetBy" = ${actorId}
+    FROM "ImageReport" i
+    WHERE i."reportId" = r.id
+      AND i."imageId" = ANY(${ids}::int[])
+      AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
+      AND r.status = ${ReportStatus.Pending}::"ReportStatus"
+    RETURNING r.id, r."userId"
   `;
 };
 

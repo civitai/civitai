@@ -427,6 +427,50 @@ describe('handleBlockImages over held and other images', () => {
   });
 });
 
+describe("handleBlockImages and the images' reports", () => {
+  const all = [HELD, FLAGGED_LIVE, FLAG_REMOVED, OTHER_REASON, DISMISSED];
+  const CSAM_REPORT = 2001;
+  const UNACTIONED_REPORT = 2002;
+  beforeEach(async () => {
+    await holder.db.exec(`
+      INSERT INTO "Report" (id, "userId", reason, status) VALUES
+        (${CSAM_REPORT}, 9, 'CSAM', 'Pending'), (${UNACTIONED_REPORT}, 9, 'TOSViolation', 'Unactioned');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES
+        (${OTHER_REASON}, ${CSAM_REPORT}), (${OTHER_REASON}, ${UNACTIONED_REPORT});
+    `);
+  });
+  const statuses = async () =>
+    Object.fromEntries(
+      (
+        await holder.db.query<{ id: number; status: string }>(
+          `SELECT id, status FROM "Report" ORDER BY id`
+        )
+      ).rows.map((r) => [r.id, r.status])
+    );
+
+  it("a moderator's removal actions and rewards the Pending TOS reports of images not held or flagged", async () => {
+    await handleBlockImages({ ids: all, moderatorId: 2 });
+
+    expect(await statuses()).toEqual({
+      [report(HELD)]: 'Pending',
+      [report(FLAGGED_LIVE)]: 'Pending',
+      [report(FLAG_REMOVED)]: 'Pending',
+      [report(OTHER_REASON)]: 'Actioned',
+      [report(DISMISSED)]: 'Pending',
+      [CSAM_REPORT]: 'Pending',
+      [UNACTIONED_REPORT]: 'Unactioned',
+    });
+    expect(rewardedReports()).toEqual([report(OTHER_REASON)]);
+  });
+
+  it('a removal with no moderator moves no report', async () => {
+    await handleBlockImages({ ids: all });
+
+    expect(await reportStatus(report(OTHER_REASON))).toBe('Pending');
+    expect(rewardedReports()).toEqual([]);
+  });
+});
+
 describe('setTosViolationHandler on a CSAM removal with no hash on the row', () => {
   it('writes the CSAM entry from the row when the replica read has no hash yet', async () => {
     await tosBlock(HELD, undefined, null);

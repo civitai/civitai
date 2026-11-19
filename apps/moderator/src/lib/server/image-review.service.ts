@@ -438,6 +438,10 @@ export type ReportedImageItem = {
   minor: boolean;
   poi: boolean;
   modelRestricted: boolean;
+  /** Removed already (`ingestion` Blocked): its report can only be closed, not acted on again. Not
+   *  `ingestion` itself, which the queue page reads as a review-queue card's. */
+  removed: boolean;
+  blockedFor: string | null;
   userId: number;
   username: string | null;
   report: {
@@ -488,6 +492,8 @@ export async function getReportedImageQueue({
       'i.minor',
       'i.poi',
       'i.modelRestricted',
+      'i.ingestion',
+      'i.blockedFor',
       'i.userId',
       'u.username',
       'r.id as reportId',
@@ -529,6 +535,8 @@ export async function getReportedImageQueue({
     minor: r.minor,
     poi: r.poi,
     modelRestricted: r.modelRestricted,
+    removed: r.ingestion === 'Blocked',
+    blockedFor: r.blockedFor,
     userId: r.userId,
     username: r.username,
     report: {
