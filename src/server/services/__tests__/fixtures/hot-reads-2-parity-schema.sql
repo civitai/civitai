@@ -104,7 +104,8 @@ CREATE TABLE "hot_reads_2_parity"."Image" (
   "nsfwLevel" INTEGER                                     NOT NULL DEFAULT 0,
   "ingestion" "hot_reads_2_parity"."ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
   "needsReview" TEXT,
-  "modelRestricted" BOOLEAN NOT NULL DEFAULT false
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT false,
+  "blockedFor" TEXT
 );
 
 CREATE TABLE "hot_reads_2_parity"."Model" (

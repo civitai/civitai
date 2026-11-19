@@ -11777,6 +11777,10 @@ model ServiceDealFile {
   deliveryKey    String?
   deliverySize   Int?
   repackedAt     DateTime?
+  /// A video Final only: the ETag and version of the held object its scan copy was made from. A
+  /// download refuses unless the object still has them, and serves that version.
+  scannedEtag      String?
+  scannedVersionId String?
   /// An Attachment only: when the buyer confirmed the rights and likeness attestations for it.
   attestedAt     DateTime?
   /// Set when the uploader removed the file but its row and objects must stay; only moderators

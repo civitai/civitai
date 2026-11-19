@@ -171,6 +171,7 @@ const MIGRATIONS = [
   '20261224150100_service_deal_file_attachment',
   '20270106120000_service_offering_content_scan',
   '20271118230000_service_deal_file_purge',
+  '20271119070000_service_deal_file_scanned_etag',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -407,7 +408,14 @@ const download = (
   userId: number,
   isModerator = false,
   canReviewCsam = isModerator
-) => files.resolveServiceDealFileDownload({ fileId, userId, isModerator, canReviewCsam });
+) =>
+  files.resolveServiceDealFileDownload({
+    servableLevels: 31,
+    fileId,
+    userId,
+    isModerator,
+    canReviewCsam,
+  });
 
 const finalsClear = async (dealId: number) =>
   (
@@ -433,6 +441,24 @@ const agedPurge = async () => {
 };
 
 describe('attaching', () => {
+  it.each(['a.mp4', 'a.webm'])(
+    'refuses a video attachment (%s) on the server',
+    async (fileName) => {
+      const dealId = await accepted();
+      await expect(
+        files.requestServiceDealAttachment({
+          ...ATTESTED,
+          dealId,
+          userId: BUYER,
+          fileName,
+          mimeType: 'video/mp4',
+          size: 10,
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toEqual([]);
+    }
+  );
+
   it('records the attestation time and stores the upload at a server-held key', async () => {
     const dealId = await accepted();
     const fileId = await attach(

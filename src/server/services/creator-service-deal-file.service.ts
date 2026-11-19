@@ -1,3 +1,4 @@
+import { captureImageStateHeldSql } from '~/server/services/legal-hold.service';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
@@ -41,6 +42,8 @@ import {
   SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
   SERVICE_FINAL_EXTENSIONS,
+  SERVICE_FINAL_VIDEO_EXTENSIONS,
+  SERVICE_FINAL_VIDEO_MAX_BYTES,
   SERVICE_FINAL_MAX_BYTES,
   SERVICE_FINAL_MAX_FILES,
   SERVICE_PREVIEW_ANIMATED_MAX_BYTES,
@@ -118,19 +121,33 @@ export const fileExtension = (name: string) => {
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
 };
 
+export const isFinalVideoName = (fileName: string) =>
+  (SERVICE_FINAL_VIDEO_EXTENSIONS as readonly string[]).includes(
+    fileExtension(cleanFileName(fileName))
+  );
+
 /** Refuses a Final we cannot inspect: an unknown type, or an archive other than a plain .zip. */
-export function assertFinalFileType(fileName: string) {
+export function assertFinalFileType(fileName: string, { video = true } = {}) {
   const extension = fileExtension(cleanFileName(fileName));
-  if (!(SERVICE_FINAL_EXTENSIONS as readonly string[]).includes(extension))
+  if (
+    !(SERVICE_FINAL_EXTENSIONS as readonly string[]).includes(extension) ||
+    (!video && isFinalVideoName(fileName))
+  )
     throw throwBadRequestError(
-      'This file type cannot be delivered. Use a .zip, a model file, or an image, audio or text file.'
+      video
+        ? 'This file type cannot be delivered. Use a .zip, a model file, or an image, video, audio or text file.'
+        : 'This file type cannot be attached. Use a .zip, a model file, or an image, audio or text file.'
     );
 }
 
-/** The type and size limits a Final has, which an Attachment shares. */
-function assertScannableFile(fileName: string, size: number) {
-  assertFinalFileType(fileName);
+/** The type and size limits a Final has, which an Attachment shares, video aside. */
+function assertScannableFile(fileName: string, size: number, { video = true } = {}) {
+  assertFinalFileType(fileName, { video });
   if (size > SERVICE_FINAL_MAX_BYTES) throw throwBadRequestError('That file is too large.');
+  if (isFinalVideoName(fileName) && size > SERVICE_FINAL_VIDEO_MAX_BYTES)
+    throw throwBadRequestError(
+      `A video cannot be more than ${SERVICE_FINAL_VIDEO_MAX_BYTES / (1024 * 1024)} MB.`
+    );
   // An image is scanned whole, so it has its own, lower, cap.
   if (
     (SERVICE_ZIP_IMAGE_EXTENSIONS as readonly string[]).includes(
@@ -267,7 +284,7 @@ export async function requestServiceDealAttachment({
     throw throwBadRequestError('Attaching files is not available right now.');
   // The seller sees the file name once the file passes. Scanned as it will be stored.
   await throwOnBlockedUserContent(cleanFileName(fileName), { surface: 'service-deal-file' });
-  assertScannableFile(fileName, size);
+  assertScannableFile(fileName, size, { video: false });
 
   const created = await dbWrite.$transaction(async (tx) => {
     const [deal] = await tx.$queryRaw<{ id: number; round: number; files: number }[]>`
@@ -1103,6 +1120,8 @@ type ServiceDealFileAccess = {
 export type ServiceDealFileDownload = {
   bucket: string;
   key: string;
+  /** A scanned video: the object version its scan copy was made from. */
+  versionId?: string;
   fileName: string;
   access: ServiceDealFileAccess;
   /** A removed file is signed only once its access is recorded. */
@@ -1127,6 +1146,7 @@ export async function resolveServiceDealFileDownload({
   delivered = false,
   moderatorFetch = false,
   canReviewCsam = false,
+  servableLevels,
 }: {
   fileId: number;
   userId: number;
@@ -1134,6 +1154,8 @@ export async function resolveServiceDealFileDownload({
   delivered?: boolean;
   /** The `csamReports` permission: a removed file is served only to a moderator who holds it. */
   canReviewCsam?: boolean;
+  /** What the requesting domain may be sent; a video rated outside it is not served to a party. */
+  servableLevels: number;
   /** The moderator dispute tool. Recorded as a ModeratorFetch under the caller's role on the deal;
    *  it never counts as the buyer's download. */
   moderatorFetch?: boolean;
@@ -1155,10 +1177,21 @@ export async function resolveServiceDealFileDownload({
       revisionsUsed: number;
       completedAt: Date | null;
       removedAt: Date | null;
+      scannedEtag: string | null;
+      scannedVersionId: string | null;
+      contentLevel: number | null;
+      csamHeld: boolean;
+      ratedImageGone: boolean;
     }[]
   >`
     SELECT f."dealId", f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus",
-      f."malwareScanStatus", f."status", f."removedAt",
+      f."malwareScanStatus", f."status", f."removedAt", f."scannedEtag", f."scannedVersionId",
+      (SELECT max(e."nsfwLevel") FROM "ServiceDealFileEntry" e WHERE e."fileId" = f."id") AS "contentLevel",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
+        WHERE e."fileId" = f."id" AND ${captureImageStateHeldSql('i')}) AS "csamHeld",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+        WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone",
       d."buyerId", d."sellerId", d."status"::text AS "dealStatus", d."revisionsUsed", d."completedAt"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
     WHERE f."id" = ${fileId}::int`;
@@ -1205,9 +1238,24 @@ export async function resolveServiceDealFileDownload({
   }
   const role: ServiceDealAccessRole =
     row.sellerId === userId ? 'Seller' : row.buyerId === userId ? 'Buyer' : 'Moderator';
+  const bucket = await getBucket();
+  if (row.kind === 'Final' && isFinalVideoName(row.fileName)) {
+    // A video is served only as the version its scan copy was made from, and only where its rating
+    // may be shown. One never stamped (refused, or not scanned yet) goes only to dispute review.
+    const disputeReview = isModerator && !!moderatorFetch;
+    // Held for CSAM or a minor, it goes only through the CSAM path, never this route.
+    if (row.csamHeld) return null;
+    const levelInDomain = !!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels);
+    // Dispute review sees it whatever its rating, Blocked included, which no domain's levels hold,
+    // but only while the scan image that shows it is not held is still there to say so.
+    const levelShown = levelInDomain || (disputeReview && !row.ratedImageGone);
+    if (!levelShown || (!row.scannedEtag && !disputeReview)) return null;
+    if (row.scannedEtag && !(await stillScannedVersion(bucket, key, row))) return null;
+  }
   return {
-    bucket: await getBucket(),
+    bucket,
     key,
+    versionId: row.scannedVersionId ?? undefined,
     removed: !!row.removedAt,
     fileName: row.fileName,
     access: {
@@ -1258,8 +1306,35 @@ const signDownload = async (target: ServiceDealFileDownload) =>
       bucket: target.bucket,
       fileName: target.fileName,
       expiresIn: SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
+      versionId: target.versionId,
     })
   ).url;
+
+/** Whether the held object (that version, when one was recorded) still has the scanned ETag. */
+async function stillScannedVersion(
+  bucket: string,
+  key: string,
+  row: { scannedEtag: string | null; scannedVersionId: string | null }
+) {
+  // A version that is gone is a mismatch; any other failure is not an answer, so it throws.
+  const head = await getS3Client()
+    .send(
+      new HeadObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        ...(row.scannedVersionId ? { VersionId: row.scannedVersionId } : {}),
+      })
+    )
+    .catch((error: { name?: string; $metadata?: { httpStatusCode?: number } }) => {
+      if (error?.$metadata?.httpStatusCode === 404 || error?.name === 'NotFound') return null;
+      throw error;
+    });
+  return (
+    !!head &&
+    head.ETag === row.scannedEtag &&
+    (!row.scannedVersionId || head.VersionId === row.scannedVersionId)
+  );
+}
 
 const logAccessFailure = (access: ServiceDealFileAccess) => (error: unknown) =>
   logToAxiom({
