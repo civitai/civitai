@@ -674,8 +674,9 @@ const dealHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
 
 /**
  * A removed file whose scans finished clean (or that can never be judged), with an uploader not on
- * a report, no hold on its deal, and its scan copies gone, has nothing left to keep. A removed file
- * whose scan failed, or is still to come, stays for the moderators. `f` names the file row.
+ * a report and its scan copies gone. Deal holds are not checked here; `purgeable` adds them. A
+ * removed file whose scan failed, or is still to come, stays for the moderators. `f` names the
+ * file row.
  */
 const purgeableState = (f: Prisma.Sql) => Prisma.sql`(
   ${f}."removedAt" IS NOT NULL
