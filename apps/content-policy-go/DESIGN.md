@@ -80,7 +80,7 @@ keeps its own behaviour and nothing is resolved silently.
 | `level`           | `viewer`: getServerBrowsingLevel                         | `viewer`                                                       | `api`: all, or SFW when held      |
 | `nsfwHost`        | `ignored`: mature-capable whatever the host              | `color`: blue or red, or no host at all                        | `ignored`                        |
 | `ratingSurface`   | `unless-held`                                            | `red-host`: isRedCapableHost                                   | `always`                         |
-| `unknownRating`   | `closed`: only to a viewer who may read R and X          | `open`: not mature, admitted                                   | `open`                           |
+| `unknownRating`   | `closed`: only to a viewer who may read R, X and XXX     | `open`: not mature, admitted                                   | `open`                           |
 | `moderatorBypass` | no                                                       | yes: a moderator is let past the region restriction            | no                               |
 | Node code         | `describeRegion`, `audienceForUser`, `audienceAdmits`     | `getFeatureFlags().canViewNsfw`, `getServerBrowsingLevel`, the `/apps` store gate (`matureRatingsAllowed`) | `apiBrowsingLevel`, `isAPIAccessBlocked` |
 
@@ -105,15 +105,15 @@ Measured by the vectors (the generator runs the real functions; each row is pinn
    `canViewNsfw` is on (the user's own level applies), while `isRedCapableHost(undefined)` is off (no
    mature rating). Part of `nsfwHost: color`. feed-go's `CanViewNsfw` answers false for no host:
    narrower than the site.
-5. **Unknown rating.** The adapter fails closed (`audienceAdmits`: only to a viewer who may read R
-   and X); the store's `matureRatingAllowed` admits any rating that is not mature. Rule
-   `unknownRating`.
-6. **XXX in the adapter.** An `Audience` never admits XXX itself (`allowed.xxx` is false, and the
-   comment in `audience.ts` says XXX fails closed), but `xxx` is not on the rating ladder, so
-   `audienceAdmits` reads it as an unknown rating and admits it to every viewer who may read R and X.
-   Measured: `audienceAdmits(audienceForUser({showNsfw: true, browsingLevel: 31}), 'xxx')` is true.
-   The service reproduces it (`unknownRating: closed`), and it is reported, not fixed here: changing
-   it changes what the adapter streams.
+5. **Unknown rating.** The adapter fails closed (`audienceAdmits`: a null, empty or unknown rating
+   only to a viewer who may read R, X and XXX); the store's `matureRatingAllowed` admits any rating
+   that is not mature. Rule `unknownRating`.
+6. **XXX (resolved).** `xxx` is now a rating the adapter knows (`isKnownRating`, the
+   APP_SUB_LISTING_CONTENT_RATINGS list, generated into `policydata.json` as
+   `registryKnownRatings`), and an `Audience` carries its own XXX bit, so `xxx` reaches only a viewer
+   whose level includes XXX, as the store gates it. Until that change, `xxx` fell through to the
+   unknown-rating path and reached every viewer who may read R and X, XXX bit or not. The vectors
+   pin both sides: R+X without XXX gets neither `xxx` nor an unknown rating; XXX alone gets `xxx`.
 7. **Moderators.** The feature-flag service lets a moderator past the region restriction; the
    adapter does not. Rule `moderatorBypass`.
 8. **The API ignores the user.** `apiBrowsingLevel` is every level, or SFW in a restricted region,

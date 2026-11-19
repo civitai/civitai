@@ -12,7 +12,11 @@ import dotenv from 'dotenv';
 export const RELEASE_BASE = 'https://github.com/civitai/civitai/releases/download';
 export const TAG_PREFIX = 'feed-go-v';
 /** The Flipt keys of the client's Go-transport flags (`feedGoTransport*` in feature-flags.service.ts). */
-export const TRANSPORT_FLIPT_KEYS = ['feed-go-transport', 'feed-go-transport-model-getall'];
+export const TRANSPORT_FLIPT_KEYS = [
+  'feed-go-transport',
+  'feed-go-transport-model-getall',
+  'feed-go-transport-infinite',
+];
 
 const SEMVER = /^\d+\.\d+\.\d+$/;
 

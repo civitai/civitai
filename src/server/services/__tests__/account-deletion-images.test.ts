@@ -24,7 +24,11 @@ import {
   MAX_RESTORE_BATCHES,
   RESTORE_BATCH_SIZE,
 } from '~/server/services/account-deletion-images';
-import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
+import {
+  PRIOR_BLOCKED_FOR_KEY,
+  PRIOR_INGESTION_KEY,
+  PRIOR_NEEDS_REVIEW_KEY,
+} from '~/server/utils/image-removal-mode';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -49,6 +53,7 @@ type ImageRow = {
   postId: number | null;
   ingestion: string;
   blockedFor: string | null;
+  needsReview?: string | null;
   metadata: Record<string, string>;
   /** Fiction: a row the claim matches but the UPDATE never moves off `Blocked`. */
   stuck?: boolean;
@@ -84,11 +89,13 @@ function splitTopLevel(body: string) {
 const METADATA_LOOKUP = /^\(?"metadata"->>\?::text\)?(::"\w+")?$/;
 const METADATA_MINUS = /^"metadata"(\s*-\s*\?::text)+$/;
 const SCOPED_ON_BREADCRUMB = /"metadata"->>\?::text IS NOT NULL/;
-const CLAIMS_BY_ID = /^WHERE\s+id IN \(\s*SELECT i\.id\s+FROM "Image" i\s+WHERE\s/;
-const BOUNDED_CLAIM = /^LIMIT \?\s*\)\s*$/;
+const CLAIM_START =
+  /FROM \(\s*SELECT i\.id, i\."needsReview" AS "currentReview",[\s\S]*?AS "recordedReview"\s+FROM "Image" i\s+WHERE\s/;
+const BOUNDED_CLAIM = /^LIMIT \?\s*\)\s*c\s+WHERE "Image"\.id = c\.id\s*$/;
 const OWNER_CHECK = /^\s*\(SELECT [^()]*\([^()]*\)[^()]* FROM "User" u WHERE u\.id = \?\)\s*$/;
 const ENUM_RANGE = /\(SELECT unnest\(enum_range\(NULL::"ImageIngestionStatus"\)\)::text\)/;
 
+const COALESCE_EXPR = /^COALESCE\(("\w+"),\s*([\s\S]+)\)$/;
 const CASE_EXPR = /^CASE\s+WHEN\s+([\s\S]+?)\s+THEN\s+([\s\S]+?)\s+ELSE\s+([\s\S]+?)\s+END$/;
 const takeKeys = (part: string, keys: string[]) => keys.splice(0, (part.match(/\?/g) ?? []).length);
 
@@ -99,16 +106,39 @@ function evalValue(expr: string, keys: string[], row: ImageRow): string | null {
   if (caseExpr) {
     const [, cond, then, otherwise] = caseExpr;
     const condKeys = takeKeys(cond, keys);
-    const holds = cond.split(/\s+OR\s+/).some((clause) => {
+    // Every conjunct is evaluated (none short-circuits), so each consumes its own parameters.
+    const conjunct = (clause: string) => {
+      const anyOf = clause.match(/^([\s\S]+?)\s*=\s*ANY\(\?::text\[\]\)$/);
+      if (anyOf) {
+        const operandKeys = takeKeys(anyOf[1], condKeys);
+        const allowed = condKeys.shift() as unknown as string[];
+        return allowed.includes(evalValue(anyOf[1].trim(), operandKeys, row) as string);
+      }
+      const isLiteral = clause.match(/^([\s\S]+?)\s*=\s*'(\w+)'$/);
+      if (isLiteral)
+        return (
+          evalValue(isLiteral[1].trim(), takeKeys(isLiteral[1], condKeys), row) === isLiteral[2]
+        );
+      const notLiteral = clause.match(/^([\s\S]+?)\s*<>\s*'(\w+)'$/);
+      if (notLiteral) {
+        const value = evalValue(notLiteral[1].trim(), takeKeys(notLiteral[1], condKeys), row);
+        return value !== null && value !== notLiteral[2];
+      }
       const [operand, compared] = clause.split(/\s*=\s*\?\s*$/);
       if (compared !== '') throw new Error(`unhandled CASE condition: ${clause}`);
       const operandKeys = takeKeys(operand, condKeys);
       return evalValue(operand.trim(), operandKeys, row) === condKeys.shift();
-    });
+    };
+    const holds = cond
+      .split(/\s+OR\s+/)
+      .map((clause) => clause.split(/\s+AND\s+/).map(conjunct))
+      .some((results) => results.every(Boolean));
     const thenKeys = takeKeys(then, keys);
     const elseKeys = takeKeys(otherwise, keys);
     return holds ? evalValue(then, thenKeys, row) : evalValue(otherwise, elseKeys, row);
   }
+  const coalesce = expr.match(COALESCE_EXPR);
+  if (coalesce) return evalValue(coalesce[1], [], row) ?? evalValue(coalesce[2], keys, row);
   const lookup = expr.match(METADATA_LOOKUP);
   if (lookup) {
     const value = row.metadata[keys[0]] ?? null;
@@ -117,14 +147,20 @@ function evalValue(expr: string, keys: string[], row: ImageRow): string | null {
     return value;
   }
   if (expr === '"blockedFor"') return row.blockedFor;
+  if (expr === '"needsReview"') return row.needsReview ?? null;
+  if (expr === 'NULL') return null;
   if (expr === `'Blocked'::"ImageIngestionStatus"`) return 'Blocked';
   throw new Error(`unhandled assignment: ${expr}`);
 }
 
-function applyRestoreUpdate(sql: string, values: unknown[]) {
+function applyRestoreUpdate(rawSql: string, values: unknown[]) {
+  const sql = rawSql.replace(/--[^\n]*/g, '');
   const params = [...values];
-  const whereAt = sql.indexOf('WHERE');
-  const assignments = splitTopLevel(sql.slice(sql.indexOf('SET ') + 4, whereAt)).map(
+  // The whole gallery reaching Node in one statement is the failure this batching exists to
+  // prevent, so a claim without its own bound is rejected rather than run.
+  const claimAt = sql.search(CLAIM_START);
+  if (claimAt < 0) throw new Error(`the reversal must claim rows by id: ${sql}`);
+  const assignments = splitTopLevel(sql.slice(sql.indexOf('SET ') + 4, claimAt)).map(
     (assignment) => {
       const split = assignment.indexOf('=');
       const expr = assignment.slice(split + 1).trim();
@@ -136,11 +172,13 @@ function applyRestoreUpdate(sql: string, values: unknown[]) {
     }
   );
 
-  // The whole gallery reaching Node in one statement is the failure this batching exists to
-  // prevent, so a claim without its own bound is rejected rather than run.
-  const claim = sql.slice(whereAt, sql.indexOf('RETURNING'));
-  if (!CLAIMS_BY_ID.test(claim)) throw new Error(`the reversal must claim rows by id: ${claim}`);
-  const innerWhereAt = claim.indexOf('WHERE', 1);
+  const claim = sql.slice(claimAt, sql.indexOf('RETURNING'));
+  const innerWhereAt = claim.indexOf('WHERE', claim.indexOf('FROM "Image" i'));
+  // Which recorded review counts (a decided appeal's does not) is pinned on Postgres too.
+  const recordedReviewKey = params.splice(
+    0,
+    (claim.slice(0, innerWhereAt).match(/\?/g) ?? []).length
+  )[0] as string;
   const limitAt = claim.lastIndexOf('LIMIT');
   if (limitAt < innerWhereAt || !BOUNDED_CLAIM.test(claim.slice(limitAt).trim()))
     throw new Error(`the claim must be bounded by a LIMIT: ${claim}`);
@@ -172,22 +210,27 @@ function applyRestoreUpdate(sql: string, values: unknown[]) {
   const staged = claimed.map((row) => {
     const next: Partial<ImageRow> = {};
     for (const { column, expr, keys } of assignments) {
+      // Which review flag survives is pinned on Postgres, in scan-outcome-csam-block.behavior.test.ts.
+      if (column === 'needsReview') continue;
       if (METADATA_MINUS.test(expr)) {
         const metadata = { ...row.metadata };
         for (const key of keys) delete metadata[key];
         next.metadata = metadata;
       } else next[column as 'ingestion'] = evalValue(expr, [...keys], row)!;
     }
-    return { row, next };
+    return { row, next, recordedReview: row.metadata[recordedReviewKey] ?? null };
   });
   for (const { row, next } of staged) if (!row.stuck) Object.assign(row, next);
 
   claimedPerPass.push(claimed.length);
-  return claimed.map(({ id, postId, ingestion, blockedFor }) => ({
-    id,
-    postId,
-    ingestion,
-    blockedFor,
+  return staged.map(({ row, recordedReview }) => ({
+    id: row.id,
+    postId: row.postId,
+    ingestion: row.ingestion,
+    blockedFor: row.blockedFor,
+    needsReview: row.needsReview ?? null,
+    currentReview: row.needsReview ?? null,
+    recordedReview,
   }));
 }
 
@@ -368,6 +411,7 @@ describe('unblockAccountDeletionImages', () => {
         metadata: {
           [PRIOR_INGESTION_KEY]: 'Blocked',
           [PRIOR_BLOCKED_FOR_KEY]: 'AiNotVerified',
+          [PRIOR_NEEDS_REVIEW_KEY]: 'minor',
         },
       }),
     ];

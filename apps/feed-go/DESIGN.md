@@ -19,7 +19,9 @@ last sections list what is **not** at parity and what a deployment needs.
 Five more ports run in **shadow only** (nothing routes public traffic to them): the public REST
 endpoint `GET /api/v1/images` (§13), the tRPC procedures `image.getInfinite`, the flat image feed
 (§14), and `model.getAll`, the model browse feed (§15), and the REST model endpoints
-`GET /api/v1/models` and `GET /api/v1/models/[id]` (§16). They share the hydration readers, the caches
+`GET /api/v1/models` and `GET /api/v1/models/[id]` (§16). (`image.getInfinite` and `model.getAll` each
+also have a public route that computes nothing unless its own serve switch is on, default off: §14.8,
+§15.8.) They share the hydration readers, the caches
 (and the images ports the feed-service client), the shadow queue and the metric families, told
 apart by a `feed_endpoint` label (not `endpoint`: that is a reserved scrape target label, which would
 overwrite ours).
@@ -1589,13 +1591,14 @@ the per-route CPU attribution over the same window.
   the refresh lock, which only matters when the meta changed since); a miss is read from the replica
   and not written back, so it stays a miss for the next reader until Node fills it.
 
-## 14. `image.getInfinite` (tRPC, shadow only)
+## 14. `image.getInfinite` (tRPC, shadow; served only behind `FEED_GO_SERVE_INFINITE`, default off)
 
 The flat image feed (`/images`, a creator's images, a post's carousel tail, a tag page):
 `src/server/routers/image.router.ts` (`heavyProcedure`, input `getInfiniteImagesSchema`) →
 `getInfiniteImagesHandler` (`image.controller.ts`) → `getAllImagesIndex` (the feed service) or
 `getAllImages` (Postgres), then `withSharedFeedUsers`. Ported in `internal/feed/infinite.go`; compared at
-`POST /internal/shadow/image.getInfinite`. Nothing serves it publicly. It reuses the gallery port's feed
+`POST /internal/shadow/image.getInfinite`. The public route exists but computes nothing unless
+`FEED_GO_SERVE_INFINITE` is on (§14.8). It reuses the gallery port's feed
 client, page query, page cache, hydration (one cluster pipeline per stage, `hydrate.Sources.Page`), the
 REST port's post→version / version→model readers and username lookup, the session resolver and the
 domain cap.
@@ -1717,6 +1720,30 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="infinite",m
 - the blocked tag list is read from its cache key and memoized in-process for 30 s (single flight, an
   error never memoized), as Node's `createTtlMemo` does: a changed list reaches both within that
   window, each pod on its own clock.
+
+### 14.8 Serving (`FEED_GO_SERVE_INFINITE`, default off)
+
+The same shape as `model.getAll`'s (§15.8). The public listener routes `GET /api/trpc/image.getInfinite`
+to `ServeInfiniteHTTP`. With `FEED_GO_SERVE_INFINITE` off (the default) every request there is the
+`infinite-off` fallback: nothing is computed, no serve slot is taken, and the request is proxied to the
+Node app as it came
+(`feed_go_fallback_total{feed_endpoint="infinite",mode="serve",reason="infinite-off"}`). On, the
+request runs the gallery route's gates in the same order (the API request policy, the origin check, a
+serve slot from the shared `FEED_GO_MAX_IN_FLIGHT` pool, the request budget) and then
+`computeInfinite`; every fallback of §14.2 is proxied, as for the gallery. Cache policy: as
+`computeInfinite`'s doc comment states.
+
+Two switches gate real traffic, both off by default and each independent of the other procedures':
+this one, and the web client's per-user flag that sends a signed-in browser's `image.getInfinite` to
+`/api/trpc-go/image.getInfinite` (an exact-path route in front of the app rewrites that path to
+`/api/trpc/image.getInfinite` on this service). The client flag alone, with this switch off, moves the
+cohort through this service to the Node app unchanged.
+
+Serve slots are shared by all three public routes. In Node `image.getInfinite` is a `heavyProcedure`
+(the `heavy-image` bulkhead, as the gallery's), so here it draws on the same pool the gallery does;
+`feed_go_serve_in_flight` and the `bulkhead` fallbacks are seeded at 0 for it too. Before the switch
+goes on and for as long as it is on, watch them per endpoint as §15.8 says: a gallery or model
+`bulkhead` rate that rises when `image.getInfinite` is served means the shared pool is too small.
 
 ## 15. `model.getAll` (tRPC, shadow; served only behind `FEED_GO_SERVE_MODEL_GETALL`, default off)
 
@@ -1944,7 +1971,7 @@ sends a signed-in browser's `model.getAll` to `/api/trpc-go/model.getAll` (an ex
 of the app rewrites that path to `/api/trpc/model.getAll` on this service). The client flag alone, with
 this switch off, moves the cohort through this service to the Node app unchanged.
 
-Serve slots are SHARED: both public routes draw on the one `FEED_GO_MAX_IN_FLIGHT` pool (for the
+Serve slots are SHARED: every public route (since §14.8, three) draws on the one `FEED_GO_MAX_IN_FLIGHT` pool (for the
 gallery it stands in for Node's `heavy-image` bulkhead; Node has no bulkhead on `model.getAll`), so a
 burst on one route makes the other shed. `feed_go_serve_in_flight` is labelled by the route holding
 the slot, and both endpoints' series and `bulkhead` fallbacks are seeded at 0. An answer that loaded

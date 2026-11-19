@@ -45,7 +45,7 @@
       "goRoots": ["apps/feed-go/internal/feed"],
       "flags": {
         "shadow": "feed-go-shadow-infinite",
-        "transport": null,
+        "transport": "feed-go-transport-infinite",
         "probe": null
       },
       "holdout": null,

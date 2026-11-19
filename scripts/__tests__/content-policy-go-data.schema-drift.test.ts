@@ -30,6 +30,7 @@ describe('apps/content-policy-go policydata.json', () => {
       all: 31,
     });
     expect(data.ratingLadder).toEqual(['g', 'pg', 'pg13', 'r', 'x']);
+    expect(data.registryKnownRatings).toEqual(['g', 'pg', 'pg13', 'r', 'x', 'xxx']);
     expect(data.matureRatings).toEqual(['r', 'x', 'xxx']);
     expect(data.noCountryCodes).toEqual(['T1', 'XX']);
     expect(data.regionBlockDefault).toContainEqual({ region: 'GB', effectiveDate: '2025-07-24' });

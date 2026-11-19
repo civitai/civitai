@@ -279,15 +279,15 @@ func matureRatingAllowed(rating string, a mature) bool {
 	}
 }
 
-// admitsRating is audienceAdmits (UnknownRatingClosed; the audience never admits XXX itself, so xxx is
-// read as an unknown rating) or matureRatingAllowed (UnknownRatingOpen). Ratings are lowercase here;
-// both Node predicates lowercase theirs.
+// admitsRating is audienceAdmits (UnknownRatingClosed: a rating the registry knows, `xxx` included,
+// by its own bit; any other only with R, X and XXX all allowed) or matureRatingAllowed
+// (UnknownRatingOpen). Ratings are lowercase here; both Node predicates lowercase theirs.
 func admitsRating(rule UnknownRatingRule, a mature, rating string) bool {
 	if rule == UnknownRatingClosed {
-		if slices.Contains(data.RatingLadder, rating) {
-			return matureRatingAllowed(rating, mature{r: a.r, x: a.x})
+		if slices.Contains(data.RegistryKnownRatings, rating) {
+			return matureRatingAllowed(rating, a)
 		}
-		return a.r && a.x
+		return a.r && a.x && a.xxx
 	}
 	return matureRatingAllowed(rating, a)
 }

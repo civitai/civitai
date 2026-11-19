@@ -99,16 +99,16 @@ describe('clearHeldUserImages', () => {
       null,
       'key-csam',
     ]);
-    // The cleared ones are marked with the picture only, never the value; other meta is kept.
+    // The clear writes only the image: meta is left as it was.
     const meta = await pg.query<{ id: number; meta: unknown }>(
       `SELECT id, meta FROM "User" WHERE id IN (1, 2, 3) ORDER BY id`
     );
     expect(meta.rows).toEqual([
-      { id: 1, meta: { keep: true, heldImageCleared: { pictureId: 1 } } },
-      { id: 2, meta: { heldImageCleared: { pictureId: 2 } } },
+      { id: 1, meta: { keep: true } },
+      { id: 2, meta: null },
       { id: 3, meta: {} },
     ]);
-    // A non-object meta takes no marker but is still cleared.
+    // A non-object meta is still cleared, and kept.
     await clearHeldUserImages(db, [8]);
     const eight = await pg.query<{ image: string | null; meta: unknown }>(
       `SELECT image, meta FROM "User" WHERE id = 8`

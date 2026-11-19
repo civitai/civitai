@@ -68,8 +68,9 @@ const (
 	// RatingSurfaceAlways: the level alone decides (the public API has no host rule).
 	RatingSurfaceAlways RatingSurfaceRule = "always"
 
-	// UnknownRatingClosed admits a rating outside the ladder (null, empty, unknown, and `xxx`, which the
-	// ladder does not carry) only to a viewer who may read both R and X (audienceAdmits).
+	// UnknownRatingClosed admits each rating the registry knows (registryKnownRatings: the ladder plus
+	// `xxx`) by its own level bit, and any other rating (null, empty, unknown) only to a viewer who may
+	// read every mature rating, R, X and XXX (audienceAdmits).
 	UnknownRatingClosed UnknownRatingRule = "closed"
 	// UnknownRatingOpen admits a rating that is not mature to everyone, and `xxx` by the level's XXX
 	// bit (matureRatingAllowed).

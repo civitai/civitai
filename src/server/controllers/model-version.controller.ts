@@ -19,7 +19,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { getFeatureFlagsLazy, userTiers } from '~/server/services/feature-flags.service';
 import type { SessionUser } from '~/types/session';
 import type { BaseModelType } from '~/server/common/constants';
-import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
+import type {
+  GetModelVersionsByIdsInput,
+  LicensingSourceRejection,
+} from '~/server/schema/model-version.schema';
 import {
   type BaseModel,
   DEPRECATED_BASE_MODELS,
@@ -66,7 +69,9 @@ import {
   earlyAccessModelVersionsOnTimeframe,
   earlyAccessPurchase,
   getModelVersionRunStrategies,
+  getExplorationPromptsById,
   getVersionById,
+  getVersionsByIds,
   getWorkflowIdFromModelVersion,
   modelVersionDonationGoal,
   modelVersionGeneratedImagesOnTimeframe,
@@ -100,6 +105,7 @@ import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
+import { getViewableModelVersionIds } from '~/server/services/model-version-visibility.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import {
@@ -114,7 +120,7 @@ import { dbRead, dbWrite } from '../db/client';
 import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
-import { getFilesByEntity } from '../services/file.service';
+import { getDownloadFilename, getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
 import { getLinkedFileData } from '~/server/services/linked-file-data.service';
 import { assertBountyEntryFileUrlAllowed } from '~/server/utils/model-file-url-bound';
@@ -132,12 +138,47 @@ import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 
-export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
+// A version the viewer may not see reads as one that does not exist: no rows, or NOT_FOUND.
+const canViewVersion = async (id: number, ctx: Context) =>
+  (await getViewableModelVersionIds([id], ownerOrModeratorViewer(ctx))).has(id);
+
+export const getModelVersionRunStrategiesHandler = async ({
+  input: { id },
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
-    return getModelVersionRunStrategies({ modelVersionId: id });
+    if (!(await canViewVersion(id, ctx))) return [];
+    return await getModelVersionRunStrategies({ modelVersionId: id });
   } catch (e) {
     throw throwDbError(e);
   }
+};
+
+export const getVersionsByIdsHandler = ({
+  input,
+  ctx,
+}: {
+  input: GetModelVersionsByIdsInput;
+  ctx: Context;
+}) =>
+  getVersionsByIds({
+    ...input,
+    browsingLevel: getRequestBrowsingLevel(ctx),
+    viewer: ownerOrModeratorViewer(ctx),
+  });
+
+export const getExplorationPromptsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  if (!(await canViewVersion(input.id, ctx))) return [];
+  return getExplorationPromptsById(input);
 };
 
 export type ModelVersionById = AsyncReturnType<typeof getModelVersionHandler>;
@@ -389,12 +430,23 @@ const loadModelVersion = async ({
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
       // Training data keeps its own public view (the router's strip); other non-Public files are the
-      // owner's and moderators'.
-      files: (isOwnerOrMod || !version.files
-        ? version.files
-        : version.files.filter(
+      // owner's and moderators'. Only they get downloadName, which the editor shows in place of a
+      // trainer blob id: it is built from the real model name, which a .com face hides.
+      files: (isOwnerOrMod
+        ? version.files?.map((file) => ({
+            ...file,
+            downloadName: getDownloadFilename({
+              model,
+              modelVersion: version,
+              file,
+              versionFiles: version.files,
+            }),
+          }))
+        : version.files?.filter(
             (file) => file.visibility === 'Public' || file.type === 'Training Data'
-          )) as unknown as Array<Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }>,
+          )) as unknown as Array<
+        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata; downloadName?: string }
+      >,
       settings: version.settings as RecommendedSettingsSchema | undefined,
       recommendedResources: generationResources,
       linkedComponents,
@@ -1270,8 +1322,16 @@ export const modelVersionGeneratedImagesOnTimeframeHandler = async ({
 };
 
 // Only available for SD 1.5 and SDXL 1.0 models for now
-export async function getVersionLicenseHandler({ input }: { input: GetByIdInput }) {
+export async function getVersionLicenseHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) {
   try {
+    if (!(await canViewVersion(input.id, ctx)))
+      throw throwNotFoundError(`No version with id ${input.id}`);
     const version = await getVersionById({
       id: input.id,
       select: {
@@ -1356,14 +1416,17 @@ export const modelVersionDonationGoalHandler = async ({
   ctx: Context;
 }) => {
   try {
+    if (!(await canViewVersion(input.id, ctx)))
+      throw throwNotFoundError(`No model version with id ${input.id}`);
+    const viewer = ownerOrModeratorViewer(ctx);
     // `await` is load-bearing: without it the rejected promise escapes this
     // try/catch (so a Prisma error bypassed the P2025→NOT_FOUND mapping in
     // throwDbError and surfaced as INTERNAL_SERVER_ERROR). The service now also
     // throws NOT_FOUND at the source, so this is belt-and-suspenders.
     return await modelVersionDonationGoal({
       ...input,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      userId: viewer?.id,
+      isModerator: viewer?.isModerator,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -1371,7 +1434,14 @@ export const modelVersionDonationGoalHandler = async ({
   }
 };
 
-export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInput }) {
+export async function getModelVersionOwnerHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) {
+  if (!(await canViewVersion(input.id, ctx))) throw throwNotFoundError();
   // No Kysely row (a missing version, or an orphaned model or user) runs the Prisma read, so a
   // missing version is still NOT_FOUND and an orphan still throws as Prisma throws.
   const version =

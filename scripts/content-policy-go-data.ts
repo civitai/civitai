@@ -6,6 +6,9 @@
  *     from them (src/shared/constants/browsingLevel.constants.ts): public (PG), sfw (PG + PG-13),
  *     all (every level but Blocked).
  *   - `ratingLadder`: OFFSITE_CONTENT_RATING_LADDER, the content ratings an app can carry.
+ *   - `registryKnownRatings`: APP_SUB_LISTING_CONTENT_RATINGS (app-sub-listing.constants.ts), the
+ *     ratings the registry adapter's `isKnownRating` knows (the ladder plus `xxx`); any other rating
+ *     is an unknown one there, and fails closed.
  *   - `matureRatings`: the ratings `isMatureContentRating` (src/server/utils/server-domain.ts) calls
  *     mature, probed over the ladder plus `xxx`.
  *   - `noCountryCodes`: NO_COUNTRY (src/server/registry-adapter/request-origin.ts), the edge's codes
@@ -27,6 +30,7 @@ import { join } from 'node:path';
 import { NsfwLevel } from '~/server/common/enums';
 import { NO_COUNTRY } from '~/server/registry-adapter/request-origin';
 import { isMatureContentRating } from '~/server/utils/server-domain';
+import { APP_SUB_LISTING_CONTENT_RATINGS } from '~/shared/constants/app-sub-listing.constants';
 import {
   DEFAULT_REGION_BLOCK_CONFIG,
   DEFAULT_REGION_RESTRICTION_CONFIG,
@@ -61,6 +65,7 @@ export function buildContentPolicyGoData() {
       all: allBrowsingLevelsFlag,
     },
     ratingLadder: [...OFFSITE_CONTENT_RATING_LADDER],
+    registryKnownRatings: [...APP_SUB_LISTING_CONTENT_RATINGS],
     matureRatings: [...OFFSITE_CONTENT_RATING_LADDER, 'xxx'].filter((r) =>
       isMatureContentRating(r)
     ),

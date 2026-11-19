@@ -70,6 +70,10 @@ type Config struct {
 	// route (`/api/trpc/model.getAll`). Off, every request there is the `model-getall-off` fallback,
 	// proxied to the Node app unchanged.
 	ServeModelGetAll bool
+	// ServeInfinite is FEED_GO_SERVE_INFINITE (default off): compute `image.getInfinite` on the public
+	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
+	// proxied to the Node app unchanged.
+	ServeInfinite bool
 
 	// RevocationMarkerCache is SESSION_REVOCATION_CACHE (default on; off|0|false turns it off, as
 	// isEnvSwitchOn): a failed revocation read still denies a revocation this process has already read.
@@ -195,6 +199,7 @@ func Load() (*Config, error) {
 		LoadingOpenToAll:     boolEnv("FEED_GO_GENERATION_LOADING_OPEN_TO_ALL", true),
 		Pprof:                boolEnv("FEED_GO_PPROF", false),
 		ServeModelGetAll:     boolEnv("FEED_GO_SERVE_MODEL_GETALL", false),
+		ServeInfinite:        boolEnv("FEED_GO_SERVE_INFINITE", false),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),

@@ -52,7 +52,14 @@ function recordingAdapter(seen: (Audience | undefined)[]): Adapter {
 const FULL_USER = { showNsfw: true, browsingLevel: 31 };
 const verifyToken: VerifyToken = async (token) =>
   token === 'good-token'
-    ? { subject: 'user:4711/client:9', user: FULL_USER, expiresAt: null }
+    ? {
+        subject: 'user:4711/client:9',
+        clientId: '9',
+        scope: 0n,
+        actor: null,
+        user: FULL_USER,
+        expiresAt: null,
+      }
     : null;
 
 /** What the service answers for a full user from a country nothing holds: the adapter's decision. */
@@ -348,10 +355,27 @@ describe('the comparison', () => {
       unknownRating: false,
       held: true,
     });
-    // The audience admits xxx and unknown ratings to an R+X user (audienceAdmits' unknown path).
+    // A user whose level carries R, X and XXX: every rating, and an unknown one.
     expect(ourDecision(principal('user:1/client:1', audienceForUser(FULL_USER)), false)).toEqual({
       ratings: ['g', 'pg', 'pg13', 'r', 'x', 'xxx'],
       unknownRating: true,
+      held: false,
+    });
+    // The audience carries its own XXX bit: R+X without XXX reads neither xxx nor an unknown rating,
+    // and XXX alone reads xxx but not R or X. These are the answers the service gives for the same
+    // levels (its registry-subscription vectors), so the shadow compares like with like.
+    const rx = audienceForUser({ showNsfw: true, browsingLevel: 12 });
+    expect(rx.key).toBe('mrx');
+    expect(ourDecision(principal('user:1/client:1', rx), false)).toEqual({
+      ratings: ['g', 'pg', 'pg13', 'r', 'x'],
+      unknownRating: false,
+      held: false,
+    });
+    const xxxOnly = audienceForUser({ showNsfw: true, browsingLevel: 16 });
+    expect(xxxOnly.key).toBe('m+xxx');
+    expect(ourDecision(principal('user:1/client:1', xxxOnly), false)).toEqual({
+      ratings: ['g', 'pg', 'pg13', 'xxx'],
+      unknownRating: false,
       held: false,
     });
     expect(

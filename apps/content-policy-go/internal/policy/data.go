@@ -34,6 +34,7 @@ type levelData struct {
 type policyData struct {
 	Levels                   levelData  `json:"levels"`
 	RatingLadder             []string   `json:"ratingLadder"`
+	RegistryKnownRatings     []string   `json:"registryKnownRatings"`
 	MatureRatings            []string   `json:"matureRatings"`
 	NoCountryCodes           []string   `json:"noCountryCodes"`
 	RegionBlockDefault       []RuleSpec `json:"regionBlockDefault"`
@@ -43,8 +44,8 @@ type policyData struct {
 var data policyData
 
 // Ratings is every rating a decision answers for, in its order: the rating ladder
-// (OFFSITE_CONTENT_RATING_LADDER), then `xxx`, the one mature rating no app carries but an App Store
-// item can.
+// (OFFSITE_CONTENT_RATING_LADDER), then `xxx`, the rating above it (an app sub-listing or App Store
+// item can carry it; the registry knows it, registryKnownRatings).
 var Ratings []string
 
 func init() {
@@ -66,7 +67,7 @@ func parseData(raw []byte, out *policyData) error {
 	if l.PG == 0 || l.PG13 == 0 || l.R == 0 || l.X == 0 || l.XXX == 0 || l.Blocked == 0 || l.Public == 0 || l.SFW == 0 || l.All == 0 {
 		return dataError("a level is missing")
 	}
-	if len(out.RatingLadder) == 0 || len(out.MatureRatings) == 0 || len(out.NoCountryCodes) == 0 {
+	if len(out.RatingLadder) == 0 || len(out.RegistryKnownRatings) == 0 || len(out.MatureRatings) == 0 || len(out.NoCountryCodes) == 0 {
 		return dataError("a list is empty")
 	}
 	if slices.Contains(out.RatingLadder, "xxx") {

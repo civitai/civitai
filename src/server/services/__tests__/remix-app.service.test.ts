@@ -602,9 +602,9 @@ describe('team remix', () => {
   });
 
   it('is not in the remix menu, so nobody is offered it without a team', async () => {
-    expect((await listRemixApps()).map((app) => app.slug)).not.toContain(TEAM_REMIX_SLUG);
+    expect((await listRemixApps(caller())).map((app) => app.slug)).not.toContain(TEAM_REMIX_SLUG);
     // POSITIVE CONTROL: the menu does list the seed apps.
-    expect((await listRemixApps()).map((app) => app.slug)).toContain('make-it-real');
+    expect((await listRemixApps(caller())).map((app) => app.slug)).toContain('make-it-real');
   });
 
   it('submits the prompt with the team the server resolved, on the Edit safe engine', async () => {
@@ -734,5 +734,65 @@ describe('team remix', () => {
     await runTeam(34);
     const whatIf = (h.whatIfFromGraph.mock.calls as unknown as [SubmitArgs][])[0][0].input;
     expect(whatIf).toEqual(submitted()[0].input);
+  });
+});
+
+describe('a user app in the menu', () => {
+  const userRow = {
+    id: 'ab_rx_u5_mine_______________',
+    blockId: 'remix-u5-mine',
+    version: '1.0.0',
+    status: 'remix',
+    featuredOrder: 99,
+    manifest: {
+      kind: 'remix',
+      name: 'Mine',
+      version: '1.0.0',
+      targets: [{ slotId: 'image.remix' }],
+      remix: {
+        icon: 'sparkles',
+        engine: {
+          safe: {
+            ecosystem: REMIX_ENGINES.edit.safe.ecosystemKey,
+            versionId: REMIX_ENGINES.edit.safe.modelVersionId,
+          },
+        },
+        source: 'export default defineRemixApp({ async run(ctx) { return []; } });',
+      },
+      author: { userId: 5 },
+      review: 'approved',
+    },
+  };
+  const systemRow = {
+    id: remixAppBlockRowId(MENU_APPS[0].slug),
+    blockId: remixBlockId(MENU_APPS[0].slug),
+    version: '1.0.0',
+    manifest: manifestOf(MENU_APPS[0], 1),
+    status: 'remix',
+    featuredOrder: 0,
+  };
+  const flagOn = caller({
+    features: { isGreen: false, remixAppsUserCode: true } as RemixAppCaller['features'],
+  });
+
+  beforeEach(() =>
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([systemRow, userRow] as never)
+  );
+
+  it('is listed only behind its flag', async () => {
+    expect((await listRemixApps(caller())).map((app) => app.slug)).toEqual([MENU_APPS[0].slug]);
+    // POSITIVE CONTROL: the same rows with the flag on.
+    expect((await listRemixApps(flagOn)).map((app) => app.slug)).toEqual([
+      MENU_APPS[0].slug,
+      'u5-mine',
+    ]);
+  });
+
+  it('is never priced by the menu quote, flag on or off', async () => {
+    for (const viewer of [caller(), flagOn]) {
+      addImage(22);
+      const { prices } = await quoteRemixApps({ imageId: 22, caller: viewer });
+      expect(prices.map((p) => p.slug)).toEqual([MENU_APPS[0].slug]);
+    }
   });
 });

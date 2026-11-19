@@ -56,6 +56,7 @@ import { auditPostImageMeta } from '~/utils/metadata/audit';
 import { getImagesModRules } from '~/server/services/image.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { ModerationRuleAction } from '~/shared/utils/prisma/enums';
 
 const holder = vi.hoisted(() => ({
@@ -97,6 +98,14 @@ beforeAll(async () => {
       "scannedAt" timestamp(3),
       metadata jsonb,
       "scanJobs" jsonb
+    );
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" (
+      id serial PRIMARY KEY,
+      "entityType" "EntityType" NOT NULL,
+      "entityId" int NOT NULL,
+      status "AppealStatus" NOT NULL DEFAULT 'Pending'
     );
     CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
@@ -481,7 +490,7 @@ const CONTROL = 72;
 /** Never grace-blocked. */
 const PLAIN = 73;
 
-const BREADCRUMBS = `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null}'`;
+const BREADCRUMBS = `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": null}'`;
 
 const graceRow = async (id: number) =>
   (
@@ -493,7 +502,8 @@ const graceRow = async (id: number) =>
     }>(
       `SELECT ingestion, "blockedFor", "nsfwLevel",
         ((metadata -> 'accountDeletionPriorIngestion') IS NOT NULL
-          OR (metadata -> 'accountDeletionPriorBlockedFor') IS NOT NULL) AS breadcrumb
+          OR (metadata -> 'accountDeletionPriorBlockedFor') IS NOT NULL
+          OR (metadata -> 'accountDeletionPriorNeedsReview') IS NOT NULL) AS breadcrumb
       FROM "Image" WHERE id = $1`,
       [id]
     )
@@ -515,6 +525,130 @@ const restore = async () => {
     'the restore did not revert the untouched grace block'
   ).toMatchObject(RESTORED);
 };
+
+describe('a restore and the recorded review flag, on the real statement', () => {
+  const crumbs = (review: string | null) =>
+    `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": ${
+      review === null ? 'null' : `"${review}"`
+    }}'`;
+  const reviewsOf = async (ids: number[]) =>
+    (
+      await holder.db.query<{ id: number; needsReview: string | null; ingestion: string }>(
+        `SELECT id, "needsReview", ingestion FROM "Image" WHERE id = ANY($1) ORDER BY id`,
+        [ids]
+      )
+    ).rows;
+
+  it('keeps the higher of the current and the recorded review, and logs the one it drops', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", metadata) VALUES
+        (81, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('poi')}),
+        (82, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')}),
+        (83, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('appeal')}),
+        (84, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('modRule')}),
+        (85, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('tag')}),
+        (86, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('remixSource')}),
+        (87, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('newUser')}),
+        (88, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('not-a-review')}),
+        (89, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('csam')}),
+        (90, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs(null)}),
+        (91, ${OWNER}, 'Blocked', 'moderated', 32, 'csam', ${crumbs('minor')}),
+        (92, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('minor')}),
+        (93, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', ${crumbs('newUser')}),
+        (94, ${OWNER}, 'Blocked', 'moderated', 32, 'newUser', ${crumbs('poi')}),
+        (95, ${OWNER}, 'Blocked', 'moderated', 32, 'tag', ${crumbs('tag')}),
+        (96, ${OWNER}, 'Blocked', 'moderated', 32, 'appeal', ${crumbs('csam')}),
+        (98, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', '{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null}'),
+        (99, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs(null)}),
+        (100, ${OWNER}, 'Blocked', 'moderated', 32, 'tag', ${crumbs('not-a-review')}),
+        (101, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', ${crumbs('appeal')}),
+        (102, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('appeal')}),
+        (103, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('appeal')});
+      -- 83's and 101's appeals are still Pending; 102's and 103's were decided during the window.
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
+        ('Image', 83, 'Pending'), ('Image', 101, 'Pending'), ('Image', 102, 'Approved'), ('Image', 103, 'Rejected');
+    `);
+    dbMock.dbWrite.appeal.findMany.mockImplementation(
+      (async ({ where }: { where: { entityId: { in: number[] } } }) =>
+        (
+          await holder.db.query<{ entityId: number }>(
+            `SELECT "entityId" FROM "Appeal" WHERE status = 'Pending' AND "entityId" = ANY($1)`,
+            [where.entityId.in]
+          )
+        ).rows) as never
+    );
+
+    await unblockAccountDeletionImages(OWNER);
+
+    const rows = await reviewsOf([
+      81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 98, 99, 100, 101, 102, 103,
+    ]);
+    // Control: every row was restored, so the review flags below are the restore's doing.
+    expect(rows.map((row) => row.ingestion)).toEqual(Array(22).fill('Scanned'));
+    expect(rows.map((row) => [row.id, row.needsReview])).toEqual([
+      // Nothing set since: every listed review but csam comes back.
+      [81, 'poi'],
+      [82, 'minor'],
+      [83, 'appeal'],
+      [84, 'modRule'],
+      [85, 'tag'],
+      [86, 'remixSource'],
+      [87, 'newUser'],
+      // A value outside the list, a recorded csam (dismissed, or the block would have kept it) and
+      // a JSON null write nothing.
+      [88, null],
+      [89, null],
+      [90, null],
+      // A current csam is never overwritten.
+      [91, 'csam'],
+      // Otherwise the higher of the two stays.
+      [92, 'minor'],
+      [93, 'minor'],
+      [94, 'poi'],
+      [95, 'tag'],
+      [96, 'appeal'],
+      // Nothing usable recorded (no key, JSON null, a value outside the list): the current flag stays.
+      [98, 'minor'],
+      [99, 'poi'],
+      [100, 'tag'],
+      // An approval must not publish an image a minor or poi review is still owed on.
+      [101, 'minor'],
+      [102, 'poi'],
+      // A recorded appeal decided during the window has no queue left to clear it.
+      [103, null],
+    ]);
+
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as { message?: string; payload?: { reviews: { imageId: number }[] } })
+      .filter((entry) => entry.message === 'kept the higher of two competing review flags')
+      .flatMap((entry) => entry.payload?.reviews ?? []);
+    expect(logged.sort((a, b) => a.imageId - b.imageId)).toEqual([
+      { imageId: 91, kept: 'csam', dropped: 'minor' },
+      { imageId: 92, kept: 'minor', dropped: 'poi' },
+      { imageId: 93, kept: 'minor', dropped: 'newUser' },
+      { imageId: 94, kept: 'poi', dropped: 'newUser' },
+      { imageId: 101, kept: 'minor', dropped: 'appeal', pendingAppeal: true },
+    ]);
+  });
+
+  it('leaves an account deleted again blocked, and restores it once it is not', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", metadata) VALUES
+        (97, ${OTHER_OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')});
+      UPDATE "User" SET "deletedAt" = now() WHERE id = ${OTHER_OWNER};
+    `);
+
+    const deleted = await unblockAccountDeletionImages(OTHER_OWNER);
+    // The claim finds nothing, so the reversal reads as drained: restore-user-images then drops the
+    // worklist entry, and a later restore queues it again.
+    expect(deleted).toMatchObject({ unblocked: 0, drained: true });
+    expect(await reviewsOf([97])).toEqual([{ id: 97, needsReview: null, ingestion: 'Blocked' }]);
+
+    await holder.db.exec(`UPDATE "User" SET "deletedAt" = NULL WHERE id = ${OTHER_OWNER}`);
+    await unblockAccountDeletionImages(OTHER_OWNER);
+    expect(await reviewsOf([97])).toEqual([{ id: 97, needsReview: 'minor', ingestion: 'Scanned' }]);
+  });
+});
 
 describe('the account-deletion grace block', () => {
   beforeEach(async () => {

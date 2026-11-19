@@ -234,6 +234,26 @@ func TestRatingsMapToTheirOwnBits(t *testing.T) {
 	}
 }
 
+// The registry admits xxx by the XXX bit alone, never as an unknown rating, and an unknown rating
+// only with R, X and XXX all allowed (audienceAdmits since XXX joined the audience).
+func TestRegistryXXXByItsOwnBit(t *testing.T) {
+	e := NewEngine(nil, nil)
+	for level, want := range map[int32]struct {
+		ratings []string
+		unknown bool
+	}{
+		12: {[]string{"g", "pg", "pg13", "r", "x"}, false}, // R+X, no XXX: neither xxx nor an unknown rating
+		16: {[]string{"g", "pg", "pg13", "xxx"}, false},    // XXX alone
+		28: {[]string{"g", "pg", "pg13", "r", "x", "xxx"}, true},
+	} {
+		got, _ := e.Decide(Input{Context: ContextRegistrySubscription, Location: Location{Country: sp("NL")}, At: at0,
+			Viewer: SignedIn, User: User{ShowNsfw: true, BrowsingLevel: level}})
+		if !slices.Equal(got.Ratings, want.ratings) || got.UnknownRating != want.unknown {
+			t.Errorf("registry level %d: ratings %v unknownRating %v, want %v %v", level, got.Ratings, got.UnknownRating, want.ratings, want.unknown)
+		}
+	}
+}
+
 func TestPolicyVersion(t *testing.T) {
 	a := NewEngine(mustRules(t, "FR:2025-08-01"), nil).PolicyVersion()
 	b := NewEngine(mustRules(t, "FR:2025-08-02"), nil).PolicyVersion()
