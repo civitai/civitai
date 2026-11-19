@@ -22,6 +22,7 @@ import { REVIEW_JOB_NAME } from '~/server/games/daily-challenge/challenge-ladder
 import { acquireJobLock } from '~/server/jobs/job-lock';
 import { sysRedis } from '~/server/redis/client';
 import { resolveChallengeCollectionOwnerId } from '~/server/games/daily-challenge/challenge-collection-owner';
+import { capitalize } from '~/utils/string-helpers';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
 import {
@@ -113,12 +114,11 @@ import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { enrichMyChallengeCards } from '~/server/services/challenge-participation.util';
 import {
   getEffectiveBrowsingLevel,
-  isChallengeHiddenByCoverScan,
-  isChallengeHiddenByPoiCover,
   isImageHiddenFromGreenViewer,
   winnerImageFields,
   winnerImageStateSql,
 } from '~/server/games/daily-challenge/challenge-visibility';
+import { isChallengeDetailHidden } from '~/server/games/daily-challenge/challenge-detail-visibility';
 import {
   getChallengeExcludedUserIds,
   challengeCreatorBlockSql,
@@ -136,7 +136,6 @@ import {
 } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   deriveDomainCurrency,
-  isChallengeHiddenByDomainCurrency,
   isNonSfwForGreen,
   type ChallengeBuzzType,
 } from '~/server/games/daily-challenge/challenge-currency';
@@ -153,8 +152,13 @@ import {
   getUserChallengeVisibleAt,
 } from '~/shared/constants/challenge.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { hasBlockMarker } from '~/server/common/image-visibility';
+import {
+  hasBlockMarker,
+  imageNotRestrictedSql,
+  imageNotRestrictedWhere,
+} from '~/server/common/image-visibility';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   deriveChallengeNsfwLevel,
@@ -394,7 +398,7 @@ async function mapChallengeRowsToCards(
 
   const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
   const coverImages = await dbRead.image.findMany({
-    where: { id: { in: coverImageIds } },
+    where: { id: { in: coverImageIds }, ...imageNotRestrictedWhere({ viewerId: site.viewerId }) },
     select: imageSelect,
   });
 
@@ -582,36 +586,43 @@ export async function getDailyChallenges(
 
 // Who may see challenge `c` in a public list: the feed and event listings share these, so one
 // can't drift from the other.
-async function challengeVisibilityConditions({
+export async function challengeVisibilityConditions({
   isGreen,
   viewerId,
   canAccessUserChallenges,
   browsingLevel,
+  ownRowsExempt = true,
 }: {
   isGreen: boolean;
   viewerId: number | undefined;
   canAccessUserChallenges: boolean;
   browsingLevel?: number;
+  /**
+   * The creator exemptions below (visibility window, scans, currency, level) apply only while
+   * true; false holds the viewer's own challenges to every gate (a narrowed search).
+   */
+  ownRowsExempt?: boolean;
 }): Promise<Prisma.Sql[]> {
   const conditions: Prisma.Sql[] = [];
+  const own = ownRowsExempt ? viewerId : undefined;
 
-  // Only show challenges past their visibility window — except to their own creator, so a creator
+  // Only show challenges past their visibility window — except to an exempt creator, so a creator
   // can see (and manage) a not-yet-visible challenge they made. Mirrors the scan gates below.
   conditions.push(
-    viewerId
-      ? Prisma.sql`(c."visibleAt" <= now() OR c."createdById" = ${viewerId})`
+    own
+      ? Prisma.sql`(c."visibleAt" <= now() OR c."createdById" = ${own})`
       : Prisma.sql`c."visibleAt" <= now()`
   );
 
-  conditions.push(...challengeScanGates(viewerId));
+  conditions.push(...challengeScanGates(own));
 
   // Domain-currency gate: green user challenges surface only on the green site, yellow only
   // off-green. Scoped to user challenges — System/mod/event (prize-only, no entry fee) are
   // universal and show on both domains, mirroring the scan/POI gates.
   const domainCurrency = deriveDomainCurrency(isGreen);
   conditions.push(
-    viewerId
-      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${viewerId})`
+    own
+      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${own})`
       : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
   );
 
@@ -629,9 +640,8 @@ async function challengeVisibilityConditions({
   // `allowedNsfwLevel` permits) must intersect the viewer's effective browsing level. The REAL
   // cover level is required to intersect too, so a challenge that under-declares its rating can't
   // leak an NSFW cover into an SFW feed. On green the level is capped server-side (see
-  // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. Creator
-  // always sees their own. A challenge with no cover is already excluded by the IS NOT NULL gate
-  // above.
+  // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. A challenge
+  // with no cover is already excluded by the IS NOT NULL gate above.
   const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
     isGreen,
     isLoggedIn: viewerId != null,
@@ -639,9 +649,7 @@ async function challengeVisibilityConditions({
   });
   if (effectiveBrowsingLevel > 0) {
     const levelSql = Prisma.sql`((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`;
-    conditions.push(
-      viewerId ? Prisma.sql`(c."createdById" = ${viewerId} OR ${levelSql})` : levelSql
-    );
+    conditions.push(own ? Prisma.sql`(c."createdById" = ${own} OR ${levelSql})` : levelSql);
   }
 
   return conditions;
@@ -654,6 +662,8 @@ export async function getInfiniteChallenges(
     canAccessUserChallenges?: boolean;
     /** Server-only: only these challenges, e.g. the semantic search's candidates. */
     ids?: number[];
+    /** Server-only: see challengeVisibilityConditions. */
+    ownRowsExempt?: boolean;
   }
 ) {
   const {
@@ -674,6 +684,7 @@ export async function getInfiniteChallenges(
     currentUserId,
     isGreen,
     canAccessUserChallenges = false,
+    ownRowsExempt,
   } = input;
 
   // Build WHERE conditions using parameterized queries (SQL injection safe)
@@ -685,6 +696,7 @@ export async function getInfiniteChallenges(
       viewerId: currentUserId,
       canAccessUserChallenges,
       browsingLevel,
+      ownRowsExempt,
     }))
   );
 
@@ -912,7 +924,8 @@ export async function getInfiniteChallenges(
  */
 async function buildChallengeDetail(
   challenge: NonNullable<Awaited<ReturnType<typeof getChallengeById>>>,
-  green?: { isGreen?: boolean; viewerId?: number }
+  green?: { isGreen?: boolean; viewerId?: number },
+  { forEdit = false }: { forEdit?: boolean } = {}
 ) {
   const id = challenge.id;
 
@@ -951,8 +964,12 @@ async function buildChallengeDetail(
 
   // Fetch cover image
   const fetchedCover = challenge.coverImageId
-    ? await dbRead.image.findUnique({
-        where: { id: challenge.coverImageId },
+    ? await dbRead.image.findFirst({
+        where: {
+          id: challenge.coverImageId,
+          // The edit form must round-trip the cover it keeps, or a save would drop it.
+          ...(forEdit ? {} : imageNotRestrictedWhere({ viewerId: green?.viewerId })),
+        },
         select: imageSelect,
       })
     : null;
@@ -1043,6 +1060,7 @@ async function buildChallengeDetail(
           width: coverImage.width,
           height: coverImage.height,
           type: coverImage.type,
+          ...(forEdit && { restricted: isRestrictedImage(coverImage) }),
         }
       : null,
     startsAt: challenge.startsAt,
@@ -1110,94 +1128,24 @@ export async function getChallengeDetail(
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
-  // User-created challenges are still flag-gated. Hiding them here (rather than only in the UI)
-  // covers the direct-link case: the detail page's SSG prefetch and every client fetch go through
-  // this function, so without the flag the page falls through to its not-found branch.
-  if (challenge.source === ChallengeSource.User && !canAccessUserChallenges) return null;
-
-  // Block gate: a viewer the creator has blocked can't open the challenge — direct-link parity
-  // with model/article/post detail. Scoped to user challenges (System/mod challenges have no owner
-  // to block); moderators exempt. A creator viewing their own challenge is self-safe:
-  // amIBlockedByUser returns false when targetUserId === userId.
-  if (viewerId != null && isModerator !== true && challenge.source === ChallengeSource.User) {
-    const blocked = await amIBlockedByUser({
-      userId: viewerId,
-      targetUserId: challenge.createdById ?? undefined,
-    });
-    if (blocked) return null;
-  }
-
-  // Visibility check: only show challenges that are visible to the public. The creator and
-  // moderators may preview a not-yet-visible or Cancelled challenge, and are likewise exempt
-  // from the scan/POI/cover gates below (mods need to inspect hidden challenges; the creator
-  // needs to see their own pending/blocked one).
-  const now = new Date();
-  const canPreviewUnpublished =
-    isModerator === true || (viewerId != null && challenge.createdById === viewerId);
-  if (challenge.visibleAt > now && !canPreviewUnpublished) return null;
-  if (challenge.status === ChallengeStatus.Cancelled && !canPreviewUnpublished) return null;
-
-  // Scan gate: user-created challenges stay hidden until moderation scan passes.
+  const checksUserGates = challenge.source === ChallengeSource.User && canAccessUserChallenges;
+  const [blockedByCreator, cover] = await Promise.all([
+    checksUserGates && viewerId != null && !isModerator
+      ? amIBlockedByUser({ userId: viewerId, targetUserId: challenge.createdById ?? undefined })
+      : false,
+    checksUserGates && challenge.coverImageId
+      ? dbRead.image.findUnique({
+          where: { id: challenge.coverImageId },
+          select: { poi: true, ingestion: true, nsfwLevel: true },
+        })
+      : null,
+  ]);
   if (
-    !canPreviewUnpublished &&
-    challenge.source === ChallengeSource.User &&
-    challenge.ingestion !== ChallengeIngestionStatus.Scanned
-  ) {
-    return null;
-  }
-
-  // POI + cover-scan gate: a cover depicting a real person (Image.poi, set by the image scanner),
-  // or one that hasn't finished moderation scanning yet, keeps the challenge out of public view —
-  // direct-URL parity with the feed filter. Mod/creator exempt; skip the lookup entirely for trusted
-  // System challenges. NSFW-on-green page gating is handled client-side by <Gated> (MatureContentRedirect),
-  // matching model/image detail pages; buildChallengeDetail applies the site's ceiling to the cover
-  // and winner images.
-  if (
-    !canPreviewUnpublished &&
-    challenge.source === ChallengeSource.User &&
-    challenge.coverImageId
-  ) {
-    const cover = await dbRead.image.findUnique({
-      where: { id: challenge.coverImageId },
-      select: { poi: true, ingestion: true },
-    });
-    if (
-      isChallengeHiddenByPoiCover(
-        {
-          source: challenge.source,
-          createdById: challenge.createdById,
-          coverPoi: cover?.poi ?? false,
-        },
-        viewerId
-      )
-    )
-      return null;
-
-    if (
-      isChallengeHiddenByCoverScan(
-        { source: challenge.source, createdById: challenge.createdById, coverImage: cover },
-        viewerId
-      )
-    )
-      return null;
-  }
-
-  // Domain-currency gate — direct-URL parity with the feed filter. Like the other gates above,
-  // moderators and creators can preview unpublished/hidden challenges regardless of domain.
-  // On the green site a mismatched (yellow) challenge is returned anyway: the detail page's
-  // <Gated> shows the civitai.red redirect card instead of a bare 404. The red side keeps
-  // hiding green challenges — there's no equivalent redirect surface pointing back to green.
-  if (
-    !isGreen &&
-    !canPreviewUnpublished &&
-    isChallengeHiddenByDomainCurrency(
-      {
-        source: challenge.source,
-        buzzType: challenge.buzzType,
-        createdById: challenge.createdById,
-      },
-      isGreen ?? false,
-      viewerId
+    isChallengeDetailHidden(
+      challenge,
+      { id: viewerId, isModerator, isGreen, canAccessUserChallenges, blockedByCreator },
+      cover,
+      new Date()
     )
   )
     return null;
@@ -1215,7 +1163,9 @@ export async function getChallengeForEdit(id: number): Promise<ChallengeDetailFo
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
-  const { _internal, ...detail } = await buildChallengeDetail(challenge);
+  const { _internal, ...detail } = await buildChallengeDetail(challenge, undefined, {
+    forEdit: true,
+  });
   return { ...detail, ..._internal };
 }
 
@@ -1380,9 +1330,38 @@ export async function upsertChallenge({
   // misconfigured judge must not leave an orphaned cover Image behind.
   const collectionOwnerId = id ? undefined : await resolveChallengeCollectionOwnerId(judgeId);
 
+  const existingChallenge = id
+    ? await dbRead.challenge.findUnique({
+        where: { id },
+        select: {
+          collectionId: true,
+          metadata: true,
+          status: true,
+          startsAt: true,
+          modelVersionIds: true,
+          allowedNsfwLevel: true,
+          source: true,
+          maxEntriesPerUser: true,
+          entryPrizeRequirement: true,
+          prizeMode: true,
+          basePrizePool: true,
+          buzzPerAction: true,
+          poolTrigger: true,
+          maxPrizePool: true,
+          prizeDistribution: true,
+          judgingCategories: true,
+          coverImageId: true,
+        },
+      })
+    : null;
+
   // Handle cover image - reuse the supplied id, else reuse/verify-then-create (like Article
   // does). No ownership check here: this is the moderator path, as before.
-  const coverImageId = await resolveCoverImageId({ coverImage, userId });
+  const coverImageId = await resolveCoverImageId({
+    coverImage,
+    userId,
+    currentCoverId: existingChallenge?.coverImageId,
+  });
 
   // Helper: resolve judging config and generate theme elements.
   async function tryGenerateThemeElements(
@@ -1401,27 +1380,7 @@ export async function upsertChallenge({
 
   if (id) {
     // Update existing challenge
-    const challenge = await dbRead.challenge.findUnique({
-      where: { id },
-      select: {
-        collectionId: true,
-        metadata: true,
-        status: true,
-        startsAt: true,
-        modelVersionIds: true,
-        allowedNsfwLevel: true,
-        source: true,
-        maxEntriesPerUser: true,
-        entryPrizeRequirement: true,
-        prizeMode: true,
-        basePrizePool: true,
-        buzzPerAction: true,
-        poolTrigger: true,
-        maxPrizePool: true,
-        prizeDistribution: true,
-        judgingCategories: true,
-      },
-    });
+    const challenge = existingChallenge;
     if (!challenge) throw throwNotFoundError('Challenge not found');
 
     // Block edits to terminal/completing challenges
@@ -1769,6 +1728,27 @@ export async function upsertUserChallenge({
   // a misconfigured judge must not leave an orphaned cover Image behind.
   const collectionOwnerId = id ? undefined : await resolveChallengeCollectionOwnerId(judgeId);
 
+  const existingUserChallenge = id
+    ? await dbRead.challenge.findUnique({
+        where: { id },
+        select: {
+          createdById: true,
+          source: true,
+          status: true,
+          collectionId: true,
+          basePrizePool: true,
+          metadata: true,
+          buzzType: true,
+          startsAt: true,
+          title: true,
+          description: true,
+          theme: true,
+          invitation: true,
+          coverImageId: true,
+        },
+      })
+    : null;
+
   // Cover image: reuse an existing Image or create one from the upload (like the mod path).
   // A reused id must belong to the caller — otherwise anyone could surface another user's
   // (possibly unpublished/blocked) image on a public challenge card, and the challenge scan
@@ -1776,6 +1756,7 @@ export async function upsertUserChallenge({
   const coverImageId = await resolveCoverImageId({
     coverImage,
     userId,
+    currentCoverId: existingUserChallenge?.coverImageId,
     assertOwnership: async (imageId) => {
       // Regular users must own the reused image. Moderators skip the ownership check entirely
       // (trusted role — typically re-saving the creator's existing cover during a mod edit).
@@ -1818,23 +1799,7 @@ export async function upsertUserChallenge({
   };
 
   if (id) {
-    const existing = await dbRead.challenge.findUnique({
-      where: { id },
-      select: {
-        createdById: true,
-        source: true,
-        status: true,
-        collectionId: true,
-        basePrizePool: true,
-        metadata: true,
-        buzzType: true,
-        startsAt: true,
-        title: true,
-        description: true,
-        theme: true,
-        invitation: true,
-      },
-    });
+    const existing = existingUserChallenge;
     if (!existing) throw throwNotFoundError('Challenge not found');
     if (existing.source !== ChallengeSource.User)
       throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be edited here.' });
@@ -2511,6 +2476,7 @@ export async function requestReview(
       AND ci.status IN ('ACCEPTED', 'REVIEW')
       AND (ci."tagId" IS NULL OR ci."tagId" NOT IN (${config.reviewMeTagId}, ${config.judgedTagId}))
       AND i."userId" = ${userId}
+      AND ${imageNotRestrictedSql()}
       ${
         imageIds?.length
           ? Prisma.sql`AND ci."imageId" = ANY(ARRAY[${Prisma.join(imageIds)}])`
@@ -2927,8 +2893,10 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
           name: 'challenge-winner-duplicate-pick',
           message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${challengeId}`,
           challengeId,
-          droppedUserIds: droppedWinners.map((entry) => entry.userId),
-          droppedPlaces: droppedWinners.map((entry) => entry.position),
+          payload: {
+            droppedUserIds: droppedWinners.map((entry) => entry.userId),
+            droppedPlaces: droppedWinners.map((entry) => entry.position),
+          },
         });
         recordChallengeWinnerDuplicatePick({
           source: challenge.source,
@@ -3293,6 +3261,7 @@ export async function checkImageEligibility(
     Array<{
       id: number;
       nsfwLevel: number;
+      modelRestricted: boolean;
       createdAt: Date;
       modelVersionIds: number[] | null;
       modelVersionIdsManual: number[] | null;
@@ -3302,6 +3271,7 @@ export async function checkImageEligibility(
     SELECT
       i.id,
       i."nsfwLevel",
+      i."modelRestricted",
       i."createdAt",
       array_agg(DISTINCT ir."modelVersionId") FILTER (WHERE ir."modelVersionId" IS NOT NULL AND ir.detected IS TRUE) AS "modelVersionIds",
       array_agg(DISTINCT ir."modelVersionId") FILTER (WHERE ir."modelVersionId" IS NOT NULL AND ir.detected IS NOT TRUE) AS "modelVersionIdsManual"
@@ -3325,6 +3295,8 @@ export async function checkImageEligibility(
     if (image.nsfwLevel !== 0 && (image.nsfwLevel & challenge.allowedNsfwLevel) === 0) {
       reasons.push('NSFW restricted');
     }
+
+    if (isRestrictedImage(image)) reasons.push(capitalize(RESTRICTED_IMAGE_REASON));
 
     // Check recency
     if (new Date(image.createdAt) < new Date(challenge.startsAt)) {
@@ -3395,11 +3367,18 @@ export async function updateChallengeSystemConfig(input: UpdateChallengeConfigIn
 
 // Batch-map event coverImageIds to the ChallengeCoverImage shape (mirrors the challenge-cover
 // mapping in mapChallengeRowsToCards above so both produce identical shapes).
-async function getEventCoverImages(coverImageIds: (number | null)[], site: SiteViewer) {
+async function getEventCoverImages(
+  coverImageIds: (number | null)[],
+  site: SiteViewer,
+  { forEdit = false }: { forEdit?: boolean } = {}
+) {
   const ids = coverImageIds.filter(isDefined);
   if (ids.length === 0) return new Map<number, ChallengeCoverImage>();
   const images = await dbRead.image.findMany({
-    where: { id: { in: ids } },
+    where: {
+      id: { in: ids },
+      ...(forEdit ? {} : imageNotRestrictedWhere({ viewerId: site.viewerId })),
+    },
     select: imageSelect,
   });
   const map = new Map<number, ChallengeCoverImage>();
@@ -3413,6 +3392,7 @@ async function getEventCoverImages(coverImageIds: (number | null)[], site: SiteV
       width: img.width,
       height: img.height,
       type: img.type,
+      ...(forEdit && { restricted: isRestrictedImage(img) }),
     });
   }
   return map;
@@ -3545,7 +3525,13 @@ export async function getActiveEvents(
   const coverImages =
     coverImageIds.length > 0
       ? await dbRead.image
-          .findMany({ where: { id: { in: coverImageIds } }, select: imageSelect })
+          .findMany({
+            where: {
+              id: { in: coverImageIds },
+              ...imageNotRestrictedWhere({ viewerId: site.viewerId }),
+            },
+            select: imageSelect,
+          })
           .then((imgs) => new Map(imgs.map((img) => [img.id, img])))
       : new Map();
 
@@ -3725,10 +3711,12 @@ export async function getChallengeEvents(input: GetChallengeEventsInput) {
     },
   });
 
-  // Moderator management view, which, like the challenge edit view, is not site-gated.
+  // Moderator management view, which, like the challenge edit view, is not site-gated and must
+  // round-trip the cover it keeps, or a save would drop it.
   const coverMap = await getEventCoverImages(
     events.map((e) => e.coverImageId),
-    { isGreen: false }
+    { isGreen: false },
+    { forEdit: true }
   );
   return events.map(({ coverImageId, ...e }) => ({
     ...e,
@@ -3755,7 +3743,15 @@ export async function upsertChallengeEvent({
   let coverImageId: number | null | undefined;
   if (coverImage === null) coverImageId = null;
   else if (coverImage) {
-    coverImageId = await resolveCoverImageId({ coverImage, userId });
+    coverImageId = await resolveCoverImageId({
+      coverImage,
+      userId,
+      currentCoverId: id
+        ? (
+            await dbRead.challengeEvent.findFirst({ where: { id }, select: { coverImageId: true } })
+          )?.coverImageId
+        : undefined,
+    });
   }
 
   return dbWrite.$transaction(async (tx) => {
@@ -4180,6 +4176,8 @@ export async function getCompletedChallengesWithWinners(
     isGreen: boolean;
     currentUserId?: number;
     canAccessUserChallenges?: boolean;
+    /** Server-only: as on challengeVisibilityConditions (scans, currency, level here). */
+    ownRowsExempt?: boolean;
   }
 ) {
   const {
@@ -4192,14 +4190,16 @@ export async function getCompletedChallengesWithWinners(
     isGreen,
     currentUserId,
     canAccessUserChallenges = false,
+    ownRowsExempt = true,
   } = input;
+  const own = ownRowsExempt ? currentUserId : undefined;
 
   // Phase 1: Query completed challenges with cursor pagination
   const conditions: Prisma.Sql[] = [
     Prisma.sql`c."visibleAt" <= now()`,
     Prisma.sql`c.status = 'Completed'::"ChallengeStatus"`,
     Prisma.sql`EXISTS (SELECT 1 FROM "ChallengeWinner" cw WHERE cw."challengeId" = c.id)`,
-    ...challengeScanGates(currentUserId),
+    ...challengeScanGates(own),
   ];
 
   // User challenges stay behind the `userChallenges` flag, as on the feed and the detail page.
@@ -4219,11 +4219,12 @@ export async function getCompletedChallengesWithWinners(
   }
 
   // Domain-currency gate — parity with the feed: a user challenge only appears on its own domain
-  // (green on green, yellow off-green). System/mod/event challenges are universal. Creator exempt.
+  // (green on green, yellow off-green). System/mod/event challenges are universal. An exempt
+  // creator sees their own.
   const domainCurrency = deriveDomainCurrency(isGreen);
   conditions.push(
-    currentUserId
-      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
+    own
+      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${own})`
       : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
   );
 
@@ -4232,8 +4233,7 @@ export async function getCompletedChallengesWithWinners(
   if (blockSql) conditions.push(blockSql);
 
   // Content level filter — parity with the feed: the challenge's own rating and its REAL cover
-  // level must both intersect the viewer's effective (green-capped) browsing level. Creator sees
-  // their own.
+  // level must both intersect the viewer's effective (green-capped) browsing level.
   const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
     isGreen,
     isLoggedIn: currentUserId != null,
@@ -4241,9 +4241,7 @@ export async function getCompletedChallengesWithWinners(
   });
   if (effectiveBrowsingLevel > 0) {
     const levelSql = Prisma.sql`((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`;
-    conditions.push(
-      currentUserId ? Prisma.sql`(c."createdById" = ${currentUserId} OR ${levelSql})` : levelSql
-    );
+    conditions.push(own ? Prisma.sql`(c."createdById" = ${own} OR ${levelSql})` : levelSql);
   }
 
   if (query) {
@@ -4374,6 +4372,7 @@ export async function getCompletedChallengesWithWinners(
       imageIngestion: ImageIngestionStatus | null;
       imageBlockedFor: string | null;
       imageReviewed: boolean | null;
+      imageNotRestricted: boolean | null;
       buzzAwarded: number;
       reason: string | null;
       collectionItemNote: string | null;
@@ -4442,7 +4441,10 @@ export async function getCompletedChallengesWithWinners(
   const coverImages =
     coverImageIds.length > 0
       ? await dbRead.image.findMany({
-          where: { id: { in: coverImageIds } },
+          where: {
+            id: { in: coverImageIds },
+            ...imageNotRestrictedWhere({ viewerId: currentUserId }),
+          },
           select: imageSelect,
         })
       : [];

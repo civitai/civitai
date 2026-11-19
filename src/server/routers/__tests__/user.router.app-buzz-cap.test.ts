@@ -18,7 +18,7 @@ import { userRouter } from '~/server/routers/user.router';
 const REQ = { headers: {}, socket: {} };
 const USER = { id: 42, tier: 'free', username: 'u', muted: false, onboarding: 0xff };
 
-const caller = (opts: { user?: object; apiKeyId?: number | null; tokenScope?: number }) =>
+const caller = (opts: { user?: object; apiKeyId?: number | null; tokenScope?: bigint }) =>
   userRouter.createCaller({
     acceptableOrigin: true,
     user: opts.user,

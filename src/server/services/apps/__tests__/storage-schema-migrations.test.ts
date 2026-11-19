@@ -900,3 +900,74 @@ describe('collectionStorageKey — what the approve gate and the runner compare'
     expect(collectionStorageKey(null, 'cards')).toBeNull();
   });
 });
+
+describe('checkStorageMigrations — default values', () => {
+  const REQUIRES_TITLE = obj(
+    { title: { type: 'string' }, stars: { type: 'integer', maximum: 10 }, legacy: {} },
+    { additionalProperties: false, required: ['title'] }
+  );
+  const withDefault = (value: unknown) =>
+    checkStorageMigrations(
+      manifest({ cards: cards(V1) }),
+      manifest({ cards: cards(REQUIRES_TITLE, [{ op: 'default', path: '/title', value }]) })
+    );
+
+  it.each([
+    ['a consumer-blob url', 'https://orchestration.civitai.com/v2/consumer/blobs/D1.png?sig=s'],
+    [
+      'a resolved content url',
+      'https://orchestration-new.civitai.com/v2/consumer/blobs/content/Tk1',
+    ],
+    ['a host split by a tab', 'https://orches\ttration.civitai.com/v2/consumer/blobs/T1'],
+    ['a host split by a newline', 'https://orchestration.civitai\n.com/x'],
+  ])('🔴 a default carrying %s is refused', (_label, value) => {
+    const check = withDefault(value);
+    expect(check.errors).toEqual([expect.stringMatching(/orchestrator media link/)]);
+    expect(() => assertStorageMigrationsCover(check)).toThrow(StorageMigrationRefusal);
+  });
+
+  it('🔴 a link nested in an object default, or used as a key, is refused', () => {
+    const ANY = obj({ meta: {} }, { additionalProperties: false, required: ['meta'] });
+    for (const value of [
+      { nested: { img: 'https://orches\ttration.civitai.com/x' } },
+      { 'orchestration.civitai.com': 1 },
+    ]) {
+      const check = checkStorageMigrations(
+        manifest({ cards: cards(obj({ meta: {} }, { additionalProperties: false })) }),
+        manifest({ cards: cards(ANY, [{ op: 'default', path: '/meta', value }]) })
+      );
+      expect(check.errors).toEqual([expect.stringMatching(/orchestrator media link/)]);
+    }
+  });
+
+  const metaDefault = (value: unknown) =>
+    checkStorageMigrations(
+      manifest({ cards: cards(obj({ meta: {} }, { additionalProperties: false })) }),
+      manifest({
+        cards: cards(obj({ meta: {} }, { additionalProperties: false, required: ['meta'] }), [
+          { op: 'default', path: '/meta', value },
+        ]),
+      })
+    );
+
+  it('🔴 a default nested past the walk limit is refused, not checked as JSON text', () => {
+    let value: unknown = 'https://orchestration.civitai\n.com/x';
+    for (let i = 0; i < 40; i++) value = [value];
+    expect(metaDefault(value).errors).toEqual([
+      expect.stringMatching(/too large or too deeply nested/),
+    ]);
+  });
+
+  it('a large plain default under the limits is accepted', () => {
+    expect(metaDefault({ text: 'x'.repeat(3000), list: ['a', 'b', 'c'] }).errors).toEqual([]);
+  });
+
+  it.each([
+    ['a public image url', 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/a/width=450/1.jpeg'],
+    ['plain text', 'untitled'],
+  ])('a default of %s is accepted', (_label, value) => {
+    const check = withDefault(value);
+    expect(check.errors).toEqual([]);
+    expect(() => assertStorageMigrationsCover(check)).not.toThrow();
+  });
+});

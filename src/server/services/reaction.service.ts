@@ -6,7 +6,7 @@ import { readImageReactionIdViaKysely } from '~/server/services/hot-reads-5.read
 import { articleMetrics, bountyEntryMetrics, postMetrics } from '~/server/metrics';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
-import { onReactionCreated, onReactionRemoved } from '~/server/events/points/hooks';
+import { onReactionCreated } from '~/server/events/points/hooks';
 import type { EventPointGrant } from '~/server/events/points/award';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
@@ -83,7 +83,8 @@ export const toggleReaction = async ({
   const existing = await getReaction({ entityType, entityId, userId, reaction });
   if (existing) {
     const deleted = await deleteReaction({ entityType, entityId, userId, reaction });
-    if (deleted > 0 && eventPoints) void onReactionRemoved({ entityType, entityId, userId });
+    // No event-points removal: an un-react keeps the points the first reaction earned, and its
+    // dedupe mark stays, so a re-react earns nothing. A moderator's bulk erasure still removes them.
     return deleted > 0 ? 'removed' : 'noop';
   } else {
     // Enforce on create only — a user blocked after reacting can still un-react.

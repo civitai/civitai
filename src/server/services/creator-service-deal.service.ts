@@ -642,6 +642,29 @@ export const cancelLateServiceDeal = ({ dealId, userId }: { dealId: number; user
     refund: true,
   });
 
+const sellerUnavailable = (sellerId: Prisma.Sql) =>
+  Prisma.sql`NOT ${sellerInGoodStanding(sellerId)}`;
+
+/** The seller's state is read in the same statement as the transition, so it cannot change between check and close. */
+export const cancelServiceDealSellerUnavailable = ({
+  dealId,
+  userId,
+}: {
+  dealId: number;
+  userId: number;
+}) =>
+  requireTransition({
+    dealId,
+    from: ['Accepted', 'InRevision'],
+    to: 'Cancelled',
+    actorId: userId,
+    event: 'Cancelled',
+    comment: 'buyer_refund',
+    where: Prisma.sql`"buyerId" = ${userId}::int AND ${sellerUnavailable(Prisma.sql`"sellerId"`)}`,
+    set: Prisma.sql`, "closeReason" = 'buyer_refund'`,
+    refund: true,
+  });
+
 export const requestServiceDealCancellation = async ({
   dealId,
   userId,
@@ -1002,14 +1025,16 @@ export async function getServiceDealView({
     throw throwNotFoundError('Deal not found');
 
   // From the row, not the session, so a fresh mute shows before the next sign-in.
-  const [viewer] = await dbWrite.$queryRaw<{ muted: boolean }[]>`
-    SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
+  const [viewer] = await dbWrite.$queryRaw<{ muted: boolean; sellerUnavailable: boolean }[]>`
+    SELECT "muted", ${sellerUnavailable(Prisma.sql`${deal.sellerId}::int`)} AS "sellerUnavailable"
+    FROM "User" WHERE "id" = ${userId}::int`;
   const { removedReason, ...offering } = deal.offering;
   const offeringTakenDown = removedReason != null;
   const seesLiveOffering = isModerator || deal.sellerId === userId;
   const { actions, primaryAction } = dealActions(deal, userId, new Date(), {
     gatedAllowed: servicesEnabled && !viewer?.muted,
     offeringTakenDown,
+    sellerUnavailable: !!viewer?.sellerUnavailable,
   });
   // Decision (briony, 2026-10-15): the seller's moderation status is not the buyer's to see.
   const seesTakedown = isModerator || deal.sellerId === userId;
@@ -1136,6 +1161,7 @@ export async function listMyServiceDeals({
       counterparty: role === 'buyer' ? deal.seller : deal.buyer,
       price: deal.price,
       buzzType: deal.buzzType,
+      held: !!deal.heldAt,
       revisionsUsed: deal.revisionsUsed,
       revisionsIncluded: deal.revisionsIncluded,
       requestedAt: deal.requestedAt,

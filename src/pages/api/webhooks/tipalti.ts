@@ -331,7 +331,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
           type: 'error',
           userId: cashWithdrawal.userId,
           withdrawalId: cashWithdrawal.id,
-          refCode: payment.refCode,
+          payload: { refCode: payment.refCode },
         });
 
       // Update the status of the withdrawal request:

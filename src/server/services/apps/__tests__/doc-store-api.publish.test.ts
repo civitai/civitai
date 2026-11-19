@@ -1106,3 +1106,20 @@ describe('the store: prune is bounded per call', () => {
     expect((await sharedRows(A)).map((x) => x.key)).toEqual(['p5']);
   });
 });
+
+describe('publish refuses orchestrator media links in every moderation mode', () => {
+  it.each(['off', 'shadow'] as const)(
+    'a private draft holding a consumer-blob url saves, but publishing it is refused (%s)',
+    async (mode) => {
+      h.moderationMode = mode;
+      const A = freshApp();
+      const t = await mint(A, V1);
+      const blob = 'https://orchestration.civitai.com/v2/consumer/blobs/PUB123.png?sig=s';
+      await expectOk(putPrivate(t, 'c1', { char: 'A', img: blob }));
+      const r = await publish(t, { from: 'drafts', keys: ['c1'] });
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ code: 'content_rejected' });
+      expect(await sharedRows(A)).toEqual([]);
+    }
+  );
+});

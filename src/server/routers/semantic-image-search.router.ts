@@ -1,7 +1,9 @@
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import { TRPCError } from '@trpc/server';
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
+  type SemanticImageSearchInput,
   semanticImageSearchSchema,
   semanticSearchFeedbackSchema,
 } from '~/server/schema/semantic-image-search.schema';
@@ -11,15 +13,70 @@ import {
   isFeedbackAreaEnabled,
 } from '~/server/services/feedback.service';
 import { searchSemanticImages } from '~/server/services/semantic-image-search.service';
-import { guardedProcedure, isFlagProtected, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  guardFlagEnabled,
+  isFlagProtected,
+  middleware,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
+import { sleep } from '~/server/utils/concurrency-helpers';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
 
+// Without `imageSearch` or `feedSearch` (the images feed answers its ?query= from here), a signed-in
+// user may still search their own images: the showcase picker. The request must name exactly their
+// username, and it is narrowed to their id, so it cannot reach anyone else's images.
+const imageSearchOrOwnImages = middleware(({ ctx, input, next }) => {
+  if (guardFlagEnabled(ctx, 'imageSearch') || guardFlagEnabled(ctx, 'feedSearch'))
+    return next({ ctx: { ownImagesOf: undefined as number | undefined } });
+
+  const { usernames, userIds, cursor, imageId } = input as SemanticImageSearchInput;
+  const username = ctx.user?.username?.toLowerCase();
+  const ownOnly =
+    !!username &&
+    usernames?.length === 1 &&
+    usernames[0].toLowerCase() === username &&
+    !userIds &&
+    // No paging or image-similarity search on this path.
+    !cursor &&
+    !imageId;
+  if (!ownOnly) throw new TRPCError({ code: 'FORBIDDEN' });
+
+  return next({ ctx: { ownImagesOf: ctx.user!.id as number | undefined } });
+});
+
+const OWN_IMAGES_PAGE = 25;
+// Only what the picker sends; anything else on this path is dropped.
+const ownImagesInput = (
+  { query, limit, browsingLevel }: SemanticImageSearchInput,
+  userId: number
+): SemanticImageSearchInput => ({
+  query,
+  limit: Math.min(limit, OWN_IMAGES_PAGE),
+  browsingLevel,
+  userIds: [userId],
+});
+
+// The own-images path has its own, lower limit: the picker needs no more.
+const ownImagesRateLimit = rateLimit(
+  { limit: 20, period: 60 },
+  (_, ctx) => !!(ctx as { ownImagesOf?: number }).ownImagesOf,
+  { sharedKey: 'semanticImageSearch:search:own' }
+);
+
+// shortcut: estimated, as own-images latency was not yet logged; re-derive from the `ownImages`
+// search log rows.
+export const OWN_IMAGES_FLOOR_MS = 200;
+export const OWN_IMAGES_JITTER_MS = 500;
+const holdOwnImages = async (started: number) => {
+  const wait = started + OWN_IMAGES_FLOOR_MS + Math.random() * OWN_IMAGES_JITTER_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+};
+
 // Timed first, so flag and rate-limit refusals land on the dashboard too.
-// `feedSearch` alone opens it too: the images feed answers its ?query= from this procedure.
-const semanticSearchProcedure = publicProcedure
-  .use(timeSemanticSearch('images'))
-  .use(isFlagProtected('imageSearch', 'feedSearch'));
+const semanticSearchProcedure = publicProcedure.use(timeSemanticSearch('images'));
 
 export const semanticImageSearchRouter = router({
   search: semanticSearchProcedure
@@ -31,27 +88,54 @@ export const semanticImageSearchRouter = router({
       ])
     )
     .input(semanticImageSearchSchema)
+    .use(imageSearchOrOwnImages)
+    .use(ownImagesRateLimit)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
+      const { ownImagesOf } = ctx;
+      const searched = ownImagesOf ? ownImagesInput(input, ownImagesOf) : input;
       const result = await searchSemanticImages({
-        input,
+        input: searched,
         user: ctx.user,
+        ...credentialViews(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         track: ctx.track,
+        refuseNarrowing: !!ownImagesOf,
+        tagMatchesFirst: !!ownImagesOf,
+      }).catch(async (error) => {
+        if (ownImagesOf) await holdOwnImages(started);
+        throw error;
       });
       const latencyMs = Date.now() - started;
 
       if (!input.cursor) {
-        const { query, imageId, cursor, limit, ...filters } = input;
+        // Logged as searched, so the row says what ran.
+        const { query, imageId, cursor, limit, ...filters } = searched;
         void ctx.track
           .search({
             query: query ?? '',
             index: 'images_semantic',
-            filters: { ...filters, imageId, resultCount: result.items.length, latencyMs },
+            filters: {
+              ...filters,
+              imageId,
+              resultCount: result.items.length,
+              latencyMs,
+              ...(ownImagesOf && { ownImages: true }),
+            },
           })
           .catch(() => undefined);
       }
 
+      // The picker reads one page and shows neither a correction nor a timing.
+      if (ownImagesOf) {
+        await holdOwnImages(started);
+        return {
+          items: result.items,
+          nextCursor: undefined,
+          correctedQuery: undefined,
+          latencyMs: 0,
+        };
+      }
       return { ...result, latencyMs };
     }),
 

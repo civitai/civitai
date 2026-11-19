@@ -9,7 +9,7 @@ import type {
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
 import {
   getStepByOrchestratorType,
-  isTrainingStepType,
+  canonicalTrainingStepType,
   NATIVE_STEP_OUTPUT_KEY,
   NATIVELY_EXTRACTED_STEP_TYPES,
   postureProducesMedia,
@@ -21,7 +21,14 @@ import type { OrchestratorBlobLike, StepOutputSlot, TrainedEpoch } from './steps
 import { isNeverRatedVideoStep } from '~/shared/orchestrator/workflow-data';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { classifyBlockOutput, isUnrestrictedOutput } from './block-output-restriction';
-import type { BlockOutputCeiling, BlockOutputWorkflowFacts } from './block-output-restriction';
+import type { BlockOutputWorkflowFacts } from './block-output-restriction';
+import {
+  applyServingRules,
+  restrictWhileServingUnknown,
+  isPrivateGenerationWorkflow,
+  mintBlockOutput,
+  type BlockOutputView,
+} from './block-output-mint';
 import { hasRecasedTwin, isRepeatStepType } from './workflow-graph';
 import { safeQuoteReason } from './pass-through-quote-failure';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -105,16 +112,17 @@ export { WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY, readModelSubstitutionsFromMe
  * surfaced — pending/blocked blobs are dropped rather than sending dead links
  * the block would render as broken images.
  *
- * 🔴 `ceiling` IS REQUIRED, and that is the guard: it is the calling token's maturity
- * ceiling (`blockOutputCeilingFromClaims(claims)`), and every available output is
- * passed through `classifyBlockOutput` with it. A RESTRICTED output is reported on
+ * 🔴 `view` IS REQUIRED, and that is the guard: its ceiling is the calling token's
+ * maturity ceiling, and every available output is passed through `classifyBlockOutput`
+ * with it. A RESTRICTED output is reported on
  * `outputs` (and `steps[].outputs`) in position, with no url, and is left out of
  * `imageUrls`, `steps[].imageUrls` and `model3dOutputs`. See `outputs` in
- * `schema/blocks/workflow.schema`.
+ * `schema/blocks/workflow.schema`. Its `mint` (`resolveBlockOutputView`) turns every
+ * url the app is given into a host media ticket while serving is on for the viewer.
  */
 export function snapshotFromWorkflow(
   workflow: Workflow,
-  ceiling: BlockOutputCeiling,
+  view: BlockOutputView,
   /**
    * Facts known to the SUBMITTING request that the orchestrator Workflow object
    * does not itself model — currently only the silent checkpoint substitutions
@@ -151,9 +159,13 @@ export function snapshotFromWorkflow(
      * correct, and inventing one would report a fee as if it were the price.
      */
     additionalCostBuzz?: number;
+    /** The clock for the rating hold's deadline ({@link isRatingHoldExpired}); tests only. */
+    now?: number;
   }
 ): BlockWorkflowSnapshot {
-  const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
+  // The orchestrator's status. The app is told `appWorkflowStatus(...)` of it instead.
+  const status = orchestratorBlockStatus(workflow);
+  const now = extra?.now ?? Date.now();
   const imageUrls: string[] = [];
   const outputs: BlockWorkflowOutput[] = [];
   const stepOutputs: NonNullable<BlockWorkflowSnapshot['stepOutputs']> = [];
@@ -174,13 +186,13 @@ export function snapshotFromWorkflow(
       const extracted = isRepeatStepType(step.$type)
         ? EMPTY_STEP_EXTRACT
         : extractSnapshotStep(step, true);
-      const stepOutputList = classifyOutputs(extracted.media, step, workflow, ceiling);
+      const stepOutputList = classifyOutputs(extracted.media, step, workflow, view);
       const stepUrls = unrestrictedUrls(stepOutputList);
       if (!member.suppressOutput) {
         imageUrls.push(...stepUrls);
         outputs.push(...stepOutputList);
         // Labels only for urls that are in `imageUrls` — see the field's own doc.
-        model3dOutputs.push(...labelsFor(extracted.model3d, stepUrls));
+        model3dOutputs.push(...labelsFor(extracted.model3d, extracted.media, stepOutputList));
       }
       trainedEpochs.push(...extracted.trainedEpochs);
       const error = stepFailureReason(step);
@@ -205,13 +217,13 @@ export function snapshotFromWorkflow(
       continue;
     }
     const extracted = extractSnapshotStep(step, step.name === BLOCK_STEP_NAME);
-    const stepOutputList = classifyOutputs(extracted.media, step, workflow, ceiling);
+    const stepOutputList = classifyOutputs(extracted.media, step, workflow, view);
     const stepUrls = unrestrictedUrls(stepOutputList);
     imageUrls.push(...stepUrls);
     outputs.push(...stepOutputList);
     trainedEpochs.push(...extracted.trainedEpochs);
     // ADDITIVE: the 3D models among those urls, labelled — `imageUrls` is unchanged.
-    model3dOutputs.push(...labelsFor(extracted.model3d, stepUrls));
+    model3dOutputs.push(...labelsFor(extracted.model3d, extracted.media, stepOutputList));
     // A step with no output yet — the submit reply — would otherwise get an
     // entry saying nothing.
     if (extracted.rest !== undefined) {
@@ -270,7 +282,7 @@ export function snapshotFromWorkflow(
     // treats estimate results as a cost quote only and never polls on this id
     // (the request is correlated by requestId, not workflowId).
     workflowId: workflow.id ?? 'whatif',
-    status,
+    status: appWorkflowStatus(workflow, status, outputs, now),
     ...(typeof total === 'number'
       ? { cost: { total, ...(addedAuthorFee !== undefined ? { authorFee: addedAuthorFee } : {}) } }
       : {}),
@@ -309,19 +321,33 @@ function classifyOutputs(
   slots: readonly StepOutputSlot[],
   step: { $type: string; status?: string; output?: unknown; metadata?: unknown; input?: unknown },
   workflow: Workflow,
-  ceiling: BlockOutputCeiling
+  view: BlockOutputView
 ): BlockWorkflowOutput[] {
   const neverRatedVideo = isBlockNeverRatedVideoStep(step, workflow);
-  return propagateMeshRating(slots, step, workflow).map((m) =>
-    classifyBlockOutput(m, workflow as BlockOutputWorkflowFacts, ceiling, {
+  const mintStep = view.mint
+    ? {
+        workflowId: workflow.id ?? '',
+        privateGen: isPrivateGenerationWorkflow(workflow, step),
+        neverRatedVideoStep: neverRatedVideo,
+      }
+    : null;
+  return propagateMeshRating(slots, step, workflow).map((m) => {
+    const output = classifyBlockOutput(m, workflow as BlockOutputWorkflowFacts, view, {
       neverRated: m.neverRated === true,
       // 🔴 MIRRORS THE SITE (`workflow-data.ts`, `NEVER_RATED_VIDEO_ECOSYSTEMS`): the
       // provider moderates a never-rated engine's own output, so an UNRATED video from
       // one is delivered — neither held nor locked — whatever the ceiling. A rating
       // that does arrive still meets every ceiling check.
       unratedDelivered: neverRatedVideo && m.type === 'video',
-    })
-  );
+    });
+    if (view.servingUnknown) return restrictWhileServingUnknown(output);
+    if (view.mint && mintStep) {
+      return mintBlockOutput(output, m, mintStep, { ...view, mint: view.mint });
+    }
+    return view.serving
+      ? applyServingRules(output, m, { neverRatedVideoStep: neverRatedVideo })
+      : output;
+  });
 }
 
 /**
@@ -480,6 +506,94 @@ export function propagateMeshRating(
   });
 }
 
+/**
+ * 🔴 HOW LONG A FINISHED WORKFLOW MAY STILL BE REPORTED `processing` WHILE AN OUTPUT
+ * WAITS FOR ITS RATING, measured from the workflow's completion
+ * ({@link ratingHoldAnchorMs}). After it the workflow's real terminal status is
+ * reported again, the output still `{ pending: true }` with `ratingPending` (exactly
+ * what #8994 sends), so no app polls forever. The output is NOT turned into a
+ * restricted `'unrated'` entry: that reason means "no rating will ever come" and is
+ * terminal in the wire contract, and the unlock dialog answers it as such.
+ *
+ * 5 minutes: well past the blob scan latency tail
+ * (`orchestration_blob_scan_latency_seconds`), and under `@civitai/blocks-react` `watch`'s
+ * default 10 minute timeout, which counts from the watch's start, not from completion.
+ */
+export const RATING_HOLD_MAX_MS = 5 * 60_000;
+
+/**
+ * When the workflow finished, in epoch ms: its `completedAt`, else its latest step
+ * `completedAt`, else its `createdAt` — so a workflow missing every completion stamp is
+ * still bounded. `null` only when none of them parses.
+ */
+function ratingHoldAnchorMs(workflow: Workflow): number | null {
+  const candidates: Array<string | null | undefined> = [workflow.completedAt];
+  if (!workflow.completedAt) {
+    for (const step of workflow.steps ?? []) {
+      candidates.push((step as { completedAt?: string | null }).completedAt);
+    }
+  }
+  let anchor: number | null = null;
+  for (const c of candidates) {
+    const t = typeof c === 'string' ? Date.parse(c) : NaN;
+    if (Number.isFinite(t) && (anchor === null || t > anchor)) anchor = t;
+  }
+  if (anchor !== null) return anchor;
+  const created = Date.parse(workflow.createdAt);
+  return Number.isFinite(created) ? created : null;
+}
+
+/**
+ * Whether the rating hold has run out for this workflow: it is terminal and finished at
+ * least {@link RATING_HOLD_MAX_MS} before `now`. A record with no parseable timestamp
+ * at all (`createdAt` is required on every orchestrator workflow, so only a malformed
+ * one) is never run out: its output stays held, which never hands out a url.
+ */
+export function isRatingHoldExpired(workflow: Workflow, now: number): boolean {
+  if (!TERMINAL_SNAPSHOT_STATUSES.has(orchestratorBlockStatus(workflow))) return false;
+  const anchor = ratingHoldAnchorMs(workflow);
+  return anchor !== null && now - anchor >= RATING_HOLD_MAX_MS;
+}
+
+/**
+ * The workflow's REAL block-contract status, before {@link appWorkflowStatus}. For the
+ * host's own bookkeeping (the read model, settle, the post terminality gate), which must
+ * not wait on a rating the way an app is told to.
+ */
+export function orchestratorBlockStatus(
+  workflow: Pick<Workflow, 'status'>
+): BlockWorkflowSnapshot['status'] {
+  return ORCH_STATUS_MAP[workflow.status] ?? 'pending';
+}
+
+/**
+ * 🔴 THE STATUS AN APP IS TOLD, for every snapshot and listing producer — the one place
+ * this rule lives. A `succeeded` workflow with an output still held for its rating
+ * (`{ pending: true }`) is reported `processing`.
+ *
+ * WHY. Apps built on `@civitai/app-sdk` before `ratingPending` existed stop polling at
+ * the first `succeeded` and keep whatever `imageUrls` it carried, so an output held for
+ * its rating was lost for good although the viewer paid for it. Every app already keeps
+ * polling on `processing`. The hold is bounded: after {@link RATING_HOLD_MAX_MS} the
+ * real status returns with the output still pending. `failed` / `expired` / `canceled`
+ * are passed through: no app keeps outputs on them as a success, and the cancel and
+ * refund paths key on them.
+ *
+ * ⚠️ Applies to every app, new SDKs included: the host cannot tell which apps need it,
+ * and an app that polls by hand and stops at `succeeded` loses the image whatever its
+ * SDK version. Cost: a `watch` caller can hit its own timeout on this `processing`
+ * snapshot.
+ */
+export function appWorkflowStatus(
+  workflow: Workflow,
+  status: BlockWorkflowSnapshot['status'],
+  outputs: readonly BlockWorkflowOutput[],
+  now: number
+): BlockWorkflowSnapshot['status'] {
+  if (status !== 'succeeded' || !anyPending(outputs)) return status;
+  return isRatingHoldExpired(workflow, now) ? status : 'processing';
+}
+
 /** True when any entry is held for its rating — what sets `ratingPending`. */
 function anyPending(outputs: readonly BlockWorkflowOutput[]): boolean {
   return outputs.some((o) => 'pending' in o && o.pending === true);
@@ -492,11 +606,25 @@ function unrestrictedUrls(outputs: readonly BlockWorkflowOutput[]): string[] {
   return urls;
 }
 
-/** 3D labels only for urls the app is given: a restricted model's url is withheld. */
-function labelsFor(labels: readonly BlockModel3dOutput[], urls: readonly string[]) {
+/**
+ * 3D labels only for urls the app is given (a restricted model's url is withheld), each
+ * carrying the url the app was given for that position.
+ */
+function labelsFor(
+  labels: readonly BlockModel3dOutput[],
+  slots: readonly StepOutputSlot[],
+  outputs: readonly BlockWorkflowOutput[]
+): BlockModel3dOutput[] {
   if (labels.length === 0) return [];
-  const given = new Set(urls);
-  return labels.filter((l) => given.has(l.url));
+  const given = new Map<string, string>();
+  slots.forEach((slot, i) => {
+    const output = outputs[i];
+    if (output && isUnrestrictedOutput(output)) given.set(slot.url, output.url);
+  });
+  return labels.flatMap((l) => {
+    const url = given.get(l.url);
+    return url === undefined ? [] : [url === l.url ? l : { ...l, url }];
+  });
 }
 
 const TERMINAL_SNAPSHOT_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set<
@@ -783,9 +911,9 @@ function extractSnapshotStep(
     // are echoed back by the orchestrator. Anything else keeps the pre-existing
     // behaviour: dropped.
     //
-    // 🔴 THE BLOBS GO TO `imageUrls`, NOT TO `stepOutputs`. That keeps every
-    // image this arm produces on the one channel the publish path and the
-    // per-viewer gated read already own; see `stepOutputs` in
+    // 🔴 THE BLOBS GO TO `imageUrls`, NOT TO `stepOutputs` (an unapproved training
+    // run's go to neither). That keeps every image this arm produces on the one
+    // channel the publish path and the per-viewer gated read already own; see `stepOutputs` in
     // `schema/blocks/workflow.schema`. A training checkpoint goes to NEITHER —
     // `splitPassThroughStep` drops it.
     if (!bridgeSubmitted) return { media, trainedEpochs, model3d: [] };
@@ -889,7 +1017,7 @@ export function classifySucceededWithoutMedia(
     if (step.status !== 'succeeded') continue;
     const member = submittedSteps ? resolveBlockWorkflowStep(submittedSteps, step.name) : null;
     if (member && (member.suppressOutput || isRepeatStepType(step.$type))) continue;
-    if (isTrainingStepType(step.$type)) continue;
+    if (canonicalTrainingStepType(step.$type) !== null) continue;
     const registered = getStepByOrchestratorType(step.$type);
     let label: string;
     if (registered) {
@@ -932,7 +1060,7 @@ function hasBlockTrainingStep(workflow: Workflow): boolean {
   const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
   return (workflow.steps ?? []).some(
     (step) =>
-      isTrainingStepType(step.$type) &&
+      canonicalTrainingStepType(step.$type) !== null &&
       (step.name === BLOCK_STEP_NAME ||
         (submittedSteps !== null && resolveBlockWorkflowStep(submittedSteps, step.name) !== null))
   );
@@ -1004,7 +1132,9 @@ export function appBlockInstanceTag(blockInstanceId: string): string {
  *           NOT an index space — indexes are positions in `outputs`.
  *   cost:   the workflow's realized/estimated buzz total, or null when absent.
  *   status: the block-contract status (see ORCH_STATUS_MAP) — the orchestrator's
- *           unassigned/preparing/scheduled all collapse to `pending`.
+ *           unassigned/preparing/scheduled all collapse to `pending`, and a
+ *           `succeeded` workflow still holding an output for its rating reads
+ *           `processing` ({@link appWorkflowStatus}).
  *   trainedEpochs: OPTIONAL, same value and rule as the snapshot field — see
  *           `BlockWorkflowSnapshot.trainedEpochs`. Absent unless an approved
  *           pass-through training run has a ready checkpoint.
@@ -1043,15 +1173,19 @@ export type AppWorkflow = {
  * Pure projection Workflow → AppWorkflow. No IO, no throws — safe to map over a
  * whole page of LIST results. See `AppWorkflow` for the field-by-field contract.
  *
- * 🔴 `ceiling` IS REQUIRED for the same reason as on `snapshotFromWorkflow`: the
+ * 🔴 `view` IS REQUIRED for the same reason as on `snapshotFromWorkflow`: the
  * calling token's maturity ceiling decides which outputs are RESTRICTED, and a
  * restricted output's url is in neither `images` nor `model3dOutputs`. Every
- * consumer — the listing, the cancel reply, publish and post — must pass the
- * calling token's ceiling, so the `images` a block indexed is the `images` the
- * server resolves its `imageIndexes` against.
+ * consumer — the listing, the cancel reply, publish, post and persist — passes the
+ * calling token's ceiling and serving rules, so the positions a block indexed are the
+ * positions the server resolves its `imageIndexes` against.
  */
-export function projectAppWorkflow(workflow: Workflow, ceiling: BlockOutputCeiling): AppWorkflow {
-  return projectAppWorkflowWithPositions(workflow, ceiling).workflow;
+export function projectAppWorkflow(
+  workflow: Workflow,
+  view: BlockOutputView,
+  opts?: { now?: number }
+): AppWorkflow {
+  return projectAppWorkflowWithPositions(workflow, view, opts).workflow;
 }
 
 /**
@@ -1073,16 +1207,19 @@ export type AppWorkflowOutputPosition = { image: AppWorkflowImage; output: Block
  */
 export function projectAppWorkflowWithPositions(
   workflow: Workflow,
-  ceiling: BlockOutputCeiling
+  view: BlockOutputView,
+  /** `now`: the clock for the rating hold's deadline ({@link isRatingHoldExpired}); tests only. */
+  opts?: { now?: number }
 ): { workflow: AppWorkflow; positions: AppWorkflowOutputPosition[] } {
-  const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
+  const status = orchestratorBlockStatus(workflow);
+  const now = opts?.now ?? Date.now();
   // Every output position (surfaceable and blocked), in order, and its verdict —
   // classified PER STEP, the same call `snapshotFromWorkflow` makes.
   const available: StepOutputSlot[] = [];
   const outputs: BlockWorkflowOutput[] = [];
   const add = (step: Parameters<typeof classifyOutputs>[1], slots: readonly StepOutputSlot[]) => {
     available.push(...slots);
-    outputs.push(...classifyOutputs(slots, step, workflow, ceiling));
+    outputs.push(...classifyOutputs(slots, step, workflow, view));
   };
   const trainedEpochs: TrainedEpoch[] = [];
   const model3dOutputs: BlockModel3dOutput[] = [];
@@ -1094,7 +1231,7 @@ export function projectAppWorkflowWithPositions(
     if (member?.suppressOutput) {
       // Still report a suppressed training step's ready epochs: `suppressOutput`
       // hides images, and a checkpoint is never one.
-      if (isTrainingStepType(step.$type)) {
+      if (canonicalTrainingStepType(step.$type) !== null) {
         trainedEpochs.push(
           ...splitPassThroughStep(step.$type, (step as unknown as { output?: unknown }).output)
             .trainedEpochs
@@ -1150,21 +1287,23 @@ export function projectAppWorkflowWithPositions(
     // `nativeStepOutputMedia`.
     add(step, nativeStepOutputMedia(step));
   }
-  // `outputs` keeps every position, `images` only the unrestricted ones.
-  const unrestricted = available.filter((_, i) => isUnrestrictedOutput(outputs[i]));
+  // `outputs` keeps every position, `images` only the unrestricted ones, each with the
+  // url the app is given for it.
+  const images: AppWorkflowImage[] = [];
+  available.forEach((m, i) => {
+    const output = outputs[i];
+    if (isUnrestrictedOutput(output)) images.push({ ...toAppWorkflowImage(m), url: output.url });
+  });
   const total = workflow.cost?.total;
   const publishedModel = readBlockPublishedModel(workflow);
-  const labels = labelsFor(
-    model3dOutputs,
-    unrestricted.map((m) => m.url)
-  );
+  const labels = labelsFor(model3dOutputs, available, outputs);
   return {
     workflow: {
       // A real LIST/GET item always carries an id; empty-string only if the
       // orchestrator ever omits it (never for a persisted workflow).
       workflowId: workflow.id ?? '',
-      status,
-      images: unrestricted.map(toAppWorkflowImage),
+      status: appWorkflowStatus(workflow, status, outputs, now),
+      images,
       cost: typeof total === 'number' ? total : null,
       createdAt: workflow.createdAt,
       ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),

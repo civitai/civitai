@@ -1412,7 +1412,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // useless-but-valid token is the right graceful outcome, not a 403.
   const knownManifestScopes = rawManifestScopes.filter(isKnownBlockScope);
 
-  const oauthAllowed = block.app?.allowedScopes ?? 0;
+  const oauthAllowed = block.app?.allowedScopes ?? 0n;
   const scopeCheck = validateBlockScopesAgainstOauthClient(knownManifestScopes, oauthAllowed);
   if (!scopeCheck.valid) {
     res.status(403).json({

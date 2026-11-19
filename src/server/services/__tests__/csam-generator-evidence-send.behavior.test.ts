@@ -720,8 +720,12 @@ describe('a preserved-evidence report left waiting for approval', () => {
   const filedHoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000 - 60_000);
   const overdueLines = () =>
     loggingMock.logToAxiom.mock.calls
-      .map(([line]) => line as { subType?: string; awaiting?: string; reportId?: number })
-      .filter((line) => line.subType === 'send-blocked' && line.awaiting === 'evidence-approval');
+      .map(
+        ([line]) => line as { subType?: string; payload?: { awaiting?: string }; reportId?: number }
+      )
+      .filter(
+        (line) => line.subType === 'send-blocked' && line.payload?.awaiting === 'evidence-approval'
+      );
 
   it('raises a blocked line once it has waited past the threshold, and not once approved', async () => {
     loggingMock.logToAxiom.mockClear();

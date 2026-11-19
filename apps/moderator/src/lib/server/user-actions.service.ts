@@ -260,6 +260,7 @@ export type ModEndpoint =
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
   | 'cosmetic/holdings-removed'
+  | 'feedback/ticket-bug'
   | 'cosmetic/refund-box-purchase'
   | 'messages/claim'
   | 'messages/release'
@@ -286,6 +287,7 @@ export type ModEndpoint =
   | 'poi-flag/dismiss'
   | 'poi-flag/flag-match'
   | 'poi-flag/revert'
+  | 'post-text/moderate'
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'
@@ -340,7 +342,8 @@ export type ModReadEndpoint =
   | 'user/membership-cancel-preview'
   | 'user/membership-extend-preview'
   | 'user/membership-resync-preview'
-  | 'user/reactions';
+  | 'user/reactions'
+  | 'whoami';
 
 /** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
 export const readModEndpoint = (

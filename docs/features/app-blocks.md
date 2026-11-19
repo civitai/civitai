@@ -117,6 +117,15 @@ A third such site has to make its own argument — see the note at the foot of
 | `apps:store:items:write`             | non-anon `sub`                          | **SENSITIVE + CONSENT-EXEMPT.** Publish the viewer's own app items as App Store sub-listing cards under the calling app (`/api/v1/blocks/sub-listings/{upsert,withdraw,mine}`). Gated per call by the parent's `app_sub_listing_parents` switch, the shared-write trust check, item authorship (a document in a shared `own`/`anyone` collection, or a legacy shared row for an app with none), the shared text-safety check, rate limits and moderator approval. In no dev or review mint allowlist. See `docs/features/app-store-sub-listings.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `social:react:self`                  | non-anon `sub`                          | **SENSITIVE + CONSENT-GATED.** Set or clear the viewer's reaction on an IMAGE a block endpoint served this app (`SET_ENTITY_REACTION` → `blocks.setReactionFromApp`; read: `GET_ENTITY_REACTIONS` → `blocks.getReactionsForApp`). Both require the viewer's signed-in session to be the token's `sub`. Calls the site's own reaction handler, so rewards, metrics and notifications match a click on the site, and shares the site's per-user reaction quota (`sharedKey: 'reaction:toggle'`). Requires a provenance `reactTicket` the serving endpoint (`/api/v1/blocks/images`, `/api/v1/blocks/gated-images`, `/api/v1/blocks/collections/[id]`) signed for that image, app and viewer (24h). `Like`/`Heart`/`Laugh`/`Cry` only. Set semantics: a request that matches the current state writes nothing. No per-reaction confirm — the grant is the consent. `SKIP_OAUTH_CHECK` (not `SocialWrite`). Behind its own fail-closed flag (`app-blocks-app-reactions`). Revoking the scope does not remove reactions already made                                                                                                                                                                                               |
 
+**Shared viewer uploads on the grid.** A viewer-picked `OPEN_IMAGE_UPLOAD` the app opted in to
+share for that one upload (`share: true`), after the host's dialog told the viewer it will be
+visible to the app's other viewers, carries `blockSharedUploadAppId` = that app, and every reply to
+the request echoes `shared` (`true` exactly when that stamp was written). `blocks.getImagesByIds`
+returns it to any viewer of THAT app only, once it is terminally scanned, unflagged and within the
+viewer's and the SFW (PG / PG-13) ceiling; until then it is `hidden`, to its uploader too. Another
+app never reads it, and it is not postable. A viewer-picked upload without the opt-in stays private
+and unstamped, and an app's bytes upload (`blockUploadedAppId`) is never readable here.
+
 ⚠️ **This table is NOT exhaustive and the constant is the authority.** Absent
 from it today: `apps:storage:shared:read` / `:write` (the cross-user shared
 datastore) and `collections:read:self` / `:write:self` / `:read:private`. Read
@@ -236,7 +245,7 @@ fine-grained tool for ops.
 Several capabilities also have their own fail-closed flag, independent of
 `app-blocks-enabled`, that ships OFF with no moderator floor (an absent flag is
 off for everyone): `app-blocks-post-creation` (`posts:write:self`),
-`app-blocks-training-kind`, `app-blocks-confirmed-step` and
+`app-blocks-training-kind`, `app-blocks-confirmed-step`, `app-confirmed-step-within-limit` and
 `app-blocks-app-reactions` (`social:react:self`; off refuses both reaction
 procedures at once). See `src/server/services/app-blocks-flag.ts`.
 
@@ -1035,6 +1044,28 @@ same page host, so the owner sees the same confirm.
    default) is unaffected. On an owner's private run the submit reserves against the
    private-run cap instead of the daily counters, so there the host's check before the
    confirm is the only daily-limit check.
+
+4. **"Don't ask me each job" (opt-in, per app).** Behind `app-confirmed-step-within-limit`
+   (off by default). The confirm offers an unchecked checkbox. A viewer with a daily limit for
+   the app ticks it as is; a viewer with none sets a limit in the same step (suggested
+   `max(1,000, the job's price)`, never below the job's price). The price of the job on screen
+   becomes the highest price that may run unasked. After that, `blocks.previewQuoteGrant`
+   returns `standing: true` when the flag is on, the job costs no more than that ceiling, it
+   fits what is left of the limit today, and it is not a private run. The host then shows no
+   dialog. It calls `blocks.consentQuoteGrantStanding` (session only), which checks every
+   condition again on the primary and takes a slot from a per-(viewer, app) burst bound of 5
+   per 60 seconds. That bound fails closed when its store is unreachable. Any error from that
+   call, including NOT_FOUND from an older server, makes the host draw the confirm instead. The
+   submit accepts such a quote only with the flag on, the opt-in still in place at that price,
+   a daily-limit reservation to bound it, and a slot from a second bucket of the same size
+   taken at submit: a consented quote can be submitted later, so only the submit-time slot
+   bounds how many jobs run in a minute. A pricier job asks again, and ticking the box on
+   it raises the ceiling to its price. Re-consenting to spending, any limit change on
+   `/apps/activity`, revoking spending, or "Ask me each job" there turns the opt-in off.
+   Raising the limit from the raise dialog keeps it; that dialog then says "Jobs up to N Buzz
+   that fit within the new limit will run without asking." Each submit records `consentKind: 'click' |
+   'standing'` on its audit row, and `civitai_app_block_confirmed_step_submit_total{app_block_id,consent}`
+   counts both. The per-app aggregate cap and velocity limit still apply.
 
 A quote is single-use, bound to the viewer, app, install and exact body, expires after 15
 minutes, and is re-priced at submit; a higher re-price, or one that is no longer fixed, is

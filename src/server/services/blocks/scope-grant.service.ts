@@ -35,7 +35,9 @@
 
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { sql } from 'kysely';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { logToAxiom } from '~/server/logging/client';
 import {
   consentCapExceeded,
@@ -581,6 +583,139 @@ export async function readConsentDailyLimit(
   };
 }
 
+let missingConfirmWithinLimitColumnLogged = false;
+function logMissingConfirmWithinLimitColumn(site: string, err: unknown): void {
+  if (missingConfirmWithinLimitColumnLogged) return;
+  missingConfirmWithinLimitColumnLogged = true;
+  logToAxiom(
+    {
+      name: 'app-blocks-scope-grant',
+      type: 'error',
+      message:
+        `app_user_scope_grants.confirm_within_limit_max_job is MISSING from this database — apply ` +
+        `migration 20271116180000_app_user_scope_grant_confirm_within_limit. Every viewer reads ` +
+        `as not opted in, so every above-budget job still asks.`,
+      site,
+      code: (err as { code?: unknown } | null)?.code,
+    },
+    'webhooks'
+  );
+}
+
+/**
+ * The highest job price the viewer lets this app run without a per-job confirm, or `null` when
+ * they have not opted in. Not a grant check: it can be set on a revoked row, so a caller must
+ * also require the live daily limit. Its own select with its own missing-column branch:
+ * `isMissingColumnError` matches ANY missing column, so this column in a shared grant select
+ * would switch off the limit or the revoke before the migration lands.
+ */
+export async function readConfirmWithinLimit(
+  userId: number,
+  appBlockId: string,
+  db: 'read' | 'write' = 'write'
+): Promise<number | null> {
+  const { kyselyRead, kyselyWrite } = await loadKyselyDb();
+  const client = db === 'read' ? kyselyRead : kyselyWrite;
+  try {
+    const row = await client
+      .selectFrom('app_user_scope_grants')
+      .select('confirm_within_limit_max_job')
+      .where('user_id', '=', userId)
+      .where('app_block_id', '=', appBlockId)
+      .executeTakeFirst();
+    const maxJob = row?.confirm_within_limit_max_job;
+    return typeof maxJob === 'number' && maxJob > 0 ? maxJob : null;
+  } catch (err) {
+    if (!isMissingColumnError(err)) throw err;
+    logMissingConfirmWithinLimitColumn('readConfirmWithinLimit', err);
+    return null;
+  }
+}
+
+/** The viewer's own switch-off from /apps/activity. */
+export async function optOutConfirmWithinLimit(userId: number, appBlockId: string): Promise<void> {
+  const { kyselyWrite } = await loadKyselyDb();
+  try {
+    await kyselyWrite
+      .updateTable('app_user_scope_grants')
+      .set({ confirm_within_limit_max_job: null })
+      .where('user_id', '=', userId)
+      .where('app_block_id', '=', appBlockId)
+      .execute();
+  } catch (err) {
+    if (!isMissingColumnError(err)) throw err;
+    logMissingConfirmWithinLimitColumn('optOutConfirmWithinLimit', err);
+  }
+}
+
+/**
+ * The viewer opts in from the confirmed-step dialog, for jobs priced up to `maxJob` (the price
+ * of the job in front of them). With `newLimit`, a viewer with no limit sets one in the same
+ * statement; without it, a limit must already be set. Either way only while spending is granted
+ * and unrevoked, and it never grants a scope or lifts a revocation. `null` when nothing was
+ * written.
+ */
+export async function optInConfirmWithinLimit(opts: {
+  userId: number;
+  appBlockId: string;
+  maxJob: number;
+  newLimit?: number;
+}): Promise<{ limit: number } | null> {
+  const { userId, appBlockId, maxJob, newLimit } = opts;
+  const { kyselyWrite } = await loadKyselyDb();
+  let query = kyselyWrite
+    .updateTable('app_user_scope_grants')
+    .where('user_id', '=', userId)
+    .where('app_block_id', '=', appBlockId)
+    .where('revoked_at', 'is', null)
+    .where(sql<boolean>`${CONSENT_SPEND_SCOPE} = ANY(granted_scopes)`)
+    .where(sql<boolean>`NOT (${CONSENT_SPEND_SCOPE} = ANY(revoked_scopes))`);
+  query =
+    newLimit === undefined
+      ? query.where('buzz_budget_per_day', '>', 0).set({ confirm_within_limit_max_job: maxJob })
+      : query
+          .where('buzz_budget_per_day', 'is', null)
+          .set({ confirm_within_limit_max_job: maxJob, buzz_budget_per_day: newLimit });
+  let row: { buzz_budget_per_day: number | null } | undefined;
+  try {
+    row = await query.returning('buzz_budget_per_day').executeTakeFirst();
+  } catch (err) {
+    if (!isMissingColumnError(err)) throw err;
+    logMissingConfirmWithinLimitColumn('optInConfirmWithinLimit', err);
+    return null;
+  }
+  if (row?.buzz_budget_per_day == null) return null;
+  return { limit: row.buzz_budget_per_day };
+}
+
+/**
+ * Runs a grant UPDATE that also turns the opt-in off. On a database without the column it
+ * runs the same write without it (a viewer there was never opted in); any other error
+ * propagates.
+ */
+async function writeClearingConfirmWithinLimit(
+  site: string,
+  write: (clear: { confirmWithinLimitMaxJob?: null }) => Promise<unknown>
+): Promise<void> {
+  try {
+    await write({ confirmWithinLimitMaxJob: null });
+  } catch (err) {
+    if (!isMissingConfirmWithinLimitColumn(err)) throw err;
+    await write({});
+    logMissingConfirmWithinLimitColumn(site, err);
+  }
+}
+
+// Narrower than `isMissingColumnError`: a write that also names an older hand-applied column
+// must keep that column's own refusal, not be retried as if this one were the missing one.
+function isMissingConfirmWithinLimitColumn(err: unknown): boolean {
+  if (!isMissingColumnError(err)) return false;
+  const e = err as { message?: unknown; meta?: { column?: unknown } | null };
+  return [e.message, e.meta?.column].some(
+    (v) => typeof v === 'string' && v.includes('confirm_within_limit_max_job')
+  );
+}
+
 /**
  * 🔴 THE WRITES BELOW MUST NEVER READ A COLUMN BACK. Prisma's DEFAULT selection is
  * "every scalar", so a `create`/`update` with no `select` emits
@@ -1046,21 +1181,34 @@ export async function recordScopeGrant(opts: {
     }
   }
 
+  // A re-consent to spending, or any budget write, starts the viewer over at "ask each job".
+  const clearsConfirmWithinLimit = budgetSupplied || incomingSet.has(CONSENT_SPEND_SCOPE);
+  async function updateExisting(row: {
+    id: string;
+    grantedScopes: string[];
+    revokedScopes?: string[];
+  }): Promise<void> {
+    const data = {
+      grantedScopes: Array.from(new Set([...(row.grantedScopes ?? []), ...incoming])),
+      version,
+      ...unrevokeData(row.grantedScopes, row.revokedScopes),
+      ...budgetData,
+      ...revocationData(row.revokedScopes),
+    };
+    const write = (clear: { confirmWithinLimitMaxJob?: null }) =>
+      dbWrite.appUserScopeGrant.update({
+        where: { id: row.id },
+        data: { ...data, ...clear },
+        select: WRITE_RETURN_SELECT,
+      });
+    if (clearsConfirmWithinLimit) await writeClearingConfirmWithinLimit('recordScopeGrant', write);
+    else await write({});
+  }
+
   const existing = await readExisting();
 
   if (existing) {
-    const merged = Array.from(new Set([...(existing.grantedScopes ?? []), ...incoming]));
-    await dbWrite.appUserScopeGrant.update({
-      where: { id: existing.id },
-      data: {
-        grantedScopes: merged,
-        version,
-        ...unrevokeData(existing.grantedScopes, existing.revokedScopes),
-        ...budgetData,
-        ...revocationData(existing.revokedScopes),
-      },
-      select: WRITE_RETURN_SELECT,
-    });
+    await updateExisting(existing);
     return { revokedScopesAfterClear: clearedTo };
   }
 
@@ -1086,18 +1234,7 @@ export async function recordScopeGrant(opts: {
     if (code !== 'P2002') throw err;
     const row = await readExisting();
     if (!row) throw err;
-    const merged = Array.from(new Set([...(row.grantedScopes ?? []), ...incoming]));
-    await dbWrite.appUserScopeGrant.update({
-      where: { id: row.id },
-      data: {
-        grantedScopes: merged,
-        version,
-        ...unrevokeData(row.grantedScopes, row.revokedScopes),
-        ...budgetData,
-        ...revocationData(row.revokedScopes),
-      },
-      select: WRITE_RETURN_SELECT,
-    });
+    await updateExisting(row);
   }
   return { revokedScopesAfterClear: clearedTo };
 }
@@ -1356,11 +1493,17 @@ export async function revokeScopes(
 
   try {
     if (existing) {
-      await dbWrite.appUserScopeGrant.update({
-        where: { id: existing.id },
-        data,
-        select: WRITE_RETURN_SELECT,
-      });
+      const write = (clear: { confirmWithinLimitMaxJob?: null }) =>
+        dbWrite.appUserScopeGrant.update({
+          where: { id: existing.id },
+          data: { ...data, ...clear },
+          select: WRITE_RETURN_SELECT,
+        });
+      if (budgetCleared || fullyRevoked) {
+        await writeClearingConfirmWithinLimit('revokeScopes', write);
+      } else {
+        await write({});
+      }
     } else {
       // `version: ''` — the same placeholder `blocks.grantScopes` writes when an AppBlock
       // carries no version. This row records a REFUSAL, so there is no version the

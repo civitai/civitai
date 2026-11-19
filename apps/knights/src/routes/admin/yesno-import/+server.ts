@@ -29,11 +29,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
         name: 'knights-yesno-import',
         message: 'Knights yes/no import chunk',
         userId: locals.user.id,
-        read: summary.read,
-        toImport: summary.toImport,
-        skipped: summary.skipped,
-        retire: summary.retire,
-        ...summary.result,
+        payload: {
+          read: summary.read,
+          toImport: summary.toImport,
+          retire: summary.retire,
+          skipped: summary.skipped,
+          ...summary.result,
+        },
       });
     }
     return json({ ok: true, dryRun, ...summary });

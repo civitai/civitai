@@ -56,18 +56,6 @@ export interface CacheUpdate {
   userId?: number | null
 }
 
-export interface FeedUpdate {
-  entityType: 'Model' | 'Post' | 'Image' | 'Bounty' | 'Article'
-  entityId?: number | null
-  type: 'update' | 'delete' | 'metricUpdate'
-}
-
-export interface IndexUpdate {
-  entityType: string
-  entityId: number
-  type: 'update' | 'delete' | 'metricUpdate'
-}
-
 export interface OutboxEvent {
   id: number
   entityType: string

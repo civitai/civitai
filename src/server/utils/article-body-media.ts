@@ -1,20 +1,27 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
 import sanitize from 'sanitize-html';
+import { isMinorMatureImage } from '~/server/common/image-visibility';
 import { keysIn } from '~/server/services/image-url-ownership';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { extractCloudflareUuid } from '~/utils/article-helpers';
 
-export type ArticleBodyImageState = {
-  url: string;
-  nsfwLevel: number;
-  ingestion: string;
-  needsReview: string | null;
-  tosViolation: boolean;
-};
+export type ArticleBodyImageState = Pick<
+  Selectable<DB['Image']>,
+  'url' | 'nsfwLevel' | 'ingestion' | 'needsReview' | 'tosViolation' | 'modelRestricted'
+>;
 
-/** Scanned, not awaiting review and not a violation: what anyone but its owner and mods may get. */
-export const isServableBodyImage = (image: ArticleBodyImageState) =>
+/** Scanned, rated, not awaiting review, not a violation and not restricted by its base model. */
+const isClearedBodyImage = (image: ArticleBodyImageState) =>
   servableArticleImage(image) !== null && !image.tosViolation;
+
+/**
+ * What anyone but its owner and mods may get: cleared, and not a minor-flagged image the minor
+ * content rule restricts (`isMinorMatureImage`).
+ */
+export const isServableBodyImage = (image: ArticleBodyImageState & { minor: boolean | null }) =>
+  isClearedBodyImage(image) && !isMinorMatureImage(image);
 
 /** The `needsReview` of an image held for csam review. */
 export const CSAM_HELD_REVIEW = 'csam';
@@ -23,12 +30,15 @@ export const CSAM_HELD_REVIEW = 'csam';
 export const isCsamHeldBodyImage = (image: Pick<ArticleBodyImageState, 'needsReview'>) =>
   image.needsReview === CSAM_HELD_REVIEW;
 
-/** Servable body images rated wholly within `browsingLevel` (unrated never is), by uuid. */
+/**
+ * Cleared body images rated wholly within `browsingLevel` (unrated never is), by uuid. For images
+ * `getArticleById` already narrowed to what this viewer may get.
+ */
 export function servableBodyImageUrls(images: ArticleBodyImageState[], browsingLevel: number) {
   return new Set(
     images
       .filter(
-        (image) => isServableBodyImage(image) && isRatingWithinCap(image.nsfwLevel, browsingLevel)
+        (image) => isClearedBodyImage(image) && isRatingWithinCap(image.nsfwLevel, browsingLevel)
       )
       .map((image) => image.url)
   );

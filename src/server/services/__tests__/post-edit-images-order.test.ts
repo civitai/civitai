@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as Caches from '~/server/redis/caches';
@@ -42,7 +43,11 @@ describe('getPostEditImages order', () => {
       row(5, 2),
     ] as never);
 
-    const images = await getPostEditImages({ id: 1, user: { id: 1 } as SessionUser });
+    const images = await getPostEditImages({
+      id: 1,
+      user: { id: 1 } as SessionUser,
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(images.map((x) => x.id)).toEqual([10, 11, 5, 21, 30]);
   });

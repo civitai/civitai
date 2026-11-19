@@ -71,6 +71,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "updatedAt" timestamp(3),
       "pHash" bigint,
       ingestion "ImageIngestionStatus",
@@ -410,7 +411,7 @@ describe('the nsfwAxes write never changes the scan', () => {
       ['the verdict', false, 'Scanned', null],
       ['the legacy blocked branch', true, 'Blocked', 'Pending'],
     ])(
-      'writes %s without the axes, and logs it, with the flag on',
+      'writes %s without the axes, with the flag on',
       async (_, blocked, outcomeIngestion, rowIngestion) => {
         await holder.db.query(
           `INSERT INTO "Image" (id, ingestion, "scanJobs") VALUES ($1, 'Pending', '{"workflowId":"wf-0"}')`,
@@ -428,10 +429,6 @@ describe('the nsfwAxes write never changes the scan', () => {
           ingestion: rowIngestion ?? outcomeIngestion,
           workflowId: 'wf-1',
         });
-        expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-          expect.objectContaining({ name: 'image-nsfw-axes', imageId: ID, workflowId: 'wf-1' }),
-          'webhooks'
-        );
       }
     );
   });

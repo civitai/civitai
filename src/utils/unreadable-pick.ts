@@ -288,6 +288,5 @@ export function reportUnreadablePick(file: File, source: string) {
   void reportApplicationError(new Error(`${source} pick failed: pick-unreadable`), {
     name: `${source}-pick`,
     message: `picked-file ${type} ${size} NotReadableError android:${isAndroidDevice()}`,
-    resolveStack: false,
   });
 }

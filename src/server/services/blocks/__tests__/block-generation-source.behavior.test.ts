@@ -148,7 +148,7 @@ function persist(
     imageIndex: 0,
     getWorkflow: async () => wf,
     // Every browsing level: no fixture output is above the ceiling.
-    ceiling: { maxBrowsingLevel: 31 },
+    ceiling: { maxBrowsingLevel: 31, serving: false },
     ...over,
   });
 }
@@ -176,6 +176,7 @@ async function gate(url: string, userId = VIEWER) {
       userId,
       entry: 'appBlocks',
       isApiCaller: false,
+      appBlockLog: { appBlockId: 'apb_alpha' },
     });
     return 'accepted';
   } catch (e) {
@@ -203,6 +204,7 @@ beforeAll(async () => {
       availability text NOT NULL DEFAULT 'Public', "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "modelRestricted" boolean NOT NULL DEFAULT false,
       "userId" int NOT NULL,
       url text NOT NULL,
       "postId" int,
@@ -406,6 +408,47 @@ describe('ownership: refused before anything is fetched or written', () => {
     });
     expect(createImage).not.toHaveBeenCalled();
   });
+
+  describe('🔴 serving on: persist refuses what the poll restricts', () => {
+    const SERVING = { maxBrowsingLevel: 31, serving: true };
+    const withNa = () =>
+      workflow({
+        steps: [
+          {
+            $type: 'textToImage',
+            output: {
+              images: [
+                { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'na' },
+                { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+              ],
+            },
+          },
+        ],
+      });
+
+    it('an output rated `na` is refused, and nothing is fetched or written', async () => {
+      await expect(persist({ imageIndex: 0, ceiling: SERVING }, withNa())).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'output 0 is restricted',
+      });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(createImage).not.toHaveBeenCalled();
+    });
+
+    // The controls schedule the scan (persistAfterScan): a bare persist() of an accepted output
+    // waits out the whole scan deadline in real time (~30 s each) to say nothing more.
+    it('CONTROL: the rated output beside it persists', async () => {
+      const wf = withNa();
+      await persistAfterScan({ imageIndex: 1, ceiling: SERVING, getWorkflow: async () => wf });
+      expect(createImage).toHaveBeenCalledTimes(1);
+    });
+
+    it('CONTROL: with serving off the `na` output persists', async () => {
+      const wf = withNa();
+      await persistAfterScan({ imageIndex: 0, getWorkflow: async () => wf });
+      expect(createImage).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe('the written row is private', () => {
@@ -506,6 +549,7 @@ describe('the scan wait (the generation gate is the definition of ready)', () =>
       waitForGenerationSource({
         url,
         userId: VIEWER,
+        appBlockId: 'apb_alpha',
         deadline: start + GENERATION_SOURCE_DEADLINE_MS,
       })
     );
@@ -526,6 +570,7 @@ describe('the scan wait (the generation gate is the definition of ready)', () =>
       waitForGenerationSource({
         url,
         userId: VIEWER,
+        appBlockId: 'apb_alpha',
         deadline: start + GENERATION_SOURCE_DEADLINE_MS,
       })
     );
@@ -553,7 +598,12 @@ describe('the scan wait (the generation gate is the definition of ready)', () =>
     await scan(902, set);
     const url = generationSourceUrl('33333333-3333-4333-8333-333333333333');
     await expect(
-      waitForGenerationSource({ url, userId: VIEWER, deadline: Date.now() + 1 })
+      waitForGenerationSource({
+        url,
+        userId: VIEWER,
+        appBlockId: 'apb_alpha',
+        deadline: Date.now() + 1,
+      })
     ).rejects.toMatchObject({ message });
   });
 
@@ -695,6 +745,7 @@ describe('🔴 gate seam on the textToImage path (flag on): the persisted url as
         userId: VIEWER,
         entry: 'appBlocks',
         isApiCaller: false,
+        appBlockLog: { appBlockId: 'apb_alpha' },
       });
       return { urls, verdict: 'accepted' };
     } catch (e) {

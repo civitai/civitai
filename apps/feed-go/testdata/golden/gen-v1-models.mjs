@@ -644,7 +644,7 @@ function redisEntries(w) {
   for (const [id, v] of Object.entries(w.tags)) record('packed:caches:basic-tags', id, v);
   for (const [id, v] of Object.entries(w.users)) record('packed:caches:basic-users', id, v);
   for (const [id, v] of Object.entries(w.profilePictures))
-    record('packed:caches:profile-pictures:v2', id, v);
+    record('packed:caches:profile-pictures:v4', id, v);
   for (const [id, v] of Object.entries(w.paidAccess))
     record('packed:caches:paid-access:ModelVersion', id, v);
   for (const [id, v] of Object.entries(w.images))

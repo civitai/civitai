@@ -21,7 +21,6 @@ import {
   IconBolt,
   IconBookmark,
   IconBrush,
-  IconCircleMinus,
   IconClock,
   IconDotsVertical,
   IconDownload,
@@ -1460,20 +1459,12 @@ export default function ModelDetailsV2({
                                     key="toggle-searchable-menu-item"
                                   />
                                   {!model.mode ? (
-                                    <>
-                                      <Menu.Item
-                                        leftSection={<IconArchive size={14} stroke={1.5} />}
-                                        onClick={() => handleChangeMode(ModelModifier.Archived)}
-                                      >
-                                        Archive
-                                      </Menu.Item>
-                                      <Menu.Item
-                                        leftSection={<IconCircleMinus size={14} stroke={1.5} />}
-                                        onClick={() => handleChangeMode(ModelModifier.TakenDown)}
-                                      >
-                                        Take Down
-                                      </Menu.Item>
-                                    </>
+                                    <Menu.Item
+                                      leftSection={<IconArchive size={14} stroke={1.5} />}
+                                      onClick={() => handleChangeMode(ModelModifier.Archived)}
+                                    >
+                                      Archive
+                                    </Menu.Item>
                                   ) : (
                                     <Menu.Item
                                       leftSection={<IconReload size={14} stroke={1.5} />}

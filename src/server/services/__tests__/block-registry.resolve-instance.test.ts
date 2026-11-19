@@ -46,7 +46,7 @@ const APPROVED_BLOCK = {
     scopes: ['models:read:self'],
   },
   approvedScopes: ['models:read:self'],
-  app: { allowedScopes: 33554431 },
+  app: { allowedScopes: 33554431n },
 };
 
 /** Subscription shape returned by findUnique for the pinned (bki_*) path. */

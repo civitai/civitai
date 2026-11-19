@@ -159,6 +159,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
         ...data,
         bountyId: bounty.id,
         images: [...bountyEntryImages.map((i, index) => ({ ...i, index })), ...filteredImages],
+        shownImageIds: bountyEntry?.images.map((image) => image.id),
         files,
       },
       {

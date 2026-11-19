@@ -462,6 +462,7 @@ model User {
   pushSubscriptions    PushSubscription[]
   pushSettings         UserPushSetting[]
   emailOptOuts         UserEmailNotificationOptOut[]
+  notificationDigest   UserNotificationDigest?
   webhooks             Webhook[]
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
@@ -1818,6 +1819,7 @@ model Report {
   crucible       CrucibleReport?
   gameFrameGame  GameFrameGameReport?
   serviceOffering ServiceOfferingReport?
+  postText       PostTextReport?
   gameFrameReceipts GameFrameReportReceipt[]
 }
 
@@ -2151,6 +2153,7 @@ model Post {
   tagsComposite   PostTag[]
   tagVotes        TagsOnPostVote[]
   reports         PostReport[]
+  textReports     PostTextReport[]
   collectionItems CollectionItem[]
   storylineChapter StorylineChapter?
   storylinePendingChapter StorylinePendingChapter?
@@ -2253,6 +2256,8 @@ model Image {
   minor             Boolean                 @default(false)
   poi               Boolean                 @default(false)
   acceptableMinor   Boolean                 @default(false)
+  /// Made with a base model that restricts mature images. Read through imageNotRestrictedSql / imageNotRestrictedWhere.
+  modelRestricted   Boolean                 @default(false)
 
   reports             ImageReport[]
   reactions           ImageReaction[]
@@ -2972,6 +2977,10 @@ model ApiKey {
   key        String       @unique
   name       String
   tokenScope Int          @default(33554431) // Bitwise flags — default = Full (all scopes)
+  /// The whole scope, past the 31 bits `tokenScope` holds. Read `tokenScopeWide ?? tokenScope`; a write sets both
+  /// (`apiKeyScopeColumns` in @civitai/auth/token-scope), `tokenScope` to the low 31 bits. Null on rows written
+  /// before the column existed, all of which fit `tokenScope`.
+  tokenScopeWide BigInt?
   userId     Int
   user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt  DateTime     @default(now())
@@ -2999,7 +3008,7 @@ model OauthClient {
   redirectUris   String[]       @default([])
   allowedOrigins String[]       @default([])
   grants         String[]       @default(["authorization_code", "refresh_token"])
-  allowedScopes  Int            @default(33554431)
+  allowedScopes  BigInt         @default(33554431)
   isConfidential Boolean        @default(true)
   /// Login gating: "open" (anyone), "testers" (only users holding the "tester" UserRole), "disabled" (no one).
   /// Read by the auth hub's /authorize gate. First-party (spoke) clients have no row here, so are never gated.
@@ -3470,6 +3479,22 @@ model AppBlockPublishRequest {
   // migration `20261126120000_app_fork_provenance`.
   forkOfAppBlockId      String?   @map("fork_of_app_block_id") // @no-type
   forkOfCommitSha       String?   @map("fork_of_commit_sha") // @no-type
+  // GITHUB ACTIONS RUN that submitted this request, from an OIDC token GitHub signed and the
+  // server verified at submit (flag `app-blocks-oidc-verified-submit`). Facts about the RUN, not
+  // the bundle: the developer's workflow uploads the bundle, so this says "submitted by a GitHub
+  // Actions run of <repo> at <tag> (<sha>)" and nothing more. A DIFFERENT trust level from the
+  // client-claimed sourceCommit/sourceDirty above and from forgejoCommitSha; never alias between
+  // them. Manual-apply and no-type (raw SQL only, in actions-run-source.service.ts), so no
+  // default-select query names them; migration
+  // `20271117130000_app_block_publish_request_actions_run_source`.
+  actionsRunRepository           String? @map("actions_run_repository") // @no-type
+  actionsRunRepositoryId         String? @map("actions_run_repository_id") // @no-type
+  actionsRunRepositoryOwnerId    String? @map("actions_run_repository_owner_id") // @no-type
+  actionsRunSha                  String? @map("actions_run_sha") // @no-type
+  actionsRunRef                  String? @map("actions_run_ref") // @no-type
+  actionsRunWorkflowRef          String? @map("actions_run_workflow_ref") // @no-type
+  actionsRunRepositoryVisibility String? @map("actions_run_repository_visibility") // @no-type
+  actionsRunId                   String? @map("actions_run_id") // @no-type
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -4119,6 +4144,45 @@ model AppReviewAgentReport {
   // (publish_request_id) WHERE status='running' live ONLY in the migration .sql —
   // Prisma cannot express CHECKs or partial-unique indexes.
   @@map("app_review_agent_reports")
+}
+
+// App review holds: a moderator or agent's open check on an app's pending publish requests;
+// approve is refused while one is open unless overridden with a reason. RAW SQL ONLY
+// (`publish-request-holds.service.ts`). Scoped by slug, so a withdraw + resubmit keeps the hold.
+// CHECKs and the partial index live in migration `20270114120000_app_publish_request_holds`,
+// applied by hand.
+// @no-type
+model AppPublishRequestHold {
+  id               Int       @id @default(autoincrement())
+  slug             String
+  publishRequestId String    @map("publish_request_id")
+  requestKind      String    @map("request_kind")
+  placedByUserId   Int       @map("placed_by_user_id")
+  placedByLabel    String    @map("placed_by_label")
+  reason           String
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  clearedAt        DateTime? @map("cleared_at") @db.Timestamptz(6)
+  clearedByUserId  Int?      @map("cleared_by_user_id")
+  clearedKind      String?   @map("cleared_kind")
+  clearedReason    String?   @map("cleared_reason")
+
+  @@index([publishRequestId], map: "app_publish_request_holds_request_idx")
+  @@index([slug, createdAt(sort: Desc)], map: "app_publish_request_holds_slug_created_idx")
+  @@map("app_publish_request_holds")
+}
+
+// While an on-site approve that passed its hold check is running, placing a hold on the app is
+// refused. RAW SQL ONLY (`publish-request-holds.service.ts`); same migration as the holds.
+// @no-type
+model AppPublishRequestApproveClaim {
+  slug             String   @id
+  publishRequestId String   @map("publish_request_id")
+  claimedByUserId  Int      @map("claimed_by_user_id")
+  claimedAt        DateTime @default(now()) @map("claimed_at") @db.Timestamptz(6)
+  claimToken       String   @map("claim_token")
+
+  @@index([publishRequestId], map: "app_publish_request_approve_claims_request_idx")
+  @@map("app_publish_request_approve_claims")
 }
 
 /// Per-block-instance, per-user settings (viewer preferences).
@@ -4993,6 +5057,11 @@ model AppUserScopeGrant {
   /// apply and the tighter one binds. Meaningful only alongside the
   /// `ai:write:budgeted` scope (nothing else in a grant can spend).
   buzzBudgetPerDay Int?    @map("buzz_budget_per_day")
+  /// Highest job price, in Buzz, the viewer lets this app run without a per-job confirm
+  /// (within `buzzBudgetPerDay`); NULL = not opted in. MANUALLY APPLIED (migration
+  /// 20271116180000). Read only through `readConfirmWithinLimit`, never in a shared grant
+  /// select, so a database without it breaks no other grant read.
+  confirmWithinLimitMaxJob Int? @map("confirm_within_limit_max_job")
 
   @@unique([userId, appBlockId], map: "app_user_scope_grants_user_app_uniq")
   @@map("app_user_scope_grants")
@@ -5196,7 +5265,7 @@ model OauthConsent {
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   clientId  String
   client    OauthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  scope     Int
+  scope     BigInt
   buzzLimit Json?
   createdAt DateTime    @default(now())
   updatedAt DateTime    @default(now()) @updatedAt
@@ -5322,6 +5391,19 @@ model UserEmailNotificationOptOut {
   createdAt DateTime @default(now())
 
   @@id([userId, type])
+}
+
+// The weekly missed-notification digest: when each user was last sent one, so a user gets at most
+// one a week and no notification is listed in two of them. RAW SQL ONLY
+// (`notification-digest.service.ts`). Migration `20271117150000_user_notification_digest`, applied
+// by hand; the digest sends nothing while the table is missing.
+// @no-type
+model UserNotificationDigest {
+  userId     Int      @id
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastSentAt DateTime
+
+  @@map("UserNotificationDigest")
 }
 
 model Webhook {
@@ -7750,6 +7832,8 @@ enum JobQueueType {
   ImageScan
   ReplacedImageDelete
   ImageStorageDelete
+  /// An image whose parent's delete orphaned it; `image-deletes` retries one its caller left.
+  ImageDelete
   CdnAccessSync
   ImageCdnPersistRetry
   /// A user queued for the CSAM report archiver (a separate service). Written and consumed only
@@ -11222,10 +11306,32 @@ model PostText {
   refused   Boolean  @default(false)
   /// Set by a CSAM verdict and held for review. Cleared only when no csam hold on it is pending or confirmed, never by a scan.
   csamHeld  Boolean  @default(false)
+  /// A moderator refused it from a report: `refused` stays set until a moderator restores it, and no
+  /// scan verdict lifts it.
+  refusedByModerator Boolean @default(false)
+  /// The scan's own refusal while a moderator's covers it (`refused` is then the moderator's): what a
+  /// restore falls back to. False whenever `refusedByModerator` is.
+  refusedByScan      Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  reports   PostTextReport[]
 
   @@index([postId, index])
+}
+
+/// A report on one storyline text. Filed in the post report queue, so it names the text's post too;
+/// it outlives the text (`postTextId` goes NULL), and `Report.details.postText` keeps the words as
+/// reported, stamped from the row when it was filed.
+model PostTextReport {
+  reportId   Int       @id
+  report     Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  postTextId Int?
+  postText   PostText? @relation(fields: [postTextId], references: [id], onDelete: SetNull)
+  postId     Int
+  post       Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postTextId], type: Hash)
+  @@index([postId], type: Hash)
 }
 
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and

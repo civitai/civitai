@@ -3,18 +3,25 @@ import { isBlockReason } from '$lib/block-reasons';
 import { db } from '$lib/server/db';
 import { getDailyStatus } from '$lib/server/daily/daily.service';
 import { openItem } from '$lib/server/feed-token';
+import { imageUrl, THUMBNAIL_WIDTH } from '$lib/server/image-url';
+import { metrics } from '$lib/server/metrics';
 import {
   answerHiddenCheck,
   dismissHiddenNotices,
+  parseNoticeKeys,
+  hiddenItemId,
   readHiddenNotices,
 } from '$lib/server/hidden/hidden.service';
 import { DISMISS_FAILED } from '$lib/notice-copy';
-import { requireMember } from '$lib/server/membership';
+import { consented, consentFailure, requireConsent, requireMember } from '$lib/server/membership';
 import { getPlayerStatus } from '$lib/server/player-status';
+import { goldForRank } from '$lib/server/progression/config';
 import { isRank, RANK_RULES } from '$lib/server/ranks';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
+import { storedSettings } from '$lib/server/settings/runtime';
+import { ratingExamples, withExamples } from '$lib/server/rating-examples';
 import {
   dismissGuide,
   dismissProgress,
@@ -25,13 +32,15 @@ import {
 import { seenStore } from '$lib/server/seen-runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { recordSkip, skippedFor } from '$lib/server/skips';
+import { creditLateJudgment } from '$lib/server/queue/vote-record';
+import { STALE_REASONS } from './optimistic';
 import { railFor } from '$lib/server/rail-runtime';
 import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { lockoutFor, voteGate } from '$lib/server/vote-limits/runtime';
-import { feedSecret } from '$lib/server/smites/runtime';
+import { hiddenSettings } from '$lib/server/hidden/runtime';
+import { feedSecret, resetDeps } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
-import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { castYesNoVote } from '$lib/server/yesno/vote';
 import { apprenticeDeps } from '$lib/server/apprenticeship/runtime';
 import { crossedMilestone } from '$lib/server/apprenticeship/standing';
@@ -114,21 +123,28 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     requireMember(db, locals.user.id),
     getStanding(db, locals.user.id),
   ]);
+  await requireConsent(locals.user.id);
   const now = queueDeps.now();
-  const [resetNotice, notices, seen] = await Promise.all([
+  const [resetNotice, notices, seen, examples, settings] = await Promise.all([
     hasUnseenReset(db, locals.user.id, now),
     readHiddenNotices(db, locals.user.id),
     readNotices(seenStore, locals.user.id, status),
+    ratingExamples(db),
+    storedSettings(),
   ]);
   const common = {
     status,
     muted,
     resetNotice,
-    notices,
+    notices: notices.map((notice) => ({
+      ...notice,
+      imageSrc: notice.imageKey ? imageUrl(notice.imageKey, THUMBNAIL_WIDTH) : null,
+    })),
     whatsNew: seen.whatsNew ? whatsNewCopy(isReturningPlayer(status)) : null,
     showGuide: seen.guide,
     progress: withRankPerks(seen.progress),
-    ratingGuide: ratingGuide(),
+    ratingGuide: withExamples(ratingGuide(), examples),
+    ruleGuide: settings.ruleGuide ?? null,
   };
 
   // An Acolyte whose career reset is due falls through to the queue page, which serves nothing until it lands.
@@ -167,7 +183,11 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     banner: picked?.banner ?? null,
     category: picked?.category ?? null,
     ...common,
-    daily,
+    // `goldPerVote` lets the rail move today's gold the moment a vote is cast (`withVotesSent`).
+    daily: {
+      ...daily,
+      goldPerVote: isRank(status.rank) ? goldForRank(status.rank, status.rating.belowBar) : 0,
+    },
     rail,
     resetPending,
     apprenticeMeter,
@@ -218,20 +238,25 @@ type ParsedVote = {
 async function readVote({
   request,
   locals,
-}: VoteEvent): Promise<{ failure: ActionFailure<{ message: string }> } | ParsedVote> {
+}: VoteEvent): Promise<
+  { failure: ActionFailure<{ message: string }>; reason?: string } | ParsedVote
+> {
   const form = await request.formData();
   const token = form.get('item');
   const answer = form.get('answer');
   const reasonField = form.get('blockReason');
-  if (typeof token !== 'string' || typeof answer !== 'string') {
-    return { failure: fail(400, { message: 'Pick an answer.' }) };
+  if (typeof token !== 'string') {
+    return { failure: fail(400, { message: 'Pick an answer.' }), reason: 'bad-token' };
+  }
+  if (typeof answer !== 'string') {
+    return { failure: fail(400, { message: 'Pick an answer.' }), reason: 'bad-answer' };
   }
   if (reasonField !== null && typeof reasonField !== 'string') {
-    return { failure: fail(400, { message: BLOCK_REASON_TEXT }) };
+    return { failure: fail(400, { message: BLOCK_REASON_TEXT }), reason: 'bad-block-reason' };
   }
   const blockReason = reasonField === '' ? null : reasonField;
   if (blockReason !== null && !isBlockReason(blockReason)) {
-    return { failure: fail(400, { message: BLOCK_REASON_TEXT }) };
+    return { failure: fail(400, { message: BLOCK_REASON_TEXT }), reason: 'bad-block-reason' };
   }
   let ref: ReturnType<typeof openItem>;
   try {
@@ -244,12 +269,40 @@ async function readVote({
       }),
     };
   }
-  if (!ref) return { failure: fail(400, { message: 'Pick an answer.' }) };
+  if (!ref) return { failure: fail(400, { message: 'Pick an answer.' }), reason: 'bad-token' };
   const itemId = ref.id;
   if (ref.kind === 'yesno' && blockReason !== null) {
-    return { failure: fail(400, { message: BLOCK_REASON_TEXT }) };
+    return { failure: fail(400, { message: BLOCK_REASON_TEXT }), reason: 'bad-block-reason' };
   }
   return { ref, answer, blockReason, itemId };
+}
+
+const kindOf = (ref: ParsedVote['ref']) =>
+  ref.kind === 'hidden' ? 'hidden_check' : ref.kind === 'yesno' ? 'yesno' : 'rating';
+
+/** Logs and meters a refused vote under its ledger item id: a hidden check's is the negative of its reference id. */
+function refused(reason: string, vote: Pick<ParsedVote, 'ref' | 'itemId'> | null, userId: number) {
+  metrics.voteRefused(
+    reason,
+    vote ? kindOf(vote.ref) : 'unknown',
+    userId,
+    vote ? (vote.ref.kind === 'hidden' ? hiddenItemId(vote.itemId) : vote.itemId) : null,
+    'vote'
+  );
+}
+
+/** A rating judgment on an item that settled while it waited in the buffer still counts toward the Daily Watch. */
+async function creditLate(userId: number, itemId: number, answer: string): Promise<boolean> {
+  try {
+    return await creditLateJudgment(db, { userId, itemId, answer, now: queueDeps.now() });
+  } catch (error) {
+    console.error('knights: could not count a late judgment toward the Watch', {
+      userId,
+      itemId,
+      error,
+    });
+    return false;
+  }
 }
 
 async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { locals }: VoteEvent) {
@@ -265,7 +318,8 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
               blockReason,
               isModerator: locals.user.isModerator,
             },
-            queueDeps
+            // Graded in this request, so the warning or smite shows on the answer that caused it.
+            { ...queueDeps, grade: { settings: await hiddenSettings(), ...resetDeps } }
           )
         : ref.kind === 'yesno'
         ? await castYesNoVote(
@@ -284,13 +338,25 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
             },
             queueDeps
           );
-    if (result.status === 'limited') return limitedFailure(result.until);
+    if (result.status === 'limited') {
+      refused('limited', { ref, itemId }, locals.user.id);
+      return limitedFailure(result.until);
+    }
     if (result.status === 'rejected') {
+      refused(result.reason, { ref, itemId }, locals.user.id);
+      const watchCounted =
+        ref.kind === 'queue' &&
+        STALE_REASONS.has(result.reason) &&
+        (await creditLate(locals.user.id, itemId, answer));
       return fail(result.reason === 'bad-block-reason' ? 400 : 409, {
         message: REJECTION_TEXT[result.reason],
+        reason: result.reason,
+        ...(watchCounted ? { watchCounted } : {}),
       });
     }
-    return { success: true };
+    return 'check' in result && result.check
+      ? { success: true, check: result.check }
+      : { success: true };
   } catch (error) {
     console.error('knights: vote failed', { itemId, error });
     return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });
@@ -300,23 +366,41 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
 export const actions: Actions = {
   // Every kind of vote (rating, yes/no, hidden check) passes the Redis vote limits here, before any database work.
   vote: async (event) => {
-    if ((await getStanding(db, event.locals.user.id)).muted) return mutedFailure();
+    const userId = event.locals.user.id;
+    if ((await getStanding(db, userId)).muted) {
+      refused('muted', null, userId);
+      return mutedFailure();
+    }
+    if (!(await consented(userId))) {
+      refused('no-consent', null, userId);
+      return consentFailure();
+    }
     const parsed = await readVote(event);
-    if ('failure' in parsed) return parsed.failure;
-    const outcome = await voteGate.guard(
-      event.locals.user.id,
-      queueDeps.now(),
-      () => recordVote(parsed, event),
-      { moderator: event.locals.user.isModerator }
-    );
+    if ('failure' in parsed) {
+      if (parsed.reason) refused(parsed.reason, null, userId);
+      return parsed.failure;
+    }
+    const outcome = await voteGate.guard(userId, queueDeps.now(), () => recordVote(parsed, event), {
+      moderator: event.locals.user.isModerator,
+    });
     if (!('until' in outcome)) return outcome;
+    refused(outcome.busy ? 'busy' : 'limited', parsed, userId);
     return outcome.busy ? busyFailure() : limitedFailure(outcome.until);
   },
 
   // Moves a player past an item without judging it: no vote, pay, accuracy or Watch credit, and it is not served to them
   // again. Every kind of item is handled and answered alike, so a skip does not show what the item was.
   skip: async ({ request, locals }) => {
-    if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
+    const skipRefused = (reason: string) =>
+      metrics.voteRefused(reason, 'unknown', locals.user.id, null, 'skip');
+    if ((await getStanding(db, locals.user.id)).muted) {
+      skipRefused('muted');
+      return mutedFailure();
+    }
+    if (!(await consented(locals.user.id))) {
+      skipRefused('no-consent');
+      return consentFailure();
+    }
     const token = (await request.formData()).get('item');
     let ref: ReturnType<typeof openItem> = null;
     try {
@@ -324,14 +408,22 @@ export const actions: Actions = {
     } catch (error) {
       console.error('knights: the feed cannot be served', { error });
     }
-    if (!ref) return fail(400, { message: 'That one cannot be skipped.' });
+    if (!ref) {
+      skipRefused('bad-token');
+      return fail(400, { message: 'That one cannot be skipped.' });
+    }
     await recordSkip(skipStore, locals.user.id, ref, queueDeps.now());
     return { success: true };
   },
 
-  dismissNotices: async ({ locals }) => {
+  // The toast posts the keys it showed, so a check graded meanwhile stays unseen; a page without them dismisses all.
+  dismissNotices: async ({ locals, request }) => {
     try {
-      await dismissHiddenNotices(db, locals.user.id, queueDeps.now());
+      const posted = (await request.formData())
+        .getAll('notice')
+        .filter((key) => typeof key === 'string');
+      const shown = posted.length > 0 ? parseNoticeKeys(posted) : undefined;
+      await dismissHiddenNotices(db, locals.user.id, queueDeps.now(), shown);
     } catch (error) {
       console.error('knights: could not store the notice dismissal', { error });
       return fail(500, { message: DISMISS_FAILED, noticeFailed: true });
@@ -376,6 +468,7 @@ export const actions: Actions = {
 
   apprentice: async ({ request, locals }) => {
     if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
+    if (!(await consented(locals.user.id))) return consentFailure();
     const form = await request.formData();
     const kind = form.get('kind');
     const referenceId = Number(form.get('referenceId'));

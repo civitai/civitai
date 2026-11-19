@@ -148,6 +148,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['catalog'],
     why: 'The session-bound confirmation of a viewer-confirmed quote of either kind (training or confirmed step): one Redis read + write, reached only from a viewer click in host chrome. The read bucket; consentTrainingQuote is its training-named delegate.',
   },
+  consentQuoteGrantStanding: {
+    buckets: ['catalog'],
+    why: 'The session-bound standing consent to a step quote for a viewer who opted in: Redis and two primary reads, reached only from the host after a preview said standing. The read bucket like consentQuoteGrant; the per-(viewer, app) burst bound that limits what it lets run is a separate fail-closed bucket checked inside it, not a bridge bucket.',
+  },
   createPostFromApp: {
     buckets: ['post', 'post-app', 'publish'],
     why: 'Public-feed write with reward exposure. Per-(instance, viewer) AND per-app post buckets, plus the image-weighted publish bucket for the images it adopts. Not catalog — unlike its previewPostFromApp sibling, this one materialises rows.',

@@ -1071,10 +1071,6 @@ export const removeBlockedImages = createJob(
     //       (`blockImageFromRating`), the prompt/text audit, and the moderation rule engine
     //       (`image-scan-result.service` / `image-scan-pipeline`). Automated, no moderator, no
     //       `ModActivity`.
-    //     • the CSAM branch of `report.service` — reached from `report.create`, which is a
-    //       `guardedProcedureAllowUnverifiedEmail`, so it is fired by ANY reporting user's report
-    //       and not by a moderator reviewing one. This is the writer that would be most dangerous
-    //       to opt in by default: it is the only queue writer a stranger can aim at your image.
     //     • the Knights of New Order game (`new-order.service`), which calls `handleBlockImages`
     //       with an id but NO `moderatorId`, so no activity row is written. A community rating
     //       consensus is not a staff takedown decision.
@@ -1161,10 +1157,12 @@ export const removeBlockedImages = createJob(
         retractionDeferred.push(...ids);
         continue;
       }
-      const rows = await deleteImages(ids, true, {
+      const rows = await deleteImages(ids, {
+        actor: { system: 'image-ingestion' },
         retractPublicBlobs: true,
         onlyWhere,
         retractionGate,
+        moderatorDelete: true,
       });
       deleted.push(...rows.map((x) => x.id));
       // After the storage deletes. The CDN sync purged these urls' CDN entries at takedown time,
@@ -1216,7 +1214,11 @@ export const removeBlockedImages = createJob(
         count: retractionDeferred.length,
       });
     if (deletedWithoutRetraction.length > 0) {
-      const rows = await deleteImages(deletedWithoutRetraction, true, { onlyWhere });
+      const rows = await deleteImages(deletedWithoutRetraction, {
+        actor: { system: 'image-ingestion' },
+        onlyWhere,
+        moderatorDelete: true,
+      });
       deleted.push(...rows.map((x) => x.id));
     }
     const deletedSet = new Set(deleted);

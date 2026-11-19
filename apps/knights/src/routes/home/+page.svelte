@@ -18,6 +18,8 @@
   let attempted = $state(false);
 
   const status = $derived(data.status);
+  // A v1 player already has a row; they take the oath again for v2 instead of joining.
+  const renewing = $derived(!!data.player);
   const next = $derived(status ? nextRankLine(status) : null);
   const segment = $derived(
     status ? pendingSegment(status.xpIntoLevel, status.xpForNextLevel, status.xpPending) : { confirmed: 0, pending: 0, overflow: 0 }
@@ -54,7 +56,7 @@
   <title>Home · Knights of New Order</title>
 </svelte:head>
 
-{#if data.player && status}
+{#if data.player && status && !data.needsConsent}
   <div class="page-wide home">
     <section class="hero" aria-label="Your standing in the Order">
       <p class="eyebrow">Welcome back{data.username ? `, ${data.username}` : ''}</p>
@@ -110,13 +112,14 @@
           <span>Fervor{data.fervorPosition ? ` · #${count(data.fervorPosition)}` : ''}</span>
         </li>
       </ul>
-
-      {#if status.smites > 0}
-        <SmiteNotice smites={status.smites} maxSmites={status.maxSmites} />
-      {/if}
     </section>
 
-    <div class="verdicts"><VerdictsCard recap={data.recap} /></div>
+    <div class="verdicts">
+      <VerdictsCard recap={data.recap} />
+      {#if status.smites > 0}
+        <SmiteNotice smites={status.smites} maxSmites={status.maxSmites} heartBack={status.heartBack} />
+      {/if}
+    </div>
 
     <nav class="links" aria-label="The Order">
       <div class="divider" aria-hidden="true"><span></span></div>
@@ -133,17 +136,28 @@
   <div class="page-wide join">
     <div class="oath">
       <p class="eyebrow">The oath</p>
-      <h1 class="page-title">Join the Order</h1>
+      <h1 class="page-title">{renewing ? 'Renew your oath' : 'Join the Order'}</h1>
       <div class="divider" aria-hidden="true"><span></span></div>
       <p class="vow">I will rate what the image shows, not what I would like to see.</p>
       <p class="vow">I will judge in good faith, and let the Order's verdict stand.</p>
-      <p class="vow">I will begin as an Acolyte, and earn my rank as an apprentice.</p>
-      <p class="small muted">
-        Knights judge how mature images should be rated. New members begin as Acolytes and prove
-        themselves as apprentices. <a href="/codex#judging">Read the Codex</a> first if you like.
-      </p>
+      {#if renewing}
+        <p class="small muted">
+          The Order has a new home. Your rank and progress came with you; before you judge again,
+          take the oath and accept the content warning below.
+        </p>
+      {:else}
+        <p class="vow">I will begin as an Acolyte, and earn my rank as an apprentice.</p>
+        <p class="small muted">
+          Knights judge how mature images should be rated. New members begin as Acolytes and prove
+          themselves as apprentices. <a href="/codex#judging">Read the Codex</a> first if you like.
+        </p>
+      {/if}
       {#if !warning}
-        <p><button type="button" class="btn primary" onclick={() => (warning = true)}>Join the Order</button></p>
+        <p>
+          <button type="button" class="btn primary" onclick={() => (warning = true)}>
+            {renewing ? 'Renew your oath' : 'Join the Order'}
+          </button>
+        </p>
       {/if}
     </div>
     {#if warning}
@@ -160,7 +174,7 @@
         </p>
         <form
           method="POST"
-          action="?/join"
+          action={renewing ? '?/consent' : '?/join'}
           class="actions"
           use:enhance={() => {
             submitting = true;
@@ -216,6 +230,9 @@
   }
   .verdicts {
     grid-area: verdicts;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
     padding-top: 1.75rem;
   }
   .links {

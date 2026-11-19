@@ -128,9 +128,24 @@ export async function createFeedback({
   message,
   context,
   server,
-}: CreateFeedbackInput & { userId: number; server?: FeedbackServerStamp }) {
+  freshdeskTicketId,
+}: CreateFeedbackInput & {
+  userId: number;
+  server?: FeedbackServerStamp;
+  /** Server-only: the support ticket a moderator filed this from. Never taken from a client. */
+  freshdeskTicketId?: number;
+}) {
   return dbWrite.feedback.create({
-    data: { userId, area, message, context: { ...(context ?? {}), ...(server ? { server } : {}) } },
+    data: {
+      userId,
+      area,
+      message,
+      context: {
+        ...(context ?? {}),
+        ...(server ? { server } : {}),
+        ...(freshdeskTicketId ? { freshdeskTicketId } : {}),
+      },
+    },
     select: { id: true },
   });
 }

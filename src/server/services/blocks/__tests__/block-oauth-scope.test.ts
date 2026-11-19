@@ -56,7 +56,7 @@ describe('OAUTH_BASELINE_BLOCK_SCOPE', () => {
    */
   it('names the block scope that carries TokenScope.UserRead', () => {
     expect(BLOCK_SCOPE_TO_OAUTH_BIT[OAUTH_BASELINE_BLOCK_SCOPE]).toBe(TokenScope.UserRead);
-    expect(oauthScopeBitsFor([OAUTH_BASELINE_BLOCK_SCOPE]) & TokenScope.UserRead).not.toBe(0);
+    expect(oauthScopeBitsFor([OAUTH_BASELINE_BLOCK_SCOPE]) & TokenScope.UserRead).not.toBe(0n);
   });
 });
 

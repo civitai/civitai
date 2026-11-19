@@ -41,6 +41,7 @@ export const placeFlagHatsSchema = z.object({
 });
 
 export const turfEventSchema = z.object({ event: eventName });
+export const flagRaceCollectionSchema = z.object({ collectionId: z.number().int().positive() });
 
 export const turfReactionEarnsSchema = z.object({
   event: eventName,

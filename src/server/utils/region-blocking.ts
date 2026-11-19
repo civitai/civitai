@@ -21,7 +21,8 @@ export type RegionBlockConfig = {
 // Region block configurations with effective dates
 // Format: "REGION:YYYY-MM-DD,REGION:YYYY-MM-DD" or "COUNTRY:STATE:YYYY-MM-DD"
 // Example: "GB:2025-07-24,FR:2025-08-01,US:CA:2025-07-24"
-const DEFAULT_REGION_BLOCK_CONFIG: RegionBlockConfig[] = [
+// Exported for scripts/feed-go-api-policy.ts, which hands this default to the Go feed service.
+export const DEFAULT_REGION_BLOCK_CONFIG: RegionBlockConfig[] = [
   { region: 'GB', effectiveDate: '2025-07-24' },
   { region: 'AU', effectiveDate: '2026-03-15' },
 ];

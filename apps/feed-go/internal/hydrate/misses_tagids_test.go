@@ -98,7 +98,7 @@ func TestPageComputesTagIDsMiss(t *testing.T) {
 			f, m := tagIDsMissFixture(t)
 			gate := &tagGateSpy{gate: map[int]bool{25: true, 99: true}}
 			obs := &observed{}
-			s, r := m.load(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, TagGate: gate.fn, Observe: obs.observe})
+			s, r := m.load(f, &MissCompute{WriteBack: writeSet(writeBack), FrameNegative: true, TagGate: gate.fn, Observe: obs.observe})
 			got, err := s.Page(context.Background(), pageRequest())
 			if err != nil {
 				t.Fatalf("Page: %v (fallback %q)", err, fallback.Reason(err))
@@ -236,11 +236,13 @@ func TestTagIDsMissRepeatsShareOneLookup(t *testing.T) {
 }
 
 // Which caches keep their answers in process: with write-back off every computed cache but the image
-// meta (tag ids and model frames included), with it on none.
+// meta (tag ids, model frames, model decorations, version showcases, model data, model tags, the
+// official models and image metrics included), with it on none.
 func TestMemoizedCaches(t *testing.T) {
-	off, on := &MissCompute{}, &MissCompute{WriteBack: true}
+	off, on := &MissCompute{}, &MissCompute{WriteBack: AllWrites()}
 	want := map[string]bool{MissUserCosmetics: true, MissImageFrames: true, MissEventDecorations: true, MissImageMeta: false,
-		MissTagIDs: true, MissModelFrames: true}
+		MissTagIDs: true, MissModelFrames: true, MissModelDecorations: true, MissVersionImages: true, MissMetrics: true,
+		"model-data": true, "model-tags": true, "official-models": true}
 	if len(want) != len(MissCaches) {
 		t.Fatalf("MissCaches %v; this test enumerates %d", MissCaches, len(want))
 	}
@@ -275,7 +277,7 @@ func TestStaleTagIDsAreRevalidated(t *testing.T) {
 	for _, writeBack := range []bool{false, true} {
 		t.Run(strconv.FormatBool(writeBack), func(t *testing.T) {
 			f, m := staleTagIDsFixture(t)
-			s, r := m.load(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, TagGate: (&tagGateSpy{}).fn})
+			s, r := m.load(f, &MissCompute{WriteBack: writeSet(writeBack), FrameNegative: true, TagGate: (&tagGateSpy{}).fn})
 			got, err := s.TagIDs(context.Background(), []int{11, 12})
 			if err != nil {
 				t.Fatal(err)
@@ -308,7 +310,7 @@ func TestStaleTagIDsAreRevalidated(t *testing.T) {
 // Node's fetch serves it, and neither looked up nor written; the lock is left to its holder.
 func TestStaleTagIDsLockHeldServesStale(t *testing.T) {
 	f, m := staleTagIDsFixture(t)
-	s, r := m.load(f, &MissCompute{WriteBack: true, FrameNegative: true})
+	s, r := m.load(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true})
 	r.SetString(tagLockKey(12), []byte("1"))
 	before, _ := r.String(pageNS + missKey(KeyTagIDs, 12))
 	got, err := s.TagIDs(context.Background(), []int{12})
@@ -331,7 +333,7 @@ func TestStaleTagIDsLockHeldServesStale(t *testing.T) {
 func TestStaleTagIDsMarkerKeepsNX(t *testing.T) {
 	f, m := staleTagIDsFixture(t)
 	f.put(t, KeyTagIDs, 13, map[string]any{"imageId": 13, "tags": []any{88}, "cachedAt": pageNow.Add(-9 * time.Hour)})
-	s, r := m.load(f, &MissCompute{WriteBack: true, FrameNegative: true})
+	s, r := m.load(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true})
 	before, _ := r.String(pageNS + missKey(KeyTagIDs, 13))
 	got, err := s.TagIDs(context.Background(), []int{13})
 	if err != nil {

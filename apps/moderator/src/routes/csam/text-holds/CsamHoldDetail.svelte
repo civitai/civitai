@@ -44,6 +44,7 @@
   import HoldConversation from './HoldConversation.svelte';
   import HoldParentCard from './HoldParentCard.svelte';
   import HoldProfileCard from './HoldProfileCard.svelte';
+  import HoldVersionTextHits from './HoldVersionTextHits.svelte';
   import {
     alsoDecidable,
     ALSO_MAX,
@@ -356,6 +357,20 @@
         </details>
       {/if}
     </TriageCard>
+    {#if row.versionTextHitsStale}
+      <TriageCard dense title="Flagged in">
+        <p class="m-0 text-dark-2">
+          The flagged version positions were for held text that has since been replaced.
+        </p>
+      </TriageCard>
+    {:else if row.versionTextHits}
+      <HoldVersionTextHits
+        holdId={row.id}
+        modelId={row.entityId}
+        hits={row.versionTextHits}
+        {civitaiUrl}
+      />
+    {/if}
     {#if row.profile}
       <HoldProfileCard profile={row.profile} blurred={!imageReveal.on} />
     {/if}

@@ -141,38 +141,14 @@ export type AppBlockEndpoint =
   // maps 401/403 to `forbidden`, >=500 to `server_error` and EVERYTHING ELSE >=400
   // to `client_error` — so a 429 is indistinguishable from a 400 on
   // `civitai_app_block_requests_total`, and 400 is exactly the class this route
-  // makes easiest to hit (its `unrecognized_keys` refusals). Compounding it,
-  // `queryAppWorkflows` does not call `recordBlockBridgeRateLimitRefusal`, so the
-  // subqueue throttle has NO dedicated signal on either surface. This label is for
+  // makes easiest to hit (its `unrecognized_keys` refusals). This label is for
   // per-endpoint ATTRIBUTION and latency, which it does give.
   //
-  // 🔴 THE MISSING RECORDER IS NOT A `queryAppWorkflows` PROBLEM, OR A TWO-
-  // PROCEDURE ONE. IT IS THE `catalog` BUCKET'S, AND YOU ARE READING THE FOURTH
-  // ATTEMPT AT THIS SENTENCE — the three before it were each wrong in the same
-  // direction, each written while fixing the one before:
-  //   1. "the one workflow label whose error rate reads as blocks being throttled"
-  //      — false; `statusToRequestResult` collapses 429 into `client_error`.
-  //   2. "`queryAppWorkflows` is the ONE rate-limited procedure in this family"
-  //      missing the recorder — false; `cancelAppWorkflow` is silent too.
-  //   3. "it is TWO procedures, not one" — false, and WIDER than draft 2 while
-  //      reading as a correction: dropping "in this family" made a bare count
-  //      router-wide, on evidence (an enumeration of RECORDERS) that cannot
-  //      establish a claim about the RATE-LIMITED population at all.
-  // 🔴 SO DO NOT REACH FOR A FIFTH NUMBER FROM THE RECORDER SIDE. The population
-  // is owned by `RATE_LIMIT_DECISION_LEDGER` in
-  // `services/__tests__/no-unlimited-block-bridge-proc.test.ts`, which is asserted
-  // as a SET against an AST walk of `blocks.router.ts` — read it there, do not
-  // re-count here.
-  //
-  // WHO RECORDS, by name because the names can be grepped: `pollWorkflow` (`poll`),
-  // `cancelWorkflow`, `estimateWorkflow`, `estimateWorkflowBatch` and
-  // `getMyBuzzBalance`. Every other rate-limited bridge procedure sheds a request
-  // silently, and most of those charge `catalog` — both app-subqueue procs among
-  // them. `recordBlockBridgeRateLimitRefusal`'s OWN docblock says it is "called
-  // from the refusal branch of each limiter site", which this contradicts.
-  //
-  // civitai/civitai#5095 tracks the silent `catalog` procedures. Do not read this
-  // comment as saying the gap is shut.
+  // The throttle's own signal is `civitai_app_block_rate_limit_refusals_total{surface=
+  // "bridge", bucket="catalog"}` (per app; the log line names the procedure);
+  // `services/__tests__/no-unrecorded-block-rate-limit-refusal.test.ts` fails when a limiter
+  // call site does not record. The rate-limited POPULATION is owned by
+  // `RATE_LIMIT_DECISION_LEDGER` in `no-unlimited-block-bridge-proc.test.ts`.
   | 'workflows_query'
   // The PER-VIEWER app-storage surface (`/api/v1/blocks/app-storage/{get,set,
   // delete,list,quota}`) — the v1 replacement for the postMessage APP_STORAGE_*
@@ -760,8 +736,12 @@ type Bundle = {
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
   confirmedQuoteOverchargeTotal: Counter<string>;
+  confirmedStepSubmitTotal: Counter<string>;
   succeededWithoutMediaTotal: Counter<string>;
   mediaVerdictTotal: Counter<string>;
+  mediaServingDegradedTotal: Counter<string>;
+  mediaInputRefusedTotal: Counter<string>;
+  unlockChargedNotReleasedTotal: Counter<string>;
   outputTruncatedTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
@@ -773,8 +753,9 @@ type Bundle = {
   docStoreErrorsTotal: Counter<string>;
   storageOpsTotal: Counter<string>;
   docStoreEnabled: Gauge<string>;
-  bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
+  rateLimitRefusalsTotal: Counter<string>;
+  docStoreUnchangedWritesTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
   submitFailuresTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
@@ -1104,6 +1085,13 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['kind']
   );
 
+  const confirmedStepSubmitTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_confirmed_step_submit_total',
+    'Confirmed pass-through step submits that reached the orchestrator, per app (app_block_id, `dev` for dev tokens) and by how the viewer consented: consent=click (the per-job confirm) or consent=standing (their per-app opt-in, within their daily limit).',
+    ['app_block_id', 'consent']
+  );
+
   // ── SUCCEEDED generations that DELIVERED NOTHING ─────────────────────────────
   // One increment per App Blocks workflow whose terminal poll first observed
   // `succeeded` while at least one bridge-submitted MEDIA step succeeded with no
@@ -1144,6 +1132,33 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_media_verdict_total',
     'App Block workflow media decisions, one per item judged for a viewer: at the media route (each fetch) and in GET_WORKFLOW_MEDIA (each ref). verdict = served | pending | hidden. reason = the hidden reason (blocked, above_level, unknown_rating, unrated, owner_only, private, paused, unrecognised_url, invalid), or none. Its own denominator: the share hidden is hidden / sum over verdicts.',
     ['surface', 'verdict', 'reason']
+  );
+
+  // Expected flat zero for eval_failed: a nonzero rate is a pod restricting every App Block media
+  // output because it has no flag answer (an evaluation error, or no Flipt client). Closed labels,
+  // published at 0 by seedAppBlockMediaMetrics.
+  const mediaServingDegradedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_media_serving_degraded_total',
+    'App Block host media serve decisions made without a full answer, one per decision. reason = eval_failed (no flag evaluation: an error, or a Flipt client that never started; every media output is restricted and unlocks are refused) | no_session (the viewer session did not resolve; judged as signed out). eval_failed is expected to be zero. Every reason is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['reason']
+  );
+
+  // The workflow-input guard's refusals (block-media-input-guard.ts), beside its log line.
+  const mediaInputRefusedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_media_input_refused_total',
+    'App Blocks workflow bodies refused because they carried a host media url or ref as an input, by phase (estimate | submit). One per refused body. Every phase is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['phase']
+  );
+
+  // Beside the `app-block-unlock-charged-not-released` WARN: an unlock that charged and did not
+  // release the output. Expected flat zero; published at 0 by seedAppBlockMediaMetrics.
+  const unlockChargedNotReleasedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_unlock_charged_not_released_total',
+    'App Block output unlocks that charged and did not release the output, one per unlock, by read_back (ok = the read-back after the lift succeeded and the output was not released | failed = the read-back itself failed, so release is unknown). Expected to be zero. Every label is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['read_back']
   );
 
   const outputTruncatedTotal = getOrCreateCounter(
@@ -1348,31 +1363,42 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     []
   );
 
-  // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
-  // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
-  // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
-  // solely by the REST `withBlockScope` wrapper — it never counts a bridge call — so
-  // before this there was no way to answer "has any of these limits ever fired?" for any
-  // bucket, old or new. Three separate comments in `block-catalog-rate-limit.ts` name a
-  // closing condition that depends on this series existing.
+  // ── PER-APP RATE-LIMIT REFUSALS, EVERY APP BLOCKS LIMITER ────────────────────
+  // The one series that answers "which limit is THIS app hitting" without its author telling us.
   //
-  // REFUSALS ONLY, NOT A DENOMINATOR, and that asymmetry is deliberate. The question a
-  // ceiling has to answer is "is it biting?", and the blast radius on this surface is
-  // asymmetric: too tight throttles a paid generation and presents as a broken block.
-  // A refusal count answers that directly and costs one in-heap increment on a path that
-  // should be empty; a total-calls counter would add an increment to EVERY bridge call
-  // including the poll loop, for a number nothing currently acts on. Add the denominator
-  // when someone needs a RATE rather than an alarm.
+  // 🔴 ONE BUCKET IS NOT A RATE LIMIT: `{surface="doc_store", bucket="version_conflict"}` is the
+  // store's 409 (a write whose `ifVersion` no longer matched). It is here so one query answers
+  // "what is this app being refused, and is it looping", which is the question both serve. The
+  // name is kept rather than widened: every other bucket IS a limiter, a broader name
+  // (`…_refusals_total`) would collide in meaning with the revocation/consent refusal counters
+  // above, and the bucket value names itself. Exclude it from anything that means "throttled".
   //
-  // Cardinality: procedure (≤ ~20 bridge procs) × bucket (5 buckets) ≈ 100 worst case,
-  // and in practice far less — each procedure charges exactly one bucket. Both labels are
-  // SERVER-CHOSEN constants from the call site, never request input, so a hostile block
-  // cannot inflate the label set.
-  const bridgeRateLimitRefusalsTotal = getOrCreateCounter(
+  // ONE recorder writes it (`recordAppBlockRateLimitRefusal` in
+  // `services/blocks/rate-limit-refusal.service.ts`), called from the refusal branch of every
+  // limiter; the set of call sites is pinned by `no-unrecorded-block-rate-limit-refusal.test.ts`.
+  //
+  // Cardinality: app (approved apps + 'dev') × a closed set of server-chosen (surface, bucket)
+  // pairs; anything else is clamped to 'other', and nothing comes from request input. No user label:
+  // the viewer is in the log line the same recorder writes.
+  const rateLimitRefusalsTotal = getOrCreateCounter(
     reg,
-    'civitai_app_block_bridge_rate_limit_refusals_total',
-    'App Block tRPC bridge rate-limit refusals by procedure and bucket',
-    ['procedure', 'bucket']
+    'civitai_app_block_rate_limit_refusals_total',
+    "App Blocks server-side rate-limit refusals, by app, surface (rest = a block REST route's own limiter; doc_store = the document store /api/v1/blocks/storage; bridge = a blocks.* bridge procedure, reached over the postMessage bridge or its REST twin; sub_listings = App Store store items) and bucket (the limiter that refused, from a closed set; on doc_store it is the details.bucket the app receives in its 429 body, plus contention for the store's own lock-timeout 429). ALSO counts one non-rate-limit refusal: surface=doc_store bucket=version_conflict is the store's 409 (a write whose ifVersion no longer matched), expected in small numbers from optimistic writers; exclude it when you mean throttling. One increment per refused request. bridge poll/cancel refusals are answered 200 with a throttled snapshot, not 429, and are counted here too. app_block_id=\"dev\" is every dev token. Each child is born at 1 on its pod's first refusal, so increase()/rate() miss it: read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods",
+    ['app_block_id', 'surface', 'bucket']
+  );
+
+  // ── DOC STORE: UNCHANGED SHARED WRITES ──────────────────────────────────────
+  // One increment per shared PUT answered for free because it would change no stored row
+  // (`putIfUnchanged`, behind `app-blocks-storage-unchanged-writes-free`): no shared-write token,
+  // no moderation scan. Read it against the shared writes that did land to see what the flag saves.
+  // ONE recorder (`recordDocStoreUnchangedWrite`), called from the route's free path only.
+  // Cardinality: app (approved apps + 'dev' via `blockClaimsAppLabel`, 'other' without claims); no
+  // other label, nothing from request input.
+  const docStoreUnchangedWritesTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_doc_store_unchanged_writes_total',
+    'App Blocks document-store shared PUTs answered without writing because they would change no stored row (same content hash and index rows as the caller\'s own stored document), by app. Each spent no shared-write budget token and ran no moderation scan. Only while app-blocks-storage-unchanged-writes-free is on for the app. app_block_id="dev" is every dev token. Each child is born at 1 on its pod\'s first free write, so increase()/rate() miss it: read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['app_block_id']
   );
 
   // ── POST-FROM-APP: UNREADABLE SUBJECT ────────────────────────────────────────
@@ -1600,8 +1626,12 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
     confirmedQuoteOverchargeTotal,
+    confirmedStepSubmitTotal,
     succeededWithoutMediaTotal,
     mediaVerdictTotal,
+    mediaServingDegradedTotal,
+    mediaInputRefusedTotal,
+    unlockChargedNotReleasedTotal,
     outputTruncatedTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
@@ -1613,8 +1643,9 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     docStoreErrorsTotal,
     storageOpsTotal,
     docStoreEnabled,
-    bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
+    rateLimitRefusalsTotal,
+    docStoreUnchangedWritesTotal,
     stepPriceCheckTotal,
     launchTotalSeconds,
     launchPhaseSeconds,
@@ -1855,6 +1886,20 @@ export function recordConfirmedQuoteOvercharge(kind: AppBlockConfirmedQuoteKind)
   }
 }
 
+export function recordConfirmedStepSubmit(
+  appBlockIdLabel: string,
+  consent: 'click' | 'standing'
+): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().confirmedStepSubmitTotal.inc({
+      app_block_id: appBlockIdLabel,
+      consent,
+    });
+  } catch {
+    /* instrument-only */
+  }
+}
+
 /**
  * Fail-soft emit of one succeeded-without-media workflow (see the counter). Called
  * from `blocks.pollWorkflow` only when the transition-only status write reported
@@ -1884,6 +1929,61 @@ export function recordBlockMediaVerdict(
     ensureRegisterAppBlockRuntimeMetrics().mediaVerdictTotal.inc({ surface, verdict, reason });
   } catch {
     /* instrument-only */
+  }
+}
+
+export const BLOCK_MEDIA_SERVING_DEGRADED_REASONS = ['eval_failed', 'no_session'] as const;
+export const BLOCK_MEDIA_INPUT_REFUSED_PHASES = ['estimate', 'submit'] as const;
+export const BLOCK_UNLOCK_READ_BACK_OUTCOMES = ['ok', 'failed'] as const;
+
+/** Fail-soft emit of one degraded App Block serve decision (see the counter). */
+export function recordBlockMediaServingDegraded(
+  reason: (typeof BLOCK_MEDIA_SERVING_DEGRADED_REASONS)[number]
+): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().mediaServingDegradedTotal.inc({ reason });
+  } catch {
+    /* instrument-only */
+  }
+}
+
+/** Fail-soft emit of one refused workflow body (see the counter). */
+export function recordBlockMediaInputRefused(
+  phase: (typeof BLOCK_MEDIA_INPUT_REFUSED_PHASES)[number]
+): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().mediaInputRefusedTotal.inc({ phase });
+  } catch {
+    /* instrument-only */
+  }
+}
+
+/** Fail-soft emit of one unlock that charged and did not release the output (see the counter). */
+export function recordBlockUnlockChargedNotReleased(readBackFailed: boolean): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().unlockChargedNotReleasedTotal.inc({
+      read_back: readBackFailed ? 'failed' : 'ok',
+    });
+  } catch {
+    /* instrument-only */
+  }
+}
+
+/**
+ * Publishes the host-media safety counters at 0 for every label, so a series that never fired is
+ * distinguishable from one that is not deployed. Idempotent; /api/metrics calls it on every scrape.
+ */
+export function seedAppBlockMediaMetrics(reg: Registry = client.register): void {
+  try {
+    const { mediaServingDegradedTotal, mediaInputRefusedTotal, unlockChargedNotReleasedTotal } =
+      ensureRegisterAppBlockRuntimeMetrics(reg);
+    for (const reason of BLOCK_MEDIA_SERVING_DEGRADED_REASONS)
+      mediaServingDegradedTotal.inc({ reason }, 0);
+    for (const phase of BLOCK_MEDIA_INPUT_REFUSED_PHASES) mediaInputRefusedTotal.inc({ phase }, 0);
+    for (const read_back of BLOCK_UNLOCK_READ_BACK_OUTCOMES)
+      unlockChargedNotReleasedTotal.inc({ read_back }, 0);
+  } catch {
+    // Seeding is a readability nicety; losing it must not cost the scrape.
   }
 }
 
@@ -2053,6 +2153,17 @@ export function recordDocStoreError(endpoint: DocStoreEndpoint, code: StorageApi
   }
 }
 
+/** One shared PUT answered without writing (`putIfUnchanged`). Total. */
+export function recordDocStoreUnchangedWrite(appBlockIdLabel: string): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().docStoreUnchangedWritesTotal.inc({
+      app_block_id: appBlockIdLabel,
+    });
+  } catch {
+    /* instrument-only — never let a metrics error change a write's reply */
+  }
+}
+
 /** The update operators a storage tally can be (`civitai_app_block_doc_store_tally_ops_total{op}`). */
 export const STORAGE_TALLY_OPS = ['inc', 'mark', 'unmark'] as const;
 export type StorageTallyOp = (typeof STORAGE_TALLY_OPS)[number];
@@ -2150,31 +2261,100 @@ export type AppBlockRateLimitBucket =
   | 'poll'
   | 'estimate-cells'
   | 'submit'
-  | 'submit-user';
+  | 'submit-user'
+  | 'upload-app'
+  | 'gen-source-user'
+  | 'uploaded-gen-source-user'
+  // `withInFlightLimit`'s per-user concurrency pool (the generation-source saves).
+  | 'in-flight';
 
 /**
- * Fail-soft emit of ONE bridge rate-limit refusal.
- *
- * Called from the refusal branch of each limiter site in `blocks.router.ts` — the branch
- * that either throws `TOO_MANY_REQUESTS` or (for `pollWorkflow` and `cancelWorkflow`)
- * returns a non-terminal snapshot. Both are refusals; the difference is how the client is
- * told, and the ceiling is equally worth grading either way.
- *
- * 🔴 TOTAL, like every emitter in this module: a metrics error must never convert a
- * refusal the limiter has already decided into a 500, and on the two returning paths it
- * must never convert one into a thrown error at all — which is precisely the failure the
- * returning paths exist to avoid.
- *
- * COST: one in-heap counter increment, only on the refusal path. A fleet under its
- * ceilings emits zero, which is also the reading that says the ceilings are not biting.
+ * Where an App Blocks limiter lives (`civitai_app_block_rate_limit_refusals_total{surface}`). Named
+ * by the code that holds the limiter, not by the transport: a bridge procedure reached through its
+ * REST twin (`/api/v1/blocks/workflows/*`) is still `bridge`, so a refusal is counted exactly once.
+ * The legacy shared-KV store has no surface: it is removed (fail-closed, gated ahead of its
+ * limiters), so none of its limiters is reachable.
  */
-export function recordBlockBridgeRateLimitRefusal(
-  procedure: string,
-  bucket: AppBlockRateLimitBucket
+export const APP_BLOCK_RATE_LIMIT_SURFACES = [
+  'rest',
+  'doc_store',
+  'bridge',
+  'sub_listings',
+] as const;
+export type AppBlockRateLimitSurface = (typeof APP_BLOCK_RATE_LIMIT_SURFACES)[number];
+
+/**
+ * Every bucket an App Blocks limiter can refuse from — the closed `bucket` label set. A bucket
+ * name is only meaningful together with its surface: `publish` on `bridge` is the per-install
+ * image publish, on `doc_store` the server-side document publish.
+ */
+export const APP_BLOCK_RATE_LIMIT_BUCKETS = [
+  // block-catalog-rate-limit.ts — bridge procedures and REST routes
+  'catalog',
+  'publish',
+  'post',
+  'post-app',
+  'poll',
+  'estimate-cells',
+  'submit',
+  'submit-user',
+  'upload-app',
+  'gen-source-user',
+  'uploaded-gen-source-user',
+  'llm',
+  // in-flight-limit.ts — a per-user concurrency pool, not a rate window
+  'in-flight',
+  // block-tip-rate-limit.ts / block-goods-rate-limit.ts — REST money routes and their reads
+  'tip',
+  'goods',
+  'goods-read',
+  // the document store: `details.bucket` of its 429 (shared-storage-rate-limit.ts), plus the
+  // store's own lock-timeout refusal
+  'read',
+  'write',
+  'tally',
+  'report',
+  'shared-write',
+  'contention',
+  // the document store's 409 — NOT a rate limit (see the counter's comment)
+  'version_conflict',
+  // App Store store items (app-sub-listing.service.ts)
+  'sub-listing-write',
+  'sub-listing-sync',
+  // a refusal raised without naming its limiter (the ledger test keeps this at zero sites)
+  'unattributed',
+] as const;
+export type AppBlockRefusalBucket = (typeof APP_BLOCK_RATE_LIMIT_BUCKETS)[number];
+
+const RATE_LIMIT_SURFACE_SET: ReadonlySet<string> = new Set(APP_BLOCK_RATE_LIMIT_SURFACES);
+const RATE_LIMIT_BUCKET_SET: ReadonlySet<string> = new Set(APP_BLOCK_RATE_LIMIT_BUCKETS);
+
+/**
+ * The `app_block_id` label for a set of block claims: every dev token is `dev`, exactly as the
+ * per-app REST counter has always bucketed it (a dev token may carry a synthetic, unbounded id).
+ * The one definition, shared by `withBlockScope` and every limiter recorder.
+ */
+export function blockClaimsAppLabel(claims: { dev?: boolean; appBlockId: string }): string {
+  return claims.dev === true ? 'dev' : claims.appBlockId;
+}
+
+/**
+ * The metric half of one rate-limit refusal. Callers go through `recordAppBlockRateLimitRefusal`
+ * (`services/blocks/rate-limit-refusal.service.ts`), which also writes the log line; this is
+ * exported for that module and its tests. Total. Surface and bucket are CLAMPED to their closed
+ * sets (unknown → 'other') so a mistyped caller cannot grow the label set.
+ */
+export function incAppBlockRateLimitRefusal(
+  appBlockIdLabel: string,
+  surface: AppBlockRateLimitSurface,
+  bucket: AppBlockRefusalBucket
 ): void {
   try {
-    const { bridgeRateLimitRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
-    bridgeRateLimitRefusalsTotal.inc({ procedure, bucket });
+    ensureRegisterAppBlockRuntimeMetrics().rateLimitRefusalsTotal.inc({
+      app_block_id: appBlockIdLabel,
+      surface: RATE_LIMIT_SURFACE_SET.has(surface) ? surface : 'other',
+      bucket: RATE_LIMIT_BUCKET_SET.has(bucket) ? bucket : 'other',
+    });
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
   }

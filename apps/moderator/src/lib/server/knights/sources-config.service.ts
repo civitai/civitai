@@ -1,8 +1,17 @@
 import { utc } from '@civitai/db/kysely';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import {
+  isValidKnightsGameSetting,
+  KNIGHTS_GAME_SETTING_KEYS,
+  KNIGHTS_GAME_SETTINGS,
   KNIGHTS_NSFW_LEVEL_QUESTION,
+  KNIGHTS_RULE_GUIDE_LIMITS,
+  KNIGHTS_SOURCES_MAX_OPEN_LIMIT,
   readKnightsSourcesConfig,
+  type KnightsGameSettingKey,
+  type KnightsGameSettings,
+  type KnightsRuleGuide,
+  type KnightsRuleSet,
   type KnightsSourcesConfig,
 } from '@civitai/shared/new-order';
 import { dbRead, dbWrite } from '../db';
@@ -38,43 +47,108 @@ export async function getSourcesSettings(): Promise<SourcesSettings> {
 const isRate = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 
-/** Nothing is coerced: a string "true" or a rate of 5 is a bug in the caller, not an intent to guess at. */
+/**
+ * Nothing is coerced: a string "true" or a rate of 5 is a bug in the caller, not an intent to guess at. `yesNoShare: null`
+ * asks to clear the stored share (`clearYesNoShare`), so Knights falls back to its environment default.
+ */
+const isMaxOpen = (value: unknown): value is number =>
+  Number.isSafeInteger(value) &&
+  (value as number) >= 0 &&
+  (value as number) <= KNIGHTS_SOURCES_MAX_OPEN_LIMIT;
+
 export function validateSourcesInput(
   input: unknown
-): { ok: true; config: KnightsSourcesConfig } | { ok: false; error: string } {
+):
+  | { ok: true; config: KnightsSourcesConfig; clearYesNoShare: boolean }
+  | { ok: false; error: string } {
   const value = (input ?? {}) as Record<string, unknown>;
   if (typeof value.enabled !== 'boolean') return { ok: false, error: 'Enabled must be on or off.' };
   if (!isRate(value.sfwRate)) return { ok: false, error: 'The SFW rate must be between 0 and 1.' };
   if (!isRate(value.nsfwRate))
     return { ok: false, error: 'The NSFW rate must be between 0 and 1.' };
+  if (value.maxOpen !== undefined && !isMaxOpen(value.maxOpen))
+    return {
+      ok: false,
+      error: `The open-item cap must be a whole number from 0 to ${KNIGHTS_SOURCES_MAX_OPEN_LIMIT.toLocaleString(
+        'en-US'
+      )}.`,
+    };
+  const clearYesNoShare = value.yesNoShare === null;
+  if (value.yesNoShare !== undefined && !clearYesNoShare && !isRate(value.yesNoShare))
+    return { ok: false, error: 'The yes/no share must be between 0 and 1.' };
   return {
     ok: true,
-    config: { enabled: value.enabled, sfwRate: value.sfwRate, nsfwRate: value.nsfwRate },
+    clearYesNoShare,
+    config: {
+      enabled: value.enabled,
+      sfwRate: value.sfwRate,
+      nsfwRate: value.nsfwRate,
+      ...(isMaxOpen(value.maxOpen) ? { maxOpen: value.maxOpen } : {}),
+      ...(isRate(value.yesNoShare) ? { yesNoShare: value.yesNoShare } : {}),
+    },
   };
 }
 
+const sameGame = (a: KnightsGameSettings = {}, b: KnightsGameSettings = {}) =>
+  KNIGHTS_GAME_SETTING_KEYS.every((key) => a[key] === b[key]);
+
 const same = (a: KnightsSourcesConfig, b: KnightsSourcesConfig) =>
-  a.enabled === b.enabled && a.sfwRate === b.sfwRate && a.nsfwRate === b.nsfwRate;
+  a.enabled === b.enabled &&
+  a.sfwRate === b.sfwRate &&
+  a.nsfwRate === b.nsfwRate &&
+  a.maxOpen === b.maxOpen &&
+  a.yesNoShare === b.yesNoShare &&
+  sameGame(a.game, b.game) &&
+  JSON.stringify(a.ruleGuide ?? null) === JSON.stringify(b.ruleGuide ?? null);
+
+/** Sets the key only while it still holds what was read (ARGV[1] '0': absent; '1': equal to ARGV[2]). 1 when written. */
+const COMPARE_AND_SET = `local current = redis.call('get', KEYS[1])
+if (ARGV[1] == '0' and current == false) or (ARGV[1] == '1' and current == ARGV[2]) then
+  redis.call('set', KEYS[1], ARGV[3])
+  return 1
+end
+return 0`;
+
+const SAVE_ATTEMPTS = 3;
+const CONFLICT_ERROR =
+  'Another moderator saved the config at the same time. Reload the page to see their change, then try again.';
+
+type Built = { ok: true; config: KnightsSourcesConfig } | { ok: false; error: string };
 
 /**
- * All three fields are written, so a later change to the reader's defaults cannot move a saved rate. A stored
- * `maxOpen` is carried over: the page does not edit it, and dropping it would reset the intake cap to the default.
+ * The one writer of the key. Reads it, builds the next value from what was read, and writes it only while the key still
+ * holds what was read (compare-and-set), so a save never overwrites another moderator's; on a conflict the whole
+ * read-build-write runs again, up to `SAVE_ATTEMPTS` times. A value equal to what is stored writes and audits nothing.
  */
-export async function saveSourcesConfig(input: unknown, moderatorId: number): Promise<SaveOutcome> {
-  const checked = validateSourcesInput(input);
-  if (!checked.ok) return checked;
+async function updateSourcesConfig(
+  moderatorId: number,
+  build: (before: SourcesSettings) => Built
+): Promise<SaveOutcome> {
+  const redis = getSysRedis();
+  const key = REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES;
+  for (let attempt = 0; attempt < SAVE_ATTEMPTS; attempt++) {
+    const raw = await redis.get(key);
+    const before = readKnightsSourcesConfig(raw);
+    const next = build(before);
+    if (!next.ok) return next;
+    if (before.stored && same(before.config, next.config)) return { ok: true, changed: false };
+    const swapped = await redis.eval(COMPARE_AND_SET, {
+      keys: [key],
+      arguments: [raw === null ? '0' : '1', raw ?? '', JSON.stringify(next.config)],
+    });
+    if (Number(swapped) === 1) {
+      await auditSave(before, next.config, moderatorId);
+      return { ok: true, changed: true };
+    }
+  }
+  return { ok: false, error: CONFLICT_ERROR };
+}
 
-  const before = await getSourcesSettings();
-  if (before.stored && same(before.config, checked.config)) return { ok: true, changed: false };
-
-  const { maxOpen } = before.config;
-  const config: KnightsSourcesConfig = {
-    enabled: checked.config.enabled,
-    sfwRate: checked.config.sfwRate,
-    nsfwRate: checked.config.nsfwRate,
-    ...(maxOpen === undefined ? {} : { maxOpen }),
-  };
-  await getSysRedis().set(REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES, JSON.stringify(config));
+async function auditSave(
+  before: SourcesSettings,
+  config: KnightsSourcesConfig,
+  moderatorId: number
+) {
   await recordModActivity({
     userId: moderatorId,
     entityType: SOURCES_AUDIT_ENTITY.type,
@@ -84,7 +158,174 @@ export async function saveSourcesConfig(input: unknown, moderatorId: number): Pr
       after: config,
     })}`,
   });
-  return { ok: true, changed: true };
+}
+
+/**
+ * The switch and both rates are always written, so a later change to the reader's defaults cannot move a saved rate. A stored
+ * `maxOpen` is kept when the input leaves it out (dropping it would reset the intake cap to the default), as is a stored
+ * `yesNoShare`, so saving the rates never turns yes/no questions back on; `yesNoShare: null` removes it. The stored game
+ * settings are always carried over.
+ */
+export async function saveSourcesConfig(input: unknown, moderatorId: number): Promise<SaveOutcome> {
+  const checked = validateSourcesInput(input);
+  if (!checked.ok) return checked;
+
+  return updateSourcesConfig(moderatorId, (before) => {
+    const { game, ruleGuide } = before.config;
+    const maxOpen = checked.config.maxOpen ?? before.config.maxOpen;
+    const yesNoShare = checked.clearYesNoShare
+      ? undefined
+      : checked.config.yesNoShare ?? before.config.yesNoShare;
+    return {
+      ok: true,
+      config: {
+        enabled: checked.config.enabled,
+        sfwRate: checked.config.sfwRate,
+        nsfwRate: checked.config.nsfwRate,
+        ...(maxOpen === undefined ? {} : { maxOpen }),
+        ...(yesNoShare === undefined ? {} : { yesNoShare }),
+        ...(game === undefined ? {} : { game }),
+        ...(ruleGuide === undefined ? {} : { ruleGuide }),
+      },
+    };
+  });
+}
+
+/** A field set to a value stores it; `null` removes it, so Knights falls back to its environment; a field left out is untouched. */
+export type GameSettingsChanges = {
+  [K in KnightsGameSettingKey]?: KnightsGameSettings[K] | null;
+};
+
+const KILL_SWITCHES = [
+  'shopDisabled',
+  'conversionDisabled',
+] as const satisfies KnightsGameSettingKey[];
+
+const rangeError = (key: KnightsGameSettingKey) => {
+  const spec = KNIGHTS_GAME_SETTINGS[key];
+  return spec.kind === 'toggle'
+    ? `${spec.label} must be on or off.`
+    : `${spec.label} must be ${spec.range}.`;
+};
+
+/** Nothing is coerced, and a key that is not a game setting is refused rather than ignored. */
+export function validateGameSettingsInput(
+  input: unknown
+): { ok: true; changes: GameSettingsChanges } | { ok: false; error: string } {
+  if (!input || typeof input !== 'object' || Array.isArray(input))
+    return { ok: false, error: 'No settings were sent.' };
+  const changes: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (!(KNIGHTS_GAME_SETTING_KEYS as string[]).includes(key))
+      return { ok: false, error: `${key} is not a Knights game setting.` };
+    const setting = key as KnightsGameSettingKey;
+    if (value !== null && !isValidKnightsGameSetting(setting, value))
+      return { ok: false, error: rangeError(setting) };
+    changes[setting] = value;
+  }
+  return { ok: true, changes: changes as GameSettingsChanges };
+}
+
+/**
+ * Applies only the fields in `input` on top of what is stored and carries every other stored field over (the switch, rates,
+ * `maxOpen`, `yesNoShare` and the other game settings). A change to the shop or conversion kill switch is refused unless the
+ * moderator confirmed it. Audited through the same writer as the sources form.
+ */
+export async function saveGameSettings(
+  input: unknown,
+  moderatorId: number,
+  { killSwitchesConfirmed = false }: { killSwitchesConfirmed?: boolean } = {}
+): Promise<SaveOutcome> {
+  const checked = validateGameSettingsInput(input);
+  if (!checked.ok) return checked;
+
+  return updateSourcesConfig(moderatorId, (before) => {
+    const game: Record<string, number | boolean> = { ...before.config.game };
+    for (const [key, value] of Object.entries(checked.changes)) {
+      if (value === null) delete game[key];
+      else game[key] = value;
+    }
+    const next = game as KnightsGameSettings;
+    const flipped = KILL_SWITCHES.filter((key) => next[key] !== before.config.game?.[key]);
+    if (flipped.length && !killSwitchesConfirmed)
+      return {
+        ok: false,
+        error: `Confirm the change to ${flipped
+          .map((key) => KNIGHTS_GAME_SETTINGS[key].label)
+          .join(' and ')} before saving.`,
+      };
+
+    const { game: _previous, ...rest } = before.config;
+    return { ok: true, config: { ...rest, ...(Object.keys(next).length ? { game: next } : {}) } };
+  });
+}
+
+const LIMITS = KNIGHTS_RULE_GUIDE_LIMITS;
+
+function text(
+  value: unknown,
+  label: string,
+  max: number,
+  required: boolean
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (value !== undefined && value !== null && typeof value !== 'string')
+    return { ok: false, error: `${label} must be text.` };
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (required && !trimmed) return { ok: false, error: `${label} is missing.` };
+  if (trimmed.length > max)
+    return { ok: false, error: `${label} is longer than ${max} characters.` };
+  return { ok: true, value: trimmed };
+}
+
+/** Refuses anything readRuleGuide would drop, so what a moderator saves is what players see. */
+export function validateRuleGuideInput(
+  input: unknown
+): { ok: true; guide: KnightsRuleGuide | null } | { ok: false; error: string } {
+  if (input === null) return { ok: true, guide: null };
+  if (!input || typeof input !== 'object' || Array.isArray(input))
+    return { ok: false, error: 'No rule guide was sent.' };
+  const value = input as Record<string, unknown>;
+  if (!Array.isArray(value.sets)) return { ok: false, error: 'The rule sets are missing.' };
+  if (!value.sets.length) return { ok: true, guide: null };
+  if (value.sets.length > LIMITS.sets)
+    return { ok: false, error: `There can be at most ${LIMITS.sets} rule sets.` };
+
+  const intro = text(value.intro, 'The intro', LIMITS.intro, false);
+  if (!intro.ok) return intro;
+
+  const sets: KnightsRuleSet[] = [];
+  for (const [i, raw] of value.sets.entries()) {
+    const where = `Set ${i + 1}`;
+    const set = (raw ?? {}) as Record<string, unknown>;
+    const title = text(set.title, `${where}'s title`, LIMITS.title, true);
+    if (!title.ok) return title;
+    const notes = text(set.notes, `${where}'s notes`, LIMITS.notes, false);
+    if (!notes.ok) return notes;
+    const rawPoints = set.points ?? [];
+    if (!Array.isArray(rawPoints)) return { ok: false, error: `${where}'s points must be a list.` };
+    if (rawPoints.length > LIMITS.points)
+      return { ok: false, error: `${where} can have at most ${LIMITS.points} points.` };
+    const points: string[] = [];
+    for (const [j, rawPoint] of rawPoints.entries()) {
+      const point = text(rawPoint, `${where}, point ${j + 1}`, LIMITS.point, true);
+      if (!point.ok) return point;
+      points.push(point.value);
+    }
+    if (!points.length && !notes.value)
+      return { ok: false, error: `${where} needs notes or at least one point.` };
+    sets.push({ title: title.value, ...(notes.value ? { notes: notes.value } : {}), points });
+  }
+  return { ok: true, guide: { ...(intro.value ? { intro: intro.value } : {}), sets } };
+}
+
+export async function saveRuleGuide(input: unknown, moderatorId: number): Promise<SaveOutcome> {
+  const checked = validateRuleGuideInput(input);
+  if (!checked.ok) return checked;
+
+  return updateSourcesConfig(moderatorId, (before) => {
+    const { ruleGuide: _previous, ...rest } = before.config;
+    return { ok: true, config: { ...rest, ...(checked.guide ? { ruleGuide: checked.guide } : {}) } };
+  });
 }
 
 function parseChange(activity: string): Pick<SourcesChange, 'before' | 'after'> | null {

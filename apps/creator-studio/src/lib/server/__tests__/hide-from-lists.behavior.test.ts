@@ -317,8 +317,9 @@ describe('Creator Studio "Who reacted" and "Who collected" avatars', () => {
   // [userId, the avatar's needsReview, the avatar served]
   const USERS: [number, string | null, string | null][] = [
     [300, 'csam', null],
-    [301, 'minor', 'av301.jpg'],
+    [301, 'minor', null],
     [302, null, 'av302.jpg'],
+    [303, 'poi', 'av303.jpg'],
   ];
   const avatars = (rows: { userId: number; image: string | null }[] | undefined) =>
     rows?.map((r) => [r.userId, r.image]);
@@ -340,7 +341,7 @@ describe('Creator Studio "Who reacted" and "Who collected" avatars', () => {
     `);
   });
 
-  it('"Who reacted" hides an avatar held for CSAM review and keeps the rest', async () => {
+  it('"Who reacted" hides an avatar held csam or minor and keeps the rest', async () => {
     const page = await getReactors(holder.db as never, OWNER, 'image', AV_IMAGE, {
       reaction: 'Like',
       cursor: null,
@@ -348,7 +349,7 @@ describe('Creator Studio "Who reacted" and "Who collected" avatars', () => {
     expect(avatars(page?.reactors)).toEqual(expected);
   });
 
-  it('"Who collected" hides an avatar held for CSAM review and keeps the rest', async () => {
+  it('"Who collected" hides an avatar held csam or minor and keeps the rest', async () => {
     const page = await getCollectors(holder.db as never, OWNER, 'image', AV_IMAGE, null);
     expect(avatars(page?.collectors)).toEqual(expected);
   });

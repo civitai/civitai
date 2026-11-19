@@ -67,7 +67,8 @@ export type PublicApiRateLimitResult =
 export async function checkFixedWindow(
   key: string,
   max: number,
-  windowSeconds: number
+  windowSeconds: number,
+  { failOpen = true }: { failOpen?: boolean } = {}
 ): Promise<PublicApiRateLimitResult> {
   try {
     const count = await redis.incrBy(key as never, 1);
@@ -87,7 +88,9 @@ export async function checkFixedWindow(
     if (!Number.isFinite(retryAfter) || retryAfter < 1) retryAfter = windowSeconds;
     return { allowed: false, retryAfterSeconds: retryAfter };
   } catch {
-    // Fail open — a redis incident must never break a public read.
+    // Fail open — a redis incident must never break a public read. A caller guarding something
+    // other than a public read can ask to fail closed.
+    if (!failOpen) return { allowed: false, retryAfterSeconds: windowSeconds };
     return { allowed: true };
   }
 }

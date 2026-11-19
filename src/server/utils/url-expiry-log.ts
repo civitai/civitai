@@ -28,9 +28,9 @@ export function logUrlExpiry({
     message: 'url-expiry',
     fileId,
     sizeKB,
-    linkId,
     expiresAt: expiresAt?.toISOString() ?? null,
     remainingSeconds: expiresAt ? Math.round((expiresAt.getTime() - Date.now()) / 1000) : null,
     sampleRate: large ? 1 : SMALL_FILE_EXPIRY_SAMPLE_RATE,
+    payload: { linkId },
   });
 }

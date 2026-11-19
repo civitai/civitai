@@ -32,7 +32,7 @@ const logAuth = (req: NextApiRequest, outcome: string, extra?: Record<string, un
 // (civitai.red / a test host / localhost) can't read the hub's `.civitai.com` cookie, so it runs the OAuth
 // authorization-code + PKCE flow against the hub. This is a THIN Next wrapper: derive this spoke's origin, then
 // the package bridge builds the hub /authorize URL (first-party client_id + exact redirect_uri + state + S256
-// challenge) and the bridge cookie (PKCE verifier + state + returnUrl, for /api/auth/callback). The bridge core
+// challenge) and a per-flow bridge cookie (`oauth_bridge_<state>`: PKCE verifier + state + returnUrl, for /api/auth/callback). The bridge core
 // lives in @civitai/auth (first-party-bridge) — shared with every spoke + unit-tested there.
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (!HUB_BASE_URL) {
@@ -63,7 +63,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const cookieOps: string[] = [];
   // The cookie the callback writes in this app's mode; a shared-slot cookie still present in host mode must not
   // hide a host-only cookie that failed to land.
-  const writtenCookie = sessionCookieNameForSlot(sessionCookieMode());
+  const writtenCookie = sessionCookieNameForSlot(sessionCookieMode(req.headers.host));
   if (req.cookies[POST_LOGIN_MARKER] && !req.cookies[writtenCookie]) {
     const retries = Number.parseInt(req.cookies[LOGIN_RETRY_COOKIE] ?? '', 10) || 0;
     if (retries >= 1) {
@@ -71,7 +71,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       logAuth(req, 'loop-terminal', { retries });
       res.setHeader('Set-Cookie', [
         ...clearAllSessionCookies(req.headers.host),
-        clearBridgeCookie(undefined, cookieDomain), // match the Domain the bridge cookie was set with
+        clearBridgeCookie(undefined, cookieDomain), // the pre-per-flow cookie; per-flow ones expire by TTL
       ]);
       res.status(400).setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(renderSignInProblemHtml());
@@ -85,12 +85,11 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     cookieOps.push(clearLoginRetryCookie());
   }
 
-  const { location, setCookie } = buildAuthorizeRedirect({
+  const { location, setCookies } = buildAuthorizeRedirect({
     selfOrigin,
     returnUrl: safePath(req.query.returnUrl),
     cookieDomain,
   });
-  const bridge = Array.isArray(setCookie) ? setCookie : [setCookie];
-  res.setHeader('Set-Cookie', [...bridge, ...cookieOps]);
+  res.setHeader('Set-Cookie', [...setCookies, ...cookieOps]);
   res.redirect(302, location);
 }

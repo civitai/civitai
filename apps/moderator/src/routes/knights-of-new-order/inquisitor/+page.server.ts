@@ -11,7 +11,11 @@ import {
   ruleOnInquisitorItem,
 } from '$lib/server/knights/inquisitor.service';
 
-const rulingForm = z.object({ itemId: int4Id, level: z.coerce.number().int() });
+const rulingForm = z.object({
+  itemId: int4Id,
+  level: z.coerce.number().int(),
+  blockReason: z.string().optional(),
+});
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   requireAccess(locals.user, url.pathname);
@@ -20,7 +24,14 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     getInquisitorQueue(filter),
     countInquisitorQueueByFilter(),
   ]);
-  return { limit: INQUISITOR_QUEUE_LIMIT, filter, counts, items };
+  return {
+    limit: INQUISITOR_QUEUE_LIMIT,
+    filter,
+    counts,
+    items,
+    fullBleed: true,
+    headerInline: true,
+  };
 };
 
 export const actions: Actions = {
@@ -29,8 +40,9 @@ export const actions: Actions = {
     const input = parseForm(rulingForm, await request.formData());
     if (typeof input === 'string') return fail(400, { error: input });
     try {
-      const result = await ruleOnInquisitorItem(input.itemId, input.level, locals.user.id);
-      return result.ok ? { success: true } : fail(409, { error: result.error });
+      const { itemId, level, blockReason } = input;
+      const result = await ruleOnInquisitorItem(itemId, { level, blockReason }, locals.user.id);
+      return result.ok ? { success: true } : fail(409, { error: result.error, key: itemId });
     } catch (error) {
       console.error('knights inquisitor: could not set the rating', {
         itemId: input.itemId,

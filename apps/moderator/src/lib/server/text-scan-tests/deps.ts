@@ -46,9 +46,8 @@ async function auditRun(event: RunAuditEvent) {
     type: 'info',
     name: 'text-scan',
     event: `test-set-run-${action}`,
-    setId,
-    runIds,
     userId,
+    payload: { setId, runIds },
     ...(calls === undefined ? {} : { calls }),
     ...(buzz === undefined ? {} : { buzz }),
   });

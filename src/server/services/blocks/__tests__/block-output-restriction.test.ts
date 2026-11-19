@@ -26,15 +26,20 @@ import {
 // alone decides (the ceiling is the domain ceiling intersected with the viewer's level).
 const ANY_VIEWER = 1 | 2 | 4 | 8 | 16;
 // An SFW app token (green/blue host): PG | PG13.
-const SFW = blockOutputCeilingFromClaims({
-  maxBrowsingLevel: 1 | 2,
-  viewerBrowsingLevel: ANY_VIEWER,
-});
+const SFW = {
+  ...blockOutputCeilingFromClaims({ maxBrowsingLevel: 1 | 2, viewerBrowsingLevel: ANY_VIEWER }),
+  serving: false,
+  mint: null,
+};
 // A mature app token (red host): PG through XXX.
-const MATURE = blockOutputCeilingFromClaims({
-  maxBrowsingLevel: 1 | 2 | 4 | 8 | 16,
-  viewerBrowsingLevel: ANY_VIEWER,
-});
+const MATURE = {
+  ...blockOutputCeilingFromClaims({
+    maxBrowsingLevel: 1 | 2 | 4 | 8 | 16,
+    viewerBrowsingLevel: ANY_VIEWER,
+  }),
+  serving: false,
+  mint: null,
+};
 
 function image(id: string, nsfwLevel: string | null, over: Record<string, unknown> = {}) {
   return {
@@ -57,6 +62,9 @@ function wf(
     id: 'wf_r',
     createdAt: '2026-11-14T00:00:00.000Z',
     status: 'succeeded',
+    // Just finished, so an unrated output is still inside the rating hold
+    // (`isRatingHoldExpired`; its deadline is pinned in rating-hold-compat.test.ts).
+    completedAt: new Date().toISOString(),
     metadata: {},
     tags: [],
     cost: { total: 8 },
@@ -400,7 +408,10 @@ describe('🔴 F1 — unrated outputs are held, at every level', () => {
           $type: 'imageResourceTraining',
           name: BLOCK_STEP_NAME,
           status: 'succeeded',
-          output: { epochs: [{ epochNumber: 1, sampleImages: ['https://cdn/sample.png'] }] },
+          output: {
+            moderationStatus: 'approved',
+            epochs: [{ epochNumber: 1, sampleImages: ['https://cdn/sample.png'] }],
+          },
         },
       ],
     });

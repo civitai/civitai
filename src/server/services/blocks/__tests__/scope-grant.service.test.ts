@@ -1608,4 +1608,111 @@ describe('scope-grant.service', () => {
       expect(isMissingColumnError(42703)).toBe(false);
     });
   });
+
+  // The opt-in to running above-budget jobs without asking must not survive the viewer starting
+  // over: a re-consent to spending, a budget write or a revoke of spending turns it off.
+  describe('confirm_within_limit_max_job is cleared', () => {
+    const SPEND = 'ai:write:budgeted';
+    const missingOptInColumn = () =>
+      Object.assign(
+        new Error(
+          'The column `app_user_scope_grants.confirm_within_limit_max_job` does not exist in the current database.'
+        ),
+        { code: 'P2022' }
+      );
+
+    it('by a re-consent that grants spending', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({ id: 'g', grantedScopes: [] });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({ userId: 1, appBlockId: 'ab_x', version: '1', scopes: [SPEND] });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data).toMatchObject({
+        confirmWithinLimitMaxJob: null,
+      });
+    });
+
+    it('by a budget write, even with no spend scope in it', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'g',
+        grantedScopes: [SPEND],
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1',
+        scopes: [],
+        buzzBudgetPerDay: null,
+      });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data).toMatchObject({
+        confirmWithinLimitMaxJob: null,
+      });
+    });
+
+    it('control: a grant of other scopes alone leaves the column unnamed', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({ id: 'g', grantedScopes: [] });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1',
+        scopes: ['user:read:self'],
+      });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data).not.toHaveProperty(
+        'confirmWithinLimitMaxJob'
+      );
+    });
+
+    it('by a revoke of spending', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'g',
+        grantedScopes: [SPEND, 'user:read:self'],
+        revokedScopes: [],
+        revokedAt: null,
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { revokeScopes } = await import('../scope-grant.service');
+      await revokeScopes({ userId: 1, appBlockId: 'ab_x', scopes: [SPEND] });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data).toMatchObject({
+        confirmWithinLimitMaxJob: null,
+        buzzBudgetPerDay: null,
+      });
+    });
+
+    it('before its migration, the re-consent still lands, without the column', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({ id: 'g', grantedScopes: [] });
+      mockDb.appUserScopeGrant.update
+        .mockRejectedValueOnce(missingOptInColumn())
+        .mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({ userId: 1, appBlockId: 'ab_x', version: '1', scopes: [SPEND] });
+      expect(mockDb.appUserScopeGrant.update).toHaveBeenCalledTimes(2);
+      expect(mockDb.appUserScopeGrant.update.mock.calls[1][0].data).not.toHaveProperty(
+        'confirmWithinLimitMaxJob'
+      );
+      expect(mockDb.appUserScopeGrant.update.mock.calls[1][0].data).toMatchObject({
+        grantedScopes: [SPEND],
+      });
+    });
+
+    it('before its migration, the revoke still lands, without the column', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'g',
+        grantedScopes: [SPEND],
+        revokedScopes: [],
+        revokedAt: null,
+      });
+      mockDb.appUserScopeGrant.update
+        .mockRejectedValueOnce(missingOptInColumn())
+        .mockResolvedValueOnce({});
+      const { revokeScopes } = await import('../scope-grant.service');
+      const res = await revokeScopes({ userId: 1, appBlockId: 'ab_x', scopes: [SPEND] });
+      expect(res.budgetCleared).toBe(true);
+      expect(mockDb.appUserScopeGrant.update.mock.calls[1][0].data).toMatchObject({
+        revokedScopes: [SPEND],
+      });
+    });
+  });
 });

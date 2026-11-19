@@ -7,10 +7,11 @@
 // comment, whose thread must be read to learn which Image or Article it belongs to.
 //
 // Each action carries `time`, taken synchronously at the write site, so two quick opposite writes
-// (react then un-react) order by when they happened, not by which hook's query finished first.
+// (comment then delete) order by when they happened, not by which hook's query finished first.
 //
 // A removal is sent only when the actor's LAST qualifying row on the entity goes (their last
-// reaction, comment, approved sticker, recommended review), so `sourceId` is one per
+// comment, approved sticker, recommended review, or reaction erased by a moderator; a user's own
+// un-react keeps its points and sends nothing), so `sourceId` is one per
 // (kind, entity, actor) and an add and its removal always pair. Accepted limitation: if the hat
 // came off before the removal, the gate skips it and no removal is sent.
 import { Prisma } from '@prisma/client';
@@ -171,6 +172,7 @@ export function onReactionCreated(input: ReactionInput): Promise<EventPointGrant
   });
 }
 
+/** Moderator bulk erasure only: a user's own un-react keeps its points and does not call this. */
 export async function onReactionRemoved(input: ReactionInput): Promise<void> {
   const time = new Date();
   try {

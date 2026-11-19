@@ -287,6 +287,14 @@ describe("a decision applied to the author's other holds", () => {
         { value, reason: decision, subjectType: 'comment_v3_text', subjectId: '55' },
         { value, reason: 'batch_apply', subjectType: 'comment_v3_text', subjectId: '56' },
       ]);
+      // A report counts only the hold decided on its own as reviewed.
+      const reviewed = Object.fromEntries(
+        dbMock.dbWrite.textScanHold.updateMany.mock.calls.map(([args]) => [
+          (args as { where: { id: number } }).where.id,
+          (args as { data: { meta: { reviewedDecision?: boolean } } }).data.meta.reviewedDecision,
+        ])
+      );
+      expect(reviewed).toEqual({ 12: true, 13: false });
     }
   );
 });

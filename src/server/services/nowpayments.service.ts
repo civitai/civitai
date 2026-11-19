@@ -1225,7 +1225,7 @@ const processLateFinish = async (
     credited,
     held: after?.status === HELD,
     handPaid: after?.status === HAND_PAID,
-    heldReason,
+    payload: { heldReason },
     error: failure,
     buzz: buzzAmount,
     transactionId,

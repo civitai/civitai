@@ -95,48 +95,6 @@ describe('reportBoundaryError — the POST sink', () => {
     });
   });
 
-  // 🔴 AMPLIFICATION GUARD. With no componentStack, the body carries the error's REAL minified
-  // stack, and resolving one server-side reads and parses build artifacts ON the request path.
-  // The server caps and caches that work, so this flag is a saving rather than the only thing
-  // standing between a failing render and amplified load — but a caller that fires once per failed
-  // render still has nothing to gain from re-resolving the same stack per repeat. Keyed on the
-  // componentStack rather than the boundary name so a new caller inherits it.
-  it.each(throwables)(
-    'declines server-side stack resolution with no componentStack, for %s',
-    (_n, thrown) => {
-      withFetch((f) => {
-        reportBoundaryError(thrown, { boundary: 'root' });
-        expect(bodyOf(f).resolveStack).toBe(false);
-      });
-    }
-  );
-
-  // 🔴 The fixture that makes the guard above mean what its caption says. Every other case pairs
-  // `root` with no componentStack, or a non-`root` boundary WITH one — two shapes that a keying on
-  // the BOUNDARY NAME satisfies exactly as well as a keying on the componentStack, so neither
-  // separates them. This one is the case where they disagree: a non-`root` boundary carrying no
-  // componentStack, which is what any future boundary looks like before someone remembers to wire
-  // one up. Measured: a version keyed on `boundary === 'root'` left the other 63 cases green and
-  // fails only here.
-  it.each(throwables)(
-    'declines resolution for a NON-root boundary with no componentStack, for %s',
-    (_n, thrown) => {
-      withFetch((f) => {
-        reportBoundaryError(thrown, { boundary: 'user' });
-        expect(bodyOf(f).resolveStack).toBe(false);
-      });
-    }
-  );
-
-  // The mirror half: with a componentStack there are no file frames, so the resolver is a no-op and
-  // we must NOT opt out — that keeps the body byte-identical to what every other caller sends.
-  it('does NOT decline resolution when a componentStack is supplied', () => {
-    withFetch((f) => {
-      reportBoundaryError(new Error('boom'), { boundary: 'user', componentStack: '\n at Bar' });
-      expect('resolveStack' in bodyOf(f)).toBe(false);
-    });
-  });
-
   // 🔴 The handler does `JSON.parse(req.body)`, so it needs the RAW string. Declaring
   // application/json makes Next's body parser hand it an object and that parse throws.
   // Read through `new Headers(...)`, NOT `Object.keys`. `Object.keys` only sees a plain object, so

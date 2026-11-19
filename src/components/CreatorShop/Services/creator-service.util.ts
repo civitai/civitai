@@ -24,10 +24,10 @@ export function useQueryShopServices(userId: number, enabled: boolean) {
 
 export type ServiceFeedOffering = RouterOutput['creatorService']['getFeed']['items'][number];
 
-export function useServiceOfferingFeed(sort: ServiceOfferingFeedSort) {
+export function useServiceOfferingFeed(sort: ServiceOfferingFeedSort, query?: string) {
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.creatorService.getFeed.useInfiniteQuery(
-      { sort },
+      { sort, query },
       { getNextPageParam: (last) => last.nextCursor }
     );
   return {

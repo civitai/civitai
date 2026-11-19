@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -38,7 +39,7 @@ func (l *countingLookup) lookup(_ context.Context, ids []int) (map[int]jspack.Ob
 // where nothing is kept between requests: the coalescing alone answers them.
 func TestConcurrentLookupsShareOne(t *testing.T) {
 	const n = 8
-	c := &MissCompute{WriteBack: true}
+	c := &MissCompute{WriteBack: AllWrites()}
 	var entered atomic.Int32
 	c.beforeFlight = func() { entered.Add(1) }
 	l := &countingLookup{gate: func() {
@@ -82,7 +83,7 @@ func TestConcurrentLookupsShareOne(t *testing.T) {
 func TestRecentLookupsExpire(t *testing.T) {
 	now := pageNow
 	for _, writeBack := range []bool{false, true} {
-		c := &MissCompute{WriteBack: writeBack, Now: func() time.Time { return now }}
+		c := &MissCompute{WriteBack: writeSet(writeBack), Now: func() time.Time { return now }}
 		l := &countingLookup{}
 		ctx := context.Background()
 		now = pageNow
@@ -115,6 +116,120 @@ func TestRecentLookupsExpire(t *testing.T) {
 		if _, err := c.lookupShared(ctx, MissImageFrames, []int{1}, l.lookup); err != nil || l.calls.Load() != before+1 {
 			t.Fatalf("write-back %v: another cache's miss was answered from this one (%v)", writeBack, err)
 		}
+	}
+}
+
+// A caller arriving the moment the first lookup's flight has ended is answered without a query.
+// singleflight drops a flight from its map before Do returns, so the answer must already be kept by
+// then: the second caller runs inside the first one's afterFlight hook, after its flight is gone and
+// before it reads the answer. Kept only after Do returned, the answer is not there yet and the second
+// caller queries again (the intermittent two queries of TestPageConcurrentMissesOneQuery).
+func TestLookupKeptBeforeFlightEnds(t *testing.T) {
+	c := &MissCompute{Now: func() time.Time { return pageNow }}
+	l := &countingLookup{}
+	ctx := context.Background()
+	var hooks atomic.Int32
+	var second map[int]jspack.Obj
+	var secondErr error
+	c.afterFlight = func() {
+		if hooks.Add(1) == 1 {
+			second, secondErr = c.lookupShared(ctx, MissUserCosmetics, []int{2, 1}, l.lookup)
+		}
+	}
+	first, err := c.lookupShared(ctx, MissUserCosmetics, []int{1, 2}, l.lookup)
+	want := map[int]jspack.Obj{1: jspack.O("id", 1)}
+	if err != nil || secondErr != nil || !reflect.DeepEqual(first, want) || !reflect.DeepEqual(second, want) {
+		t.Fatalf("answers %v (%v) and %v (%v), want %v", first, err, second, secondErr, want)
+	}
+	if got := l.calls.Load(); got != 1 {
+		t.Fatalf("%d lookups, want 1: the caller arriving as the flight ended queried again", got)
+	}
+}
+
+// A caller that missed the kept answers, and reaches its flight only after an earlier flight for the
+// same ids has ended, is answered from what that flight kept: the flight rechecks before it queries.
+// The second caller is held in beforeFlight (past its first check, before Do) while the first one
+// runs to the end. The image meta is never kept, so there both callers query.
+func TestLookupRecheckedInFlight(t *testing.T) {
+	for _, tc := range []struct {
+		cache string
+		want  int32
+	}{{MissUserCosmetics, 1}, {MissImageFrames, 1}, {MissImageMeta, 2}} {
+		c := &MissCompute{Now: func() time.Time { return pageNow }}
+		l := &countingLookup{}
+		ctx := context.Background()
+		var hooks atomic.Int32
+		var first map[int]jspack.Obj
+		var firstErr error
+		c.beforeFlight = func() {
+			if hooks.Add(1) == 1 {
+				first, firstErr = c.lookupShared(ctx, tc.cache, []int{1, 2}, l.lookup)
+			}
+		}
+		second, err := c.lookupShared(ctx, tc.cache, []int{2, 1}, l.lookup)
+		want := map[int]jspack.Obj{1: jspack.O("id", 1)}
+		if err != nil || firstErr != nil || !reflect.DeepEqual(first, want) || !reflect.DeepEqual(second, want) {
+			t.Fatalf("%s: answers %v (%v) and %v (%v), want %v", tc.cache, first, firstErr, second, err, want)
+		}
+		if got := l.calls.Load(); got != tc.want {
+			t.Fatalf("%s: %d lookups, want %d", tc.cache, got, tc.want)
+		}
+	}
+}
+
+// recordingLookup is a lookup that records each call's ids (sorted) and answers every id but 13 with
+// a record whose "v" is 7 times its id (13 has no row).
+type recordingLookup struct {
+	calls [][]int
+}
+
+func (l *recordingLookup) lookup(_ context.Context, ids []int) (map[int]jspack.Obj, error) {
+	l.calls = append(l.calls, slices.Sorted(slices.Values(ids)))
+	out := map[int]jspack.Obj{}
+	for _, id := range ids {
+		if id != 13 {
+			out[id] = jspack.O("id", id, "v", id*7)
+		}
+	}
+	return out, nil
+}
+
+// When the in-flight recheck answers only some ids, the flight looks up the rest and answers the
+// union. The second caller (ids 10-13) is held in beforeFlight, past its first check, while a first
+// caller for the subset 10-11 runs to the end and keeps its answers. The second caller's flight then
+// finds 10-11 kept, looks up only 12-13, and must still answer all of its found ids (13 has no row).
+func TestLookupRecheckedInFlightMergesKept(t *testing.T) {
+	c := &MissCompute{Now: func() time.Time { return pageNow }}
+	l := &recordingLookup{}
+	lookup := l.lookup
+	ctx := context.Background()
+	var hooks atomic.Int32
+	var first map[int]jspack.Obj
+	var firstErr error
+	c.beforeFlight = func() {
+		if hooks.Add(1) == 1 {
+			first, firstErr = c.lookupShared(ctx, MissUserCosmetics, []int{11, 10}, lookup)
+		}
+	}
+	second, err := c.lookupShared(ctx, MissUserCosmetics, []int{13, 10, 12, 11}, lookup)
+	if err != nil || firstErr != nil {
+		t.Fatalf("errors %v and %v", firstErr, err)
+	}
+	wantCalls := [][]int{{10, 11}, {12, 13}}
+	if !reflect.DeepEqual(l.calls, wantCalls) {
+		t.Fatalf("lookups %v, want %v: the second flight must look up only the ids the recheck did not answer", l.calls, wantCalls)
+	}
+	wantFirst := map[int]jspack.Obj{10: jspack.O("id", 10, "v", 70), 11: jspack.O("id", 11, "v", 77)}
+	if !reflect.DeepEqual(first, wantFirst) {
+		t.Fatalf("first caller answered %v, want %v", first, wantFirst)
+	}
+	wantSecond := map[int]jspack.Obj{
+		10: jspack.O("id", 10, "v", 70),
+		11: jspack.O("id", 11, "v", 77),
+		12: jspack.O("id", 12, "v", 84),
+	}
+	if !reflect.DeepEqual(second, wantSecond) {
+		t.Fatalf("second caller answered %v, want %v: the rechecked ids must be merged with the looked-up rest", second, wantSecond)
 	}
 }
 

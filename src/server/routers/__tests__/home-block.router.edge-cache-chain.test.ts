@@ -101,7 +101,7 @@ type Ctx = {
   // header: `responseMeta` only sets one when `errors.length === 0`.
   acceptableOrigin: boolean;
   // `enforceTokenScope` runs ahead of the cache middleware too.
-  tokenScope: number;
+  tokenScope: bigint;
   cache: CacheState;
   // Read by `applyDomainFeature` (src/server/trpc.ts) as `ctx.features.canViewNsfw`,
   // ahead of the cache middleware — but ONLY on the authenticated arm. Measured: drop

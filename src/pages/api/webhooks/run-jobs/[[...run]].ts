@@ -19,6 +19,7 @@ import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { linkedAccountReview } from '~/server/jobs/linked-account-review';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
+import { feedbackHqSyncJob } from '~/server/jobs/feedback-hq-sync';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
 import { bluePaidAccessDetection } from '~/server/jobs/blue-buzz-paid-access-detection';
@@ -99,6 +100,7 @@ import {
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { cdnAccessReconcile, cdnAccessSync } from '~/server/jobs/cdn-access-sync';
+import { missedNotificationDigest } from '~/server/jobs/missed-notification-digest';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
@@ -157,6 +159,10 @@ import { trainingDataScanHealJob } from '~/server/jobs/training-data-scan-heal';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
 import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
 import { comFaceRecheckJob } from '~/server/jobs/com-face-recheck';
+import {
+  comFaceVersionTextJob,
+  comFaceVersionTextSweepJob,
+} from '~/server/jobs/com-face-version-text';
 import { comFaceIntentDisputesJob } from '~/server/jobs/com-face-intent-disputes';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
@@ -166,6 +172,7 @@ import { notificationCursorMonitor } from '~/server/jobs/notification-cursor-mon
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
+import { appDocRaterJob } from '~/server/jobs/app-doc-rater';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
 import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
@@ -181,7 +188,8 @@ import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
 import { purgeFeedbackCaptures } from '~/server/jobs/purge-feedback-captures';
-import { retryImageStorageDeletes } from '~/server/jobs/retry-image-storage-deletes';
+import { imageStorageDeletes } from '~/server/jobs/image-storage-deletes';
+import { imageDeletes } from '~/server/jobs/image-deletes';
 import { retryUploadPromptScansJob } from '~/server/jobs/retry-upload-prompt-scans';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
@@ -226,9 +234,11 @@ export const jobs: Job[] = [
   removeBlockedImages,
   cdnAccessSync,
   cdnAccessReconcile,
+  missedNotificationDigest,
   removeReplacedImages,
   purgeFeedbackCaptures,
-  retryImageStorageDeletes,
+  imageStorageDeletes,
+  imageDeletes,
   retryUploadPromptScansJob,
   processScheduledPublishing,
   // refreshImageGenerationCoverage,
@@ -246,6 +256,8 @@ export const jobs: Job[] = [
   searchIndexCleanupJob,
   searchIndexQueueDrainJob,
   comFaceRecheckJob,
+  comFaceVersionTextJob,
+  comFaceVersionTextSweepJob,
   comFaceIntentDisputesJob,
   processRewards,
   rewardsDailyReset,
@@ -295,6 +307,7 @@ export const jobs: Job[] = [
   botAccountDetection,
   linkedAccountReview,
   relabelBuildBatchJob,
+  feedbackHqSyncJob,
   reactionWithdrawalDetection,
   bluePaidAccessDetection,
   creatorProgramCounterpartyReview,
@@ -351,6 +364,7 @@ export const jobs: Job[] = [
   creatorBoxPayoutSweepJob,
   mysteryBoxOverPoolRefundsJob,
   retryFailedTextModeration,
+  appDocRaterJob,
   textScanRetention,
   textScanChatWindowsJob,
   textScanNewUsersJob,

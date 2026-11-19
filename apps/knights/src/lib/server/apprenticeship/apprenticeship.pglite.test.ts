@@ -28,7 +28,13 @@ let db: Kysely<DB>;
 let now = T0;
 const mirrorXp = vi.fn(async () => undefined);
 const resetPlayer = vi.fn<(id: number) => Promise<void>>(async () => undefined);
-const deps = (): ApprenticeDeps => ({ now: () => now, mirrorXp, resetPlayer });
+let smitesSwitch: { smites: boolean } | undefined;
+const deps = (): ApprenticeDeps => ({
+  now: () => now,
+  mirrorXp,
+  resetPlayer,
+  ...(smitesSwitch ? { settings: () => smitesSwitch! } : {}),
+});
 
 beforeAll(async () => {
   ({ pg, db } = await createQueueDb());
@@ -44,6 +50,7 @@ beforeEach(async () => {
     [YESNO_Q]
   );
   now = T0;
+  smitesSwitch = undefined;
   mirrorXp.mockClear();
   resetPlayer.mockClear();
 });
@@ -190,7 +197,7 @@ const sourceOf = async (item: ApprenticeItem) => {
 };
 
 describe('the stream', () => {
-  it('mixes core, harvested and yes/no from the first item, fills in when a kind runs out, and never repeats an item', async () => {
+  it('mixes core and yes/no from the first item, turns to harvested once core runs out, and never repeats an item', async () => {
     await player(1);
     for (let i = 0; i < 4; i++) await rating(1 + i, { source: 'core', explanation: 'x' });
     for (let i = 0; i < 4; i++) await rating(10 + i);
@@ -199,20 +206,34 @@ describe('the stream', () => {
     const served = await play(1, 10);
     const sources = await Promise.all(served.map(sourceOf));
 
-    expect(sources.slice(0, 6)).toEqual([
+    expect(sources).toEqual([
       'core',
-      'harvested',
+      'core',
       'yesno',
       'core',
-      'harvested',
+      'core',
       'yesno',
+      // Core and yes/no are used up: harvested fills in rather than the stream running dry.
+      'harvested',
+      'harvested',
+      'harvested',
+      'harvested',
     ]);
-    // The yes/no pairs are used up: the rest is core and harvested.
-    expect(sources.slice(6).sort()).toEqual(['core', 'core', 'harvested', 'harvested']);
     const keys = served.map((s) => `${s.kind}:${s.referenceId}`);
     expect(new Set(keys).size).toBe(10);
     // 10 answered, nothing left: the recap is not due yet, so the stream simply has no more items.
     expect((await getApprentice(db, 1)).kind).toBe('exhausted');
+  });
+
+  it('serves only core rating references while any are left, however many harvested ones there are', async () => {
+    await player(1);
+    for (let i = 0; i < 3; i++) await rating(1 + i, { source: 'core' });
+    for (let i = 0; i < 12; i++) await rating(10 + i);
+
+    const served = await play(1, 3);
+
+    expect(await Promise.all(served.map(sourceOf))).toEqual(['core', 'core', 'core']);
+    expect(await sourceOf(question(await getApprentice(db, 1)).item)).toBe('harvested');
   });
 
   it('deals a fresh order after every answer, not one fixed order per player', async () => {
@@ -473,7 +494,12 @@ describe('smites', () => {
     expect(await smitesOf(1)).toHaveLength(0);
     await play(1, 1, false);
     expect(await smitesOf(1)).toMatchObject([
-      { givenById: -1, cleansedAt: null, size: BASE_SMITE_SIZE, reason: ACOLYTE_WRONG_ANSWER_SMITE },
+      {
+        givenById: -1,
+        cleansedAt: null,
+        size: BASE_SMITE_SIZE,
+        reason: ACOLYTE_WRONG_ANSWER_SMITE,
+      },
     ]);
     // The window restarts after a smite: five more wrong answers are not a second one, the sixth is.
     await play(1, 5, false);
@@ -481,6 +507,32 @@ describe('smites', () => {
     await play(1, 1, false);
     expect(await activeOf(1)).toBe(2);
     expect(await expOf(1)).toBe(0);
+  });
+
+  it('issues no wrong-answer smite while smites are switched off, and does when the switch is unset', async () => {
+    await player(1);
+    await player(2);
+    for (let i = 0; i < 40; i++) await rating(i + 1);
+
+    smitesSwitch = { smites: false };
+    await play(1, 20, (n) => n >= 6);
+    expect(await smitesOf(1)).toHaveLength(0);
+
+    smitesSwitch = undefined;
+    await play(2, 20, (n) => n >= 6);
+    expect(await smitesOf(2)).toMatchObject([{ reason: ACOLYTE_WRONG_ANSWER_SMITE }]);
+  });
+
+  it('starts no career reset while smites are switched off, however many answers are wrong', async () => {
+    await player(1);
+    for (let i = 0; i < 20; i++) await rating(i + 1);
+    smitesSwitch = { smites: false };
+
+    await play(1, 18, false);
+
+    expect(await smitesOf(1)).toHaveLength(0);
+    expect(resetPlayer).not.toHaveBeenCalled();
+    expect(await playersDueForReset(db)).toEqual([]);
   });
 
   it('counts only the last 20 answers', async () => {

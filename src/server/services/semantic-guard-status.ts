@@ -17,6 +17,14 @@ export type GuardStatus = {
 
 export const UNKNOWN_GUARD_STATUS: GuardStatus = { key: 'unknown', withholdResults: null };
 
+/**
+ * No artifact (`null`) keys as the bare mode: every real version, `none` or `''` included, carries
+ * the `:`, so a block cached before an artifact ships is never served under one.
+ */
+export function guardKey(mode: string, version: string | null) {
+  return version === null ? mode : `${mode}:${version}`;
+}
+
 export function parseGuardStatus(raw: unknown): GuardStatus {
   if (!raw || typeof raw !== 'object') return UNKNOWN_GUARD_STATUS;
   const { mode, version, withhold_results } = raw as Record<string, unknown>;
@@ -26,7 +34,7 @@ export function parseGuardStatus(raw: unknown): GuardStatus {
     ? withhold_results.filter((r): r is string => typeof r === 'string')
     : [];
   return {
-    key: `${mode}:${version ?? 'none'}`,
+    key: guardKey(mode, version as string | null),
     withholdResults: withheld.length ? new Set(withheld) : null,
   };
 }

@@ -3,6 +3,7 @@ import { withAxiom } from '@civitai/next-axiom';
 import bundlAnalyzer from '@next/bundle-analyzer';
 import { createRequire } from 'module';
 import { STATIC_ASSET_CACHE_RULES } from './src/shared/constants/static-asset-cache-rules.mjs';
+import { feedGoRewrites } from './src/shared/constants/feed-go-rewrites.mjs';
 const require = createRequire(import.meta.url);
 const packageJson = require('./package.json');
 
@@ -124,30 +125,10 @@ export default defineNextConfig(
     },
     reactStrictMode: true,
     typescript: { ignoreBuildErrors: skipBuildTypecheck },
-    // Source maps for prod CPU-profile de-minification.
-    //
-    // Under Turbopack (our prod bundler, Next 16), the ONLY source-map lever is the
-    // experimental `turbopackSourceMaps` flag, whose build-time default IS
-    // `productionBrowserSourceMaps`. So setting this `true` turns on map emission for
-    // BOTH client (`.next/static/**/*.js.map`) and server (`.next/server/**/*.js.map`)
-    // chunks. Turbopack ignores `experimental.serverSourceMaps` (webpack-only) — that
-    // flag below only matters for the `next build --webpack` fallback path.
-    //
-    // Maps are inert at runtime: the Node server never loads a `.js.map` unless an
-    // inspector / error-stack resolver reads it, so there is NO
-    //  request-path perf cost.
-    // They are NOT served to browsers for server chunks (those live in `.next/server`,
-    // which is not a static-served directory). Cost is build time + image size only.
-    //
-    // IMPORTANT: `output:'standalone'` traces required files via @vercel/nft, which
-    // follows `import`/`require`/`fs` — it does NOT trace sibling `.js.map` files, so
-    // the server maps are emitted to `.next/server` but DROPPED from `.next/standalone`.
-    // The runtime image does NOT ship these maps (the RUNNER stage copies only
-    // standalone + static). The build instead publishes them as a separate
-    // `civitai-web-maps:<tag>` artifact (Dockerfile `maps` target + the pipeline),
-    // fetched on demand by `scripts/resolve-cpuprofile.mjs --image <tag>` to
-    // de-minify a captured profile — keeping the runtime image lean.
-    productionBrowserSourceMaps: true,
+    // Off to cut release-build memory, together with `experimental.serverSourceMaps` below:
+    // which of the two Turbopack reads for server maps is decided in the native binary, so
+    // both are off.
+    productionBrowserSourceMaps: false,
     // Next.js i18n docs: https://nextjs.org/docs/advanced-features/i18n-routing
     i18n: {
       locales: ['en'],
@@ -273,7 +254,7 @@ export default defineNextConfig(
     experimental: {
       // scrollRestoration: true,
       cpus: 8,
-      serverSourceMaps: true,
+      serverSourceMaps: false,
       // instrumentationHook removed in Next 15 — instrumentation.ts is enabled by default now
       largePageDataBytes: 512 * 100000,
       // Nested async chunking for the SERVER build. Next's own defaults table
@@ -312,9 +293,6 @@ export default defineNextConfig(
       // smaller. Projected onto the worst observed production build that lands at
       // 37-39 GiB against the enforced 40 GiB limit, which is the exact band where the
       // release build OOMKilled three times when this flag was last on (#3807).
-      // Dropping source maps to pay for it is also closed: it works, but server `.js.map`
-      // has three consumers including the hard `scripts/assert-compiled-branches.mjs`
-      // gate, and `turbopackSourceMaps` cannot be split client/server.
       // Full evidence: claudedocs/turbopack-chunk-hash-collision-2026-08-18.md
       // (§Option 1 is closed). The live fix is upstream, not this flag.
       turbopackServerSideNestedAsyncChunking: false,
@@ -399,18 +377,20 @@ export default defineNextConfig(
       return headers;
     },
     poweredByHeader: false,
-    // The `feedGoTransport` client path (`GO_TRANSPORT_URL` in src/utils/trpc-go-transport.ts). An
-    // exact-path route in front of this app may send it to a separate Go feed service; whatever
-    // reaches this app is served by the ordinary tRPC route, so the flag can never strand a request
-    // (edge rules keyed on `/api/trpc/` still do not match this path; see `feedGoTransport`).
+    // The `feedGoTransport` / `feedGoTransportModelGetAll` client path (`GO_TRANSPORT_URL` in
+    // src/utils/trpc-go-transport.ts). An exact-path route in front of this app may send it to a
+    // separate Go feed service; whatever reaches this app is served by the ordinary tRPC route, so
+    // the flag can never strand a request (edge rules keyed on `/api/trpc/` still do not match this
+    // path; see `feedGoTransport`).
     // One exact source per procedure in `GO_TRANSPORT_PROCEDURES`, never a wildcard: a wildcard would
     // make `/api/trpc-go/*` an alias of the whole tRPC API. src/utils/__tests__/trpc-go-transport.test.ts
-    // pins that this list and that set agree.
+    // pins that this list and that set agree. In local dev `pnpm dev` (scripts/dev-feed-go) sets
+    // FEED_GO_LOCAL_URL and these go to a local feed-go instead (see feed-go-rewrites.mjs).
     rewrites: async () =>
-      ['image.getImagesAsPostsInfinite'].map((procedure) => ({
-        source: `/api/trpc-go/${procedure}`,
-        destination: `/api/trpc/${procedure}`,
-      })),
+      feedGoRewrites({
+        localUrl: process.env.FEED_GO_LOCAL_URL,
+        nodeEnv: process.env.NODE_ENV,
+      }),
     redirects: async () => {
       // Note: the .red-host support-portal bounce is implemented as a
       // Cloudflare Redirect Rule on the civitai.red zone. Config lives at

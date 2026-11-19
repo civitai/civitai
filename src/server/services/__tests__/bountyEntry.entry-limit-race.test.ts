@@ -93,6 +93,7 @@ function installFakeDb() {
 const ctxFor = (userId: number) =>
   ({
     user: { id: userId },
+    features: { canViewNsfw: true },
     track: { bountyEntry: () => Promise.resolve() },
   } as unknown as ProtectedContext);
 

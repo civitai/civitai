@@ -477,7 +477,7 @@ describe('who may call it', () => {
   });
 
   describe('API key path', () => {
-    const keySession = (tokenScope: number) => ({
+    const keySession = (tokenScope: bigint) => ({
       user: { id: MODERATOR, isModerator: true, permissions: [], bannedAt: null },
       apiKeyId: 1,
       apiKeyType: 'User',

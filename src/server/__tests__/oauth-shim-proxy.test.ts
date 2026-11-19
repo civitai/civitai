@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, afterAll, beforeAll, beforeEach } from 'vitest';
 import { Readable } from 'stream';
 
 // Tests the civitai.com OAuth shim at src/pages/api/auth/oauth/[...path].ts. It must REDIRECT the browser
@@ -166,5 +166,71 @@ describe('oauth shim', () => {
     const out = (res as never as { _out: ReturnType<typeof makeRes>['_out'] })._out;
     expect(out.status).toBe(502);
     expect(out.body).toMatchObject({ error: 'server_error' });
+  });
+});
+
+describe('oauth shim on a host-only site', () => {
+  const hubResponse = () => {
+    const headers = new Headers({ 'content-type': 'application/json' });
+    headers.append(
+      'set-cookie',
+      '__Secure-civ-token=t; Path=/; Domain=civitai.red; Secure; HttpOnly'
+    );
+    headers.append('set-cookie', '__Host-civ-device=d; Path=/; Secure; HttpOnly');
+    headers.append('set-cookie', 'other=1; Path=/');
+    return new Response('{}', { status: 200, headers });
+  };
+  const cookie = '__Secure-civ-token=s; __Host-civ-token=h; civ-device=d; other=1';
+  const relay = async (host: string) => {
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(hubResponse());
+    const res = makeRes();
+    await handler(
+      makeReq({
+        url: '/api/auth/oauth/userinfo',
+        query: { path: ['userinfo'] },
+        headers: { host, cookie },
+      }),
+      res
+    );
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    const out = (res as unknown as { _out: { headers: Record<string, unknown> } })._out;
+    return {
+      forwarded: new Headers(init.headers).get('cookie'),
+      setCookie: out.headers['set-cookie'],
+    };
+  };
+  const ORIGINAL = process.env.AUTH_SESSION_COOKIE_MODE_BY_SITE;
+  beforeEach(() => {
+    process.env.AUTH_SESSION_COOKIE_MODE_BY_SITE = 'civitai.red:host';
+  });
+  afterAll(() => {
+    if (ORIGINAL === undefined) delete process.env.AUTH_SESSION_COOKIE_MODE_BY_SITE;
+    else process.env.AUTH_SESSION_COOKIE_MODE_BY_SITE = ORIGINAL;
+  });
+
+  it('civitai.red neither forwards its session cookies to the hub nor relays the hub’s', async () => {
+    const { forwarded, setCookie } = await relay('civitai.red');
+    expect(forwarded).toBe('other=1');
+    expect(setCookie).toEqual(['other=1; Path=/']);
+  });
+
+  it('drops a session cookie sent with no value', async () => {
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(hubResponse());
+    await handler(
+      makeReq({
+        url: '/api/auth/oauth/userinfo',
+        query: { path: ['userinfo'] },
+        headers: { host: 'civitai.red', cookie: '__Host-civ-token; other=1' },
+      }),
+      makeRes()
+    );
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    expect(new Headers(init.headers).get('cookie')).toBe('other=1');
+  });
+
+  it('civitai.com relays both ways as before', async () => {
+    const { forwarded, setCookie } = await relay('civitai.com');
+    expect(forwarded).toBe(cookie);
+    expect(setCookie).toHaveLength(3);
   });
 });

@@ -5,13 +5,11 @@ import type { SemanticStorylineSearchInput } from '~/server/schema/semantic-stor
 import {
   beginSemanticAudit,
   isNonModClampOn,
+  makeRefusalOf,
+  type QueryTracker,
   queryVerdictLevel,
-  recordRefusal,
   refusedTextCandidates,
   resolveSemanticBrowsingLevel,
-  semanticQueryRefusal,
-  type QueryStage,
-  type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import {
   MAX_HITS_PER_USER,
@@ -82,7 +80,7 @@ export async function searchSemanticStorylines({
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
-    await isNonModClampOn()
+    await isNonModClampOn(user)
   );
   const [hidden, addonData] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -97,16 +95,12 @@ export async function searchSemanticStorylines({
     query: input.query,
     firstPage: !input.cursor,
   });
-  const refusalOf = async (text: string, stage: QueryStage) => {
-    const refusal = await semanticQueryRefusal(text, {
-      browsingLevel,
-      disablePoi,
-      isModerator: user?.isModerator,
-    });
-    recordRefusal(track, refusal, text, 'storylines_semantic', stage);
-    audit.verdict(refusal);
-    return refusal;
-  };
+  const refusalOf = makeRefusalOf({
+    index: 'storylines_semantic',
+    track,
+    context: () => ({ browsingLevel, disablePoi, isModerator: user?.isModerator }),
+    audit,
+  });
   const refusal = await refusalOf(input.query, 'query');
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
   const queryRefused = verdictLevel === 'refuse';
@@ -125,6 +119,7 @@ export async function searchSemanticStorylines({
   // Refused before any search: the audit may run it after the response, for its row only.
   if (queryRefused)
     return audit.refused(
+      'refused_query',
       none,
       browsingLevel,
       refusedTextCandidates(candidateSource, {
@@ -186,13 +181,17 @@ export async function searchSemanticStorylines({
   logToAxiom({
     type: 'info',
     name: 'semantic-storyline-search',
-    returned: search.state.returned,
     hydrated,
-    shown: page.items.length,
+    payload: { returned: search.state.returned, shown: page.items.length },
   });
 
   audit.candidates(search.state.first);
   if (search.state.refused)
-    return audit.refused(none, browsingLevel, async () => search.state.first ?? { ids: [] });
+    return audit.refused(
+      'refused_correction',
+      none,
+      browsingLevel,
+      async () => search.state.first ?? { ids: [] }
+    );
   return audit.done({ ...page, correctedQuery: search.state.correctedQuery }, browsingLevel);
 }

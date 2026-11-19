@@ -23,11 +23,10 @@ shared with ratings. What marks one is `audience` (`players` or `moderators`); a
 The item's question (`questionKey`) is one `KnightsQuestion` per axis, `knights.yesno.<axis>`, kind `bool`, options yes and no.
 Its `prompt` is a plain fallback question for the axis (`axisPrompt` in `keys.ts`), shown only where an item or Acolyte pair has no
 question text of its own; overlapping axes share one;
-`votesToResolve` is the number of answers a consensus needs (default 5) and `maxVotes` the most it is ever asked (default 10); both are
-read from the row on every answer, so tuning it takes effect at once (the Codex does not quote the number). A `maxVotes` below
-`votesToResolve` is treated as `votesToResolve`. The item's own `votesNeeded` is unused for yes/no.
-Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`, `unplayable`, `stale`, `retired` or `moderator-retired`). A yes/no item is never `Resolved`, so write-back, escalation and the
-settle sweeps never touch it. Rating `getFeed` and `castVote` exclude items with an `audience`. The partial unique index that allows one
+`votesToResolve` (default 5) feeds the label store's rule row (`minHuman`); it and `maxVotes` no longer decide a question in the game,
+which follows the rating stage rule below. The item's own `votesNeeded` is unused for yes/no.
+Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`, `unplayable`, `stale`, `retired` or `moderator-retired`). A yes/no item is never `Resolved`, so write-back and the rating
+escalation and settle sweeps never touch it (it has no `expiresAt`; its own stage escalation is below). Rating `getFeed` and `castVote` exclude items with an `audience`. The partial unique index that allows one
 open rating item per question and image exempts yes/no items, which share an axis and an image.
 
 ## Import
@@ -61,7 +60,7 @@ sample-0003,false,1003,sample_axis,observable,Withdrawn question.,,
 
 `cd apps/knights && pnpm run import:yesno <file.csv> [--dry-run]` reads `DATABASE_URL` from `.env` and refuses any host other than
 localhost, 127.0.0.1 or ::1 (for a dev database, forward the port first). It keeps rows marked active, maps `observable` to `players`
-and `policy_preference` to `moderators`, skips a row whose image does not exist (`bad-image`), creates the axis questions once, and upserts items by `externalId` in batches. It never
+and `policy_preference` to `moderators`, skips a row whose image does not exist (`bad-image`) or that the public feeds would not show (`unservable-image`, the `servableImage` test), creates the axis questions once, and upserts items by `externalId` in batches. It never
 rewrites an item that has answers (a changed one is reported as `refused`; the moderation record a moderator's action adds to `meta` is not a change), and closes an open item the file marks inactive
 (`retired`, no outcome), along with any open reworded copies of it; a question it withdrew earlier and lists again, with no
 answers, is reopened. It skips an unanswered item a moderator changed (counted as `moderated`), except that a moderated item the file
@@ -71,8 +70,8 @@ reworded copy instead, if the import had closed that copy. It prints counts only
 **Temporary launch page.** The script cannot reach production, so `/admin/yesno-import` in the Knights app runs the same import once at launch.
 It is moderator-only (an explicit `isModerator` check on the page load and on its POST; others get 403), is not linked from any navigation,
 and is to be removed after the Knights v2 launch import. The browser splits the cleaned file into chunks of at most 400 rows (and 256 KB, to stay under the
-node adapter's request body limit), repeats the header in each, and posts them one after another; each chunk runs `toYesNoRows`, drops rows whose image does not exist (`bad-image`) and runs `importYesNo`,
-and the page sums the counts, showing `moderated` and each skip reason on their own. It is dry-run by default (parse, check the images exist and count; no writes). Each real chunk is logged to Axiom with the moderator id and counts.
+node adapter's request body limit), repeats the header in each, and posts them one after another; each chunk runs `toYesNoRows`, drops rows whose image does not exist (`bad-image`) or cannot be served (`unservable-image`) and runs `importYesNo`,
+and the page sums the counts, showing `moderated` and each skip reason on their own. It is dry-run by default (parse, check the images exist and can be served, and count; no writes). Each real chunk is logged to Axiom with the moderator id and counts.
 Upload only the cleaned file: a withdrawn id is retired only within its own chunk's run, which is why the file must hold no inactive rows.
 
 ## Moderator cleanup
@@ -92,8 +91,14 @@ votes, never player rows.
 
 ## Serving (`feed.ts`)
 
-- Each feed slot rolls once, per player, against `KNIGHTS_YESNO_SHARE` (default above one half; 0 switches questions off). The roll is
-  fixed until the player answers, so a reload does not change it. With no rating to show, a question is shown whenever there is one.
+- Questions come in bursts (`cadence.ts`, `BURSTS`): a gap of 5, 8 or 10 ratings, then a burst of 1 to 5 questions, each length
+  rolled anew per player. `burstDue` reads the player's last 11 votes plus the items already handed out ahead (`servedHistory`; a
+  hidden check counts as a rating), and rolls each length from the item that ended the run before it, so a reload or the look-ahead
+  never re-rolls. A due burst comes before the hidden-check roll; a hidden check rides only on a rating slot. When no question is
+  left, the slot is a rating; with no rating to show, a question is shown whenever there is one. A share of 0 switches questions
+  off; any other value leaves the cadence as it is. The share comes from `yesNoShare` on `system:knights-v2-sources`, set on the
+  moderator app's Knights of New Order Config page (read by Knights at most every 30 s), else from `KNIGHTS_YESNO_SHARE`.
+  The stretch and the max age below work the same way ([game settings](knights-sources.md#game-settings)).
 - A stretch is `KNIGHTS_YESNO_STRETCH` questions of one axis in a row (default 8); the next axis starts with a banner. The player's
   latest yes/no answers in the ledger say where they are in a stretch, so no state is kept. `GET /play/next` hands out up to 10 items at once, so each pick also counts the yes/no questions already handed out ahead of it and not yet on the ledger (`ahead` in `pickYesNo`): the stretch cap and the new-category banner hold across the buffer, and the banner is on the first question of a stretch only.
 - A question is offered only to a rank that may judge Knight items, on an image `servableImage` accepts, if it is `Open`, if the
@@ -109,11 +114,22 @@ votes, never player rows.
 refusals, and `insertVote` / `creditVote`. The ledger row is under the item's own id, with `answer` `yes` or `no`, the vote XP at once
 and gold held as pending. The item row lock serialises its votes.
 
-A question has a consensus when `votesToResolve` players have answered and one answer has a strict majority (one vote per player, as the
-label store counts). A tie keeps it open, but answers arrive one at a time under the item row lock, so after a tie at an even
-`votesToResolve` the very next answer decides. A close with no outcome therefore happens only when `maxVotes` equals an even
-`votesToResolve` (including a `maxVotes` below it, which is clamped up to it): the tie is then at the cap. With the defaults (5 to resolve,
-10 at most) it never happens: five yes/no answers cannot tie, so every question resolves at the fifth answer. At the close, in the same transaction:
+A stage decides a question by the rating stage rule (`STAGE_RULES` in `queue/stage-rules.ts`, applied by `decideChoice`): unanimous at
+the answers the stage needs, then one answer holding 75% up to the stage's cap. One vote per player, as the label store counts; only the
+current stage's (`minRank`) answers count, and earlier stages' answers stay pending and are graded by the final outcome.
+
+| Stage | Settles at | Then (yes-no) | Cap |
+|---|---|---|---|
+| Knight | 4-0 | 4-1, 5-1, 6-1, 6-2, 7-2, 8-2 | 10 |
+| Templar | 3-0 | 3-1, 4-1, 5-1 | 6 |
+| Paladin | 2-0 | 3-0, 3-1 | 4 |
+
+A stage that reaches its cap without that agreement (a plain majority such as 7-3 included) does not close the question while a higher rank is staffed: it moves to the next
+staffed rank (`nextStaffedRank` over `staffedRanks`, as a rating item escalates: Knight, then Templar, then Paladin), with
+`escalatedAt` set and no deadline. Players below that rank are no longer served it or allowed to answer (`stagesWorkedBy` in the feed,
+`canVote` in `insertVote`). At the last staffed stage it closes as `no-consensus`; a yes/no question never goes to the Inquisitors.
+
+At the close, in the same transaction:
 
 - The majority answer is graded `correct` and the others `failed`; a close with no outcome leaves every vote `inconclusive`, as for a
   rating item. The item becomes `Consensus`, which counts as final, and the votes are paid by `settleItemVotes`, the rating path.
@@ -138,5 +154,9 @@ question gets its own `rule` row, so the store computes the majority per questio
 ## Players see
 
 `/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
-any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. A hidden check is offered before a question is rolled for, so its rate does
-not depend on the yes/no share.
+any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. A hidden check is rolled only on a rating slot, at its own rate
+(`KNIGHTS_HIDDEN_CHECK_RATE`).
+
+The rules the questions test are shown as "Question rules" below the rating levels, in the Codex rating guide and in the guide
+window on `/play`. Their text is not in the code: moderators enter it on the Config page (`ruleGuide`, see
+[game settings](knights-sources.md#game-settings)). With rules saved, a yes/no question shows the guide button and opens the guide at the rules; with none saved the button stays hidden on yes/no, as before.

@@ -3,6 +3,12 @@ import type * as ManifestSubmitValidation from '~/server/services/blocks/manifes
 // Submit-time deep manifest validation is pinned in publish-request.submitValidation.test.ts;
 // this file's fixtures are not full manifests, so that seam is a no-op here (approve's own
 // validator is untouched).
+const { mockRevokeOrchestratorTokens } = vi.hoisted(() => ({
+  mockRevokeOrchestratorTokens: vi.fn(async (_a: { userId: number }) => undefined),
+}));
+vi.mock('~/server/services/orchestrator/civitai', () => ({
+  revokeCivitaiUserTokens: mockRevokeOrchestratorTokens,
+}));
 vi.mock('~/server/services/blocks/manifest-submit-validation', async (importOriginal) => ({
   ...(await importOriginal<typeof ManifestSubmitValidation>()),
   assertManifestValidAtSubmit: vi.fn(async () => undefined),
@@ -10,6 +16,10 @@ vi.mock('~/server/services/blocks/manifest-submit-validation', async (importOrig
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import type * as ForgejoService from '~/server/services/blocks/forgejo.service';
 import type * as ReviewAutodeployService from '~/server/services/blocks/review-autodeploy.service';
+import type * as PublishRequestFinalise from '~/server/services/blocks/publish-request-finalise.service';
+import type * as AppBlockNotify from '~/server/services/blocks/app-block-notify';
+import type * as LiveUnpublish from '~/server/services/blocks/live-unpublish.service';
+import type * as AppListingService from '~/server/services/blocks/app-listing.service';
 import JSZip from 'jszip';
 
 import { NsfwLevel } from '~/server/common/enums';
@@ -160,7 +170,12 @@ const {
       // the app-block OauthClient's allowedScopes to the manifest-derived
       // ceiling + forces grants:[] on the subsequent-version + P2002-retry
       // paths.
-      oauthClient: { create: vi.fn(), update: vi.fn() },
+      oauthClient: {
+        create: vi.fn(),
+        update: vi.fn(),
+        // The ceiling a late hold puts back, read on the primary before step (3).
+        findUnique: vi.fn<DelegateMock>(async () => ({ allowedScopes: 33554431n })),
+      },
       // W13 auto-create-on-approve: approveRequest mints the onsite AppListing
       // (idempotent skip-if-exists, P2002-tolerant) right after the AppBlock row
       // exists so the app appears on the /apps grid without a manual backfill.
@@ -263,6 +278,32 @@ const { mockOnNewPendingSubmission, mockDeleteReviewResources } = vi.hoisted(() 
   mockOnNewPendingSubmission: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
   mockDeleteReviewResources: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
 }));
+// Calls through, so every approve here still runs the real final step (holds check included);
+// the spy proves approveRequest reaches it.
+vi.mock('~/server/services/blocks/publish-request-finalise.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof PublishRequestFinalise>();
+  return { ...actual, finaliseOnsiteApprove: vi.fn(actual.finaliseOnsiteApprove) };
+});
+const finaliseMock = async () =>
+  vi.mocked(
+    (await import('~/server/services/blocks/publish-request-finalise.service'))
+      .finaliseOnsiteApprove
+  );
+
+vi.mock('~/server/services/blocks/app-listing.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingService>()),
+  bustAppListingCatalogCache: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/blocks/live-unpublish.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LiveUnpublish>()),
+  takeDownLiveApp: vi.fn(async () => ({})),
+}));
+// Calls through; the late-hold approve test proves the developer is not told.
+vi.mock('~/server/services/blocks/app-block-notify', async (importOriginal) => {
+  const actual = await importOriginal<typeof AppBlockNotify>();
+  return { ...actual, notifyAppBlockSubmitter: vi.fn(actual.notifyAppBlockSubmitter) };
+});
+
 vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReviewAutodeployService>()),
   onNewPendingSubmission: (...a: unknown[]) => mockOnNewPendingSubmission(...a),
@@ -388,6 +429,21 @@ async function makeValidBundle(over: Record<string, unknown> = {}): Promise<Buff
   });
 }
 
+// Max-length tagline and valid repository URL, each wrapped in heavy whitespace.
+const TRIM_TAGLINE = 'Pitch: ' + 'abcdefghij'.repeat(13) + 'xyz';
+const TRIM_REPO = 'https://github.com/example-org/hello';
+const PAD = ` \t\n${' '.repeat(600)}\n\t `;
+const paddedStrings = () => ({
+  tagline: `${PAD}${TRIM_TAGLINE}${PAD}`,
+  repository: `${PAD}${TRIM_REPO}${PAD}`,
+});
+function expectTrimmedStrings(stored: unknown) {
+  expect(TRIM_TAGLINE).toHaveLength(140);
+  const m = stored as { tagline?: unknown; repository?: unknown };
+  expect(m.tagline).toBe(TRIM_TAGLINE);
+  expect(m.repository).toBe(TRIM_REPO);
+}
+
 beforeEach(() => {
   // M-2 manifests here: publish-request.service uses raw `process.env.NEXTAUTH_URL`
   // for the git-push webhook callback URL in approveRequest, not the typed `env`
@@ -427,6 +483,16 @@ beforeEach(() => {
   mockProvision.mockResolvedValue(undefined);
   mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
   mockDbWrite.appBlock.update.mockResolvedValue(undefined);
+  // approveRequest finalises the request and the block in one transaction.
+  (mockDbWrite.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+    async (cb: (tx: unknown) => Promise<unknown>) =>
+      cb({
+        ...mockDbWrite,
+        $queryRaw: async () => [],
+        $executeRaw: async () => 0,
+        $executeRawUnsafe: async () => 0,
+      })
+  );
   // W13 category-on-approve default: the no-clobber category `updateMany` is a
   // no-op unless a test opts in (the default manifest declares no category).
   mockDbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
@@ -766,6 +832,19 @@ describe('submitVersion', () => {
       expect(persistedManifest().iframe.src).toBe('https://hello.civit.ai/');
       expect(persistedManifest().iframe.sandbox).toBe('allow-scripts');
     }
+  });
+
+  it('stores a padded tagline/repository trimmed in the publish_request row', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    const buf = await makeValidBundle(paddedStrings());
+    const result = await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 42,
+      submitterIsModerator: false,
+    });
+    expect(result.publishRequestId).toBeDefined();
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(persistedManifest());
   });
 
   it('leaves an already-canonical iframe.src unchanged', async () => {
@@ -1215,7 +1294,60 @@ describe('submitVersion', () => {
 
 // ---- withdrawRequest -------------------------------------------------------
 
+/**
+ * The suite's beforeEach strips `$transaction`'s implementation, so a callback would never run.
+ * Run it on the write mock, so a write made inside a transaction is recorded like any other.
+ */
+function runTransactionsOnWriteMock() {
+  (mockDbWrite.$transaction as ReturnType<typeof vi.fn>).mockImplementation(async (arg: unknown) =>
+    typeof arg === 'function'
+      ? (arg as (tx: unknown) => Promise<unknown>)(mockDbWrite)
+      : Promise.all(arg as unknown[])
+  );
+}
+
+/** Raw statements that WRITE the review-holds table, on either client (tx runs on the write mock). */
+function holdWrites(): string[] {
+  return [mockDbWrite, mockDbRead]
+    .flatMap((c) =>
+      ['$executeRaw', '$executeRawUnsafe', '$queryRaw', '$queryRawUnsafe'].flatMap((m) => {
+        const fn = (c as unknown as Record<string, { mock?: { calls: unknown[][] } } | undefined>)[
+          m
+        ];
+        return (fn?.mock?.calls ?? []).map((call) =>
+          Array.isArray(call[0]) ? (call[0] as string[]).join('?') : String(call[0])
+        );
+      })
+    )
+    .filter((sql) => /app_publish_request_holds/.test(sql) && /\b(UPDATE|DELETE)\b/i.test(sql));
+}
+
 describe('withdrawRequest', () => {
+  it('holdWrites sees a hold cleared through a transaction (negative control)', async () => {
+    runTransactionsOnWriteMock();
+    const { clearHold } = await import('../publish-request-holds.service');
+    (mockDbWrite.$executeRaw as ReturnType<typeof vi.fn>).mockResolvedValue(1);
+    await (mockDbWrite.$transaction as (cb: (tx: unknown) => Promise<unknown>) => Promise<unknown>)(
+      (tx) => clearHold(tx as never, { holdId: 7, actorUserId: 1, reason: 'check finished, clean' })
+    ).catch(() => undefined);
+    expect(holdWrites()).not.toEqual([]);
+  });
+
+  it('🔴 a developer withdrawing their request never lifts a moderator hold on the app', async () => {
+    runTransactionsOnWriteMock();
+    const { withdrawRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: 'pubreq_x',
+      slug: 'held-app',
+      status: 'pending',
+      submittedByUserId: 42,
+    });
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+    await withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 });
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalled();
+    expect(holdWrites()).toEqual([]);
+  });
+
   it('moves pending → withdrawn for the owner via a status-guarded updateMany', async () => {
     const { withdrawRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
@@ -1891,6 +2023,13 @@ describe('listRejectedRequests', () => {
 
 // ---- approveRequest --------------------------------------------------------
 
+const claimReleases = () =>
+  mockDbWrite.$executeRaw.mock.calls.filter(
+    (c: unknown[]) =>
+      Array.isArray(c[0]) &&
+      (c[0] as string[]).join('?').includes('DELETE FROM app_publish_request_approve_claims')
+  ).length;
+
 describe('approveRequest', () => {
   function pendingRequest(over: Record<string, unknown> = {}) {
     return {
@@ -2020,7 +2159,7 @@ describe('approveRequest', () => {
       id: 'apb_legacy',
       appId: 'oc_legacy',
       repoUrl: 'https://forgejo.example/civitai-apps/old--name',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://old--name.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://old--name.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
 
@@ -2029,8 +2168,50 @@ describe('approveRequest', () => {
     ).resolves.toMatchObject({ isFirstVersion: false, appBlockId: 'apb_legacy' });
   });
 
+  it('🔴 a hold placed after the claim expired leaves the held version unbuilt and unannounced', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    const finalise = await finaliseMock();
+    const notify = vi.mocked(
+      (await import('~/server/services/blocks/app-block-notify')).notifyAppBlockSubmitter
+    );
+    const takeDown = vi.mocked(
+      (await import('~/server/services/blocks/live-unpublish.service')).takeDownLiveApp
+    );
+    takeDown.mockClear();
+    const bust = vi.mocked(
+      (await import('~/server/services/blocks/app-listing.service')).bustAppListingCatalogCache
+    );
+    bust.mockClear();
+    finalise.mockClear();
+    notify.mockClear();
+    mockTriggerBuild.mockClear();
+    finalise.mockImplementationOnce(async () => ({
+      lateHoldIds: [7],
+      revokedTokens: { clientId: 'appblk-hello', userIds: [5] },
+    }));
+    mockRevokeOrchestratorTokens.mockClear();
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+    expect(finalise).toHaveBeenCalledTimes(1);
+    expect(notify).not.toHaveBeenCalled();
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+    expect(result.lateHoldIds).toEqual([7]);
+    // The previous version stops serving on the subdomain too.
+    expect(takeDown).toHaveBeenCalledWith('hello');
+    // The put-back listing is not served from a stale catalog cache.
+    expect(bust).toHaveBeenCalled();
+    // The tokens the late hold revoked are dropped from the orchestrator's auth cache too.
+    expect(mockRevokeOrchestratorTokens).toHaveBeenCalledWith({ userId: 5 });
+  });
+
   it('first-version happy path wires the 4 external systems in order', async () => {
     const { approveRequest } = await import('../publish-request.service');
+    const finalise = await finaliseMock();
+    finalise.mockClear();
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue(null);
     mockBundleBuffer.current = await makeValidBundle();
@@ -2043,6 +2224,18 @@ describe('approveRequest', () => {
 
     expect(result.isFirstVersion).toBe(true);
     expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+
+    // 🔴 The approved flip goes through the final hold check, never around it.
+    expect(finalise).toHaveBeenCalledTimes(1);
+    expect(finalise).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        publishRequestId: 'pubreq_1',
+        reviewerUserId: 999,
+        forgejoCommitSha: 'commit_sha_abc',
+        holdDecision: expect.objectContaining({ slug: 'hello' }),
+      })
+    );
 
     // Order of operations checks
     expect(mockDbWrite.oauthClient.create).toHaveBeenCalledOnce();
@@ -2119,7 +2312,7 @@ describe('approveRequest', () => {
     // allowedScopes is the manifest-derived ceiling — for the default
     // zero-scope manifest that's 0, NOT TokenScope.Full (33554431).
     expect(ocArg.grants).toEqual([]);
-    expect(ocArg.allowedScopes).toBe(0);
+    expect(ocArg.allowedScopes).toBe(0n);
 
     // commitFiles received the bundle contents with replaceAllFiles=true.
     const commitArg = mockForgejo.commitFiles.mock.calls[0][0];
@@ -2162,7 +2355,7 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
       });
       await expect(
         approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
@@ -2192,7 +2385,7 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
       });
       await expect(
         approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
@@ -2234,7 +2427,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // The reset listing flip matches one row (listing WAS pending) → reset re-approve.
@@ -2274,7 +2467,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // The reset listing exists + is pending (found by id), but its icon is still
@@ -2323,7 +2516,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // The reset listing exists (found by id) with all-Scanned icon+cover → gate passes.
@@ -2433,7 +2626,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
   };
@@ -2507,7 +2700,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // Answer ONLY the (3b-reset) probe. Answering the (3b-transition) draft probe as well
@@ -2564,7 +2757,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     mockDbWrite.appListing.findFirst.mockResolvedValue({
@@ -2608,7 +2801,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // Listing flip matches 0 rows (not a reset) → the block un-suspend is skipped.
@@ -2763,13 +2956,155 @@ describe('approveRequest', () => {
     });
 
     const ocArg = mockDbWrite.oauthClient.create.mock.calls[0][0].data;
-    expect(ocArg.allowedScopes).toBe(5);
-    expect(ocArg.allowedScopes).not.toBe(33554431);
+    expect(ocArg.allowedScopes).toBe(5n);
+    expect(ocArg.allowedScopes).not.toBe(33554431n);
     expect(ocArg.grants).toEqual([]);
+  });
+
+  it('🔴 a review hold that appears after the first check refuses at the approve claim: nothing is written and no build starts', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    const hold = {
+      id: 7,
+      slug: 'hello',
+      placedByUserId: 1,
+      placedByUsername: 'mod',
+      placedByLabel: 'code-check',
+      reason: 'security check still running',
+    };
+    // The early check (on dbWrite) sees no hold; the final one, inside the transaction, does.
+    (mockDbWrite.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+      async (cb: (tx: unknown) => Promise<unknown>) =>
+        cb({
+          ...mockDbWrite,
+          $queryRaw: async (strings: unknown) =>
+            Array.isArray(strings) && strings.join('?').includes('FROM app_publish_request_holds')
+              ? [hold]
+              : [],
+          $executeRaw: async () => 0,
+          $executeRawUnsafe: async () => 0,
+        })
+    );
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(/open review hold/);
+    // Refused at the claim, before the approve's first write.
+    expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.oauthClient.update).not.toHaveBeenCalled();
+    expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlockPublishRequest.update).not.toHaveBeenCalled();
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+  });
+
+  it('an override approves, and its reason is never written to the developer-visible approval notes', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    const hold = {
+      id: 7,
+      slug: 'hello',
+      placedByUserId: 1,
+      placedByUsername: 'mod',
+      placedByLabel: 'code-check',
+      reason: 'security check still running',
+    };
+    const holdsRead = async (strings: unknown) =>
+      Array.isArray(strings) && strings.join('?').includes('FROM app_publish_request_holds')
+        ? [hold]
+        : [];
+    mockDbWrite.$queryRaw.mockImplementation(holdsRead as never);
+    const executed: string[] = [];
+    (mockDbWrite.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+      async (cb: (tx: unknown) => Promise<unknown>) =>
+        cb({
+          ...mockDbWrite,
+          $queryRaw: holdsRead,
+          $executeRaw: async (strings: unknown) => {
+            if (Array.isArray(strings)) executed.push(strings.join('?'));
+            return 1;
+          },
+          $executeRawUnsafe: async () => 0,
+        })
+    );
+    const OVERRIDE = 'override text the developer must not see';
+
+    await approveRequest({
+      publishRequestId: 'pubreq_1',
+      reviewerUserId: 999,
+      approvalNotes: 'Reviewed.',
+      holdOverrideReason: OVERRIDE,
+      holdOverrideIds: [7],
+    });
+
+    expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ approvalNotes: 'Reviewed.' }) })
+    );
+    expect(JSON.stringify(mockDbWrite.appBlockPublishRequest.update.mock.calls)).not.toContain(
+      OVERRIDE
+    );
+    expect(executed.some((sql) => sql.includes("cleared_kind = 'overridden'"))).toBe(true);
+    expect(executed.some((sql) => sql.includes('INSERT INTO "ModActivity"'))).toBe(true);
+    expect(claimReleases()).toBe(1);
+  });
+
+  it('🔴 an approve that fails after taking its claim releases it', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    mockForgejo.commitFiles.mockRejectedValueOnce(new Error('forgejo down'));
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(/forgejo down/);
+    expect(claimReleases()).toBe(1);
+  });
+
+  it('🔴 refuses a subsequent version before any write when its OAuth ceiling cannot be read', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce(null);
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    mockForgejo.commitFiles.mockClear();
+    mockDbWrite.appBlock.update.mockClear();
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(/could not read the OAuth client/);
+    expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
+    expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
   });
 
   it('subsequent-version happy path skips OauthClient + repo create', async () => {
     const { approveRequest } = await import('../publish-request.service');
+    const finalise = await finaliseMock();
+    finalise.mockClear();
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue({
       id: 'apb_existing',
@@ -2778,11 +3113,35 @@ describe('approveRequest', () => {
       // H-4 fix path: approveRequest's pre-validation reads the
       // existing OauthClient context off this relation.
       app: {
-        allowedScopes: 33554431,
+        allowedScopes: 33554431n,
         allowedOrigins: ['https://hello.civit.ai'],
       },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    const prior = {
+      manifest: { blockId: 'hello', version: '0.1.0' },
+      version: '0.1.0',
+      approvedScopes: ['old:scope'],
+      contentRating: 'pg',
+      renderMode: 'iframe',
+      trustTier: 'unverified',
+    };
+    mockDbWrite.appBlock.findUnique.mockResolvedValueOnce(prior);
+    const listingBefore = {
+      id: 'al_hello',
+      kind: 'onsite',
+      status: 'approved',
+      contentRating: 'pg',
+      name: 'Hello',
+      tagline: null,
+      description: null,
+      category: null,
+      sourceRepoUrl: null,
+      appBlockId: 'apb_existing',
+    };
+    mockDbWrite.appListing.findUnique.mockImplementation(async (args: unknown) =>
+      (args as { where: { slug?: string } }).where.slug === 'hello' ? listingBefore : null
+    );
 
     const result = await approveRequest({
       publishRequestId: 'pubreq_1',
@@ -2791,6 +3150,37 @@ describe('approveRequest', () => {
 
     expect(result.isFirstVersion).toBe(false);
     expect(result.appBlockId).toBe('apb_existing');
+    // 🔴 What the app ran under before this approve reaches the final step, for a late hold.
+    expect(finalise).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        priorVersion: { block: prior, oauthClientId: 'oc_existing', allowedScopes: 33554431n },
+      })
+    );
+    // 🔴 The store listing as it was before the approve reaches it too.
+    expect(finalise).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        priorListing: expect.objectContaining({
+          id: 'al_hello',
+          name: 'Hello',
+          status: 'approved',
+        }),
+      })
+    );
+    mockDbWrite.appListing.findUnique.mockImplementation(async () => null);
+
+    // 🔴 The approved flip goes through the final hold check, never around it.
+    expect(finalise).toHaveBeenCalledTimes(1);
+    expect(finalise).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        publishRequestId: 'pubreq_1',
+        reviewerUserId: 999,
+        forgejoCommitSha: 'commit_sha_abc',
+        holdDecision: expect.objectContaining({ slug: 'hello' }),
+      })
+    );
 
     expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
     expect(mockForgejo.createRepoFromTemplate).not.toHaveBeenCalled();
@@ -2821,7 +3211,22 @@ describe('approveRequest', () => {
     const ocUpdateArg = mockDbWrite.oauthClient.update.mock.calls[0][0];
     expect(ocUpdateArg.where).toEqual({ id: 'oc_existing' });
     expect(ocUpdateArg.data.grants).toEqual([]);
-    expect(ocUpdateArg.data.allowedScopes).toBe(0);
+    expect(ocUpdateArg.data.allowedScopes).toBe(0n);
+  });
+
+  // The validator here is the real one, so the padded manifest is accepted, not refused.
+  it('writes a padded tagline/repository trimmed into app_blocks.manifest', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ manifest: manifest(paddedStrings()) })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle(paddedStrings());
+
+    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+    expect(mockDbWrite.appBlock.create).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(mockDbWrite.appBlock.create.mock.calls[0][0].data.manifest);
   });
 
   // ---- C1: trust-tier self-escalation (the most security-critical contract) ----
@@ -2899,7 +3304,7 @@ describe('approveRequest', () => {
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
         trustTier: 'verified',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0', trustTier: 'internal' });
 
@@ -2926,7 +3331,7 @@ describe('approveRequest', () => {
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
         trustTier: 'unverified',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0', trustTier: 'internal' });
 
@@ -3206,7 +3611,7 @@ describe('approveRequest', () => {
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
       app: {
-        allowedScopes: 33554431,
+        allowedScopes: 33554431n,
         allowedOrigins: ['https://hello.civit.ai'],
       },
     });
@@ -3323,7 +3728,7 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       // A listing already exists (minted on the first approve; a mod may since
       // have set category/featured). The guard must never CREATE a second one —
@@ -3377,7 +3782,7 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       // No listing yet (app approved BEFORE this feature; never backfilled).
       mockDbRead.appListing.findUnique.mockResolvedValue(null);
@@ -3592,7 +3997,7 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       // …but the row already carries the moderator's curated 'utility'. Use the
       // transition case (no prior listing) so a listing IS minted and we can
@@ -3824,7 +4229,7 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       mockBundleBuffer.current = await makeValidBundle({
         version: '0.2.0',
@@ -3844,6 +4249,23 @@ describe('approveRequest', () => {
 // ---- rejectRequest ---------------------------------------------------------
 
 describe('rejectRequest', () => {
+  it('🔴 rejecting a request leaves the app review holds open', async () => {
+    runTransactionsOnWriteMock();
+    const { rejectRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: 'pubreq_x',
+      slug: 'held-app',
+      status: 'pending',
+    });
+    await rejectRequest({
+      publishRequestId: 'pubreq_x',
+      reviewerUserId: 999,
+      rejectionReason: 'manifest contentRating mismatch',
+    });
+    expect(mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0].data.status).toBe('rejected');
+    expect(holdWrites()).toEqual([]);
+  });
+
   it('happy path moves pending → rejected with reason', async () => {
     const { rejectRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
@@ -3982,6 +4404,34 @@ describe('backfillPublishRequest', () => {
     expect(createArg.submittedByUserId).toBe(42);
     expect(createArg.reviewedByUserId).toBe(999);
     expect(createArg.forgejoCommitSha).toBe('sha_in_repo');
+  });
+
+  it('stores a padded tagline/repository from the repo manifest trimmed', async () => {
+    const { backfillPublishRequest } = await import('../publish-request.service');
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      manifest: manifest(),
+      version: '0.1.0',
+      currentVersionSha: 'sha_in_repo',
+      app: { userId: 42 },
+    });
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(
+      new Map([
+        ['block.manifest.json', 'blob1'],
+        ['index.html', 'blob2'],
+      ])
+    );
+    mockForgejo.getBlobContent.mockImplementation(async (_slug: string, sha: string) => {
+      if (sha === 'blob1') return Buffer.from(JSON.stringify(manifest(paddedStrings())));
+      return Buffer.from('<!doctype html>');
+    });
+
+    await backfillPublishRequest({ slug: 'hello', reviewerUserId: 999 });
+
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(mockDbWrite.appBlockPublishRequest.create.mock.calls[0][0].data.manifest);
   });
 
   it('idempotent: re-running with the same Forgejo HEAD returns the existing row', async () => {
@@ -4156,6 +4606,36 @@ describe('recordPendingFromPush', () => {
       submittedByUserId: 777,
       origin: 'push',
     });
+  });
+
+  it('stores a padded tagline/repository trimmed on a new pending request', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    await recordPendingFromPush({ ...pushArgs, manifest: manifest(paddedStrings()) });
+    await flush();
+
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(mockDbWrite.appBlockPublishRequest.create.mock.calls[0][0].data.manifest);
+  });
+
+  it('stores a padded tagline/repository trimmed on a same-sha refresh', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ app: { userId: 7 } });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({
+      id: 'pubreq_existing_sha',
+    });
+    mockDbWrite.appBlockPublishRequest.update.mockResolvedValue(undefined);
+
+    await recordPendingFromPush({ ...pushArgs, manifest: manifest(paddedStrings()) });
+    await flush();
+
+    expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0].data.manifest);
   });
 
   it('a refresh of an already-pending sha announces nothing (one alert per new request)', async () => {

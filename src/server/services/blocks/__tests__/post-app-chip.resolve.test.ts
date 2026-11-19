@@ -25,19 +25,24 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
-import { resolvePostAppChip } from '~/server/services/blocks/post-app-chip.logic';
+import {
+  resolvePostAppChip,
+  type PostAppChipRow,
+} from '~/server/services/blocks/post-app-chip.logic';
 
 const POST_ID = 31107522;
 const MARKER = 'appblk-custom-generators';
 const HOST = 'civitai.com';
 
-const approvedRow = {
+const approvedRow: PostAppChipRow = {
   name: 'Custom Generators Client',
+  connectListings: [],
   appBlocks: [
     {
       status: 'approved',
       currentVersionDeployedAt: new Date('2026-09-01T00:00:00.000Z'),
       appListing: {
+        id: 'apl_custom',
         slug: 'custom-generators',
         name: 'Custom Generators',
         status: 'approved',
@@ -50,9 +55,13 @@ const approvedRow = {
   ],
 };
 
-function harness(opts: { storeScope: StoreVisibilityScope; metadata?: unknown; app?: unknown }) {
+function harness(opts: {
+  storeScope: StoreVisibilityScope;
+  metadata?: unknown;
+  app?: PostAppChipRow;
+}) {
   const readPostMetadata = vi.fn(async () => opts.metadata ?? null);
-  const readApp = vi.fn(async () => (opts.app ?? null) as never);
+  const readApp = vi.fn(async () => opts.app ?? null);
   return {
     readPostMetadata,
     readApp,
@@ -63,6 +72,7 @@ function harness(opts: { storeScope: StoreVisibilityScope; metadata?: unknown; a
         host: HOST,
         readPostMetadata,
         readApp,
+        readHiddenListingIds: async () => new Set<string>(),
       }),
   };
 }
@@ -168,11 +178,13 @@ describe('the three resolve branches', () => {
       metadata: { blockPublishedAppId: 'appblk-ab-img-poster' },
       app: {
         name: 'Ab Img Poster',
+        connectListings: [],
         appBlocks: [
           {
             status: 'suspended',
             currentVersionDeployedAt: null,
             appListing: {
+              id: 'apl_ab',
               slug: 'ab-img-poster',
               name: 'Ab Img Poster',
               status: 'removed',

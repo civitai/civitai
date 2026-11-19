@@ -52,13 +52,6 @@ type ReadoutPlan = {
 // Pre-registered with the Team Hats lead on 2026-11-03. Change a plan only before its experiment
 // starts; a primary metric chosen after looking is not a test.
 export const READOUT_PLANS: Record<ExperimentKey, ReadoutPlan> = {
-  hatTurfImageDetail: {
-    primary: 'joined',
-    secondary: ['returned2Days', 'placements', 'inviteDismissed'],
-    guardrail: ['hidAllHats'],
-    split: [0.5, 0.5],
-    readOn: '2026-11-24',
-  },
   hatTurfFeedCard: {
     primary: 'placedFromFeed',
     secondary: ['returned2Days', 'placements', 'feedSaved', 'hatCountOpened'],

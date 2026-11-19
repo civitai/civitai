@@ -460,6 +460,135 @@ describe('entity image writers', () => {
       data: [{ imageId: 555, entityId: 1, entityType: 'Bounty' }],
     });
   });
+
+  describe('links the edit form was not shown', () => {
+    let linked: number[];
+    // Applies each deleteMany to `linked`, so a test reads which links survive the save.
+    beforeEach(() => {
+      dbMock.dbWrite.imageConnection.findMany.mockImplementation(
+        async () => linked.map((imageId) => ({ imageId })) as never
+      );
+      dbMock.dbWrite.imageConnection.deleteMany.mockImplementation((async ({
+        where,
+      }: {
+        where: { imageId: { in: number[] } };
+      }) => {
+        linked = linked.filter((id) => !where.imageId.in.includes(id));
+        return { count: 0 };
+      }) as never);
+    });
+    afterEach(() => {
+      dbMock.dbWrite.imageConnection.findMany.mockReset();
+      dbMock.dbWrite.imageConnection.deleteMany.mockReset();
+    });
+    const save = (keep: number[], shownImageIds?: number[] | 'all') =>
+      updateEntityImages({
+        images: keep.map((id) => ({ id, url: URL_KEY, type: 'image' })),
+        userId: OWNER,
+        entityType: 'Bounty',
+        entityId: 1,
+        shownImageIds,
+      });
+
+    it('removes only the shown images left out, keeping the ones it was not shown', async () => {
+      linked = [1, 2, 3];
+      await save([1], [1, 2]);
+      expect(linked).toEqual([1, 3]);
+    });
+
+    // Unrated (hidden) when the form loaded, then rated inside the cap before the save.
+    it('keeps an image rated inside the cap between the form load and the save', async () => {
+      linked = [1, 7];
+      await save([1], [1]);
+      expect(linked).toContain(7);
+    });
+
+    it('ignores a shown id that is not linked to this entity', async () => {
+      linked = [1, 2];
+      await save([1], [1, 999]);
+      expect(dbMock.dbWrite.imageConnection.deleteMany).not.toHaveBeenCalled();
+      expect(linked).toEqual([1, 2]);
+    });
+
+    it('refuses an edit that drops a linked image without saying what it was shown', async () => {
+      linked = [1, 2];
+      await expect(save([1], undefined)).rejects.toThrow('Reload the page and save again');
+      expect(linked).toEqual([1, 2]);
+    });
+
+    it('lets an edit that only adds images through without the list', async () => {
+      linked = [1, 2];
+      await expect(
+        updateEntityImages({
+          images: [
+            { id: 1, url: URL_KEY, type: 'image' },
+            { id: 2, url: URL_KEY, type: 'image' },
+            { url: URL_KEY, type: 'image' },
+          ],
+          userId: OWNER,
+          entityType: 'Bounty',
+          entityId: 1,
+        })
+      ).resolves.toBeDefined();
+      expect(linked).toEqual([1, 2]);
+    });
+
+    it('saves a form that was shown no image while hidden ones stay linked', async () => {
+      linked = [3];
+      await expect(save([], [])).resolves.toBeDefined();
+      expect(linked).toEqual([3]);
+    });
+
+    it('replaces the set for a caller that read none', async () => {
+      linked = [1, 2, 3];
+      await save([1], 'all');
+      expect(linked).toEqual([1]);
+    });
+
+    it('refuses a save that would link more than the limit, before removing any', async () => {
+      linked = [1, 2];
+      await expect(
+        updateEntityImages({
+          images: [
+            { id: 1, url: URL_KEY, type: 'image' },
+            { id: 2, url: URL_KEY, type: 'image' },
+            { url: URL_KEY, type: 'image' },
+          ],
+          userId: OWNER,
+          entityType: 'BountyEntry',
+          entityId: 1,
+          shownImageIds: [1, 2],
+          maxLinked: 2,
+        })
+      ).rejects.toThrow('At most 2 images');
+      expect(linked).toEqual([1, 2]);
+    });
+
+    // Entries saved before the limit can be past it; trimming one, or editing only its text, saves.
+    it.each([
+      ['removes an image', [1, 2, 3], [1, 2, 3]],
+      ['keeps every image', [1, 2, 3, 4], [1, 2, 3, 4]],
+    ])('saves an entry already past the limit when the edit %s', async (_l, keep, after) => {
+      linked = [1, 2, 3, 4];
+      await expect(
+        updateEntityImages({
+          images: keep.map((id) => ({ id, url: URL_KEY, type: 'image' })),
+          userId: OWNER,
+          entityType: 'BountyEntry',
+          entityId: 1,
+          shownImageIds: [1, 2, 3, 4],
+          maxLinked: 2,
+        })
+      ).resolves.toBeDefined();
+      expect(linked).toEqual(after);
+    });
+
+    it('refuses a save that would leave no image, before removing any', async () => {
+      linked = [2];
+      await expect(save([], [2])).rejects.toThrow('At least one example image');
+      expect(linked).toEqual([2]);
+    });
+  });
 });
 
 describe('setVideoThumbnail', () => {
@@ -531,6 +660,7 @@ describe('resolveCoverImageId', () => {
       assertUrlUsable: vi.fn().mockResolvedValue(undefined),
       createImage: createImageDep,
       logExistenceUnknown: vi.fn(),
+      assertNotRestricted: vi.fn().mockResolvedValue(undefined),
     };
     const { id: _id, ...cover } = withServerColumns();
 

@@ -27,3 +27,12 @@ export function resolveViewerBrowsingLevel(claims: {
   );
   return selectable || publicBrowsingLevelsFlag;
 }
+
+/**
+ * A token whose own viewer level is exactly 0 (its minter's level and the domain share no level)
+ * may read no media at all. `resolveViewerBrowsingLevel` would read it as PG, the floor for a
+ * legacy or malformed token; a read of another user's media refuses it outright instead.
+ */
+export function hasEmptyViewerLevel(claims: { viewerBrowsingLevel?: number | null }): boolean {
+  return claims.viewerBrowsingLevel === 0;
+}

@@ -68,6 +68,7 @@ function image(id: number, url: string, extra: Record<string, unknown> = {}) {
       ingestion: 'Scanned',
       needsReview: null,
       tosViolation: false,
+      modelRestricted: false,
       userId: OWNER_ID,
       hash: null,
       width: 1,

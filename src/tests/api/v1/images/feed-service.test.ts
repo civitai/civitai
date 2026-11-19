@@ -551,7 +551,7 @@ describe('/api/v1/images served by the feed service', () => {
       expect(h.enforce).toHaveBeenCalledTimes(1);
       expect(h.enforce).toHaveBeenCalledWith(
         expect.objectContaining({ tags: [5, 6], limit: 10, browsingLevel: 1 }),
-        { id: undefined, isModerator: undefined }
+        { id: undefined, username: undefined, isModerator: false }
       );
     });
 

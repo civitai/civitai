@@ -125,6 +125,13 @@ vi.mock('~/server/services/model-com-face-recheck.service', async (importOrigina
   queueComFaceRecheck: mockQueueComFaceRecheck,
   queueComFaceRestore: mockQueueComFaceRestore,
 }));
+const { mockQueueComFaceVersionText } = vi.hoisted(() => ({
+  mockQueueComFaceVersionText: vi.fn(),
+}));
+vi.mock('~/server/services/model-com-face-version-text.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  queueComFaceVersionText: mockQueueComFaceVersionText,
+}));
 const { mockPreviewComFaceIntent, mockPreviewTextScanNsfw } = vi.hoisted(() => ({
   mockPreviewComFaceIntent: vi.fn(),
   mockPreviewTextScanNsfw: vi.fn(),
@@ -484,6 +491,7 @@ describe('a moderator lifting the nsfw lock', () => {
     detected: true,
     reason: 'r',
     textHash: listingHash,
+    promptId: 77,
     at: '2026-11-01T00:00:00.000Z',
     priorSystemNsfwLock: { source: 'text-scan', at: '2026-10-01T00:00:00.000Z' },
     laterVerdict: { source: 'xguard-text-moderation', at: '2026-11-02T00:00:00.000Z' },
@@ -517,7 +525,7 @@ describe('a moderator lifting the nsfw lock', () => {
     expect(meta.comFaceIntent?.overturnedAt).toEqual(expect.any(String));
     expect(meta.comFaceIntent).not.toHaveProperty('priorSystemNsfwLock');
     expect(meta.comFaceIntent).not.toHaveProperty('laterVerdict');
-    expect(reusableComFaceIntent(meta, listingHash)).toEqual({ detected: false, reason: 'r' });
+    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({ detected: false, reason: 'r' });
     expect(meta).not.toHaveProperty('comFaceIntentRelockSuppressed');
   });
 
@@ -533,7 +541,7 @@ describe('a moderator lifting the nsfw lock', () => {
     await unlock();
     const meta = updateData().meta as ModelMeta;
     expect(meta.comFaceIntent).toEqual(detection);
-    expect(reusableComFaceIntent(meta, listingHash)).toEqual({ detected: true, reason: 'r' });
+    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({ detected: true, reason: 'r' });
     expect(meta.comFaceIntentRelockSuppressed).toEqual({
       textHash: listingHash,
       at: expect.any(String),
@@ -552,7 +560,7 @@ describe('a moderator lifting the nsfw lock', () => {
     const editedHash = comFaceIntentTextHash({ ...edited, triggerWords: words });
     const meta = updateData().meta as ModelMeta;
     expect(meta.comFaceIntent).toEqual(detection);
-    expect(reusableComFaceIntent(meta, editedHash)).toBeNull();
+    expect(reusableComFaceIntent(meta, editedHash, 77)).toBeNull();
   });
 
   it('keys the re-lock suppression to the text the save leaves', async () => {
@@ -1188,6 +1196,8 @@ describe('.com face re-check after a listing edit', () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed' });
     expect(mockQueueComFaceRecheck).toHaveBeenCalledTimes(1);
     expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockQueueComFaceVersionText).toHaveBeenCalledTimes(1);
+    expect(mockQueueComFaceVersionText).toHaveBeenCalledWith(MODEL_ID);
   });
 
   it('queues it for an owner who edits the description', async () => {
@@ -1195,12 +1205,15 @@ describe('.com face re-check after a listing edit', () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID, description: 'New description' });
     expect(mockQueueComFaceRecheck).toHaveBeenCalledTimes(1);
     expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockQueueComFaceVersionText).toHaveBeenCalledTimes(1);
+    expect(mockQueueComFaceVersionText).toHaveBeenCalledWith(MODEL_ID);
   });
 
   it('does not queue it for a moderator’s edit', async () => {
     mockStored(withFace);
     await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, name: 'Renamed' });
     expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+    expect(mockQueueComFaceVersionText).not.toHaveBeenCalled();
   });
 
   it('arms the restore check on a .red listing edit only, not on a .com edit', async () => {
@@ -1237,24 +1250,30 @@ describe('.com face re-check after a listing edit', () => {
       mockStored({ ...withFace, ...unchanged });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: withFace.sfwName });
       expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+      expect(mockQueueComFaceVersionText).not.toHaveBeenCalled();
     });
 
     it('queues it when the owner retitles the .com face', async () => {
       mockStored({ ...withFace, ...unchanged });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
       expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+      expect(mockQueueComFaceVersionText).toHaveBeenCalledTimes(1);
+      expect(mockQueueComFaceVersionText).toHaveBeenCalledWith(MODEL_ID);
     });
 
     it('queues it when the owner picks another .com cover', async () => {
       mockStored({ ...withFace, ...unchanged });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwCoverImageId: 6 });
       expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+      expect(mockQueueComFaceVersionText).toHaveBeenCalledTimes(1);
+      expect(mockQueueComFaceVersionText).toHaveBeenCalledWith(MODEL_ID);
     });
 
     it('does not queue it when the owner clears the .com face', async () => {
       mockStored({ ...withFace, ...unchanged });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
       expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+      expect(mockQueueComFaceVersionText).not.toHaveBeenCalled();
     });
   });
 

@@ -1,3 +1,4 @@
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
 import {
@@ -108,6 +109,7 @@ export const getHomeBlocksHandler = async ({
           const data = await getHomeBlockData({
             homeBlock,
             user: ctx.user,
+            ...credentialViews(ctx),
             input,
             coverage,
           }).catch((error) => {

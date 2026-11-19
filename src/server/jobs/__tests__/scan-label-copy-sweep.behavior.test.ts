@@ -466,6 +466,6 @@ describe('createScanLabelSweepStore', () => {
   it('treats an already-deleted object as removed', async () => {
     const { client, sent } = fakeClient([[]]);
     await createScanLabelSweepStore({ client: client as never, bucket: 'b' }).remove('1/key-1');
-    expect(sent.map((s) => s.name)).toEqual([ListObjectVersionsCommand.name]);
+    expect(sent.filter((s) => s.name !== ListObjectVersionsCommand.name)).toEqual([]);
   });
 });

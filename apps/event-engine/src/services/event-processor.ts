@@ -10,12 +10,10 @@ import {
   getTableFromTopic,
   MetricEvent,
   CacheUpdate,
-  FeedUpdate,
   Operation,
   KafkaOffsetMeta,
 } from '@/types/events';
 import { MetricEventBatcher } from '@/services/metric-event-batcher';
-import { IndexUpdateQueue } from '@/services/index-update-queue';
 import { RedisCache } from '@/services/redis-cache';
 import { QueryCacheManager } from '@/services/query-cache-manager';
 import { metricSignals } from '@/services/metric-signals';
@@ -23,11 +21,9 @@ import { OutboxService, OutboxRecord } from '@/common/services/outbox';
 import { getOutboxHandlers } from '@/handlers/outbox/index';
 import { OutboxPoller } from '@/services/outbox-poller';
 import { spineService } from '@/services/spine';
-import { HandlerContext, EventHandler, HandlerActions, FeedUpdateType } from '@/types/handlers';
+import { HandlerContext, EventHandler, HandlerActions } from '@/types/handlers';
 import { createEventHandlerMapper } from '@/utils/handler-mapper';
 import { eventProcessorMetrics, excludedUsersMetrics, queryCacheMetrics } from '@/metrics';
-import { MetricService } from '@/common/services/metrics';
-import { CacheService } from '@/common/services/cache';
 import { CacheDriftMonitor } from '@/services/cache-drift-monitor';
 import { MetricExcludedUsers } from '@/services/metric-excluded-users';
 
@@ -48,9 +44,6 @@ export class EventProcessor {
   private redisCache: RedisCache;
   private queryCacheManager: QueryCacheManager | null = null;
   private metricBatcher: MetricEventBatcher;
-  private indexQueue!: IndexUpdateQueue;
-  private metricService!: MetricService;
-  private cacheService!: CacheService;
   private cacheDriftMonitor: CacheDriftMonitor | null = null;
   private excludedUsers: MetricExcludedUsers;
   private outboxService: OutboxService;
@@ -126,17 +119,6 @@ export class EventProcessor {
 
     const redisClient = await this.redisCache.getClient();
 
-    this.metricService = new MetricService(this.chClient, redisClient);
-    this.cacheService = new CacheService(redisClient, this.pgPool, this.chClient);
-
-    this.indexQueue = new IndexUpdateQueue(
-      this.chClient,
-      this.pgPool,
-      redisClient,
-      this.metricService,
-      this.cacheService
-    );
-
     this.queryCacheManager = new QueryCacheManager(this.redisCache);
 
     this.pgQueryMemoized = this.queryCacheManager.createMemoizedQuery(
@@ -153,7 +135,6 @@ export class EventProcessor {
 
     await this.queryCacheManager.start();
     await this.metricBatcher.start();
-    await this.indexQueue.start();
 
     // Drift canary: compares the Redis cache against deduped ClickHouse truth
     // for hot entities and emits mew_cache_drift_ratio. Defaults on; disable
@@ -203,7 +184,6 @@ export class EventProcessor {
     // Final flush. If this throws, propagate so the caller can avoid
     // committing offsets for events that aren't durable.
     await this.metricBatcher.stop();
-    await this.indexQueue.stop();
 
     await this.pgPool.end();
     await this.chClient.close();
@@ -286,7 +266,7 @@ export class EventProcessor {
     await Promise.all(completions);
 
     // Ensure the offset is recorded even if no handler emitted a metric
-    // event for it (e.g. handler ran but only updated feeds/redis).
+    // event for it (e.g. handler ran but only updated redis).
     this.metricBatcher.markOffset(kafkaMeta);
   }
 
@@ -454,18 +434,6 @@ export class EventProcessor {
           void metricSignals.sendDelta(enriched as CacheUpdate);
         }
       },
-      feedUpdate: (
-        entityType: FeedUpdate['entityType'],
-        entityId: FeedUpdate['entityId'],
-        type: FeedUpdateType = 'update'
-      ) => {
-        if (entityId == null) return;
-        this.indexQueue.add({ entityType, entityId: entityId as number, type });
-      },
-      feedDelete: (entityType: FeedUpdate['entityType'], entityId: FeedUpdate['entityId']) =>
-        actions.feedUpdate(entityType, entityId, 'delete'),
-      feedMetricUpdate: (entityType: FeedUpdate['entityType'], entityId: FeedUpdate['entityId']) =>
-        actions.feedUpdate(entityType, entityId, 'metricUpdate'),
       outboxRemove: async (id: number) => {
         await this.outboxService.delete(id);
       },

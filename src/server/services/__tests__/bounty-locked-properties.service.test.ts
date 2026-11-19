@@ -1,4 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
@@ -50,13 +52,24 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/redis/caches', () => ({
   userBountyCountCache: { refresh: vi.fn() },
 }));
+vi.mock('~/server/search-index/bounties.search-index', () => ({
+  bountiesSearchIndex: { queueUpdate: vi.fn() },
+}));
+vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
+  SearchIndexUpdate: { queueUpdate: vi.fn() },
+}));
 
 import {
   addBenefactorUnitAmount,
+  applyBountyContentChange,
   updateBountyById,
   upsertBounty,
 } from '~/server/services/bounty.service';
 import { constants } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
+import { bountyNsfwFlagLevel, ratedLevel } from '~/server/services/bounty-rated-level';
+import { loadRatingReviewSubject } from '~/server/services/rating-review.entities';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import {
   checkEntityImageKeys,
   createEntityImages,
@@ -75,12 +88,16 @@ function mockStored({
   poi = false,
   meta = null as unknown,
   details = null as unknown,
+  nsfw = false,
+  moderatorNsfwLevel = null as number | null,
 }: {
   lockedProperties?: string[];
   complete?: boolean;
   poi?: boolean;
   meta?: unknown;
   details?: unknown;
+  nsfw?: boolean;
+  moderatorNsfwLevel?: number | null;
 } = {}) {
   mockDbRead.bounty.findUnique.mockResolvedValue({ lockedProperties });
   mockDbWrite.bounty.findUniqueOrThrow.mockResolvedValue({
@@ -91,6 +108,8 @@ function mockStored({
     poi,
     meta,
     lockedProperties,
+    nsfw,
+    moderatorNsfwLevel,
     _count: { entries: 0 },
   });
 }
@@ -203,6 +222,255 @@ describe('updateBountyById — lock enforcement', () => {
   });
 });
 
+describe('updateBountyById — a moderator rating against a new nsfw flag', () => {
+  type Row = { nsfw: boolean; moderatorNsfwLevel: number | null };
+  const modEdit = { ...baseUpdate, userId: MODERATOR_ID, isModerator: true, nsfw: true };
+  const applied = (stored: Row): Row => {
+    const data = updateData();
+    return {
+      nsfw: data.nsfw ?? stored.nsfw,
+      moderatorNsfwLevel:
+        'moderatorNsfwLevel' in data ? data.moderatorNsfwLevel : stored.moderatorNsfwLevel,
+    };
+  };
+  const servedLevel = (row: Row) => bountyNsfwFlagLevel({ ...row, nsfwLevel: 60 }, undefined);
+
+  it('raises a rating below R to R when the edit sets the flag', async () => {
+    for (const rated of [NsfwLevel.PG, NsfwLevel.PG13]) {
+      const stored = { nsfw: false, moderatorNsfwLevel: rated };
+      mockStored(stored);
+      await updateBountyById(modEdit as never);
+      expect(updateData()).toMatchObject({
+        moderatorNsfwLevel: NsfwLevel.R,
+        moderatorNsfwLevelBasis: null,
+      });
+      expect(servedLevel(applied(stored))).toBe(NsfwLevel.R);
+    }
+  });
+
+  it('keeps a rating made after the flag, and one at R or above', async () => {
+    const cases = [
+      { nsfw: true, moderatorNsfwLevel: NsfwLevel.PG13 },
+      { nsfw: false, moderatorNsfwLevel: NsfwLevel.X },
+    ];
+    for (const stored of cases) {
+      mockStored(stored);
+      await updateBountyById(modEdit as never);
+      expect(updateData()).not.toHaveProperty('moderatorNsfwLevel');
+      expect(servedLevel(applied(stored))).toBe(stored.moderatorNsfwLevel);
+    }
+  });
+});
+
+// An unflagged bounty is served at its stored level, which updateBountyNsfwLevels' SQL computes.
+// Here the edit's own write, its raw queries and its job enqueue all land on real tables.
+describe('on real rows: the stored level after the nsfw flag moves', () => {
+  type Row = { nsfw: boolean; moderatorNsfwLevel: number | null; nsfwLevel: number };
+  const pg = { db: null as unknown as PGlite };
+  const onPg = (query: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
+    const q = 'text' in query ? query : Prisma.sql(query, ...(values as never[]));
+    return pg.db.query(q.text, q.values as unknown[]);
+  };
+  const readRow = async () =>
+    (
+      await pg.db.query<Row>(
+        `SELECT nsfw, "moderatorNsfwLevel", "nsfwLevel" FROM "Bounty" WHERE id = $1`,
+        [BOUNTY_ID]
+      )
+    ).rows[0];
+  const queued = async () =>
+    (
+      await pg.db.query(
+        `SELECT 1 FROM "JobQueue" WHERE "entityId" = $1 AND "entityType" = 'Bounty' AND type = 'UpdateNsfwLevel'`,
+        [BOUNTY_ID]
+      )
+    ).rows.length;
+  const edit = async (nsfw: boolean) => {
+    mockStored(await readRow());
+    await updateBountyById({ ...baseUpdate, nsfw } as never);
+  };
+
+  beforeAll(async () => {
+    pg.db = new PGlite();
+    await pg.db.exec(`
+      CREATE TYPE "EntityType" AS ENUM ('Bounty');
+      CREATE TYPE "JobQueueType" AS ENUM ('UpdateNsfwLevel');
+      CREATE TABLE "JobQueue" (
+        "entityId" integer, "entityType" "EntityType", "type" "JobQueueType",
+        PRIMARY KEY ("entityType", "entityId", "type")
+      );
+      CREATE TABLE "Bounty" (
+        "id" integer PRIMARY KEY,
+        "nsfw" boolean NOT NULL DEFAULT false,
+        "nsfwLevel" integer NOT NULL DEFAULT 0,
+        "moderatorNsfwLevel" integer,
+        "description" text
+      );
+      CREATE TABLE "Image" ("id" integer PRIMARY KEY, "nsfwLevel" integer NOT NULL);
+      CREATE TABLE "ImageConnection" ("imageId" integer, "entityType" text, "entityId" integer);
+      CREATE TABLE "EntityModeration" (
+        "entityType" text, "entityId" integer, "nsfwLevel" integer, "result" jsonb,
+        "blocked" boolean NOT NULL DEFAULT false, "triggeredLabels" text[] NOT NULL DEFAULT '{}'
+      );
+      INSERT INTO "Image" VALUES (10, ${NsfwLevel.PG});
+      INSERT INTO "ImageConnection" VALUES (10, 'Bounty', ${BOUNTY_ID});
+      INSERT INTO "EntityModeration" ("entityType", "entityId", "nsfwLevel", "result")
+        VALUES ('Bounty', ${BOUNTY_ID}, ${NsfwLevel.PG}, '{"version":"1"}');
+    `);
+  }, 60_000);
+  afterAll(() => pg.db?.close());
+
+  const saved = {
+    queryRaw: mockDbWrite.$queryRaw.getMockImplementation(),
+    executeRaw: mockDbWrite.$executeRaw.getMockImplementation(),
+  };
+  beforeEach(() => {
+    mockDbWrite.$queryRaw.mockImplementation(((...a: Parameters<typeof onPg>) =>
+      onPg(...a).then((r) => r.rows)) as never);
+    mockDbWrite.$executeRaw.mockImplementation(((...a: Parameters<typeof onPg>) =>
+      onPg(...a).then((r) => r.affectedRows ?? 0)) as never);
+    // The edit's row write, reduced to the columns the stored level depends on.
+    mockDbWrite.bounty.update.mockImplementation((async ({ data }: { data: Partial<Row> }) => {
+      if (data.nsfw !== undefined)
+        await pg.db.query(`UPDATE "Bounty" SET nsfw = $2 WHERE id = $1`, [BOUNTY_ID, data.nsfw]);
+      if (data.moderatorNsfwLevel !== undefined)
+        await pg.db.query(`UPDATE "Bounty" SET "moderatorNsfwLevel" = $2 WHERE id = $1`, [
+          BOUNTY_ID,
+          data.moderatorNsfwLevel,
+        ]);
+      return { id: BOUNTY_ID, userId: OWNER_ID };
+    }) as never);
+  });
+  afterEach(() => {
+    // A once-implementation left unconsumed by a failing test would read a closed PGlite later.
+    vi.mocked(SearchIndexUpdate.queueUpdate).mockReset();
+    mockDbWrite.bounty.findUnique.mockReset();
+    mockDbWrite.$queryRaw.mockImplementation(saved.queryRaw as never);
+    mockDbWrite.$executeRaw.mockImplementation(saved.executeRaw as never);
+  });
+
+  it('stores R or above as soon as the owner turns the flag on over a PG-13 rating, and after turning it off', async () => {
+    // Scan rated PG, moderator rated PG-13.
+    await pg.db.exec(`
+      DELETE FROM "Bounty"; DELETE FROM "JobQueue";
+      INSERT INTO "Bounty" VALUES (${BOUNTY_ID}, false, ${NsfwLevel.PG13}, ${NsfwLevel.PG13});
+    `);
+
+    await edit(true);
+    expect(ratedLevel((await readRow()).nsfwLevel)).toBeGreaterThanOrEqual(NsfwLevel.R);
+    expect(await queued()).toBe(1);
+
+    await edit(false);
+    const row = await readRow();
+    expect(row.nsfw).toBe(false);
+    expect(ratedLevel(row.nsfwLevel)).toBeGreaterThanOrEqual(NsfwLevel.R);
+  });
+
+  it('keeps the committed edit and its queued retry when the recompute fails', async () => {
+    await pg.db.exec(`
+      DELETE FROM "Bounty"; DELETE FROM "JobQueue";
+      INSERT INTO "Bounty" VALUES (${BOUNTY_ID}, false, ${NsfwLevel.PG}, null);
+    `);
+    mockDbWrite.$queryRaw.mockImplementation(((...a: Parameters<typeof onPg>) => {
+      const q = 'text' in a[0] ? a[0] : Prisma.sql(a[0], ...(a.slice(1) as never[]));
+      if (q.text.includes('WITH next AS')) return Promise.reject(new Error('recompute failed'));
+      return onPg(...a).then((r) => r.rows);
+    }) as never);
+
+    await edit(true);
+    expect((await readRow()).nsfw).toBe(true);
+    expect(await queued()).toBe(1);
+  });
+
+  // The blurb fan-out reads the row once unlocked, then again under the row lock; `between` runs
+  // after the first read, where a concurrent write would land.
+  const blurbEdit = async (between?: () => Promise<unknown>) => {
+    let reads = 0;
+    mockDbWrite.bounty.findUnique.mockImplementation((async () => {
+      const row = { ...(await readRow()), name: 'A bounty', lockedProperties: [], details: null };
+      if (++reads === 1) await between?.();
+      return row;
+    }) as never);
+    mockEvaluateContent.mockReturnValue({
+      shouldMarkNSFW: true,
+      matchedWords: ['x'],
+      reason: 'r',
+      metrics: { matchCount: 1 },
+    });
+    await applyBountyContentChange({ id: BOUNTY_ID, description: 'blurb text' });
+  };
+  const seedPg13 = () =>
+    pg.db.exec(`
+      DELETE FROM "Bounty"; DELETE FROM "JobQueue";
+      INSERT INTO "Bounty" VALUES (${BOUNTY_ID}, false, ${NsfwLevel.PG13}, ${NsfwLevel.PG13});
+    `);
+
+  it('reindexes at R or above when a blurb edit trips the profanity gate over a PG-13 rating', async () => {
+    await seedPg13();
+    let indexedLevel: number | undefined;
+    vi.mocked(SearchIndexUpdate.queueUpdate).mockImplementationOnce((async () => {
+      indexedLevel = (await readRow()).nsfwLevel;
+    }) as never);
+
+    await blurbEdit();
+
+    expect(ratedLevel(indexedLevel ?? 0)).toBeGreaterThanOrEqual(NsfwLevel.R);
+    expect(await queued()).toBe(1);
+  });
+
+  it('keeps a moderator rating written after the unlocked read', async () => {
+    await seedPg13();
+
+    await blurbEdit(() =>
+      pg.db.query(`UPDATE "Bounty" SET "moderatorNsfwLevel" = $2 WHERE id = $1`, [
+        BOUNTY_ID,
+        NsfwLevel.X,
+      ])
+    );
+
+    const row = await readRow();
+    expect(row.moderatorNsfwLevel).toBe(NsfwLevel.X);
+    expect(ratedLevel(row.nsfwLevel)).toBe(NsfwLevel.X);
+    expect(row.nsfw).toBe(true);
+    // One connection here, so the lock cannot block; check the second read is taken under it.
+    const lockAt = mockDbWrite.$queryRaw.mock.calls.findIndex(([q]) =>
+      (Array.isArray(q) ? q.join('') : (q as { text: string }).text).includes('FOR UPDATE')
+    );
+    expect(lockAt, 'row lock statement issued').toBeGreaterThanOrEqual(0);
+    expect(
+      mockDbWrite.$queryRaw.mock.invocationCallOrder[lockAt],
+      'row lock taken before the locked re-read'
+    ).toBeLessThan(mockDbWrite.bounty.findUnique.mock.invocationCallOrder[1]);
+  });
+});
+
+describe('upsertBounty — images the edit form was not shown', () => {
+  const upsert = (input: Record<string, unknown>) =>
+    upsertBounty({
+      isModerator: false,
+      ...baseUpdate,
+      startsAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      ...input,
+    } as never);
+
+  it('passes the ids the form was shown through to the image links', async () => {
+    await upsert({
+      images: [{ id: 1, url: '00000000-0000-4000-8000-000000000000' }],
+      shownImageIds: [1, 2],
+    });
+    expect(vi.mocked(updateEntityImages).mock.calls[0][0]).toMatchObject({
+      shownImageIds: [1, 2],
+    });
+  });
+
+  // Every image hidden by the domain's cap: the form shows none and must still save a name edit.
+  it('saves an edit whose form was shown no image', async () => {
+    await upsert({ name: 'Renamed', images: [], shownImageIds: [] });
+    expect(vi.mocked(updateEntityImages).mock.calls[0][0]).toMatchObject({ images: [] });
+  });
+});
+
 describe('upsertBounty — profanity filter vs stored locks', () => {
   // upsertBounty re-parses through updateBountyInputSchema, which requires at least one
   // image and an expiry in the future.
@@ -272,6 +540,74 @@ describe('upsertBounty — profanity filter vs stored locks', () => {
     expect(data).not.toHaveProperty('nsfw');
     expect(data).not.toHaveProperty('lockedProperties');
     expect(data.details).toEqual(expect.objectContaining({ profanityMatches: ['bad'] }));
+  });
+
+  describe("the text scan's record on an edit", () => {
+    const scan = { workflowId: 'w', level: 4, at: '2026-11-16' };
+    beforeEach(() => mockEvaluateContent.mockReturnValue({ shouldMarkNSFW: false }));
+
+    it('keeps the stored record over one the editor sends', async () => {
+      mockStored({ details: { baseModel: 'SD 1.5', textScanNsfw: scan } });
+      for (const isModerator of [false, true]) {
+        await upsert({
+          isModerator,
+          details: { baseModel: 'SDXL 1.0', textScanNsfw: { level: 1 } },
+        });
+        expect(updateData().details).toEqual({ baseModel: 'SDXL 1.0', textScanNsfw: scan });
+      }
+    });
+
+    it('keeps it when the edit drops it or sends no details', async () => {
+      mockStored({ details: { baseModel: 'SD 1.5', textScanNsfw: scan } });
+      await upsert({ details: { baseModel: 'SDXL 1.0' } });
+      expect(updateData().details).toEqual({ baseModel: 'SDXL 1.0', textScanNsfw: scan });
+      await upsert({ details: undefined });
+      expect(updateData().details).toEqual({ textScanNsfw: scan });
+    });
+
+    it("goes with a moderator's unflag, so a later manual flag is not read as the scan's", async () => {
+      mockStored({ details: { baseModel: 'SD 1.5', textScanNsfw: scan } });
+      await upsert({
+        isModerator: true,
+        nsfw: false,
+        details: { baseModel: 'SD 1.5', textScanNsfw: scan },
+      });
+      const unflagged = updateData().details;
+      expect(unflagged).toEqual({ baseModel: 'SD 1.5' });
+
+      mockStored({ details: unflagged });
+      await upsert({ isModerator: true, nsfw: true, details: unflagged });
+      const reflagged = updateData().details;
+
+      dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+        userId: 3,
+        nsfw: true,
+        details: reflagged,
+        nsfwLevel: 60,
+        updatedAt: new Date(),
+        name: 'b',
+        moderatorNsfwLevel: null,
+        moderatorNsfwLevelBasis: null,
+      });
+      dbMock.dbRead.entityModeration.findUnique.mockResolvedValue({
+        status: 'Succeeded',
+        nsfwLevel: 4,
+        result: { version: 1, textHash: 'h', labels: { nsfw: { level: 'r', reason: 'x' } } },
+      });
+      expect(await loadRatingReviewSubject('Bounty', 1)).toMatchObject({ currentLevel: 16 });
+    });
+
+    it("is kept when an owner's edit unflags", async () => {
+      mockStored({ details: { baseModel: 'SD 1.5', textScanNsfw: scan } });
+      await upsert({ nsfw: false, details: { baseModel: 'SD 1.5' } });
+      expect(updateData().details).toEqual({ baseModel: 'SD 1.5', textScanNsfw: scan });
+    });
+
+    it('takes none from an editor when the scan wrote none', async () => {
+      mockStored({ details: { baseModel: 'SD 1.5' } });
+      await upsert({ details: { baseModel: 'SDXL 1.0', textScanNsfw: scan } });
+      expect(updateData().details).toEqual({ baseModel: 'SDXL 1.0' });
+    });
   });
 
   describe('the stored detection on an edit', () => {
@@ -372,6 +708,11 @@ describe('upsertBounty — create path', () => {
   const chargedAccountTypes = () =>
     mockBuzzTransaction.mock.calls.at(-1)?.[0]?.fromAccountTypes ?? [];
 
+  it('refuses a new bounty with no image', async () => {
+    await expect(create({ images: [] })).rejects.toThrow(/At least one example image/);
+    expect(mockDbWrite.bounty.create).not.toHaveBeenCalled();
+  });
+
   it('checks the image upload keys before opening the transaction', async () => {
     await create();
 
@@ -457,6 +798,14 @@ describe('upsertBounty — create path', () => {
 
     expect(chargedAccountTypes()).toEqual(['yellow']);
     expect(createData().lockedProperties).toBeUndefined();
+  });
+
+  it("takes no text scan record from the creator's details", async () => {
+    await create({
+      buzzType: 'yellow',
+      details: { baseModel: 'SDXL 1.0', textScanNsfw: { level: 4 } },
+    });
+    expect(createData().details).toEqual({ baseModel: 'SDXL 1.0' });
   });
 
   it('carries the profanity filter nsfw lock into the new row', async () => {

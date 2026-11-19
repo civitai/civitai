@@ -117,6 +117,7 @@ const SKIP_ORDER = [
   'bad-kind',
   'bad-question',
   'duplicate',
+  'unservable-image',
 ];
 const rank = (reason: string) => {
   const at = SKIP_ORDER.indexOf(reason);

@@ -231,7 +231,8 @@ describe('connect scope disclosure', () => {
       scopeJustifications: { UserRead: 'updated', ModelsWrite: 'reason' },
     };
     const patch = buildScalarPatch(ctx, form);
-    expect(patch.requestedScopes).toBe(FULL);
+    // Sent as a JSON number.
+    expect(patch.requestedScopes).toBe(Number(FULL));
     expect(patch.scopeJustifications).toEqual({ UserRead: 'updated', ModelsWrite: 'reason' });
   });
 
@@ -243,7 +244,8 @@ describe('connect scope disclosure', () => {
       connectAllowedScopes: FULL,
     });
     const patch = buildScalarPatch(ctx, editContextToForm(ctx));
-    expect(patch.requestedScopes).toBe(FULL);
+    // Sent as a JSON number.
+    expect(patch.requestedScopes).toBe(Number(FULL));
   });
 
   it('no scope fields for a listing without a connect client', () => {

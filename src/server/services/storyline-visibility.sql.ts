@@ -1,7 +1,10 @@
 import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 import { NsfwLevel } from '~/server/common/enums';
 import { heldUserSql } from '@civitai/shared/held-media';
-import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
+import {
+  semanticCoverImageCleanText,
+  semanticImageHeldText,
+} from '~/server/services/semantic-held-content.sql';
 import { STORYLINE_MINOR_CEILING } from '~/shared/utils/storyline';
 
 /**
@@ -56,7 +59,9 @@ export const storylineSemanticEligibleText = ({
   rp = 'rp',
   ru = 'ru',
 } = {}) =>
-  `(${st}."tosViolation" = false AND ${u}."bannedAt" IS NULL AND ${u}."deletedAt" IS NULL
+  `(${st}."tosViolation" = false AND ${st}."minorByScan" = false
+  AND ${u}."bannedAt" IS NULL AND ${u}."deletedAt" IS NULL
+  AND ${semanticCoverImageCleanText(`${st}."coverImageId"`)}
   AND ${storylineRootText({ rc, rp, ru }, `${rp}."publishedAt" IS NOT NULL`)}
   AND ${rp}.availability = 'Public'
   AND NOT ${heldUserSql(`${st}."userId"`)} AND NOT ${heldUserSql(`${rp}."userId"`)}

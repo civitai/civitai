@@ -1,6 +1,6 @@
 import { uniq } from 'lodash-es';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BlockedReason, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -47,7 +47,8 @@ export function disarmAccountDeletionImagePurge(userId: number) {
  * off `blockedFor`: a moderator block is also `blockedFor = 'moderated'`, so anything scoped that
  * way would unblock content a moderator hid. Restoring the recorded values rather than forcing
  * `Scanned`/`NULL` keeps an image that was mid-scan (or blocked for `AiNotVerified`) in the state
- * it was actually in.
+ * it was actually in. The exception is a CSAM reason, current or recorded: it is kept, and the row
+ * stays `Blocked`.
  *
  * The largest account holds ~785K images, so the reversal claims a bounded batch per pass instead
  * of returning the whole gallery to Node in one statement. The breadcrumb check lives in the claim
@@ -63,11 +64,18 @@ export async function unblockAccountDeletionImages(userId: number) {
   while (passes < MAX_RESTORE_BATCHES) {
     passes++;
     const restored = await dbWrite.$queryRaw<
-      { id: number; postId: number | null; ingestion: string }[]
+      { id: number; postId: number | null; ingestion: string; blockedFor: string | null }[]
     >`
       UPDATE "Image"
-      SET ingestion = ("metadata"->>${PRIOR_INGESTION_KEY}::text)::"ImageIngestionStatus",
-          "blockedFor" = "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text,
+      SET ingestion = CASE
+            WHEN "blockedFor" = ${BlockedReason.CSAM} OR "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${BlockedReason.CSAM}
+            THEN 'Blocked'::"ImageIngestionStatus"
+            ELSE ("metadata"->>${PRIOR_INGESTION_KEY}::text)::"ImageIngestionStatus"
+          END,
+          "blockedFor" = CASE
+            WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
+            ELSE "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text
+          END,
           "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text
       WHERE id IN (
         SELECT i.id
@@ -78,7 +86,7 @@ export async function unblockAccountDeletionImages(userId: number) {
           AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
         LIMIT ${RESTORE_BATCH_SIZE}
       )
-      RETURNING id, "postId", ingestion
+      RETURNING id, "postId", ingestion, "blockedFor"
     `;
 
     if (!restored.length) {
@@ -86,7 +94,9 @@ export async function unblockAccountDeletionImages(userId: number) {
       break;
     }
 
-    const visible = restored.filter((x) => x.ingestion !== 'Blocked');
+    const visible = restored.filter(
+      (x) => x.ingestion !== 'Blocked' && x.blockedFor !== BlockedReason.CSAM
+    );
     const ids = visible.map((x) => x.id);
     const postIds = uniq(visible.map((x) => x.postId).filter((id): id is number => id != null));
     unblocked += ids.length;

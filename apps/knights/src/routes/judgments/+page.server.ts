@@ -1,7 +1,7 @@
 import { db } from '$lib/server/db';
 import { imagePageUrl, imageUrl, THUMBNAIL_WIDTH } from '$lib/server/image-url';
 import { listJudgments, parseJudgmentFilter } from '$lib/server/progression/judgments';
-import { requireMember } from '$lib/server/membership';
+import { requireConsent, requireMember } from '$lib/server/membership';
 import type { PageServerLoad } from './$types';
 
 const MAX_PAGE = 1000;
@@ -17,6 +17,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     requireMember(db, locals.user.id),
     listJudgments(db, locals.user.id, { page, filter }),
   ]);
+  await requireConsent(locals.user.id);
 
   return {
     page,

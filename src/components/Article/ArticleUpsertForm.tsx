@@ -55,6 +55,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { MatureRestrictedBadge } from '~/components/Image/MatureRestrictedBadge/MatureRestrictedBadge';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 const schema = articleFormSchema(true);
 const querySchema = z.object({
@@ -143,6 +145,11 @@ export function ArticleUpsertForm({ article }: Props) {
   });
   const [userNsfwLevel, content] = form.watch(['userNsfwLevel', 'content']);
   const [watchedCover, watchedBanner] = form.watch(['coverImage', 'bannerImage']);
+  // The saved image, while it is still selected: its owner and moderators see it, its readers don't.
+  const isSavedRestricted = (
+    saved: ArticleGetById['coverImage'],
+    watched: { id?: number } | null | undefined
+  ) => !!saved && watched?.id === saved.id && isRestrictedImage(saved);
   useEffect(() => {
     if (currentUser?.isModerator) {
       if (userNsfwLevel)
@@ -523,6 +530,9 @@ export function ArticleUpsertForm({ article }: Props) {
               previewWidth={constants.article.coverImageWidth}
               withAsterisk={!features.articleTypography}
             />
+            <MatureRestrictedBadge
+              restricted={isSavedRestricted(article?.coverImage, watchedCover)}
+            />
             {features.articleTypography && (
               <ReframeButton
                 source={watchedCover}
@@ -538,6 +548,11 @@ export function ArticleUpsertForm({ article }: Props) {
                 aspectRatio={
                   constants.article.bannerImageHeight / constants.article.bannerImageWidth
                 }
+              />
+            )}
+            {features.articleTypography && (
+              <MatureRestrictedBadge
+                restricted={isSavedRestricted(article?.bannerImage, watchedBanner)}
               />
             )}
             {features.articleTypography && (

@@ -86,6 +86,10 @@ import {
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
 import {
+  containsPrivateMediaUrl,
+  valueContainsPrivateMediaUrl,
+} from '~/server/services/apps/shared-private-media-urls';
+import {
   checkSharedVoteRateLimit,
   checkSharedReportRateLimit,
   checkSharedWithdrawRateLimit,
@@ -376,17 +380,6 @@ export async function resolveSharedContext(
   // them. Do not re-enumerate that set here — it is four ops today and adding a
   // fifth must not silently make this comment wrong. Mechanism + the measurement
   // against the real wasm engine: GLOBAL-EVAL SEMANTICS in `app-blocks-flag.ts`.
-  //
-  // 🔴 WATCHLISTED as `shared-storage-subject-refusal` in
-  // `scripts/compiled-branch-watchlist.mjs`. Unlike a type-level guard, this is a pure
-  // runtime branch, so a bundler that drops it re-opens the exposure with the source
-  // still correct — which is precisely what shipped in release 5.1.18 (civitai#3983).
-  // MOVING this branch is fine — the gate resolves its anchor from source at run time,
-  // so line numbers do not matter, and the message text is free to change because the
-  // anchor here is the CONDITION on the next line, not the message. DELETING the branch,
-  // or rewriting that condition, fails the production Docker build at
-  // `assert-compiled-branches.mjs` — in the second case update the watchlist entry in the
-  // same commit.
   if (userId != null && !subjectUser) {
     throw tagSharedStorageOutcome(
       new TRPCError({ code: 'FORBIDDEN', message: 'token subject could not be resolved' }),
@@ -1660,6 +1653,15 @@ async function incrementSharedCounterUnmetered(
     }
   };
 
+  if (moderationMode !== 'enforce' && containsPrivateMediaUrl(key)) {
+    throw tagSharedStorageOutcome(
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Content contains a blocked link (counterKey)',
+      }),
+      'moderation_blocked'
+    );
+  }
   let outcome = await runIncrement(moderationMode === 'enforce');
   if (!outcome) {
     // Enforce, and this increment would create the key: scan it now, with no transaction open.
@@ -1955,6 +1957,13 @@ async function assertSharedValueSafeAndSerialize(params: {
   // A thunk, so shadow mode parses off the request path too (inside the deferred scan).
   const readStoredData = () =>
     value.data === undefined ? undefined : (JSON.parse(serialized) as { data?: unknown }).data;
+  // Refused in every mode; under `enforce` the scan below records it.
+  if (mode !== 'enforce' && valueContainsPrivateMediaUrl(JSON.parse(serialized))) {
+    throw tagSharedStorageOutcome(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Content contains a blocked link (data)' }),
+      'moderation_blocked'
+    );
+  }
   if (mode === 'enforce') {
     const scan = await enforceScan(
       () => scanSharedData(readStoredData(), { isModerator: subjectUser?.isModerator }),

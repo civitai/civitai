@@ -133,9 +133,7 @@ vi.mock('~/utils/generator-import', () => ({
   downloadGeneratorImages: mocks.downloadGeneratorImages,
 }));
 
-const { useGeneratorSelectionStore } = await import(
-  '~/components/EntrySubmit/GeneratorMediaPicker'
-);
+const { generatorSelectionStore } = await import('~/components/EntrySubmit/GeneratorMediaPicker');
 const { default: CrucibleSubmitEntryModal } = await import(
   '~/components/Crucible/CrucibleSubmitEntryModal'
 );
@@ -212,7 +210,7 @@ beforeEach(() => {
     .mockImplementation(async (selected: unknown[]) =>
       selected.map((_, i) => ({ file: new File(['x'], `gen-${i}.png`) }))
     );
-  useGeneratorSelectionStore.setState({ selected: [] });
+  generatorSelectionStore.actions.clear();
   mocks.reasonsById = {};
   mocks.minVotes = 0;
   mocks.user = { id: 42, muted: false };
@@ -396,7 +394,7 @@ describe('CrucibleSubmitEntryModal — from the generator', () => {
   };
 
   test('submits straight to the crucible, never offering to add to a library', async () => {
-    useGeneratorSelectionStore.setState({ selected: generated(1) });
+    generatorSelectionStore.actions.setSelected(generated(1));
     renderModal();
     await openGeneratorTab();
 
@@ -405,7 +403,7 @@ describe('CrucibleSubmitEntryModal — from the generator', () => {
   });
 
   test('puts each generated image in its own unpublished post', async () => {
-    useGeneratorSelectionStore.setState({ selected: generated(2) });
+    generatorSelectionStore.actions.setSelected(generated(2));
     renderModal({ freeEntriesPerUser: 3 });
     await openGeneratorTab();
     await vi.waitFor(() => expect(plainSubmit()?.textContent).toContain('Submit 2 Entries'));
@@ -434,9 +432,9 @@ describe('CrucibleSubmitEntryModal — from the generator', () => {
 
 describe('CrucibleSubmitEntryModal — generator picks enter once scanned', () => {
   test('enters each picked image as soon as its scan settles, with no second click', async () => {
-    useGeneratorSelectionStore.setState({
-      selected: [{ url: 'gen-0', type: MediaType.image }] as never[],
-    });
+    generatorSelectionStore.actions.setSelected([
+      { url: 'gen-0', type: MediaType.image },
+    ] as never[]);
     mocks.images = [];
     const view = await renderModal();
     const tab = await vi.waitFor(() => {
@@ -502,12 +500,10 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
     currentEntryCount: 0,
   };
   const startBatch = async () => {
-    useGeneratorSelectionStore.setState({
-      selected: [
-        { url: 'gen-0', type: MediaType.image },
-        { url: 'gen-1', type: MediaType.image },
-      ] as never[],
-    });
+    generatorSelectionStore.actions.setSelected([
+      { url: 'gen-0', type: MediaType.image },
+      { url: 'gen-1', type: MediaType.image },
+    ] as never[]);
     mocks.images = [];
     const view = await renderWithProviders(<CrucibleSubmitEntryModal {...props} />);
     const tab = await vi.waitFor(() => {

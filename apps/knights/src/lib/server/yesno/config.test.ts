@@ -32,3 +32,23 @@ describe('yesNoSettings', () => {
     );
   });
 });
+
+describe('yesNoSettings with stored settings', () => {
+  it('lets each stored value win over the environment, a share of 0 included', () => {
+    expect(
+      yesNoSettings(
+        { KNIGHTS_YESNO_SHARE: '0.4', KNIGHTS_YESNO_STRETCH: '5', KNIGHTS_YESNO_MAX_AGE_DAYS: '3' },
+        { yesNoShare: 0, yesNoStretch: 2, yesNoMaxAgeDays: 21 }
+      )
+    ).toEqual({ share: 0, stretch: 2, maxAgeDays: 21 });
+  });
+
+  it('keeps the environment for every field nothing is stored for', () => {
+    expect(
+      yesNoSettings(
+        { KNIGHTS_YESNO_SHARE: '0.4', KNIGHTS_YESNO_MAX_AGE_DAYS: '3' },
+        { yesNoStretch: 2 }
+      )
+    ).toEqual({ share: 0.4, stretch: 2, maxAgeDays: 3 });
+  });
+});

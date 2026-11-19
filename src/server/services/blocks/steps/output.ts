@@ -11,6 +11,9 @@
 // cycle to reason about.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Another leaf (no imports of its own), so this module stays one.
+import { stripPlainUrlFields } from '~/server/services/blocks/steps/plain-url-fields';
+
 /**
  * One piece of output media a registered step produced.
  *
@@ -272,11 +275,9 @@ const PASS_THROUGH_OUTPUT_WALK_DEPTH = 32;
  * invisible to a shape test, and reaches the app through `stepOutputs` unseen by
  * the publish path or the per-viewer gated read. Sniffing every string for
  * something url-shaped is NOT the fix — it would strip prose that merely contains
- * a link. Handling a named field by position is; `splitPassThroughStep` does
- * that for the training `$type`s (incl. the plain-string
- * `imageResourceTraining.epochs[].blobUrl` and `sampleImages`). `blobArchive`
- * remains open, as does `imageResourceTraining.sampleInputImages` (images the
- * run selected from the app's own training input).
+ * a link. Handling a named field by position is: `PLAIN_URL_FIELDS`
+ * (`plain-url-fields.ts`) names every such field, and `splitPassThroughStep`
+ * strips or lifts each one before this walk.
  *
  * 🔴 IT REBUILDS RATHER THAN FORWARDS. Every object and array it descends into
  * is reconstructed, so "forward verbatim" is true of VALUES and not of identity:
@@ -358,6 +359,14 @@ export function isTrainingStepType(stepType: unknown): stepType is TrainingStepT
   return (TRAINING_STEP_TYPES as readonly unknown[]).includes(stepType);
 }
 
+/** A returned `$type` folded to its training spelling, or null. The orchestrator may echo
+ *  whatever casing was submitted, so reading output must not depend on it. */
+export function canonicalTrainingStepType(stepType: unknown): TrainingStepType | null {
+  if (typeof stepType !== 'string') return null;
+  const folded = stepType.toLowerCase();
+  return TRAINING_STEP_TYPES.find((t) => t.toLowerCase() === folded) ?? null;
+}
+
 /** An epoch whose checkpoint is ready — what the training publish wizard can be handed. */
 export type TrainedEpoch = { $type: TrainingStepType; epochNumber: number };
 
@@ -373,14 +382,13 @@ export type TrainedEpoch = { $type: TrainingStepType; epochNumber: number };
  * keyed on the two `$type`s, before the walk runs — never by sniffing a url for
  * a file extension.
  *
- * 🔴 SAMPLES GO TO `imageUrls` FOR BOTH TYPES. `training` samples are `Blob`s and
- * the walk lifts them; `imageResourceTraining.epochs[].sampleImages` are plain
+ * 🔴 SAMPLES GO TO `imageUrls` FOR BOTH TYPES, once the run is approved.
+ * `training` samples are `Blob`s and the walk lifts them; `imageResourceTraining.epochs[].sampleImages` are plain
  * strings the main app renders as image urls, so they are lifted here by
  * position — otherwise they would ride `stepOutputs`, around the gated read.
  *
- * 🔴 `trainedEpochs` IS EMPTY UNLESS THE RUN'S `moderationStatus` IS `approved`.
- * It is what a block offers to the publish wizard; a run still evaluating, under
- * review or rejected has nothing to offer.
+ * 🔴 NO SAMPLE AND NO EPOCH UNLESS THE RUN'S `moderationStatus` IS `approved`.
+ * The manager API returns it in either casing, so compare case-insensitively.
  *
  * Both workflow extractors call this rather than `splitPassThroughStepOutput`
  * directly, so neither can forget the training rule.
@@ -397,12 +405,14 @@ export function splitPassThroughStep(
   /** Subtrees nested past the walk cap, nulled rather than forwarded. */
   truncated: number;
 } {
-  if (!isTrainingStepType(stepType)) {
-    return { ...splitPassThroughStepOutput(output), trainedEpochs: [] };
+  const visible = stripPlainUrlFields(stepType, output);
+  const trainingType = canonicalTrainingStepType(stepType);
+  if (!trainingType) {
+    return { ...splitPassThroughStepOutput(visible), trainedEpochs: [] };
   }
   const trainedEpochs: TrainedEpoch[] = [];
   const sampleUrls: string[] = [];
-  const stripped = stripTrainingEpochs(stepType, output, trainedEpochs, sampleUrls);
+  const stripped = stripTrainingEpochs(trainingType, visible, trainedEpochs, sampleUrls);
   const { media, rest, model3d, slots, truncated } = splitPassThroughStepOutput(stripped);
   // 🔴 These plain-string samples carry NO rating, and none will ever arrive, so as
   // output positions they are `neverRated`: restricted `'unrated'` wherever a rating
@@ -420,18 +430,14 @@ export function splitPassThroughStep(
       neverRated: true,
     });
   }
+  const moderationStatus =
+    output !== null && typeof output === 'object'
+      ? (output as Record<string, unknown>).moderationStatus
+      : undefined;
   const approved =
-    output !== null &&
-    typeof output === 'object' &&
-    (output as Record<string, unknown>).moderationStatus === 'approved';
-  return {
-    media,
-    rest,
-    trainedEpochs: approved ? trainedEpochs : [],
-    model3d,
-    slots,
-    truncated,
-  };
+    typeof moderationStatus === 'string' && moderationStatus.toLowerCase() === 'approved';
+  if (!approved) return { media: [], rest, trainedEpochs: [], model3d: [], slots: [], truncated };
+  return { media, rest, trainedEpochs, model3d, slots, truncated };
 }
 
 /**
@@ -440,8 +446,8 @@ export function splitPassThroughStep(
  * for the legacy type, the plain-string samples lifted to media instead.
  */
 const STRIPPED_EPOCH_KEYS: Record<TrainingStepType, readonly string[]> = {
-  training: ['model'],
-  imageResourceTraining: ['blobUrl', 'blobName', 'sampleImages'],
+  training: ['model', 'traceUrl'],
+  imageResourceTraining: ['blobUrl', 'blobName', 'sampleImages', 'traceUrl'],
 };
 
 function hasReadyCheckpoint(stepType: TrainingStepType, epoch: Record<string, unknown>): boolean {

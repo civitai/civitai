@@ -360,7 +360,7 @@ func infRows(rows []RawImage) *testkit.Rows {
 		"hasPositivePrompt", "onSite", "remixOfId", "createdAt", "sortAt", "mimeType", "type", "metadata",
 		"ingestion", "blockedFor", "scannedAt", "needsReview", "userId", "postId", "postTitle", "index",
 		"publishedAt", "unpublishedAt", "modelVersionId", "model3dId", "availability", "minor", "poi",
-		"acceptableMinor", "cursorId"}
+		"acceptableMinor", "restricted", "cursorId"}
 	ptr := func(p *int) any {
 		if p == nil {
 			return nil
@@ -382,7 +382,7 @@ func infRows(rows []RawImage) *testkit.Rows {
 		}
 		data = append(data, []any{r.ID, nil, strOrNil(r.URL), r.NsfwLevel, ptr(r.Width), ptr(r.Height), strOrNil(r.Hash),
 			false, true, true, nil, nil, r.SortAt, r.SortAt, nil, r.Type, meta, "Scanned", nil, nil, nil, r.UserID,
-			r.PostID, nil, ptr(r.Index), published, nil, nil, nil, r.Availability, false, false, false, cursor})
+			r.PostID, nil, ptr(r.Index), published, nil, nil, nil, r.Availability, false, false, false, false, cursor})
 	}
 	return testkit.NewRows(cols, data...)
 }

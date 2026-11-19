@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { recordAppBlockRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
+import { blockClaimsAppLabel } from '~/server/metrics/app-block-runtime.metrics';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 
@@ -33,6 +35,7 @@ import {
   APP_SUB_LISTING_TAGLINE_MAX,
   APP_SUB_LISTING_TITLE_MAX,
   effectiveSubListingRating,
+  subListingRatingFromNsfwLevel,
   isAppSubListingId,
   isRatingAtLeastAsStrict,
   isValidSubListingExternalId,
@@ -44,7 +47,6 @@ import type { SessionUser } from '~/types/session';
 import { NsfwLevel } from '~/server/common/enums';
 import type { DocRating } from '~/server/services/apps/doc-store.types';
 import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
-import { contentRatingFromNsfwLevel } from '~/shared/constants/browsingLevel.constants';
 import type {
   ListSubListingQueueInput,
   ModerateSubListingInput,
@@ -106,7 +108,7 @@ function cardRatingFromItem(rating: DocRating, chosen: string | null): string | 
   if (rating.level == null || rating.level & NsfwLevel.Blocked) {
     throw new SubListingError(404, 'item_not_found', 'Item not found');
   }
-  return effectiveSubListingRating(contentRatingFromNsfwLevel(rating.level), chosen);
+  return effectiveSubListingRating(subListingRatingFromNsfwLevel(rating.level), chosen);
 }
 
 /**
@@ -140,26 +142,31 @@ export async function syncSubListingRatingFromDoc(args: {
       });
       return;
     }
-    const rating = contentRatingFromNsfwLevel(args.level);
+    const rating = subListingRatingFromNsfwLevel(args.level);
     // Through `effectiveSubListingRating`, as publishing is: a card the author rated stricter
     // than its item keeps that rating (picked `x`, re-rated `r`: stays `x`).
     const rows = await dbWrite.appSubListing.findMany({
       where,
       select: { id: true, contentRating: true, pendingContentRating: true },
     });
+    // Only a card whose rating moves is written, and the catalog is busted only then: the rater
+    // calls this on every rating, and most items have no card.
+    let changed = false;
     for (const row of rows) {
+      const contentRating = effectiveSubListingRating(rating, row.contentRating);
+      const pendingContentRating =
+        row.pendingContentRating == null
+          ? null
+          : effectiveSubListingRating(rating, row.pendingContentRating);
+      if (contentRating === row.contentRating && pendingContentRating === row.pendingContentRating)
+        continue;
+      changed = true;
       await dbWrite.appSubListing.update({
         where: { id: row.id },
-        data: {
-          contentRating: effectiveSubListingRating(rating, row.contentRating),
-          pendingContentRating:
-            row.pendingContentRating == null
-              ? null
-              : effectiveSubListingRating(rating, row.pendingContentRating),
-        },
+        data: { contentRating, pendingContentRating },
       });
     }
-    await bustCatalog();
+    if (changed) await bustCatalog();
   } catch (err) {
     if (isMissingTableError(err)) return;
     logToAxiom({
@@ -488,6 +495,8 @@ export type UpsertSubListingResult = {
 
 export async function upsertSubListing(args: {
   appBlockId: string;
+  /** The token is a dev token: its refusals are counted under app_block_id="dev". */
+  dev?: boolean;
   subjectUser: SessionUser | null;
   hasLinkedOAuth: boolean;
   body: unknown;
@@ -521,6 +530,15 @@ export async function upsertSubListing(args: {
 
   const rate = await checkSubListingWriteRateLimit(user.id, parent.id);
   if (!rate.allowed) {
+    recordAppBlockRateLimitRefusal({
+      appBlockId: blockClaimsAppLabel({ dev: args.dev, appBlockId: args.appBlockId }),
+      surface: 'sub_listings',
+      bucket: 'sub-listing-write',
+      endpoint: 'upsertSubListing',
+      retryAfterSeconds: rate.retryAfterSeconds,
+      userId: user.id,
+      status: 429,
+    });
     throw new SubListingError(
       429,
       'rate_limited',
@@ -746,6 +764,8 @@ async function transitionActive(args: {
 
 export async function withdrawSubListing(args: {
   appBlockId: string;
+  /** The token is a dev token: its refusals are counted under app_block_id="dev". */
+  dev?: boolean;
   userId: number | null;
   body: unknown;
 }): Promise<{ ok: true; withdrawn: boolean }> {
@@ -758,6 +778,15 @@ export async function withdrawSubListing(args: {
   if (!parent) return { ok: true, withdrawn: false };
   const rate = await checkSubListingWriteRateLimit(args.userId, parent.id);
   if (!rate.allowed) {
+    recordAppBlockRateLimitRefusal({
+      appBlockId: blockClaimsAppLabel({ dev: args.dev, appBlockId: args.appBlockId }),
+      surface: 'sub_listings',
+      bucket: 'sub-listing-write',
+      endpoint: 'withdrawSubListing',
+      retryAfterSeconds: rate.retryAfterSeconds,
+      userId: args.userId,
+      status: 429,
+    });
     throw new SubListingError(
       429,
       'rate_limited',

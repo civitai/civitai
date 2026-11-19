@@ -86,6 +86,12 @@ type Query struct {
 	HasGeneration bool
 	HasRemixOfID  bool
 	RequiringMeta bool
+	// HasPrioritizedUserIDs is a non-empty `prioritizedUserIds` (UNSUPPORTED_KEYS, before
+	// `generation`); Pending is `pending: true` (UNSUPPORTED_FLAGS, after `requiringMeta`).
+	HasPrioritizedUserIDs bool
+	Pending               bool
+	// Tools is the input's `tools` as sent; the positive ids are sent, in order and with repeats.
+	Tools []int
 }
 
 // Refusal is why a Query cannot be sent to the feed. Rejected refusals are answered by Node with a
@@ -179,6 +185,9 @@ func Map(q Query) (string, *Refusal) {
 	skip := func(reason string) (string, *Refusal) { return "", &Refusal{Reason: reason} }
 	reject := func(reason string) (string, *Refusal) { return "", &Refusal{Reason: reason, Rejected: true} }
 
+	if q.HasPrioritizedUserIDs {
+		return skip("input:prioritizedUserIds")
+	}
 	if q.HasGeneration {
 		return skip("input:generation")
 	}
@@ -187,6 +196,9 @@ func Map(q Query) (string, *Refusal) {
 	}
 	if q.RequiringMeta {
 		return skip("flag:requiringMeta")
+	}
+	if q.Pending {
+		return skip("flag:pending")
 	}
 	// `[...postIds, postId]`: the completion's list, then the input's own post.
 	postIDs := positive(append(append([]int(nil), q.PostIDs...), q.PostID))
@@ -314,6 +326,10 @@ func Map(q Query) (string, *Refusal) {
 		if q.ViewerID != 0 {
 			p.set("viewerId", strconv.Itoa(q.ViewerID))
 		}
+	}
+	// `tools` after the POI exclusion (and the unported baseModels) and before the post ids.
+	if tools := positive(q.Tools); len(tools) > 0 {
+		p.set("tools", join(tools))
 	}
 	if len(postIDs) > 0 {
 		p.set("postIds", join(uniq(postIDs)))

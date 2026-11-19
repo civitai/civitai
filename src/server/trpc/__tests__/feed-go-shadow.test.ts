@@ -7,6 +7,8 @@
  * pins one decision. The end-to-end path through the real route and transformer is
  * `src/server/__tests__/trpc-feed-go-shadow.test.ts`.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import superjson from 'superjson';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -14,14 +16,15 @@ import {
   feedGoV1ShapeClass,
   FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
-  pickSessionCookies,
   pickShadowHeaders,
+  pickShadowResponseHeaders,
   readFeedGoShadowConfig,
   SHADOW_DEFAULT_MAX_IN_FLIGHT,
   SHADOW_DEFAULT_MAX_PER_SECOND,
   SHADOW_DEFAULT_TIMEOUT_MS,
   type FeedGoShadowConfig,
 } from '~/server/trpc/feed-go-shadow';
+import { pickSessionCookies } from '~/server/utils/session-cookies';
 
 const URL_ = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
 const V1_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/images';
@@ -260,6 +263,103 @@ describe('pickSessionCookies / pickShadowHeaders', () => {
       authorization: 'present',
     });
     expect(pickShadowHeaders(request({ headers: { cookie: 'theme=dark' } }))).toEqual({});
+  });
+});
+
+describe('pickShadowResponseHeaders', () => {
+  it('keeps only the compared headers, lowercased, Set-Cookie as presence, each bounded', () => {
+    expect(
+      pickShadowResponseHeaders({
+        'Cache-Control': 'public, max-age=60, s-maxage=60, stale-while-revalidate=30',
+        vary: ['Accept-Encoding', 'Cookie'],
+        'cache-tag': 'images, user-1',
+        'set-cookie': ['session=secret-value; HttpOnly'],
+        'x-update-required': 'true',
+        'x-handled-by': 'pod-a',
+        'content-length': 123,
+        'x-ratelimit-remaining': '9',
+      })
+    ).toEqual({
+      'cache-control': 'public, max-age=60, s-maxage=60, stale-while-revalidate=30',
+      vary: 'Accept-Encoding, Cookie',
+      'cache-tag': 'images, user-1',
+      'set-cookie': 'present',
+      'x-update-required': 'true',
+    });
+    expect(pickShadowResponseHeaders({ 'cache-tag': 'x'.repeat(5000) })['cache-tag']).toHaveLength(
+      1024
+    );
+    expect(pickShadowResponseHeaders({})).toEqual({});
+  });
+
+  it('an empty Set-Cookie (no cookie) is absent, not present', () => {
+    expect(pickShadowResponseHeaders({ 'set-cookie': [] })).toEqual({});
+    expect(pickShadowResponseHeaders({ 'set-cookie': '' })).toEqual({});
+    expect(pickShadowResponseHeaders({ 'set-cookie': ['a=1'], vary: [] })).toEqual({
+      'set-cookie': 'present',
+    });
+  });
+});
+
+describe('createFeedGoShadow — response headers', () => {
+  it('posts the compared response headers the route passes to finish, and no status', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    h.shadow.finish(sample, 200, {
+      getHeaders: () => ({
+        'cache-control': 'max-age=0, private, no-cache',
+        'set-cookie': 'a=secret',
+        'x-handled-by': 'pod-a',
+      }),
+    });
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body).not.toHaveProperty('status');
+    expect(body.responseHeaders).toEqual({
+      'cache-control': 'max-age=0, private, no-cache',
+      'set-cookie': 'present',
+    });
+    // The cookie's value never leaves the process.
+    expect(h.fetchMock.mock.calls[0][1].body as string).not.toContain('secret');
+  });
+
+  it('omits responseHeaders for a response without getHeaders (a test double), and still sends', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    h.shadow.finish(sample, 200, {});
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body).not.toHaveProperty('responseHeaders');
+    expect(h.outcomes).toEqual(['sent']);
+  });
+
+  it('records skipped_headers, sends nothing and frees the slot when getHeaders throws', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    expect(h.shadow.inFlight()).toBe(1);
+    h.shadow.finish(sample, 200, {
+      getHeaders: () => {
+        throw new Error('headers gone');
+      },
+    });
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_headers']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('omits responseHeaders when the route passes none', async () => {
+    const h = harness();
+    serve(h);
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body).not.toHaveProperty('responseHeaders');
   });
 });
 
@@ -995,6 +1095,64 @@ describe('feedGoV1ShapeClass', () => {
     ['a 503', { modelVersionId: 9 }, 503, 'non200'],
   ] as const)('%s is %s', (_name, data, status, want) => {
     expect(feedGoV1ShapeClass(req, data, status)).toBe(want);
+  });
+
+  // zod strips a key outside imagesEndpointSchema, so the parsed data never shows one: the class is
+  // read from the raw query, in ParseV1's order (after imageId/tags/baseModels, before the rest).
+  it.each([
+    [
+      'an unknown key',
+      { modelVersionId: '9', utm_source: 'x' },
+      { modelVersionId: 9 },
+      'unported_unknownKey',
+    ],
+    ['an unknown key with no value', { ids: '1', foo: '' }, { ids: [1] }, 'unported_unknownKey'],
+    ['the API key alone is not unknown', { token: 'K' }, {}, 'api_key'],
+    [
+      'schema keys only',
+      { modelVersionId: '9', limit: '2', sort: 'Newest' },
+      { modelVersionId: 9 },
+      'ported',
+    ],
+    ['tags wins over an unknown key', { tags: '5', foo: '1' }, { tags: [5] }, 'unported_tags'],
+    [
+      'imageId wins over an unknown key',
+      { imageId: '3', foo: '1' },
+      { imageId: 3 },
+      'unported_imageId',
+    ],
+    [
+      'an unknown key wins over a model without a version',
+      { modelId: '3', foo: '1' },
+      { modelId: 3 },
+      'unported_unknownKey',
+    ],
+    [
+      'an unknown key wins over withTags',
+      { withTags: 'true', foo: '1' },
+      { withTags: true },
+      'unported_unknownKey',
+    ],
+  ] as const)('raw query: %s is %s', (_name, query, data, want) => {
+    expect(feedGoV1ShapeClass(restRequest({ query }), data, 200)).toBe(want);
+  });
+
+  // The seam with feed-go: every key of the generated allow-list Go reads (schemas.json) is accepted
+  // here too, so the two cannot disagree about which query keys are unknown.
+  it('accepts every key of the allow-list feed-go embeds', () => {
+    const embedded = JSON.parse(
+      readFileSync(
+        join(__dirname, '../../../../apps/feed-go/internal/inputschema/schemas.json'),
+        'utf8'
+      )
+    ) as { imagesEndpointSchema: { keys: string[] } };
+    expect(embedded.imagesEndpointSchema.keys.length).toBe(21);
+    for (const key of embedded.imagesEndpointSchema.keys) {
+      expect([key, feedGoV1ShapeClass(restRequest({ query: { [key]: '1' } }), {}, 200)]).toEqual([
+        key,
+        'ported',
+      ]);
+    }
   });
 
   it('a query that did not parse is non200, an API credential is api_key', () => {

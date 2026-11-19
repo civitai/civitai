@@ -1,85 +1,72 @@
 import { describe, expect, it } from 'vitest';
-import { consensusRule, decideYesNo } from './decide';
+import { decideYesNo } from './decide';
 
 const votes = (yes: number, no: number) => [
   ...Array.from({ length: yes }, () => ({ answer: 'yes', weight: 1 })),
   ...Array.from({ length: no }, () => ({ answer: 'no', weight: 1 })),
 ];
 const held = (yes: number, no: number) => votes(yes, no).map((v) => ({ ...v, weight: 0 }));
-const rule = { needed: 5, max: 8 };
 
-describe('decideYesNo', () => {
-  it('waits until enough have answered', () => {
-    expect(decideYesNo(votes(3, 1), rule)).toEqual({ kind: 'pending' });
+describe('decideYesNo at the Knight stage (4 to settle, 10 at most, 75%)', () => {
+  it('waits until four have answered', () => {
+    expect(decideYesNo(votes(3, 0), 'Knight')).toEqual({ kind: 'pending' });
   });
 
-  it('settles on the majority once enough have answered, one vote each', () => {
-    expect(decideYesNo(votes(3, 2), rule)).toEqual({ kind: 'consensus', value: 'yes' });
-    expect(decideYesNo(votes(1, 4), rule)).toEqual({ kind: 'consensus', value: 'no' });
+  it('settles on four unanimous answers', () => {
+    expect(decideYesNo(votes(4, 0), 'Knight')).toEqual({ kind: 'consensus', value: 'yes' });
+    expect(decideYesNo(votes(0, 4), 'Knight')).toEqual({ kind: 'consensus', value: 'no' });
   });
 
-  it('treats a tie as no outcome and keeps asking, until the cap gives it up', () => {
-    expect(decideYesNo(votes(3, 3), { needed: 4, max: 8 })).toEqual({ kind: 'pending' });
-    expect(decideYesNo(votes(4, 4), { needed: 4, max: 8 })).toEqual({ kind: 'exhausted' });
+  it('keeps asking while the agreement is weak, and settles once one answer holds 75%', () => {
+    expect(decideYesNo(votes(3, 1), 'Knight')).toEqual({ kind: 'pending' });
+    expect(decideYesNo(votes(3, 2), 'Knight')).toEqual({ kind: 'pending' });
+    expect(decideYesNo(votes(4, 2), 'Knight')).toEqual({ kind: 'pending' });
+    expect(decideYesNo(votes(4, 1), 'Knight')).toEqual({ kind: 'consensus', value: 'yes' });
+    expect(decideYesNo(votes(2, 6), 'Knight')).toEqual({ kind: 'consensus', value: 'no' });
   });
 
-  it('never reaches the cap with the default 5 to resolve and 10 at most: five answers cannot tie', () => {
-    const defaults = { needed: 5, max: 10 };
-    for (let yes = 0; yes <= 5; yes++) {
-      expect(decideYesNo(votes(yes, 5 - yes), defaults).kind).toBe('consensus');
-    }
-  });
-
-  it('is decided by the next answer after a tie, so the cap is only reached when it equals the consensus size', () => {
-    const rule4 = { needed: 4, max: 8 };
-    expect(decideYesNo(votes(2, 2), rule4)).toEqual({ kind: 'pending' });
-    expect(decideYesNo(votes(3, 2), rule4)).toEqual({ kind: 'consensus', value: 'yes' });
-    expect(decideYesNo(votes(2, 3), rule4)).toEqual({ kind: 'consensus', value: 'no' });
-    expect(decideYesNo(votes(2, 2), { needed: 4, max: 4 })).toEqual({ kind: 'exhausted' });
-  });
-
-  it('prefers a majority over the cap', () => {
-    expect(decideYesNo(votes(5, 3), { needed: 4, max: 8 })).toEqual({
-      kind: 'consensus',
-      value: 'yes',
-    });
-  });
-
-  it('does not count a weight-0 answer toward the size, the majority or the cap', () => {
-    expect(decideYesNo([...votes(2, 2), ...held(1, 0)], rule)).toEqual({ kind: 'pending' });
-    expect(decideYesNo(held(9, 0), rule)).toEqual({ kind: 'pending' });
-    expect(decideYesNo([...votes(3, 2), ...held(0, 4)], rule)).toEqual({
-      kind: 'consensus',
-      value: 'yes',
-    });
-    expect(decideYesNo([...votes(3, 3), ...held(2, 2)], { needed: 4, max: 6 })).toEqual({
-      kind: 'exhausted',
-    });
-    expect(decideYesNo([...votes(2, 2), ...held(2, 2)], { needed: 4, max: 6 })).toEqual({
-      kind: 'pending',
-    });
-  });
-
-  it('ignores answers that are not on offer', () => {
-    expect(
-      decideYesNo([{ answer: '4', weight: 1 }, ...votes(2, 2)], { needed: 5, max: 9 })
-    ).toEqual({
-      kind: 'pending',
-    });
+  it('is exhausted at ten answers without 75%, a plain majority included', () => {
+    expect(decideYesNo(votes(5, 5), 'Knight')).toEqual({ kind: 'exhausted' });
+    expect(decideYesNo(votes(7, 3), 'Knight')).toEqual({ kind: 'exhausted' });
+    expect(decideYesNo(votes(8, 2), 'Knight')).toEqual({ kind: 'consensus', value: 'yes' });
   });
 });
 
-describe('consensusRule', () => {
-  it('takes the consensus size and the cap as the axis question says', () => {
-    expect(consensusRule({ votesToResolve: 3, maxVotes: 9 })).toEqual({ needed: 3, max: 9 });
+describe('decideYesNo at the higher stages', () => {
+  it('Templar: three unanimous settle, six without 75% are exhausted', () => {
+    expect(decideYesNo(votes(2, 1), 'Templar')).toEqual({ kind: 'pending' });
+    expect(decideYesNo(votes(0, 3), 'Templar')).toEqual({ kind: 'consensus', value: 'no' });
+    expect(decideYesNo(votes(3, 1), 'Templar')).toEqual({ kind: 'consensus', value: 'yes' });
+    expect(decideYesNo(votes(4, 2), 'Templar')).toEqual({ kind: 'exhausted' });
   });
 
-  it('treats a cap below the consensus size as the consensus size, and says so', () => {
-    const warn: string[] = [];
-    expect(consensusRule({ votesToResolve: 5, maxVotes: 2 }, (m) => warn.push(m))).toEqual({
-      needed: 5,
-      max: 5,
+  it('Paladin: two unanimous settle, four without 75% are exhausted', () => {
+    expect(decideYesNo(votes(1, 1), 'Paladin')).toEqual({ kind: 'pending' });
+    expect(decideYesNo(votes(2, 0), 'Paladin')).toEqual({ kind: 'consensus', value: 'yes' });
+    expect(decideYesNo(votes(2, 1), 'Paladin')).toEqual({ kind: 'pending' });
+    expect(decideYesNo(votes(2, 2), 'Paladin')).toEqual({ kind: 'exhausted' });
+  });
+});
+
+describe('what counts as a vote', () => {
+  it('does not count a weight-0 answer toward the size, the share or the cap', () => {
+    expect(decideYesNo([...votes(3, 0), ...held(0, 3)], 'Knight')).toEqual({ kind: 'pending' });
+    expect(decideYesNo(held(9, 0), 'Knight')).toEqual({ kind: 'pending' });
+    expect(decideYesNo([...votes(4, 0), ...held(0, 4)], 'Knight')).toEqual({
+      kind: 'consensus',
+      value: 'yes',
     });
-    expect(warn).toHaveLength(1);
+    expect(decideYesNo([...votes(5, 4), ...held(1, 0)], 'Knight')).toEqual({ kind: 'pending' });
+  });
+
+  it('counts one vote per player, whatever the stored weight', () => {
+    const heavy = [{ answer: 'yes', weight: 3 }, ...votes(0, 3)];
+    expect(decideYesNo(heavy, 'Knight')).toEqual({ kind: 'pending' });
+  });
+
+  it('ignores answers that are not on offer', () => {
+    expect(decideYesNo([{ answer: '4', weight: 1 }, ...votes(3, 0)], 'Knight')).toEqual({
+      kind: 'pending',
+    });
   });
 });

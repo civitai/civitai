@@ -184,11 +184,10 @@ async function resolve({
       message: 'held detection resolved',
       entityType: 'Model',
       entityId: modelId,
-      label,
       kind: detection.kind ?? 'redetected',
       decision,
-      promptIds: detection.promptIds ?? null,
       moderatorId: userId,
+      payload: { label, promptIds: detection.promptIds ?? null },
       ...(decision !== 'closed' && { reason: reason ?? null, note: note ?? null }),
     });
 

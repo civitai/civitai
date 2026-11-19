@@ -12,9 +12,11 @@ vi.setConfig({ hookTimeout: 60_000 });
 
 const KEY = REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES;
 
-const { dbHandle, redisStore } = vi.hoisted(() => ({
+const { dbHandle, redisStore, beforeSwap } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   redisStore: new Map<string, string>(),
+  // Runs inside the compare-and-set, before the compare: a write landing between the read and the write.
+  beforeSwap: { current: null as null | (() => void) },
 }));
 
 vi.mock('../../db', () => ({
@@ -33,6 +35,18 @@ vi.mock('../../redis', () => ({
       redisStore.set(key, value);
       return 'OK';
     },
+    // The compare-and-set script: ARGV = [present ? '1' : '0', expected raw, new raw].
+    eval: async (
+      _script: string,
+      { keys, arguments: args }: { keys: string[]; arguments: string[] }
+    ) => {
+      beforeSwap.current?.();
+      const current = redisStore.get(keys[0]);
+      const matches = args[0] === '0' ? current === undefined : current === args[1];
+      if (!matches) return 0;
+      redisStore.set(keys[0], args[2]);
+      return 1;
+    },
   }),
 }));
 
@@ -40,6 +54,8 @@ const {
   getLastSourcesChange,
   getSourcesContext,
   getSourcesSettings,
+  saveGameSettings,
+  saveRuleGuide,
   saveSourcesConfig,
   SOURCES_AUDIT_ACTIVITY,
 } = await import('../sources-config.service');
@@ -104,6 +120,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   redisStore.clear();
+  beforeSwap.current = null;
   await db.exec(
     `DELETE FROM "KnightsQueueItem"; DELETE FROM "ModActivity"; DELETE FROM "User"; DELETE FROM "Image";
      INSERT INTO "User" ("id","username") VALUES (${MOD},'mod-seven');`
@@ -171,7 +188,7 @@ describe('saveSourcesConfig', () => {
     });
   });
 
-  it('keeps a stored maxOpen, which the page does not edit', async () => {
+  it('keeps a stored maxOpen when the form leaves it out', async () => {
     redisStore.set(
       KEY,
       JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3, maxOpen: 1200 })
@@ -185,6 +202,99 @@ describe('saveSourcesConfig', () => {
       nsfwRate: 0.2,
       maxOpen: 1200,
     });
+  });
+
+  it('stores the open-item cap the form sends, and keeps the stored one when it sends none', async () => {
+    redisStore.set(
+      KEY,
+      JSON.stringify({ enabled: true, sfwRate: 0.5, nsfwRate: 0.25, maxOpen: 18300 })
+    );
+
+    await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, maxOpen: 60000 }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!)).toMatchObject({ maxOpen: 60000 });
+
+    await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.5 }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!)).toMatchObject({ nsfwRate: 0.5, maxOpen: 60000 });
+  });
+
+  it.each([
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['over the limit', 1_000_001],
+    ['text', '60000'],
+  ])('refuses an open-item cap that is %s and changes nothing', async (_label, maxOpen) => {
+    expect(
+      await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, maxOpen }, MOD)
+    ).toEqual({ ok: false, error: expect.stringContaining('open-item cap') });
+    expect(redisStore.has(KEY)).toBe(false);
+  });
+
+  it('stores a yes/no share, 0 included, in the shape Knights reads', async () => {
+    await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 }, MOD);
+
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({
+      enabled: true,
+      sfwRate: 1,
+      nsfwRate: 0.3,
+      yesNoShare: 0,
+    });
+    expect(parseKnightsSourcesConfig(redisStore.get(KEY)!).yesNoShare).toBe(0);
+  });
+
+  it.each([
+    ['above 1', 1.2],
+    ['negative', -0.1],
+    ['a string', '0.5'],
+  ])('refuses a yes/no share that is %s and changes nothing', async (_label, yesNoShare) => {
+    expect(
+      await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare }, MOD)
+    ).toMatchObject({ ok: false });
+    expect(redisStore.has(KEY)).toBe(false);
+  });
+
+  it('keeps a stored yes/no share when a save leaves it out, so saving the rates never turns yes/no back on', async () => {
+    redisStore.set(
+      KEY,
+      JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 })
+    );
+
+    expect(await saveSourcesConfig({ enabled: true, sfwRate: 0.5, nsfwRate: 0.3 }, MOD)).toEqual({
+      ok: true,
+      changed: true,
+    });
+    expect(JSON.parse(redisStore.get(KEY)!).yesNoShare).toBe(0);
+  });
+
+  it('clears a stored yes/no share on request, so Knights falls back to its default, and audits it', async () => {
+    redisStore.set(
+      KEY,
+      JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 })
+    );
+
+    expect(
+      await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: null }, MOD)
+    ).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({ enabled: true, sfwRate: 1, nsfwRate: 0.3 });
+    const [row] = await activity();
+    expect(JSON.parse(row.activity.slice(SOURCES_AUDIT_ACTIVITY.length + 1))).toEqual({
+      before: { enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 },
+      after: { enabled: true, sfwRate: 1, nsfwRate: 0.3 },
+    });
+  });
+
+  it('records nothing when clearing a share that is not stored', async () => {
+    redisStore.set(KEY, JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3 }));
+    expect(
+      await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: null }, MOD)
+    ).toEqual({ ok: true, changed: false });
+  });
+
+  it('records a change of the yes/no share alone', async () => {
+    await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0.7 }, MOD);
+    expect(
+      await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 }, MOD)
+    ).toEqual({ ok: true, changed: true });
+    expect(await activity()).toHaveLength(2);
   });
 
   it('records who changed it with the value before and after', async () => {
@@ -209,6 +319,277 @@ describe('saveSourcesConfig', () => {
     await saveSourcesConfig(input, MOD);
     expect(await saveSourcesConfig(input, MOD)).toEqual({ ok: true, changed: false });
     expect(await activity()).toHaveLength(1);
+  });
+});
+
+describe('saveSourcesConfig and game settings', () => {
+  it('keeps every stored game setting when the sources are saved', async () => {
+    const game = { hiddenCheckRate: 0, shopDisabled: true };
+    redisStore.set(KEY, JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3, game }));
+    await saveSourcesConfig({ enabled: false, sfwRate: 0.5, nsfwRate: 0.3 }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({
+      enabled: false,
+      sfwRate: 0.5,
+      nsfwRate: 0.3,
+      game,
+    });
+  });
+});
+
+describe('saveGameSettings', () => {
+  const stored = {
+    enabled: true,
+    sfwRate: 0.4,
+    nsfwRate: 0.2,
+    maxOpen: 1200,
+    yesNoShare: 0.5,
+    game: { hiddenCheckRate: 0.1, yesNoStretch: 4 },
+  };
+  const audit = async () =>
+    (await activity()).map((r) => JSON.parse(r.activity.slice(SOURCES_AUDIT_ACTIVITY.length + 1)));
+
+  it('writes only the fields it changes and carries every other stored field over', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveGameSettings({ yesNoMaxAgeDays: 21, apprenticeSmites: false }, MOD)).toEqual({
+      ok: true,
+      changed: true,
+    });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({
+      ...stored,
+      game: { hiddenCheckRate: 0.1, yesNoStretch: 4, yesNoMaxAgeDays: 21, apprenticeSmites: false },
+    });
+    expect(parseKnightsSourcesConfig(redisStore.get(KEY)!).game?.yesNoMaxAgeDays).toBe(21);
+  });
+
+  it('clears one stored field on request, so Knights uses its default for it, and audits it', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    await saveGameSettings({ hiddenCheckRate: null }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!).game).toEqual({ yesNoStretch: 4 });
+    const [row] = await audit();
+    expect(row.before.game).toEqual(stored.game);
+    expect(row.after.game).toEqual({ yesNoStretch: 4 });
+  });
+
+  it('leaves game out once its last field is cleared', async () => {
+    redisStore.set(KEY, JSON.stringify({ ...stored, game: { yesNoStretch: 4 } }));
+    await saveGameSettings({ yesNoStretch: null }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!)).not.toHaveProperty('game');
+  });
+
+  it.each([
+    ['a rate above 1', { hiddenCheckRate: 1.5 }],
+    ['a fractional distance', { hiddenCheckSevereDistance: 1.5 }],
+    ['a zero window', { hiddenCheckFailureWindowHours: 0 }],
+    ['a string number', { yesNoStretch: '4' }],
+    ['a string toggle', { apprenticeSmites: 'off' }],
+    ['an unknown setting', { yesNoShare: 0.2 }],
+    ['no object', 'x'],
+  ])('refuses %s and changes nothing', async (_label, input) => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveGameSettings(input, MOD)).toMatchObject({ ok: false });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual(stored);
+    expect(await activity()).toEqual([]);
+  });
+
+  it('refuses a kill switch change that was not confirmed, and saves it once confirmed', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveGameSettings({ shopDisabled: true, yesNoStretch: 2 }, MOD)).toMatchObject({
+      ok: false,
+    });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual(stored);
+    expect(
+      await saveGameSettings({ conversionDisabled: true }, MOD, { killSwitchesConfirmed: true })
+    ).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!).game.conversionDisabled).toBe(true);
+  });
+
+  it('needs no confirmation when a kill switch is posted at the value it already has', async () => {
+    redisStore.set(KEY, JSON.stringify({ ...stored, game: { shopDisabled: true } }));
+    expect(await saveGameSettings({ shopDisabled: true, yesNoStretch: 2 }, MOD)).toEqual({
+      ok: true,
+      changed: true,
+    });
+  });
+
+  it('records nothing when nothing changes', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveGameSettings({ yesNoStretch: 4, yesNoMaxAgeDays: null }, MOD)).toEqual({
+      ok: true,
+      changed: false,
+    });
+    expect(await activity()).toEqual([]);
+  });
+
+  it('keeps the sources off when nothing was stored before', async () => {
+    await saveGameSettings({ yesNoStretch: 2 }, MOD);
+    expect(parseKnightsSourcesConfig(redisStore.get(KEY)!)).toEqual({
+      enabled: false,
+      sfwRate: 1,
+      nsfwRate: 0.3,
+      game: { yesNoStretch: 2 },
+    });
+    expect((await audit())[0].before).toBeNull();
+  });
+});
+
+describe('saveGameSettings harvest fields', () => {
+  const stored = {
+    enabled: true,
+    sfwRate: 0.4,
+    nsfwRate: 0.2,
+    maxOpen: 1200,
+    yesNoShare: 0.5,
+    game: { shopDisabled: true },
+  };
+
+  it('stores an explicit harvest off and a share, carrying every other field over, with no kill switch confirmation', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveGameSettings({ harvest: false, harvestHiddenCheckShare: 0 }, MOD)).toEqual({
+      ok: true,
+      changed: true,
+    });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({
+      ...stored,
+      game: { shopDisabled: true, harvest: false, harvestHiddenCheckShare: 0 },
+    });
+  });
+
+  it('clears each harvest field on request', async () => {
+    redisStore.set(
+      KEY,
+      JSON.stringify({ ...stored, game: { harvest: true, harvestHiddenCheckShare: 0.3 } })
+    );
+    await saveGameSettings({ harvest: null }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!).game).toEqual({ harvestHiddenCheckShare: 0.3 });
+    await saveGameSettings({ harvestHiddenCheckShare: null }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!)).not.toHaveProperty('game');
+  });
+
+  it.each([
+    ['a share above 1', { harvestHiddenCheckShare: 1.5 }],
+    ['a negative share', { harvestHiddenCheckShare: -0.1 }],
+    ['a string share', { harvestHiddenCheckShare: '0.3' }],
+    ['a string switch', { harvest: 'on' }],
+  ])('refuses %s and changes nothing', async (_label, input) => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveGameSettings(input, MOD)).toMatchObject({ ok: false });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual(stored);
+  });
+
+  it('keeps stored harvest fields when the sources are saved', async () => {
+    const game = { harvest: false, harvestHiddenCheckShare: 0.2 };
+    redisStore.set(KEY, JSON.stringify({ ...stored, game }));
+    await saveSourcesConfig({ enabled: false, sfwRate: 0.4, nsfwRate: 0.2 }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!).game).toEqual(game);
+  });
+});
+
+describe('saveRuleGuide', () => {
+  const stored = {
+    enabled: true,
+    sfwRate: 0.4,
+    nsfwRate: 0.2,
+    maxOpen: 1200,
+    yesNoShare: 0.5,
+    game: { shopDisabled: true },
+  };
+  const guide = {
+    intro: 'Why we ask',
+    sets: [
+      { title: 'First set', notes: 'A note', points: ['Point one'] },
+      { title: 'Notes only', notes: 'Just a line.', points: [] },
+    ],
+  };
+
+  it('stores the guide and carries every other stored field over', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveRuleGuide(guide, MOD)).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({ ...stored, ruleGuide: guide });
+  });
+
+  it('records nothing when the guide saved is the one stored', async () => {
+    redisStore.set(KEY, JSON.stringify({ ...stored, ruleGuide: guide }));
+    expect(await saveRuleGuide(guide, MOD)).toEqual({ ok: true, changed: false });
+    expect(await activity()).toHaveLength(0);
+  });
+
+  it('removes the guide when it is cleared', async () => {
+    redisStore.set(KEY, JSON.stringify({ ...stored, ruleGuide: guide }));
+    expect(await saveRuleGuide(null, MOD)).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual(stored);
+  });
+
+  it.each([
+    ['a blank point', { sets: [{ title: 'T', points: ['One', ' '] }] }, 'point 2'],
+    ['a set with neither notes nor points', { sets: [{ title: 'T', points: [] }] }, 'notes or'],
+    ['a set with no title', { sets: [{ title: '', points: ['One'] }] }, 'title'],
+    ['a point over the limit', { sets: [{ title: 'T', points: ['x'.repeat(301)] }] }, 'point 1'],
+    ['an intro over the limit', { intro: 'x'.repeat(601), sets: guide.sets }, 'intro'],
+  ])('refuses %s, naming what is wrong, and writes nothing', async (_, input, word) => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    const outcome = await saveRuleGuide(input, MOD);
+    expect(outcome.ok).toBe(false);
+    expect(!outcome.ok && outcome.error.toLowerCase()).toContain(word);
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual(stored);
+  });
+
+  it('keeps the guide when the sources or game settings are saved', async () => {
+    redisStore.set(KEY, JSON.stringify({ ...stored, ruleGuide: guide }));
+    await saveSourcesConfig({ enabled: false, sfwRate: 0.1, nsfwRate: 0.1 }, MOD);
+    await saveGameSettings({ shopDisabled: false }, MOD, { killSwitchesConfirmed: true });
+    expect(JSON.parse(redisStore.get(KEY)!).ruleGuide).toEqual(guide);
+  });
+});
+
+describe('concurrent saves', () => {
+  it('does not overwrite a write that lands between the read and the write, and applies on top of it', async () => {
+    redisStore.set(KEY, JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3 }));
+    let raced = false;
+    beforeSwap.current = () => {
+      if (raced) return;
+      raced = true;
+      redisStore.set(
+        KEY,
+        JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3, game: { shopDisabled: true } })
+      );
+    };
+    expect(await saveGameSettings({ yesNoStretch: 2 }, MOD)).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!).game).toEqual({ shopDisabled: true, yesNoStretch: 2 });
+    const rows = await activity();
+    expect(rows).toHaveLength(1);
+    expect(
+      JSON.parse(rows[0].activity.slice(SOURCES_AUDIT_ACTIVITY.length + 1)).before.game
+    ).toEqual({
+      shopDisabled: true,
+    });
+  });
+
+  it('treats a key created between the read and the write as a conflict', async () => {
+    let raced = false;
+    beforeSwap.current = () => {
+      if (raced) return;
+      raced = true;
+      redisStore.set(KEY, JSON.stringify({ enabled: true, sfwRate: 0.2, nsfwRate: 0.1 }));
+    };
+    await saveGameSettings({ yesNoStretch: 2 }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({
+      enabled: true,
+      sfwRate: 0.2,
+      nsfwRate: 0.1,
+      game: { yesNoStretch: 2 },
+    });
+  });
+
+  it('gives up with a clear error when every attempt conflicts, leaving the other write in place', async () => {
+    let n = 0;
+    beforeSwap.current = () => {
+      n++;
+      redisStore.set(KEY, JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: n / 100 }));
+    };
+    const result = await saveSourcesConfig({ enabled: false, sfwRate: 0.5, nsfwRate: 0.5 }, MOD);
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/at the same time/) });
+    expect(JSON.parse(redisStore.get(KEY)!).enabled).toBe(true);
+    expect(await activity()).toEqual([]);
   });
 });
 

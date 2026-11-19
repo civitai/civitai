@@ -138,22 +138,41 @@ export function searchPeriodChange({
     : { savedPeriod: undefined };
 }
 
-/** The feed's filters as a semantic image search: only what the index can apply. */
+/** The `?excludeOwn=` toggle of a "more like this" search. */
+export const parseExcludeOwn = (value: unknown) => value === 'true';
+
+/** The `?similarTo=` image id, when it is one. */
+export function parseSimilarTo(value: unknown) {
+  const id = Number(first(value as string | string[] | undefined));
+  return Number.isInteger(id) && id > 0 ? id : undefined;
+}
+
+/**
+ * The feed's filters as a semantic image search: only what the index can apply. A query searches by
+ * text; without one, `imageId` searches for images like that one ("more like this").
+ */
 export function toSemanticImageSearchInput({
   query,
+  imageId,
   filters,
   browsingLevel,
   sort,
+  excludeOwn,
   now,
 }: {
-  query: string;
+  query?: string;
+  imageId?: number;
+  /** "More like this" without the viewer's own images. */
+  excludeOwn?: boolean;
   filters: FeedFilters;
   browsingLevel: number;
   sort?: ImageFeedSearchSort;
   now?: Date;
 }): SemanticImageSearchInput {
   return {
-    query,
+    query: query || undefined,
+    imageId: query ? undefined : imageId,
+    excludeOwn: !query && imageId && excludeOwn ? true : undefined,
     browsingLevel,
     tagIds: filters.tags?.length ? filters.tags : undefined,
     excludedTagIds: filters.excludedTagIds?.length ? filters.excludedTagIds : undefined,
@@ -162,7 +181,8 @@ export function toSemanticImageSearchInput({
     usernames: filters.username ? [filters.username] : undefined,
     userIds: filters.userId ? [filters.userId] : undefined,
     postedAfter: periodStart(filters.period, now),
-    sort,
+    // "More like this" is always in similarity order.
+    sort: query ? sort : undefined,
     fromPlatform: filters.fromPlatform || undefined,
     withMeta: filters.withMeta || undefined,
     limit: 50,
@@ -187,7 +207,8 @@ export const all = (value: string | string[] | undefined) =>
  * Where an old `/search/images` URL lands now: the images feed with the query applied. Tag names are
  * resolved by `resolveTags` (at most 20, the search's own cap); a name that matches no tag stays in
  * the query as a word, as `#tag` words do in the search bar, so the redirect never widens the search
- * by dropping it. A sort only survives without a query; with one the feed ranks by match.
+ * by dropping it. A sort only survives without a query; with one the feed ranks by match. A
+ * `similarTo` ("more like this") is carried over; the feed ignores it once a query is typed.
  */
 export async function imageFeedUrlFromLegacySearch(
   params: Record<string, string | string[] | undefined>,
@@ -201,9 +222,14 @@ export async function imageFeedUrlFromLegacySearch(
     [first(params.query), ...unknownNames].filter(Boolean).join(' ')
   );
   const sortBy = first(params.sortBy);
-  const sort = !query && sortBy ? legacyImageSorts.find(([re]) => re.test(sortBy))?.[1] : undefined;
+  const similarTo = parseSimilarTo(params.similarTo);
+  const sort =
+    !query && !similarTo && sortBy
+      ? legacyImageSorts.find(([re]) => re.test(sortBy))?.[1]
+      : undefined;
   const queryString = QS.stringify({
     query,
+    similarTo,
     username: first(params.users),
     baseModels: all(params.baseModel ?? params.baseModels),
     tags: tags.map((tag) => tag.id),

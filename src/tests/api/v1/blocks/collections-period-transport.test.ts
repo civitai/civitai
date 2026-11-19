@@ -173,6 +173,7 @@ beforeEach(() => {
     scopes: ['collections:read:self'],
     blockInstanceId: 'bki_test',
     maxBrowsingLevel: 31,
+    viewerBrowsingLevel: 31,
     ctx: {},
   } as unknown as BlockTokenClaims;
   mockRate.mockResolvedValue({ allowed: true });

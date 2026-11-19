@@ -52,6 +52,8 @@ const ASSISTANT = { appBlocks: true, appAssistant: true };
 
 const NOT_FOUND = { notFound: true };
 const BUILD = { props: { mode: 'build' } };
+/** A signed-in viewer the build gate refuses: the pitch + Request access, not a 404. */
+const REQUEST = { props: { mode: 'request' } };
 const ASSISTANT_PROPS = {
   props: {
     mode: 'assistant',
@@ -63,8 +65,17 @@ const ASSISTANT_PROPS = {
   },
 };
 
-async function resolve(features: Record<string, boolean>, user: User | null) {
-  return captured.fn!({ features, session: user ? { user } : null, ctx: { res: { setHeader } } });
+async function resolve(
+  features: Record<string, boolean>,
+  user: User | null,
+  url: string = '/apps/build'
+) {
+  const query = Object.fromEntries(new URL(url, 'https://civitai.test').searchParams);
+  return captured.fn!({
+    features,
+    session: user ? { user } : null,
+    ctx: { res: { setHeader }, query, resolvedUrl: url },
+  });
 }
 
 beforeEach(() => {
@@ -78,27 +89,16 @@ beforeEach(() => {
 describe('/apps/build — the page each viewer gets', () => {
   // [flags, signed out, member, moderator]
   it.each([
-    ['no flags', {}, NOT_FOUND, NOT_FOUND, NOT_FOUND],
-    ['the store alone', { appListings: true }, NOT_FOUND, NOT_FOUND, BUILD],
+    // 🔴 An ordinary signed-in account holds none of these flags: it gets the request view.
+    ['no flags', {}, NOT_FOUND, REQUEST, REQUEST],
+    ['the store alone', { appListings: true }, NOT_FOUND, REQUEST, BUILD],
     ['store + get-started', { appListings: true, appBlocksGetStarted: true }, BUILD, BUILD, BUILD],
     // The author flag is evaluated PER VIEWER, so a resolved `true` admits whoever it was resolved
     // for — signed out included. (A signed-out viewer does not hold it in practice.)
     ['store + author', { appListings: true, appBlocksAuthor: true }, BUILD, BUILD, BUILD],
-    [
-      'get-started WITHOUT the store',
-      { appBlocksGetStarted: true },
-      NOT_FOUND,
-      NOT_FOUND,
-      NOT_FOUND,
-    ],
-    [
-      'the assistant flag without the runtime',
-      { appAssistant: true },
-      NOT_FOUND,
-      NOT_FOUND,
-      NOT_FOUND,
-    ],
-    ['the runtime without the assistant flag', { appBlocks: true }, NOT_FOUND, NOT_FOUND, BUILD],
+    ['get-started WITHOUT the store', { appBlocksGetStarted: true }, NOT_FOUND, REQUEST, REQUEST],
+    ['the assistant flag without the runtime', { appAssistant: true }, NOT_FOUND, REQUEST, REQUEST],
+    ['the runtime without the assistant flag', { appBlocks: true }, NOT_FOUND, REQUEST, BUILD],
     // Signed out with only the assistant flags is unreachable in production (the flag's only
     // rollouts are segments an anonymous context cannot match); it is a plain 404 here.
     ['the assistant', ASSISTANT, NOT_FOUND, ASSISTANT_PROPS, ASSISTANT_PROPS],
@@ -118,6 +118,52 @@ describe('/apps/build — the page each viewer gets', () => {
   it('sends a banned account home instead of into the assistant', async () => {
     expect(await resolve(ASSISTANT, BANNED)).toEqual({
       redirect: { destination: '/', permanent: false },
+    });
+  });
+
+  it('a banned account the build gate refuses gets notFound, not the request view', async () => {
+    expect(await resolve({}, BANNED)).toEqual(NOT_FOUND);
+  });
+});
+
+describe('/apps/build — Request access for viewers the build gate refuses', () => {
+  it('🔴 an ordinary signed-in account gets the request view, with or without the param', async () => {
+    expect(await resolve({}, MEMBER)).toEqual(REQUEST);
+    expect(await resolve({}, MEMBER, '/apps/build?request-access=1')).toEqual(REQUEST);
+  });
+
+  it('🔴 signed out with ?request-access=1: sent to sign in, returning to that URL', async () => {
+    expect(await resolve({}, null, '/apps/build?request-access=1')).toEqual({
+      redirect: {
+        destination: '/login?returnUrl=%2Fapps%2Fbuild%3Frequest-access%3D1&reason=perform-action',
+        permanent: false,
+      },
+    });
+  });
+
+  it('signed out WITHOUT the param: unchanged, notFound', async () => {
+    expect(await resolve({}, null)).toEqual(NOT_FOUND);
+    expect(await resolve({}, null, '/apps/build?ref=cli')).toEqual(NOT_FOUND);
+  });
+
+  /**
+   * The grant path. An approved request sets the session's `appBuilderApproved`, and the
+   * `app-builder-approved` Flipt segment rides `app-blocks-enabled`, `app-listings`,
+   * `app-blocks-author` and `app-assistant` (not `app-blocks-get-started`). These are the flags
+   * that viewer resolves to, so approval must land them in the assistant, not back at the request
+   * view.
+   */
+  it('🔴 an APPROVED builder’s flags admit them to the assistant, not the request view', async () => {
+    const approvedFlags = {
+      appBlocks: true,
+      appListings: true,
+      appBlocksAuthor: true,
+      appAssistant: true,
+    };
+    // `canPreview` follows the author flag (dev tunnels are on in this file), so match the mode.
+    expect(await resolve(approvedFlags, MEMBER)).toMatchObject({ props: { mode: 'assistant' } });
+    expect(await resolve(approvedFlags, MEMBER, '/apps/build?request-access=1')).toMatchObject({
+      props: { mode: 'assistant' },
     });
   });
 });

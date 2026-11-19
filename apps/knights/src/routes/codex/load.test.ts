@@ -14,6 +14,9 @@ vi.mock('$lib/server/rank-badges', () => ({
   rankBadgeUrls: async () => ({ small: {}, large: { Knight: 'k450' } }),
 }));
 
+const stored = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+vi.mock('$lib/server/settings/runtime', () => ({ storedSettings: async () => stored.value }));
+
 const { load } = await import('./+page.server');
 const run = () => load({ locals: { user: { id: 7 } } } as never) as Promise<Record<string, any>>;
 
@@ -21,6 +24,7 @@ beforeEach(() => {
   getPlayerStatusOrNew.mockReset();
   getPlayerStatusOrNew.mockResolvedValue({ rank: 'Knight', level: 12 });
   startAtRow.value = { startAt: new Date('2026-03-14T00:00:00Z') };
+  stored.value = {};
 });
 
 describe('codex load', () => {
@@ -57,5 +61,12 @@ describe('codex load', () => {
   it('has no sworn-in date for someone without a career yet', async () => {
     startAtRow.value = undefined;
     expect((await run()).swornIn).toBeNull();
+  });
+
+  it('carries the question rules saved on the moderator Config page, and null when none are', async () => {
+    expect((await run()).ruleGuide).toBeNull();
+    const ruleGuide = { sets: [{ title: 'T', points: ['Point one'] }] };
+    stored.value = { ruleGuide };
+    expect((await run()).ruleGuide).toEqual(ruleGuide);
   });
 });

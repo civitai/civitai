@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { imageRestrictionSelect } from '~/server/common/image-visibility';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 export const crucibleListSelect = Prisma.validator<Prisma.CrucibleSelect>()({
@@ -77,13 +78,13 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
       url: true,
       type: true,
       metadata: true,
-      nsfwLevel: true,
       width: true,
       height: true,
       ingestion: true,
       // Read by isCrucibleHiddenByScan; the crucible page handler drops them before responding.
       needsReview: true,
       tosViolation: true,
+      ...imageRestrictionSelect,
     },
   },
   heroImage: {
@@ -93,10 +94,12 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
       url: true,
       type: true,
       metadata: true,
-      nsfwLevel: true,
       width: true,
       height: true,
       ingestion: true,
+      // Read by the crucible page handler, which drops it before responding.
+      needsReview: true,
+      ...imageRestrictionSelect,
     },
   },
   _count: {

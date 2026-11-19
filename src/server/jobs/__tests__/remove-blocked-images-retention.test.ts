@@ -377,7 +377,7 @@ function deletedIds() {
 }
 /** The options object this job hands `deleteImages` — the retraction intent lives here. */
 function deleteOptions() {
-  return mockDeleteImages.mock.calls[0]?.[2] as Record<string, unknown> | undefined;
+  return mockDeleteImages.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
 }
 function queuePruneIds() {
   const call = execLog.find((c) => c.sql.includes('DELETE FROM "JobQueue"'));
@@ -456,7 +456,7 @@ describe('remove-blocked-images retention clock', () => {
     await runJob();
 
     expect(mockDeleteImages).toHaveBeenCalledTimes(1);
-    expect(deleteOptions()).toMatchObject({ retractPublicBlobs: true });
+    expect(deleteOptions()).toMatchObject({ retractPublicBlobs: true, moderatorDelete: true });
     // And persists exactly the rows it deleted, after deleting them.
     expect(mockPersistDeletedTakedowns).toHaveBeenLastCalledWith(
       await mockDeleteImages.mock.results.at(-1)?.value,
@@ -467,13 +467,13 @@ describe('remove-blocked-images retention clock', () => {
     );
   });
 
-  // The option is the third argument; `updatePosts` is the second and must keep its value.
-  // Passing the options object in the wrong position would read as `updatePosts = {…}` —
-  // truthy, so nothing visibly breaks, while the retraction silently never happens.
+  // `updatePosts` defaults on in `deleteImages`: the takedown's posts must still be recounted, so
+  // the job must not turn it off while asking for retraction.
   it('leaves post updating on while doing so', async () => {
     await runJob();
 
-    expect(mockDeleteImages.mock.calls[0]?.[1]).toBe(true);
+    expect(deleteOptions()).toBeDefined();
+    expect(deleteOptions()?.updatePosts).not.toBe(false);
   });
 
   it('holds media of a user under a legal hold', async () => {
@@ -810,7 +810,7 @@ describe('remove-blocked-images retention clock', () => {
     await runJob();
 
     const guards = mockDeleteImages.mock.calls.map(
-      (c) => (c[2] as { onlyWhere?: { sql: string } } | undefined)?.onlyWhere
+      (c) => (c[1] as { onlyWhere?: { sql: string } } | undefined)?.onlyWhere
     );
     expect(guards).toHaveLength(2);
     for (const guard of guards) {
@@ -856,7 +856,7 @@ describe('remove-blocked-images retraction load', () => {
   };
   const retractingCalls = () =>
     mockDeleteImages.mock.calls.filter(
-      (c) => (c[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs === true
+      (c) => (c[1] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs === true
     );
 
   it('stops starting retracting deletes after a 429 and leaves the rest queued', async () => {
@@ -990,7 +990,7 @@ describe('remove-blocked-images retraction load', () => {
 
   it('stops starting retracting deletes after a timeout trips the run gate', async () => {
     addTakedowns();
-    mockDeleteImages.mockImplementationOnce(async (ids: number[], _u, opts) => {
+    mockDeleteImages.mockImplementationOnce(async (ids: number[], opts) => {
       (opts as { retractionGate: { busy: boolean } }).retractionGate.busy = true;
       return ids.map((id) => ({ id, retraction: 'unconfirmed' as const }));
     });

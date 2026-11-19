@@ -35,7 +35,7 @@ async function post(body: unknown) {
   const req = {
     method: 'POST',
     body,
-    blockClaims: { blockInstanceId: 'page_x' },
+    blockClaims: { blockInstanceId: 'page_x', appBlockId: 'apb_media_fixture', sub: 'user:5121' },
   } as unknown as NextApiRequest;
   await (baseHandler as unknown as (q: NextApiRequest, s: NextApiResponse) => Promise<void>)(
     req,
@@ -68,5 +68,43 @@ describe('POST /api/v1/blocks/workflow-media', () => {
   ])('🔴 refuses %s with a 400, before judging any ref', async (_label, body) => {
     expect((await post(body)).status).toBe(400);
     expect(resolveWorkflowMediaForBlockClaims).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/v1/blocks/workflow-media — a refusal names its app', () => {
+  async function refusals(app: string): Promise<number> {
+    const { default: promClient } = await import('prom-client');
+    const metric = promClient.register.getSingleMetric(
+      'civitai_app_block_rate_limit_refusals_total'
+    ) as
+      | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
+      | undefined;
+    if (!metric) return 0;
+    const { values } = await metric.get();
+    return (
+      values.find(
+        (v) =>
+          v.labels.app_block_id === app &&
+          v.labels.surface === 'rest' &&
+          v.labels.bucket === 'catalog'
+      )?.value ?? 0
+    );
+  }
+
+  // Pins: the route's own catalog limiter records its refusal under the token's app.
+  it('a catalog refusal is one {app, rest, catalog} increment, and a 429', async () => {
+    checkBlockCatalogRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 3 });
+    const before = await refusals('apb_media_fixture');
+
+    expect((await post({ refs: refs(1) })).status).toBe(429);
+
+    expect((await refusals('apb_media_fixture')) - before).toBe(1);
+    expect(resolveWorkflowMediaForBlockClaims).not.toHaveBeenCalled();
+  });
+
+  it('an allowed request moves nothing', async () => {
+    const before = await refusals('apb_media_fixture');
+    expect((await post({ refs: refs(1) })).status).toBe(200);
+    expect((await refusals('apb_media_fixture')) - before).toBe(0);
   });
 });

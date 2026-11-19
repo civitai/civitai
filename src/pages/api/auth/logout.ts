@@ -6,6 +6,7 @@ import {
   hostDeviceCookieName,
   createSessionTokenClient,
   hubLogoutUrl,
+  hostOnlySite,
   readDeviceId,
   readSessionToken,
 } from '@civitai/auth';
@@ -75,12 +76,16 @@ export function buildLogoutCookies(host: string | undefined): string[] {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const callbackUrl = safeInternalPath(req.query.callbackUrl, '/');
-  const token = readSessionToken(req.cookies)?.value;
+  // A host-only site never takes a shared-slot token as its session, but still revokes one it holds.
+  const host = req.headers.host;
+  const read = { host, ...(hostOnlySite(host) && { legacyRead: true }) };
+  const token = readSessionToken(req.cookies, read)?.value;
 
   // Always clear THIS spoke's own cookies (registrable domain) + best-effort revoke its token's jti at the hub
   // (stops replay of the just-cleared token; a hub blip must never block logout, so revoke never throws).
   res.setHeader('Set-Cookie', buildLogoutCookies(req.headers.host));
-  if (token) await sessionTokenClient.revoke(token, { deviceId: readDeviceId(req.cookies)?.value });
+  if (token)
+    await sessionTokenClient.revoke(token, { deviceId: readDeviceId(req.cookies, read)?.value });
 
   // Every logout, same-site included, finishes THROUGH the hub: its host-only cookies can only be cleared by a
   // response from the hub's own origin. The hub validates the absolute returnUrl against the trusted-spoke

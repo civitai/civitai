@@ -12,10 +12,11 @@ import {
   MODEL_FLAGS_PATH,
 } from '$lib/minor-flags/paths';
 import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
+import { MERGE_ANALYSIS_PATH } from '$lib/model-merge-analysis';
 import { TICKET_COUNT_KEYS } from '$lib/tickets/counts';
 import { feedbackAreaLabel } from '$lib/feedback';
 import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
-import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
+import { reportCountKey, reportEntityLabels, reportPath, reportQueueEntities } from '$lib/reports';
 import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
 
 export const APP = 'moderator';
@@ -89,12 +90,13 @@ export const NAVIGATION: NavLink[] = [
     label: 'Reports',
     path: '/reports',
     sharedAccess: true,
-    children: reportEntities.map((entity) => ({
+    children: reportQueueEntities.map((entity) => ({
       path: reportPath(entity),
       label: reportEntityLabels[entity],
       countKey: reportCountKey(entity),
     })),
   },
+  { path: '/cases', label: 'Takedown Cases' },
   {
     label: 'Images',
     path: '/images',
@@ -161,6 +163,7 @@ export const NAVIGATION: NavLink[] = [
         ],
       },
       { path: MODEL_RULE_MATCHES_PATH, label: 'Model rule matches' },
+      { path: MERGE_ANALYSIS_PATH, label: 'Model merge analysis' },
     ],
   },
   {

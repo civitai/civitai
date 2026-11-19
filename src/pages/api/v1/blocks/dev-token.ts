@@ -18,8 +18,7 @@ import {
   resolveDevBuzzBudget,
   signDevScopedPageToken,
 } from '~/server/services/blocks/dev-scoped-mint.service';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
@@ -412,7 +411,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // The mod + not-banned gate (step 2) applies to BOTH paths. Ordered after auth
   // (401) and before the mod gate so an un-scoped OAuth token gets 403, not a leak.
   if (session.subject?.type === 'oauth') {
-    if (!Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AppBlocksSubmit)) {
+    if (!hasScope(session.tokenScope ?? 0n, TokenScope.AppBlocksSubmit)) {
       res.status(403).json({
         message:
           'dev-token needs a personal API key (full scope, create at ' +
@@ -563,7 +562,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // need. `oauthAllowed: null` ⇒ skip the OAuth-ceiling clamp (no client exists).
   type Resolved = {
     scopeSource: string[];
-    oauthAllowed: number | null;
+    oauthAllowed: bigint | null;
     signBlockId: string;
     signAppId: string;
     signAppBlockId: string;
@@ -626,7 +625,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     approvedAppBlockId = block.id;
     resolved = {
       scopeSource: approvedRaw.filter((s): s is string => typeof s === 'string'),
-      oauthAllowed: block.app.allowedScopes ?? 0,
+      oauthAllowed: block.app.allowedScopes ?? 0n,
       signBlockId: block.blockId,
       signAppId: block.appId,
       signAppBlockId: block.id,
@@ -845,7 +844,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     select: { muted: true, bannedAt: true },
   });
   const spendEntitled =
-    Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AIServicesWrite) &&
+    hasScope(session.tokenScope ?? 0n, TokenScope.AIServicesWrite) &&
     subjectRow != null &&
     !subjectRow.muted &&
     !subjectRow.bannedAt;

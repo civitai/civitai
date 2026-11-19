@@ -10,6 +10,8 @@ import {
   type Dialect,
 } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TokenScope } from '@civitai/auth/token-scope';
+import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 
 /**
  * The app-builder grant, at the ONE place it is derived: the hub's session producer, run for real
@@ -30,8 +32,10 @@ vi.mock('../../db/db', () => ({
   },
 }));
 vi.mock('../../redis', () => ({ getRedis: () => null, getSysRedis: () => null }));
+vi.mock('@civitai/auth/secret-hash', () => ({ generateSecretHash: (s: string) => `hash:${s}` }));
 
 const { produceSessionUser } = await import('../session-producer');
+const { GET: userinfo } = await import('../../../../routes/api/auth/oauth/userinfo/+server');
 
 const MIGRATION = join(
   __dirname,
@@ -51,7 +55,16 @@ const PRELUDE = `
     "settings" JSONB NOT NULL DEFAULT '{}', "meta" JSONB NOT NULL DEFAULT '{}',
     "profilePictureId" INTEGER
   );
-  CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT);
+  CREATE TABLE "Image" (
+    "id" INTEGER PRIMARY KEY, "url" TEXT, "needsReview" TEXT, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
+    "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "blockedFor" TEXT,
+    "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false, "metadata" JSONB NOT NULL DEFAULT '{}',
+    "scanJobs" JSONB, "modelRestricted" BOOLEAN NOT NULL DEFAULT false
+  );
+  CREATE TABLE "ApiKey" (
+    "key" TEXT PRIMARY KEY, "userId" INTEGER, "type" TEXT, "expiresAt" TIMESTAMP,
+    "tokenScope" INTEGER NOT NULL, "tokenScopeWide" BIGINT
+  );
   CREATE TABLE "UserReferral" ("id" INTEGER PRIMARY KEY, "userId" INTEGER);
   CREATE TABLE "Product" ("id" TEXT PRIMARY KEY, "metadata" JSONB);
   CREATE TABLE "CustomerSubscription" (
@@ -163,5 +176,162 @@ describe('produceSessionUser — appBuilderApproved comes from AppAccessRequest'
     // read ran and the absence below is not an unread blob.
     expect(user?.isEarlyAdopter).toBe(true);
     expect(user?.appBuilderApproved).toBeUndefined();
+  });
+});
+
+describe('produceSessionUser — the profile picture', () => {
+  it.each([
+    [null, 'pic.jpg'],
+    ['poi', 'pic.jpg'],
+    ['csam', 'legacy.jpg'],
+    ['minor', 'legacy.jpg'],
+  ])('a picture held %s gives the session image %s', async (hold, image) => {
+    await pg.query(`INSERT INTO "Image" ("id", "url", "needsReview") VALUES (1, 'pic.jpg', $1)`, [
+      hold,
+    ]);
+    await pg.query(
+      `UPDATE "User" SET "profilePictureId" = 1, "image" = 'legacy.jpg' WHERE "id" = $1`,
+      [BUILDER]
+    );
+    expect((await produceSessionUser(BUILDER))?.image).toBe(image);
+  });
+
+  it.each([
+    ['csam', 'https://cdn.example/PIC.JPG/width=96', undefined],
+    ['minor', 'pic.jpg', undefined],
+    ['poi', 'pic.jpg', 'pic.jpg'],
+  ])(
+    'a picture held %s with User.image %s naming it gives the session image %s',
+    async (hold, legacy, image) => {
+      await pg.query(`INSERT INTO "Image" ("id", "url", "needsReview") VALUES (1, 'pic.jpg', $1)`, [
+        hold,
+      ]);
+      await pg.query(`UPDATE "User" SET "profilePictureId" = 1, "image" = $2 WHERE "id" = $1`, [
+        BUILDER,
+        legacy,
+      ]);
+      expect((await produceSessionUser(BUILDER))?.image).toBe(image);
+    }
+  );
+});
+
+describe('produceSessionUser — a blocked profile picture', () => {
+  const blocks = [
+    ['Blocked ingestion', `"ingestion" = 'Blocked'`],
+    ['the Blocked level', `"nsfwLevel" = 32`],
+    ['a block reason', `"blockedFor" = 'tos'`],
+  ];
+
+  it.each(blocks)('carrying %s is not the session image', async (_marker, set) => {
+    await pg.query(`INSERT INTO "Image" ("id", "url") VALUES (1, 'pic.jpg')`);
+    await pg.query(`UPDATE "Image" SET ${set} WHERE "id" = 1`);
+    await pg.query(
+      `UPDATE "User" SET "profilePictureId" = 1, "image" = 'legacy.jpg' WHERE "id" = $1`,
+      [BUILDER]
+    );
+    expect((await produceSessionUser(BUILDER))?.image).toBe('legacy.jpg');
+  });
+
+  it.each(blocks)('carrying %s leaves out a User.image naming it', async (_marker, set) => {
+    await pg.query(`INSERT INTO "Image" ("id", "url") VALUES (1, 'pic.jpg')`);
+    await pg.query(`UPDATE "Image" SET ${set} WHERE "id" = 1`);
+    await pg.query(
+      `UPDATE "User" SET "profilePictureId" = 1, "image" = 'https://cdn.example/PIC.JPG/width=96' WHERE "id" = $1`,
+      [BUILDER]
+    );
+    expect((await produceSessionUser(BUILDER))?.image).toBeUndefined();
+  });
+});
+
+describe('produceSessionUser — an unscanned profile picture', () => {
+  const NAMING = 'https://cdn.example/PIC.JPG/width=96';
+  const picture = async (ingestion: string, nsfwLevel: number, image: string) => {
+    await pg.query(
+      `INSERT INTO "Image" ("id", "url", "ingestion", "nsfwLevel") VALUES (1, 'pic.jpg', $1, $2)`,
+      [ingestion, nsfwLevel]
+    );
+    await pg.query(`UPDATE "User" SET "profilePictureId" = 1, "image" = $2 WHERE "id" = $1`, [
+      BUILDER,
+      image,
+    ]);
+  };
+
+  it('🔴 a Pending picture, with User.image naming it, is not the session image', async () => {
+    await picture('Pending', 0, NAMING);
+    expect((await produceSessionUser(BUILDER))?.image).toBeUndefined();
+  });
+
+  it('the same picture once Scanned is the session image (control)', async () => {
+    await picture('Scanned', 1, NAMING);
+    expect((await produceSessionUser(BUILDER))?.image).toBe('pic.jpg');
+  });
+
+  it('🔴 a Pending picture leaves a User.image that names another picture', async () => {
+    await picture('Pending', 0, 'legacy.jpg');
+    expect((await produceSessionUser(BUILDER))?.image).toBe('legacy.jpg');
+  });
+
+  it.each([
+    { state: 'Pending at a rated level', set: `"ingestion" = 'Pending'`, image: undefined },
+    { state: 'Scanned but unrated', set: `"nsfwLevel" = 0`, image: undefined },
+    {
+      state: 'mature on a restricted model',
+      set: `"nsfwLevel" = 4, "modelRestricted" = true`,
+      image: undefined,
+    },
+    { state: 'PG on a restricted model', set: `"modelRestricted" = true`, image: 'pic.jpg' },
+    {
+      state: 'locked, Pending',
+      set: `"ingestion" = 'Pending', "nsfwLevelLocked" = true`,
+      image: 'pic.jpg',
+    },
+    {
+      state: 'locked, Error',
+      set: `"ingestion" = 'Error', "nsfwLevelLocked" = true`,
+      image: 'pic.jpg',
+    },
+    {
+      state: 'locked, Error from a Knights vote',
+      set: `"ingestion" = 'Error', "nsfwLevelLocked" = true,
+       "metadata" = jsonb_build_object('nsfwLevelReason', '${KNIGHTS_VOTE_NSFW_LEVEL_REASON}')`,
+      image: undefined,
+    },
+    {
+      state: 'locked, Error from a permanent scan failure',
+      set: `"ingestion" = 'Error', "nsfwLevelLocked" = true,
+       "scanJobs" = '{"error": {"failureClass": "permanent"}}'`,
+      image: undefined,
+    },
+  ])('a picture $state gives the session image $image', async ({ set, image }) => {
+    await picture('Scanned', 1, NAMING);
+    await pg.query(`UPDATE "Image" SET ${set} WHERE "id" = 1`);
+    expect((await produceSessionUser(BUILDER))?.image).toBe(image);
+  });
+
+  describe('the OAuth userinfo picture claim', () => {
+    const TOKEN = 'civitai_userinfo_test';
+    const claims = async () => {
+      await pg.query(
+        `INSERT INTO "ApiKey" ("key", "userId", "type", "tokenScope") VALUES ($1, $2, 'Access', $3)`,
+        [`hash:${TOKEN}`, BUILDER, TokenScope.UserRead]
+      );
+      const response = await userinfo({
+        request: new Request('https://auth.civitai.com/api/auth/oauth/userinfo', {
+          headers: { authorization: `Bearer ${TOKEN}` },
+        }),
+      } as never);
+      expect(response.status).toBe(200);
+      return (await response.json()) as { picture?: string | null };
+    };
+
+    it('🔴 is absent for a Pending picture', async () => {
+      await picture('Pending', 0, NAMING);
+      expect((await claims()).picture ?? null).toBeNull();
+    });
+
+    it('is the url of a Scanned picture (control)', async () => {
+      await picture('Scanned', 1, NAMING);
+      expect((await claims()).picture).toBe('pic.jpg');
+    });
   });
 });

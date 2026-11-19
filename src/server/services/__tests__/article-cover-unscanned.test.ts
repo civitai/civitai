@@ -72,13 +72,16 @@ beforeEach(() => {
   dbMock.dbRead.pressMention.findMany.mockResolvedValue([] as never);
 });
 
-const feedCovers = async (sessionUser?: { id: number; isModerator?: boolean }) => {
+const feedCovers = async (
+  sessionUser?: { id: number; isModerator?: boolean },
+  browsingLevel = 1
+) => {
   const { items } = await getArticles({
     limit: 10,
     sort: ArticleSort.Newest,
     period: MetricTimeframe.AllTime,
     periodMode: 'published',
-    browsingLevel: 1,
+    browsingLevel,
     sessionUser,
   } as Parameters<typeof getArticles>[0]);
   return items.map((a) => a.coverImage?.url ?? null);
@@ -106,8 +109,60 @@ describe('article card covers', () => {
     expect(await feedCovers({ id: 6 })).toEqual([null, null, null]);
   });
 
+  it.each([
+    ['signed out', undefined],
+    ['another user', { id: 6 }],
+  ])('the feed carries no unrated cover to a viewer %s', async (_, viewer) => {
+    dbMock.dbRead.image.findMany.mockResolvedValue(
+      STATES.map((_, i) => ({ ...coverOf(i), nsfwLevel: 0 })) as never
+    );
+    expect(await feedCovers(viewer)).toEqual([null, null, null]);
+  });
+
+  it('the feed carries an unrated cover to its author', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue(
+      STATES.map((_, i) => ({ ...coverOf(i), nsfwLevel: 0 })) as never
+    );
+    expect(await feedCovers({ id: AUTHOR })).toEqual([
+      'cover-Scanned',
+      'cover-Pending',
+      'cover-Error',
+    ]);
+  });
+
   it('Civitai News carries only a Scanned cover', async () => {
     const { articles } = await getCivitaiNews();
     expect(articles.map((a) => a.coverImage?.url ?? null)).toEqual(['cover-Scanned', null, null]);
+  });
+});
+
+describe('article card covers restricted by their base model', () => {
+  const mature = (modelRestricted: boolean) =>
+    STATES.map((_, i) => ({ ...coverOf(i), ingestion: 'Scanned', nsfwLevel: 4, modelRestricted }));
+  const ALL = ['cover-Scanned', 'cover-Pending', 'cover-Error'];
+
+  it.each([
+    ['signed out', undefined],
+    ['another user', { id: 6 }],
+    ['a moderator', { id: 6, isModerator: true }],
+  ])('the feed withholds a mature restricted cover from a viewer %s', async (_, viewer) => {
+    dbMock.dbRead.image.findMany.mockResolvedValue(mature(true) as never);
+    expect(await feedCovers(viewer, 31)).toEqual([null, null, null]);
+    dbMock.dbRead.image.findMany.mockResolvedValue(mature(false) as never);
+    expect(await feedCovers(viewer, 31)).toEqual(ALL);
+  });
+
+  it('the feed carries a mature restricted cover to its author', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue(mature(true) as never);
+    expect(await feedCovers({ id: AUTHOR }, 31)).toEqual(ALL);
+  });
+
+  it('Civitai News withholds a mature restricted cover', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue(mature(true) as never);
+    const { articles } = await getCivitaiNews();
+    expect(articles.map((a) => a.coverImage?.url ?? null)).toEqual([null, null, null]);
+    dbMock.dbRead.image.findMany.mockResolvedValue(mature(false) as never);
+    const { articles: unrestricted } = await getCivitaiNews();
+    expect(unrestricted.map((a) => a.coverImage?.url ?? null)).toEqual(ALL);
   });
 });

@@ -9,7 +9,7 @@ import {
 } from '~/server/services/blocks/workflow.service';
 
 /** Every browsing level, so no fixture output is above the ceiling. */
-const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31 };
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, serving: false, mint: null };
 
 /**
  * The read side of `kind:'workflow'`: which orchestrator steps a snapshot and the

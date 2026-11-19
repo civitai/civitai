@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { chunk, partition } from 'lodash-es';
+import { chunk } from 'lodash-es';
 import {
   moderatorActedBeforeDeleteSql,
   statusAtDeleteKnownSql,
@@ -33,10 +33,12 @@ import type {
 } from '~/server/services/creator-milestone-grant.service';
 import {
   grantScoreTierMilestones,
-  markMilestonesSeen,
   notifyScoreTierCrossings,
 } from '~/server/services/creator-milestone-grant.service';
-import { isMilestoneAnnounced } from '~/server/services/creator-milestone-registry';
+import {
+  creatorMilestoneRegistry,
+  isMilestoneAnnounced,
+} from '~/server/services/creator-milestone-registry';
 import { alertNewLegends } from '~/server/services/creator-legend-alert.service';
 import {
   CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
@@ -640,22 +642,21 @@ export async function grantScoreTierCrossings(
     const grantable = grantsRequireFlag
       ? transitions.filter((t) => audience.has(t.userId))
       : transitions;
-    crossings = await grantScoreTierMilestones(ctx.pg, grantable, onCancel);
+    crossings = await grantScoreTierMilestones(ctx.pg, grantable, onCancel, {
+      userIds: [...audience],
+      announcedKeys: Object.keys(creatorMilestoneRegistry).filter((key) =>
+        isMilestoneAnnounced(key, now)
+      ),
+    });
   } catch (e) {
     log('tier grant failed for batch', e);
     ctx.tierGrantErrors.push(e);
     return;
   }
   const audienceCrossings = crossings.filter((crossing) => audience.has(crossing.userId));
-  const [announced, silenced] = partition(audienceCrossings, (crossing) =>
+  const announced = audienceCrossings.filter((crossing) =>
     isMilestoneAnnounced(crossing.milestoneKey, now)
   );
-  try {
-    await markMilestonesSeen(ctx.pg, silenced, onCancel);
-  } catch (e) {
-    log('marking silent tier grants seen failed for batch', e);
-    ctx.tierGrantErrors.push(e);
-  }
   // Notified here rather than after the run: a re-run's ON CONFLICT never returns these again.
   await notifyScoreTierCrossings(announced, ctx.tierUnlocks);
   // Staff hear about every alerted crossing, including one whose user-facing announcement is silenced.

@@ -210,6 +210,7 @@ function Detail({
     items: images.map((image) => ({ key: `img:${image.id}` })),
     index,
     navigate: (i) => navigate(images[i].id),
+    carouselIndex: carouselNavigation.index,
     carouselNavigate: carouselNavigation.navigate,
   });
   const shown = images[carouselNavigation.index]?.id;

@@ -61,7 +61,8 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
             metadata: row.profilePictureMetadata as Prisma.JsonValue,
           }
         : null,
-      row.profilePictureNeedsReview
+      row.profilePictureNeedsReview,
+      row.profilePictureModelRestricted
     ),
     cosmetics: row.cosmetics.map((cosmetic) => ({
       data: cosmetic.data as Prisma.JsonValue,

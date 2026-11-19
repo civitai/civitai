@@ -24,10 +24,10 @@ export function parseDevTunnelClientId(clientId: string): { userId: number; slug
 }
 
 /** Which of `scopes` a consent bitmask covers; block-only scopes have no bit and pass through. */
-export function scopesCoveredByConsent(scopes: readonly string[], consentScope: number): string[] {
+export function scopesCoveredByConsent(scopes: readonly string[], consentScope: bigint): string[] {
   return scopes.filter((scope) => {
     const bit = BLOCK_SCOPE_TO_OAUTH_BIT[scope];
-    return typeof bit !== 'number' || (consentScope & bit) === bit;
+    return typeof bit !== 'bigint' || (consentScope & bit) === bit;
   });
 }
 

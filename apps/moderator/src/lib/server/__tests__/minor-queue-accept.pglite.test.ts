@@ -47,8 +47,19 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
+// The models-index requeue is covered in image-models-reindex.pglite.test.ts; this schema has no Post table.
+vi.mock('../image-models-reindex', () => ({
+  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+}));
+
+// The article lookup is covered in article-cover-reindex.pglite.test.ts; this schema has no Article table.
+vi.mock('../article-cover-reindex', () => ({
+  queueArticlesForCoverImages: vi.fn(async () => undefined),
+}));
 
 const { acceptImage } = await import('../image-moderation.service');
+const { queueArticlesForCoverImages } = await import('../article-cover-reindex');
+const { queueModelsForImageChildTagChanges } = await import('../image-models-reindex');
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
@@ -70,7 +81,10 @@ CREATE TABLE "Image" (
   "scannedAt" TIMESTAMP(3)
 );
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+  PRIMARY KEY ("entityType", "entityId", "type"));
+CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "disabled" BOOLEAN);
+ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "scanJobs" JSONB;
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -139,5 +153,31 @@ describe('minor queue Accept', () => {
       `SELECT "nsfwLevel", "minor" FROM "Image" ORDER BY "id"`
     );
     expect(rows.map((row) => [row.nsfwLevel, row.minor])).toEqual(LEVELS);
+  });
+
+  // The accept rewrites "minor", which no trigger watches.
+  it('queues the articles each accepted image covers', async () => {
+    await db.query(`UPDATE "Image" SET "needsReview" = 'minor' WHERE "id" = 1`);
+    vi.mocked(queueArticlesForCoverImages).mockClear();
+    await acceptImage({ imageId: 1, userId: 2 });
+    expect(queueArticlesForCoverImages).toHaveBeenCalledWith([1]);
+  });
+
+  it('queues the models whose showcase can hold each accepted image', async () => {
+    await db.query(`UPDATE "Image" SET "needsReview" = 'minor' WHERE "id" = 1`);
+    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+    await acceptImage({ imageId: 1, userId: 2 });
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ minorImageIds: [1] });
+  });
+
+  it('queues neither for an accept out of another queue (control)', async () => {
+    await db.query(`UPDATE "Image" SET "needsReview" = 'newUser' WHERE "id" = 1`);
+    vi.mocked(queueArticlesForCoverImages).mockClear();
+    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+    await acceptImage({ imageId: 1, userId: 2 });
+    expect(queueArticlesForCoverImages).not.toHaveBeenCalled();
+    expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalledWith(
+      expect.objectContaining({ minorImageIds: expect.anything() })
+    );
   });
 });

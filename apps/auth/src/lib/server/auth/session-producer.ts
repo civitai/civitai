@@ -1,4 +1,9 @@
 import { isRefusedModerationAccount } from './moderation-account';
+import { sql } from 'kysely';
+import {
+  servablePictureSql,
+  userImageNamesPicture,
+} from '@civitai/db-queries/profile-picture-clear';
 import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { env } from '$env/dynamic/private';
@@ -29,7 +34,14 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.name',
       'User.email',
       'User.emailVerified',
-      'User.image',
+      // The legacy `User.image` is left out when it names the profile picture, so that picture reaches
+      // the session only through `profilePicture`, which admits it once it is servable: a wider rule than
+      // the main app's `fallbackUserImageColumn`, since this image is also the OAuth userinfo picture.
+      sql<string | null>`CASE WHEN EXISTS (
+        SELECT 1 FROM "Image" i
+        WHERE i.id = "User"."profilePictureId"
+          AND ${sql.raw(userImageNamesPicture('i', '"User"'))}
+      ) THEN NULL ELSE "User".image END`.as('image'),
       'User.createdAt',
       'User.isModerator',
       'User.showNsfw',
@@ -49,9 +61,11 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.meta',
       jsonObjectFrom(
         eb
-          .selectFrom('Image')
-          .select(['Image.url'])
-          .whereRef('Image.id', '=', 'User.profilePictureId')
+          .selectFrom('Image as i')
+          .select(['i.url'])
+          .whereRef('i.id', '=', 'User.profilePictureId')
+          // Only a servable picture is shown, even to its owner.
+          .where(servablePictureSql())
       ).as('profilePicture'),
       jsonObjectFrom(
         eb

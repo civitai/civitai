@@ -156,6 +156,7 @@ beforeEach(() => {
       cb,
       {
         $executeRaw: (...args: unknown[]) => dbMock.dbWrite.$executeRaw(...(args as [never])),
+        $queryRaw: (...args: unknown[]) => dbMock.dbWrite.$queryRaw(...(args as [never])),
         post: { updateMany: (args: unknown) => dbMock.dbWrite.post.updateMany(args as never) },
         crucibleEntry: {
           create: (args: unknown) => dbMock.dbWrite.crucibleEntry.create(args as never),

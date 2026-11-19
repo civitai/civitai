@@ -141,8 +141,11 @@ export async function checkSharedReportRateLimit(
 // here: they spend a token-bucket write budget below (`reserveSharedWrite` with
 // `DOC_STORE_SHARED_WRITE_BUDGET`), their own, not the one the legacy append/update spend.
 //   reads             — per (app, viewer), or per (app, client IP) for an anonymous viewer;
-//   writes            — per (app, viewer): private document writes, and every DELETE (a
-//                       viewer's own shared documents included — see the route);
+//   writes            — per (app, viewer): private document writes, every DELETE (a
+//                       viewer's own shared documents included — see the route), each publish
+//                       and unpublish call, and, only while the app has
+//                       `app-blocks-storage-unchanged-writes-free` on, every shared PUT, changed
+//                       or not, on top of the shared write budget a changed one still spends;
 //   marks + counters  — per (app, viewer), every mark and counter write;
 //   report            — per (app, viewer) per day, on top of the marks + counters bucket.
 export const DOC_STORE_READ_RATE_LIMIT_MAX = 300;

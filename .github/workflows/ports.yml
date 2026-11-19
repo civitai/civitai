@@ -1,0 +1,123 @@
+name: Node→Go ports
+
+# Checks ports/manifest.json and its markers, and reports which ports a PR touches; what each
+# job does is in ports/README.md (CI).
+#
+# Its own workflow because it needs Node and Go together: lint.yml has no Go, and the Go workflows
+# are filtered to their own app. The path filter is that wide because it is everything a port can
+# depend on: the Node deps reach src/ and packages/ (and the event-engine-common pin), the Go deps
+# the two Go apps, and a change to any of them can change which ports a PR touches.
+on:
+  pull_request:
+    branches: [main, release]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: &ports-inputs
+      - '.github/workflows/ports.yml'
+      - 'ports/**'
+      - 'scripts/ports/**'
+      - 'scripts/__tests__/ports-*.test.ts'
+      - 'src/**'
+      - 'packages/**'
+      - 'apps/feed-go/**'
+      - 'apps/beacon-go/**'
+      - 'event-engine-common'
+      - 'tsconfig.json'
+      - '.gitmodules'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+  push:
+    branches: [main]
+    paths: *ports-inputs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ports-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+jobs:
+  manifest:
+    name: Ports manifest and markers
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # One toolchain for both modules: their go.mod files name the same Go version.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/feed-go/go.mod
+          cache-dependency-path: |
+            apps/feed-go/go.sum
+            apps/beacon-go/go.sum
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Counted: vitest given a file it does not match runs the rest and still exits 0.
+      - name: Generator tests
+        env:
+          PORTS_REQUIRE_GO: '1'
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files 'scripts/__tests__/ports-*.test.ts')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No scripts/__tests__/ports-*.test.ts files found; this step would have checked nothing."
+            exit 1
+          fi
+          pnpm exec vitest run --project 'unit*' --reporter=default --reporter=json \
+            --outputFile=ports-test-report.json "${files[@]}"
+          ran=$(node -e 'console.log(require("./ports-test-report.json").testResults.length)')
+          if [ "$ran" -ne "${#files[@]}" ]; then
+            echo "::error::vitest ran $ran of ${#files[@]} ports test files; each one must run."
+            exit 1
+          fi
+
+      - name: Manifest is valid and markers are committed
+        run: node scripts/ports/generate.mjs --check
+
+  touched:
+    name: Ports this PR touches
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/feed-go/go.mod
+          cache-dependency-path: |
+            apps/feed-go/go.sum
+            apps/beacon-go/go.sum
+
+      # For `typescript`, which the Node dependency walk parses with.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Map changed files to ports
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch -q origin "$BASE_REF"
+          node scripts/ports/touched.mjs --base FETCH_HEAD

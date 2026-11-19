@@ -113,6 +113,17 @@ describe('classifySharedTexts — the local checks, one leaf at a time', () => {
     await expect(classifySharedTexts([leaf('a perfectly ordinary label')])).resolves.toEqual([]);
   });
 
+  it('flags an orchestrator media link as a link hit, without recording the url', async () => {
+    const url = 'https://orchestration.civitai.com/v2/consumer/blobs/K1.png?sig=s';
+    const hits = await classifySharedTexts([leaf(url)]);
+    expect(hits).toContainEqual({
+      category: 'link',
+      matched: 'private_media',
+      label: 'private_media',
+      leaf: leaf(url),
+    });
+  });
+
   it('flags a minor term, with the leaf it came from', async () => {
     const hits = await classifySharedTexts([leaf('fine'), leaf(MINOR, 'y/0')]);
     expect(hits).toContainEqual({

@@ -46,7 +46,7 @@ const {
       {
         userId: number;
         grants: string[];
-        allowedScopes: number;
+        allowedScopes: bigint;
         secret: string;
         user: { bannedAt: Date | null; deletedAt: Date | null };
       }
@@ -69,11 +69,11 @@ vi.mock('~/server/auth/bearer-token', async () => {
       token: string,
       options: { allowClientCredentialsOnly?: boolean } = {}
     ) => {
-      const session = mockSessions.get(token) as { tokenScope?: number } | undefined;
+      const session = mockSessions.get(token) as { tokenScope?: bigint } | undefined;
       if (!session) return null;
       if (
         !options.allowClientCredentialsOnly &&
-        ((session.tokenScope ?? 0) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0
+        ((session.tokenScope ?? 0n) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0n
       )
         return null;
       return session;
@@ -166,14 +166,17 @@ vi.mock('~/server/redis/caches', () => ({
 import mintHandler from '~/pages/api/v1/download-links/index';
 import revokeHandler from '~/pages/api/v1/download-links/[linkId]';
 import linkHandler from '~/pages/api/download/l/[id]';
-import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
+import {
+  revokeLinksOfRevokedCredentials,
+  takeMintBudget,
+} from '~/server/services/download-link/download-link.store';
 import { clearGateReadCache } from '~/server/services/download-link/generation-fetch.service';
 import { mintProviderLink } from '~/server/services/download-link/download-link.service';
 import type { DownloadLinkCredential } from '~/server/services/download-link/download-link.store';
 import { miniResponseExpiresAt } from '~/server/utils/mini-expires';
 
 // ---------------------------------------------------------------------------------------------
-// In-memory sysRedis.
+// In-memory sysRedis (and the cache cluster, for the mint-rate windows).
 
 type Entry =
   | { type: 'hash'; value: Map<string, string>; expiresAt: number | null }
@@ -204,8 +207,11 @@ const ops = {
     const entry = live(key);
     if (entry) entry.expiresAt = Date.now() + seconds * 1000;
   },
-  set(key: string, value: string, options?: { PXAT?: number }) {
-    store.set(key, { type: 'string', value, expiresAt: options?.PXAT ?? null });
+  set(key: string, value: string, options?: { PXAT?: number; NX?: boolean; EX?: number }) {
+    if (options?.NX && live(key)) return null;
+    const expiresAt = options?.PXAT ?? (options?.EX ? Date.now() + options.EX * 1000 : null);
+    store.set(key, { type: 'string', value, expiresAt });
+    return 'OK';
   },
   sAdd(key: string, member: string) {
     const entry = live(key);
@@ -270,7 +276,18 @@ function installFakeSysRedis() {
       throw new Error('unknown script');
     }
   );
-  r.multi.mockImplementation(() => {
+  sysMultiKeys = [];
+  clusterMultiKeys = [];
+  r.multi.mockImplementation(fakeMulti(sysMultiKeys));
+  // The mint-rate windows are on the cache cluster; one store backs both clients here, and each
+  // records the keys its MULTIs touched.
+  redisMock.redis.multi.mockImplementation(fakeMulti(clusterMultiKeys));
+}
+
+let sysMultiKeys: string[] = [];
+let clusterMultiKeys: string[] = [];
+function fakeMulti(seen: string[]) {
+  return () => {
     const queued: (() => unknown)[] = [];
     const chain: Record<string, unknown> = {
       exec: async () => {
@@ -280,12 +297,13 @@ function installFakeSysRedis() {
     };
     for (const name of Object.keys(ops) as (keyof typeof ops)[]) {
       chain[name] = (...args: unknown[]) => {
+        seen.push(String(args[0]));
         queued.push(() => (ops[name] as (...a: unknown[]) => unknown)(...args));
         return chain;
       };
     }
     return chain;
-  });
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1093,6 +1111,13 @@ describe('reuse', () => {
 });
 
 describe('mint limits', () => {
+  it('counts the mint windows on the cache cluster, and only them', async () => {
+    await mintOne(userItem(PUBLIC_VERSION));
+    expect(clusterMultiKeys.length).toBeGreaterThan(0);
+    expect(clusterMultiKeys.every((key) => key.startsWith('dl:mint-rate:'))).toBe(true);
+    expect(sysMultiKeys.filter((key) => key.startsWith('dl:mint-rate:'))).toEqual([]);
+  });
+
   it('answers an item 429 past the per-user limit', async () => {
     setEnv({ DOWNLOAD_LINK_MINT_LIMIT_PER_USER: 2 });
     const res = await mint([
@@ -1135,6 +1160,32 @@ describe('mint limits', () => {
     ]);
     expect(res.status).toBe(429);
     expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+  });
+
+  it('a mint window key carries its TTL from the first take', async () => {
+    await mintOne(userItem(PUBLIC_VERSION));
+    const windows = [...store.entries()].filter(([key]) => key.startsWith('dl:mint-rate:'));
+    expect(windows.length).toBeGreaterThan(0);
+    for (const [key, entry] of windows) expect(entry.expiresAt, key).not.toBeNull();
+  });
+
+  it('a hung cache cluster refuses the take by its deadline, not stalling the mint', async () => {
+    redisMock.redis.multi.mockImplementation(() => {
+      const chain: Record<string, unknown> = {
+        exec: () => new Promise(() => undefined),
+      };
+      for (const name of ['set', 'incr', 'incrBy', 'expire']) chain[name] = () => chain;
+      return chain;
+    });
+    const STILL_HUNG = 'takeMintBudget still pending 3s after the cluster stopped answering';
+    const outcome = await Promise.race([
+      takeMintBudget('user:1', 1, 10, Date.now()).then(
+        () => 'takeMintBudget resolved against a hung cluster',
+        (err: unknown) => err
+      ),
+      new Promise((resolve) => setTimeout(() => resolve(STILL_HUNG), 3_000)),
+    ]);
+    expect(outcome).toMatchObject({ name: 'ClusterCacheUnavailableError', reason: 'timeout' });
   });
 });
 

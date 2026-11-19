@@ -22,6 +22,10 @@ An item at a stage nobody can serve is not extended. It is handed up as rule 1 s
 
 The tick response carries `escalated`, `toInquisitor`, `extended` and `expired`; each expiry also counts as `knights_escalations_total{reason="expired"}`.
 
+## An open item a moderator has since ruled on
+
+When a moderator locks an image's level after its item was queued, the tick closes the open item instead of letting players keep judging it (`closeModeratorRuledItems`, before `settleFinalItems`). The rule is the one the write-back applies to a settled item (`moderatorRuling` in `resolution.ts`): a lock other than Knights' own (`KNIGHTS_VOTE_NSFW_LEVEL_REASON`) at a level. The item becomes `Closed`, `reason = 'moderator-ruled'`, `resolvedValue` = the moderator's level, and its votes are graded and paid against that level through the write-back's own path (`reroute`). It acts only on an item still `Open` under its row lock, so an item a vote, the escalation or the Inquisitors moved first is left alone; `Resolved`, `Closed` and `Inquisitor` items are never regraded. A blocked image, or a lock without a level, is left to the other paths. The tick response carries `moderatorRuled` (items closed); an item that fails is retried next tick and counted as `knights_tick_item_failures_total{step="moderator_ruled"}`.
+
 ## Sources
 
-Scan sampling and owner ratings feed the queue only while `system:knights-v2-sources` (`{enabled, sfwRate, nsfwRate, maxOpen?}`) is on. Scan sampling also pauses while more than `maxOpen` Knight-stage items are open (see [Knights queue sources](knights-sources.md)). Moderators switch the sources and set both rates from the moderator app's Knights of New Order Config page; each save is recorded in `ModActivity` with the value before and after. The main app reads the key with a 30 s cache.
+Scan sampling and owner ratings feed the queue only while `system:knights-v2-sources` (`{enabled, sfwRate, nsfwRate, maxOpen?, yesNoShare?, game?}`) is on. Scan sampling also pauses while more than `maxOpen` Knight-stage items are open (see [Knights queue sources](knights-sources.md)). Moderators switch the sources and set both rates from the moderator app's Knights of New Order Config page; each save is recorded in `ModActivity` with the value before and after. The main app reads the key with a 30 s cache.

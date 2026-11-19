@@ -361,6 +361,8 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // `from` and `surface` are acquisition attribution: where the launch link was built. Both
     // are parsed to closed values (`parseAppsRunOrigin` / `resolveAppOpenSurface`), so a
     // hand-edited query string can mislabel its own row but cannot put text in it.
+    // `sl`, `src` and `from` are HOST-OWNED query params: keep `HOST_OWNED_RUN_PARAMS`
+    // (`~/shared/utils/apps-run-origin`) in step when adding one, or it leaks to the app.
     const subListingId = isAppSubListingId(ctx.query?.sl) ? ctx.query.sl : null;
     void recordAppListingOpen({
       appBlockId: page.appBlockId,

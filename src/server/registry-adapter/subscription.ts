@@ -9,7 +9,9 @@
  *      it has no source for (`Adapter.serves`: `end` means never), or `urns` none of which is of
  *      its namespace ({@link servesAnyUrn});
  *   2. the filter is compiled (`bad_request` for one that is not a schema, or one this source
- *      will not evaluate: rule 6, a filter is applied in full or refused, never ignored);
+ *      will not evaluate: rule 6, a filter is applied in full or refused, never ignored, except
+ *      that a `pattern` is best-effort on very long values and bodies, see
+ *      `FILTER_PATTERN_MAX_INPUT_LENGTH` and `FILTER_PATTERN_BODY_BUDGET` in `filter-pattern.ts`);
  *   3. a resume's cursor is checked against the request and the token's subject (rule 2, the
  *      auth extension; {@link unbindCursor}), then by the adapter, which for a document, app,
  *      release or schema stream also checks the token's audience, all before `live`, so a refused cursor is

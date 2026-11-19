@@ -1,6 +1,7 @@
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { scanLiftPostText, scanRefusePostText } from '~/server/services/post-text-scan-refusal';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import { imageCaptionTextScanSubject } from '~/server/services/text-scan/profiles/image-caption.profile';
 import { postTextTextScanSubject } from '~/server/services/text-scan/profiles/post-text.profile';
@@ -33,6 +34,14 @@ type ScannedTextTable = {
    * longer has must not rate it: that would show the new text at the old text's rating.
    */
   unratedHides?: boolean;
+  /**
+   * The row also carries a moderator's refusal, which no verdict lifts: the scan refuses and lifts
+   * through these single statements instead (`post-text-scan-refusal`).
+   */
+  scanRefusal?: {
+    refuse: (id: number) => Promise<unknown>;
+    lift: (id: number, content: string) => Promise<unknown>;
+  };
   /** Recomputes whatever the row's level and refusal feed, after every verdict. */
   afterVerdict?: (id: number) => Promise<unknown>;
 };
@@ -81,9 +90,14 @@ async function applyScannedTextScan(
   const refuse =
     !!outcome.poi?.detected ||
     isMinorContentRestricted({ minor: !!outcome.minor?.detected, nsfwLevel: level });
-  if (refuse) await table.update(entityId, { refused: false }, { refused: true });
+  if (refuse)
+    await (table.scanRefusal
+      ? table.scanRefusal.refuse(entityId)
+      : table.update(entityId, { refused: false }, { refused: true }));
   else if (current && outcome.poi && outcome.minor)
-    await table.update(entityId, { ...pinned, refused: true }, { refused: false });
+    await (table.scanRefusal
+      ? table.scanRefusal.lift(entityId, before.content)
+      : table.update(entityId, { ...pinned, refused: true }, { refused: false }));
 
   await table.afterVerdict?.(entityId);
 }
@@ -115,6 +129,7 @@ const postTextTable: ScannedTextTable = {
       select: { id: true },
     })),
   unratedHides: true,
+  scanRefusal: { refuse: scanRefusePostText, lift: scanLiftPostText },
   afterVerdict: async (id) => {
     const row = await dbWrite.postText.findUnique({ where: { id }, select: { postId: true } });
     if (row) await recomputeRatedEntityNsfwLevel('Post', row.postId);

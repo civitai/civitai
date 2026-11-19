@@ -737,7 +737,7 @@ function logSendFailure(
     message: (e as Error | undefined)?.message,
     reportId: report.id,
     ncmecReportId,
-    hoursPending: hoursSinceFiled(report),
+    payload: { hoursPending: hoursSinceFiled(report) },
   });
 }
 
@@ -757,7 +757,7 @@ export async function logBlockedCsamReports(reportIds: number[]) {
       subType: 'send-blocked',
       message: `report ${report.id} unsent after ${hoursPending} hours`,
       reportId: report.id,
-      hoursPending,
+      payload: { hoursPending },
     });
   }
 }
@@ -782,8 +782,7 @@ export async function logOverdueEvidenceApprovals() {
       subType: 'send-blocked',
       message: `report ${report.id} has waited ${hoursPending} hours for a moderator to approve its evidence`,
       reportId: report.id,
-      hoursPending,
-      awaiting: 'evidence-approval',
+      payload: { hoursPending, awaiting: 'evidence-approval' },
     });
   }
 }
@@ -921,8 +920,7 @@ async function recordSkippedEntries(claim: SendClaim, budget: SpoolBudget) {
     'send-entries-skipped',
     {
       message: `report ${claim.report.id} skips ${skipped.count} archive entries`,
-      empty: skipped.empty,
-      unreadable: skipped.unreadable,
+      payload: { empty: skipped.empty, unreadable: skipped.unreadable },
     },
     'error'
   );
@@ -952,11 +950,13 @@ async function holdForDecision(claim: SendClaim, holdCase: SendHoldCase, reason:
   const unconfirmed = report.details?.unconfirmedOpens ?? [];
   const fields = {
     message: `report ${report.id} held (${holdCase}): ${reason}`,
-    case: holdCase,
-    hoursPending: hoursSinceFiled(report),
     ncmecReportId: report.reportId ?? undefined,
-    possibleDuplicateReportIds: possibleDuplicates,
-    unconfirmedOpens: unconfirmed.length,
+    payload: {
+      case: holdCase,
+      hoursPending: hoursSinceFiled(report),
+      possibleDuplicateReportIds: possibleDuplicates,
+      unconfirmedOpens: unconfirmed.length,
+    },
   };
   logSendLine(claim, 'send-held', fields, 'error');
   logSendLine(claim, 'send-decision-needed', fields, 'error');
@@ -1028,7 +1028,7 @@ async function cancelStoredCyberTip(
     logSendLine(
       claim,
       'send-possible-duplicate',
-      { ncmecReportId: stored, cancelOutcome: outcome, message },
+      { ncmecReportId: stored, message, payload: { cancelOutcome: outcome } },
       'error'
     );
   else
@@ -1049,19 +1049,17 @@ async function cancelStoredCyberTip(
 async function logNoFiles(claim: SendClaim, message: string) {
   const hoursPending = hoursSinceFiled(claim.report);
   // A CyberTip an earlier run left open is named, so whoever decides sees it.
-  const stored = {
-    case: 'no-files' satisfies SendHoldCase,
-    ncmecReportId: claim.report.reportId ?? undefined,
-  };
-  logSendLine(claim, 'send-no-files', { message, hoursPending, ...stored }, 'error');
+  const ncmecReportId = claim.report.reportId ?? undefined;
+  const payload = { hoursPending, case: 'no-files' satisfies SendHoldCase };
+  logSendLine(claim, 'send-no-files', { message, ncmecReportId, payload }, 'error');
   if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
     logSendLine(
       claim,
       'send-decision-needed',
       {
         message: `report ${claim.report.id} has had no file to send for ${hoursPending} hours`,
-        hoursPending,
-        ...stored,
+        ncmecReportId,
+        payload,
       },
       'error'
     );
@@ -1074,10 +1072,15 @@ async function logNoFiles(claim: SendClaim, message: string) {
  */
 function logXmlProblem(claim: SendClaim, problem: string) {
   const hoursPending = hoursSinceFiled(claim.report);
-  const stored = { ncmecReportId: claim.report.reportId ?? undefined };
+  const ncmecReportId = claim.report.reportId ?? undefined;
   const message = `report ${claim.report.id} would not be well-formed XML: ${problem}`;
-  logSendLine(claim, 'send-xml', { message, hoursPending, ...stored }, 'error');
-  logSendLine(claim, 'send-decision-needed', { message, hoursPending, ...stored }, 'error');
+  logSendLine(claim, 'send-xml', { message, ncmecReportId, payload: { hoursPending } }, 'error');
+  logSendLine(
+    claim,
+    'send-decision-needed',
+    { message, ncmecReportId, payload: { hoursPending } },
+    'error'
+  );
 }
 
 /**
@@ -1109,8 +1112,7 @@ function logHeldOnUnconfirmedOpen(claim: SendClaim) {
     'send-decision-needed',
     {
       message: `report ${claim.report.id} is held: ${opens.length} earlier open(s) may have left a CyberTip at NCMEC with no id here. Check with NCMEC, then clear it to send.`,
-      hoursPending: hoursSinceFiled(claim.report),
-      unconfirmedOpens: opens.length,
+      payload: { hoursPending: hoursSinceFiled(claim.report), unconfirmedOpens: opens.length },
     },
     'error'
   );
@@ -1310,9 +1312,7 @@ async function reportImages(claim: SendClaim) {
       subType: 'send-all-unreadable',
       message: `report ${report.id} has no readable file`,
       reportId: report.id,
-      hoursPending,
-      filesUnreadable: failed.length,
-      filesAbsent: absent.length,
+      payload: { hoursPending, filesUnreadable: failed.length, filesAbsent: absent.length },
     });
     if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
       logToAxiom({
@@ -1321,7 +1321,7 @@ async function reportImages(claim: SendClaim) {
         subType: 'send-decision-needed',
         message: `report ${report.id} has had no readable file for ${hoursPending} hours`,
         reportId: report.id,
-        hoursPending,
+        payload: { hoursPending },
       });
     return logSendFailure(report, new Error('no file of the report could be read'), 'archive-data');
   }
@@ -1543,8 +1543,7 @@ async function reportImages(claim: SendClaim) {
       'send-short',
       {
         message: `report ${report.id} sent without ${filesMissing} file(s)`,
-        filesMissing,
-        filesAbsent: filesMissing - failed.length,
+        payload: { filesMissing, filesAbsent: filesMissing - failed.length },
       },
       'error'
     );
@@ -1718,8 +1717,7 @@ async function sendGenerationData(
       'send-short',
       {
         message: `report ${report.id} sent without ${failed.length} file(s)`,
-        filesMissing: failed.length,
-        filesAbsent: 0,
+        payload: { filesMissing: failed.length, filesAbsent: 0 },
       },
       'error'
     );
@@ -3218,11 +3216,13 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       message: `report ${report.id}: archived ${entries} of ${imageUrls.length} generated images`,
       reportId: report.id,
       expected: imageUrls.length,
-      strikeUrls: strikeUrls.size,
-      namedUrls: namedUrls.size,
-      entries,
-      unreadable,
-      strikesNotFound,
+      payload: {
+        strikeUrls: strikeUrls.size,
+        namedUrls: namedUrls.size,
+        entries,
+        unreadable,
+        strikesNotFound,
+      },
     });
 
     archived.push({

@@ -1,4 +1,11 @@
-import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  sysRedis,
+  REDIS_SYS_KEYS,
+  withSysReadDeadline,
+} from '~/server/redis/client';
+import { boundedClusterCall, takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 
 /**
  * The bundle-submit rate limit, shared by both submit routes (the CLI's token route and the session
@@ -17,8 +24,34 @@ export type RateLimit = { readonly max: number; readonly windowSeconds: number }
 
 const RATE_KEYS = {
   submit: REDIS_SYS_KEYS.BLOCKS.SUBMIT_RATE_LIMIT,
-  push: REDIS_SYS_KEYS.BLOCKS.PUSH_REVIEW_RATE_LIMIT,
+  push: REDIS_KEYS.BLOCKS.PUSH_REVIEW_RATE_LIMIT,
 } as const;
+
+/**
+ * One window's count after this take, and its TTL on the 429 path, from the store the family
+ * lives in.
+ */
+function rateStore(family: keyof typeof RATE_KEYS, subject: string, windowSeconds: number) {
+  if (family === 'push') {
+    const key = `${RATE_KEYS.push}:${subject}` as const;
+    return {
+      take: (): Promise<number> => takeClusterWindowCount('takePushReviewSlot', key, windowSeconds),
+      ttl: (): Promise<number> => boundedClusterCall('takePushReviewSlot', () => redis.ttl(key)),
+    };
+  }
+  const key = `${RATE_KEYS.submit}:${subject}` as const;
+  // Submit limits stay on sysRedis: durable across eviction, so a lost window cannot admit a burst
+  // of submits.
+  return {
+    take: async (): Promise<number> => {
+      const reply = await withSysReadDeadline(
+        sysRedis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec()
+      );
+      return Number((reply as unknown[] | null)?.[1]);
+    },
+    ttl: (): Promise<number> => withSysReadDeadline(sysRedis.ttl(key)),
+  };
+}
 
 export type SubmitRateDecision =
   | { ok: true }
@@ -59,21 +92,16 @@ async function takeRateSlot(
   subject: string,
   limit: RateLimit
 ): Promise<SubmitRateDecision> {
-  const rateKey = `${RATE_KEYS[family]}:${subject}` as const;
+  const store = rateStore(family, subject, limit.windowSeconds);
   let count: number;
   try {
-    const multiResult = await withSysReadDeadline(
-      sysRedis.multi().set(rateKey, '0', { NX: true, EX: limit.windowSeconds }).incr(rateKey).exec()
-    );
-    count = Number(multiResult?.[1]);
+    count = await store.take();
   } catch {
     return { ok: false, reason: 'unavailable' };
   }
   if (!Number.isFinite(count)) return { ok: false, reason: 'malformed' };
   if (count <= limit.max) return { ok: true };
   // Bound the 429-path TTL read (#28) too; on a deadline/throw fall back to the full window.
-  const retryAfterSeconds = await withSysReadDeadline(sysRedis.ttl(rateKey)).catch(
-    () => limit.windowSeconds
-  );
+  const retryAfterSeconds = await store.ttl().catch(() => limit.windowSeconds);
   return { ok: false, reason: 'limited', retryAfterSeconds };
 }

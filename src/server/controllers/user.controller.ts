@@ -1,3 +1,4 @@
+import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
@@ -8,7 +9,9 @@ import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
+  keysIn,
 } from '~/server/services/image-url-ownership';
+import { anyImageHeldOrBlocked } from '~/server/services/held-image-keys';
 import { constants } from '~/server/common/constants';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
@@ -681,8 +684,10 @@ export const updateUserHandler = async ({
       : inputProfilePicture;
 
   try {
+    // From the primary: the unchanged-value pass below must not compare against a lagging replica.
     const user = await getUserById({
       id,
+      db: dbWrite,
       select: {
         username: true,
         image: true,
@@ -704,6 +709,16 @@ export const updateUserHandler = async ({
     const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
     await assertClientImageUrlsUsable({ urls: newPictureUrls, userId: id });
     await assertClientKeysIssuedToCaller({ urls: newPictureUrls, userId: id });
+    if (
+      await anyImageHeldOrBlocked(
+        dbWrite,
+        newPictureUrls.flatMap((url) => keysIn(url))
+      )
+    )
+      throw throwBadRequestError('Invalid avatar URL');
+    // Our upload keys reach `User.image` only through `profilePicture`, whose Image row is scanned.
+    if (data.image && data.image !== user.image && keysIn(data.image).length)
+      throw throwBadRequestError('Invalid avatar URL');
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -765,7 +780,7 @@ export const updateUserHandler = async ({
 
     // Queue the old profilePic for a DEFERRED reap, and ingest the new one.
     //
-    // This used to be an inline `deleteImageById`, which destroyed the row and the stored
+    // This used to be an inline image delete, which destroyed the row and the stored
     // object the instant the new picture saved. The write is instant; the references are
     // not — the image CDN caches its redirect for 24h, the account-switcher roster in
     // localStorage is durable by design, and other surfaces hold rendered avatar urls. None
@@ -1127,6 +1142,15 @@ export async function toggleFavoriteHandler({
   const { id: userId, muted } = ctx.user;
   if (muted) return false;
 
+  // Before the review and notify writes, so a refused favorite leaves nothing half-saved.
+  if (setTo)
+    await assertCollectionItemsVisibleToViewer({
+      itemKey: 'modelId',
+      ids: [modelId],
+      userId,
+      isModerator: ctx.user.isModerator,
+    });
+
   // Toggle review (on/off)
   const reviewResult = await toggleReview({
     modelId,
@@ -1150,6 +1174,7 @@ export async function toggleFavoriteHandler({
       type: 'Model',
       entityId: modelId,
       userId,
+      isModerator: ctx.user.isModerator,
       setTo,
     });
   } else {

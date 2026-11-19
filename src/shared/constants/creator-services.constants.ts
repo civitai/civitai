@@ -73,6 +73,18 @@ export const SERVICE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
 /** An animated preview costs a CPU-second per few frames to mark, so it has its own, tighter, caps. */
 export const SERVICE_PREVIEW_ANIMATED_MAX_BYTES = 20 * 1024 * 1024;
 export const SERVICE_PREVIEW_ANIMATED_MAX_FRAMES = 60;
+/**
+ * Accepted only on a deal whose preview kind is Video. The orchestrator transcodes and marks it,
+ * so type and size are bounded by what its blob upload takes.
+ */
+export const SERVICE_PREVIEW_VIDEO_MIME_TYPES = ['video/mp4', 'video/webm'] as const;
+export const SERVICE_PREVIEW_VIDEO_MAX_BYTES = 64 * 1024 * 1024;
+export const SERVICE_PREVIEW_VIDEO_WIDTH = 480;
+export const SERVICE_PREVIEW_VIDEO_MAX_SECONDS = 15;
+/** A video preview not yet transcoded this long after upload is failed rather than retried. */
+export const SERVICE_PREVIEW_VIDEO_GIVE_UP_MS = 45 * 60_000;
+export const isVideoPreviewMime = (mime: string | null | undefined) =>
+  !!mime && (SERVICE_PREVIEW_VIDEO_MIME_TYPES as readonly string[]).includes(mime);
 /** Previews a seller may upload per round, by the deal's preview kind. */
 export const SERVICE_PREVIEW_MAX_FILES = {
   Image: 1,
@@ -123,11 +135,9 @@ export const SERVICE_FINAL_EXTENSIONS = [
   'yml',
   'csv',
 ] as const;
-/**
- * The highest scan rating a preview may carry (PG-13). Services are SFW-only in v1; a preview above
- * this fails, and so does one the scan left unrated. Relaxing it is this one number.
- */
-export const SERVICE_PREVIEW_MAX_NSFW_LEVEL = 2;
+/** Why a preview rated above its deal's content level was refused. Shown to the seller only. */
+export const SERVICE_PREVIEW_OVER_LEVEL_REASON =
+  "This preview is rated above this deal's content level.";
 
 /**
  * The structured reasons a party may give when leaving a deal, one list per action. A muted party

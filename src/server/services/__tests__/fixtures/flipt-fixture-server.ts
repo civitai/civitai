@@ -82,6 +82,7 @@ export async function buildRealFliptClientMock(urlEnvVar: string) {
     getFliptVariant: flipt.getVariant,
     getFliptBoolean: flipt.getBoolean,
     ensureFliptInitialized: flipt.ensureInitialized,
+    getFliptClientSync: flipt.getClientSync,
   };
 }
 

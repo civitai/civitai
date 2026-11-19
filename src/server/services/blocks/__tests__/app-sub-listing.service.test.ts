@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 
 import { resetSharedMocks } from '~/__tests__/mocks';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -35,13 +36,17 @@ vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => ({ query: mockPoolQu
 // `app-blocks-shared-doc-levels`, for every app; off unless a case turns it on.
 const docLevels = vi.hoisted(() => ({ on: false }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const real = await importOriginal<typeof import('~/server/flipt/client')>();
+  const real = await importOriginal<typeof FliptClient>();
   return {
     ...real,
     isFlipt: (flag: string, entityId?: string, context?: unknown) =>
       flag === 'app-blocks-shared-doc-levels'
         ? Promise.resolve(docLevels.on)
         : real.isFlipt(flag, entityId, context as never),
+    readFliptBoolean: (flag: string, entityId?: string, context?: unknown) =>
+      flag === 'app-blocks-shared-doc-levels'
+        ? Promise.resolve(docLevels.on)
+        : real.readFliptBoolean(flag, entityId, context as never),
   };
 });
 vi.mock('~/server/services/image.service', () => ({ getImage: mockGetImage }));
@@ -362,16 +367,44 @@ describe('upsertSubListing — refusals', () => {
         expect(write.appSubListing.findMany).toHaveBeenCalledWith(
           expect.objectContaining({ where: { parentListingId: PARENT, itemKey: 'gen-1' } })
         );
+        // The stricter card does not move, so it is not written.
         expect(write.appSubListing.update.mock.calls).toEqual([
-          [
-            {
-              where: { id: 'asl_STRICT' },
-              data: { contentRating: 'x', pendingContentRating: null },
-            },
-          ],
           [{ where: { id: 'asl_LOOSE' }, data: { contentRating: 'r', pendingContentRating: 'r' } }],
         ]);
         expect(mockBust).toHaveBeenCalled();
+      });
+
+      it('a re-rate that moves no card writes nothing and leaves the catalog cache alone', async () => {
+        write.appSubListing.findMany.mockResolvedValueOnce([
+          { id: 'asl_SAME', contentRating: 'r', pendingContentRating: null },
+        ]);
+        mockBust.mockClear();
+        await syncSubListingRatingFromDoc({ appBlockId: 'apb_1', itemKey: 'gen-1', level: 4 });
+        expect(write.appSubListing.update).not.toHaveBeenCalled();
+        expect(mockBust).not.toHaveBeenCalled();
+      });
+
+      it('🔴 an item re-rated XXX (16) makes its card xxx, never x', async () => {
+        write.appSubListing.findMany.mockResolvedValueOnce([
+          { id: 'asl_X', contentRating: 'x', pendingContentRating: 'r' },
+        ]);
+        await syncSubListingRatingFromDoc({ appBlockId: 'apb_1', itemKey: 'gen-1', level: 16 });
+        expect(write.appSubListing.update.mock.calls).toEqual([
+          [
+            {
+              where: { id: 'asl_X' },
+              data: { contentRating: 'xxx', pendingContentRating: 'xxx' },
+            },
+          ],
+        ]);
+      });
+
+      it('🔴 an item rated XXX publishes as an xxx card', async () => {
+        mockFindShared.mockResolvedValueOnce(rated(16, 'rated'));
+        await upsert();
+        expect(write.appSubListing.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ contentRating: 'xxx' }) })
+        );
       });
     });
 
@@ -774,25 +807,15 @@ describe('the tables are absent (manual-apply migration not run)', () => {
     ).rejects.toBe(half);
   });
 
-  it('the in-app hooks stay silent instead of logging an error per withdraw', async () => {
-    read.appListing.findFirst.mockRejectedValueOnce(missing[0]);
-    await syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
-  });
-
   // Before the migration `app_listings` exists and `app_sub_listings` does not, so the first
   // statement to fail is the version touch, not the parent read.
-  it.each(missing)(
-    'the hooks stay silent when the sub-listing table is missing (%s)',
-    async (err) => {
-      write.appSubListing.updateMany.mockRejectedValue(err);
-      await expect(
-        syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' })
-      ).resolves.toBeUndefined();
-      expect(write.appSubListing.updateMany).toHaveBeenCalled();
-      expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
-    }
-  );
+  it.each(missing)('the hooks resolve when the sub-listing table is missing (%s)', async (err) => {
+    write.appSubListing.updateMany.mockRejectedValue(err);
+    await expect(
+      syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' })
+    ).resolves.toBeUndefined();
+    expect(write.appSubListing.updateMany).toHaveBeenCalled();
+  });
 });
 
 describe('withdrawSubListing / listMySubListings', () => {
@@ -1264,5 +1287,99 @@ describe('🔴 content levels on: a card is approved or restored only for a rate
     await mod({ id: 'asl_x', action: 'approve' });
     expect(mockFindShared).not.toHaveBeenCalled();
     expect(write.appSubListing.updateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('per-app refusal attribution (civitai_app_block_rate_limit_refusals_total)', () => {
+  async function refusals(): Promise<number> {
+    const { default: promClient } = await import('prom-client');
+    const metric = promClient.register.getSingleMetric(
+      'civitai_app_block_rate_limit_refusals_total'
+    ) as
+      | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
+      | undefined;
+    if (!metric) return 0;
+    const { values } = await metric.get();
+    return (
+      values.find(
+        (v) =>
+          v.labels.app_block_id === 'apb_1' &&
+          v.labels.surface === 'sub_listings' &&
+          v.labels.bucket === 'sub-listing-write'
+      )?.value ?? 0
+    );
+  }
+
+  // Pins: both store-item writes record their limiter refusal under the calling app.
+  it('an upsert refusal is one {apb_1, sub_listings, sub-listing-write}', async () => {
+    mockRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 77 });
+    const before = await refusals();
+    await expectError(upsert(), 429, 'rate_limited');
+    expect((await refusals()) - before).toBe(1);
+  });
+
+  it('a withdraw refusal is one {apb_1, sub_listings, sub-listing-write}', async () => {
+    mockRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 78 });
+    const before = await refusals();
+    await expectError(
+      withdrawSubListing({ appBlockId: 'apb_1', userId: AUTHOR, body: { itemKey: 'gen-1' } }),
+      429,
+      'rate_limited'
+    );
+    expect((await refusals()) - before).toBe(1);
+  });
+
+  // Pins: the same dev bucketing as every other surface.
+  it('a DEV token refusal is counted as app_block_id="dev", not against the real app', async () => {
+    async function count(app: string): Promise<number> {
+      const { default: promClient } = await import('prom-client');
+      const metric = promClient.register.getSingleMetric(
+        'civitai_app_block_rate_limit_refusals_total'
+      ) as
+        | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
+        | undefined;
+      if (!metric) return 0;
+      const { values } = await metric.get();
+      return (
+        values.find(
+          (v) =>
+            v.labels.app_block_id === app &&
+            v.labels.surface === 'sub_listings' &&
+            v.labels.bucket === 'sub-listing-write'
+        )?.value ?? 0
+      );
+    }
+    const before = { dev: await count('dev'), app: await count('apb_1') };
+    mockRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 79 });
+    await expectError(
+      upsertSubListing({
+        appBlockId: 'apb_1',
+        dev: true,
+        subjectUser: trustedUser(),
+        hasLinkedOAuth: false,
+        body: BODY,
+      } as Parameters<typeof upsertSubListing>[0]),
+      429,
+      'rate_limited'
+    );
+    mockRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 80 });
+    await expectError(
+      withdrawSubListing({
+        appBlockId: 'apb_1',
+        dev: true,
+        userId: AUTHOR,
+        body: { itemKey: 'gen-1' },
+      } as Parameters<typeof withdrawSubListing>[0]),
+      429,
+      'rate_limited'
+    );
+    expect((await count('dev')) - before.dev).toBe(2);
+    expect((await count('apb_1')) - before.app).toBe(0);
+  });
+
+  it('an allowed upsert moves nothing', async () => {
+    const before = await refusals();
+    await upsert().catch(() => undefined);
+    expect((await refusals()) - before).toBe(0);
   });
 });

@@ -12,7 +12,11 @@ vi.mock('~/server/services/crucible.service', async (importOriginal) => ({
   finalizeCrucible,
 }));
 
+const freezeAllFlagDays = vi.fn(async () => 0);
+vi.mock('~/server/events/turf/flag-freeze', () => ({ freezeAllFlagDays }));
+
 const { finalizeCruciblesJob } = await import('~/server/jobs/finalize-crucibles');
+const crucibleService = await import('~/server/services/crucible.service');
 const { CrucibleRankingDeferredError } = await import('~/server/services/crucible-bradley-terry');
 
 describe('finalize-crucibles — a crucible waiting on ClickHouse', () => {
@@ -45,5 +49,27 @@ describe('finalize-crucibles — a crucible waiting on ClickHouse', () => {
       expect.objectContaining({ type: 'error', message: 'Failed to finalize crucible' }),
       'webhooks'
     );
+  });
+});
+
+describe('finalize-crucibles — the flag freeze', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('runs every minute, even when no crucible is due', async () => {
+    vi.mocked(crucibleService.getCruciblesForFinalization).mockResolvedValueOnce([]);
+
+    const result = await finalizeCruciblesJob.run({}).result;
+
+    expect(result).toMatchObject({ finalized: 0 });
+    expect(freezeAllFlagDays).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not stop the job when it fails', async () => {
+    vi.mocked(crucibleService.getCruciblesForFinalization).mockResolvedValueOnce([]);
+    freezeAllFlagDays.mockRejectedValueOnce(new Error('db down'));
+
+    await expect(finalizeCruciblesJob.run({}).result).resolves.toMatchObject({ finalized: 0 });
   });
 });

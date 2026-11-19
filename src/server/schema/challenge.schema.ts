@@ -42,6 +42,8 @@ export type ChallengeCoverImage = {
   width: number | null;
   height: number | null;
   type: MediaType;
+  /** Set by the edit reads (moderator, and the creator's own), which keep a cover restricted by its base model. */
+  restricted?: boolean;
 };
 
 // Sort options for challenges

@@ -453,6 +453,26 @@ describe('storefront read', () => {
     ]);
   });
 
+  it('lists an offering without its cover when the cover is mature and restricted, even for its seller', async () => {
+    shopEnabled(true);
+    const cover = (nsfwLevel: number, modelRestricted: boolean) => ({
+      id: 9,
+      url: 'u',
+      nsfwLevel,
+      modelRestricted,
+    });
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([
+      { id: 1, maxOpenDeals: null, coverImage: cover(4, true) },
+      { id: 2, maxOpenDeals: null, coverImage: cover(1, true) },
+      { id: 3, maxOpenDeals: null, coverImage: cover(4, false) },
+    ] as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+    for (const viewerId of [VISITOR, SELLER]) {
+      const offerings = await getShopServiceOfferings({ userId: SELLER, viewerId, servable: ALL });
+      expect(offerings.map((o) => o.coverImage?.nsfwLevel ?? null)).toEqual([null, 1, 4]);
+    }
+  });
+
   it("hides a private shop's offerings from visitors, not from its owner", async () => {
     shopEnabled(false);
     expect(

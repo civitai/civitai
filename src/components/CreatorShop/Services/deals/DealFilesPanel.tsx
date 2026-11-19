@@ -13,6 +13,9 @@ import {
 } from '@mantine/core';
 import { IconDownload, IconTrash, IconUpload } from '@tabler/icons-react';
 import { useRef } from 'react';
+import { useRouter } from 'next/router';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useServerDomains } from '~/providers/AppProvider';
 import { useDealFileUploads } from '~/components/CreatorShop/Services/deals/useDealFileUploads';
 import { roundLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
@@ -25,8 +28,10 @@ import {
   sellerFileStatus,
   serviceDealDownloadHref,
   sortPicked,
+  previewAccept,
   uploadSlotsLeft,
 } from '~/components/CreatorShop/Services/deals/deal-files';
+import { isVideoPreviewMime } from '~/shared/constants/creator-services.constants';
 import { DEAL_FRESHNESS } from '~/components/CreatorShop/Services/deals/deal.util';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -110,7 +115,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
     // So the same file can be picked again after a failed attempt.
     (kind === 'Preview' ? resetPreview : resetFinal).current?.();
     const slots = uploadSlotsLeft(kind, deal.previewKind, files, round);
-    const { send, refused, overflow } = sortPicked(kind, picked, slots);
+    const { send, refused, overflow } = sortPicked(kind, picked, slots, deal.previewKind);
     for (const { name, reason } of refused)
       showErrorNotification({ title: `Can't upload ${name}`, error: { message: reason } });
     if (overflow > 0)
@@ -153,7 +158,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
           <FileButton
             onChange={(picked) => upload('Preview', picked)}
             resetRef={resetPreview}
-            accept="image/jpeg,image/png,image/webp,image/gif"
+            accept={previewAccept(deal.previewKind)}
             multiple
           >
             {(props) => (
@@ -298,9 +303,7 @@ function PartyFiles({
                     {file.failReason}
                   </Text>
                 )}
-                {file.previewUrl && (
-                  <Image src={file.previewUrl} alt="Watermarked preview" radius="sm" maw={256} />
-                )}
+                <PreviewMedia file={file} maw={256} />
               </Stack>
             );
           })}
@@ -308,6 +311,42 @@ function PartyFiles({
       ))}
     </Stack>
   );
+}
+
+/** Where this domain may not show a preview, says so and links to the same page on civitai.red. */
+function PreviewOffDomain() {
+  const router = useRouter();
+  const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
+  return (
+    <Text size="xs" c="dimmed">
+      This preview isn&apos;t available on civitai.com.{' '}
+      <Anchor href={syncAccount(`//${redDomain}${router.asPath}`)} inherit>
+        See it on civitai.red
+      </Anchor>
+    </Text>
+  );
+}
+
+function PreviewMedia({ file, maw }: { file: DealFile; maw?: number }) {
+  if (file.previewOffDomain) return <PreviewOffDomain />;
+  if (!file.previewUrl) return null;
+  // EdgeVideo builds its URL from a key; previewUrl is already the finished edge URL.
+  if (isVideoPreviewMime(file.mimeType))
+    return (
+      <video
+        src={file.previewUrl}
+        aria-label="Watermarked preview"
+        className="w-full rounded-sm"
+        style={maw ? { maxWidth: maw } : undefined}
+        controls
+        muted
+        loop
+        playsInline
+        preload="metadata"
+      />
+    );
+  return <Image src={file.previewUrl} alt="Watermarked preview" radius="sm" maw={maw} />;
 }
 
 /** The buyer sees ready, watermarked previews, and final files only as the server unlocks them. */
@@ -322,7 +361,9 @@ function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] 
   return (
     <Stack gap="md">
       {filesByRound(files).map(({ round, files: roundFiles }) => {
-        const previews = roundFiles.filter((file) => file.kind === 'Preview' && file.previewUrl);
+        const previews = roundFiles.filter(
+          (file) => file.kind === 'Preview' && (file.previewUrl || file.previewOffDomain)
+        );
         const finals = roundFiles.filter((file) => file.kind === 'Final');
         const state = buyerRoundFinalsState(deal, round, finals);
         return (
@@ -333,12 +374,7 @@ function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] 
             {previews.length > 0 && (
               <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
                 {previews.map((file) => (
-                  <Image
-                    key={file.id}
-                    src={file.previewUrl}
-                    alt="Watermarked preview"
-                    radius="sm"
-                  />
+                  <PreviewMedia key={file.id} file={file} />
                 ))}
               </SimpleGrid>
             )}

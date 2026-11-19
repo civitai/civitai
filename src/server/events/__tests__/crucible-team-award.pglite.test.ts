@@ -107,7 +107,8 @@ beforeAll(async () => {
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "postId" int, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
-      "tosViolation" boolean DEFAULT false, "needsReview" text, "nsfwLevel" int DEFAULT 1
+      "tosViolation" boolean DEFAULT false, "needsReview" text, "nsfwLevel" int DEFAULT 1,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Crucible" (
       id int PRIMARY KEY, status "CrucibleStatus", "endAt" timestamptz, "nsfwLevel" int,

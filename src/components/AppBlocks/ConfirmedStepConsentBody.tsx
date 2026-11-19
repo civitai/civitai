@@ -1,11 +1,23 @@
-import { Anchor, Button, Code, Group, Stack, Text } from '@mantine/core';
+import { Anchor, Button, Checkbox, Code, Group, NumberInput, Stack, Text } from '@mantine/core';
 import Link from 'next/link';
-import type {
-  ConfirmedStepConsentCopy,
-  ConfirmedStepDailyLimitCopy,
-  ConfirmedStepQuotePreview,
+import { useState } from 'react';
+import {
+  confirmedStepStandingLimitHint,
+  type ConfirmedStepConsentCopy,
+  type ConfirmedStepDailyLimitCopy,
+  type ConfirmedStepQuotePreview,
+  type ConfirmedStepStandingOfferCopy,
 } from '~/components/AppBlocks/runConfirmedStepGate';
-import { APP_DAILY_LIMIT_SETTINGS_PATH } from '~/shared/constants/block-scope.constants';
+import {
+  APP_DAILY_LIMIT_SETTINGS_PATH,
+  BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
+} from '~/shared/constants/block-scope.constants';
+
+/**
+ * What the viewer chose in the opt-in, read by the confirm handler when they press Run.
+ * `limit` is set only for the new-limit offer, and only to a valid value.
+ */
+export type ConfirmedStepStandingChoice = { checked: boolean; limit?: number };
 
 /**
  * The BODY of the `RUN_CONFIRMED_STEP` host-chrome consent dialog.
@@ -19,10 +31,14 @@ export function ConfirmedStepConsentBody({
   copy,
   preview,
   onBuyBuzz,
+  standingOffer,
+  onStandingChange,
 }: {
   copy: ConfirmedStepConsentCopy;
   preview: ConfirmedStepQuotePreview;
   onBuyBuzz?: () => void;
+  standingOffer?: ConfirmedStepStandingOfferCopy | null;
+  onStandingChange?: (choice: ConfirmedStepStandingChoice) => void;
 }) {
   return (
     <Stack gap="sm" data-testid="block-confirmed-step-consent">
@@ -58,6 +74,67 @@ export function ConfirmedStepConsentBody({
             </Button>
           )}
         </Group>
+      )}
+
+      {standingOffer && onStandingChange && (
+        <StandingOffer offer={standingOffer} onChange={onStandingChange} />
+      )}
+    </Stack>
+  );
+}
+
+function StandingOffer({
+  offer,
+  onChange,
+}: {
+  offer: ConfirmedStepStandingOfferCopy;
+  onChange: (choice: ConfirmedStepStandingChoice) => void;
+}) {
+  const [checked, setChecked] = useState(false);
+  const [limit, setLimit] = useState<number | string>(
+    offer.kind === 'new-limit' ? offer.suggestedLimit : 0
+  );
+  const parsed = typeof limit === 'number' ? limit : Number(limit);
+  const valid =
+    offer.kind === 'new-limit' &&
+    Number.isInteger(parsed) &&
+    parsed >= offer.minLimit &&
+    parsed <= BLOCK_CONSENT_BUDGET_MAX_PER_DAY;
+  const report = (nextChecked: boolean, nextLimit: number | string) => {
+    if (offer.kind === 'existing-limit') return onChange({ checked: nextChecked });
+    const n = typeof nextLimit === 'number' ? nextLimit : Number(nextLimit);
+    const ok = Number.isInteger(n) && n >= offer.minLimit && n <= BLOCK_CONSENT_BUDGET_MAX_PER_DAY;
+    onChange({ checked: nextChecked && ok, limit: ok ? n : undefined });
+  };
+  return (
+    <Stack gap={4} data-testid="block-confirmed-step-standing-offer">
+      <Checkbox
+        size="sm"
+        label={offer.label}
+        checked={checked}
+        onChange={(e) => {
+          setChecked(e.currentTarget.checked);
+          report(e.currentTarget.checked, limit);
+        }}
+        data-testid="block-confirmed-step-standing-checkbox"
+      />
+      {offer.kind === 'new-limit' && checked && (
+        <NumberInput
+          size="xs"
+          label="Daily limit (Buzz)"
+          value={limit}
+          min={offer.minLimit}
+          max={BLOCK_CONSENT_BUDGET_MAX_PER_DAY}
+          allowDecimal={false}
+          thousandSeparator=","
+          onChange={(v) => {
+            setLimit(v);
+            report(checked, v);
+          }}
+          description={valid ? confirmedStepStandingLimitHint(parsed) : undefined}
+          error={valid ? undefined : `Enter at least ${offer.minLimit.toLocaleString('en-US')}`}
+          data-testid="block-confirmed-step-standing-limit"
+        />
       )}
     </Stack>
   );

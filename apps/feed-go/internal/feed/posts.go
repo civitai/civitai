@@ -28,6 +28,10 @@ type Config struct {
 	// ImageIndexFeed mirrors `image-index-feed`: on, the pages come from the feed service
 	// (getAllImagesIndex) instead of the Postgres query (getAllImages).
 	ImageIndexFeed bool
+	// PrioritizedVersionCache mirrors `use-model-version-cache-for-images` (image.getInfinite only):
+	// on, a prioritizedUserIds request on the Postgres path takes its ids from
+	// imagesForModelVersionsCache in Node, which is not ported, so it falls back here.
+	PrioritizedVersionCache bool
 	// VisibleDecorationEvents is the set of event decorations every viewer may see.
 	VisibleDecorationEvents map[string]bool
 	// CompletionConcurrency caps the lazy-post-images completion fetches one request runs at once
@@ -260,6 +264,9 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		ExcludedUsers:  in.ExcludedUserIDs,
 		ViewerID:       viewer.ID,
 		IsModerator:    viewer.IsModerator,
+		// Every fetch below reads it: the page, the post completion, the hydrate of the feed's ids,
+		// and the pinned and sponsored posts (`...input` in each of the handler's getAllImages calls).
+		Tools: in.Tools,
 	}
 
 	overscan := int(math.Ceil(float64(in.Limit) * 2)) // so posts can be merged
@@ -289,6 +296,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 				HasGeneration:   len(in.Generation) > 0,
 				HasRemixOfID:    in.HasRemixOfID,
 				RequiringMeta:   in.RequiringMeta,
+				Tools:           in.Tools,
 			},
 			hydrate: func(ctx context.Context, ids, postIDs []int) ([]Image, error) {
 				h := hq

@@ -1,5 +1,6 @@
 import { getPostLookup, getRecentImagesOutsidePost } from '$lib/server/image-lookup.service';
 import { loadAccountHistory } from '$lib/server/account-history';
+import { getReportedPostTexts } from '$lib/server/post-text-reports.service';
 import { loadItemReports } from '$lib/server/report-queue-load';
 import { getPostStorylineChapter } from '$lib/server/storyline-takedown.service';
 import { ReportEntity } from '$lib/reports';
@@ -19,6 +20,7 @@ export async function loadPostItem(postId: number, tab: PostTab, locals: App.Loc
     loadItemReports(ReportEntity.Post, postId),
     getPostStorylineChapter(postId),
   ]);
+  const texts = await getReportedPostTexts(reports.map((r) => r.id));
   const ownerId = lookup?.post.userId ?? null;
   // The heavy read, on its own tab only: a moderator settling a report from the images never opens it.
   const [accountHistory, ownerRecentImages] = await Promise.all([
@@ -31,7 +33,7 @@ export async function loadPostItem(postId: number, tab: PostTab, locals: App.Loc
     postId,
     tab,
     lookup,
-    reports,
+    reports: reports.map((r) => ({ ...r, postText: texts.get(r.id) ?? null })),
     storylineChapter,
     ownerId,
     accountHistory,

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { fakeVersionedBucket } from '~/__tests__/mocks/fake-versioned-bucket';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -23,8 +25,10 @@ const mockLogToAxiom = loggingMock.logToAxiom;
 // Only a moderation takedown may, and only by saying so explicitly at every layer.
 //
 // Every "does not ask for retraction" assertion below is preceded by an assertion that the
-// invalidate call HAPPENED. Without it, a code path that throws before ever calling the service
-// satisfies the negative assertion perfectly, and the guard reads green while covering nothing.
+// invalidate call HAPPENED, or, for a delete that queues its stored file for
+// `image-storage-deletes` instead, that the file was queued. Without it, a code path that throws
+// before ever calling the service satisfies the negative assertion perfectly, and the guard reads
+// green while covering nothing.
 //
 // image.service is the graph root; the mock scaffold mirrors the established recipe
 // (delete-image-from-s3-logging.test.ts): stub the infra clients and the event-engine-common
@@ -97,19 +101,80 @@ vi.mock('~/server/services/image-url-ownership', async (importOriginal) => ({
   shopArtworkUrls: mockShopArtworkUrls,
 }));
 
-const {
-  purgeResizeCache,
-  deleteImageFromS3,
-  deleteImages,
-  deleteImageById,
-  imagesWithOpenReports,
-} = await import('../image.service');
+const { purgeResizeCache, deleteImageFromS3, deleteImages, imagesWithOpenReports } = await import(
+  '../image.service'
+);
 const { callCdnAccess } = await import('../cdn-access.service');
 
 const invalidateCalls = () =>
   mockFetch.mock.calls.filter((call) => String(call[0]).includes('/admin/invalidate'));
 
 const lastUrl = () => String(invalidateCalls().at(-1)?.[0] ?? '');
+
+// The DELETE decides in its own SQL which files it queues and how, so it runs on PGlite.
+const pg = new PGlite();
+await pg.exec(`
+  CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+  CREATE TABLE "Image" (
+    id int PRIMARY KEY, url text NOT NULL, "userId" int NOT NULL, "postId" int,
+    "nsfwLevel" int NOT NULL DEFAULT 1, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
+    "needsReview" text, "blockedFor" text, metadata jsonb
+  );
+  CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+  CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
+  CREATE TABLE "JobQueue" (
+    "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+    data jsonb, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+    UNIQUE ("entityType", "entityId", type)
+  );
+`);
+
+/** Stores `image` and answers each statement: the DELETE on PGlite, the report read from `reports`. */
+const storeImage = async (
+  image: Record<string, unknown> | null,
+  reports: () => unknown[] = () => []
+) => {
+  if (image)
+    await pg.query(
+      `INSERT INTO "Image" (id, url, "userId", "nsfwLevel", ingestion, "needsReview", "blockedFor")
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        image.id,
+        image.url,
+        image.userId,
+        image.nsfwLevel ?? 1,
+        image.ingestion ?? 'Scanned',
+        image.needsReview ?? null,
+        image.blockedFor ?? null,
+      ]
+    );
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const text = strings.join('');
+    if (text.includes('"ImageReport"')) return reports();
+    if (!text.includes('DELETE FROM "Image"')) return [];
+    const sql = Prisma.sql(strings, ...(values as never[]));
+    return (await pg.query(sql.text, sql.values as unknown[])).rows;
+  }) as never);
+};
+
+/** The stored files a delete queued for `image-storage-deletes`. */
+const queuedFiles = async () =>
+  (
+    await pg.query<{ id: number; data: unknown }>(
+      `SELECT "entityId" AS id, data FROM "JobQueue" WHERE type = 'ImageStorageDelete' ORDER BY 1`
+    )
+  ).rows;
+
+/** The CDN takedowns a delete queued for `cdn-access-sync`, without the run-order `seq`. */
+const queuedTakedowns = async () =>
+  (
+    await pg.query<{ id: number; data: unknown }>(
+      `SELECT "entityId" AS id, data - 'seq' AS data FROM "JobQueue" WHERE type = 'CdnAccessSync' ORDER BY 1`
+    )
+  ).rows;
 
 /** The exact literal the counterpart service gates on. Anything else means no retraction. */
 const RETRACT = 'retractPublicBlobs=true';
@@ -119,8 +184,9 @@ const KEY = 'abc-def/original.jpeg';
 /** A row shape `deleteImages`' `DELETE … RETURNING` produces. */
 const row = (id: number, url: string) => ({ id, url, postId: null, nsfwLevel: 1, userId: 7 });
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
+  await pg.exec(`TRUNCATE "Image", "JobQueue"`);
   vi.stubGlobal('fetch', mockFetch);
   mockFetch.mockResolvedValue({ ok: true, status: 202 } as any);
   setEnv({
@@ -259,66 +325,40 @@ describe('deleteImageFromS3 retraction opt-in', () => {
 });
 
 describe('deleteImages retraction opt-in', () => {
-  beforeEach(() => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([row(1, KEY)]);
-  });
+  beforeEach(() => storeImage(row(1, KEY)));
 
-  // 🔴 THE CENTRAL REGRESSION. Ordinary bulk deletion — a replaced image being reaped, a
-  // deleted user's media, a moderator clearing one account's uploads — must never reach
-  // another account's stored bytes. This is the assertion that fails if the option is threaded
-  // wrongly at any layer between here and the request.
+  // 🔴 THE CENTRAL REGRESSION. Ordinary deletion — a user deleting their own image (the image
+  // controller's `delete` mutation), a replaced image being reaped, a deleted user's media, a
+  // moderator clearing one account's uploads — must never reach another account's stored bytes.
+  // Such a delete queues its stored file and sends nothing itself; only a retracting delete
+  // touches storage and the image-cache service inline.
   it('does not ask for retraction by default', async () => {
-    await deleteImages([1]);
+    await deleteImages([1], { actor: { system: 'test' } });
 
-    expect(invalidateCalls()).toHaveLength(1);
-    expect(lastUrl()).not.toContain('retractPublicBlobs');
-    expect(lastUrl()).not.toContain('persist');
-  });
-
-  it('does not ask for retraction when the option is explicitly false', async () => {
-    await deleteImages([1], true, { retractPublicBlobs: false });
-
-    expect(invalidateCalls()).toHaveLength(1);
-    expect(lastUrl()).not.toContain('retractPublicBlobs');
-  });
-
-  it('asks for retraction when the moderation flow says so', async () => {
-    await deleteImages([1], true, { retractPublicBlobs: true });
-
-    expect(invalidateCalls()).toHaveLength(1);
-    expect(lastUrl()).toContain(`&${RETRACT}`);
-  });
-
-  // The option must not be positional-adjacent to `updatePosts`: a caller that means "do not
-  // update posts" must not be able to request a retraction by accident.
-  it('does not ask for retraction when only updatePosts is passed', async () => {
-    await deleteImages([1], false);
-
-    expect(invalidateCalls()).toHaveLength(1);
-    expect(lastUrl()).not.toContain('retractPublicBlobs');
-  });
-});
-
-describe('deleteImageById never retracts', () => {
-  // The user-facing delete path (the image controller's `delete` mutation) goes through here.
-  // It has no retraction option at all, by design — there is no moderation caller for it, and
-  // an option nobody sets is one more way to set it by accident.
-  it('sends an ordinary invalidation for a user-initiated delete', async () => {
-    dbMock.dbWrite.image.delete.mockResolvedValue({
-      url: KEY,
-      postId: null,
-      nsfwLevel: 1,
-      userId: 7,
-    });
-
-    await deleteImageById({ id: 4242 });
-
-    expect(invalidateCalls()).toHaveLength(1);
-    expect(lastUrl()).not.toContain('retractPublicBlobs');
-    expect(lastUrl()).not.toContain('persist');
+    expect(await queuedFiles()).toEqual([{ id: 1, data: { url: KEY } }]);
+    expect(invalidateCalls()).toHaveLength(0);
+    expect(mockB2Send).not.toHaveBeenCalled();
     expect(mockLogToAxiom).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'image-blob-retraction-requested' })
     );
+  });
+
+  it('does not ask for retraction when the option is explicitly false', async () => {
+    await deleteImages([1], { actor: { system: 'test' }, retractPublicBlobs: false });
+
+    expect(await queuedFiles()).toEqual([{ id: 1, data: { url: KEY } }]);
+    expect(invalidateCalls()).toHaveLength(0);
+  });
+
+  it('asks for retraction when the moderation flow says so', async () => {
+    await deleteImages([1], { actor: { system: 'test' }, retractPublicBlobs: true });
+
+    expect(invalidateCalls()).toHaveLength(1);
+    expect(lastUrl()).toContain(`&${RETRACT}`);
+    // It deletes the file itself, and queues it too, so a run that dies in between still leaves
+    // the file queued.
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
+    expect(await queuedFiles()).toEqual([{ id: 1, data: { url: KEY } }]);
   });
 });
 
@@ -345,11 +385,7 @@ describe('retraction load on the image-cache service', () => {
       ...values: unknown[]
     ) => {
       if (!strings.join('').includes('DELETE FROM "Image"')) return [];
-      const joined = values.find(
-        (v): v is { values: number[] } =>
-          !!v && typeof v === 'object' && Array.isArray((v as { values?: unknown }).values)
-      );
-      return (joined?.values ?? []).map((id) => row(id, `key-${id}`));
+      return (values[0] as number[]).map((id) => row(id, `key-${id}`));
     }) as never);
     let inFlight = 0;
     let maxInFlight = 0;
@@ -362,7 +398,10 @@ describe('retraction load on the image-cache service', () => {
     });
 
     const ids = Array.from({ length: 120 }, (_, i) => i + 1);
-    const rows = await deleteImages(ids, true, { retractPublicBlobs: true });
+    const rows = await deleteImages(ids, {
+      actor: { system: 'test' },
+      retractPublicBlobs: true,
+    });
 
     expect(invalidateCalls()).toHaveLength(120);
     expect(invalidateCalls().every((c) => String(c[0]).includes(`&${RETRACT}`))).toBe(true);
@@ -384,7 +423,10 @@ describe('retraction load on the image-cache service', () => {
 
     dbMock.dbWrite.$queryRaw.mockResolvedValue([row(1, KEY)]);
     mockFetch.mockClear();
-    const rows = await deleteImages([1], true, { retractPublicBlobs: true });
+    const rows = await deleteImages([1], {
+      actor: { system: 'test' },
+      retractPublicBlobs: true,
+    });
     expect(invalidateCalls()).toHaveLength(1);
     expect(rows).toEqual([expect.objectContaining({ id: 1, retraction: 'busy' })]);
   });
@@ -432,11 +474,7 @@ describe('retraction load on the image-cache service', () => {
       ...values: unknown[]
     ) => {
       if (!strings.join('').includes('DELETE FROM "Image"')) return [];
-      const joined = values.find(
-        (v): v is { values: number[] } =>
-          !!v && typeof v === 'object' && Array.isArray((v as { values?: unknown }).values)
-      );
-      return (joined?.values ?? []).map((id) => row(id, `key-${id}`));
+      return (values[0] as number[]).map((id) => row(id, `key-${id}`));
     }) as never);
     mockFetch.mockImplementation(async () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -444,7 +482,10 @@ describe('retraction load on the image-cache service', () => {
     });
 
     const ids = Array.from({ length: 20 }, (_, i) => i + 1);
-    const rows = await deleteImages(ids, true, { retractPublicBlobs: true });
+    const rows = await deleteImages(ids, {
+      actor: { system: 'test' },
+      retractPublicBlobs: true,
+    });
 
     expect(invalidateCalls().length).toBeGreaterThan(0);
     expect(invalidateCalls().length).toBeLessThanOrEqual(5);
@@ -459,11 +500,7 @@ describe('retraction load on the image-cache service', () => {
       ...values: unknown[]
     ) => {
       if (!strings.join('').includes('DELETE FROM "Image"')) return [];
-      const joined = values.find(
-        (v): v is { values: number[] } =>
-          !!v && typeof v === 'object' && Array.isArray((v as { values?: unknown }).values)
-      );
-      return (joined?.values ?? []).map((id) => row(id, `key-${id}`));
+      return (values[0] as number[]).map((id) => row(id, `key-${id}`));
     }) as never);
   const requestedLogs = () =>
     mockLogToAxiom.mock.calls.filter(
@@ -481,8 +518,7 @@ describe('retraction load on the image-cache service', () => {
 
     const rows = await deleteImages(
       Array.from({ length: 20 }, (_, i) => i + 1),
-      true,
-      { retractPublicBlobs: true, retractionGate: gate }
+      { actor: { system: 'test' }, retractPublicBlobs: true, retractionGate: gate }
     );
 
     expect(invalidateCalls().length).toBeGreaterThan(0);
@@ -524,86 +560,100 @@ describe('retraction load on the image-cache service', () => {
 
 describe('an image whose key shop artwork uses', () => {
   const OWNER = 7;
-  // The delete is one raw statement; the other raw reads around it find nothing.
-  // The delete is one raw statement; `reports` answers the open-report read before it, and the
-  // other raw reads around it find nothing.
+  // `null` stores no row, as when a hold marker's trigger keeps it; `reports` answers the open-report
+  // read before the delete.
   const deleted = (
     over: Record<string, unknown> | null = {},
     reports: () => unknown[] = () => []
-  ) =>
-    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
-      const text = strings.join('');
-      if (text.includes('"ImageReport"')) return reports();
-      return text.includes('DELETE FROM "Image"') && over
-        ? [
-            {
-              url: KEY,
-              postId: null,
-              nsfwLevel: 1,
-              userId: OWNER,
-              metadata: null,
-              ingestion: 'Scanned',
-              needsReview: null,
-              blockedFor: null,
-              ...over,
-            },
-          ]
-        : [];
-    }) as never);
+  ) => storeImage(over && { id: 4242, url: KEY, userId: OWNER, ...over }, reports);
   beforeEach(() => mockShopArtworkUrls.mockResolvedValue(new Set([KEY])));
-
-  it('keeps its object when the owner deletes it', async () => {
-    deleted();
-
-    await deleteImageById({ id: 4242, deletedById: OWNER });
-
+  // The delete only queues the file; `image-storage-deletes` honours `keepShopArtwork`.
+  const expectQueued = async (data: Record<string, unknown>) => {
+    expect(await queuedFiles()).toEqual([{ id: 4242, data }]);
     expect(mockB2Send).not.toHaveBeenCalled();
     expect(invalidateCalls()).toHaveLength(0);
+  };
+
+  it('queues its object to stay while shop artwork uses it when the owner deletes it', async () => {
+    await deleted();
+
+    await deleteImages([4242], { actor: { id: OWNER, isModerator: false } });
+
+    await expectQueued({ url: KEY, keepShopArtwork: true });
   });
 
+  // A moderator actor is a moderator's delete without being told: every version goes.
+  it('queues every version of its object when a moderator deletes it', async () => {
+    await deleted();
+
+    await deleteImages([4242], { actor: { id: 99, isModerator: true } });
+
+    await expectQueued({ url: KEY, allVersions: true });
+  });
+
+  // None of these is a moderator's delete, so each is one delete by key, whatever marks the row.
   it.each([
-    ['a moderator deletes it', { deletedById: 99 }, {}],
-    ['the deleter is unknown', {}, {}],
-    ['it is blocked', { deletedById: OWNER }, { ingestion: 'Blocked' }],
+    ['the deleter is unknown', { actor: { system: 'test' } }, {}],
+    ['it is blocked', { actor: { id: OWNER, isModerator: false } }, { ingestion: 'Blocked' }],
     // A scan error or rescan moves ingestion off Blocked but keeps the other block markers.
-    ['it keeps a block reason', { deletedById: OWNER }, { ingestion: 'Error', blockedFor: 'tos' }],
-    ['it keeps the Blocked level', { deletedById: OWNER }, { nsfwLevel: NsfwLevel.Blocked }],
-    ['it is not scanned yet', { deletedById: OWNER }, { ingestion: 'Pending' }],
-    ['it is held for review', { deletedById: OWNER }, { needsReview: 'csam' }],
-  ])('deletes and purges its object when %s', async (_case, args, over) => {
-    deleted(over);
+    [
+      'it keeps a block reason',
+      { actor: { id: OWNER, isModerator: false } },
+      { ingestion: 'Error', blockedFor: 'tos' },
+    ],
+    [
+      'it keeps the Blocked level',
+      { actor: { id: OWNER, isModerator: false } },
+      { nsfwLevel: NsfwLevel.Blocked },
+    ],
+    [
+      'it is not scanned yet',
+      { actor: { id: OWNER, isModerator: false } },
+      { ingestion: 'Pending' },
+    ],
+    [
+      'it is held for review',
+      { actor: { id: OWNER, isModerator: false } },
+      { needsReview: 'csam' },
+    ],
+    [
+      'it is blocked for CSAM',
+      { actor: { id: OWNER, isModerator: false } },
+      { ingestion: 'Blocked', blockedFor: 'CSAM' },
+    ],
+  ])('queues its object for a delete by key when %s', async (_case, args, over) => {
+    await deleted(over);
 
-    await deleteImageById({ id: 4242, ...args });
+    await deleteImages([4242], args);
 
-    expect(mockB2Send).toHaveBeenCalledTimes(1);
-    expect(invalidateCalls()).toHaveLength(1);
+    await expectQueued({ url: KEY });
   });
 
-  it('deletes and purges its object when the owner deletes it under an open report', async () => {
-    deleted({}, () => [{ imageId: 4242 }]);
+  it('queues its object for a delete by key when the owner deletes it under an open report', async () => {
+    await deleted({}, () => [{ imageId: 4242 }]);
 
-    await deleteImageById({ id: 4242, deletedById: OWNER });
+    await deleteImages([4242], { actor: { id: OWNER, isModerator: false } });
 
-    expect(mockB2Send).toHaveBeenCalledTimes(1);
-    expect(invalidateCalls()).toHaveLength(1);
+    await expectQueued({ url: KEY });
   });
 
-  it('deletes and purges its object when the report lookup fails', async () => {
-    deleted({}, () => {
+  it('queues its object for a delete by key when the report lookup fails', async () => {
+    await deleted({}, () => {
       throw new Error('lookup failed');
     });
 
-    await deleteImageById({ id: 4242, deletedById: OWNER });
+    await deleteImages([4242], { actor: { id: OWNER, isModerator: false } });
 
-    expect(mockB2Send).toHaveBeenCalledTimes(1);
+    await expectQueued({ url: KEY });
   });
 
   // A hold marker keeps the row, so nothing reaches storage, whoever deletes it.
   it('leaves a held image to its hold', async () => {
-    deleted(null);
+    await deleted(null);
 
-    await deleteImageById({ id: 4242, deletedById: OWNER });
+    await deleteImages([4242], { actor: { id: OWNER, isModerator: false } });
 
+    expect(await queuedFiles()).toEqual([]);
     expect(mockB2Send).not.toHaveBeenCalled();
   });
 
@@ -644,5 +694,110 @@ describe('imagesWithOpenReports', () => {
     `);
 
     expect([...reported].sort()).toEqual([1, 2, 3]);
+  });
+});
+
+describe('a moderator delete', () => {
+  const OWNER = 7;
+  const MOD = 99;
+  // `kept`: a hold marker's trigger kept the row, so the DELETE finds nothing.
+  const deleted = ({ kept = false, over = {} as Record<string, unknown> } = {}) =>
+    storeImage(kept ? null : { id: 4242, url: KEY, userId: OWNER, ...over });
+  // `allVersions` is what makes `image-storage-deletes` purge every version, not only the current one.
+  it('removes every version of an unblocked image', async () => {
+    await deleted();
+    await deleteImages([4242], { moderatorDelete: true, actor: { id: MOD, isModerator: true } });
+    expect(await queuedFiles()).toEqual([{ id: 4242, data: { url: KEY, allVersions: true } }]);
+  });
+
+  // The row is gone by the time `cdn-access-sync` runs, so the takedown carries its url and owner.
+  it('queues the CDN takedown of its url', async () => {
+    await deleted();
+    await deleteImages([4242], { actor: { id: MOD, isModerator: true } });
+    expect(await queuedTakedowns()).toEqual([
+      {
+        id: 4242,
+        data: { url: KEY, userId: OWNER, csamReview: false, moderatorDelete: true },
+      },
+    ]);
+  });
+
+  it("leaves the versions of an owner's delete of the same image", async () => {
+    await deleted();
+    await deleteImages([4242], { actor: { id: OWNER, isModerator: false } });
+    expect(await queuedFiles()).toEqual([{ id: 4242, data: { url: KEY, keepShopArtwork: true } }]);
+    expect(await queuedTakedowns()).toEqual([]);
+  });
+
+  // Its earlier versions stay until a hold can cover the image; the current one still goes.
+  it.each([
+    ['under CSAM review', { needsReview: 'csam' }],
+    ['blocked for CSAM', { ingestion: 'Blocked', blockedFor: 'CSAM' }],
+  ])('deletes an image %s by key alone', async (_case, over) => {
+    await deleted({ over });
+    await deleteImages([4242], { moderatorDelete: true, actor: { id: MOD, isModerator: true } });
+    expect(await queuedFiles()).toEqual([{ id: 4242, data: { url: KEY } }]);
+  });
+
+  it('removes nothing of an image a hold kept', async () => {
+    await deleted({ kept: true });
+    await deleteImages([4242], { moderatorDelete: true, actor: { id: MOD, isModerator: true } });
+    expect(await queuedFiles()).toEqual([]);
+  });
+
+  // A retracting delete removes the file itself, so the version rule holds there too.
+  describe('that retracts', () => {
+    let bucket: ReturnType<typeof fakeVersionedBucket>;
+    beforeEach(() => {
+      bucket = fakeVersionedBucket();
+      bucket.putVersion(KEY);
+      bucket.putVersion(KEY);
+      bucket.putDeleteMarker(KEY);
+      mockGetB2ImageS3Client.mockReturnValue({ send: bucket.send });
+      dbMock.dbWrite.$executeRaw.mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        const sql = Prisma.sql(strings, ...(values as never[]));
+        return (await pg.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
+      }) as never);
+    });
+    const retract = () =>
+      deleteImages([4242], {
+        moderatorDelete: true,
+        retractPublicBlobs: true,
+        actor: { id: MOD, isModerator: true },
+      });
+
+    it('removes every version of an unblocked image', async () => {
+      await deleted();
+      await retract();
+      expect(bucket.entriesFor(KEY)).toHaveLength(0);
+    });
+
+    it('deletes an image under CSAM review by key alone', async () => {
+      await deleted({ over: { needsReview: 'csam' } });
+      await retract();
+      expect(bucket.calls).toEqual(['delete-key']);
+      expect(bucket.entriesFor(KEY)).toHaveLength(4);
+    });
+
+    // The DELETE queued the file too; done here, it would only take the job's turn from others.
+    it('leaves nothing queued for the job once it has removed the file', async () => {
+      await deleted();
+      await retract();
+      expect(await queuedFiles()).toEqual([]);
+    });
+
+    it('leaves the file queued when removing it fails', async () => {
+      await deleted();
+      mockGetB2ImageS3Client.mockReturnValue({
+        send: async () => {
+          throw new Error('storage down');
+        },
+      });
+      await retract();
+      expect(await queuedFiles()).toEqual([{ id: 4242, data: { url: KEY, allVersions: true } }]);
+    });
   });
 });

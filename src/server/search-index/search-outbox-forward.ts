@@ -10,7 +10,8 @@ export type SearchOutboxEntity = 'Article' | 'Comic';
 
 /**
  * Why an index update was queued. Metrics churn every article on each run without changing what
- * search embeds, so a 'metrics' update is never forwarded.
+ * search embeds, so a 'metrics' update is never forwarded; nor is a 'refresh' pass, since the
+ * semantic sync walks its own tables.
  */
 export type SearchUpdateReason = string;
 
@@ -29,7 +30,7 @@ export async function forwardSearchUpdate({
   items: { id: number; action?: SearchIndexUpdateQueueAction }[];
   reason?: SearchUpdateReason;
 }) {
-  if (reason === 'metrics' || !items.length) return;
+  if (reason === 'metrics' || reason === 'refresh' || !items.length) return;
   if (!env.SEARCH_OUTBOX_FORWARD.includes(entityType)) return;
 
   try {

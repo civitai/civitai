@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import superjson from 'superjson';
-import { allCookieNames, SESSION_COOKIE_BASE } from '@civitai/auth/client';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+import { imagesEndpointSchema } from '~/server/schema/images-endpoint.schema';
 import {
   FEED_GO_SHADOW_ENDPOINTS,
   recordFeedGoProbeOutcome,
@@ -12,6 +12,7 @@ import {
   type FeedGoShadowOutcome,
   type FeedGoV1ShapeClass,
 } from '~/server/prom/feed-go-shadow.metrics';
+import { pickSessionCookies } from '~/server/utils/session-cookies';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
 
@@ -89,9 +90,6 @@ export const SHADOW_MAX_TIMEOUT_MS = 10_000;
 export const SHADOW_DEFAULT_MAX_IN_FLIGHT = 8;
 export const SHADOW_DEFAULT_MAX_PER_SECOND = 5;
 
-/** The session cookie names feed-go reads (dev, `__Secure-` and `__Host-` slots). */
-const SESSION_COOKIE_NAMES = new Set(allCookieNames(SESSION_COOKIE_BASE));
-
 /** Headers forwarded verbatim when present. */
 const COPIED_HEADERS = [
   'host',
@@ -100,6 +98,52 @@ const COPIED_HEADERS = [
   'x-isuk',
   'x-civitai-verified-bot',
 ] as const;
+
+/**
+ * The response headers mirrored with a sample, for feed-go's status + header comparison
+ * (shadow.ComparedHeaders in apps/feed-go): who may cache the answer and how (Cache-Control, Vary),
+ * its purge tags (Cache-Tag), whether a Set-Cookie survived (sent as the literal `present`, never
+ * its value) and the stale-client signal (x-update-required). Nothing else: the payload stays bounded.
+ */
+export const FEED_GO_COMPARED_RESPONSE_HEADERS = [
+  'cache-control',
+  'vary',
+  'cache-tag',
+  'set-cookie',
+  'x-update-required',
+] as const;
+
+/** Longest header value mirrored; a longer one is cut (a Cache-Tag list is the only one that grows). */
+const RESPONSE_HEADER_MAX_CHARS = 1024;
+
+/** A response's headers as `res.getHeaders()` returns them. */
+export type ShadowResponseHeaders = Record<string, string | string[] | number | undefined>;
+
+/** The route's response, read for its headers once the handler has answered. */
+export type ShadowResponseLike = { getHeaders?: () => ShadowResponseHeaders };
+
+/**
+ * The FEED_GO_COMPARED_RESPONSE_HEADERS a response carries, lowercased, each a string (an array
+ * joined with `, `, cut at RESPONSE_HEADER_MAX_CHARS); Set-Cookie as `present`. Never throws.
+ */
+export function pickShadowResponseHeaders(headers: ShadowResponseHeaders): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    const lower: Record<string, ShadowResponseHeaders[string]> = {};
+    for (const [k, v] of Object.entries(headers)) lower[k.toLowerCase()] = v;
+    for (const name of FEED_GO_COMPARED_RESPONSE_HEADERS) {
+      const v = lower[name];
+      if (v === undefined) continue;
+      const value = Array.isArray(v) ? v.join(', ') : String(v);
+      // An empty value is absent, Set-Cookie included: `[]` (no cookie) must not read as present.
+      if (value === '') continue;
+      out[name] = name === 'set-cookie' ? 'present' : value.slice(0, RESPONSE_HEADER_MAX_CHARS);
+    }
+  } catch {
+    /* observability only */
+  }
+  return out;
+}
 
 export type FeedGoShadowConfig = {
   /** Full compare endpoint URL, or undefined (disabled). */
@@ -198,21 +242,6 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
   };
 }
 
-/** Keep only the session cookies of a raw `Cookie` header (same `name=value` text, `; `-joined). */
-// Hand-split rather than `parseCookieHeader` on purpose: that decodes %-escapes, and the compare
-// side must receive the cookie bytes exactly as the browser sent them.
-export function pickSessionCookies(header: string | undefined): string | undefined {
-  if (!header) return undefined;
-  const kept: string[] = [];
-  for (const part of header.split(';')) {
-    const pair = part.trim();
-    const eq = pair.indexOf('=');
-    if (eq <= 0) continue;
-    if (SESSION_COOKIE_NAMES.has(pair.slice(0, eq).trim())) kept.push(pair);
-  }
-  return kept.length ? kept.join('; ') : undefined;
-}
-
 type ShadowRequestLike = {
   method?: string;
   /** The request target as Node received it (`req.url`); read by the REST route only. */
@@ -274,6 +303,8 @@ export type FeedGoShadowSample = {
   /** Whether the Go-first probe was already started for this sample (at most once). */
   probed?: boolean;
   captured?: Captured;
+  /** Node's compared response headers, set in `finish`. */
+  responseHeaders?: Record<string, string>;
   done: boolean;
 };
 
@@ -580,10 +611,12 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const started = now();
       const captured = sample.captured!;
       const node = 'envelope' in captured ? captured.envelope : superjson.serialize(captured.data);
+      // No status: only 200s are posted, and feed-go does not compare it.
+      const response = sample.responseHeaders ? { responseHeaders: sample.responseHeaders } : {};
       body = JSON.stringify(
         isRestEndpoint(endpoint)
-          ? { input: sample.input, path: sample.path, headers: sample.headers, node }
-          : { input: sample.input, headers: sample.headers, node }
+          ? { input: sample.input, path: sample.path, headers: sample.headers, node, ...response }
+          : { input: sample.input, headers: sample.headers, node, ...response }
       );
       // Drop the reference to the captured page now that it is encoded: only `body` is needed
       // while the POST is in flight.
@@ -624,10 +657,16 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   /**
-   * After the handler: queue the POST if Node answered 200 and a body was captured. Synchronous,
-   * returns nothing to await, never throws.
+   * After the handler: queue the POST if Node answered 200 and a body was captured, with the compared
+   * response headers (when the route passes them). A response whose headers cannot be read is not
+   * sent (`skipped_headers`), so its comparison is not silently lost. Synchronous, returns nothing to
+   * await, never throws.
    */
-  function finish(sample: FeedGoShadowSample, statusCode: number): void {
+  function finish(
+    sample: FeedGoShadowSample,
+    statusCode: number,
+    response?: ShadowResponseLike
+  ): void {
     try {
       if (sample.done) return;
       if (statusCode !== 200) {
@@ -639,6 +678,18 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
         record('skipped_no_capture', sample.endpoint);
         release(sample);
         return;
+      }
+      if (typeof response?.getHeaders === 'function') {
+        let headers: ShadowResponseHeaders;
+        try {
+          headers = response.getHeaders();
+        } catch {
+          record('skipped_headers', sample.endpoint);
+          sample.captured = undefined;
+          release(sample);
+          return;
+        }
+        sample.responseHeaders = pickShadowResponseHeaders(headers);
       }
       if (!sample.holdsSlot) {
         // A REST sample is bounded here, after the handler: it held nothing while it ran.
@@ -767,8 +818,19 @@ export type FeedGoV1ShapeInput = {
 };
 
 /**
+ * The query keys feed-go's ParseV1 accepts: imagesEndpointSchema's (the keys its generated
+ * allow-list, apps/feed-go/internal/inputschema/schemas.json, is projected from and held to by the
+ * schema-drift test) plus `token`, the API key. Any other key is `input-unknown-key` there.
+ */
+const V1_ACCEPTED_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys(imagesEndpointSchema.shape),
+  'token',
+]);
+
+/**
  * The shape class of one `/api/v1/images` request, from its parsed query (null when it did not
- * parse) and its final status, in feed-go's own fallback order (ParseV1). Pure and cheap.
+ * parse), its raw query (zod strips an unknown key, so only `req.query` shows one) and its final
+ * status, in feed-go's own fallback order (ParseV1). Pure and cheap.
  */
 export function feedGoV1ShapeClass(
   req: ShadowRequestLike,
@@ -781,6 +843,7 @@ export function feedGoV1ShapeClass(
     if (data.imageId !== undefined) return 'unported_imageId';
     if (data.tags !== undefined) return 'unported_tags';
     if (data.baseModels !== undefined) return 'unported_baseModels';
+    if (Object.keys(req.query).some((k) => !V1_ACCEPTED_KEYS.has(k))) return 'unported_unknownKey';
     if (data.modelId && !data.modelVersionId) return 'unported_modelId_only';
     if (data.withTags) return 'unported_withTags';
     return 'ported';
@@ -811,6 +874,10 @@ export function captureFeedGoShadowResponse(data: unknown, written: unknown, dev
   getInstance().capture(data, written, devalue);
 }
 
-export function finishFeedGoShadow(sample: FeedGoShadowSample, statusCode: number): void {
-  (owners.get(sample) ?? getInstance()).finish(sample, statusCode);
+export function finishFeedGoShadow(
+  sample: FeedGoShadowSample,
+  statusCode: number,
+  response?: ShadowResponseLike
+): void {
+  (owners.get(sample) ?? getInstance()).finish(sample, statusCode, response);
 }

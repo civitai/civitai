@@ -124,3 +124,62 @@ describe('sendEmail', () => {
     ).rejects.toThrow('bad@example.test');
   });
 });
+
+describe('sendEmailStrict', () => {
+  const saved = { ...process.env };
+  beforeEach(() => {
+    seen.options.length = 0;
+    seen.messages.length = 0;
+    seen.rejected = [];
+    Object.assign(process.env, ENV);
+  });
+  afterEach(() => {
+    process.env = { ...saved };
+  });
+
+  it('throws instead of returning when EMAIL_* is not configured', async () => {
+    delete process.env.EMAIL_HOST;
+    const { sendEmailStrict, EmailNotConfiguredError } = await load();
+    await expect(
+      sendEmailStrict({ to: 'a@example.test', subject: 'Hi', html: '<p>Hi</p>' })
+    ).rejects.toBeInstanceOf(EmailNotConfiguredError);
+    expect(seen.messages).toHaveLength(0);
+  });
+
+  it('throws when there is no recipient', async () => {
+    const { sendEmailStrict } = await load();
+    await expect(sendEmailStrict({ to: [], subject: 'Hi', html: '<p>Hi</p>' })).rejects.toThrow(
+      'no recipient'
+    );
+    expect(seen.messages).toHaveLength(0);
+  });
+
+  it('sends with the Reply-To and returns the message id', async () => {
+    const { sendEmailStrict } = await load();
+    const result = await sendEmailStrict({
+      to: 'a@example.test',
+      from: 'Notices <notices@example.test>',
+      replyTo: 'inbox@example.test',
+      subject: '[TD-26-ABC123] Notice',
+      html: '<p>Hello</p>',
+    });
+    const message = JSON.parse(seen.messages[0]);
+    expect(message.replyTo).toEqual([{ name: '', address: 'inbox@example.test' }]);
+    expect(message.from).toEqual({ name: 'Notices', address: 'notices@example.test' });
+    expect(result.messageId).toBe(message.messageId);
+    expect(result.messageId).toMatch(/@/);
+  });
+
+  it('names no address when the server rejects a recipient', async () => {
+    seen.rejected = ['bad@example.test'];
+    const { sendEmailStrict } = await load();
+    const error = await sendEmailStrict({
+      to: 'bad@example.test',
+      subject: 'Hi',
+      html: '<p>Hello</p>',
+    }).catch((e: Error) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('1 recipient');
+    expect((error as Error).message).not.toContain('bad@example.test');
+  });
+});

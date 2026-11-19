@@ -3,13 +3,17 @@ import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getUploadPartUrl, getUploadS3Client, getUploadBucket } from '~/utils/s3-utils';
 import { logToAxiom } from '~/server/logging/client';
+import { UPLOAD_SCOPE } from '~/server/auth/route-scopes';
 
 // Part URLs from /api/upload expire 12h after the upload starts, which a multi-hour
 // transfer of a very large file can outlive. Without this the client's retry replays
 // the same expired URL and the upload dies with the bytes already half-uploaded.
 const signPart = async (req: NextApiRequest, res: NextApiResponse) => {
   instrumentApiResponse(req, res);
-  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  const session = await getApiAuthSession(
+    { req, res },
+    { whenBanned: 'refuse', scope: UPLOAD_SCOPE, insufficient: 'refuse' }
+  );
   if (session === false) return;
   const userId = session?.user?.id;
   if (!userId) {

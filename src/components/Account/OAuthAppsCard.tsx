@@ -46,20 +46,20 @@ import {
   CopyAffordance,
 } from '~/components/CopyAffordance/CopyAffordance';
 import {
-  TokenScope,
-  TokenScopePresets,
-  tokenScopePresetLabels,
-  tokenScopeGrid,
+  hasScope,
   toggleGridScope,
+  TokenScope,
+  tokenScopeGrid,
+  tokenScopePresetLabels,
+  TokenScopePresets,
 } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
 import classes from './OAuthAppsCard.module.css';
 
 const presetOptions = (
   Object.keys(tokenScopePresetLabels) as (keyof typeof TokenScopePresets)[]
 ).map((key) => ({ value: key, label: tokenScopePresetLabels[key] }));
 
-function getPresetKey(tokenScope: number): string | null {
+function getPresetKey(tokenScope: bigint): string | null {
   for (const [key, value] of Object.entries(TokenScopePresets)) {
     if (tokenScope === value) return key;
   }
@@ -70,8 +70,8 @@ function ScopeSelector({
   tokenScope,
   onChange,
 }: {
-  tokenScope: number;
-  onChange: (scope: number) => void;
+  tokenScope: bigint;
+  onChange: (scope: bigint) => void;
 }) {
   const preset = getPresetKey(tokenScope);
 
@@ -81,7 +81,7 @@ function ScopeSelector({
     if (newScope != null) onChange(newScope);
   };
 
-  const handleToggleFlag = (flag: number) => {
+  const handleToggleFlag = (flag: bigint) => {
     onChange(toggleGridScope(tokenScope, flag));
   };
 
@@ -117,7 +117,7 @@ function ScopeSelector({
                 <Table.Td style={{ textAlign: 'center' }}>
                   {'read' in row && row.read ? (
                     <Checkbox
-                      checked={Flags.hasFlag(tokenScope, row.read)}
+                      checked={hasScope(tokenScope, row.read)}
                       onChange={() => handleToggleFlag(row.read)}
                       styles={{ input: { cursor: 'pointer' } }}
                     />
@@ -130,7 +130,7 @@ function ScopeSelector({
                 <Table.Td style={{ textAlign: 'center' }}>
                   {'write' in row && row.write ? (
                     <Checkbox
-                      checked={Flags.hasFlag(tokenScope, row.write)}
+                      checked={hasScope(tokenScope, row.write)}
                       onChange={() => handleToggleFlag(row.write)}
                       styles={{ input: { cursor: 'pointer' } }}
                     />
@@ -143,7 +143,7 @@ function ScopeSelector({
                 <Table.Td style={{ textAlign: 'center' }}>
                   {'delete' in row && row.delete ? (
                     <Checkbox
-                      checked={Flags.hasFlag(tokenScope, row.delete)}
+                      checked={hasScope(tokenScope, row.delete)}
                       onChange={() => handleToggleFlag(row.delete)}
                       styles={{ input: { cursor: 'pointer' } }}
                     />
@@ -473,7 +473,7 @@ function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () =>
       redirectUris: uris,
       allowedOrigins,
       isConfidential,
-      allowedScopes: tokenScope,
+      allowedScopes: Number(tokenScope),
     });
   };
 
@@ -580,7 +580,8 @@ function EditAppModal({
   const [description, setDescription] = useState(client.description ?? '');
   const [redirectUrisText, setRedirectUrisText] = useState(client.redirectUris.join('\n'));
   const [allowedOriginsText, setAllowedOriginsText] = useState(client.allowedOrigins.join('\n'));
-  const [tokenScope, setTokenScope] = useState(client.allowedScopes);
+  // The client's scope arrives from tRPC as a number; held as a bigint for the bitwise edits.
+  const [tokenScope, setTokenScope] = useState(BigInt(client.allowedScopes));
   const [uriError, setUriError] = useState<string | null>(null);
   const [originError, setOriginError] = useState<string | null>(null);
 
@@ -636,7 +637,7 @@ function EditAppModal({
       redirectUris: uris,
       allowedOrigins: originsParsed.value,
       // Opt-in bits above `Full` aren't editable here.
-      allowedScopes: tokenScope & TokenScope.Full,
+      allowedScopes: Number(tokenScope & TokenScope.Full),
     });
   };
 

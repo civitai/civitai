@@ -3,14 +3,23 @@ import { env } from '$env/dynamic/private';
 import {
   MOD_ACTION,
   abuseReportInput,
+  feedbackTriageInput,
   imageModerateInput,
   relabelBuildBatchInput,
 } from '@civitai/moderation';
-import { acceptImage, blockImage } from '../image-moderation.service';
+import { hqTaskFromUrl } from '@civitai/shared/clickup-url';
+import {
+  acceptImage,
+  blockImage,
+  ImageNotFoundError,
+  ImageNotRestoredError,
+} from '../image-moderation.service';
+import { CSAM_BLOCKLIST_RETRY, CsamBlocklistWriteError } from '../image-moderation-effects';
 import { recordAbuseRun } from '../abuse-detection.service';
 import { logToAxiom } from '../axiom';
 import { getClickhouse } from '../clickhouse';
 import { dbRead } from '../db';
+import { triageFeedback } from '../feedback.service';
 import { getModeratorDb } from '../moderator-db';
 import { relabelBuildBatchAction } from '../relabel-batch-build';
 import { heldRemovalMessage, type HeldRemoval } from '../removal-hold';
@@ -31,15 +40,52 @@ type ModAction<T = any> = {
   handler: (input: T) => Promise<unknown>;
 };
 
+const listIds = (ids: number[]) => ids.join(', ');
+
+const notRestoredMessage = (notRestored: number[], notFound: number[], restored: number[]) =>
+  [
+    notRestored.length > 1
+      ? `Images ${listIds(
+          notRestored
+        )} were not restored: each can only be restored through its own review.`
+      : notRestored.length
+      ? `Image ${notRestored[0]} was not restored: it can only be restored through its own review.`
+      : '',
+    notFound.length > 1
+      ? `Images ${listIds(notFound)} were not found.`
+      : notFound.length
+      ? `Image ${notFound[0]} was not found.`
+      : '',
+    restored.length > 1
+      ? `Images ${listIds(restored)} were restored.`
+      : restored.length
+      ? `Image ${restored[0]} was restored.`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
 // Backs the main app's `image.moderate` (block/unblock over one or more ids). Single-image verdicts loop
 // the spoke services; the moderator UI always sends one id, but the batch shape is preserved.
 const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
   schema: imageModerateInput,
   handler: async ({ ids, reviewAction, userId, ip, userAgent, canConfirmReRemoval }) => {
     const held: HeldRemoval[] = [];
+    const notRestored: number[] = [];
+    const notFound: number[] = [];
+    const csamBlocklistFailed: number[] = [];
+    const restored: number[] = [];
     for (const imageId of ids) {
       // Delegated accept uses the smart default (removeMinorFlag is a spoke-only, minor-page option).
-      if (reviewAction === 'unblock') await acceptImage({ imageId, userId, restoreRemoved: true });
+      if (reviewAction === 'unblock')
+        await acceptImage({ imageId, userId, restoreRemoved: true }).then(
+          () => restored.push(imageId),
+          (e) => {
+            if (e instanceof ImageNotRestoredError) notRestored.push(imageId);
+            else if (e instanceof ImageNotFoundError) notFound.push(imageId);
+            else throw e;
+          }
+        );
       else {
         const result = await blockImage({
           imageId,
@@ -48,12 +94,23 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
           userAgent,
           source: 'site.imageModerate',
           skipAppealCheck: canConfirmReRemoval,
+        }).catch((e: unknown): Awaited<ReturnType<typeof blockImage>> => {
+          if (!(e instanceof CsamBlocklistWriteError)) throw e;
+          csamBlocklistFailed.push(imageId);
+          return {};
         });
         if (result.held) held.push(result.held);
       }
     }
+    // The blocks committed; the moderator is told to retry the CSAM blocklist entry.
+    if (csamBlocklistFailed.length)
+      throw Object.assign(new Error(CSAM_BLOCKLIST_RETRY), { status: 502 });
     // A 409 so the main app shows the moderator why the image is still up.
     if (held.length) throw Object.assign(new Error(heldRemovalMessage(held)), { status: 409 });
+    if (notRestored.length || notFound.length)
+      throw Object.assign(new Error(notRestoredMessage(notRestored, notFound, restored)), {
+        status: 409,
+      });
     return { count: ids.length };
   },
 };
@@ -98,8 +155,31 @@ const relabelBuildBatch: ModAction<z.infer<typeof relabelBuildBatchInput>> = {
     ),
 };
 
+/**
+ * Backs the main app's `/api/mod/feedback/triage` (a moderator's API key) and its HQ status sync.
+ * The SAME `triageFeedback` the queue's status buttons call, so the compare-and-set on
+ * `expectedStatus`, the handler/time stamps, the change-feed stamp and the audit row are one
+ * implementation. `userId` is the acting moderator, asserted by the main app after its
+ * `feedback.status.set` check.
+ */
+const feedbackTriage: ModAction<z.infer<typeof feedbackTriageInput>> = {
+  schema: feedbackTriageInput,
+  handler: ({ id, status, expectedStatus, expectedHandledById, noteAppend, hqTaskUrl, userId }) =>
+    triageFeedback({
+      id,
+      status,
+      expectedStatus,
+      expectedHandledById,
+      noteAppend,
+      // The schema already refused anything else; null cannot reach here.
+      hqTask: hqTaskUrl ? hqTaskFromUrl(hqTaskUrl) ?? undefined : undefined,
+      moderatorId: userId,
+    }),
+};
+
 export const modActions: Record<string, ModAction> = {
   [MOD_ACTION.imageModerate]: imageModerate,
   [MOD_ACTION.abuseReport]: abuseReport,
   [MOD_ACTION.relabelBuildBatch]: relabelBuildBatch,
+  [MOD_ACTION.feedbackTriage]: feedbackTriage,
 };

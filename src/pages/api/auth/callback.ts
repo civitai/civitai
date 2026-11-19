@@ -3,6 +3,7 @@ import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import {
   setSessionCookie,
   postLoginMarkerCookie,
+  POST_LOGIN_MARKER,
   clearLegacyCookies,
   hasAnyLegacyCookie,
   cookieDomainForHost,
@@ -10,10 +11,9 @@ import {
 import {
   resolveSelfOrigin,
   completeFirstPartyCallback,
-  clearBridgeCookie,
-  OAUTH_BRIDGE_COOKIE,
   HUB_BASE_URL,
 } from '~/server/auth/oauth-bridge';
+import { getHubSession } from '~/server/auth/session-client';
 import { logToAxiom } from '~/server/logging/client';
 
 // Fire-and-forget structured log — see the note in authorize.ts. `['civitai-prod'] | where name == 'auth-flow'`;
@@ -25,7 +25,7 @@ const logAuth = (req: NextApiRequest, outcome: string, extra?: Record<string, un
   );
 
 // GET /api/auth/callback — RECEIVE the hub's authorization-code redirect. A THIN Next wrapper over the package
-// bridge: verify `state` against the bridge cookie + exchange the code for a civ-token SESSION at the hub's
+// bridge: verify `state` against this flow's bridge cookie + exchange the code for a civ-token SESSION at the hub's
 // first-party /session endpoint (server-to-server with the PKCE verifier), then set THIS domain's civ-token
 // cookie via setSessionCookie() and continue to returnUrl. The CSRF/exchange logic lives in @civitai/auth
 // (first-party-bridge). Cookie format is unchanged → existing sessions unaffected.
@@ -46,10 +46,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
-  // Single-use clear of the bridge cookie regardless of outcome (setSessionCookie appends to this on success).
-  // Pass the registrable Domain so a Domain-scoped bridge cookie is actually cleared (host-only clear wouldn't).
+  // The registrable Domain the bridge cookies were set with (authorize.ts), so their clears match.
   const cookieDomain = cookieDomainForHost(req.headers.host);
-  res.setHeader('Set-Cookie', clearBridgeCookie(undefined, cookieDomain));
 
   const result = await completeFirstPartyCallback({
     selfOrigin,
@@ -58,7 +56,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       state: typeof req.query.state === 'string' ? req.query.state : null,
       error: typeof req.query.error === 'string' ? req.query.error : null,
     },
-    bridgeCookieValue: req.cookies[OAUTH_BRIDGE_COOKIE],
+    cookies: req.cookies,
+    cookieDomain,
     // The end-user address, forwarded to the hub on the server-to-server exchange
     // (the bridge sends it as a single-value `x-forwarded-for`; see
     // `packages/civitai-auth/src/first-party-bridge.ts`). Null is coerced to undefined
@@ -88,17 +87,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     clientIp: resolveClientIpOrNull(req) ?? undefined,
   });
 
+  // Single-use clear of this flow's stash regardless of outcome (setSessionCookie appends to this on success).
+  res.setHeader('Set-Cookie', result.clearCookies);
+
   if ('error' in result) {
     // `detail` sub-classifies oauth_state (no_code / no_cookie / state_mismatch) + oauth_exchange (declined /
     // network). `cookieCount` separates a real failure (>0 = other cookies reached the callback) from a full
     // cross-site block / bot (0 = no cookies at all) — the .red no_cookie residual was ~2/3 already-logged-in
     // duplicate callbacks + ~1/3 bots, with a negligible genuine-failure slice (ClickUp 868k9gug8).
+
+    // A duplicate callback right after this host's own sign-in completed (the post-login marker lives 60s)
+    // continues as signed in instead of showing the sign-in error; nothing is minted. Scoped to the marker so
+    // a failed add-account or account sync by an already signed-in user still shows its error.
+    const signedIn =
+      result.error === 'oauth_state' &&
+      !req.query.error &&
+      !!req.cookies[POST_LOGIN_MARKER] &&
+      !!(await getHubSession(req).catch(() => null));
     logAuth(req, 'exchange-error', {
       error: result.error,
       detail: result.detail,
       cookieCount: Object.keys(req.cookies ?? {}).length,
+      ...(signedIn ? { signedIn: true } : {}),
     });
-    res.redirect(302, `/login?error=${encodeURIComponent(result.error)}`);
+    res.redirect(
+      302,
+      signedIn ? result.returnUrl : `/login?error=${encodeURIComponent(result.error)}`
+    );
     return;
   }
   logAuth(req, 'success');

@@ -5,9 +5,11 @@ import type * as ModeratorEndpoint from '~/server/utils/moderator-endpoint';
 import type * as CollectionService from '~/server/services/collection.service';
 
 const saveItemInCollections = vi.fn(async (_: unknown) => 'added');
+const collectionPermissions = vi.fn(async (_: unknown) => ({ write: true, manage: false }));
 vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CollectionService>()),
   saveItemInCollections: (args: unknown) => saveItemInCollections(args),
+  getUserCollectionPermissionsById: (args: unknown) => collectionPermissions(args),
 }));
 
 // The moderator routes' auth is not what this file tests: their handlers are called directly.
@@ -181,6 +183,46 @@ describe('setting the showcase collection', () => {
     await setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER });
     expect(saveItemInCollections).not.toHaveBeenCalled();
     expect(written()).toMatchObject({ showcaseCollectionId: 9 });
+  });
+
+  it('refuses a caller with no access the same way whether or not the model is listed', async () => {
+    const refusal = async (listed: boolean) => {
+      dbMock.dbWrite.collectionItem.findFirst.mockResolvedValue(
+        (listed ? { id: 1 } : null) as never
+      );
+      collectionPermissions.mockResolvedValueOnce({ write: false, manage: false });
+      return setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER }).catch(
+        (error: { code: string; message: string }) => ({ code: error.code, message: error.message })
+      );
+    };
+    const notListed = await refusal(false);
+    expect(notListed).toEqual({
+      code: 'BAD_REQUEST',
+      message: 'The model could not be added to that collection',
+    });
+    expect(await refusal(true)).toEqual(notListed);
+    dbMock.dbWrite.collectionItem.findFirst.mockReset();
+    expect(saveItemInCollections).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a collection the model is already in when the owner cannot write to it', async () => {
+    dbMock.dbWrite.collectionItem.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+    // A review-only contributor cannot write straight in, so it cannot pick the showcase either.
+    collectionPermissions.mockResolvedValueOnce({
+      write: false,
+      manage: false,
+      writeReview: true,
+    } as never);
+    await expect(
+      setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(collectionPermissions).toHaveBeenCalledWith({
+      id: 9,
+      userId: OWNER,
+      isModerator: undefined,
+    });
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
   });
 
   it('adds nothing when the showcase is cleared', async () => {

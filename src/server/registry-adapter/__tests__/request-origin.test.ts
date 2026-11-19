@@ -110,6 +110,237 @@ describe('🔴 a region the site blocks is held to SFW as well', () => {
   });
 });
 
+describe('🔴 meta is ignored until REGISTRY_ADAPTER_TRUST_META is 1', () => {
+  it.each([
+    ['unset', undefined],
+    ['0', '0'],
+    ['true (only "1" turns it on)', 'true'],
+  ])(
+    'flag %s: meta DE does not release the header GB, nor an origin with no headers',
+    async (_name, flag) => {
+      vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', flag);
+      const { regionRestricted } = await load(undefined);
+      expect(
+        regionRestricted({ headers: { 'cf-ipcountry': 'GB' }, meta: { country: 'DE' } }, NOW)
+      ).toBe(true);
+      expect(regionRestricted({ headers: {}, meta: { country: 'DE' } }, NOW)).toBe(true);
+    }
+  );
+
+  it('positive control: with the flag at 1 the same meta DE releases both', async () => {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', '1');
+    const { regionRestricted } = await load(undefined);
+    expect(
+      regionRestricted({ headers: { 'cf-ipcountry': 'GB' }, meta: { country: 'DE' } }, NOW)
+    ).toBe(false);
+    expect(regionRestricted({ headers: {}, meta: { country: 'DE' } }, NOW)).toBe(false);
+  });
+});
+
+describe('🔴 a region value in the request’s meta is judged as its header is', () => {
+  beforeEach(() => {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', '1');
+  });
+
+  it.each([
+    ['meta GB, no headers: held', true, { country: 'GB' }, {}],
+    // `x-isuk` comes from no edge the gateway sits behind, so it has no meta key: a caller's own
+    // `isuk` is not read.
+    [
+      'meta isuk is not read: meta DE with isuk is not held',
+      false,
+      { country: 'DE', isuk: 'true' },
+      {},
+    ],
+    ['positive control: meta DE, no headers: not held', false, { country: 'DE' }, {}],
+    [
+      'meta XX, header DE: meta wins and names no country',
+      true,
+      { country: 'XX' },
+      { 'cf-ipcountry': 'DE' },
+    ],
+    ['meta DE wins over the header GB', false, { country: 'DE' }, { 'cf-ipcountry': 'GB' }],
+    ['meta GB wins over the header DE', true, { country: 'GB' }, { 'cf-ipcountry': 'DE' }],
+    ['no meta: the header GB decides', true, undefined, { 'cf-ipcountry': 'GB' }],
+    ['no meta: the header DE decides', false, undefined, { 'cf-ipcountry': 'DE' }],
+    [
+      'meta without the key: the header GB decides',
+      true,
+      { locale: 'en' },
+      { 'cf-ipcountry': 'GB' },
+    ],
+    ['a country that is not a string, no headers: held', true, { country: 5 }, {}],
+    [
+      'a country that is not a string: the header DE decides',
+      false,
+      { country: ['GB'] },
+      { 'cf-ipcountry': 'DE' },
+    ],
+  ])('%s', async (_name, held, meta, headers) => {
+    const { regionRestricted } = await load(undefined);
+    expect(regionRestricted({ headers, meta }, NOW)).toBe(held);
+  });
+
+  it.each([
+    ['a configured US state', true, 'NY'],
+    ['another US state', false, 'CA'],
+  ])('meta region, %s: held = %s', async (_name, held, region) => {
+    const { regionRestricted } = await load('US:NY:2026-01-01');
+    expect(regionRestricted({ headers: {}, meta: { country: 'US', region } }, NOW)).toBe(held);
+  });
+
+  it.each([
+    ['not JSON', '{"country":"DE"'],
+    ['an array', '["DE"]'],
+    ['a number', '7'],
+    ['null', 'null'],
+  ])('meta that is %s is none: held with no headers', async (_name, raw) => {
+    const { regionRestricted } = await load(undefined);
+    const { subscribeRequest } = await import('~/server/registry-adapter/protocol');
+    const { meta } = subscribeRequest({ schema: 's', cursor: '', urns: [], filter: '', meta: raw });
+    expect(meta).toBeUndefined();
+    expect(regionRestricted({ headers: {}, meta }, NOW)).toBe(true);
+  });
+
+  it('positive control: the same request with object meta DE, as text or bytes, is not held', async () => {
+    const { regionRestricted } = await load(undefined);
+    const { subscribeRequest } = await import('~/server/registry-adapter/protocol');
+    for (const raw of ['{"country":"DE"}', Buffer.from('{"country":"DE"}', 'utf8')]) {
+      const { meta } = subscribeRequest({
+        schema: 's',
+        cursor: '',
+        urns: [],
+        filter: '',
+        meta: raw,
+      });
+      expect(regionRestricted({ headers: {}, meta }, NOW)).toBe(false);
+    }
+  });
+});
+
+describe('🔴 describeRegion: the decision each subscription logs', () => {
+  // Header CA and meta DE are distinct, so a source read from the wrong place shows.
+  const CA_DE = { headers: { 'cf-ipcountry': 'CA' }, meta: { country: 'DE' } };
+
+  it('flag on: meta wins over the header', async () => {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', '1');
+    const { describeRegion } = await load(undefined);
+    expect(describeRegion(CA_DE, NOW)).toEqual({
+      country: 'DE',
+      region: undefined,
+      source: 'meta',
+      restricted: false,
+    });
+  });
+
+  it('flag off: meta is ignored and the header decides', async () => {
+    const { describeRegion } = await load(undefined);
+    expect(describeRegion(CA_DE, NOW)).toEqual({
+      country: 'CA',
+      region: undefined,
+      source: 'header',
+      restricted: false,
+    });
+  });
+
+  it('flag on, meta without a country: the header decides', async () => {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', '1');
+    const { describeRegion } = await load(undefined);
+    expect(
+      describeRegion({ headers: { 'cf-ipcountry': 'CA' }, meta: { locale: 'en' } }, NOW).source
+    ).toBe('header');
+  });
+
+  it('no country anywhere: none, held', async () => {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', '1');
+    const { describeRegion } = await load(undefined);
+    expect(describeRegion({ headers: {}, meta: { locale: 'en' } }, NOW)).toEqual({
+      country: 'none',
+      source: 'none',
+      restricted: true,
+    });
+  });
+
+  it.each([
+    ['the edge’s XX', 'XX'],
+    ['a value that is not a code is never echoed', 'DE, FR'],
+  ])('%s: country none from the header, held', async (_name, value) => {
+    const { describeRegion } = await load(undefined);
+    expect(describeRegion({ headers: { 'cf-ipcountry': value } }, NOW)).toEqual({
+      country: 'none',
+      source: 'header',
+      restricted: true,
+    });
+  });
+
+  it('a restricted region from the header: held, with its region code', async () => {
+    const { describeRegion } = await load('US:NY:2026-01-01');
+    expect(
+      describeRegion({ headers: { 'cf-ipcountry': 'US', 'cf-region-code': 'NY' } }, NOW)
+    ).toEqual({ country: 'US', region: 'NY', source: 'header', restricted: true });
+  });
+
+  it('a restricted region from meta: held, meta over the header FR', async () => {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', '1');
+    const { describeRegion } = await load('US:NY:2026-01-01');
+    expect(
+      describeRegion(
+        { headers: { 'cf-ipcountry': 'FR' }, meta: { country: 'US', region: 'NY' } },
+        NOW
+      )
+    ).toEqual({ country: 'US', region: 'NY', source: 'meta', restricted: true });
+  });
+
+  it('positive control: another US state from meta is not held', async () => {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', '1');
+    const { describeRegion } = await load('US:NY:2026-01-01');
+    expect(describeRegion({ headers: {}, meta: { country: 'US', region: 'CA' } }, NOW)).toEqual({
+      country: 'US',
+      region: 'CA',
+      source: 'meta',
+      restricted: false,
+    });
+  });
+
+  it('a region code that is not one is left out', async () => {
+    const { describeRegion } = await load(undefined);
+    expect(
+      describeRegion({ headers: { 'cf-ipcountry': 'US', 'cf-region-code': 'New York' } }, NOW)
+        .region
+    ).toBeUndefined();
+  });
+
+  it('the site’s x-isuk over a meta country is the header’s GB', async () => {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', '1');
+    const { describeRegion } = await load(undefined);
+    expect(describeRegion({ headers: { 'x-isuk': 'true' }, meta: { country: 'DE' } }, NOW)).toEqual(
+      { country: 'GB', region: undefined, source: 'header', restricted: true }
+    );
+  });
+
+  it('flag on, meta with an empty country: meta overrides the header CA, none, held', async () => {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', '1');
+    const { describeRegion, regionLine } = await load(undefined);
+    const decision = describeRegion(
+      { headers: { 'cf-ipcountry': 'CA' }, meta: { country: '' } },
+      NOW
+    );
+    expect(decision).toEqual({ country: 'none', source: 'meta', restricted: true });
+    expect(regionLine('http', decision)).toBe(
+      'subscription region: binding=http country=none region=none source=meta restricted=true'
+    );
+  });
+});
+
+describe('regionLine: the logged line', () => {
+  it('pins the format, a region code included', async () => {
+    const { regionLine } = await load(undefined);
+    expect(
+      regionLine('grpc', { country: 'US', region: 'NY', source: 'header', restricted: true })
+    ).toBe('subscription region: binding=grpc country=US region=NY source=header restricted=true');
+  });
+});
+
 describe('describeRegionConfig: the startup lines', () => {
   it('names both lists, with no warning when a region is restricted', async () => {
     const { describeRegionConfig } = await load('ZZ:2026-01-01,US:NY:2026-02-01');

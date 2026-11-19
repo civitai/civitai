@@ -5,7 +5,6 @@
   import { page } from '$app/state';
   import AppHeader from '$lib/AppHeader.svelte';
   import WhatsNewDialog from '$lib/WhatsNewDialog.svelte';
-  import { headerDaily, pendingVotes, type Watch } from '$lib/chrome';
   import type { PlayerStatus } from '$lib/server/player-status';
   import type { WhatsNew } from '$lib/whats-new';
   import { provideWhatsNew } from '$lib/whats-new-dismiss.svelte';
@@ -16,19 +15,11 @@
 
   // A page that loads the player's status (play keeps it live) hands it to the header through page.data; every other page
   // gets the layout's copy, so the header is the same on each of them.
-  type Streak = { streak: number; shields: number; maxShields: number };
   let status = $derived(
     (page.data.status as PlayerStatus | null | undefined) ?? data.headerStats?.status ?? undefined
   );
-  // /play's votes in flight move the header's streak in the same frame as the rail's.
-  const inFlight = provideVotesSent();
-  let streak = $derived(
-    headerDaily(
-      page.data.daily as (Streak & Watch) | null | undefined,
-      data.headerStats?.daily ?? undefined,
-      pendingVotes(inFlight, page.data.daily as object | null | undefined)
-    )
-  );
+  // /play reads the votes it has in flight from this context.
+  provideVotesSent();
   // /play keeps its own live status for the header while it is open, so the layout's copy is as old as the visit. Leaving
   // refreshes it for the pages that carry no status of their own.
   afterNavigate(({ from }) => {
@@ -59,7 +50,6 @@
       isPlayer={data.isPlayer}
       feedbackOpen={data.feedbackOpen}
       {status}
-      {streak}
       recapUnseen={data.recapUnseen}
       goldPerBuzz={data.goldPerBuzz}
       ladder={data.ladder}
@@ -101,7 +91,7 @@
     overflow-y: auto;
   }
   /* Must match PrimaryNav's tab-bar breakpoint and height. */
-  @media (max-width: 75rem) {
+  @media (max-width: 63.9375rem) {
     .app {
       padding-bottom: calc(57px + env(safe-area-inset-bottom));
     }

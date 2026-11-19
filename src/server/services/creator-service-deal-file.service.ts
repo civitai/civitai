@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 import { CopyObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -29,6 +31,7 @@ import {
   buildWatermarkedPreview,
   PreviewRejectedError,
 } from '~/server/utils/service-deal-preview';
+import { buildWatermarkedVideoPreview } from '~/server/services/creator-service-deal-video-preview';
 import {
   SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
@@ -37,14 +40,18 @@ import {
   SERVICE_FINAL_MAX_FILES,
   SERVICE_PREVIEW_ANIMATED_MAX_BYTES,
   SERVICE_PREVIEW_GIVE_UP_MS,
+  SERVICE_PREVIEW_OVER_LEVEL_REASON,
   SERVICE_PREVIEW_MAX_BYTES,
   SERVICE_PREVIEW_MAX_FILES,
-  SERVICE_PREVIEW_MAX_NSFW_LEVEL,
   SERVICE_PREVIEW_MIME_TYPES,
   SERVICE_DEAL_HOLD_REASONS,
   SERVICE_PREVIEW_PROCESSING_STALE_MS,
+  SERVICE_PREVIEW_VIDEO_GIVE_UP_MS,
+  SERVICE_PREVIEW_VIDEO_MAX_BYTES,
+  SERVICE_PREVIEW_VIDEO_MIME_TYPES,
   SERVICE_ZIP_IMAGE_EXTENSIONS,
   SERVICE_ZIP_MAX_IMAGE_BYTES,
+  isVideoPreviewMime,
 } from '~/shared/constants/creator-services.constants';
 import type {
   ServiceDealFileKind,
@@ -57,6 +64,7 @@ import {
   getBucket,
   getGetUrlByKey,
   getPutUrl,
+  getImageUploadBackend,
   getS3Client,
   headObject,
   uploadImageBufferToStore,
@@ -164,7 +172,14 @@ export async function requestServiceDealUpload({
   // The buyer sees the file name. Scanned as it will be stored.
   await throwOnBlockedUserContent(cleanFileName(fileName), { surface: 'service-deal-file' });
 
-  if (kind === 'Preview') {
+  if (kind === 'Preview' && isVideoPreviewMime(mimeType)) {
+    if (size > SERVICE_PREVIEW_VIDEO_MAX_BYTES)
+      throw throwBadRequestError(
+        `Preview is too large (max ${Math.floor(
+          SERVICE_PREVIEW_VIDEO_MAX_BYTES / (1024 * 1024)
+        )} MB).`
+      );
+  } else if (kind === 'Preview') {
     if (!isPreviewMime(mimeType))
       throw throwBadRequestError('Previews must be JPEG, PNG, WebP or GIF images.');
     if (size > previewByteCap(mimeType))
@@ -192,6 +207,8 @@ export async function requestServiceDealUpload({
     if (kind === 'Preview') {
       const max = SERVICE_PREVIEW_MAX_FILES[deal.previewKind];
       if (max === 0) throw throwBadRequestError('This service does not take a preview.');
+      if (isVideoPreviewMime(mimeType) && deal.previewKind !== 'Video')
+        throw throwBadRequestError('Previews must be JPEG, PNG, WebP or GIF images.');
       if (deal.files >= max)
         throw throwConflictError(`This delivery already has ${max === 1 ? 'a' : max} preview.`);
     } else if (deal.files >= SERVICE_FINAL_MAX_FILES) {
@@ -534,8 +551,11 @@ type FileObjects = {
 
 async function deleteImages(imageIds: number[]) {
   if (!imageIds.length) return;
-  const { deleteImageById } = await import('~/server/services/image.service');
-  for (const id of imageIds) await deleteImageById({ id, updatePost: false }).catch(() => null);
+  const service = await import('~/server/services/image.service');
+  for (const id of imageIds)
+    await service
+      .deleteImages([id], { updatePosts: false, actor: { system: 'creator-service-deal-file' } })
+      .catch(() => null);
 }
 
 /** The row is the source of truth; an object left behind is unreachable and harmless. */
@@ -742,6 +762,8 @@ type ListedFile = {
   failReason: string | null;
   scanStatus: ServiceDealFileScanStatus | null;
   previewUrl: string | null;
+  /** A ready preview this domain may not show; `previewUrl` is null. */
+  previewOffDomain?: boolean;
   canDownload: boolean;
   /** Moderators only: when the uploader removed a file that was kept. */
   removedAt?: Date;
@@ -761,6 +783,7 @@ type FileRow = {
   malwareScanStatus: ServiceDealFileScanStatus;
   watermarkedKey: string | null;
   removedAt: Date | null;
+  nsfwLevel: number | null;
 };
 
 /**
@@ -798,12 +821,15 @@ export async function listServiceDealFiles({
   userId,
   isModerator,
   canReviewCsam = false,
+  servableLevels,
 }: {
   dealId: number;
   userId: number;
   isModerator: boolean;
   /** See `resolveServiceDealFileDownload`. */
   canReviewCsam?: boolean;
+  /** What this domain may show; a preview rated outside it is listed without its URL. */
+  servableLevels: number;
 }) {
   const [deal] = await dbWrite.$queryRaw<DealForFiles[]>`
     SELECT d."id", d."buyerId", d."sellerId", d."status"::text AS "status", d."revisionsUsed",
@@ -821,7 +847,7 @@ export async function listServiceDealFiles({
   const rows = await dbWrite.$queryRaw<FileRow[]>`
     SELECT f."id", f."round", f."kind", f."fileName", f."mimeType", f."size", f."deliverySize",
       f."status", f."failReason", f."scanStatus", f."malwareScanStatus", f."watermarkedKey",
-      f."removedAt"
+      f."removedAt", f."nsfwLevel"
     FROM "ServiceDealFile" f
     WHERE f."dealId" = ${dealId}::int
     ORDER BY f."round", f."id"`;
@@ -885,7 +911,9 @@ export async function listServiceDealFiles({
       (privileged ||
         (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && finalScansClear(row)));
     const lockedFinal = buyerOnly && row.kind === 'Final' && !downloadable;
-    const key = row.watermarkedKey;
+    const offDomain =
+      row.kind === 'Preview' && !!row.nsfwLevel && !Flags.intersects(row.nsfwLevel, servableLevels);
+    const key = offDomain ? null : row.watermarkedKey;
 
     return [
       {
@@ -902,8 +930,13 @@ export async function listServiceDealFiles({
         scanStatus: row.kind === 'Final' || privileged ? row.scanStatus : null,
         previewUrl:
           row.kind === 'Preview' && row.status === 'Ready' && key
-            ? getEdgeUrl(key, { original: true, name: 'preview' })
+            ? getEdgeUrl(key, {
+                original: true,
+                name: 'preview',
+                type: isVideoPreviewMime(row.mimeType) ? 'video' : undefined,
+              })
             : null,
+        ...(offDomain && row.status === 'Ready' ? { previewOffDomain: true } : {}),
         canDownload: downloadable,
       },
     ];
@@ -1103,10 +1136,13 @@ const logAccessFailure = (access: ServiceDealFileAccess) => (error: unknown) =>
 // Each step is claimed per file and idempotent, so a pod that rolls mid-way leaves the file where
 // the next run picks it up, with no second ingest and no copy left behind.
 
+const VIDEO_MIMES = Prisma.join([...SERVICE_PREVIEW_VIDEO_MIME_TYPES]);
+
 type ClaimedPreview = {
   id: number;
   s3Key: string;
   scanKey: string | null;
+  mimeType: string;
   sellerId: number;
 };
 
@@ -1123,11 +1159,11 @@ function claimPreviews(where: Prisma.Sql, limit: number) {
         AND (p."processingAt" IS NULL
           OR p."processingAt" < now() - (${SERVICE_PREVIEW_PROCESSING_STALE_MS}::int * interval '1 millisecond'))
       ORDER BY p."id" LIMIT ${limit}::int FOR UPDATE SKIP LOCKED)
-    RETURNING f."id", f."s3Key", f."scanKey", d."sellerId"`;
+    RETURNING f."id", f."s3Key", f."scanKey", f."mimeType", d."sellerId"`;
 }
 
-export async function readObject(bucket: string, key: string) {
-  const response = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+export async function readObject(bucket: string, key: string, s3 = getS3Client()) {
+  const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   if (!response.Body) throw new Error('Empty object body');
   return Buffer.from(await response.Body.transformToByteArray());
 }
@@ -1151,13 +1187,19 @@ async function failOrRetry(preview: ClaimedPreview, error: unknown) {
  */
 export async function createScanImage(
   url: string,
-  copy: { mimeType: string; width: number; height: number; data: Buffer },
+  copy: {
+    mimeType: string;
+    width: number;
+    height: number | null;
+    data: Buffer;
+    type?: 'image' | 'video';
+  },
   userId: number
 ) {
   const { createImage } = await import('~/server/services/image.service');
   return createImage({
     url,
-    type: 'image',
+    type: copy.type ?? 'image',
     mimeType: copy.mimeType,
     width: copy.width,
     height: copy.height,
@@ -1168,10 +1210,15 @@ export async function createScanImage(
 
 /** Step 1: the hidden scan copy, for previews that have none yet. */
 export async function startPreviewScans({ limit = 5 } = {}) {
-  const claimed = await claimPreviews(
-    Prisma.sql`p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND p."imageId" IS NULL`,
-    limit
-  );
+  const unscanned = Prisma.sql`p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND p."imageId" IS NULL`;
+  // One video per run: each holds the run for a transcode wait, inside the claim's stale window.
+  const claimed = [
+    ...(await claimPreviews(
+      Prisma.sql`${unscanned} AND p."mimeType" NOT IN (${VIDEO_MIMES})`,
+      limit
+    )),
+    ...(await claimPreviews(Prisma.sql`${unscanned} AND p."mimeType" IN (${VIDEO_MIMES})`, 1)),
+  ];
   let started = 0;
   for (const preview of claimed) {
     const began = Date.now();
@@ -1186,7 +1233,15 @@ export async function startPreviewScans({ limit = 5 } = {}) {
       }
       if (!imageId) {
         const original = await readObject(await getBucket(), preview.s3Key);
-        const copy = await buildScanCopy(original);
+        // Scanned already marked: the transcode is the only place a video gets its mark, and publish reuses this clip.
+        const copy = isVideoPreviewMime(preview.mimeType)
+          ? {
+              ...(await buildWatermarkedVideoPreview(original, preview.mimeType, preview.sellerId)),
+              height: null,
+              frames: 0,
+              type: 'video' as const,
+            }
+          : await buildScanCopy(original);
         frames = copy.frames;
         let scanKey = preview.scanKey;
         if (!scanKey) {
@@ -1221,16 +1276,17 @@ export async function settlePreviewScans() {
   const waiting = Prisma.sql`f."kind" = 'Preview'::"ServiceDealFileKind"
     AND f."status" = 'Processing'::"ServiceDealFileStatus"
     AND f."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"`;
+  // A preview may go as high as the deal's own level, read now, as its finals may.
   const passed = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
     SET "scanStatus" = 'Passed'::"ServiceDealFileScanStatus", "processingAt" = NULL,
       "nsfwLevel" = i."nsfwLevel"
-    FROM "Image" i
-    WHERE i."id" = f."imageId" AND ${waiting}
+    FROM "Image" i, "ServiceDeal" d
+    WHERE i."id" = f."imageId" AND d."id" = f."dealId" AND ${waiting}
       AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"
       AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
-      AND i."nsfwLevel" BETWEEN 1 AND ${SERVICE_PREVIEW_MAX_NSFW_LEVEL}::int`;
-  const rejected = await dbWrite.$executeRaw`
+      AND i."nsfwLevel" BETWEEN 1 AND d."maxNsfwLevel"`;
+  const refused = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
     SET "status" = 'Failed'::"ServiceDealFileStatus", "scanStatus" = 'Failed'::"ServiceDealFileScanStatus",
       "failReason" = 'This preview was rejected when it was checked.'
@@ -1238,8 +1294,19 @@ export async function settlePreviewScans() {
     WHERE i."id" = f."imageId" AND ${waiting}
       AND (i."ingestion" = 'Blocked'::"ImageIngestionStatus"
         OR (i."ingestion" = 'Scanned'::"ImageIngestionStatus"
-          AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor"
-            OR i."nsfwLevel" > ${SERVICE_PREVIEW_MAX_NSFW_LEVEL}::int)))`;
+          -- Blocked rates above every level a deal can have.
+          AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor" OR i."nsfwLevel" > ${NsfwLevel.XXX}::int)))`;
+  // Only the rating is above the deal's level: the seller is told that, and nothing else.
+  const overLevel = await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile" f
+    SET "status" = 'Failed'::"ServiceDealFileStatus", "scanStatus" = 'Failed'::"ServiceDealFileScanStatus",
+      "failReason" = ${SERVICE_PREVIEW_OVER_LEVEL_REASON}
+    FROM "Image" i, "ServiceDeal" d
+    WHERE i."id" = f."imageId" AND d."id" = f."dealId" AND ${waiting}
+      AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"
+      AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
+      AND i."nsfwLevel" > d."maxNsfwLevel" AND i."nsfwLevel" <= ${NsfwLevel.XXX}::int`;
+  const rejected = refused + overLevel;
   const unchecked = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
     SET "status" = 'Failed'::"ServiceDealFileStatus",
@@ -1253,7 +1320,15 @@ export async function settlePreviewScans() {
       "failReason" = 'This preview could not be prepared. Upload it again.'
     WHERE "kind" = 'Preview'::"ServiceDealFileKind" AND "status" = 'Processing'::"ServiceDealFileStatus"
       AND "uploadedAt" < now() - (${SERVICE_PREVIEW_GIVE_UP_MS}::int * interval '1 millisecond')`;
-  return { passed, rejected, unchecked, timedOut };
+  // Each retry of an unfinished transcode is a new paid one, so a video gets far less time.
+  const videoTimedOut = await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile"
+    SET "status" = 'Failed'::"ServiceDealFileStatus",
+      "failReason" = 'This video could not be prepared. Upload a shorter or smaller one.'
+    WHERE "kind" = 'Preview'::"ServiceDealFileKind" AND "status" = 'Processing'::"ServiceDealFileStatus"
+      AND "imageId" IS NULL AND "mimeType" IN (${VIDEO_MIMES})
+      AND "uploadedAt" < now() - (${SERVICE_PREVIEW_VIDEO_GIVE_UP_MS}::int * interval '1 millisecond')`;
+  return { passed, rejected, unchecked, timedOut: timedOut + videoTimedOut };
 }
 
 /** Step 3: mark and publish the previews that passed. Ready only when the mark is on. */
@@ -1266,8 +1341,16 @@ export async function publishPreviews({ limit = 5 } = {}) {
   for (const preview of claimed) {
     const began = Date.now();
     try {
-      const original = await readObject(await getBucket(), preview.s3Key);
-      const result = await buildWatermarkedPreview(original);
+      let result: { data: Buffer; mimeType: string; frames: number };
+      if (isVideoPreviewMime(preview.mimeType)) {
+        // Published from the scanned clip only, copied because step 4 deletes the scan copy.
+        if (!preview.scanKey) throw new Error('Video preview has no scanned clip to publish');
+        const { s3, bucket } = await getImageUploadBackend();
+        const data = await readObject(bucket, preview.scanKey, s3);
+        result = { data, mimeType: 'video/mp4', frames: 0 };
+      } else {
+        result = await buildWatermarkedPreview(await readObject(await getBucket(), preview.s3Key));
+      }
       const { key } = await uploadImageBufferToStore(result.data, { contentType: result.mimeType });
       await dbWrite.$executeRaw`
         UPDATE "ServiceDealFile"
@@ -1278,7 +1361,6 @@ export async function publishPreviews({ limit = 5 } = {}) {
       logPreview('preview published', {
         fileId: preview.id,
         frames: result.frames,
-        inputBytes: original.byteLength,
         outputBytes: result.data.byteLength,
         ms: Date.now() - began,
       });
@@ -1299,16 +1381,22 @@ export async function deleteScanCopies({ limit = 50 } = {}) {
   const rows = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
     SELECT "id", "imageId" FROM "ServiceDealFile"
     WHERE "imageId" IS NOT NULL
-      AND ("scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+      AND (("scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+          -- A video publishes by copying its scan copy, so the copy waits for that.
+          AND ("mimeType" NOT IN (${VIDEO_MIMES}) OR "watermarkedKey" IS NOT NULL
+            OR "status" = 'Failed'::"ServiceDealFileStatus"))
         OR ("scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
           AND "status" = 'Failed'::"ServiceDealFileStatus"))
     ORDER BY "id" LIMIT ${limit}::int`;
   if (!rows.length) return 0;
-  const { deleteImageById } = await import('~/server/services/image.service');
+  const service = await import('~/server/services/image.service');
   let deleted = 0;
   for (const row of rows) {
     try {
-      await deleteImageById({ id: row.imageId, updatePost: false });
+      await service.deleteImages([row.imageId], {
+        updatePosts: false,
+        actor: { system: 'creator-service-deal-file' },
+      });
       await dbWrite.$executeRaw`
         UPDATE "ServiceDealFile" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
       deleted++;

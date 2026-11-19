@@ -27,6 +27,7 @@ import { computePerceptualHash } from '~/server/services/orchestrator/orchestrat
 import { recordImageScanningResult } from '~/server/services/scanner-audit.service';
 import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
 import { labelUploadPrompt } from '~/server/services/upload-prompt-scan.service';
+import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -337,6 +338,8 @@ export async function processImageScanningWorkflow({
       },
       'webhooks'
     );
+    // Backstop: the in-pipeline showcase bust may not have run if an earlier step threw.
+    if (image.postId) await bustPostCachesLazy(image.postId);
   }
 
   // A label for moderators to verify, recorded after the verdict so it cannot change it.

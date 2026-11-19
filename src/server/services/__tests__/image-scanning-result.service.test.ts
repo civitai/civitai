@@ -27,6 +27,8 @@ const { mockRecordAudit, mockRemoveJobQueue, mockFanOut, mockRecordFlag, mockLab
 // The pipeline imports the whole ingestion stack, and its stages run for real in
 // image-scan-result.test.ts, so this suite pins only what this service passes them.
 vi.mock('~/server/services/image-scan-pipeline', () => pipeline);
+const mockBustPosts = vi.hoisted(() => vi.fn(async (_postId: number) => undefined));
+vi.mock('~/server/services/post.service', () => ({ bustCachesForPosts: mockBustPosts }));
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   computePerceptualHash: (hash?: string) => (hash ? BigInt(`0x${hash}`) : undefined),
 }));
@@ -328,6 +330,26 @@ describe('processImageScanningWorkflow', () => {
     pipeline.loadImageForScan.mockRejectedValueOnce(new Error('image not found: 7'));
     await expect(deliver('succeeded', [scanStep])).rejects.toThrow('image not found');
     expect(pipeline.markImageScanError).not.toHaveBeenCalled();
+  });
+
+  it("still refreshes the image's post showcase when an earlier side effect fails", async () => {
+    pipeline.loadImageForScan.mockResolvedValue({ ...image, postId: 50 });
+    mockRemoveJobQueue.mockRejectedValueOnce(new Error('queue down'));
+
+    await deliver('succeeded', [scanStep]);
+
+    expect(mockBustPosts).toHaveBeenCalledWith(50);
+  });
+
+  it('leaves the showcase to the side effects when none fails, and busts nothing on no post', async () => {
+    pipeline.loadImageForScan.mockResolvedValue({ ...image, postId: 50 });
+    await deliver('succeeded', [scanStep]);
+    expect(mockBustPosts).not.toHaveBeenCalled();
+
+    pipeline.loadImageForScan.mockResolvedValue(image);
+    mockRemoveJobQueue.mockRejectedValueOnce(new Error('queue down'));
+    await deliver('succeeded', [scanStep]);
+    expect(mockBustPosts).not.toHaveBeenCalled();
   });
 
   it('keeps the verdict when a side effect fails', async () => {

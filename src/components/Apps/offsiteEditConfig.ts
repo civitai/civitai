@@ -5,7 +5,7 @@ import {
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { SENSITIVE_TOKEN_SCOPES } from '~/shared/constants/token-scope.constants';
-import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import type { UpdateListingPatchInput } from '~/server/schema/blocks/offsite-listing.schema';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 
@@ -114,8 +114,8 @@ export type ListingEditContext = {
    *   - `connectScopeJustifications` — the STORED per-scope rationale (prefill).
    */
   connectClientId?: string | null;
-  connectAllowedScopes?: number | null;
-  connectRequestedScopes?: number | null;
+  connectAllowedScopes?: number | bigint | null;
+  connectRequestedScopes?: number | bigint | null;
   connectScopeJustifications?: Record<string, string> | null;
 };
 
@@ -280,7 +280,7 @@ export function scopeDisclosureLockedForEdit(
   // precondition directly: the lock applies in the unpublished state.
   if (!isUnpublishedEdit(ctx)) return false;
   if (ctx.connectClientId == null) return false;
-  return (ctx.connectAllowedScopes ?? 0) !== (ctx.connectRequestedScopes ?? 0);
+  return BigInt(ctx.connectAllowedScopes ?? 0) !== BigInt(ctx.connectRequestedScopes ?? 0);
 }
 
 /**
@@ -328,7 +328,7 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     // drops any non-sensitive (or no-longer-allowed) key — no dangling rationale.
     scopeJustifications: pruneJustificationsToMask(
       ctx.connectScopeJustifications ?? {},
-      derivedScopes & SENSITIVE_TOKEN_SCOPES
+      BigInt(derivedScopes) & SENSITIVE_TOKEN_SCOPES
     ),
   };
 }
@@ -422,9 +422,9 @@ function shallowEqualStringMap(a: Record<string, string>, b: Record<string, stri
 export function buildScalarPatch(
   ctx: ListingEditContext,
   current: OffsiteSubmitFormValues
-): UpdateListingPatch {
+): UpdateListingPatchInput {
   const original = editContextToForm(ctx);
-  const patch: UpdateListingPatch = {};
+  const patch: UpdateListingPatchInput = {};
 
   const name = current.name.trim();
   if (name !== original.name.trim()) patch.name = name;
@@ -525,9 +525,10 @@ export function buildScalarPatch(
       storedSnapshot
     );
     const currentJust = shapeSensitiveJustifications(current.scopeJustifications, derived);
-    const drifted = derived !== storedSnapshot;
+    const drifted = BigInt(derived) !== BigInt(storedSnapshot);
     if (drifted || !shallowEqualStringMap(currentJust, storedJust)) {
-      patch.requestedScopes = derived;
+      // A JSON number on the wire.
+      patch.requestedScopes = Number(derived);
       patch.scopeJustifications = currentJust;
     }
   }
@@ -536,6 +537,6 @@ export function buildScalarPatch(
 }
 
 /** True when the scalar patch has at least one changed field (a save is needed). */
-export function hasScalarChanges(patch: UpdateListingPatch): boolean {
+export function hasScalarChanges(patch: UpdateListingPatchInput): boolean {
   return Object.keys(patch).length > 0;
 }
