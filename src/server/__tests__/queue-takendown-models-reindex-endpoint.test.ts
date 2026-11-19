@@ -136,13 +136,19 @@ const lookedUp = () => collectionsOf.mock.calls.map(([arg]) => arg.modelId);
 const enqueued = () =>
   enqueueCollectionRebuild.mock.calls.flatMap(([arg]) => arg.collectionIds).sort((a, b) => a - b);
 
+// Every taken-down row in the fixture, whatever its status or availability.
+const TAKEN_DOWN_IDS = [1, 2, 3, 4];
+
 describe('/api/admin/temp/queue-takendown-models-reindex', () => {
-  // A taken-down model is no longer index-eligible, so there is no document to rewrite: the
-  // nightly cleanup deletes it instead (model-index-eligibility.test.ts).
-  it('queues no model, and no collection', async () => {
+  it('queues every taken-down model for deletion, indexed or not, and no collection', async () => {
     expect(await call({ dryRun: 'false' })).toBe(200);
-    const [ids] = queueModelsReindex.mock.calls.at(-1) as unknown as [number[]];
-    expect([...ids]).toEqual([]);
+    const [ids, , action] = queueModelsReindex.mock.calls.at(-1) as unknown as [
+      number[],
+      unknown,
+      string
+    ];
+    expect(action).toBe('Delete');
+    expect([...ids].sort()).toEqual(TAKEN_DOWN_IDS);
     expect(collectionsOf).not.toHaveBeenCalled();
   });
 

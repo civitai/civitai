@@ -2,7 +2,6 @@ import * as z from 'zod';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
-import { modelSearchIndexEligibilitySql } from '~/server/search-index/model-index-eligibility';
 import { queueModelsReindex } from '~/server/search-index/queue-models-reindex';
 import { queueModelsReindexSchema } from '~/server/search-index/queue-models-reindex.schema';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
@@ -15,10 +14,11 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 
 /**
- * Queue every indexed taken-down model for a models-index rewrite (`target=models`, the default;
- * now none, since a taken-down model is not index-eligible and the nightly cleanup deletes its
- * document), or the collections showing taken-down models' images for a collections-index rewrite
- * (`target=collections`).
+ * Queue every taken-down model for deletion from the models index (`target=models`, the default),
+ * or the collections showing taken-down models' images for a collections-index rewrite
+ * (`target=collections`). A taken-down model is not index-eligible, so the nightly cleanup would
+ * delete its document too, but only when its pass reaches the models index; this removes the
+ * existing ones at the next 15-minute sync.
  *
  * Hidden admin route. Guarded by WEBHOOK_TOKEN via `?token=` query param.
  *
@@ -56,11 +56,11 @@ const schema = queueModelsReindexSchema.extend({
 const SOURCE = 'takendown-collections-backfill';
 
 async function queryTakenDownModelIds() {
+  // Every one, indexed or not: deleting a document that is not there is a no-op.
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT m.id
     FROM "Model" m
     WHERE m.mode = ${ModelModifier.TakenDown}::"ModelModifier"
-      AND ${modelSearchIndexEligibilitySql()}
   `;
   return rows.map((r) => Number(r.id));
 }
@@ -133,5 +133,11 @@ export default WebhookEndpoint(async (req, res) => {
 
   return res
     .status(200)
-    .json(await queueModelsReindex(await queryTakenDownModelIds(), parsed.data));
+    .json(
+      await queueModelsReindex(
+        await queryTakenDownModelIds(),
+        parsed.data,
+        SearchIndexUpdateQueueAction.Delete
+      )
+    );
 });

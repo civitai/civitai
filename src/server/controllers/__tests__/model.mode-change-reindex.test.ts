@@ -9,9 +9,10 @@ vi.mock('~/server/utils/moderator-endpoint', async (importOriginal) => ({
 }));
 
 /**
- * A taken-down model's search document carries no images, nor do the collection covers drawn from
- * them. Entering or leaving TakenDown queues the model's document and its collections; another
- * change of mode queues the model's document only, and an edit that leaves the mode alone neither.
+ * A taken-down model has no search document, and the collection covers drawn from its images skip
+ * them. Entering TakenDown deletes the model's document and queues its collections; leaving it
+ * rewrites both; another change of mode rewrites the model's document only, and an edit that leaves
+ * the mode alone queues neither.
  */
 
 const { modelsSearchIndex, collectionsSearchIndex, articlesSearchIndex } = await import(
@@ -153,6 +154,8 @@ describe("a change of a model's mode", () => {
     await changeModelModifierHandler({ input: { id: MODEL, mode: to } as never, ctx: ctx() });
     await settled();
     expect(reindexed()).toBe(true);
+    // Archived stays searchable.
+    expect(queuedAs(SearchIndexUpdateQueueAction.Delete)).toBe(false);
     expect(collectionRebuilt()).toBe(false);
   });
 
@@ -168,6 +171,7 @@ describe("a change of a model's mode", () => {
     });
     await settled();
     expect(removed ? removedFromSearch() : reindexed()).toBe(true);
+    if (!removed) expect(queuedAs(SearchIndexUpdateQueueAction.Delete)).toBe(false);
     expect(collectionRebuilt()).toBe(rebuilt);
   });
 
