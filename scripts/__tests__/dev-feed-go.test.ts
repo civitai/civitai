@@ -83,9 +83,7 @@ describe('platform/arch → release asset', () => {
     }
     expect(wf).toContain('sha256sum feed-go-v* > SHA256SUMS');
   });
-  // A published version's binary must never change under a developer who pinned it (the launcher
-  // re-verifies against SHA256SUMS, so a swapped asset + sums pair would be trusted), and a pull
-  // request must never get a token that can publish. Read structurally, so a reformat stays green.
+  // The launcher re-verifies against SHA256SUMS, so a swapped asset + sums pair would be trusted.
   it('the release is create-only, and only the non-PR publish job can write', () => {
     type Step = { uses?: string; run?: string; with?: Record<string, unknown> };
     type Perms = string | Record<string, string> | undefined;
@@ -454,8 +452,7 @@ describe('what a run gives Next (planLaunch)', () => {
     });
   });
   // If Next started first it would take the port, isPortFree would then always say "taken", and
-  // feed-go would never start for anyone (only a misleading "port is in use" line). planLaunch
-  // covers the decision; this pins that the launcher asks before it spawns Next.
+  // feed-go would never start for anyone (only a misleading "port is in use" line).
   it('the launcher checks the port before it starts Next (seam: launcher.mjs order)', () => {
     const src = readFileSync(join(REPO, 'scripts/dev-feed-go/launcher.mjs'), 'utf8');
     const probe = src.indexOf('await isPortFree(port)');
@@ -516,7 +513,7 @@ describe('feed-go health monitoring', () => {
     const h = monitorHarness([]);
     await h.m.start();
     // Bounded: a monitor that never gives up would otherwise spin here on resolved promises with a
-    // fake clock, where vitest's timeout never fires. 60 polls of 1 s reach the 60 s window.
+    // fake clock, where vitest's timeout never fires.
     let polls = 0;
     while (polls < 200 && (await h.step())) polls++;
     expect(polls).toBeLessThan(200);
