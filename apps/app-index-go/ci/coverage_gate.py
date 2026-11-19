@@ -11,7 +11,7 @@ Coverage is statement-weighted, as `go tool cover -func` computes its total: a b
 statements once (blocks repeated in the profile are merged, covered if any copy is).
 
 Floors file: one `<package> <percent>` per line, `<package>` relative to the module root
-(`internal/beacon`) or the word `total`; `#` starts a comment. Floors are ratchets, set at a measured
+(`internal/store`) or the word `total`; `#` starts a comment. Floors are ratchets, set at a measured
 value rounded DOWN to a whole percent: to raise one, read the measured value this script prints in
 CI and set the floor to its integer part. Never lower one to get a red run green.
 """

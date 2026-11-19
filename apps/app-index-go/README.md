@@ -13,16 +13,15 @@ viewer (`src/server/services/blocks/app-index-search.service.ts`, `APP_INDEX_URL
 
 | Route          | What                                                                                                                                                                                    |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /search`  | `q`, `kind` (`onsite` / `offsite`), `category`, `sort` (`relevance` / `newest` / `name`), `limit` (1-50, default 20), `cursor` → `{results:[{urn, slug, name, tagline, kind, category, rating, iconUrl, creator}], next}` |
+| `GET /search`  | `q`, `kind` (`onsite` / `offsite`), `category`, `limit` (1-50, default 20) → `{results:[{urn, slug, name, tagline, kind, category, rating, iconUrl, creator}]}` |
 | `GET /healthz` | the process is up                                                                                                                                                                       |
 | `GET /readyz`  | 200 once a generation is serving (the first `Live`), 503 before                                                                                                                          |
 | `GET /metrics` | Prometheus (`app_index_*`)                                                                                                                                                              |
 
 `q` matches word by word: every word must be a prefix of a word of the app's name, slug, tagline or
-creator. `relevance` is Postgres `ts_rank` (name above slug and tagline above creator). `newest` is
-the time the index first saw the app, kept across rebuilds: app@v1 carries no timestamp. `next` is an
-opaque keyset cursor, bound to the query it came from; it has nothing to do with registry cursors.
-`/search` answers 503 until the index is ready.
+creator. Results are in relevance order, Postgres `ts_rank` (name above slug and tagline above
+creator), then by name; without `q` they are by name. There is one page of at most `limit` results:
+no other sort and no paging. `/search` answers 503 until the index is ready.
 
 ## Following the stream
 
@@ -65,4 +64,5 @@ integration tier runs the same contract and scenarios against Postgres. CI runs 
 ## Releasing
 
 `pnpm run release:app-index-go` bumps `package.json` and cuts an `app-index-go-vX.Y.Z` tag
-(`scripts/release-app.mjs`), which the tag webhook builds into an image.
+(`scripts/release-app.mjs`). Building an image from that tag needs a tag-webhook entry for
+`app-index-go`, which does not exist yet.

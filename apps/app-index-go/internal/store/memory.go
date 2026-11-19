@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 )
 
 // Memory is an in-process Store with the same transaction semantics as Postgres: every method
@@ -16,7 +15,6 @@ type Memory struct {
 	mu   sync.Mutex
 	gens map[int64]*memGen
 	next int64
-	now  func() time.Time
 
 	// failBeforeCommit, when set, is called where the transaction would commit; an error aborts
 	// it. Tests use it to stand in for a crash between a change and its commit.
@@ -31,12 +29,11 @@ type memGen struct {
 type memApp struct {
 	App
 	nameKey string
-	seen    int64
 }
 
 // NewMemory returns an empty Memory store.
 func NewMemory() *Memory {
-	return &Memory{gens: map[int64]*memGen{}, now: time.Now}
+	return &Memory{gens: map[int64]*memGen{}}
 }
 
 func (m *Memory) commit(op string) error {
@@ -128,16 +125,8 @@ func (m *Memory) Apply(_ context.Context, gen int64, c Change) error {
 	apps := g.apps
 	switch c.Kind {
 	case ChangeUpsert:
-		seen := m.now().UnixMicro()
-		if old, ok := g.apps[c.App.URN]; ok {
-			seen = old.seen
-		} else if s := m.find(StateServing); s != nil && s != g {
-			if old, ok := s.apps[c.App.URN]; ok {
-				seen = old.seen
-			}
-		}
 		apps = cloneApps(g.apps)
-		apps[c.App.URN] = memApp{App: c.App, nameKey: nameKey(c.App.Name), seen: seen}
+		apps[c.App.URN] = memApp{App: c.App, nameKey: nameKey(c.App.Name)}
 	case ChangeDelete:
 		if _, ok := g.apps[c.URN]; ok {
 			apps = cloneApps(g.apps)
@@ -195,7 +184,6 @@ func (m *Memory) Search(_ context.Context, q Query) (Page, error) {
 	if strings.TrimSpace(q.Text) != "" && len(tokens) == 0 {
 		return Page{}, nil
 	}
-	sortBy := q.effectiveSort()
 	type hit struct {
 		a    memApp
 		rank float64
@@ -214,55 +202,19 @@ func (m *Memory) Search(_ context.Context, q Query) (Page, error) {
 		}
 		hits = append(hits, hit{a, rank})
 	}
-	less := func(x, y hit) bool {
-		switch sortBy {
-		case SortRelevance:
-			if x.rank != y.rank {
-				return x.rank > y.rank
-			}
-			if x.a.nameKey != y.a.nameKey {
-				return x.a.nameKey < y.a.nameKey
-			}
-			return x.a.URN < y.a.URN
-		case SortNewest:
-			if x.a.seen != y.a.seen {
-				return x.a.seen > y.a.seen
-			}
-			return x.a.URN > y.a.URN
-		default:
-			if x.a.nameKey != y.a.nameKey {
-				return x.a.nameKey < y.a.nameKey
-			}
-			return x.a.URN < y.a.URN
+	sort.Slice(hits, func(i, j int) bool {
+		x, y := hits[i], hits[j]
+		if x.rank != y.rank {
+			return x.rank > y.rank
 		}
-	}
-	sort.Slice(hits, func(i, j int) bool { return less(hits[i], hits[j]) })
-	keyOf := func(h hit) Key {
-		switch sortBy {
-		case SortRelevance:
-			return Key{Rank: h.rank, Name: h.a.nameKey, URN: h.a.URN}
-		case SortNewest:
-			return Key{Seen: h.a.seen, URN: h.a.URN}
-		default:
-			return Key{Name: h.a.nameKey, URN: h.a.URN}
+		if x.a.nameKey != y.a.nameKey {
+			return x.a.nameKey < y.a.nameKey
 		}
-	}
-	start := 0
-	if q.After != nil {
-		after := hit{a: memApp{App: App{URN: q.After.URN}, nameKey: q.After.Name, seen: q.After.Seen}, rank: q.After.Rank}
-		start = sort.Search(len(hits), func(i int) bool { return less(after, hits[i]) })
-	}
-	limit := q.Limit
-	if limit <= 0 {
-		limit = 20
-	}
+		return x.a.URN < y.a.URN
+	})
 	var page Page
-	for i := start; i < len(hits) && len(page.Results) < limit; i++ {
+	for i := 0; i < len(hits) && i < q.limitOf(); i++ {
 		page.Results = append(page.Results, resultOf(hits[i].a.App))
-		if len(page.Results) == limit && i+1 < len(hits) {
-			k := keyOf(hits[i])
-			page.Next = &k
-		}
 	}
 	return page, nil
 }

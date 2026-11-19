@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -74,41 +75,42 @@ func get(t *testing.T, u string) (int, []byte) {
 	return res.StatusCode, b
 }
 
-func TestSearchPagesThroughResults(t *testing.T) {
+func TestSearchFiltersAndLimit(t *testing.T) {
 	st := readyStore(t, app("a", "Apple", "onsite", "generation"), app("b", "Banana", "offsite", "chat"),
 		app("c", "Cherry", "onsite", "generation"), app("d", "Date", "onsite", "game"), app("e", "Elder", "onsite", "generation"))
 	s := newServer(t, st)
-	var names []string
-	q := url.Values{"kind": {"onsite"}, "sort": {"name"}, "limit": {"2"}}
-	for range 10 {
+	names := func(q url.Values) []string {
 		code, body := get(t, s.URL+"/search?"+q.Encode())
 		if code != http.StatusOK {
 			t.Fatalf("status %d %s", code, body)
 		}
 		var res struct {
 			Results []map[string]string `json:"results"`
-			Next    *string             `json:"next"`
 		}
 		if err := json.Unmarshal(body, &res); err != nil {
 			t.Fatal(err)
 		}
+		out := make([]string, 0, len(res.Results))
 		for _, r := range res.Results {
-			names = append(names, r["name"])
+			out = append(out, r["name"])
 			for _, k := range []string{"urn", "slug", "name", "tagline", "kind", "category", "rating", "iconUrl", "creator"} {
 				if _, ok := r[k]; !ok {
 					t.Fatalf("result lacks %q: %v", k, r)
 				}
 			}
 		}
-		if res.Next == nil {
-			break
-		}
-		q.Set("cursor", *res.Next)
+		return out
 	}
-	if want := []string{"Apple", "Cherry", "Date", "Elder"}; !slices.Equal(names, want) {
-		t.Fatalf("names = %v, want %v", names, want)
+	if got := names(url.Values{"kind": {"onsite"}}); !slices.Equal(got, []string{"Apple", "Cherry", "Date", "Elder"}) {
+		t.Fatalf("onsite = %v", got)
 	}
-	if got := testutil.ToFloat64(s.m.Searches.WithLabelValues("ok")); got != 2 {
+	if got := names(url.Values{"kind": {"onsite"}, "limit": {"2"}}); !slices.Equal(got, []string{"Apple", "Cherry"}) {
+		t.Fatalf("onsite limit 2 = %v", got)
+	}
+	if got := names(url.Values{"category": {"generation"}, "q": {"el"}}); !slices.Equal(got, []string{"Elder"}) {
+		t.Fatalf("generation q=el = %v", got)
+	}
+	if got := testutil.ToFloat64(s.m.Searches.WithLabelValues("ok")); got != 3 {
 		t.Fatalf("ok searches = %v", got)
 	}
 }
@@ -119,12 +121,12 @@ func TestSearchShape(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatal(code)
 	}
-	want := `{"results":[{"urn":"urn:apps.civitai.com:app/a","slug":"a","name":"Apple","tagline":"Apple tagline","kind":"onsite","category":"generation","rating":"pg","iconUrl":"https://cdn.invalid/a.png","creator":"maker"}],"next":null}`
+	want := `{"results":[{"urn":"urn:apps.civitai.com:app/a","slug":"a","name":"Apple","tagline":"Apple tagline","kind":"onsite","category":"generation","rating":"pg","iconUrl":"https://cdn.invalid/a.png","creator":"maker"}]}`
 	if strings.TrimSpace(string(body)) != want {
 		t.Fatalf("body\n%s\nwant\n%s", body, want)
 	}
 	code, body = get(t, s.URL+"/search?q=zzz")
-	if code != http.StatusOK || strings.TrimSpace(string(body)) != `{"results":[],"next":null}` {
+	if code != http.StatusOK || strings.TrimSpace(string(body)) != `{"results":[]}` {
 		t.Fatalf("no match: %d %s", code, body)
 	}
 }
@@ -145,6 +147,51 @@ func TestSearchNotReady(t *testing.T) {
 	}
 }
 
+func TestReadyz(t *testing.T) {
+	s := newServer(t, readyStore(t))
+	code, body := get(t, s.URL+"/readyz")
+	if code != http.StatusOK || !strings.Contains(string(body), `"generation":1`) {
+		t.Fatalf("ready store: %d %s", code, body)
+	}
+	if testutil.ToFloat64(s.m.Ready) != 1 {
+		t.Fatal("ready gauge not set")
+	}
+	s = newServer(t, brokenState{store.NewMemory()})
+	if code, body := get(t, s.URL+"/readyz"); code != http.StatusServiceUnavailable || !strings.Contains(string(body), `"store"`) {
+		t.Fatalf("store error: %d %s", code, body)
+	}
+}
+
+type brokenState struct{ store.Store }
+
+func (brokenState) State(context.Context) (store.State, error) {
+	return store.State{}, errors.New("db down")
+}
+
+// slowStore answers only when its context ends.
+type slowStore struct{ store.Store }
+
+func (slowStore) Search(ctx context.Context, _ store.Query) (store.Page, error) {
+	<-ctx.Done()
+	return store.Page{}, ctx.Err()
+}
+
+func TestSearchTimeout(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg)
+	srv := httptest.NewServer((&Server{Store: slowStore{store.NewMemory()}, Metrics: m, Gatherer: reg,
+		Log: slog.New(slog.DiscardHandler), SearchTimeout: 20 * time.Millisecond}).Handler())
+	defer srv.Close()
+	start := time.Now()
+	code, _ := get(t, srv.URL+"/search?q=a")
+	if code != http.StatusInternalServerError || time.Since(start) > 5*time.Second {
+		t.Fatalf("status %d after %s", code, time.Since(start))
+	}
+	if testutil.ToFloat64(m.Searches.WithLabelValues("error")) != 1 {
+		t.Fatal("timeout not counted as error")
+	}
+}
+
 type failingStore struct{ store.Store }
 
 func (failingStore) Search(context.Context, store.Query) (store.Page, error) {
@@ -162,54 +209,26 @@ func TestSearchStoreErrorHidesDetail(t *testing.T) {
 func TestSearchRejectsBadParameters(t *testing.T) {
 	s := newServer(t, readyStore(t, app("a", "Apple", "onsite", "generation")))
 	for _, q := range []string{
-		"kind=web", "sort=popular", "limit=0", "limit=51", "limit=x",
+		"kind=web", "limit=0", "limit=51", "limit=x",
 		"q=" + strings.Repeat("a", MaxQueryLen+1), "category=" + strings.Repeat("c", MaxFilterLen+1),
-		"cursor=!!!", "cursor=" + strings.Repeat("A", 2000), "cursor=e30",
 	} {
 		if code, body := get(t, s.URL+"/search?"+q); code != http.StatusBadRequest {
 			t.Errorf("%.40s: %d %s, want 400", q, code, body)
 		}
 	}
-	if got := testutil.ToFloat64(s.m.Searches.WithLabelValues("bad_request")); got != 10 {
+	if got := testutil.ToFloat64(s.m.Searches.WithLabelValues("bad_request")); got != 6 {
 		t.Fatalf("bad_request = %v", got)
-	}
-}
-
-func TestCursorIsBoundToItsQuery(t *testing.T) {
-	q := store.Query{Text: "pixel art", Kind: "onsite", Sort: store.SortRelevance}
-	k := store.Key{Rank: 0.0607927, Name: "pixel forge", URN: "urn:apps.civitai.com:app/pixel-forge"}
-	c := EncodeCursor(q, k)
-	if strings.Contains(c, "pixel") {
-		t.Fatal("cursor is not opaque")
-	}
-	got, err := DecodeCursor(q, c)
-	if err != nil || got != k {
-		t.Fatalf("round trip = %+v %v", got, err)
-	}
-	// Same words, other spelling: same query.
-	if _, err := DecodeCursor(store.Query{Text: "  PIXEL  art!", Kind: "onsite", Sort: store.SortRelevance}, c); err != nil {
-		t.Fatalf("normalised query rejected: %v", err)
-	}
-	for _, other := range []store.Query{
-		{Text: "pixel", Kind: "onsite", Sort: store.SortRelevance},
-		{Text: "pixel art", Kind: "offsite", Sort: store.SortRelevance},
-		{Text: "pixel art", Kind: "onsite", Category: "x", Sort: store.SortRelevance},
-		{Text: "pixel art", Kind: "onsite", Sort: store.SortName},
-	} {
-		if _, err := DecodeCursor(other, c); err == nil {
-			t.Errorf("cursor accepted for %+v", other)
-		}
 	}
 }
 
 func TestParseQueryDefaults(t *testing.T) {
 	q, err := ParseQuery(url.Values{})
-	if err != nil || q.Sort != store.SortName || q.Limit != DefaultLimit {
+	if err != nil || q.Limit != DefaultLimit || q.Text != "" {
 		t.Fatalf("no params: %+v %v", q, err)
 	}
-	q, err = ParseQuery(url.Values{"q": {"x"}})
-	if err != nil || q.Sort != store.SortRelevance {
-		t.Fatalf("with q: %+v %v", q, err)
+	q, err = ParseQuery(url.Values{"q": {"x"}, "limit": {"7"}, "kind": {"offsite"}, "category": {"game"}})
+	if err != nil || q != (store.Query{Text: "x", Limit: 7, Kind: "offsite", Category: "game"}) {
+		t.Fatalf("with params: %+v %v", q, err)
 	}
 }
 

@@ -285,7 +285,6 @@ func (h *harness) state(t *testing.T) store.State {
 
 type searchResponse struct {
 	Results []store.Result `json:"results"`
-	Next    *string        `json:"next"`
 }
 
 // search calls GET /search and returns the status and the result names in order.

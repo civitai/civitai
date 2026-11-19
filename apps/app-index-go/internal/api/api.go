@@ -1,27 +1,22 @@
 // Package api is the service's HTTP surface:
 //
-//	GET /search?q=&kind=&category=&sort=(relevance|newest|name)&limit=&cursor=
-//	    → {"results":[{urn, slug, name, tagline, kind, category, rating, iconUrl, creator}], "next"}
+//	GET /search?q=&kind=&category=&limit=
+//	    → {"results":[{urn, slug, name, tagline, kind, category, rating, iconUrl, creator}]}
 //	GET /healthz  the process is up
 //	GET /readyz   200 once a generation is serving (the first Live), 503 before
 //	GET /metrics  Prometheus
 //
-// `next` is an opaque keyset cursor for the next page, null on the last. It has nothing to do with
-// registry cursors. A cursor is bound to the sort and filters it was issued for; presented with
-// others it is a 400.
+// Results are in relevance order (store.Query), at most `limit` of them. There is one page: no
+// other sort and no paging, since no caller reads either.
 package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -34,11 +29,10 @@ import (
 
 // Bounds of the query parameters.
 const (
-	MaxQueryLen    = 200
-	MaxFilterLen   = 64
-	DefaultLimit   = 20
-	MaxLimit       = 50
-	maxCursorBytes = 1024
+	MaxQueryLen  = 200
+	MaxFilterLen = 64
+	DefaultLimit = 20
+	MaxLimit     = 50
 )
 
 // Server answers the HTTP API from a store.
@@ -80,7 +74,6 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 
 type response struct {
 	Results []store.Result `json:"results"`
-	Next    *string        `json:"next"`
 }
 
 type apiError struct {
@@ -123,10 +116,6 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	if res.Results == nil {
 		res.Results = []store.Result{}
 	}
-	if page.Next != nil {
-		c := EncodeCursor(q, *page.Next)
-		res.Next = &c
-	}
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -150,17 +139,6 @@ func ParseQuery(v map[string][]string) (store.Query, error) {
 	if len(q.Category) > MaxFilterLen {
 		return store.Query{}, errors.New("category is too long")
 	}
-	switch s := store.Sort(get("sort")); s {
-	case "":
-		q.Sort = store.SortRelevance
-		if strings.TrimSpace(q.Text) == "" {
-			q.Sort = store.SortName
-		}
-	case store.SortRelevance, store.SortNewest, store.SortName:
-		q.Sort = s
-	default:
-		return store.Query{}, errors.New("sort must be relevance, newest or name")
-	}
 	if l := get("limit"); l != "" {
 		n, err := strconv.Atoi(l)
 		if err != nil || n < 1 || n > MaxLimit {
@@ -168,57 +146,7 @@ func ParseQuery(v map[string][]string) (store.Query, error) {
 		}
 		q.Limit = n
 	}
-	if c := get("cursor"); c != "" {
-		k, err := DecodeCursor(q, c)
-		if err != nil {
-			return store.Query{}, err
-		}
-		q.After = &k
-	}
 	return q, nil
-}
-
-type cursorJSON struct {
-	F string `json:"f"` // the query the cursor belongs to (queryTag)
-	store.Key
-}
-
-// queryTag ties a cursor to its sort and filters: a short hash, so the cursor does not echo the
-// query text.
-func queryTag(q store.Query) string {
-	h := sha256.New()
-	for _, part := range []string{string(q.Sort), strings.Join(store.Tokens(q.Text), " "), q.Kind, q.Category} {
-		var n [4]byte
-		binary.BigEndian.PutUint32(n[:], uint32(len(part))) //nolint:gosec // bounded by the parameter limits
-		h.Write(n[:])
-		h.Write([]byte(part))
-	}
-	return base64.RawURLEncoding.EncodeToString(h.Sum(nil)[:9])
-}
-
-// EncodeCursor is the opaque `next` of a page.
-func EncodeCursor(q store.Query, k store.Key) string {
-	b, _ := json.Marshal(cursorJSON{F: queryTag(q), Key: k})
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-// DecodeCursor reads a `cursor` parameter issued for q.
-func DecodeCursor(q store.Query, c string) (store.Key, error) {
-	if len(c) > maxCursorBytes {
-		return store.Key{}, errors.New("cursor is invalid")
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(c)
-	if err != nil {
-		return store.Key{}, errors.New("cursor is invalid")
-	}
-	var cj cursorJSON
-	if err := json.Unmarshal(raw, &cj); err != nil || cj.URN == "" {
-		return store.Key{}, errors.New("cursor is invalid")
-	}
-	if cj.F != queryTag(q) {
-		return store.Key{}, errors.New("cursor belongs to another query")
-	}
-	return cj.Key, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -60,7 +60,7 @@ func testSnapshotThenLive(t *testing.T, st store.Store) {
 	if code := h.readyz(t); code != http.StatusOK {
 		t.Fatalf("readyz after Live = %d, want 200", code)
 	}
-	if code, names := h.search(t, "sort=name"); code != http.StatusOK || !slices.Equal(names, []string{"Alpha", "Beta", "Gamma"}) {
+	if code, names := h.search(t, ""); code != http.StatusOK || !slices.Equal(names, []string{"Alpha", "Beta", "Gamma"}) {
 		t.Fatalf("search after Live = %d %v", code, names)
 	}
 	if testutil.ToFloat64(h.m.Ready) != 1 || testutil.ToFloat64(h.m.Generation) == 0 {
@@ -95,7 +95,7 @@ func testResumeFromStoredCursor(t *testing.T, st store.Store) {
 	c.upsert(t, "beta", "Beta Two", "c4")
 	c.upsert(t, "delta", "Delta", "c5")
 	h.cursorIs(t, store.StateServing, "c5")
-	if _, names := h.search(t, "sort=name"); !slices.Equal(names, []string{"Beta Two", "Delta", "Gamma"}) {
+	if _, names := h.search(t, ""); !slices.Equal(names, []string{"Beta Two", "Delta", "Gamma"}) {
 		t.Fatalf("after resume = %v, want [Beta Two Delta Gamma]", names)
 	}
 
@@ -108,7 +108,7 @@ func testResumeFromStoredCursor(t *testing.T, st store.Store) {
 	c.live(t, "c5")
 	c.del(t, "delta", "c6")
 	h.cursorIs(t, store.StateServing, "c6")
-	if _, names := h.search(t, "sort=name"); !slices.Equal(names, []string{"Beta Two", "Gamma"}) {
+	if _, names := h.search(t, ""); !slices.Equal(names, []string{"Beta Two", "Gamma"}) {
 		t.Fatalf("after reconnect = %v", names)
 	}
 }
@@ -133,7 +133,7 @@ func testCrashMidSnapshotStartsOver(t *testing.T, st store.Store) {
 	c.upsert(t, "beta", "Beta", "") // alpha was deleted while the index was down
 	c.live(t, "L1")
 	h.cursorIs(t, store.StateServing, "L1")
-	if _, names := h.search(t, "sort=name"); !slices.Equal(names, []string{"Beta"}) {
+	if _, names := h.search(t, ""); !slices.Equal(names, []string{"Beta"}) {
 		t.Fatalf("after the restarted snapshot = %v, want [Beta] (alpha must not survive)", names)
 	}
 }
@@ -194,7 +194,7 @@ func testCursorExpiredRebuildsBeside(t *testing.T, st store.Store) {
 	h.cursorIs(t, store.StateBuilding, "")
 	eventually(t, "rebuild upserts", func() bool { return testutil.ToFloat64(h.m.Applied.WithLabelValues("upsert")) == 4 })
 	// The old generation still answers, and readiness holds.
-	if code, names := h.search(t, "sort=name"); code != http.StatusOK || !slices.Equal(names, []string{"Alpha", "Beta"}) {
+	if code, names := h.search(t, ""); code != http.StatusOK || !slices.Equal(names, []string{"Alpha", "Beta"}) {
 		t.Fatalf("during rebuild = %d %v, want the old generation [Alpha Beta]", code, names)
 	}
 	if code := h.readyz(t); code != http.StatusOK {
@@ -205,7 +205,7 @@ func testCursorExpiredRebuildsBeside(t *testing.T, st store.Store) {
 	}
 	c.live(t, "L2")
 	h.cursorIs(t, store.StateServing, "L2")
-	if _, names := h.search(t, "sort=name"); !slices.Equal(names, []string{"Alpha Rebuilt", "Gamma"}) {
+	if _, names := h.search(t, ""); !slices.Equal(names, []string{"Alpha Rebuilt", "Gamma"}) {
 		t.Fatalf("after switch = %v", names)
 	}
 	st2 := h.state(t)

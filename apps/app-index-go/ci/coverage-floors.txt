@@ -6,8 +6,8 @@
 # get a red run green. Packages without unit tests (cmd/app-index-go, metrics, pgtest) are not
 # listed. internal/store is low here because its Postgres half runs only in the integration tier
 # (`-tags integration`, against the job's Postgres), which this profile does not include.
-total 65
-internal/api 93
+total 66
+internal/api 100
 internal/config 97
 internal/index 76
 internal/registry 94

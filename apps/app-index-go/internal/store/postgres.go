@@ -50,7 +50,6 @@ CREATE TABLE IF NOT EXISTS app_index_apps (
   tagline text,
   icon_url text,
   release text,
-  first_seen_us bigint NOT NULL,
   search tsvector GENERATED ALWAYS AS (
     setweight(to_tsvector('simple', name), 'A') ||
     setweight(to_tsvector('simple', slug), 'B') ||
@@ -62,8 +61,6 @@ CREATE TABLE IF NOT EXISTS app_index_apps (
 CREATE INDEX IF NOT EXISTS app_index_apps_search ON app_index_apps USING gin (search);
 CREATE INDEX IF NOT EXISTS app_index_apps_by_name
   ON app_index_apps (generation, name_key COLLATE "C", urn COLLATE "C");
-CREATE INDEX IF NOT EXISTS app_index_apps_by_seen
-  ON app_index_apps (generation, first_seen_us DESC, urn COLLATE "C" DESC);
 `
 
 // lockKey is the advisory lock a consumer holds, per schema so that separate schemas of one
@@ -80,7 +77,6 @@ var ErrFenced = errors.New("store: generation claimed by another consumer")
 type Postgres struct {
 	pool  *pgxpool.Pool
 	owner string
-	now   func() time.Time
 
 	// beforeCommit, when set, is called where a write transaction would commit; an error rolls it
 	// back. Tests use it to stand in for a crash between a change and its commit.
@@ -94,7 +90,7 @@ func NewPostgres(ctx context.Context, pool *pgxpool.Pool) (*Postgres, error) {
 	if _, err := rand.Read(b[:]); err != nil {
 		return nil, err
 	}
-	p := &Postgres{pool: pool, owner: hex.EncodeToString(b[:]), now: time.Now}
+	p := &Postgres{pool: pool, owner: hex.EncodeToString(b[:])}
 	err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 		// Serializes two processes starting at once: concurrent CREATE ... IF NOT EXISTS can race.
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(`+lockKey+` + 1)`); err != nil {
@@ -252,19 +248,16 @@ func (p *Postgres) Apply(ctx context.Context, gen int64, c Change) error {
 		switch c.Kind {
 		case ChangeUpsert:
 			a := c.App
-			// A whole-row replace. first_seen_us is kept from this generation's row, else carried
-			// from the serving generation's (a rebuild keeps "newest" stable), else now.
+			// A whole-row replace.
 			_, err := tx.Exec(ctx, `
-INSERT INTO app_index_apps (generation, urn, rev, body, slug, name, name_key, kind, category, rating, creator, tagline, icon_url, release, first_seen_us)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''),
-  COALESCE((SELECT s.first_seen_us FROM app_index_apps s JOIN app_index_cursors g ON g.generation = s.generation
-            WHERE g.state = 'serving' AND s.urn = $2), $15))
+INSERT INTO app_index_apps (generation, urn, rev, body, slug, name, name_key, kind, category, rating, creator, tagline, icon_url, release)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''))
 ON CONFLICT (generation, urn) DO UPDATE SET
   rev = EXCLUDED.rev, body = EXCLUDED.body, slug = EXCLUDED.slug, name = EXCLUDED.name, name_key = EXCLUDED.name_key,
   kind = EXCLUDED.kind, category = EXCLUDED.category, rating = EXCLUDED.rating, creator = EXCLUDED.creator,
   tagline = EXCLUDED.tagline, icon_url = EXCLUDED.icon_url, release = EXCLUDED.release`,
 				gen, a.URN, a.Rev, []byte(a.Body), a.Slug, a.Name, nameKey(a.Name), a.Kind, a.Category, a.Rating, a.Creator,
-				a.Tagline, a.IconURL, a.Release, p.now().UnixMicro())
+				a.Tagline, a.IconURL, a.Release)
 			return err
 		case ChangeDelete:
 			_, err := tx.Exec(ctx, `DELETE FROM app_index_apps WHERE generation = $1 AND urn = $2`, gen, c.URN)
@@ -315,22 +308,17 @@ func (p *Postgres) Search(ctx context.Context, q Query) (Page, error) {
 	if strings.TrimSpace(q.Text) != "" && len(tokens) == 0 {
 		return Page{}, p.servingOrNotReady(ctx)
 	}
-	limit := q.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-	sortBy := q.effectiveSort()
 	var args []any
 	arg := func(v any) string {
 		args = append(args, v)
 		return "$" + strconv.Itoa(len(args))
 	}
 	where := []string{"g.state = 'serving'"}
-	rank := "0::float8"
+	rank := "0::real"
 	if len(tokens) > 0 {
 		tsq := "to_tsquery('simple', " + arg(prefixTSQuery(tokens)) + ")"
 		where = append(where, "a.search @@ "+tsq)
-		rank = "ts_rank(a.search, " + tsq + ")::float8"
+		rank = "ts_rank(a.search, " + tsq + ")"
 	}
 	if q.Kind != "" {
 		where = append(where, "a.kind = "+arg(q.Kind))
@@ -338,73 +326,28 @@ func (p *Postgres) Search(ctx context.Context, q Query) (Page, error) {
 	if q.Category != "" {
 		where = append(where, "a.category = "+arg(q.Category))
 	}
-	var keyset, order string
-	switch sortBy {
-	case SortRelevance:
-		order = `m.rank DESC, m.name_key COLLATE "C", m.urn COLLATE "C"`
-		if q.After != nil {
-			r, n, u := arg(q.After.Rank), arg(q.After.Name), arg(q.After.URN)
-			keyset = `m.rank < ` + r + ` OR (m.rank = ` + r + ` AND (m.name_key COLLATE "C", m.urn COLLATE "C") > (` + n + `, ` + u + `))`
-		}
-	case SortNewest:
-		order = `m.first_seen_us DESC, m.urn COLLATE "C" DESC`
-		if q.After != nil {
-			keyset = `(m.first_seen_us, m.urn COLLATE "C") < (` + arg(q.After.Seen) + `, ` + arg(q.After.URN) + `)`
-		}
-	default:
-		order = `m.name_key COLLATE "C", m.urn COLLATE "C"`
-		if q.After != nil {
-			keyset = `(m.name_key COLLATE "C", m.urn COLLATE "C") > (` + arg(q.After.Name) + `, ` + arg(q.After.URN) + `)`
-		}
-	}
-	if keyset == "" {
-		keyset = "true"
-	}
 	sql := `
-SELECT m.urn, m.slug, m.name, m.tagline, m.kind, m.category, m.rating, m.icon_url, m.creator, m.name_key, m.first_seen_us, m.rank
-FROM (
-  SELECT a.urn, a.slug, a.name, coalesce(a.tagline, '') AS tagline, a.kind, coalesce(a.category, '') AS category,
-    coalesce(a.rating, '') AS rating, coalesce(a.icon_url, '') AS icon_url, coalesce(a.creator, '') AS creator,
-    a.name_key, a.first_seen_us, ` + rank + ` AS rank
-  FROM app_index_apps a JOIN app_index_cursors g ON g.generation = a.generation
-  WHERE ` + strings.Join(where, " AND ") + `
-) m
-WHERE ` + keyset + `
-ORDER BY ` + order + `
-LIMIT ` + arg(limit+1)
+SELECT a.urn, a.slug, a.name, coalesce(a.tagline, ''), a.kind, coalesce(a.category, ''), coalesce(a.rating, ''),
+  coalesce(a.icon_url, ''), coalesce(a.creator, '')
+FROM app_index_apps a JOIN app_index_cursors g ON g.generation = a.generation
+WHERE ` + strings.Join(where, " AND ") + `
+ORDER BY ` + rank + ` DESC, a.name_key COLLATE "C", a.urn COLLATE "C"
+LIMIT ` + arg(q.limitOf())
 	rows, err := p.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return Page{}, err
 	}
 	defer rows.Close()
 	var page Page
-	var keys []Key
 	for rows.Next() {
 		var r Result
-		var k Key
-		if err := rows.Scan(&r.URN, &r.Slug, &r.Name, &r.Tagline, &r.Kind, &r.Category, &r.Rating, &r.IconURL, &r.Creator,
-			&k.Name, &k.Seen, &k.Rank); err != nil {
+		if err := rows.Scan(&r.URN, &r.Slug, &r.Name, &r.Tagline, &r.Kind, &r.Category, &r.Rating, &r.IconURL, &r.Creator); err != nil {
 			return Page{}, err
 		}
-		k.URN = r.URN
 		page.Results = append(page.Results, r)
-		keys = append(keys, k)
 	}
 	if err := rows.Err(); err != nil {
 		return Page{}, err
-	}
-	if len(page.Results) > limit {
-		page.Results = page.Results[:limit]
-		k := keys[limit-1]
-		switch sortBy {
-		case SortRelevance:
-			k.Seen = 0
-		case SortNewest:
-			k.Rank, k.Name = 0, ""
-		default:
-			k.Rank, k.Seen = 0, 0
-		}
-		page.Next = &k
 	}
 	if len(page.Results) == 0 {
 		return Page{}, p.servingOrNotReady(ctx)

@@ -6,14 +6,12 @@ import (
 	"fmt"
 	"slices"
 	"testing"
-	"time"
 )
 
-// testStore is a Store whose commit can be failed and whose clock can be set.
+// testStore is a Store whose commit can be failed.
 type testStore interface {
 	Store
 	setFailBeforeCommit(func(op string) error)
-	setNow(func() time.Time)
 }
 
 const schemaURN = "urn:schema:apps.civitai.com:app@v1"
@@ -74,34 +72,21 @@ func mustState(t *testing.T, s Store) State {
 	return st
 }
 
-// slugs searches and returns the result slugs, all pages concatenated.
+// slugs searches and returns the result slugs in order.
 func slugs(t *testing.T, s Store, q Query) []string {
 	t.Helper()
-	var out []string
-	for range 100 {
-		p, err := s.Search(t.Context(), q)
-		if err != nil {
-			t.Fatalf("search %+v: %v", q, err)
-		}
-		for _, r := range p.Results {
-			out = append(out, r.Slug)
-		}
-		if p.Next == nil {
-			return out
-		}
-		q.After = p.Next
+	if q.Limit == 0 {
+		q.Limit = 50
 	}
-	t.Fatal("search never ended")
-	return nil
-}
-
-// stepClock returns a clock that advances 1ms per reading from t0.
-func stepClock(t0 time.Time) func() time.Time {
-	n := 0
-	return func() time.Time {
-		n++
-		return t0.Add(time.Duration(n) * time.Millisecond)
+	p, err := s.Search(t.Context(), q)
+	if err != nil {
+		t.Fatalf("search %+v: %v", q, err)
 	}
+	out := make([]string, 0, len(p.Results))
+	for _, r := range p.Results {
+		out = append(out, r.Slug)
+	}
+	return out
 }
 
 var catalog = []fixture{
@@ -132,7 +117,7 @@ func runContract(t *testing.T, newStore func(t *testing.T) testStore) {
 		if !mustLive(t, s, g.ID, "L1") {
 			t.Fatal("first Live did not promote the building generation")
 		}
-		if got := slugs(t, s, Query{Sort: SortName}); !slices.Equal(got, []string{"alpha-chat", "pixel-forge"}) {
+		if got := slugs(t, s, Query{}); !slices.Equal(got, []string{"alpha-chat", "pixel-forge"}) {
 			t.Fatalf("after Live: %v", got)
 		}
 		st = mustState(t, s)
@@ -168,7 +153,7 @@ func runContract(t *testing.T, newStore func(t *testing.T) testStore) {
 			t.Fatalf("delete err %v, want the injected crash", err)
 		}
 		s.setFailBeforeCommit(nil)
-		if got := slugs(t, s, Query{Sort: SortName}); !slices.Equal(got, []string{"pixel-forge"}) {
+		if got := slugs(t, s, Query{}); !slices.Equal(got, []string{"pixel-forge"}) {
 			t.Fatalf("row change survived its failed transaction: index holds %v, want [pixel-forge]", got)
 		}
 		if c := mustState(t, s).Serving.Cursor; c != "L1" {
@@ -176,7 +161,7 @@ func runContract(t *testing.T, newStore func(t *testing.T) testStore) {
 		}
 		// And a committed change moves both.
 		mustApply(t, s, g.ID, upsert(catalog[1], "c4"))
-		if got := slugs(t, s, Query{Sort: SortName}); !slices.Equal(got, []string{"alpha-chat", "pixel-forge"}) {
+		if got := slugs(t, s, Query{}); !slices.Equal(got, []string{"alpha-chat", "pixel-forge"}) {
 			t.Fatalf("after commit: %v", got)
 		}
 		if c := mustState(t, s).Serving.Cursor; c != "c4" {
@@ -251,7 +236,7 @@ func runContract(t *testing.T, newStore func(t *testing.T) testStore) {
 		renamed.name = "Pixel Forge Two"
 		mustApply(t, s, g.ID, upsert(renamed, ""), upsert(catalog[2], ""))
 		// The old generation keeps answering while the new one builds.
-		if got := slugs(t, s, Query{Sort: SortName}); !slices.Equal(got, []string{"alpha-chat", "pixel-forge"}) {
+		if got := slugs(t, s, Query{}); !slices.Equal(got, []string{"alpha-chat", "pixel-forge"}) {
 			t.Fatalf("during rebuild: %v", got)
 		}
 		st := mustState(t, s)
@@ -261,7 +246,7 @@ func runContract(t *testing.T, newStore func(t *testing.T) testStore) {
 		if !mustLive(t, s, g.ID, "L2") {
 			t.Fatal("rebuild did not switch over at Live")
 		}
-		if got := slugs(t, s, Query{Sort: SortName}); !slices.Equal(got, []string{"beta-paint", "pixel-forge"}) {
+		if got := slugs(t, s, Query{}); !slices.Equal(got, []string{"beta-paint", "pixel-forge"}) {
 			t.Fatalf("after switch: %v", got)
 		}
 		p, _ := s.Search(t.Context(), Query{Text: "two"})
@@ -322,23 +307,23 @@ func runContract(t *testing.T, newStore func(t *testing.T) testStore) {
 			q    Query
 			want []string
 		}{
-			{Query{Sort: SortName}, []string{"alpha-chat", "beta-paint", "delta-quiz", "echo-music", "gamma-tools", "pixel-forge", "zeta-zine"}},
-			{Query{Kind: "offsite", Sort: SortName}, []string{"alpha-chat", "delta-quiz", "zeta-zine"}},
-			{Query{Category: "generation", Sort: SortName}, []string{"beta-paint", "pixel-forge", "zeta-zine"}},
-			{Query{Kind: "onsite", Category: "generation", Sort: SortName}, []string{"beta-paint", "pixel-forge"}},
+			{Query{}, []string{"alpha-chat", "beta-paint", "delta-quiz", "echo-music", "gamma-tools", "pixel-forge", "zeta-zine"}},
+			{Query{Kind: "offsite"}, []string{"alpha-chat", "delta-quiz", "zeta-zine"}},
+			{Query{Category: "generation"}, []string{"beta-paint", "pixel-forge", "zeta-zine"}},
+			{Query{Kind: "onsite", Category: "generation"}, []string{"beta-paint", "pixel-forge"}},
 			// Prefix match on name, tagline and creator words.
-			{Query{Text: "pix", Sort: SortName}, []string{"echo-music", "gamma-tools", "pixel-forge"}},
-			{Query{Text: "PIXEL forge", Sort: SortName}, []string{"pixel-forge"}},
+			{Query{Text: "pix"}, []string{"echo-music", "gamma-tools", "pixel-forge"}},
+			{Query{Text: "PIXEL forge"}, []string{"pixel-forge"}},
 			{Query{Text: "quiz"}, []string{"delta-quiz"}},
-			{Query{Text: "ana", Sort: SortName}, []string{"beta-paint", "pixel-forge"}},
+			{Query{Text: "ana"}, []string{"beta-paint", "pixel-forge"}},
 			{Query{Text: "nomatch"}, nil},
 			{Query{Text: "!!! ..."}, nil},
 			{Query{Text: "pix", Kind: "offsite"}, nil},
 		}
 		for _, tc := range cases {
 			got := slugs(t, s, tc.q)
-			if tc.q.Sort == "" || tc.q.Sort == SortRelevance {
-				slices.Sort(got)
+			if tc.q.Text != "" {
+				slices.Sort(got) // relevance order is pinned against Postgres only
 			}
 			if !slices.Equal(got, tc.want) {
 				t.Errorf("search %+v = %v, want %v", tc.q, got, tc.want)
@@ -346,43 +331,24 @@ func runContract(t *testing.T, newStore func(t *testing.T) testStore) {
 		}
 	})
 
-	t.Run("SearchPaging", func(t *testing.T) {
+	t.Run("SearchLimit", func(t *testing.T) {
 		s := newStore(t)
-		s.setNow(stepClock(time.Unix(1_700_000_000, 0)))
 		g := mustBuilding(t, s)
 		for _, f := range catalog {
 			mustApply(t, s, g.ID, upsert(f, ""))
 		}
 		mustLive(t, s, g.ID, "L")
-		for _, sortBy := range []Sort{SortName, SortNewest, SortRelevance} {
-			for _, text := range []string{"", "pix"} {
-				q := Query{Sort: sortBy, Text: text, Limit: 50}
-				all := slugs(t, s, q)
-				for _, limit := range []int{1, 2, 3} {
-					q.Limit = limit
-					if paged := slugs(t, s, q); !slices.Equal(paged, all) {
-						t.Errorf("sort %s text %q limit %d: pages %v, one page %v", sortBy, text, limit, paged, all)
-					}
-				}
+		all := slugs(t, s, Query{})
+		if len(all) != len(catalog) {
+			t.Fatalf("no limit hit: %v", all)
+		}
+		for _, limit := range []int{1, 3} {
+			if got := slugs(t, s, Query{Limit: limit}); !slices.Equal(got, all[:limit]) {
+				t.Errorf("limit %d = %v, want the first %d of %v", limit, got, limit, all)
 			}
 		}
-		if got := slugs(t, s, Query{Sort: SortNewest}); !slices.Equal(got, []string{"zeta-zine", "echo-music", "delta-quiz", "gamma-tools", "beta-paint", "alpha-chat", "pixel-forge"}) {
-			t.Fatalf("newest = %v", got)
-		}
-	})
-
-	t.Run("NewestCarriesFirstSeenAcrossRebuild", func(t *testing.T) {
-		s := newStore(t)
-		s.setNow(stepClock(time.Unix(1_700_000_000, 0)))
-		old := mustBuilding(t, s)
-		mustApply(t, s, old.ID, upsert(catalog[0], ""), upsert(catalog[1], ""))
-		mustLive(t, s, old.ID, "L1")
-		g := mustBuilding(t, s)
-		// Replayed in the opposite order: without the carry-over, catalog[0] would be newest.
-		mustApply(t, s, g.ID, upsert(catalog[1], ""), upsert(catalog[0], ""), upsert(catalog[2], ""))
-		mustLive(t, s, g.ID, "L2")
-		if got := slugs(t, s, Query{Sort: SortNewest}); !slices.Equal(got, []string{"beta-paint", "alpha-chat", "pixel-forge"}) {
-			t.Fatalf("newest after rebuild = %v, want [beta-paint alpha-chat pixel-forge]", got)
+		if got := slugs(t, s, Query{Text: "pix", Limit: 2}); len(got) != 2 {
+			t.Errorf("text with limit 2 = %v", got)
 		}
 	})
 

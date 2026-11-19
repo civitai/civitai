@@ -7,13 +7,11 @@ import (
 	"errors"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/civitai/civitai/apps/app-index-go/internal/pgtest"
 )
 
 func (p *Postgres) setFailBeforeCommit(f func(op string) error) { p.beforeCommit = f }
-func (p *Postgres) setNow(f func() time.Time)                   { p.now = f }
 
 // newTestPostgres is a Postgres store on a fresh schema (pgtest.Pool).
 func newTestPostgres(t *testing.T) *Postgres {
@@ -57,7 +55,7 @@ func TestIntegrationPostgresRelevanceOrder(t *testing.T) {
 	}
 	mustLive(t, s, g.ID, "L")
 	// A name match (weight A) outranks a tagline match (B), which outranks a creator match (C).
-	got := slugs(t, s, Query{Text: "pix", Sort: SortRelevance})
+	got := slugs(t, s, Query{Text: "pix"})
 	if want := []string{"pixel-forge", "gamma-tools", "echo-music"}; !slices.Equal(got, want) {
 		t.Fatalf("relevance = %v, want %v", got, want)
 	}
