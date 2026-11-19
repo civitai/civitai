@@ -300,8 +300,9 @@ export async function establishSession(
   // session's family, so one sign-out ends both.
   let family: string | undefined;
   if (!handedOff) {
+    // The credentials prove who this is; a prior session the store could not confirm only loses the family link.
     const minted = await mintSession(user, {
-      parent: prior,
+      parent: prior && !isUnconfirmedSession(prior) ? prior : null,
       iat0: Date.now(),
       clearImpersonation: true,
     });
