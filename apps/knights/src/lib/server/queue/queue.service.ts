@@ -1272,11 +1272,7 @@ END`;
  */
 export async function closeUnservableItems(
   db: Kysely<DB>,
-  {
-    now,
-    limit = 200,
-    moved,
-  }: { now: Date; limit?: number; moved?: (items: MovedItem[]) => void }
+  { now, limit = 200, moved }: { now: Date; limit?: number; moved?: (items: MovedItem[]) => void }
 ): Promise<{
   unservable: number;
   publishesAfterExpiry: number;

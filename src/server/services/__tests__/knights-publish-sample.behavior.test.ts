@@ -98,8 +98,7 @@ describe('sampleNewlyLivePostsForKnights', () => {
     cursor: PublishSampleCursor | null,
     fields: Record<string, unknown> = {},
     { postLimit, now = NOW }: { postLimit?: number; now?: Date } = {}
-  ) =>
-    sampleNewlyLivePostsForKnights(db, { cursor, now, config: config(fields), postLimit });
+  ) => sampleNewlyLivePostsForKnights(db, { cursor, now, config: config(fields), postLimit });
   const sweep = (since: Date, fields: Record<string, unknown> = {}, postLimit?: number) =>
     run(at(since), fields, { postLimit });
 
@@ -140,7 +139,11 @@ describe('sampleNewlyLivePostsForKnights', () => {
     const first = await sweep(minutesAgo(10), { sfwRate: 1 });
     expect(await queued()).toEqual([]);
 
-    const second = await run(first.cursor, { sfwRate: 1 }, { now: new Date(NOW.getTime() + 60_000) });
+    const second = await run(
+      first.cursor,
+      { sfwRate: 1 },
+      { now: new Date(NOW.getTime() + 60_000) }
+    );
     expect(second.enqueued).toBe(1);
     expect((await queued()).map((i) => i.imageId)).toEqual([11]);
   });
@@ -170,7 +173,11 @@ describe('sampleNewlyLivePostsForKnights', () => {
 
     let cursor: PublishSampleCursor | null = at(minutesAgo(10));
     const cursors: PublishSampleCursor[] = [];
-    for (let runs = 0; runs < 10 && cursors.at(-1)?.publishedAt.getTime() !== minutesAgo(1).getTime(); runs++) {
+    for (
+      let runs = 0;
+      runs < 10 && cursors.at(-1)?.publishedAt.getTime() !== minutesAgo(1).getTime();
+      runs++
+    ) {
       cursor = (await run(cursor, { sfwRate: 1 }, { postLimit: 2 })).cursor;
       cursors.push(cursor);
     }
