@@ -1090,7 +1090,7 @@ export const getModelsRaw = async ({
     );
   }
   if (availability) {
-    // A user's Private models are theirs and moderators' alone; naming the user is not enough.
+    // Private models are listed only to their owner and moderators.
     const ownListing = !!sessionUser && listedUserId === sessionUser.id;
     if (availability === Availability.Private && !(ownListing || isModerator)) {
       throw throwAuthorizationError();

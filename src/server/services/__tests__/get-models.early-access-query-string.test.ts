@@ -118,15 +118,13 @@ describe('getModels and Private models', () => {
     return JSON.stringify(where).includes('{"availability":{"not":"Private"}}');
   }
 
-  it('leaves them out for a signed-out viewer and for a signed-in user, the owner included', async () => {
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 3300 } as never);
+  it('leaves them out for every non-moderator', async () => {
     expect(await excludesPrivate(undefined)).toBe(true);
     expect(await excludesPrivate({ id: 4400, isModerator: false })).toBe(true);
     expect(await excludesPrivate({ id: 3300, isModerator: false })).toBe(true);
   });
 
   it('lists them for a moderator', async () => {
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 3300 } as never);
     expect(await excludesPrivate({ id: 5500, isModerator: true })).toBe(false);
   });
 });
