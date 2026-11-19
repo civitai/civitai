@@ -70,6 +70,9 @@ type Deps struct {
 	Addons   *AddonSource
 	// Feed is the feed service; nil = not configured (index-path requests fall back).
 	Feed FeedFetcher
+	// Blocked is the blocked browsing tag list a `tags` filter is stripped against; nil = not
+	// configured (a request with `tags` falls back). image.getInfinite reads InfiniteDeps.Blocked.
+	Blocked *BlockedTags
 	// Promotions and Resources default to Gallery (tests replace them).
 	Promotions PromotionStore
 	Resources  ImageResourceReader
@@ -109,6 +112,30 @@ type AddonFilters struct {
 	ExcludedTagIDs []int
 	DisablePoi     bool
 	DisableMinor   bool
+}
+
+// stripBlockedTags is enforceBlockedBrowsingTags' W2 (stripBlockedTagIds) on an input's `tags`: the
+// ids the blocked browsing tag list does not hold, in order. allBlocked: every id was blocked, which
+// getAllImages and getAllImagesIndex each answer with their own empty page. No tags reads nothing. A
+// list that cannot be read falls back (BlockedTags), as does a nil list (not configured).
+func stripBlockedTags(ctx context.Context, blocked *BlockedTags, tags []int) (kept []int, allBlocked bool, err error) {
+	if len(tags) == 0 {
+		return tags, false, nil
+	}
+	if blocked == nil {
+		return nil, false, fallback.New("blocked-tags-unconfigured")
+	}
+	ids, err := blocked.IDs(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	kept = make([]int, 0, len(tags))
+	for _, t := range tags {
+		if !ids[t] {
+			kept = append(kept, t)
+		}
+	}
+	return kept, len(kept) == 0, nil
 }
 
 // ResolveAddonFilters is those two steps for one getAllImages call at browsingLevel: Node runs them
@@ -236,6 +263,17 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 	}
 	pinned := settings.PinnedFor(in.ModelVersionID)
 
+	// Every getAllImages call below (the pinned and sponsored posts, each page, each completion)
+	// strips the blocked tags from its own copy of `tags`: when all of them are blocked, each call is
+	// an empty page, so the gallery is empty.
+	tags, allBlocked, err := stripBlockedTags(ctx, d.Blocked, in.Tags)
+	if err != nil {
+		return nil, err
+	}
+	if allBlocked {
+		return empty, nil
+	}
+
 	// getAllImages resolves its addon exclusions at each call's own browsing level, so the page and
 	// the sponsored fetch (which runs at the sponsored level) each get their own.
 	addons := d.Addons.Addons(ctx)
@@ -264,6 +302,12 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		ExcludedUsers:  in.ExcludedUserIDs,
 		ViewerID:       viewer.ID,
 		IsModerator:    viewer.IsModerator,
+		// Every fetch below reads it: the page, the post completion, the hydrate of the feed's ids,
+		// and the pinned and sponsored posts (`...input` in each of the handler's getAllImages calls).
+		// So do the tags and the techniques.
+		Tools:      in.Tools,
+		TagIDs:     tags,
+		Techniques: in.Techniques,
 	}
 
 	overscan := int(math.Ceil(float64(in.Limit) * 2)) // so posts can be merged
@@ -293,6 +337,9 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 				HasGeneration:   len(in.Generation) > 0,
 				HasRemixOfID:    in.HasRemixOfID,
 				RequiringMeta:   in.RequiringMeta,
+				Tools:           in.Tools,
+				Tags:            tags,
+				Techniques:      in.Techniques,
 			},
 			hydrate: func(ctx context.Context, ids, postIDs []int) ([]Image, error) {
 				h := hq

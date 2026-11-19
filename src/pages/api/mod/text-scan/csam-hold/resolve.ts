@@ -18,11 +18,12 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
   notes: [
     'Requires the moderator app permission `csam.report.file`; `remove_strike` also needs `user.strike`, and `remove_ban` and `remove_ban_report` also need `user.ban`.',
     '`dismiss` closes the hold and changes nothing on the held content or its author.',
+    'With `holdId`, every decision but `dismiss` sends `reportChoice` (a reportable category, or `none`), and `dismiss` refuses one. The choice is recorded on the hold; it files nothing. Until every moderator app sends it, a confirm without one is decided as before and counted (`reportChoice-missing`).',
     '`remove` takes the held content down through the same service a moderator removal uses; `remove_strike` also strikes the author; `remove_ban` and `remove_ban_report` also ban the author (skipped when already banned).',
     '`remove_ban_report` does not file anything: the moderator completes the existing CSAM report form for the returned `userId`. No Report row is created by any decision.',
     'A removal decision is refused with BAD_REQUEST for a type with no removal path; the hold stays pending.',
     'The decision and its label-store record are one transaction. If a removal, strike or ban fails the hold stays pending and the call can be repeated.',
-    `\`holds\` decides up to ${CSAM_HOLD_BATCH_MAX} holds (\`remove\` or \`dismiss\` only) in one call that counts as one rate-limit hit. Each is decided on its own against its \`textHash\`; a stale or refused hold is reported in \`results\` and does not stop the rest.`,
+    `\`holds\` decides up to ${CSAM_HOLD_BATCH_MAX} holds (\`remove\` or \`dismiss\` only) in one call that counts as one rate-limit hit. Each is decided on its own against its \`textHash\`; a stale or refused hold is reported in \`results\` and does not stop the rest. A batch records no report choice; a confirmed hold waits on "Report not filed" until \`textScan.setCsamHoldReportChoice\` sets one.`,
     'Refuses with CONFLICT when the hold is missing, not a csam hold, no longer Pending, or its text changed since `textHash` was read (a rescan of edited content updates the pending hold in place).',
   ],
   rateLimit: { max: 60, windowSeconds: 60 },
@@ -32,6 +33,14 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
       throw new TRPCError({
         code: 'FORBIDDEN',
         message: 'Deciding a csam hold needs the "csam.report.file" moderator permission.',
+      });
+    // Counts only: an older moderator app confirming without a choice. Drop once none arrive.
+    if (!input.holds && input.decision !== 'dismiss' && input.reportChoice === undefined)
+      logToAxiom({
+        name: 'text-scan',
+        type: 'reportChoice-missing',
+        message: 'csam hold confirmed without a report choice',
+        payload: { decision: input.decision },
       });
 
     if (input.holds) {
@@ -89,6 +98,7 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
       holdId: input.holdId,
       textHash: input.textHash,
       decision: input.decision,
+      reportChoice: input.reportChoice,
       note: input.note,
       actor: { id: ctx.actor.id, ip },
       tracker: ctx.tracker,
@@ -105,6 +115,7 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
       decision: input.decision,
       outcome: 'ok',
       moderatorId: ctx.actor.id,
+      payload: { reportChoice: input.reportChoice },
     });
 
     return {

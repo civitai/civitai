@@ -6,6 +6,8 @@ const answerHiddenCheck = vi.hoisted(() => vi.fn());
 const castYesNoVote = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
 const voteRefused = vi.hoisted(() => vi.fn());
+const creditLateJudgment = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/queue/vote-record', () => ({ creditLateJudgment }));
 vi.mock('$lib/server/metrics', async (original) => {
   const real = await original<typeof import('$lib/server/metrics')>();
   return { ...real, metrics: { ...real.metrics, voteRefused } };
@@ -14,10 +16,10 @@ vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
   getStanding,
 }));
-vi.mock('$lib/server/skip-runtime', () => ({
-  skipStore: { add: vi.fn(), list: vi.fn(async () => []) },
+vi.mock('$lib/server/skip-runtime', async () => ({
+  skipStore: (await import('$lib/server/skips')).memorySkipStore(),
 }));
-vi.mock('$lib/server/db', () => ({ db: {} }));
+vi.mock('$lib/server/db', () => ({ db: {}, dbRead: {} }));
 const guard = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/vote-limits/runtime', () => ({ voteGate: { guard }, lockoutFor: vi.fn() }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
@@ -64,6 +66,7 @@ beforeEach(() => {
   answerHiddenCheck.mockReset();
   castYesNoVote.mockReset();
   voteRefused.mockReset();
+  creditLateJudgment.mockReset();
 });
 
 describe('vote action on a yes/no question', () => {
@@ -126,6 +129,14 @@ describe('vote action', () => {
     expect(await submit({ item: queueItem(3), answer: '4' })).toMatchObject({
       status: 409,
       data: { message: expect.stringMatching(/already judged/i) },
+    });
+  });
+
+  it('names the refusal reason, so the page can tell an item that moved on from a mistake', async () => {
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+    expect(await submit({ item: queueItem(3), answer: '4' })).toMatchObject({
+      status: 409,
+      data: { reason: 'not-open', message: expect.stringMatching(/settled/i) },
     });
   });
 
@@ -351,5 +362,44 @@ describe('vote action for a muted player', () => {
     getStanding.mockResolvedValue({ banned: false, muted: false });
     castVote.mockResolvedValue({ status: 'recorded' });
     expect(await submit({ item: queueItem(3), answer: '4' })).toEqual({ success: true });
+  });
+});
+
+describe('a judgment on an item that settled before it arrived', () => {
+  it('asks to count it toward the Daily Watch and says so when it was counted', async () => {
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+    creditLateJudgment.mockResolvedValueOnce(true);
+
+    expect(await submit({ item: queueItem(501), answer: '4' })).toMatchObject({
+      status: 409,
+      data: { reason: 'not-open', watchCounted: true },
+    });
+    expect(creditLateJudgment).toHaveBeenCalledWith(expect.anything(), {
+      userId: 7,
+      itemId: 501,
+      answer: '4',
+      now: expect.any(Date),
+    });
+  });
+
+  it('says nothing was counted when the credit is refused or fails', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+    creditLateJudgment.mockResolvedValueOnce(false);
+    const refused = (await submit({ item: queueItem(501), answer: '4' })) as { data: object };
+    expect(refused.data).not.toHaveProperty('watchCounted');
+
+    creditLateJudgment.mockRejectedValueOnce(new Error('db down'));
+    const failed = (await submit({ item: queueItem(502), answer: '4' })) as { data: object };
+    expect(failed.data).not.toHaveProperty('watchCounted');
+    expect(log).toHaveBeenCalled();
+  });
+
+  it('does not ask for a refusal that is not about the item moving on, or for a yes/no question', async () => {
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'already-voted' });
+    await submit({ item: queueItem(503), answer: '4' });
+    castYesNoVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+    await submit({ item: sealItem('secret', 7, { kind: 'yesno', id: 9 }), answer: 'yes' });
+    expect(creditLateJudgment).not.toHaveBeenCalled();
   });
 });

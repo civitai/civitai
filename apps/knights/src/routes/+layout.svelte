@@ -9,14 +9,19 @@
   import type { WhatsNew } from '$lib/whats-new';
   import { provideWhatsNew } from '$lib/whats-new-dismiss.svelte';
   import { provideVotesSent } from '$lib/votes-sent.svelte';
+  import { provideLiveStatus } from '$lib/live-status.svelte';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
   // A page that loads the player's status (play keeps it live) hands it to the header through page.data; every other page
   // gets the layout's copy, so the header is the same on each of them.
+  const live = provideLiveStatus();
   let status = $derived(
-    (page.data.status as PlayerStatus | null | undefined) ?? data.headerStats?.status ?? undefined
+    live.current ??
+      (page.data.status as PlayerStatus | null | undefined) ??
+      data.headerStats?.status ??
+      undefined
   );
   // /play reads the votes it has in flight from this context.
   provideVotesSent();

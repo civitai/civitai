@@ -47,7 +47,6 @@ const { mockGetEntityCollaborators } = vi.hoisted(() => ({
 vi.mock('~/server/services/entity-collaborator.service', () => ({
   getEntityCollaborators: (...a: unknown[]) => mockGetEntityCollaborators(...(a as [])),
 }));
-vi.mock('~/server/services/image.service', () => ({ getImageById: vi.fn(async () => null) }));
 
 // Hoisted so the 🔴-2 tests can assert these NON-idempotent side effects do not fire
 // for a transaction the ledger deduped.
@@ -395,6 +394,37 @@ describe('createBuzzTipTransactionHandler — a model that is not commercially a
     const ledger = installLedger();
     await createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser() });
     expect(mockVersionFindMany).not.toHaveBeenCalled();
+    expect(ledger.debits()).toBe(1);
+  });
+});
+
+describe('createBuzzTipTransactionHandler — POI images', () => {
+  const mockImageFindUnique = dbMock.dbWrite.image.findUnique;
+  beforeEach(() => mockImageFindUnique.mockReset());
+
+  const tipImage = () =>
+    createBuzzTipTransactionHandler({
+      input: { ...baseInput, entityType: 'Image', entityId: 900 },
+      ctx: ctxUser(),
+    });
+
+  it('refuses a tip on a POI image and moves no Buzz', async () => {
+    const ledger = installLedger();
+    mockImageFindUnique.mockResolvedValue({ postId: 10, poi: true } as never);
+    await expect(tipImage()).rejects.toThrow('This image cannot receive tips');
+    expect(ledger.debits()).toBe(0);
+  });
+
+  it('still tips an image that is not POI', async () => {
+    const ledger = installLedger();
+    mockImageFindUnique.mockResolvedValue({ postId: 10, poi: false } as never);
+    await tipImage();
+    // Read on the primary, like the other guards here: a just-flagged image is not tippable.
+    expect(mockImageFindUnique).toHaveBeenCalledWith({
+      where: { id: 900 },
+      select: { postId: true, poi: true },
+    });
+    expect(mockGetEntityCollaborators).toHaveBeenCalledWith({ entityId: 10, entityType: 'Post' });
     expect(ledger.debits()).toBe(1);
   });
 });

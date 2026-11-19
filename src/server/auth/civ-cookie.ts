@@ -4,6 +4,8 @@ import {
   hostSessionCookieName,
   clearLoginRetryCookie,
   clearPostLoginMarker,
+  deviceCookieName,
+  hostOnlySite,
   isSecureCookie,
   LOGIN_RETRY_COOKIE,
   loginRetryCookie,
@@ -166,23 +168,23 @@ export function clearLegacyCookies(host?: string): string[] {
  * to roll the device cookie in lockstep (switch + rolling-refresh; impersonation does NOT touch the device set).
  * Does NOT clear legacy cookies — the transition that needs that (the login callback) calls
  * clearLegacyCookies explicitly; keeping it out of here avoids re-emitting the de-crud on every rolling refresh.
- * `slot` defaults to this app's cookie mode; a roll passes the slot the token was read from. The host-only slot
+ * `slot` defaults to the host's cookie mode; a roll passes the slot the token was read from. The host-only slot
  * never carries a Domain (`__Host-` forbids it). Pass `requestCookies` so the write also expires, host-only, the
- * other slot's session and device names the request carries.
+ * other slot's session and device names the request carries; on a host-only site, on the registrable domain too.
  */
 export function setSessionCookie(
   res: CookieWritable,
   token: string,
-  opts?: {
+  opts: {
     deviceCookie?: string;
-    host?: string;
+    host: string | undefined;
     slot?: CookieSlot;
     requestCookies?: Partial<Record<string, string | undefined>>;
   }
 ): void {
   const secure = isSecureCookie();
-  const slot = opts?.slot ?? sessionCookieMode();
-  const domain = slot === 'host' ? undefined : cookieDomainForHost(opts?.host);
+  const slot = opts.slot ?? sessionCookieMode(opts.host);
+  const domain = slot === 'host' ? undefined : cookieDomainForHost(opts.host);
   const exp = decodeTokenClaim(token, 'exp');
   const maxAge = exp ? Math.max(0, exp - Math.floor(Date.now() / 1000)) : undefined;
 
@@ -193,11 +195,13 @@ export function setSessionCookie(
     ? [String(existing)]
     : [];
   all.push(buildCookie(sessionCookieNameForSlot(slot, secure), token, secure, domain, maxAge));
-  if (opts?.deviceCookie) {
+  if (opts.deviceCookie) {
     const deviceName = deviceCookieNameForSlot(slot, secure);
     all.push(buildCookie(deviceName, opts.deviceCookie, secure, domain, DEVICE_TTL_S));
   }
-  all.push(...otherSlotExpiries(slot, opts?.requestCookies, secure));
+  const sharedScope =
+    slot === 'host' && hostOnlySite(opts.host) ? cookieDomainForHost(opts.host) : undefined;
+  all.push(...otherSlotExpiries(slot, opts.requestCookies, secure, sharedScope));
   res.setHeader('Set-Cookie', all);
 }
 
@@ -261,6 +265,15 @@ export function clearAllSessionCookies(host?: string): string[] {
   }
   out.push(`${hostSessionCookieName(true)}=; Path=/; Max-Age=0; SameSite=Lax; Secure`);
   out.push(`${hostDeviceCookieName(true)}=; Path=/; Max-Age=0; SameSite=Lax; Secure`);
+  // A host-only site also drops a shared-slot device id: it was never this site's.
+  if (hostOnlySite(h)) {
+    for (const d of scopes)
+      out.push(
+        `${deviceCookieName(true)}=; Path=/; Max-Age=0; SameSite=Lax; Secure${
+          d ? `; Domain=${d}` : ''
+        }`
+      );
+  }
   out.push(clearPostLoginMarker(), clearLoginRetryCookie(), clearPostLoginRetryCookie());
   return out;
 }

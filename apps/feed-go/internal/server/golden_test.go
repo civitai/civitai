@@ -45,9 +45,9 @@ const (
 	goldenDir = "../../testdata/golden"
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
-	goldenMinAsPosts  = 23
+	goldenMinAsPosts  = 32
 	goldenMinV1       = 36
-	goldenMinInfinite = 21
+	goldenMinInfinite = 30
 	goldenMinModels   = 31
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -185,8 +185,14 @@ type goldenImage struct {
 		ModelVersionID int  `json:"modelVersionId"`
 		Detected       bool `json:"detected"`
 	} `json:"_resources"`
-	// Tags are the image's TagsOnImageDetails tag ids (infinite/ fixtures only: the tag scope).
+	// Tags are the image's TagsOnImageDetails tag ids (infinite/ fixtures, and a fixture whose query
+	// filters by `tags`: the tag scope).
 	Tags []int `json:"_tags"`
+	// Tools are the image's ImageTool tool ids (only in a fixture whose query filters by `tools`).
+	Tools []int `json:"_tools"`
+	// Techniques are the image's ImageTechnique ids (only in a fixture whose query filters by
+	// `techniques`).
+	Techniques []int `json:"_techniques"`
 	// Meta is the image's `meta` jsonb as Postgres prints it (v1-images/ fixtures only: the
 	// image-meta cache's lookup); null when NULL.
 	Meta *string `json:"_meta"`
@@ -244,6 +250,8 @@ type goldenDB struct {
 	ModelVersions []struct {
 		ID      int `json:"id"`
 		ModelID int `json:"modelId"`
+		// BaseModel is the version's `baseModel` (only in a fixture whose query filters by `baseModels`).
+		BaseModel string `json:"baseModel"`
 	} `json:"modelVersions"`
 	Models []struct {
 		ID           int             `json:"id"`
@@ -556,6 +564,9 @@ var (
 	goldenReTypes     = regexp.MustCompile(`i\.type = ANY\(\$(\d+)::text`)
 	goldenReCursor    = regexp.MustCompile(`\(\((i\."id"|irr\."imageId"|i\."index") (<=|>=) \$(\d+)\)\)`)
 	goldenReTags      = regexp.MustCompile(`WHERE "tagId" = ANY\(\$(\d+)::int\[\]\) AND "disabled" = FALSE`)
+	goldenReTechnique = regexp.MustCompile(`it\."techniqueId" = ANY\(\$(\d+)::int\[\]\)`)
+	goldenReTools     = regexp.MustCompile(`HAVING array_agg\(it\."toolId" ORDER BY it\."toolId"\) @> \$(\d+)::integer\[\]`)
+	goldenReBaseMdl   = regexp.MustCompile(`WHERE mv\."baseModel" = ANY\(\$(\d+)::text\[\]\)`)
 	goldenReLimit     = regexp.MustCompile(`LIMIT \$(\d+)\s*$`)
 	goldenReOffset    = regexp.MustCompile(`OFFSET (\d+)\s+LIMIT`)
 	goldenReMinorOwn  = regexp.MustCompile(`\(i\."minor" != TRUE OR i\."userId" = \$(\d+)\)`)
@@ -618,11 +629,14 @@ func goldenHas(list []int, n int) bool {
 
 // goldenImageRows answers the getAllImages page query: the clauses the fixtures reach, evaluated
 // over the images table as Postgres would (ids, posts, version or model scope, level, creator,
-// excluded creators, types, the minor exclusion, published-before-now, order, cursor, offset, limit).
+// excluded creators, types, tools, base models, the minor exclusion, published-before-now, order,
+// cursor, offset, limit).
 func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, error) {
 	versionModel := map[int]int{}
+	versionBase := map[int]string{}
 	for _, v := range fx.DB.ModelVersions {
 		versionModel[v.ID] = v.ModelID
+		versionBase[v.ID] = v.BaseModel
 	}
 	ids, hasIDs := goldenArg(args, goldenReIDs, sql)
 	postIDs, hasPostIDs := goldenArg(args, goldenRePostIDs, sql)
@@ -635,6 +649,9 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	types, hasTypes := goldenArg(args, goldenReTypes, sql)
 	minorOwner, hasMinorOwner := goldenArg(args, goldenReMinorOwn, sql)
 	tags, hasTags := goldenArg(args, goldenReTags, sql)
+	techniques, hasTechniques := goldenArg(args, goldenReTechnique, sql)
+	tools, hasTools := goldenArg(args, goldenReTools, sql)
+	baseModels, hasBaseModels := goldenArg(args, goldenReBaseMdl, sql)
 	minorAll := strings.Contains(sql, `(i."minor" != TRUE)`)
 	published := strings.Contains(sql, `(p."publishedAt" < now())`)
 	if !hasLevel {
@@ -678,8 +695,44 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 				continue
 			}
 		}
+		if hasTechniques {
+			// EXISTS (… "techniqueId" = ANY(<techniques>)): a row for any listed technique.
+			holdsAny := false
+			for _, t := range img.Techniques {
+				holdsAny = holdsAny || goldenHas(goldenInts(techniques), t)
+			}
+			if !holdsAny {
+				continue
+			}
+		}
 		if hasExcl && goldenHas(goldenInts(exclUsers), img.UserID) {
 			continue
+		}
+		if hasTools {
+			// array_agg(toolId) @> <tools>: the image holds every listed tool (none held: no group).
+			holdsAll := len(img.Tools) > 0
+			for _, t := range goldenInts(tools) {
+				holdsAll = holdsAll && goldenHas(img.Tools, t)
+			}
+			if !holdsAll {
+				continue
+			}
+		}
+		if hasBaseModels {
+			// EXISTS (ModelVersion RIGHT JOIN ImageResourceNew … WHERE mv."baseModel" = ANY(<names>)): a
+			// resource row whose version exists and carries one of the names.
+			names, _ := baseModels.([]string)
+			matched := false
+			for _, r := range img.Resources {
+				if b, ok := versionBase[r.ModelVersionID]; ok {
+					for _, n := range names {
+						matched = matched || n == b
+					}
+				}
+			}
+			if !matched {
+				continue
+			}
 		}
 		if hasTypes {
 			list, _ := types.([]string)
@@ -1071,6 +1124,14 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	return goldenSetupMode(t, fx, false)
 }
 
+// goldenWrites is the write-back set of a golden mode: every cache with writeBack, none without.
+func goldenWrites(writeBack bool) hydrate.WriteSet {
+	if writeBack {
+		return hydrate.AllWrites()
+	}
+	return nil
+}
+
 // goldenSetupMode builds the server as main does: misses computed (hydrate.MissCompute), written
 // back only with writeBack.
 func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv {
@@ -1093,7 +1154,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 
 	packed := &hydrate.PackedReader{Redis: cache, Now: nowFn}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: db, Compute: &hydrate.MissCompute{
-		WriteBack:     writeBack,
+		WriteBack:     goldenWrites(writeBack),
 		FrameNegative: fx.Config.FrameCacheNegative,
 		Now:           nowFn,
 	}}
@@ -1104,7 +1165,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 		Verifier:    &auth.Verifier{Issuer: goldenIssuer, JWKSURL: jwks.URL, HTTP: jwks.Client(), Now: nowFn},
 		Revocation:  &auth.Revocation{Redis: sys},
 		Sessions:    packed,
-		CookieNames: []string{goldenCookieName},
+		CookieNames: auth.FixedCookieNames(goldenCookieName),
 	}
 	events := map[string]bool{}
 	for _, e := range fx.Config.DecorationEvents {
@@ -1119,6 +1180,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 		Gallery:  &feed.GalleryStore{Cache: cache, DB: db},
 		Addons:   &feed.AddonSource{Sys: sys},
 		Feed:     &feedsvc.Client{BaseURL: feedSrv.URL, HTTP: feedSrv.Client()},
+		Blocked:  blocked,
 		Config: feed.Config{
 			CreatorPromotions:       feed.ParsePromotionAudience(fx.Config.CreatorPromotions),
 			LazyPostImages:          fx.Config.LazyPostImages,
@@ -1748,7 +1810,7 @@ func goldenSetupModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) *gol
 	blocked := &feed.BlockedTags{Cache: env.cache}
 	// As main: the model feed shares the miss computation.
 	compute := &hydrate.MissCompute{FrameNegative: fx.Config.FrameCacheNegative, Now: env.now, TagGate: feed.ImageTagGate(blocked, addons),
-		WriteBack: writeBack}
+		WriteBack: goldenWrites(writeBack)}
 	if writeBack {
 		compute.Primary = db
 	}

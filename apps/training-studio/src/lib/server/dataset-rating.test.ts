@@ -5,32 +5,67 @@ const store = vi.hoisted(() => new Map<string, unknown>());
 const redisDown = vi.hoisted(() => ({ value: false }));
 const flag = vi.hoisted(() => ({ variant: null as string | null }));
 const invokeScan = vi.hoisted(() => vi.fn());
+const refresh = vi.hoisted(() => vi.fn());
+const scan = vi.hoisted(() => vi.fn());
 
+// One map behind both fakes; the two key tables give every key a prefix naming its store.
 vi.mock('@civitai/redis', () => ({
-  REDIS_SYS_KEYS: {
+  REDIS_KEYS: {
     TRAINING: { STUDIO_DATASET_RATING: 'rating', STUDIO_DATASET_RATING_DAILY: 'daily' },
   },
+  REDIS_SYS_KEYS: {
+    TRAINING: { STUDIO_DATASET_RATING: 'sysrating', STUDIO_DATASET_RATING_SENT: 'sent' },
+  },
 }));
-vi.mock('./redis', () => ({
-  getSysRedis: () => ({
+vi.mock('./redis', () => {
+  const add = (k: string, n: number) => {
+    const v = ((store.get(k) as number) ?? 0) + n;
+    store.set(k, v);
+    return v;
+  };
+  // The cache cluster: ratings and the daily allowances.
+  const cache = {
     packed: {
       mGet: async (keys: string[]) => keys.map((k) => store.get(k) ?? null),
       set: async (k: string, v: unknown) => void store.set(k, v),
     },
-    incrBy: async (k: string, n: number) => {
-      if (redisDown.value) throw new Error('redis down');
-      const v = ((store.get(k) as number) ?? 0) + n;
-      store.set(k, v);
-      return v;
+    multi: () => {
+      const queued: (() => unknown)[] = [];
+      const chain = {
+        set: (k: string, v: unknown, opts?: { NX?: boolean }) => {
+          queued.push(() => {
+            if (opts?.NX && store.has(k)) return null;
+            store.set(k, v === '0' ? 0 : v);
+            return 'OK';
+          });
+          return chain;
+        },
+        incrBy: (k: string, n: number) => {
+          queued.push(() => add(k, n));
+          return chain;
+        },
+        exec: async () => {
+          if (redisDown.value) throw new Error('redis down');
+          return queued.map((run) => run());
+        },
+      };
+      return chain;
     },
-    decrBy: async (k: string, n: number) => {
-      const v = ((store.get(k) as number) ?? 0) - n;
+    incrBy: async (k: string, n: number) => add(k, n),
+  };
+  // System Redis: the sent markers, and ratings written before they moved (the read fallback).
+  const sys = {
+    packed: { mGet: async (keys: string[]) => keys.map((k) => store.get(k) ?? null) },
+    set: async (k: string, v: unknown, opts?: { NX?: boolean }) => {
+      if (opts?.NX && store.has(k)) return null;
       store.set(k, v);
-      return v;
+      return 'OK';
     },
-    expire: async () => true,
-  }),
-}));
+    del: async (k: string) => Number(store.delete(k)),
+    mGet: async (keys: string[]) => keys.map((k) => (store.get(k) as string | undefined) ?? null),
+  };
+  return { getCacheRedis: () => cache, getSysRedis: () => sys };
+});
 const flagVariant = vi.hoisted(() => vi.fn(async () => flag.variant));
 vi.mock('./flipt', () => ({ flagVariant }));
 vi.mock('./axiom', () => ({ logToAxiom: async () => undefined, safeError: (e: unknown) => e }));
@@ -38,29 +73,49 @@ vi.mock('./orchestrator', () => ({ orchestratorClient: () => ({}) }));
 // Hand-listed: the package's dist can't be loaded through importOriginal (see train-core.test.ts).
 vi.mock('@civitai/orchestration-client', () => ({
   invokeImageScanningStepTemplate: (...args: unknown[]) => invokeScan(...args),
+  refreshBlob: (...args: unknown[]) => refresh(...args),
 }));
+vi.mock('./main-app', () => ({ mainAppSessionOrigin: () => 'https://civitai.test' }));
+// The main app's rating endpoint: `scan` answers each request's one item with its mature verdict, or
+// a whole Response (a refusal).
+const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+  const { items } = JSON.parse(String(init.body)) as { items: { key: string; mediaUrl: string }[] };
+  const answer: unknown = await scan(items[0]);
+  return answer instanceof Response
+    ? answer
+    : Response.json({ results: [{ key: items[0]!.key, mature: answer }] });
+});
+vi.stubGlobal('fetch', fetchMock);
 
 const {
   claimDaily,
+  claimDailyReturnable,
   DATASET_RATING_DAILY_CALLS,
   datasetRatingFor,
   rateImage,
+  DATASET_RATING_SYS_FALLBACK_UNTIL,
   runRatingJob,
   warmDatasetRating,
 } = await import('./dataset-rating');
 
 const user = { id: 7 } as SessionUser;
-const client = {} as Parameters<typeof rateImage>[0];
-const ok = (label: string, restricted = false) => ({
-  data: { nsfwLevel: 'na', ratingV2: { status: 'ok', sexual: { label }, restricted } },
-  response: new Response(null, { status: 200 }),
-});
+const client = { client: {}, cookie: 'session=1', matureLevel: 1 } as Parameters<
+  typeof rateImage
+>[0];
+const signedUrl = (id: string) => `https://orchestration.civitai.com/v2/consumer/blobs/${id}?sig=x`;
+const refused = (status: number, retryAfter?: string) =>
+  new Response(null, { status, headers: retryAfter ? { 'retry-after': retryAfter } : {} });
 
 beforeEach(() => {
   store.clear();
   redisDown.value = false;
   flag.variant = null;
   invokeScan.mockReset();
+  refresh.mockReset().mockImplementation(async ({ path }: { path: { blobId: string } }) => ({
+    data: { url: signedUrl(path.blobId) },
+  }));
+  scan.mockReset();
+  fetchMock.mockClear();
 });
 
 describe('the flag', () => {
@@ -77,103 +132,168 @@ describe('the flag', () => {
     'a level variant (%i) turns it on, reading only well-formed cache entries',
     async (level) => {
       flag.variant = `S${level}`;
-      store.set('rating:radio-alpha:good', { s: 1, r: false });
-      store.set('rating:radio-alpha:junk', { s: 'x', r: false });
+      store.set(`rating:radio-alpha:m${level}:good`, { mature: false });
+      store.set(`rating:radio-alpha:m${level}:junk`, { mature: 'x' });
+      // A verdict made at another level is not this level's verdict.
+      store.set(`rating:radio-alpha:m${(level % 4) + 1}:other`, { mature: true });
       const rating = (await datasetRatingFor(user))!;
       expect(rating.matureLevel).toBe(level);
       // The Flipt flag key is the contract with flag state.
       expect(flagVariant).toHaveBeenCalledWith('trainingStudioDatasetRatingV2', user);
-      const read = await rating.read(['good', 'junk', 'missing']);
+      const read = await rating.read(['good', 'junk', 'other', 'missing']);
       expect([...read.keys()]).toEqual(['good']);
     }
   );
 });
 
-describe('one rating call', () => {
-  it('asks for the v2 rater and returns its rating', async () => {
-    invokeScan.mockResolvedValueOnce(ok('S2', true));
-    const { signal } = new AbortController();
-    expect(await rateImage(client, 'blob-1', signal)).toEqual({
-      rating: { s: 2, r: true },
-    });
-    // The job's deadline must reach the call, or it runs on past it.
-    expect(invokeScan.mock.calls[0]![0].signal).toBe(signal);
-    expect(invokeScan.mock.calls[0]![0].body).toEqual({
-      // The exact form the recipe takes a blob in; a bare id is decoded as base64 and refused.
-      image: 'urn:air:other:other:orchestrator:blob@blob-1',
-      'rater-model': 'radio-alpha',
+describe('ratings written before the move to the cache cluster', () => {
+  it('pins the end of the system Redis fallback', () => {
+    expect(DATASET_RATING_SYS_FALLBACK_UNTIL.toISOString()).toBe('2027-01-15T00:00:00.000Z');
+  });
+
+  it('🔴 a rating only system Redis holds is still read; the cluster copy wins when both do', async () => {
+    flag.variant = 'S2';
+    store.set('sysrating:radio-alpha:m2:old', { mature: true });
+    store.set('sysrating:radio-alpha:m2:both', { mature: true });
+    store.set('rating:radio-alpha:m2:both', { mature: false });
+    store.set('rating:radio-alpha:m2:new', { mature: false });
+    // Another level's verdict is not read through the fallback either.
+    store.set('sysrating:radio-alpha:m3:other', { mature: true });
+    const read = await (await datasetRatingFor(user))!.read(['old', 'both', 'new', 'other']);
+    expect(Object.fromEntries(read)).toEqual({
+      old: { mature: true },
+      both: { mature: false },
+      new: { mature: false },
     });
   });
 
+  it('🔴 a new rating is written to the cache cluster only', async () => {
+    const rate = vi.fn(async () => ({ rating: { mature: false } }));
+    await runRatingJob(client, ['a.png'], rate);
+    expect(store.get('rating:radio-alpha:m1:a.png')).toEqual({ mature: false });
+    expect(store.has('sysrating:radio-alpha:m1:a.png')).toBe(false);
+  });
+});
+
+describe('one rating call', () => {
+  it("scans the URL the user's token minted on the main app's free path, never with the user's token", async () => {
+    scan.mockResolvedValueOnce(true);
+    const { signal } = new AbortController();
+    expect(await rateImage(client, 'blob-1.png', signal)).toEqual({ rating: { mature: true } });
+    expect(refresh.mock.calls[0]![0]).toMatchObject({
+      client: client.client,
+      path: { blobId: 'blob-1.png' },
+      signal,
+    });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('https://civitai.test/api/training-studio/dataset-rating');
+    expect(init.headers).toMatchObject({ cookie: 'session=1' });
+    expect(JSON.parse(String(init.body))).toEqual({
+      items: [{ key: 'blob-1.png', mediaUrl: signedUrl('blob-1.png') }],
+      matureLevel: 1,
+    });
+    // A scan submitted with the user's own token is charged to them.
+    expect(invokeScan).not.toHaveBeenCalled();
+  });
+
   it.each([
-    [
-      'a status in another case',
-      { ratingV2: { status: 'OK', sexual: { label: 'S0' }, restricted: false } },
-    ],
-    [
-      'an error status',
-      { ratingV2: { status: 'error', sexual: { label: 'S0' }, restricted: false } },
-    ],
-    ['no ratingV2 block', { nsfwLevel: 'pg' }],
-    ['only a top-level nsfwLevel', { nsfwLevel: 'xxx', ratingV2: null }],
-    [
-      'an unknown label',
-      { ratingV2: { status: 'ok', sexual: { label: 'S7' }, restricted: false } },
-    ],
-    ['no restricted flag', { ratingV2: { status: 'ok', sexual: { label: 'S0' } } }],
-  ])('%s is no rating', async (_name, data) => {
-    invokeScan.mockResolvedValueOnce({ data, response: new Response(null, { status: 200 }) });
-    expect((await rateImage(client, 'b', new AbortController().signal)).rating).toBeNull();
+    ['no verdict (null)', null],
+    ['a verdict that is not a boolean', 'true'],
+    ['a level instead of a verdict', 3],
+  ])('%s is no rating', async (_name, verdict) => {
+    scan.mockResolvedValueOnce(verdict);
+    expect((await rateImage(client, 'b.png', new AbortController().signal)).rating).toBeNull();
   });
 
   it.each(['x@other', 'urn:air:x', 'a/b', 'a b', ''])(
     'an id that is not a plain blob key (%j) is never sent',
     async (id) => {
       expect((await rateImage(client, id, new AbortController().signal)).rating).toBeNull();
-      expect(invokeScan).not.toHaveBeenCalled();
+      expect(refresh).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
     }
   );
 
-  it.each(['abc.jpeg', 'def.webp', 'ghi'])('sends %j as a blob AIR, extension kept', async (id) => {
-    invokeScan.mockResolvedValueOnce(ok('S0'));
-    await rateImage(client, id, new AbortController().signal);
-    expect(invokeScan.mock.calls[0]![0].body.image).toBe(
-      `urn:air:other:other:orchestrator:blob@${id}`
-    );
+  it("a blob the user's token can't refresh is never sent to the main app", async () => {
+    refresh.mockResolvedValueOnce({ data: undefined, error: { status: 404 } });
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+      notSent: true,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('reads a label in either case', async () => {
-    invokeScan.mockResolvedValueOnce(ok('s3'));
-    expect((await rateImage(client, 'b', new AbortController().signal)).rating).toEqual({
-      s: 3,
-      r: false,
-    });
-  });
-
-  it('a 429 is no rating, carrying Retry-After', async () => {
-    invokeScan.mockResolvedValueOnce({
-      data: undefined,
-      response: new Response(null, { status: 429, headers: { 'retry-after': '3' } }),
-    });
-    expect(await rateImage(client, 'b', new AbortController().signal)).toEqual({
+  it("the main app's 429 is no rating, carrying Retry-After", async () => {
+    scan.mockResolvedValueOnce(refused(429, '3'));
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
       rating: null,
       limited: true,
       retryAfterMs: 3000,
+      notSent: true,
     });
   });
 
+  it("the main app's 429 without Retry-After pauses past the job's deadline", async () => {
+    scan.mockResolvedValueOnce(refused(429));
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toMatchObject({
+      limited: true,
+      retryAfterMs: 60_000,
+    });
+  });
+
+  it('an answer without the requested image is no rating, though it may have reached the rater', async () => {
+    scan.mockResolvedValueOnce(Response.json({ results: [{ key: 'other.png', mature: false }] }));
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+    });
+  });
+
+  it('an answer from a main app that predates the bit is refused, so the marker is released', async () => {
+    scan.mockResolvedValueOnce(
+      Response.json({ results: [{ key: 'b.png', output: { ratingV2: { status: 'ok' } } }] })
+    );
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+      notSent: true,
+    });
+  });
+
+  it("the main app's refusal is no rating, and nothing reached the rater", async () => {
+    scan.mockResolvedValueOnce(refused(400));
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+      notSent: true,
+    });
+  });
+
+  it('a 5xx may have reached the rater', async () => {
+    scan.mockResolvedValueOnce(refused(502));
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+    });
+  });
+
+  it('a presign that throws is no rating, and nothing reached the rater', async () => {
+    refresh.mockRejectedValueOnce(new Error('aborted'));
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+      notSent: true,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('a thrown call is no rating', async () => {
-    invokeScan.mockRejectedValueOnce(new Error('socket hang up'));
-    expect((await rateImage(client, 'b', new AbortController().signal)).rating).toBeNull();
+    scan.mockRejectedValueOnce(new Error('socket hang up'));
+    expect((await rateImage(client, 'b.png', new AbortController().signal)).rating).toBeNull();
   });
 });
 
 describe('the rating job', () => {
   it('stores each OK rating and leaves the rest unrated', async () => {
     const rate = vi.fn(async (_c: unknown, key: string) =>
-      key === 'bad' ? { rating: null } : { rating: { s: 1, r: false } }
+      key === 'bad.png' ? { rating: null } : { rating: { mature: false } }
     );
-    const summary = await runRatingJob(client, ['a', 'bad', 'c'], rate);
+    const summary = await runRatingJob(client, ['a.png', 'bad.png', 'c.png'], rate);
     expect(summary).toMatchObject({
       images: 3,
       calls: 3,
@@ -181,8 +301,35 @@ describe('the rating job', () => {
       fallbacks: 1,
       deadlineHit: false,
     });
-    expect(store.get('rating:radio-alpha:a')).toEqual({ s: 1, r: false });
-    expect(store.has('rating:radio-alpha:bad')).toBe(false);
+    expect(store.get('rating:radio-alpha:m1:a.png')).toEqual({ mature: false });
+    expect(store.has('rating:radio-alpha:m1:bad.png')).toBe(false);
+  });
+
+  it('sends only images to the rater, counting the rest as skipped', async () => {
+    const rate = vi.fn(async (_c: unknown, _key: string) => ({ rating: { mature: false } }));
+    const summary = await runRatingJob(
+      client,
+      ['voice.wav', 'clip.mp4', 'Photo.JPG', 'noextension', 'pic.webp'],
+      rate
+    );
+    expect(rate.mock.calls.map(([, key]) => key)).toEqual(['Photo.JPG', 'pic.webp']);
+    expect(summary).toMatchObject({ images: 5, skipped: 3, calls: 2, rated: 2, fallbacks: 0 });
+  });
+
+  it('a blob sent once is not sent again by a later job, whatever came back', async () => {
+    const rate = vi.fn(async () => ({ rating: null }));
+    await runRatingJob(client, ['a.png', 'b.png'], rate);
+    const again = await runRatingJob(client, ['a.png', 'b.png'], rate);
+    expect(rate).toHaveBeenCalledTimes(2);
+    expect(again).toMatchObject({ calls: 0, alreadySent: 2, rated: 0 });
+  });
+
+  it('a blob nothing reached the rater with may be sent again', async () => {
+    const rate = vi.fn(async () => ({ rating: null, notSent: true as const }));
+    await runRatingJob(client, ['a.png'], rate);
+    const again = await runRatingJob(client, ['a.png'], rate);
+    expect(rate).toHaveBeenCalledTimes(2);
+    expect(again).toMatchObject({ calls: 1, alreadySent: 0 });
   });
 
   it('stops at the deadline, leaving unreached images unrated', async () => {
@@ -195,17 +342,17 @@ describe('the rating job', () => {
           signal.addEventListener('abort', () => resolve({ rating: null }));
         })
     );
-    const keys = Array.from({ length: 50 }, (_, i) => `k${i}`);
+    const keys = Array.from({ length: 50 }, (_, i) => `k${i}.png`);
     const summary = await runRatingJob(client, keys, rate, 30);
     expect(summary.deadlineHit).toBe(true);
     expect(summary.calls).toBeLessThan(5);
     expect(summary.rated).toBe(0);
-    expect(store.size).toBe(0);
+    expect([...store.keys()].filter((k) => k.startsWith('rating:'))).toEqual([]);
   });
 
   it('pauses on a 429 instead of hammering the rater', async () => {
     const rate = vi.fn(async () => ({ rating: null, limited: true, retryAfterMs: 10_000 }));
-    const keys = Array.from({ length: 50 }, (_, i) => `k${i}`);
+    const keys = Array.from({ length: 50 }, (_, i) => `k${i}.png`);
     const summary = await runRatingJob(client, keys, rate, 50);
     // Both workers' first calls, then the pause outlasts the deadline.
     expect(rate.mock.calls.length).toBeLessThanOrEqual(2);
@@ -216,18 +363,54 @@ describe('the rating job', () => {
 describe('starting a job', () => {
   it('starts nothing for a user whose job is still running', async () => {
     let release!: () => void;
-    invokeScan.mockImplementation(
+    scan.mockImplementation(
       () =>
         new Promise((resolve) => {
-          release = () => resolve(ok('S0'));
+          release = () => resolve(false);
         })
     );
-    warmDatasetRating('t', 9, ['a']);
-    warmDatasetRating('t', 9, ['b']);
-    await vi.waitFor(() => expect(invokeScan).toHaveBeenCalledTimes(1));
-    expect(invokeScan.mock.calls[0]![0].body.image).toBe('urn:air:other:other:orchestrator:blob@a');
+    warmDatasetRating('t', 9, 1, ['a.png'], 'c');
+    warmDatasetRating('t', 9, 1, ['b.png'], 'c');
+    await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
+    expect(scan.mock.calls[0]![0].key).toBe('a.png');
     release();
-    await vi.waitFor(() => expect(store.get('rating:radio-alpha:a')).toEqual({ s: 0, r: false }));
+    await vi.waitFor(() =>
+      expect(store.get('rating:radio-alpha:m1:a.png')).toEqual({ mature: false })
+    );
+  });
+
+  it('a later view after a call that reached the rater and failed sends nothing again', async () => {
+    scan.mockResolvedValue(refused(502));
+    warmDatasetRating('t', 16, 1, ['a.png'], 'c');
+    await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
+    expect(store.has('sent:radio-alpha:m1:a.png')).toBe(true);
+    // Another user's view of the same blob, so this user's running job can't be what stops it.
+    warmDatasetRating('t', 19, 1, ['a.png'], 'c');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(scan).toHaveBeenCalledTimes(1);
+  });
+
+  it('an image already sent takes no allowance slot from one that was not', async () => {
+    // One send left today, and the first image of the dataset was sent before.
+    await claimDaily('calls', 21, DATASET_RATING_DAILY_CALLS - 1);
+    store.set('sent:radio-alpha:m1:a.png', '1');
+    scan.mockResolvedValue(false);
+    warmDatasetRating('t', 21, 1, ['a.png', 'b.png'], 'c');
+    await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
+    expect(scan.mock.calls[0]![0].key).toBe('b.png');
+  });
+
+  it('a view of an already-rated dataset, which has no unrated keys, makes 0 rate calls', async () => {
+    warmDatasetRating('t', 17, 1, [], 'c');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(refresh).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('with no session to call the main app with, rates nothing', async () => {
+    warmDatasetRating('t', 18, 1, ['a.png'], null);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -247,22 +430,41 @@ describe('the daily allowance', () => {
     expect(await claimDaily('lookups', 3, 1)).toBe(0);
   });
 
+  it('a give-back that lands after the count was evicted leaves it at zero, never below', async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const { granted, giveBack } = await claimDailyReturnable('lookups', 5, 4);
+    expect(granted).toBe(4);
+    store.delete(`daily:lookups:5:${day}`);
+    await giveBack(3);
+    expect(store.get(`daily:lookups:5:${day}`)).toBe(0);
+  });
+
+  it('claims allowance only for the images in a dataset', async () => {
+    scan.mockResolvedValue(false);
+    warmDatasetRating('t', 14, 1, ['a.wav', 'b.mp4', 'c.png'], 'c');
+    await vi.waitFor(() =>
+      expect(store.get('rating:radio-alpha:m1:c.png')).toEqual({ mature: false })
+    );
+    expect(scan).toHaveBeenCalledTimes(1);
+    const day = new Date().toISOString().slice(0, 10);
+    expect(store.get(`daily:calls:14:${day}`)).toBe(1);
+  });
+
   it('a job over the allowance rates only what was granted', async () => {
     await claimDaily('calls', 11, DATASET_RATING_DAILY_CALLS - 1);
-    invokeScan.mockResolvedValue(ok('S0'));
-    warmDatasetRating('t', 11, ['a', 'b', 'c']);
-    await vi.waitFor(() => expect(store.get('rating:radio-alpha:a')).toEqual({ s: 0, r: false }));
-    expect(invokeScan).toHaveBeenCalledTimes(1);
+    scan.mockResolvedValue(false);
+    warmDatasetRating('t', 11, 1, ['a.png', 'b.png', 'c.png'], 'c');
+    await vi.waitFor(() =>
+      expect(store.get('rating:radio-alpha:m1:a.png')).toEqual({ mature: false })
+    );
+    expect(scan).toHaveBeenCalledTimes(1);
   });
 });
 
 it('gives back the allowance for images a job did not reach', async () => {
   // Every call is rate-limited past the deadline, so each worker makes one call and the rest go unreached.
-  invokeScan.mockResolvedValue({
-    data: undefined,
-    response: new Response(null, { status: 429, headers: { 'retry-after': '60' } }),
-  });
-  warmDatasetRating('t', 12, ['a', 'b', 'c', 'd', 'e', 'f'], 30);
+  scan.mockImplementation(async () => refused(429, '60'));
+  warmDatasetRating('t', 12, 1, ['a.png', 'b.png', 'c.png', 'd.png', 'e.png', 'f.png'], 'c', 30);
   const day = new Date().toISOString().slice(0, 10);
   await vi.waitFor(() => expect(store.get(`daily:calls:12:${day}`)).toBe(2));
 });
@@ -272,15 +474,12 @@ it('gives the allowance back to the day it was claimed on, across UTC midnight',
   try {
     vi.setSystemTime(new Date('2026-11-12T23:59:59.900Z'));
     // The first call lands after midnight; every call is rate-limited past the deadline.
-    invokeScan.mockImplementation(async () => {
+    scan.mockImplementation(async () => {
       await Promise.resolve(); // both workers have made their call by now
       vi.setSystemTime(new Date('2026-11-13T00:00:00.100Z'));
-      return {
-        data: undefined,
-        response: new Response(null, { status: 429, headers: { 'retry-after': '60' } }),
-      };
+      return refused(429, '60');
     });
-    warmDatasetRating('t', 13, ['a', 'b', 'c', 'd', 'e', 'f'], 30);
+    warmDatasetRating('t', 13, 1, ['a.png', 'b.png', 'c.png', 'd.png', 'e.png', 'f.png'], 'c', 30);
     await vi.waitFor(() => expect(store.get('daily:calls:13:2026-11-12')).toBe(2));
     expect(store.has('daily:calls:13:2026-11-13')).toBe(false);
   } finally {

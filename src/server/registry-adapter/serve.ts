@@ -1,7 +1,7 @@
 /**
  * The HTTP binding of the registry protocol (the registry spec, "Bindings" → "HTTP"):
- * `GET /subscribe?schema=&cursor=&urn=&filter=` streaming `text/event-stream`, plus `/healthz`
- * for a process supervisor. Everything between request and events is the shared core
+ * `GET /subscribe?schema=&cursor=&urn=&filter=&meta=` streaming `text/event-stream`, plus
+ * `/healthz` for a process supervisor. Everything between request and events is the shared core
  * (`subscription.ts`); this file only maps the request in and the events and errors out.
  *
  *   - Each event is an SSE event of its type; one with a cursor field also carries it as the SSE
@@ -40,8 +40,14 @@ import {
 import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-adapter/limits';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import { HTTP_STATUS, ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import type { PolicyShadow } from '~/server/registry-adapter/policy-shadow';
+import { runShadow } from '~/server/registry-adapter/policy-shadow';
 import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
-import { clientAddress, regionRestricted } from '~/server/registry-adapter/request-origin';
+import {
+  clientAddress,
+  regionRestricted,
+  subscriptionRegionLine,
+} from '~/server/registry-adapter/request-origin';
 import type { EventSink } from '~/server/registry-adapter/subscription';
 import {
   SLOW_CONSUMER_MS,
@@ -198,6 +204,16 @@ export type ServeOptions = {
    * region at all): the site's own rule (`request-origin.ts`) unless replaced.
    */
   regionRestricted?: (origin: RequestOrigin) => boolean;
+  /**
+   * Called with one line per subscription once its token is accepted: its region decision
+   * (`regionLine`).
+   */
+  onRegion?: (line: string) => void;
+  /**
+   * Compares each subscription's decision with the content-policy service's, without waiting for
+   * it and without changing it (`policy-shadow.ts`). Without it, nothing is compared.
+   */
+  policyShadow?: PolicyShadow;
 };
 
 export function handleRequest(
@@ -224,9 +240,11 @@ export function handleRequest(
         cursor: resumeCursor(req, url.searchParams),
         urns: url.searchParams.getAll('urn'),
         filter: url.searchParams.get('filter'),
+        meta: url.searchParams.get('meta'),
       });
       const origin: RequestOrigin = {
         headers: req.headers,
+        meta: request.meta,
         // Optional: a request handed to `handleRequest` directly need not carry a socket.
         remoteAddress: req.socket?.remoteAddress,
       };
@@ -241,6 +259,8 @@ export function handleRequest(
         }
       );
       slot?.claim(principal.subject);
+      opts.onRegion?.(subscriptionRegionLine('http', origin, restricted));
+      runShadow(opts.policyShadow, { origin, principal, held: restricted(origin) });
       const open = openStream(res, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       stream = open;
       // The stream ends with `invalid_token` once its token does (auth extension, Relays 4).
@@ -263,7 +283,32 @@ export function handleRequest(
   };
 }
 
-export function createRegistryServer(adapter: Adapter, opts: ServeOptions = {}): Server {
+/**
+ * How long an idle keep-alive connection is held open, in ms. Above the 90 s a reverse proxy in
+ * front holds its idle upstream connections: were it shorter (Node's default is 5 s), the proxy
+ * could reuse a socket this server had just closed and answer 502.
+ */
+export const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 100_000;
+
+/**
+ * `KEEP_ALIVE_TIMEOUT` in ms (same env var as `scripts/trpc-server/server.cjs`). An unset, zero,
+ * negative or non-numeric value is the default above, never Node's 5 s.
+ */
+export function keepAliveTimeoutFromEnv(env: Record<string, string | undefined>): number {
+  const ms = parseInt(env.KEEP_ALIVE_TIMEOUT ?? '', 10);
+  if (Number.isNaN(ms) || !Number.isFinite(ms) || ms <= 0) return DEFAULT_KEEP_ALIVE_TIMEOUT_MS;
+  return ms;
+}
+
+export function createRegistryServer(
+  adapter: Adapter,
+  opts: ServeOptions & { keepAliveTimeoutMs?: number } = {}
+): Server {
   const handle = handleRequest(adapter, opts);
-  return createServer((req, res) => void handle(req, res));
+  const server = createServer((req, res) => void handle(req, res));
+  server.keepAliveTimeout = opts.keepAliveTimeoutMs ?? DEFAULT_KEEP_ALIVE_TIMEOUT_MS;
+  // Strictly above keepAliveTimeout, so a request arriving on a connection about to idle out
+  // is not cut off by the headers timeout first.
+  server.headersTimeout = server.keepAliveTimeout + 1000;
+  return server;
 }

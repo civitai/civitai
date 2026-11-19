@@ -125,6 +125,12 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
       'parseSubjectUserId(claims.sub) on claims stamped by withBlockScope, passed in by the document-store route handler',
     why: 'The document-store resolver behind /api/v1/blocks/storage: the RUN gate on the viewer whose documents a request reads or writes, the same gate the legacy per-viewer storage path applies. The subject is the one the store keys private documents and authorship on.',
   },
+  'src/server/services/apps/data-read-grant.ts': {
+    calls: 1,
+    selfBinds:
+      'reader.userId, which the CALLER supplies. doc-store-access.ts passes `via` (its consumer from a token withBlockScope verified) and never reaches this call; a caller without `via` must pass the user of a token it verified itself',
+    why: "The one collection-read predicate (decideCollectionRead): reading an app's stored data needs the reader to be allowed to run apps at all, the same RUN gate the document-store resolver applies. Skipped through `via`, where resolveStorageAccess already applied it to the same viewer.",
+  },
   'src/server/services/blocks/block-media-serving.ts': {
     calls: 1,
     selfBinds:
@@ -217,7 +223,8 @@ describe('assertAppBlocksEnabledForTokenUser — production call-site ledger', (
     // and `user-settings.service.ts` (the extracted viewer-settings write body).
     // 4 → 5: `apps/doc-store-access.ts` (the document-store resolver).
     // 5 → 6: `block-media-serving.ts` (the workflow media read body).
-    expect(consumers.length).toBe(6);
+    // 6 → 7: `apps/data-read-grant.ts` (the collection-read predicate).
+    expect(consumers.length).toBe(7);
     expect(
       importsSharedGate(readFileSync(join(ROOT, 'src/pages/api/v1/blocks/me.ts'), 'utf8'))
     ).toBe(true);

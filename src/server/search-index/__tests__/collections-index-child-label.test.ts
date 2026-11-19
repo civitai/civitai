@@ -41,11 +41,11 @@ async function records() {
 }
 
 describe('collections search index and child-tagged images', () => {
-  it('leaves out a cover or item image above PG13 carrying a child tag, with its cover string', async () => {
+  it('keeps a cover or item image above PG13 carrying a child tag, with its cover string', async () => {
     expect(await records()).toEqual([
-      { id: 1, image: null, images: [], srcs: [] },
+      { id: 1, image: 100, images: [], srcs: [] },
       { id: 2, image: 200, images: [], srcs: [] },
-      { id: 3, image: null, images: [301, 302], srcs: ['src-301'] },
+      { id: 3, image: null, images: [300, 301, 302], srcs: ['src-300', 'src-301'] },
     ]);
   });
 });

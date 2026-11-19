@@ -106,8 +106,7 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TABLE "User" (
       "id" integer PRIMARY KEY, "username" text, "image" text,
-      "bannedAt" timestamptz, "deletedAt" timestamptz
-    );
+      "bannedAt" timestamptz, "deletedAt" timestamptz, "profilePictureId" int);
     CREATE TABLE "Image" (
       "id" integer PRIMARY KEY, "url" text NOT NULL, "userId" integer NOT NULL,
       "nsfwLevel" integer NOT NULL DEFAULT 0, "ingestion" text NOT NULL DEFAULT 'Scanned',

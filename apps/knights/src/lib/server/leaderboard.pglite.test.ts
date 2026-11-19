@@ -117,15 +117,21 @@ describe('queryBoard', () => {
     expect(await ids()).toEqual([3, 5, 7]);
   });
 
-  it('shows the profile picture at any rated level, but not unrated or Blocked', async () => {
+  it('shows the profile picture at any rated level, but not unrated, Blocked or held csam or minor', async () => {
     await member(1, 'Knight', 3);
     await member(2, 'Knight', 2);
     await member(3, 'Knight', 1);
     await member(4, 'Knight', 1);
     await member(5, 'Knight', 1);
+    await member(6, 'Knight', 1);
+    await member(7, 'Knight', 1);
+    await member(8, 'Knight', 1);
     await pg.exec(
-      `INSERT INTO "Image" ("id","url","nsfwLevel") VALUES (50,'pic-pg',1),(51,'pic-blocked',32),(52,'pic-x',8),(53,'pic-unrated',0)`
+      `INSERT INTO "Image" ("id","url","nsfwLevel","needsReview") VALUES (50,'pic-pg',1,NULL),(51,'pic-blocked',32,NULL),(52,'pic-x',8,NULL),(53,'pic-unrated',0,NULL),(54,'pic-csam',1,'csam'),(55,'pic-minor',1,'minor'),(56,'pic-poi',1,'poi')`
     );
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=54 WHERE "id"=6`);
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=55 WHERE "id"=7`);
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=56 WHERE "id"=8`);
     await pg.exec(`UPDATE "User" SET "profilePictureId"=50 WHERE "id"=1`);
     await pg.exec(`UPDATE "User" SET "profilePictureId"=51 WHERE "id"=2`);
     await pg.exec(`UPDATE "User" SET "profilePictureId"=52 WHERE "id"=3`);
@@ -134,7 +140,137 @@ describe('queryBoard', () => {
 
     const { rows } = await queryBoard(db, NOW);
 
-    expect(rows.map((r) => r.image)).toEqual(['pic-pg', 'img-2', 'pic-x', null, 'img-5']);
+    expect(rows.map((r) => r.image)).toEqual([
+      'pic-pg',
+      'img-2',
+      'pic-x',
+      null,
+      'img-5',
+      'img-6',
+      'img-7',
+      'pic-poi',
+    ]);
+  });
+
+  it('drops a legacy User.image that names its held picture, and keeps any other', async () => {
+    await member(1, 'Knight', 3);
+    await member(2, 'Knight', 2);
+    await member(3, 'Knight', 1);
+    await pg.exec(
+      `INSERT INTO "Image" ("id","url","nsfwLevel","needsReview") VALUES (60,'pic-held',1,'csam'),(61,'pic-minor',1,'minor')`
+    );
+    await pg.exec(
+      `UPDATE "User" SET "profilePictureId"=60, "image"='https://cdn.example/PIC-HELD/width=96' WHERE "id"=1`
+    );
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=61, "image"='pic%2dminor' WHERE "id"=2`);
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=61 WHERE "id"=3`);
+
+    const { rows } = await queryBoard(db, NOW);
+
+    expect(rows.map((r) => r.image)).toEqual([null, null, 'img-3']);
+  });
+
+  it('serves no picture that carries a block marker, and drops a legacy User.image naming one', async () => {
+    await member(1, 'Knight', 4);
+    await member(2, 'Knight', 3);
+    await member(3, 'Knight', 2);
+    await member(4, 'Knight', 1);
+    await pg.exec(
+      `INSERT INTO "Image" ("id","url","nsfwLevel","ingestion","blockedFor") VALUES
+        (70,'pic-ingestion-blocked',1,'Blocked',NULL),
+        (71,'pic-reason',1,'Scanned','moderated'),
+        (72,'pic-named',1,'Blocked','moderated'),
+        (73,'pic-ok',1,'Scanned',NULL)`
+    );
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=70 WHERE "id"=1`);
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=71 WHERE "id"=2`);
+    await pg.exec(
+      `UPDATE "User" SET "profilePictureId"=72, "image"='https://cdn.example/pic-named/width=96' WHERE "id"=3`
+    );
+    // Control: the same shape with no marker is served.
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=73 WHERE "id"=4`);
+
+    const { rows } = await queryBoard(db, NOW);
+
+    expect(rows.map((r) => r.image)).toEqual(['img-1', 'img-2', null, 'pic-ok']);
+  });
+
+  it("drops a legacy User.image naming another of the user's own images that is blocked or held", async () => {
+    await member(1, 'Knight', 3);
+    await member(2, 'Knight', 2);
+    await member(3, 'Knight', 1);
+    await pg.exec(
+      `INSERT INTO "Image" ("id","url","nsfwLevel","ingestion","blockedFor","needsReview","userId") VALUES
+        (80,'4f9a2c1e-0b7d-4c3a-9e21-5d6f7a8b9c01',1,'Scanned','moderated',NULL,1),
+        (81,'5a0b3d2f-1c8e-4d4b-8f32-6e7a8b9c0d12',1,'Scanned',NULL,'minor',2),
+        (82,'6b1c4e3a-2d9f-4e5c-9a43-7f8b9c0d1e23',1,'Scanned',NULL,NULL,3)`
+    );
+    await pg.exec(`UPDATE "User" SET "image"='4f9a2c1e-0b7d-4c3a-9e21-5d6f7a8b9c01' WHERE "id"=1`);
+    await pg.exec(`UPDATE "User" SET "image"='5A0B3D2F-1C8E-4D4B-8F32-6E7A8B9C0D12' WHERE "id"=2`);
+    // Control: the same shape on an image that is neither blocked nor held is kept.
+    await pg.exec(`UPDATE "User" SET "image"='6b1c4e3a-2d9f-4e5c-9a43-7f8b9c0d1e23' WHERE "id"=3`);
+
+    const { rows } = await queryBoard(db, NOW);
+
+    expect(rows.map((r) => r.image)).toEqual([null, null, '6b1c4e3a-2d9f-4e5c-9a43-7f8b9c0d1e23']);
+  });
+
+  it('serves a picture only once scanned or locked at a rating that stands, and no mature one on a restricted model', async () => {
+    for (const [id, votes] of [
+      [1, 6],
+      [2, 5],
+      [3, 4],
+      [4, 3],
+      [5, 2],
+      [6, 1],
+    ])
+      await member(id, 'Knight', votes);
+    await pg.exec(
+      `INSERT INTO "Image" ("id","url","nsfwLevel","ingestion","nsfwLevelLocked","scanJobs","modelRestricted") VALUES
+        (90,'pic-pending',1,'Pending',false,NULL,false),
+        (91,'pic-locked',1,'Pending',true,NULL,false),
+        (92,'pic-failed',1,'Error',true,'{"permanentFailure": true}',false),
+        (93,'pic-restricted-r',4,'Scanned',false,NULL,true),
+        (94,'pic-r',4,'Scanned',false,NULL,false),
+        (95,'pic-restricted-pg',1,'Scanned',false,NULL,true)`
+    );
+    for (const [user, picture] of [
+      [1, 90],
+      [2, 91],
+      [3, 92],
+      [4, 93],
+      [5, 94],
+      [6, 95],
+    ])
+      await pg.query(`UPDATE "User" SET "profilePictureId"=$2 WHERE "id"=$1`, [user, picture]);
+
+    const { rows } = await queryBoard(db, NOW);
+
+    expect(rows.map((r) => r.image)).toEqual([
+      'img-1',
+      'pic-locked',
+      'img-3',
+      'img-4',
+      // Controls: a mature picture on an unrestricted model, and a PG one on a restricted model.
+      'pic-r',
+      'pic-restricted-pg',
+    ]);
+  });
+
+  it('drops a legacy User.image naming an own image by any block marker, in any case', async () => {
+    await member(1, 'Knight', 2);
+    await member(2, 'Knight', 1);
+    await pg.exec(
+      `INSERT INTO "Image" ("id","url","nsfwLevel","ingestion","userId") VALUES
+        (96,'7c2d5f4b-3e0a-4f6d-8b54-8a9c0d1e2f34',1,'Blocked',1),
+        (97,'8D3E6A5C-4F1B-4A7E-9C65-9B0D1E2F3A45',32,'Scanned',2)`
+    );
+    await pg.exec(`UPDATE "User" SET "image"='7c2d5f4b-3e0a-4f6d-8b54-8a9c0d1e2f34' WHERE "id"=1`);
+    await pg.exec(`UPDATE "User" SET "image"='8d3e6a5c-4f1b-4a7e-9c65-9b0d1e2f3a45' WHERE "id"=2`);
+
+    const { rows } = await queryBoard(db, NOW);
+
+    expect(rows.map((r) => r.image)).toEqual([null, null]);
   });
 
   it('reads each rank badge cosmetic image from the Trophy cosmetics, Paladin included', async () => {

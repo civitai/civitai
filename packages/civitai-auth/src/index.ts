@@ -23,6 +23,7 @@ export { createImpersonationClient } from './impersonation-client'; // moderator
 export { probeInternalParity } from './hub'; // does the hub accept this app's service credential
 export type { ImpersonationClient, ImpersonationResult } from './impersonation-client';
 export { createSpokeGuard } from './spoke-guard'; // framework-agnostic first-party app session+role gate
+export { createSlotTally, type SlotCounts } from './slot-tally';
 export {
   MODERATION_ACCOUNT_USERNAME,
   isModerationAccountUser,
@@ -50,7 +51,6 @@ export {
   clearPostLoginMarker,
   loginRetryCookie,
   clearLoginRetryCookie,
-  otherSlotExpiries,
   SESSION_REAUTH_HEADER,
 } from './spoke-signin'; // a first-party app's own sign-in routes
 export type { SpokeSignInEvent, SpokeSignInOptions, SpokeCallbackOptions } from './spoke-signin';
@@ -105,7 +105,14 @@ export {
   legacySessionCookieName,
   allCookieNames,
   sessionCookieMode,
+  siteCookieMode,
   legacyCookieReadEnabled,
+  hostOnlySite,
+  otherSlotExpiries,
+  siteCookieHeader,
+  siteCookieJar,
+  cookiePairName,
+  expireCookie,
   hostSessionCookieName,
   hostDeviceCookieName,
   sessionCookieNameForSlot,

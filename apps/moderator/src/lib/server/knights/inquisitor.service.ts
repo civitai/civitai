@@ -1,7 +1,7 @@
 import type { ExpressionBuilder, Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
-import { gradeKnightsVotes } from '@civitai/db/knights';
+import { ESCALATED_FROM_LEVEL_META_KEY, gradeKnightsVotes } from '@civitai/db/knights';
 import { NsfwLevel } from '@civitai/shared';
 import {
   KNIGHTS_ESCALATION_REASONS,
@@ -15,7 +15,12 @@ import { INQUISITOR_FILTERS, type InquisitorFilter } from '$lib/knights/inquisit
 import { isRatingLevel } from '$lib/nsfw-levels';
 import { dbRead, dbWrite } from '../db';
 import { updateImageNsfwLevel } from '../image-nsfw-level';
-import { consensusBlockReason, type ConsensusBlockReason } from './block-reason';
+import {
+  consensusBlockReason,
+  isKnightsBlockReason,
+  knightsBlockReasonLabel,
+  type ConsensusBlockReason,
+} from './block-reason';
 
 export const INQUISITOR_QUEUE_LIMIT = 100;
 
@@ -39,6 +44,8 @@ export type InquisitorItem = {
   escalationReason: KnightsEscalationReason | null;
   source: string;
   currentLevel: number;
+  /** The image's level when the item reached the Inquisitors; null on items escalated before it was recorded. */
+  escalatedFromLevel: number | null;
   locked: boolean;
   hasBlockMarker: boolean;
   blockedFor: string | null;
@@ -156,6 +163,9 @@ export async function getInquisitorQueue(
       'img.nsfwLevelLocked as locked',
       'img.ingestion',
       'img.blockedFor',
+      sql<number | null>`(i.meta ->> ${sql.lit(ESCALATED_FROM_LEVEL_META_KEY)})::int`.as(
+        'escalatedFromLevel'
+      ),
     ])
     .orderBy('i.priority', 'asc')
     .orderBy('i.createdAt', 'asc')
@@ -254,13 +264,33 @@ async function release(itemId: number, moderatorId: number, now: Date) {
     .execute();
 }
 
+export type InquisitorRuling = { level: number; blockReason?: string | null };
+
+/** Why a ruling cannot be recorded, or null: Blocked needs a reason from the Knights list, as a Knight's Blocked vote does, and any other level carries none. */
+export function rulingProblem({ level, blockReason }: InquisitorRuling): string | null {
+  if (!isRatingLevel(level)) return 'Pick a rating.';
+  const given = blockReason !== null && blockReason !== undefined && blockReason !== '';
+  if (level === NsfwLevel.Blocked) {
+    if (!given) return 'Pick a reason for blocking.';
+    return isKnightsBlockReason(blockReason) ? null : 'That block reason is not on the list.';
+  }
+  return given ? 'Only a Blocked ruling takes a block reason.' : null;
+}
+
 export async function ruleOnInquisitorItem(
   itemId: number,
-  level: number,
+  ruling: InquisitorRuling,
   moderatorId: number,
   now: Date = new Date()
 ): Promise<RulingOutcome> {
-  if (!isRatingLevel(level)) return { ok: false, error: 'Pick a rating.' };
+  const problem = rulingProblem(ruling);
+  if (problem) return { ok: false, error: problem };
+  const { level } = ruling;
+  // Written where every moderator rating records why it was set; other levels leave it empty, as before.
+  const reason =
+    level === NsfwLevel.Blocked && isKnightsBlockReason(ruling.blockReason)
+      ? `Inquisitor ruling: ${knightsBlockReasonLabel(ruling.blockReason)}`
+      : undefined;
 
   const claimed = await claim(itemId, moderatorId, now);
   if (!claimed) {
@@ -287,7 +317,12 @@ export async function ruleOnInquisitorItem(
       };
     }
 
-    await updateImageNsfwLevel({ id: claimed.imageId, nsfwLevel: level, userId: moderatorId });
+    await updateImageNsfwLevel({
+      id: claimed.imageId,
+      nsfwLevel: level,
+      ...(reason && { reason }),
+      userId: moderatorId,
+    });
   } catch (error) {
     await release(itemId, moderatorId, now).catch(() => undefined);
     throw error;

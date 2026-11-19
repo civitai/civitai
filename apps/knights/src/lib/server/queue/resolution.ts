@@ -67,6 +67,27 @@ export function decideChoice(cast: WeightedAnswer[], rule: DecisionRule): Decisi
   return votes.length >= rule.maxVotes ? { kind: 'split' } : { kind: 'pending' };
 }
 
+/**
+ * The level a rating that reached no consensus at its last stage is re-rated to: the answer with the most votes, counted (not
+ * weighted, unlike `decideChoice`), a tie going to the highest level. A held player's weight-0 vote is not counted. Null with no
+ * counted vote.
+ */
+export function mostVotedLevel(cast: WeightedAnswer[]): string | null {
+  const counts = new Map<string, number>();
+  for (const vote of cast) {
+    if (vote.weight > 0) counts.set(vote.answer, (counts.get(vote.answer) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [answer, count] of counts) {
+    if (count > bestCount || (count === bestCount && Number(answer) > Number(best))) {
+      best = answer;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
 // Levels are bit flags, so a "step" is a power of two.
 export function isExcessiveDownRating(current: number, winner: number): boolean {
   if (current <= 0 || winner <= 0 || winner >= current) return false;
@@ -97,6 +118,22 @@ export type WritebackDecision =
   | { kind: 'inquisitor'; reason: KnightsWritebackReason }
   | { kind: 'moderator'; level: number };
 
+const isKnightsLocked = (image: Pick<ImageState, 'locked' | 'lockReason'>) =>
+  image.locked && image.lockReason === KNIGHTS_VOTE_NSFW_LEVEL_REASON;
+
+/**
+ * A lock other than Knights' own is a moderator's ruling: its level, or the Inquisitors when it carries no usable level.
+ * `moderatorRuledImageSql` (queue.service.ts) is its SQL form with `hasBlockMarker`; change them together.
+ */
+export function moderatorRuling(
+  image: Pick<ImageState, 'locked' | 'lockReason' | 'nsfwLevel'>
+): Extract<WritebackDecision, { kind: 'moderator' | 'inquisitor' }> | null {
+  if (!image.locked || isKnightsLocked(image)) return null;
+  return image.nsfwLevel > 0
+    ? { kind: 'moderator', level: image.nsfwLevel }
+    : { kind: 'inquisitor', reason: 'moderator-locked' };
+}
+
 /**
  * Whether a settled rating may still be written. `resolvedFromLevel` is the level the players'
  * image had when they settled; an image that has since moved is a moderator's to look at. An image
@@ -109,15 +146,11 @@ export function decideWriteback(
 ): WritebackDecision {
   if (!image) return { kind: 'missing' };
   if (hasBlockMarker(image)) return { kind: 'inquisitor', reason: 'blocked' };
-  const knightsLocked = image.locked && image.lockReason === KNIGHTS_VOTE_NSFW_LEVEL_REASON;
-  if (knightsLocked && String(image.nsfwLevel) === settled.resolvedValue) {
+  if (isKnightsLocked(image) && String(image.nsfwLevel) === settled.resolvedValue) {
     return { kind: 'already-applied' };
   }
-  if (image.locked && !knightsLocked) {
-    return image.nsfwLevel > 0
-      ? { kind: 'moderator', level: image.nsfwLevel }
-      : { kind: 'inquisitor', reason: 'moderator-locked' };
-  }
+  const ruling = moderatorRuling(image);
+  if (ruling) return ruling;
   if (settled.resolvedFromLevel !== null && image.nsfwLevel !== settled.resolvedFromLevel) {
     return { kind: 'inquisitor', reason: 'level-moved' };
   }

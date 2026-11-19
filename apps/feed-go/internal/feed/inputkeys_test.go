@@ -97,7 +97,7 @@ func TestParseUnknownKeyFallsBack(t *testing.T) {
 	for input, want := range map[string]string{
 		`{"collectionId":5,"someNewFilter":1}`: "input-collectionId",
 		`{"someNewFilter":1,"userId":7}`:       "input-userId",
-		`{"tags":[3],"aNewKey":true}`:          "input-tags",
+		`{"hidden":true,"aNewKey":true}`:       "input-hidden",
 		`{"userId":null,"someNewFilter":1}`:    "input-unknown-key",
 	} {
 		if _, err := Parse(parseObj(t, input)); fallback.Reason(err) != want {

@@ -3,6 +3,7 @@ import { env } from '$env/dynamic/private';
 import { db } from '$lib/server/db';
 import { isJobRequest } from '$lib/server/jobs-auth';
 import { metrics } from '$lib/server/metrics';
+import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { storedSettings } from '$lib/server/settings/runtime';
 import { harvestSettings } from '$lib/server/trials/config';
 import { runHarvestJob } from '$lib/server/trials/harvest.service';
@@ -18,7 +19,8 @@ export const POST: RequestHandler = async ({ request }) => {
         `knights: KNIGHTS_HARVEST="${settings.unrecognized}" is not on/true/1 or off/false/0; paused`
       );
     }
-    const result = await runHarvestJob(db, { now: new Date(), settings });
+    const { probationShare } = await hiddenSettings();
+    const result = await runHarvestJob(db, { now: new Date(), settings, probationShare });
     if ('skippedStale' in result && result.skippedStale > 0) {
       console.warn(`knights: harvest skipped ${result.skippedStale} rulings older than its window`);
       metrics.harvestSkipped(result.skippedStale);

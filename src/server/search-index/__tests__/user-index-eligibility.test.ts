@@ -3,6 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 // Pure string helpers, no module graph — safe to import statically above the vi.mock below.
 import { norm, renderTag, whereClausesOf } from './sql-shape.test-utils';
 
+/** The WHERE clauses of a statement, less the one inside the `image` column's own subquery. */
+const eligibilityClausesOf = (statement: string) =>
+  whereClausesOf(
+    norm(statement).replace(/CASE WHEN \(?EXISTS \(.*?\) THEN NULL ELSE u\.image END/, 'u.image')
+  );
+
 /**
  * WHO BELONGS IN THE USER SEARCH INDEX.
  *
@@ -91,7 +97,9 @@ describe('user search index eligibility', () => {
         pullUsersData(ctx as never, { type: 'update', ids: [11, 22] }, 0)
       );
       expect(statements).toHaveLength(1);
-      expect(statements.flatMap(whereClausesOf)).toEqual([`${ELIGIBILITY} AND u.id IN (?,?)`]);
+      expect(statements.flatMap(eligibilityClausesOf)).toEqual([
+        `${ELIGIBILITY} AND u.id IN (?,?)`,
+      ]);
     });
 
     it('a full RANGE scan filters banned accounts', async () => {
@@ -99,7 +107,7 @@ describe('user search index eligibility', () => {
         pullUsersData(ctx as never, { type: 'new', startId: 5, endId: 9 }, 0)
       );
       expect(statements).toHaveLength(1);
-      expect(statements.flatMap(whereClausesOf)).toEqual([
+      expect(statements.flatMap(eligibilityClausesOf)).toEqual([
         `${ELIGIBILITY} AND u.id >= ? AND u.id <= ?`,
       ]);
     });
@@ -110,7 +118,7 @@ describe('user search index eligibility', () => {
       );
       expect(statements).toHaveLength(1);
       // Two sub-selects, and a fix applied to only one of them is the obvious half-fix.
-      expect(statements.flatMap(whereClausesOf)).toEqual([
+      expect(statements.flatMap(eligibilityClausesOf)).toEqual([
         `${ELIGIBILITY} AND u."createdAt" >= ?`,
         `${ELIGIBILITY} AND u."createdAt" >= ?`,
       ]);
@@ -119,7 +127,7 @@ describe('user search index eligibility', () => {
     it('…and so does a full rebuild, which passes no narrowing clause at all', async () => {
       const statements = await captureQueries((ctx) => prepareUsersBatches(ctx as never));
       expect(statements).toHaveLength(1);
-      expect(statements.flatMap(whereClausesOf)).toEqual([ELIGIBILITY, ELIGIBILITY]);
+      expect(statements.flatMap(eligibilityClausesOf)).toEqual([ELIGIBILITY, ELIGIBILITY]);
     });
 
     /**

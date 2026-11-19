@@ -6,8 +6,9 @@ import { constants } from '~/server/common/constants';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import {
+  fallbackUserImage,
   servableProfilePicture,
-  withoutCsamPicture,
+  withoutHeldPicture,
 } from '~/server/services/profile-picture.servable';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
@@ -78,15 +79,33 @@ export type UserCreatorRead = { user: UserCreatorUser; modelCount: number } | nu
 
 type CreatorRow = NonNullable<Awaited<ReturnType<typeof getUserCreatorRow>>>;
 
+/** The picture fields `fallbackUserImage` compares a row's `User.image` against. */
+export const fallbackPictureOf = (
+  row: Pick<
+    CreatorRow,
+    | 'profilePictureUrl'
+    | 'profilePictureNeedsReview'
+    | 'profilePictureIngestion'
+    | 'profilePictureNsfwLevel'
+    | 'profilePictureBlockedFor'
+  >
+) => ({
+  url: row.profilePictureUrl,
+  needsReview: row.profilePictureNeedsReview,
+  ingestion: row.profilePictureIngestion,
+  nsfwLevel: row.profilePictureNsfwLevel,
+  blockedFor: row.profilePictureBlockedFor,
+});
+
 /**
  * The `profileImageSelect` payload from a row's `ProfilePicture` columns, or null for a picture
- * flagged `csam`; also used by the user profile read (`getUserWithProfileRow`), which selects the
+ * under an owner-hidden review hold; also used by the user profile read (`getUserWithProfileRow`), which selects the
  * same columns.
  */
 export function profilePictureOf(
   row: Pick<CreatorRow, Extract<keyof CreatorRow, `profilePicture${string}`>>
 ) {
-  return withoutCsamPicture(
+  return withoutHeldPicture(
     row.profilePictureId !== null
       ? {
           id: row.profilePictureId,
@@ -135,7 +154,7 @@ export async function readUserCreatorViaKysely(
 
   const user = {
     id: row.id,
-    image: row.image,
+    image: fallbackUserImage(row.image, fallbackPictureOf(row)),
     username: row.username,
     muted: row.muted,
     bannedAt: row.bannedAt,
@@ -171,7 +190,8 @@ export async function readUserCreatorViaKysely(
     profilePicture: servableProfilePicture(
       profilePictureOf(row),
       row.profilePictureNeedsReview,
-      row.profilePictureModelRestricted
+      row.profilePictureModelRestricted,
+      row.profilePictureBlockedFor
     ),
   };
 

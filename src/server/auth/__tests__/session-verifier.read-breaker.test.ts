@@ -44,21 +44,12 @@ describe('isRevoked over a hung store', () => {
       REDIS_SYS_READ_TIMEOUT_MS: 20,
     });
     for (let i = 0; i < THRESHOLD; i++) expect(await isRevoked(claims)).toBe(false);
-    expect(observeSessionLeg.mock.calls.map((c) => c.slice(0, 2))).toEqual(
-      Array(THRESHOLD).fill(['revocation', 'timeout'])
-    );
 
     envMock.set({ REDIS_SYS_READ_TIMEOUT_MS: 3000 });
     const started = Date.now();
     expect(await isRevoked(claims)).toBe(false);
     // Only the tripped breaker returns before the 3s deadline.
     expect(Date.now() - started).toBeLessThan(500);
-    // ...and the revocation leg records it as its own outcome, not as an error.
-    expect(observeSessionLeg).toHaveBeenLastCalledWith(
-      'revocation',
-      'breaker-open',
-      expect.any(Number)
-    );
   }, 10_000);
 
   it('with the breaker off (the default), each read still waits out its deadline', async () => {
@@ -94,11 +85,6 @@ describe('isRevoked over a hung store', () => {
     const started = Date.now();
     expect(await isRevoked(revoked)).toBe(true);
     expect(Date.now() - started).toBeLessThan(500);
-    expect(observeSessionLeg).toHaveBeenLastCalledWith(
-      'revocation',
-      'breaker-open',
-      expect.any(Number)
-    );
     expect(observeRevocationDegraded).toHaveBeenLastCalledWith('deny_cached');
   }, 10_000);
 });

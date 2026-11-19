@@ -17,6 +17,8 @@ export const MAX_CANDIDATE_OFFSET = 2000;
 // A filter shape Qdrant has not served recently can take 10 s on its first query (vectors, graph
 // and payload indexes are on disk), then well under 1 s.
 const SEARCH_SERVICE_TIMEOUT_MS = 20_000;
+// Above the search service's own orchestrator wait, so a slow image embed is not paid twice.
+const SIMILAR_IMAGE_TIMEOUT_MS = 35_000;
 
 /**
  * The viewer's content gate, which every query carries. Challenges and crucibles rate the entity
@@ -50,7 +52,7 @@ const GATE_KIND = {
 
 export type SearchCollection = keyof typeof GATE_KIND;
 
-export type SearchQuery = { text: string } | { similarTo: number };
+export type SearchQuery = { text: string } | { similarTo: number } | { imageUrl: string };
 
 export type QdrantCondition = Record<string, unknown>;
 type PayloadValue = string | number | boolean;
@@ -201,13 +203,14 @@ async function searchServiceRequest<T>(
   path: string,
   body: unknown,
   notFound: string,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  timeoutMs = SEARCH_SERVICE_TIMEOUT_MS
 ): Promise<T> {
   const res = await fetch(searchServiceUrl(path), {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...searchServiceAuth(), ...headers },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(SEARCH_SERVICE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   }).catch((err) => {
     throw new TRPCError({ code: 'BAD_GATEWAY', message: 'Search is unavailable', cause: err });
   });
@@ -258,6 +261,24 @@ export function searchServiceSource(
       );
       return { ids: result.points.map((p) => Number(p.id)), guard: GUARD_NONE };
     }
+    if ('imageUrl' in query) {
+      // The caller has scanned and rated the image (the search upload gate) before sending it.
+      const { hits } = await searchServiceRequest<{ hits: { id: number | string }[] }>(
+        '/v1/similar',
+        {
+          collection,
+          image_url: query.imageUrl,
+          filter: qdrantFilter,
+          offset,
+          limit,
+          ...(audit ? { browsing_levels: filter.gate.nsfwLevels } : {}),
+        },
+        notFoundMessage,
+        headers,
+        SIMILAR_IMAGE_TIMEOUT_MS
+      );
+      return { ids: hits.map((h) => Number(h.id)), guard: GUARD_NONE };
+    }
 
     const { corrected, changes, hits, guard } = await searchServiceRequest<{
       corrected: string;
@@ -289,24 +310,26 @@ export function searchServiceSource(
   };
 }
 
-// Cap on the word matches ranked ahead of the rest of a text search.
-const MAX_WORD_MATCHES = 200;
+// Cap on the matches ranked ahead of the rest of a text search.
+const MAX_FIRST_MATCHES = 200;
 
 /**
- * Text candidates with the points holding every query word in `key` first (in their own similarity
- * order), then the rest of the semantic ranking without them. Embeddings rank meaning, so a query
- * that is a model's name, or a word of it, otherwise loses to look-alike names and spellings.
- * Make one per request: the word matches are fetched once and reused for every later block.
+ * Text candidates with the points `narrow` admits first (in their own similarity order), then the
+ * rest of the semantic ranking without them. The matches are fetched once per source and reused
+ * for every later block, so make one per request.
  */
-export function withWordMatchesFirst(source: CandidateSource, key: string): CandidateSource {
+function withMatchesFirst(
+  source: CandidateSource,
+  narrow: (filter: CandidateFilter, text: string) => CandidateFilter
+): CandidateSource {
   let matches: ReturnType<CandidateSource> | undefined;
   return async (args) => {
     if (!('text' in args.query) || !args.query.text.trim()) return source(args);
     matches ??= source({
       ...args,
-      filter: { ...args.filter, allWords: { key, text: args.query.text } },
+      filter: narrow(args.filter, args.query.text),
       offset: 0,
-      limit: MAX_WORD_MATCHES,
+      limit: MAX_FIRST_MATCHES,
     });
     const first = await matches;
     const rest = (offset: number, limit: number) =>
@@ -321,6 +344,25 @@ export function withWordMatchesFirst(source: CandidateSource, key: string): Cand
     const tail = head.length < args.limit ? await rest(0, args.limit - head.length) : undefined;
     return { ...first, ids: [...head, ...(tail?.ids ?? [])] };
   };
+}
+
+/**
+ * The points holding every query word in `key` first. Embeddings rank meaning, so a query that is a
+ * model's name, or a word of it, otherwise loses to look-alike names and spellings.
+ */
+export function withWordMatchesFirst(source: CandidateSource, key: string): CandidateSource {
+  return withMatchesFirst(source, (filter, text) => ({ ...filter, allWords: { key, text } }));
+}
+
+/**
+ * The points carrying `tagId` first. A rare term embeds as its nearest common concept (a tiefling
+ * as horns), so the images tagged with it lose to unrelated ones that share that concept.
+ */
+export function withTagMatchesFirst(source: CandidateSource, tagId: number): CandidateSource {
+  return withMatchesFirst(source, (filter) => ({
+    ...filter,
+    tagIds: [...new Set([...(filter.tagIds ?? []), tagId])],
+  }));
 }
 
 /** The viewer's hidden users, those they blocked and those who blocked them: never candidates. */

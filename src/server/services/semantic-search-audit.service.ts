@@ -27,11 +27,20 @@ export const AUDIT_RESULT_IDS = 20;
 // a client repeating refused queries cannot drive the extra search calls.
 export const REFUSED_RUNS_PER_MINUTE = 30;
 const MAX_QUERY_LENGTH = 1_000;
-// Only a query the audit passed keeps what was served. Every verdict withholds the ids, including
-// any added later; its row keeps the query, rule and level.
+// Only a passed query or a minor-narrowed one keeps what was served. Every other verdict withholds
+// the ids, including any added later; its row keeps the query, rule and level.
 export function verdictKeepsServedIds(verdict: QueryRefusal) {
-  return verdict === false;
+  return verdict === false || verdict === 'minor' || verdict === 'minor-safe';
 }
+
+export type SemanticSearchPath =
+  | 'served'
+  | 'narrowed'
+  | 'refused_query'
+  | 'refused_correction'
+  | 'refused_own_images'
+  | 'refused_upload_level';
+export type RefusedSearchPath = Extract<SemanticSearchPath, `refused_${string}`>;
 
 // The only verdicts whose refused searches are run anyway, for the ids they would have served.
 // Everything else, minor-adjacent verdicts and any added later included, is never run.
@@ -64,6 +73,7 @@ export type SemanticAuditEntry = {
   withholdComputedIds: boolean;
   /** False when `resultIds` were computed for a refused search and never served. */
   resultsServed: boolean;
+  searchPath: SemanticSearchPath;
   guard: GuardRead;
   cacheHit: boolean;
   resultIds: number[];
@@ -84,6 +94,7 @@ export type SemanticAuditRow = {
   cacheHit: boolean;
   resultIds: number[];
   query: string;
+  searchPath: SemanticSearchPath;
   /** Sent only when false, so the writer works before the column (DEFAULT true) exists. */
   resultsServed?: false;
 };
@@ -102,8 +113,11 @@ export function buildSemanticAuditRow(
   const withheldByGuard = withheldRules
     ? guard.rules.some((r) => withheldRules.has(r))
     : guard.rules.length > 0;
+  // A minor verdict keeps ids only on the narrowed path, never on a refused one.
   const idsAllowed = entry.resultsServed
-    ? !entry.withholdIds && verdictKeepsServedIds(entry.wordVerdict)
+    ? !entry.withholdIds &&
+      verdictKeepsServedIds(entry.wordVerdict) &&
+      (!entry.wordVerdict || entry.searchPath === 'narrowed')
     : !entry.withholdComputedIds && verdictComputesRefusedIds(entry.wordVerdict);
   // A refused search's ids are stored only past a guard read it can check rules against.
   const refusedUnchecked = !entry.resultsServed && guard.outcome === 'unknown';
@@ -127,6 +141,7 @@ export function buildSemanticAuditRow(
     cacheHit: entry.cacheHit,
     resultIds: withhold ? [] : entry.resultIds.slice(0, AUDIT_RESULT_IDS),
     query: entry.query.slice(0, MAX_QUERY_LENGTH),
+    searchPath: entry.searchPath,
     ...(!entry.resultsServed && { resultsServed: false as const }),
   };
 }

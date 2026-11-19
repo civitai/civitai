@@ -168,9 +168,6 @@ describe('applyChallengeNsfwEscalation', () => {
     expect(mockCreateNotification).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'challenge-nsfw-cancelled-77' })
     );
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'challenge-nsfw-escalation-voided', challengeId: 77 })
-    );
   });
 
   it('green user + nsfw while Active but void claim lost: holds, and never claims a refund happened', async () => {

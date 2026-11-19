@@ -35,6 +35,9 @@ const UNRATED = 102;
 const UNRATED_PENDING = 103;
 const MINOR_R = 104; // minor-flagged, rated R: restricted by the minor content rule
 const UNFLAGGED_R = 105;
+const HELD_CSAM = 106;
+const HELD_MINOR = 107;
+const OTHER_REVIEW = 108;
 
 let db: PGlite;
 
@@ -54,9 +57,12 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, "nsfwLevel", ingestion) VALUES
       (${RATED}, 1, 'Scanned'), (${UNRATED}, 0, 'Scanned'), (${UNRATED_PENDING}, 0, 'Pending');
     INSERT INTO "Image" (id, "nsfwLevel", minor) VALUES (${MINOR_R}, 4, true), (${UNFLAGGED_R}, 4, false);
+    INSERT INTO "Image" (id, "needsReview") VALUES
+      (${HELD_CSAM}, 'csam'), (${HELD_MINOR}, 'minor'), (${OTHER_REVIEW}, 'poi');
     INSERT INTO "ImageConnection" VALUES
       (${RATED}, 1, 'BountyEntry'), (${UNRATED}, 2, 'BountyEntry'), (${UNRATED_PENDING}, 3, 'BountyEntry'),
-      (${MINOR_R}, 4, 'BountyEntry'), (${UNFLAGGED_R}, 5, 'BountyEntry');
+      (${MINOR_R}, 4, 'BountyEntry'), (${UNFLAGGED_R}, 5, 'BountyEntry'),
+      (${HELD_CSAM}, 6, 'BountyEntry'), (${HELD_MINOR}, 7, 'BountyEntry'), (${OTHER_REVIEW}, 8, 'BountyEntry');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -109,5 +115,20 @@ describe('getImagesByEntity', () => {
 
   it('serves an unflagged R image to a stranger (control)', async () => {
     expect(await imageOf(5, viewers.stranger)).toEqual([UNFLAGGED_R]);
+  });
+
+  it.each([
+    ['held for csam review', 6],
+    ['held for minor review', 7],
+  ])(
+    'withholds from the owner their own image %s, and serves it to a moderator',
+    async (_l, entry) => {
+      expect(await imageOf(entry, viewers.owner)).toEqual([]);
+      expect(await imageOf(entry, viewers.moderator)).toHaveLength(1);
+    }
+  );
+
+  it('serves the owner their own image under another review', async () => {
+    expect(await imageOf(8, viewers.owner)).toEqual([OTHER_REVIEW]);
   });
 });

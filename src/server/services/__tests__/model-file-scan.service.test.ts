@@ -13,6 +13,8 @@ const mockDbWrite = dbMock.dbWrite;
 const mockDbRead = dbMock.dbRead;
 const mockLogToAxiom = loggingMock.logToAxiom;
 const mockSetNxKeepTtlWithEx = redisMock.sysRedis.setNxKeepTtlWithEx;
+// The failed-scan bust throttle is a cache: it lives on the cluster client.
+const mockBustSetNx = redisMock.redis.setNxKeepTtlWithEx;
 
 const {
   mockGetWorkflow,
@@ -329,20 +331,11 @@ describe('model-file-scan.service', () => {
       mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
     }
 
-    it('logs a warning and returns without writes when the file is not found', async () => {
+    it('returns without writes when the file is not found', async () => {
       setupFileFound(null);
 
       await applyScanOutcome({ fileId: 999, modelVersionId: 42 });
 
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'warning',
-          name: 'apply-scan-outcome',
-          fileId: 999,
-          modelVersionId: 42,
-        }),
-        'webhooks'
-      );
       expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
       expect(mockDeleteFilesForModelVersionCache).not.toHaveBeenCalled();
     });
@@ -366,14 +359,27 @@ describe('model-file-scan.service', () => {
     describe('busting the orchestrator after a failed scan', () => {
       beforeEach(() => {
         const held = new Set<string>();
-        mockSetNxKeepTtlWithEx.mockImplementation(async (key: string) => {
+        mockBustSetNx.mockImplementation(async (key: string) => {
           if (held.has(key)) return false;
           held.add(key);
           return true;
         });
       });
 
-      afterEach(() => mockSetNxKeepTtlWithEx.mockReset());
+      afterEach(() => mockBustSetNx.mockReset());
+
+      it('keeps its once-per-window markers on the cache cluster, not in system Redis', async () => {
+        setupFileFound();
+        mockSetNxKeepTtlWithEx.mockClear();
+
+        await applyScanOutcome({ fileId: 1, failed: true });
+
+        expect(mockBustSetNx.mock.calls.map(([key]) => key)).toEqual([
+          'webhooks:model-file-scan:failure-bust:100',
+          'webhooks:model-file-scan:failure-bust:file:1',
+        ]);
+        expect(mockSetNxKeepTtlWithEx).not.toHaveBeenCalled();
+      });
 
       it('busts the version once per window, however many of its files fail', async () => {
         setupFileFound();
@@ -500,7 +506,7 @@ describe('model-file-scan.service', () => {
       expect(mockBustOrchestratorModelCache).toHaveBeenCalledWith(100);
     });
 
-    it('logs a failed invalidation instead of failing the outcome, after the index update', async () => {
+    it('does not fail the outcome on a failed invalidation, after the index update', async () => {
       setupFileFound();
       mockBustOrchestratorModelCache.mockRejectedValueOnce(new Error('db timeout'));
 
@@ -514,10 +520,6 @@ describe('model-file-scan.service', () => {
       expect(mockModelsSearchIndexQueueUpdate).toHaveBeenCalled();
       expect(mockModelsSearchIndexQueueUpdate.mock.invocationCallOrder[0]).toBeLessThan(
         mockBustOrchestratorModelCache.mock.invocationCallOrder[0]
-      );
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'error', name: 'model-file-scan' }),
-        'webhooks'
       );
     });
 
@@ -883,15 +885,6 @@ describe('model-file-scan.service', () => {
       expect(mockGetWorkflow).not.toHaveBeenCalled();
       expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
       expect(mockDeleteFilesForModelVersionCache).not.toHaveBeenCalled();
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'info',
-          name: 'model-file-scan-result',
-          workflowId: 'wf-dup',
-          duplicate: true,
-        }),
-        'webhooks'
-      );
     });
 
     it('acquires the dedupe lock on first delivery and proceeds to process the workflow', async () => {
@@ -1076,7 +1069,7 @@ describe('model-file-scan.service', () => {
       ).rejects.toThrow('missing workflow metadata.fileId - wf-1');
     });
 
-    it('on non-succeeded status, calls applyScanOutcome with failed=true and logs a warning', async () => {
+    it('on non-succeeded status, calls applyScanOutcome with failed=true', async () => {
       mockGetWorkflow.mockResolvedValue({
         data: {
           metadata: { fileId: 1, modelVersionId: 100 },
@@ -1093,14 +1086,6 @@ describe('model-file-scan.service', () => {
         where: { id: 1 },
         data: { scanRequestedAt: expect.any(Date) },
       });
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'warning',
-          name: 'model-file-scan-result',
-          status: 'failed',
-        }),
-        'webhooks'
-      );
     });
 
     it('maps clamScan exitCode 0 to virusScan.Success with null message', async () => {

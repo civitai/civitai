@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { restOwnerOrModeratorViewer } from '~/server/auth/rest-viewer';
 import * as z from 'zod';
 
 import { resModelVersionDetails } from '~/pages/api/v1/model-versions/[id]';
@@ -55,7 +56,7 @@ export default PublicEndpoint(
 
     await resModelVersionDetails(req, res, servable, async () =>
       getApiAuthSession({ req, res }, { whenBanned: 'anonymous', scope: MODEL_VIEW_SCOPE }).then(
-        (session) => session?.user
+        (session) => restOwnerOrModeratorViewer(req, session?.user)
       )
     );
   },

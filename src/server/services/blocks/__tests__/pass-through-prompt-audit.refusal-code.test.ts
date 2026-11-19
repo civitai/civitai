@@ -146,8 +146,8 @@ describe('log mode, the positive control', () => {
     await vi.waitFor(() => expect(auditRows()).toHaveLength(1));
     expect(auditRows()[0]).toMatchObject({
       outcome: 'error',
-      externalError: true,
       wouldRefuse: true,
+      payload: expect.objectContaining({ externalError: true }),
     });
   });
 
@@ -157,8 +157,8 @@ describe('log mode, the positive control', () => {
     await vi.waitFor(() => expect(auditRows()).toHaveLength(1));
     expect(auditRows()[0]).toMatchObject({
       outcome: 'unconfigured',
-      externalSkipped: true,
       wouldRefuse: true,
+      payload: expect.objectContaining({ externalSkipped: true }),
     });
   });
 });
@@ -200,9 +200,6 @@ describe('enforce, the codes', () => {
     h.configured.mockImplementation(() => false);
     const e = await refusalOf(auditPassThroughPrompts({ ...ctx, steps }, 'enforce'));
     expect(e).toMatchObject({ errorCode: PROMPT_CHECK_UNAVAILABLE_ERROR_CODE });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'prompt-check-unavailable', reason: 'unconfigured' })
-    );
   });
 
   it('a refused prompt with the classifier unconfigured is still recorded and gets the policy code', async () => {

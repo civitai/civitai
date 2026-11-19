@@ -7,7 +7,8 @@ import {
   type UserWithProfileWhere,
 } from '@civitai/db-queries/hot-reads-9';
 import { userWithProfileSelect } from '~/server/selectors/user.selector';
-import { profilePictureOf } from '~/server/services/user-creator.reads';
+import { fallbackUserImage } from '~/server/services/profile-picture.servable';
+import { fallbackPictureOf, profilePictureOf } from '~/server/services/user-creator.reads';
 
 /**
  * The read behind `kysely-hot-reads-9`: the user profile read (`getUserWithProfile`,
@@ -112,6 +113,17 @@ export async function readUserWithProfileViaKysely(
   db: Kysely<DB>,
   where: UserWithProfileWhere
 ): Promise<UserWithProfile> {
+  return (await readUserWithProfileAndPictureGateViaKysely(db, where)).user;
+}
+
+/**
+ * `readUserWithProfileViaKysely`, plus the profile picture's `blockedFor`, which the payload does
+ * not carry (`profileImageSelect`) but a visitor's view of the picture is gated on.
+ */
+export async function readUserWithProfileAndPictureGateViaKysely(
+  db: Kysely<DB>,
+  where: UserWithProfileWhere
+): Promise<{ user: UserWithProfile; pictureBlockedFor: string | null }> {
   // Prisma rejects a where with no unique field; never issue an unfiltered read.
   if (where.id === undefined && where.username === undefined)
     throw new Error('readUserWithProfileViaKysely: an id or a username is required');
@@ -122,7 +134,7 @@ export async function readUserWithProfileViaKysely(
     id: row.id,
     username: row.username,
     deletedAt: row.deletedAt,
-    image: row.image,
+    image: fallbackUserImage(row.image, fallbackPictureOf(row)),
     profilePicture: profilePictureOf(row),
     leaderboardShowcase: row.leaderboardShowcase,
     createdAt: row.createdAt,
@@ -181,5 +193,8 @@ export async function readUserWithProfileViaKysely(
     settings: row.settings,
   };
 
-  return user as unknown as UserWithProfile;
+  return {
+    user: user as unknown as UserWithProfile,
+    pictureBlockedFor: row.profilePictureBlockedFor,
+  };
 }

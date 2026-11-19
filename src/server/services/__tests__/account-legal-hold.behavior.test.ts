@@ -103,8 +103,19 @@ beforeAll(async () => {
       "customerId" text,
       image text,
       "profilePictureId" int,
-      "subscriptionId" text
+      "subscriptionId" text,
+      meta jsonb
     );
+    CREATE TABLE "UserReport" ("userId" int, "reportId" int);
+    -- What deleteUser's deal-file statement reads; no deals, so it marks nothing.
+    CREATE TABLE "ServiceOffering" (id int PRIMARY KEY);
+    CREATE TABLE "ServiceDeal" (id int PRIMARY KEY, "offeringId" int, "buyerId" int, "sellerId" int,
+      status text, "heldAt" timestamp(3), "settledAt" timestamp(3));
+    CREATE TABLE "ServiceDealFile" (id int PRIMARY KEY, "dealId" int, kind text, "removedAt" timestamp(3));
+    CREATE TABLE "Report" (id int PRIMARY KEY, status text);
+    CREATE TABLE "ServiceOfferingReport" ("serviceOfferingId" int, "reportId" int);
+    CREATE TABLE "Appeal" ("userId" int, status text);
+    CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     INSERT INTO "Model" VALUES (${CLEAN_MODEL}, ${CLEAN}), (${OTHER_OWNERS_MODEL}, ${RECENTLY_SENT});
     CREATE TYPE "ModelStatus" AS ENUM

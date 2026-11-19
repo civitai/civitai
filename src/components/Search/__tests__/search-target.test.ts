@@ -4,10 +4,12 @@ import {
   offersImageSearch,
   resolveSearchTarget,
   feedSearchPathname,
+  pageSearchFor,
   isProfileFeedPathname,
   searchSectionFromPath,
   profileFeedSection,
   searchesFeedInPlace,
+  searchSectionFor,
 } from '~/components/Search/search-target';
 
 describe('resolveSearchTarget', () => {
@@ -136,5 +138,68 @@ describe('searchSectionFromPath', () => {
     expect(searchSectionFromPath('/user/RisingV/posts')).toBe('user');
     expect(searchSectionFromPath('/articles/123/slug')).toBe('articles');
     expect(searchSectionFromPath('/')).toBeUndefined();
+  });
+});
+
+describe('pageSearchFor', () => {
+  it("gives a page that searches its own content the header bar, under that page's flag", () => {
+    expect(pageSearchFor({ semanticChallengeSearch: true }, '/challenges')).toEqual({
+      placeholder: 'Search challenges',
+    });
+    expect(pageSearchFor({ pageSearch: true }, '/shop')).toEqual({
+      placeholder: 'Search the shop',
+    });
+  });
+
+  it("searches a creator's posts and collections tabs by their route pattern", () => {
+    expect(pageSearchFor({ pageSearch: true }, '/user/[username]/posts')).toEqual({
+      placeholder: 'Search their posts',
+    });
+    expect(pageSearchFor({ pageSearch: true }, '/user/[username]/collections')).toEqual({
+      placeholder: 'Search their collections',
+    });
+  });
+
+  it('leaves the index search everywhere else, and on a page whose flag is off', () => {
+    expect(pageSearchFor({ pageSearch: true }, '/models')).toBeUndefined();
+    expect(pageSearchFor({}, '/shop')).toBeUndefined();
+    expect(pageSearchFor({ pageSearch: true }, '/challenges')).toBeUndefined();
+  });
+});
+
+describe('the bounties feed search', () => {
+  it('searches /bounties in place under semanticBountySearch, with no profile tab', () => {
+    const bountiesOnly = { semanticBountySearch: true };
+    expect(searchesFeedInPlace(bountiesOnly, 'bounties', '/bounties')).toBe(true);
+    expect(searchesFeedInPlace({}, 'bounties', '/bounties')).toBe(false);
+    expect(feedSearchPathname(bountiesOnly, 'bounties')).toBe('/bounties');
+  });
+});
+
+// /videos is the images feed's videos, so the images index searches it, under its own flag.
+describe('the videos feed search', () => {
+  const both = { feedSearch: true, videoFeedSearch: true };
+
+  it('filters /videos in place from the images index only with both flags', () => {
+    expect(searchesFeedInPlace(both, 'images', '/videos')).toBe(true);
+    expect(searchesFeedInPlace(both, 'models', '/videos')).toBe(false);
+    expect(searchesFeedInPlace({ feedSearch: true }, 'images', '/videos')).toBe(false);
+    expect(searchesFeedInPlace({ videoFeedSearch: true }, 'images', '/videos')).toBe(false);
+  });
+
+  it('points the header bar at images on /videos, and leaves other sections alone', () => {
+    expect(searchSectionFor('/videos', both)).toBe('images');
+    expect(searchSectionFor('/videos', { feedSearch: true })).toBe('videos');
+    expect(searchSectionFor('/models', both)).toBe('models');
+  });
+});
+
+describe('page search on tools and downloads', () => {
+  it('gives /tools and /user/downloads the header bar under pageSearch', () => {
+    expect(pageSearchFor({ pageSearch: true }, '/tools')).toEqual({ placeholder: 'Search tools' });
+    expect(pageSearchFor({ pageSearch: true }, '/user/downloads')).toEqual({
+      placeholder: 'Search your downloads',
+    });
+    expect(pageSearchFor({}, '/tools')).toBeUndefined();
   });
 });

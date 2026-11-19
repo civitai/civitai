@@ -19,7 +19,10 @@ const queueDeps = vi.hoisted(() => ({
 }));
 const skipList = vi.hoisted(() => ({ add: vi.fn(), list: vi.fn() }));
 const NOW = new Date('2026-12-15T12:00:00Z');
-vi.mock('$lib/server/db', () => ({ db: {} }));
+// Distinct objects, so a read that takes the primary instead of the replica (or the reverse) fails `toBe`.
+const PRIMARY = vi.hoisted(() => ({ client: 'primary' }));
+const REPLICA = vi.hoisted(() => ({ client: 'replica' }));
+vi.mock('$lib/server/db', () => ({ db: PRIMARY, dbRead: REPLICA }));
 // Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
 vi.mock('$lib/server/membership', async (original) => ({
   ...(await original<typeof import('$lib/server/membership')>()),
@@ -40,7 +43,9 @@ vi.mock('$lib/server/smites/smites.service', () => ({
 vi.mock('$lib/server/skip-runtime', () => ({ skipStore: skipList }));
 const seenStore = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn() }));
 vi.mock('$lib/server/seen-runtime', () => ({ seenStore }));
-vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.5 }) }));
+vi.mock('$lib/server/hidden/runtime', () => ({
+  hiddenSettings: () => ({ rate: 0.5, probationShare: 0.25 }),
+}));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
   hiddenItemId: (id: number) => -id,
   pickHiddenCheck,
@@ -80,10 +85,18 @@ vi.mock('$lib/server/standing', async (original) => ({
 
 const { load, actions } = await import('./+page.server');
 
-const run = (user: Record<string, unknown> = {}) =>
-  load({ locals: { user: { id: 7, ...user } }, depends: vi.fn() } as never) as Promise<
+const run = (user: Record<string, unknown> = {}) => {
+  // The load reads the player's rating for the gold a vote records; each test gives only the status fields it checks.
+  const given = getPlayerStatus.getMockImplementation();
+  if (given)
+    getPlayerStatus.mockImplementation(async (...args: unknown[]) => {
+      const status = await given(...args);
+      return status && { rating: { belowBar: false }, ...status };
+    });
+  return load({ locals: { user: { id: 7, ...user } }, depends: vi.fn() } as never) as Promise<
     Record<string, any>
   >;
+};
 
 beforeEach(() => {
   acolyteLevelGoldSince.mockReset();
@@ -299,7 +312,7 @@ describe('play load', () => {
 
     const page = await run();
 
-    expect(page.daily).toEqual({ votes: 3 });
+    expect(page.daily).toEqual({ votes: 3, goldPerVote: 100 });
     expect(page).not.toHaveProperty('recap');
     expect(getDailyStatus).toHaveBeenCalledWith(expect.anything(), {
       playerId: 7,
@@ -419,7 +432,7 @@ describe('play load feed', () => {
       yesNoSettings.share = 0.7;
     }
 
-    expect(getFeed).toHaveBeenCalledWith(expect.anything(), 7, { limit: 1, exclude: [3] });
+    expect(getFeed).toHaveBeenCalledWith(REPLICA, 7, { limit: 1, exclude: [3] });
     expect(pickHiddenCheck).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ exclude: [5] })
@@ -428,6 +441,19 @@ describe('play load feed', () => {
       expect.anything(),
       expect.objectContaining({ exclude: [8] })
     );
+  });
+
+  it('reads the feed from the replica, and the player, their pace and their served history from the primary', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 0, maxSmites: 3 });
+    lockoutFor.mockResolvedValue(null);
+
+    await run();
+
+    expect(getFeed).toHaveBeenCalledTimes(1);
+    expect(getFeed.mock.calls[0][0]).toBe(REPLICA);
+    expect(getPlayerStatus.mock.calls[0][0]).toBe(PRIMARY);
+    expect(lockoutFor.mock.calls[0][0]).toBe(PRIMARY);
+    expect(servedHistory.mock.calls[0][0]).toBe(PRIMARY);
   });
 
   it('serves no hidden check when the queue is empty', async () => {
@@ -482,7 +508,7 @@ describe('play load feed', () => {
     await run();
     expect(pickHiddenCheck).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ questionKey: 'q', rate: 0.5 })
+      expect.objectContaining({ questionKey: 'q', rate: 0.5, probationShare: 0.25 })
     );
   });
 });

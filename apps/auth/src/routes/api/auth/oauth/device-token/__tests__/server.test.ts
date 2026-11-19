@@ -117,6 +117,20 @@ describe('device-token +server — AppBlocksSubmit scope survives into the minte
     expect(h.logOAuthEvent).toHaveBeenCalledWith(expect.objectContaining({ ip: '203.0.113.7' }));
   });
 
+  it('mints nothing for an app block’s client, even with an approved code', async () => {
+    h.hGet.mockResolvedValueOnce({ ...approvedCode, clientId: 'appblk-some-app' });
+    h.clientRow = { allowedScopes: CLI_SCOPE };
+    const res = await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'appblk-some-app',
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(h.createPair).not.toHaveBeenCalled();
+  });
+
   it('rejects with invalid_scope when the client allowedScopes does NOT include AppBlocksSubmit', async () => {
     h.hGet.mockResolvedValueOnce(approvedCode);
     h.clientRow = { allowedScopes: TokenScope.UserRead }; // intersection must reject the submit bit

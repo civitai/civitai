@@ -775,18 +775,21 @@ async function getReferenceImages(referenceId: number) {
     },
   });
 
-  if (!reference) return { referenceName: '', refImages: [] };
+  if (!reference) return { referenceName: '', refImages: [], skipped: false };
+  // A blocked image is never sent to a generation.
+  const refImages = reference.images
+    .filter((ri) => !ri.image.blockedFor)
+    .map((ri) => ({
+      imageId: ri.image.id,
+      url: getEdgeUrl(ri.image.url, { original: true }),
+      width: ri.image.width ?? 512,
+      height: ri.image.height ?? 512,
+    }));
   return {
     referenceName: reference.name,
-    // A blocked image is never sent to a generation.
-    refImages: reference.images
-      .filter((ri) => !ri.image.blockedFor)
-      .map((ri) => ({
-        imageId: ri.image.id,
-        url: getEdgeUrl(ri.image.url, { original: true }),
-        width: ri.image.width ?? 512,
-        height: ri.image.height ?? 512,
-      })),
+    refImages,
+    /** Every image it has was left out: the generation runs without this reference. */
+    skipped: reference.images.length > 0 && refImages.length === 0,
   };
 }
 
@@ -1262,6 +1265,7 @@ export const comicsRouter = router({
           id: true,
           name: true,
           userId: true,
+          user: { select: { username: true } },
           meta: true,
           chapters: {
             orderBy: { position: 'asc' },
@@ -1310,6 +1314,7 @@ export const comicsRouter = router({
       return {
         id: project.id,
         name: project.name,
+        username: project.user.username,
         meta: parseComicProjectMeta(project.meta),
         chapters: project.chapters,
       };
@@ -2328,6 +2333,23 @@ export const comicsRouter = router({
         isModerator: ctx.user.isModerator,
         surface: 'comic',
       });
+      // Images first, so a refused cover or hero leaves no project behind.
+      const cover = input.coverUrl
+        ? await createImage({
+            url: input.coverUrl,
+            type: 'image',
+            clientUrl: true,
+            userId: ctx.user.id,
+          })
+        : null;
+      const hero = input.heroUrl
+        ? await createImage({
+            url: input.heroUrl,
+            type: 'image',
+            clientUrl: true,
+            userId: ctx.user.id,
+          })
+        : null;
       const project = await dbWrite.comicProject.create({
         data: {
           userId: ctx.user.id,
@@ -2335,6 +2357,8 @@ export const comicsRouter = router({
           description: input.description ?? null,
           genre: input.genre ?? null,
           heroImagePosition: input.heroImagePosition ?? 50,
+          coverImageId: cover?.id ?? null,
+          heroImageId: hero?.id ?? null,
           chapters: {
             create: {
               name: 'Chapter 1',
@@ -2346,34 +2370,6 @@ export const comicsRouter = router({
           chapters: true,
         },
       });
-
-      // Handle cover image
-      if (input.coverUrl) {
-        const image = await createImage({
-          url: input.coverUrl,
-          type: 'image',
-          clientUrl: true,
-          userId: ctx.user.id,
-        });
-        await dbWrite.comicProject.update({
-          where: { id: project.id },
-          data: { coverImageId: image.id },
-        });
-      }
-
-      // Handle hero image
-      if (input.heroUrl) {
-        const image = await createImage({
-          url: input.heroUrl,
-          type: 'image',
-          clientUrl: true,
-          userId: ctx.user.id,
-        });
-        await dbWrite.comicProject.update({
-          where: { id: project.id },
-          data: { heroImageId: image.id },
-        });
-      }
 
       await comicsSearchIndex.queueUpdate(
         [{ id: project.id, action: SearchIndexUpdateQueueAction.Update }],
@@ -3057,13 +3053,15 @@ export const comicsRouter = router({
       // Get reference images for generation (skip if no references)
       let primaryReferenceName = '';
       let combinedRefImages: { url: string; width: number; height: number }[] = [];
+      let referenceImagesSkipped = false;
 
       if (generationReferenceIds.length > 0) {
         const allRefImages: { imageId: number; url: string; width: number; height: number }[] = [];
 
         for (const refId of generationReferenceIds) {
-          const { referenceName, refImages: imgs } = await getReferenceImages(refId);
+          const { referenceName, refImages: imgs, skipped } = await getReferenceImages(refId);
           if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
+          if (skipped) referenceImagesSkipped = true;
           allRefImages.push(...imgs);
         }
 
@@ -3214,7 +3212,7 @@ export const comicsRouter = router({
           status: updated.status,
           workflowId: result.id,
         });
-        return updated;
+        return { ...updated, referenceImagesSkipped };
       } catch (error: any) {
         // Capture as much detail as possible for debugging
         const errorDetails: string[] = [];
@@ -3248,7 +3246,7 @@ export const comicsRouter = router({
             errorMessage: userFacingError,
           },
         });
-        return updated;
+        return { ...updated, referenceImagesSkipped: false };
       }
     }),
 
@@ -4449,10 +4447,12 @@ export const comicsRouter = router({
 
       // Gather reference images from selected refs
       let primaryReferenceName = '';
+      let referenceImagesSkipped = false;
       const allRefImages: { imageId: number; url: string; width: number; height: number }[] = [];
       for (const refId of generationReferenceIds) {
-        const { referenceName, refImages: imgs } = await getReferenceImages(refId);
+        const { referenceName, refImages: imgs, skipped } = await getReferenceImages(refId);
         if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
+        if (skipped) referenceImagesSkipped = true;
         allRefImages.push(...imgs);
       }
 
@@ -4523,6 +4523,7 @@ export const comicsRouter = router({
         width: panelWidth,
         height: panelHeight,
         cost: result.cost?.total ?? 0,
+        referenceImagesSkipped,
         enhancedPrompt: null,
       };
     }),
@@ -4738,13 +4739,19 @@ export const comicsRouter = router({
       // Pre-load reference images keyed by refId (only used for panels that @mention them)
       const refImagesByRefId = new Map<
         number,
-        { referenceName: string; images: { url: string; width: number; height: number }[] }
+        {
+          referenceName: string;
+          images: { url: string; width: number; height: number }[];
+          skipped: boolean;
+        }
       >();
+      let referenceImagesSkipped = false;
       for (const ref of relevantRefs) {
-        const { referenceName, refImages: imgs } = await getReferenceImages(ref.id);
+        const { referenceName, refImages: imgs, skipped } = await getReferenceImages(ref.id);
         refImagesByRefId.set(ref.id, {
           referenceName: referenceName ?? ref.name,
           images: imgs.map(({ url, width, height }) => ({ url, width, height })),
+          skipped,
         });
       }
 
@@ -4776,6 +4783,9 @@ export const comicsRouter = router({
         const mentionedRefImages = mentionedIds.flatMap(
           (id) => refImagesByRefId.get(id)?.images ?? []
         );
+        if (mentionedIds.some((id) => refImagesByRefId.get(id)?.skipped)) {
+          referenceImagesSkipped = true;
+        }
         const panelPrimaryRefName =
           mentionedIds.length > 0 ? refImagesByRefId.get(mentionedIds[0])?.referenceName ?? '' : '';
         const mentionedRefNames = mentionedIds
@@ -4823,6 +4833,7 @@ export const comicsRouter = router({
       return {
         ...chapter,
         panels: createdPanels,
+        referenceImagesSkipped,
       };
     }),
 
@@ -5616,7 +5627,7 @@ export const comicsRouter = router({
           },
         });
 
-        return panel;
+        return { ...panel, referenceImagesSkipped: false };
       }
 
       // With prompt → img2img generation
@@ -5679,10 +5690,12 @@ export const comicsRouter = router({
 
       // Gather reference images from selected refs
       let primaryReferenceName = '';
+      let referenceImagesSkipped = false;
       const allRefImages: { imageId: number; url: string; width: number; height: number }[] = [];
       for (const refId of generationReferenceIds) {
-        const { referenceName, refImages: imgs } = await getReferenceImages(refId);
+        const { referenceName, refImages: imgs, skipped } = await getReferenceImages(refId);
         if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
+        if (skipped) referenceImagesSkipped = true;
         allRefImages.push(...imgs);
       }
 
@@ -5803,7 +5816,7 @@ export const comicsRouter = router({
           status: updated.status,
           workflowId: result.id,
         });
-        return updated;
+        return { ...updated, referenceImagesSkipped };
       } catch (error: any) {
         console.error('Comics enhancePanel generation failed:', {
           panelId: panel.id,
@@ -5821,7 +5834,7 @@ export const comicsRouter = router({
           projectId: input.projectId,
           status: updated.status,
         });
-        return updated;
+        return { ...updated, referenceImagesSkipped: false };
       }
     }),
 
@@ -5870,13 +5883,19 @@ export const comicsRouter = router({
       // Pre-load reference images keyed by refId (only used for panels that @mention them)
       const refImagesByRefId = new Map<
         number,
-        { referenceName: string; images: { url: string; width: number; height: number }[] }
+        {
+          referenceName: string;
+          images: { url: string; width: number; height: number }[];
+          skipped: boolean;
+        }
       >();
+      let referenceImagesSkipped = false;
       for (const ref of allUserRefs) {
-        const { referenceName, refImages: imgs } = await getReferenceImages(ref.id);
+        const { referenceName, refImages: imgs, skipped } = await getReferenceImages(ref.id);
         refImagesByRefId.set(ref.id, {
           referenceName: referenceName ?? ref.name,
           images: imgs.map(({ url, width, height }) => ({ url, width, height })),
+          skipped,
         });
       }
 
@@ -6008,6 +6027,9 @@ export const comicsRouter = router({
           const mentionedRefImages = mentionedIds.flatMap(
             (id) => refImagesByRefId.get(id)?.images ?? []
           );
+          if (mentionedIds.some((id) => refImagesByRefId.get(id)?.skipped)) {
+            referenceImagesSkipped = true;
+          }
           const panelPrimaryRefName =
             mentionedIds.length > 0
               ? refImagesByRefId.get(mentionedIds[0])?.referenceName ?? ''
@@ -6147,6 +6169,9 @@ export const comicsRouter = router({
           const mentionedRefImages = mentionedIds.flatMap(
             (id) => refImagesByRefId.get(id)?.images ?? []
           );
+          if (mentionedIds.some((id) => refImagesByRefId.get(id)?.skipped)) {
+            referenceImagesSkipped = true;
+          }
           const panelPrimaryRefName =
             mentionedIds.length > 0
               ? refImagesByRefId.get(mentionedIds[0])?.referenceName ?? ''
@@ -6191,7 +6216,7 @@ export const comicsRouter = router({
         throw throwBadRequestError(`Panel ${i + 1} has no prompt, source image, or image ID`);
       }
 
-      return { panels: createdPanels };
+      return { panels: createdPanels, referenceImagesSkipped };
     }),
 
   // ──── Phase 2: Create panel from existing Image (manual mode) ────

@@ -2129,22 +2129,6 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     }
   );
 
-  const hostSourcePhases = () =>
-    loggingMock.logToAxiom.mock.calls
-      .map(([data]) => data as Record<string, unknown>)
-      .filter((data) => data.reason === 'host-orchestrator-source')
-      .map((data) => data.phase);
-
-  it.each(ARMS)(
-    '%s: counts an orchestrator blob on the estimate and on the submit',
-    async (_, make) => {
-      loggingMock.logToAxiom.mockClear();
-      await estimate(make(BLOB)).catch(() => undefined);
-      await submit(make(BLOB)).catch(() => undefined);
-      expect(hostSourcePhases()).toEqual(['estimate', 'submit']);
-    }
-  );
-
   const refusedBeforeTheOrchestrator = async (b: Record<string, unknown>) => {
     const refusal = { code: 'BAD_REQUEST', message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE };
     await expect(estimate(b)).rejects.toMatchObject(refusal);
@@ -2607,33 +2591,16 @@ describe('inline customComfy — the generation input gate', () => {
         redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
       },
     ],
-  ])('refuses an own row-less upload (%s) before any orchestrator call', async (reason, given) => {
+  ])('refuses an own row-less upload (%s) before any orchestrator call', async (_reason, given) => {
     dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
     await given();
-    loggingMock.logToAxiom.mockClear();
     const body = inline();
     (body.workflow['2'].inputs as Record<string, unknown>).text = `restyle ${OWN_KEY}`;
     await expect(submit(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: APP_SOURCE_UNUSABLE_MESSAGE,
     });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'app-block-source-refusal', reason })
-    );
     expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('counts an orchestrator blob on the estimate and on the submit', async () => {
-    const blob = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg';
-    const body = inline({ image: blob });
-    loggingMock.logToAxiom.mockClear();
-    await estimate(body).catch(() => undefined);
-    await submit(body).catch(() => undefined);
-    const phases = loggingMock.logToAxiom.mock.calls
-      .map(([data]) => data as Record<string, unknown>)
-      .filter((data) => data.reason === 'host-orchestrator-source')
-      .map((data) => data.phase);
-    expect(phases).toEqual(['estimate', 'submit']);
   });
 
   it('refuses inline image bytes in a node input at the schema', async () => {

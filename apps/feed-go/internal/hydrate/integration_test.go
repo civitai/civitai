@@ -342,21 +342,24 @@ func TestIntegrationProfilePictures(t *testing.T) {
 		  (1103102, 'integ-pp-db', 'integ-pp-url', 1103002, 2, 'integ-pp-hash', 'Scanned', 'image', 96, 97, '{"size": 1234}', NULL),
 		  (1103103, 'integ-pp-blocked', 'integ-pp-blocked-url', 1103003, 1, NULL, 'Blocked', 'image', 10, 11, '{}', NULL),
 		  (1103104, 'integ-pp-pending', 'integ-pp-pending-url', 1103004, 1, NULL, 'Pending', 'image', 10, 11, '{}', NULL),
-		  (1103105, 'integ-pp-csam', 'integ-pp-csam-url', 1103005, 1, NULL, 'Scanned', 'image', 10, 11, '{}', 'csam');
+		  (1103105, 'integ-pp-csam', 'integ-pp-csam-url', 1103005, 1, NULL, 'Scanned', 'image', 10, 11, '{}', 'csam'),
+		  (1103107, 'integ-pp-minor', 'integ-pp-minor-url', 1103007, 1, NULL, 'Scanned', 'image', 10, 11, '{}', 'minor'),
+		  (1103108, 'integ-pp-poi', 'integ-pp-poi-url', 1103008, 1, NULL, 'Scanned', 'image', 10, 11, '{}', 'poi');
 		INSERT INTO "User" (id, username, "profilePictureId") VALUES
 		  (1103002, 'integ-pp-user2', 1103102), (1103003, 'integ-pp-user3', 1103103),
 		  (1103004, 'integ-pp-user4', 1103104), (1103005, 'integ-pp-user5', 1103105),
-		  (1103006, 'integ-pp-user6', NULL);`)
+		  (1103006, 'integ-pp-user6', NULL), (1103007, 'integ-pp-user7', 1103107),
+		  (1103008, 'integ-pp-user8', 1103108);`)
 	e.put(t, KeyProfilePictures, 1103001, integtest.O("id", 1103101, "name", "integ-pp-hit", "url", "integ-pp-hit-url",
 		"nsfwLevel", 1, "hash", nil, "userId", 1103001, "ingestion", "Scanned", "type", "image", "width", 50, "height", 51,
 		"metadata", integtest.O("hash", "integ-blur"), "extra", "dropped"))
 
-	got, err := e.src.ProfilePictures(integtest.Ctx(t), []int{1103001, 1103002, 1103003, 1103004, 1103005, 1103006})
+	got, err := e.src.ProfilePictures(integtest.Ctx(t), []int{1103001, 1103002, 1103003, 1103004, 1103005, 1103006, 1103007, 1103008})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ids := integKeys(got); !reflect.DeepEqual(ids, []int{1103001, 1103002}) {
-		t.Fatalf("ids = %v, want [1103001 1103002] (blocked, unscanned, csam and no-picture users absent)", ids)
+	if ids := integKeys(got); !reflect.DeepEqual(ids, []int{1103001, 1103002, 1103008}) {
+		t.Fatalf("ids = %v, want [1103001 1103002 1103008] (blocked, unscanned, csam, minor and no-picture users absent; another review stays)", ids)
 	}
 	if s, want := integPlain(t, got[1103001]), `{"id":1103101,"name":"integ-pp-hit","url":"integ-pp-hit-url","nsfwLevel":1,"hash":null,"userId":1103001,"ingestion":"Scanned","type":"image","width":50,"height":51,"metadata":{"hash":"integ-blur"}}`; s != want {
 		t.Fatalf("cache hit:\n got %s\nwant %s", s, want)

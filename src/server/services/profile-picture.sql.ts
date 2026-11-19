@@ -1,15 +1,28 @@
 import { Prisma } from '@prisma/client';
-import { imageNotRestrictedSql, imageReviewedSql } from '~/server/common/image-visibility';
+import {
+  hasBlockMarkerSql,
+  imageNotRestrictedSql,
+  imageReviewedSql,
+  notHeldForReviewSql,
+} from '~/server/common/image-visibility';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 
 /** When a profile picture may be served to anyone but its owner; any other picture is served as none. */
 export const servableProfilePictureSql = Prisma.sql`
   i.ingestion <> 'Blocked'::"ImageIngestionStatus"
   AND i."nsfwLevel" != 0
-  AND i."needsReview" IS DISTINCT FROM 'csam'
+  AND ${notHeldForReviewSql()}
   AND ${imageReviewedSql('i')}
   AND ${imageNotRestrictedSql()}
+  AND NOT ${hasBlockMarkerSql('i')}
 `;
+
+export {
+  fallbackUserImageColumn,
+  fallbackUserImageColumnOf,
+  userImageNamesHeldPicture,
+  userImageNamesHeldPictureOf,
+} from '~/server/services/profile-picture-fallback.sql';
 
 export type RawQueryClient = {
   $queryRaw<T = unknown>(
@@ -33,7 +46,8 @@ export async function getServableProfilePictures(db: RawQueryClient, imageIds: n
 }
 
 /**
- * A user's own profile picture whatever its scan state, except one flagged `csam`, for the reads
+ * A user's own profile picture whatever its scan state, except one under an owner-hidden review hold
+ * (`notHeldForReviewSql`), for the reads
  * that serve it to its owner or a moderator. Raw SQL: the Prisma find queries null an unscanned
  * picture for every viewer.
  */
@@ -42,7 +56,7 @@ export async function getProfilePictureOfUser(db: RawQueryClient, userId: number
     SELECT ${profilePictureColumnsSql}
     FROM "User" u
     JOIN "Image" i ON i.id = u."profilePictureId"
-    WHERE u.id = ${userId} AND i."needsReview" IS DISTINCT FROM 'csam'
+    WHERE u.id = ${userId} AND ${notHeldForReviewSql()}
   `;
   return picture ?? null;
 }

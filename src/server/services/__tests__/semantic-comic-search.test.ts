@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import type { CandidateFilter, CandidateSource } from '~/server/services/semantic-search-client';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -37,6 +36,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: () => false,
   includesMinor: () => false,
@@ -131,7 +131,6 @@ beforeEach(() => {
   // The containment switch reads enabled (clamped) unless a test lifts it.
   h.evalBoolean.mockReset().mockReturnValue({ enabled: true });
   h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
-  loggingMock.logToAxiom.mockClear();
 });
 
 describe('levelsWithin', () => {
@@ -267,18 +266,6 @@ describe('semantic comic search', () => {
     expect(resolveSemanticBrowsingLevel(PG | R, viewer, undefined)).toBe(PG);
     expect(resolveSemanticBrowsingLevel(PG | R, viewer, true)).toBe(PG);
     expect(resolveSemanticBrowsingLevel(PG | R, viewer, false)).toBe(PG | R);
-  });
-
-  it('logs how many candidates came back and how many survived hydration', async () => {
-    h.rows.set(10, comic(10));
-    await search([11, 10]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'semantic-comic-search',
-        hydrated: 1,
-        payload: expect.objectContaining({ returned: 2 }),
-      })
-    );
   });
 });
 

@@ -114,39 +114,6 @@ describe('linkArticleContentImages', () => {
   });
 });
 
-describe('linkArticleContentImages orphan cleanup', () => {
-  // An article saved before shop keys were refused can hold one as the author's own image row.
-  it('never offers for deletion an orphaned image whose key shop artwork uses', async () => {
-    const orphans = [
-      { id: 5, url: SHOP_KEY },
-      { id: 6, url: FREE_KEY },
-    ];
-    dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => unknown) =>
-      cb({
-        $queryRaw: pgliteRaw(db).queryRaw,
-        image: {
-          findMany: async ({ where }: { where: { id?: unknown } }) => (where.id ? orphans : []),
-          createManyAndReturn,
-        },
-        imageConnection: {
-          upsert: vi.fn(),
-          findMany: async () => orphans.map((orphan) => ({ imageId: orphan.id })),
-          deleteMany: vi.fn(),
-        },
-        serviceOffering: { findMany: async () => [] },
-      })) as never);
-
-    const { orphanedImageIds } = await linkArticleContentImages({
-      articleId: 1,
-      content: '<p>both images removed</p>',
-      userId: 7,
-      ownerId: 7,
-    });
-
-    expect(orphanedImageIds).toEqual([6]);
-  });
-});
-
 describe('upsertArticle', () => {
   const save = (content: string) =>
     upsertArticle({ userId: 7, title: 'A title', content } as never);

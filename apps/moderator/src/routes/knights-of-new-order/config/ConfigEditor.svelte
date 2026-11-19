@@ -21,6 +21,7 @@
     gameFormData,
     killSwitchChanged,
     NUMBER_ROWS,
+    maxOpenError,
     percentError,
     seedDraft,
     sourcesFormData,
@@ -48,6 +49,7 @@
     sfw: sourcesTouched ? percentError(draft.sources.sfw, true) : null,
     nsfw: sourcesTouched ? percentError(draft.sources.nsfw, true) : null,
     yesNo: draft.sources.yesNoReset ? null : percentError(draft.sources.yesNo, false),
+    maxOpen: maxOpenError(draft.sources.maxOpen),
     ...Object.fromEntries(
       (Object.keys(NUMBER_ROWS) as NumberKey[]).map((key) => [
         key,
@@ -81,7 +83,7 @@
       toggles: ['harvest'],
     },
   ];
-  const DANGER: ToggleKey[] = ['shopDisabled', 'conversionDisabled'];
+  const DANGER: ToggleKey[] = ['shopDisabled', 'conversionDisabled', 'signalsDisabled'];
 
   async function post(action: string, body: FormData) {
     const response = await fetch(`?/${action}`, {
@@ -243,6 +245,22 @@
           value={draft.sources.nsfw}
           invalid={Boolean(errors.nsfw)}
           oninput={(value) => (draft.sources.nsfw = value)}
+        />
+      </SettingRow>
+      <Separator />
+      <SettingRow
+        id="cfg-max-open"
+        label="Open-item cap"
+        description="Scan intake pauses while more Knight-stage rating items than this are open. Owner ratings always queue. Blank keeps the stored cap (5,000 when none is stored)."
+        error={errors.maxOpen}
+      >
+        <NumberInput
+          id="cfg-max-open"
+          unit="items"
+          placeholder="5000"
+          value={draft.sources.maxOpen}
+          invalid={Boolean(errors.maxOpen)}
+          oninput={(value) => (draft.sources.maxOpen = value)}
         />
       </SettingRow>
       <Separator />

@@ -1,3 +1,4 @@
+import { pack, unpack } from 'msgpackr';
 import { LuaFactory } from 'wasmoon';
 
 /**
@@ -85,6 +86,9 @@ export function createLuaRedis(
         await engine.doString('unpack = table.unpack');
         engine.global.set('KEYS', keys);
         engine.global.set('ARGV', argv);
+        engine.global.set('__cmsgpack', cmsgpack);
+        // Lists cross as comma-joined numbers, so scripts get real Lua tables, not JS proxies.
+        await engine.doString(CMSGPACK_SHIM);
         engine.global.set('redis', {
           call: redisCall,
           error_reply: (message: string) => {
@@ -407,3 +411,58 @@ function toRedisReply(value: unknown): unknown {
   }
   return value;
 }
+
+/**
+ * A stand-in for `HINCRBY key field 1` that hands out `next()` instead of counting, and stores it in
+ * `lua`'s hash as the real command would, so a script that reads the field back sees the counter.
+ */
+export function hashTicketFrom(lua: LuaRedis, next: () => number) {
+  return async (key: string, field: string) => {
+    const ticket = next();
+    lua.setHash(key, { ...(lua.hash(key) ?? {}), [field]: String(ticket) });
+    return ticket;
+  };
+}
+
+/**
+ * Redis's `cmsgpack` for arrays of numbers, backed by msgpackr. Like Redis's, `pack` writes an
+ * integral number as an integer (int64 above 2^32), which msgpackr reads back as a bigint; `unpack`
+ * hands Lua plain numbers. Packed bytes travel as base64 strings: wasmoon passes strings through C,
+ * where a NUL byte would cut them short. Scripts only move packed values, never read their bytes.
+ */
+const cmsgpack = {
+  pack: (list: string) =>
+    pack(
+      (list === '' ? [] : list.split(',')).map((s) => {
+        const v = Number(s);
+        return Number.isInteger(v) ? BigInt(v) : v;
+      })
+    ).toString('base64'),
+  unpack: (packed: string) => {
+    const value = unpack(Buffer.from(packed, 'base64'));
+    if (!Array.isArray(value)) throw new Error('cmsgpack.unpack: only arrays are supported');
+    return value.map((v) => String(v)).join(',');
+  },
+};
+
+const CMSGPACK_SHIM = `
+local js = __cmsgpack
+__cmsgpack = nil
+cmsgpack = {
+  pack = function(t)
+    local parts = {}
+    for i = 1, #t do parts[i] = string.format('%d', t[i]) end
+    return js.pack(table.concat(parts, ','))
+  end,
+  unpack = function(s)
+    local out = {}
+    for x in string.gmatch(js.unpack(s), '[^,]+') do out[#out + 1] = tonumber(x) end
+    return out
+  end,
+}
+`;
+
+/** A packed value in the harness's string form, as the JS writer (msgpackr `pack`) stored it. */
+export const packedForHarness = (value: unknown) => pack(value).toString('base64');
+/** Decodes a harness hash value written by a script's `cmsgpack.pack`. */
+export const unpackFromHarness = (value: string) => unpack(Buffer.from(value, 'base64'));

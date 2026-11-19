@@ -1,0 +1,6 @@
+{
+  "name": "@civitai/app-index-go",
+  "version": "0.0.2",
+  "private": true,
+  "description": "Version source for the app-index-go Go service (apps/app-index-go). Read only by scripts/release-app.mjs, which bumps it and cuts the app-index-go-vX.Y.Z tag the tag-webhook builds. Not a pnpm workspace member (excluded in pnpm-workspace.yaml): the Go module has no Node dependencies."
+}

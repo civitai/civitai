@@ -1,13 +1,19 @@
 import { Prisma } from '@prisma/client';
-import { servableProfilePicture } from '~/server/services/profile-picture.servable';
+import {
+  fallbackUserImage,
+  namesPicture,
+  servableProfilePicture,
+} from '~/server/services/profile-picture.servable';
 
 /**
  * A user's `profilePicture`, read through Prisma's nested select (`simpleUserSelect` and every copy
  * of it), comes back as `null` unless `servableProfilePicture` serves it: Scanned, rated, not
- * flagged `csam` and not restricted by its base model. Stricter than `servableProfilePictureSql`,
+ * under an owner-hidden review hold, not restricted by its base model and carrying no block
+ * marker. Stricter than `servableProfilePictureSql`,
  * which also admits moderator-locked ratings.
  * `User.profilePicture` is the only relation of that name, so the match is by key: a spread or
- * hand-built copy of the select is caught too.
+ * hand-built copy of the select is caught too. A sibling `image` (`User.image`) follows the same
+ * holds as the picture (`fallbackUserImage`).
  *
  * Only find queries are touched; writes return what they wrote. A query whose select tree has no
  * `profilePicture` carrying `url` is passed through as is: the cost is one walk of the args.
@@ -24,7 +30,13 @@ const READ_OPERATIONS = [
 const PICTURE_KEY = 'profilePicture';
 
 type Args = Record<string, unknown>;
-const CHECKED_FIELDS = ['ingestion', 'needsReview', 'nsfwLevel', 'modelRestricted'] as const;
+const CHECKED_FIELDS = [
+  'ingestion',
+  'needsReview',
+  'nsfwLevel',
+  'modelRestricted',
+  'blockedFor',
+] as const;
 type CheckedField = (typeof CHECKED_FIELDS)[number];
 type Leaf = { added: CheckedField[] };
 type Plan = Map<string, Plan | Leaf>;
@@ -112,15 +124,34 @@ export function applyProfilePicturePlan(result: unknown, plan: Plan): void {
       !servableProfilePicture(
         picture as { ingestion: string | null; nsfwLevel: number | null },
         picture.needsReview as string | null,
-        picture.modelRestricted as boolean | null
+        picture.modelRestricted as boolean | null,
+        picture.blockedFor as string | null
       )
-    )
+    ) {
+      if (typeof result.image === 'string')
+        result.image = fallbackUserImage(
+          result.image,
+          picture as Parameters<typeof fallbackUserImage>[1]
+        );
       result[key] = null;
-    else for (const field of node.added) delete picture[field];
+    } else for (const field of node.added) delete picture[field];
   }
 }
 
-/** The fallback when the plan fails: every `profilePicture` anywhere in the result becomes null. */
+/** Whether `image` names the record's picture; true when the picture cannot be read. */
+function mayNamePicture(image: string, record: Args) {
+  try {
+    const picture = record[PICTURE_KEY];
+    return isObject(picture) && namesPicture(image, picture.url);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The fallback when the plan fails: every `profilePicture` anywhere in the result becomes null, and
+ * a sibling `image` naming it too.
+ */
 function nullEveryProfilePicture(value: unknown, seen = new WeakSet<object>()): void {
   if (typeof value !== 'object' || value === null || seen.has(value)) return;
   seen.add(value);
@@ -130,8 +161,11 @@ function nullEveryProfilePicture(value: unknown, seen = new WeakSet<object>()): 
   }
   const record = value as Args;
   for (const key of Object.keys(record)) {
-    if (key === PICTURE_KEY) record[key] = null;
-    else nullEveryProfilePicture(record[key], seen);
+    if (key === PICTURE_KEY) {
+      if (typeof record.image === 'string' && mayNamePicture(record.image, record))
+        record.image = null;
+      record[key] = null;
+    } else nullEveryProfilePicture(record[key], seen);
   }
 }
 

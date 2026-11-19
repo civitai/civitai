@@ -13,7 +13,10 @@ import type {
   NotificationCategory,
   NotificationListCursor,
   NotificationRow,
+  UnseenNotificationItem,
+  UnseenNotifications,
 } from '@civitai/notifications';
+import { UNSEEN_COUNT_LIMIT } from '@civitai/notifications';
 import { notifDbRead, notifDbWrite } from './clients/db';
 import { notificationCache, redisWithin, type NotificationCategoryCount } from './cache';
 import { getNotifDbWithoutLag, isWritePool, preventReplicationLag } from './lag';
@@ -263,6 +266,61 @@ export async function notificationExists(key: string): Promise<boolean> {
     [key]
   );
   return rows.length > 0;
+}
+
+// Per user: how many notifications they have not seen (`viewed IS FALSE`) since their own `since`, and
+// the newest `limit` of them. One statement per call over the ("userId", "createdAt" DESC) index, each
+// user's scan bounded by their window. Reads the replica: a weekly digest can be a moment behind.
+export async function queryUnseenNotifications(input: {
+  users: { userId: number; since: Date }[];
+  excludeTypes: string[];
+  limit: number;
+}): Promise<UnseenNotifications[]> {
+  const { users, excludeTypes, limit } = input;
+  if (users.length === 0) return [];
+  const unseen = `un."userId" = u."userId" AND un."createdAt" > u.since AND un.viewed IS FALSE
+      AND n.type <> ALL($3::text[])`;
+  const rows = await queryWithRetry<
+    Omit<UnseenNotificationItem, 'id'> & { id: string | number; userId: number; total: number }
+  >(
+    notifDbRead(),
+    `SELECT u."userId", c.total, x.id, x.type, x.category, x.details, x."createdAt"
+     FROM unnest($1::int[], $2::timestamp[]) AS u("userId", since)
+     CROSS JOIN LATERAL (
+       SELECT count(*)::int AS total FROM (
+         SELECT 1 FROM "UserNotification" un JOIN "Notification" n ON n.id = un."notificationId"
+         WHERE ${unseen}
+         LIMIT $5
+       ) capped
+     ) c
+     CROSS JOIN LATERAL (
+       SELECT un.id, n.type, n.category, n.details, un."createdAt"
+       FROM "UserNotification" un JOIN "Notification" n ON n.id = un."notificationId"
+       WHERE ${unseen}
+       ORDER BY un."createdAt" DESC, un.id DESC
+       LIMIT $4
+     ) x
+     ORDER BY u."userId", x."createdAt" DESC, x.id DESC`,
+    [
+      users.map((u) => u.userId),
+      // `createdAt` is a UTC timestamp without a zone, so the window start goes in as UTC wall time.
+      users.map((u) => u.since.toISOString().replace('Z', '')),
+      excludeTypes,
+      limit,
+      UNSEEN_COUNT_LIMIT,
+    ]
+  );
+
+  const byUser = new Map<number, UnseenNotifications>();
+  for (const { userId, total, id, ...item } of rows) {
+    let user = byUser.get(userId);
+    if (!user) {
+      user = { userId, total, floor: total >= UNSEEN_COUNT_LIMIT, items: [] };
+      byUser.set(userId, user);
+    }
+    user.items.push({ ...item, id: Number(id) });
+  }
+  return [...byUser.values()];
 }
 
 // --- cleanup: batched delete of old UserNotification rows -------------------------------------------

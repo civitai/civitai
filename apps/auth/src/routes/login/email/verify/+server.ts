@@ -12,6 +12,7 @@ import {
   SystemAccountSignInError,
 } from '$lib/server/auth/users';
 import { establishSession } from '$lib/server/auth/session';
+import { readLastMethod, rememberLastMethod } from '$lib/server/auth/last-method';
 import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
 import { loginsTotal } from '$lib/server/metrics';
@@ -33,12 +34,16 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 
   // Same rule as the send path: only a plain address may start a new account.
   const allowCreate = parsePlainEmailAddress(email, addressparser) !== null;
-  const user = await findOrCreateUserByEmail(email, { allowCreate }).catch((e) => {
+  const user = await findOrCreateUserByEmail(email, {
+    allowCreate,
+    lastMethod: readLastMethod(cookies),
+  }).catch((e) => {
     if (e instanceof SystemAccountSignInError) redirect(302, '/login?error=SystemAccount');
     if (e instanceof NoAccountForEmailError) redirect(302, '/login?error=Verification');
     throw e;
   });
   await establishSession(cookies, user, { returnUrl });
+  rememberLastMethod(cookies, 'email');
 
   // Count the successful email login (best-effort; never blocks the redirect).
   loginsTotal.inc({ provider: 'email' });

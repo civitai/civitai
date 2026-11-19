@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
-import { REFERENCE_POOL, servableImage } from '@civitai/db/knights';
+import { REFERENCE_POOL, REFERENCE_STATUS, servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { metrics } from '../metrics';
 import { PROGRESSION } from '../progression/config';
+import { payOutVotes } from '../progression/progression';
 import { BUCKET_LEVELS } from '../queue/feed';
 import { canVote } from '../queue/ranks';
 import {
@@ -17,8 +18,8 @@ import {
 import { BLOCKED_ANSWER } from '../../block-reasons';
 import { creditVote, insertVote } from '../queue/vote-record';
 import { isRank } from '../ranks';
-import { servableReferences } from '../reference';
-import { resetNow, type ResetDeps } from '../smites/smites.service';
+import { servableReferences, type ServedStatus } from '../reference';
+import { activeSmiteCount, resetNow, type ResetDeps } from '../smites/smites.service';
 import type { HiddenCheckSettings } from './config';
 import { gradeHiddenVotes, type CheckOutcome } from './settle';
 import { closeNotice, SMITE_NOTICE, warningNotice, type Notice } from './notices';
@@ -78,18 +79,20 @@ function eligibleReferences(
   db: Executor,
   userId: number,
   questionKey: string,
+  statuses: ServedStatus[],
   exclude: number[] = []
 ) {
-  return servableReferences(db, REFERENCE_POOL.hiddenCheck)
+  return servableReferences(db, REFERENCE_POOL.hiddenCheck, statuses)
     .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
     .where('r.questionKey', '=', questionKey)
     .where('q.active', '=', true)
+    .where('img.userId', 'is distinct from', userId)
     .$if(exclude.length > 0, (qb) => qb.where('r.id', 'not in', exclude))
     .where((eb) =>
       eb.not(
         eb.exists(
           // A check is a vote on its reference's image, so (player, image) is the whole test and rides the
-          // ("playerId","imageId") index.
+          // ("playerId","imageId") index. It also keeps a probation check from the players whose votes made it.
           eb
             .selectFrom('KnightsVote as v')
             .select(sql<number>`1`.as('one'))
@@ -109,6 +112,8 @@ function eligibleReferences(
  * at or after it (wrapping to the first one) in the first bucket, in that order, that has one: each bucket with an
  * eligible reference is equally likely, whatever its size, and the cost is a short index walk per bucket tried, not a
  * count of every eligible row.
+ *
+ * A share of 0 never serves probation, not even as a fallback.
  */
 export async function pickHiddenCheck(
   db: Executor,
@@ -118,6 +123,8 @@ export async function pickHiddenCheck(
     secret: string;
     questionKey: string;
     rate: number;
+    /** Share (0 to 1) of checks drawn from probation references first; unset is 0. */
+    probationShare?: number;
     /** Reference ids the player has skipped. */
     exclude?: number[];
     /** Rolls for an item the player has not reached yet; unset, the roll is fixed by their last vote. */
@@ -125,11 +132,19 @@ export async function pickHiddenCheck(
   }
 ): Promise<HiddenCheckOffer | null> {
   if (!isRank(input.rank) || !canVote(input.rank, 'Knight')) return null;
-  const digest = createHash('sha256')
-    .update(
-      `${input.secret}:hidden:${input.userId}:${input.slot ?? (await slotOf(db, input.userId))}`
-    )
-    .digest();
+  const seed = `${input.secret}:hidden:${input.userId}:${
+    input.slot ?? (await slotOf(db, input.userId))
+  }`;
+  const digest = createHash('sha256').update(seed).digest();
+  // Its own digest: the pool roll must not reuse bytes `digest` already spends.
+  const poolRoll = unit(createHash('sha256').update(`${seed}:probation`).digest(), 0);
+  const share = input.probationShare ?? 0;
+  const pools: ServedStatus[] =
+    share <= 0
+      ? [REFERENCE_STATUS.active]
+      : poolRoll < share
+      ? [REFERENCE_STATUS.probation, REFERENCE_STATUS.active]
+      : [REFERENCE_STATUS.active, REFERENCE_STATUS.probation];
 
   const { low, top } = await db
     .selectFrom('KnightsReferenceImage')
@@ -153,8 +168,8 @@ export async function pickHiddenCheck(
     'img.width',
     'img.height',
   ] as const;
-  const walk = (answers: AnswerGroup, from: 'at-or-after' | 'before') =>
-    eligibleReferences(db, input.userId, input.questionKey, input.exclude)
+  const walk = (status: ServedStatus, answers: AnswerGroup, from: 'at-or-after' | 'before') =>
+    eligibleReferences(db, input.userId, input.questionKey, [status], input.exclude)
       .where((eb) =>
         answers === null ? eb('r.answer', 'not in', BUCKET_ANSWERS) : eb('r.answer', '=', answers)
       )
@@ -165,8 +180,11 @@ export async function pickHiddenCheck(
       .executeTakeFirst();
 
   let row: Awaited<ReturnType<typeof walk>> = undefined;
-  for (const group of bucketOrder(digest)) {
-    row = (await walk(group, 'at-or-after')) ?? (await walk(group, 'before'));
+  for (const status of pools) {
+    for (const group of bucketOrder(digest)) {
+      row = (await walk(status, group, 'at-or-after')) ?? (await walk(status, group, 'before'));
+      if (row) break;
+    }
     if (row) break;
   }
 
@@ -208,6 +226,9 @@ export const isSevereUnderRating = (given: string, known: string, distance: numb
  * queue vote. It has no queue item and no write-back. With `grade` it is graded in the same transaction (`gradeHiddenVotes`)
  * and the result says what it cost, so the player sees a warning or smite on the answer that caused it; without `grade`,
  * `settleHiddenChecks` grades it later.
+ *
+ * A probation reference grades nobody: its answer is settled inconclusive at once, so a later promotion cannot grade it,
+ * and the result reads as any inconclusive check. Any status but active or probation is refused.
  */
 export async function answerHiddenCheck(
   db: Kysely<DB>,
@@ -225,16 +246,25 @@ export async function answerHiddenCheck(
 ): Promise<HiddenCheckResult> {
   const now = deps.now();
   let graded: { outcome: CheckOutcome; xp: XpDelta[]; reset: boolean } | null = null;
+  let ungraded = false;
   const result = await db.transaction().execute(async (trx): Promise<HiddenCheckResult> => {
     const until = await pacingGate(trx, input, now, deps);
     if (until) return { status: 'limited', until };
 
-    const ref = await servableReferences(trx, REFERENCE_POOL.hiddenCheck)
+    const ref = await servableReferences(trx, REFERENCE_POOL.hiddenCheck, [
+      REFERENCE_STATUS.active,
+      REFERENCE_STATUS.probation,
+    ])
       .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
-      .select(['r.id', 'r.imageId', 'r.questionKey', 'q.options'])
+      .select(['r.id', 'r.imageId', 'r.questionKey', 'r.status', 'q.options'])
       .where('r.id', '=', input.referenceId)
       .executeTakeFirst();
     if (!ref) return { status: 'rejected', reason: 'unavailable' };
+    const probation = ref.status === REFERENCE_STATUS.probation;
+    // Fail closed on any other status.
+    if (!probation && ref.status !== REFERENCE_STATUS.active) {
+      return { status: 'rejected', reason: 'unavailable' };
+    }
 
     const itemId = hiddenItemId(ref.id);
     const vote = await insertVote(
@@ -264,6 +294,19 @@ export async function answerHiddenCheck(
       player: vote.player,
       gold: vote.gold,
     });
+    if (probation) {
+      await settleUngraded(trx, { itemId, playerId: input.userId, now });
+      if (deps.grade) {
+        const smites = await activeSmiteCount(trx, input.userId);
+        graded = {
+          outcome: { playerId: input.userId, verdict: 'inconclusive', consequence: null, smites },
+          xp: [],
+          reset: false,
+        };
+        ungraded = true;
+      }
+      return { status: 'recorded' };
+    }
     if (!deps.grade) return { status: 'recorded' };
 
     // Read back: `creditVote` may have clamped the stored gold to the day's cap.
@@ -287,7 +330,7 @@ export async function answerHiddenCheck(
   if (!graded || !deps.grade) return result;
 
   const { outcome, xp, reset } = graded as { outcome: CheckOutcome; xp: XpDelta[]; reset: boolean };
-  metrics.hiddenCheckGraded(outcome.verdict);
+  if (!ungraded) metrics.hiddenCheckGraded(outcome.verdict);
   await mirrorXp(deps.mirrorXp, xp);
   // A reset that fails here stays due: the tick retries it (`resetPendingPlayers`).
   if (reset) await resetNow(input.userId, deps.grade);
@@ -300,6 +343,22 @@ export async function answerHiddenCheck(
       reset,
     },
   };
+}
+
+/** Settles a just-cast check vote as inconclusive: no verdict against its reference, no pay, its pending gold released. */
+async function settleUngraded(
+  trx: Transaction<DB>,
+  { itemId, playerId, now }: { itemId: number; playerId: number; now: Date }
+) {
+  const votes = await trx
+    .updateTable('KnightsVote')
+    .set({ verdict: 'inconclusive' })
+    .where('itemId', '=', itemId)
+    .where('playerId', '=', playerId)
+    .where('createdAt', '=', utc(now))
+    .returning(['itemId', 'playerId', 'verdict', 'gold', 'createdAt'])
+    .execute();
+  await payOutVotes(trx, votes, now);
 }
 
 /** A warning or smite the player has not dismissed, naming the check that caused it. */
@@ -368,12 +427,55 @@ export async function readHiddenNotices(db: Executor, playerId: number): Promise
   });
 }
 
-export async function dismissHiddenNotices(db: Executor, playerId: number, now: Date) {
-  await db
+/** One notice the toast showed, as its `key` names it (`${itemId}:${createdAt ms}`). */
+export type ShownNotice = { itemId: number; createdAt: Date };
+
+const MAX_NOTICE_KEYS = 20;
+const INT4_MAX = 2_147_483_647;
+
+/** The posted keys of the notices a toast showed; malformed ones are skipped, and at most `MAX_NOTICE_KEYS` are read. */
+export function parseNoticeKeys(keys: readonly string[]): ShownNotice[] {
+  const shown: ShownNotice[] = [];
+  for (const key of keys.slice(0, MAX_NOTICE_KEYS)) {
+    const match = /^(-?\d{1,10}):(\d{1,15})$/.exec(key);
+    if (!match) continue;
+    const itemId = Number(match[1]);
+    const createdAt = new Date(Number(match[2]));
+    if (Math.abs(itemId) > INT4_MAX || Number.isNaN(createdAt.getTime())) continue;
+    shown.push({ itemId, createdAt });
+  }
+  return shown;
+}
+
+/**
+ * Marks the player's notices seen. Given the ones a toast showed, only those: a check graded after the toast was drawn
+ * stays unseen for the next one. Without them (a page from before keys were sent), every unseen notice, as before.
+ */
+export async function dismissHiddenNotices(
+  db: Executor,
+  playerId: number,
+  now: Date,
+  shown?: ShownNotice[]
+) {
+  if (shown && shown.length === 0) return;
+  let update = db
     .updateTable('KnightsVote')
     .set({ noticedAt: utc(now) })
     .where('playerId', '=', playerId)
     .where('consequence', 'is not', null)
-    .where('noticedAt', 'is', null)
-    .execute();
+    .where('noticedAt', 'is', null);
+  if (shown) {
+    // The key carries milliseconds; the column may hold finer, so it is compared at the key's precision.
+    update = update.where((eb) =>
+      eb.or(
+        shown.map((notice) =>
+          eb.and([
+            eb('itemId', '=', notice.itemId),
+            eb(sql`date_trunc('milliseconds', "createdAt")`, '=', utc(notice.createdAt)),
+          ])
+        )
+      )
+    );
+  }
+  await update.execute();
 }

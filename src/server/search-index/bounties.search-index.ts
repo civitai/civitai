@@ -17,10 +17,10 @@ import { dbRead } from '~/server/db/client';
 import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import type { ImageModelWithIngestion } from '../selectors/image.selector';
-import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
 import { NsfwLevel } from '~/server/common/enums';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { publicBountyDetails } from '~/server/utils/bounty-details';
@@ -187,10 +187,7 @@ export const transformData = async ({
         .filter((i) => {
           const nsfwLevel = nsfw ? NsfwLevel.XXX : i.nsfwLevel;
           // The index has no viewer, so a restricted minor image is left out for everyone.
-          return (
-            !isTaggedMatureImage({ nsfwLevel, tags: i.tags.map((tag) => tag.id) }) &&
-            !isMinorMatureImage({ minor: i.minor, nsfwLevel })
-          );
+          return !isMinorMatureImage({ minor: i.minor, nsfwLevel });
         })
         .map(withoutMinorFlag);
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
@@ -287,7 +284,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
             'id', u.id,
             'username', u.username,
             'deletedAt', u."deletedAt",
-            'image', u.image,
+            'image', ${Prisma.raw(fallbackUserImageColumn)},
             'profilePictureId', u."profilePictureId"
           ) user
         FROM "User" u

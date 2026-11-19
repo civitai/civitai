@@ -62,7 +62,7 @@ beforeAll(async () => {
       hash text, "userId" int NOT NULL, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "needsReview" text, type text NOT NULL DEFAULT 'image', width int, height int, metadata jsonb,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb,
-      "modelRestricted" boolean NOT NULL DEFAULT false
+      "modelRestricted" boolean NOT NULL DEFAULT false, "blockedFor" text
     );
     INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview") VALUES
       (${CLEAN}, 'clean', ${CLEAN_AUTHOR}, 'Scanned', NULL),
@@ -70,13 +70,16 @@ beforeAll(async () => {
       (${FLAGGED}, 'flagged', ${FLAGGED_AUTHOR}, 'Scanned', 'csam'),
       (40, 'pending', 4, 'Pending', NULL),
       (50, 'other-review', 5, 'Scanned', 'other-review'),
-      (60, 'error', 6, 'Error', NULL);
+      (60, 'error', 6, 'Error', NULL),
+      (110, 'minor', 11, 'Scanned', 'minor');
     INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevelLocked") VALUES
       (70, 'pending-mod-rated', 7, 'Pending', true);
     INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevel") VALUES
       (80, 'unrated', 8, 'Scanned', 0);
     INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "modelRestricted") VALUES
       (90, 'restricted-r', 9, 4, true), (100, 'restricted-pg', 10, 1, true);
+    INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevel", "blockedFor") VALUES
+      (120, 'block-level', 12, 'Scanned', 32, NULL), (130, 'block-reason', 13, 'Scanned', 1, 'tos');
   `);
 });
 afterAll(() => pg.close());
@@ -144,9 +147,12 @@ describe('servable profile pictures', () => {
       80,
       90,
       100,
+      110,
+      120,
+      130,
     ]);
 
-    // Unscanned (Pending, Error) and unrated pictures are left out; a moderator's rating stands in
+    // Unscanned (Pending, Error), unrated, blocked, csam- and minor-held pictures are left out; a moderator's rating stands in
     // for a scan.
     expect(pictureUrls(pictures)).toEqual([
       'clean',

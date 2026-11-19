@@ -736,7 +736,7 @@ describe('image-scan-result webhook - pipeline tests', () => {
           (sql: any) =>
             sql.text.includes('UPDATE "Image"') &&
             sql.text.includes('"needsReview"') &&
-            sql.params.at(-1) === imageId
+            sql.params[Number(sql.text.match(/WHERE id = \$(\d+)/)?.[1]) - 1] === imageId
         );
       if (!update) return undefined;
       const param = (column: string, valueAt = '\\$(\\d+)') => {

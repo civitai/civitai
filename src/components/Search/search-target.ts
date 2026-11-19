@@ -30,7 +30,15 @@ export function resolveSearchTarget(
 
 type ImageSearchFlags = Partial<Pick<FeatureAccess, 'imageSearch' | 'feedSearch'>>;
 type FeedSearchFlags = Partial<
-  Pick<FeatureAccess, 'feedSearch' | 'modelFeedSearch' | 'articleFeedSearch' | 'servicesFeedSearch'>
+  Pick<
+    FeatureAccess,
+    | 'feedSearch'
+    | 'modelFeedSearch'
+    | 'articleFeedSearch'
+    | 'servicesFeedSearch'
+    | 'semanticBountySearch'
+    | 'videoFeedSearch'
+  >
 >;
 
 /**
@@ -54,8 +62,12 @@ const FEED_SEARCH = {
     pathname: '/articles',
     profilePathname: '/user/[username]/articles',
   },
+  bounties: { flag: 'semanticBountySearch', pathname: '/bounties', profilePathname: undefined },
 } as const satisfies Partial<
-  Record<SearchIndexKey, { flag: keyof FeedSearchFlags; pathname: string; profilePathname: string }>
+  Record<
+    SearchIndexKey,
+    { flag: keyof FeedSearchFlags; pathname: string; profilePathname: string | undefined }
+  >
 >;
 
 /** The feed a search on `index` lands on, when that feed answers `?query=` for this viewer. */
@@ -80,6 +92,8 @@ export function searchesFeedInPlace(
 ) {
   // /services has no search index, so there only the bar's default target (`models`) filters it.
   if (pathname === '/services') return !!features.servicesFeedSearch && index === 'models';
+  if (pathname === '/videos')
+    return !!features.videoFeedSearch && !!features.feedSearch && index === 'images';
   const feed = FEED_SEARCH[index as keyof typeof FEED_SEARCH];
   if (!feed || !features[feed.flag]) return false;
   if (pathname === feed.pathname) return true;
@@ -115,6 +129,14 @@ export function searchSectionFromPath(path: string) {
   return section === 'user' && username && isFeedTab ? tab : section;
 }
 
+/** The section the header bar's target follows, with /videos searching the images index. */
+export function searchSectionFor(path: string, features: FeedSearchFlags) {
+  const section = searchSectionFromPath(path);
+  return section === 'videos' && features.videoFeedSearch && features.feedSearch
+    ? 'images'
+    : section;
+}
+
 /** Where /search/images sends a viewer: the images feed, the models search, or nowhere (it stays). */
 export function legacyImageSearchDestination(
   features: ImageSearchFlags
@@ -122,4 +144,36 @@ export function legacyImageSearchDestination(
   if (features.feedSearch) return 'images-feed';
   if (!features.imageSearch) return 'models-search';
   return undefined;
+}
+
+type PageSearchFlags = Partial<
+  Pick<
+    FeatureAccess,
+    'semanticChallengeSearch' | 'semanticCrucibleSearch' | 'servicesFeedSearch' | 'pageSearch'
+  >
+>;
+
+// Pages outside the search indexes that answer their own `?query=`, each behind a flag: there the
+// header bar is a plain search of that page, whatever the page does with the text.
+const PAGE_SEARCH: Record<string, { flag: keyof PageSearchFlags; placeholder: string }> = {
+  '/challenges': { flag: 'semanticChallengeSearch', placeholder: 'Search challenges' },
+  '/crucibles': { flag: 'semanticCrucibleSearch', placeholder: 'Search crucibles' },
+  '/services': { flag: 'servicesFeedSearch', placeholder: 'Search services' },
+  '/shop': { flag: 'pageSearch', placeholder: 'Search the shop' },
+  '/apps/store': { flag: 'pageSearch', placeholder: 'Search apps' },
+  '/changelog': { flag: 'pageSearch', placeholder: 'Search updates' },
+  '/tools': { flag: 'pageSearch', placeholder: 'Search tools' },
+  '/user/downloads': { flag: 'pageSearch', placeholder: 'Search your downloads' },
+  // A creator's tabs without a search index: their own feeds filter by text.
+  '/user/[username]/posts': { flag: 'pageSearch', placeholder: 'Search their posts' },
+  '/user/[username]/collections': { flag: 'pageSearch', placeholder: 'Search their collections' },
+};
+
+/**
+ * The header bar's search on a page that answers its own `?query=`, or undefined elsewhere.
+ * `pathname` is the route pattern (`router.pathname`).
+ */
+export function pageSearchFor(features: PageSearchFlags, pathname: string) {
+  const page = PAGE_SEARCH[pathname];
+  return page && features[page.flag] ? { placeholder: page.placeholder } : undefined;
 }

@@ -1,3 +1,4 @@
+import type * as BlockedImageHash from '~/server/services/blocked-image-hash';
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks';
@@ -12,7 +13,8 @@ const { getIsImageBlocked, canCheckBlockedImageHash } = vi.hoisted(() => ({
   getIsImageBlocked: vi.fn<(hash: bigint) => Promise<boolean>>(),
   canCheckBlockedImageHash: vi.fn<() => boolean>(),
 }));
-vi.mock('~/server/services/blocked-image-hash', () => ({
+vi.mock('~/server/services/blocked-image-hash', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlockedImageHash>()),
   getIsImageBlocked,
   canCheckBlockedImageHash,
 }));

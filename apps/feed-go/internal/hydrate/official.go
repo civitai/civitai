@@ -38,8 +38,8 @@ type OfficialModel struct {
 }
 
 // OfficialModels mirrors getOfficialModelIds (src/server/services/resource-select.service.ts):
-// fetchThroughCache(OFFICIAL_MODELS, ttl 300, retryCount 0), whose catch answers []. With write-back off
-// or under a probe nothing is written and no lock is taken. A failed replica read is
+// fetchThroughCache(OFFICIAL_MODELS, ttl 300, retryCount 0), whose catch answers []. With the cache not
+// written back (MissOfficialModels not in WriteBack) or under a probe nothing is written and no lock is taken. A failed replica read is
 // official-models-miss-failed, not [], because Node would answer a different page.
 func (s *Sources) OfficialModels(ctx context.Context) ([]OfficialModel, error) {
 	if s.Packed == nil || s.Packed.Redis == nil {
@@ -65,7 +65,7 @@ func (s *Sources) OfficialModels(ctx context.Context) ([]OfficialModel, error) {
 		return cached, nil
 	}
 	lockKey := s.Packed.Prefix + "cache-lock:" + key
-	if s.Compute != nil && s.Compute.WriteBack && presenceOf(ctx) == nil {
+	if s.Compute.writes(MissOfficialModels) && presenceOf(ctx) == nil {
 		var lock *redis.BoolCmd
 		_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
 			lock = p.SetNX(ctx, lockKey, "1", officialModelsLockTTL)
@@ -82,7 +82,7 @@ func (s *Sources) OfficialModels(ctx context.Context) ([]OfficialModel, error) {
 		case !got:
 			return []OfficialModel{}, nil
 		}
-		defer s.releaseLocks(context.WithoutCancel(ctx), []string{lockKey})
+		defer s.releaseLocks(ctx, []string{lockKey}) // detached from the request by releaseLocks itself
 		list, err := s.officialFetch(ctx)
 		if err != nil {
 			return nil, err
@@ -92,7 +92,7 @@ func (s *Sources) OfficialModels(ctx context.Context) ([]OfficialModel, error) {
 			data[i] = jspack.O("id", m.ID, "type", m.Type)
 		}
 		val := jspack.Pack(jspack.O("data", data, "cachedAt", float64(s.Compute.now().UnixMilli())))
-		s.writePacked(ctx, []packedWrite{{key: key, val: val, ttl: officialModelsEX, overwrite: true}})
+		s.writePacked(ctx, []packedWrite{{cache: MissOfficialModels, key: key, val: val, ttl: officialModelsEX, overwrite: true}})
 		return list, nil
 	}
 	var exists *redis.IntCmd
@@ -115,7 +115,7 @@ func (s *Sources) OfficialModels(ctx context.Context) ([]OfficialModel, error) {
 }
 
 // officialFetch is getOfficialModelIds' fetchFn on the replica (dbRead), through the miss computation
-// (one flight per process, the answer kept a few seconds with write-back off). Without s.Compute it
+// (one flight per process, the answer kept a few seconds when not written back). Without s.Compute it
 // falls back.
 func (s *Sources) officialFetch(ctx context.Context) ([]OfficialModel, error) {
 	if s.Compute == nil {
@@ -135,7 +135,7 @@ func (s *Sources) officialFetch(ctx context.Context) ([]OfficialModel, error) {
 		if p == nil {
 			c.observe(MissOfficialModels, "error", 1)
 		}
-		return nil, fallback.Newf("official-models-miss-failed", "%v", err)
+		return nil, fallback.Wrap("official-models-miss-failed", err)
 	}
 	if p == nil {
 		c.observe(MissOfficialModels, "computed", 1)

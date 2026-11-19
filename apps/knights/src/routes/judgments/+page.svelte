@@ -22,6 +22,7 @@
     ['pending', 'Pending'],
     ['inconclusive', 'Inconclusive'],
     ['forfeited', 'Forfeited'],
+    ['smites', 'Smites'],
   ] as const;
 </script>
 
@@ -63,6 +64,7 @@
               <span class="dot">·</span> Close: the answer was {judgment.verdictLabel}, one level off, so no reward and no penalty{:else if judgment.verdictLabel}
               <span class="dot">·</span> The verdict: {judgment.verdictLabel}{/if}
           </p>
+          {#if judgment.smite}<p class="smite">Cost you a smite</p>{/if}
           <p class="when">
             {#if judgment.kind === 'practice'}<span class="tag">Practice</span> · {/if}{new Date(
               judgment.at
@@ -84,7 +86,11 @@
       </article>
     {:else}
       <p class="empty">
-        {data.filter === 'all' ? 'You have not judged anything yet.' : 'Nothing matches this filter.'}
+        {data.filter === 'all'
+          ? 'You have not judged anything yet.'
+          : data.filter === 'smites'
+          ? 'No judgment has cost you a smite.'
+          : 'Nothing matches this filter.'}
       </p>
     {/each}
   </div>
@@ -165,6 +171,11 @@
     margin-top: 0.2rem;
     color: var(--io-parchment-muted);
     font: 400 0.95rem/1.4 var(--io-font-ui);
+  }
+  .smite {
+    margin-top: 0.2rem;
+    color: var(--io-crimson-text);
+    font: 600 0.95rem/1.4 var(--io-font-ui);
   }
   .when a {
     display: inline-flex;

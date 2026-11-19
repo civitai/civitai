@@ -19,6 +19,7 @@ const RECENT_MATURE = 62;
 
 const state = vi.hoisted(() => ({
   renderedHits: [] as unknown[],
+  rowProps: [] as unknown[],
   imageSearch: true,
   semanticQuery: vi.fn(),
   articleQuery: vi.fn(),
@@ -72,6 +73,7 @@ vi.mock('~/components/AutocompleteSearch/renderItems/images', async () => {
   const React = await import('react');
   const ImagesSearchItem = React.forwardRef((props: { value: string; hit?: unknown }, ref) => {
     state.renderedHits.push(props.hit);
+    state.rowProps.push(props);
     return React.createElement('div', { ref, 'data-testid': `option-${props.value}` });
   });
   ImagesSearchItem.displayName = 'ImagesSearchItemStub';
@@ -103,6 +105,7 @@ const { ShowcaseItemsInput } = await import('~/components/Profile/ShowcaseItemsI
 
 beforeEach(() => {
   state.renderedHits = [];
+  state.rowProps = [];
   state.imageSearch = true;
   state.myImages.mockReset();
   // Browsing level 3 (PG + PG-13) is set above; 2 is PG-13, 16 is X.
@@ -176,6 +179,13 @@ describe('Images search in the showcase picker', () => {
     await vi.waitFor(() => expect(offeredIds()).toEqual([RECENT_SAFE]), { timeout: 3000 });
     // A blurred row draws its placeholder from these; without them it is an empty box.
     expect(state.renderedHits.at(-1)).toMatchObject({ hash: 'h', width: 3, height: 2 });
+    // The select returns no `user`; the row's avatar needs the caller's.
+    expect(state.renderedHits.at(-1)).toMatchObject({ user: { id: 7, username: 'fox' } });
+    expect(state.rowProps.at(-1)).toMatchObject({
+      pickerRow: true,
+      viewerLevel: 3,
+      blurLevels: expect.any(Number),
+    });
     expect(state.semanticQuery).not.toHaveBeenCalled();
     // Whose images is the session's call: the request names no user.
     expect(state.myImages).toHaveBeenCalledWith({

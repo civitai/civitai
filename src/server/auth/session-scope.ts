@@ -4,6 +4,7 @@ import { withholdsModerator, type BearerCredential } from '~/server/auth/full-us
 import { logToAxiom } from '~/server/logging/client';
 import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import type { Session } from '~/types/session';
+import { routeSegments, type RouteQuery } from '~/server/utils/route-segments';
 
 /**
  * The token scope a caller needs for the session to be returned to it. Omitted, a bearer credential
@@ -26,7 +27,7 @@ type ScopeContext = BearerCredential & {
   apiKeyId?: number | null;
   scopeDecisionsLogged?: Set<string>;
 };
-type ScopeRequest = { url?: string; context?: Record<string, unknown> };
+type ScopeRequest = { url?: string; query?: RouteQuery; context?: Record<string, unknown> };
 
 export const INSUFFICIENT_SCOPE_MESSAGE =
   'Your API key does not have the required scope for this action';
@@ -53,16 +54,33 @@ function requiredBits(scope: SessionScope | undefined): bigint {
   return 'scope' in scope ? scope.scope : scope.anyOf.reduce((all, bit) => all | bit, 0n);
 }
 
-const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const WORD_SEGMENT = /^[a-z][a-z0-9-]{0,31}$/;
+const HEX_SEGMENT = /^[0-9a-f]+$/;
 
-/** The request path with numeric and UUID segments as `:id`, so one route logs as one value. */
-function routePattern(url: string | undefined): string | null {
-  const path = url?.split('?')[0];
-  if (!path) return null;
-  return path
-    .split('/')
-    .map((segment) => (/^\d+$/.test(segment) || UUID_SEGMENT.test(segment) ? ':id' : segment))
-    .join('/');
+/**
+ * The route template, e.g. `/api/download/models/[modelVersionId]`: a segment Next matched to a
+ * route param (`routeSegments`) is logged as the param's name. Any other segment is logged as
+ * `:segment` unless it is a short lowercase word, not all hex, that is not also a query-string
+ * value. Without `query`, a short lowercase segment such as a slug is logged as it is.
+ */
+function routeTemplate(url: string | undefined, query: RouteQuery | undefined): string | null {
+  if (!url) return null;
+  const route = routeSegments(url, query);
+  if (!route) return null;
+  const logged: string[] = [];
+  for (const { value, param, inQueryString } of route.segments) {
+    const segment = param
+      ? param.catchAll
+        ? `[...${param.name}]`
+        : `[${param.name}]`
+      : !inQueryString && WORD_SEGMENT.test(value) && !HEX_SEGMENT.test(value)
+      ? value
+      : ':segment';
+    // A catch-all param spans several segments; log it once.
+    if (param?.catchAll && logged.at(-1) === segment) continue;
+    logged.push(segment);
+  }
+  return `/${logged.join('/')}`;
 }
 
 /** Keyed, so the log cannot be mapped back to a key id by hashing the small id range. */
@@ -79,9 +97,10 @@ function logScopeDecision(
   context: ScopeContext,
   scope: SessionScope | undefined,
   enforcement: RestScopeEnforcement,
-  outcome: 'refused' | 'moderator-withheld'
+  outcome: 'refused' | 'moderator-withheld',
+  query: RouteQuery | undefined = req.query
 ) {
-  const route = routePattern(req.url);
+  const route = routeTemplate(req.url, query);
   const scopeKind =
     scope === undefined ? 'full' : typeof scope === 'string' ? scope : Object.keys(scope)[0];
   const key = `${route} ${scopeKind} ${requiredBits(scope)} ${outcome}`;
@@ -111,12 +130,14 @@ type ScopedSession = { session: Session | null; insufficient: boolean };
 /**
  * Holds a bearer credential to `scope`. Reads the credential `getServerAuthSession` recorded on
  * `req.context`; a request with none there (a browser session, or no session) is returned as is.
- * Under `report` the decision is only logged.
+ * Under `report` the decision is only logged. `query`, when given, names the route params for the
+ * log in place of `req.query` (a page request's params are on its context).
  */
 export function applySessionScope(
   req: ScopeRequest,
   session: Session | null,
-  scope: SessionScope | undefined
+  scope: SessionScope | undefined,
+  query?: RouteQuery
 ): ScopedSession {
   const pass = { session, insufficient: false };
   const user = session?.user;
@@ -127,9 +148,9 @@ export function applySessionScope(
 
   const allowed = credentialMeetsScope(heldScope(context.tokenScope), scope);
   const withholdModerator = allowed && scope !== 'defer' && withholdsModerator(user, context);
-  if (!allowed) logScopeDecision(req, context, scope, enforcement, 'refused');
+  if (!allowed) logScopeDecision(req, context, scope, enforcement, 'refused', query);
   else if (withholdModerator)
-    logScopeDecision(req, context, scope, enforcement, 'moderator-withheld');
+    logScopeDecision(req, context, scope, enforcement, 'moderator-withheld', query);
   if (enforcement === 'report') return pass;
 
   if (!allowed) return { session: null, insufficient: true };

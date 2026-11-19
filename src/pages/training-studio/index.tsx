@@ -103,9 +103,9 @@ function TrainingStudioEmbed({
   const canGenerate = features.generationAirResources;
   // The host knows its domain color; the element locks its Buzz mode to it (no user toggle).
   const buzzMode: 'yellow' | 'green' = features.isGreen ? 'green' : 'yellow';
-  // Epoch generation runs off UNPUBLISHED weights, which this app gates on membership — the same
+  // Epoch generation runs off UNPUBLISHED weights, which this app gates on sign-in — the same
   // predicate as the training-results Generate button (TrainingSelectFile). Passed explicitly so
-  // the element can explain the gate instead of a non-member's click silently doing nothing.
+  // the element can explain the gate instead of a click silently doing nothing.
   const currentUser = useCurrentUser();
   const canGenerateUnpublished = canGenerateWithEpochs(currentUser);
   const isPaidMember = paidMemberHostFlag(currentUser);

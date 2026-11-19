@@ -1,25 +1,32 @@
+import { createHash, randomUUID } from 'crypto';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { newBlockIdError } from '~/server/utils/apps-slug';
 import { isPrismaForeignKeyViolation } from '~/server/utils/errorHandling';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { compileRemixApp } from '~/shared/remix-apps/compile';
 import type { RemixApp } from '~/shared/remix-apps/define';
+import { replayRemixApp, type RemixReplayer } from '~/shared/remix-apps/replay';
 import {
   REMIX_BLOCK_ID_PREFIX,
   REMIX_CODE_APP_SLUGS,
   REMIX_SAVABLE_SLOT_IDS,
   REMIX_STATUS,
   REMIX_STATUSES,
+  USER_REMIX_SLUG,
   remixEngineIssues,
+  userRemixSlugPrefix,
   remixManifestSchema,
   type RemixAppInput,
   type RemixAppSpec,
   type RemixManifest,
   type RemixSlotId,
+  type RemixStoredSpec,
 } from '~/shared/remix-apps/row.schema';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
@@ -44,10 +51,31 @@ export type RegisteredRemixApp = {
   target: RemixSlotId;
   enabled: boolean;
   order: number;
-  spec: RemixAppSpec;
-  /** What `start` and `advance` run. */
+  spec: RemixStoredSpec;
+  /** Set on a user app: its code is the author's. */
+  author?: { userId: number };
+  /** Its listing and engine. A user app's `run` is never called in-process. */
   app: RemixApp;
+  /** What `start` and `advance` replay. */
+  replay: RemixReplayer;
+  /** A hash of what it runs: a run started on another shape is not replayed. */
+  shape: string;
 };
+
+export const REMIX_APP_UNAVAILABLE = 'This app is unavailable right now';
+
+// shortcut: until the sandbox runner ships, a user app refuses every replay.
+const unavailable = async (): Promise<never> => {
+  throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
+};
+
+/** The apps `caller` may see: user apps only behind their flag. */
+export function visibleRemixApps<T extends Pick<RegisteredRemixApp, 'author'>>(
+  apps: T[],
+  caller: { features: Pick<FeatureAccess, 'remixAppsUserCode'> }
+) {
+  return caller.features.remixAppsUserCode ? apps : apps.filter((entry) => !entry.author);
+}
 
 export const remixAppRowSelect = {
   id: true,
@@ -74,18 +102,31 @@ export const runVersionOf = (manifest: Pick<RemixManifest, 'version'>) =>
   Number(manifest.version.split('.')[0]);
 
 function register(
-  listing: Omit<RegisteredRemixApp, 'app' | 'icon'> & { version: number }
+  listing: Omit<RegisteredRemixApp, 'app' | 'icon' | 'replay' | 'shape'> & { version: number }
 ): RegisteredRemixApp {
   const { slug, name, description, spec, version } = listing;
   let app: RemixApp;
   if ('code' in spec) {
     // The code keeps its own run and version; the row only lists it.
     app = { ...CODE_REMIX_APPS[spec.code], slug, name, description, icon: spec.icon };
+  } else if ('source' in spec) {
+    app = {
+      slug,
+      name,
+      description,
+      icon: spec.icon,
+      version,
+      engine: spec.engine,
+      run: unavailable,
+    };
   } else {
     app = compileRemixApp({ slug, name, description, version }, spec);
   }
+  const replay: RemixReplayer =
+    'source' in spec ? unavailable : (source, log) => replayRemixApp(app, source, log);
+  const shape = createHash('sha256').update(runShape(spec)).digest('hex').slice(0, 16);
   const { version: _, ...rest } = listing;
-  return { ...rest, icon: spec.icon, app };
+  return { ...rest, icon: spec.icon, app, replay, shape };
 }
 
 /** A stored row as a registered app, or `null` (logged) when it no longer validates. */
@@ -102,6 +143,20 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
     return null;
   }
   const manifest = parsed.data;
+  const slug = row.blockId.slice(REMIX_BLOCK_ID_PREFIX.length);
+  if (
+    manifest.author
+      ? !slug.startsWith(userRemixSlugPrefix(manifest.author.userId))
+      : USER_REMIX_SLUG.test(slug)
+  ) {
+    logToAxiom({
+      name: 'remix-app-registry',
+      type: 'error',
+      message: 'Skipped a remix app row whose slug does not match its author',
+      blockId: row.blockId,
+    });
+    return null;
+  }
   // Saves check the engine; a stored row keeps serving after the allowlist moves on.
   const engineIssues = remixEngineIssues(manifest.remix);
   if (engineIssues.length)
@@ -113,7 +168,7 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
       payload: { issues: engineIssues },
     });
   return register({
-    slug: row.blockId.slice(REMIX_BLOCK_ID_PREFIX.length),
+    slug,
     name: manifest.name,
     description: manifest.description,
     target: manifest.targets[0].slotId,
@@ -121,6 +176,7 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
     order: row.featuredOrder ?? Number.MAX_SAFE_INTEGER,
     spec: manifest.remix,
     version: runVersionOf(manifest),
+    ...(manifest.author ? { author: manifest.author } : {}),
   });
 }
 
@@ -132,6 +188,8 @@ function seedRegistry() {
 }
 
 const REGISTRY_TTL = CacheTTL.hour;
+/** Bounds how long an idle generation key lives; a missing key just starts a new generation. */
+const GENERATION_TTL_SECONDS = 24 * 60 * 60;
 
 /**
  * On the primary: a mod's write is followed by this read, and a lagging replica would cache the
@@ -170,26 +228,43 @@ export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
  * that read the rows before a write landed fills the old generation's entry, which no reader uses
  * once the bump is done: a bust or a set can't promise that, since a refill already in flight
  * writes after either. `null` when Redis can't say; the caller then reads the primary uncached.
+ *
+ * The generation is a cache key's version, so it lives on the cache cluster with a TTL, and the
+ * cluster can evict it at any time. A reader that finds no key starts a fresh generation (SET NX,
+ * so concurrent readers agree on one). It must not fall back to a fixed name: an entry filled under
+ * that name before a mod write would be served again once the bumped key was evicted. Losing the
+ * key costs one read of the primary per reader until the new generation's entry is filled.
  */
 async function registryGeneration() {
+  const key = REDIS_KEYS.REMIX_APP.REGISTRY_GENERATION;
+  const bounded = <T>(op: () => Promise<T>) => boundedClusterCall('remixAppRegistryGeneration', op);
   try {
-    const generation = await withSysReadDeadline(
-      sysRedis.get(REDIS_SYS_KEYS.REMIX_APP.REGISTRY_GENERATION)
-    );
-    return generation ?? '0';
+    const generation = await bounded(() => redis.get(key));
+    if (generation) return generation;
+    const fresh = randomUUID();
+    if (await bounded(() => redis.set(key, fresh, { NX: true, EX: GENERATION_TTL_SECONDS })))
+      return fresh;
+    // Another reader started one between the GET and the SET NX.
+    return (await bounded(() => redis.get(key))) ?? null;
   } catch {
     return null;
   }
 }
 
-/** After a mod write has committed: moves every reader to a fresh read of the primary. */
+/**
+ * After a mod write has committed: moves every reader to a fresh read of the primary. A random
+ * token rather than a counter, so a generation that expired and started again can never name an
+ * entry an earlier generation filled.
+ */
 export async function bumpRemixAppRegistry() {
-  await sysRedis.incr(REDIS_SYS_KEYS.REMIX_APP.REGISTRY_GENERATION);
+  await redis.set(REDIS_KEYS.REMIX_APP.REGISTRY_GENERATION, randomUUID(), {
+    EX: GENERATION_TTL_SECONDS,
+  });
 }
 
 /** The apps the menu lists and the quote prices. */
-export async function getEnabledRemixApps() {
-  return (await getRemixAppRegistry()).filter((entry) => entry.enabled);
+export async function getEnabledRemixApps(caller: Parameters<typeof visibleRemixApps>[1]) {
+  return visibleRemixApps(await getRemixAppRegistry(), caller).filter((entry) => entry.enabled);
 }
 
 /**
@@ -198,9 +273,12 @@ export async function getEnabledRemixApps() {
  */
 export async function getRegisteredRemixApp(
   slug: string,
+  caller: Parameters<typeof visibleRemixApps>[1],
   { allowDisabled }: { allowDisabled: boolean }
 ) {
-  const entry = (await getRemixAppRegistry()).find((app) => app.slug === slug);
+  const entry = visibleRemixApps(await getRemixAppRegistry(), caller).find(
+    (app) => app.slug === slug
+  );
   if (!entry || (!entry.enabled && !allowDisabled))
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
   return entry;
@@ -210,7 +288,7 @@ export async function getRegisteredRemixApp(
 // Mod writes. Each one bumps the registry generation, so every server reads the change on its next request.
 
 /** The fields a change to which makes recorded runs mean something else. */
-function runShape(spec: RemixAppSpec) {
+function runShape(spec: RemixStoredSpec) {
   const { icon: _, ...shape } = spec;
   return JSON.stringify(shape);
 }
@@ -255,6 +333,9 @@ export async function saveRemixApp(input: RemixAppInput) {
   });
   if (existing && !REMIX_STATUSES.includes(existing.status))
     throw new TRPCError({ code: 'CONFLICT', message: `${blockId} belongs to another app` });
+  // A user app is its author's: a mod reviews it, never edits it.
+  if (existing ? isUserRow(existing.manifest) : USER_REMIX_SLUG.test(input.slug))
+    throw new TRPCError({ code: 'FORBIDDEN', message: `${blockId} is a user's app` });
 
   const previous = existing ? remixManifestSchema.safeParse(existing.manifest) : undefined;
   const storedTarget = previous?.success ? previous.data.targets[0].slotId : undefined;
@@ -296,6 +377,10 @@ export async function saveRemixApp(input: RemixAppInput) {
   await bumpRemixAppRegistry();
   return { slug: input.slug, version: runVersion };
 }
+
+/** Read off the raw manifest, so a user row that no longer validates still counts as one. */
+const isUserRow = (manifest: unknown) =>
+  typeof manifest === 'object' && manifest !== null && 'author' in manifest;
 
 const isSavableTarget = (target: string) =>
   (REMIX_SAVABLE_SLOT_IDS as readonly string[]).includes(target);

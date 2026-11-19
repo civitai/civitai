@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // fallbackIdleTimeout is how long the fallback proxy keeps an idle connection to the Node app. It must
@@ -47,11 +49,13 @@ var forwardingHeaders = []string{"Forwarded", "X-Forwarded-Host", "X-Forwarded-P
 // ReverseProxy itself sends an empty User-Agent when the inbound request has none.
 //
 // The proxy has its own transport, keeping idle connections for idle (fallbackIdleTimeout in
-// production; a test passes a shorter one), not DefaultTransport's 90 s. A request that fails before
+// production; a test passes a shorter one), not DefaultTransport's 90 s. With prop (tracing on) the
+// outbound request carries the trace context of its own context (prop.Inject), replacing an inbound
+// traceparent. A request that fails before
 // the Node app's response starts is answered 502 and reported to onError (if non-nil) with
 // proxyErrorCanceled or proxyErrorUpstream; one that fails mid-body is aborted by ReverseProxy
 // (http.ErrAbortHandler) and not reported.
-func fallbackProxy(target *url.URL, idle time.Duration, onError func(reason string, err error)) *httputil.ReverseProxy {
+func fallbackProxy(target *url.URL, idle time.Duration, onError func(r *http.Request, reason string, err error), prop propagation.TextMapPropagator) *httputil.ReverseProxy {
 	p := &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) {
 		pr.SetURL(target)
 		// The target has no query of its own; a target query would be dropped.
@@ -76,6 +80,12 @@ func fallbackProxy(target *url.URL, idle time.Duration, onError func(reason stri
 		case len(prior) > 0:
 			pr.Out.Header["X-Forwarded-For"] = prior
 		}
+		// Tracing on: the outbound traceparent is this hop's span (server.proxy starts it), replacing
+		// the inbound one, so the Node app's span is its child. Off (nil): the inbound headers pass
+		// through as they came.
+		if prop != nil {
+			prop.Inject(pr.Out.Context(), propagation.HeaderCarrier(pr.Out.Header))
+		}
 	}}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.IdleConnTimeout = idle
@@ -87,7 +97,7 @@ func fallbackProxy(target *url.URL, idle time.Duration, onError func(reason stri
 			if r.Context().Err() != nil {
 				reason = proxyErrorCanceled
 			}
-			onError(reason, err)
+			onError(r, reason, err)
 		}
 		w.WriteHeader(http.StatusBadGateway)
 	}

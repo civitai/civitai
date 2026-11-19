@@ -462,6 +462,7 @@ model User {
   pushSubscriptions    PushSubscription[]
   pushSettings         UserPushSetting[]
   emailOptOuts         UserEmailNotificationOptOut[]
+  notificationDigest   UserNotificationDigest?
   webhooks             Webhook[]
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
@@ -2318,6 +2319,9 @@ model Image {
   @@index([userId, postId])
   @@index([userId, id], map: "image_userid_id_idx")
   @@index([sortAt])
+  // Also INCLUDE (id, "hideMeta"), which Prisma cannot express: it lives in migration
+  // 20271119051500 and will not round-trip here. The auth session producer relies on it.
+  @@index([url], map: "Image_url_covered_idx")
 }
 
 model ImageTagForReview {
@@ -2882,6 +2886,24 @@ model Partner {
 model KeyValue {
   key   String @id
   value Json
+}
+
+// "Already done" markers that must survive a Redis eviction: the moderator DM, headless post and
+// Stripe AIR idempotency keys, behind the `idempotency-keys-pg` flag. RAW SQL ONLY
+// (`idempotency-key.service.ts`). Migration `20271119120000_idempotency_key`, applied by hand;
+// with the flag on and the table missing, each caller refuses rather than act twice.
+// `state` is 'pending' or 'done' (a CHECK constraint in the migration).
+// @no-type
+model IdempotencyKey {
+  scope     String
+  key       String
+  state     String
+  result    Json?
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  expiresAt DateTime @db.Timestamptz(6)
+
+  @@id([scope, key])
+  @@index([expiresAt])
 }
 
 /// Free-text feedback captured from in-product prompts. `area` is a plain
@@ -5392,6 +5414,19 @@ model UserEmailNotificationOptOut {
   @@id([userId, type])
 }
 
+// The weekly missed-notification digest: when each user was last sent one, so a user gets at most
+// one a week and no notification is listed in two of them. RAW SQL ONLY
+// (`notification-digest.service.ts`). Migration `20271117150000_user_notification_digest`, applied
+// by hand; the digest sends nothing while the table is missing.
+// @no-type
+model UserNotificationDigest {
+  userId     Int      @id
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastSentAt DateTime
+
+  @@map("UserNotificationDigest")
+}
+
 model Webhook {
   id        Int      @id @default(autoincrement())
   url       String
@@ -7818,6 +7853,8 @@ enum JobQueueType {
   ImageScan
   ReplacedImageDelete
   ImageStorageDelete
+  /// An image whose parent's delete orphaned it; `image-deletes` retries one its caller left.
+  ImageDelete
   CdnAccessSync
   ImageCdnPersistRetry
   /// A user queued for the CSAM report archiver (a separate service). Written and consumed only
@@ -11705,6 +11742,19 @@ model ServiceDealEvent {
   @@index([dealId, createdAt, id])
 }
 
+/// What remains of a deal file once it is deleted: no name or content. `etag` is the storage
+/// fingerprint of the upload, when it could be read at deletion.
+model ServiceDealFilePurge {
+  id       Int      @id @default(autoincrement())
+  fileId   Int      @unique
+  dealId   Int
+  size     Int
+  etag     String?
+  purgedAt DateTime @default(now())
+
+  @@index([dealId])
+}
+
 model ServiceDealFile {
   id             Int                       @id @default(autoincrement())
   dealId         Int
@@ -11745,6 +11795,10 @@ model ServiceDealFile {
   deliveryKey    String?
   deliverySize   Int?
   repackedAt     DateTime?
+  /// A video Final only: the ETag and version of the held object its scan copy was made from. A
+  /// download refuses unless the object still has them, and serves that version.
+  scannedEtag      String?
+  scannedVersionId String?
   /// An Attachment only: when the buyer confirmed the rights and likeness attestations for it.
   attestedAt     DateTime?
   /// Set when the uploader removed the file but its row and objects must stay; only moderators

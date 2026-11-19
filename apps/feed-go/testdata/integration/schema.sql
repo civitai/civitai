@@ -102,6 +102,14 @@ CREATE TABLE "TagsOnImageDetails" (
   PRIMARY KEY ("imageId", "tagId")
 );
 
+-- source: getAllImages' `tools` filter (internal/feed/query.go). The app's notes and createdAt are
+-- not read.
+CREATE TABLE "ImageTool" (
+  "imageId" integer NOT NULL,
+  "toolId"  integer NOT NULL,
+  PRIMARY KEY ("imageId", "toolId")
+);
+
 CREATE TABLE "ImageReaction" (
   id        integer PRIMARY KEY,
   "imageId" integer NOT NULL,

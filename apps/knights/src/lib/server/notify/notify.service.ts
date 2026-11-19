@@ -54,6 +54,7 @@ export type NotifyResult = {
  * A type added later never counts against them. One grouped query over the (userId, type) index, for
  * the candidates only, rather than a subquery per player in every candidate query.
  */
+// Copy of `silencedUsersAmong` in src/server/notifications/silence-check-ages.ts; change both.
 async function silencedAmong(
   db: Kysely<DB>,
   ids: number[],
@@ -209,6 +210,7 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
           servableItems(db)
             .select(sql<number>`1`.as('one'))
             .where('i.minRank', 'in', stages)
+            .where(sql<boolean>`img."userId" is distinct from pl."userId"`)
             .where(
               // A re-queue of an image the player judged under any item is not waiting for them (`insertVote`).
               sql<boolean>`not exists (select 1 from "KnightsVote" j where j."playerId" = pl."userId" and j."imageId" = i."imageId" and j."questionKey" = i."questionKey")`

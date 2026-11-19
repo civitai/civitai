@@ -25,10 +25,11 @@ const searchSortOptions = [
 ];
 
 export function ImageFeedFilters({
+  type = 'images',
   hideMediaTypes,
   hideTools,
   ...groupProps
-}: GroupProps & { hideMediaTypes?: boolean; hideTools?: boolean }) {
+}: GroupProps & { type?: 'images' | 'videos'; hideMediaTypes?: boolean; hideTools?: boolean }) {
   const currentUser = useCurrentUser();
   const searchQuery = useImageFeedSearchQuery();
   const similarTo = useImageFeedSimilarTo();
@@ -39,12 +40,19 @@ export function ImageFeedFilters({
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
       {currentUser &&
         (searching ? (
-          // The search doesn't narrow by audience, so the selector waits until it's cleared.
+          // The search doesn't narrow by audience, so it reads Everyone, whatever the feed's saved
+          // audience is; that comes back once the search is cleared.
           <SearchLock reason="Clear the search to filter by who posted">
-            <FollowedFilter type="images" variant="button" buttonProps={{ disabled: true }} />
+            <FollowedFilter
+              type={type}
+              variant="button"
+              value="false"
+              onChange={() => undefined}
+              buttonProps={{ disabled: true }}
+            />
           </SearchLock>
         ) : (
-          <FollowedFilter type="images" variant="button" />
+          <FollowedFilter type={type} variant="button" />
         ))}
       {searchQuery && searchSort.selectable ? (
         <SelectMenuV2
@@ -58,11 +66,11 @@ export function ImageFeedFilters({
         // can't keep.
         <SearchSortLock />
       ) : (
-        <SortFilter type="images" />
+        <SortFilter type={type} />
       )}
       <MediaFiltersDropdown
         w="100%"
-        filterType="images"
+        filterType={type}
         hideMediaTypes={hideMediaTypes}
         hideTools={hideTools}
         unavailable={
@@ -76,6 +84,7 @@ export function ImageFeedFilters({
             : undefined
         }
         isFeed
+        showTags
         size="compact-sm"
       />
     </Group>

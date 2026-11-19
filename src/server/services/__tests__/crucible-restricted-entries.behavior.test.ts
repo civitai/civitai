@@ -33,8 +33,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked', 'Error', 'NotFound');
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamp(3));
     CREATE TABLE "User" (
-      id int PRIMARY KEY, username text, "deletedAt" timestamp(3), image text
-    );
+      id int PRIMARY KEY, username text, "deletedAt" timestamp(3), image text, "profilePictureId" int);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -44,8 +43,7 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false,
       "postId" int,
       "nsfwLevel" int NOT NULL,
-      "modelRestricted" boolean NOT NULL DEFAULT false
-    );
+      "modelRestricted" boolean NOT NULL DEFAULT false, "blockedFor" text);
     CREATE TABLE "CrucibleEntry" (
       id int PRIMARY KEY,
       "crucibleId" int NOT NULL,

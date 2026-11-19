@@ -5,6 +5,7 @@ import {
   KNIGHTS_GAME_SETTING_KEYS,
   KNIGHTS_GAME_SETTINGS,
   KNIGHTS_NSFW_LEVEL_QUESTION,
+  KNIGHTS_SOURCES_MAX_OPEN_LIMIT,
   readKnightsSourcesConfig,
   type KnightsGameSettingKey,
   type KnightsGameSettings,
@@ -47,6 +48,11 @@ const isRate = (value: unknown): value is number =>
  * Nothing is coerced: a string "true" or a rate of 5 is a bug in the caller, not an intent to guess at. `yesNoShare: null`
  * asks to clear the stored share (`clearYesNoShare`), so Knights falls back to its environment default.
  */
+const isMaxOpen = (value: unknown): value is number =>
+  Number.isSafeInteger(value) &&
+  (value as number) >= 0 &&
+  (value as number) <= KNIGHTS_SOURCES_MAX_OPEN_LIMIT;
+
 export function validateSourcesInput(
   input: unknown
 ):
@@ -57,6 +63,13 @@ export function validateSourcesInput(
   if (!isRate(value.sfwRate)) return { ok: false, error: 'The SFW rate must be between 0 and 1.' };
   if (!isRate(value.nsfwRate))
     return { ok: false, error: 'The NSFW rate must be between 0 and 1.' };
+  if (value.maxOpen !== undefined && !isMaxOpen(value.maxOpen))
+    return {
+      ok: false,
+      error: `The open-item cap must be a whole number from 0 to ${KNIGHTS_SOURCES_MAX_OPEN_LIMIT.toLocaleString(
+        'en-US'
+      )}.`,
+    };
   const clearYesNoShare = value.yesNoShare === null;
   if (value.yesNoShare !== undefined && !clearYesNoShare && !isRate(value.yesNoShare))
     return { ok: false, error: 'The yes/no share must be between 0 and 1.' };
@@ -67,6 +80,7 @@ export function validateSourcesInput(
       enabled: value.enabled,
       sfwRate: value.sfwRate,
       nsfwRate: value.nsfwRate,
+      ...(isMaxOpen(value.maxOpen) ? { maxOpen: value.maxOpen } : {}),
       ...(isRate(value.yesNoShare) ? { yesNoShare: value.yesNoShare } : {}),
     },
   };
@@ -144,16 +158,17 @@ async function auditSave(
 
 /**
  * The switch and both rates are always written, so a later change to the reader's defaults cannot move a saved rate. A stored
- * `maxOpen` and the stored game settings are carried over (this form does not edit them, and dropping `maxOpen` would reset the
- * intake cap to the default), and so is a stored `yesNoShare` when the input leaves it out, so saving the rates never turns
- * yes/no questions back on; `yesNoShare: null` removes it.
+ * `maxOpen` is kept when the input leaves it out (dropping it would reset the intake cap to the default), as is a stored
+ * `yesNoShare`, so saving the rates never turns yes/no questions back on; `yesNoShare: null` removes it. The stored game
+ * settings are always carried over.
  */
 export async function saveSourcesConfig(input: unknown, moderatorId: number): Promise<SaveOutcome> {
   const checked = validateSourcesInput(input);
   if (!checked.ok) return checked;
 
   return updateSourcesConfig(moderatorId, (before) => {
-    const { maxOpen, game } = before.config;
+    const { game } = before.config;
+    const maxOpen = checked.config.maxOpen ?? before.config.maxOpen;
     const yesNoShare = checked.clearYesNoShare
       ? undefined
       : checked.config.yesNoShare ?? before.config.yesNoShare;
@@ -179,6 +194,7 @@ export type GameSettingsChanges = {
 const KILL_SWITCHES = [
   'shopDisabled',
   'conversionDisabled',
+  'signalsDisabled',
 ] as const satisfies KnightsGameSettingKey[];
 
 const rangeError = (key: KnightsGameSettingKey) => {

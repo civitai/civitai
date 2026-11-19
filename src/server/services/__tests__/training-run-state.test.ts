@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as OrchestratorToken from '~/server/orchestrator/get-orchestrator-token';
 import type * as Workflows from '~/server/services/orchestrator/workflows';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 
 /**
@@ -169,7 +168,6 @@ describe('getTrainingRunState', () => {
     expect(state.source).toBe('stored');
     expect(state.trainingStatus).toBe(TrainingStatus.Processing);
     expect(state.trainingResults?.epochs[0].modelUrl).toBe('stored-e1');
-    expect(loggingMock.logToAxiom).toHaveBeenCalled();
   });
 
   // A moderator can set Paused by hand, so only the live step says a paused run awaits review.

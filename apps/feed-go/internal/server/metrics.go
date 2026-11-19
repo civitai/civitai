@@ -1,9 +1,14 @@
 package server
 
 import (
+	"net/http"
+	"slices"
+
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
 
@@ -59,6 +64,8 @@ type Metrics struct {
 	JWKSRefresh *prometheus.CounterVec
 	// JWKSStale counts the times the key set was dropped for being older than its maximum staleness.
 	JWKSStale prometheus.Counter
+	// SessionCookieSlot counts resolved sessions by the cookie slot they were read from (auth.CookieSlot).
+	SessionCookieSlot *prometheus.CounterVec
 	// FallbackProxyErrors counts fallback requests the proxy answered 502 because the Node app failed
 	// before a response started, by reason (upstream | canceled). A failure mid-body aborts the
 	// response with http.ErrAbortHandler and is not counted. Not per endpoint.
@@ -68,14 +75,44 @@ type Metrics struct {
 	// feed_endpoint of the route holding it: one gauge per served endpoint, resolved here so the serve
 	// path does no label lookup.
 	ServeInFlight map[string]prometheus.Gauge
+	// Errors counts every compute and proxy error (feed_go_errors_total: endpoint, mode, class), the
+	// ones whose log line the limiter drops included. Labels are closed sets: Endpoints (+
+	// EndpointUnknown), ErrorModes, fallback.ErrorClasses.
+	Errors *prometheus.CounterVec
 	// CacheMisses counts the per-entity cache misses hydration computed (cache, result: computed |
 	// error), per missed id. Not per endpoint: hydration is shared by both.
 	CacheMisses *prometheus.CounterVec
+	// CacheWrites counts the cache writes of write-back (feed_go_cache_writes_total: cache, result:
+	// written | nx_lost | error), per key. Seeded only for the written-back caches (SeedCacheWrites).
+	CacheWrites *prometheus.CounterVec
+}
+
+// MetricsHandler is the /metrics handler over g. With openMetrics (on with tracing) it answers a scrape
+// that asks for OpenMetrics in that format, the only one that carries the duration histograms'
+// trace-id exemplars; any other scrape gets the classic text format either way.
+func MetricsHandler(g prometheus.Gatherer, openMetrics bool) http.Handler {
+	return promhttp.HandlerFor(g, promhttp.HandlerOpts{EnableOpenMetrics: openMetrics})
 }
 
 // ObserveCacheMiss is hydrate.MissCompute's Observe.
 func (m *Metrics) ObserveCacheMiss(cache, result string, n int) {
 	m.CacheMisses.WithLabelValues(cache, result).Add(float64(n))
+}
+
+// ObserveCacheWrite is hydrate.MissCompute's ObserveWrite.
+func (m *Metrics) ObserveCacheWrite(cache, result string, n int) {
+	m.CacheWrites.WithLabelValues(cache, result).Add(float64(n))
+}
+
+// SeedCacheWrites creates the write counter's series of caches (the written-back ones) for every
+// result, so a write-back cache that has written nothing, or lost no race, reads 0 rather than an
+// absent series.
+func (m *Metrics) SeedCacheWrites(caches []string) {
+	for _, c := range caches {
+		for _, r := range hydrate.WriteResults {
+			m.CacheWrites.WithLabelValues(c, r)
+		}
+	}
 }
 
 // probeLagBuckets resolve the first tens of milliseconds, where the probe races Node's fills.
@@ -175,10 +212,22 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_cache_miss_total",
 			Help: "Per-entity cache miss ids this service computed itself (result=computed) or failed to (result=error, the request falls back), by cache.",
 		}, []string{"cache", "result"}),
+		CacheWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_cache_writes_total",
+			Help: "Cache writes of write-back (FEED_GO_CACHE_WRITEBACK), per key, by cache and result: written, nx_lost (a SET NX found the key filled by another writer since the read; nothing written) or error (the write failed). Series exist only for the written-back caches.",
+		}, []string{"cache", "result"}),
+		Errors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_errors_total",
+			Help: "Compute errors (mode serve|shadow|probe) and fallback-proxy errors (mode proxy), by the error's class (fallback.ErrorClasses: deadline, canceled, pg_no_rows, pg_<SQLSTATE class>, redis_nil, timeout, conn_refused, http_5xx, ...). Every error is counted, whether or not its log line was rate-limited.",
+		}, []string{EndpointLabel, "mode", "class"}),
 		JWKSStale: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "feed_go_jwks_stale_total",
 			Help: "Times the JWKS key set was dropped (sessions verify as signed out) because no fetch had succeeded for FEED_GO_JWKS_MAX_STALENESS_MS.",
 		}),
+		SessionCookieSlot: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_session_cookie_slot_total",
+			Help: "Sessions resolved from a session cookie, by the cookie slot they were read from (host | shared).",
+		}, []string{"slot"}),
 		FallbackProxyErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_proxy_errors_total",
 			Help: "Fallback requests the proxy answered 502 because the Node app failed before a response started, by reason (upstream: unreachable or connection broken; canceled: the client left first). A failure mid-body aborts the response (http.ErrAbortHandler) and is not counted.",
@@ -190,7 +239,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}, []string{EndpointLabel})
 	// A pod that never shed reads 0 rather than an absent series, on each served endpoint.
 	m.ServeInFlight = map[string]prometheus.Gauge{}
-	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll} {
+	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite} {
 		m.ServeInFlight[e] = serveInFlight.WithLabelValues(e)
 		m.Fallbacks.WithLabelValues(e, "serve", "bulkhead")
 	}
@@ -234,6 +283,31 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowResponse, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
-		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, serveInFlight)
+		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight,
+		m.SessionCookieSlot)
+	for _, s := range []string{"host", "shared"} {
+		m.SessionCookieSlot.WithLabelValues(s)
+	}
 	return m
+}
+
+// ErrorModes are the `mode` values of feed_go_errors_total: a compute error on the public route, in a
+// shadow sample or in a Go-first probe, and a fallback-proxy error.
+var ErrorModes = []string{"serve", "shadow", "probe", "proxy"}
+
+// EndpointUnknown is feed_go_errors_total's feed_endpoint for an error under no known endpoint (a
+// proxied path no public route names).
+const EndpointUnknown = "unknown"
+
+// ObserveError counts err on feed_go_errors_total by its fallback.Class. A nil err is not counted, a
+// mode outside ErrorModes is dropped and an endpoint outside Endpoints is EndpointUnknown, so every
+// label comes from a closed set.
+func (m *Metrics) ObserveError(endpoint, mode string, err error) {
+	if err == nil || !slices.Contains(ErrorModes, mode) {
+		return
+	}
+	if !slices.Contains(Endpoints, endpoint) {
+		endpoint = EndpointUnknown
+	}
+	m.Errors.WithLabelValues(endpoint, mode, fallback.Class(err)).Inc()
 }

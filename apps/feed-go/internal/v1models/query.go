@@ -71,7 +71,7 @@ func boolParam(key string, vals []string) (bool, error) {
 	case stringboolFalse[l]:
 		return false, nil
 	}
-	return false, fallback.Newf("v1-models-input-bool", "%s", key)
+	return false, fallback.NewfSafe("v1-models-input-bool", fallback.Token(key), "%s", key)
 }
 
 // intParam reads a value Number() turns into a plain integer the same way: decimal digits only.
