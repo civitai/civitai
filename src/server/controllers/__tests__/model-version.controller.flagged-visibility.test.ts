@@ -28,7 +28,10 @@ vi.mock('~/server/services/generation/coverage-source', () => ({
   coveragePairForUser: vi.fn(() => ({})),
 }));
 
-import { getModelVersionHandler } from '~/server/controllers/model-version.controller';
+import {
+  getModelVersionForEditHandler,
+  getModelVersionHandler,
+} from '~/server/controllers/model-version.controller';
 
 /** `modelVersion.getById` for a version of a model flagged `poi`: owner and moderators only. */
 
@@ -48,12 +51,22 @@ const SCOPED_KEY = {
   tokenScope: TokenScope.ModelsRead,
 };
 
-async function lookup(viewer: ViewerKey, poi: boolean, credential = {}) {
+async function lookup(
+  viewer: ViewerKey,
+  poi: boolean,
+  credential = {},
+  {
+    versionStatus = 'Published',
+    modelStatus = 'Published',
+    publishedAt = versionStatus === 'Published' ? new Date(0) : null,
+  }: { versionStatus?: string; modelStatus?: string; publishedAt?: Date | null } = {}
+) {
   mockGetVersionById.mockResolvedValue({
     id: 100,
-    status: 'Published',
+    status: versionStatus,
+    publishedAt,
     recommendedResources: [],
-    model: { id: 1, poi, user: { id: OWNER } },
+    model: { id: 1, poi, status: modelStatus, user: { id: OWNER } },
   });
   const outcome = await getModelVersionHandler({
     input: { id: 100 },
@@ -96,5 +109,93 @@ describe('getModelVersionHandler, flagged model', () => {
 
   it.each<ViewerKey>(['anon', 'other'])('control: unflagged model is served to %s', async (v) => {
     expect(await lookup(v, false)).toBe('served');
+  });
+});
+
+describe('getModelVersionHandler, version and model status', () => {
+  const FULL_KEY = { ...SCOPED_KEY, tokenScope: TokenScope.Full };
+  const NOT_PUBLIC = [
+    ['a draft version of a draft model', { versionStatus: 'Draft', modelStatus: 'Draft' }],
+    ['a draft version of a published model', { versionStatus: 'Draft', modelStatus: 'Published' }],
+    [
+      'a published version of an unpublished model',
+      { versionStatus: 'Published', modelStatus: 'Unpublished' },
+    ],
+    [
+      'a version unpublished for a violation',
+      { versionStatus: 'UnpublishedViolation', modelStatus: 'UnpublishedViolation' },
+    ],
+    ['a deleted version', { versionStatus: 'Deleted', modelStatus: 'Deleted' }],
+    ['a scheduled version', { versionStatus: 'Scheduled', modelStatus: 'Published' }],
+    ['a version published for a later time', { publishedAt: new Date(Date.now() + 86_400_000) }],
+    [
+      'an unpublished version of a published model',
+      { versionStatus: 'Unpublished', modelStatus: 'Published' },
+    ],
+  ] as const;
+
+  it.each(NOT_PUBLIC)(
+    '%s is not found by a signed-out visitor or another user',
+    async (_, statuses) => {
+      expect(await lookup('anon', false, {}, statuses)).toBe('not-found');
+      expect(await lookup('other', false, {}, statuses)).toBe('not-found');
+    }
+  );
+
+  it.each(NOT_PUBLIC)('%s is served to its owner and to a moderator', async (_, statuses) => {
+    expect(await lookup('owner', false, {}, statuses)).toBe('served');
+    expect(await lookup('moderator', false, {}, statuses)).toBe('served');
+  });
+
+  it.each([
+    ['a scoped key', 'not-found', SCOPED_KEY],
+    ['a full-access key', 'served', FULL_KEY],
+  ])('the owner of a draft on %s: %s', async (_, expected, credential) => {
+    expect(await lookup('owner', false, credential, { versionStatus: 'Draft' })).toBe(expected);
+  });
+});
+
+describe('getModelVersionForEditHandler, the editor read', () => {
+  const edit = (credential: object) =>
+    getModelVersionForEditHandler({
+      input: { id: 100 },
+      ctx: { user: VIEWERS.owner, features: {}, ...credential },
+    } as never).then(
+      () => 'resolved',
+      (e: unknown) =>
+        e === STOP || (e as Error)?.cause === STOP
+          ? 'served'
+          : e instanceof TRPCError
+          ? e.code
+          : String(e)
+    );
+
+  beforeEach(() => {
+    mockGetVersionById.mockResolvedValue({
+      id: 100,
+      status: 'Draft',
+      publishedAt: null,
+      recommendedResources: [],
+      model: { id: 1, poi: false, status: 'Draft', user: { id: OWNER } },
+    });
+  });
+
+  it('serves the owner their draft on a session', async () => {
+    expect(await edit({})).toBe('served');
+  });
+
+  it('serves a moderator who is not the owner', async () => {
+    const outcome = await getModelVersionForEditHandler({
+      input: { id: 100 },
+      ctx: { user: VIEWERS.moderator, features: {} },
+    } as never).then(
+      () => 'resolved',
+      (e: unknown) => (e === STOP || (e as Error)?.cause === STOP ? 'served' : String(e))
+    );
+    expect(outcome).toBe('served');
+  });
+
+  it('refuses the owner on a scoped key', async () => {
+    expect(await edit(SCOPED_KEY)).toBe('UNAUTHORIZED');
   });
 });

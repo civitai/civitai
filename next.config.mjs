@@ -378,7 +378,7 @@ export default defineNextConfig(
       return headers;
     },
     poweredByHeader: false,
-    // The `feedGoTransport` / `feedGoTransportModelGetAll` client path (`GO_TRANSPORT_URL` in
+    // The `feedGoTransport*` client path (`GO_TRANSPORT_URL` in
     // src/utils/trpc-go-transport.ts). An exact-path route in front of this app may send it to a
     // separate Go feed service; whatever reaches this app is served by the ordinary tRPC route, so
     // the flag can never strand a request (edge rules keyed on `/api/trpc/` still do not match this

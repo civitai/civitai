@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { FEED_TRANSPORT_TIMED_PROCEDURES } from '~/utils/faro/feedTransport';
 import { setTrpcBatchingEnabled, trpcVanilla } from '~/utils/trpc';
 import {
+  GO_TRANSPORT_PROCEDURES,
   setFeedGoTransportEnabled,
+  setFeedGoTransportInfiniteEnabled,
   setFeedGoTransportModelGetAllEnabled,
 } from '~/utils/trpc-go-transport';
 
@@ -62,6 +65,7 @@ beforeEach(() => {
   setTrpcBatchingEnabled(false);
   setFeedGoTransportEnabled(false);
   setFeedGoTransportModelGetAllEnabled(false);
+  setFeedGoTransportInfiniteEnabled(false);
   vi.useFakeTimers({ toFake: ['performance'] });
   vi.stubGlobal(
     'fetch',
@@ -88,6 +92,7 @@ afterEach(() => {
   setTrpcBatchingEnabled(false);
   setFeedGoTransportEnabled(false);
   setFeedGoTransportModelGetAllEnabled(false);
+  setFeedGoTransportInfiniteEnabled(false);
   delete (globalThis as { window?: unknown }).window;
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -224,6 +229,34 @@ describe('feed_transport measurement: transport tag follows the link the request
 
     await callQuery(MODELS, MODELS_INPUT);
     expect(pushes()).toHaveLength(1);
+  });
+
+  // image.getInfinite has a Go transport (dark) but no RUM comparison yet: measuring it would make
+  // every signed-in image feed request push a node-arm beacon, flag on or off, in production. Both
+  // arms stay unmeasured; the request still leaves on the right path (positive control: model.getAll
+  // is measured in the same run).
+  it('image.getInfinite is not measured on either arm (its RUM comparison is a separate step)', async () => {
+    browser(true);
+    await callQuery('image.getInfinite', { limit: 50, username: USERNAME });
+    setFeedGoTransportInfiniteEnabled(true);
+    await callQuery('image.getInfinite', { limit: 50, username: USERNAME });
+
+    expect(sent).toHaveLength(2);
+    expect(sent[0].url).toContain('/api/trpc/image.getInfinite?');
+    expect(sent[1].url).toContain('/api/trpc-go/image.getInfinite?');
+    expect(pushes()).toHaveLength(0);
+
+    await callQuery(MODELS, MODELS_INPUT);
+    expect(pushes()).toHaveLength(1);
+  });
+
+  it('measures exactly the gallery and model.getAll, each a Go-transport procedure', () => {
+    expect([...FEED_TRANSPORT_TIMED_PROCEDURES].sort()).toEqual([
+      'image.getImagesAsPostsInfinite',
+      'model.getAll',
+    ]);
+    for (const p of FEED_TRANSPORT_TIMED_PROCEDURES)
+      expect(GO_TRANSPORT_PROCEDURES.has(p)).toBe(true);
   });
 });
 

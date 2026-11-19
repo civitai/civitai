@@ -1,3 +1,4 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
 import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
@@ -4225,7 +4226,7 @@ export const getImage = async ({
       i."meta"->'extra'->'remixOfId' as "remixOfId",
       u.id as "userId",
       u.username,
-      u.image as "userImage",
+      ${Prisma.raw(fallbackUserImageColumn)} as "userImage",
       u."deletedAt",
       u."profilePictureId",
       COALESCE(p."availability", 'Public') "availability",
