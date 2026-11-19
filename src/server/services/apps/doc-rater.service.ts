@@ -136,11 +136,10 @@ export async function applyAppDocTextScan(args: {
   if (textLevel === null) return { status: 'no-level' };
   if (await tooLongForOneCall(args.subject.fields)) return { status: 'too-long' };
   // The subject carries the document's text, not its `data`, which its image ids are read from:
-  // read the document again, and rate it only at the revision the subject was loaded at.
+  // read the document again. A revision other than the subject's is refused by `applyRating`.
   const meta = args.subject.meta as AppDocSubjectMeta;
   const doc = await getDocStoreRater().getForRating(meta.appId, meta.ns, meta.collection, meta.key);
   if (!doc) return { status: 'gone' };
-  if (doc.seq !== meta.seq) return { status: 'changed' };
   return rateAppDoc(meta, args.subject.fields, textLevel, doc.data);
 }
 

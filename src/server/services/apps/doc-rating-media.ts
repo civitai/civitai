@@ -207,8 +207,8 @@ export function imageLevel(row: Omit<ImageRow, 'id' | 'url'>): NsfwLevel | null 
 /** The level of the images `keys` and `ids` name, read in one query (see the module header). */
 export async function resolveDocMediaLevel(
   keys: readonly string[],
-  urlKeys: readonly string[] = [],
-  ids: readonly number[] = []
+  urlKeys: readonly string[],
+  ids: readonly number[]
 ): Promise<DocMediaLevel> {
   if (keys.length === 0 && ids.length === 0) return { status: 'rated', level: NsfwLevel.PG };
   const rows = await dbRead.image.findMany({
