@@ -474,7 +474,7 @@ describe('the purge after the sweep', () => {
   it('deletes a removed file refused at completion, after settleFinals has marked its scan Failed', async () => {
     const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
     await q(
-      `UPDATE "ServiceDealFile" SET status = 'Failed', "failReason" = 'refused', "scanStatus" = 'Pending', "malwareScanStatus" = 'NotScanned'`
+      `UPDATE "ServiceDealFile" SET status = 'Failed', "failReason" = 'refused', "scanStatus" = 'Pending', "malwareScanStatus" = 'Pending'`
     );
     await q(`UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Failed' WHERE id = $1`, [
       attachmentId,
