@@ -134,16 +134,16 @@ describe('deal push backfill', () => {
       INSERT INTO "UserPushSetting" VALUES
         (1, 'service-deal-accepted'),
         (2, 'new-mention'),
-        (3, 'service-deal-accepted'), (3, 'service-deal-refunded'),
+        (3, 'service-deal-accepted'), (3, 'service-deal-overdue'),
         (5, 'service-deal-accepted');
     `);
     await later();
     await later();
 
-    expect((await pushTypes(1)).filter((t) => t !== 'service-deal-accepted')).toHaveLength(9);
+    expect((await pushTypes(1)).filter((t) => t !== 'service-deal-accepted')).toHaveLength(8);
     // Deal push turned off, a choice already made about the new notices, and no subscription.
     expect(await pushTypes(2)).toEqual(['new-mention']);
-    expect(await pushTypes(3)).toEqual(['service-deal-accepted', 'service-deal-refunded']);
+    expect(await pushTypes(3)).toEqual(['service-deal-accepted', 'service-deal-overdue']);
     expect(await pushTypes(5)).toEqual(['service-deal-accepted']);
   });
 });

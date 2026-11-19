@@ -37,7 +37,7 @@ const transitionNotices: Partial<
   CancellationRequested: { notice: 'cancellationRequested', to: 'otherParty' },
   CancellationAccepted: { notice: 'cancellationAccepted', to: 'otherParty' },
   CancellationDeclined: { notice: 'cancellationDeclined', to: 'otherParty' },
-  Cancelled: { notice: 'cancelled', to: 'otherParty' },
+  Cancelled: { notice: 'cancelled', to: 'parties' },
   Disputed: { notice: 'disputed', to: 'parties' },
   Completed: { notice: 'completed', to: 'seller' },
 };
@@ -51,10 +51,13 @@ export async function getDealPartiesWithTitle(dealId: number) {
       ingestion: ServiceOfferingIngestionStatus;
       sellerName: string | null;
       resolution: ServiceDealNotificationDetails['resolution'] | null;
+      closeReason: string | null;
+      held: boolean;
     }[]
   >`
     SELECT d."buyerId", d."sellerId", o."title", o."ingestion"::text AS "ingestion",
-      s."username" AS "sellerName", d."disputeResolution"::text AS "resolution"
+      s."username" AS "sellerName", d."disputeResolution"::text AS "resolution",
+      d."closeReason", d."heldAt" IS NOT NULL AS "held"
     FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
     LEFT JOIN "User" s ON s."id" = d."sellerId"
     WHERE d."id" = ${dealId}::int`;
@@ -94,6 +97,12 @@ export async function notifyServiceDeal({
     } else if (to === 'parties') {
       userIds = [deal.buyerId, deal.sellerId].filter((id) => id !== actorId);
     } else userIds = [to === 'buyer' ? deal.buyerId : deal.sellerId];
+    if (notice === 'cancelled') {
+      // The buyer saw a refused payment as their request failing; the seller never saw the request.
+      if (deal.closeReason === 'payment_refused') return;
+      // A seller hears of a request only once its hold lands, so not of its end before then.
+      if (!deal.held) userIds = userIds.filter((id) => id !== deal.sellerId);
+    }
 
     for (const userId of userIds) {
       const details: ServiceDealNotificationDetails = {
@@ -102,6 +111,10 @@ export async function notifyServiceDeal({
       };
       if (requestedBy) details.requestedBy = requestedBy;
       if (notice === 'disputeResolved' && deal.resolution) details.resolution = deal.resolution;
+      if (notice === 'cancelled') {
+        if (deal.closeReason) details.closeReason = deal.closeReason;
+        if (userId === deal.buyerId && deal.held) details.buzzReturned = true;
+      }
       await createNotification({
         userId,
         type,

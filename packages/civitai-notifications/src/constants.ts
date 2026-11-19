@@ -49,7 +49,6 @@ export const emailNotificationTypes: readonly string[] = [
   'service-deal-cancellation-accepted',
   'service-deal-cancellation-declined',
   'service-deal-cancelled',
-  'service-deal-refunded',
   'service-deal-auto-complete-soon',
   'service-deal-due-soon',
   'service-deal-overdue',

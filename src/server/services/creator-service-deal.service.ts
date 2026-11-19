@@ -205,15 +205,6 @@ export async function transitionDeal(t: Transition) {
   });
   const moved = eventId !== null;
 
-  // Before the refund, whose own notice to the buyer follows this one.
-  if (moved)
-    await notifyServiceDealTransition({
-      dealId: t.dealId,
-      event: t.event,
-      eventId,
-      actorId: t.actorId,
-    });
-
   if (moved && t.refund)
     await refundDeal(t.dealId).catch((error) =>
       // The refund is claimed and the sweep finishes it; the transition itself succeeded.
@@ -225,6 +216,14 @@ export async function transitionDeal(t: Transition) {
         error: (error as Error)?.message,
       })
     );
+
+  if (moved)
+    await notifyServiceDealTransition({
+      dealId: t.dealId,
+      event: t.event,
+      eventId,
+      actorId: t.actorId,
+    });
 
   return moved;
 }

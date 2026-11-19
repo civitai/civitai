@@ -2934,8 +2934,7 @@ describe('a held offering on its deals', () => {
     notifications.createNotification.mockClear();
     await deals.declineServiceDeal({ dealId: id, userId: SELLER });
 
-    // The decline and the refund.
-    expect(titlesSentTo(BUYER)).toEqual(['Service under review', 'Service under review']);
+    expect(titlesSentTo(BUYER)).toEqual(['Service under review']);
     const buyer = await viewAs(id, 'Blocked', BUYER);
     expect(buyer.view).toEqual({ id: 1, title: 'Service under review', coverImageId: null });
     expect(buyer.listed).toEqual({ id: 1, title: 'Service under review', coverImageId: null });
@@ -2971,6 +2970,8 @@ describe('site notifications', () => {
       creatorServiceNotifications[n.type]?.prepareMessage(n)?.url,
     ]);
   const reset = () => notifications.createNotification.mockClear();
+  const details = () =>
+    notifications.createNotification.mock.calls.map(([n]) => [n.userId, n.details]);
   const accepted = async () => {
     const { id } = await request();
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
@@ -3033,13 +3034,16 @@ describe('site notifications', () => {
     expect(sent()).toEqual([]);
   });
 
-  it('tells nobody when reconcile finds nothing was charged', async () => {
+  it('tells only the buyer when reconcile finds nothing was charged: the seller never saw the request', async () => {
     buzz.createMultiAccountBuzzTransaction.mockRejectedValueOnce(buzzError(504));
     const { id } = await request();
     await ageHoldLeg(id, 11);
     await escrow.reconcileUnconfirmedHolds();
+    await escrow.reconcileUnconfirmedHolds();
     expect((await deal(id)).status).toBe('Cancelled');
-    expect(sent()).toEqual([]);
+    expect(sent()).toEqual([[BUYER, 'service-deal-cancelled', `/services/deals/${id}`]]);
+    expect(details()[0][1]).toMatchObject({ closeReason: 'payment_failed' });
+    expect(details()[0][1].buzzReturned).toBeUndefined();
   });
 
   it('tells the buyer once when the seller accepts, and nobody on a refused accept', async () => {
@@ -3060,10 +3064,7 @@ describe('site notifications', () => {
     await expect(deals.declineServiceDeal({ dealId: id, userId: BUYER })).rejects.toEqual(conflict);
     expect(sent()).toEqual([]);
     await deals.declineServiceDeal({ dealId: id, userId: SELLER });
-    expect(sent()).toEqual([
-      [BUYER, 'service-deal-declined', `/services/deals/${id}`],
-      [BUYER, 'service-deal-refunded', `/services/deals/${id}`],
-    ]);
+    expect(sent()).toEqual([[BUYER, 'service-deal-declined', `/services/deals/${id}`]]);
   });
 
   it('tells the buyer once when the request expires, and nobody before it does', async () => {
@@ -3075,10 +3076,7 @@ describe('site notifications', () => {
     await age(id, 'requestedAt', 49);
     await deals.expireServiceDeals();
     await deals.expireServiceDeals();
-    expect(sent()).toEqual([
-      [BUYER, 'service-deal-expired', `/services/deals/${id}`],
-      [BUYER, 'service-deal-refunded', `/services/deals/${id}`],
-    ]);
+    expect(sent()).toEqual([[BUYER, 'service-deal-expired', `/services/deals/${id}`]]);
   });
 
   it('tells the buyer about each delivery once, and nobody when delivery is refused', async () => {
@@ -3182,27 +3180,52 @@ describe('site notifications', () => {
     expect(sent()).toEqual([[SELLER, 'service-deal-paid-out', `/services/deals/${id}`]]);
   });
 
-  const details = () =>
-    notifications.createNotification.mock.calls.map(([n]) => [n.userId, n.details]);
-
-  it('tells the seller when the buyer withdraws, then the buyer once the refund lands', async () => {
+  it('tells the seller when the buyer withdraws, and not the buyer who did it', async () => {
     const { id } = await request();
     reset();
     await deals.withdrawServiceDeal({ dealId: id, userId: BUYER });
-    expect(sent()).toEqual([
-      [SELLER, 'service-deal-cancelled', `/services/deals/${id}`],
-      [BUYER, 'service-deal-refunded', `/services/deals/${id}`],
-    ]);
+    expect(sent()).toEqual([[SELLER, 'service-deal-cancelled', `/services/deals/${id}`]]);
     expect(details()[0][1]).toMatchObject({ requestedBy: 'buyer' });
   });
 
-  it('tells the buyer about the refund, and nobody about a cancel no party made', async () => {
-    const id = await accepted();
-    await q(`UPDATE "ServiceDeal" SET "dueAt" = now() - interval '8 days' WHERE id = $1`, [id]);
-    await deals.cancelOverdueServiceDeals();
-    expect((await deal(id)).status).toBe('Cancelled');
-    expect(sent()).toEqual([[BUYER, 'service-deal-refunded', `/services/deals/${id}`]]);
-  });
+  it.each([
+    [
+      'overdue',
+      async (id: number) => {
+        await q(`UPDATE "ServiceDeal" SET "dueAt" = now() - interval '8 days' WHERE id = $1`, [id]);
+        await deals.cancelOverdueServiceDeals();
+      },
+    ],
+    [
+      'cancellation_unanswered',
+      async (id: number) => {
+        await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+        reset();
+        await age(id, 'cancellationRequestedAt', 49);
+        await deals.autoCancelServiceDeals();
+      },
+    ],
+  ])(
+    'tells both parties once, in one notice each, when a deal cancels as %s',
+    async (code, cancel) => {
+      const id = await accepted();
+      await cancel(id);
+      await deals.cancelOverdueServiceDeals();
+      await deals.autoCancelServiceDeals();
+      expect((await deal(id)).status).toBe('Cancelled');
+      expect(sent()).toEqual([
+        [BUYER, 'service-deal-cancelled', `/services/deals/${id}`],
+        [SELLER, 'service-deal-cancelled', `/services/deals/${id}`],
+      ]);
+      const [buyer, seller] = notifications.createNotification.mock.calls.map(([n]) => n);
+      expect(buyer.details).toMatchObject({ closeReason: code, buzzReturned: true });
+      expect(seller.details).toMatchObject({ closeReason: code });
+      expect(seller.details.buzzReturned).toBeUndefined();
+      expect(creatorServiceNotifications[buyer.type].prepareMessage(buyer)?.message).toContain(
+        'Your Buzz is being returned.'
+      );
+    }
+  );
 
   it('tells the party who asked to cancel how the other answered', async () => {
     const agreed = await accepted();
@@ -3215,7 +3238,6 @@ describe('site notifications', () => {
     await deals.respondServiceDealCancellation({ dealId: declined, userId: BUYER, agree: false });
     expect(sent()).toEqual([
       [SELLER, 'service-deal-cancellation-accepted', `/services/deals/${agreed}`],
-      [BUYER, 'service-deal-refunded', `/services/deals/${agreed}`],
       [SELLER, 'service-deal-cancellation-declined', `/services/deals/${declined}`],
     ]);
     expect(details()[0][1]).toMatchObject({ requestedBy: 'buyer' });
@@ -3245,7 +3267,6 @@ describe('site notifications', () => {
       note: 'n',
     });
     expect(sent()).toEqual([
-      [BUYER, 'service-deal-refunded', `/services/deals/${refunded}`],
       [BUYER, 'service-deal-dispute-resolved', `/services/deals/${refunded}`],
       [SELLER, 'service-deal-dispute-resolved', `/services/deals/${refunded}`],
       [SELLER, 'service-deal-paid-out', `/services/deals/${released}`],

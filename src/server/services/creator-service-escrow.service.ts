@@ -475,7 +475,6 @@ async function holdRefundShortfall(dealId: number, heldAmount: number) {
  */
 export async function refundDeal(dealId: number) {
   await claimRefund(dbWrite, dealId);
-  let settled = false;
   const paid = await runDealLeg(
     dealId,
     'Refund',
@@ -518,11 +517,8 @@ export async function refundDeal(dealId: number) {
         throw new Error(`creator service escrow: refund moved nothing for deal ${dealId}`);
       return result.externalTransactionIdPrefix ?? serviceDealTransactionId(dealId, 'refund');
     },
-    async (tx) => {
-      settled = await markSettled(tx, dealId, 'Refunded');
-    }
+    (tx) => markSettled(tx, dealId, 'Refunded')
   );
-  if (settled) await notifyServiceDeal({ dealId, notice: 'refunded', to: 'buyer' });
   return paid !== null;
 }
 
@@ -597,6 +593,14 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
             return updated;
           });
           cancelled += closed;
+          if (closed)
+            await notifyServiceDeal({
+              dealId: hold.dealId,
+              notice: 'cancelled',
+              to: 'parties',
+              actorId: -1,
+              key: 'payment_failed',
+            });
         }
       } else {
         // Part of the price moved. Neither marking it held nor cancelling is safe.

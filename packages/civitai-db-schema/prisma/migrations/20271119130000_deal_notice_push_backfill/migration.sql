@@ -1,6 +1,6 @@
 -- One-off backfill, applied by hand. Safe to re-run: ON CONFLICT DO NOTHING, and the skip below.
 --
--- The deal notices added for disputes, cancellations, refunds and reminders are push-on by default.
+-- The deal notices added for disputes, cancellations and reminders are push-on by default.
 -- New browser grants get them from DEFAULT_PUSH_TYPES; this gives them to users who already held a
 -- push subscription and still take deal push. A subscriber with no deal push row turned deal push
 -- off and is left alone, as is anyone holding any of the new types (a re-run, or a later choice).
@@ -14,7 +14,6 @@ CROSS JOIN unnest(ARRAY[
   'service-deal-cancellation-accepted',
   'service-deal-cancellation-declined',
   'service-deal-cancelled',
-  'service-deal-refunded',
   'service-deal-auto-complete-soon',
   'service-deal-due-soon',
   'service-deal-overdue'
@@ -41,8 +40,7 @@ AND NOT EXISTS (
     'service-deal-cancellation-accepted',
     'service-deal-cancellation-declined',
     'service-deal-cancelled',
-    'service-deal-refunded',
-    'service-deal-auto-complete-soon',
+      'service-deal-auto-complete-soon',
     'service-deal-due-soon',
     'service-deal-overdue'
   )

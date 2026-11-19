@@ -15,6 +15,18 @@ export const SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS = 7 * 24 * HOUR;
 export const SERVICE_DEAL_CANCELLATION_RESPONSE_MS = 48 * HOUR;
 /** A delivery the buyer neither accepts nor sends back completes on its own after this. */
 export const SERVICE_DEAL_AUTO_COMPLETE_MS = 72 * HOUR;
+/** Labels for the codes the server writes when it closes a deal itself (event comment, closeReason). */
+export const SERVICE_DEAL_CLOSE_LABELS: Record<string, string> = {
+  withdrawn: 'Request withdrawn by the buyer',
+  late: 'Canceled by the buyer after the due date',
+  buyer_refund: 'Canceled by the buyer with a full refund',
+  overdue: 'Canceled automatically: nothing delivered in time',
+  cancellation_unanswered: 'Canceled automatically: the cancellation request was not answered',
+  payment_refused: 'Canceled: the payment was refused',
+  payment_failed: 'Canceled: the payment could not be confirmed',
+  auto: 'Completed automatically: the buyer did not respond in time',
+};
+
 /** The buyer is reminded this long before an unanswered delivery completes on its own. */
 export const SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS = 24 * HOUR;
 /** The seller is reminded this long before the due date. */

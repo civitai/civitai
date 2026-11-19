@@ -5,6 +5,7 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 import type { NotificationProcessor } from '~/server/notifications/base.notifications';
 import {
   SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS,
+  SERVICE_DEAL_CLOSE_LABELS,
   SERVICE_DEAL_DUE_SOON_NOTICE_MS,
   SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS,
 } from '~/shared/constants/creator-services.constants';
@@ -27,7 +28,6 @@ export const serviceDealNotificationTypes = {
   cancellationAccepted: 'service-deal-cancellation-accepted',
   cancellationDeclined: 'service-deal-cancellation-declined',
   cancelled: 'service-deal-cancelled',
-  refunded: 'service-deal-refunded',
   autoCompleteSoon: 'service-deal-auto-complete-soon',
   dueSoon: 'service-deal-due-soon',
   overdue: 'service-deal-overdue',
@@ -41,6 +41,10 @@ export type ServiceDealNotificationDetails = {
   requestedBy?: 'buyer' | 'seller';
   /** How moderators settled a dispute. */
   resolution?: 'Release' | 'Refund';
+  /** Why a deal closed, as the code the server wrote. */
+  closeReason?: string;
+  /** The recipient is the buyer and the held Buzz goes back to them. */
+  buzzReturned?: boolean;
 };
 
 const dealNotification = (
@@ -154,12 +158,14 @@ export const creatorServiceNotifications = createNotificationProcessor({
   ),
   [serviceDealNotificationTypes.cancelled]: dealNotification(
     'Services: A deal was canceled',
-    ({ offeringTitle, requestedBy }) =>
-      `The ${requestedBy ?? 'other party'} canceled the deal for "${offeringTitle}".`
-  ),
-  [serviceDealNotificationTypes.refunded]: dealNotification(
-    'Services: You were refunded',
-    ({ offeringTitle }) => `Your Buzz for "${offeringTitle}" was returned to you.`
+    ({ offeringTitle, requestedBy, closeReason, buzzReturned }) => {
+      const what = requestedBy
+        ? `The ${requestedBy} canceled the deal for "${offeringTitle}".`
+        : `"${offeringTitle}": ${
+            (closeReason && SERVICE_DEAL_CLOSE_LABELS[closeReason]) || 'Canceled'
+          }.`;
+      return buzzReturned ? `${what} Your Buzz is being returned.` : what;
+    }
   ),
   [serviceDealNotificationTypes.autoCompleteSoon]: dealNotification(
     'Services: Your order completes soon',
