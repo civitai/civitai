@@ -41,8 +41,8 @@ The game-tuning variables Knights read from its environment can also be saved un
 `hiddenCheckRate` (`KNIGHTS_HIDDEN_CHECK_RATE`, 0-1, 0 stops serving skill checks), `hiddenCheckFailureWindowHours` (`>0`),
 `hiddenCheckSevereDistance` (whole number `>0`), `hiddenCheckSettleDelayMinutes` (`>=0`), `hiddenCheckRetireMinAnswers` (whole number
 `>0`), `hiddenCheckRetireFailureRate` (`>0` to 1), `yesNoStretch` (whole number `>0`), `yesNoMaxAgeDays` (`>0`), and the booleans
-`apprenticeSmites` (`KNIGHTS_APPRENTICE_SMITES`), `shopDisabled` (`KNIGHTS_SHOP_DISABLED`) and `conversionDisabled`
-(`KNIGHTS_CONVERSION_DISABLED`), plus the harvest's `harvest` (boolean, true runs it; overrides `KNIGHTS_HARVEST`, which without a
+`apprenticeSmites` (`KNIGHTS_APPRENTICE_SMITES`), `shopDisabled` (`KNIGHTS_SHOP_DISABLED`), `conversionDisabled`
+(`KNIGHTS_CONVERSION_DISABLED`) and `signalsDisabled` (`KNIGHTS_SIGNALS_DISABLED`, [live updates](knights-live-updates.md)), plus the harvest's `harvest` (boolean, true runs it; overrides `KNIGHTS_HARVEST`, which without a
 saved value runs the harvest when unset, `on`, `true` or `1`) and `harvestHiddenCheckShare` (`KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE`, 0-1).
 The harvest job reads both per run. The list, its ranges (the same as the Knights environment readers) and the reader are
 `KNIGHTS_GAME_SETTINGS` / `readKnightsSourcesConfig` in `@civitai/shared/new-order`; a stored field that is out of range is dropped
