@@ -3,7 +3,7 @@ import {
   fallbackUserImage,
   servableProfilePicture,
 } from '~/server/services/profile-picture.servable';
-import { heldPictureOf } from '~/server/services/user-creator.reads';
+import { fallbackPictureOf } from '~/server/services/user-creator.reads';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
@@ -47,7 +47,7 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
     id: row.id,
     username: row.username,
     deletedAt: row.deletedAt,
-    image: fallbackUserImage(row.image, heldPictureOf(row)),
+    image: fallbackUserImage(row.image, fallbackPictureOf(row)),
     // One payload for every viewer: no owner exception.
     profilePicture: servableProfilePicture(
       row.profilePictureId !== null

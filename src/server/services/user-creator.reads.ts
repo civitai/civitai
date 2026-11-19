@@ -80,7 +80,7 @@ export type UserCreatorRead = { user: UserCreatorUser; modelCount: number } | nu
 type CreatorRow = NonNullable<Awaited<ReturnType<typeof getUserCreatorRow>>>;
 
 /** The picture fields `fallbackUserImage` compares a row's `User.image` against. */
-export const heldPictureOf = (
+export const fallbackPictureOf = (
   row: Pick<
     CreatorRow,
     | 'profilePictureUrl'
@@ -154,7 +154,7 @@ export async function readUserCreatorViaKysely(
 
   const user = {
     id: row.id,
-    image: fallbackUserImage(row.image, heldPictureOf(row)),
+    image: fallbackUserImage(row.image, fallbackPictureOf(row)),
     username: row.username,
     muted: row.muted,
     bannedAt: row.bannedAt,

@@ -14,7 +14,7 @@ import {
   fallbackUserImage,
   servableProfilePicture,
 } from '~/server/services/profile-picture.servable';
-import { heldPictureOf } from '~/server/services/user-creator.reads';
+import { fallbackPictureOf } from '~/server/services/user-creator.reads';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 
 /**
@@ -40,7 +40,7 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
     id: row.id,
     username: row.username,
     deletedAt: row.deletedAt,
-    image: fallbackUserImage(row.image, heldPictureOf(row)),
+    image: fallbackUserImage(row.image, fallbackPictureOf(row)),
     // One payload for every viewer, as Prisma's servable-profile-picture extension gives.
     profilePicture: servableProfilePicture(
       row.profilePictureId !== null
