@@ -113,6 +113,17 @@ export async function readUserWithProfileViaKysely(
   db: Kysely<DB>,
   where: UserWithProfileWhere
 ): Promise<UserWithProfile> {
+  return (await readUserWithProfileAndPictureGateViaKysely(db, where)).user;
+}
+
+/**
+ * `readUserWithProfileViaKysely`, plus the profile picture's `blockedFor`, which the payload does
+ * not carry (`profileImageSelect`) but a visitor's view of the picture is gated on.
+ */
+export async function readUserWithProfileAndPictureGateViaKysely(
+  db: Kysely<DB>,
+  where: UserWithProfileWhere
+): Promise<{ user: UserWithProfile; pictureBlockedFor: string | null }> {
   // Prisma rejects a where with no unique field; never issue an unfiltered read.
   if (where.id === undefined && where.username === undefined)
     throw new Error('readUserWithProfileViaKysely: an id or a username is required');
@@ -182,5 +193,8 @@ export async function readUserWithProfileViaKysely(
     settings: row.settings,
   };
 
-  return user as unknown as UserWithProfile;
+  return {
+    user: user as unknown as UserWithProfile,
+    pictureBlockedFor: row.profilePictureBlockedFor,
+  };
 }

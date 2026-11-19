@@ -5,7 +5,7 @@ import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
-  readUserWithProfileViaKysely,
+  readUserWithProfileAndPictureGateViaKysely,
   readUserWithProfileViaPrisma,
 } from '~/server/services/hot-reads-9.reads';
 import type {
@@ -134,9 +134,14 @@ export const getUserWithProfile = async ({
   }
   const viaKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_9);
   const getUser = async () => {
-    const user = viaKysely
-      ? await readUserWithProfileViaKysely(kyselyWrite, { id, username })
-      : await readUserWithProfileViaPrisma(dbWrite, { id, username });
+    // The Prisma read's picture passed the servable-profile-picture extension, block markers
+    // included; the Kysely read's carries its `blockedFor` beside it.
+    const { user, pictureBlockedFor } = viaKysely
+      ? await readUserWithProfileAndPictureGateViaKysely(kyselyWrite, { id, username })
+      : {
+          user: await readUserWithProfileViaPrisma(dbWrite, { id, username }),
+          pictureBlockedFor: null,
+        };
 
     // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
     // Ideally, using dbRead.
@@ -201,7 +206,12 @@ export const getUserWithProfile = async ({
               (viaKysely ? null : await getProfilePictureOfUser(dbWrite, user.id))
           )
         : // A held picture is already dropped upstream for every viewer.
-          await servablePictureForVisitor(user.profilePicture, viaKysely),
+          servableProfilePicture(
+            user.profilePicture,
+            null,
+            await isPictureModelRestricted(user.profilePicture),
+            pictureBlockedFor
+          ),
       // Claim keys are owner-only; withheld from every other viewer, moderators included.
       cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
         ...c,
@@ -765,27 +775,6 @@ async function isPictureModelRestricted(picture: { id: number; nsfwLevel: number
     select: { modelRestricted: true },
   });
   return image?.modelRestricted ?? true;
-}
-
-/**
- * `servableProfilePicture` for a visitor. The gate fields the picture was read without are read by
- * id: `modelRestricted` for a mature picture (a missing row counts as restricted), and `blockedFor`
- * on the Kysely read. The Prisma read's picture already passed the servable-profile-picture
- * extension, which checks `blockedFor`.
- */
-async function servablePictureForVisitor<
-  T extends { id: number; nsfwLevel: number; ingestion: string | null }
->(picture: T | null, viaKysely: boolean) {
-  if (!picture) return null;
-  const mature = (picture.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0;
-  if (!mature && !viaKysely) return servableProfilePicture(picture, null, false, null);
-  const image = await dbRead.image.findUnique({
-    where: { id: picture.id },
-    select: { modelRestricted: true, blockedFor: true },
-  });
-  // A missing row is served as none: its gate fields cannot be read.
-  if (!image) return null;
-  return servableProfilePicture(picture, null, mature && image.modelRestricted, image.blockedFor);
 }
 
 /** Null for a restricted picture unless `sameUser`: a moderator never sees one. */
