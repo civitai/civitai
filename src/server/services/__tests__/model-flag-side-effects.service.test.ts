@@ -39,7 +39,7 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class 
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
 vi.mock('~/server/metrics', () => ({ modelMetrics: {} }));
 vi.mock('~/server/redis/caches', () => ({
-  dataForModelsCache: {},
+  dataForModelsCache: { refresh: vi.fn() },
   modelTagCache: { refresh: mockModelTagRefresh },
   modelVotableTagsCache: { bust: mockModelVotableBust },
   userBasicCache: {},
@@ -117,7 +117,11 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
-import { applyModelFlagSideEffects } from '~/server/services/model.service';
+import {
+  applyModelFlagSideEffects,
+  privateModelFromTraining,
+} from '~/server/services/model.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -439,5 +443,52 @@ describe('applyModelFlagSideEffects — public API edge cache', () => {
       applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, minor: true } })
     ).resolves.toBeUndefined();
     expect(mockBustMvCache).toHaveBeenCalled();
+  });
+});
+
+describe('privateModelFromTraining — the sfwOnly it forces on', () => {
+  const MODEL_ID = 42;
+  const row = (sfwOnly: boolean) => ({
+    userId: 5,
+    status: 'Draft',
+    availability: 'Public',
+    mode: null,
+    meta: {},
+    lockedProperties: [],
+    nsfw: false,
+    minor: false,
+    poi: false,
+    sfwOnly,
+    gallerySettings: { level: 1 },
+    name: 'Test Model',
+    description: null,
+  });
+
+  async function makePrivate(sfwOnlyBefore: boolean) {
+    vi.mocked(getHighestTierSubscription).mockResolvedValue({ tier: 'founder' } as never);
+    mockDbRead.model.count.mockResolvedValue(0 as never);
+    mockDbWrite.model.findUnique.mockResolvedValue(row(sfwOnlyBefore) as never);
+    mockDbWrite.model.update.mockResolvedValue({
+      ...baseAfter,
+      id: MODEL_ID,
+      sfwOnly: true,
+      meta: {},
+      modelVersions: [],
+    } as never);
+    await privateModelFromTraining({ id: MODEL_ID, user: { id: 5, isModerator: false } } as never);
+  }
+
+  it('queues the model and collection reindexes when it turns sfwOnly on', async () => {
+    await makePrivate(false);
+    expect(mockModelsQueueUpdate).toHaveBeenCalledWith([
+      { id: MODEL_ID, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+    expect(mockCollectionsReindex).toHaveBeenCalledWith([MODEL_ID]);
+  });
+
+  it('queues neither when the model was already sfwOnly', async () => {
+    await makePrivate(true);
+    expect(mockModelsQueueUpdate).not.toHaveBeenCalled();
+    expect(mockCollectionsReindex).not.toHaveBeenCalled();
   });
 });

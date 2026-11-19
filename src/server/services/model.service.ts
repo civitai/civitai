@@ -7739,6 +7739,8 @@ export const privateModelFromTraining = async ({
   // Set when the flow is refused before it wrote anything (a take-down first, or a gate on the locked
   // row), so there is nothing to roll back.
   let takenDown = false;
+  // The flags as the locked row had them, for the side effects of the sfwOnly this flow forces on.
+  let flagsBefore: Parameters<typeof applyModelFlagSideEffects>[0]['before'] | undefined;
 
   try {
     // One transaction: the model row stays locked until its versions are written, so a model
@@ -7762,6 +7764,13 @@ export const privateModelFromTraining = async ({
           takenDown = true;
           throw error;
         }
+        flagsBefore = {
+          poi: locked.poi,
+          minor: locked.minor,
+          sfwOnly: locked.sfwOnly,
+          nsfw: locked.nsfw,
+          gallerySettings: locked.gallerySettings,
+        };
         const storedMeta = locked.meta;
         const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
         const intentMeta = user.isModerator
@@ -7894,6 +7903,18 @@ export const privateModelFromTraining = async ({
     );
     // The model is now SFW-only, which holds the gallery level it serves.
     await bustModelGallerySettings([id]);
+    // Its search documents and the collections showing it are rebuilt for that hold. Logged, not
+    // thrown: the model is already Private, and a throw here would send it down the revert below.
+    if (flagsBefore)
+      await applyModelFlagSideEffects({ before: flagsBefore, after: result }).catch((error) =>
+        logToAxiom({
+          name: 'private-model-from-training',
+          type: 'error',
+          message: 'flag side effects failed',
+          modelId: id,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
     await applyHeldVerdictAfterOwnerSave(model, result, { isModerator: user.isModerator });
 
     return withoutModeratorOnlyMeta(result);
