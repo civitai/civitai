@@ -5,7 +5,10 @@
 -- the transaction open and returns one row per outcome: COMMIT when each count equals the dry run's, otherwise ROLLBACK. Then
 -- re-run dry-run.sql: expect 0 everywhere. `POST /api/jobs/tick` writes the re-rated levels back over the next ticks
 -- (`applyPendingResolutions`: at most 100 per tick, within its 45 s budget).
+-- Until COMMIT or ROLLBACK the transaction holds every row it changed, so a moderator ruling one of these items waits on it:
+-- decide promptly. `lock_timeout` makes the apply fail fast instead of waiting on a row a moderator is ruling.
 BEGIN;
+SET LOCAL lock_timeout = '10s';
 
 -- shared CTE: identical in dry-run.sql and apply.sql (the backfill test checks)
 WITH waiting AS (
