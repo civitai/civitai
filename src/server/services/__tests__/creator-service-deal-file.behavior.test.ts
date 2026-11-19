@@ -1052,7 +1052,7 @@ describe('what the listing shows', () => {
     await files.deliverServiceDeal({ dealId, userId: SELLER });
     await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 4`);
     await q(`UPDATE "ServiceDealFile" SET "nsfwLevel" = 4 WHERE id = $1`, [previewId]);
-    const { watermarkedKey } = await fileRow(previewId);
+    const watermarkedKey = (await fileRow(previewId)).watermarkedKey as string;
     const sfw = 1 | 2;
     for (const userId of [BUYER, SELLER]) {
       const seen = await files.listServiceDealFiles({
@@ -1343,7 +1343,7 @@ describe('preview pipeline', () => {
       ['a real person', `poi = true`],
       ['one held for review', `"needsReview" = 'csam'`],
       ['a Blocked rating', `"nsfwLevel" = 32`],
-    ].flatMap(([name, set]) => [
+    ].flatMap(([name, set]): [string, number, number, string][] => [
       [name, 16, 4, set],
       [name, 2, 8, set],
     ])
