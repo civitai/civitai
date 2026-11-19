@@ -227,11 +227,23 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 	if in.Tools, err = int4IDs(m["tools"], "tools"); err != nil {
 		return nil, err
 	}
-	if in.Tags, err = ints(m["tags"]); err != nil {
-		return nil, err
+	// `tags` and `techniques` are `.optional()`, not `.nullish()`: a literal null is the schema's
+	// BAD_REQUEST, so only an absent key means no filter.
+	if v, ok := m["tags"]; ok {
+		if v == nil {
+			return nil, fallback.NewfSafe("input-invalid", "tags", "tags: null")
+		}
+		if in.Tags, err = ints(v); err != nil {
+			return nil, err
+		}
 	}
-	if in.Techniques, err = int4IDs(m["techniques"], "techniques"); err != nil {
-		return nil, err
+	if v, ok := m["techniques"]; ok {
+		if v == nil {
+			return nil, fallback.NewfSafe("input-invalid", "techniques", "techniques: null")
+		}
+		if in.Techniques, err = int4IDs(v, "techniques"); err != nil {
+			return nil, err
+		}
 	}
 	if v, ok := m["include"]; ok && v != nil {
 		// The default is ['cosmetics']; 'meta' is what withMeta adds. Anything else falls back here:

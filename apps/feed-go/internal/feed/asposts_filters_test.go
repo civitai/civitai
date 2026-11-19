@@ -39,6 +39,8 @@ func TestParseNoLongerFallsBackOnTagsAndTechniques(t *testing.T) {
 			`{"tags":[501,"502"]}`:  "input-invalid",
 			`{"techniques":3}`:      "input-invalid",
 			`{"techniques":[null]}`: "input-invalid",
+			`{"tags":null}`:         "input-invalid",
+			`{"techniques":null}`:   "input-invalid",
 			`{"techniques":[true]}`: "input-invalid",
 			// Numbers the schema accepts that Postgres would have to cast: still Node's.
 			`{"techniques":[1.5]}`:          "input-techniques",
@@ -73,7 +75,6 @@ func TestParseTagsAndTechniquesAsSent(t *testing.T) {
 			tags, tech []int
 		}{
 			{`{"limit":10}`, nil, nil},
-			{`{"tags":null,"techniques":null}`, nil, nil},
 			{`{"tags":[],"techniques":[]}`, []int{}, []int{}},
 			{`{"tags":[7,3,7,0,-2]}`, []int{7, 3, 7, 0, -2}, nil},
 			{`{"techniques":[9,4,9,0,-5]}`, nil, []int{9, 4, 9, 0, -5}},
