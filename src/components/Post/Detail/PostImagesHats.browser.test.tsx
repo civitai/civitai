@@ -71,9 +71,6 @@ vi.mock('~/components/Image/Meta/ImageMetaPopover', () => ({ ImageMetaPopover2: 
 vi.mock('~/components/Post/Detail/PostContestCollectionInfoAlert', () => ({
   PostContestCollectionInfoAlert: () => null,
 }));
-vi.mock('~/components/RenderHtml/RenderHtml', () => ({
-  RenderHtml: ({ html }: { html: string }) => <div dangerouslySetInnerHTML={{ __html: html }} />,
-}));
 
 import '~/styles/globals.css';
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -110,7 +107,8 @@ describe('a hat on a post page image', () => {
 describe('a ?text= link on the post page', () => {
   // 21 images, then a text after the last: past the 20 items the page shows before Load more.
   const images = Array.from({ length: 21 }, (_, i) => ({ ...image(i + 1), index: i }));
-  const late = { id: 7, postId: 100, index: 20, nsfwLevel: 1, content: '<p>The late text</p>' };
+  // No words: the block draws its placeholder, so the page's rich-text renderer stays out of this.
+  const late = { id: 7, postId: 100, index: 20, nsfwLevel: 1, content: '' };
   const block = () => document.querySelector('[data-text-id="7"]');
 
   test('shows a text past the fold, scrolls to it and outlines it', async () => {
