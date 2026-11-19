@@ -11,6 +11,7 @@ import {
 } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TokenScope } from '@civitai/auth/token-scope';
+import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 
 /**
  * The app-builder grant, at the ONE place it is derived: the hub's session producer, run for real
@@ -268,6 +269,43 @@ describe('produceSessionUser — an unscanned profile picture', () => {
   it('🔴 a Pending picture leaves a User.image that names another picture', async () => {
     await picture('Pending', 0, 'legacy.jpg');
     expect((await produceSessionUser(BUILDER))?.image).toBe('legacy.jpg');
+  });
+
+  it.each([
+    { state: 'Pending at a rated level', set: `"ingestion" = 'Pending'`, image: undefined },
+    { state: 'Scanned but unrated', set: `"nsfwLevel" = 0`, image: undefined },
+    {
+      state: 'mature on a restricted model',
+      set: `"nsfwLevel" = 4, "modelRestricted" = true`,
+      image: undefined,
+    },
+    { state: 'PG on a restricted model', set: `"modelRestricted" = true`, image: 'pic.jpg' },
+    {
+      state: 'locked, Pending',
+      set: `"ingestion" = 'Pending', "nsfwLevelLocked" = true`,
+      image: 'pic.jpg',
+    },
+    {
+      state: 'locked, Error',
+      set: `"ingestion" = 'Error', "nsfwLevelLocked" = true`,
+      image: 'pic.jpg',
+    },
+    {
+      state: 'locked, Error from a Knights vote',
+      set: `"ingestion" = 'Error', "nsfwLevelLocked" = true,
+       "metadata" = jsonb_build_object('nsfwLevelReason', '${KNIGHTS_VOTE_NSFW_LEVEL_REASON}')`,
+      image: undefined,
+    },
+    {
+      state: 'locked, Error from a permanent scan failure',
+      set: `"ingestion" = 'Error', "nsfwLevelLocked" = true,
+       "scanJobs" = '{"error": {"failureClass": "permanent"}}'`,
+      image: undefined,
+    },
+  ])('a picture $state gives the session image $image', async ({ set, image }) => {
+    await picture('Scanned', 1, NAMING);
+    await pg.query(`UPDATE "Image" SET ${set} WHERE "id" = 1`);
+    expect((await produceSessionUser(BUILDER))?.image).toBe(image);
   });
 
   describe('the OAuth userinfo picture claim', () => {
