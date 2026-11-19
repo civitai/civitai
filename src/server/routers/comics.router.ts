@@ -1265,6 +1265,7 @@ export const comicsRouter = router({
           id: true,
           name: true,
           userId: true,
+          user: { select: { username: true } },
           meta: true,
           chapters: {
             orderBy: { position: 'asc' },
@@ -1313,6 +1314,7 @@ export const comicsRouter = router({
       return {
         id: project.id,
         name: project.name,
+        username: project.user.username,
         meta: parseComicProjectMeta(project.meta),
         chapters: project.chapters,
       };
