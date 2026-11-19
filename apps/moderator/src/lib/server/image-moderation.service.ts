@@ -74,7 +74,7 @@ const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview
 /** Removed by a moderator, or under an account-deletion grace block, which a report verdict does not lift
  *  either. Not a block by an automated moderation rule (`metadata.ruleId`): a report review is where a rule's
  *  false positive is restored. Never NULL, so `NOT` of it is safe. */
-const REMOVED_BY_MODERATOR = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS NOT DISTINCT FROM ${BLOCKED_REASON_MODERATED} AND ("metadata" -> 'ruleId') IS NULL)`;
+const REMOVED_BY_MODERATOR = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS NOT DISTINCT FROM ${BLOCKED_REASON_MODERATED} AND (("metadata" -> 'ruleId') IS NULL OR ("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NOT NULL))`;
 /** `isModerationBlocked` as a condition: a grace block is not one. Remove still blocks a grace-blocked image,
  *  which strips its breadcrumbs, so a later account restore cannot put it back. */
 const MODERATION_BLOCKED = sql<boolean>`(${REMOVED_BY_MODERATOR} AND ("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NULL)`;
@@ -155,6 +155,13 @@ const pHashText = sql<string | null>`"pHash"::text`.as('pHash');
 export class RemovedImageNotRestorableError extends Error {
   constructor(readonly imageId: number) {
     super(`Image ${imageId} is removed, and a review queue cannot put it back`);
+  }
+}
+
+/** A verdict on a report refused for an image under the CSAM review flag: that queue decides it. */
+export class CsamReviewImageError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} is under CSAM review`);
   }
 }
 
@@ -246,7 +253,11 @@ export async function acceptImage({
     .where('id', '=', imageId)
     .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
     .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
-    .$if(keepModeratorRemoved, (qb) => qb.where(sql<boolean>`NOT ${REMOVED_BY_MODERATOR}`))
+    .$if(keepModeratorRemoved, (qb) =>
+      qb.where(
+        sql<boolean>`NOT ${REMOVED_BY_MODERATOR} AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
+      )
+    )
     // Only a minor-queue accept reads the flag back. A subquery in RETURNING reads the statement's
     // snapshot, so `wasMinor` is the value this update replaced, from the primary, not the replica.
     .returning([
@@ -261,8 +272,15 @@ export async function acceptImage({
     .executeTakeFirst();
   if (!updated) {
     if (restoreRemoved) throw new ImageNotRestoredError(imageId);
-    // An image under the review flag, dismissed or not, is the CSAM queue's, not closed from here.
     if (keepModeratorRemoved) {
+      // An image under the review flag, removed or not and dismissed or not, is the CSAM queue's.
+      const flagged = await dbWrite
+        .selectFrom('Image')
+        .select('id')
+        .where('id', '=', imageId)
+        .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+        .executeTakeFirst();
+      if (flagged) throw new CsamReviewImageError(imageId);
       const removed = await dbWrite
         .selectFrom('Image')
         .select(

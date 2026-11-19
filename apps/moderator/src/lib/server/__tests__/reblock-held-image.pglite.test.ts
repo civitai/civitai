@@ -560,6 +560,49 @@ describe('a verdict on a report of an image a moderator already removed', () => 
     });
   });
 
+  it('a bulk Unaction closes a grace-blocked report unpaid and a moderator-removed one paid', async () => {
+    await imageQueueActions.bulkAccept(
+      event({
+        imageIds: [GRACE, MOD_REMOVED].join(','),
+        reportIds: [report(GRACE), report(MOD_REMOVED)].join(','),
+      })
+    );
+
+    const noReward = Object.fromEntries(
+      setReportStatus.mock.calls.map(([a]) => [a.id, (a as { noReward?: boolean }).noReward])
+    );
+    expect(noReward).toEqual({ [report(GRACE)]: true, [report(MOD_REMOVED)]: false });
+  });
+
+  it('a bulk Unaction posting only a report from another image still restores no removed image', async () => {
+    await imageQueueActions.bulkAccept(
+      event({ imageIds: String(MOD_REMOVED), reportIds: String(report(HELD)) })
+    );
+
+    expect(await row(MOD_REMOVED)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('Unaction on an image under CSAM review and still up is refused, keeping the flag and the report', async () => {
+    const result = await verdict('accept', FLAGGED_LIVE);
+
+    expect(result).toMatchObject({ status: 409 });
+    expect(await row(FLAGGED_LIVE)).toMatchObject({ ingestion: 'Scanned', needsReview: 'csam' });
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('Unaction refuses a grace-blocked image even when a rule flagged it first', async () => {
+    await db.query(
+      `UPDATE "Image" SET metadata = metadata || '{"ruleId": 5}'::jsonb WHERE id = $1`,
+      [GRACE]
+    );
+
+    await verdict('accept', GRACE);
+
+    expect(await row(GRACE)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    expect(reportsMovedTo('Actioned')).toEqual([report(GRACE)]);
+  });
+
   it('Accept with no report posted, as the review queues post it, still restores it (control)', async () => {
     await imageQueueActions.accept(event({ imageId: String(MOD_REMOVED) }));
 

@@ -74,6 +74,17 @@
     for (const item of untrack(() => data.items))
       if (held.has(item.id)) acted.set(keyOfItem(item), 'Held for confirmation');
   });
+  // What a verdict does to a removed image, for the card's Removed badge.
+  const removedTitle = (item: { needsReview: string | null; blockedFor: string | null; ruleBlocked: boolean }) =>
+    item.needsReview === FLAG_KEPT_THROUGH_BLOCK
+      ? 'Under CSAM review: that queue decides it, and neither verdict acts on it here.'
+      : item.blockedFor === 'CSAM'
+        ? 'Removed for CSAM: Unaction is refused.'
+        : item.blockedFor === 'moderated' && item.ruleBlocked
+          ? 'Blocked by an automated rule: Unaction restores it, Remove makes it a moderator removal.'
+          : item.blockedFor === 'moderated'
+            ? 'Already removed: Unaction will not restore it, and either verdict closes this report.'
+            : `Removed (${item.blockedFor ?? 'blocked'}): Unaction restores it.`;
   // A report on an image a moderator already removed is closed, not ruled on: its card says so.
   $effect(() => {
     for (const id of form?.closedReportIds ?? []) acted.set(id, 'Closed: already removed');
@@ -417,11 +428,7 @@
           {#if item.removed}
             <Badge
               class="bg-muted"
-              title={item.blockedFor === 'moderated' && item.needsReview !== FLAG_KEPT_THROUGH_BLOCK
-                ? 'Already removed: Unaction will not restore it, and either verdict closes this report.'
-                : item.needsReview === FLAG_KEPT_THROUGH_BLOCK
-                  ? 'Already removed, with the CSAM review flag: Unaction is refused here.'
-                  : `Already removed (${item.blockedFor ?? 'blocked'}): Unaction restores it.`}>Removed</Badge
+              title={removedTitle(item)}>Removed</Badge
             >
           {/if}
           {#if item.report.count > 0}

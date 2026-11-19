@@ -442,6 +442,8 @@ export type ReportedImageItem = {
    *  `ingestion` itself, which the queue page reads as a review-queue card's. */
   removed: boolean;
   blockedFor: string | null;
+  /** Blocked by an automated moderation rule, which a report verdict may still lift. */
+  ruleBlocked: boolean;
   userId: number;
   username: string | null;
   report: {
@@ -494,6 +496,9 @@ export async function getReportedImageQueue({
       'i.modelRestricted',
       'i.ingestion',
       'i.blockedFor',
+      sql<boolean>`(i."metadata" -> 'ruleId') IS NOT NULL AND (i."metadata" -> 'accountDeletionPriorIngestion') IS NULL`.as(
+        'ruleBlocked'
+      ),
       'i.userId',
       'u.username',
       'r.id as reportId',
@@ -537,6 +542,7 @@ export async function getReportedImageQueue({
     modelRestricted: r.modelRestricted,
     removed: r.ingestion === 'Blocked',
     blockedFor: r.blockedFor,
+    ruleBlocked: !!r.ruleBlocked,
     userId: r.userId,
     username: r.username,
     report: {

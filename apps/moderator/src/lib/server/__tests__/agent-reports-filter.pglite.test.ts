@@ -62,7 +62,7 @@ CREATE TABLE "Image" (
   "minor" BOOLEAN NOT NULL DEFAULT FALSE, "poi" BOOLEAN NOT NULL DEFAULT FALSE,
   "userId" INTEGER NOT NULL DEFAULT 10, "postId" INTEGER,
   "modelRestricted" BOOLEAN NOT NULL DEFAULT FALSE,
-  "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT
+  "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT, "metadata" JSONB
 );
 INSERT INTO "User" ("id", "username") VALUES
   (${HUMAN}, 'human'), (${AGENT_A}, 'agent-a'), (${AGENT_B}, 'agent-b'), (10, 'owner');

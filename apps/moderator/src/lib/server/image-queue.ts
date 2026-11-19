@@ -19,6 +19,7 @@ import {
   dismissUserFromCsamQueue,
   RemovedImageNotRestorableError,
   ModeratorRemovedImageError,
+  CsamReviewImageError,
   AppealRestoreRefusedError,
   APPEAL_RESTORE_REFUSED,
   resolveImageAppeal,
@@ -243,6 +244,8 @@ async function reportIdsByImage(reportIds: number[]): Promise<Map<number, number
   return byImage;
 }
 
+const UNDER_CSAM_REVIEW =
+  'This image is under CSAM review, so its report stays open for that queue. Nothing was changed.';
 const REPORT_NOT_ON_IMAGE = 'That report is not on this image. Nothing was changed. Reload.';
 /** A verdict moves only a report filed on the image it rules on. */
 async function reportIsOnImage(reportId: number, imageId: number) {
@@ -303,6 +306,8 @@ export const imageQueueActions = {
           closedReportIds: [reportId],
         };
       }
+      if (e instanceof CsamReviewImageError)
+        return fail(409, { error: UNDER_CSAM_REVIEW, imageId });
       if (e instanceof RemovedImageNotRestorableError)
         return fail(409, {
           error: `This image was ${REMOVED_REASON}. ${REMOVED_REMEDY}`,
@@ -537,7 +542,8 @@ export const imageQueueActions = {
             if (e.graceBlock) graceBlocked.add(imageId);
             return undefined;
           }
-          if (!(e instanceof RemovedImageNotRestorableError)) throw e;
+          if (!(e instanceof RemovedImageNotRestorableError || e instanceof CsamReviewImageError))
+            throw e;
           refused.push(imageId);
           return undefined;
         })

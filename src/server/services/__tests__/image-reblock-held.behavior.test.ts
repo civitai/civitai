@@ -85,7 +85,10 @@ beforeAll(async () => {
       reason "ReportReason" NOT NULL,
       status "ReportStatus" NOT NULL,
       "statusSetAt" timestamp(3),
-      "statusSetBy" int
+      "statusSetBy" int,
+      "alsoReportedBy" int[] NOT NULL DEFAULT '{}',
+      details jsonb,
+      "previouslyReviewedCount" int NOT NULL DEFAULT 0
     );
     CREATE TABLE "ImageReport" ("imageId" int, "reportId" int);
     CREATE TABLE "CsamQueueSetAside" ("imageId" int PRIMARY KEY, outcome text NOT NULL);
@@ -103,6 +106,8 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  // No reporter here is banned or deleted.
+  dbMock.dbWrite.user.findMany.mockResolvedValue([] as never);
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
@@ -466,14 +471,17 @@ describe("handleBlockImages and the images' reports", () => {
       [UNACTIONED_REPORT]: 'Unactioned',
       [ACTIONED_REPORT]: 'Actioned',
     });
-    expect(applyReward).toHaveBeenCalledWith({ userId: 9, reportId: report(OTHER_REASON) });
+    expect(applyReward).toHaveBeenCalledWith(
+      { userId: 9, reportId: report(OTHER_REASON) },
+      expect.anything()
+    );
     expect(rewardedReports()).toEqual([report(OTHER_REASON)]);
   });
 
   it('a failure settling the reports leaves them Pending and still completes the removal', async () => {
     const raw = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
     dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...v: unknown[]) =>
-      strings.join('').includes('UPDATE "Report" r SET')
+      strings.join('').includes('FROM "Report" r')
         ? Promise.reject(new Error('lock timeout'))
         : raw(strings, ...v)) as never);
 
@@ -482,6 +490,17 @@ describe("handleBlockImages and the images' reports", () => {
     expect(await blockedFor(OTHER_REASON)).toBe('moderated');
     expect(await reportStatus(report(OTHER_REASON))).toBe('Pending');
     expect(rewardedReports()).toEqual([]);
+  });
+
+  it('pays every reporter of a settled report, co-reporters included', async () => {
+    await holder.db.exec(
+      `UPDATE "Report" SET "alsoReportedBy" = '{10}' WHERE id = ${report(OTHER_REASON)}`
+    );
+
+    await handleBlockImages({ ids: all, moderatorId: 2 });
+
+    expect(applyReward.mock.calls.map(([a]) => a.userId).sort()).toEqual([10, 9].sort());
+    expect(rewardedReports()).toEqual([report(OTHER_REASON), report(OTHER_REASON)]);
   });
 
   it('a second removal of the same images pays nothing more', async () => {

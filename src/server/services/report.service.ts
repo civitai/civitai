@@ -737,6 +737,7 @@ export async function bulkSetReportStatus({
   ip,
   noRewardFor = () => [],
   rewardRemovedReporters = true,
+  fromStatus,
 }: {
   ids: number[];
   status: ReportStatus;
@@ -745,6 +746,8 @@ export async function bulkSetReportStatus({
   /** Reporters of a report who get no reward for it; the report is still actioned. */
   noRewardFor?: (reportId: number) => readonly number[];
   rewardRemovedReporters?: boolean;
+  /** Moves only the reports in this status; any other is left as it is. */
+  fromStatus?: ReportStatus;
 }) {
   if (!ids.length) return;
 
@@ -765,6 +768,7 @@ export async function bulkSetReportStatus({
           : Prisma.sql`"previouslyReviewedCount"`
       }
     WHERE id = ANY(${ids}::int[]) AND status != ${status}::"ReportStatus"
+      ${fromStatus ? Prisma.sql`AND status = ${fromStatus}::"ReportStatus"` : Prisma.empty}
     RETURNING id, "userId", "alsoReportedBy", details
   `;
 

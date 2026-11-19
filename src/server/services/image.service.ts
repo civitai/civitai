@@ -369,7 +369,6 @@ import {
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
 const model3dService = () => import('~/server/services/model3d.service');
-const rewards = () => import('~/server/rewards');
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -1526,31 +1525,23 @@ export async function handleBlockImages({
       });
     }
 
-    // A moderator's removal settles the images' open TOS reports and pays their reporters, as
-    // `setTosViolationHandler` does. Held images and those under the review flag keep theirs for the
-    // CSAM queue. Only for images a moderator chose: an account-wide removal pays no reporter. Last, and
-    // a failure here leaves the reports Pending for the queue rather than failing a removal that has
-    // already notified the owners.
-    if (moderatorId && !!imageIds?.length) {
-      const settled = await actionPendingTosReports(
+    // A moderator's removal settles the images' open TOS reports and pays their reporters, as the
+    // reports queue does. Held images and those under the review flag keep theirs for the CSAM queue.
+    // Only for images a moderator chose: an account-wide removal pays no reporter. Last, and a failure
+    // here leaves the reports Pending for the queue rather than failing a removal that has already
+    // notified the owners.
+    if (moderatorId && !!imageIds?.length)
+      await actionPendingTosReports(
         ids.filter((id) => !held.has(id) && !underReview.has(id)),
         moderatorId
-      ).catch((e: unknown) => {
+      ).catch((e: unknown) =>
         logToAxiom({
           type: 'error',
           name: 'block-images-reports-not-settled',
           imageIds: ids,
           error: safeError(e),
-        });
-        return [];
-      });
-      const { reportAcceptedReward } = await rewards();
-      await Promise.allSettled(
-        settled.map((report) =>
-          reportAcceptedReward.apply({ userId: report.userId, reportId: report.id })
-        )
+        })
       );
-    }
   });
 
   if (moderatorId && userId) {
@@ -1691,21 +1682,24 @@ export const updateImageReportStatusByReason = ({
   `;
 };
 
-/** Actions the Pending TOS reports on these images; returns the reports it moved. */
+/** Actions the Pending TOS reports on these images and pays their reporters, filer and co-reporters,
+ *  through `bulkSetReportStatus`: a report another path has moved since is left as it is. */
 export const actionPendingTosReports = async (ids: number[], actorId: number) => {
-  if (!ids.length) return [];
-  return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-    UPDATE "Report" r SET
-      status = ${ReportStatus.Actioned}::"ReportStatus",
-      "statusSetAt" = now(),
-      "statusSetBy" = ${actorId}
-    FROM "ImageReport" i
-    WHERE i."reportId" = r.id
-      AND i."imageId" = ANY(${ids}::int[])
+  if (!ids.length) return;
+  const reports = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT DISTINCT r.id FROM "Report" r
+    JOIN "ImageReport" i ON i."reportId" = r.id
+    WHERE i."imageId" = ANY(${ids}::int[])
       AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
       AND r.status = ${ReportStatus.Pending}::"ReportStatus"
-    RETURNING r.id, r."userId"
   `;
+  await bulkSetReportStatus({
+    ids: reports.map((r) => r.id),
+    status: ReportStatus.Actioned,
+    userId: actorId,
+    fromStatus: ReportStatus.Pending,
+    rewardRemovedReporters: false,
+  });
 };
 
 /** The image's reports for one reason that are not yet actioned. */
