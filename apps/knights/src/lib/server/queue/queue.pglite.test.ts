@@ -672,9 +672,9 @@ describe('resolution', () => {
       reason: 'no-consensus-rerate',
     });
     for (let i = 0; i < 4; i++) await vote(20 + i, id, answers[i]);
-    expect(
-      await counterValue('knights_escalations_total', { reason: 'no-consensus-rerate' })
-    ).toBe(before + 1);
+    expect(await counterValue('knights_escalations_total', { reason: 'no-consensus-rerate' })).toBe(
+      before + 1
+    );
 
     // Four answers, one vote each: the highest of them.
     expect(await itemRow(id)).toMatchObject({

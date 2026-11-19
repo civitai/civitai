@@ -521,7 +521,9 @@ async function rerate(
     .where('id', '=', item.imageId)
     .executeTakeFirst();
   // The write-back's actor: the latest counted voter who gave the level (the backfill picks the same one).
-  const actor = votes.find((vote) => vote.weight > 0 && vote.answer === level) as (typeof votes)[number];
+  const actor = votes.find(
+    (vote) => vote.weight > 0 && vote.answer === level
+  ) as (typeof votes)[number];
   await trx
     .updateTable('KnightsQueueItem')
     .set({

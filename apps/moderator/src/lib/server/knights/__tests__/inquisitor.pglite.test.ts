@@ -241,9 +241,9 @@ describe('Inquisitor queue filters', () => {
 
   it('has no no-consensus tab: a link to it opens the whole queue', async () => {
     expect(INQUISITOR_FILTERS).not.toContain('no-consensus');
-    expect((await getInquisitorQueue(parseInquisitorFilter('no-consensus'))).map((i) => i.id)).toEqual(
-      [ID.blocked, ID.pushedDown, ID.noConsensus, ID.writeBack, ID.neither]
-    );
+    expect(
+      (await getInquisitorQueue(parseInquisitorFilter('no-consensus'))).map((i) => i.id)
+    ).toEqual([ID.blocked, ID.pushedDown, ID.noConsensus, ID.writeBack, ID.neither]);
   });
 
   it('counts each filter from the same rows it lists, with All equal to the sidebar badge', async () => {
