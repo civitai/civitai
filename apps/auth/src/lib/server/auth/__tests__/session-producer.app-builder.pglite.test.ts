@@ -10,6 +10,7 @@ import {
   type Dialect,
 } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TokenScope } from '@civitai/auth/token-scope';
 
 /**
  * The app-builder grant, at the ONE place it is derived: the hub's session producer, run for real
@@ -30,8 +31,10 @@ vi.mock('../../db/db', () => ({
   },
 }));
 vi.mock('../../redis', () => ({ getRedis: () => null, getSysRedis: () => null }));
+vi.mock('@civitai/auth/secret-hash', () => ({ generateSecretHash: (s: string) => `hash:${s}` }));
 
 const { produceSessionUser } = await import('../session-producer');
+const { GET: userinfo } = await import('../../../../routes/api/auth/oauth/userinfo/+server');
 
 const MIGRATION = join(
   __dirname,
@@ -53,7 +56,13 @@ const PRELUDE = `
   );
   CREATE TABLE "Image" (
     "id" INTEGER PRIMARY KEY, "url" TEXT, "needsReview" TEXT, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
-    "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "blockedFor" TEXT
+    "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "blockedFor" TEXT,
+    "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false, "metadata" JSONB NOT NULL DEFAULT '{}',
+    "scanJobs" JSONB, "modelRestricted" BOOLEAN NOT NULL DEFAULT false
+  );
+  CREATE TABLE "ApiKey" (
+    "key" TEXT PRIMARY KEY, "userId" INTEGER, "type" TEXT, "expiresAt" TIMESTAMP,
+    "tokenScope" INTEGER NOT NULL, "tokenScopeWide" BIGINT
   );
   CREATE TABLE "UserReferral" ("id" INTEGER PRIMARY KEY, "userId" INTEGER);
   CREATE TABLE "Product" ("id" TEXT PRIMARY KEY, "metadata" JSONB);
@@ -230,5 +239,61 @@ describe('produceSessionUser — a blocked profile picture', () => {
       [BUILDER]
     );
     expect((await produceSessionUser(BUILDER))?.image).toBeUndefined();
+  });
+});
+
+describe('produceSessionUser — an unscanned profile picture', () => {
+  const NAMING = 'https://cdn.example/PIC.JPG/width=96';
+  const picture = async (ingestion: string, nsfwLevel: number, image: string) => {
+    await pg.query(
+      `INSERT INTO "Image" ("id", "url", "ingestion", "nsfwLevel") VALUES (1, 'pic.jpg', $1, $2)`,
+      [ingestion, nsfwLevel]
+    );
+    await pg.query(`UPDATE "User" SET "profilePictureId" = 1, "image" = $2 WHERE "id" = $1`, [
+      BUILDER,
+      image,
+    ]);
+  };
+
+  it('🔴 a Pending picture, with User.image naming it, is not the session image', async () => {
+    await picture('Pending', 0, NAMING);
+    expect((await produceSessionUser(BUILDER))?.image).toBeUndefined();
+  });
+
+  it('the same picture once Scanned is the session image (control)', async () => {
+    await picture('Scanned', 1, NAMING);
+    expect((await produceSessionUser(BUILDER))?.image).toBe('pic.jpg');
+  });
+
+  it('🔴 a Pending picture leaves a User.image that names another picture', async () => {
+    await picture('Pending', 0, 'legacy.jpg');
+    expect((await produceSessionUser(BUILDER))?.image).toBe('legacy.jpg');
+  });
+
+  describe('the OAuth userinfo picture claim', () => {
+    const TOKEN = 'civitai_userinfo_test';
+    const claims = async () => {
+      await pg.query(
+        `INSERT INTO "ApiKey" ("key", "userId", "type", "tokenScope") VALUES ($1, $2, 'Access', $3)`,
+        [`hash:${TOKEN}`, BUILDER, TokenScope.UserRead]
+      );
+      const response = await userinfo({
+        request: new Request('https://auth.civitai.com/api/auth/oauth/userinfo', {
+          headers: { authorization: `Bearer ${TOKEN}` },
+        }),
+      } as never);
+      expect(response.status).toBe(200);
+      return (await response.json()) as { picture?: string | null };
+    };
+
+    it('🔴 is absent for a Pending picture', async () => {
+      await picture('Pending', 0, NAMING);
+      expect((await claims()).picture ?? null).toBeNull();
+    });
+
+    it('is the url of a Scanned picture (control)', async () => {
+      await picture('Scanned', 1, NAMING);
+      expect((await claims()).picture).toBe('pic.jpg');
+    });
   });
 });
