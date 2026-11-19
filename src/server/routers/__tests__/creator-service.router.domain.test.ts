@@ -134,7 +134,7 @@ describe('creator service router: one service page', () => {
 
   it('is refused without the creatorServicesNext flag', async () => {
     flags.creatorServicesNext = false;
-    await expect(callerOn(false).getById({ id: 3 })).rejects.toThrow();
+    await expect(callerOn(false).getById({ id: 3 })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(mockGetById).not.toHaveBeenCalled();
   });
 });

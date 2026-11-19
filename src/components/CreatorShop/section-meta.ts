@@ -68,8 +68,8 @@ export const serviceStorefrontHref = (username: string, offeringId: number) =>
   `/user/${username}/shop#${serviceCardId(offeringId)}`;
 
 /** An offering's own page. */
-export const servicePageHref = (offeringId: number, title?: string) =>
-  title ? `/services/${offeringId}/${slugit(title)}` : `/services/${offeringId}`;
+export const servicePageHref = (offeringId: number, title: string) =>
+  `/services/${offeringId}/${slugit(title)}`;
 
 /** Where a card links: the offering's page behind `creatorServicesNext`, else its storefront card. */
 export const serviceHref = ({

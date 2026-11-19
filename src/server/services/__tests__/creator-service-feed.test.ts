@@ -477,7 +477,8 @@ describe('one service page', () => {
   it('shows a listed offering to a visitor, with its open slots', async () => {
     const offering = row({ maxOpenDeals: 3 });
     table = [offering];
-    expect(await open(offering)).toMatchObject({ id: offering.id, slotsOpen: 3 });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ offeringId: offering.id, open: 1 }] as never);
+    expect(await open(offering)).toMatchObject({ id: offering.id, slotsOpen: 2 });
   });
 
   it('never sends an X offering to civitai.com, and does to a viewer who browses X on civitai.red', async () => {
@@ -517,13 +518,14 @@ describe('one service page', () => {
 
   it('shows an unlisted offering to its seller and moderators only, and a removed one to moderators only', async () => {
     const draft = row({ status: ServiceOfferingStatus.Draft });
+    const paused = row({ status: ServiceOfferingStatus.Paused });
     const checking = row({ ingestion: ServiceOfferingIngestionStatus.Pending });
     const removed = row({ status: ServiceOfferingStatus.Removed });
     const banned = row({ seller: { bannedAt: new Date() } });
-    table = [draft, checking, removed, banned];
-    for (const offering of [draft, checking, removed, banned])
+    table = [draft, paused, checking, removed, banned];
+    for (const offering of [draft, paused, checking, removed, banned])
       await expect(open(offering)).rejects.toMatchObject(notFound);
-    for (const offering of [draft, checking])
+    for (const offering of [draft, paused, checking])
       expect(await open(offering, { viewerId: SELLER })).toMatchObject({ id: offering.id });
     await expect(open(removed, { viewerId: SELLER })).rejects.toMatchObject(notFound);
     for (const offering of [draft, removed, banned])
