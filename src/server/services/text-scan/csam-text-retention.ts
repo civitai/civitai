@@ -13,19 +13,16 @@ export type CsamTextRetentionSkip =
   | 'unknown-owner';
 
 /** Confirmed held PostText a year past a confirmation where every confirmed hold chose "none". */
+// Driven from the confirmed holds (`TextScanHold_status_createdAt_idx`), not a scan of PostText.
 const dueSql = Prisma.sql`
   FROM "PostText" t
   WHERE t."csamHeld"
-    AND post_text_csam_confirmed_at(t.id) <= (now() AT TIME ZONE 'UTC') - interval '1 year'
-    AND EXISTS (
-      SELECT 1 FROM "TextScanHold" h
-      WHERE h."entityType" = 'PostText' AND h."entityId" = t.id AND h.label = 'csam'
-        AND h.status = 'Confirmed'
-    )
-    AND NOT EXISTS (
-      SELECT 1 FROM "TextScanHold" h
-      WHERE h."entityType" = 'PostText' AND h."entityId" = t.id AND h.label = 'csam'
-        AND h.status = 'Confirmed' AND h.meta ->> 'reportChoice' IS DISTINCT FROM 'none'
+    AND t.id IN (
+      SELECT h."entityId" FROM "TextScanHold" h
+      WHERE h.status = 'Confirmed' AND h."entityType" = 'PostText' AND h.label = 'csam'
+      GROUP BY h."entityId"
+      HAVING max(h."decidedAt") <= (now() AT TIME ZONE 'UTC') - interval '1 year'
+        AND bool_and(h.meta ->> 'reportChoice' IS NOT DISTINCT FROM 'none')
     )
 `;
 

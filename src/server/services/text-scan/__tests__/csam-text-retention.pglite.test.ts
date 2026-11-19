@@ -258,6 +258,17 @@ describe('purgeConfirmedCsamText', () => {
     expect(await copies(textId, holdId)).toEqual(KEPT);
   });
 
+  it('counts as skipped only texts that are due: a year past a "none" confirmation', async () => {
+    await pg.query(`INSERT INTO "Appeal" ("userId", status) VALUES ($1, 'Pending')`, [AUTHOR]);
+    await confirmed({ confirmedDaysAgo: 366, reportChoice: 'imagery' });
+    await confirmed({ confirmedDaysAgo: 364, postId: 2 });
+
+    expect(await purgeConfirmedCsamText()).toMatchObject({
+      deleted: 0,
+      skipped: { 'pending-appeal': 0 },
+    });
+  });
+
   it('counts a delete that fails for another reason and carries on', async () => {
     await confirmed({ confirmedDaysAgo: 366 });
     const second = await confirmed({ confirmedDaysAgo: 366, postId: 2 });
