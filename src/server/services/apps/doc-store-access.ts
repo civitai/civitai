@@ -50,7 +50,6 @@ import {
   DocStoreError,
 } from '~/server/services/apps/doc-store.types';
 import type { SessionUser } from '~/types/session';
-import { importSourceStanding } from '~/server/services/apps/deleted-app-storage';
 import {
   getStorageImportGrant,
   importGrantCovers,
@@ -293,21 +292,8 @@ export async function resolveImportAccess(
       select: { id: true, status: true, manifest: true, updatedAt: true },
     })
   );
-  if (!source) {
+  if (!source || source.status !== 'approved') {
     throw notEligible('source_not_approved', `the app ${from} is not available`);
-  }
-  // Approved, or deleted with the record core on (`importSourceStanding`, the one rule): a deleted
-  // source's data stays readable through a grant the viewer already gave, and nothing more.
-  const standing = await dependency(importSourceStanding(source));
-  if (standing === 'unavailable') {
-    throw notEligible('source_not_approved', `the app ${from} is not available`);
-  }
-  const deleted = standing === 'deleted';
-  if (deleted && op !== 'read') {
-    throw new DocStoreError('write_policy', `the app ${from} was deleted: its data is read-only`, {
-      from,
-      reason: 'import_source_deleted',
-    });
   }
   if (source.id === consumer.ctx.appId) {
     throw new DocStoreError('import_not_declared', 'an app cannot import from itself', { from });
@@ -362,15 +348,7 @@ export async function resolveImportAccess(
       sourceAppBlockId: source.id,
     })
   );
-  if (deleted) {
-    // Only a grant given before the deletion reads it; no grant can be given now, so a missing
-    // one is a refusal, never a prompt.
-    if (!importGrantCovers(grant, { collections: declared.collections, access: 'read' })) {
-      throw notEligible('source_deleted', `the app ${from} was deleted`);
-    }
-  } else if (!importGrantCovers(grant, declared)) {
-    throw consentRequired();
-  }
+  if (!importGrantCovers(grant, declared)) throw consentRequired();
 
   if (consumer.ctx.ns !== PUBLISHED_NS) {
     throw notEligible('import_namespace', 'this token cannot reach another app');
@@ -394,7 +372,7 @@ export async function resolveImportAccess(
     tokenKind: consumer.tokenKind,
     maxBrowsingLevel: consumer.maxBrowsingLevel,
     importedFrom: from,
-    importAccess: deleted ? 'read' : declared.access,
+    importAccess: declared.access,
     enforcedManifest: enforcedManifestOf(source),
   };
 }

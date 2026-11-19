@@ -64,7 +64,7 @@ export const serverSchema = z
       .optional(),
     APPDATA_DATABASE_PORT: intString(1, 65535).optional(),
     // App Storage record core (`services/apps/app-record.ts`). OFF by default. On: the record
-    // export, the deleted-app reaper keeping users' records, and grant reads of a deleted app.
+    // export (`appStorage.exportMine`); off, that route is NOT_FOUND.
     APP_RECORD_CORE_ENABLED: zc.booleanString.optional().default(false),
     DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
     DATABASE_POOL_MAX: z.coerce.number().default(20),

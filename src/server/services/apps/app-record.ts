@@ -23,10 +23,8 @@
  *
  * 🔴 SWITCHED OFF BY DEFAULT. {@link toAppRecord} takes an {@link AppRecordConfig}, and the only
  * way to get one is {@link appRecordConfig}, which returns null unless `APP_RECORD_CORE_ENABLED`
- * is on. What the switch turns on: the export (`appStorage.exportMine`,
- * `doc-store-viewer-usage.service.ts`), the deleted-app reaper keeping the records users own
- * (`jobs/reap-deleted-app-storage.ts`), and a deleted app's data staying readable through grants
- * already given (`deleted-app-storage.ts`). Off, each of those is exactly what it was.
+ * is on. What the switch turns on: the record export (`appStorage.exportMine`,
+ * `doc-store-viewer-usage.service.ts`), its only caller. Off, that route is NOT_FOUND.
  *
  * Pure: no database, no clock, no env read (the caller passes the env value in).
  */

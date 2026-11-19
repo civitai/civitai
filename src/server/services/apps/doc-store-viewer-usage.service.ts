@@ -3,7 +3,7 @@
 // the `appStorage` router.
 //
 // The EXPORT (`exportMyAppRecords`, behind the record core's switch) reads the same production
-// data: every record the user owns across apps, deleted apps included, as record-core objects.
+// data: every record the user owns across apps, whatever each app's status, as record-core objects.
 //
 // Production namespace only: `dev:<uid>` is a developer's sandbox and `rev:` a moderator's
 // review, and neither is data the user keeps in a published app. The figures are the store's
@@ -223,7 +223,7 @@ export type AppRecordExportAppLookup = (appBlockId: string) => Promise<AppRecord
 const noSchemas: RecordSchemaClaim = () => [];
 
 /**
- * One app as the export reads it, whatever its status (a deleted app's row is kept): the slug is
+ * One app as the export reads it, whatever its status (a delisted app's row is kept): the slug is
  * `AppBlock.blockId`, the collections come from its enforced manifest, and the schemas a body
  * claims are the registry feed's (`createClaimer` over the collection's family, derived from the
  * approved history then the enforced manifest, as `doc-streams.ts` derives it), for the
@@ -307,7 +307,7 @@ function decodeExportCursor(raw: string): ExportCursor {
 
 /**
  * One page of the bundle of every record `userId` owns, across every app they hold production
- * data in (`listViewerUsage`), deleted apps included: their private documents and the visible
+ * data in (`listViewerUsage`), whatever each app's status: their private documents and the visible
  * shared documents they created (`viewerRecords`), each turned into a record by `toAppRecord`
  * alone. The store reads only the caller's own rows; a record whose owner is not the caller is
  * dropped as a second check, so the bundle never carries another user's data. A record's `owner`

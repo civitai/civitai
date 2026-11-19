@@ -52,11 +52,7 @@ vi.mock('~/server/utils/server-domain', () => ({
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { appStorageRouter } from '~/server/routers/app-storage.router';
-import {
-  createDocStore,
-  createDocStoreMaintenance,
-  createDocStoreViewerData,
-} from '~/server/services/apps/doc-store';
+import { createDocStore, createDocStoreViewerData } from '~/server/services/apps/doc-store';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   createPgliteHarness,
@@ -530,8 +526,7 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('exportMine (the record core on)', () => {
-    // A deleted app: its block row is kept (suspended), its data purged as the reaper does with
-    // the core on, so only the records users own survive.
+    // A delisted app: its block row is kept (suspended); the export reads it like any other.
     const APP_DEL = { id: 'apb_STO_D', blockId: 'delta-store' };
     const MANIFESTS: Record<string, unknown> = {
       [APP_A.id]: {
@@ -669,18 +664,15 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
       expect(records.map((r) => r.owner)).toEqual(records.map(() => owner));
     });
 
-    it('after the app is deleted and purged, the owner still exports their surviving records, and can delete them', async () => {
+    it("a delisted app's records are exported like any other's, and the owner can still delete them", async () => {
       const uD = storeCtx(APP_DEL.id, 'prod', USER);
       await h.store.put(uD, PREFS, 'theme', sized(64));
       await h.store.put(uD, POSTS, 'post-d', sized(48));
-      // A counter document (nobody's) and another user's post (theirs, not the caller's).
+      // A counter document (nobody's) and another user's post (theirs, not the caller's): neither
+      // is the caller's, so neither is exported.
       await h.store.increment(storeCtx(APP_DEL.id, 'prod', OTHER), TALLIES, 'c1', 'plays');
       await h.store.put(storeCtx(APP_DEL.id, 'prod', OTHER), POSTS, 'post-o', sized(41));
       await setRecordId(APP_DEL.id, 'prefs', USER, 'theme', RID.dPrefs);
-      const maint = createDocStoreMaintenance({ db: harness.db, limits: LIMITS });
-      expect(await maint.purgeApp(APP_DEL.id, { keepUserRecords: true })).toMatchObject({
-        done: true,
-      });
 
       const D_RECORDS = [
         {
@@ -719,7 +711,7 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
         nextCursor: null,
         skipped: [GONE_SKIPPED],
       });
-      // The other user's surviving post is still theirs, untouched.
+      // The other user's post is still theirs, untouched.
       expect((await userRows(APP_DEL.id, 'prod', OTHER)).sharedKeys).toEqual(['posts/post-o']);
       await assertUsageConsistent(harness, APP_DEL.id, 'prod');
       expect(harness.violations).toEqual([]);

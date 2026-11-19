@@ -31,7 +31,6 @@ vi.mock('../job', () => ({
 const { reapDeletedAppStorage, reapDeletedAppStorageJob, STORAGE_REAP_AFTER_DAYS } = await import(
   '~/server/jobs/reap-deleted-app-storage'
 );
-const { appRecordConfig } = await import('~/server/services/apps/app-record');
 
 /**
  * The deleted-app reaper against the REAL store (embedded Postgres, the real migrations, the
@@ -306,97 +305,6 @@ describe('reapDeletedAppStorage', () => {
       expect(await purgedAt(id)).toBeNull();
     });
   }
-});
-
-/** The production documents left in an app: `coll/scope_uid/key`. */
-async function prodDocs(appId: string): Promise<string[]> {
-  return (
-    await h.raw(
-      `SELECT coll, scope_uid, key FROM appdata.doc WHERE app_id = $1 AND ns = 'prod'
-        ORDER BY coll, scope_uid, key`,
-      [appId]
-    )
-  ).map((r) => `${r.coll}/${r.scope_uid}/${r.key}`);
-}
-
-describe('reapDeletedAppStorage and the record core switch', () => {
-  const ON = appRecordConfig({ APP_RECORD_CORE_ENABLED: true });
-  // Each user's private pref and shared post, and the counter document the first increment made.
-  const SEEDED = [
-    `posts/0/post-${USERS[0]}`,
-    `posts/0/post-${USERS[1]}`,
-    `prefs/${USERS[0]}/p`,
-    `prefs/${USERS[1]}/p`,
-    'tallies/0/game',
-  ];
-
-  it("ON: keeps the records users own, deletes the counter document and the dev namespace, stamps the purge and keeps the app's row", async () => {
-    const id = await app('KEEPON', { status: 'suspended', deletedAt: ago(PERIOD + HOUR) });
-    expect(await prodDocs(id)).toEqual(SEEDED);
-    expect(await rowsOf(id)).toBeGreaterThan(SEEDED.length);
-
-    const out = await reapDeletedAppStorage({ store: maint, now: NOW, recordCore: ON });
-
-    expect(out).toMatchObject({ scanned: 1, purged: 1, failed: 0, stopped: 0, partial: 0 });
-    expect(await prodDocs(id)).toEqual(SEEDED.slice(0, 4));
-    expect(
-      (
-        await h.raw(
-          `SELECT count(*)::int AS n FROM appdata.doc WHERE app_id = $1 AND ns <> 'prod'`,
-          [id]
-        )
-      )[0].n
-    ).toBe(0);
-    expect(await purgedAt(id)).not.toBeNull();
-    // The block row (and with it the slug) is never deleted: only the purge is stamped.
-    expect(
-      (await main.query(`SELECT id, status FROM app_blocks WHERE id = $1`, [id])).rows
-    ).toEqual([{ id, status: 'suspended' }]);
-    // Stamped: the next run does not look at it again.
-    expect(await reapDeletedAppStorage({ store: maint, now: NOW, recordCore: ON })).toMatchObject({
-      scanned: 0,
-    });
-  });
-
-  it('OFF: every row goes, as before, and the store is called exactly as it always was', async () => {
-    const on = await app('SWON', { status: 'suspended', deletedAt: ago(PERIOD + HOUR) });
-    const calls: Array<{ id: string; keys: string[]; keep: unknown }> = [];
-    const spy = vi.spyOn(maint, 'purgeApp').mockImplementation(async (appId, opts = {}) => {
-      calls.push({
-        id: appId,
-        keys: Object.keys(opts).sort(),
-        keep: (opts as { keepUserRecords?: unknown }).keepUserRecords,
-      });
-      spy.mockRestore();
-      return maint.purgeApp(appId, opts);
-    });
-    await reapDeletedAppStorage({ store: maint, now: NOW, recordCore: ON });
-    expect(calls).toEqual([
-      { id: on, keys: ['batchRows', 'keepUserRecords', 'maxRows', 'proceed'], keep: true },
-    ]);
-
-    const off = await app('SWOFF', { status: 'suspended', deletedAt: ago(PERIOD + HOUR) });
-    expect(await prodDocs(off)).toEqual(SEEDED);
-    calls.length = 0;
-    const spyOff = vi.spyOn(maint, 'purgeApp').mockImplementation(async (appId, opts = {}) => {
-      calls.push({
-        id: appId,
-        keys: Object.keys(opts).sort(),
-        keep: (opts as { keepUserRecords?: unknown }).keepUserRecords,
-      });
-      spyOff.mockRestore();
-      return maint.purgeApp(appId, opts);
-    });
-
-    const out = await reapDeletedAppStorage({ store: maint, now: NOW, recordCore: null });
-
-    expect(calls).toEqual([
-      { id: off, keys: ['batchRows', 'maxRows', 'proceed'], keep: undefined },
-    ]);
-    expect(out).toMatchObject({ scanned: 1, purged: 1, failed: 0 });
-    expect(await rowsOf(off)).toBe(0);
-    expect(await purgedAt(off)).not.toBeNull();
-  });
 });
 
 describe('the reaper before its migrations are applied', () => {

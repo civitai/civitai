@@ -1144,23 +1144,6 @@ const SQL_APP_PURGE_BATCH = [
       WHERE bb.app_id = $1 AND bb.ns = $2 LIMIT $3::int))
     RETURNING 1) SELECT count(*)::int AS n FROM gone`,
 ] as const;
-// An app purge that KEEPS the users' records (`purgeApp` with `keepUserRecords`), in the
-// production namespace only. A batch of the shared documents no user owns, locked in one ordered
-// statement (LOCK ORDER (1)) and then deleted by `deleteLockedSharedDocs`, the moderator delete's
-// own accounting: the documents the app created (`author_kind = 'app'`) and the counter
-// documents (`'counter'`). Every other row is a user's under the record core's owner rule
-// (`recordOwner` in `app-record.ts`): a private document (`scope_uid` <> 0) is its scope user's,
-// and a shared one a user created (`'user'`) is that user's. $1 app, $2 ns, $3 batch size.
-const SQL_APP_PURGE_LOCK_UNOWNED = `SELECT d.coll, d.key, d.size_bytes, d.author_uid
-  FROM appdata.doc d
-  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.author_kind IN ('app', 'counter')
-  ORDER BY d.coll, d.key
-  LIMIT $3::int
-  FOR UPDATE OF d`;
-// Whether any document is left in the namespace: none left, and the namespace's remaining rows
-// (usage, tombstones) go as an ordinary purge removes them. $1 app, $2 ns.
-const SQL_APP_PURGE_ANY_DOC = `SELECT EXISTS (SELECT 1 FROM appdata.doc d
-    WHERE d.app_id = $1 AND d.ns = $2) AS found`;
 
 // SCHEMA MIGRATION (see `migrateDocuments`). Ordinary (app, ns)-scoped statements, run in
 // ordinary `withTx` transactions bound to the app's production namespace.
@@ -2852,25 +2835,10 @@ function buildDocStore(deps: DocStoreDeps) {
    * deletes it. Idempotent and resumable: a re-run finds only what is left. A disabled store throws
    * `storage_disabled`, a missing app-purge policy `DocStoreMigrationPendingError`; a failed
    * transaction throws, having rolled back only its own batch.
-   *
-   * `keepUserRecords` (the deleted-app reaper while the record core is switched on): the
-   * production namespace keeps every row a USER owns — their private documents and the shared
-   * documents they created, with the tallies, marks and usage rows beside them — and loses only
-   * the documents no user owns (the app's own and the counter documents,
-   * `SQL_APP_PURGE_LOCK_UNOWNED`), each deleted with the moderator delete's accounting
-   * (`deleteLockedSharedDocs`). A production namespace with no document left is then removed as
-   * an ordinary purge removes it. Every other namespace (a developer's `dev:<uid>`) is purged in
-   * full, as without the option. `done` then means: nothing but user-owned production rows is
-   * left. Without the option the purge is exactly what it was.
    */
   async function purgeApp(
     appId: string,
-    opts: {
-      batchRows?: number;
-      maxRows?: number;
-      proceed?: () => Promise<boolean>;
-      keepUserRecords?: boolean;
-    } = {}
+    opts: { batchRows?: number; maxRows?: number; proceed?: () => Promise<boolean> } = {}
   ): Promise<{ appId: string; namespaces: number; rows: number; done: boolean; stopped: boolean }> {
     const batchRows = opts.batchRows ?? 1000;
     const maxRows = opts.maxRows ?? Number.POSITIVE_INFINITY;
@@ -2878,9 +2846,6 @@ function buildDocStore(deps: DocStoreDeps) {
       throw new Error('doc-store: batchRows must be 1–10000');
     }
     const proceed = opts.proceed ?? (async () => true);
-    if (opts.keepUserRecords === true) {
-      return purgeAppKeepingUserRecords(appId, { batchRows, maxRows, proceed });
-    }
     const namespaces = await listAppNamespaces(appId);
     const result = { appId, namespaces: namespaces.length, rows: 0, done: false, stopped: false };
     const n = (res: DocStoreQueryResult) => Number(res.rows[0]?.n ?? 0);
@@ -2905,75 +2870,6 @@ function buildDocStore(deps: DocStoreDeps) {
       });
     }
     if (namespaces.length > 0 && (await listAppNamespaces(appId)).length > 0) return result;
-    return { ...result, done: true };
-  }
-
-  /** `purgeApp` with `keepUserRecords` (see there). */
-  async function purgeAppKeepingUserRecords(
-    appId: string,
-    opts: { batchRows: number; maxRows: number; proceed: () => Promise<boolean> }
-  ): Promise<{ appId: string; namespaces: number; rows: number; done: boolean; stopped: boolean }> {
-    const { batchRows, maxRows, proceed } = opts;
-    const namespaces = await listAppNamespaces(appId);
-    const result = { appId, namespaces: namespaces.length, rows: 0, done: false, stopped: false };
-    const n = (res: DocStoreQueryResult) => Number(res.rows[0]?.n ?? 0);
-    for (const ns of namespaces) {
-      const ctx: DocStoreContext = { appId, ns, viewerUid: null };
-      if (ns === PUBLISHED_NS) {
-        for (;;) {
-          if (result.rows >= maxRows) return result;
-          if (!(await proceed())) return { ...result, stopped: true };
-          const deleted = await withTx(ctx, async (c) => {
-            const locked = (await c.query(SQL_APP_PURGE_LOCK_UNOWNED, [appId, ns, batchRows])).rows;
-            await deleteLockedSharedDocs(c, ctx, charge, locked.map(toLockedSharedDoc));
-            return locked.length;
-          });
-          result.rows += deleted;
-          if (deleted < batchRows) break;
-        }
-        if (!(await proceed())) return { ...result, stopped: true };
-        // Nothing a user owns is left either: the namespace goes in full, usage rows included.
-        result.rows += await withTx(ctx, async (c) => {
-          const found = (await c.query(SQL_APP_PURGE_ANY_DOC, [appId, ns])).rows[0]?.found;
-          if (found === true) return 0;
-          let rows = 0;
-          for (const sql of SQL_WIPE_NAMESPACE) rows += n(await c.query(sql, [appId, ns]));
-          return rows;
-        });
-        continue;
-      }
-      for (const sql of SQL_APP_PURGE_BATCH) {
-        for (;;) {
-          if (result.rows >= maxRows) return result;
-          if (!(await proceed())) return { ...result, stopped: true };
-          const deleted = await withTx(ctx, async (c) =>
-            n(await c.query(sql, [appId, ns, batchRows]))
-          );
-          result.rows += deleted;
-          if (deleted < batchRows) break;
-        }
-      }
-      if (!(await proceed())) return { ...result, stopped: true };
-      result.rows += await withTx(ctx, async (c) => {
-        let rows = 0;
-        for (const sql of SQL_WIPE_NAMESPACE) rows += n(await c.query(sql, [appId, ns]));
-        return rows;
-      });
-    }
-    // Done when the only namespace left is production and it holds no document no user owns. A
-    // namespace that appeared mid-purge, or an unowned document written after its last batch,
-    // leaves `done: false` for the next call.
-    const left = namespaces.length > 0 ? await listAppNamespaces(appId) : [];
-    if (left.some((ns) => ns !== PUBLISHED_NS)) return result;
-    if (left.includes(PUBLISHED_NS)) {
-      const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: null };
-      const unownedLeft = await withTx(
-        ctx,
-        async (c) =>
-          (await c.query(SQL_APP_PURGE_LOCK_UNOWNED, [appId, PUBLISHED_NS, 1])).rows.length > 0
-      );
-      if (unownedLeft) return result;
-    }
     return { ...result, done: true };
   }
 
@@ -3193,8 +3089,7 @@ function buildDocStore(deps: DocStoreDeps) {
    * (`SQL_VIEWER_RECORDS`): their private documents and the visible shared documents they
    * created, in (collection, key space, key) order after `after` (exclusive). Never another
    * user's private document, a counter or app document, or a document moderation hid. Reads the
-   * rows as they are, whatever the app's status, so a deleted app's surviving records are read
-   * like any other.
+   * rows as they are, whatever the app's status.
    */
   async function viewerRecords(
     userId: number,
