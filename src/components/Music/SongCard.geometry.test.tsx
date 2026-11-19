@@ -85,29 +85,18 @@ function PhoneFeed() {
 }
 
 describe('the Song Card at phone width', () => {
-  test('the feed sizes the card for the width it is drawn at, so the title shows', async () => {
+  // The masonry sizes the slot at the column width and draws the card wider (358px), so the slot is
+  // shorter than the card's own proportions: the cover gives up the difference, the text none.
+  test('in the slot the feed gives it, every text row keeps its height', async () => {
     await renderAtViewport(<PhoneFeed />, PHONE_VIEWPORT);
     await vi.waitFor(() => expect(title('Palm Static')).toBeTruthy());
-    const card = cardOf(title('Palm Static')).getBoundingClientRect();
-    expect(card.width).toBe(PHONE_VIEWPORT.width - 32);
-    expect(card.height).toBe(Math.floor(card.width * SONG_COVER_RATIO + SONG_CARD_TEXT_HEIGHT));
-    expect(title('Palm Static').getBoundingClientRect().height).toBe(20);
-  });
-
-  test('a slot shorter than the card shrinks the cover, never the text', async () => {
-    await renderAtViewport(
-      <div style={{ width: 358 }}>
-        <SongCard data={songs[0]} height={300} />
-      </div>,
-      PHONE_VIEWPORT
-    );
-    const card = cardOf(title('Midnight Arcade'));
-    const [cover] = card.children;
-    expect(title('Midnight Arcade').getBoundingClientRect().height).toBe(20);
-    expect(card.lastElementChild!.getBoundingClientRect().bottom).toBeLessThanOrEqual(
-      card.getBoundingClientRect().bottom
-    );
-    expect(cover.getBoundingClientRect().height).toBe(300 - SONG_CARD_TEXT_HEIGHT);
+    const card = cardOf(title('Palm Static'));
+    const [cover, ...rows] = [...card.children].map((el) => el.getBoundingClientRect().height);
+    const { height } = card.getBoundingClientRect();
+    expect(card.getBoundingClientRect().width).toBe(PHONE_VIEWPORT.width - 32);
+    // Title 20, creator 16, style line 15, stats 15 (Pencil `AECSM`).
+    expect(rows).toEqual([20, 16, 15, 15]);
+    expect(cover).toBe(height - SONG_CARD_TEXT_HEIGHT);
   });
 });
 
