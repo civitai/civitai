@@ -153,6 +153,11 @@ describe('POST /api/held-media/[imageId]/opened', () => {
       expect(await rows()).toHaveLength(1);
     });
 
+    it('answers an image it did not serve this moderator with the refusal 404', async () => {
+      expect(await post('7')).toBe(404);
+      expect(await rows()).toEqual([]);
+    });
+
     it('never covers the sheet credential', async () => {
       await served(7);
       const url = new URL('http://mod.test/api/held-media/7/opened');

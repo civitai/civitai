@@ -236,7 +236,7 @@ describe('the read', () => {
     ]);
   });
 
-  it('refuses when the read fails, and logs it', async () => {
+  it('refuses when the read fails', async () => {
     const spy = vi
       .spyOn(db, 'query')
       .mockRejectedValue(new Error('canceling statement due to statement timeout'));

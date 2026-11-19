@@ -133,6 +133,7 @@ describe('held media on the covered view', () => {
     expect(status).toBe(200);
     expect(await res!.text()).toBe('bytes');
     expect(h.getCoveredHeldMedia).toHaveBeenCalledWith(7, 42);
+    expect(h.insertModActivity).toHaveBeenCalledTimes(1);
     expect(h.insertModActivity).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 42,
@@ -169,6 +170,32 @@ describe('held media on the covered view', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('answers reported bytes and an image it does not cover identically', async () => {
+    const answer = async (read: unknown) => {
+      h.getCoveredHeldMedia.mockResolvedValue(read);
+      const e = await Promise.resolve(
+        held({
+          params: { imageId: '7' },
+          url: new URL('http://mod.test/api/held-media/7'),
+          request: new Request('http://mod.test/api/held-media/7'),
+          cookies: { get: () => undefined },
+          locals: { user: { id: 42 }, grants: {} },
+        } as never)
+      ).then(
+        () => null,
+        (err: unknown) => err
+      );
+      return JSON.stringify(e);
+    };
+    expect(await answer('covered-refused')).toBe(await answer(null));
+  });
+
+  it('writes the row before storage is touched, so a range past the end is recorded too', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 416 }));
+    expect((await getHeld({ headers: { range: 'bytes=5-' } })).status).toBe(416);
+    expect(h.insertModActivity).toHaveBeenCalledTimes(1);
+  });
+
   it('answers HEAD without reading the image', async () => {
     expect((await getHeld({ method: 'HEAD' })).status).toBe(404);
     expect(h.getCoveredHeldMedia).not.toHaveBeenCalled();
@@ -199,7 +226,14 @@ describe('blocked media on the covered view', () => {
     expect((await getRetracted({ headers: { range: 'bytes=1-' } })).status).toBe(206);
     expect(h.getCoveredRetractedMedia).toHaveBeenCalledWith(7, 42);
     expect(h.getRetractedMedia).not.toHaveBeenCalled();
+    expect(h.recordRetractedView).toHaveBeenCalledTimes(1);
     expect(h.recordRetractedView).toHaveBeenCalledWith(42, 7);
+  });
+
+  it('writes the row before storage is touched, so a range past the end is recorded too', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 416 }));
+    expect((await getRetracted({ headers: { range: 'bytes=5-' } })).status).toBe(416);
+    expect(h.recordRetractedView).toHaveBeenCalledTimes(1);
   });
 
   it('answers reported bytes, or a failed read, as a missing image', async () => {
@@ -220,10 +254,10 @@ describe('blocked media on the covered view', () => {
   it.each([
     ['a probe', { query: '?probe=1' }],
     ['HEAD', { method: 'HEAD' }],
-  ])('answers %s by the existing rules, without the covered read', async (_, opts) => {
-    await getRetracted(opts);
+  ])('answers %s with the refusal 404, reading nothing', async (_, opts) => {
+    expect((await getRetracted(opts)).status).toBe(404);
     expect(h.getCoveredRetractedMedia).not.toHaveBeenCalled();
-    expect(h.getRetractedMedia).toHaveBeenCalledWith(7, { csamReview: false });
+    expect(h.getRetractedMedia).not.toHaveBeenCalled();
   });
 
   it('falls back to the existing rules for an image it does not cover', async () => {

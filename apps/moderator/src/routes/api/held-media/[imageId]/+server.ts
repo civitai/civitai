@@ -37,7 +37,7 @@ export const GET: RequestHandler = async ({ params, locals, request, cookies }) 
       sheet: false,
       request,
       audit: () => recordHeldView(moderatorId, imageId, 'web'),
-      auditEveryRange: true,
+      auditFirst: true,
     });
   }
 

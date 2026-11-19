@@ -45,18 +45,28 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
   const moderatorId = locals.user.id;
   const csamReview = canAccess(locals.user, HELD_MEDIA_PAGE);
 
-  // Without the CSAM page's grant, the covered view first: anything blocked but reported bytes. Only
-  // for a GET of the bytes, which writes its row: a probe or HEAD gets the answer it gets without it,
-  // so neither tells a reported image from an unreported one unrecorded.
-  const covered =
-    !csamReview &&
-    coveredViewEnabled() &&
-    request.method === 'GET' &&
-    url.searchParams.get('probe') !== '1'
-      ? await getCoveredRetractedMedia(imageId, moderatorId)
-      : null;
-  if (covered === COVERED_REFUSED) error(404, 'Not available here.');
-  const media = covered ?? (await getRetractedMedia(imageId, { csamReview }));
+  // Without the CSAM page's grant, the covered view: anything blocked but reported bytes. It answers
+  // only a GET, writing the row before storage is touched, and a probe or HEAD the same 404 as a
+  // refusal, so no answer tells a reported image from an unreported one without a row.
+  if (!csamReview && coveredViewEnabled()) {
+    if (request.method !== 'GET' || url.searchParams.get('probe') === '1')
+      error(404, 'Not available here.');
+    const covered = await getCoveredRetractedMedia(imageId, moderatorId);
+    if (covered === COVERED_REFUSED) error(404, 'Not available here.');
+    if (covered)
+      return streamStoredMedia({
+        media: covered,
+        imageId,
+        moderatorId,
+        sheet: false,
+        request,
+        audit: () => recordRetractedView(moderatorId, imageId),
+        auditFirst: true,
+        maxBytes: RETRACTED_MEDIA_MAX_BYTES,
+      });
+  }
+
+  const media = await getRetractedMedia(imageId, { csamReview });
   if (media === NEEDS_CSAM_QUEUE) error(403, 'Needs CSAM-queue access.');
   if (!media) error(404, 'Not available here.');
   // Eligibility alone, so a tile whose load failed can say why; nothing is served or audited.

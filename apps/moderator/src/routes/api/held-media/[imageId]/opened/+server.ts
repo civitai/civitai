@@ -48,6 +48,8 @@ export const POST: RequestHandler = async ({ params, locals, request, url }) => 
     ON CONFLICT DO NOTHING
     RETURNING id
   `.execute(dbWrite);
-  if (!rows.length) error(403, 'Not served to you.');
+  // On the covered view, the same 404 as a refusal, so this cannot tell reported from not.
+  if (!rows.length)
+    error(covered ? 404 : 403, covered ? 'Not available here.' : 'Not served to you.');
   return new Response(null, { status: 204 });
 };
