@@ -182,9 +182,15 @@ describe('the count of what a scan newly sets after a moderator review', () => {
     expect(lines()[0].payload).toMatchObject({ priorReview: false, sampled: true });
   });
 
-  it('still writes the outcome when the review lookup fails', async () => {
+  it('still writes the outcome when the review lookup fails, with no unhandled rejection', async () => {
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
     vi.mocked(dbMock.dbRead.$queryRaw).mockRejectedValue(new Error('replica down'));
     await resolveScanOutcome({ image: { ...image, minor: false }, workflowId: 'wf' });
+    await settle();
+    await settle();
+    process.off('unhandledRejection', unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
     await settle();
     expect(writtenMinor()).toBe(true);
     expect(lines()).toEqual([]);

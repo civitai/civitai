@@ -557,6 +557,15 @@ const SCAN_AFTER_REVIEW_SAMPLE = 100;
  * sample of unreviewed images. Never throws: the outcome is already written.
  */
 async function logScanAfterReview(image: ScanImage, toUpdate: Prisma.ImageUpdateInput) {
+  // Read now, before the caller's later mappings change `toUpdate`.
+  const newlySet = {
+    newlyBlocked:
+      toUpdate.ingestion === ImageIngestionStatus.Blocked &&
+      image.ingestion !== ImageIngestionStatus.Blocked,
+    newlyMinor: toUpdate.minor === true && !image.minor,
+    newlyPoi: toUpdate.poi === true && !image.poi,
+    newlyNeedsReview: !!toUpdate.needsReview && !image.needsReview,
+  };
   try {
     const sampled = image.id % SCAN_AFTER_REVIEW_SAMPLE === 0;
     const [row] = await dbRead.$queryRaw<{ reviewed: boolean }[]>`
@@ -570,16 +579,7 @@ async function logScanAfterReview(image: ScanImage, toUpdate: Prisma.ImageUpdate
     logToAxiom({
       name: 'scan-outcome-after-review',
       type: 'info',
-      payload: {
-        priorReview,
-        sampled,
-        newlyBlocked:
-          toUpdate.ingestion === ImageIngestionStatus.Blocked &&
-          image.ingestion !== ImageIngestionStatus.Blocked,
-        newlyMinor: toUpdate.minor === true && !image.minor,
-        newlyPoi: toUpdate.poi === true && !image.poi,
-        newlyNeedsReview: !!toUpdate.needsReview && !image.needsReview,
-      },
+      payload: { priorReview, sampled, ...newlySet },
     });
   } catch {
     // Counting is best effort.
@@ -795,7 +795,7 @@ export async function resolveScanOutcome({
     return [];
   });
   // Not awaited: a slow replica must not hold up the outcome.
-  void logScanAfterReview(image, toUpdate);
+  void logScanAfterReview(image, toUpdate).catch(() => undefined);
   if (written?.blockedFor === BlockedReason.CSAM) {
     toUpdate.ingestion = ImageIngestionStatus.Blocked;
     toUpdate.blockedFor = BlockedReason.CSAM;
