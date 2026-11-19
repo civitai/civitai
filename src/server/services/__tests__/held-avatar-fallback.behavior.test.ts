@@ -93,7 +93,7 @@ describe('clearHeldUserImages', () => {
 });
 
 describe('anyImageHeldOrBlocked', () => {
-  it('is true only for a key stored on an image held csam or minor', async () => {
+  it('is true for a key stored on an image held csam or minor, and false for an unheld one', async () => {
     expect(await anyImageHeldOrBlocked(db, ['key-csam'])).toBe(true);
     expect(await anyImageHeldOrBlocked(db, ['nope', 'key-minor'])).toBe(true);
     expect(await anyImageHeldOrBlocked(db, ['key-upper'])).toBe(true);

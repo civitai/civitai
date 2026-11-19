@@ -293,3 +293,19 @@ describe('moderator writes to an image that is a profile picture', () => {
     expect(rows[0].nsfwLevel).toBe(16);
   });
 });
+
+describe('a moderator block of an image a stale User.image names', () => {
+  const OLD_KEY = '3f6e2a10-9b4c-4d7e-8a21-6c0b5d9e1f42';
+
+  it("🔴 clears that User.image and evicts the owner's session", async () => {
+    await db.query(`UPDATE "Image" SET "url" = $1 WHERE "id" = $2`, [OLD_KEY, OTHER_IMAGE_ID]);
+    await db.query(`UPDATE "User" SET "image" = $1 WHERE "id" = $2`, [
+      `https://cdn.example/${OLD_KEY}/width=96`,
+      AVATAR_OWNER,
+    ]);
+    await blockImage({ imageId: OTHER_IMAGE_ID, userId: 1 });
+
+    expect(await ownerRow()).toEqual({ image: null, meta: {} });
+    expect(bustedKeys()).toContain(`${REDIS_KEYS.USER.SESSION}:${AVATAR_OWNER}`);
+  });
+});

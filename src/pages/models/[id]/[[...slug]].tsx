@@ -1284,6 +1284,9 @@ export default function ModelDetailsV2({
                               key="add-to-showcase"
                               entityType="Model"
                               entityId={model.id}
+                              offerSections={
+                                isCreator && model.status === ModelStatus.Published && !model.mode
+                              }
                             />
                           )}
                           {/* The model itself, so its showcase images are not the nearest thing to hat. */}
