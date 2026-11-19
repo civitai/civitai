@@ -22,13 +22,17 @@ import {
 const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
 const SERVER_APP_ID = 'verified-app-77';
 
-// Client-shaped metadata: every provenance key, plus unrelated keys that must survive
-// untouched — including near-misses of the key and a copy nested inside a value.
+// Client-shaped metadata: every provenance key and every account-deletion grace breadcrumb, plus
+// unrelated keys that must survive untouched — including near-misses of the key and a copy nested
+// inside a value.
 const CLIENT_METADATA = {
   blockPublishedAppId: 'client-app-1',
   blockUploadedAppId: 'client-app-2',
   blockGenerationSourceAppId: 'client-app-3',
   blockSharedUploadAppId: 'client-app-4',
+  accountDeletionPriorIngestion: 'Scanned',
+  accountDeletionPriorBlockedFor: null,
+  accountDeletionPriorNeedsReview: 'minor',
   size: 12345,
   width: 640,
   blockedAppId: 'not-provenance',
