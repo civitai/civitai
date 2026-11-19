@@ -58,11 +58,18 @@ export const PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS = 60;
 // limiter's keys.
 const KEY_PREFIX = 'public-api:rate-limit';
 
-export type PublicApiRateLimitFamily = 'articles' | 'collections' | 'posts' | 'verify';
+export type PublicApiRateLimitFamily =
+  | 'articles'
+  | 'collections'
+  | 'posts'
+  | 'verify'
+  | 'verify-signed-in-ip';
 
 // /api/v1/verify parses an uploaded file of up to 10 MiB in-process, so it gets a tighter budget.
 const FAMILY_MAX: Partial<Record<PublicApiRateLimitFamily, { unauth: number; auth: number }>> = {
   verify: { unauth: 10, auth: 30 },
+  // Keyed by IP across signed-in callers, so one address can't multiply its budget with accounts.
+  'verify-signed-in-ip': { unauth: 60, auth: 60 },
 };
 
 export type PublicApiRateLimitResult =

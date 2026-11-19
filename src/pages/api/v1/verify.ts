@@ -17,13 +17,16 @@ export default MixedAuthEndpoint(
   async function handler(req, res, user) {
     res.setHeader('Cache-Control', 'no-store');
 
-    // Per IP for everyone, and per user too when signed in. Closed on a redis error, unlike the
-    // read endpoints: each request here is an in-process parse.
-    const limits = await Promise.all([
-      checkPublicApiRateLimit({ req, family: 'verify', failOpen: false }),
-      user && checkPublicApiRateLimit({ req, family: 'verify', userId: user.id, failOpen: false }),
-    ]);
-    const blocked = limits.find((l) => l && !l.allowed);
+    // Closed on a redis error, unlike the read endpoints: each request here is an in-process parse.
+    const limits = await Promise.all(
+      user
+        ? [
+            checkPublicApiRateLimit({ req, family: 'verify', userId: user.id, failOpen: false }),
+            checkPublicApiRateLimit({ req, family: 'verify-signed-in-ip', failOpen: false }),
+          ]
+        : [checkPublicApiRateLimit({ req, family: 'verify', failOpen: false })]
+    );
+    const blocked = limits.find((l) => !l.allowed);
     if (blocked && !blocked.allowed) {
       res.setHeader('Retry-After', String(blocked.retryAfterSeconds));
       return res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
@@ -32,8 +35,9 @@ export default MixedAuthEndpoint(
     // Required: without it a body the proxy truncated looks complete, and a cut-off signed file
     // reads as tampered.
     const declared = Number(req.headers['content-length']);
-    if (!Number.isInteger(declared) || declared <= 0)
+    if (!Number.isInteger(declared) || declared < 0)
       return res.status(411).json({ error: 'Send the file with a Content-Length header' });
+    if (declared === 0) return res.status(400).json({ error: 'The file is empty' });
     if (declared > MAX_VERIFY_BYTES) return res.status(413).json({ error: 'File too large' });
 
     let body: Buffer;

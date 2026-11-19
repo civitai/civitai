@@ -5,11 +5,16 @@ import type * as C2pa from '@contentauth/c2pa-wasm';
 
 let c2pa: Promise<typeof C2pa> | undefined;
 
-// The SDK defaults fetch a manifest URL named inside the file, and OCSP; an uploaded file must
-// never make this server call out.
+// Each of these can make a read call out to a host named inside the file, and the SDK's
+// allowed_network_hosts does not cover identity assertions.
 const READER_CONTEXT = JSON.stringify({
   verify: { remote_manifest_fetch: false, ocsp_fetch: false },
+  core: { decode_identity_assertions: false },
 });
+
+// shortcut: the reader shares one wasm instance on the request thread. A trap can leave it broken
+// until the pod restarts, and a hung read is only cut off here. A worker thread would fix both.
+const READ_TIMEOUT_MS = 10_000;
 
 function loadC2pa() {
   c2pa ??= (async () => {
@@ -73,6 +78,14 @@ export type ContentCredentialsResult =
       aiGenerated: boolean;
     };
 
+function withTimeout<T>(promise: Promise<T>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('C2PA read timed out')), READ_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 const VALIDATION_STATES: Record<string, 'valid' | 'invalid'> = {
   Valid: 'valid',
   Trusted: 'valid',
@@ -86,10 +99,8 @@ export async function readContentCredentials(
   const { WasmReader } = await loadC2pa();
   let reader: C2pa.WasmReader;
   try {
-    reader = await WasmReader.fromBytes(mimeType, bytes, READER_CONTEXT);
+    reader = await withTimeout(WasmReader.fromBytes(mimeType, bytes, READER_CONTEXT));
   } catch (e) {
-    // A trap can leave the instance's memory corrupt; start the next call on a fresh one.
-    if (e instanceof WebAssembly.RuntimeError) c2pa = undefined;
     return { credentials: String(e).includes('JumbfNotFound') ? 'none' : 'unreadable' };
   }
   try {
