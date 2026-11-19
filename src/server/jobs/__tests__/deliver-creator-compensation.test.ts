@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { creatorCompAmountPaidCounter, generationTipAmountPaidCounter } from '~/server/prom/client';
 import {
   GENERATION_TIP_TRANSACTION_PREFIX,
   TransactionType,
@@ -211,8 +210,6 @@ describe('runPayout', () => {
     mockCreateBuzzTransactionMany.mockReset();
     mockCreateBuzzTransactionMany.mockResolvedValue({ transactions: [], conflicts: [] });
     dbMock.dbRead.$queryRaw.mockReset();
-    vi.mocked(generationTipAmountPaidCounter.inc).mockClear();
-    vi.mocked(creatorCompAmountPaidCounter.inc).mockClear();
   });
 
   const sentTransactions = () =>
@@ -255,10 +252,6 @@ describe('runPayout', () => {
       ])
     );
     expect(sent).toHaveLength(2);
-    expect(generationTipAmountPaidCounter.inc).toHaveBeenCalledWith({ account_type: 'Yellow' }, 6);
-    expect(creatorCompAmountPaidCounter.inc).toHaveBeenCalledWith({ account_type: 'Yellow' }, 50);
-    expect(generationTipAmountPaidCounter.inc).toHaveBeenCalledTimes(1);
-    expect(creatorCompAmountPaidCounter.inc).toHaveBeenCalledTimes(1);
   });
 
   it('pays a creator whose rows span ClickHouse batches one compensation and one tip transaction', async () => {

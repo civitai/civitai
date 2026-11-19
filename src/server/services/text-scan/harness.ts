@@ -218,6 +218,8 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       .optional()
       .transform((note) => note?.trim() || undefined),
     baseId: z.number().int().positive().nullable().optional(),
+    /** A rollback: the intent key then refuses revoked text even for a holder. */
+    restore: z.literal(true).optional(),
     createdById: moderatorId.optional(),
   }),
   z.object({
