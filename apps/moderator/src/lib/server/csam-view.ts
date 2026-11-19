@@ -73,6 +73,10 @@ export function getCoveredHeldMedia(imageId: number, moderatorId: number) {
       .select(listedSql.as('listed'))
       .where('i.id', '=', imageId)
       .where(sql<boolean>`${sql.raw(heldImageSql('i'))}`)
+      // An evidence hold, a legal one included, is never on the covered view.
+      .where(
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM "EvidenceHoldImage" rh WHERE rh."imageId" = i.id)`
+      )
       .where(isModeratorSql(moderatorId))
       .executeTakeFirst()
   );

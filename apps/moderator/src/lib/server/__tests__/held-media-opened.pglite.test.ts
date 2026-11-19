@@ -154,7 +154,19 @@ describe('POST /api/held-media/[imageId]/opened', () => {
     });
 
     it('answers an image it did not serve this moderator with the refusal 404', async () => {
-      expect(await post('7')).toBe(404);
+      const url = new URL('http://mod.test/api/held-media/7/opened');
+      const refusal = await Promise.resolve(
+        POST({
+          params: { imageId: '7' },
+          url,
+          request: new Request(url, { method: 'POST', headers: { origin: 'http://mod.test' } }),
+          locals: { user: { id: 42 }, grants: {} },
+        } as never)
+      ).then(
+        () => null,
+        (e: unknown) => e as { status: number; body: { message: string } }
+      );
+      expect(refusal).toMatchObject({ status: 404, body: { message: 'Not available here.' } });
       expect(await rows()).toEqual([]);
     });
 

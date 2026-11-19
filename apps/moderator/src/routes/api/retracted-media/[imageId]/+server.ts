@@ -52,18 +52,19 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
     if (request.method !== 'GET' || url.searchParams.get('probe') === '1')
       error(404, 'Not available here.');
     const covered = await getCoveredRetractedMedia(imageId, moderatorId);
-    if (covered === COVERED_REFUSED) error(404, 'Not available here.');
-    if (covered)
-      return streamStoredMedia({
-        media: covered,
-        imageId,
-        moderatorId,
-        sheet: false,
-        request,
-        audit: () => recordRetractedView(moderatorId, imageId),
-        auditFirst: true,
-        maxBytes: RETRACTED_MEDIA_MAX_BYTES,
-      });
+    // Not covered answers as refused too, never by the rules below, so no answer here can depend on
+    // whether an image is reported.
+    if (!covered || covered === COVERED_REFUSED) error(404, 'Not available here.');
+    return streamStoredMedia({
+      media: covered,
+      imageId,
+      moderatorId,
+      sheet: false,
+      request,
+      audit: () => recordRetractedView(moderatorId, imageId),
+      auditFirst: true,
+      maxBytes: RETRACTED_MEDIA_MAX_BYTES,
+    });
   }
 
   const media = await getRetractedMedia(imageId, { csamReview });

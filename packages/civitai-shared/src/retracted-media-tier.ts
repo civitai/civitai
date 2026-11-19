@@ -17,8 +17,8 @@ export type RetractedTier = 'plain' | 'suspect';
 
 /** Whether this route may serve the "Image" row aliased `image` at all, to anyone: it is blocked
  *  (or, with `cdnLeg`, scanned with its url retracted and not held), not held media, and not under
- *  an evidence hold. With `covered`, held media, evidence holds and held urls are eligible too; the
- *  caller refuses reported bytes (`reportListedUrlSql`) itself. */
+ *  an evidence hold. With `covered`, held media and held urls are eligible too, never an image under
+ *  an evidence hold; the caller refuses reported bytes (`reportListedUrlSql`) itself. */
 export function retractedImageWhereSql(
   image: string,
   { cdnLeg = false, covered = false } = {}
@@ -39,7 +39,8 @@ ${
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" st WHERE st.url = ${image}."url")
     ))`
     : `${image}.ingestion = 'Blocked'`;
-  if (covered) return `(${eligible})`;
+  const evidenceHold = `EXISTS (SELECT 1 FROM "EvidenceHoldImage" rh WHERE rh."imageId" = ${image}.id)`;
+  if (covered) return `(${eligible} AND NOT ${evidenceHold})`;
   return `(
     ${eligible}
     -- NULL for an image with no review flag or block reason, so COALESCE before the NOT.

@@ -89,7 +89,8 @@ beforeAll(async () => {
       (109, 'key-109', 509, 'csam', 9999),            -- nothing else
       (110, 'key-110', 510, 'csam', NULL),            -- listed as a bare number
       (111, 'key-111', 511, 'csam', NULL),            -- listed as a string
-      (112, 'key-112', 512, 'csam', NULL);            -- listed on an archived report
+      (112, 'key-112', 512, 'csam', NULL),            -- listed on an archived report
+      (113, 'key-113', 513, 'csam', NULL);            -- under an evidence hold
     INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId") VALUES (906, 'key-106', 606);
     INSERT INTO "BlockedImage" (hash, reason) VALUES (8888, 'CSAM');
 
@@ -101,7 +102,7 @@ beforeAll(async () => {
       (204, 'key-204', 604, 'Blocked', 'moderated', false, NULL, NULL), -- under an evidence hold
       (205, 'key-205', 605, 'Blocked', 'moderated', false, 'csam', NULL), -- held media
       (206, 'key-206', 606, 'Blocked', 'moderated', false, NULL, ${LISTED_PHASH}); -- listed pHash
-    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (204);
+    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (204), (113);
 
     -- The CDN-refusal leg: scanned, its url retracted. One fact each.
     INSERT INTO "Image" (id, url, "userId", ingestion) VALUES
@@ -171,7 +172,6 @@ describe('everything else is served', () => {
   it.each([
     [201, 'no scanner verdict'],
     [202, 'a minor signal, never reported'],
-    [204, 'under an evidence hold'],
     [205, 'held media'],
   ])('blocked %i: %s', async (id) => {
     expect(await retracted(id)).toMatchObject({ url: `key-${id}` });
@@ -207,6 +207,11 @@ describe('who', () => {
   it('a user who is not a moderator is not covered', async () => {
     expect(await held(109, NOT_MOD)).toBeNull();
     expect(await retracted(201, NOT_MOD)).toBeNull();
+  });
+
+  it('an image under an evidence hold, a legal one included, is never covered', async () => {
+    expect(await held(113)).toBeNull();
+    expect(await retracted(204)).toBeNull();
   });
 
   it('an image neither route holds is not covered', async () => {

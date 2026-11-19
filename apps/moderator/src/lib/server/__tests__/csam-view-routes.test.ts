@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   getRetractedMedia: vi.fn(),
   insertModActivity: vi.fn(async (_row: Record<string, unknown>) => {}),
   recordRetractedView: vi.fn(async () => {}),
+  presignFails: false,
 }));
 
 vi.mock('$lib/server/access', async () => {
@@ -56,9 +57,10 @@ vi.mock('$lib/server/mod-activity', () => ({
 vi.mock('$lib/server/axiom', () => ({ logToAxiom: vi.fn(async () => {}) }));
 vi.mock('$lib/server/storage', () => ({
   getStorage: () => ({
-    getGetUrl: async (input: { key?: string }) => ({
-      url: `https://store.test/signed/${input.key}`,
-    }),
+    getGetUrl: async (input: { key?: string }) => {
+      if (h.presignFails) throw new Error('storage down');
+      return { url: `https://store.test/signed/${input.key}` };
+    },
   }),
 }));
 
@@ -98,6 +100,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.grants = new Set();
   h.coveredOn = true;
+  h.presignFails = false;
   h.getCoveredHeldMedia.mockResolvedValue(MEDIA);
   h.getCoveredRetractedMedia.mockResolvedValue({ ...MEDIA, tier: 'suspect' });
   h.getHeldMedia.mockResolvedValue(MEDIA);
@@ -155,6 +158,7 @@ describe('held media on the covered view', () => {
     const { status, res } = await getHeld();
     expect(status).toBe(503);
     expect(res).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('answers reported bytes, or a failed read, as a missing image, touching no storage', async () => {
@@ -193,6 +197,12 @@ describe('held media on the covered view', () => {
   it('writes the row before storage is touched, so a range past the end is recorded too', async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 416 }));
     expect((await getHeld({ headers: { range: 'bytes=5-' } })).status).toBe(416);
+    expect(h.insertModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a view whose storage call then fails', async () => {
+    h.presignFails = true;
+    expect((await getHeld()).status).toBe(502);
     expect(h.insertModActivity).toHaveBeenCalledTimes(1);
   });
 
@@ -249,6 +259,7 @@ describe('blocked media on the covered view', () => {
     expect(status).toBe(503);
     // The route answers its refusals as JSON: the message, not the image.
     expect(await res!.json()).toEqual({ message: 'Could not record this view.' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -258,13 +269,21 @@ describe('blocked media on the covered view', () => {
     expect((await getRetracted(opts)).status).toBe(404);
     expect(h.getCoveredRetractedMedia).not.toHaveBeenCalled();
     expect(h.getRetractedMedia).not.toHaveBeenCalled();
+    expect(h.recordRetractedView).not.toHaveBeenCalled();
   });
 
-  it('falls back to the existing rules for an image it does not cover', async () => {
+  it('answers an image it does not cover with the refusal 404, never by the existing rules', async () => {
     h.getCoveredRetractedMedia.mockResolvedValue(null);
-    h.getRetractedMedia.mockResolvedValue('needs-csam-queue');
-    expect((await getRetracted()).status).toBe(403);
-    expect(h.getRetractedMedia).toHaveBeenCalledWith(7, { csamReview: false });
+    const { status, res } = await getRetracted();
+    expect(status).toBe(404);
+    expect(await res!.json()).toEqual({ message: 'Not available here.' });
+    expect(h.getRetractedMedia).not.toHaveBeenCalled();
+  });
+
+  it('answers reported bytes with that same 404', async () => {
+    h.getCoveredRetractedMedia.mockResolvedValue('covered-refused');
+    const { res } = await getRetracted();
+    expect(await res!.json()).toEqual({ message: 'Not available here.' });
   });
 
   it.each([
