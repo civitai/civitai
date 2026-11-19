@@ -37,7 +37,8 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
  * The predicate's own semantics are pinned in model-withheld.sql.behavior.test.ts.
  */
 
-const TAKEN_DOWN = /"mode" IS DISTINCT FROM \$(\d+)::"ModelModifier"/;
+const TAKEN_DOWN =
+  /"mode" IS DISTINCT FROM \$(\d+)::"ModelModifier" OR \(\$(\d+)::boolean AND mm\."userId" = \$(\d+)\) OR \$(\d+)::boolean/;
 
 async function feedSql(user?: { id: number; isModerator?: boolean }, includeWithheld?: boolean) {
   capturedQueries.length = 0;
@@ -50,22 +51,20 @@ async function feedSql(user?: { id: number; isModerator?: boolean }, includeWith
   return capturedQueries[0];
 }
 
+/** The clause's bound values: [mode, signedIn, viewerId, isModerator], or undefined when absent. */
 const withheldClause = ({ text, values }: { text: string; values: unknown[] }) => {
   const m = text.replace(/\s+/g, ' ').match(TAKEN_DOWN);
-  return m ? values[Number(m[1]) - 1] : undefined;
+  return m ? m.slice(1, 5).map((n) => values[Number(n) - 1]) : undefined;
 };
 
 describe('getModelsRaw and taken-down models', () => {
   it.each([
-    ['a signed-out visitor', undefined],
-    ['a signed-in visitor', { id: 7 }],
-    ['a moderator', { id: 8, isModerator: true }],
-  ])(
-    'filters them for %s (the owner/moderator exemption is inside the predicate)',
-    async (_n, user) => {
-      expect(withheldClause(await feedSql(user))).toBe('TakenDown');
-    }
-  );
+    ['a signed-out visitor', undefined, ['TakenDown', false, undefined, false]],
+    ['a signed-in visitor', { id: 7 }, ['TakenDown', true, 7, false]],
+    ['a moderator', { id: 8, isModerator: true }, ['TakenDown', true, 8, true]],
+  ])('binds the viewer for %s', async (_n, user, bound) => {
+    expect(withheldClause(await feedSql(user))).toEqual(bound);
+  });
 
   it('keeps them when the caller opts out', async () => {
     expect(withheldClause(await feedSql({ id: 7 }, true))).toBeUndefined();

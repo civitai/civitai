@@ -310,6 +310,16 @@ func (q *PageQuery) Build() (SQL, error) {
 	if !q.Archived {
 		and = append(and, `(`+p+`."mode" IS NULL OR `+p+`."mode" != 'Archived'::"ModelModifier")`)
 	}
+	// modelNotWithheldSql (src/server/utils/model-withheld.ts): a taken-down model is its owner's
+	// and moderators' alone. Node binds signedIn and isModerator; their constant arms are folded here.
+	if !q.IsModerator {
+		withheld := `(` + p + `."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier"`
+		if q.ViewerID != 0 {
+			// Inlined, not bound: an int cannot inject, and binding would renumber every later arg.
+			withheld += ` OR mm."userId" = ` + strconv.Itoa(q.ViewerID)
+		}
+		and = append(and, withheld+`)`)
+	}
 	if q.DisablePoi {
 		and = append(and, `(`+p+`."poi" = false OR mm."userId" = `+b.viewer(q.ViewerID)+`)`)
 	}

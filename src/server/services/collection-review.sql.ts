@@ -17,7 +17,8 @@ import { ArticleStatus, ModelModifier, ModelStatus } from '~/shared/utils/prisma
  * page asks for every level, which the domain cap holds to PG/PG-13 on the SFW site, so `levels` is
  * that ceiling: a badge on civitai.com must not count mature items only civitai.red can show. Each branch mirrors the clauses that decide that:
  * - Model: `getModelsRaw` reads `ModelMetric`'s denormalized status/mode/nsfwLevel (Published, not
- *   Archived, not TakenDown unless the reviewer owns it or moderates) and leaves out Private models.
+ *   Archived) and leaves out Private models; it also leaves out TakenDown for all but the owner and
+ *   moderators, which this count drops for everyone.
  * - Image: `getAllImages` with `pending` and `reviewCollectionId` keeps the collection's unrated
  *   and `acceptableMinor` images only when their uploader submitted them, with the same image and
  *   post filters as any read of the image.

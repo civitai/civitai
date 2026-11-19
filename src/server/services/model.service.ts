@@ -6889,7 +6889,8 @@ export async function getModelsWithVersions({
     ignoreBrowsingAddons,
     ownerUserId,
     publicVersionsOnly,
-    // Only the public v1 API calls this, which keeps taken-down models listed.
+    // Only the v1 API calls this (directly, and for App Blocks through runModelSearch), which keeps
+    // taken-down models listed.
     includeWithheld: true,
   });
 
