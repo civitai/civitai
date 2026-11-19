@@ -47,6 +47,7 @@
       heldImageIds?: number[];
       alreadyRemoved?: string;
       closedReportIds?: number[];
+      notMoved?: string;
     } | null;
   } = $props();
 
@@ -198,12 +199,12 @@
   </div>
 {/if}
 
-{#if form?.alreadyRemoved}
+{#if form?.alreadyRemoved || form?.notMoved}
   <div
     class="mb-3 rounded-md border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm text-sky-200"
     role="status"
   >
-    {form.alreadyRemoved}
+    {[form.alreadyRemoved, form.notMoved].filter(Boolean).join(' ')}
   </div>
 {/if}
 
@@ -418,9 +419,9 @@
               class="bg-muted"
               title={item.blockedFor === 'moderated' && item.needsReview !== FLAG_KEPT_THROUGH_BLOCK
                 ? 'Already removed: Unaction will not restore it, and either verdict closes this report.'
-                : `Already removed (${item.needsReview === FLAG_KEPT_THROUGH_BLOCK
-                    ? 'under CSAM review'
-                    : item.blockedFor ?? 'blocked'}).`}>Removed</Badge
+                : item.needsReview === FLAG_KEPT_THROUGH_BLOCK
+                  ? 'Already removed, with the CSAM review flag: Unaction is refused here.'
+                  : `Already removed (${item.blockedFor ?? 'blocked'}): Unaction restores it.`}>Removed</Badge
             >
           {/if}
           {#if item.report.count > 0}

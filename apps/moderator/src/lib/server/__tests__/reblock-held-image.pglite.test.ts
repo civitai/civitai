@@ -397,7 +397,7 @@ describe('a verdict on a report of an image a moderator already removed', () => 
       `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash", "metadata") VALUES
         ($1, 7, NULL, 'moderated', 'Blocked', 32, 106, NULL),
         ($2, 7, NULL, NULL, 'Scanned', 4, 107, NULL),
-        ($3, 7, NULL, 'moderated', 'Blocked', 32, 108, '{"accountDeletionPriorIngestion": "Scanned"}')`,
+        ($3, 7, NULL, 'moderated', 'Blocked', 32, 108, '{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": null}')`,
       [MOD_REMOVED, LIVE, GRACE]
     );
     await db.query(
@@ -446,7 +446,7 @@ describe('a verdict on a report of an image a moderator already removed', () => 
         [GRACE]
       )
     ).rows[0];
-    expect(metadata?.accountDeletionPriorIngestion).toBeUndefined();
+    expect(metadata).toEqual({});
     expect(notifiedImages()).toEqual([`/images/${GRACE}`]);
     expect(reportsMovedTo('Actioned')).toEqual([report(GRACE)]);
     expect(remove).not.toHaveProperty('alreadyRemoved');
@@ -506,6 +506,27 @@ describe('a verdict on a report of an image a moderator already removed', () => 
     expect(result).toMatchObject({ status: 409, data: { closedReportIds: [report(MOD_REMOVED)] } });
   });
 
+  it.each(['bulkAccept', 'bulkBlock'] as const)(
+    '%s moves no report filed on an image outside the batch, and still rules on the rest',
+    async (action) => {
+      const result = await imageQueueActions[action](
+        event({
+          imageIds: String(OTHER_REASON),
+          reportIds: [report(OTHER_REASON), report(HELD)].join(','),
+        })
+      );
+
+      expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([report(OTHER_REASON)]);
+      expect(result).toMatchObject({ notMoved: expect.stringContaining(`#${report(HELD)}`) });
+    }
+  );
+
+  it('Accept with no report posted, as the review queues post it, still restores it (control)', async () => {
+    await imageQueueActions.accept(event({ imageId: String(MOD_REMOVED) }));
+
+    expect(await row(MOD_REMOVED)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+  });
+
   it('Unaction on a reported image still up restores nothing and unactions the report (control)', async () => {
     await verdict('accept', LIVE);
 
@@ -525,6 +546,8 @@ describe('a verdict on a report of an image a moderator already removed', () => 
     const result = await verdict('block', MOD_REMOVED);
 
     expect(notifiedImages()).toEqual([]);
+    expect(blocklistReasons()).toEqual({});
+    expect(await row(MOD_REMOVED)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
     expect(reportsMovedTo('Actioned')).toEqual([report(MOD_REMOVED)]);
     expect(result).toMatchObject({ success: true, closedReportIds: [report(MOD_REMOVED)] });
   });

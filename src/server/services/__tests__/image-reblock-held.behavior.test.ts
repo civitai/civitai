@@ -466,7 +466,22 @@ describe("handleBlockImages and the images' reports", () => {
       [UNACTIONED_REPORT]: 'Unactioned',
       [ACTIONED_REPORT]: 'Actioned',
     });
+    expect(applyReward).toHaveBeenCalledWith({ userId: 9, reportId: report(OTHER_REASON) });
     expect(rewardedReports()).toEqual([report(OTHER_REASON)]);
+  });
+
+  it('a failure settling the reports leaves them Pending and still completes the removal', async () => {
+    const raw = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...v: unknown[]) =>
+      strings.join('').includes('UPDATE "Report" r SET')
+        ? Promise.reject(new Error('lock timeout'))
+        : raw(strings, ...v)) as never);
+
+    await expect(handleBlockImages({ ids: all, moderatorId: 2 })).resolves.toBeDefined();
+
+    expect(await blockedFor(OTHER_REASON)).toBe('moderated');
+    expect(await reportStatus(report(OTHER_REASON))).toBe('Pending');
+    expect(rewardedReports()).toEqual([]);
   });
 
   it('a second removal of the same images pays nothing more', async () => {

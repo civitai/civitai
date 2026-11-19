@@ -249,6 +249,22 @@ async function reportIsOnImage(reportId: number, imageId: number) {
   return !!(await reportIdsByImage([reportId])).get(imageId)?.includes(reportId);
 }
 
+/** The posted reports filed on one of the posted images. A report on any other image is not moved:
+ *  a stale or forged id must not close, or pay out on, a report nobody ruled on. */
+async function boundReportIds(reportIds: number[], imageIds: number[]) {
+  const byImage = await reportIdsByImage(reportIds);
+  const bound = new Set(imageIds.flatMap((id) => byImage.get(id) ?? []));
+  const unbound = reportIds.filter((id) => !bound.has(id));
+  return {
+    reportIds: reportIds.filter((id) => bound.has(id)),
+    notMoved: unbound.length
+      ? `Not on a selected image, so not moved: report ${unbound
+          .map((id) => `#${id}`)
+          .join(', ')}. Reload.`
+      : undefined,
+  };
+}
+
 export function parseResolutionReason(form: FormData, status: ResolutionVerdict<'appeal'>) {
   const input = parseForm(z.object(resolutionReasonFields), form);
   return typeof input === 'string' ? input : checkedResolutionReason('appeal', status, input);
@@ -498,7 +514,8 @@ export const imageQueueActions = {
   bulkAccept: async ({ request, locals }) => {
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
-    const reportIds = parseIds(form.get('reportIds'));
+    const posted = parseIds(form.get('reportIds'));
+    const { reportIds, notMoved } = await boundReportIds(posted, imageIds);
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
     const refused: number[] = [];
     const removed: number[] = [];
@@ -510,7 +527,7 @@ export const imageQueueActions = {
           removeMinorFlag,
           userId: locals.user.id,
           deferAppealEmail: true,
-          keepModeratorRemoved: reportIds.length > 0,
+          keepModeratorRemoved: posted.length > 0,
         }).catch((e) => {
           if (e instanceof ModeratorRemovedImageError) {
             removed.push(imageId);
@@ -530,10 +547,14 @@ export const imageQueueActions = {
         setReportStatus({ id, status: ReportStatus.Actioned, userId: locals.user.id })
       )
     );
-    const notice = closedReportIds.length
-      ? { alreadyRemoved: alreadyRemovedNotice(removed), closedReportIds }
-      : {};
-    // Which report belongs to which image is not posted, so a partial batch moves no other report.
+    const notice = {
+      ...(closedReportIds.length && {
+        alreadyRemoved: alreadyRemovedNotice(removed),
+        closedReportIds,
+      }),
+      ...(notMoved && { notMoved }),
+    };
+    // A partial batch moves no other report: the refused images' reports stay open.
     if (refused.length)
       return fail(409, {
         ...notice,
@@ -561,7 +582,8 @@ export const imageQueueActions = {
     const { request, locals } = event;
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
-    const reportIds = parseIds(form.get('reportIds'));
+    const posted = parseIds(form.get('reportIds'));
+    const { reportIds, notMoved } = await boundReportIds(posted, imageIds);
     const violation = parseViolation(form);
     if (typeof violation === 'string') return fail(400, { error: violation });
     const actor = {
@@ -578,7 +600,7 @@ export const imageQueueActions = {
           userId: locals.user.id,
           ...actor,
           reportIds: reportsByImage.get(imageId),
-          skipModeratorRemoved: reportIds.length > 0,
+          skipModeratorRemoved: posted.length > 0,
         }).catch((e: unknown): Awaited<ReturnType<typeof blockImage>> => {
           if (!(e instanceof CsamBlocklistWriteError)) throw e;
           csamBlocklistFailed.push(imageId);
@@ -610,6 +632,7 @@ export const imageQueueActions = {
         alreadyRemoved: alreadyRemovedNotice(removed),
         closedReportIds,
       }),
+      ...(notMoved && { notMoved }),
       ...(held.length && {
         held: heldRemovalMessage(held),
         heldImageIds: held.map((h) => h.imageId),
