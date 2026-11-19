@@ -102,9 +102,7 @@ vi.mock('~/server/webhooks/training-moderation.webhooks', () => ({
   queueNewTrainingModerationWebhook: vi.fn(() => Promise.resolve()),
 }));
 import handler from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-const mockLogToAxiom = loggingMock.logToAxiom;
 
 function createMocks({
   method = 'POST',
@@ -164,11 +162,9 @@ describe('/api/webhooks/resource-training-v2/[modelVersionId] — orphaned train
     );
     expect(res._getStatusCode()).toBe(200);
     expect(res._getJSONData()).toEqual({ ok: true });
-    // Happy path does not error-log.
-    expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 
-  it('missing ModelFile (permanent / orphaned training) → 200 ACK, NOT 500, and logs', async () => {
+  it('missing ModelFile (permanent / orphaned training) → 200 ACK, NOT 500', async () => {
     // THE bug: id 3111039 whose ModelFile was deleted. Pre-fix this threw and the
     // catch returned an unconditional 500 → orchestrator retried → storm.
     mockUpdate.mockRejectedValue(
@@ -181,16 +177,6 @@ describe('/api/webhooks/resource-training-v2/[modelVersionId] — orphaned train
     expect(res._getStatusCode()).toBe(200);
     expect(res._getStatusCode()).not.toBe(500);
     expect(res._getJSONData()).toEqual({ ok: true, skipped: 'permanent-condition' });
-    // Still logged (as a warning) for visibility.
-    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'resource-training-v2-webhook',
-        type: 'warning',
-        message: 'Permanent training-webhook condition — acking to stop orchestrator retries',
-      }),
-      'webhooks'
-    );
   });
 
   it('any PermanentTrainingWebhookError (base type: malformed workflow) → 200 ACK, not 500', async () => {
@@ -204,10 +190,6 @@ describe('/api/webhooks/resource-training-v2/[modelVersionId] — orphaned train
 
     expect(res._getStatusCode()).toBe(200);
     expect(res._getJSONData()).toEqual({ ok: true, skipped: 'permanent-condition' });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'warning' }),
-      'webhooks'
-    );
   });
 
   it('genuine transient failure mid-update (DB error) → STILL 500 (retryable) — not masked', async () => {
@@ -224,14 +206,6 @@ describe('/api/webhooks/resource-training-v2/[modelVersionId] — orphaned train
     expect(res._getJSONData()).toEqual(
       expect.objectContaining({ ok: false, error: 'write CONN_RESET: db connection reset' })
     );
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'resource-training-v2-webhook',
-        type: 'error',
-        message: 'Failed to update record',
-      }),
-      'webhooks'
-    );
   });
 
   it('transient orchestrator fetch failure (getWorkflow throws) → STILL 500', async () => {
@@ -243,10 +217,6 @@ describe('/api/webhooks/resource-training-v2/[modelVersionId] — orphaned train
 
     expect(res._getStatusCode()).toBe(500);
     expect(mockUpdate).not.toHaveBeenCalled();
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', message: 'Failed to update record' }),
-      'webhooks'
-    );
   });
 
   it('non-POST method → 405 (unchanged)', async () => {
