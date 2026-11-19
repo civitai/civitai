@@ -87,7 +87,7 @@ export function PostImages({
     [features.music, images]
   );
   const songIds = useMemo(() => songs.map((song) => song.id), [songs]);
-  const songList: SongList = { name: postTitle || 'this post', songs };
+  const songList: SongList = { name: postTitle || 'this post', songs, wrap: true };
   const items = useMemo(() => mergeDetailItems(images, texts), [images, texts]);
 
   if (isLoading)
