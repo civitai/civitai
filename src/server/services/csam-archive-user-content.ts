@@ -57,7 +57,7 @@ type Reader = (
   db: Db,
   userId: number,
   pageSize?: number,
-  incomplete?: Set<string>
+  incomplete?: Map<string, string>
 ) => AsyncIterable<unknown>;
 
 /**
@@ -317,7 +317,12 @@ const CHAT_MESSAGE_COLUMNS = [
  * The user's other messages are found by `userId`, which no index leads with: the read walks the
  * primary key, so even a user with none outside their chats costs a scan of the table.
  */
-async function* chatMessages(db: Db, userId: number, pageSize?: number, incomplete?: Set<string>) {
+async function* chatMessages(
+  db: Db,
+  userId: number,
+  pageSize?: number,
+  incomplete?: Map<string, string>
+) {
   const memberships = await db
     .selectFrom('ChatMember')
     .select('chatId')
@@ -363,7 +368,9 @@ async function* chatMessages(db: Db, userId: number, pageSize?: number, incomple
     );
   } catch (e) {
     if (!incomplete) throw e;
-    incomplete.add('authorPass');
+    // The cause, so a permanent break reads differently from a one-off timeout. No row data.
+    const err = e as { code?: unknown; name?: unknown };
+    incomplete.set('authorPass', String(err.code ?? err.name ?? 'unknown'));
   }
 }
 

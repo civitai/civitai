@@ -109,7 +109,9 @@ vi.mock('~/server/db/kyselyDb', () => {
     limit: (take: number) => mainQuery(table, { ...state, take }),
     execute: async () => {
       if (v3.failWhen?.(table, state.eq ?? {}))
-        throw new Error('canceling statement due to statement timeout');
+        throw Object.assign(new Error('canceling statement due to statement timeout'), {
+          code: '57014',
+        });
       return (v3.tables[table] ?? [])
         .filter((r) => Object.entries(state.eq ?? {}).every(([c, v]) => r[c] === v))
         .filter((r) => state.afterId === undefined || (r.id as number) > state.afterId)
@@ -1312,7 +1314,18 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
       .mock.calls.map(([p]) => p as Record<string, unknown>)
       .filter((p) => p.subType === 'archive-section-incomplete');
     expect(warned).toHaveLength(1);
+    expect(warned[0].payload).toEqual({ passes: ['authorPass'], causes: ['57014'], count: 1 });
     expect(JSON.stringify(warned)).not.toContain(String(report.userId));
+  });
+
+  it('fails the bundle when a read other than that pass fails', async () => {
+    seedDb();
+    v3.tables = { ChatMember: [{ chatId: 9, userId: report.userId }] };
+    // The member-chat pass reads by chat, not by author.
+    v3.failWhen = (table, eq) => table === 'ChatMessage' && 'chatId' in eq;
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('statement timeout');
+    expect(uploads.has('data.json')).toBe(false);
   });
 
   it("archives a held user's comments on their own", async () => {

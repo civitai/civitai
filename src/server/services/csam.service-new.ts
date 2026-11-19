@@ -2299,12 +2299,12 @@ const userCommentRows = (userId: number) =>
 /** The reported user's own content, written to `data.json` under `name` after `images`. Comments are not held, so this archive may be their only copy. */
 export const userContentSections: {
   name: string;
-  rows: (userId: number, incomplete?: Set<string>) => AsyncIterable<unknown>;
+  rows: (userId: number, incomplete?: Map<string, string>) => AsyncIterable<unknown>;
 }[] = [
   { name: 'comments', rows: userCommentRows },
   ...userContentReaders.map(({ name, rows }) => ({
     name,
-    rows: (userId: number, incomplete?: Set<string>) =>
+    rows: (userId: number, incomplete?: Map<string, string>) =>
       rows(kyselyRead, userId, undefined, incomplete),
   })),
 ];
@@ -2859,7 +2859,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     }
 
     const outPath = `${reportDirs.base}/${userId}_data.json`;
-    const incomplete = new Set<string>();
+    const incomplete = new Map<string, string>();
     await writeJsonObject({
       sink: fs.createWriteStream(outPath),
       replacer: bigintReplacer,
@@ -2906,7 +2906,11 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         type: 'warning',
         subType: 'archive-section-incomplete',
         message: 'a chat pass failed; the bundle was written without it',
-        payload: { passes: [...incomplete], count: incomplete.size },
+        payload: {
+          passes: [...incomplete.keys()],
+          causes: [...incomplete.values()],
+          count: incomplete.size,
+        },
       });
 
     const readableStream = fs.createReadStream(outPath);
