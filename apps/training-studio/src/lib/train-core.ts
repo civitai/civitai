@@ -5,6 +5,7 @@ import { buildKohyaInput } from './kohya-training';
 import { engineTakesRepeats, expandRepeats, isRepeatExt, MAX_REPEATS } from './repeats';
 import { kohyaFamily, type KohyaOptions, type KohyaInput } from './data/kohya';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
+import { getTrainingLicenseTerms } from '@civitai/shared/generation-license';
 // Client-safe training submit builders: pure body construction + SDK calls against a provided
 // client. Env-derived concerns are parameters — the shell's server wrappers (lib/server/train.ts)
 // pass the trace mode from env and the per-user signal callbacks; the web-component backend passes
@@ -742,6 +743,8 @@ export async function submitTrainingBatch(
   // sweep repeats one trigger word across runs; each distinct one is checked once.
   for (const triggerWord of new Set(runs.map((run) => run.trigger)))
     await opts.checkText({ triggerWord });
+  for (const ecosystem of new Set(runs.map((run) => run.ecosystem)))
+    if (getTrainingLicenseTerms(ecosystem)) await opts.checkText({ licenseEcosystem: ecosystem });
 
   // All custom-model checks happen before ANY submit, so a refused batch never part-charges.
   const customModels = new Map<string, string>();
@@ -908,6 +911,7 @@ async function buildContinuation(
   body: WorkflowTemplate;
   steps: number | undefined;
   triggerWord: string;
+  ecosystem: string;
   matureCount: number;
 }> {
   const addEpochs = Math.min(20, Math.max(1, Math.round(opts.addEpochs)));
@@ -1064,6 +1068,7 @@ async function buildContinuation(
     },
     steps,
     triggerWord: String(input.engine === 'kohya' ? srcMeta.trigger ?? '' : input.triggerWord ?? ''),
+    ecosystem,
     matureCount,
   };
 }
@@ -1129,12 +1134,18 @@ export async function continueTraining(
   opts: ContinueOpts,
   submitOpts: SubmitOptions & { checkText: TrainingTextCheck }
 ): Promise<string> {
-  const { body, triggerWord, matureCount } = await buildContinuation(client, opts, submitOpts);
+  const { body, triggerWord, ecosystem, matureCount } = await buildContinuation(
+    client,
+    opts,
+    submitOpts
+  );
   const quotedMature = typeof opts.quotedMatureCount === 'number' && opts.quotedMatureCount > 0;
   if (matureCount > 0 && !quotedMature && runCurrencies(opts.currencies).includes('green'))
     throw new MatureRepriceError(matureCount);
   // The source run may predate the check, so its trigger word is checked again before it trains again.
   await submitOpts.checkText({ triggerWord });
+  if (getTrainingLicenseTerms(ecosystem))
+    await submitOpts.checkText({ licenseEcosystem: ecosystem });
   const { data, error, response } = await submitWorkflow({ client, body, query: { wait: 0 } });
   if (!data?.id) {
     throw new Error(

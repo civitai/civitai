@@ -52,8 +52,9 @@ enters the flow.
   video models can't train it — check per model before enforcing).
 
 - **Every submit calls the main app's trigger word check** (`POST /api/training-studio/check-text`,
-  session cookie, `CIVITAI_URL`); `submitTrainingBatch`/`continueTraining` refuse to run without a
-  `checkText` hook, so outside the dev-login preview a local Studio needs a reachable main app.
+  session cookie, `CIVITAI_URL`), and its licence check for a model with base model licence terms
+  (`@civitai/shared/generation-license`); `submitTrainingBatch`/`continueTraining` refuse to run
+  without a `checkText` hook, so outside the dev-login preview a local Studio needs a reachable main app.
 
 ## Model catalog
 
