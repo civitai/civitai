@@ -7,6 +7,10 @@ import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as Trpc from '~/utils/trpc';
 
 const genreTags = vi.hoisted(() => ({ Pop: 11, Synthwave: 29 }));
+const landing = vi.hoisted(() => ({
+  rising: [] as number[],
+  imageReads: [] as { ids?: number[]; tags?: number[] }[],
+}));
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
@@ -14,13 +18,14 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
-  const image = new Proxy(actual.trpc.image, {
-    get: (target, key) =>
-      key === 'getSongGenreTags'
-        ? { useQuery: () => ({ data: genreTags, isLoading: false }) }
-        : Reflect.get(target, key),
-  });
-  const trpc = new Proxy(actual.trpc, {
+  const { withSongCoversStub } = await import('../MusicPlayer/__tests__/song-covers-trpc-stub');
+  const stubbed = withSongCoversStub(actual.trpc);
+  const image = {
+    ...stubbed.image,
+    getSongGenreTags: { useQuery: () => ({ data: genreTags, isLoading: false }) },
+    getRisingSongs: { useQuery: () => ({ data: landing.rising }) },
+  };
+  const trpc = new Proxy(stubbed, {
     get: (target, key) => (key === 'image' ? image : Reflect.get(target, key)),
   });
   return { ...actual, trpc };
@@ -45,6 +50,31 @@ vi.mock('~/components/Image/Infinite/ImagesInfinite', () => ({
     />
   ),
 }));
+// The landing sections' songs, read by id through the image feed.
+vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useQueryImages: (filters: { ids?: number[]; tags?: number[] }) => {
+    landing.imageReads.push(filters);
+    return {
+      images: (filters.ids ?? []).map((id) => ({
+        id,
+        url: `song-${id}.mp3`,
+        type: 'audio',
+        metadata: { title: `Song ${id}`, duration: 120 },
+        user: { id: 100 + id, username: `artist${id}` },
+        stats: {},
+      })),
+      isLoading: false,
+    };
+  },
+}));
+vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
+  ImageContextMenu: () => null,
+}));
+vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
+  ImagesProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useImagesContext: () => ({ getImages: () => undefined }),
+}));
 vi.mock('~/components/Filters/SortFilter', () => ({ SortFilter: () => null }));
 vi.mock('~/components/Image/Filters/MediaFiltersDropdown', () => ({
   MediaFiltersDropdown: () => null,
@@ -60,6 +90,7 @@ vi.mock('~/components/Filters/useSortAvailability', () => ({
 
 import { MusicFeedPage } from '~/components/Music/MusicFeedPage';
 import { FiltersProvider } from '~/providers/FiltersProvider';
+import { useMusicPlayerStore } from '~/store/music-player.store';
 
 const render = () =>
   renderWithProviders(
@@ -72,6 +103,9 @@ const pickView = (name: string) => page.getByRole('radio', { name }).click();
 const lastReplace = () => vi.mocked(Router.replace).mock.calls.at(-1)?.[0] as { query: object };
 
 beforeEach(() => {
+  landing.rising = [];
+  landing.imageReads = [];
+  useMusicPlayerStore.setState({ recentlyPlayed: [] });
   localStorage.clear();
   Router.query = {};
   Router.pathname = '/music';
@@ -92,6 +126,40 @@ describe('the /music page', () => {
     await expect.element(page.getByTestId('feed')).toHaveAttribute('data-types', 'audio');
     await expect.element(page.getByTestId('feed')).toHaveAttribute('data-list-name', 'All music');
     await expect.element(page.getByTestId('feed')).toHaveAttribute('data-tags', '');
+  });
+});
+
+describe('the landing sections', () => {
+  const headings = () =>
+    page
+      .getByRole('heading')
+      .elements()
+      .map((el) => el.textContent);
+
+  test('come in order: title, Recently played, Rising this week, All music', async () => {
+    useMusicPlayerStore.setState({ recentlyPlayed: [4] });
+    landing.rising = [7];
+    await render();
+    await expect.element(page.getByRole('heading', { name: 'Rising this week' })).toBeVisible();
+    expect(headings()).toEqual(['Music', 'Recently played', 'Rising this week', 'All music']);
+    // The chips sit between the title and the first section.
+    const chips = chip('Pop').element();
+    const recent = page.getByRole('heading', { name: 'Recently played' }).element();
+    expect(chips.compareDocumentPosition(recent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test('a first-time visitor with no plays this week sees only the feed', async () => {
+    await render();
+    await expect.element(page.getByRole('heading', { name: 'All music' })).toBeVisible();
+    expect(headings()).toEqual(['Music', 'All music']);
+  });
+
+  test('Rising lists the picked genre only', async () => {
+    Router.query = { tags: '29' };
+    landing.rising = [7];
+    await render();
+    await expect.element(page.getByRole('heading', { name: 'Rising this week' })).toBeVisible();
+    expect(landing.imageReads.find((read) => read.ids?.includes(7))?.tags).toEqual([29]);
   });
 });
 

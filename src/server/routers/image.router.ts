@@ -32,6 +32,7 @@ import {
 } from '~/server/services/image.service';
 import { getSongCoversForPlayer, setSongCover } from '~/server/services/post.service';
 import { getSongGenreTagIds } from '~/server/services/song-genre.service';
+import { getRisingSongIds } from '~/server/services/song-rising.service';
 import { getSongLyrics } from '~/server/services/track-lyrics.service';
 import {
   middleware,
@@ -272,6 +273,10 @@ export const imageRouter = router({
     .input(getSongCoversSchema)
     .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
     .query(({ input, ctx }) => getSongPlayCounts({ ids: input.ids, features: ctx.features, user: ctx.user })),
+  // Per viewer (the music flag), so no `edgeCacheIt`.
+  getRisingSongs: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .query(({ ctx }) => getRisingSongIds({ features: ctx.features })),
   // Per viewer (the music flag), so no `edgeCacheIt`.
   getSongGenreTags: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

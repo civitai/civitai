@@ -8,6 +8,7 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MUSIC_FEED_COLUMN_WIDTH } from '~/components/Music/song-card.constants';
+import { RecentlyPlayedSection, RisingSection } from '~/components/Music/MusicLandingSections';
 import { Meta } from '~/components/Meta/Meta';
 import { SONG_ROW_HEIGHT, SongRow } from '~/components/Music/SongRow';
 import { songTextBright } from '~/components/Music/song-styles';
@@ -72,6 +73,11 @@ export function MusicFeedPage() {
               loading={isLoading}
               variant="outline"
             />
+            {/* Client only: Recently played lives in this browser's storage. */}
+            <IsClient>
+              <RecentlyPlayedSection />
+              <RisingSection tags={tagIds.length ? tagIds : undefined} />
+            </IsClient>
             <section className="flex flex-col gap-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Title order={2} className={clsx('text-3xl font-bold', songTextBright)}>
