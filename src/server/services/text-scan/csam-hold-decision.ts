@@ -278,8 +278,6 @@ const REPORT_NEEDS_CATEGORY = 'Filing a report needs a reportable category, not 
 export async function decideCsamHold(args: DecideArgs) {
   const { holdId, textHash, decision, reportChoice, note, actor, batched } = args;
   const plan = PLAN[decision];
-  // A missing choice on a confirm is accepted as main decided before the choice existed: a moderator
-  // app older than this one sends none (counted by the endpoint as `reportChoice-missing`).
   if (decision === 'dismiss' && reportChoice !== undefined)
     throw throwBadRequestError('A dismissal takes no report choice.');
   if (decision === 'remove_ban_report' && reportChoice === 'none')
