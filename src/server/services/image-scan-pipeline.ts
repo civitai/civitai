@@ -660,6 +660,10 @@ export async function resolveScanOutcome({
     ruleBlocked = modRule.ingestion === ImageIngestionStatus.Blocked;
   }
 
+  // Decided by this verdict (audit or rule). The appeal and hold branches below only keep a block
+  // the row already has, which must not turn a grace block into a permanent one.
+  const blocking = toUpdate.ingestion === ImageIngestionStatus.Blocked;
+
   // The appeal is the open decision on this image's block: a scan may tighten it, never lift it.
   // A rescan request may already have cleared `ingestion` and `blockedFor`; it leaves the Blocked level.
   if ((await getPendingAppealImageIds([image.id])).size) {
@@ -714,7 +718,6 @@ export async function resolveScanOutcome({
   const csamBlocked = Prisma.raw(`"blockedFor" = '${BlockedReason.CSAM}'`);
   // A block outlives an account restore (its breadcrumbs go in this write); anything else leaves a
   // grace-blocked row as it is.
-  const blocking = toUpdate.ingestion === ImageIngestionStatus.Blocked;
   const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
         ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END`;
   let rowsWritten: number | undefined;
@@ -752,11 +755,21 @@ export async function resolveScanOutcome({
   );
   if (!blocking && rowsWritten === 0) {
     // Skipped as grace-blocked: the outcome is the row as it stands, so no Scanned effects run.
-    const [kept] = await dbWrite.$queryRaw<
+    const rows = await dbWrite.$queryRaw<
       { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
     >`
       SELECT ingestion, "blockedFor", "nsfwLevel" FROM "Image" WHERE id = ${image.id}
-    `.catch(() => []);
+    `.catch(() => null);
+    // A failed read is reported blocked, since the skip only matches a blocked row; no row at all
+    // means the image is gone, and the verdict is reported as before.
+    const kept =
+      rows === null
+        ? {
+            ingestion: ImageIngestionStatus.Blocked,
+            blockedFor: BlockedReason.Moderated,
+            nsfwLevel: NsfwLevel.Blocked,
+          }
+        : rows?.[0];
     if (kept) {
       toUpdate.ingestion = kept.ingestion;
       toUpdate.blockedFor = kept.blockedFor;

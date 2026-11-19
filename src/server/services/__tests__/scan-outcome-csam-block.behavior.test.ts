@@ -520,9 +520,20 @@ describe('the account-deletion grace block', () => {
     });
 
     it('from a ban, which also keeps every grace-blocked image blocked', async () => {
+      // A reason and level the ban's own block would not write, so keeping them is visible.
+      await holder.db.exec(
+        `UPDATE "Image" SET "blockedFor" = 'tos', "nsfwLevel" = 16 WHERE id = ${CONTROL}`
+      );
+
       await blockBannedUserImages(OWNER);
       // The ban leaves a grace-blocked row as it was, without its breadcrumbs, and blocks the rest.
       expect(await graceRow(GRACED)).toEqual({ ...GRACE_BLOCK, breadcrumb: false });
+      expect(await graceRow(CONTROL)).toEqual({
+        ingestion: 'Blocked',
+        blockedFor: 'tos',
+        nsfwLevel: 16,
+        breadcrumb: false,
+      });
       expect(await graceRow(PLAIN)).toEqual({
         ingestion: 'Blocked',
         blockedFor: 'moderated',
@@ -530,13 +541,9 @@ describe('the account-deletion grace block', () => {
         breadcrumb: false,
       });
 
+      // With no breadcrumb left the restore has nothing to claim; the assertions above are the guard.
       await unblockAccountDeletionImages(OWNER);
-
       expect(await graceRow(GRACED)).toMatchObject({
-        ingestion: 'Blocked',
-        blockedFor: 'moderated',
-      });
-      expect(await graceRow(CONTROL)).toMatchObject({
         ingestion: 'Blocked',
         blockedFor: 'moderated',
       });
@@ -560,8 +567,54 @@ describe('the account-deletion grace block', () => {
       expect(await graceRow(PLAIN)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
     });
 
+    it('a clean scan verdict for an image loaded before the grace block', async () => {
+      const stale = {
+        ...(await loaded(GRACED)),
+        ingestion: 'Pending',
+        blockedFor: null,
+        nsfwLevel: 0,
+      };
+
+      const outcome = await resolveScanOutcome({
+        image: stale as ScanImage,
+        workflowId: 'wf',
+        prompt: 'a landscape',
+      });
+
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+      expect(outcome).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    });
+
+    it('a clean scan verdict while an appeal is pending, which only keeps the block', async () => {
+      dbMock.dbWrite.appeal.findMany.mockResolvedValue([{ entityId: GRACED }] as never);
+
+      await scan(GRACED);
+
+      // Keeping the grace block is not a new block: the breadcrumbs stay for the restore.
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+    });
+
+    it('reports the image blocked when the skipped row cannot be read back', async () => {
+      const route = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(((
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) =>
+        strings.join('').includes('SELECT ingestion, "blockedFor", "nsfwLevel" FROM "Image"')
+          ? Promise.reject(new Error('read failed'))
+          : route(strings, ...values)) as never);
+
+      const outcome = await scan(GRACED);
+
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+      expect(outcome).toMatchObject({ ingestion: 'Blocked', nsfwLevel: 32 });
+    });
+
     it('a scan error', async () => {
-      await holder.db.exec(`UPDATE "Image" SET ingestion = 'Rescan' WHERE id = ${PLAIN}`);
+      // Blocked without breadcrumbs: only the grace block is kept, not every block.
+      await holder.db.exec(
+        `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = ${PLAIN}`
+      );
       const fail = (imageId: number) =>
         markImageScanError({
           workflowId: 'wf',
@@ -575,7 +628,7 @@ describe('the account-deletion grace block', () => {
       await fail(PLAIN);
 
       expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
-      // Control: the error write does reach a row that is not grace-blocked.
+      // Control: the error write does reach a blocked row that is not grace-blocked.
       expect((await graceRow(PLAIN)).ingestion).toBe('Error');
     });
   });
