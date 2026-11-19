@@ -7,8 +7,17 @@ const act = (React as unknown as { act: (cb: () => unknown) => Promise<void> }).
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+const { tracked } = vi.hoisted(() => ({
+  tracked: [] as { file: File; status: string; abort: () => void }[],
+}));
 vi.mock('~/components/FileUpload/FileUploadProvider', () => ({
-  useFileUploadContext: () => undefined,
+  useFileUploadContext: () => [
+    tracked,
+    (update: (prev: typeof tracked) => typeof tracked) => {
+      const next = update(tracked);
+      tracked.splice(0, tracked.length, ...next);
+    },
+  ],
 }));
 vi.mock('~/components/MediaUploadSettings/MediaUploadSettingsProvider', () => ({
   useMediaUploadSettingsContext: () => ({
@@ -91,6 +100,7 @@ describe('useMediaUpload in-flight reservation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     releaseUploads();
+    tracked.length = 0;
   });
 
   it('lets a second pick fill only what the first left of the limit while it is still uploading', async () => {
@@ -108,6 +118,17 @@ describe('useMediaUpload in-flight reservation', () => {
     await editor.pickTogether(named('a', 15), named('b', 15));
     for (let i = 0; i < 25; i++) await editor.finish();
     expect(editor.completed.filter((x) => x.startsWith('added'))).toHaveLength(20);
+    await editor.unmount();
+  });
+
+  it('returns the reservation of a queued file that is removed before it uploads', async () => {
+    const editor = await mount();
+    await editor.pick(named('a', 20));
+    const queued = tracked[tracked.length - 1];
+    await act(async () => queued.abort());
+    for (let i = 0; i < 25; i++) await editor.finish();
+    expect(editor.completed.filter((x) => x.startsWith('added'))).toHaveLength(19);
+    expect(editor.remaining()).toBe(20);
     await editor.unmount();
   });
 
