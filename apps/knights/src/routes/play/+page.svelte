@@ -608,11 +608,9 @@
 
 {#snippet questionTools()}
   <div class="qtools">
-    {#if !yesNo}
-      <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
-        <Icon name="book-open" size={16} />Guide
-      </button>
-    {/if}
+    <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
+      <Icon name="book-open" size={16} />Guide
+    </button>
     {@render soundToggle()}
   </div>
 {/snippet}
@@ -830,8 +828,7 @@
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
-        <!-- Hidden, not removed, on yes/no: its slot keeps Skip from shifting. -->
-        <span class="rowtool" class:held={yesNo}>
+        <span class="rowtool">
           <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
         </span>
         <span class="rowtool">{@render soundToggle()}</span>
@@ -868,6 +865,7 @@
 {#if guideOpen}
   <GuideDialog
     guide={data.ratingGuide}
+    scrollToRules={yesNo}
     first={data.showGuide}
     message={form?.guideFailed ? form.message : null}
     {submitting}
@@ -1201,9 +1199,6 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-  }
-  .rowtool.held {
-    visibility: hidden;
   }
   .quiet.guide {
     color: var(--io-gold);

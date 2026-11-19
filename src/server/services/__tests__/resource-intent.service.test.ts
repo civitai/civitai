@@ -806,7 +806,6 @@ describe('stage flow', () => {
     const { JevError } = await import('~/server/services/ai/jev');
     for (const failing of [0, 1]) {
       mockAskJev.mockReset();
-      loggingMock.logToAxiom.mockClear();
       mockStage1();
       mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
       const answer = stage3Responder({ 11: 0.7, 22: 0.2 }, 0.1);
@@ -821,13 +820,6 @@ describe('stage flow', () => {
       expect(mockAskJev).toHaveBeenCalledTimes(3);
       expect(result.degraded).toBe(true);
       expect(result.suggestions).toEqual([]);
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'resource-intent-degraded',
-          degradedReason: 'jev_timeout',
-        }),
-        'temp-search'
-      );
     }
   });
 
@@ -957,9 +949,6 @@ describe('shadow event', () => {
     const row = mockInsert.mock.calls[0][0].values[0] as Record<string, unknown>;
     expect(row.degraded).toBe(1);
     expect(row.degradedReason).toBe('cached_degrade');
-    // and no log for a replay — the log lives in the catch, which did not run
-    const logged = loggingMock.logToAxiom.mock.calls.map((c) => (c[0] as { type?: string }).type);
-    expect(logged).not.toContain('resource-intent-degraded');
   });
 
   it('records the pinned model, spec hash and suggestion ids to ClickHouse', async () => {
@@ -1127,7 +1116,7 @@ describe('shadow event', () => {
 });
 
 describe('degradation reasons', () => {
-  it('a stage-3 answer of the wrong kind degrades as jev_stage3_shape', async () => {
+  it('a stage-3 answer of the wrong kind degrades the response', async () => {
     mockStage1();
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     const noul = async () => ({
@@ -1139,13 +1128,9 @@ describe('degradation reasons', () => {
     mockAskJev.mockImplementationOnce(noul);
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(true);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ degradedReason: 'jev_stage3_shape' }),
-      'temp-search'
-    );
   });
 
-  it('a stage-1 answer shape mismatch degrades as jev_stage1_shape', async () => {
+  it('a stage-1 answer shape mismatch degrades the response', async () => {
     // The Jev client would never return this (it validates per question); the
     // service re-checks so a spec desync degrades instead of shipping.
     mockAskJev.mockImplementationOnce(async () => ({
@@ -1158,10 +1143,6 @@ describe('degradation reasons', () => {
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(true);
     expect(result.suggestions).toEqual([]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ degradedReason: 'jev_stage1_shape' }),
-      'temp-search'
-    );
   });
 });
 

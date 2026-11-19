@@ -9,6 +9,10 @@ civitai.com's styling: plain CSS in `src/global.css`, no Mantine, no `@civitai/u
 The game is moving here from the main Next.js app: `src/components/Games`,
 `src/server/services/games/new-order.service.ts` and `src/server/jobs/new-order-jobs.ts`. It keeps using the main
 Postgres through `@civitai/db/kysely` and the existing `NewOrderPlayer` tables; do not add a second database.
+`$lib/server/db` exports `db` (the primary) and `dbRead` (a read replica when `DATABASE_REPLICA_URL` is set, else the
+primary). Exactly three reads take `dbRead`: the play feed's `getFeed` (`routes/play/next-item.server.ts`), the shared
+leaderboard board's `queryBoard` (built by both `routes/leaderboard` and the play/home rail, `lib/server/rail-runtime.ts`)
+and the rail's day vote count `votesOnDay`. Everything else, writes, transactions and every other read, stays on `db`.
 
 ## Access gate
 
@@ -132,7 +136,7 @@ Queue producers (moderator enqueue endpoint, scan sampling, owner ratings, the `
 ## Wired packages
 
 `@civitai/auth` (guard), `@civitai/axiom` (logging), `@civitai/brand` (favicon), `@civitai/buzz` (gold conversion, Buzz packs), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
-`@civitai/flipt` (access flag), `@civitai/redis` (today only a sys client: the guard's session revocation check, the skip sets, the seen-notice records, the vote-limit gate, the legacy XP mirror, the leaderboard cache; new cached data goes on a cache client built with `createCacheRedis`, never on the sys client, which holds only durable state),
+`@civitai/flipt` (access flag), `@civitai/redis` (a sys client for the guard's session revocation check, the skip sets, the seen-notice records, the legacy XP mirror and the leaderboard cache; a cache client, `getCacheRedis`, for the vote-limit gate, whose keys share the player's `{id}` hash tag; new cached data goes on the cache client, never on the sys client, which holds only durable state),
 `@civitai/shared` (`NsfwLevel`; `new-order-levels` is the original game's level curve, which Knights no longer uses (see Progression), still used by the main app's `game-helpers.ts`). Add others when a task needs them.
 
 ## Deploy
