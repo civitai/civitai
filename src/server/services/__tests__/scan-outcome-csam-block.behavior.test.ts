@@ -65,6 +65,8 @@ const holder = vi.hoisted(() => ({
   csamLandsAfterRead: null as number | null,
   /** Set to an image id: its owner is banned, with the media block, right after the fresh read. */
   banLandsAfterRead: null as number | null,
+  /** Set to an image id: a hold keeps it, blocked, right after the fresh read. */
+  holdLandsAfterRead: null as number | null,
 }));
 
 const OWNER = 8;
@@ -153,6 +155,14 @@ beforeEach(async () => {
           [id]
         );
       }
+      if (holder.holdLandsAfterRead != null) {
+        const id = holder.holdLandsAfterRead;
+        await holder.db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [id]);
+        await holder.db.query(
+          `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated', "nsfwLevel" = 32 WHERE id = $1`,
+          [id]
+        );
+      }
       return rows;
     }
     if (
@@ -166,6 +176,7 @@ beforeEach(async () => {
   holder.tagNsfwLevel = 1;
   holder.csamLandsAfterRead = null;
   holder.banLandsAfterRead = null;
+  holder.holdLandsAfterRead = null;
   await holder.db.exec(`
     TRUNCATE "Image", "User", "EvidenceHeldUser", "EvidenceHoldImage", "CsamReport";
     INSERT INTO "User" (id, "bannedAt") VALUES (${OWNER}, NULL), (${OTHER_OWNER}, NULL);
@@ -336,6 +347,21 @@ describe('a ban that lands after the scan read the row', () => {
     expect(await imageRow(OTHER)).toEqual(BANNED);
     // A Scanned outcome would queue the image for Knights review and signal its owner.
     expect(outcome).toMatchObject(BANNED);
+  });
+});
+
+describe('a hold that lands after the scan read the row', () => {
+  it('keeps the block when the audit comes back clean', async () => {
+    await holder.db.exec(
+      `UPDATE "Image" SET ingestion = 'Rescan', "blockedFor" = NULL, "nsfwLevel" = 0 WHERE id = ${OTHER}`
+    );
+    holder.holdLandsAfterRead = OTHER;
+
+    const outcome = await scan(OTHER);
+
+    const HELD = { ingestion: 'Blocked', blockedFor: 'moderated', nsfwLevel: 32 };
+    expect(await imageRow(OTHER)).toEqual(HELD);
+    expect(outcome).toMatchObject(HELD);
   });
 });
 
