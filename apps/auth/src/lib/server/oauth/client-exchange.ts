@@ -93,7 +93,8 @@ export interface ClientExchangeInput {
 export async function handleClientTokenExchange(input: ClientExchangeInput): Promise<Response> {
   const { request, body } = input;
   // The log line of every outcome: `service` (the subject's client), `relay` (the caller), `resource`
-  // (the target) and `source` (the subject's resource), as far as each is known. Never a token.
+  // (the target), `source` (the subject's resource), `subject_jti` (the subject's id) and `jti` (the
+  // issued token's id), as far as each is known. Never a token.
   const ctx: Record<string, string | undefined> = {};
 
   const refuse = (error: ExchangeError, reason: string, extra?: HeadersInit) => {
@@ -179,6 +180,8 @@ export async function handleClientTokenExchange(input: ClientExchangeInput): Pro
     }
     ctx.service = clientId;
     ctx.source = aud;
+    // The subject's id (not the token): traces a relay chain after its records expire.
+    ctx.subject_jti = jti;
     if (sub !== clientId || !isServiceClientId(clientId)) {
       return refuse('invalid_grant', 'subject is not a service token');
     }

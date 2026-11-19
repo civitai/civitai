@@ -444,6 +444,12 @@ describe('🔴 client token exchange — refused unless allowed', () => {
     );
   });
 
+  it('a disabled relay is refused', async () => {
+    const own = await serviceToken();
+    h.tables.OauthClient.find((c) => c.id === GATEWAY)!.accessMode = 'disabled';
+    expectRefused(await exchange(own, EXP_RES, GATEWAY), 'unauthorized_client', 'caller disabled');
+  });
+
   it('a caller that is not a relay of the target is refused', async () => {
     const forExp = await hop1();
     expectRefused(
@@ -509,6 +515,34 @@ async function serviceSubjectExpiring(inSeconds: number): Promise<{ token: strin
   return { token, exp };
 }
 
+describe('🔴 client token exchange — scope', () => {
+  it('a requested scope outside the target’s cap is refused, even one the subject holds', async () => {
+    // The subject holds AppsRead and AppDataRead; the origin's cap is AppsRead only.
+    const forExp = await hop1();
+    expect(decodeJwt(forExp).scope).toBe('AppsRead AppDataRead');
+    expectRefused(
+      await exchange(forExp, APPS_RES, EXP_SERVER, { scope: 'AppsRead AppDataRead' }),
+      'invalid_scope',
+      'scope outside grant'
+    );
+    expectRefused(
+      await exchange(forExp, APPS_RES, EXP_SERVER, { scope: 'ModelsRead' }),
+      'invalid_scope',
+      'scope outside grant'
+    );
+  });
+
+  it('a narrower request within the grant gets exactly that scope', async () => {
+    const res = await exchange(await serviceToken(), EXP_RES, GATEWAY, { scope: 'AppsRead' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.scope).toBe('AppsRead');
+    expect(decodeJwt(res.body.access_token as string).scope).toBe('AppsRead');
+    // Control: unnarrowed, the same exchange carries both scopes.
+    const full = await exchange(await serviceToken(), EXP_RES, GATEWAY);
+    expect(full.body.scope).toBe('AppsRead AppDataRead');
+  });
+});
+
 describe('🔴 client token exchange — expiry', () => {
   it('never outlives the subject: a subject with 2 minutes left gives a token with 2 minutes', async () => {
     const subject = await serviceSubjectExpiring(120);
@@ -544,6 +578,8 @@ describe('🔴 client token exchange — the log line', () => {
       relay: EXP_SERVER,
       resource: APPS_RES,
       source: EXP_RES,
+      subject_jti: decodeJwt(forExp).jti,
+      jti: decodeJwt(res.body.access_token as string).jti,
     });
     const line = JSON.stringify(issued[0]);
     expect(line).not.toContain(forExp);
