@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
+import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import {
   clampRequestBrowsingLevels,
   clampToDomainCap,
@@ -44,6 +45,15 @@ describe('requestDomainBrowsingLevelCap', () => {
     expect(
       requestDomainBrowsingLevelCap({ ...signedInMature({}), req: undefined } as unknown as CapCtx)
     ).toBe(publicBrowsingLevelsFlag);
+  });
+
+  it('caps a verified crawler with no Host at PG', () => {
+    const crawler = {
+      user: undefined,
+      features: { canViewNsfw: true },
+      req: { headers: { [VERIFIED_BOT_HEADER]: 'googlebot' } },
+    } as unknown as CapCtx;
+    expect(requestDomainBrowsingLevelCap(crawler)).toBe(publicBrowsingLevelsFlag);
   });
 
   it('caps nothing for the same viewer once the request names its host', () => {
