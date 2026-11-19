@@ -404,11 +404,29 @@ export function reportedUserIdsOf(userId: number, details: unknown) {
 }
 
 /** Earlier captures are kept: a re-filing never replaces text already captured. */
-export function foldContextText(prior: unknown, added: CsamContextText[] | undefined) {
-  const kept = Array.isArray(prior) ? (prior as CsamContextText[]) : [];
-  const key = (c: CsamContextText) => `${c.source}:${c.id}`;
-  const seen = new Set(kept.map(key));
-  const merged = kept.concat((added ?? []).filter((c) => !seen.has(key(c))));
+/**
+ * Merges a filing's captures into a report's. Every earlier capture is kept as it was. A capture of an
+ * item already in the report is added as its own entry when its text differs in any way, so an item
+ * edited and captured again keeps both texts; the same text captured again adds nothing, and
+ * `onIdentical` hears each capture the report already held.
+ */
+export function foldContextText(
+  prior: unknown,
+  added: CsamContextText[] | undefined,
+  onIdentical?: (capture: CsamContextText) => void
+) {
+  const merged = Array.isArray(prior) ? [...(prior as CsamContextText[])] : [];
+  const capture = (c: CsamContextText) => JSON.stringify([c.source, c.id, c.text]);
+  const stored = new Set(merged.map(capture));
+  const seen = new Set(stored);
+  for (const c of added ?? []) {
+    if (seen.has(capture(c))) {
+      if (stored.has(capture(c))) onIdentical?.(c);
+      continue;
+    }
+    seen.add(capture(c));
+    merged.push(c);
+  }
   return merged.length ? merged : undefined;
 }
 
