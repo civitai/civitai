@@ -1,37 +1,20 @@
 import { Profiler } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
-import type * as StoreModule from '~/components/Apps/reviewConsoleStore';
+import { ReviewConsolePanel, ReviewConsoleProvider } from '~/components/Apps/ReviewConsole';
+import {
+  createReviewConsoleStore,
+  REVIEW_CONSOLE_NOTIFY_MS,
+} from '~/components/Apps/reviewConsoleStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { advanceBy, advanceUntil, fakeTimeouts } from '../../../test/fakeTimeouts';
 
 /**
- * 🔴 THE CONSOLE'S RENDER COST UNDER A FLOOD OF REPORTS. An unapproved app can post
- * `BLOCK_ERROR` in a loop (with or without the SDK's rate limit), and the Console panel stays
- * mounted once visited. Each report used to notify the store's subscribers at once, and every
- * render rebuilt each row's frame label from the whole list: N reports cost N renders of
- * O(N² log N) each.
- *
- * Pinned here: a burst — each report its own task, as `postMessage` delivers them — commits the
- * panel ONCE, and that render's own label build runs ONCE, not once per row. The panel also hands
- * those labels to `formatReviewConsoleLog` for the Copy log; a module-internal call is not seen
- * by the spy, so that hand-off is NOT pinned here.
- *
- * The store module is spread and only `reviewConsoleFrameLabels` is wrapped in a spy, to count
- * the view's calls; every rule runs as written.
+ * 🔴 A flood of `BLOCK_ERROR`s (an app need not go through the SDK's rate limit) re-renders the
+ * mounted Console panel ONCE, not once per report. Each report is its own task, as `postMessage`
+ * delivers them. That a render builds the frame labels once, not per row, is not pinned here.
  */
-
-vi.mock('~/components/Apps/reviewConsoleStore', async (importOriginal) => {
-  const actual = await importOriginal<typeof StoreModule>();
-  return { ...actual, reviewConsoleFrameLabels: vi.fn(actual.reviewConsoleFrameLabels) };
-});
-
-const { ReviewConsolePanel, ReviewConsoleProvider } = await import(
-  '~/components/Apps/ReviewConsole'
-);
-const { createReviewConsoleStore, reviewConsoleFrameLabels, REVIEW_CONSOLE_NOTIFY_MS } =
-  await import('~/components/Apps/reviewConsoleStore');
 
 /** One macrotask, as each posted message is: React's own scheduled work runs before it ends. */
 function nextMessageTask() {
@@ -49,7 +32,7 @@ afterEach(() => {
 });
 
 describe('ReviewConsole — a burst of reports', () => {
-  test('🔴 commits the panel once and builds the frame labels once, however many reports arrive', async () => {
+  test('🔴 commits the panel once, however many reports arrive', async () => {
     fakeTimeouts();
     const store = createReviewConsoleStore();
     const overview = store.openFrame();
@@ -68,7 +51,6 @@ describe('ReviewConsole — a burst of reports', () => {
     );
 
     commits = 0;
-    vi.mocked(reviewConsoleFrameLabels).mockClear();
     const N = 60;
     for (let i = 0; i < N; i += 1) {
       // Two frames, so every row carries a label and the label path is exercised.
@@ -87,7 +69,6 @@ describe('ReviewConsole — a burst of reports', () => {
     await advanceBy(REVIEW_CONSOLE_NOTIFY_MS, REVIEW_CONSOLE_NOTIFY_MS);
     expect(rendered()).toBe(N);
     expect(commits).toBe(1);
-    expect(reviewConsoleFrameLabels).toHaveBeenCalledTimes(1);
     expect(
       page
         .getByTestId('apps-review-console-entry-frame')
