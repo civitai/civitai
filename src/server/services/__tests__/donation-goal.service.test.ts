@@ -133,7 +133,6 @@ describe('checkDonationGoalComplete — public cache refresh', () => {
 
     const result = await checkDonationGoalComplete({ entityType: 'ModelVersion', entityId: 5 });
 
-    // Resolves normally with the goal (donation/total logic unaffected).
     expect(result).toMatchObject({ id: 10, total: 100 });
     expect(mockDonationGoalsRefresh).toHaveBeenCalledWith(5);
   });

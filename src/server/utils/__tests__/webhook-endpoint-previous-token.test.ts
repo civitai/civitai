@@ -135,6 +135,7 @@ describe('WebhookEndpoint with WEBHOOK_TOKEN_PREVIOUS', () => {
     await call(path, { query: PREVIOUS });
     await call(path, { query: CURRENT });
 
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
     const [line] = logToAxiom.mock.calls[0] as unknown as [Record<string, unknown>];
     expect(JSON.stringify(line)).not.toContain(PREVIOUS);
   });
