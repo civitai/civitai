@@ -66,6 +66,7 @@ import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import {
   graceBlockedSql,
   hasBlockMarker,
+  hasBlockMarkerSql,
   ingestionAfterScanErrorSql,
   keepPermanentScanFailureSql,
   ingestionAfterVerdictSql,
@@ -525,14 +526,25 @@ export type ScanOutcome = {
   audit?: Awaited<ReturnType<typeof auditScanResults>>;
 };
 
-/** Whether the owner is held or a hold kept the image. A read that fails counts as held. */
-function isBlockKeptByHold(imageId: number) {
+/**
+ * A block a scan must not lift: the owner is banned or held, or a hold kept the image. The fresh
+ * read and the write's WHERE share it, since a ban or hold can land between the two.
+ */
+const blockKeptByBanOrHoldSql = (alias: string) => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`(${hasBlockMarkerSql(alias)} AND (
+    EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${t}."userId" AND u."bannedAt" IS NOT NULL)
+    OR ${ownerHeldSql(Prisma.sql`${t}."userId"`)}
+    OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" k WHERE k."imageId" = ${t}.id)
+    OR ${captureImageKeptSql(`"${alias}"`)}))`;
+};
+
+/** Whether `blockKeptByBanOrHoldSql` holds for the image. A read that fails counts as kept. */
+function isBlockKeptByBanOrHold(imageId: number) {
   return ownerHeld(
     dbWrite,
     Prisma.sql`FROM "Image" m WHERE m.id = ${imageId}`,
-    Prisma.sql`(${ownerHeldSql(Prisma.raw('m."userId"'))}
-      OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" k WHERE k."imageId" = m.id)
-      OR ${captureImageKeptSql('m')})`
+    blockKeptByBanOrHoldSql('m')
   );
 }
 
@@ -688,23 +700,11 @@ export async function resolveScanOutcome({
   // the row after this scan loaded it.
   if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
     const [current] = await dbWrite.$queryRaw<
-      {
-        ingestion: ImageIngestionStatus;
-        blockedFor: string | null;
-        nsfwLevel: number;
-        ownerBanned: boolean;
-      }[]
+      { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
     >`
-      SELECT i.ingestion, i."blockedFor", i."nsfwLevel", u."bannedAt" IS NOT NULL AS "ownerBanned"
-      FROM "Image" i
-      JOIN "User" u ON u.id = i."userId"
-      WHERE i.id = ${image.id}
+      SELECT i.ingestion, i."blockedFor", i."nsfwLevel" FROM "Image" i WHERE i.id = ${image.id}
     `;
-    if (
-      current &&
-      hasBlockMarker(current) &&
-      (current.ownerBanned || (await isBlockKeptByHold(image.id)))
-    ) {
+    if (current && hasBlockMarker(current) && (await isBlockKeptByBanOrHold(image.id))) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;
@@ -720,6 +720,7 @@ export async function resolveScanOutcome({
   // else leaves a grace-blocked row as it is.
   const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
         ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END`;
+  const lifting = toUpdate.ingestion !== ImageIngestionStatus.Blocked;
   let rowsWritten: number | undefined;
   await writeWithNsfwAxes(
     async (axesTerm) =>
@@ -748,13 +749,15 @@ export async function resolveScanOutcome({
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
         workflowId
       )}::jsonb)${axesTerm}
-    WHERE id = ${image.id}${blocking ? Prisma.empty : Prisma.sql` AND NOT ${graceBlockedSql}`}
+    WHERE id = ${image.id}${blocking ? Prisma.empty : Prisma.sql` AND NOT ${graceBlockedSql}`}${
+        lifting ? Prisma.sql` AND NOT ${blockKeptByBanOrHoldSql('Image')}` : Prisma.empty
+      }
   `),
     axesSet,
     axesTarget
   );
   if (!blocking && rowsWritten === 0) {
-    // Skipped as grace-blocked: the hash is still kept (a later block reads it), and the outcome is
+    // Skipped as grace-blocked, or blocked by a ban or hold since the read: the hash is still kept (a later block reads it), and the outcome is
     // the row as it stands, so no Scanned effects run.
     await dbWrite.$executeRaw`
       UPDATE "Image" SET "pHash" = COALESCE(${pHash ?? null}, "pHash") WHERE id = ${image.id}

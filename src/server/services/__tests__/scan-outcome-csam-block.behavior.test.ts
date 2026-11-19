@@ -63,6 +63,8 @@ const holder = vi.hoisted(() => ({
   tagNsfwLevel: 1,
   /** Set to an image id: that row turns CSAM-blocked right after the scan's fresh read of it. */
   csamLandsAfterRead: null as number | null,
+  /** Set to an image id: its owner is banned, with the media block, right after the fresh read. */
+  banLandsAfterRead: null as number | null,
 }));
 
 const OWNER = 8;
@@ -133,13 +135,24 @@ beforeEach(async () => {
       ];
     if (text.includes('is_new_user')) return [{ isNewUser: false }];
     if (text.includes(' AS held ')) return (await runOnPglite(strings, values)).rows;
-    if (text.includes('"User"')) {
+    if (text.includes('FROM "Image" i WHERE i.id')) {
       const { rows } = await runOnPglite(strings, values);
       if (holder.csamLandsAfterRead != null)
         await holder.db.query(
           `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM', "nsfwLevel" = 32 WHERE id = $1`,
           [holder.csamLandsAfterRead]
         );
+      if (holder.banLandsAfterRead != null) {
+        const id = holder.banLandsAfterRead;
+        await holder.db.query(
+          `UPDATE "User" SET "bannedAt" = now() WHERE id = (SELECT "userId" FROM "Image" WHERE id = $1)`,
+          [id]
+        );
+        await holder.db.query(
+          `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated', "nsfwLevel" = 32 WHERE id = $1`,
+          [id]
+        );
+      }
       return rows;
     }
     if (
@@ -152,6 +165,7 @@ beforeEach(async () => {
   }) as never);
   holder.tagNsfwLevel = 1;
   holder.csamLandsAfterRead = null;
+  holder.banLandsAfterRead = null;
   await holder.db.exec(`
     TRUNCATE "Image", "User", "EvidenceHeldUser", "EvidenceHoldImage", "CsamReport";
     INSERT INTO "User" (id, "bannedAt") VALUES (${OWNER}, NULL), (${OTHER_OWNER}, NULL);
@@ -306,6 +320,22 @@ describe('a scan of a CSAM-blocked image', () => {
     expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
     // A Scanned outcome would queue the image for Knights review and signal its owner.
     expect(outcome).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM', nsfwLevel: 32 });
+  });
+});
+
+describe('a ban that lands after the scan read the row', () => {
+  it('keeps the media block when the audit comes back clean', async () => {
+    await holder.db.exec(
+      `UPDATE "Image" SET ingestion = 'Rescan', "blockedFor" = NULL, "nsfwLevel" = 0 WHERE id = ${OTHER}`
+    );
+    holder.banLandsAfterRead = OTHER;
+
+    const outcome = await scan(OTHER);
+
+    const BANNED = { ingestion: 'Blocked', blockedFor: 'moderated', nsfwLevel: 32 };
+    expect(await imageRow(OTHER)).toEqual(BANNED);
+    // A Scanned outcome would queue the image for Knights review and signal its owner.
+    expect(outcome).toMatchObject(BANNED);
   });
 });
 
