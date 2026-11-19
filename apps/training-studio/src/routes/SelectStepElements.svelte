@@ -137,7 +137,6 @@
   const primary = $derived(runs[0]!);
   const focused = $derived(runs[focus] ?? primary);
   const selectedCard = $derived(runCard(focused));
-  // Like the tiles, the Engine choice applies to the highlighted run.
   const kohyaCards = $derived(
     editSection ? [] : cardsForMedia(media, enabledFlags).filter(cardSupportsKohya)
   );
@@ -259,7 +258,7 @@
   // The banner refreshes it too; Select reads it on its own so a down model greys out on first paint.
   onMount(() => void serviceStatus.refresh());
   const blockedMessage = $derived(blockedSelectionMessage(runs, serviceStatus.value));
-  // Defensive: not reachable today, but keep it — without it Continue would fall back to a mode some run can't take.
+  // Keeps Continue from falling back to a label mode some run can't take.
   const sweepBroken = $derived(
     multi && sweepLabelMode(runs.map(runCard), previousCard, flowLabelMode, datasetLabeled) === null
   );
