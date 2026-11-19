@@ -4106,8 +4106,7 @@ export const getCollectionCoverImages = async ({
   return withinLevel.flatMap(({ id, image, src }) => {
     if (!image) return [];
     const tags = tagIdsByImage.get(image.id);
-    // For every viewer, mods and owners too, as in the search docs: unlike the viewer's addon
-    // exclusions in `showsImage`, this rule does not depend on editable browsing-settings config.
+    // Not folded into `showsImage`: moderators skip its addon exclusions, and this rule holds for all.
     if (isWithheldMatureCover({ nsfwLevel: image.nsfwLevel, tags })) return [];
     if (!showsImage({ ...image, tags })) return [];
     return [
