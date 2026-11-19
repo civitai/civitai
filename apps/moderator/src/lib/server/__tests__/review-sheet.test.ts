@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ReviewBatchModule from '../review-batch';
+import { keyHashSlots } from '@civitai/redis';
 
 /**
  * Review batches on the moderator app: signing the sheet in to a batch (`auth/start?batch`,
@@ -512,6 +513,19 @@ describe('one general sign-in a day', () => {
     release();
     expect(await inFlight).toBe(404);
     expect([...store.keys()].filter((k) => k.startsWith('app:review-sheet:session'))).toEqual([]);
+  });
+
+  it('🔴 a session and its batch set share one cluster slot, so one DEL ends both', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    const keys = [...store.keys()].filter((k) => k.startsWith('app:review-sheet:session'));
+    expect(keys).toHaveLength(2);
+    expect(keys.some((k) => k.endsWith(':batches'))).toBe(true);
+    expect(keyHashSlots(keys)).toHaveLength(1);
+    redis.del.mockClear();
+    await signout.POST({
+      cookies: { get: (n: string) => (n === COOKIE.review ? token : undefined) },
+    } as never);
+    expect(redis.del).toHaveBeenCalledWith([...keys].sort());
   });
 
   it('a revoked web session ends it on the next request', async () => {

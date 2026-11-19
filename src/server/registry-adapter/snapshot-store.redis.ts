@@ -2,55 +2,69 @@ import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import { STATES_KEPT_PER_STREAM } from '~/server/registry-adapter/cursor';
 import { sha256Hex } from '~/server/registry-adapter/release';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 
 /** How long a cursor stays resumable after it was last issued or resumed from. */
 export const SNAPSHOT_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 
-/** The sys-client surface this store uses, so a test can hand in a fake. */
-export type SnapshotRedis = Pick<typeof sysRedis, 'get' | 'del' | 'multi'>;
+/** The cache-client surface this store uses, so a test can hand in a fake. */
+export type SnapshotRedis = Pick<typeof redis, 'get' | 'del' | 'multi'>;
 
 export const snapshotKey = (digest: string) =>
-  `${REDIS_SYS_KEYS.REGISTRY_ADAPTER.SNAPSHOT}:${digest}` as const;
+  `${REDIS_KEYS.REGISTRY_ADAPTER.SNAPSHOT}:${digest}` as const;
 export const streamStatesKey = (stream: string) =>
-  `${REDIS_SYS_KEYS.REGISTRY_ADAPTER.STREAM_STATES}:${sha256Hex(stream).slice(0, 32)}` as const;
+  `${REDIS_KEYS.REGISTRY_ADAPTER.STREAM_STATES}:${sha256Hex(stream).slice(0, 32)}` as const;
 
 /**
- * Snapshots in system Redis, at most {@link STATES_KEPT_PER_STREAM} per stream, newest first.
+ * Snapshots on the cache cluster, at most {@link STATES_KEPT_PER_STREAM} per stream, newest first.
  *
- * One MULTI writes the snapshot and moves its digest to the head of the stream's list, reads
- * what falls past the bound and trims it, and refreshes the list's TTL, so concurrent writers of
- * one stream never lose each other's digests (a multi-key MULTI on the system client). The
- * digests that fell off are deleted after the MULTI.
- * If one of them is pushed again meanwhile, its cursor expires early, which costs a
- * re-snapshot and nothing else.
+ * A cursor names only a digest, so a snapshot's key cannot carry its stream's hash tag, and the
+ * snapshot and its stream's list are in different slots. They are written apart: the snapshot
+ * first, then one MULTI on the list alone moves its digest to the head, reads what falls past the
+ * bound and trims it, and refreshes the list's TTL, so concurrent writers of one stream never lose
+ * each other's digests. The digests that fell off are deleted after it.
+ *
+ * Losing any of this costs a re-snapshot and nothing else: a snapshot whose write lands but whose
+ * list update fails is only bounded by its TTL; a digest pushed again after it fell off expires
+ * its cursor early; a key the cluster evicts expires that cursor (`cursor_expired`).
  */
 export function createRedisSnapshotStore(
-  client: SnapshotRedis = sysRedis,
+  client: SnapshotRedis = redis,
   keep: number = STATES_KEPT_PER_STREAM
 ): SnapshotStore {
+  const call = <T>(fn: string, op: () => Promise<T>) =>
+    boundedClusterCall(`registrySnapshot.${fn}`, op);
+
   /** With `value` null, only refreshes the snapshot's TTL (a resume). */
   async function retain(digest: string, stream: string, value: string | null): Promise<void> {
     const states = streamStatesKey(stream);
-    const tx = client.multi();
-    if (value === null) tx.expire(snapshotKey(digest), SNAPSHOT_RETENTION_SECONDS);
-    else tx.set(snapshotKey(digest), value, { EX: SNAPSHOT_RETENTION_SECONDS });
-    tx.lRem(states, 0, digest);
-    tx.lPush(states, digest);
-    tx.lRange(states, keep, -1);
-    tx.lTrim(states, 0, keep - 1);
-    tx.expire(states, SNAPSHOT_RETENTION_SECONDS);
-    const results = await withSysReadDeadline(tx.exec());
-    const evicted = Array.isArray(results?.[3]) ? (results[3] as unknown[]) : [];
+    const snapshot = snapshotKey(digest);
+    await call('retain.snapshot', () =>
+      value === null
+        ? client.multi().expire(snapshot, SNAPSHOT_RETENTION_SECONDS).exec()
+        : client.multi().set(snapshot, value, { EX: SNAPSHOT_RETENTION_SECONDS }).exec()
+    );
+    const results = await call('retain.states', () =>
+      client
+        .multi()
+        .lRem(states, 0, digest)
+        .lPush(states, digest)
+        .lRange(states, keep, -1)
+        .lTrim(states, 0, keep - 1)
+        .expire(states, SNAPSHOT_RETENTION_SECONDS)
+        .exec()
+    );
+    const evicted = Array.isArray(results?.[2]) ? (results[2] as unknown[]) : [];
     for (const old of evicted) {
       const d = String(decodeRedisString(old as string));
-      if (d !== digest) await client.del(snapshotKey(d));
+      if (d !== digest) await call('retain.drop', () => client.del(snapshotKey(d)));
     }
   }
 
   return {
     async get(digest) {
-      return decodeRedisString(await withSysReadDeadline(client.get(snapshotKey(digest)))) ?? null;
+      return decodeRedisString(await call('get', () => client.get(snapshotKey(digest)))) ?? null;
     },
     put: (digest, value, stream) => retain(digest, stream, value),
     touch: (digest, stream) => retain(digest, stream, null),
