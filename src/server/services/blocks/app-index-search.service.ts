@@ -20,12 +20,14 @@
  * as it always has; a page answered by the index says so (`search: 'index'`), so the client does
  * not filter it again.
  *
- * Every flagged request also reads the database page it would have served, which is the
- * fallback, and logs a comparison of the two slug sets (no query text, no user):
+ * Every routed request logs one line (no query text, no user):
  * `app-index-search: q_len=… index=N db=M overlap=K dropped=D source=index|db_fallback reason=…
  * field_diffs=name:…,tagline:…,iconUrl:…,rating:… field_expected=iconUrl:…,rating:…`.
- * The database side is the slugs of that first page whose name or tagline contains the query, the
- * client-side rule, so for a catalog larger than one page it undercounts.
+ * `db` and `overlap` compare against the database page the request would have served: the slugs
+ * of that first page whose name or tagline contains the query (the client-side rule, so for a
+ * catalog larger than one page it undercounts). An index answer reads that page only for a sampled
+ * fraction (APP_INDEX_SEARCH_COMPARE_SAMPLE), off the response path; unsampled, the two are
+ * `none`. `searchThroughIndex` states the latency shape.
  *
  * Users only ever see database-hydrated cards. The index's own copy of each field the store card
  * shows (name, tagline, iconUrl, rating) is compared with the card the database hydrated for the
@@ -172,37 +174,57 @@ async function searchThroughIndex(
   opts: ListAvailableListingsOpts,
   reads: StoreGridReads
 ): Promise<StoreGridPage> {
-  // Started at once: it is the fallback, and the comparison's other side.
-  const dbPage = reads.listAvailableListings(input, opts);
-  // Handled where it is awaited; this only keeps an early rejection from being reported as
-  // unhandled while the index call is in flight.
-  dbPage.catch(() => undefined);
   const skip = notRoutable(input, opts);
-  if (skip) return fallBack(dbPage, query, skip);
+  if (skip) return fallBack(reads.listAvailableListings(input, opts), query, skip);
+
+  // The latency shape. A sampled request (APP_INDEX_SEARCH_COMPARE_SAMPLE) reads the database page
+  // at once, beside the index call: it is the comparison's other side, and, if the index fails,
+  // the fallback already in flight, so that fallback costs max(index, database), never the sum.
+  // When the index answers, the response never waits for that read; the comparison is logged when
+  // it settles. An unsampled request reads the database only if the index fails, so its fallback
+  // costs the index's failure (at most APP_INDEX_SEARCH_TIMEOUT_MS) plus the database read, and a
+  // successful one reads no grid page at all.
+  const sampled = Math.random() < env.APP_INDEX_SEARCH_COMPARE_SAMPLE;
+  const early = sampled ? reads.listAvailableListings(input, opts) : null;
+  // Handled where it is used; this only keeps an early rejection from being reported as
+  // unhandled while the index call is in flight.
+  early?.catch(() => undefined);
+  const dbPage = () => early ?? reads.listAvailableListings(input, opts);
 
   let indexed: IndexResult[];
   try {
     indexed = await fetchIndexResults(query, input, indexKind(input, opts));
   } catch (err) {
-    return fallBack(dbPage, query, err instanceof IndexUnavailable ? err.reason : 'error');
+    return fallBack(dbPage(), query, err instanceof IndexUnavailable ? err.reason : 'error');
   }
   const slugs = indexed.map((r) => r.slug);
   let cards: ListingCard[];
   try {
     cards = await reads.listStoreListingsBySlugs(slugs, input, opts);
   } catch {
-    return fallBack(dbPage, query, 'error');
+    return fallBack(dbPage(), query, 'error');
   }
-  const db = await dbPage.catch(() => null);
-  report({
+  const r: Report = {
     query,
     source: 'index',
     reason: 'ok',
     served: cards,
     indexed: slugs.length,
-    db: db?.items,
+    db: 'unsampled',
     fields: compareIndexFields(indexed, cards, { redCapable: opts.redCapable ?? false }),
-  });
+  };
+  recordCounters(r);
+  if (early) {
+    // Fire and forget, with its own catch: the response has already been decided.
+    void early
+      .then(
+        (db) => logLine({ ...r, db: db.items }),
+        () => logLine({ ...r, db: undefined })
+      )
+      .catch(() => undefined);
+  } else {
+    logLine(r);
+  }
   return { items: cards, nextCursor: undefined, search: 'index' };
 }
 
@@ -212,7 +234,7 @@ async function fallBack(
   reason: AppIndexSearchReason
 ): Promise<StoreGridPage> {
   const db = await dbPage;
-  report({
+  const r: Report = {
     query,
     source: 'db_fallback',
     reason,
@@ -220,7 +242,9 @@ async function fallBack(
     indexed: 0,
     db: db.items,
     fields: null,
-  });
+  };
+  recordCounters(r);
+  logLine(r);
   return db;
 }
 
@@ -324,7 +348,7 @@ function matchingSlugs(items: StoreGridItem[], query: string): Set<string> {
   return out;
 }
 
-function report(r: {
+type Report = {
   query: string;
   source: AppIndexSearchSource;
   reason: AppIndexSearchReason;
@@ -332,25 +356,37 @@ function report(r: {
   served: ListingCard[] | null;
   /** How many slugs the index returned (before the store gates). */
   indexed: number;
-  /** The database page, or undefined when it failed. */
-  db: StoreGridItem[] | undefined;
+  /** The database page; undefined when it failed, 'unsampled' when it was not read. */
+  db: StoreGridItem[] | undefined | 'unsampled';
   /** The field comparison, or null on the database path. */
   fields: ReturnType<typeof compareIndexFields> | null;
-}) {
+};
+
+function recordCounters(r: Report) {
   recordAppIndexSearch(r.source, r.reason);
   if (r.fields) {
     for (const f of APP_INDEX_COMPARED_FIELDS) recordAppIndexSearchFieldDiffs(f, r.fields.diffs[f]);
   }
+}
+
+/** The comparison log line: counts only, never the query text or a value. */
+function logLine(r: Report) {
   const fieldDiffs = r.fields ? formatCounts(r.fields.diffs, APP_INDEX_COMPARED_FIELDS) : 'none';
   const fieldExpected = r.fields ? formatCounts(r.fields.expected, ['iconUrl', 'rating']) : 'none';
-  const dbSlugs = r.db ? matchingSlugs(r.db, r.query) : null;
   const served = r.served ?? [];
-  const overlap = dbSlugs ? served.filter((c) => dbSlugs.has(c.slug)).length : 0;
+  let db = 'none';
+  let overlap = 'none';
+  if (r.db === undefined) {
+    db = '-1';
+    overlap = '0';
+  } else if (r.db !== 'unsampled') {
+    const dbSlugs = matchingSlugs(r.db, r.query);
+    db = String(dbSlugs.size);
+    overlap = String(served.filter((c) => dbSlugs.has(c.slug)).length);
+  }
   console.info(
-    `app-index-search: q_len=${r.query.length} index=${served.length} db=${
-      dbSlugs ? dbSlugs.size : -1
-    } overlap=${overlap} dropped=${Math.max(0, r.indexed - served.length)} source=${
-      r.source
-    } reason=${r.reason} field_diffs=${fieldDiffs} field_expected=${fieldExpected}`
+    `app-index-search: q_len=${r.query.length} index=${served.length} db=${db} overlap=${overlap} ` +
+      `dropped=${Math.max(0, r.indexed - served.length)} source=${r.source} reason=${r.reason} ` +
+      `field_diffs=${fieldDiffs} field_expected=${fieldExpected}`
   );
 }

@@ -6,20 +6,14 @@ import type {
   StoreGridItem,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { NsfwLevel } from '~/server/common/enums';
+import { instrumentationRegistry } from '@civitai/telemetry/client';
 import type { AppIndexSearchReason } from '~/server/prom/app-index-search.metrics';
 import type { ListAvailableListingsOpts } from '~/server/services/blocks/app-listing.service';
 
-const h = vi.hoisted(() => ({
+const h = {
   listAvailableListings: vi.fn(),
   listStoreListingsBySlugs: vi.fn(),
-  recordAppIndexSearch: vi.fn(),
-  recordAppIndexSearchFieldDiffs: vi.fn(),
-}));
-vi.mock('~/server/prom/app-index-search.metrics', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  recordAppIndexSearch: h.recordAppIndexSearch,
-  recordAppIndexSearchFieldDiffs: h.recordAppIndexSearchFieldDiffs,
-}));
+};
 
 const { listStoreGrid: listStoreGridWith, APP_INDEX_SEARCH_TIMEOUT_MS } = await import(
   '~/server/services/blocks/app-index-search.service'
@@ -122,15 +116,38 @@ function indexAnswers(results: IndexResult[]) {
   stubIndex(() => Response.json({ results }));
 }
 
-/** The field_diffs counter calls with a non-zero count, as `field:count`. */
-function fieldDiffCalls(): string[] {
-  return h.recordAppIndexSearchFieldDiffs.mock.calls
-    .filter((c: unknown[]) => (c[1] as number) > 0)
-    .map((c: unknown[]) => `${String(c[0])}:${String(c[1])}`);
+// The real counters, read from the registry `/api/metrics` scrapes. They are process-wide, so
+// every assertion is on how far a series moved since this test began.
+const REQUESTS = 'civitai_app_index_search_requests_total';
+const FIELD_DIFFS = 'civitai_app_index_search_field_diffs_total';
+async function readCounter(name: string): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const metric = instrumentationRegistry.getSingleMetric(name);
+  if (!metric) return out;
+  for (const v of (await metric.get()).values) {
+    const key = Object.values(v.labels).join('/');
+    out.set(key, (out.get(key) ?? 0) + v.value);
+  }
+  return out;
 }
+let baseline: { requests: Map<string, number>; diffs: Map<string, number> };
+async function moved(name: string, before: Map<string, number>): Promise<string[]> {
+  const now = await readCounter(name);
+  return [...now]
+    .filter(([k, v]) => v > (before.get(k) ?? 0))
+    .map(([k, v]) => `${k}:${v - (before.get(k) ?? 0)}`)
+    .sort();
+}
+/** The request counter series that moved since the test began, as `source/reason:delta`. */
+const requestsMoved = () => moved(REQUESTS, baseline.requests);
+/** The field diff counter series that moved since the test began, as `field:delta`. */
+const fieldDiffsMoved = () => moved(FIELD_DIFFS, baseline.diffs);
+/** Lets fire-and-forget work queued by the service (the sampled comparison) run. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-beforeEach(() => {
-  setEnv({ APP_INDEX_URL: INDEX_URL });
+beforeEach(async () => {
+  // Every request compares unless a test says otherwise, so the log lines carry db and overlap.
+  setEnv({ APP_INDEX_URL: INDEX_URL, APP_INDEX_SEARCH_COMPARE_SAMPLE: 1 });
   fetchCalls = [];
   logLines = [];
   h.listAvailableListings.mockReset().mockResolvedValue(DB_PAGE);
@@ -144,8 +161,7 @@ beforeEach(() => {
       return c ? [c] : [];
     })
   );
-  h.recordAppIndexSearch.mockReset();
-  h.recordAppIndexSearchFieldDiffs.mockReset();
+  baseline = { requests: await readCounter(REQUESTS), diffs: await readCounter(FIELD_DIFFS) };
   vi.spyOn(console, 'info').mockImplementation((...args: unknown[]) => {
     logLines.push(String(args[0]));
   });
@@ -171,8 +187,9 @@ describe('listStoreGrid', () => {
     expect(h.listAvailableListings.mock.calls[0][1]).toBe(opts);
     expect(fetchCalls).toEqual([]);
     expect(h.listStoreListingsBySlugs).not.toHaveBeenCalled();
-    expect(h.recordAppIndexSearch).not.toHaveBeenCalled();
-    expect(h.recordAppIndexSearchFieldDiffs).not.toHaveBeenCalled();
+    await settle();
+    expect(await requestsMoved()).toEqual([]);
+    expect(await fieldDiffsMoved()).toEqual([]);
     expect(logLines).toEqual([]);
   });
 
@@ -186,7 +203,7 @@ describe('listStoreGrid', () => {
       expect(h.listAvailableListings.mock.calls[0][0]).toBe(input);
     }
     expect(fetchCalls).toEqual([]);
-    expect(h.recordAppIndexSearch).not.toHaveBeenCalled();
+    expect(await requestsMoved()).toEqual([]);
   });
 
   it('flag on, SFW viewer: the index answers, in its order, with database cards', async () => {
@@ -208,9 +225,10 @@ describe('listStoreGrid', () => {
       search: 'index',
       indexSearchRoutable: true,
     });
-    expect(h.recordAppIndexSearch).toHaveBeenCalledWith('index', 'ok');
+    expect(await requestsMoved()).toEqual(['index/ok:1']);
     // Identical fields (BETA's rating differs only in case): no field counter moves.
-    expect(fieldDiffCalls()).toEqual([]);
+    expect(await fieldDiffsMoved()).toEqual([]);
+    await settle();
     // db: alpha (name) and beta (tagline) contain "pixel"; the sub-listing is not a listing.
     // overlap: beta and alpha; dropped: "unlisted", which the store gates did not return.
     expect(logLines).toEqual([
@@ -235,7 +253,8 @@ describe('listStoreGrid', () => {
     indexAnswers([indexed(DELTA, over), indexed(BETA), indexed(ALPHA)]);
     const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
     expect(res.items).toEqual([card(DELTA), card(BETA), card(ALPHA)]);
-    expect(fieldDiffCalls()).toEqual([`${field.split(' ')[0]}:1`]);
+    expect(await fieldDiffsMoved()).toEqual([`${field.split(' ')[0]}:1`]);
+    await settle();
     expect(logLines).toEqual([
       'app-index-search: q_len=5 index=3 db=2 overlap=2 dropped=0 source=index reason=ok ' +
         `field_diffs=${counts} field_expected=iconUrl:0,rating:0`,
@@ -269,7 +288,8 @@ describe('listStoreGrid', () => {
     hydrated.set('delta', card(dbCard));
     indexAnswers([idx]);
     await listStoreGrid(INPUT, { ...SFW_OPTS, redCapable }, { indexSearch: true });
-    expect(fieldDiffCalls()).toEqual([]);
+    expect(await fieldDiffsMoved()).toEqual([]);
+    await settle();
     expect(logLines[0]).toContain(
       `field_diffs=name:0,tagline:0,iconUrl:0,rating:0 field_expected=${expected}`
     );
@@ -282,7 +302,7 @@ describe('listStoreGrid', () => {
     );
     indexAnswers([indexed(DELTA)]);
     await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
-    expect(fieldDiffCalls()).toEqual(['iconUrl:1']);
+    expect(await fieldDiffsMoved()).toEqual(['iconUrl:1']);
   });
 
   it.each<[string, IndexReply, AppIndexSearchReason]>([
@@ -310,8 +330,8 @@ describe('listStoreGrid', () => {
     expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: true });
     expect(fetchCalls).toHaveLength(1);
     expect(h.listStoreListingsBySlugs).not.toHaveBeenCalled();
-    expect(h.recordAppIndexSearch).toHaveBeenCalledWith('db_fallback', reason);
-    expect(h.recordAppIndexSearchFieldDiffs).not.toHaveBeenCalled();
+    expect(await requestsMoved()).toEqual([`db_fallback/${reason}:1`]);
+    expect(await fieldDiffsMoved()).toEqual([]);
     expect(logLines).toEqual([
       'app-index-search: q_len=5 index=0 db=2 overlap=0 dropped=0 source=db_fallback ' +
         `reason=${reason} field_diffs=none field_expected=none`,
@@ -322,20 +342,19 @@ describe('listStoreGrid', () => {
     h.listStoreListingsBySlugs.mockRejectedValue(new Error('db'));
     const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
     expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: true });
-    expect(h.recordAppIndexSearch).toHaveBeenCalledWith('db_fallback', 'error');
+    expect(await requestsMoved()).toEqual(['db_fallback/error:1']);
   });
 
   it('a viewer who may see r/x listings is never sent to the index', async () => {
     for (const viewerBrowsingLevel of [NsfwLevel.R, NsfwLevel.X, NsfwLevel.PG | NsfwLevel.R]) {
-      h.recordAppIndexSearch.mockClear();
       const res = await listStoreGrid(
         INPUT,
         { ...SFW_OPTS, redCapable: true, viewerBrowsingLevel },
         { indexSearch: true }
       );
       expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: false });
-      expect(h.recordAppIndexSearch).toHaveBeenCalledWith('db_fallback', 'mature_viewer');
     }
+    expect(await requestsMoved()).toEqual(['db_fallback/mature_viewer:3']);
     expect(fetchCalls).toEqual([]);
   });
 
@@ -357,7 +376,7 @@ describe('listStoreGrid', () => {
     const res = await listStoreGrid({ ...INPUT, ...extra }, SFW_OPTS, { indexSearch: true });
     expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: routable });
     expect(fetchCalls).toEqual([]);
-    expect(h.recordAppIndexSearch).toHaveBeenCalledWith('db_fallback', reason);
+    expect(await requestsMoved()).toEqual([`db_fallback/${reason}:1`]);
   });
 
   // The index could leave out listings the database grid shows these viewers, so they keep it.
@@ -370,7 +389,7 @@ describe('listStoreGrid', () => {
     expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: false });
     expect(fetchCalls).toEqual([]);
     expect(h.listStoreListingsBySlugs).not.toHaveBeenCalled();
-    expect(h.recordAppIndexSearch).toHaveBeenCalledWith('db_fallback', reason);
+    expect(await requestsMoved()).toEqual([`db_fallback/${reason}:1`]);
     // Not routable is said even on a page without a query, so the client never sends one.
     const plain = await listStoreGrid(
       { ...INPUT, query: undefined },
@@ -398,7 +417,77 @@ describe('listStoreGrid', () => {
     expect(new URL(fetchCalls[0]).searchParams.get('kind') ?? '').toBe(kind);
   });
 
-  it('times out quickly', () => {
-    expect(APP_INDEX_SEARCH_TIMEOUT_MS).toBe(300);
+  it('an index that does not answer is abandoned at its deadline for the database page', async () => {
+    // The index holds the request open until the service's own deadline aborts it.
+    vi.stubGlobal('fetch', (url: string, init: RequestInit) => {
+      fetchCalls.push(url);
+      return new Promise<Response>((_, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    });
+    const start = Date.now();
+    const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
+    const waited = Date.now() - start;
+    expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: true });
+    expect(await requestsMoved()).toEqual(['db_fallback/timeout:1']);
+    // At its deadline: not before it, and not long after.
+    expect(waited).toBeGreaterThanOrEqual(APP_INDEX_SEARCH_TIMEOUT_MS - 20);
+    expect(waited).toBeLessThan(APP_INDEX_SEARCH_TIMEOUT_MS + 2_000);
+  });
+
+  it('an index answer does not wait for a slow database page', async () => {
+    let releaseDb: (page: typeof DB_PAGE) => void = () => undefined;
+    h.listAvailableListings.mockReset().mockReturnValue(
+      new Promise((resolve) => {
+        releaseDb = resolve;
+      })
+    );
+    const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
+    // Answered while the database page is still pending.
+    expect(res.search).toBe('index');
+    expect(h.listAvailableListings).toHaveBeenCalledTimes(1);
+    expect(await requestsMoved()).toEqual(['index/ok:1']);
+    await settle();
+    expect(logLines).toEqual([]);
+    // The comparison is logged once the database page arrives.
+    releaseDb(DB_PAGE);
+    await settle();
+    expect(logLines).toEqual([
+      'app-index-search: q_len=5 index=3 db=2 overlap=2 dropped=1 source=index reason=ok ' +
+        'field_diffs=name:0,tagline:0,iconUrl:0,rating:0 field_expected=iconUrl:0,rating:0',
+    ]);
+  });
+
+  it('a failing sampled database read never fails the index answer', async () => {
+    h.listAvailableListings.mockReset().mockRejectedValue(new Error('db down'));
+    const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
+    expect(res.search).toBe('index');
+    await settle();
+    expect(logLines[0]).toContain('db=-1 overlap=0');
+  });
+
+  it('sample 0: an index answer reads no database page', async () => {
+    setEnv({ APP_INDEX_SEARCH_COMPARE_SAMPLE: 0 });
+    const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
+    expect(res.search).toBe('index');
+    await settle();
+    expect(h.listAvailableListings).not.toHaveBeenCalled();
+    expect(await requestsMoved()).toEqual(['index/ok:1']);
+    expect(logLines).toEqual([
+      'app-index-search: q_len=5 index=3 db=none overlap=none dropped=1 source=index reason=ok ' +
+        'field_diffs=name:0,tagline:0,iconUrl:0,rating:0 field_expected=iconUrl:0,rating:0',
+    ]);
+  });
+
+  it.each<[string, number]>([
+    ['sampled: the database read already in flight', 1],
+    ['unsampled: one database read, after the index failed', 0],
+  ])('index failure, %s, is the fallback', async (_, sample) => {
+    setEnv({ APP_INDEX_SEARCH_COMPARE_SAMPLE: sample });
+    stubIndex(() => new Response('{"error":"internal"}', { status: 500 }));
+    const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
+    expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: true });
+    expect(h.listAvailableListings).toHaveBeenCalledTimes(1);
+    expect(await requestsMoved()).toEqual(['db_fallback/error:1']);
   });
 });
