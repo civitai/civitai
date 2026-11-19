@@ -147,6 +147,7 @@ export const KNIGHTS_GAME_SETTINGS = {
     env: 'KNIGHTS_CONVERSION_DISABLED',
     label: 'Gold to Buzz conversion',
   },
+  signalsDisabled: { kind: 'toggle', env: 'KNIGHTS_SIGNALS_DISABLED', label: 'Live updates' },
   harvest: { kind: 'toggle', env: 'KNIGHTS_HARVEST', label: 'Harvest' },
   harvestHiddenCheckShare: {
     kind: 'number',

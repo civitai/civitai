@@ -1315,12 +1315,18 @@ describe('search by uploaded image', () => {
     expect(calls[0].query).toEqual({ imageUrl: IMAGE_URL });
     expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
     expect(page.items.map((i) => i.id)).toEqual([101, 102]);
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ searchPath: 'served', resultIds: [101, 102] })
+    );
   });
 
   it('returns nothing for an upload above the viewer, without asking the index', async () => {
     const { page, calls } = await run(R, PG | 2);
     expect(page.items).toEqual([]);
     expect(calls).toHaveLength(0);
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ searchPath: 'refused_upload_level', resultIds: [] })
+    );
   });
 
   it('serves the same upload to a viewer who may see its level', async () => {

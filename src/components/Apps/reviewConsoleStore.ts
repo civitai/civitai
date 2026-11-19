@@ -10,20 +10,11 @@ import {
  * 🔴 NOTHING HERE IS STORED OR SENT. The dev tunnel POSTs the same reports to
  * `/api/apps/dev/preview-errors` for App Assistant; the review page must not, and does not: this
  * module has no network path at all. A reload, or opening another submission, starts empty.
- *
- * How the reports get here: the review host lists `blockErrors:v1` in `BLOCK_INIT.capabilities`
- * (`BLOCK_HOST_ERROR_REPORTS`), and an SDK at or above its {@link REVIEW_CONSOLE_MIN_SDKS} entry then
- * forwards uncaught errors, unhandled rejections and `console.error` as non-fatal
- * `BLOCK_ERROR`s. A fatal crash (`host.reportError(…, { fatal: true })`) arrives from any SDK.
- *
- * Pure and React-free, so the rules run in the node-env `unit` project; `ReviewConsole.tsx` is
- * the view.
  */
 
 /**
  * Each SDK's first release that forwards non-fatal errors to a review preview, keyed by the
- * `sdkName` it sends in `BLOCK_READY`: `@civitai/sdk` from 0.29.0 and `@civitai/blocks-react` from
- * 0.85.0, both published. An SDK not named here forwards none.
+ * `sdkName` it sends in `BLOCK_READY`. An SDK not named here forwards none.
  */
 export const REVIEW_CONSOLE_MIN_SDKS: Record<string, { packageName: string; version: string }> = {
   sdk: { packageName: '@civitai/sdk', version: '0.29.0' },
@@ -32,6 +23,13 @@ export const REVIEW_CONSOLE_MIN_SDKS: Record<string, { packageName: string; vers
 
 /** Entries kept at most. A fatal one is never the one dropped. */
 export const REVIEW_CONSOLE_MAX_ENTRIES = 500;
+
+/**
+ * How long a change waits before subscribers hear of it, so a burst of reports re-renders the
+ * console once. Each `BLOCK_ERROR` arrives as its own message event, so a microtask would not
+ * coalesce them; and an app can post them without the SDK's rate limit.
+ */
+export const REVIEW_CONSOLE_NOTIFY_MS = 100;
 
 export type ReviewConsoleEntry = PreviewErrorReport & {
   id: number;
@@ -43,16 +41,24 @@ export type ReviewConsoleEntry = PreviewErrorReport & {
 };
 
 /**
- * "Preview 2" for an entry, or `null` while only one frame has reported: the label exists to
- * explain a duplicate, so a page with one run carries none. Numbered in the order frames FIRST
- * reported, not the order they mounted.
+ * Each frame's label ("Preview 2"), keyed by frame, or an EMPTY map while only one frame has
+ * reported: the label exists to explain a duplicate, so a page with one run carries none.
+ * Numbered in the order frames FIRST reported, not the order they mounted.
+ *
+ * Built once for the whole list, in one pass: a per-entry lookup that rescans every entry made
+ * a render of N rows cost O(N² log N).
  */
-export function reviewConsoleFrameLabel(
-  entries: readonly ReviewConsoleEntry[],
-  entry: Pick<ReviewConsoleEntry, 'frame'>
-): string | null {
-  const frames = [...new Set([...entries].sort((a, b) => a.id - b.id).map((e) => e.frame))];
-  return frames.length > 1 ? `Preview ${frames.indexOf(entry.frame) + 1}` : null;
+export function reviewConsoleFrameLabels(
+  entries: readonly ReviewConsoleEntry[]
+): ReadonlyMap<number, string> {
+  const firstId = new Map<number, number>();
+  for (const e of entries) {
+    const seen = firstId.get(e.frame);
+    if (seen === undefined || e.id < seen) firstId.set(e.frame, e.id);
+  }
+  if (firstId.size < 2) return new Map();
+  const frames = [...firstId].sort((a, b) => a[1] - b[1]).map(([frame]) => frame);
+  return new Map(frames.map((frame, i) => [frame, `Preview ${i + 1}`]));
 }
 
 /** What the app's `BLOCK_READY` said about the SDK that sent it. */
@@ -80,6 +86,14 @@ function parseVersion(version: string): [number, number, number, boolean] | null
   return [Number(match[1]), Number(match[2]), Number(match[3]), match[4] !== undefined];
 }
 
+/** The cut-off entry for an app-sent SDK name, or `undefined` for a name not in the table. */
+function minSdkFor(name: string | null): { packageName: string; version: string } | undefined {
+  // `hasOwn`: an app-sent name like `constructor` must not hit an inherited property.
+  return name && Object.hasOwn(REVIEW_CONSOLE_MIN_SDKS, name)
+    ? REVIEW_CONSOLE_MIN_SDKS[name]
+    : undefined;
+}
+
 /**
  * Does this SDK forward non-fatal errors to a review preview? Only an SDK named in
  * {@link REVIEW_CONSOLE_MIN_SDKS}, at or above ITS OWN entry. An unknown SDK, one that names no
@@ -87,11 +101,7 @@ function parseVersion(version: string): [number, number, number, boolean] | null
  * sorts below it, as semver orders it.
  */
 export function sdkForwardsReviewErrors(sdk: ReviewConsoleSdk): boolean {
-  // `hasOwn`, so a name like `constructor` cannot reach an inherited property.
-  const cutoff =
-    sdk.name && Object.hasOwn(REVIEW_CONSOLE_MIN_SDKS, sdk.name)
-      ? REVIEW_CONSOLE_MIN_SDKS[sdk.name]
-      : undefined;
+  const cutoff = minSdkFor(sdk.name);
   if (!cutoff || !sdk.version) return false;
   const have = parseVersion(sdk.version);
   const min = parseVersion(cutoff.version);
@@ -104,13 +114,9 @@ export function sdkForwardsReviewErrors(sdk: ReviewConsoleSdk): boolean {
 
 /** "@civitai/sdk 0.28.0": the SDK as its package; an unknown name is shown as sent. */
 export function sdkPackageLabel(sdk: ReviewConsoleSdk): string {
-  // The package names live in REVIEW_CONSOLE_MIN_SDKS only, so a new SDK is named and cut off
-  // in one place. `hasOwn`, so an app-sent name cannot reach an inherited property.
   const name = !sdk.name
     ? 'an SDK that does not name itself'
-    : Object.hasOwn(REVIEW_CONSOLE_MIN_SDKS, sdk.name)
-    ? REVIEW_CONSOLE_MIN_SDKS[sdk.name]!.packageName
-    : sdk.name;
+    : minSdkFor(sdk.name)?.packageName ?? sdk.name;
   return sdk.version ? `${name} ${sdk.version}` : name;
 }
 
@@ -122,11 +128,8 @@ export function sdkPackageLabel(sdk: ReviewConsoleSdk): string {
 export function reviewConsoleSdkNotice(sdk: ReviewConsoleSdk | null): string | null {
   if (!sdk || sdkForwardsReviewErrors(sdk)) return null;
   const label = sdkPackageLabel(sdk);
-  // Its own package's cut-off when it names one we know; otherwise every package's.
-  const own =
-    sdk.name && Object.hasOwn(REVIEW_CONSOLE_MIN_SDKS, sdk.name)
-      ? [REVIEW_CONSOLE_MIN_SDKS[sdk.name]!]
-      : Object.values(REVIEW_CONSOLE_MIN_SDKS);
+  const cutoff = minSdkFor(sdk.name);
+  const own = cutoff ? [cutoff] : Object.values(REVIEW_CONSOLE_MIN_SDKS);
   const min = own.map((c) => `${c.packageName} ${c.version}`).join(' or ');
   return `This app's SDK (${label}) is too old to report other errors, so only fatal crashes show here. Apps report every error from ${min}.`;
 }
@@ -154,14 +157,18 @@ export function reviewConsoleEntryLabel(entry: Pick<ReviewConsoleEntry, 'fatal' 
  * The whole console as plain text, in display order: one line per entry — ISO time, label,
  * message — then its stack, indented. For a rejection note or a message to the author.
  */
-export function formatReviewConsoleLog(state: ReviewConsoleState): string {
+export function formatReviewConsoleLog(
+  state: ReviewConsoleState,
+  /** The view's own labels for `state.entries`, so one render builds them once. */
+  frames: ReadonlyMap<number, string> = reviewConsoleFrameLabels(state.entries)
+): string {
   const ordered = orderReviewConsoleEntries(state.entries);
   const sdk = state.sdk ? sdkPackageLabel(state.sdk) : 'not started';
   const lines = [
     `App console: ${ordered.length} error${ordered.length === 1 ? '' : 's'} (SDK: ${sdk})`,
   ];
   for (const entry of ordered) {
-    const frame = reviewConsoleFrameLabel(state.entries, entry);
+    const frame = frames.get(entry.frame);
     lines.push(
       `[${new Date(entry.at).toISOString()}] ${frame ? `${frame} ` : ''}${reviewConsoleEntryLabel(
         entry
@@ -191,7 +198,8 @@ export type ReviewConsoleFrame = {
 /**
  * One console for one page session. Each preview frame takes its own `openFrame()` sink, whose
  * `report` and `ready` are stable functions, so they can be handed to the host as props without
- * re-rendering it.
+ * re-rendering it. `getState()` is current at once; subscribers hear of changes at most once per
+ * `REVIEW_CONSOLE_NOTIFY_MS`.
  */
 export function createReviewConsoleStore(
   maxEntries = REVIEW_CONSOLE_MAX_ENTRIES
@@ -199,10 +207,15 @@ export function createReviewConsoleStore(
   let state: ReviewConsoleState = { entries: [], sdk: null };
   let nextId = 1;
   let nextFrame = 1;
+  let pending: ReturnType<typeof setTimeout> | null = null;
   const listeners = new Set<() => void>();
+  const notify = () => {
+    pending = null;
+    for (const listener of [...listeners]) listener();
+  };
   const set = (next: ReviewConsoleState) => {
     state = next;
-    for (const listener of [...listeners]) listener();
+    if (pending === null) pending = setTimeout(notify, REVIEW_CONSOLE_NOTIFY_MS);
   };
   return {
     getState: () => state,

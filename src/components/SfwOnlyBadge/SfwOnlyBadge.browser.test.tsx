@@ -196,6 +196,28 @@ describe('base model filter (Models and Images)', () => {
   });
 });
 
+describe('base model filter on images', () => {
+  // SDXL 1.0 (visible) is awaited first, or the absence check passes on a list not yet rendered.
+  const sdxlTurbo = async (includeHidden?: boolean) => {
+    renderWithProviders(
+      <BaseModelFilterSelect includeHidden={includeHidden} value={[]} onChange={vi.fn()} />
+    );
+    await page.getByPlaceholder('All Base Models').fill('SDXL');
+    await expect
+      .element(page.getByRole('option', { name: 'SDXL 1.0', exact: true }))
+      .toBeInTheDocument();
+    return page.getByRole('option', { name: /^SDXL Turbo/ });
+  };
+
+  test('lists the hidden bases when asked', async () => {
+    await expect.element(await sdxlTurbo(true)).toBeInTheDocument();
+  });
+
+  test('leaves them out otherwise', async () => {
+    await expect.element(await sdxlTurbo()).not.toBeInTheDocument();
+  });
+});
+
 describe('search refinement list', () => {
   const renderRefinement = () => {
     mocks.refinementItems = ['SD 3.5 Large Turbo', 'SDXL 1.0', 'Ideogram 4.5'].map((value) => ({
