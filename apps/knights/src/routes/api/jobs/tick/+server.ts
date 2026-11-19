@@ -154,6 +154,7 @@ export const POST: RequestHandler = async ({ request }) => {
     unservable: unservable.value.unservable,
     publishesAfterExpiry: unservable.value.publishesAfterExpiry,
     unpublishedDrafts: unservable.value.unpublishedDrafts,
+    imageUnservable: unservable.value.imageUnservable,
     settledVotes: progression.value.votes,
     hiddenChecksGraded: hidden.value.graded,
     yesNoClosed: yesNo.value.unplayable + yesNo.value.stale,

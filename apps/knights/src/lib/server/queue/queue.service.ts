@@ -13,7 +13,11 @@ import {
 import { PROGRESSION } from '../progression/config';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
-import { ESCALATED_FROM_LEVEL_META_KEY, servableImage } from '@civitai/db/knights';
+import {
+  ESCALATED_FROM_LEVEL_META_KEY,
+  servableImage,
+  servableImageContent,
+} from '@civitai/db/knights';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { votePartitionName } from './vote-partition';
 import { RANKS, rankIndex, type Rank } from '../ranks';
@@ -1219,6 +1223,8 @@ export async function escalateExpired(
 
 /** `reason` of an item closed because its image, or the image's post, is gone (`closeUnservableItems`). */
 export const UNSERVABLE_REASON = 'unservable';
+/** `reason` of an open item closed because its image on a live post stopped being servable (`closeUnservableItems`). */
+export const IMAGE_UNSERVABLE_REASON = 'image-unservable';
 /** `reason` of an item closed because its post publishes only after the item would have expired (`closeUnservableItems`). */
 export const PUBLISHES_AFTER_EXPIRY_REASON = 'publishes-after-expiry';
 /** `reason` of an item closed because its post is still a draft long after queueing (`closeUnservableItems`). */
@@ -1244,7 +1250,12 @@ END`;
 /**
  * Closes open rating items Knights can never serve, so they stop filling the queue until they expire. Each closes like `expired`:
  * no label, no write-back, leftover votes inconclusive (`settleFinalItems`, next in the tick, settles them unpaid).
- * - `unservable`: the image row is gone, or its post is (`Image.post` is `onDelete: SetNull`). Neither comes back.
+ * - `unservable`: the image row is gone, or its post is (`Image.post` is `onDelete: SetNull`). Neither comes back. Also an item
+ *   waiting on the Inquisitors (`Inquisitor`, or `Ruling` whose moderator lease has lapsed), which no moderator can rule on once
+ *   the image is gone; a ruling in progress is left alone, and so is an Inquisitor item whose image is merely blocked.
+ * - `image-unservable`: the post is live (published, not later than `now`) but the image fails `servableImageContent`: blocked,
+ *   held for review, flagged poi/minor, or unrated. The feed skips it, so it would only wait out its windows. A level a
+ *   moderator locked is left to `closeModeratorRuledItems`, which runs first and grades the votes against it.
  * - `publishes-after-expiry`: the post is scheduled to publish after the latest moment the item could still be open
  *   (`latestStageEndSql`), so it would close as `expired` before any player could be served it. Only for an item still at the
  *   stage it was queued at (never escalated, `minRank` Knight, where nobody serving the stage means nobody serves any stage, so
@@ -1259,9 +1270,14 @@ END`;
 export async function closeUnservableItems(
   db: Kysely<DB>,
   { now, limit = 200 }: { now: Date; limit?: number }
-): Promise<{ unservable: number; publishesAfterExpiry: number; unpublishedDrafts: number }> {
+): Promise<{
+  unservable: number;
+  publishesAfterExpiry: number;
+  unpublishedDrafts: number;
+  imageUnservable: number;
+}> {
   const result = await db.transaction().execute(async (trx) => {
-    // Primary-key lookups into Image and Post from the open items: never a scan of either table.
+    // Primary-key lookups into Image and Post from the open and Inquisitor items: never a scan of either table.
     const due = await trx
       .selectFrom('KnightsQueueItem as i')
       .leftJoin('Image as img', 'img.id', 'i.imageId')
@@ -1270,21 +1286,43 @@ export async function closeUnservableItems(
         'i.id',
         sql<boolean>`"p"."id" IS NULL`.as('gone'),
         sql<boolean>`"p"."id" IS NOT NULL AND "p"."publishedAt" IS NULL`.as('draft'),
+        sql<boolean>`"p"."publishedAt" IS NOT NULL AND "p"."publishedAt" <= ${utc(now)}`.as('live'),
       ])
-      .where('i.status', '=', 'Open')
+      // Narrows to the status index before the per-reason rules below.
+      .where('i.status', 'in', ['Open', 'Inquisitor', 'Ruling'])
       .where('i.isHiddenCheck', '=', false)
       .where('i.audience', 'is', null)
       .where((eb) =>
         eb.or([
           // Also true when the image is gone: the Post join then has nothing to match.
-          eb('p.id', 'is', null),
           eb.and([
+            eb('p.id', 'is', null),
+            eb.or([
+              eb('i.status', '=', 'Open'),
+              eb('i.status', '=', 'Inquisitor'),
+              // The moderator app's claim (`RULING_LEASE_MS`): a lapsed lease is free to reclaim, a live one is a ruling in progress.
+              eb.and([
+                eb('i.status', '=', 'Ruling'),
+                eb.or([eb('i.nextAttemptAt', 'is', null), eb('i.nextAttemptAt', '<=', utc(now))]),
+              ]),
+            ]),
+          ]),
+          eb.and([
+            eb('i.status', '=', 'Open'),
+            eb('p.publishedAt', 'is not', null),
+            eb('p.publishedAt', '<=', utc(now)),
+            eb.not(servableImageContent(eb)),
+            eb.not(moderatorRuledImageSql(eb)),
+          ]),
+          eb.and([
+            eb('i.status', '=', 'Open'),
             eb('i.source', '=', SCAN_SAMPLE_SOURCE),
             eb('p.id', 'is not', null),
             eb('p.publishedAt', 'is', null),
             eb('i.createdAt', '<', utc(addHours(now, -UNPUBLISHED_DRAFT_HOURS))),
           ]),
           eb.and([
+            eb('i.status', '=', 'Open'),
             eb('i.minRank', '=', 'Knight'),
             eb('i.escalatedAt', 'is', null),
             eb('i.expiresAt', 'is not', null),
@@ -1311,20 +1349,28 @@ export async function closeUnservableItems(
 
     const gone = due.filter((item) => item.gone).map((item) => item.id);
     const drafts = due.filter((item) => item.draft).map((item) => item.id);
-    const late = due.filter((item) => !item.gone && !item.draft).map((item) => item.id);
+    const live = due
+      .filter((item) => !item.gone && !item.draft && item.live)
+      .map((item) => item.id);
+    const late = due
+      .filter((item) => !item.gone && !item.draft && !item.live)
+      .map((item) => item.id);
     if (gone.length > 0) await closeItems(trx, gone, now, UNSERVABLE_REASON);
     if (late.length > 0) await closeItems(trx, late, now, PUBLISHES_AFTER_EXPIRY_REASON);
     if (drafts.length > 0) await closeItems(trx, drafts, now, UNPUBLISHED_DRAFT_REASON);
+    if (live.length > 0) await closeItems(trx, live, now, IMAGE_UNSERVABLE_REASON);
     return {
       unservable: gone.length,
       publishesAfterExpiry: late.length,
       unpublishedDrafts: drafts.length,
+      imageUnservable: live.length,
     };
   });
   for (let i = 0; i < result.unservable; i++) metrics.escalation(UNSERVABLE_REASON);
   for (let i = 0; i < result.publishesAfterExpiry; i++)
     metrics.escalation(PUBLISHES_AFTER_EXPIRY_REASON);
   for (let i = 0; i < result.unpublishedDrafts; i++) metrics.escalation(UNPUBLISHED_DRAFT_REASON);
+  for (let i = 0; i < result.imageUnservable; i++) metrics.escalation(IMAGE_UNSERVABLE_REASON);
   return result;
 }
 
