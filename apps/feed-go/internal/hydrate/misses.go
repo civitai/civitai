@@ -70,8 +70,8 @@ type MissCompute struct {
 	ObserveWrite func(cache, result string, n int)
 	// WriteLog logs each cache write, rate-limited (FEED_GO_CACHE_WRITE_LOG_PER_MIN); nil logs none.
 	WriteLog *WriteLog
-	// WriteTimeout bounds one write-back round trip, run detached from the request (writeContext);
-	// 0 is cacheWriteTimeout. Tests shorten it.
+	// WriteTimeout bounds a request's write-back, run detached from the request (writeContext): the
+	// total time its round trips wait under WithWriteBudget; 0 is cacheWriteTimeout. Tests shorten it.
 	WriteTimeout time.Duration
 	// FrameNegative mirrors the `frame-cache-negative` flag (FEED_GO_FRAME_CACHE_NEGATIVE): whether the
 	// frame cache's notFound markers are live. Off, a marker is read as a miss and none is written,

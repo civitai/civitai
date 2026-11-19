@@ -113,29 +113,77 @@ func (c *MissCompute) recordWrite(ctx context.Context, cache, key string, id int
 	if c.ObserveWrite != nil {
 		c.ObserveWrite(cache, result, 1)
 	}
-	c.WriteLog.writeErr(ctx, cache, key, id, result, err)
+	c.WriteLog.write(ctx, cache, key, id, result, err)
 }
 
-// cacheWriteTimeout bounds one write-back round trip (the entries' SETs, the revalidation locks'
-// release), which runs detached from the request (writeContext). A healthy pipeline answers in
-// milliseconds, so the bound only bites on a sick store; it is the default system-store read bound
-// (REDIS_SYS_READ_TIMEOUT_MS, 1000 ms), below go-redis's default 3 s read timeout, so it also caps how
-// long a page that already failed (and falls back) waits on its writes. The writes run inline on the
-// computing goroutine, so a request handler still returns only after them, and a draining shutdown
-// waits for them like any other in-flight work.
+// cacheWriteTimeout bounds a request's write-back: the time it spends waiting on its round trips
+// (the entries' SETs, the revalidation locks' release), which run detached from the request
+// (writeContext), adds up to at most this much (WithWriteBudget), so a request that writes several
+// caches in sequence still waits at most this long on all of them together. A healthy pipeline
+// answers in milliseconds, so the bound only bites on a sick store; it is the default system-store
+// read bound (REDIS_SYS_READ_TIMEOUT_MS, 1000 ms), below go-redis's default 3 s read timeout, so it
+// also caps how long a page that already failed (and falls back) waits on its writes. The writes run
+// inline on the computing goroutine, so a request handler still returns only after them, and a
+// draining shutdown waits for them like any other in-flight work.
 const cacheWriteTimeout = time.Second
 
+// writeBudgetKey keys a request's write-back budget (WithWriteBudget).
+type writeBudgetKey struct{}
+
+// writeBudget is the write-back time one request has left: set to the bound on its first round trip,
+// less each round trip's duration as it ends. It is time spent writing, not a wall-clock deadline: a
+// request that computes for seconds between two healthy writes still has (nearly) all of it.
+type writeBudget struct {
+	mu      sync.Mutex
+	started bool
+	left    time.Duration
+}
+
+// WithWriteBudget marks ctx as one request: every write-back round trip under it draws on one budget
+// (cacheWriteTimeout, or MissCompute.WriteTimeout) instead of each taking its own bound, so N
+// sequential round trips against a sick store wait about one bound in total, not N. The server
+// installs it once per computation; on a ctx that already carries one it returns ctx unchanged.
+// Without it each round trip is bounded on its own.
+func WithWriteBudget(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(writeBudgetKey{}).(*writeBudget); ok {
+		return ctx
+	}
+	return context.WithValue(ctx, writeBudgetKey{}, &writeBudget{})
+}
+
 // writeContext is the context of a write-back round trip: ctx's values (its span, so the write stays
-// in the request's trace) without its cancellation or deadline, bounded by the computation's
-// WriteTimeout (0: cacheWriteTimeout). The writes come after the lookup has answered, so a request
-// that ends meanwhile (a sibling lookup failed and the page falls back, the client left, the budget
-// ran out) no longer cancels entries already computed; they still land at most the bound later.
+// in the request's trace) without its cancellation or deadline, bounded by what is left of the
+// request's write budget (WithWriteBudget; the computation's WriteTimeout, 0: cacheWriteTimeout), or
+// by that bound alone on a ctx without one. The returned cancel ends the round trip and charges its
+// duration to the budget; once the budget is spent a round trip fails at once (counted error). The
+// writes come after the lookup has answered, so a request that ends meanwhile (a sibling lookup
+// failed and the page falls back, the client left, the budget ran out) no longer cancels entries
+// already computed.
 func (c *MissCompute) writeContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	d := cacheWriteTimeout
 	if c != nil && c.WriteTimeout > 0 {
 		d = c.WriteTimeout
 	}
-	return context.WithTimeout(context.WithoutCancel(ctx), d)
+	detached := context.WithoutCancel(ctx)
+	b, ok := ctx.Value(writeBudgetKey{}).(*writeBudget)
+	if !ok {
+		return context.WithTimeout(detached, d)
+	}
+	b.mu.Lock()
+	if !b.started {
+		b.started, b.left = true, d
+	}
+	left := b.left
+	b.mu.Unlock()
+	wctx, cancel := context.WithTimeout(detached, max(left, 0))
+	start := time.Now()
+	return wctx, func() {
+		cancel()
+		spent := time.Since(start)
+		b.mu.Lock()
+		b.left -= spent
+		b.mu.Unlock()
+	}
 }
 
 // WriteLog writes one `cache write` line per cache write (written, nx_lost or error), so the keys a
@@ -194,15 +242,11 @@ func (l *WriteLog) allow(k writeLogKey) (bool, int) {
 	return true, n
 }
 
-// write logs one cache write, within the limit. A nil log, or PerMinute <= 0, writes nothing.
-func (l *WriteLog) write(ctx context.Context, cache, key string, id int, result string) {
-	l.writeErr(ctx, cache, key, id, result, nil)
-}
-
-// writeErr is write, an error line also carrying err's text (`err`), so a failed write can be told
-// apart (a timeout, a refused connection, a cluster redirect) from the log alone. The text is the
-// store client's error, never the value.
-func (l *WriteLog) writeErr(ctx context.Context, cache, key string, id int, result string, err error) {
+// write logs one cache write, within the limit. An error line also carries err's text (`err`), so a
+// failed write can be told apart (a timeout, a refused connection, a cluster redirect) from the log
+// alone; the text is the store client's error, never the value. err is ignored for any other result. A
+// nil log, or PerMinute <= 0, writes nothing.
+func (l *WriteLog) write(ctx context.Context, cache, key string, id int, result string, err error) {
 	if l == nil || l.Log == nil || l.PerMinute <= 0 {
 		return
 	}
