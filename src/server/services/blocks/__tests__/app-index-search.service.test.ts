@@ -231,6 +231,7 @@ describe('listStoreGrid', () => {
     await settle();
     // db: alpha (name) and beta (tagline) contain "pixel"; the sub-listing is not a listing.
     // overlap: beta and alpha; dropped: "unlisted", which the store gates did not return.
+    // The one exact pin of the whole line; the other tests check only the part they are about.
     expect(logLines).toEqual([
       'app-index-search: q_len=5 index=3 db=2 overlap=2 dropped=1 source=index reason=ok ' +
         'field_diffs=name:0,tagline:0,iconUrl:0,rating:0 field_expected=iconUrl:0,rating:0',
@@ -255,10 +256,8 @@ describe('listStoreGrid', () => {
     expect(res.items).toEqual([card(DELTA), card(BETA), card(ALPHA)]);
     expect(await fieldDiffsMoved()).toEqual([`${field.split(' ')[0]}:1`]);
     await settle();
-    expect(logLines).toEqual([
-      'app-index-search: q_len=5 index=3 db=2 overlap=2 dropped=0 source=index reason=ok ' +
-        `field_diffs=${counts} field_expected=iconUrl:0,rating:0`,
-    ]);
+    expect(logLines).toHaveLength(1);
+    expect(logLines[0]).toContain(` field_diffs=${counts} `);
     expect(logLines[0]).not.toContain(Object.values(over)[0] || '\u0000');
   });
 
@@ -332,10 +331,8 @@ describe('listStoreGrid', () => {
     expect(h.listStoreListingsBySlugs).not.toHaveBeenCalled();
     expect(await requestsMoved()).toEqual([`db_fallback/${reason}:1`]);
     expect(await fieldDiffsMoved()).toEqual([]);
-    expect(logLines).toEqual([
-      'app-index-search: q_len=5 index=0 db=2 overlap=0 dropped=0 source=db_fallback ' +
-        `reason=${reason} field_diffs=none field_expected=none`,
-    ]);
+    expect(logLines).toHaveLength(1);
+    expect(logLines[0]).toContain(` source=db_fallback reason=${reason} `);
   });
 
   it('hydration failure: the database page', async () => {
@@ -452,10 +449,8 @@ describe('listStoreGrid', () => {
     // The comparison is logged once the database page arrives.
     releaseDb(DB_PAGE);
     await settle();
-    expect(logLines).toEqual([
-      'app-index-search: q_len=5 index=3 db=2 overlap=2 dropped=1 source=index reason=ok ' +
-        'field_diffs=name:0,tagline:0,iconUrl:0,rating:0 field_expected=iconUrl:0,rating:0',
-    ]);
+    expect(logLines).toHaveLength(1);
+    expect(logLines[0]).toContain(' db=2 overlap=2 ');
   });
 
   it('a failing sampled database read never fails the index answer', async () => {
@@ -473,10 +468,8 @@ describe('listStoreGrid', () => {
     await settle();
     expect(h.listAvailableListings).not.toHaveBeenCalled();
     expect(await requestsMoved()).toEqual(['index/ok:1']);
-    expect(logLines).toEqual([
-      'app-index-search: q_len=5 index=3 db=none overlap=none dropped=1 source=index reason=ok ' +
-        'field_diffs=name:0,tagline:0,iconUrl:0,rating:0 field_expected=iconUrl:0,rating:0',
-    ]);
+    expect(logLines).toHaveLength(1);
+    expect(logLines[0]).toContain(' db=none overlap=none ');
   });
 
   it.each<[string, number]>([

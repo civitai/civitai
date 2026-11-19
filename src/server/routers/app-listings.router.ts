@@ -2047,8 +2047,6 @@ export const appListingsRouter = router({
       if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
-      // A text query goes to the app index only with the `app-index-search` flag on; otherwise
-      // (and on any index failure) this is `listAvailableListings`, unchanged.
       const { listStoreGrid } = await import('~/server/services/blocks/app-index-search.service');
       return listStoreGrid(
         input,
