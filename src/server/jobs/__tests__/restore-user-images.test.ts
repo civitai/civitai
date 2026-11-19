@@ -284,7 +284,7 @@ describe('restoreUserImages', () => {
       expect(refreshPictures).toHaveBeenCalledWith([7]);
     });
 
-    it('leaves out an account with nothing unblocked, one deleted again, and one whose reversal threw', async () => {
+    it('leaves out an account deleted again, and keeps a drained one and one whose reversal threw', async () => {
       users = [
         restored(7),
         { id: 8, deletedAt: new Date('2026-07-29T00:00:00Z') },
@@ -298,7 +298,24 @@ describe('restoreUserImages', () => {
 
       await run();
 
-      expect(refreshPictures).toHaveBeenCalledWith([10]);
+      // 7 unblocked nothing this run but drained: a crash after an earlier run's unblock is caught here.
+      expect(refreshPictures).toHaveBeenCalledTimes(1);
+      // 9's reversal threw after batches that may have committed.
+      expect(refreshPictures).toHaveBeenCalledWith([7, 9, 10]);
+    });
+
+    it('clears a worklist entry only after the refresh ran', async () => {
+      users = [restored(7)];
+      pendingSet = ['7'];
+      let pendingAtRefresh: string[] = [];
+      refreshPictures.mockImplementationOnce(async () => {
+        pendingAtRefresh = pendingSet.map(decoded);
+      });
+
+      await run();
+
+      expect(pendingAtRefresh).toEqual(['7']);
+      expect(pendingSet).toEqual([]);
     });
 
     it('refreshes nothing on a run that unblocks nothing', async () => {

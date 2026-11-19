@@ -29,7 +29,8 @@ async function isRestored(userId: number) {
  * rows and a filtered `User` scan measures ~1.7s, which a cron this frequent would pay on every
  * tick to learn that nobody was restored. An empty set costs one SMEMBERS and no query at all.
  *
- * `refreshPictures` runs once, after the loop, for the accounts that had images unblocked: the grace block cleared a `User.image` naming one of them, and the refresh puts it
+ * `refreshPictures` runs once, after the loop, for the accounts that had images unblocked or whose
+ * reversal drained, before their worklist entries are cleared: the grace block cleared a `User.image` naming one of them, and the refresh puts it
  * back once the picture is servable again (`restoreClearedUserImages`).
  */
 export async function runRestoreUserImages(
@@ -42,6 +43,7 @@ export async function runRestoreUserImages(
   let finished = 0;
   let reDeleted = 0;
   const refreshed: number[] = [];
+  const drained: number[] = [];
 
   for (const userId of pending.slice(0, RESTORE_USERS_PER_RUN)) {
     // Re-deletion is terminal for this entry, not a state to wait out: the grace block is once
@@ -55,14 +57,13 @@ export async function runRestoreUserImages(
     try {
       const result = await unblockAccountDeletionImages(userId);
       unblocked += result.unblocked;
-      if (result.unblocked > 0) refreshed.push(userId);
+      if (result.unblocked > 0 || result.drained) refreshed.push(userId);
       // Dropped only once the reversal ran out of rows to claim: a pass cut short by its batch
       // ceiling has to be reached again next tick.
-      if (result.drained) {
-        await clearPendingImageRestore(userId);
-        finished++;
-      }
+      if (result.drained) drained.push(userId);
     } catch (error) {
+      // Batches before the throw may have committed; the refresh does nothing where none did.
+      refreshed.push(userId);
       // Caught per account so one that cannot be reversed doesn't strand the rest behind it.
       logToAxiom({
         type: 'error',
@@ -74,7 +75,12 @@ export async function runRestoreUserImages(
     }
   }
 
+  // Before the worklist entries are cleared: a run cut short in between refreshes them next tick.
   if (refreshed.length) await refreshPictures(refreshed);
+  for (const userId of drained) {
+    await clearPendingImageRestore(userId);
+    finished++;
+  }
 
   return { pending: pending.length, finished, unblocked, reDeleted };
 }
