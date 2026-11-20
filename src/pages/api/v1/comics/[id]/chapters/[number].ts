@@ -38,6 +38,8 @@ async function handler(
   try {
     const browsingLevel = comicsBrowsingLevel(req, res, parsed.data.nsfw);
     const result = await getPublicComicChapter(parsed.data.id, parsed.data.number, browsingLevel);
+    // Not cached: early access ends, and chapters are published, within the edge TTL.
+    if (result.status !== 200) res.setHeader('Cache-Control', 'no-store');
     if (result.status === 404) return res.status(404).json({ error: 'Chapter not found' });
     if (result.status === 403)
       return res.status(403).json({

@@ -3,7 +3,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { challengeCoverWhere } from '~/server/common/image-visibility';
-import { publicCoverImageSelect, toPublicCoverImage } from '~/server/utils/public-cover-image';
+import {
+  getCoverBrowsingLevels,
+  publicCoverImageSelect,
+  toPublicCoverImage,
+} from '~/server/utils/public-cover-image';
 import { dbRead } from '~/server/db/client';
 import { parseComicProjectMeta } from '~/server/schema/comics.schema';
 import {
@@ -54,8 +58,8 @@ const chapterUrl = (
   )}`;
 
 /**
- * The public `coverImage` for each id in `ids`, by the public API's cover rule (`toPublicCoverImage`,
- * the one /collections uses) plus the shared cover filter. A cover is any image the creator picked, so
+ * The public `coverImage` for each id in `ids`, judged as /api/v1/collections judges its covers
+ * (`toPublicCoverImage` at the held-level-narrowed browsing level) plus the shared cover filter. A cover is any image the creator picked, so
  * unlike a page it has not passed the reader's panel check.
  */
 async function publicCovers(ids: (number | undefined)[], browsingLevel: number) {
@@ -65,7 +69,9 @@ async function publicCovers(ids: (number | undefined)[], browsingLevel: number) 
     where: { AND: [{ id: { in: wanted } }, challengeCoverWhere()] },
     select: publicCoverImageSelect,
   });
-  return new Map(rows.map((row) => [row.id, toPublicCoverImage(row, browsingLevel)]));
+  // Narrowed to the held gallery level of a cover's post's model, as /collections does.
+  const coverLevel = await getCoverBrowsingLevels(rows, browsingLevel);
+  return new Map(rows.map((row) => [row.id, toPublicCoverImage(row, coverLevel(row))]));
 }
 
 /** The cover the reader would serve (it already withheld a restricted one), if it passes the rule. */

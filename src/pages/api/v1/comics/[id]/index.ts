@@ -30,7 +30,12 @@ async function handler(
   try {
     const browsingLevel = comicsBrowsingLevel(req, res, parsed.data.nsfw);
     const comic = await getPublicComic(parsed.data.id, browsingLevel);
-    if (!comic) return res.status(404).json({ error: 'Comic not found' });
+    // Not cached: the comic may be published or re-rated within the edge TTL.
+    if (!comic)
+      return res
+        .setHeader('Cache-Control', 'no-store')
+        .status(404)
+        .json({ error: 'Comic not found' });
     return res.status(200).json(comic);
   } catch (e) {
     return handleEndpointError(res, e);
