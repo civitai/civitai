@@ -281,11 +281,12 @@ describe('isReadQuery', () => {
     expect(isReadQuery('INSERT INTO t SELECT 1')).toBe(false);
   });
 
-  // Small enough that a backtracking pattern (each extra space doubles its time) fails this in
-  // about a second instead of hanging the synchronous test, large enough to fail it at all.
+  // The backtracking `(\s+|...)*` pattern took ~3.3 s on 30 spaces (node 24), so it fails this
+  // instead of hanging the synchronous test; the linear one takes ~0.1 ms. 500 ms leaves room for
+  // a GC pause or a busy CI runner.
   it('classifies leading whitespace without backtracking', () => {
     const start = performance.now();
-    expect(isReadQuery(' '.repeat(28) + 'INSERT INTO t VALUES (1)')).toBe(false);
-    expect(performance.now() - start).toBeLessThan(50);
+    expect(isReadQuery(' '.repeat(30) + 'INSERT INTO t VALUES (1)')).toBe(false);
+    expect(performance.now() - start).toBeLessThan(500);
   });
 });
