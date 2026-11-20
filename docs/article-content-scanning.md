@@ -1005,7 +1005,7 @@ console.log('Article Image Scanning:', flags.articleImageScanning);
 - `src/env/server-schema.ts` - `TEXT_MODERATION_CALLBACK` env var
 
 ### Migration
-- `src/pages/api/admin/temp/migrate-article-images.ts` - Migration webhook (supports `mode=images|text-moderation|both`)
+- `src/server/api-routes/admin/temp/migrate-article-images.ts` - Migration webhook (supports `mode=images|text-moderation|both`)
 
 ---
 

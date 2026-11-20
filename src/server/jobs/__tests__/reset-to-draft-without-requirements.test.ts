@@ -211,7 +211,7 @@ describe('resetToDraftWithoutRequirements', () => {
 
     // The bump is deliberately unconditional across both CASE branches: the
     // Unpublished rows are later flipped to Draft by the backfill in
-    // src/pages/api/admin/temp/backfill-swept-trained-models.ts, and a stale clock
+    // src/server/api-routes/admin/temp/backfill-swept-trained-models.ts, and a stale clock
     // carried through that hop lands in exactly the same hole. Pinning the VALUE
     // (not just the presence of the target) is what catches a
     // `CASE ... THEN now() ELSE m."updatedAt" END` mutant, and equally a

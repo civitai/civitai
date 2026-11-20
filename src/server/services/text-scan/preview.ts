@@ -19,7 +19,7 @@ import type {
 import { nsfwLevelFromName } from '~/server/services/text-scan/types';
 
 export type TextScanNsfwPreview =
-  | { status: 'ok'; level: NsfwLevel; reason: string }
+  | { status: 'ok'; level: NsfwLevel; reason: string; promptId?: number }
   | { status: 'unavailable' };
 
 /**
@@ -100,6 +100,7 @@ export async function previewTextScanNsfw(args: {
     status: 'ok',
     level: nsfwLevelFromName[result.output.level],
     reason: result.output.reason,
+    promptId: result.promptId,
   };
 }
 

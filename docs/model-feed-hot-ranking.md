@@ -1533,7 +1533,7 @@ source, same target shape — the alias is the only difference. A corrected MV b
 
 That kills the cheap version of this feature. Generation **counts** can be windowed, provided the
 query picks a database deliberately and bounds the upper end (`createdDate <= today()`, as
-`backfill-generation-counts.ts` already does) so a row dated 2120 cannot land in "the last 7 days".
+the since-removed `backfill-generation-counts` route did) so a row dated 2120 cannot land in "the last 7 days".
 Distinct **generators** cannot be windowed at all, at any granularity — and the section below argues the distinct-actor denominator
 is a day-one requirement, not a follow-up. So a trending signal needs new pipeline work whichever
 metric it ranks: either fix the generator view's date, or snapshot the all-time counters daily and diff

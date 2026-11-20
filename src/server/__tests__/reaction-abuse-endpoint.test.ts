@@ -40,7 +40,7 @@ vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   trackModActivity,
 }));
 
-const handler = (await import('~/pages/api/admin/reaction-abuse')).default;
+const handler = (await import('~/server/api-routes/admin/reaction-abuse')).default;
 
 function createMocks(body: Record<string, unknown>) {
   const req = {

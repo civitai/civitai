@@ -29,7 +29,7 @@ vi.mock('~/server/services/image.service', () => ({
   }),
 }));
 
-import deleteUserImages from '~/pages/api/mod/delete-user-images';
+import deleteUserImages from '~/server/api-routes/mod/delete-user-images';
 
 const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
 

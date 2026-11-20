@@ -165,6 +165,11 @@ is switched on; elsewhere every authorization-code grant still gets a refresh to
   `scope` includes `offline_access` and the user approves "Stay connected while you're away, until you
   disconnect" on the consent screen. Without both, the code exchange returns an access token alone (no
   `refresh_token` field), and you send the user through authorization again when it expires.
+- **Declare it on your store listing.** If your app is listed in the App Store as a Connect app, it
+  gets offline access only when its approved listing declares it: tick "offline_access" on the
+  listing and say why your app acts while the user is away. Moderators review that reason like a
+  sensitive permission, and changing it on a live listing goes back to review. Without the
+  declaration the consent screen does not offer "Stay connected" and no refresh token is issued.
 - **Propose a Buzz cap.** Add `offline_buzz_limit` (a positive whole number of Buzz) and optionally
   `offline_buzz_period` (`day`, `week` or `month`; default `day`) to the authorization request. The
   consent screen shows it on the offline line, the user can raise, lower or clear it, and they can

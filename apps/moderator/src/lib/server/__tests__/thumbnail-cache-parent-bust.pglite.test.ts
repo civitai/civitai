@@ -57,7 +57,10 @@ vi.mock('../image-moderation-effects', () => ({
   bustPostGalleryCaches: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
-vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
+vi.mock('../mod-activity', () => ({
+  insertModActivity: vi.fn(async () => 1),
+  recordModActivity: vi.fn(async () => undefined),
+}));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
 vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
 
