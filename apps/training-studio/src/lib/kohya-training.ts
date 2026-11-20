@@ -4,6 +4,7 @@ import {
   KOHYA_OPTIMIZERS,
   KOHYA_SCHEDULERS,
   isKohyaFlow,
+  isKohyaFlux,
   kohyaFamily,
   type KohyaInput,
 } from './data/kohya';
@@ -52,6 +53,7 @@ export function buildKohyaInput(
   if (run.editTraining || run.sourceImages?.length)
     throw new Error('Kohya does not support image-edit datasets.');
   const flow = isKohyaFlow(family);
+  const flux = isKohyaFlux(family);
   const settings = run.kohya;
   const prodigy = optimizerType === 'Prodigy';
   const textEncoderLR =
@@ -72,7 +74,7 @@ export function buildKohyaInput(
     keepTokens: run.keepTokens ?? 0,
     minSnrGamma: flow ? 0 : run.minSnrGamma ?? 5,
     noiseOffset: flow ? 0 : run.noiseOffset ?? 0,
-    blocksToSwap: flow ? settings?.blocksToSwap ?? 18 : 0,
+    blocksToSwap: flux ? settings?.blocksToSwap ?? 18 : 0,
   };
   for (const [name, value] of Object.entries(numeric)) {
     const { min, max, step } = KOHYA_BOUNDS[name]!;
@@ -126,7 +128,7 @@ export function buildKohyaInput(
     optimizerType,
     seed: settings?.seed ?? 42,
     trace: trace === 'logs' || trace === 'none' ? trace : 'events',
-    ...(flow
+    ...(flux
       ? { fp8Base: settings?.fp8Base ?? true, blocksToSwap: settings?.blocksToSwap ?? 18 }
       : {}),
     ...(!flow && settings?.vParameterization != null

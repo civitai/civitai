@@ -21,5 +21,5 @@ export const GIFT_CLAIM_NOTICE =
 // single-key lock on the same id.
 /** Per model version: serialises mints under the live-code cap. */
 export const GIFT_MINT_LOCK_CLASS = 0x47490001;
-/** Per claimer: serialises new claims under the monthly allowance. */
-export const GIFT_CLAIM_LOCK_CLASS = 0x47490002;
+/** Per link creator: serialises new claims under the creator's monthly limit. */
+export const GIFT_CREATOR_LIMIT_LOCK_CLASS = 0x47490003;

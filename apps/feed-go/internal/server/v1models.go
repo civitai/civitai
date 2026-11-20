@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
@@ -83,7 +84,7 @@ func ClassifyV1ModelID(r *shadow.Report, goBody, _ []byte) string {
 // SyntheticV1ModelsRequest rebuilds the REST request a v1-models sample describes: its path and raw
 // query string as Node received them, and the forwarded headers.
 func SyntheticV1ModelsRequest(ctx context.Context, req ShadowRequest) (*http.Request, error) {
-	r, err := http.NewRequestWithContext(ctx, http.MethodGet, V1ModelsPath, nil)
+	r, err := http.NewRequestWithContext(auth.WithRedactedCredentials(ctx), http.MethodGet, V1ModelsPath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +128,10 @@ func (s *Server) computeV1Models(ctx context.Context, r *http.Request) (*compute
 	// Parsed before the session: Node answers a 400/401/429 without it.
 	if _, err := v1models.ParseList(r.URL.RawQuery); err != nil {
 		return nil, err
+	}
+	// An API credential falls back (the route's block-scope middleware decides it; DESIGN.md §4.2).
+	if auth.HasAPICredential(r) {
+		return nil, fallback.New("bearer-token")
 	}
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {

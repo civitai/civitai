@@ -231,6 +231,38 @@ export const articleCardCoverIdSql = Prisma.sql`CASE
       AND ${imageAllowedByItsModelSql(Prisma.sql`b.id`)})
 END`;
 
+/**
+ * `?tags=` on an article list. A category id matches the article's assigned category: the system
+ * category when it has one, the author's pick only where it does not. Any other tag id matches the
+ * author's tags. Ids are OR'd, so several ids widen the list.
+ */
+export function articleTagFilterSql(tagIds: number[], categoryIds: number[]) {
+  const categories = tagIds.filter((id) => categoryIds.includes(id));
+  const others = tagIds.filter((id) => !categoryIds.includes(id));
+  const authorTagged = (ids: number[]) =>
+    Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
+        ids
+      )})
+    )`;
+  const parts: Prisma.Sql[] = [];
+  if (categories.length)
+    parts.push(Prisma.sql`(a."systemCategoryId" IN (${Prisma.join(categories)}) OR (
+      a."systemCategoryId" IS NULL AND ${authorTagged(categories)}
+    ))`);
+  if (others.length) parts.push(authorTagged(others));
+  return Prisma.sql`(${Prisma.join(parts, ' OR ')})`;
+}
+
+/** Hidden tags drop an article the author tagged with one, or whose system category is one. */
+export function articleExcludedTagsSql(tagIds: number[]) {
+  return Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
+      tagIds
+    )})
+  ) AND (a."systemCategoryId" IS NULL OR a."systemCategoryId" NOT IN (${Prisma.join(tagIds)}))`;
+}
+
 export const getArticles = async ({
   limit,
   cursor,
@@ -291,14 +323,8 @@ export const getArticles = async ({
       AND.push(Prisma.sql`a."title" ILIKE ${'%' + query + '%'}`);
     }
     if (!!tags?.length) {
-      AND.push(
-        Prisma.sql`EXISTS (
-          SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
-            tags,
-            ','
-          )})
-        )`
-      );
+      const categoryIds = (await getCategoryTags('article')).map((c) => c.id);
+      AND.push(articleTagFilterSql(tags, categoryIds));
     }
 
     if (!!userIds?.length) {
@@ -384,16 +410,7 @@ export const getArticles = async ({
       if (!!excludedIds?.length) {
         AND.push(Prisma.sql`a.id NOT IN (${Prisma.join(excludedIds, ',')})`);
       }
-      if (!!excludedTagIds?.length) {
-        AND.push(
-          Prisma.sql`NOT EXISTS (
-            SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
-              excludedTagIds,
-              ','
-            )})
-          )`
-        );
-      }
+      if (!!excludedTagIds?.length) AND.push(articleExcludedTagsSql(excludedTagIds));
     }
 
     if (sessionUser) {
