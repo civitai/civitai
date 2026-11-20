@@ -236,6 +236,9 @@ func hostAllowsNsfw(rule NsfwHostRule, host string) bool {
 	return host == "" || host == "blue" || host == "red"
 }
 
+// browsingLevels is allBrowsingLevelsFlag (PG..XXX): all a non-moderator's saved level keeps.
+const browsingLevels int32 = 31
+
 // serverBrowsingLevel is getServerBrowsingLevel (src/server/utils/browsing-level.ts).
 func serverBrowsingLevel(canViewNsfw, signedIn bool, u User) int32 {
 	if !canViewNsfw {
@@ -244,8 +247,12 @@ func serverBrowsingLevel(canViewNsfw, signedIn bool, u User) int32 {
 		}
 		return data.Levels.Public
 	}
-	if signedIn && u.ShowNsfw && u.BrowsingLevel != 0 {
-		return u.BrowsingLevel
+	saved := u.BrowsingLevel
+	if !u.IsModerator {
+		saved &= browsingLevels
+	}
+	if signedIn && u.ShowNsfw && saved != 0 {
+		return saved
 	}
 	return data.Levels.Public
 }
@@ -254,7 +261,7 @@ func serverBrowsingLevel(canViewNsfw, signedIn bool, u User) int32 {
 type mature struct{ r, x, xxx bool }
 
 // matureRatingsAllowed is matureRatingsAllowed: none off a mature-capable surface; on one, each by
-// its level bit. (onlySelectableLevels clears only the Blocked bit, which none of the three reads.)
+// its level bit. (onlySelectableLevels keeps only the browsing-level bits, which include all three.)
 func matureRatingsAllowed(surface bool, level int32) mature {
 	if !surface {
 		return mature{}

@@ -277,6 +277,7 @@ import {
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
+  allBrowsingLevelsFlag,
   browsingLevels as selectableBrowsingLevels,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
@@ -4533,11 +4534,7 @@ export const getImagesForModelVersion = async ({
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
-    imageWhere.push(
-      browsingLevel
-        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
-        : Prisma.sql`i."nsfwLevel" != 0`
-    );
+    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel || allBrowsingLevelsFlag}) != 0`);
     imageWhere.push(imageReviewedSql());
   }
   imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));

@@ -1,3 +1,4 @@
+import { liveCsamTextHoldText } from '@civitai/shared/held-url';
 import { sql } from 'kysely';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -15,8 +16,8 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
  */
 const restorableText = sql<boolean>`NOT t."csamHeld"
   AND NOT EXISTS (SELECT 1 FROM "TextScanHold" th
-    WHERE th."entityType" = 'PostText' AND th."entityId" = t.id AND th.label = 'csam'
-      AND th.status IN ('Pending', 'Confirmed'))
+    WHERE th."entityType" = 'PostText' AND th."entityId" = t.id
+      AND ${sql.raw(liveCsamTextHoldText('th'))})
   AND NOT post_text_held(t.id, t."csamHeld", t."postId", t."userId")`;
 
 export type PostTextModerationResult =
