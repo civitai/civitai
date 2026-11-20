@@ -258,7 +258,10 @@ export function Timeline({
 
   if (sheet)
     return (
-      <div className="flex w-full flex-col gap-1.5">
+      // The top 44px is the reached comment's label's own row (Pencil `QrxWW`: the bubble, then the
+      // avatars, then the track): the label floats 8px above the avatars, which sit 12px over the
+      // waveform, so it never covers the lyric lines above the timeline.
+      <div className="flex w-full flex-col gap-1.5 pt-11">
         {waveform}
         <div className="flex justify-between">
           {elapsed}

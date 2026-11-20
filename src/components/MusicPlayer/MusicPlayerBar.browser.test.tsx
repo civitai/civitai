@@ -634,4 +634,19 @@ describe('on a phone', () => {
     await expect.element(inSheet('Like')).toBeDisabled();
     await expect.element(inSheet('Remix this')).not.toBeInTheDocument();
   });
+
+  test('spare height around the cover splits above and below it, not pooled under it', async () => {
+    await page.viewport(390, 844);
+    await renderPhone();
+    await openSheet();
+    const art = sheet().getByTestId('music-cover-placeholder').element().getBoundingClientRect();
+    const grab = sheet().getByTestId('now-playing-grab').element().getBoundingClientRect();
+    const title = sheet()
+      .getByRole('heading', { name: 'Midnight Arcade' })
+      .element()
+      .getBoundingClientRect();
+    const above = art.top - grab.bottom;
+    const below = title.top - art.bottom;
+    expect(Math.abs(below - above)).toBeLessThanOrEqual(4);
+  });
 });

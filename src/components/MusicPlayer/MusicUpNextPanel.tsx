@@ -272,7 +272,14 @@ export function MusicUpNextList({
             <Portal>
               <DragOverlay zIndex={MUSIC_UP_NEXT_DRAG_Z_INDEX}>
                 {dragging ? (
-                  <RowContent track={dragging} cover={covers.get(dragging.id)} className={LIFTED} />
+                  // Portalled out of the sheet: it takes the sheet's dark scheme along.
+                  <div data-mantine-color-scheme={sheet ? 'dark' : undefined}>
+                    <RowContent
+                      track={dragging}
+                      cover={covers.get(dragging.id)}
+                      className={LIFTED}
+                    />
+                  </div>
                 ) : null}
               </DragOverlay>
             </Portal>

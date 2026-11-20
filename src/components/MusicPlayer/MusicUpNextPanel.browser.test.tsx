@@ -396,6 +396,53 @@ describe('the Up next sheet on a phone', () => {
     await expect.element(inSheet('Play Midnight Arcade')).not.toBeInTheDocument();
   });
 
+  test('a long downward drag of its top closes it; a short one does not', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    await openSheet();
+    const drag = (distance: number) => {
+      const grab = upNextSheet().getByTestId('up-next-grab').element();
+      const { left, top } = grab.getBoundingClientRect();
+      for (const [type, y] of [
+        ['pointerdown', top + 4],
+        ['pointermove', top + 4 + distance / 2],
+        ['pointermove', top + 4 + distance],
+        ['pointerup', top + 4 + distance],
+      ] as const)
+        grab.dispatchEvent(
+          new PointerEvent(type, { bubbles: true, pointerId: 1, clientX: left + 20, clientY: y })
+        );
+    };
+
+    drag(30);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await expect.element(upNextSheet()).toBeVisible();
+
+    drag(160);
+    await expect.element(upNextSheet()).not.toBeInTheDocument();
+    await expect.element(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible();
+  });
+
+  test('stays dark in light mode, over the always-dark now-playing sheet', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'light');
+    try {
+      await openSheet();
+      const rgb = (css: string) =>
+        css
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number);
+      // Pencil `sQ6E2`: dark-5.
+      expect(rgb(getComputedStyle(upNextSheet().element()).backgroundColor)).toEqual([44, 46, 51]);
+      const title = upNextSheet().getByText('Palm Static').element();
+      // Light text on it, not the light scheme's black.
+      for (const channel of rgb(getComputedStyle(title).color))
+        expect(channel).toBeGreaterThan(240);
+    } finally {
+      document.documentElement.removeAttribute('data-mantine-color-scheme');
+    }
+  });
+
   test('closes by Escape back to the now-playing sheet', async () => {
     player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
     await openSheet();

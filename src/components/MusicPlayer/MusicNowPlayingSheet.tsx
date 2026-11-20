@@ -9,8 +9,8 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import type { CSSProperties, PointerEvent } from 'react';
-import { useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { useMemo, useState } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { isRemixMenuVisible, RemixMenu } from '~/components/Image/Remix/RemixMenu';
 import {
@@ -31,14 +31,12 @@ import { MusicUpNextSheet } from '~/components/MusicPlayer/MusicUpNextSheet';
 import { ReactionButton } from '~/components/Reaction/ReactionButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHistoryLayer } from '~/hooks/useHistoryLayer';
+import { useSwipeToClose } from '~/components/MusicPlayer/useSwipeToClose';
 import type { MusicTrack } from '~/store/music-player.store';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 import { trpc } from '~/utils/trpc';
 
 const store = useMusicPlayerStore.getState;
-
-// A downward drag of the sheet's top this far closes it.
-const SWIPE_CLOSE_PX = 100;
 
 const headerButton =
   'flex size-9 shrink-0 items-center justify-center rounded-full text-white transition-colors hover:bg-white/10';
@@ -68,20 +66,11 @@ export function MusicNowPlayingSheet({
   const playing = useMusicPlayerStore((s) => s.playing);
   const listName = useMusicPlayerStore((s) => s.listName);
   const [upNextOpen, setUpNextOpen] = useState(false);
-  const [dragY, setDragY] = useState(0);
+  const { offset: dragY, handlers: swipe } = useSwipeToClose(onClose);
   // Slid in: a timed comment's label is placed once, when it opens, so not while the sheet moves.
   const [settled, setSettled] = useState(false);
-  const drag = useRef<{ pointerId: number; startY: number } | null>(null);
   // Back closes the latest layer first: the Up next sheet when it is open.
   useHistoryLayer(opened, onClose);
-
-  const endDrag = (e: PointerEvent<HTMLElement>) => {
-    if (drag.current?.pointerId !== e.pointerId) return;
-    const dy = e.clientY - drag.current.startY;
-    drag.current = null;
-    setDragY(0);
-    if (dy >= SWIPE_CLOSE_PX) onClose();
-  };
 
   return (
     <>
@@ -135,19 +124,7 @@ export function MusicNowPlayingSheet({
               <div
                 data-testid="now-playing-grab"
                 className="flex shrink-0 touch-none flex-col items-center gap-2"
-                onPointerDown={(e) => {
-                  if ((e.target as Element).closest('button')) return;
-                  drag.current = { pointerId: e.pointerId, startY: e.clientY };
-                }}
-                onPointerMove={(e) => {
-                  if (drag.current?.pointerId !== e.pointerId) return;
-                  setDragY(Math.max(0, e.clientY - drag.current.startY));
-                }}
-                onPointerUp={endDrag}
-                onPointerCancel={() => {
-                  drag.current = null;
-                  setDragY(0);
-                }}
+                {...swipe}
               >
                 <span aria-hidden className="h-1 w-9 rounded-sm bg-white/40" />
                 <div className="flex w-full items-center gap-3">
@@ -172,12 +149,14 @@ export function MusicNowPlayingSheet({
                   </button>
                 </div>
               </div>
-              <div className="flex min-h-[120px] flex-1 justify-center">
+              {/* The spare height goes to the cover, up to the content's width, and what is left is
+                  split above and below it rather than pooled under it. */}
+              <div className="flex min-h-[120px] flex-1 items-center justify-center">
                 <SongArt
                   url={coverUrl}
-                  width={236}
+                  width={342}
                   iconSize={72}
-                  className="aspect-square h-full max-h-[236px] rounded-[22px] shadow-[0_20px_60px_#00000066]"
+                  className="aspect-square h-full max-h-[342px] rounded-[22px] shadow-[0_20px_60px_#00000066]"
                 />
               </div>
               <div className="flex shrink-0 items-center gap-3">
@@ -358,7 +337,7 @@ function NowPlayingLyrics({ songId }: { songId: number }) {
             aria-current={reached || undefined}
             className={clsx(
               'm-0 line-clamp-2 leading-tight',
-              reached ? 'text-[26px] font-bold text-white' : 'text-xl font-semibold text-white/70'
+              reached ? 'text-[30px] font-bold text-white' : 'text-xl font-semibold text-white/70'
             )}
           >
             {current.text}

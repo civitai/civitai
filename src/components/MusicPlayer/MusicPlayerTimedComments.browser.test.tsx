@@ -43,7 +43,10 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
 }));
 
 import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
-import { timedComments } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
+import {
+  songDetails,
+  timedComments,
+} from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 
@@ -460,6 +463,7 @@ describe('timed comments on a phone', () => {
 
   beforeEach(async () => {
     await page.viewport(390, 800);
+    songDetails.reset();
   });
 
   test('show on the now-playing sheet’s waveform, the reached one’s label above it and on top', async () => {
@@ -476,5 +480,27 @@ describe('timed comments on a phone', () => {
     expect(box.top).toBeGreaterThanOrEqual(0);
     const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
     expect(label().contains(hit)).toBe(true);
+  });
+
+  test('a label has its own row in the sheet: it never covers the lyric lines above', async () => {
+    songDetails.lyrics = {
+      [SONG_ID]: [
+        { t: 40_000, text: 'Every high score I chase leads back to you' },
+        { t: 50_000, text: 'Joystick heartbeat, pixel rain' },
+        { t: 60_000, text: 'Player two, press start again' },
+      ],
+    };
+    await renderPhone();
+    await page.getByRole('button', { name: 'Open now playing' }).click();
+    await expect.element(sheet()).toBeVisible();
+    await expect.poll(() => cluster(1)).toBeTruthy();
+
+    await at(50.5);
+    await expect.poll(labels).toEqual(['mira: that bass drop']);
+    const box = label().getBoundingClientRect();
+    const lyrics = page.getByTestId('now-playing-lyrics').element().getBoundingClientRect();
+    expect(box.top).toBeGreaterThanOrEqual(lyrics.bottom);
+    // One label at a time, nothing left behind it.
+    expect(document.querySelectorAll('[data-testid="timed-comment-label"]')).toHaveLength(1);
   });
 });
