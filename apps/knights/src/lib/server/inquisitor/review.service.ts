@@ -79,12 +79,18 @@ type OpenReview = { id: number; imageId: number; consensusValue: string };
  * Why a review can no longer produce a check: the image is gone, a moderator ruled on it, it was blocked, it moved off the
  * players' level, or it fell under a review or hold. Null while it still can.
  */
-async function exclusionOf(db: Executor, review: OpenReview): Promise<string | null> {
+async function exclusionOf(
+  db: Executor,
+  review: OpenReview,
+  /** The level a moderator's vote on this review already named: an image ruled at it is that vote's own override landing. */
+  acceptLevel: string | null = null
+): Promise<string | null> {
   const image = await readImageState(db, review.imageId);
   if (!image) return 'missing';
   if (hasBlockMarker(image)) return 'blocked';
-  if (moderatorRuling(image)) return 'moderator-ruled';
-  if (String(image.nsfwLevel) !== review.consensusValue) return 'level-moved';
+  const ownOverride = acceptLevel !== null && String(image.nsfwLevel) === acceptLevel;
+  if (!ownOverride && moderatorRuling(image)) return 'moderator-ruled';
+  if (!ownOverride && String(image.nsfwLevel) !== review.consensusValue) return 'level-moved';
   const eligible = await db
     .selectFrom('Image as img')
     .innerJoin('Post as p', 'p.id', 'img.postId')
@@ -104,7 +110,13 @@ async function closeReview(
 ) {
   await db
     .updateTable('KnightsInquisitorReview')
-    .set({ status: outcome, confirmedValue, closedAt: utc(now) })
+    .set({
+      status: outcome,
+      confirmedValue,
+      closedAt: utc(now),
+      claimedBy: null,
+      claimExpiresAt: null,
+    })
     .where('id', '=', reviewId)
     .where('status', '=', 'open')
     .execute();
@@ -153,8 +165,23 @@ export async function nextReview(
             .select(sql<number>`count(*)::int`.as('n'))
             .whereRef('v.reviewId', '=', 'r.id')
             .as('votes'),
+        (eb) =>
+          eb
+            .selectFrom('KnightsInquisitorVote as v')
+            .select('v.answer')
+            .whereRef('v.reviewId', '=', 'r.id')
+            .orderBy('v.createdAt', 'asc')
+            .limit(1)
+            .as('firstAnswer'),
       ])
       .where('r.status', '=', 'open')
+      .where((eb) =>
+        eb.or([
+          eb('r.claimedBy', 'is', null),
+          eb('r.claimedBy', '=', moderatorId),
+          eb('r.claimExpiresAt', '<=', utc(now)),
+        ])
+      )
       .where('img.userId', 'is distinct from', moderatorId)
       .where((eb) =>
         eb.not(
@@ -173,7 +200,7 @@ export async function nextReview(
       .limit(1)
       .executeTakeFirst();
     if (!row) return null;
-    if (await exclusionOf(db, row)) {
+    if (await exclusionOf(db, row, row.firstAnswer ?? null)) {
       await closeReview(db, row.id, 'excluded', now);
       continue;
     }
@@ -197,7 +224,9 @@ export type ReviewVoteRejection =
   | 'bad-answer'
   | 'own-image'
   | 'already-voted'
-  | 'override-unavailable';
+  | 'claimed'
+  | 'override-unavailable'
+  | 'override-failed';
 
 export type ReviewVoteResult =
   | { status: 'recorded' | 'confirmed' | 'split' | 'excluded' }
@@ -207,7 +236,15 @@ export type ReviewVoteDeps = {
   now: () => Date;
   /** Mod-confirmed checks kept (`skillCheckPoolCap`). */
   poolCap: number;
+  /**
+   * Writes the agreed level as the closing moderator's ruling (`setImageLevelAsModerator` with their session). Absent, an
+   * agreement on a level other than the image's is refused.
+   */
+  setImageLevel?: (imageId: number, level: number) => Promise<void>;
 };
+
+/** How long a closing moderator holds a review while their level is written to the image. */
+const CLAIM_MS = 2 * 60_000;
 
 async function ratingAnswers(db: Executor, questionKey: string): Promise<string[]> {
   const question = await db
@@ -234,67 +271,127 @@ export async function castReviewVote(
   deps: ReviewVoteDeps
 ): Promise<ReviewVoteResult> {
   const now = deps.now();
-  return db.transaction().execute(async (trx): Promise<ReviewVoteResult> => {
-    const review = await trx
-      .selectFrom('KnightsInquisitorReview')
-      .select(['id', 'imageId', 'questionKey', 'consensusValue', 'status'])
-      .where('id', '=', input.reviewId)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!review) return { status: 'rejected', reason: 'not-found' };
-    if (review.status !== 'open') return { status: 'rejected', reason: 'not-open' };
-    if (!(await ratingAnswers(trx, review.questionKey)).includes(input.answer)) {
-      return { status: 'rejected', reason: 'bad-answer' };
-    }
-    const owner = await trx
-      .selectFrom('Image')
-      .select('userId')
-      .where('id', '=', review.imageId)
-      .executeTakeFirst();
-    if (owner?.userId === input.moderatorId) return { status: 'rejected', reason: 'own-image' };
+  const first = await db.transaction().execute((trx) => voteOrClaim(trx, input, deps, now));
+  if (first.kind === 'done') return first.result;
 
-    const votes = await trx
-      .selectFrom('KnightsInquisitorVote')
-      .select(['moderatorId', 'answer'])
-      .where('reviewId', '=', review.id)
-      .execute();
-    if (votes.some((v) => v.moderatorId === input.moderatorId)) {
-      return { status: 'rejected', reason: 'already-voted' };
-    }
-    if (await exclusionOf(trx, review)) {
-      await closeReview(trx, review.id, 'excluded', now);
-      return { status: 'excluded' };
-    }
-
-    const [first] = votes;
-    const image = (await readImageState(trx, review.imageId)) as ImageState;
-    if (first && first.answer === input.answer && String(image.nsfwLevel) !== input.answer) {
-      return { status: 'rejected', reason: 'override-unavailable' };
-    }
-
-    await trx
-      .insertInto('KnightsInquisitorVote')
-      .values({
-        reviewId: review.id,
-        moderatorId: input.moderatorId,
-        answer: input.answer,
-        createdAt: utc(now),
-      })
-      .execute();
-    if (!first) return { status: 'recorded' };
-    if (first.answer !== input.answer) {
-      await closeReview(trx, review.id, 'split', now);
-      return { status: 'split' };
-    }
-    await addSkillCheck(trx, {
-      imageId: review.imageId,
-      answer: input.answer,
-      cap: deps.poolCap,
-      now,
+  // The closing vote names another level: write it to the image as a moderator ruling first, holding no lock or transaction
+  // across the call. A failure records nothing and releases the claim, so the moderator can vote again.
+  try {
+    await deps.setImageLevel!(first.imageId, Number(input.answer));
+  } catch (error) {
+    console.error("knights: could not write the moderators' level, the vote was not recorded", {
+      reviewId: input.reviewId,
+      error,
     });
-    await closeReview(trx, review.id, 'confirmed', now, input.answer);
-    return { status: 'confirmed' };
+    await db
+      .updateTable('KnightsInquisitorReview')
+      .set({ claimedBy: null, claimExpiresAt: null })
+      .where('id', '=', input.reviewId)
+      .where('claimedBy', '=', input.moderatorId)
+      .execute();
+    return { status: 'rejected', reason: 'override-failed' };
+  }
+  return db.transaction().execute(async (trx): Promise<ReviewVoteResult> => {
+    const again = await voteOrClaim(trx, input, deps, deps.now(), { overrideWritten: true });
+    return again.kind === 'done' ? again.result : { status: 'rejected', reason: 'claimed' };
   });
+}
+
+type VoteStep = { kind: 'done'; result: ReviewVoteResult } | { kind: 'override'; imageId: number };
+
+async function voteOrClaim(
+  trx: Transaction<DB>,
+  input: { reviewId: number; moderatorId: number; answer: string },
+  deps: ReviewVoteDeps,
+  now: Date,
+  { overrideWritten = false }: { overrideWritten?: boolean } = {}
+): Promise<VoteStep> {
+  const done = (result: ReviewVoteResult): VoteStep => ({ kind: 'done', result });
+  const review = await trx
+    .selectFrom('KnightsInquisitorReview')
+    .select([
+      'id',
+      'imageId',
+      'questionKey',
+      'consensusValue',
+      'status',
+      'claimedBy',
+      'claimExpiresAt',
+    ])
+    .where('id', '=', input.reviewId)
+    .forUpdate()
+    .executeTakeFirst();
+  if (!review) return done({ status: 'rejected', reason: 'not-found' });
+  if (review.status !== 'open') return done({ status: 'rejected', reason: 'not-open' });
+  if (
+    review.claimedBy !== null &&
+    review.claimedBy !== input.moderatorId &&
+    review.claimExpiresAt !== null &&
+    review.claimExpiresAt > now
+  ) {
+    return done({ status: 'rejected', reason: 'claimed' });
+  }
+  if (!(await ratingAnswers(trx, review.questionKey)).includes(input.answer)) {
+    return done({ status: 'rejected', reason: 'bad-answer' });
+  }
+  const owner = await trx
+    .selectFrom('Image')
+    .select('userId')
+    .where('id', '=', review.imageId)
+    .executeTakeFirst();
+  if (owner?.userId === input.moderatorId) return done({ status: 'rejected', reason: 'own-image' });
+
+  const votes = await trx
+    .selectFrom('KnightsInquisitorVote')
+    .select(['moderatorId', 'answer'])
+    .where('reviewId', '=', review.id)
+    .execute();
+  if (votes.some((v) => v.moderatorId === input.moderatorId)) {
+    return done({ status: 'rejected', reason: 'already-voted' });
+  }
+  const [first] = votes;
+  const agrees = first?.answer === input.answer;
+  if (await exclusionOf(trx, review, agrees ? input.answer : first?.answer ?? null)) {
+    await closeReview(trx, review.id, 'excluded', now);
+    return done({ status: 'excluded' });
+  }
+
+  const image = (await readImageState(trx, review.imageId)) as ImageState;
+  if (agrees && String(image.nsfwLevel) !== input.answer && !overrideWritten) {
+    if (!deps.setImageLevel) return done({ status: 'rejected', reason: 'override-unavailable' });
+    await trx
+      .updateTable('KnightsInquisitorReview')
+      .set({
+        claimedBy: input.moderatorId,
+        claimExpiresAt: utc(new Date(now.getTime() + CLAIM_MS)),
+      })
+      .where('id', '=', review.id)
+      .execute();
+    return { kind: 'override', imageId: review.imageId };
+  }
+
+  await trx
+    .insertInto('KnightsInquisitorVote')
+    .values({
+      reviewId: review.id,
+      moderatorId: input.moderatorId,
+      answer: input.answer,
+      createdAt: utc(now),
+    })
+    .execute();
+  if (!first) return done({ status: 'recorded' });
+  if (!agrees) {
+    await closeReview(trx, review.id, 'split', now);
+    return done({ status: 'split' });
+  }
+  await addSkillCheck(trx, {
+    imageId: review.imageId,
+    answer: input.answer,
+    cap: deps.poolCap,
+    now,
+  });
+  await closeReview(trx, review.id, 'confirmed', now, input.answer);
+  return done({ status: 'confirmed' });
 }
 
 /**

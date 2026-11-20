@@ -299,6 +299,117 @@ describe('voting', () => {
   });
 });
 
+describe('overriding the image level', () => {
+  /** Stands in for the main app: writes the moderator lock its rating endpoint writes. */
+  const setImageLevel = vi.fn(async (imageId: number, level: number) => {
+    await lockImage(pg, imageId, { reason: 'moderator', level });
+  });
+  const voteWith = (reviewId: number, moderatorId: number, answer: string, port = setImageLevel) =>
+    castReviewVote(db, { reviewId, moderatorId, answer }, { ...voteDeps, setImageLevel: port });
+  beforeEach(() => setImageLevel.mockClear());
+
+  it('writes the mods level once when they agree on another level, then confirms at it', async () => {
+    const id = await reviewed(1);
+    await voteWith(id, MOD_A, '8');
+    expect(await voteWith(id, MOD_B, '8')).toEqual({ status: 'confirmed' });
+    expect(setImageLevel).toHaveBeenCalledTimes(1);
+    expect(setImageLevel).toHaveBeenCalledWith(1, 8);
+    expect(await reviewRow(id)).toMatchObject({ status: 'confirmed', confirmedValue: '8' });
+    expect(await pool()).toEqual([
+      { imageId: 1, pool: 'skillCheck', source: 'inquisitor', answer: '8' },
+    ]);
+  });
+
+  it('writes nothing to the image when the mods agree with its level', async () => {
+    const id = await reviewed(1);
+    await voteWith(id, MOD_A, '4');
+    expect(await voteWith(id, MOD_B, '4')).toEqual({ status: 'confirmed' });
+    expect(setImageLevel).not.toHaveBeenCalled();
+  });
+
+  it('records no vote and leaves the review open and unclaimed when the write fails, so the mod can retry', async () => {
+    const id = await reviewed(1);
+    await voteWith(id, MOD_A, '8');
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failing = vi.fn(async () => {
+      throw new Error('main app down');
+    });
+    expect(await voteWith(id, MOD_B, '8', failing)).toEqual({
+      status: 'rejected',
+      reason: 'override-failed',
+    });
+    expect(await votesOn(id)).toEqual([{ moderatorId: MOD_A, answer: '8' }]);
+    expect(
+      (await pg.query(`SELECT status,"claimedBy" FROM "KnightsInquisitorReview" WHERE id=$1`, [id]))
+        .rows[0]
+    ).toEqual({ status: 'open', claimedBy: null });
+    expect(await pool()).toEqual([]);
+    expect(await voteWith(id, MOD_B, '8')).toEqual({ status: 'confirmed' });
+  });
+
+  it('confirms on a retry whose write already landed instead of excluding the review', async () => {
+    const id = await reviewed(1);
+    await voteWith(id, MOD_A, '8');
+    await lockImage(pg, 1, { reason: 'moderator', level: 8 });
+    expect(await voteWith(id, MOD_B, '8')).toEqual({ status: 'confirmed' });
+    expect(setImageLevel).not.toHaveBeenCalled();
+  });
+
+  it('still serves a review whose write landed to the next moderator', async () => {
+    const id = await reviewed(1);
+    await voteWith(id, MOD_A, '8');
+    await lockImage(pg, 1, { reason: 'moderator', level: 8 });
+    expect((await nextReview(db, { moderatorId: MOD_C }))?.reviewId).toBe(id);
+  });
+
+  it('never writes a blocked image: the review is excluded first', async () => {
+    const id = await reviewed(1);
+    await voteWith(id, MOD_A, '8');
+    await pg.query(`UPDATE "Image" SET ingestion='Blocked' WHERE id=1`);
+    expect(await voteWith(id, MOD_B, '8')).toEqual({ status: 'excluded' });
+    expect(setImageLevel).not.toHaveBeenCalled();
+  });
+
+  it("leaves every player's vote, XP and gold and the settled item as they were", async () => {
+    const itemId = await settled(1);
+    await pg.query(
+      `INSERT INTO "NewOrderPlayer" ("userId","rankType","exp","goldPending") VALUES (5,'Knight',100,7)`
+    );
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict","gold","xp","settledAt")
+       VALUES ($1,5,$2,$3,1,'Knight','4',1,'correct',3,10,$2)`,
+      [itemId, NOW, Q]
+    );
+    await applyPendingResolutions(db, deps());
+    const reviewId = (await reviewOf(itemId))!.id;
+    const snapshot = async () => [
+      (await pg.query(`SELECT * FROM "KnightsQueueItem" WHERE id=$1`, [itemId])).rows,
+      (await pg.query(`SELECT * FROM "KnightsVote"`)).rows,
+      (await pg.query(`SELECT exp,"goldPending","goldEarned" FROM "NewOrderPlayer"`)).rows,
+    ];
+    const before = await snapshot();
+    await voteWith(reviewId, MOD_A, '8');
+    expect(await voteWith(reviewId, MOD_B, '8')).toEqual({ status: 'confirmed' });
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it('refuses a third moderator while another holds the claim, and lets them take over a lapsed one', async () => {
+    const id = await reviewed(1);
+    await voteWith(id, MOD_A, '8');
+    await pg.query(
+      `UPDATE "KnightsInquisitorReview" SET "claimedBy"=$1,"claimExpiresAt"=$2 WHERE id=$3`,
+      [MOD_B, new Date(NOW.getTime() + 60_000), id]
+    );
+    expect(await voteWith(id, MOD_C, '8')).toEqual({ status: 'rejected', reason: 'claimed' });
+    expect(await nextReview(db, { moderatorId: MOD_C, now: NOW })).toBeNull();
+    await pg.query(`UPDATE "KnightsInquisitorReview" SET "claimExpiresAt"=$1 WHERE id=$2`, [
+      new Date(NOW.getTime() - 60_000),
+      id,
+    ]);
+    expect(await voteWith(id, MOD_C, '8')).toEqual({ status: 'confirmed' });
+  });
+});
+
 describe('excluding reviews', () => {
   const causes: [string, () => Promise<unknown>][] = [
     ['a moderator ruled on the image', () => lockImage(pg, 1, { reason: 'Moderator', level: 4 })],

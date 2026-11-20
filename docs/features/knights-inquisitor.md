@@ -21,6 +21,16 @@ is recorded. The second closes the review:
 - the same level: `confirmed`, and the image enters the skill-check pool at that level;
 - another level: `split`, no check, the image keeps the players' level, both votes are kept.
 
+A review a moderator's override already reached (the image ruled at the level the first vote named) is still served and can
+still be confirmed.
+
+When the two moderators agree on a level other than the image's, that level is written to the image as a moderator ruling
+first, through the main app's moderator rating endpoint and in the name of the moderator whose vote closed the review (their
+own session is used, so the main app records the ruling as theirs). Only then is the vote recorded and the review confirmed;
+if the write fails, nothing is recorded and the moderator can vote again. While the write runs the review is held for that
+moderator for two minutes. The image is never written while it is blocked: such a review is excluded first. The players who
+settled the item keep their verdicts, XP and gold.
+
 Moderator votes earn no XP, gold or Watch, need no player record, and never change the players' votes, verdicts, XP or gold.
 
 ## Excluded reviews
