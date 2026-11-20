@@ -5,8 +5,8 @@ import { createApiRouter } from '~/server/utils/api-router';
 function setup() {
   const handler = vi.fn();
   const router = createApiRouter({ 'homeblock/create': async () => ({ default: handler }) });
-  const call = async (query: Record<string, string | string[]>) => {
-    const req = { method: 'POST', query } as unknown as NextApiRequest;
+  const call = async (query: Record<string, string | string[]>, method = 'POST') => {
+    const req = { method, query } as unknown as NextApiRequest;
     const res = {
       status: vi.fn().mockReturnThis(),
       json: vi.fn().mockReturnThis(),
@@ -25,6 +25,13 @@ describe('createApiRouter', () => {
     expect(handler).toHaveBeenCalledWith(req, res);
     // defineModeratorEndpoint merges req.query over the body, so a leftover `path` would override a body field.
     expect(req.query).toEqual({ id: '5' });
+  });
+
+  it.each(['GET', 'HEAD'])('forwards a %s request to the handler unchanged', async (method) => {
+    const { handler, call } = setup();
+    const { req, res } = await call({ path: ['homeblock', 'create'] }, method);
+    expect(handler).toHaveBeenCalledWith(req, res);
+    expect(req.method).toBe(method);
   });
 
   // `homeblock%2Fcreate` reaches the router as the one decoded segment `homeblock/create`.
