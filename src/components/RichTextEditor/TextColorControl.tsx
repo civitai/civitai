@@ -14,12 +14,25 @@ export function parseHexColor(input: string) {
   return HEX_COLOR.test(value) ? value : null;
 }
 
+/** Saved text comes back from the DOM as rgb(), so read either form back as hex. */
+export function toHexColor(color: string | undefined) {
+  if (!color) return null;
+  const rgb = color.match(
+    /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*1\s*)?\)$/i
+  );
+  if (!rgb) return parseHexColor(color);
+  const channels = rgb.slice(1).map(Number);
+  if (channels.some((c) => c > 255)) return null;
+  return `#${channels.map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+}
+
 // Mantine's RTE.ColorPicker has no text field, so this mirrors it (swatches + drag picker) and adds one.
 export function TextColorControl({ colors }: { colors: readonly string[] }) {
   const { editor } = useRichTextEditorContext();
   const [opened, { open, close }] = useDisclosure(false);
   const [mode, setMode] = useState<'palette' | 'picker'>('palette');
   const [hex, setHex] = useState('');
+  const [pickerColor, setPickerColor] = useState('#ffffff');
   const [invalid, setInvalid] = useState(false);
   const current: string | undefined = editor?.getAttributes('textStyle').color;
 
@@ -48,7 +61,9 @@ export function TextColorControl({ colors }: { colors: readonly string[] }) {
           title="Text color"
           onClick={() => {
             if (opened) return close();
-            setHex(current && parseHexColor(current) ? current : '');
+            const start = toHexColor(current);
+            setHex(start ?? '');
+            if (start) setPickerColor(start);
             setInvalid(false);
             open();
           }}
@@ -79,8 +94,9 @@ export function TextColorControl({ colors }: { colors: readonly string[] }) {
             format="hex"
             saturationLabel="Saturation and brightness"
             hueLabel="Hue"
-            defaultValue={current && parseHexColor(current) ? current : undefined}
+            value={pickerColor}
             onChange={(value) => {
+              setPickerColor(value);
               setHex(value);
               apply(value, true);
             }}
@@ -89,6 +105,7 @@ export function TextColorControl({ colors }: { colors: readonly string[] }) {
         <Group gap="xs" mt="sm" wrap="nowrap">
           <TextInput
             aria-label="Hex color"
+            data-autofocus
             placeholder="#ff8800"
             size="xs"
             w={120}
@@ -99,8 +116,11 @@ export function TextColorControl({ colors }: { colors: readonly string[] }) {
             value={hex}
             error={invalid}
             onChange={(e) => {
-              setHex(e.currentTarget.value);
+              const value = e.currentTarget.value;
+              setHex(value);
               setInvalid(false);
+              const color = parseHexColor(value);
+              if (color && color.length === 7) setPickerColor(color);
             }}
             onKeyDown={(e) => {
               if (e.key !== 'Enter') return;

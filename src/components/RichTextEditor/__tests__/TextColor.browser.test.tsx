@@ -16,10 +16,10 @@ let html = '';
 // What the article actually saves: the editor's HTML after the sanitiser.
 const savedHtml = () => sanitizeHtml(html);
 
-function Editor() {
+function Editor({ content }: { content: string }) {
   const editor = useEditor({
     extensions: [StarterKit, TextStyleKit],
-    content: '<p>hello</p>',
+    content,
     onUpdate: ({ editor }) => (html = editor.getHTML()),
   });
   return (
@@ -32,8 +32,9 @@ function Editor() {
   );
 }
 
-async function openColorControl() {
-  renderWithProviders(<Editor />);
+async function openColorControl(content = '<p>hello</p>') {
+  html = '';
+  renderWithProviders(<Editor content={content} />);
   const text = page.getByText('hello');
   await expect.element(text).toBeInTheDocument();
   await userEvent.tripleClick(text);
@@ -78,5 +79,41 @@ describe('text colour control', () => {
     await userEvent.click(page.getByRole('button', { name: 'Set color #fa5252' }));
 
     await expect.poll(spanColor).toBe('rgb(250, 82, 82)');
+  });
+
+  test('a typed hex moves the drag picker to that colour', async () => {
+    await openColorControl();
+    await userEvent.click(page.getByRole('button', { name: 'Color picker' }));
+    await userEvent.fill(page.getByRole('textbox', { name: 'Hex color' }), '#ff0000');
+
+    await expect
+      .element(page.getByRole('slider', { name: 'Saturation and brightness' }))
+      .toHaveAttribute('aria-valuetext', 'rgba(255, 0, 0, 1)');
+  });
+
+  test('reopening on saved coloured text shows its colour as hex', async () => {
+    await openColorControl('<p><span style="color: rgb(26, 43, 60)">hello</span></p>');
+
+    await expect.element(page.getByRole('textbox', { name: 'Hex color' })).toHaveValue('#1a2b3c');
+  });
+
+  test('the same colour applies again to a second selection', async () => {
+    await openColorControl('<p>hello</p><p>world</p>');
+    await userEvent.fill(page.getByRole('textbox', { name: 'Hex color' }), '#1a2b3c');
+    await userEvent.keyboard('{Enter}');
+    await expect.poll(spanColor).toBe('rgb(26, 43, 60)');
+
+    await userEvent.tripleClick(page.getByText('world'));
+    await userEvent.click(page.getByRole('button', { name: 'Text color' }));
+    await expect.element(page.getByRole('textbox', { name: 'Hex color' })).toHaveValue('#1a2b3c');
+    await userEvent.keyboard('{Enter}');
+
+    await expect
+      .poll(() =>
+        [...document.querySelectorAll<HTMLElement>('.ProseMirror span[style]')].map(
+          (s) => s.style.color
+        )
+      )
+      .toEqual(['rgb(26, 43, 60)', 'rgb(26, 43, 60)']);
   });
 });
