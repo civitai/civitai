@@ -60,6 +60,8 @@ export type ConnectReviewSubject = {
     grants: string[];
     isConfidential: boolean;
     isVerified: boolean;
+    /** Another approved listing on this client declares offline access (the hub grants per client). */
+    anotherListingDeclaresOffline?: boolean;
   };
 };
 
@@ -191,6 +193,7 @@ export function connectCivitaiChecks(
       ...offlineAccessPosture(subject.client.grants),
       grants: [...subject.client.grants],
       declared: offlineAccessDeclaration(subject.listing.scopeJustifications).declared,
+      anotherListingDeclares: subject.client.anotherListingDeclaresOffline === true,
     },
     source,
   };

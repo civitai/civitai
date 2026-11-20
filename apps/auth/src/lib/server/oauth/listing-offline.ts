@@ -14,17 +14,24 @@ import { logAxiomError } from '$lib/server/axiom';
 // network hop and a second service whose outage changes token issuance, and a copy of the flag on
 // the client row would need a writer to keep it in step with every approve, delist and edit.
 //
-// Only `approved` listings declare. A pending edit of a live listing sits on a shadow revision,
+// LISTED means EVER LIVE: the client has a listing that has been approved, i.e. one now
+// `approved` or `removed` (a removed listing was live, or it could not have been taken down or
+// unpublished). A draft or pending first submission, or a rejected one, changes nothing for the
+// app's existing users: the client keeps the unlisted rule until a listing goes live. A delisted
+// app stays listed, so it does not fall back to the unlisted rule and regain offline access.
+//
+// Only `approved` listings DECLARE. A pending edit of a live listing sits on a shadow revision,
 // which is always a draft, so its declaration counts only once approve copies it onto the live
-// listing; no separate shadow filter is needed. A listing in any other state (draft, pending,
-// rejected, removed) still makes the client a listed one, so a delisted app does not fall back to
-// the unlisted rule and regain offline access.
+// listing.
 //
 // Fail-closed: if the listings cannot be read, no client gets offline access for that request.
 // The hub cannot tell a connect client from any other without the read, and granting a refresh
 // token by mistake lasts 30 days, where refusing one only costs the user a sign-in later.
 
 export type ClientOfflineListing = 'unlisted' | 'declared' | 'undeclared';
+
+/** A listing in one of these has been approved at some point: it went live. */
+const EVER_LIVE_STATUSES = ['approved', 'removed'];
 
 /** What the client's connect listings say about offline access. Throws if they cannot be read. */
 export async function readClientOfflineListing(clientId: string): Promise<ClientOfflineListing> {
@@ -33,6 +40,7 @@ export async function readClientOfflineListing(clientId: string): Promise<Client
     .select(['status', 'connect_scope_justifications'])
     .where('connect_client_id', '=', clientId)
     .where('kind', '=', 'offsite')
+    .where('status', 'in', EVER_LIVE_STATUSES)
     .execute();
   if (rows.length === 0) return 'unlisted';
   return rows.some(

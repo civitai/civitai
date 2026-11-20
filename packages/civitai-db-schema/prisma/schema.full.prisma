@@ -3785,6 +3785,11 @@ model AppListing {
   // guard is the migration's partial-unique index + the app-level P2002 →
   // idempotent-reuse handling in beginListingRevision.
   @@index([revisionOfId], map: "app_listings_revision_of_id_key")
+  // The auth hub reads a client's connect listings (offline access is granted only when one of
+  // its approved listings declares it). Plain here; the REAL index is PARTIAL (WHERE
+  // connect_client_id IS NOT NULL), which Prisma cannot express, and lives only in the
+  // manual-apply migration `20271120150000_app_listing_connect_client_idx`.
+  @@index([connectClientId], map: "app_listings_connect_client_id_idx")
   @@map("app_listings")
 }
 

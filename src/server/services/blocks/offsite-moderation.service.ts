@@ -510,6 +510,7 @@ async function classifyListingForAction(appListingId: string): Promise<{
   name: string | null;
   appBlockId: string | null;
   userId: number;
+  connectClientId: string | null;
 }> {
   const listing = await dbRead.appListing.findUnique({
     where: { id: appListingId },
@@ -521,6 +522,7 @@ async function classifyListingForAction(appListingId: string): Promise<{
       name: true,
       appBlockId: true,
       userId: true,
+      connectClientId: true,
     },
   });
   if (!listing) {
@@ -534,6 +536,8 @@ async function classifyListingForAction(appListingId: string): Promise<{
     name: listing.name,
     appBlockId: listing.appBlockId,
     userId: listing.userId,
+    // `?? null`: a fixture or a row shape without the column reads as no client.
+    connectClientId: listing.connectClientId ?? null,
   };
 }
 
@@ -758,6 +762,12 @@ export async function delistListing(opts: {
   await bustAppListingCatalogCache().catch(() => undefined);
   const live = isOnsite && listing.appBlockId ? await takeDownLiveAppAfterCommit(listing.slug) : {};
   await forgetRevokedAppTokens(revoked.value);
+  // A moderator takedown of a CONNECT listing also cuts the app's offline access now (refresh
+  // tokens deleted; users sign in again). An owner's unpublish does not (see that module).
+  if (!isOnsite) {
+    const { cutConnectOfflineAccessAfterTakedown } = await import('./connect-offline-takedown');
+    await cutConnectOfflineAccessAfterTakedown(listing.connectClientId);
+  }
 
   return { appListingId: input.appListingId, status: 'removed', ...live };
 }

@@ -37,6 +37,7 @@ const {
   mockCheckCreate,
   mockPendingFindFirst,
   mockDeleteStaged,
+  mockSiblingFindMany,
 } = vi.hoisted(() => ({
   mockEnv: {
     APPS_KUBE_NAMESPACE: 'civitai-apps',
@@ -66,6 +67,8 @@ const {
   mockCheckCreate: vi.fn(async (_args: unknown) => undefined),
   mockPendingFindFirst: vi.fn(async () => ({ id: 'still-pending' } as { id: string } | null)),
   mockDeleteStaged: vi.fn(async (_id: string) => undefined),
+  // Other approved listings on the same OAuth client (the review's sibling-declaration check).
+  mockSiblingFindMany: vi.fn(async (_a: unknown) => [] as Array<Record<string, unknown>>),
 }));
 
 vi.mock('~/env/server', () => ({ env: mockEnv }));
@@ -76,7 +79,7 @@ vi.mock('~/server/db/client', () => ({
     appBlock: { findFirst: mockAppBlockFindFirst },
     appReviewAgentReport: { findFirst: mockReportFindFirst },
     appListingPublishRequest: { findUnique: mockListingRequestFindUnique },
-    appListing: { findUnique: mockListingFindUnique },
+    appListing: { findUnique: mockListingFindUnique, findMany: mockSiblingFindMany },
   },
   dbWrite: {
     appReviewAgentReport: { create: mockCreate, updateMany: mockUpdateMany },
@@ -758,6 +761,7 @@ describe('startAgentReview — CONNECT lane dispatch', () => {
     mockPendingFindFirst.mockResolvedValue({ id: ALPR });
     mockCheckCreate.mockResolvedValue(undefined);
     mockStage.mockResolvedValue(undefined);
+    mockSiblingFindMany.mockResolvedValue([]);
   });
 
   it('stages a listing review ZIP, inserts an external report row, provisions the shared Job', async () => {
@@ -830,9 +834,41 @@ describe('startAgentReview — CONNECT lane dispatch', () => {
         grants: ['authorization_code', 'refresh_token'],
         // The fixture's justifications carry no `offline_access` key.
         declared: false,
+        anotherListingDeclares: false,
       },
       source: { provided: false },
     });
+  });
+
+  it('🔴 TWO listings on one client: another approved one declares → recorded, read excludes this listing', async () => {
+    mockSiblingFindMany.mockResolvedValue([
+      { connectScopeJustifications: { offline_access: 'the other app syncs nightly' } },
+    ]);
+    await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
+    expect(checksRow().checks.offlineAccess).toMatchObject({
+      declared: false,
+      anotherListingDeclares: true,
+    });
+    expect(mockSiblingFindMany).toHaveBeenCalledWith({
+      where: {
+        connectClientId: 'oc_CLIENT',
+        kind: 'offsite',
+        status: 'approved',
+        revisionOfId: null,
+        id: { notIn: ['apl_LISTING'] },
+      },
+      select: { connectScopeJustifications: true },
+    });
+  });
+
+  it('a revision\'s own live parent is not "another listing"', async () => {
+    mockListingRequestFindUnique.mockResolvedValue(
+      connectRequest({ listing: { revisionOfId: 'apl_PARENT' } })
+    );
+    await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
+    const where = (mockSiblingFindMany.mock.calls as unknown as Array<[{ where: any }]>)[0][0]
+      .where;
+    expect(where.id).toEqual({ notIn: ['apl_LISTING', 'apl_PARENT'] });
   });
 
   it('a DECLARED offline_access: the checks record it, and the runner gets the justification to judge', async () => {
@@ -869,7 +905,12 @@ describe('startAgentReview — CONNECT lane dispatch', () => {
   ])('grants %j → offline access %j', async (grants, posture) => {
     mockListingRequestFindUnique.mockResolvedValue(connectRequest({ grants }));
     await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
-    expect(checksRow().checks.offlineAccess).toEqual({ ...posture, grants, declared: false });
+    expect(checksRow().checks.offlineAccess).toEqual({
+      ...posture,
+      grants,
+      declared: false,
+      anotherListingDeclares: false,
+    });
   });
 
   it('no linked source: the checks say so, and the bundle carries the plain statement and no archive', async () => {

@@ -75,6 +75,7 @@ import {
   validateConnectScopeJustifications,
   SENSITIVE_TOKEN_SCOPES,
   OFFLINE_ACCESS_JUSTIFICATION_KEY,
+  offlineAccessJustification,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
 import {
@@ -3435,7 +3436,8 @@ async function resolveOnsiteApprovalContentRating(
 
 /**
  * Approval gate for OAuth-CONNECT listings (PR3): every SENSITIVE requested scope
- * MUST carry a non-empty per-scope justification before the listing can go live.
+ * MUST carry a non-empty per-scope justification before the listing can go live, and so
+ * must a declared `offline_access` (checked first, whatever the scope set).
  * `SENSITIVE_TOKEN_SCOPES` (money / private / cross-user writes) is the flagged set;
  * a non-sensitive requested scope need not be justified. No-op for an external-link
  * listing (`connectClientId == null`) or a connect listing requesting no sensitive
@@ -3462,13 +3464,12 @@ function assertConnectSensitiveScopesJustified(listing: {
       ? (listing.connectScopeJustifications as Record<string, unknown>)
       : {};
   // OFFLINE ACCESS is treated like a sensitive scope: a listing that declares it must justify it.
-  // A key that is present but blank is a declaration with no reason, and is refused. Not
-  // declaring is allowed (see the PR: `refresh_token` is a default client grant, so requiring a
-  // declaration from every reachable client would block nearly every approval); the agent
-  // review flags a reachable-but-undeclared client instead.
+  // The key present but with no reason the shared rule accepts (`offlineAccessJustification`, the
+  // one the auth hub reads) is a declaration with no reason, and is refused. NOT declaring is
+  // allowed, and it is not a gap: the hub never offers offline access to a listed app whose
+  // approved listing does not declare it, so an undeclared app simply gets none.
   if (Object.hasOwn(justifications, OFFLINE_ACCESS_JUSTIFICATION_KEY)) {
-    const raw = justifications[OFFLINE_ACCESS_JUSTIFICATION_KEY];
-    if (!(typeof raw === 'string' && raw.trim().length > 0)) {
+    if (offlineAccessJustification(justifications) == null) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
         message: 'offline access is declared but has no justification; add one before approval',

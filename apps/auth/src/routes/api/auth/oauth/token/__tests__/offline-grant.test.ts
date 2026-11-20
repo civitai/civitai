@@ -524,11 +524,22 @@ describe('App Store connect clients: offline access only with an approved declar
       expect(h.tables.ApiKey.map((k) => k.type)).toEqual(['Access']);
     });
 
-    it('🔴 a declaration on a PENDING listing does not count', async () => {
-      listing('pending', { offline_access: 'syncs your images nightly' });
+    it('🔴 a declaration on a PENDING listing does not count (beside a live undeclared one)', async () => {
+      listing('approved', { ModelsWrite: 'uploads' });
+      listing('pending', { offline_access: 'syncs your images nightly' }, { revision_of_id: null });
       const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
       expect(res.body).not.toHaveProperty('refresh_token');
     });
+
+    it.each(['draft', 'pending', 'rejected'])(
+      '🔴 a client whose only listing is %s (never live) keeps the unlisted behaviour',
+      async (status) => {
+        listing(status, { ModelsWrite: 'uploads' });
+        const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+        expect(typeof res.body.refresh_token).toBe('string');
+        expect(h.tables.OauthConsent[0]).toMatchObject({ offlineGrantedAt: NOW });
+      }
+    );
 
     it('🔴 a declaration only on the SHADOW revision (not yet approved) does not count', async () => {
       listing('approved', {});
@@ -561,6 +572,49 @@ describe('App Store connect clients: offline access only with an approved declar
       expect(row(res.body.refresh_token)).toMatchObject({
         expiresAt: new Date(NOW.getTime() + 30 * DAY),
       });
+    });
+
+    // Listings that cannot be read: a getter that throws on the table the hub reads.
+    const breakListings = () =>
+      Object.defineProperty(h.tables, 'app_listings', {
+        configurable: true,
+        enumerable: true,
+        get() {
+          throw new Error('db down');
+        },
+      });
+
+    it('🔴 fail-closed at the CODE EXCHANGE: a read failure there means no refresh token', async () => {
+      listing('approved', { offline_access: 'syncs nightly' });
+      const redirect = await authorize(authorizeParams(ASK), { offline: 'true' });
+      breakListings();
+      const res = await exchangeCode(redirect);
+      expect(res.status).toBe(200);
+      expect(res.body).not.toHaveProperty('refresh_token');
+    });
+
+    it('🔴 fail-closed at REFRESH: a read failure stops the chain sliding', async () => {
+      listing('approved', { offline_access: 'syncs nightly' });
+      const first = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      breakListings();
+      vi.setSystemTime(new Date(NOW.getTime() + 10 * DAY));
+      const res = await refresh(String(first.body.refresh_token));
+      expect(res.status).toBe(200);
+      expect(row(res.body.refresh_token)).toMatchObject({
+        expiresAt: new Date(NOW.getTime() + 30 * DAY),
+      });
+    });
+
+    it('🔴 an UNTICK is honoured even when the listing read fails at the POST', async () => {
+      // The user held the grant from an earlier visit, and a refresh token with it.
+      consent({ offlineGrantedAt: new Date(NOW.getTime() - DAY) });
+      legacyRefresh(new Date(NOW.getTime() + 20 * DAY));
+      breakListings();
+      await authorize(authorizeParams(ASK), { offline: 'false' });
+      expect(h.tables.OauthConsent[0].offlineGrantedAt).toBeNull();
+      expect(h.tables.ApiKey.filter((k) => k.type === 'Refresh' && k.clientId === CLIENT)).toEqual(
+        []
+      );
     });
 
     it('a client no listing points at is unchanged (another client listed does not matter)', async () => {

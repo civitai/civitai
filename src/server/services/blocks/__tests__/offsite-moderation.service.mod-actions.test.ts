@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import { TRPCError } from '@trpc/server';
 
@@ -181,6 +182,13 @@ const { mockRevokeOrchestratorTokens, mockDeleteAuthSubject } = vi.hoisted(() =>
   mockRevokeOrchestratorTokens: vi.fn(async (_a: { userId: number }) => undefined),
   mockDeleteAuthSubject: vi.fn(async (_a: unknown) => undefined),
 }));
+// Flipt (a process boundary): every flag off unless a test turns one on, as the real client reads
+// an unconfigured Flipt.
+const flipt = vi.hoisted(() => ({ on: new Set<string>() }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: async (key: string) => flipt.on.has(key),
+}));
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   revokeCivitaiUserTokens: mockRevokeOrchestratorTokens,
 }));
@@ -313,6 +321,88 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 // delistListing
 // ---------------------------------------------------------------------------
+
+describe('delistListing — a moderator takedown of a CONNECT listing cuts offline access', () => {
+  const connectListing = () => ({ ...offsiteListing('approved'), connectClientId: 'oc_connect' });
+  const refreshDeletes = () =>
+    mockWrite.apiKey.deleteMany.mock.calls.filter(
+      (c) => (c[0] as { where: { type?: string } }).where.type === 'Refresh'
+    );
+  beforeEach(() => {
+    flipt.on.clear();
+    mockWrite.apiKey.findMany.mockResolvedValue([{ userId: 11 }, { userId: 12 }]);
+  });
+
+  it('🔴 flag on: deletes every Refresh row of the client, then expires each holder’s orchestrator auth, after the commit', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    const order: string[] = [];
+    mockWrite.$transaction.mockImplementationOnce(
+      async (cb: (tx: WriteMock) => Promise<unknown>) => {
+        const out = await cb(mockWrite);
+        order.push('commit');
+        return out;
+      }
+    );
+    mockWrite.apiKey.deleteMany.mockImplementation(async () => {
+      order.push('delete-refresh');
+      return { count: 2 };
+    });
+    mockRevokeOrchestratorTokens.mockImplementation(async ({ userId }: { userId: number }) => {
+      order.push(`orchestrator:${userId}`);
+    });
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(mockWrite.apiKey.findMany).toHaveBeenCalledWith({
+      where: { type: 'Refresh', clientId: 'oc_connect' },
+      select: { userId: true },
+      distinct: ['userId'],
+    });
+    expect(refreshDeletes().map((c) => c[0])).toEqual([
+      { where: { type: 'Refresh', clientId: 'oc_connect' } },
+    ]);
+    expect(order).toEqual(['commit', 'delete-refresh', 'orchestrator:11', 'orchestrator:12']);
+  });
+
+  it('flag off: a takedown is unchanged — no refresh token is touched', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(refreshDeletes()).toEqual([]);
+  });
+
+  it('an external-link listing (no OAuth client) has nothing to cut', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(refreshDeletes()).toEqual([]);
+  });
+
+  it('🔴 an OWNER unpublish of the same connect listing does NOT cut (its chains only stop sliding)', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockWrite.appListing.findUnique.mockResolvedValueOnce({
+      userId: OWNER,
+      status: 'approved',
+      kind: 'offsite',
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: null,
+      externalUrl: EXTERNAL_URL,
+      connectClientId: 'oc_connect',
+    });
+    const res = await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(refreshDeletes()).toEqual([]);
+    expect(mockRevokeOrchestratorTokens).not.toHaveBeenCalled();
+  });
+});
 
 describe('delistListing', () => {
   it('flips approved → removed (status+kind-guarded) and writes exactly ONE delist event', async () => {

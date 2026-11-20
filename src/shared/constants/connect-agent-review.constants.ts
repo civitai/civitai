@@ -83,7 +83,12 @@ export type ConnectCivitaiChecks = {
    * `declared`: the listing's own declaration. Absent on checks stored before declarations
    * existed; those render as before, with no mismatch line.
    */
-  offlineAccess: OfflineAccessPosture & { grants: string[]; declared?: boolean };
+  offlineAccess: OfflineAccessPosture & {
+    grants: string[];
+    declared?: boolean;
+    /** Another approved listing on the same client declares it, so the hub still grants it. */
+    anotherListingDeclares?: boolean;
+  };
   source: ConnectSourceResult;
 };
 
@@ -108,6 +113,15 @@ export const UNDECLARED_NO_OFFLINE_STATEMENT =
   'offer "Stay connected" and no refresh token is issued. Until offline access is a separate ' +
   'grant on the sign-in service, every app still receives refresh tokens.';
 
+/**
+ * This listing does not declare offline access, but another approved listing on the same OAuth
+ * client does, so the hub (which decides per client) still grants it.
+ */
+export const UNDECLARED_SIBLING_DECLARES_STATEMENT =
+  'Offline access: not declared on this listing, but another listing on this client declares ' +
+  'offline access, so this app can still get it: users are offered "Stay connected" and the app ' +
+  'can hold a refresh token.';
+
 export const STALE_REVIEW_STATEMENT = 'Stale — the listing changed after this review.';
 
 export type CivitaiCheckLine = { tone: 'warn' | 'info'; text: string };
@@ -120,7 +134,11 @@ export function civitaiCheckLines(checks: ConnectCivitaiChecks): CivitaiCheckLin
   // declares it (auth hub, listing-offline.ts, while offline access is its own grant). So a client
   // that could refresh but whose listing does not declare it simply cannot get it; that is the
   // line, not a "reachable" warning. The device flow is not gated there, so it stays ALWAYS.
-  const undeclaredSoBlocked = o.declared === false && o.reachable && !o.alwaysOffline;
+  const undeclaredHere = o.declared === false && o.reachable && !o.alwaysOffline;
+  // The hub decides per CLIENT: an undeclared listing whose client has another approved listing
+  // that declares it can still get offline access. Do not claim it cannot.
+  const undeclaredSoBlocked = undeclaredHere && o.anotherListingDeclares !== true;
+  const undeclaredButSibling = undeclaredHere && o.anotherListingDeclares === true;
   lines.push(
     o.alwaysOffline
       ? {
@@ -131,6 +149,8 @@ export function civitaiCheckLines(checks: ConnectCivitaiChecks): CivitaiCheckLin
         }
       : undeclaredSoBlocked
       ? { tone: 'warn', text: UNDECLARED_NO_OFFLINE_STATEMENT }
+      : undeclaredButSibling
+      ? { tone: 'warn', text: UNDECLARED_SIBLING_DECLARES_STATEMENT }
       : o.reachable
       ? {
           tone: 'warn',

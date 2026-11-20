@@ -438,7 +438,7 @@ describe('🔴 the ASSETS step carries the repair frame too', () => {
   });
 });
 
-describe('🔴 the OAuth scope disclosure follows the DRIFT, not the status', () => {
+describe('🔴 the OAuth scope disclosure on an unpublished connect listing', () => {
   const connect = {
     connectClientId: 'oauth-1',
     connectAllowedScopes: 12,
@@ -446,16 +446,21 @@ describe('🔴 the OAuth scope disclosure follows the DRIFT, not the status', ()
     connectScopeJustifications: { ModelsWrite: 'original reason' },
   };
 
-  test('🔴 while the masks AGREE, a justification edit stays live on an unpublished listing', async () => {
-    // `buildScalarPatch` sends the (unchanged) mask alongside the edited justifications, and
-    // `materialPatchChanges` counts the key as material only when the masks DIFFER — so this
-    // save is trivial and the server takes it. Locking the box here would remove a
-    // legitimate edit.
+  test('🔴 even while the masks AGREE, the justification and offline boxes are locked, and the notice names them', async () => {
+    // A justification edit (the offline_access declaration included) is MATERIAL on the server
+    // (`materialPatchChanges` counts the whole map), and the `removed` branch refuses every
+    // material change. So a live box here would be one the author can fill and never save.
     renderWithProviders(<ExternalSubmitForm edit={makeCtx({ ...connect })} />);
+    await expect
+      .element(page.getByTestId('apps-offsite-edit-material-locked-notice'))
+      .toHaveTextContent(/permission justifications \(including offline access\) are locked/);
     await page.getByRole('button', { name: 'Next' }).click();
     const justification = page.getByTestId('apps-offsite-justification-8');
     await expect.element(justification).toBeInTheDocument();
-    await expect.element(justification).not.toBeDisabled();
+    await expect.element(justification).toBeDisabled();
+    await expect
+      .element(page.getByTestId('apps-offsite-offline-access').getByRole('checkbox'))
+      .toBeDisabled();
   });
 
   test('🔴 once the mask has DRIFTED, the justifications lock and the notice says so', async () => {

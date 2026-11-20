@@ -260,6 +260,26 @@ describe('civitaiCheckLines — offline-access declaration vs what the client ca
     expect(l.some(([, t]) => t.includes('Users are not told'))).toBe(false);
   });
 
+  it('🔴 undeclared here, but ANOTHER listing on the client declares → it does not claim "cannot get it"', () => {
+    const l = civitaiCheckLines({
+      offlineAccess: {
+        reachable: true,
+        alwaysOffline: false,
+        grants: [],
+        declared: false,
+        anotherListingDeclares: true,
+      },
+      source: { provided: false },
+    }).map((x) => [x.tone, x.text]);
+    expect(l[0]).toEqual([
+      'warn',
+      'Offline access: not declared on this listing, but another listing on this client declares ' +
+        'offline access, so this app can still get it: users are offered "Stay connected" and the app ' +
+        'can hold a refresh token.',
+    ]);
+    expect(l).not.toContainEqual(['warn', UNDECLARED]);
+  });
+
   it('🔴 declared but NOT reachable → flagged', () => {
     expect(lines(false, true)).toContainEqual(['warn', MISMATCH_UNREACHABLE]);
   });

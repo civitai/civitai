@@ -118,9 +118,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
    */
   const materialBlockedReason = materialEditBlockedReason(edit);
   const materialBlocked = materialBlockedReason != null;
-  // See `scopeDisclosureLockedForEdit`: a DRIFTED scope mask makes every save material, so
-  // the justification boxes are unsaveable too and must not stay live. Not implied by
-  // `materialBlocked` — while the masks agree, a justification edit is trivial and saves.
+  // See `scopeDisclosureLockedForEdit`: a justification edit (the offline-access declaration
+  // included) is MATERIAL, so on an unpublished connect listing the server refuses it and the
+  // boxes are locked; `materialBlockedReason` names them among the locked fields.
   const scopeLocked = scopeDisclosureLockedForEdit(edit);
   const STEP_DETAILS = showUrlStep ? 1 : 0;
   const STEP_ASSETS = showUrlStep ? 2 : 1;
@@ -664,11 +664,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                   onOfflineAccessDeclaredChange={(declared) =>
                     setValues((v) => setOfflineAccessDeclared(v, declared))
                   }
-                  // 🔴 `scopeLocked`, NOT `materialBlocked` — see `scopeDisclosureLockedForEdit`.
-                  // A justification edit is trivial and saves fine on an unpublished listing
-                  // while the scope masks agree; it is only unsaveable once they have DRIFTED,
-                  // because the drifted mask then rides along on every patch and the server
-                  // counts it as material.
+                  // 🔴 `scopeLocked` — see `scopeDisclosureLockedForEdit`. A justification edit
+                  // is material, so it cannot be saved on an unpublished listing; the reason is
+                  // the `materialBlockedReason` alert above, which names these boxes.
                   disabled={saving || scopeLocked}
                   forceShowErrors={showScopeErrors}
                   intro="These are your OAuth app's allowed scopes — they're derived from the app and can't be changed here. Editing a justification (or a change to your app's scopes) is sent for review on a live listing."

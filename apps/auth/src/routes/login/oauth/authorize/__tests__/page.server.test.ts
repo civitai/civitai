@@ -197,11 +197,21 @@ describe('consent screen load — the offline line', () => {
     expect((page.params as Record<string, string>).scope).toBe(String(TokenScope.UserRead));
   });
 
-  it('🔴 a declaration on a listing that is not approved does not count', async () => {
+  // This fake returns `listingRows` as the query's result, so the rows are what the REAL query
+  // returns: only ever-live listings (approved / removed). The status filter itself is proven end
+  // to end in the token route's offline-grant suite, over a fake that applies `where`.
+  it('🔴 a declaration on a delisted (removed) listing does not count: no line', async () => {
     flags.offlineGrant = true;
-    listingRows.current = [listing('pending', { offline_access: 'nightly sync' })];
+    listingRows.current = [listing('removed', { offline_access: 'nightly sync' })];
     const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
     expect(page.offline ?? null).toBeNull();
+  });
+
+  it('no ever-live listing (the read returns none) → the unlisted rule: the line is shown', async () => {
+    flags.offlineGrant = true;
+    listingRows.current = [];
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline).not.toBeNull();
   });
 
   it('a listed client whose APPROVED listing declares offline access gets the line', async () => {
