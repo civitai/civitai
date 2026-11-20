@@ -8,6 +8,7 @@ import { readImageState } from '../queue/image-state';
 import { hasBlockMarker, moderatorRuling, type ImageState } from '../queue/resolution';
 import { failClosed, skillCheckEligible } from '../skill-check/eligible';
 import { addSkillCheck } from '../skill-check/pool';
+import { OverrideWriteError } from './override-error';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
@@ -75,39 +76,80 @@ export async function sweepMissingReviews(
 
 type OpenReview = { id: number; imageId: number; consensusValue: string };
 
+/** Why a review can never produce a check: closed `excluded`. */
+type PermanentExclusion = 'missing' | 'blocked' | 'moderator-ruled' | 'level-moved';
 /**
- * Why a review can no longer produce a check: the image is gone, a moderator ruled on it, it was blocked, it moved off the
- * players' level, or it fell under a review or hold. Null while it still can.
+ * A permanent reason; `held`, a review or hold that may lift (the review waits); `unreadable`, a safety check that could not
+ * be read (fail closed: nothing served or recorded); null while the review can still produce a check.
  */
+type Exclusion = { permanent: PermanentExclusion } | 'held' | 'unreadable' | null;
+
+const MODERATOR_RULING_ACTIVITY = 'setNsfwLevel';
+
+/** The closing moderator's own ruling at `level`, recorded after `since` (their claim): their override landing, no one else's. */
+async function ownRuling(
+  db: Executor,
+  imageId: number,
+  { moderatorId, since }: { moderatorId: number; since: Date }
+): Promise<boolean> {
+  const row = await db
+    .selectFrom('ModActivity')
+    .select('id')
+    .where('activity', '=', MODERATOR_RULING_ACTIVITY)
+    .where('entityType', '=', 'image')
+    .where('entityId', '=', imageId)
+    .where('userId', '=', moderatorId)
+    .where('createdAt', '>=', utc(since))
+    .limit(1)
+    .executeTakeFirst();
+  return !!row;
+}
+
 async function exclusionOf(
   db: Executor,
   review: OpenReview,
-  /** The level a moderator's vote on this review already named: an image ruled at it is that vote's own override landing. */
-  acceptLevel: string | null = null
-): Promise<string | null> {
+  /**
+   * An image ruled at `level` that this is the vote's own write: `written` when this very request wrote it, else only a
+   * ruling the same moderator recorded after `since`.
+   */
+  own:
+    | { level: string; written: true }
+    | { level: string; moderatorId: number; since: Date }
+    | null = null
+): Promise<Exclusion> {
   const image = await readImageState(db, review.imageId);
-  if (!image) return 'missing';
-  if (hasBlockMarker(image)) return 'blocked';
-  const ownOverride = acceptLevel !== null && String(image.nsfwLevel) === acceptLevel;
-  if (!ownOverride && moderatorRuling(image)) return 'moderator-ruled';
-  if (!ownOverride && String(image.nsfwLevel) !== review.consensusValue) return 'level-moved';
-  const eligible = await failClosed(
+  if (!image) return { permanent: 'missing' };
+  if (hasBlockMarker(image)) return { permanent: 'blocked' };
+  const ruled = moderatorRuling(image) !== null;
+  const ownWrite =
+    own !== null &&
+    String(image.nsfwLevel) === own.level &&
+    ruled &&
+    ('written' in own || (await ownRuling(db, review.imageId, own)));
+  if (!ownWrite && ruled) return { permanent: 'moderator-ruled' };
+  if (!ownWrite && String(image.nsfwLevel) !== review.consensusValue) {
+    return { permanent: 'level-moved' };
+  }
+  return heldOrUnreadable(db, review.imageId);
+}
+
+/** The safety exclusions, which may lift: `held`, or `unreadable` when they cannot be read (fail closed). */
+const heldOrUnreadable = (db: Executor, imageId: number): Promise<Exclusion> =>
+  failClosed(
     db,
     'the safety exclusions of a review',
-    async () =>
+    async (): Promise<Exclusion> =>
       (await db
         .selectFrom('Image as img')
         .innerJoin('Post as p', 'p.id', 'img.postId')
         .select('img.id')
-        .where('img.id', '=', review.imageId)
+        .where('img.id', '=', imageId)
         .where(skillCheckEligible)
         .executeTakeFirst())
-        ? 'eligible'
+        ? null
         : 'held',
     'unreadable'
   );
-  return eligible === 'eligible' ? null : eligible;
-}
 
 async function closeReview(
   db: Executor,
@@ -131,6 +173,14 @@ async function closeReview(
   metrics.reviewClosed(outcome);
 }
 
+const releaseClaim = (db: Executor, reviewId: number, moderatorId: number) =>
+  db
+    .updateTable('KnightsInquisitorReview')
+    .set({ claimedBy: null, claimExpiresAt: null })
+    .where('id', '=', reviewId)
+    .where('claimedBy', '=', moderatorId)
+    .execute();
+
 export type ReviewOffer = {
   reviewId: number;
   /** The settled queue item the review is of. */
@@ -147,88 +197,92 @@ export type ReviewOffer = {
   votes: number;
 };
 
-const MAX_EXCLUDED_PER_SERVE = 25;
+/** Candidates read per serve from each of the two queues; a held review is skipped, not closed. */
+const SERVE_BATCH = 20;
+
+/** Open reviews this moderator may vote on: not claimed by another, not their own image, not voted on by them. */
+const servable = (db: Kysely<DB>, moderatorId: number, now: Date) =>
+  db
+    .selectFrom('KnightsInquisitorReview as r')
+    .innerJoin('Image as img', 'img.id', 'r.imageId')
+    .select([
+      'r.id',
+      'r.queueItemId',
+      'r.imageId',
+      'r.consensusValue',
+      'img.url',
+      'img.width',
+      'img.height',
+      'img.nsfwLevel',
+    ])
+    .where('r.status', '=', 'open')
+    .where((eb) =>
+      eb.or([
+        eb('r.claimedBy', 'is', null),
+        eb('r.claimedBy', '=', moderatorId),
+        eb('r.claimExpiresAt', '<=', utc(now)),
+      ])
+    )
+    .where('img.userId', 'is distinct from', moderatorId)
+    .where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('KnightsInquisitorVote as mine')
+            .select(sql<number>`1`.as('one'))
+            .whereRef('mine.reviewId', '=', 'r.id')
+            .where('mine.moderatorId', '=', moderatorId)
+        )
+      )
+    );
+
+const hasVote = (exists: boolean) => (qb: ReturnType<typeof servable>) =>
+  qb.where((eb) => {
+    const voted = eb.exists(
+      eb
+        .selectFrom('KnightsInquisitorVote as v')
+        .select(sql<number>`1`.as('one'))
+        .whereRef('v.reviewId', '=', 'r.id')
+    );
+    return exists ? voted : eb.not(voted);
+  });
 
 /**
- * The next review for this moderator: one another moderator already voted on first, then the oldest. Never one they voted
- * on or one of their own images. A review that can no longer produce a check is closed `excluded` on the way.
+ * The next review for this moderator: one another moderator already voted on first, then the oldest, each read as one
+ * bounded batch in `(status, createdAt)` order. A review that can never produce a check is closed `excluded` on the way;
+ * one under a review or hold is skipped and stays open; unreadable safety checks serve nothing.
  */
 export async function nextReview(
   db: Kysely<DB>,
   { moderatorId, now = new Date() }: { moderatorId: number; now?: Date }
 ): Promise<ReviewOffer | null> {
-  for (let tries = 0; tries < MAX_EXCLUDED_PER_SERVE; tries++) {
-    const row = await db
-      .selectFrom('KnightsInquisitorReview as r')
-      .innerJoin('Image as img', 'img.id', 'r.imageId')
-      .select([
-        'r.id',
-        'r.queueItemId',
-        'r.imageId',
-        'r.consensusValue',
-        'img.url',
-        'img.width',
-        'img.height',
-        'img.nsfwLevel',
-        (eb) =>
-          eb
-            .selectFrom('KnightsInquisitorVote as v')
-            .select(sql<number>`count(*)::int`.as('n'))
-            .whereRef('v.reviewId', '=', 'r.id')
-            .as('votes'),
-        (eb) =>
-          eb
-            .selectFrom('KnightsInquisitorVote as v')
-            .select('v.answer')
-            .whereRef('v.reviewId', '=', 'r.id')
-            .orderBy('v.createdAt', 'asc')
-            .limit(1)
-            .as('firstAnswer'),
-      ])
-      .where('r.status', '=', 'open')
-      .where((eb) =>
-        eb.or([
-          eb('r.claimedBy', 'is', null),
-          eb('r.claimedBy', '=', moderatorId),
-          eb('r.claimExpiresAt', '<=', utc(now)),
-        ])
-      )
-      .where('img.userId', 'is distinct from', moderatorId)
-      .where((eb) =>
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom('KnightsInquisitorVote as mine')
-              .select(sql<number>`1`.as('one'))
-              .whereRef('mine.reviewId', '=', 'r.id')
-              .where('mine.moderatorId', '=', moderatorId)
-          )
-        )
-      )
-      .orderBy('votes', 'desc')
+  for (const voted of [true, false]) {
+    const batch = await servable(db, moderatorId, now)
+      .$call(hasVote(voted))
       .orderBy('r.createdAt', 'asc')
       .orderBy('r.id', 'asc')
-      .limit(1)
-      .executeTakeFirst();
-    if (!row) return null;
-    const exclusion = await exclusionOf(db, row, row.firstAnswer ?? null);
-    // Unreadable safety checks serve nothing (fail closed) and close nothing: the review waits for them.
-    if (exclusion === 'unreadable') return null;
-    if (exclusion) {
-      await closeReview(db, row.id, 'excluded', now);
-      continue;
+      .limit(SERVE_BATCH)
+      .execute();
+    for (const row of batch) {
+      const exclusion = await exclusionOf(db, row);
+      if (exclusion === 'unreadable') return null;
+      if (exclusion === 'held') continue;
+      if (exclusion) {
+        await closeReview(db, row.id, 'excluded', now);
+        continue;
+      }
+      return {
+        reviewId: row.id,
+        queueItemId: row.queueItemId,
+        imageId: row.imageId,
+        imageKey: row.url,
+        width: row.width,
+        height: row.height,
+        consensusValue: row.consensusValue,
+        currentLevel: row.nsfwLevel,
+        votes: voted ? 1 : 0,
+      };
     }
-    return {
-      reviewId: row.id,
-      queueItemId: row.queueItemId,
-      imageId: row.imageId,
-      imageKey: row.url,
-      width: row.width,
-      height: row.height,
-      consensusValue: row.consensusValue,
-      currentLevel: row.nsfwLevel,
-      votes: Number(row.votes ?? 0),
-    };
   }
   return null;
 }
@@ -240,12 +294,15 @@ export type ReviewVoteRejection =
   | 'own-image'
   | 'already-voted'
   | 'claimed'
+  | 'held'
   | 'unavailable'
   | 'override-unavailable'
-  | 'override-failed';
+  | 'override-failed'
+  | 'override-uncertain';
 
 export type ReviewVoteResult =
-  | { status: 'recorded' | 'confirmed' | 'split' | 'excluded' }
+  /** `written-not-closed`: the agreed level reached the image, but the review could not be closed and no check was added. */
+  | { status: 'recorded' | 'confirmed' | 'split' | 'excluded' | 'written-not-closed' }
   | { status: 'rejected'; reason: ReviewVoteRejection };
 
 export type ReviewVoteDeps = {
@@ -253,14 +310,17 @@ export type ReviewVoteDeps = {
   /** Mod-confirmed checks kept (`skillCheckPoolCap`). */
   poolCap: number;
   /**
-   * Writes the agreed level as the closing moderator's ruling (`setImageLevelAsModerator` with their session). Absent, an
-   * agreement on a level other than the image's is refused.
+   * Writes the agreed level as the closing moderator's ruling (`setImageLevelAsModerator` with their session). Throws an
+   * `OverrideWriteError` when it fails. Absent, an agreement on a level other than the image's is refused.
    */
   setImageLevel?: (imageId: number, level: number) => Promise<void>;
 };
 
 /** How long a closing moderator holds a review while their level is written to the image. */
 const CLAIM_MS = 2 * 60_000;
+
+/** Rolls the closing transaction back: the pool could not take the image. */
+class PoolRefused extends Error {}
 
 async function ratingAnswers(db: Executor, questionKey: string): Promise<string[]> {
   const question = await db
@@ -276,6 +336,20 @@ async function ratingAnswers(db: Executor, questionKey: string): Promise<string[
     .filter((v): v is string => typeof v === 'string' && v !== BLOCKED_VALUE);
 }
 
+const inTransaction = async (
+  db: Kysely<DB>,
+  run: (trx: Transaction<DB>) => Promise<VoteStep>
+): Promise<VoteStep> => {
+  try {
+    return await db.transaction().execute(run);
+  } catch (error) {
+    if (error instanceof PoolRefused) {
+      return { kind: 'done', result: { status: 'rejected', reason: 'unavailable' } };
+    }
+    throw error;
+  }
+};
+
 /**
  * One moderator's vote. The first is recorded; the second closes the review: the same level confirms it and puts the image
  * in the skill-check pool, another level splits it. The review row lock serialises the two, and the vote's key stops a
@@ -286,34 +360,62 @@ export async function castReviewVote(
   input: { reviewId: number; moderatorId: number; answer: string },
   deps: ReviewVoteDeps
 ): Promise<ReviewVoteResult> {
-  const now = deps.now();
-  const first = await db.transaction().execute((trx) => voteOrClaim(trx, input, deps, now));
+  const first = await inTransaction(db, (trx) => voteOrClaim(trx, input, deps, deps.now()));
   if (first.kind === 'done') return first.result;
 
-  // The closing vote names another level: write it to the image as a moderator ruling first, holding no lock or transaction
-  // across the call. A failure records nothing and releases the claim, so the moderator can vote again.
+  // The closing vote names another level. Check the image once more right before writing it, then write it as a moderator
+  // ruling, holding no lock or transaction across the call.
+  const before = await exclusionOf(db, first.review);
+  if (before !== null) {
+    await releaseClaim(db, input.reviewId, input.moderatorId);
+    if (before === 'held') return { status: 'rejected', reason: 'held' };
+    if (before === 'unreadable') return { status: 'rejected', reason: 'unavailable' };
+    await closeReview(db, input.reviewId, 'excluded', deps.now());
+    return { status: 'excluded' };
+  }
   try {
-    await deps.setImageLevel!(first.imageId, Number(input.answer));
+    await deps.setImageLevel!(first.review.imageId, Number(input.answer));
   } catch (error) {
-    console.error("knights: could not write the moderators' level, the vote was not recorded", {
+    // The write may have landed without an answer: an image now ruled at the agreed level is taken as written.
+    const image = await readImageState(db, first.review.imageId);
+    const landed =
+      !!image && String(image.nsfwLevel) === input.answer && moderatorRuling(image) !== null;
+    console.error("knights: could not confirm the moderators' level was written", {
       reviewId: input.reviewId,
+      landed,
       error,
     });
-    await db
-      .updateTable('KnightsInquisitorReview')
-      .set({ claimedBy: null, claimExpiresAt: null })
-      .where('id', '=', input.reviewId)
-      .where('claimedBy', '=', input.moderatorId)
-      .execute();
-    return { status: 'rejected', reason: 'override-failed' };
+    if (!landed) {
+      await releaseClaim(db, input.reviewId, input.moderatorId);
+      const ambiguous = !(error instanceof OverrideWriteError) || error.ambiguous;
+      return { status: 'rejected', reason: ambiguous ? 'override-uncertain' : 'override-failed' };
+    }
   }
-  return db.transaction().execute(async (trx): Promise<ReviewVoteResult> => {
-    const again = await voteOrClaim(trx, input, deps, deps.now(), { overrideWritten: true });
-    return again.kind === 'done' ? again.result : { status: 'rejected', reason: 'claimed' };
+  const second = await inTransaction(db, (trx) =>
+    voteOrClaim(trx, input, deps, deps.now(), { overrideWritten: true })
+  );
+  if (second.kind === 'done' && second.result.status === 'confirmed') return second.result;
+  console.error("knights: the moderators' level was written but the review was not closed", {
+    reviewId: input.reviewId,
+    result: second.kind === 'done' ? second.result : second.kind,
   });
+  metrics.overrideUnclosed();
+  return { status: 'written-not-closed' };
 }
 
-type VoteStep = { kind: 'done'; result: ReviewVoteResult } | { kind: 'override'; imageId: number };
+type VoteStep =
+  | { kind: 'done'; result: ReviewVoteResult }
+  | { kind: 'override'; review: OpenReview };
+
+const claimHeldByOther = (
+  review: { claimedBy: number | null; claimExpiresAt: Date | null },
+  moderatorId: number,
+  now: Date
+) =>
+  review.claimedBy !== null &&
+  review.claimedBy !== moderatorId &&
+  review.claimExpiresAt !== null &&
+  review.claimExpiresAt > now;
 
 async function voteOrClaim(
   trx: Transaction<DB>,
@@ -339,12 +441,7 @@ async function voteOrClaim(
     .executeTakeFirst();
   if (!review) return done({ status: 'rejected', reason: 'not-found' });
   if (review.status !== 'open') return done({ status: 'rejected', reason: 'not-open' });
-  if (
-    review.claimedBy !== null &&
-    review.claimedBy !== input.moderatorId &&
-    review.claimExpiresAt !== null &&
-    review.claimExpiresAt > now
-  ) {
+  if (claimHeldByOther(review, input.moderatorId, now)) {
     return done({ status: 'rejected', reason: 'claimed' });
   }
   if (!(await ratingAnswers(trx, review.questionKey)).includes(input.answer)) {
@@ -367,15 +464,29 @@ async function voteOrClaim(
   }
   const [first] = votes;
   const agrees = first?.answer === input.answer;
-  const exclusion = await exclusionOf(trx, review, agrees ? input.answer : first?.answer ?? null);
+  // Only this moderator's own override may have moved the image: written in this request, or recorded under their claim.
+  const own = !agrees
+    ? null
+    : overrideWritten
+    ? { level: input.answer, written: true as const }
+    : review.claimedBy === input.moderatorId && review.claimExpiresAt
+    ? {
+        level: input.answer,
+        moderatorId: input.moderatorId,
+        since: new Date(review.claimExpiresAt.getTime() - CLAIM_MS),
+      }
+    : null;
+  const exclusion = await exclusionOf(trx, review, own);
   if (exclusion === 'unreadable') return done({ status: 'rejected', reason: 'unavailable' });
+  if (exclusion === 'held') return done({ status: 'rejected', reason: 'held' });
   if (exclusion) {
     await closeReview(trx, review.id, 'excluded', now);
     return done({ status: 'excluded' });
   }
 
   const image = (await readImageState(trx, review.imageId)) as ImageState;
-  if (agrees && String(image.nsfwLevel) !== input.answer && !overrideWritten) {
+  if (agrees && String(image.nsfwLevel) !== input.answer) {
+    if (overrideWritten) return done({ status: 'rejected', reason: 'unavailable' });
     if (!deps.setImageLevel) return done({ status: 'rejected', reason: 'override-unavailable' });
     await trx
       .updateTable('KnightsInquisitorReview')
@@ -385,7 +496,7 @@ async function voteOrClaim(
       })
       .where('id', '=', review.id)
       .execute();
-    return { kind: 'override', imageId: review.imageId };
+    return { kind: 'override', review };
   }
 
   await trx
@@ -402,12 +513,14 @@ async function voteOrClaim(
     await closeReview(trx, review.id, 'split', now);
     return done({ status: 'split' });
   }
-  await addSkillCheck(trx, {
+  const pooled = await addSkillCheck(trx, {
     imageId: review.imageId,
     answer: input.answer,
     cap: deps.poolCap,
     now,
   });
+  // An image the pool cannot take now (held, or its checks unreadable) rolls the vote back for a retry.
+  if (pooled === 'ineligible' || pooled === 'unreadable') throw new PoolRefused(pooled);
   await closeReview(trx, review.id, 'confirmed', now, input.answer);
   return done({ status: 'confirmed' });
 }
@@ -420,18 +533,23 @@ export async function sendToInquisitor(
   db: Kysely<DB>,
   input: { reviewId: number; moderatorId: number },
   deps: { now: () => Date }
-): Promise<{ status: 'sent' } | { status: 'rejected'; reason: 'not-found' | 'not-open' }> {
+): Promise<
+  { status: 'sent' } | { status: 'rejected'; reason: 'not-found' | 'not-open' | 'claimed' }
+> {
   const now = deps.now();
   return db.transaction().execute(async (trx) => {
     const review = await trx
       .selectFrom('KnightsInquisitorReview')
-      .select(['id', 'imageId', 'questionKey', 'status'])
+      .select(['id', 'imageId', 'questionKey', 'status', 'claimedBy', 'claimExpiresAt'])
       .where('id', '=', input.reviewId)
       .forUpdate()
       .executeTakeFirst();
     if (!review) return { status: 'rejected' as const, reason: 'not-found' as const };
     if (review.status !== 'open')
       return { status: 'rejected' as const, reason: 'not-open' as const };
+    // A moderator mid-override holds it: their level may be on its way to the image.
+    if (claimHeldByOther(review, input.moderatorId, now))
+      return { status: 'rejected' as const, reason: 'claimed' as const };
 
     const waiting = await trx
       .selectFrom('KnightsQueueItem')

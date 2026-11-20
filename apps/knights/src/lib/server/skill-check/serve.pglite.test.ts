@@ -4,10 +4,20 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
-import { answerApprentice, getApprentice } from '../apprenticeship/apprenticeship.service';
+import {
+  answerApprentice,
+  getApprentice,
+  getApprenticeProgress,
+} from '../apprenticeship/apprenticeship.service';
+import { ACOLYTE_WRONG_ANSWER_SMITE } from '../smites/config';
 import { DEFAULT_HIDDEN_CHECKS } from '../hidden/config';
 import { answerHiddenCheck, pickHiddenCheck } from '../hidden/hidden.service';
 import { castVote, enqueueItem, ensureVotePartitions } from '../queue/queue.service';
+import {
+  EXCLUSION_TABLES,
+  exclusionCases,
+  extraExclusionCases,
+} from '../../../test/skill-check-exclusions';
 
 vi.mock('../axiom', () => ({ logToAxiom: vi.fn() }));
 
@@ -27,7 +37,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsReferenceImage","KnightsVote","KnightsQueueItem","KnightsApprenticeAnswer","KnightsPlayerDay","KnightsPlayer","NewOrderPlayer","NewOrderSmite","Image","Post","ImageReport","Report" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsReferenceImage","KnightsVote","KnightsQueueItem","KnightsApprenticeAnswer","KnightsPlayerDay","KnightsPlayer","NewOrderPlayer","NewOrderSmite","Image","Post",${EXCLUSION_TABLES} RESTART IDENTITY CASCADE`
   );
 });
 
@@ -175,6 +185,35 @@ describe('serving mod-confirmed checks to Knights', () => {
   });
 });
 
+describe('a pooled image that comes under an exclusion', () => {
+  const cases = [...exclusionCases(() => pg), ...extraExclusionCases(() => pg)];
+
+  it.each(cases)(
+    'is no longer served to a Knight or accepted once it has %s',
+    async (_label, flag) => {
+      await seedPlayer(pg, 1);
+      const id = await skillCheck(10);
+      expect((await pick(1))?.referenceId).toBe(id);
+      await flag(10);
+      expect(await pick(1)).toBeNull();
+      expect(await answer(1, id, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    }
+  );
+
+  it.each(cases)('is no longer served to an Acolyte once it has %s', async (_label, flag) => {
+    await seedPlayer(pg, 1, 'Acolyte');
+    await seedImage(pg, 1);
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","explanation") VALUES (1,'trials','4','core','why')`
+    );
+    const id = await skillCheck(10);
+    await flag(10);
+    const view = await getApprentice(db, 1, { skillCheckRate: 1 });
+    expect(view.kind).toBe('question');
+    expect(view.kind === 'question' && view.item.referenceId).not.toBe(id);
+  });
+});
+
 describe('failing closed on serve', () => {
   it('serves no skill check, but still the hidden-check pool, when a safety check cannot be read', async () => {
     await seedPlayer(pg, 1);
@@ -199,7 +238,9 @@ describe('failing closed on serve', () => {
     await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
     try {
       const view = await getApprentice(db, 1, { skillCheckRate: 1 });
-      expect(view.kind === 'question' && view.item.referenceId).not.toBe(check);
+      expect(view.kind).toBe('question');
+      expect(view.kind === 'question' && view.item.referenceId).toBe(1);
+      expect(check).not.toBe(1);
     } finally {
       await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
     }
@@ -256,6 +297,32 @@ describe('serving mod-confirmed checks to Acolytes', () => {
       `SELECT "referenceId",correct FROM "KnightsApprenticeAnswer" WHERE "playerId"=1`
     );
     expect(answers.rows).toEqual([{ referenceId: check, correct: false }]);
+  });
+
+  it('counts skill-check answers toward the accuracy window and the wrong-answer smite like any trial image', async () => {
+    await seedPlayer(pg, 1, 'Acolyte');
+    for (let id = 10; id < 16; id++) await skillCheck(id, '4');
+    for (let i = 0; i < 6; i++) {
+      const view = await getApprentice(db, 1, { skillCheckRate: 1 });
+      expect(view.kind).toBe('question');
+      if (view.kind !== 'question') return;
+      expect(
+        await answerApprentice(
+          db,
+          { userId: 1, kind: 'rating', referenceId: view.item.referenceId, answer: '16' },
+          { now: () => NOW, skillCheckRate: 1 }
+        )
+      ).toMatchObject({ status: 'recorded', correct: false });
+    }
+    expect(await getApprenticeProgress(db, 1)).toMatchObject({
+      graded: 6,
+      correct: 0,
+      accuracy: 0,
+    });
+    const smites = await pg.query(
+      `SELECT reason FROM "NewOrderSmite" WHERE "targetPlayerId"=1 AND "cleansedAt" IS NULL`
+    );
+    expect(smites.rows).toEqual([{ reason: ACOLYTE_WRONG_ANSWER_SMITE }]);
   });
 
   it('does not serve an Acolyte a pooled image that came under a review', async () => {

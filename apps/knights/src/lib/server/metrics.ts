@@ -140,6 +140,10 @@ const reviewsClosed = counter(
   'In-game inquisitor reviews closed, by outcome: two agreeing moderators, a split, or excluded (ruled, blocked, moved, held, or sent to the Inquisitors).',
   { outcome: REVIEW_OUTCOMES }
 );
+const overridesUnclosed = counter(
+  'knights_inquisitor_overrides_unclosed_total',
+  "Two agreeing moderators' level written to an image whose review could then not be closed (no skill check added)."
+);
 const skillChecksRetired = counter(
   'knights_skill_checks_retired_total',
   'Mod-confirmed skill checks retired, by reason: pushed out by the pool cap, or failed by too many Knights.',
@@ -212,6 +216,7 @@ export const metrics = {
     safely(() => hiddenChecksGraded.inc({ verdict: bounded(verdict, HIDDEN_VERDICTS) })),
   smite: () => safely(() => smites.inc()),
   reviewClosed: (outcome: ReviewOutcome) => safely(() => reviewsClosed.inc({ outcome })),
+  overrideUnclosed: () => safely(() => overridesUnclosed.inc()),
   skillChecksRetired: (reason: SkillCheckRetireReason, count: number) =>
     safely(() => {
       if (count > 0) skillChecksRetired.inc({ reason }, count);

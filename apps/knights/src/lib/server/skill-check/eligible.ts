@@ -8,11 +8,14 @@ import {
 } from 'kysely';
 import { servableImage } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
-import { heldImageSql } from '@civitai/shared/held-media';
+import { heldImageSql, suspectImageSql, unreadableImageSql } from '@civitai/shared/held-media';
 import { evidenceHeldUrlSql, reportListedUrlSql } from '@civitai/shared/held-url';
 
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 type Builder = ExpressionBuilder<Joined, 'img' | 'p'>;
+
+/** A report still waiting on a moderator. */
+const OPEN_REPORT = ['Pending', 'Processing'];
 
 const none = (eb: Builder, query: Expression<unknown>) => eb.not(eb.exists(query as never));
 
@@ -31,6 +34,17 @@ export const SKILL_CHECK_EXCLUSIONS: {
   {
     name: 'legal-hold',
     clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(heldImageSql('img'))}, false)`,
+  },
+  // The shared suspect predicate (the hold above, minor flags, child tags at mature levels, a CSAM blocklist hash, scan
+  // labels): NULL-safe like the hold.
+  {
+    name: 'suspect-image',
+    clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(suspectImageSql('img'))}, false)`,
+  },
+  // The shared unscanned predicate: an image whose scan has not landed.
+  {
+    name: 'unreadable-image',
+    clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(unreadableImageSql('img'))}, false)`,
   },
   // The shared reported-image predicate: the image's bytes listed on a report.
   {
@@ -63,7 +77,48 @@ export const SKILL_CHECK_EXCLUSIONS: {
           .innerJoin('Report as rep', 'rep.id', 'ir.reportId')
           .select(sql<number>`1`.as('one'))
           .whereRef('ir.imageId', '=', 'img.id')
-          .where('rep.status', 'in', ['Pending', 'Processing'])
+          .where('rep.status', 'in', OPEN_REPORT)
+      ),
+  },
+  {
+    name: 'open-post-report',
+    clause: (eb) =>
+      none(
+        eb,
+        eb
+          .selectFrom('PostReport as pr')
+          .innerJoin('Report as rep', 'rep.id', 'pr.reportId')
+          .select(sql<number>`1`.as('one'))
+          .whereRef('pr.postId', '=', 'img.postId')
+          .where('rep.status', 'in', OPEN_REPORT)
+      ),
+  },
+  {
+    name: 'open-model-report',
+    clause: (eb) =>
+      none(
+        eb,
+        eb
+          .selectFrom('ImageResourceNew as irn')
+          .innerJoin('ModelVersion as mv', 'mv.id', 'irn.modelVersionId')
+          .innerJoin('ModelReport as mr', 'mr.modelId', 'mv.modelId')
+          .innerJoin('Report as rep', 'rep.id', 'mr.reportId')
+          .select(sql<number>`1`.as('one'))
+          .whereRef('irn.imageId', '=', 'img.id')
+          .where('rep.status', 'in', OPEN_REPORT)
+      ),
+  },
+  {
+    name: 'open-user-report',
+    clause: (eb) =>
+      none(
+        eb,
+        eb
+          .selectFrom('UserReport as ur')
+          .innerJoin('Report as rep', 'rep.id', 'ur.reportId')
+          .select(sql<number>`1`.as('one'))
+          .whereRef('ur.userId', '=', 'img.userId')
+          .where('rep.status', 'in', OPEN_REPORT)
       ),
   },
   {
@@ -128,8 +183,8 @@ export const SKILL_CHECK_EXCLUSIONS: {
       ),
   },
   {
-    // A resource the image was made with is a model flagged as depicting a minor (`Model.minor`).
-    name: 'minor-flagged-model',
+    // A resource the image was made with is a model flagged as depicting a minor or a real person (`Model.minor`, `poi`).
+    name: 'minor-or-poi-model',
     clause: (eb) =>
       none(
         eb,
@@ -139,7 +194,7 @@ export const SKILL_CHECK_EXCLUSIONS: {
           .innerJoin('Model as m', 'm.id', 'mv.modelId')
           .select(sql<number>`1`.as('one'))
           .whereRef('irn.imageId', '=', 'img.id')
-          .where('m.minor', '=', true)
+          .where((w) => w.or([w('m.minor', '=', true), w('m.poi', '=', true)]))
       ),
   },
   {

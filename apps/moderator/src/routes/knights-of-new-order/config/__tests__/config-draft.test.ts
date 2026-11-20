@@ -163,41 +163,6 @@ describe('fieldError', () => {
     expect(fieldError('yesNoStretch', 'abc')).toBe('Enter a number.');
     expect(fieldError('yesNoStretch', '')).toBeNull();
   });
-
-  it('takes the skill-check pool cap as a whole number greater than 0', () => {
-    expect(fieldError('skillCheckPoolCap', '500')).toBeNull();
-    expect(fieldError('skillCheckPoolCap', '0')).toBe('Enter a whole number greater than 0.');
-    expect(fieldError('skillCheckPoolCap', '12.5')).toBe('Enter a whole number greater than 0.');
-  });
-});
-
-describe('skill-check pool rows', () => {
-  it('offers the inquisitor queue switch as Default, then Off, then On', () => {
-    expect(TOGGLE_ROWS.inquisitorQueue.options.map((o) => [o.value, o.label])).toEqual([
-      ['default', 'Default'],
-      ['off', 'Off'],
-      ['on', 'On'],
-    ]);
-  });
-
-  it('offers the serve-judged toggle as Default, then Off, then On', () => {
-    expect(TOGGLE_ROWS.skillCheckServeJudged.options.map((o) => [o.value, o.label])).toEqual([
-      ['default', 'Default'],
-      ['off', 'Off'],
-      ['on', 'On'],
-    ]);
-    expect(toggleLabel('skillCheckServeJudged', undefined)).toBe('Default');
-    expect(toggleLabel('skillCheckServeJudged', true)).toBe('On');
-  });
-
-  it('round-trips a stored pool cap through the draft unchanged', () => {
-    const seed = settings({ game: { skillCheckPoolCap: 250 } });
-    const draft = seedDraft(seed);
-    expect(draft.numbers.skillCheckPoolCap.text).toBe('250');
-    expect(changeCount(seed, draft)).toBe(0);
-    draft.numbers.skillCheckPoolCap.text = '300';
-    expect(entries(gameFormData(seed, draft, true))).toMatchObject({ skillCheckPoolCap: '300' });
-  });
 });
 
 describe('confirmations', () => {

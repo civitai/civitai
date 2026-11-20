@@ -4,6 +4,7 @@ import { openReviewToken, sealReview } from '$lib/server/feed-token';
 import { imageUrl } from '$lib/server/image-url';
 import { moderatorStats, reviewSidebar } from '$lib/server/inquisitor/context';
 import { setImageLevelAsModerator } from '$lib/server/inquisitor/main-app';
+import { OverrideWriteError } from '$lib/server/inquisitor/override-error';
 import {
   castReviewVote,
   nextReview,
@@ -23,16 +24,28 @@ const LEVELS = [
   { value: '16', label: 'XXX' },
 ];
 
+const HELD_TEXT = 'This image came under review or a hold; your vote was not recorded.';
+
 const REJECTION_TEXT: Record<ReviewVoteRejection | 'not-found', string> = {
   'not-found': 'This review is gone. Here is the next one.',
   'not-open': 'This review was closed by another moderator. Here is the next one.',
   'bad-answer': 'Pick one of the levels.',
   'own-image': 'You cannot review your own image.',
   'already-voted': 'You already voted on this one.',
+  held: HELD_TEXT,
   unavailable: 'This image cannot be checked right now. Try again shortly.',
   claimed: 'Another moderator is closing this one right now. Here is the next one.',
   'override-unavailable': 'The level cannot be written right now. Try again.',
   'override-failed': 'Civitai did not take the new level. Your vote was not recorded; try again.',
+  'override-uncertain':
+    'Civitai may have taken the new level; check the image before voting again.',
+};
+
+/** What a vote that went through tells the moderator, when it needs saying. */
+const RESULT_TEXT: Partial<Record<string, string>> = {
+  excluded: HELD_TEXT,
+  'written-not-closed':
+    'The new level was written to the image, but this review could not be closed and no skill check was added.',
 };
 
 async function assertModerator(locals: App.Locals) {
@@ -85,14 +98,17 @@ export const inquisitorActions = {
         poolCap: (await skillChecks()).poolCap,
         setImageLevel: async (imageId, level) => {
           const written = await setImageLevelAsModerator({ cookie, imageId, level });
-          if (!written.ok) throw new Error('no moderator session to write the level with');
+          if (!written.ok) {
+            throw new OverrideWriteError('no moderator session to write the level with', false);
+          }
         },
       }
     );
     if (result.status === 'rejected') {
       return fail(409, { message: REJECTION_TEXT[result.reason] });
     }
-    return { reviewed: result.status };
+    const message = RESULT_TEXT[result.status];
+    return message ? { reviewed: result.status, message } : { reviewed: result.status };
   },
 
   sendToInquisitor: async ({ request, locals }: RequestEvent) => {

@@ -10,7 +10,18 @@ import { failClosed, skillCheckEligible } from './eligible';
 const POOL_LOCK_NAMESPACE = 7_310;
 const POOL_LOCK_KEY = 1;
 
-export type AddSkillCheckResult = 'added' | 'moved' | 'kept-core' | 'ineligible';
+/**
+ * `kept-core`: a core trial image never moves. `kept-graded`: a reference whose answers were already graded at another
+ * level keeps its row, since those ledger rows read their answer through its id. `unreadable`: a safety check could not
+ * be read; the caller must not treat the image as added.
+ */
+export type AddSkillCheckResult =
+  | 'added'
+  | 'moved'
+  | 'kept-core'
+  | 'kept-graded'
+  | 'ineligible'
+  | 'unreadable';
 
 /**
  * Puts an image two moderators confirmed into the skill-check pool at their level, then retires the oldest active checks
@@ -25,26 +36,38 @@ export async function addSkillCheck(
 
   const existing = await trx
     .selectFrom('KnightsReferenceImage')
-    .select(['id', 'source'])
+    .select(['id', 'source', 'answer'])
     .where('imageId', '=', imageId)
     .forUpdate()
     .executeTakeFirst();
   if (existing?.source === REFERENCE_SOURCE.core) return 'kept-core';
+  if (existing && existing.answer !== answer) {
+    const graded = await trx
+      .selectFrom('KnightsVote')
+      .select('playerId')
+      .where('itemId', '=', -existing.id)
+      .where('verdict', 'in', ['correct', 'failed'])
+      .limit(1)
+      .executeTakeFirst();
+    if (graded) return 'kept-graded';
+  }
 
   const eligible = await failClosed(
     trx,
     'the skill-check exclusions',
     async () =>
-      !!(await trx
+      (await trx
         .selectFrom('Image as img')
         .innerJoin('Post as p', 'p.id', 'img.postId')
         .select('img.id')
         .where('img.id', '=', imageId)
         .where(skillCheckEligible)
-        .executeTakeFirst()),
-    false
+        .executeTakeFirst())
+        ? ('eligible' as const)
+        : ('ineligible' as const),
+    'unreadable' as const
   );
-  if (!eligible) return 'ineligible';
+  if (eligible !== 'eligible') return eligible;
 
   const at = utc(now);
   const fields = {

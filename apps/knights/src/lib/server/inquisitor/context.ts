@@ -62,13 +62,16 @@ export async function reviewSidebar(
 
 export type ModeratorStats = {
   votesThisWeek: number;
-  /** Open reviews this moderator has not voted on and may vote on (not of their own images). */
+  /** Open reviews this moderator has not voted on and may vote on (not of their own images), up to `WAITING_CAP`. */
   waiting: number;
+  /** More than `WAITING_CAP` are waiting. */
+  waitingMore: boolean;
   /** Of the closed reviews they voted on, the share the other moderator gave the same level; null with none. */
   agreementRate: number | null;
 };
 
 const WEEK_MS = 7 * 86_400_000;
+export const WAITING_CAP = 1000;
 
 export async function moderatorStats(
   db: Kysely<DB>,
@@ -81,23 +84,30 @@ export async function moderatorStats(
       .where('moderatorId', '=', moderatorId)
       .where('createdAt', '>=', utc(new Date(now.getTime() - WEEK_MS)))
       .executeTakeFirstOrThrow(),
+    // Counted up to a cap, so the stat never scans a large backlog.
     db
-      .selectFrom('KnightsInquisitorReview as r')
-      .innerJoin('Image as img', 'img.id', 'r.imageId')
-      .select(sql<number>`count(*)::int`.as('n'))
-      .where('r.status', '=', 'open')
-      .where('img.userId', 'is distinct from', moderatorId)
-      .where((eb) =>
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom('KnightsInquisitorVote as v')
-              .select(sql<number>`1`.as('one'))
-              .whereRef('v.reviewId', '=', 'r.id')
-              .where('v.moderatorId', '=', moderatorId)
+      .selectFrom((eb) =>
+        eb
+          .selectFrom('KnightsInquisitorReview as r')
+          .innerJoin('Image as img', 'img.id', 'r.imageId')
+          .select('r.id')
+          .where('r.status', '=', 'open')
+          .where('img.userId', 'is distinct from', moderatorId)
+          .where((w) =>
+            w.not(
+              w.exists(
+                w
+                  .selectFrom('KnightsInquisitorVote as v')
+                  .select(sql<number>`1`.as('one'))
+                  .whereRef('v.reviewId', '=', 'r.id')
+                  .where('v.moderatorId', '=', moderatorId)
+              )
+            )
           )
-        )
+          .limit(WAITING_CAP + 1)
+          .as('w')
       )
+      .select(sql<number>`count(*)::int`.as('n'))
       .executeTakeFirstOrThrow(),
     db
       .selectFrom('KnightsInquisitorReview as r')
@@ -112,7 +122,8 @@ export async function moderatorStats(
   ]);
   return {
     votesThisWeek: Number(week.n),
-    waiting: Number(waiting.n),
+    waiting: Math.min(Number(waiting.n), WAITING_CAP),
+    waitingMore: Number(waiting.n) > WAITING_CAP,
     agreementRate: Number(closed.n) > 0 ? Number(closed.agreed) / Number(closed.n) : null,
   };
 }

@@ -107,11 +107,13 @@ describe('moderatorStats', () => {
     expect(await moderatorStats(db, { moderatorId: MOD, now: NOW })).toEqual({
       votesThisWeek: 2,
       waiting: 1,
+      waitingMore: false,
       agreementRate: 0.5,
     });
     expect(await moderatorStats(db, { moderatorId: 999, now: NOW })).toEqual({
       votesThisWeek: 0,
       waiting: 2,
+      waitingMore: false,
       agreementRate: null,
     });
   });

@@ -5,6 +5,11 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage } from '../../../test/seed';
 import { SKILL_CHECK_EXCLUSIONS } from './eligible';
+import {
+  EXCLUSION_TABLES,
+  exclusionCases,
+  extraExclusionCases,
+} from '../../../test/skill-check-exclusions';
 import { addSkillCheck } from './pool';
 
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -18,7 +23,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsReferenceImage","KnightsQueueItem","Image","Post","EvidenceHoldImage","EvidenceHoldPost","ImageReport","Report","ImageFlag","Appeal","TextScanHold","CsamReport","EvidenceHeldUser","ImageCdnModeratorDelete","ImageResourceNew","ModelVersion","Model","User" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsReferenceImage","KnightsVote","KnightsQueueItem","Image","Post",${EXCLUSION_TABLES} RESTART IDENTITY CASCADE`
   );
 });
 
@@ -115,6 +120,22 @@ describe('addSkillCheck', () => {
     ]);
   });
 
+  it('keeps a check whose answers were already graded at another level, and moves one graded at the same level', async () => {
+    await seedImage(pg, 1);
+    await seedImage(pg, 2);
+    const graded = await seedRef(1, { pool: 'hiddenCheck' });
+    const same = await seedRef(2, { pool: 'hiddenCheck' });
+    for (const ref of [graded, same])
+      await pg.query(
+        `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict") VALUES ($1,5,$2,'knights.image.nsfwLevel',0,'Knight','4',1,'correct')`,
+        [-ref, NOW]
+      );
+    const before = (await rows()).find((r) => r.id === graded);
+    expect(await add(1, '8')).toBe('kept-graded');
+    expect((await rows()).find((r) => r.id === graded)).toEqual(before);
+    expect(await add(2, '4')).toBe('moved');
+  });
+
   it('never moves a core reference', async () => {
     await seedImage(pg, 1);
     await seedRef(1, { source: 'core' });
@@ -177,92 +198,17 @@ describe('addSkillCheck', () => {
   });
 
   describe('safety exclusions at insert', () => {
-    const cases: [string, (imageId: number) => Promise<unknown>][] = [
-      [
-        'a ToS violation',
-        (id) => pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=$1`, [id]),
-      ],
-      [
-        'its owner under a legal hold',
-        async (id) => {
-          await pg.query(`UPDATE "Image" SET "userId"=40 WHERE id=$1`, [id]);
-          await pg.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (40)`);
-        },
-      ],
-      [
-        'it listed on a report',
-        (id) =>
-          pg.query(
-            `INSERT INTO "CsamReport" ("userId","images") VALUES (41, jsonb_build_array(jsonb_build_object('id',$1::int)))`,
-            [id]
-          ),
-      ],
-      [
-        'an evidence hold on the image',
-        (id) =>
-          pg.query(`INSERT INTO "EvidenceHoldImage" ("imageId","userId") VALUES ($1,1)`, [id]),
-      ],
-      [
-        'an evidence hold on its post',
-        (id) => pg.query(`INSERT INTO "EvidenceHoldPost" ("postId","userId") VALUES ($1,1)`, [id]),
-      ],
-      [
-        'a pending report',
-        async (id) => {
-          await pg.query(`INSERT INTO "Report" ("id","status") VALUES (50,'Pending')`);
-          await pg.query(`INSERT INTO "ImageReport" ("reportId","imageId") VALUES (50,$1)`, [id]);
-        },
-      ],
-      [
-        'a prompt flag',
-        (id) => pg.query(`INSERT INTO "ImageFlag" ("imageId","promptNsfw") VALUES ($1,true)`, [id]),
-      ],
-      [
-        'a pending appeal',
-        (id) =>
-          pg.query(
-            `INSERT INTO "Appeal" ("entityType","entityId","status") VALUES ('Image',$1,'Pending')`,
-            [id]
-          ),
-      ],
-      [
-        'a pending text-scan hold on its post',
-        (id) =>
-          pg.query(
-            `INSERT INTO "TextScanHold" ("entityType","entityId","status") VALUES ('Post',$1,'Pending')`,
-            [id]
-          ),
-      ],
-      [
-        'an open Inquisitor item',
-        (id) =>
-          pg.query(
-            `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","votesNeeded","status") VALUES ('knights.image.nsfwLevel',$1,'test','Inquisitor',1,'Inquisitor')`,
-            [id]
-          ),
-      ],
-      [
-        'a banned or muted uploader',
-        async (id) => {
-          await pg.query(`INSERT INTO "User" ("id","username","muted") VALUES (42,'m',true)`);
-          await pg.query(`UPDATE "Image" SET "userId"=42 WHERE id=$1`, [id]);
-        },
-      ],
-      [
-        'a model flagged as depicting a minor',
-        async (id) => {
-          await pg.query(`INSERT INTO "Model" ("id","minor") VALUES (60,true)`);
-          await pg.query(`INSERT INTO "ModelVersion" ("id","modelId") VALUES (61,60)`);
-          await pg.query(
-            `INSERT INTO "ImageResourceNew" ("imageId","modelVersionId") VALUES ($1,61)`,
-            [id]
-          );
-        },
-      ],
-    ];
+    const cases = exclusionCases(() => pg);
 
-    it('has one test per exclusion clause', () => {
-      expect(cases).toHaveLength(SKILL_CHECK_EXCLUSIONS.length);
+    it('has one case per exclusion clause, by name', () => {
+      expect(cases.map(([name]) => name)).toEqual(SKILL_CHECK_EXCLUSIONS.map((e) => e.name));
+    });
+
+    it.each(extraExclusionCases(() => pg))('refuses an image with %s', async (_label, flag) => {
+      await seedImage(pg, 1);
+      await flag(1);
+      expect(await add(1)).toBe('ineligible');
+      expect(await rows()).toEqual([]);
     });
 
     it.each(cases)('refuses an image with %s and writes nothing', async (_label, flag) => {
@@ -291,7 +237,7 @@ describe('addSkillCheck', () => {
       await seedImage(pg, 1);
       await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
       try {
-        expect(await add(1)).toBe('ineligible');
+        expect(await add(1)).toBe('unreadable');
       } finally {
         await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
       }

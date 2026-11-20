@@ -29,6 +29,10 @@ vi.mock('$lib/server/queue/runtime', () => ({
 vi.mock('$lib/server/daily/daily.service', () => ({}));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: feedSecretMock, resetDeps: {} }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 1 }) }));
+const inquisitorQueue = vi.hoisted(() => ({ enabled: true }));
+vi.mock('$lib/server/skill-check/runtime', () => ({
+  skillChecks: async () => ({ enabled: inquisitorQueue.enabled, poolCap: 500, serveJudged: true }),
+}));
 vi.mock('$lib/server/smites/smites.service', () => ({}));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
   hiddenItemId: (id: number) => -id,
@@ -205,6 +209,24 @@ describe('vote action', () => {
     );
     expect(castVote).toHaveBeenCalledTimes(1);
   });
+
+  it.each([true, false])(
+    'accepts a mod-confirmed check only with the inquisitor queue on (on: %s)',
+    async (enabled) => {
+      answerHiddenCheck.mockResolvedValue({ status: 'recorded' });
+      inquisitorQueue.enabled = enabled;
+      try {
+        await submit({ item: hiddenItem(5), answer: '8' });
+      } finally {
+        inquisitorQueue.enabled = true;
+      }
+      expect(answerHiddenCheck).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ skillChecks: enabled, serveJudged: true }),
+        expect.anything()
+      );
+    }
+  );
 
   it('grades a hidden check in the request and returns what it cost', async () => {
     const check = { verdict: 'failed', consequence: 'smite', smites: 1, reset: false };

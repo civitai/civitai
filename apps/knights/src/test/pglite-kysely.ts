@@ -62,13 +62,51 @@ CREATE TABLE "CsamReport" (
 );
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER NOT NULL);
 CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, "url" TEXT NOT NULL);
-CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "minor" BOOLEAN NOT NULL DEFAULT false);
+CREATE TABLE "Model" (
+  "id" INTEGER PRIMARY KEY,
+  "minor" BOOLEAN NOT NULL DEFAULT false,
+  "poi" BOOLEAN NOT NULL DEFAULT false
+);
 CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL);
 CREATE TABLE "ImageResourceNew" ("imageId" INTEGER NOT NULL, "modelVersionId" INTEGER NOT NULL, PRIMARY KEY ("imageId", "modelVersionId"));
+CREATE TABLE "ScanLabelItem" (
+  "id" serial PRIMARY KEY,
+  "imageId" integer NOT NULL REFERENCES "Image"("id") ON DELETE CASCADE,
+  "copyState" text,
+  "copyKey" text,
+  "copiedAt" timestamptz(3),
+  "voidReason" text
+);
+CREATE TABLE "ScanLabelFlag" (
+  "id" serial PRIMARY KEY,
+  "itemId" integer NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
+  "source" text NOT NULL,
+  "flaggerVersion" text NOT NULL,
+  "reason" text,
+  "workflowId" text NOT NULL UNIQUE,
+  "flaggedAt" timestamptz(3) NOT NULL,
+  "snapshot" jsonb,
+  "createdAt" timestamptz(3) NOT NULL DEFAULT now()
+);
+CREATE TABLE "ScanLabelVote" (
+  "itemId" integer NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
+  "userId" integer NOT NULL,
+  "block" boolean NOT NULL,
+  "reason" text,
+  "reasonComment" text,
+  "msOnItem" integer,
+  "createdAt" timestamptz(3) NOT NULL DEFAULT now(),
+  PRIMARY KEY ("itemId", "userId")
+);
 CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
 CREATE TABLE "EvidenceHoldPost" ("postId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
 CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT NOT NULL);
 CREATE TABLE "ImageReport" ("reportId" INTEGER NOT NULL, "imageId" INTEGER NOT NULL, PRIMARY KEY ("reportId", "imageId"));
+CREATE TABLE "PostReport" ("reportId" INTEGER PRIMARY KEY, "postId" INTEGER NOT NULL);
+CREATE TABLE "ModelReport" ("reportId" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL);
+CREATE TABLE "UserReport" ("reportId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
+CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER NOT NULL, "tagId" INTEGER NOT NULL, "disabled" BOOLEAN NOT NULL DEFAULT false);
+CREATE TABLE "BlockedImage" ("hash" BIGINT PRIMARY KEY, "reason" TEXT NOT NULL);
 CREATE TABLE "ImageFlag" (
   "imageId" INTEGER PRIMARY KEY,
   "promptNsfw" BOOLEAN NOT NULL DEFAULT false,
@@ -174,34 +212,6 @@ const LABEL_STORE_MIGRATION = fileURLToPath(
 
 /** The site tables the label store's migration hooks into; `Image` is already a stand-in above. */
 const LABEL_STORE_SOURCES = `
-CREATE TABLE "ScanLabelItem" (
-  "id" serial PRIMARY KEY,
-  "imageId" integer NOT NULL REFERENCES "Image"("id") ON DELETE CASCADE,
-  "copyState" text,
-  "copyKey" text,
-  "copiedAt" timestamptz(3)
-);
-CREATE TABLE "ScanLabelFlag" (
-  "id" serial PRIMARY KEY,
-  "itemId" integer NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
-  "source" text NOT NULL,
-  "flaggerVersion" text NOT NULL,
-  "reason" text,
-  "workflowId" text NOT NULL UNIQUE,
-  "flaggedAt" timestamptz(3) NOT NULL,
-  "snapshot" jsonb,
-  "createdAt" timestamptz(3) NOT NULL DEFAULT now()
-);
-CREATE TABLE "ScanLabelVote" (
-  "itemId" integer NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
-  "userId" integer NOT NULL,
-  "block" boolean NOT NULL,
-  "reason" text,
-  "reasonComment" text,
-  "msOnItem" integer,
-  "createdAt" timestamptz(3) NOT NULL DEFAULT now(),
-  PRIMARY KEY ("itemId", "userId")
-);
 CREATE TABLE "ScanLabelCopyObject" (
   "key" text PRIMARY KEY,
   "itemId" integer NOT NULL,

@@ -30,7 +30,10 @@
     </p>
     <dl class="inq-stats">
       <div><dt>Your votes this week</dt><dd>{data.stats.votesThisWeek}</dd></div>
-      <div><dt>Waiting for you</dt><dd>{data.stats.waiting}</dd></div>
+      <div>
+        <dt>Waiting for you</dt>
+        <dd>{data.stats.waiting}{data.stats.waitingMore ? '+' : ''}</dd>
+      </div>
       <div><dt>Agreed with the other moderator</dt><dd>{percent(data.stats.agreementRate)}</dd></div>
     </dl>
   </header>

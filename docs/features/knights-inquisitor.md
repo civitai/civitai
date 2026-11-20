@@ -20,8 +20,8 @@ for items written back in the last 48 hours. Hidden checks, yes/no items and ite
 
 ## Two votes
 
-A moderator is served the open reviews they have not voted on and that are not of their own image: reviews another moderator
-already voted on first, then the oldest. They answer with a rating level (Blocked is not a vote; see below). The first vote
+A moderator is served the open reviews they have not voted on and that are not of their own image and not held by another
+moderator mid-override: reviews another moderator already voted on first, then the oldest, each read as one bounded batch. They answer with a rating level (Blocked is not a vote; see below). The first vote
 is recorded. The second closes the review:
 
 - the same level: `confirmed`, and the image enters the skill-check pool at that level;
@@ -39,12 +39,24 @@ settled the item keep their verdicts, XP and gold.
 
 Moderator votes earn no XP, gold or Watch, need no player record, and never change the players' votes, verdicts, XP or gold.
 
-## Excluded reviews
+## Excluded and held reviews
 
-A review is closed `excluded`, with no vote recorded, when at serve or at vote a moderator has ruled on the image, it was
-blocked, it moved off the players' level, or it fell under a review or hold (the skill-check pool's exclusions).
+A review is closed `excluded`, with no vote recorded, when at serve or at vote the image is gone, was blocked, moved off the
+players' level, or was ruled on by a moderator. A review whose image is under a review or hold that may lift (the
+skill-check pool's exclusions: reports, appeals, scan holds and the like) stays open: it is skipped when serving and a vote
+on it is refused, until the hold lifts. If those checks cannot be read, nothing is served or recorded.
 
-"Send to Inquisitor" is the one-moderator way to say an image should be blocked: it opens a new item at the Inquisitors
+Only the closing moderator's own override counts as theirs: the image ruled at the agreed level in the same request, or,
+on a retry under their own claim, a ruling the main app recorded as theirs after the claim. A ruling by anyone else, at any
+level, closes the review. The image is checked once more right before the write. If the main app does not answer, the
+image is read again: ruled at the agreed level, the review closes; otherwise the moderator is told the level may have been
+taken and to check the image before voting again. If the level was written but the review then cannot close, the moderator
+is told so and it is counted (`knights_inquisitor_overrides_unclosed_total`). Only the moderator's session cookie is
+forwarded, never following a redirect, and only to an https main app (or a local one). A confirmation the pool cannot take
+(the image held, or its checks unreadable) rolls back and can be retried; a core trial image, or a check already graded at
+another level, keeps its row and the review still confirms.
+
+"Send to Inquisitor" is the one-moderator way to say an image should be blocked (refused while another moderator holds the review): it opens a new item at the Inquisitors
 (escalation `blocked`, shown in the moderator app's Inquisitor queue) and excludes the review. The settled item and its
 players' votes stay as they were.
 
@@ -56,7 +68,7 @@ A moderator opening `/play` gets this queue instead of the player game (`routes/
 `InquisitorPlay.svelte`); the page needs no player record and pays nothing. Beside the image it shows the Knights' consensus
 and the image's current level, how the Order voted (per answer, by the stage the votes came at), the moderator votes so far,
 the prompt, and links to the image, its post and its creator on civitai.red, where tags and resources are listed. The
-moderator's own stats sit on top: votes this week, reviews waiting for them, and how often they agreed with the other
+moderator's own stats sit on top: votes this week, reviews waiting for them (counted up to 1,000), and how often they agreed with the other
 moderator. Reviews are addressed by a sealed token bound to the moderator, under a key of its own, so a review token never
 opens as a feed item. Both actions (`inquisitorVote`, `sendToInquisitor`) are form posts that refuse anyone but a moderator.
 

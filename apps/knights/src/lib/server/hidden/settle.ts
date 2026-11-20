@@ -111,7 +111,8 @@ export async function gradeHiddenVotes(
       .where(sql<SqlBool>`"failures" > "answers" * ${settings.retireFailureRate}::float8`)
       .execute();
     // Acolytes answer mod-confirmed checks too, by exact match, so the shared counters would let them retire a check two
-    // moderators agreed on. These retire on Knights' own hard failures in the ledger instead (close answers are inconclusive).
+    // moderators agreed on. These retire on Knights' own hard failures in the ledger instead (close answers are inconclusive),
+    // counted from when the row entered the pool (`harvestedAt`), so votes on its earlier life do not count.
     const failedByKnights = await trx
       .updateTable('KnightsReferenceImage as r')
       .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
@@ -124,7 +125,7 @@ export async function gradeHiddenVotes(
              AND count(*) FILTER (WHERE v."verdict" = 'failed')
                > count(*) FILTER (WHERE v."verdict" IN ('correct', 'failed')) * ${settings.retireFailureRate}::float8
           FROM "KnightsVote" v
-          WHERE v."itemId" = -"r"."id"
+          WHERE v."itemId" = -"r"."id" AND v."createdAt" >= "r"."harvestedAt"
         )`
       )
       .executeTakeFirst();

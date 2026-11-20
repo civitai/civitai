@@ -402,6 +402,24 @@ describe('retiring mod-confirmed checks', () => {
     );
   });
 
+  it('counts only the Knight failures since the check entered the pool', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await inquisitorRef(10);
+    await pg.query(`UPDATE "KnightsReferenceImage" SET "harvestedAt"=$1 WHERE id=$2`, [
+      '2026-12-14 12:00:00',
+      ref,
+    ]);
+    // Twenty failures from before the move (votes on the row's earlier life) and none since.
+    await priorVotes(ref, Array(20).fill('failed'));
+    await pg.query(
+      `UPDATE "KnightsVote" SET "createdAt"="createdAt" - interval '1 day' WHERE "itemId"=$1`,
+      [-ref]
+    );
+    await answer(1, ref, '16');
+    await settle(minutes(31));
+    expect(await statusOf(ref)).toBe('active');
+  });
+
   it('does not count close answers toward retiring an inquisitor check', async () => {
     await seedPlayer(pg, 1);
     const ref = await inquisitorRef(10);

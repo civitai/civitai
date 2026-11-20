@@ -176,17 +176,7 @@ export async function pickHiddenCheck(
     skillChecks?: boolean;
   }
 ): Promise<HiddenCheckOffer | null> {
-  if (!input.skillChecks) return drawHiddenCheck(db, input);
-  // The mod-confirmed pool's safety reads fail closed: if they cannot be read, draw from the other pool alone.
-  const withSkill = await failClosed(
-    db,
-    'a skill-check serve',
-    () => drawHiddenCheck(db, input),
-    undefined
-  );
-  return withSkill !== undefined
-    ? withSkill
-    : drawHiddenCheck(db, { ...input, skillChecks: false });
+  return drawHiddenCheck(db, input);
 }
 
 async function drawHiddenCheck(
@@ -201,7 +191,7 @@ async function drawHiddenCheck(
   // Its own digest: the pool roll must not reuse bytes `digest` already spends.
   const poolRoll = unit(createHash('sha256').update(`${seed}:probation`).digest(), 0);
   const share = input.probationShare ?? 0;
-  const pools: ServedStatus[] =
+  const statuses: ServedStatus[] =
     share <= 0
       ? [REFERENCE_STATUS.active]
       : poolRoll < share
@@ -230,7 +220,12 @@ async function drawHiddenCheck(
     'img.width',
     'img.height',
   ] as const;
-  const walk = (status: ServedStatus, answers: AnswerGroup, from: 'at-or-after' | 'before') =>
+  const walk = (
+    pools: Pool[],
+    status: ServedStatus,
+    answers: AnswerGroup,
+    from: 'at-or-after' | 'before'
+  ) =>
     eligibleReferences(
       db,
       input.userId,
@@ -238,7 +233,7 @@ async function drawHiddenCheck(
       [status],
       input.exclude,
       input.serveJudged,
-      checkPools(input.skillChecks)
+      pools
     )
       .where((eb) =>
         answers === null ? eb('r.answer', 'not in', BUCKET_ANSWERS) : eb('r.answer', '=', answers)
@@ -249,14 +244,24 @@ async function drawHiddenCheck(
       .limit(1)
       .executeTakeFirst();
 
-  let row: Awaited<ReturnType<typeof walk>> = undefined;
-  for (const status of pools) {
-    for (const group of bucketOrder(digest)) {
-      row = (await walk(status, group, 'at-or-after')) ?? (await walk(status, group, 'before'));
-      if (row) break;
+  const find = async (pools: Pool[]) => {
+    for (const status of statuses) {
+      for (const group of bucketOrder(digest)) {
+        const row =
+          (await walk(pools, status, group, 'at-or-after')) ??
+          (await walk(pools, status, group, 'before'));
+        if (row) return row;
+      }
     }
-    if (row) break;
-  }
+    return undefined;
+  };
+  // Only the reads that apply the mod-confirmed pool's safety exclusions fail closed: unreadable, the draw falls back to
+  // the other pool alone (`failClosed` logs the error).
+  const unreadable = Symbol('unreadable');
+  const found = input.skillChecks
+    ? await failClosed(db, 'a skill-check serve', () => find(checkPools(true)), unreadable)
+    : await find(checkPools(false));
+  const row = found === unreadable ? await find(checkPools(false)) : found;
 
   if (!row || unit(digest, 0) >= input.rate) return null;
   return {
