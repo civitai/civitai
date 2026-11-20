@@ -74,7 +74,13 @@ globalThis.defineRemixApp = (app) => app;
   const then = Promise.prototype.then;
   // An own property, so no accessor the app put on Array.prototype sees the write.
   const put = (list, value) =>
-    defineProperty(list, list.length, { value, writable: true, enumerable: true, configurable: true });
+    defineProperty(list, list.length, {
+      __proto__: null,
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
   // JSON, written in JS so it polls the interrupt, bounded in depth and size, and never asks the
   // app's objects (toJSON, a prototype) how to write them.
   const write = (v, depth, out) => {
@@ -135,14 +141,20 @@ globalThis.defineRemixApp = (app) => app;
     const effects = [];
     let next = 0;
     let stopped = false;
+    let answering = false;
     let badAnswer = false;
     const stop = (effect) => {
-      if (effect) put(effects, effect);
       stopped = true;
+      if (effect) put(effects, effect);
       throw STOP;
     };
     const step = (effect) => {
       if (stopped) stop();
+      // A step taken by a getter while an answer is read is no step of the run.
+      if (answering) {
+        stopped = true;
+        throw STOP;
+      }
       // The one past the limit is returned too, so the host refuses it by its own limit.
       if (effects.length >= ${MAX_REMIX_EFFECTS}) stop(effect);
       // Past the log's own entries, never a hole an Array.prototype getter could fill.
@@ -151,13 +163,16 @@ globalThis.defineRemixApp = (app) => app;
       if (!entry) {
         if (!auto || effect.type !== 'ask') stop(effect);
         let answer;
+        answering = true;
         try {
           answer = firstAnswer(effect.spec);
         } catch {
           stop(effect);
+        } finally {
+          answering = false;
         }
-        // The app's getters ran inside firstAnswer: one that took a step has already stopped the run.
-        if (stopped) stop();
+        // A getter inside firstAnswer took a step: this ask is where the run stops, unanswered.
+        if (stopped) stop(effect);
         if (!isAnswer(answer)) {
           badAnswer = true;
           stop(effect);

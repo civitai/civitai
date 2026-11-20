@@ -184,25 +184,33 @@ export default defineRemixApp({
 });
 
 describe('POST /v1/remix/replay: auto-answers the app cannot steer', () => {
-  it('records no ask whose option getter took a step', async () => {
-    const app = (getter: boolean) => `
+  it.each([
+    ['a workflow', "ctx.workflow({ kind: 'upscale', image: ctx.source, scale: 2 });"],
+    ['an ask', "ctx.ask({ kind: 'text', prompt: 'Who?', maxLength: 40 });"],
+  ])(
+    'records no step %s taken by an option getter, and leaves the ask unanswered',
+    async (_, inner) => {
+      const app = (getter: boolean) => `
 export default defineRemixApp({
   async run(ctx) {
     const option = { label: 'A' };
     Object.defineProperty(option, 'value', { enumerable: true, get() {
-      ${getter ? "ctx.workflow({ kind: 'upscale', image: ctx.source, scale: 2 });" : ''}
+      ${getter ? inner : ''}
       return 'a';
     } });
     await ctx.ask({ kind: 'choice', prompt: 'Which?', options: [option] });
     return [];
   },
 });`;
-    // POSITIVE CONTROL: without the step, the ask is auto-answered.
-    const [plain] = await results(app(false), { autoAnswer: 'first' });
-    expect(plain.effects).toEqual([expect.objectContaining({ type: 'ask', answer: 'a' })]);
-    const [result] = await results(app(true), { autoAnswer: 'first' });
-    expect((result.effects as { type: string }[]).map(({ type }) => type)).toEqual(['workflow']);
-  });
+      // POSITIVE CONTROL: without the step, the ask is auto-answered.
+      const [plain] = await results(app(false), { autoAnswer: 'first' });
+      expect(plain.effects).toEqual([expect.objectContaining({ type: 'ask', answer: 'a' })]);
+      const [result] = await results(app(true), { autoAnswer: 'first' });
+      expect(result.effects).toEqual([
+        { type: 'ask', spec: expect.objectContaining({ kind: 'choice' }) },
+      ]);
+    }
+  );
 
   it('auto-answers only when the caller asks, whatever Object.prototype claims', async () => {
     const asker = `Object.prototype.autoAnswer = 'first';
