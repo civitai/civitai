@@ -111,7 +111,7 @@ const deps = () => ({
     pauseSends: async () => undefined as never,
     lockdownOk: async () => true,
     alert: async () => undefined,
-    from: 'Civitai <notices@civitai.com>',
+    from: 'Civitai DMCA <notices@civitai.com>',
     replyTo: 'unused@civitai.com',
     hourlyCeiling: 400,
   }),
@@ -140,6 +140,7 @@ describe('caseIntake', () => {
     };
     expect(mail.to).toBe('A@Example.com');
     expect(mail.replyTo).toBe('dmca@civitai.com');
+    expect((mail as { from?: string }).from).toBe('Civitai DMCA <notices@civitai.com>');
     expect(mail.subject).toBe(`We received your request (${out.publicRef})`);
     expect(mail.text).toContain('DMCA copyright notice on 20 November 2026, 16:05 UTC');
     const link = mail.text.match(/Continue: (\S+)/)![1];

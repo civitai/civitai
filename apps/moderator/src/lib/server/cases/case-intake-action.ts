@@ -10,7 +10,7 @@ import { fileIntakeCase, IntakeRefusedError, submitterRole } from './intake';
 import { checkIntakeValues } from './intake-values';
 import { createIntakeRateLimit } from './intake-rate-limit';
 import { noticeTime, renderNotice } from './notice-render';
-import { defaultSendDeps, hashAddress, sendNotice, type SendDeps } from './send-notice';
+import { defaultSendDeps, hashAddress, noticeFrom, sendNotice, type SendDeps } from './send-notice';
 import { verifyTurnstile } from './turnstile';
 
 /** How long a party's link opens their case. */
@@ -128,9 +128,11 @@ export async function caseIntake(
     // Sent after answering: the main app gives a case action 5s, and a slow relay must not turn a filed
     // case into "couldn't submit". The row is already pending, so an unsent receipt shows on /cases.
     const publicRef = filed.publicRef;
+    const sendDeps = deps.sendDeps();
     deps.background(
       sendNotice(Number(notice.id), {
-        ...deps.sendDeps(),
+        ...sendDeps,
+        from: noticeFrom(def.key, sendDeps.from),
         // One notice, outside any batch: there is no run lock to hold.
         holdsLock: async () => true,
         replyTo: def.mailbox,

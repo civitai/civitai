@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createIntakeRateLimit, IntakeRateLimitedError } from '../intake-rate-limit';
 import { renderNotice } from '../notice-render';
+import { noticeFrom } from '../send-notice';
 
 describe('createIntakeRateLimit', () => {
   it('refuses past the limit and opens again after the window', () => {
@@ -18,5 +19,12 @@ describe('createIntakeRateLimit', () => {
 describe('renderNotice', () => {
   it('fills known slots and leaves a slot with no value as written', () => {
     expect(renderNotice('{caseRef} / {items}', { caseRef: 'TD-1' })).toBe('TD-1 / {items}');
+  });
+});
+
+describe('noticeFrom', () => {
+  it('sends only the two DMCA forms as the DMCA sender', () => {
+    expect(noticeFrom('dmca-counter-notice', 'D')).toBe('D');
+    expect(noticeFrom('intimate-image-removal', 'D')).toBe('Civitai <notices@civitai.com>');
   });
 });
