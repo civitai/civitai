@@ -1501,8 +1501,7 @@ None of this is in this PR.
   public route for 8080 only when serving starts.
 - **Secrets / env:** the replica URL, both Redis URLs (plus `REDIS_SYS_SENTINELS` /
   `REDIS_SYS_SENTINEL_NAME`, the same values the Node pools carry, §3), the auth issuer + JWKS URI,
-  `CIVITAI_MODERATION_USER_ID` (§4), with `FEED_GO_BEARER_AUTH` on also `NEXTAUTH_SECRET` and
-  `ORCHESTRATOR_SERVICE_TOKEN` (the app's values, §4.2), `TRPC_ORIGINS` + `NEXTAUTH_URL` (the origin allow-list, serving), the
+  `CIVITAI_MODERATION_USER_ID` (§4), `TRPC_ORIGINS` + `NEXTAUTH_URL` (the origin allow-list, serving), the
   `SERVER_DOMAIN_*` hosts, `REGION_RESTRICTION_CONFIG`, `REGION_BLOCK_CONFIG` whenever the Node pools set
   it (§6.2; unset, both use the same generated default), `IMAGE_QUERY_CACHING`, the flag mirrors, and
   `FEED_SERVICE_URL` (the same value as the Node pools) with `FEED_GO_IMAGE_INDEX_FEED` /
@@ -1516,6 +1515,12 @@ None of this is in this PR.
   (§3.1): a dedicated SELECT-only login on what the populate reads, in feed-go's own Secret. The
   app's `CLICKHOUSE_*` keys reach feed-go through the shared app config but are ignored, so until
   that Secret exists the misses fall back (`metrics-miss`).
+- **API keys are a separate operator decision.** Turning `FEED_GO_BEARER_AUTH` on (§4.2) requires giving
+  feed-go `NEXTAUTH_SECRET`, the salt of the API-key hash. Node also uses that same secret for other
+  signed tokens, so with it feed-go holds a credential well beyond what key lookups need. Enabling the
+  switch therefore needs its own decision, not just a default deployment step. It also needs
+  `ORCHESTRATOR_SERVICE_TOKEN` at the app's value. Until both are provided, leave the switch off: every
+  API credential then falls back.
 - **Network:** Node pods → feed-go `:9090` (shadow); feed-go → replica, both Redis (and the system
   Redis Sentinels), the JWKS endpoint, the image feed service, the primary (only with a primary-reading cache written back),
   ClickHouse's HTTP endpoint (only with a reader configured), and (serving) the Node service.

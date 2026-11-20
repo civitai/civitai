@@ -114,20 +114,29 @@ func WithResolved(ctx context.Context, u *SessionUser, err error) context.Contex
 	return context.WithValue(ctx, resolvedKey{}, &resolved{user: u, err: err})
 }
 
-// HasAPICredential reports whether the request carries an API credential in the shape the app's
-// tRPC sampler counts (hasApiCredential): a non-empty Authorization header, or a `token` query key.
+// HasAPICredential reports whether the request carries an API credential: a non-empty Authorization
+// header, or a `?token=` value (hasQueryToken).
 func HasAPICredential(req *http.Request) bool {
-	return req.Header.Get("Authorization") != "" || req.URL.Query().Get("token") != ""
+	return req.Header.Get("Authorization") != "" || hasQueryToken(req)
+}
+
+// hasQueryToken is the one rule for "the request has a `?token=`", for both FEED_GO_BEARER_AUTH
+// settings: the first `token` value as URLSearchParams.get reads it (firstQueryValue) is non-empty,
+// or Go's own query parser finds one. The two can disagree (Go drops a pair with an invalid escape or
+// a `;`, and then may read a later value), so either one seeing a token counts: the looser reading
+// only ever turns a request into a fallback.
+func hasQueryToken(req *http.Request) bool {
+	if v, _ := firstQueryValue(req.URL.RawQuery, "token"); v != "" {
+		return true
+	}
+	return req.URL.Query().Get("token") != ""
 }
 
 // CarriesBearer reports whether the app would resolve the request's session from an API credential
 // rather than from its cookies (readRequestBearerToken returns a non-empty token). When it cannot be
-// told (a query token, several Authorization headers, a redacted credential), it reports true, so the
-// caller resolves and meets the fallback.
+// told (a query token, several Authorization headers), it reports true, so the caller resolves and
+// meets the fallback. Only serve() calls it, on public requests (never a redacted synthetic one).
 func CarriesBearer(req *http.Request) bool {
-	if credentialsRedacted(req.Context()) {
-		return HasAPICredential(req)
-	}
 	_, present, err := bearerToken(req)
 	return present || err != nil
 }
@@ -136,7 +145,8 @@ func CarriesBearer(req *http.Request) bool {
 // Authorization header, whatever the scheme (`header.split(' ')[1]`). A header that is set but has no
 // second part (or an empty one) gives no token, and then the `token` query key is NOT read: the app
 // returns from the header branch and resolves the cookies. With no header, the first `token` query
-// value is the token unless it is the webhook token, which this service cannot know: a fallback.
+// value is the token unless it is the webhook token, which this service cannot know: a fallback
+// (hasQueryToken).
 func bearerToken(req *http.Request) (token string, present bool, err error) {
 	values := req.Header.Values("Authorization")
 	if len(values) > 1 {
@@ -150,7 +160,7 @@ func bearerToken(req *http.Request) (token string, present bool, err error) {
 		}
 		return parts[1], true, nil
 	}
-	if v, ok := firstQueryValue(req.URL.RawQuery, "token"); ok && v != "" {
+	if hasQueryToken(req) {
 		return "", false, fallback.New("bearer-query-token")
 	}
 	return "", false, nil

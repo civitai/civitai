@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
 
 const testSecret = "test-secret"
@@ -400,11 +402,88 @@ func TestCarriesBearer(t *testing.T) {
 	if !CarriesBearer(r) {
 		t.Error("several headers: CarriesBearer = false, want true")
 	}
-	red := request(map[string]string{"Authorization": "present"}, "/x")
-	red = red.WithContext(WithRedactedCredentials(red.Context()))
-	if !CarriesBearer(red) {
-		t.Error("redacted placeholder: CarriesBearer = false, want true")
+}
+
+// hasQueryToken is one rule for both switch settings: the URLSearchParams reading, or Go's.
+func TestHasQueryToken(t *testing.T) {
+	for _, c := range []struct {
+		target string
+		want   bool
+	}{
+		{"/x", false},
+		{"/x?token=", false},
+		{"/x?token=&token=k", false}, // both readings take the first value, ""
+		{"/x?token=k", true},
+		{"/x?%74oken=k", true},
+		{"/x?token=a%zz", true},        // Go drops the pair; URLSearchParams keeps it
+		{"/x?token=%zz&token=k", true}, // both see a token, different ones
+		{"/x?a=1;token=k", false},      // neither: URLSearchParams reads key `a`, Go drops the pair
+		{"/x?tokens=k", false},
+	} {
+		if got := hasQueryToken(request(nil, c.target)); got != c.want {
+			t.Errorf("hasQueryToken(%q) = %v, want %v", c.target, got, c.want)
+		}
 	}
+	// The switch-off path reads the same rule: an invalid escape Go's parser drops still falls back.
+	f := newResolveFixture(t)
+	checkResolve(t, f.r, request(nil, "/x?token=a%zz"), bearerWant{reason: "bearer-token"})
+}
+
+// principal-entry.hex is msgpackr's `pack` (the encoder the app's cacheApiKey writes with, msgpackr
+// 1.11.5) of
+//
+//	{ apiKey: { id: 7, userId: 42, tokenScope: 33554431, tokenScopeWide: undefined,
+//	  lastUsedAt: new Date('2026-11-20T12:00:00.000Z'), buzzLimit: null, clientId: null, type: 'User',
+//	  expiresAt: new Date('2027-01-01T00:00:00.000Z') } }
+//
+// generated with `node -e "console.log(require('msgpackr').pack(<that>).toString('hex'))"`.
+func TestPrincipalEntryFromNodeEncoder(t *testing.T) {
+	raw, err := os.ReadFile("testdata/principal-entry.hex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := hex.DecodeString(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := hydrate.Unpack(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := v.(map[string]any)["apiKey"].(map[string]any)
+	if _, has := row["tokenScopeWide"]; has {
+		t.Fatalf("tokenScopeWide (undefined) decoded as present: %#v", row["tokenScopeWide"])
+	}
+	if got, ok := apiKeyScope(row); !ok || got != 33554431 {
+		t.Fatalf("scope %d %v, want 33554431", got, ok)
+	}
+	if id, ok := hydrate.Int(row["userId"]); !ok || id != 42 {
+		t.Fatalf("userId %v, want 42", row["userId"])
+	}
+	last, ok := row["lastUsedAt"].(time.Time)
+	if !ok || !last.Equal(time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)) {
+		t.Fatalf("lastUsedAt %#v, want 2026-11-20T12:00:00Z", row["lastUsedAt"])
+	}
+	exp, ok := row["expiresAt"].(time.Time)
+	if !ok || !exp.Equal(time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("expiresAt %#v, want 2027-01-01T00:00:00Z", row["expiresAt"])
+	}
+	if cid, has := row["clientId"]; !has || cid != nil {
+		t.Fatalf("clientId %#v (present %v), want null", cid, has)
+	}
+	if row["type"] != "User" {
+		t.Fatalf("type %#v, want User", row["type"])
+	}
+
+	// The same bytes through Resolve: served 30 minutes after lastUsedAt, a fallback 2 hours after.
+	f := newBearerFixture(t)
+	f.session(t, 42, map[string]any{"id": 42, "username": "mod-a", "isModerator": true})
+	f.cache.SetString("ns:packed:caches:api-key-principal:"+nodeHash("k-node"), b)
+	good := request(map[string]string{"Authorization": "Bearer k-node"}, "/x")
+	f.r.APIKeys.Now = func() time.Time { return time.Date(2026, 11, 20, 12, 30, 0, 0, time.UTC) }
+	checkResolve(t, f.r, good, bearerWant{id: 42, moderator: true, key: true})
+	f.r.APIKeys.Now = func() time.Time { return time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC) }
+	checkResolve(t, f.r, good, bearerWant{reason: "bearer-last-used"})
 }
 
 func TestJSTruthy(t *testing.T) {
