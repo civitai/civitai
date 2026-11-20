@@ -5,8 +5,8 @@ import {
   siblingsServable,
   URL_SIBLING_CAP,
   urlSiblingsSql,
-  type ScannerVerdict,
 } from '../retracted-media-tier';
+import type { ScannerVerdict } from '../media-signals';
 
 describe('createScannerVerdictCache', () => {
   const setup = (answers: (ScannerVerdict | null)[]) => {
