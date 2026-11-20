@@ -3,13 +3,7 @@ import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/b
 import type { ManagedProfanityList } from '~/libs/profanity-simple';
 import { trpc } from '~/utils/trpc';
 
-/**
- * The moderator benign lists, for gates that run in the browser. Search queries Meili
- * from the client, so the POI / minor / profanity checks there have no server hop to
- * strip on — see `getClientBenignLists`. Edge-cached for 10 minutes server-side and refetched
- * every 10 minutes per session, so both an addition and a REMOVAL reach an open search box in
- * about 20.
- */
+/** Shared by both hooks so they hit one cache entry for `getBenignPhrases`. */
 const BENIGN_PHRASES_QUERY_OPTIONS = { staleTime: 10 * 60 * 1000, gcTime: Infinity };
 
 /** The managed blocked list a response carries, or `null` for the list shipped in the bundle. */
@@ -30,6 +24,13 @@ export function useProfanityBlocklist(): ManagedProfanityList | null {
   return data ?? null;
 }
 
+/**
+ * The moderator benign lists, for gates that run in the browser. Search queries Meili
+ * from the client, so the POI / minor / profanity checks there have no server hop to
+ * strip on — see `getClientBenignLists`. Edge-cached for 10 minutes server-side and refetched
+ * every 10 minutes per session, so both an addition and a REMOVAL reach an open search box in
+ * about 20.
+ */
 export function useBenignPhrases() {
   // Finite staleTime, deliberately. The reason a moderator DELETES a benign phrase is that it
   // stripped too much — under `staleTime: Infinity` that deletion never reaches an open tab,

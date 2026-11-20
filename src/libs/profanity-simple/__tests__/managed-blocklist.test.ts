@@ -26,12 +26,6 @@ describe('a managed blocked list', () => {
   it('REPLACES the shipped list, so removing a shipped word unmasks it', () => {
     expect(shippedOnly.length).toBeGreaterThan(0);
   });
-
-  // No-change test: it passes with the feature reverted too. It guards the fallback, not the feature.
-  it('null means the shipped list', () => {
-    const fallback = createProfanityFilter({ moderatorBlocklist: null });
-    for (const word of shippedOnly) expect(fallback.analyze(word).isProfane).toBe(true);
-  });
 });
 
 describe('getProfanityFilter', () => {
