@@ -1755,6 +1755,7 @@ describe('the .com face stamp at save', () => {
   beforeEach(() => {
     // The intent check records its verdict on the row before the save writes.
     mockDbWrite.$executeRaw.mockResolvedValue(1 as never);
+    mockDbRead.modelVersion.findMany.mockResolvedValue([] as never);
   });
 
   it('stamps the face it checked when an owner saves one that passes', async () => {
@@ -1773,8 +1774,49 @@ describe('the .com face stamp at save', () => {
         sfwName: 'Retro Style Two',
         sfwDescription: '<p>A retro poster style.</p>',
         sfwCoverImageId: 5,
+        versionFields: [],
       }),
     });
+  });
+
+  it("covers the model's version names and trigger words, which it checks too", async () => {
+    passes();
+    mockStored(storedFace);
+    mockDbRead.modelVersion.findMany.mockResolvedValue([
+      { name: 'v1', trainedWords: ['retro'] },
+    ] as never);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
+    const checked = mockPreviewTextScanNsfw.mock.calls.flatMap((call) =>
+      (call[0] as { fields: TextScanField[] }).fields.map((field) => field.text)
+    );
+    expect(checked).toContain('v1');
+    expect(savedStamp()).toMatchObject({
+      hash: sfwFaceStampHash({
+        sfwName: 'Retro Style Two',
+        sfwDescription: null,
+        sfwCoverImageId: 5,
+        versionFields: [
+          { heading: 'Version name', text: 'v1' },
+          { heading: 'Trained words', text: 'retro' },
+        ],
+      }),
+    });
+  });
+
+  it('saves a face whose version text the check flags, but stamps nothing', async () => {
+    passes();
+    mockStored(storedFace);
+    mockDbRead.modelVersion.findMany.mockResolvedValue([
+      { name: 'v1 explicit', trainedWords: [] },
+    ] as never);
+    mockPreviewTextScanNsfw.mockImplementation(async ({ fields }: { fields: TextScanField[] }) =>
+      fields.some((field) => field.text?.includes('explicit'))
+        ? { status: 'ok', level: 16, reason: 'stub' }
+        : { status: 'ok', level: 1, reason: 'stub', promptId: 31 }
+    );
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
+    expect(mockDbWrite.model.update).toHaveBeenCalledTimes(1);
+    expect(savedStamp()).toBeUndefined();
   });
 
   it('stamps the cover the save picks, with the stored title', async () => {
@@ -1782,7 +1824,12 @@ describe('the .com face stamp at save', () => {
     mockStored(storedFace);
     await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwCoverImageId: 6 });
     expect(savedStamp()).toMatchObject({
-      hash: sfwFaceStampHash({ sfwName: 'Retro Style', sfwDescription: null, sfwCoverImageId: 6 }),
+      hash: sfwFaceStampHash({
+        sfwName: 'Retro Style',
+        sfwDescription: null,
+        sfwCoverImageId: 6,
+        versionFields: [],
+      }),
     });
   });
 

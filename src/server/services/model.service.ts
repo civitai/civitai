@@ -4257,7 +4257,7 @@ export const upsertModel = async (
   if (!isModerator && storedSfwName && (sfwFaceChanged || coverChanged)) {
     const storedSfwDescription =
       data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription;
-    const { promptId } = await assertSfwFaceSafe({
+    const { stamp } = await assertSfwFaceSafe({
       sfwName: storedSfwName,
       sfwDescription: storedSfwDescription,
       name: data.name ?? beforeUpdate?.name ?? '',
@@ -4265,21 +4265,23 @@ export const upsertModel = async (
       modelId: id,
       userId,
     });
-    // The text scan trusts this pass for as long as the face it read is unchanged.
-    meta = {
-      ...(meta ?? {}),
-      sfwFaceCheckedAt: sfwFaceStamp(
-        {
-          sfwName: storedSfwName,
-          sfwDescription: storedSfwDescription ?? null,
-          sfwCoverImageId:
-            (data.sfwCoverImageId !== undefined
-              ? data.sfwCoverImageId
-              : beforeUpdate?.sfwCoverImageId) ?? null,
-        },
-        promptId
-      ),
-    };
+    // The text scan trusts this pass for as long as everything it read is unchanged.
+    if (stamp)
+      meta = {
+        ...(meta ?? {}),
+        sfwFaceCheckedAt: sfwFaceStamp(
+          {
+            sfwName: storedSfwName,
+            sfwDescription: storedSfwDescription ?? null,
+            sfwCoverImageId:
+              (data.sfwCoverImageId !== undefined
+                ? data.sfwCoverImageId
+                : beforeUpdate?.sfwCoverImageId) ?? null,
+            versionFields: stamp.versionFields,
+          },
+          stamp.promptId
+        ),
+      };
   }
   if (coverChanged) {
     if (!beforeUpdate || !id)

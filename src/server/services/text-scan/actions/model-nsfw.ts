@@ -26,7 +26,7 @@ import {
 } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { hasCompleteSfwFace, isComSafeLevel } from '~/shared/utils/model-sfw-face';
-import { checkSfwFace } from '~/server/services/model-sfw-face.service';
+import { checkSfwFace, getOwnVersionFields } from '~/server/services/model-sfw-face.service';
 import {
   passedSfwFaceCheck,
   sfwFaceStamp,
@@ -177,7 +177,7 @@ async function hasCleanComFace(
     sfwCoverImageId: number | null;
     meta: unknown;
   },
-  check: typeof checkSfwFace
+  { check, readVersions }: { check: typeof checkSfwFace; readVersions: typeof getOwnVersionFields }
 ) {
   const { sfwName, sfwDescription, sfwCoverImageId } = model;
   if (!sfwName?.trim() || !removeTags(sfwDescription ?? '').trim() || sfwCoverImageId == null)
@@ -189,16 +189,15 @@ async function hasCleanComFace(
   });
   if (!cover || !isComSafeLevel(cover.nsfwLevel)) return false;
 
-  const face = { sfwName, sfwDescription, sfwCoverImageId };
-  if (sfwFaceStampMatches(model.meta, face)) return true;
   try {
-    const verdicts = await check({
-      sfwName,
-      sfwDescription,
+    const versionFields = await readVersions({
       modelId: model.id,
       userId: model.userId,
       db: dbWrite,
     });
+    const face = { sfwName, sfwDescription, sfwCoverImageId, versionFields };
+    if (sfwFaceStampMatches(model.meta, face)) return true;
+    const verdicts = await check({ sfwName, sfwDescription, userId: model.userId, versionFields });
     const passed = passedSfwFaceCheck(verdicts, { requireDescription: true });
     logToAxiom({
       name: 'text-scan',
@@ -477,7 +476,10 @@ async function reviveDormantVerdict(db: RawDb, modelId: number): Promise<boolean
 export async function applyModelNsfwTextScan(
   { entityId, workflowId, outcome }: ApplyTextScanArgs,
   /** The face re-check, passed in by tests. */
-  deps: { checkSfwFace?: typeof checkSfwFace } = {}
+  deps: {
+    checkSfwFace?: typeof checkSfwFace;
+    getOwnVersionFields?: typeof getOwnVersionFields;
+  } = {}
 ): Promise<RatingFloorResult> {
   const nothing: RatingFloorResult = { deferredRatingNotice: null };
   // Read as not mature (an edit since the rating): the scan's own marker goes, so the owner can
@@ -512,7 +514,11 @@ export async function applyModelNsfwTextScan(
   const result = await applySystemModelNsfwFlag({
     model,
     source: 'text-scan',
-    hasCleanComFace: () => hasCleanComFace(model, deps.checkSfwFace ?? checkSfwFace),
+    hasCleanComFace: () =>
+      hasCleanComFace(model, {
+        check: deps.checkSfwFace ?? checkSfwFace,
+        readVersions: deps.getOwnVersionFields ?? getOwnVersionFields,
+      }),
   });
   logToAxiom({
     name: 'text-scan',

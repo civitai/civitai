@@ -96,6 +96,7 @@ export async function checkSfwFace({
   modelId,
   userId,
   db = dbRead,
+  versionFields: readVersionFields,
 }: {
   sfwName?: string | null;
   sfwDescription?: string | null;
@@ -103,8 +104,11 @@ export async function checkSfwFace({
   userId: number;
   /** The primary, for a caller reading an edit that has just committed. */
   db?: Pick<typeof dbRead, 'modelVersion'>;
+  /** The version text, already read by a caller that also stamps what it checked. */
+  versionFields?: TextScanField[];
 }) {
-  const versionFields = modelId ? await getOwnVersionFields({ modelId, userId, db }) : [];
+  const versionFields =
+    readVersionFields ?? (modelId ? await getOwnVersionFields({ modelId, userId, db }) : []);
   const description = removeTags(sfwDescription ?? '').trim();
 
   const [name, desc, versions] = await Promise.all([
@@ -120,7 +124,8 @@ export async function checkSfwFace({
   return verdicts;
 }
 
-async function getOwnVersionFields({
+/** The version names and trigger words of the caller's own model, as the face check reads them. */
+export async function getOwnVersionFields({
   modelId,
   userId,
   db,
@@ -336,14 +341,22 @@ export async function assertSfwFaceSafe({
   userId: number;
 }) {
   // Both checks wait on the orchestrator, so they run together; the listing refusal still wins.
-  const triggerWords = modelId ? await getOwnTriggerWords({ modelId, userId }) : [];
+  const [triggerWords, versionFields] = modelId
+    ? await Promise.all([
+        getOwnTriggerWords({ modelId, userId }),
+        getOwnVersionFields({ modelId, userId, db: dbRead }),
+      ])
+    : [[], []];
   const [allowed, verdicts] = await Promise.allSettled([
     assertComFaceAllowed({ name, description, triggerWords, modelId, userId }),
-    checkSfwFace({ sfwName, sfwDescription, userId }),
+    checkSfwFace({ sfwName, sfwDescription, userId, versionFields }),
   ]);
   if (allowed.status === 'rejected') throw allowed.reason;
   if (verdicts.status === 'rejected') throw verdicts.reason;
-  const entries = Object.entries(verdicts.value) as [SfwFaceCheckField, SfwFaceVerdict][];
+  // The version text never refuses a save here (the listing re-check owns it), but the stamp
+  // vouches for all the scan's re-check reads, so only a clean read of it earns one.
+  const { versions: _versions, ...faceVerdicts } = verdicts.value;
+  const entries = Object.entries(faceVerdicts) as [SfwFaceCheckField, SfwFaceVerdict][];
 
   const flagged = entries.filter(([, verdict]) => verdict.status === 'flagged');
   if (flagged.length)
@@ -357,8 +370,8 @@ export async function assertSfwFaceSafe({
     throw throwBadRequestError(
       "We couldn't check the civitai.com title and description just now. Try saving again."
     );
-  // Every field it read is clean by now: the caller stamps the face it stores with this pass.
-  return passedSfwFaceCheck(verdicts.value) ?? { promptId: null };
+  const pass = passedSfwFaceCheck(verdicts.value);
+  return { stamp: pass && { promptId: pass.promptId, versionFields } };
 }
 
 const DRAFT_MODEL = 'openai/gpt-4o-mini';

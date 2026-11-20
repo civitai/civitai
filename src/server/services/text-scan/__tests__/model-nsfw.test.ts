@@ -206,12 +206,16 @@ describe('applyModelNsfwTextScan and the .com face', () => {
     sfwCoverImageId: 5,
     nsfwLevel: NsfwLevel.PG,
   };
-  const stampFor = (f: {
-    sfwName: string | null;
-    sfwDescription: string | null;
-    sfwCoverImageId: number | null;
-  }) => ({
-    sfwFaceCheckedAt: { at: '2026-11-20T00:00:00.000Z', promptId: 7, hash: sfwFaceStampHash(f) },
+  type Versions = { heading: string; text: string }[];
+  const stampFor = (
+    f: { sfwName: string | null; sfwDescription: string | null; sfwCoverImageId: number | null },
+    versionFields: Versions = []
+  ) => ({
+    sfwFaceCheckedAt: {
+      at: '2026-11-20T00:00:00.000Z',
+      promptId: 7,
+      hash: sfwFaceStampHash({ ...f, versionFields }),
+    },
   });
   /** A face as the save gate leaves it: stamped for its own values. */
   const stamped = (over: Record<string, unknown> = {}) => {
@@ -232,8 +236,12 @@ describe('applyModelNsfwTextScan and the .com face', () => {
           !sql.includes('SET nsfw = TRUE')
       );
   const clean = { status: 'clean', promptId: 7 } as const;
+  const versionsMock = vi.fn();
   const scan = (a: Parameters<typeof applyModelNsfwTextScan>[0]) =>
-    applyModelNsfwTextScan(a, { checkSfwFace: checkSfwFaceMock });
+    applyModelNsfwTextScan(a, {
+      checkSfwFace: checkSfwFaceMock,
+      getOwnVersionFields: versionsMock,
+    });
   const rated = (detectedLevel: number, declaredLevel: number) => ({
     ...args(detectedLevel > declaredLevel),
     outcome: {
@@ -246,6 +254,7 @@ describe('applyModelNsfwTextScan and the .com face', () => {
   beforeEach(() => {
     dbMock.dbWrite.image.findUnique.mockResolvedValue({ nsfwLevel: NsfwLevel.PG });
     checkSfwFaceMock.mockResolvedValue({ sfwName: clean, sfwDescription: clean });
+    versionsMock.mockReset().mockResolvedValue([]);
   });
 
   it('leaves a model with a complete, clean, stamped face unrated, without re-checking it', async () => {
@@ -311,8 +320,8 @@ describe('applyModelNsfwTextScan and the .com face', () => {
       expect.objectContaining({
         sfwName: row.sfwName,
         sfwDescription: row.sfwDescription,
-        modelId: 1,
         userId: 99,
+        versionFields: [],
       })
     );
     expect(flipSql()).toBeUndefined();
@@ -333,7 +342,62 @@ describe('applyModelNsfwTextScan and the .com face', () => {
         sfwName: row.sfwName as string,
         sfwDescription: row.sfwDescription as string,
         sfwCoverImageId: row.sfwCoverImageId as number,
+        versionFields: [],
       }),
+    });
+  });
+
+  describe('the version text the check reads', () => {
+    const v1: Versions = [
+      { heading: 'Version name', text: 'v1' },
+      { heading: 'Trained words', text: 'retro, poster' },
+    ];
+
+    it('makes the stamp stale when a version name changes after a pass, and fails closed on R+ text', async () => {
+      const edited: Versions = [{ heading: 'Version name', text: 'v1 explicit' }, v1[1]];
+      dbMock.dbWrite.model.findUnique.mockResolvedValue(
+        model({ ...face, meta: stampFor(face, v1) })
+      );
+      versionsMock.mockResolvedValue(edited);
+      checkSfwFaceMock.mockResolvedValue({
+        sfwName: clean,
+        sfwDescription: clean,
+        versions: { status: 'flagged', level: 'R', reason: 'r' },
+      });
+      await scan(args(true));
+      expect(checkSfwFaceMock).toHaveBeenCalledWith(
+        expect.objectContaining({ versionFields: edited })
+      );
+      expect(flipSql()).toBeDefined();
+      expect(stampSql()).toBeUndefined();
+    });
+
+    it('makes the stamp stale when trigger words change', async () => {
+      dbMock.dbWrite.model.findUnique.mockResolvedValue(
+        model({ ...face, meta: stampFor(face, v1) })
+      );
+      versionsMock.mockResolvedValue([v1[0], { heading: 'Trained words', text: 'retro, nude' }]);
+      await scan(args(true));
+      expect(checkSfwFaceMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('still matches with the versions read in another order', async () => {
+      dbMock.dbWrite.model.findUnique.mockResolvedValue(
+        model({ ...face, meta: stampFor(face, v1) })
+      );
+      versionsMock.mockResolvedValue([v1[1], v1[0]]);
+      await scan(args(true));
+      expect(checkSfwFaceMock).not.toHaveBeenCalled();
+      expect(flipSql()).toBeUndefined();
+    });
+
+    it('fails closed when the versions cannot be read', async () => {
+      dbMock.dbWrite.model.findUnique.mockResolvedValue(
+        model({ ...face, meta: stampFor(face, v1) })
+      );
+      versionsMock.mockRejectedValue(new Error('db down'));
+      await scan(args(true));
+      expect(flipSql()).toBeDefined();
     });
   });
 

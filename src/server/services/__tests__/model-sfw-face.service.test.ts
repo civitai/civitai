@@ -117,7 +117,7 @@ describe('assertSfwFaceSafe', () => {
         name: 'n',
         userId: 1,
       })
-    ).resolves.toEqual({ promptId: 31 });
+    ).resolves.toEqual({ stamp: { promptId: 31, versionFields: [] } });
   });
 });
 

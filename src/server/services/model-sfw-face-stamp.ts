@@ -1,17 +1,29 @@
 import { createHash } from 'crypto';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { SfwFaceCheckField, SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
+import type { TextScanField } from '~/server/services/text-scan/types';
 
 export type SfwFaceStampFace = {
   sfwName: string | null;
   sfwDescription: string | null;
   sfwCoverImageId: number | null;
+  /** The model's own version names and trigger words, which the face check reads too. */
+  versionFields: TextScanField[];
 };
 
-/** What a stamp vouches for: an edit to the .com title, description or cover makes it stale. */
-export function sfwFaceStampHash({ sfwName, sfwDescription, sfwCoverImageId }: SfwFaceStampFace) {
+/**
+ * What a stamp vouches for: everything the face check read. An edit to the .com title, description
+ * or cover, or to a version name or trigger words, makes it stale. Versions in any order hash alike.
+ */
+export function sfwFaceStampHash({
+  sfwName,
+  sfwDescription,
+  sfwCoverImageId,
+  versionFields,
+}: SfwFaceStampFace) {
+  const versions = versionFields.map((field) => `${field.heading}\n${field.text ?? ''}`).sort();
   return createHash('sha256')
-    .update(JSON.stringify([sfwName, sfwDescription, sfwCoverImageId]))
+    .update(JSON.stringify([sfwName, sfwDescription, sfwCoverImageId, versions]))
     .digest('hex');
 }
 
