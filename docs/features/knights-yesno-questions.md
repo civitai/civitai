@@ -2,7 +2,7 @@
 
 Plain yes or no questions about one image, answered by Knights and above beside the rating votes. They exist to collect human
 answers for a decision model. They are first-class votes: an answer is graded against the majority exactly as a rating vote is graded
-against its consensus. Nothing is written back to the image, and a yes/no answer never issues a smite (only hidden checks do).
+against its consensus. Nothing is written back to the image (except by the moderator tag review source below), and a yes/no answer never issues a smite (only hidden checks do).
 Code is in `apps/knights/src/lib/server/yesno`; migration `20261210120000_knights_v2_tables` (applied by hand, before the app build and the import; it creates the
 open-item index with the `"audience" IS NULL` predicate that exempts yes/no questions).
 
@@ -150,6 +150,40 @@ and are left open. Moderators' questions are not swept. A vote locks its own pla
 Each answer becomes a `knight` label in the label store, written by the tick as given (not when graded), never for a
 held player: question `knights.yesno.<externalId>`, value `yes` or `no`, one label per answer, unique source ref. Each answered
 question gets its own `rule` row, so the store computes the majority per question. Details: `docs/features/label-store.md`.
+
+## Moderator tag review source (`tag-review.ts`, `tag-writeback.ts`)
+
+Paladins also answer the moderator app's image tag review queue (`/images/tags`) as yes/no questions: "Should this image have
+the tag <name>?", yes keeps the tag, no removes it. The queue itself does not change: moderators keep seeing every flagged tag,
+and whichever side rules first takes it out of the other's queue. Off unless the moderator Config page switches it on
+(`modTagReview` in `system:knights-v2-sources`, absent is off); switching on is in [Knights queue sources](knights-sources.md#paladin-tag-review).
+
+- **Items.** Source `mod-tag-review`, axis `tag_review` (heading "Tag review"), audience `players`, created at the Paladin stage
+  with no deadline (`expiresAt` null, so `escalateExpired` never moves or expires them), `externalId`
+  `mod-tag:<imageId>:<tagId>:<episode>`, `meta { tagId, episode }`. Created through `importYesNo`, like the CSV import.
+- **Create (tick).** With the switch on and an active Paladin, the tick walks the flagged tag rows a page at a time within a time
+  budget, resuming where the last run stopped (process memory; a restart starts over, and the upsert makes reruns idempotent).
+  A row gets an item when its tag is a Moderation tag below Blocked and its image passes `modReviewEligibleImage`
+  (`@civitai/db/knights`) on a published post.
+- **Eligibility.** One predicate, `modReviewEligibleImage`, keeps staff-only images away from players. It runs where an item is
+  created, served, voted on and swept, and in the moderator app's write-back guard; an item whose image stops passing it is no
+  longer served, its vote is refused and an answered one is swept `unplayable`.
+- **Episodes.** Each time a tag is flagged after a ruling it gets a fresh item (`episode` + 1); while the latest item is open, awaiting
+  write-back, or closed without the flag ever clearing, nothing new is created. When a tag stops being flagged (a moderator ruled, or
+  it was disabled or removed), the tick closes its open item `moderator-ruled` (votes inconclusive) or stamps a finished one
+  `episodeEnded`, for items of the last 30 days. This runs with the switch off too.
+- **Deciding.** The Paladin stage rule applies, never the Inquisitors: four answers without agreement close `no-consensus` and the tag
+  stays with moderators. A "no" that would lower the image's rating (`removalLowersLevel`, read under the item lock at vote time) does
+  not settle on the 2-0 minimum and follows the 75% rule instead; keeps and level-neutral removals settle 2-0. The players'
+  answers go to the label store like any yes/no answer.
+- **Write-back (tick).** A settled item is written back through the moderator app's `image-tag-moderate` action
+  (`@civitai/moderation`), which runs the queue's own `moderateImageTags` in a guarded mode and records `moderateTagKono` for the
+  player who closed the consensus: that activity in image lookup is the history of player rulings. Outcomes `applied` and
+  `already-ruled` end the episode; `ineligible` and `missing` are final and leave the tag with moderators. A moderator app that is
+  not ready (not deployed, not configured, credential not accepted) is retried without spending attempts; other failures back off
+  and stop at the attempt cap as `attempts-exhausted` (paid, not applied). Config: `MODERATOR_APP_INTERNAL_URL` (else
+  `MODERATOR_APP_URL`) and `KNIGHTS_TAG_REVIEW_TOKEN`.
+- The moderator Questions tab leaves these items out: a reworded copy would ask something other than the tag it writes back.
 
 ## Players see
 
