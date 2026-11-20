@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { PGlite } from '@electric-sql/pglite';
+import { citext } from '@electric-sql/pglite/contrib/citext';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { withMetricExcludedUsers } from '~/server/jobs/leaderboard-board-query';
 
@@ -68,8 +69,9 @@ async function run(id: string, excludedUserIds: number[] = []) {
 const byUser = (rows: Row[], userId: number) => rows.find((r) => r.userId === userId);
 
 beforeAll(async () => {
-  db = new PGlite();
+  db = new PGlite({ extensions: { citext } });
   await db.exec(`
+    CREATE EXTENSION citext;
     CREATE TABLE "User" (
       id INT PRIMARY KEY, "isModerator" BOOLEAN DEFAULT false,
       "excludeFromLeaderboards" BOOLEAN NOT NULL DEFAULT false,
@@ -91,7 +93,8 @@ beforeAll(async () => {
     CREATE TABLE "LegendsBoardResult" ("userId" INT, "leaderboardId" TEXT, score INT, metrics JSONB, position INT);
     CREATE TABLE "KeyValue" (key TEXT PRIMARY KEY, value JSONB);
     CREATE TABLE "Cosmetic" (id SERIAL PRIMARY KEY, "leaderboardId" TEXT, "leaderboardPosition" INT, data JSONB);
-    CREATE TABLE "Tag" (id INT PRIMARY KEY, name TEXT NOT NULL, "isCategory" BOOLEAN NOT NULL);
+    -- citext, as in production: an array of names is citext[], which does not compare with a text[] literal.
+    CREATE TABLE "Tag" (id INT PRIMARY KEY, name CITEXT NOT NULL, "isCategory" BOOLEAN NOT NULL);
     CREATE TABLE "Article" (
       id INT PRIMARY KEY, "userId" INT NOT NULL, status TEXT NOT NULL, availability TEXT NOT NULL,
       unlisted BOOLEAN NOT NULL DEFAULT false, "tosViolation" BOOLEAN NOT NULL DEFAULT false,
@@ -115,7 +118,7 @@ beforeAll(async () => {
 
     INSERT INTO "Leaderboard" VALUES ('writer', 7, 'Writers', '', '', 'SELECT 1', true, true, '{green,blue}');
     -- Categories are the children of the 'article category' system tag, whatever their isCategory says.
-    INSERT INTO "Tag" VALUES (1, 'story', false), (2, 'announcement', false), (3, 'generation guide', false),
+    INSERT INTO "Tag" VALUES (1, 'story', false), (2, 'announcement', false), (3, 'Generation Guide', false),
       (4, 'musing', false), (5, 'elf', false), (100, 'article category', false);
     INSERT INTO "TagsOnTags" VALUES (100, 1), (100, 2), (100, 3), (100, 4);
     INSERT INTO "User" (id) SELECT unnest(ARRAY[

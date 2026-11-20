@@ -2,6 +2,7 @@
 -- Based on civitai/civitai#6556. Stories have their own board already (story-writer).
 -- An article's categories are its system category (Article."systemCategoryId") when it has one, and the
 -- categories its author picked (tags under the 'article category' system tag) only when it has none.
+-- Tag.name is citext: names are compared as lower(name::text) against lower-case text[] literals.
 -- Articles count under the same gates as the Writers and Story Writers boards: published, scanned, rated
 -- (any level; unrated never), not Private, unlisted or a ToS violation, by an owner neither deleted nor
 -- banned. The boards take the Writers board's domain.
@@ -67,9 +68,9 @@ $q$WITH article AS (
     POWER(0.5, EXTRACT(EPOCH FROM (now() - a."publishedAt")) / 86400.0 / 90) AS w,
     CASE
       WHEN cardinality(CASE
-        WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT t.name FROM "Tag" t WHERE t.id = a."systemCategoryId")
+        WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT lower(t.name::text) FROM "Tag" t WHERE t.id = a."systemCategoryId")
         ELSE ARRAY(
-          SELECT t.name FROM "TagsOnArticle" ta
+          SELECT lower(t.name::text) FROM "TagsOnArticle" ta
           JOIN "Tag" t ON t.id = ta."tagId"
           JOIN "TagsOnTags" tt ON tt."toTagId" = t.id
           JOIN "Tag" p ON p.id = tt."fromTagId" AND p.name = 'article category'
@@ -77,9 +78,9 @@ $q$WITH article AS (
         )
       END) > 0
         AND CASE
-          WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT t.name FROM "Tag" t WHERE t.id = a."systemCategoryId")
+          WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT lower(t.name::text) FROM "Tag" t WHERE t.id = a."systemCategoryId")
           ELSE ARRAY(
-            SELECT t.name FROM "TagsOnArticle" ta
+            SELECT lower(t.name::text) FROM "TagsOnArticle" ta
             JOIN "Tag" t ON t.id = ta."tagId"
             JOIN "TagsOnTags" tt ON tt."toTagId" = t.id
             JOIN "Tag" p ON p.id = tt."fromTagId" AND p.name = 'article category'
@@ -173,16 +174,16 @@ $q$WITH guide AS (
       WHERE u.id = a."userId" AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL AND u.id > 0
     )
     AND CASE
-      WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT t.name FROM "Tag" t WHERE t.id = a."systemCategoryId")
+      WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT lower(t.name::text) FROM "Tag" t WHERE t.id = a."systemCategoryId")
       ELSE ARRAY(
-        SELECT t.name FROM "TagsOnArticle" ta
+        SELECT lower(t.name::text) FROM "TagsOnArticle" ta
         JOIN "Tag" t ON t.id = ta."tagId"
         JOIN "TagsOnTags" tt ON tt."toTagId" = t.id
         JOIN "Tag" p ON p.id = tt."fromTagId" AND p.name = 'article category'
         WHERE ta."articleId" = a.id
       )
     END && ARRAY['generation guide', 'video generation guide', 'training guide', 'tool guide',
-                 'resource guide', 'workflows', 'data prep', 'comparative study', 'ML Research']
+                 'resource guide', 'workflows', 'data prep', 'comparative study', 'ml research']
 ), threads AS (
   SELECT g.id, g."userId", root.id AS thread_id
   FROM guide g JOIN "Thread" root ON root."articleId" = g.id
@@ -242,9 +243,9 @@ $q$WITH newcomers AS (
     GREATEST(am."viewCount", 0) AS views,
     CASE
       WHEN cardinality(CASE
-        WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT t.name FROM "Tag" t WHERE t.id = a."systemCategoryId")
+        WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT lower(t.name::text) FROM "Tag" t WHERE t.id = a."systemCategoryId")
         ELSE ARRAY(
-          SELECT t.name FROM "TagsOnArticle" ta
+          SELECT lower(t.name::text) FROM "TagsOnArticle" ta
           JOIN "Tag" t ON t.id = ta."tagId"
           JOIN "TagsOnTags" tt ON tt."toTagId" = t.id
           JOIN "Tag" p ON p.id = tt."fromTagId" AND p.name = 'article category'
@@ -252,9 +253,9 @@ $q$WITH newcomers AS (
         )
       END) > 0
         AND CASE
-          WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT t.name FROM "Tag" t WHERE t.id = a."systemCategoryId")
+          WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT lower(t.name::text) FROM "Tag" t WHERE t.id = a."systemCategoryId")
           ELSE ARRAY(
-            SELECT t.name FROM "TagsOnArticle" ta
+            SELECT lower(t.name::text) FROM "TagsOnArticle" ta
             JOIN "Tag" t ON t.id = ta."tagId"
             JOIN "TagsOnTags" tt ON tt."toTagId" = t.id
             JOIN "Tag" p ON p.id = tt."fromTagId" AND p.name = 'article category'
@@ -322,9 +323,9 @@ $q$WITH hosted AS (
     POWER(0.5, EXTRACT(EPOCH FROM (now() - a."publishedAt")) / 86400.0 / 180) AS w,
     CASE
       WHEN cardinality(CASE
-        WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT t.name FROM "Tag" t WHERE t.id = a."systemCategoryId")
+        WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT lower(t.name::text) FROM "Tag" t WHERE t.id = a."systemCategoryId")
         ELSE ARRAY(
-          SELECT t.name FROM "TagsOnArticle" ta
+          SELECT lower(t.name::text) FROM "TagsOnArticle" ta
           JOIN "Tag" t ON t.id = ta."tagId"
           JOIN "TagsOnTags" tt ON tt."toTagId" = t.id
           JOIN "Tag" p ON p.id = tt."fromTagId" AND p.name = 'article category'
@@ -332,9 +333,9 @@ $q$WITH hosted AS (
         )
       END) > 0
         AND CASE
-          WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT t.name FROM "Tag" t WHERE t.id = a."systemCategoryId")
+          WHEN a."systemCategoryId" IS NOT NULL THEN ARRAY(SELECT lower(t.name::text) FROM "Tag" t WHERE t.id = a."systemCategoryId")
           ELSE ARRAY(
-            SELECT t.name FROM "TagsOnArticle" ta
+            SELECT lower(t.name::text) FROM "TagsOnArticle" ta
             JOIN "Tag" t ON t.id = ta."tagId"
             JOIN "TagsOnTags" tt ON tt."toTagId" = t.id
             JOIN "Tag" p ON p.id = tt."fromTagId" AND p.name = 'article category'
