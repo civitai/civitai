@@ -17,7 +17,23 @@ export const MOD_ACTION = {
   abuseReport: 'abuse-report',
   relabelBuildBatch: 'relabel-build-batch',
   feedbackTriage: 'feedback-triage',
+  caseDefinitions: 'case-definitions',
+  caseIntake: 'case-intake',
+  casePartyView: 'case-party-view',
+  casePartyAction: 'case-party-action',
 } as const;
+
+/**
+ * The actions the main app may call with the scoped takedown-intake credential (MOD_CASES_TOKEN), and
+ * the only ones it may. The spoke refuses that credential on any other action, and refuses the general
+ * credential on these, so neither can stand in for the other.
+ */
+export const CASE_ACTIONS: ReadonlySet<ModActionName> = new Set([
+  MOD_ACTION.caseDefinitions,
+  MOD_ACTION.caseIntake,
+  MOD_ACTION.casePartyView,
+  MOD_ACTION.casePartyAction,
+]);
 export type ModActionName = (typeof MOD_ACTION)[keyof typeof MOD_ACTION];
 
 // image.moderate — block/unblock one or more images (the review-queue verdict + inline badges). Unblock
@@ -331,3 +347,55 @@ export const feedbackTriageResponse = z.object({
     z.object({ ok: z.literal(false), reason: z.string() }),
   ]),
 });
+
+// ── Takedown intake (segment 2) ─────────────────────────────────────────────────────────────────────
+// Called by the main app's public /requests pages, signed out as well as in. Nothing here carries an
+// acting moderator: the submitter is a member of the public, so the spoke verifies Turnstile itself and
+// rate-limits by the forwarded ip. Field values are checked against the definition in the spoke, never here.
+
+const processKey = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
+/** A case's public reference, e.g. TD-26-AJEDE5. */
+export const casePublicRef = z.string().regex(/^[A-Z]{2}-\d{2}-[A-Z0-9]{6}$/);
+const fieldValue = z.union([
+  z.string().max(20_000),
+  z.array(z.string().max(2_000)).max(200),
+  z.boolean(),
+]);
+const fieldValues = z.record(z.string().max(40), fieldValue);
+const requestOrigin = {
+  /** The submitter's ip as the main app saw it, for the spoke's rate limit and Turnstile check. */
+  ip: z.string().min(1).max(64),
+  userAgent: z.string().max(512).optional(),
+};
+
+export const caseDefinitionsInput = z.object({});
+export type CaseDefinitionsInput = z.infer<typeof caseDefinitionsInput>;
+
+export const caseIntakeInput = z.object({
+  processKey,
+  values: fieldValues,
+  turnstileToken: z.string().min(1).max(4_096),
+  /** Set by the main app only for a signed-in submitter; the spoke never trusts it for access. */
+  submitterUserId: z.number().int().positive().max(2_147_483_647).optional(),
+  /** A test case. The main app sets it only for a signed-in moderator. */
+  isTest: z.boolean().optional(),
+  ...requestOrigin,
+});
+export type CaseIntakeInput = z.infer<typeof caseIntakeInput>;
+
+/** The party's own link token travels to the spoke on every call and is resolved there each time. */
+const partyAccess = {
+  publicRef: casePublicRef,
+  token: z.string().min(16).max(256),
+  ...requestOrigin,
+};
+
+export const casePartyViewInput = z.object(partyAccess);
+export type CasePartyViewInput = z.infer<typeof casePartyViewInput>;
+
+export const casePartyActionInput = z.object({
+  ...partyAccess,
+  actionId: processKey,
+  values: fieldValues,
+});
+export type CasePartyActionInput = z.infer<typeof casePartyActionInput>;

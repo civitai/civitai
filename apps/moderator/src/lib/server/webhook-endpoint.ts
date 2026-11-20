@@ -44,10 +44,12 @@ import { env } from '$env/dynamic/private';
 // count. The removal waited for a window in which every inbound caller had actually called, including
 // the main app's own delegated moderation actions, which are human-driven and can be quiet for hours.
 //
-// Scoping a token to particular endpoints is a separate, later change: `EndpointAuth` is already
-// `{kind:'webhook'} | {kind:'session'; page}` (api-endpoint.ts), so `{kind:'webhook'; scope}` has
-// somewhere to go. 🔴 If that ever adds a SECOND accepted class, re-arm the no-early-exit guard in
-// `__tests__/webhook-endpoint-timing.test.ts` — it is DORMANT at one credential and says so in place.
+// A SECOND, SCOPED CLASS: MOD_CASES_TOKEN. The main app's public takedown pages call the case actions
+// with it, and with nothing else. hooks.server.ts marks such a request `tokenClient: 'cases'`, which
+// every service wrapper (`!== 'webhook'`) and every session wrapper (truthy) already refuses, and
+// /api/mod/[action] accepts it only for an action in CASE_ACTIONS. The general credential is refused on
+// those actions in turn. The no-early-exit guard in `__tests__/webhook-endpoint-timing.test.ts` is
+// armed again now that two classes exist.
 //
 // Operational rationale for the split lives in the private infra repo, not here.
 
@@ -73,16 +75,15 @@ function presentedToken(event: { url: URL; request: Request }): Buffer {
  * The credential VARIABLE NAMES this app accepts inbound, in PREFERENCE-DESCENDING order — most
  * preferred first, most legacy last.
  *
- * 🔴 ONE ENTRY TODAY, and two properties of this list are dormant rather than gone. Keep the ordering
- * rule if a second class is ever added: it decides which name the attribution record carries when a
- * deployment sets two variables to the SAME value (the match loop below is last-match-wins, so an
- * ambiguous deployment attributes to the most LEGACY class — which can only ever overstate legacy use,
- * never understate it), and it is the order the 503 body lists them in.
+ * The ordering decides which name a request carries when a deployment sets two variables to the SAME
+ * value: the match loop below is last-match-wins. MOD_CASES_TOKEN is last, so a shared value resolves to
+ * the NARROWER scope and the general endpoints refuse it: a misconfiguration fails closed rather than
+ * widening the public intake credential. It is also the order the 503 body lists them in.
  *
  * A credential class is a variable NAME, never a value. Nothing derived from a token's bytes — not a
  * prefix, a length, or a hash — may leave this module.
  */
-export const ACCEPTED_CREDENTIALS = ['MOD_INBOUND_TOKEN'] as const;
+export const ACCEPTED_CREDENTIALS = ['MOD_INBOUND_TOKEN', 'MOD_CASES_TOKEN'] as const;
 
 export type AcceptedCredential = (typeof ACCEPTED_CREDENTIALS)[number];
 
@@ -109,6 +110,7 @@ function acceptedTokens(): AcceptedToken[] {
   // and forgetting to read it here is a type error, not a credential that silently never matches.
   const values: Record<AcceptedCredential, string | undefined> = {
     MOD_INBOUND_TOKEN: env.MOD_INBOUND_TOKEN,
+    MOD_CASES_TOKEN: env.MOD_CASES_TOKEN,
   };
   return ACCEPTED_CREDENTIALS.map((credential) => ({
     credential,

@@ -1,16 +1,21 @@
 import { error, json } from '@sveltejs/kit';
-import { modActionResponse } from '@civitai/moderation';
+import { CASE_ACTIONS, modActionResponse, type ModActionName } from '@civitai/moderation';
 import type { RequestHandler } from './$types';
-import { WebhookEndpoint } from '$lib/server/webhook-endpoint';
+import { SEND_A_TOKEN } from '$lib/server/webhook-endpoint';
 import { modActions } from '$lib/server/mod-actions/registry';
 
-// Ingress the main app POSTs to, delegating a mutation the spoke owns. Authenticated by any accepted
-// service token in hooks.server.ts ($lib/server/webhook-endpoint), not here. The caller already gated
-// on `moderatorProcedure`, so the body's `userId` is trusted here.
-export const POST: RequestHandler = WebhookEndpoint(async ({ params, request }) => {
+// Ingress the main app POSTs to, delegating a mutation the spoke owns. The token is verified in
+// hooks.server.ts ($lib/server/webhook-endpoint). Two credentials reach here, each for its own actions
+// only: the general one for the moderation actions (the caller already gated on `moderatorProcedure`, so
+// the body's `userId` is trusted), and the scoped intake one for CASE_ACTIONS, which have no acting user.
+export const POST: RequestHandler = async ({ params, request, locals }) => {
+  const client = locals.tokenClient;
+  if (!client) error(401, SEND_A_TOKEN);
   // Object.hasOwn so a params.action of `__proto__`/`constructor` can't resolve to an inherited member.
   if (!Object.hasOwn(modActions, params.action))
     throw error(404, `unknown action: ${params.action}`);
+  if (CASE_ACTIONS.has(params.action as ModActionName) !== (client === 'cases'))
+    error(403, 'This credential cannot call this action.');
   const action = modActions[params.action];
 
   const parsed = action.schema.safeParse(await request.json().catch(() => null));
@@ -27,4 +32,4 @@ export const POST: RequestHandler = WebhookEndpoint(async ({ params, request }) 
       throw error(status, (e as Error).message);
     throw e;
   }
-});
+};

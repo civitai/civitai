@@ -1,6 +1,13 @@
 import {
   MOD_ACTION,
   abuseReportInput,
+  caseDefinitionsInput,
+  caseIntakeInput,
+  casePartyActionInput,
+  casePartyViewInput,
+  type CaseIntakeInput,
+  type CasePartyActionInput,
+  type CasePartyViewInput,
   feedbackTriageInput,
   imageModerateInput,
   relabelBuildBatchInput,
@@ -88,8 +95,29 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
     }
   }
 
+  /** Public intake is on a person's request path, so it fails fast rather than hold the page. */
+  const CASE_TIMEOUT_MS = 5_000;
+
   return {
     call,
+    /** The enabled takedown request definitions, for the public /requests pages. */
+    caseDefinitions: (): Promise<unknown> =>
+      call(MOD_ACTION.caseDefinitions, caseDefinitionsInput.parse({}), {
+        timeoutMs: CASE_TIMEOUT_MS,
+      }),
+    /** File one public takedown request. Not retried: a retry could file the case twice. */
+    caseIntake: (input: CaseIntakeInput): Promise<unknown> =>
+      call(MOD_ACTION.caseIntake, caseIntakeInput.parse(input), { timeoutMs: CASE_TIMEOUT_MS }),
+    /** A party's own view of its case, through its link token. */
+    casePartyView: (input: CasePartyViewInput): Promise<unknown> =>
+      call(MOD_ACTION.casePartyView, casePartyViewInput.parse(input), {
+        timeoutMs: CASE_TIMEOUT_MS,
+      }),
+    /** A party's public action on its case (a counter-notice, say), through its link token. */
+    casePartyAction: (input: CasePartyActionInput): Promise<unknown> =>
+      call(MOD_ACTION.casePartyAction, casePartyActionInput.parse(input), {
+        timeoutMs: CASE_TIMEOUT_MS,
+      }),
     /** Set one feedback report's triage status as the moderator queue does. Not retried. */
     feedbackTriage: (input: FeedbackTriageInput): Promise<unknown> =>
       call(MOD_ACTION.feedbackTriage, feedbackTriageInput.parse(input)),
