@@ -8,6 +8,7 @@ import {
   prepareImageSearchUploadSchema,
 } from '~/server/schema/semantic-image-search.schema';
 import {
+  claimSearchUploadSearchSlot,
   claimSearchUploadUserDay,
   getSearchUploadStatus,
   withSearchUploadSearch,
@@ -74,6 +75,8 @@ export const imageSearchUploadRouter = router({
           url: input.uploadUrl,
           isModerator: views.asModerator && !!ctx.user.isModerator,
         });
+        // After the anchor: an upload that is refused or gone costs no site-wide page.
+        await claimSearchUploadSearchSlot(ctx.req);
         const started = Date.now();
         const result = await searchSemanticImages({
           input: { browsingLevel: input.browsingLevel, limit: input.limit, cursor: input.cursor },
