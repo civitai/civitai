@@ -1092,6 +1092,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Seedance: baseLicenses['seedream'],
   'Ideogram 4.0': baseLicenses['ideogram nc'],
   'Ideogram 4.5': baseLicenses['ideogram tos'],
+  'Ideogram 4.6': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
   'MiniMax H3 Image': baseLicenses['minimax h3 image'],
