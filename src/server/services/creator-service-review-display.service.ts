@@ -2,9 +2,30 @@ import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import { reviewImageVisibleSql } from '~/server/services/creator-service-deal-review-images';
 import { shownReviewSql } from '~/server/services/creator-service-deal-review-publish';
+import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
 import type { ServiceDealReviewVerdict } from '~/shared/utils/prisma/enums';
 
 export const SERVICE_REVIEWS_PAGE_SIZE = 12;
+
+/**
+ * Who is reading an offering's reviews: their levels held to what the domain serves, and the buyers
+ * they hid or have a block with (none when signed out). The offering's counters ignore both.
+ */
+export async function serviceReviewViewer({
+  browsingLevel,
+  servable,
+  viewerId,
+}: {
+  browsingLevel?: number;
+  /** `domainServableLevels(ctx)`. */
+  servable: number;
+  viewerId?: number;
+}) {
+  return {
+    levels: (browsingLevel ?? servable) & servable,
+    excludedUserIds: viewerId ? await getHiddenOrBlockedUserIds(viewerId) : [],
+  };
+}
 
 /** `shownReviewSql` on this offering, at levels the deal's rating fits, minus excluded buyers. */
 const offeringReviewSql = (

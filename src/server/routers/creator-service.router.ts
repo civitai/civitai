@@ -13,6 +13,7 @@ import {
 import {
   getServiceOfferingReviewWork,
   getServiceOfferingReviews,
+  serviceReviewViewer,
 } from '~/server/services/creator-service-review-display.service';
 import {
   assertServiceOfferingViewable,
@@ -35,7 +36,6 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
-import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
 import { domainServableLevels, resolveRequestBrowsingLevels } from '~/server/utils/browsing-level';
 import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
@@ -65,18 +65,17 @@ async function reviewViewer(
 ) {
   resolveRequestBrowsingLevels(input, ctx);
   const servable = domainServableLevels(ctx);
+  const viewerId = ctx.user?.id;
   await assertServiceOfferingViewable({
     id: input.id,
     browsingLevel: input.browsingLevel,
     servable,
-    viewerId: ctx.user?.id,
+    viewerId,
     isModerator: ctx.user?.isModerator,
   });
-  const viewerId = ctx.user?.id;
   return {
     offeringId: input.id,
-    levels: (input.browsingLevel ?? servable) & servable,
-    excludedUserIds: viewerId ? await getHiddenOrBlockedUserIds(viewerId) : [],
+    ...(await serviceReviewViewer({ browsingLevel: input.browsingLevel, servable, viewerId })),
   };
 }
 

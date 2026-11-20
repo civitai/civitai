@@ -1852,8 +1852,43 @@ describe('reviews on the offering page', () => {
         })
       ).items.map((i) => i.id)
     ).toEqual([keptImage]);
-    // Hiding is the viewer's: the offering's score still counts the hidden buyer.
+    // Without an exclusion list, both are shown: hiding is the viewer's own.
     expect((await list(RED)).items).toHaveLength(2);
+  });
+
+  it('works out the viewer: levels held to the domain, and every buyer hidden or blocked either way', async () => {
+    await holder.db.exec(`
+      ALTER TABLE "User" ADD COLUMN IF NOT EXISTS username text;
+      ALTER TABLE "UserEngagement" ADD COLUMN IF NOT EXISTS "createdAt" timestamp NOT NULL DEFAULT now();
+    `);
+    const VIEWER = 40;
+    const [hid, blocked, blocker, other] = [41, 42, 43, 44];
+    for (const buyerId of [hid, blocked, blocker, other]) await shownReview({ buyerId });
+    await q(`INSERT INTO "User" (id) VALUES ($1) ON CONFLICT DO NOTHING`, [VIEWER]);
+    await q(
+      `INSERT INTO "UserEngagement" ("userId", "targetUserId", type) VALUES
+        ($1, $2, 'Hide'), ($1, $3, 'Block'), ($4, $1, 'Block')`,
+      [VIEWER, hid, blocked, blocker]
+    );
+
+    const viewer = await reviewDisplay.serviceReviewViewer({
+      browsingLevel: RED,
+      servable: COM,
+      viewerId: VIEWER,
+    });
+    // The domain caps what the viewer asked for.
+    expect(viewer.levels).toBe(COM);
+    const shown = await reviewDisplay.getServiceOfferingReviews({ offeringId: 1, ...viewer });
+    const [{ id: otherReview }] = await q<{ id: number }>(
+      `SELECT id FROM "ServiceDealReview" WHERE "buyerId" = $1`,
+      [other]
+    );
+    expect(shown.items.map((r) => r.id)).toEqual([otherReview]);
+
+    expect(await reviewDisplay.serviceReviewViewer({ servable: COM })).toEqual({
+      levels: COM,
+      excludedUserIds: [],
+    });
   });
 
   it("shows the seller's reply only once it passed its check", async () => {
