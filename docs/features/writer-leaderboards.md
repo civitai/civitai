@@ -63,7 +63,7 @@ The same formulas ship as each board's `scoringDescription` in the migration; ch
 
 - **Readers** are distinct people other than the author who reacted to the article
   (`ArticleReaction`). **Participants** are distinct people other than the author who commented
-  (`CommentV2`, across the article's thread and its reply threads), ignoring hidden and
+  (`CommentV3` rows on the article, replies included), ignoring deleted, hidden and
   terms-violating comments. Each is counted once per article, and metric-excluded accounts are left
   out of both through the `{{metricExcludedUserIds}}` token (see `METRIC_EXCLUDED_USERS_TOKEN` in
   `leaderboard-board-query.ts`). If that list cannot be fetched, the run proceeds with it empty.

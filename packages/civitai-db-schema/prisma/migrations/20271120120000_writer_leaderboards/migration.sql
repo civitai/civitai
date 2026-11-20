@@ -13,7 +13,7 @@
 -- Activate only once the build that replaces {{metricExcludedUserIds}} is deployed: before it the token is a
 -- syntax error, and one failing board stops the whole nightly run, Legends and the cache purge included.
 -- Queries end in a `scores` CTE with no final SELECT (the job appends one) and may use {{metricExcludedUserIds}}.
--- Readers and participants are computed from ArticleReaction/CommentV2 rather than read from ArticleMetric,
+-- Readers and participants are computed from ArticleReaction/CommentV3 rather than read from ArticleMetric,
 -- whose reaction and comment counts include the author. ArticleMetric is read only for its AllTime row; the
 -- article metrics job writes no other timeframe.
 --
@@ -110,21 +110,16 @@ $q$WITH article AS (
   WHERE ar."userId" <> x."userId"
     AND ar."userId" <> ALL({{metricExcludedUserIds}})
   GROUP BY x.id
-), threads AS (
-  SELECT x.id, x."userId", root.id AS thread_id
-  FROM article x JOIN "Thread" root ON root."articleId" = x.id
-  UNION ALL
-  SELECT x.id, x."userId", t.id
-  FROM article x JOIN "Thread" root ON root."articleId" = x.id JOIN "Thread" t ON t."rootThreadId" = root.id
 ), participants AS (
-  SELECT th.id, count(DISTINCT c."userId") AS participants
-  FROM threads th
-  JOIN "CommentV2" c ON c."threadId" = th.thread_id
-  WHERE NOT c."tosViolation"
-    AND c.hidden IS NOT TRUE
-    AND c."userId" <> th."userId"
+  SELECT x.id, count(DISTINCT c."userId") AS participants
+  FROM article x
+  JOIN "CommentV3" c ON c."entityType" = 'article' AND c."entityId" = x.id
+  WHERE c."deletedAt" IS NULL
+    AND NOT c."tosViolation"
+    AND NOT c.hidden
+    AND c."userId" <> x."userId"
     AND c."userId" <> ALL({{metricExcludedUserIds}})
-  GROUP BY th.id
+  GROUP BY x.id
 ), valued AS (
   SELECT
     x.*,
@@ -184,22 +179,17 @@ $q$WITH guide AS (
       )
     END && ARRAY['generation guide', 'video generation guide', 'training guide', 'tool guide',
                  'resource guide', 'workflows', 'data prep', 'comparative study', 'ml research']
-), threads AS (
-  SELECT g.id, g."userId", root.id AS thread_id
-  FROM guide g JOIN "Thread" root ON root."articleId" = g.id
-  UNION ALL
-  SELECT g.id, g."userId", t.id
-  FROM guide g JOIN "Thread" root ON root."articleId" = g.id JOIN "Thread" t ON t."rootThreadId" = root.id
 ), participants AS (
-  SELECT th.id, count(DISTINCT c."userId") AS participants
-  FROM threads th
-  JOIN "CommentV2" c ON c."threadId" = th.thread_id
-  WHERE NOT c."tosViolation"
-    AND c.hidden IS NOT TRUE
+  SELECT g.id, count(DISTINCT c."userId") AS participants
+  FROM guide g
+  JOIN "CommentV3" c ON c."entityType" = 'article' AND c."entityId" = g.id
+  WHERE c."deletedAt" IS NULL
+    AND NOT c."tosViolation"
+    AND NOT c.hidden
     AND c."createdAt" > now() - interval '365 days'
-    AND c."userId" <> th."userId"
+    AND c."userId" <> g."userId"
     AND c."userId" <> ALL({{metricExcludedUserIds}})
-  GROUP BY th.id
+  GROUP BY g.id
 ), valued AS (
   SELECT
     g."userId",
@@ -357,21 +347,16 @@ $q$WITH hosted AS (
       WHERE u.id = a."userId" AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL AND u.id > 0
     )
     AND a."publishedAt" > now() - interval '365 days'
-), threads AS (
-  SELECT h.id, h."userId", root.id AS thread_id
-  FROM hosted h JOIN "Thread" root ON root."articleId" = h.id
-  UNION ALL
-  SELECT h.id, h."userId", t.id
-  FROM hosted h JOIN "Thread" root ON root."articleId" = h.id JOIN "Thread" t ON t."rootThreadId" = root.id
 ), participants AS (
-  SELECT th.id, count(DISTINCT c."userId") AS participants
-  FROM threads th
-  JOIN "CommentV2" c ON c."threadId" = th.thread_id
-  WHERE NOT c."tosViolation"
-    AND c.hidden IS NOT TRUE
-    AND c."userId" <> th."userId"
+  SELECT h.id, count(DISTINCT c."userId") AS participants
+  FROM hosted h
+  JOIN "CommentV3" c ON c."entityType" = 'article' AND c."entityId" = h.id
+  WHERE c."deletedAt" IS NULL
+    AND NOT c."tosViolation"
+    AND NOT c.hidden
+    AND c."userId" <> h."userId"
     AND c."userId" <> ALL({{metricExcludedUserIds}})
-  GROUP BY th.id
+  GROUP BY h.id
 ), citations AS (
   SELECT DISTINCT a.id, a."userId", a."publishedAt", m[1]::int AS target
   FROM "Article" a, regexp_matches(a.content, '/articles/([0-9]{1,9})(?![0-9])', 'g') m

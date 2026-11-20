@@ -26,6 +26,7 @@ const ANSWERERS = [61, 62, 63, 64, 65];
 const EARLY = 66;
 const COMMENTERS = [70, 71, 72];
 const EXCLUDED_COMMENTER = 73;
+const DELETED_COMMENTER = 74; // a deleted comment on the article, and a live one on an image with the same id
 // Categories the system assigned that differ from the author's pick.
 const SYSTEM_MUSING_AUTHOR_NOTES = 32;
 const SYSTEM_NOTES_AUTHOR_MUSING = 33;
@@ -102,10 +103,12 @@ beforeAll(async () => {
       ingestion TEXT NOT NULL DEFAULT 'Scanned', "nsfwLevel" INT NOT NULL DEFAULT 1
     );
     CREATE TABLE "TagsOnTags" ("fromTagId" INT, "toTagId" INT);
-    CREATE TABLE "Thread" (id INT PRIMARY KEY, "articleId" INT, "rootThreadId" INT);
-    CREATE TABLE "CommentV2" (
-      id SERIAL, "threadId" INT, "userId" INT, "tosViolation" BOOLEAN NOT NULL DEFAULT false,
-      hidden BOOLEAN DEFAULT false, "createdAt" TIMESTAMP NOT NULL DEFAULT now()
+    CREATE TYPE "CommentEntityType" AS ENUM ('model', 'image', 'post', 'article');
+    CREATE TABLE "CommentV3" (
+      id SERIAL PRIMARY KEY, "entityType" "CommentEntityType" NOT NULL, "entityId" INT NOT NULL,
+      "parentId" INT, "userId" INT NOT NULL, "deletedAt" TIMESTAMPTZ,
+      "tosViolation" BOOLEAN NOT NULL DEFAULT false, hidden BOOLEAN NOT NULL DEFAULT false,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE TABLE "TagsOnArticle" ("articleId" INT, "tagId" INT);
     CREATE TABLE "ArticleMetric" (
@@ -149,7 +152,7 @@ beforeAll(async () => {
     -- the host's own follow-up and an answer published before the challenge do not count.
     INSERT INTO "User" (id) SELECT unnest(ARRAY[${HOST}, ${ANSWERERS.join(
     ','
-  )}, ${EARLY}, ${COMMENTERS.join(',')}, ${EXCLUDED_COMMENTER}]);
+  )}, ${EARLY}, ${COMMENTERS.join(',')}, ${EXCLUDED_COMMENTER}, ${DELETED_COMMENTER}]);
     INSERT INTO "Article" VALUES (600, ${HOST}, 'Published', 'Public', false, false, now() - interval '30 days', ''),
       (615, ${HOST}, 'Published', 'Public', false, false, now() - interval '10 days', '<a href="/articles/600">mine</a>'),
       (616, ${EARLY}, 'Published', 'Public', false, false, now() - interval '40 days', '<a href="/articles/600">early</a>');
@@ -164,12 +167,20 @@ beforeAll(async () => {
     FROM unnest(ARRAY[${ANSWERERS.slice(1).join(',')}]) WITH ORDINALITY AS x(u, i);
     INSERT INTO "TagsOnArticle" SELECT id, 4 FROM "Article" WHERE id >= 600;
 
-    -- Three people comment (one twice), the host replies in a reply thread, and one commenter is metric-excluded.
-    -- One answer also draws a comment, but nobody answers it.
-    INSERT INTO "Thread" VALUES (1, 600, NULL), (2, NULL, 1), (3, 641, NULL);
-    INSERT INTO "CommentV2" ("threadId", "userId") VALUES
-      (1, ${COMMENTERS[0]}), (1, ${COMMENTERS[0]}), (1, ${COMMENTERS[1]}), (2, ${COMMENTERS[2]}),
-      (2, ${HOST}), (2, ${HOST}), (1, ${EXCLUDED_COMMENTER}), (3, ${COMMENTERS[0]});
+    -- Three people comment (one twice), one of them in a reply, and the host replies; one commenter is
+    -- metric-excluded and one comment was deleted. One answer also draws a comment, but nobody answers it.
+    INSERT INTO "CommentV3" (id, "entityType", "entityId", "parentId", "userId", "deletedAt") VALUES
+      (1, 'article', 600, NULL, ${COMMENTERS[0]}, NULL), (2, 'article', 600, NULL, ${
+    COMMENTERS[0]
+  }, NULL),
+      (3, 'article', 600, NULL, ${COMMENTERS[1]}, NULL), (4, 'article', 600, 1, ${
+    COMMENTERS[2]
+  }, NULL),
+      (5, 'article', 600, 1, ${HOST}, NULL), (6, 'article', 600, 4, ${HOST}, NULL),
+      (7, 'article', 600, NULL, ${EXCLUDED_COMMENTER}, NULL), (8, 'article', 600, NULL, ${DELETED_COMMENTER}, now()),
+      (9, 'article', 641, NULL, ${
+        COMMENTERS[0]
+      }, NULL), (10, 'image', 600, NULL, ${DELETED_COMMENTER}, NULL);
 
     INSERT INTO "User" (id) VALUES (${SYSTEM_MUSING_AUTHOR_NOTES}), (${SYSTEM_NOTES_AUTHOR_MUSING}),
       (${SYSTEM_GUIDE_AUTHOR_MUSING}), (${SYSTEM_MUSING_AUTHOR_GUIDE});
