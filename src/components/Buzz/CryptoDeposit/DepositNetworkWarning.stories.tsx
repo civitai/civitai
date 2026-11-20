@@ -8,10 +8,12 @@ function AddressBlock({
   code,
   ticker,
   network,
+  chain = 'evm',
 }: {
   code: string;
   ticker?: string;
   network?: string;
+  chain?: string;
 }) {
   return (
     <Paper withBorder p="lg" radius="md" style={{ maxWidth: 480 }}>
@@ -24,7 +26,7 @@ function AddressBlock({
             Ethereum — Base
           </Badge>
         </Group>
-        <DepositNetworkWarning code={code} ticker={ticker} network={network} />
+        <DepositNetworkWarning code={code} ticker={ticker} network={network} chain={chain} />
         <Group
           gap={8}
           wrap="nowrap"
@@ -44,5 +46,6 @@ function AddressBlock({
 }
 
 export const UsdcBase = () => <AddressBlock code="USDCBASE" />;
-export const UsdtTron = () => <AddressBlock code="USDTTRC20" />;
+export const UsdtTron = () => <AddressBlock code="USDTTRC20" chain="trx" />;
+export const UsdcSolana = () => <AddressBlock code="usdcsol" chain="sol" />;
 export const UnknownCode = () => <AddressBlock code="foocoinx" network="xlayer" />;

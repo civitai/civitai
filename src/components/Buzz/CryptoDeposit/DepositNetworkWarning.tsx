@@ -59,12 +59,16 @@ export function DepositNetworkWarning({
   code,
   ticker,
   network,
+  chain,
 }: {
   code: string;
   ticker?: string | null;
   network?: string | null;
+  /** The address's chain: only 'evm' serves several currencies from one address. */
+  chain: string;
 }) {
   const resolved = getDepositTokenNetwork({ code, ticker, network });
+  const evenOn = resolved ? resolved.network : 'the same network';
   return (
     <Group gap="xs" wrap="nowrap" align="flex-start" data-testid="deposit-network-warning">
       <IconAlertTriangle
@@ -99,9 +103,18 @@ export function DepositNetworkWarning({
           {getTail(resolved?.network)}
         </Text>
         <Text size="xs" c="dimmed" mt={4} data-testid="deposit-token-warning">
-          Only the currencies listed in the selector are credited at this address. Any other token
-          sent to it, even on {resolved ? resolved.network : 'the same network'}, isn&apos;t
-          converted and needs a manual refund.
+          {chain === 'evm' ? (
+            <>
+              Only the currencies listed in the selector are credited at this address. Any other
+              token sent to it, even on {evenOn}, isn&apos;t converted and needs a manual refund.
+            </>
+          ) : (
+            <>
+              Only <b>{resolved ? resolved.token : code.toUpperCase()}</b> is credited. Any other
+              token sent to this address, even on {evenOn}, isn&apos;t converted and needs a manual
+              refund.
+            </>
+          )}
         </Text>
       </div>
     </Group>
