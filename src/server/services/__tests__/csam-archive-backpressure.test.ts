@@ -1412,6 +1412,31 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     });
   });
 
+  it('rejects when the profile upload fails, so the clear does not happen', async () => {
+    seedDb();
+    uploadFailure = new Error('s3 down');
+    try {
+      await expect(
+        archiveUserProfile({
+          userId: report.userId,
+          actorId: report.userId + 1,
+          clearedFields: ['bio'],
+          profile: {
+            bio: 'b',
+            message: null,
+            messageAddedAt: null,
+            sfwBio: null,
+            sfwMessage: null,
+            location: null,
+            showcaseSections: [],
+          },
+        })
+      ).rejects.toThrow();
+    } finally {
+      uploadFailure = undefined;
+    }
+  });
+
   it("archives a held user's comments on their own", async () => {
     seedDb();
     v3.comments = [

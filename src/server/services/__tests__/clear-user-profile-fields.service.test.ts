@@ -65,7 +65,22 @@ describe('clearUserProfileFields', () => {
       .mockResolvedValue(edited as never);
     await clear();
     expect(archive.mock.calls.map(([s]) => s.profile.bio)).toEqual(['b', 'edited']);
+    // Read, archive, read (changed), archive, read (settled), then clear.
+    expect(db.userProfile.findUnique).toHaveBeenCalledTimes(3);
     expect(db.userProfile.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to clear a profile that keeps changing while it is archived', async () => {
+    db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+    let reads = 0;
+    db.userProfile.findUnique.mockImplementation((async () => {
+      // A loop with no cap fails here instead of hanging.
+      if (++reads > 20) throw new Error('read loop did not end');
+      return { ...stored, bio: `v${reads}` };
+    }) as never);
+    await expect(clear()).rejects.toThrow('kept changing');
+    expect(archive.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
   });
 
   it('writes no archive and no record when the user has no profile row', async () => {
