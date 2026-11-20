@@ -53,7 +53,6 @@ import {
   KEPT_MODEL_STATUS,
   notRemovedWithOwnerSql,
   PLACEHOLDER_OWNER_ID,
-  userUnderLegalHoldSql,
 } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import { isEqual, uniq } from 'lodash-es';
@@ -243,6 +242,7 @@ import {
   reopenGenerationRestrictionsOfRestoredAccount,
 } from '~/server/services/user-restriction.service';
 import {
+  bustUserCreator,
   bustUserCreatorCache,
   fetchUserCreator,
   getCachedUserCreator,
@@ -498,9 +498,10 @@ export async function archiveProfileBeforeModeratorChange({
   archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
   alwaysArchive?: boolean;
 }) {
-  // Every legal hold (`userUnderLegalHoldSql`, manual evidence holds included), plus any report
-  // naming the user, held or not: archiving more is the safe side here.
-  const heldSql = userUnderLegalHoldSql(Prisma.sql`${userId}::int`);
+  // Every account hold `deleteUser` refuses on (`accountHoldSql`: holding reports, CSAM-flagged or
+  // blocked images, images on a holding report, evidence holds), plus any report naming the user,
+  // held or not: archiving more is the safe side here.
+  const heldSql = accountHoldSql(Prisma.sql`${userId}::int`, await holdMarkerViewExists());
   const idText = String(userId);
   const mustArchive =
     alwaysArchive ||
@@ -3255,6 +3256,10 @@ export const toggleBan = async ({
   void (bannedAt ? onStorySparkPostsRestored : onStorySparkPostsHidden)({ authorId: id });
   const { afterAccountBanChanged } = await import('~/server/services/account-standing.service');
   await afterAccountBanChanged(id);
+  // The creator card carries the links, which public reads drop for a banned user.
+  await bustUserCreator(id, { usernames: user.username ? [user.username] : [] }).catch(
+    handleLogError
+  );
 
   // The ban has committed: a throw here would skip every step below and fail an action that took.
   await invalidateSession(id, 'ban').catch((error) =>

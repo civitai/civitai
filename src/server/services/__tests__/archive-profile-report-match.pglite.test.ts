@@ -10,14 +10,19 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const SCHEMA = `
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}',
-  "reportSentAt" TIMESTAMP(3), "archivedAt" TIMESTAMP(3)
+  "reportSentAt" TIMESTAMP(3), "archivedAt" TIMESTAMP(3), "images" JSONB NOT NULL DEFAULT '[]'
+);
+CREATE TABLE "Image" (
+  "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "needsReview" TEXT, "blockedFor" TEXT
 );
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER NOT NULL, "role" TEXT NOT NULL);
 `;
 
 let pg: PGlite;
 
-const { archiveProfileBeforeModeratorChange } = await import('~/server/services/user.service');
+const { archiveProfileBeforeModeratorChange, clearUserProfileFields } = await import(
+  '~/server/services/user.service'
+);
 
 const USER = 990300001;
 const OTHER = 990300002;
@@ -36,7 +41,7 @@ beforeEach(async () => {
   dbMock.dbWrite.$queryRaw.mockImplementation(pgliteRaw(pg).queryRaw as never);
   dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({ bio: 'b' } as never);
   dbMock.dbWrite.userLink.findMany.mockResolvedValue([] as never);
-  await pg.exec(`DELETE FROM "CsamReport"; DELETE FROM "EvidenceHeldUser"`);
+  await pg.exec(`DELETE FROM "CsamReport"; DELETE FROM "EvidenceHeldUser"; DELETE FROM "Image"`);
 });
 
 const archived = async () => {
@@ -79,6 +84,33 @@ describe('archiveProfileBeforeModeratorChange report match', () => {
       [USER]
     );
     expect(await archived()).toBe(true);
+  });
+
+  it('archives a user whose only hold is an upload awaiting CSAM review', async () => {
+    await pg.query(`INSERT INTO "Image" (id, "userId", "needsReview") VALUES (1, $1, 'csam')`, [
+      USER,
+    ]);
+    expect(await archived()).toBe(true);
+  });
+
+  it('archives a user whose only hold is a CSAM-blocked upload no sent report lists', async () => {
+    await pg.query(`INSERT INTO "Image" (id, "userId", "blockedFor") VALUES (2, $1, 'CSAM')`, [
+      USER,
+    ]);
+    expect(await archived()).toBe(true);
+  });
+
+  it('archives before a moderator clear of a user with only an upload awaiting CSAM review', async () => {
+    await pg.query(`INSERT INTO "Image" (id, "userId", "needsReview") VALUES (3, $1, 'csam')`, [
+      USER,
+    ]);
+    dbMock.dbWrite.userProfile.updateMany.mockResolvedValue({ count: 0 } as never);
+    const archive = vi.fn(async () => undefined);
+    await clearUserProfileFields({ userId: USER, actorId: 7, archive });
+    expect(archive).toHaveBeenCalledTimes(1);
+    expect(archive.mock.invocationCallOrder[0]).toBeLessThan(
+      dbMock.dbWrite.userProfile.updateMany.mock.invocationCallOrder[0]
+    );
   });
 
   it('archives nothing for a user only other reports name', async () => {
