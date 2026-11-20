@@ -200,7 +200,10 @@ describe('appBlocksAuthorAccount', () => {
     expect(appBlocksAuthorAccount(ctx)).toBeUndefined();
   });
 
-  it('ignores a subject for another user', async () => {
+  // Invariant guard, not coverage of a reachable path: `createContext` sets the subject and
+  // `ctx.user` from the same session, so no caller can produce a mismatch today. It pins the
+  // defensive same-user check for a context rebuilt with another `user`.
+  it('invariant: ignores a subject for another user', async () => {
     const { appBlocksAuthorAccount } = await import('~/server/auth/full-user-credential');
     const user = { id: 1, isModerator: false };
     expect(
