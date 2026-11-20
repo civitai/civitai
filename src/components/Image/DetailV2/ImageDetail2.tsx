@@ -606,7 +606,10 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                                     <ShareButton
                                       url={imageShareUrl}
                                       title={title}
-                                      collect={{ type: CollectionType.Image, imageId: image.id }}
+                                      collect={{
+                                        type: isSong ? CollectionType.Music : CollectionType.Image,
+                                        imageId: image.id,
+                                      }}
                                     >
                                       <LegacyActionIcon {...sharedActionIconProps}>
                                         <IconShare3 {...sharedIconProps} />

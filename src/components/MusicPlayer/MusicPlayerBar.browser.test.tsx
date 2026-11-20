@@ -380,12 +380,12 @@ describe('the global player bar', () => {
     });
   });
 
-  test('saves the playing song through the image collection flow', async () => {
+  test('saves the playing song to a playlist', async () => {
     await renderWithProviders(<MusicPlayerBar />);
 
     await button('Save').click();
     expect(mocks.openAddToCollectionModal).toHaveBeenCalledWith({
-      props: { imageId: SONG_ID, type: 'Image' },
+      props: { imageId: SONG_ID, type: 'Music' },
     });
   });
 

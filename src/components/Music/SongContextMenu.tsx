@@ -102,7 +102,7 @@ function SongMenuItems({ image, leadingMenuItems, additionalMenuItems }: SongCon
           <Menu.Item
             leftSection={<IconBookmark size={16} stroke={1.5} />}
             onClick={() =>
-              openAddToCollectionModal({ props: { imageId, type: CollectionType.Image } })
+              openAddToCollectionModal({ props: { imageId, type: CollectionType.Music } })
             }
           >
             Save to playlist

@@ -118,6 +118,20 @@ Below the `sm` breakpoint the player is a mini bar with two sheets over it
 | Up next sheet (`MusicUpNextSheet`)         | Opened from the now-playing sheet: the desktop panel's list (`MusicUpNextList`) in a bottom sheet, with the same sections (Queued by you, Next from <list>, Repeating), reorder by the grip, remove (always shown, as there is no hover), Clear, shuffle and repeat. Dark in both schemes, like the sheet under it. Closes by Escape, a downward drag of its top, Back and the scrim.                                                                                                                                              |
 | Song detail (`SongDetailStage`)            | Below the `md` container width, a song with lyrics shows the cover or the lyrics in the same spot, with a Cover / Lyrics toggle under it; in the lyrics view a play/pause button sits beside the toggle. No lyrics, no toggle. From `md` up the two sit side by side as before.                                                                                                                                                                                                                                                    |
 
+## Playlists
+
+A playlist is a collection of type `Music` ("Playlist" in the UI). It holds songs only, as
+`imageId` items: `saveItemInCollections` and `upsertCollection` refuse a picture in a playlist and a
+song in an image collection ("Collection type mismatch"), and `bulkSaveItems` adds only the songs.
+Untyped collections still take either. Saving a song (its ⋯ menu, the player bar, the detail view's
+share) opens "Add to Playlist". A playlist's page is the image collection page, where songs show as
+Song Cards and play as a list. Playlists cannot be contests and have no review queue, judging or
+collected-content reward. Songs saved to image collections before playlists existed stay there.
+
+The `Music` type is offered in the create form and the type filter only with the `music` flag. Launch
+order: deploy, apply the enum migration (`20271120150000_collection_type_music`) by hand, then turn
+the flag on, so no playlist row exists before every reader can decode the value.
+
 ## The song menu
 
 A song's ⋯ menu (`SongContextMenu`, Pencil `rUDmm`) is its own, not the image menu. It is used on the

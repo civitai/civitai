@@ -69,7 +69,8 @@ export default function AddToCollectionModal(props: Props) {
 
   // Create dynamic title based on collection type
   const getModalTitle = () => {
-    if (creating) return 'New Collection';
+    const isPlaylist = props.type === CollectionType.Music;
+    if (creating) return isPlaylist ? 'New Playlist' : 'New Collection';
     if (!props.type) return 'Add to Collection';
     const typeData = collectionTypeData[props.type];
     return (
@@ -78,7 +79,7 @@ export default function AddToCollectionModal(props: Props) {
           {createElement(typeData.icon, { size: 16 })}
         </ThemeIcon>
         <Text size="lg" fw={600}>
-          Add to {typeData.label} Collection
+          {isPlaylist ? 'Add to Playlist' : `Add to ${typeData.label} Collection`}
         </Text>
       </Group>
     );
@@ -517,9 +518,11 @@ function CollectionListForm({
             <Stack align="center" gap="sm" py="xl" px="md">
               <Text c="dimmed" ta="center">
                 {!debouncedSearch
-                  ? `You don't have any ${
-                      props.type ? collectionTypeData[props.type].label.toLowerCase() : ''
-                    } collections yet.`
+                  ? props.type === CollectionType.Music
+                    ? "You don't have any playlists yet."
+                    : `You don't have any ${
+                        props.type ? collectionTypeData[props.type].label.toLowerCase() : ''
+                      } collections yet.`
                   : searching
                   ? 'Searching…'
                   : `No collections match “${debouncedSearch}”.`}

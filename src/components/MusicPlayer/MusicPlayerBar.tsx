@@ -329,7 +329,7 @@ function Controls({ track, accent }: { track: MusicTrack; accent: MusicAccent | 
         <IconButton
           label="Save"
           onClick={() =>
-            openAddToCollectionModal({ props: { imageId: track.id, type: CollectionType.Image } })
+            openAddToCollectionModal({ props: { imageId: track.id, type: CollectionType.Music } })
           }
         >
           <IconBookmark size={18} />
