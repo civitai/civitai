@@ -5,7 +5,10 @@ import {
   connectSourceArchiveUrl,
   type ConnectReviewSubject,
 } from '~/server/services/blocks/connect-agent-review.logic';
-import { civitaiCheckLines } from '~/shared/constants/connect-agent-review.constants';
+import {
+  civitaiCheckLines,
+  offlineAccessDeclaration,
+} from '~/shared/constants/connect-agent-review.constants';
 import { fetchConnectSource } from '~/server/services/blocks/connect-agent-review.service';
 
 /**
@@ -270,5 +273,22 @@ describe('civitaiCheckLines — offline-access declaration vs reachability', () 
 
   it('checks stored before declarations existed (no `declared`) render as before', () => {
     expect(lines(true, undefined).some(([, t]) => /declar/i.test(t))).toBe(false);
+  });
+});
+
+describe('offlineAccessDeclaration — what counts as declared', () => {
+  it('a reason (trimmed) is a declaration', () => {
+    expect(offlineAccessDeclaration({ offline_access: '  nightly sync ' })).toEqual({
+      declared: true,
+      justification: 'nightly sync',
+    });
+  });
+  it.each([
+    ['no key (a listing from before declarations)', {}],
+    ['a blank value', { offline_access: '   ' }],
+    ['a non-string value', { offline_access: 7 as unknown as string }],
+    ['no map at all', null],
+  ])('%s is NOT a declaration', (_label, j) => {
+    expect(offlineAccessDeclaration(j)).toEqual({ declared: false, justification: null });
   });
 });
