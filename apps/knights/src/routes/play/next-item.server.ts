@@ -2,6 +2,7 @@ import { imageUrl } from '$lib/server/image-url';
 import { sealItem, type ItemRef } from '$lib/server/feed-token';
 import { hiddenItemId, pickHiddenCheck } from '$lib/server/hidden/hidden.service';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
+import { skillChecks } from '$lib/server/skill-check/runtime';
 import { getFeed } from '$lib/server/queue/queue.service';
 import { feedSecret } from '$lib/server/smites/runtime';
 import type { Skipped } from '$lib/server/skips';
@@ -81,6 +82,7 @@ export async function pickItem(
     probationShare: hiddenConfig.probationShare,
     exclude: skipped?.hidden,
     slot,
+    serveJudged: (await skillChecks()).serveJudged,
   });
   if (hidden) {
     return {

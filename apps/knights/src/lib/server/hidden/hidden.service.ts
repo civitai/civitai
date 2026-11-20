@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
+import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { REFERENCE_POOL, REFERENCE_STATUS, servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
@@ -75,33 +75,69 @@ const bucketOrder = (digest: Buffer) =>
     .sort((a, b) => a.key - b.key)
     .map(({ group }) => group);
 
+/** The pools a Knight's skill checks are drawn from. */
+const CHECK_POOLS = [REFERENCE_POOL.hiddenCheck, REFERENCE_POOL.skillCheck] as const;
+
 function eligibleReferences(
   db: Executor,
   userId: number,
   questionKey: string,
   statuses: ServedStatus[],
-  exclude: number[] = []
+  exclude: number[] = [],
+  serveJudged = false
 ) {
-  return servableReferences(db, REFERENCE_POOL.hiddenCheck, statuses)
+  // A check is a vote on its reference's image, so (player, image) rides the ("playerId","imageId") index. It also keeps a
+  // probation check from the players whose votes made it.
+  const votedOnImage = (eb: ExpressionBuilder<Refs, 'r'>) =>
+    eb.exists(
+      eb
+        .selectFrom('KnightsVote as v')
+        .select(sql<number>`1`.as('one'))
+        .where('v.playerId', '=', userId)
+        .whereRef('v.imageId', '=', 'r.imageId')
+    );
+  return servableReferences(db, CHECK_POOLS, statuses)
     .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
     .where('r.questionKey', '=', questionKey)
     .where('q.active', '=', true)
     .where('img.userId', 'is distinct from', userId)
     .$if(exclude.length > 0, (qb) => qb.where('r.id', 'not in', exclude))
     .where((eb) =>
-      eb.not(
-        eb.exists(
-          // A check is a vote on its reference's image, so (player, image) is the whole test and rides the
-          // ("playerId","imageId") index. It also keeps a probation check from the players whose votes made it.
-          eb
-            .selectFrom('KnightsVote as v')
-            .select(sql<number>`1`.as('one'))
-            .where('v.playerId', '=', userId)
-            .whereRef('v.imageId', '=', 'r.imageId')
-        )
-      )
+      eb.or([
+        eb.and([eb('r.pool', '!=', REFERENCE_POOL.skillCheck), eb.not(votedOnImage(eb))]),
+        eb.and([
+          eb('r.pool', '=', REFERENCE_POOL.skillCheck),
+          // Never the same check twice; and, with `skillCheckServeJudged` off, not on an image the player already saw,
+          // judged in the queue or answered as an Acolyte.
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom('KnightsVote as same')
+                .select(sql<number>`1`.as('one'))
+                .where('same.playerId', '=', userId)
+                .where('same.itemId', '=', sql<number>`-"r"."id"`)
+            )
+          ),
+          serveJudged
+            ? eb.val(true)
+            : eb.and([
+                eb.not(votedOnImage(eb)),
+                eb.not(
+                  eb.exists(
+                    eb
+                      .selectFrom('KnightsApprenticeAnswer as aa')
+                      .select(sql<number>`1`.as('one'))
+                      .where('aa.playerId', '=', userId)
+                      .whereRef('aa.imageId', '=', 'r.imageId')
+                  )
+                ),
+              ]),
+        ]),
+      ])
     );
 }
+
+type Refs = DB & { r: DB['KnightsReferenceImage'] };
 
 /**
  * The hidden check for this feed slot, or null for a queue item. The pool is read on every call a Knight makes, so a page
@@ -129,6 +165,8 @@ export async function pickHiddenCheck(
     exclude?: number[];
     /** Rolls for an item the player has not reached yet; unset, the roll is fixed by their last vote. */
     slot?: number;
+    /** `skillCheckServeJudged`: a mod-confirmed check may be on an image the player already saw. */
+    serveJudged?: boolean;
   }
 ): Promise<HiddenCheckOffer | null> {
   if (!isRank(input.rank) || !canVote(input.rank, 'Knight')) return null;
@@ -152,7 +190,7 @@ export async function pickHiddenCheck(
       eb.fn.min<number | null>('id').as('low'),
       eb.fn.max<number | null>('id').as('top'),
     ])
-    .where('pool', '=', REFERENCE_POOL.hiddenCheck)
+    .where('pool', 'in', CHECK_POOLS)
     .where('questionKey', '=', input.questionKey)
     .executeTakeFirstOrThrow();
   const first = low ?? 0;
@@ -169,7 +207,14 @@ export async function pickHiddenCheck(
     'img.height',
   ] as const;
   const walk = (status: ServedStatus, answers: AnswerGroup, from: 'at-or-after' | 'before') =>
-    eligibleReferences(db, input.userId, input.questionKey, [status], input.exclude)
+    eligibleReferences(
+      db,
+      input.userId,
+      input.questionKey,
+      [status],
+      input.exclude,
+      input.serveJudged
+    )
       .where((eb) =>
         answers === null ? eb('r.answer', 'not in', BUCKET_ANSWERS) : eb('r.answer', '=', answers)
       )
@@ -238,6 +283,8 @@ export async function answerHiddenCheck(
     answer: string;
     blockReason?: string | null;
     isModerator?: boolean;
+    /** `skillCheckServeJudged`: a mod-confirmed check may be answered on an image the player judged in the queue. */
+    serveJudged?: boolean;
   },
   deps: Pick<QueueDeps, 'now' | 'voteLimits'> & {
     mirrorXp?: XpMirror;
@@ -251,12 +298,12 @@ export async function answerHiddenCheck(
     const until = await pacingGate(trx, input, now, deps);
     if (until) return { status: 'limited', until };
 
-    const ref = await servableReferences(trx, REFERENCE_POOL.hiddenCheck, [
+    const ref = await servableReferences(trx, CHECK_POOLS, [
       REFERENCE_STATUS.active,
       REFERENCE_STATUS.probation,
     ])
       .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
-      .select(['r.id', 'r.imageId', 'r.questionKey', 'r.status', 'q.options'])
+      .select(['r.id', 'r.imageId', 'r.questionKey', 'r.status', 'r.pool', 'q.options'])
       .where('r.id', '=', input.referenceId)
       .executeTakeFirst();
     if (!ref) return { status: 'rejected', reason: 'unavailable' };
@@ -283,6 +330,7 @@ export async function answerHiddenCheck(
         stage: 'Knight',
         options: ref.options as QuestionOption[],
         labelled: true,
+        judgedImageAllowed: !!input.serveJudged && ref.pool === REFERENCE_POOL.skillCheck,
       }
     );
     if (vote.status === 'rejected') return { status: 'rejected', reason: vote.reason };

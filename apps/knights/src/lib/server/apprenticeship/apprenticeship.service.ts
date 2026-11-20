@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { getLevelProgression } from '../progression/levels';
@@ -40,6 +41,8 @@ export type ApprenticeDeps = {
   resetPlayer?: ResetDeps['resetPlayer'];
   /** Without it, smites are on. */
   settings?: () => ApprenticeSettings | Promise<ApprenticeSettings>;
+  /** Share of image slots that serve a mod-confirmed skill check; must match the `getApprentice` that served the item. */
+  skillCheckRate?: number;
 };
 
 export type ItemKind = 'rating' | 'yesno';
@@ -183,15 +186,22 @@ async function ratingOptions(db: Executor): Promise<{ prompt: string; options: Q
   return { prompt: question.prompt, options: question.options as QuestionOption[] };
 }
 
+/** `core` and `harvested` are the trials pool split by source; `skill` is the mod-confirmed skill-check pool. */
+type RatingSource = 'core' | 'harvested' | 'skill';
+
 async function nextRating(
   db: Executor,
   playerId: number,
   position: number,
-  core: boolean
+  from: RatingSource
 ): Promise<NextItem | null> {
-  const row = await servableReferences(db, REFERENCE_POOL.trials)
+  const row = await servableReferences(db, [
+    from === 'skill' ? REFERENCE_POOL.skillCheck : REFERENCE_POOL.trials,
+  ])
     .where('r.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
-    .where('r.source', core ? '=' : '<>', REFERENCE_SOURCE.core)
+    .$if(from !== 'skill', (qb) =>
+      qb.where('r.source', from === 'core' ? '=' : '<>', REFERENCE_SOURCE.core)
+    )
     .where(
       seenBy(playerId, 'referenceId', {
         id: 'r.id',
@@ -269,8 +279,20 @@ async function nextYesNo(
   };
 }
 
-/** The item this player is on: the same one until it is answered. Null when nothing is left to show. */
-async function findNext(db: Executor, playerId: number): Promise<NextItem | null> {
+/** A fixed roll per (player, position) in [0, 1): the same until the player answers, so a reload serves the same item. */
+const skillRoll = (playerId: number, position: number) =>
+  createHash('sha256').update(`${playerId}:${position}:skill-check`).digest().readUInt32BE(0) /
+  0x1_0000_0000;
+
+/**
+ * The item this player is on: the same one until it is answered. Null when nothing is left to show. An image slot is a
+ * mod-confirmed skill check at `skillCheckRate` (the Knights' skill-check rate), when one is left for the player.
+ */
+async function findNext(
+  db: Executor,
+  playerId: number,
+  skillCheckRate = 0
+): Promise<NextItem | null> {
   // Every answer the player ever gave, not just this career's: the no-repeat rule spans resets too.
   const position = Number(
     (
@@ -282,11 +304,20 @@ async function findNext(db: Executor, playerId: number): Promise<NextItem | null
     ).n
   );
   const [core, yesNo] = await Promise.all([
-    nextRating(db, playerId, position, true),
+    nextRating(db, playerId, position, 'core'),
     nextYesNo(db, playerId, position),
   ]);
+  const yesNoSlot = position % APPRENTICE.yesNoEvery === APPRENTICE.yesNoEvery - 1;
+  if (
+    skillCheckRate > 0 &&
+    !(yesNoSlot && yesNo) &&
+    skillRoll(playerId, position) < skillCheckRate
+  ) {
+    const skill = await nextRating(db, playerId, position, 'skill');
+    if (skill) return skill;
+  }
   // Harvested references only once the player has answered every core one.
-  const rating = core ? null : await nextRating(db, playerId, position, false);
+  const rating = core ? null : await nextRating(db, playerId, position, 'harvested');
   const source: Source | null = chooseSource({
     position,
     core: !!core,
@@ -356,7 +387,11 @@ async function buildCheckpoint(
   };
 }
 
-export async function getApprentice(db: Kysely<DB>, playerId: number): Promise<ApprenticeView> {
+export async function getApprentice(
+  db: Kysely<DB>,
+  playerId: number,
+  { skillCheckRate = 0 }: { skillCheckRate?: number } = {}
+): Promise<ApprenticeView> {
   const player = await db
     .selectFrom('NewOrderPlayer')
     .select('rankType')
@@ -372,7 +407,7 @@ export async function getApprentice(db: Kysely<DB>, playerId: number): Promise<A
       progress,
     };
   }
-  const next = await findNext(db, playerId);
+  const next = await findNext(db, playerId, skillCheckRate);
   if (!next) return { kind: 'exhausted', progress };
   const { correctAnswer: _hidden, imageId: _image, ...item } = next;
   return { kind: 'question', item, progress };
@@ -412,7 +447,7 @@ export async function answerApprentice(
     if (await checkpointPending(trx, userId, before.answered)) {
       return { status: 'rejected', reason: 'checkpoint-pending' };
     }
-    const current = await findNext(trx, userId);
+    const current = await findNext(trx, userId, deps.skillCheckRate ?? 0);
     if (!current || current.kind !== kind || current.referenceId !== referenceId) {
       return { status: 'rejected', reason: 'not-current' };
     }

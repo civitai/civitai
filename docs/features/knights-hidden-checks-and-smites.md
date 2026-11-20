@@ -61,7 +61,9 @@ ordinary vote in every way a player can see.
   active smites, whether it reset the career), and the page reads its data again after the vote, so the notice shows at once.
   `settleHiddenChecks` (run by the tick) is now only the sweep for checks still pending after `settleDelayMinutes`, such as ones
   answered before inline grading shipped. Grading on the spot shows which images were checks; that is accepted because a player is
-  never served a check on an image they already voted on, and the harvest keeps renewing the pool.
+  never served a check on an image they already voted on (unless `skillCheckServeJudged` is on, for mod-confirmed checks
+  only; the same check is never served twice), and the harvest and the inquisitor queue keep renewing the pool. The draw reads
+  the `hiddenCheck` and `skillCheck` pools together.
 - An exact match is correct. A rating one level from the known answer, on either side (`isCloseAnswer`, `levelDistance` = 1;
   Blocked is not a level, so Blocked against the top level is a miss) is **close**: graded `inconclusive` for the player (no
   payout, no warning, no smite, not in accuracy, not an earlier failure for the warning rule) and marked `consequence = 'close'`,
