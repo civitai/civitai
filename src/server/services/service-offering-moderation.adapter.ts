@@ -33,8 +33,11 @@ const ENTITY_TYPE = 'ServiceOffering';
 export function buildServiceOfferingModerationText(offering: {
   title: string;
   description: string;
+  licenseCustomText: string | null;
 }) {
-  return [offering.title, offering.description].filter(Boolean).join(' ');
+  return [offering.title, offering.description, offering.licenseCustomText]
+    .filter(Boolean)
+    .join(' ');
 }
 
 /**
@@ -232,12 +235,12 @@ const xguard =
       rearmRetries: fresh,
     });
 
-/** Queues the title and description for the content check; the adapter below applies the result. */
+/** Queues the offering's text for the content check; the adapter below applies the result. */
 export async function scanServiceOffering(offeringId: number, { forceRescan = false } = {}) {
   // The primary: called right after a write, and a lagging replica would scan the old text.
   const offering = await dbWrite.serviceOffering.findUnique({
     where: { id: offeringId },
-    select: { title: true, description: true, updatedAt: true },
+    select: { title: true, description: true, licenseCustomText: true, updatedAt: true },
   });
   if (!offering) return;
   try {
@@ -268,7 +271,7 @@ export const serviceOfferingModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
     const rows = await dbRead.serviceOffering.findMany({
       where: { id: { in: ids } },
-      select: { id: true, title: true, description: true },
+      select: { id: true, title: true, description: true, licenseCustomText: true },
     });
     return new Map(rows.map((r) => [r.id, buildServiceOfferingModerationText(r)]));
   },

@@ -32,6 +32,9 @@ describe('requestServiceDealSchema', () => {
       expectedDeliveryDays: 3,
       requestText: 'draw my cat',
       disclosureVersion: 'v1',
+      // Unsent, they read as "shown no license, agreed to none".
+      expectedLicense: { licensePreset: null, licenseCustomText: null, licenseAllowResale: false },
+      licenseAgreed: false,
     });
   });
 

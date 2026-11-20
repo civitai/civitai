@@ -20,6 +20,7 @@ import { DealActionsPanel } from '~/components/CreatorShop/Services/deals/DealAc
 import { DealEscrowPanel } from '~/components/CreatorShop/Services/deals/DealEscrowPanel';
 import { DealAttachmentsPanel } from '~/components/CreatorShop/Services/deals/DealAttachmentsPanel';
 import { DealFilesPanel } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
+import { ServiceLicenseTerms } from '~/components/CreatorShop/Services/ServiceLicenseTerms';
 import { DealReviewCard } from '~/components/CreatorShop/Services/deals/DealReviewCard';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
 import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
@@ -238,6 +239,15 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
                   </Text>
                 </Stack>
               </Paper>
+              {deal.license && (
+                <ServiceLicenseTerms license={deal.license}>
+                  {deal.license.agreedAt && (
+                    <Text size="xs" c="dimmed">
+                      Agreed by the buyer on {formatDate(deal.license.agreedAt, 'MMM D, YYYY')}
+                    </Text>
+                  )}
+                </ServiceLicenseTerms>
+              )}
               {notice && (
                 <Paper withBorder radius="md" p="md">
                   <Text size="sm">{notice}</Text>

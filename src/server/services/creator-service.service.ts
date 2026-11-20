@@ -61,8 +61,10 @@ import {
   ImageIngestionStatus,
   ServiceOfferingIngestionStatus,
   ServiceOfferingStatus,
+  ServiceLicensePreset,
   StrikeStatus,
 } from '~/shared/utils/prisma/enums';
+import { normalizeServiceLicense } from '~/shared/constants/creator-service-license.constants';
 
 export const serviceOfferingSelect = {
   id: true,
@@ -73,6 +75,9 @@ export const serviceOfferingSelect = {
   deliveryDays: true,
   revisionsIncluded: true,
   maxOpenDeals: true,
+  licensePreset: true,
+  licenseCustomText: true,
+  licenseAllowResale: true,
   maxNsfwLevel: true,
   status: true,
   createdAt: true,
@@ -476,21 +481,45 @@ export async function getServiceOfferingFeed({
   };
 }
 
+const LICENSE_REQUIRED = 'Pick license terms to publish this service.';
+
 export async function upsertServiceOffering({
   sellerId,
   input,
+  licenseEditor = false,
 }: {
   sellerId: number;
   input: UpsertServiceOfferingInput;
+  /** `creatorServicesNext`: the seller sets the license, and publishing needs one. */
+  licenseEditor?: boolean;
 }) {
-  const { id, publish, affirmedTermsVersion, coverImage, ...fields } = input;
+  const {
+    id,
+    publish,
+    affirmedTermsVersion,
+    coverImage,
+    licensePreset,
+    licenseCustomText,
+    licenseAllowResale,
+    ...rest
+  } = input;
+  // Outside the rollout the license is left as it is: terms a seller set stay in force.
+  const license =
+    licenseEditor && licensePreset !== undefined
+      ? normalizeServiceLicense({ licensePreset, licenseCustomText, licenseAllowResale })
+      : undefined;
+  if (license?.licensePreset === ServiceLicensePreset.Custom && !license.licenseCustomText)
+    throw throwBadRequestError('Write your license terms, or pick a preset.');
+  const fields = { ...rest, ...license };
   await assertCanSellServices(sellerId);
-  await throwOnBlockedUserContent([fields.title, fields.description], {
-    surface: 'creator-service-offering',
-  });
+  await throwOnBlockedUserContent(
+    [fields.title, fields.description, license?.licenseCustomText ?? ''].filter(Boolean),
+    { surface: 'creator-service-offering' }
+  );
 
   if (!id) {
     if (publish) {
+      if (licenseEditor && !license?.licensePreset) throw throwBadRequestError(LICENSE_REQUIRED);
       // Checked before the cap so a missing tick never reads as a cap error.
       affirmationForPublish({ sellerId, offeringId: 0, existing: null, affirmedTermsVersion });
       await assertUnderActiveOfferingCap(sellerId);
@@ -532,11 +561,15 @@ export async function upsertServiceOffering({
       description: true,
       ingestion: true,
       coverImageId: true,
+      licensePreset: true,
+      licenseCustomText: true,
     },
   });
   if (!existing) throw throwNotFoundError('Service not found');
   const textChanged =
-    existing.title !== fields.title || existing.description !== fields.description;
+    existing.title !== fields.title ||
+    existing.description !== fields.description ||
+    (license !== undefined && existing.licenseCustomText !== license.licenseCustomText);
   const coverImageId =
     coverImage === undefined
       ? undefined
@@ -549,6 +582,15 @@ export async function upsertServiceOffering({
         });
 
   const activating = publish && existing.status !== ServiceOfferingStatus.Active;
+  if (activating && licenseEditor && !(license ?? existing).licensePreset)
+    throw throwBadRequestError(LICENSE_REQUIRED);
+  if (
+    existing.status === ServiceOfferingStatus.Active &&
+    existing.licensePreset &&
+    license &&
+    !license.licensePreset
+  )
+    throw throwBadRequestError('A published service keeps license terms. Pick one to save.');
   const affirmation = activating
     ? affirmationForPublish({
         sellerId,
@@ -617,9 +659,12 @@ async function afterServiceOfferingWrite(id: number, { textChanged }: { textChan
 export async function setServiceOfferingStatus({
   sellerId,
   input: { id, status, affirmedTermsVersion },
+  licenseRequired = false,
 }: {
   sellerId: number;
   input: SetServiceOfferingStatusInput;
+  /** `creatorServicesNext`: publishing needs license terms. */
+  licenseRequired?: boolean;
 }) {
   const from =
     status === ServiceOfferingStatus.Active
@@ -631,9 +676,10 @@ export async function setServiceOfferingStatus({
     await assertCanSellServices(sellerId);
     const existing = await dbWrite.serviceOffering.findFirst({
       where: { id, sellerId, status: { in: from } },
-      select: { sellerAffirmation: true },
+      select: { sellerAffirmation: true, licensePreset: true },
     });
     if (!existing) throw throwNotFoundError('Service not found');
+    if (licenseRequired && !existing.licensePreset) throw throwBadRequestError(LICENSE_REQUIRED);
     affirmation = affirmationForPublish({
       sellerId,
       offeringId: id,
