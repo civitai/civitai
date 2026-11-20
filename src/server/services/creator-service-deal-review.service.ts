@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import { transitionDeal } from '~/server/services/creator-service-deal.service';
+import { dealOpenForReview, transitionDeal } from '~/server/services/creator-service-deal.service';
 import {
   lockDealReviewCounters,
   syncDealReviewPublication,
@@ -89,9 +89,8 @@ export async function reviewServiceDeal({
       actorId: userId,
       event: 'ReviewedHappy',
       lock: true,
-      where: Prisma.sql`"buyerId" = ${userId}::int AND "reviewEnabledAt" IS NOT NULL
-        AND "settledAt" IS NULL AND "disputeOpenedAt" IS NULL AND "releaseAt" > now()
-        AND NOT EXISTS (SELECT 1 FROM "ServiceDealReview" r WHERE r."dealId" = "ServiceDeal"."id")`,
+      where: Prisma.sql`"buyerId" = ${userId}::int AND ${dealOpenForReview}
+        AND "disputeOpenedAt" IS NULL`,
       set: Prisma.sql`, "releaseAt" = now()`,
       then: async (tx) => {
         reviewId = await insertReview(tx, dealId, 'Happy', text);
@@ -116,11 +115,9 @@ export async function reviewServiceDeal({
   const inserted = await dbWrite.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 FROM "ServiceDeal" WHERE "id" = ${dealId}::int FOR UPDATE`;
     const [eligible] = await tx.$queryRaw<{ id: number }[]>`
-      SELECT d."id" FROM "ServiceDeal" d
-      WHERE d."id" = ${dealId}::int AND d."buyerId" = ${userId}::int
-        AND d."status" = 'Completed'::"ServiceDealStatus" AND d."reviewEnabledAt" IS NOT NULL
-        AND d."settledAt" IS NULL AND d."releaseAt" > now()
-        AND NOT EXISTS (SELECT 1 FROM "ServiceDealReview" r WHERE r."dealId" = d."id")`;
+      SELECT "id" FROM "ServiceDeal"
+      WHERE "id" = ${dealId}::int AND "buyerId" = ${userId}::int
+        AND "status" = 'Completed'::"ServiceDealStatus" AND ${dealOpenForReview}`;
     if (!eligible) return undefined;
     const id = await insertReview(tx, dealId, 'NotQuite', text);
     await syncDealReviewPublication(tx, dealId);

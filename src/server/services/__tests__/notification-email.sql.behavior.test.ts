@@ -29,8 +29,8 @@ const migration = (dir: string) =>
 const db = { pg: null as unknown as PGlite };
 
 const DEAL = 'service-deal-requested';
-/** The types 20261203120100_deal_push_default_backfill granted. */
 const REVIEW_DUE = serviceDealNotificationTypes.reviewDue;
+/** The types 20261203120100_deal_push_default_backfill granted. */
 const FIRST_DEAL_PUSH_TYPES: string[] = [
   'service-deal-requested',
   'service-deal-accepted',

@@ -988,10 +988,13 @@ type Reminder = {
   where?: Prisma.Sql;
 };
 
-/** Mirrors the eligibility check in `reviewServiceDeal`, plus no review left yet. */
-const awaitingReview = Prisma.sql`"reviewEnabledAt" IS NOT NULL AND "settledAt" IS NULL
-  AND "disputeOpenedAt" IS NULL
+/** A deal its buyer may still review, read against an unaliased "ServiceDeal". */
+export const dealOpenForReview = Prisma.sql`"reviewEnabledAt" IS NOT NULL AND "settledAt" IS NULL
+  AND "releaseAt" > now()
   AND NOT EXISTS (SELECT 1 FROM "ServiceDealReview" r WHERE r."dealId" = "ServiceDeal"."id")`;
+
+// Never disputed, as a Happy review requires: a reminder must lead to the card that releases early.
+const awaitingReview = Prisma.sql`${dealOpenForReview} AND "disputeOpenedAt" IS NULL`;
 
 const reminders: Reminder[] = [
   {
@@ -1023,7 +1026,7 @@ const reminders: Reminder[] = [
     statuses: ['Completed'],
     at: Prisma.sql`"completedAt" + ${ms(SERVICE_DEAL_REVIEW_FIRST_NOTICE_MS)}`,
     until: Prisma.sql`"releaseAt"`,
-    // A buyer who let the deal complete on its own already ignored one reminder; they get only the last.
+    // Its buyer already ignored the auto-complete notice, so they get only the 12-hour one.
     where: Prisma.sql`${awaitingReview} AND NOT EXISTS (
       SELECT 1 FROM "ServiceDealEvent" e
       WHERE e."dealId" = "ServiceDeal"."id" AND e."type" = 'Completed' AND e."comment" = 'auto')`,
