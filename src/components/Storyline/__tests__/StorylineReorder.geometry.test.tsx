@@ -1,24 +1,19 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderAtViewport } from '../../../../test/geometry-setup';
 import type * as QueriesMod from '~/components/Storyline/storyline.queries';
 import { StorylineChapterLanes } from '~/components/Storyline/StorylineLaneMap';
 
-const mocks = vi.hoisted(() => ({
-  move: vi.fn(),
-  error: null as string | null,
-  graph: undefined as unknown,
-  currentUser: null as null | { id: number; isModerator?: boolean },
-}));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
+const mocks = vi.hoisted(() => ({ move: vi.fn() }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   ...(await importOriginal<typeof QueriesMod>()),
   useStorylineForkShares: () => ({ data: undefined }),
-  useStorylineGraph: () => ({ data: mocks.graph, isLoading: false }),
+  useStorylineGraph: () => ({ data: GRAPH, isLoading: false }),
 }));
 vi.mock('~/components/Storyline/storyline.data', () => ({
-  useMoveStorylineChapter: () => ({ isPending: false, error: mocks.error, mutate: mocks.move }),
+  useMoveStorylineChapter: () => ({ isPending: false, error: null, mutate: mocks.move }),
   useRemoveStorylineChapter: () => ({ isPending: false, mutate: vi.fn() }),
 }));
 vi.mock('~/components/Storyline/StorylineThumb', () => ({ StorylineThumb: () => <div /> }));
@@ -44,17 +39,16 @@ const chapter = (depth: number) => ({
   firstImage: null,
 });
 const MAIN_PATH = IDS.map((_, depth) => chapter(depth));
-const storyline = (viewerRole: string | null) =>
-  ({
-    id: 2,
-    userId: OWNER,
-    viewerRole,
-    chapterCount: 4,
-    mainPath: MAIN_PATH,
-    collaborators: [],
-  } as never);
+const STORYLINE = {
+  id: 2,
+  userId: OWNER,
+  viewerRole: 'owner',
+  chapterCount: 4,
+  mainPath: MAIN_PATH,
+  collaborators: [],
+} as never;
 
-const graphOf = (viaPlacement: number[] = []) => ({
+const GRAPH = {
   rootChapterId: 130,
   chapters: MAIN_PATH.map(({ chapterId, depth, post }) => ({
     chapterId,
@@ -62,7 +56,7 @@ const graphOf = (viaPlacement: number[] = []) => ({
     tombstone: null,
     post: { id: post.id, title: post.title, userId: post.userId, username: post.username },
     firstImage: null,
-    viaPlacement: viaPlacement.includes(chapterId),
+    viaPlacement: false,
   })),
   edges: [
     [104, 130],
@@ -70,14 +64,7 @@ const graphOf = (viaPlacement: number[] = []) => ({
     [150, 121],
   ].map(([chapterId, parentChapterId]) => ({ chapterId, parentChapterId, canon: true })),
   truncated: false,
-});
-
-beforeEach(() => {
-  mocks.move.mockReset();
-  mocks.error = null;
-  mocks.graph = graphOf();
-  mocks.currentUser = null;
-});
+};
 
 // Which drop target is nearest is a question about real pixels, so this lives in the geometry tier.
 // The component tier loads no Tailwind: there the slots fall into normal flow a few pixels apart, the
@@ -85,7 +72,7 @@ beforeEach(() => {
 // between them with no pointer input. Moving this test back there brings that flake back.
 describe('dragging a chapter on the map', () => {
   test('dragging a chapter shows the drop targets and drops it after the nearest target', async () => {
-    await renderAtViewport(<StorylineChapterLanes storyline={storyline('owner')} />);
+    await renderAtViewport(<StorylineChapterLanes storyline={STORYLINE} />);
     const handle = page.getByRole('button', { name: 'Drag chapter 2 to reorder' });
     await expect.element(handle).toBeInTheDocument();
     expect(document.querySelectorAll('[data-testid="storyline-drop-slot"]').length).toBe(0);
