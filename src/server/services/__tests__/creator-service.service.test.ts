@@ -836,6 +836,7 @@ describe('license terms', () => {
       input: {
         ...fields,
         id: 5,
+        publish: false,
         licensePreset: 'Personal',
         licenseAllowResale: true,
         licenseCustomText: 'left over from Custom',
@@ -856,7 +857,7 @@ describe('license terms', () => {
       await rejects(
         upsertServiceOffering({
           sellerId: SELLER,
-          input: { ...fields, id: 5, licensePreset: null },
+          input: { ...fields, id: 5, publish: false, licensePreset: null },
           licenseEditor: true,
         })
       )
@@ -871,7 +872,13 @@ describe('license terms', () => {
       await rejects(
         upsertServiceOffering({
           sellerId: SELLER,
-          input: { ...fields, id: 5, licensePreset: 'Custom', licenseCustomText: '  ' },
+          input: {
+            ...fields,
+            id: 5,
+            publish: false,
+            licensePreset: 'Custom',
+            licenseCustomText: '  ',
+          },
           licenseEditor: true,
         })
       )
@@ -884,7 +891,13 @@ describe('license terms', () => {
     draft({ licensePreset: 'Custom', licenseCustomText: 'Old terms.' });
     await upsertServiceOffering({
       sellerId: SELLER,
-      input: { ...fields, id: 5, licensePreset: 'Custom', licenseCustomText: 'New terms.' },
+      input: {
+        ...fields,
+        id: 5,
+        publish: false,
+        licensePreset: 'Custom',
+        licenseCustomText: 'New terms.',
+      },
       licenseEditor: true,
     });
     expect(written()).toMatchObject({ ingestion: ServiceOfferingIngestionStatus.Pending });

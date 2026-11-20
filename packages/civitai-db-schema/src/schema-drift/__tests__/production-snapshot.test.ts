@@ -288,7 +288,16 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //     `20271117130000_app_block_publish_request_actions_run_source` — no-type, raw SQL in
     //     `actions-run-source.service.ts`, which degrades while it is unapplied.
     //   `ServiceDealFile.scannedEtag` / `.scannedVersionId`: `20271119070000_service_deal_file_scanned_etag`
+    //   the three `ServiceOffering.license*` and four `ServiceDeal.license*` columns:
+    //     `20271120030000_service_license_presets`
     const inFlightColumns = new Set([
+      'ServiceOffering.licensePreset',
+      'ServiceOffering.licenseCustomText',
+      'ServiceOffering.licenseAllowResale',
+      'ServiceDeal.licensePreset',
+      'ServiceDeal.licenseCustomText',
+      'ServiceDeal.licenseAllowResale',
+      'ServiceDeal.licenseAgreedAt',
       'ServiceDealFile.scannedEtag',
       'ServiceDealFile.scannedVersionId',
       'ApiKey.tokenScopeWide',

@@ -567,13 +567,12 @@ describe('license terms', () => {
   it('freezes the license the buyer agreed to onto the deal', async () => {
     await license(`"licensePreset" = 'CommercialCredit', "licenseAllowResale" = true`);
     const { id } = await request({ expectedLicense: COMMERCIAL, licenseAgreed: true });
-    const row = await deal(id);
-    expect(row).toMatchObject({
+    expect(await deal(id)).toMatchObject({
       licensePreset: 'CommercialCredit',
       licenseCustomText: null,
       licenseAllowResale: true,
+      licenseAgreedAt: expect.any(Date),
     });
-    expect(row.licenseAgreedAt).not.toBeNull();
     // The seller changing terms later leaves the deal's alone.
     await license(`"licensePreset" = 'Personal', "licenseAllowResale" = false`);
     expect(await deal(id)).toMatchObject({ licensePreset: 'CommercialCredit' });
