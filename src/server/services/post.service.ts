@@ -817,13 +817,20 @@ type PostEditInput = GetByIdInput & {
   user: SessionUser;
   /** `requestServableLevels(ctx)`: the editor takes no level, so the domain cap is applied here. */
   servableLevels: number;
+  /** The request carries the owner's view (`credentialViews`): the user's own held images show. */
+  ownerSeesHeld?: boolean;
 };
 
-export const getPostEditDetail = async ({ id, user, servableLevels }: PostEditInput) => {
+export const getPostEditDetail = async ({
+  id,
+  user,
+  servableLevels,
+  ownerSeesHeld,
+}: PostEditInput) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
   const [editImages, texts] = await Promise.all([
-    getPostEditImages({ id, user, servableLevels }),
+    getPostEditImages({ id, user, servableLevels, ownerSeesHeld }),
     getPostEditTexts(id),
   ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
@@ -981,13 +988,18 @@ async function getPostEditTexts(postId: number) {
   });
 }
 
-export const getPostEditImages = async ({ id, user, servableLevels }: PostEditInput) => {
+export const getPostEditImages = async ({
+  id,
+  user,
+  servableLevels,
+  ownerSeesHeld = false,
+}: PostEditInput) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
     where: {
       postId: id,
       AND: [
-        user.isModerator ? {} : notHeldForReviewWhere(user.id),
+        user.isModerator ? {} : notHeldForReviewWhere(ownerSeesHeld ? user.id : undefined),
         servableLevelOrOwnUnratedWhere(servableLevels, user.id),
       ],
     },
@@ -2158,7 +2170,7 @@ export const removeResourceFromPostImage = async ({
   return deleted;
 };
 
-type Editor = { user: SessionUser; servableLevels: number };
+type Editor = { user: SessionUser; servableLevels: number; ownerSeesHeld?: boolean };
 
 /**
  * Whether an image counts, or will once scanned, toward the version level
@@ -2168,15 +2180,16 @@ const countsTowardVersionLevel = (nsfwLevel: number) => nsfwLevel !== NsfwLevel.
 
 /**
  * The post's images this editor may not move (`ids`, `indexes`): those it did not list, and those
- * `getPostEditImages` does not serve it (held for review unless a moderator or its uploader, or outside the
- * request's levels and not the editor's own unrated upload) even if it lists them. They keep their
+ * `getPostEditImages` does not serve it (held for review unless a moderator, or the image's own
+ * uploader with the owner's view; or outside the request's levels and not the editor's own unrated
+ * upload) even if it lists them. They keep their
  * index. `movable` holds the others the editor listed, with their current index and whether the
  * version level counts them.
  */
 async function editorHiddenImages(
   postId: number,
   listedIds: number[],
-  { user, servableLevels }: Editor
+  { user, servableLevels, ownerSeesHeld = false }: Editor
 ) {
   // primary: decides which indexes the reorder write that follows may take
   const images = await dbWrite.image.findMany({
@@ -2186,7 +2199,9 @@ async function editorHiddenImages(
   const listed = new Set(listedIds);
   const isHidden = (image: (typeof images)[number]) =>
     !listed.has(image.id) ||
-    (!user.isModerator && image.userId !== user.id && isHeldForReview(image.needsReview)) ||
+    (!user.isModerator &&
+      !(ownerSeesHeld && image.userId === user.id) &&
+      isHeldForReview(image.needsReview)) ||
     !isServableLevelOrOwnUnrated(image, servableLevels, user.id);
   const hidden = images.filter(isHidden);
   const movable = new Map(

@@ -100,11 +100,14 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, "postId") VALUES (105, 1);
     -- 106 is rated R on a restricted base model.
     INSERT INTO "Image" (id, "postId", "nsfwLevel", "modelRestricted") VALUES (106, 1, 4, true);
+    -- 107 and 108 are held for review.
+    INSERT INTO "Image" (id, "postId", "needsReview") VALUES (107, 1, 'csam'), (108, 1, 'minor');
     INSERT INTO "Model" (id, status, "sfwName") VALUES (2, 'Published', 'Safe name');
     INSERT INTO "ImageResourceHelper" ("imageId", "modelVersionId", "modelId", "modelName") VALUES
       (105, 12, 2, 'm');
     INSERT INTO "ImageResourceHelper" ("imageId", "modelVersionId", "modelId", "modelName") VALUES
-      (101, 11, 1, 'm'), (102, 11, 1, 'm'), (103, 11, 1, 'm'), (104, 11, 1, 'm'), (106, 11, 1, 'm');
+      (101, 11, 1, 'm'), (102, 11, 1, 'm'), (103, 11, 1, 'm'), (104, 11, 1, 'm'), (106, 11, 1, 'm'),
+      (107, 11, 1, 'm'), (108, 11, 1, 'm');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -122,6 +125,8 @@ const hidden: [string, number][] = [
   ['a blocked image', 103],
   ['an image on a Private post', 104],
   ['an R image on a restricted base model', 106],
+  ['an image held for csam review', 107],
+  ['an image held for minor review', 108],
 ];
 
 describe('image.getResources follows by-id image visibility', () => {

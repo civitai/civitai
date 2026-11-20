@@ -75,8 +75,12 @@ beforeAll(async () => {
 });
 afterAll(() => harness.stop());
 
-const editorIds = async (user: SessionUser, servableLevels = allBrowsingLevelsFlag) =>
-  (await getPostEditImages({ id: POST, user, servableLevels })).map((i) => i.id);
+// A session, or a full-access key: the request carries the owner's view.
+const editorIds = async (
+  user: SessionUser,
+  servableLevels = allBrowsingLevelsFlag,
+  ownerSeesHeld = true
+) => (await getPostEditImages({ id: POST, user, servableLevels, ownerSeesHeld })).map((i) => i.id);
 
 describe('getPostEditImages: images held for review', () => {
   it('shows the owner their own held images, and leaves out a held image of another user', async () => {
@@ -89,6 +93,16 @@ describe('getPostEditImages: images held for review', () => {
       UNRATED,
       OTHER_UNRATED,
       HELD_UNRATED,
+    ]);
+  });
+
+  it("leaves the owner's held images out without the owner's view (a scoped key or app token)", async () => {
+    expect(await editorIds(owner, allBrowsingLevelsFlag, false)).toEqual([
+      CLEAN,
+      OTHER_REVIEW,
+      MATURE,
+      UNRATED,
+      OTHER_UNRATED,
     ]);
   });
 

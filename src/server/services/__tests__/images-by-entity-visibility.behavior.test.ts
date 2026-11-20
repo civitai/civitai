@@ -25,7 +25,8 @@ const OWNER = 10;
 const viewers = {
   anonymous: {},
   stranger: { userId: 20 },
-  owner: { userId: OWNER },
+  owner: { userId: OWNER, ownerSeesHeld: true },
+  ownerOnScopedKey: { userId: OWNER },
   moderator: { userId: 30, isModerator: true },
 };
 
@@ -126,6 +127,7 @@ describe('getImagesByEntity', () => {
     ['held for minor review', 7],
   ])('serves the owner their own image %s, and a moderator; nobody else', async (_l, entry) => {
     expect(await imageOf(entry, viewers.owner)).toHaveLength(1);
+    expect(await imageOf(entry, viewers.ownerOnScopedKey)).toEqual([]);
     expect(await imageOf(entry, viewers.moderator)).toHaveLength(1);
     expect(await imageOf(entry, viewers.stranger)).toEqual([]);
     expect(await imageOf(entry, viewers.anonymous)).toEqual([]);

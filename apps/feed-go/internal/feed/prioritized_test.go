@@ -3,6 +3,7 @@ package feed
 import (
 	"encoding/json"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -330,9 +331,9 @@ func TestBuildPrioritized(t *testing.T) {
 	}
 }
 
-// The owner's own image under an owner-hidden review hold (csam, minor) is withheld from their pending
-// view, as on the Node path (pendingOthersImageConditions); other review states stay the owner's.
-func TestServeInfinitePendingViewWithholdsOwnHeldImages(t *testing.T) {
+// The owner's own image under an owner-hidden review hold (csam, minor) shows in their pending view,
+// as on the Node path (pendingOthersImageConditions with the owner's view); another user's stays held.
+func TestServeInfinitePendingViewShowsOwnHeldImages(t *testing.T) {
 	f := newCarouselFixture(t)
 	f.rows = []RawImage{infRow(31, 700)}
 	if _, _, _, err := serveInf(t, f, carouselInput(), InfiniteRequest{Viewer: &Viewer{ID: 9}, ViewerUsername: "nine"}); err != nil {
@@ -343,6 +344,10 @@ func TestServeInfinitePendingViewWithholdsOwnHeldImages(t *testing.T) {
 		// Control: the owner keeps their other review states.
 		`(i."needsReview" IS NULL OR i."userId" = $`,
 	)
+	// The hold is lifted for the viewer's own rows only.
+	if !regexp.MustCompile(`i\."needsReview" NOT IN \(\$\d+, \$\d+\) OR i\."userId" = \$\d+\)`).MatchString(f.sql[0]) {
+		t.Fatalf("the hold is not lifted for the owner's own rows: %s", f.sql[0])
+	}
 	bound := map[string]bool{}
 	for _, a := range f.sqlArgs[0] {
 		if s, ok := a.(string); ok {

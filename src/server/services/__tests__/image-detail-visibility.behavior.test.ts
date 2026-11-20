@@ -241,6 +241,9 @@ describe('image.getDetail visibility', () => {
       expect(await sees(MOD)).toBe(true);
       expect(await sees(STRANGER)).toBe(false);
       expect(await sees(ANON)).toBe(false);
+      // The owner's view needs a session or a full-access key: a scoped key gets the hold.
+      expect(await sees(SELF, 1, keyOf(TokenScope.MediaRead))).toBe(false);
+      expect(await sees(SELF, 1, keyOf(TokenScope.Full))).toBe(true);
       // The owner is the session user: naming the owner in the input opens nothing.
       for (const user of [STRANGER, ANON]) {
         const asOwner = callerFor(user).getDetail({ id: 1, userId: OWNER } as never);

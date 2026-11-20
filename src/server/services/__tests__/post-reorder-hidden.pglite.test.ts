@@ -198,11 +198,23 @@ describe('reorderPostImages around images the editor does not list', () => {
     expect((await indexes())[1]).toBe(21);
   });
 
-  it('the owner moves their own held image it lists, as a moderator does', async () => {
+  it("with the owner's view, the owner moves their own held image it lists, as a moderator does", async () => {
+    const pgIds = await seedPost();
+    await harness.pg.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`);
+    await reorderPostImages({
+      ...OWNER_EDITOR,
+      ownerSeesHeld: true,
+      id: POST,
+      imageIds: [...pgIds, 1],
+    });
+    expect((await indexes())[1]).toBe(21);
+  });
+
+  it("without the owner's view, the owner's own held image keeps its index", async () => {
     const pgIds = await seedPost();
     await harness.pg.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`);
     await reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [...pgIds, 1] });
-    expect((await indexes())[1]).toBe(21);
+    expect((await indexes())[1]).toBe(0);
   });
 
   it('control: with every image listed, positions are numbered from 0', async () => {

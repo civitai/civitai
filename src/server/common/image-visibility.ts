@@ -284,20 +284,27 @@ export const imageRestrictedSql = (options: RestrictedImageOptions = {}) =>
 /**
  * What a signed-in non-moderator's `pending` read requires of another user's image, over `Image`
  * aliased `i`: not awaiting moderator review, not `acceptableMinor`, and reviewed if rated. The
- * viewer's own images are exempt, those under an owner-hidden review hold included.
+ * viewer's own images are exempt; those under an owner-hidden review hold only with `ownerSeesHeld`.
  * Unrated images still need the read's own level check to show.
  * `acceptableMinorAlso` admits further images past the `acceptableMinor` check only.
  */
 export const pendingOthersImageConditions = (
   userId: number,
-  { acceptableMinorAlso }: { acceptableMinorAlso?: Prisma.Sql } = {}
+  {
+    acceptableMinorAlso,
+    ownerSeesHeld = false,
+  }: {
+    acceptableMinorAlso?: Prisma.Sql;
+    /** Lift the hold for `userId` too: only when the request carries the owner's view (`credentialViews`). */
+    ownerSeesHeld?: boolean;
+  } = {}
 ) => [
   Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`,
   Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId}${
     acceptableMinorAlso ? Prisma.sql` OR ${acceptableMinorAlso}` : Prisma.empty
   })`,
   Prisma.sql`(i."userId" = ${userId} OR i."nsfwLevel" = 0 OR ${imageReviewedSql()})`,
-  notHeldForReviewSql(userId),
+  notHeldForReviewSql(ownerSeesHeld ? userId : undefined),
 ];
 
 /**

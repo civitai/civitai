@@ -48,10 +48,16 @@ beforeEach(async () => {
   `);
 });
 
-async function calendar(user: SessionUser, servableLevels = allBrowsingLevelsFlag) {
+// `ownerSeesHeld`: a session or a full-access key, as the router passes it.
+async function calendar(
+  user: SessionUser,
+  servableLevels = allBrowsingLevelsFlag,
+  ownerSeesHeld = true
+) {
   const { posts } = await getScheduledPosts({
     user,
     servableLevels,
+    ownerSeesHeld,
     from: new Date(),
     to: new Date(Date.now() + 7 * 24 * 3600 * 1000),
   });
@@ -67,6 +73,15 @@ describe('getScheduledPosts cover', () => {
           (1, ${POST}, 'held', 0, '${hold}'), (2, ${POST}, 'clean', 1, NULL);
       `);
       expect(await calendar(owner)).toEqual({ cover: 'held', imageCount: 2 });
+      expect(await calendar(owner, allBrowsingLevelsFlag, false)).toEqual({
+        cover: 'clean',
+        imageCount: 1,
+      });
+      // Another uploader's held image in the same post stays out of the cover and the count.
+      await db.exec(`
+        UPDATE "Image" SET "userId" = 99 WHERE id = 1;
+      `);
+      expect(await calendar(owner)).toEqual({ cover: 'clean', imageCount: 1 });
     }
   );
 

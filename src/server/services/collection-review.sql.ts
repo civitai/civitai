@@ -131,8 +131,10 @@ export const pendingViewerImageSql = ({
 }) => {
   const own = Prisma.sql`i."userId" = ${userId}`;
   const review = reviewCollectionId ? { collectionId: reviewCollectionId, userId } : undefined;
+  // Its one caller passes the owner view's id (`asOwner`), so the owner's held images show too.
   const others = pendingOthersImageConditions(userId, {
     acceptableMinorAlso: review ? reviewSubmissionSql(review) : undefined,
+    ownerSeesHeld: true,
   });
   return Prisma.sql`(${Prisma.join(others, ' AND ')}
     AND ((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND ${own}) OR (p."collectionId" IS NOT NULL AND i."nsfwLevel" NOT IN (0, ${
