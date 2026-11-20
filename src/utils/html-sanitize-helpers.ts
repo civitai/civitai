@@ -8,7 +8,7 @@ import {
   isAllowedPlayerUrl,
   isEmbedPlayerHost,
 } from '~/shared/utils/embed-providers';
-import { IMAGE_WIDTHS } from '~/shared/tiptap/image-width';
+import { IMAGE_ALIGNS, IMAGE_WIDTHS } from '~/shared/tiptap/image-width';
 
 const DEFAULT_ALLOWED_TAGS = [
   'p',
@@ -62,6 +62,7 @@ const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
 // The article editor's per-image size. sanitize-html blanks any value off this list, so a
 // stored `data-width` can't carry CSS.
 const IMAGE_WIDTH_ATTRIBUTE = { name: 'data-width', multiple: false, values: [...IMAGE_WIDTHS] };
+const IMAGE_ALIGN_ATTRIBUTE = { name: 'data-align', multiple: false, values: [...IMAGE_ALIGNS] };
 // `style` is allowed on these tags only because `allowedStyles` limits it to text-align left|center|right.
 const TEXT_ALIGN_TAGS = ['p', 'h1', 'h2', 'h3'];
 const TEXT_ALIGN_STYLES = Object.fromEntries(
@@ -70,7 +71,7 @@ const TEXT_ALIGN_STYLES = Object.fromEntries(
 
 export const DEFAULT_ALLOWED_ATTRIBUTES = {
   a: ['rel', 'href', 'target', 'data-entity', 'data-id', 'data-version-id'],
-  img: ['src', 'alt', 'width', 'height', IMAGE_WIDTH_ATTRIBUTE],
+  img: ['src', 'alt', 'width', 'height', IMAGE_WIDTH_ATTRIBUTE, IMAGE_ALIGN_ATTRIBUTE],
   iframe: [
     'src',
     'width',
@@ -101,7 +102,14 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   ...Object.fromEntries(TEXT_ALIGN_TAGS.map((tag) => [tag, ['style']])),
   time: ['datetime', 'data-type', 'data-value', 'data-style'],
   '*': ['id'],
-  'edge-media': ['url', 'type', 'filename', 'className', IMAGE_WIDTH_ATTRIBUTE],
+  'edge-media': [
+    'url',
+    'type',
+    'filename',
+    'className',
+    IMAGE_WIDTH_ATTRIBUTE,
+    IMAGE_ALIGN_ATTRIBUTE,
+  ],
 };
 
 // What may appear INSIDE a blurb.
