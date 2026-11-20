@@ -15,7 +15,8 @@ import { describe, expect, it } from 'vitest';
 const SRC = path.resolve(__dirname, '../../../../src');
 const CODE_EXTENSIONS = new Set(['.ts', '.tsx']);
 const TEST_FILE = /\.test\.tsx?$|(^|\/)__tests__\//;
-const CALL = /\bimageConnection\.(findMany|findFirst|findUnique|findFirstOrThrow|findUniqueOrThrow)\(/g;
+const CALL =
+  /\bimageConnection\.(findMany|findFirst|findUnique|findFirstOrThrow|findUniqueOrThrow)\(/g;
 const LOADS_IMAGE = /\b(select|include)\s*:\s*\{[^]*?\bimage\s*:/;
 const SAFE = /connectionImageExists|image-connection-orphan-safe:/;
 
@@ -59,16 +60,22 @@ describe('🔴 an ImageConnection read that loads the image skips orphans', () =
   });
 
   it.each([
-    ["db.imageConnection.findMany({ where: { entityId: 1 }, select: { image: { select: { id: true } } } })"],
-    ["tx.imageConnection.findMany({\n  where: { entityId },\n  include: { image: true },\n})"],
+    [
+      'db.imageConnection.findMany({ where: { entityId: 1 }, select: { image: { select: { id: true } } } })',
+    ],
+    ['tx.imageConnection.findMany({\n  where: { entityId },\n  include: { image: true },\n})'],
   ])('flags %j', (source) => {
     expect(unguardedReads(source)).toHaveLength(1);
   });
 
   it.each([
-    ["db.imageConnection.findMany({ where: { entityId: 1, ...connectionImageExists }, include: { image: true } })"],
-    ["db.imageConnection.findMany({ where: { entityId: 1 }, select: { imageId: true } })"],
-    ["db.imageConnection.findMany({ where: { NOT: { image: { needsReview: 'csam' } } }, select: { imageId: true } })"],
+    [
+      'db.imageConnection.findMany({ where: { entityId: 1, ...connectionImageExists }, include: { image: true } })',
+    ],
+    ['db.imageConnection.findMany({ where: { entityId: 1 }, select: { imageId: true } })'],
+    [
+      "db.imageConnection.findMany({ where: { NOT: { image: { needsReview: 'csam' } } }, select: { imageId: true } })",
+    ],
   ])('passes %j', (source) => {
     expect(unguardedReads(source)).toEqual([]);
   });
