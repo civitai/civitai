@@ -21,7 +21,8 @@ export const RESEND_GAVE_UP =
   "Auto-labeling didn't finish for this image. Try again in a few minutes.";
 
 // Every submitted item is a charged orchestrator job. However a caller asks — the drain, a format
-// switch, the editor's Re-run — one media URL is sent at most this many times per page session, so a
+// switch, the editor's Re-run — one media URL gets at most this many runs per page session (a run's
+// resends of a failed item share its one slot), so a
 // caller that keeps re-selecting the same tiles stops after a bounded spend instead of draining the
 // user's Buzz (the earlier auto-label loop recurred after its fix with the same signature).
 export const MAX_SUBMITS_PER_MEDIA = 3;
@@ -164,9 +165,8 @@ export async function runAutoLabel(
     for (const item of refused) onResult({ key: item.key, status: 'failed', error: CAP_REFUSAL });
   }
   // Failures are mostly capacity refusals in bursts, which the poll can't tell from a real failure,
-  // so failed items are resent within the run. Resends share the item's one cap slot, kept even when
-  // it gives up, so the tile's Retry can't resend it without end. The server gives each failed item
-  // back to the daily quota in the poll that reports it, before the resend counts it again.
+  // so failed items are resent within the run. The slot is kept even when it gives up, so the tile's
+  // Retry can't resend it without end.
   let pending = allowed;
   for (let attempt = 0; pending.length > 0; attempt++) {
     if (attempt > 0) {
