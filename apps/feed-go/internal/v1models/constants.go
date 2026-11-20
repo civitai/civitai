@@ -11,6 +11,7 @@ var matureRestrictedModels = map[string]bool{
 	"fibo 2.0 turbo":     true,
 	"ideogram 4.0":       true,
 	"ideogram 4.5":       true,
+	"ideogram 4.6":       true,
 	"stable cascade":     true,
 	"sd 3":               true,
 	"sd 3.5":             true,
