@@ -11,6 +11,7 @@ import {
   CONNECT_REVIEW_VERSION,
   type ConnectReviewSubject,
 } from './connect-agent-review.logic';
+import { anotherApprovedListingDeclaresOffline } from './connect-offline-listing';
 import type {
   ConnectCivitaiChecks,
   ConnectCivitaiChecksView,
@@ -148,6 +149,7 @@ export async function readConnectRequest(
         select: {
           id: true,
           kind: true,
+          revisionOfId: true,
           name: true,
           tagline: true,
           description: true,
@@ -182,6 +184,12 @@ export async function readConnectRequest(
   const { readListingSourceRepoUrl } = await import('./app-listing-source-repo.service');
   const repo = await readListingSourceRepoUrl(listing.id, dbRead);
   const justifications = listing.connectScopeJustifications;
+  // The hub grants per CLIENT, so another listing's declaration still reaches this app. This
+  // listing and, for a revision, the live listing it revises are the same app, not another one.
+  const anotherListingDeclaresOffline = await anotherApprovedListingDeclaresOffline(dbRead, {
+    connectClientId: listing.connectClient.id,
+    excludeListingIds: [listing.id, ...(listing.revisionOfId ? [listing.revisionOfId] : [])],
+  });
   const subject: ConnectReviewSubject = {
     publishRequestId,
     slug: request.slug,
@@ -210,6 +218,7 @@ export async function readConnectRequest(
       grants: listing.connectClient.grants,
       isConfidential: listing.connectClient.isConfidential,
       isVerified: listing.connectClient.isVerified,
+      anotherListingDeclaresOffline,
     },
   };
   return { status: request.status, subject };
