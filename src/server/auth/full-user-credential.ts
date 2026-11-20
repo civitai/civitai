@@ -82,13 +82,9 @@ export function withModeratorRightsFor<T extends { id: number; isModerator?: boo
 
 /**
  * The account the App Blocks AUTHOR capability is evaluated for: the request's user as the session
- * resolved it, before `withModeratorRightsFor` withheld moderator rights. That capability belongs
- * to the account (a moderator is always an author: the floor `isAppDeveloper` applies), not to the
- * credential, and the REST author routes already read it this way: they pass the bearer session's
- * own user to `isAppBlocksAuthorEnabled`.
+ * resolved it, before `withModeratorRightsFor` withheld moderator rights.
  *
  * Read it ONLY for the author capability. It is no moderator check: `ctx.user.isModerator` is.
- * Whether the credential may call a procedure at all stays with `enforceTokenScope`.
  *
  * A banned session reads as no one (`trpcViewer` moves it to `bannedUser`), except behind
  * `isAuthedAllowRestricted`, which restores it to `ctx.user`: put no author gate on such a
