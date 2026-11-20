@@ -247,6 +247,33 @@ describe('approveRequest — submitter notification (post-commit, best-effort)',
     expect((arg.details as { mature?: unknown }).mature).toBe(false);
   });
 
+  it('records hasPage and mature from a page app rated mature', async () => {
+    const manifest = {
+      name: 'Cool App',
+      scopes: [],
+      page: { path: '/', title: 'Cool App' },
+      contentRating: 'r',
+    };
+    // Both manifest sources say so: the stored request row and the bundle.
+    const zip = new JSZip();
+    zip.file('block.manifest.json', JSON.stringify(manifest));
+    zip.file('index.html', '<html></html>');
+    const bytes = await zip.generateAsync({ type: 'uint8array' });
+    s3.send.mockImplementation(async () => ({ Body: { transformToByteArray: async () => bytes } }));
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      ...pendingApproveRow(),
+      manifest,
+    });
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+
+    await approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+
+    expect(mockNotify).toHaveBeenCalledTimes(1);
+    const details = (mockNotify.mock.calls[0][0] as { details: Record<string, unknown> }).details;
+    expect(details.hasPage).toBe(true);
+    expect(details.mature).toBe(true);
+  });
+
   it('🔴 approve re-validates with the issue-tracker link LENIENT (a stored legacy `bugs` warns, never refuses)', async () => {
     db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(pendingApproveRow());
     db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
