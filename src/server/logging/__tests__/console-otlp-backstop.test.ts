@@ -154,6 +154,31 @@ describe('installConsoleOtlpBackstop', () => {
     expect(body).toContain("'page' => '2'");
   });
 
+  it('redacts a credential pair written inside another string field', () => {
+    const { target, emitted } = installOnFake();
+
+    target.log({ msg: `it's "x" password: 'hunter2'` }, { note: 'login token: "tok-xyz-987"' });
+
+    const body = emitted[0].body;
+    expect(body).not.toContain('hunter2');
+    expect(body).not.toContain('tok-xyz-987');
+    expect(body).toContain("it's \"x\" password: '[redacted]'");
+  });
+
+  it('formats a long token-like run without quadratic cost', () => {
+    const { target, emitted } = installOnFake();
+    // The body is cut to 8 KiB before the pattern runs; quadratic matching took ~100 ms on that, linear
+    // takes well under 1 ms, so the bound leaves a wide margin either way on a loaded runner.
+    const blob = 'a'.repeat(20000);
+
+    const started = performance.now();
+    target.log(blob);
+    const elapsed = performance.now() - started;
+
+    expect(emitted).toHaveLength(1);
+    expect(elapsed).toBeLessThan(50);
+  });
+
   it('redacts credential fields inside an Error and a class instance, as inspect prints them', () => {
     const { target, emitted } = installOnFake();
     const err = Object.assign(new Error('request failed'), {
