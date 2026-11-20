@@ -25,11 +25,11 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
   const original = await importOriginal<typeof FliptClient>();
   return {
     ...original,
-    getFliptBoolean: vi.fn(async (flag: string, ...rest: unknown[]) =>
+    isFlipt: vi.fn(async (flag: string, ...rest: unknown[]) =>
       flag === 'profanity-managed-list'
         ? managedListFlag.on
         : // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (original.getFliptBoolean as any)(flag, ...rest)
+          (original.isFlipt as any)(flag, ...rest)
     ),
   };
 });

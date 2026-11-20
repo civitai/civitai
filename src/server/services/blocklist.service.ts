@@ -18,7 +18,7 @@ import {
   MIN_DATASET_WORD_LENGTH,
 } from '@civitai/mod-utils/profanity/word-rules';
 import { foldConfusables } from '~/server/utils/confusable-fold';
-import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '~/server/flipt/client';
 import { domainAcceptsMail } from '~/server/utils/email-domain';
 
 export type BlocklistDTO = {
@@ -467,7 +467,7 @@ async function getManagedProfanityWords(): Promise<
   { id: number; data: string[] } | null | 'unavailable'
 > {
   try {
-    if (!(await getFliptBoolean(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))) return null;
+    if (!(await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))) return null;
     const row = await getBlocklistDTO({ type: BlocklistType.ProfanityWord });
     const usable = (word: string) =>
       isValidWord(word) && cleanWord(word).length >= MIN_DATASET_WORD_LENGTH;
