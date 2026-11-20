@@ -1,14 +1,21 @@
 import { TRPCError } from '@trpc/server';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import type { GetServiceOfferingReviewsInput } from '~/server/schema/creator-service.schema';
 import {
   getServiceOfferingByIdSchema,
   getServiceOfferingFeedSchema,
+  getServiceOfferingReviewsSchema,
   getShopServiceOfferingsSchema,
   setServiceOfferingStatusSchema,
   takedownServiceOfferingSchema,
   upsertServiceOfferingSchema,
 } from '~/server/schema/creator-service.schema';
 import {
+  getServiceOfferingReviewWork,
+  getServiceOfferingReviews,
+} from '~/server/services/creator-service-review-display.service';
+import {
+  assertServiceOfferingViewable,
   getMyServiceOfferings,
   getServiceSellEligibility,
   getServiceOfferingById,
@@ -43,6 +50,29 @@ const servicesProcedure = protectedProcedure
 const servicesGuardedProcedure = guardedProcedure
   .use(isFlagProtected('creatorShop'))
   .use(isFlagProtected('creatorServices'));
+
+// The reviews sit on the offering's page, so they take its flags and its viewer rule.
+const reviewsProcedure = publicProcedure
+  .use(isFlagProtected('creatorShop'))
+  .use(isFlagProtected('creatorServices'))
+  .use(isFlagProtected('creatorServicesNext'))
+  .input(getServiceOfferingReviewsSchema);
+
+async function viewableReviewLevels(
+  input: GetServiceOfferingReviewsInput,
+  ctx: Parameters<typeof domainServableLevels>[0] & { user?: { id: number; isModerator?: boolean } }
+) {
+  resolveRequestBrowsingLevels(input, ctx);
+  const servable = domainServableLevels(ctx);
+  await assertServiceOfferingViewable({
+    id: input.id,
+    browsingLevel: input.browsingLevel,
+    servable,
+    viewerId: ctx.user?.id,
+    isModerator: ctx.user?.isModerator,
+  });
+  return (input.browsingLevel ?? servable) & servable;
+}
 
 export const creatorServiceRouter = router({
   getSellEligibility: servicesProcedure.query(({ ctx }) => getServiceSellEligibility(ctx.user.id)),
@@ -106,8 +136,20 @@ export const creatorServiceRouter = router({
       resolveRequestBrowsingLevels(input, ctx);
       return getServiceOfferingFeed({
         ...input,
+        sort:
+          input.sort === 'happy' && !guardFlagEnabled(ctx, 'creatorServicesNext')
+            ? 'newest'
+            : input.sort,
         servable: domainServableLevels(ctx),
         viewerId: ctx.user?.id,
       });
     }),
+  getReviews: reviewsProcedure.query(async ({ input, ctx }) => {
+    const levels = await viewableReviewLevels(input, ctx);
+    return getServiceOfferingReviews({ offeringId: input.id, levels, cursor: input.cursor });
+  }),
+  getReviewWork: reviewsProcedure.query(async ({ input, ctx }) => {
+    const levels = await viewableReviewLevels(input, ctx);
+    return getServiceOfferingReviewWork({ offeringId: input.id, levels, cursor: input.cursor });
+  }),
 });

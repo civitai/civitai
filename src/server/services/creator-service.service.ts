@@ -77,6 +77,8 @@ export const serviceOfferingSelect = {
   status: true,
   createdAt: true,
   updatedAt: true,
+  happyCount: true,
+  reviewCount: true,
   coverImage: { select: { ...profileImageSelect, modelRestricted: true } },
 } satisfies Prisma.ServiceOfferingSelect;
 
@@ -362,18 +364,33 @@ export async function getShopServiceOfferings({
  * hid); its seller also sees it unlisted (Draft, Paused, under review) and moderators see any
  * status. Nobody is sent a rating the domain may not serve.
  */
-export async function getServiceOfferingById({
-  id,
-  browsingLevel,
-  servable,
-  viewerId,
-  isModerator,
-}: GetServiceOfferingByIdInput & {
+export async function getServiceOfferingById(input: ServiceOfferingViewerInput) {
+  const offering = await findViewableServiceOffering(input, {
+    ...serviceOfferingSelect,
+    seller: { select: { ...userWithCosmeticsSelect, createdAt: true } },
+  });
+  const [[withSlots], record] = await Promise.all([
+    withOpenSlots([withServableImage(offering, 'coverImage')]),
+    getServiceDealRecord({ sellerId: offering.seller.id, offeringId: input.id }),
+  ]);
+  return { ...withSlots, record };
+}
+
+type ServiceOfferingViewerInput = GetServiceOfferingByIdInput & {
   /** What this domain may be sent: `domainServableLevels(ctx)`. */
   servable: number;
   viewerId?: number;
   isModerator?: boolean;
-}) {
+};
+
+/** Not found unless this viewer may open the offering's page; the reviews on it follow the same rule. */
+export async function assertServiceOfferingViewable(input: ServiceOfferingViewerInput) {
+  await findViewableServiceOffering(input, { id: true, seller: { select: { id: true } } });
+}
+
+async function findViewableServiceOffering<
+  S extends Prisma.ServiceOfferingSelect & { seller: { select: { id: true } } }
+>({ id, browsingLevel, servable, viewerId, isModerator }: ServiceOfferingViewerInput, select: S) {
   const offering = await dbRead.serviceOffering.findFirst({
     where: {
       id,
@@ -389,32 +406,26 @@ export async function getServiceOfferingById({
             ],
           }),
     },
-    select: {
-      ...serviceOfferingSelect,
-      seller: { select: { ...userWithCosmeticsSelect, createdAt: true } },
-    },
+    select,
   });
   if (!offering) throw throwNotFoundError('Service not found');
 
-  const sellerId = offering.seller.id;
+  const sellerId = (offering as { seller: { id: number } }).seller.id;
   const seesUnlisted = isModerator || viewerId === sellerId;
   await assertCreatorShopVisible({ userId: sellerId, viewerId, isModerator });
   if (!seesUnlisted && viewerId) {
     const hidden = await getHiddenOrBlockedUserIds(viewerId);
     if (hidden.includes(sellerId)) throw throwNotFoundError('Service not found');
   }
-
-  const [[withSlots], record] = await Promise.all([
-    withOpenSlots([withServableImage(offering, 'coverImage')]),
-    getServiceDealRecord({ sellerId, offeringId: id }),
-  ]);
-  return { ...withSlots, record };
+  return offering;
 }
 
 const feedOrderBy = {
   newest: [{ createdAt: 'desc' }, { id: 'desc' }],
   price_asc: [{ price: 'asc' }, { id: 'asc' }],
   price_desc: [{ price: 'desc' }, { id: 'desc' }],
+  // -1 until three buyers count, so offerings without a share sort after those with one.
+  happy: [{ happySortKey: 'desc' }, { id: 'desc' }],
 } satisfies Record<ServiceOfferingFeedSort, Prisma.ServiceOfferingOrderByWithRelationInput[]>;
 
 /**

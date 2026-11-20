@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
-import { SERVICE_PRICE_MIN } from '~/shared/constants/creator-service.constants';
+import {
+  SERVICE_HAPPY_MIN_REVIEWS,
+  SERVICE_PRICE_MIN,
+} from '~/shared/constants/creator-service.constants';
 
 /** The advisory-lock class for an offering's review writes and recounts. */
 const REVIEW_LOCK_CLASS = 'service-offering-reviews';
@@ -45,7 +48,7 @@ export const offeringReviewTotals = (offeringId: Prisma.Sql) => Prisma.sql`(
 
 /** The happy share once enough buyers count, else -1 (never null, so the sort pages cleanly). */
 export const happySortKey = (happy: Prisma.Sql, total: Prisma.Sql) =>
-  Prisma.sql`CASE WHEN ${total} >= 3 THEN ${happy}::float8 / ${total} ELSE -1 END`;
+  Prisma.sql`CASE WHEN ${total} >= ${SERVICE_HAPPY_MIN_REVIEWS}::int THEN ${happy}::float8 / ${total} ELSE -1 END`;
 
 /** Raw SQL so the offering's `updatedAt`, which its own content check keys on, is left alone. */
 async function recountOffering(tx: Db, offeringId: number) {

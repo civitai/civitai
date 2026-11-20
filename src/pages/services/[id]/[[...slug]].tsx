@@ -1,5 +1,12 @@
 import { Accordion, Badge, Button, Container, Group, Stack, Text, Title } from '@mantine/core';
-import { IconChecks, IconClock, IconFlag, IconInfoCircle, IconShare3 } from '@tabler/icons-react';
+import {
+  IconChecks,
+  IconClock,
+  IconFlag,
+  IconInfoCircle,
+  IconMoodHappy,
+  IconShare3,
+} from '@tabler/icons-react';
 import type { InferGetServerSidePropsType } from 'next';
 import type { ComponentProps } from 'react';
 import * as z from 'zod';
@@ -17,6 +24,7 @@ import {
   NoCover,
 } from '~/components/CreatorShop/Services/ServiceOfferingCard';
 import { ServiceOfferingMenu } from '~/components/CreatorShop/Services/ServiceOfferingMenu';
+import { ServiceReviews } from '~/components/CreatorShop/Services/ServiceReviews';
 import { servicePageHref } from '~/components/CreatorShop/section-meta';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
@@ -30,7 +38,10 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { SERVICE_PREVIEW_KIND_LABELS } from '~/shared/constants/creator-service.constants';
+import {
+  SERVICE_PREVIEW_KIND_LABELS,
+  serviceHappyShare,
+} from '~/shared/constants/creator-service.constants';
 import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
 import { Currency, ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -73,6 +84,7 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
   const isOwner = currentUser?.id === seller.id;
   const isModerator = !!currentUser?.isModerator;
   const isActive = offering.status === ServiceOfferingStatus.Active;
+  const happy = serviceHappyShare([offering]);
   const full = offering.slotsOpen === 0;
   const onTimePct = record.completed ? Math.round((record.onTime / record.completed) * 100) : null;
   const href = servicePageHref(offering.id, offering.title);
@@ -132,6 +144,11 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
               <IconBadge radius="sm" size="lg" icon={<IconClock size={18} />}>
                 <Text size="sm">~{pluralize(offering.deliveryDays, 'day')}</Text>
               </IconBadge>
+              {happy && (
+                <IconBadge radius="sm" size="lg" color="green" icon={<IconMoodHappy size={18} />}>
+                  <Text size="sm">{happy.percent}% happy</Text>
+                </IconBadge>
+              )}
             </Group>
           </Stack>
 
@@ -159,6 +176,7 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
                 </Title>
                 <Text className="whitespace-pre-wrap break-words">{offering.description}</Text>
               </Stack>
+              <ServiceReviews offering={offering} />
             </Stack>
 
             <Stack gap="md">
