@@ -3814,6 +3814,39 @@ describe('review publishing and counters', () => {
       expect(scanned).toEqual(expect.arrayContaining(['first', 'second', 'third']));
     });
 
+    it('keeps a hidden review from the seller, and rechecks text whose scan was skipped while hidden', async () => {
+      const id = await completedBy();
+      await review(id, 'NotQuite', BUYER, 'words');
+      const { id: reviewId } = await reviewRow(id);
+      await q(`UPDATE "ServiceDealReview" SET "scanStatus" = 'Scanned' WHERE id = $1`, [reviewId]);
+      const sellerSees = async () =>
+        (
+          await dealReviews.getDealReviewView({
+            dealId: id,
+            viewerRole: 'seller',
+            servableLevels: 31,
+          })
+        )?.review;
+      expect(await sellerSees()).toMatchObject({ comment: 'words', scanStatus: null });
+      await dealReviews.setServiceDealReviewHidden({
+        reviewId,
+        moderatorId: STRANGER,
+        hidden: true,
+      });
+      expect((await sellerSees())?.comment).toBeNull();
+      // The scan was skipped while hidden and left the text in Error.
+      await q(
+        `UPDATE "ServiceDealReview" SET "scanStatus" = 'Error', "scanWorkflowId" = 'wf' WHERE id = $1`,
+        [reviewId]
+      );
+      await dealReviews.setServiceDealReviewHidden({
+        reviewId,
+        moderatorId: STRANGER,
+        hidden: false,
+      });
+      expect(await reviewRow(id)).toMatchObject({ scanStatus: 'Pending' });
+    });
+
     it('a moderator hides and restores a review, and the counters follow', async () => {
       const id = await completedBy();
       await review(id, 'Happy');

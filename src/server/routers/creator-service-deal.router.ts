@@ -48,6 +48,7 @@ import {
   reviewServiceDeal,
   setServiceDealReviewHidden,
 } from '~/server/services/creator-service-deal-review.service';
+import { rateLimit } from '~/server/middleware.trpc';
 import { domainServableLevels, getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 
@@ -92,14 +93,18 @@ export const creatorServiceDealRouter = router({
       reviewFlag: !!ctx.features.creatorServicesNext,
     })
   ),
-  editReview: gated.input(editServiceDealReviewSchema).mutation(({ input, ctx }) =>
-    editServiceDealReview({
-      dealId: input.id,
-      userId: ctx.user.id,
-      comment: input.comment,
-      reviewFlag: !!ctx.features.creatorServicesNext,
-    })
-  ),
+  // Each edit is a fresh paid scan and a recount.
+  editReview: gated
+    .use(rateLimit({ limit: 10, period: 3600, errorMessage: 'Too many edits. Try again later.' }))
+    .input(editServiceDealReviewSchema)
+    .mutation(({ input, ctx }) =>
+      editServiceDealReview({
+        dealId: input.id,
+        userId: ctx.user.id,
+        comment: input.comment,
+        reviewFlag: !!ctx.features.creatorServicesNext,
+      })
+    ),
   replyToReview: gated.input(replyServiceDealReviewSchema).mutation(({ input, ctx }) =>
     replyToServiceDealReview({
       dealId: input.id,
@@ -113,14 +118,17 @@ export const creatorServiceDealRouter = router({
     .query(({ input, ctx }) =>
       listReviewAttachableFinals({ dealId: input.id, userId: ctx.user.id })
     ),
-  attachReviewImage: gated.input(attachServiceDealReviewImageSchema).mutation(({ input, ctx }) =>
-    attachFinalToReview({
-      dealId: input.id,
-      userId: ctx.user.id,
-      fileId: input.fileId,
-      reviewFlag: !!ctx.features.creatorServicesNext,
-    })
-  ),
+  attachReviewImage: gated
+    .use(rateLimit({ limit: 20, period: 3600, errorMessage: 'Too many images. Try again later.' }))
+    .input(attachServiceDealReviewImageSchema)
+    .mutation(({ input, ctx }) =>
+      attachFinalToReview({
+        dealId: input.id,
+        userId: ctx.user.id,
+        fileId: input.fileId,
+        reviewFlag: !!ctx.features.creatorServicesNext,
+      })
+    ),
   // Not behind the flag: moderation of what was published must outlast a brake.
   hideReview: moderatorProcedure.input(hideServiceDealReviewSchema).mutation(({ input, ctx }) =>
     setServiceDealReviewHidden({

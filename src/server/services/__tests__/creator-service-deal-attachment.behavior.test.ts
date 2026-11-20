@@ -1638,6 +1638,29 @@ describe('review images', () => {
     expect(images.createImage).not.toHaveBeenCalledWith(expect.objectContaining({ userId: BUYER }));
   });
 
+  it('deletes a copy that lost its slot to another attach while it was made', async () => {
+    const { dealId, finalId } = await reviewed();
+    preview.entryCopy.mockImplementationOnce(async () => {
+      // Another request links the same final while this one copies it.
+      const [{ id: reviewId }] = await q<{ id: number }>(
+        `SELECT id FROM "ServiceDealReview" WHERE "dealId" = $1`,
+        [dealId]
+      );
+      const [{ id }] = await q<{ id: number }>(
+        `INSERT INTO "Image" (url) VALUES ('w') RETURNING id`
+      );
+      await q(
+        `INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId", "sourceFileId") VALUES ($1, $2, $3)`,
+        [reviewId, id, finalId]
+      );
+      return { data: SCAN_COPY(2), mimeType: 'image/webp', width: 10, height: 10, frames: 1 };
+    });
+    await expect(attachFinal(dealId, finalId)).rejects.toEqual(refused);
+    const lost = (await images.createImage.mock.results.at(-1)!.value) as { id: number };
+    expect(images.deleteImages).toHaveBeenCalledWith([lost.id], expect.anything());
+    expect(await linked()).toHaveLength(1);
+  });
+
   it('stops at the cap', async () => {
     const { dealId, finalId } = await reviewed();
     const [{ id: reviewId }] = await q<{ id: number }>(

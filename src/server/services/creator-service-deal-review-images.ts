@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
-import { logToAxiom } from '~/server/logging/client';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { createScanImage, readObject } from '~/server/services/creator-service-deal-file.service';
 import { liveFile } from '~/server/services/creator-service-deal-file-sql';
 import { dealFinalsClear } from '~/server/services/creator-service-escrow.service';
@@ -76,47 +76,58 @@ export async function attachFinalToReview({
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Reviews are not available.' });
   const notAttachable = () =>
     new TRPCError({ code: 'CONFLICT', message: 'That file cannot be added to this review.' });
-  const [source] = await dbWrite.$queryRaw<{ s3Key: string }[]>`
-    SELECT f."s3Key" FROM "ServiceDealReview" r, "ServiceDeal" d, "ServiceDealFile" f
-    WHERE r."dealId" = ${dealId}::int AND f."id" = ${fileId}::int AND ${attachable(userId)}
-      AND ${attachedCount} < ${SERVICE_DEAL_REVIEW_IMAGE_MAX}`;
-  if (!source) throw notAttachable();
+  // One attach per review at a time, so a burst never makes a copy per request.
+  const attached = await withDistributedLock(
+    { key: `creator-service-deal-review-attach:${dealId}`, autoRenew: true, maxRetries: 0 },
+    async () => {
+      const [source] = await dbWrite.$queryRaw<{ s3Key: string }[]>`
+        SELECT f."s3Key" FROM "ServiceDealReview" r, "ServiceDeal" d, "ServiceDealFile" f
+        WHERE r."dealId" = ${dealId}::int AND f."id" = ${fileId}::int AND ${attachable(userId)}
+          AND ${attachedCount} < ${SERVICE_DEAL_REVIEW_IMAGE_MAX}`;
+      if (!source) throw notAttachable();
 
-  const copy = await buildEntryScanCopy(await readObject(await getBucket(), source.s3Key));
-  const { key } = await uploadImageBufferToStore(copy.data, { contentType: copy.mimeType });
-  const image = await createScanImage(key, copy, userId);
+      const copy = await buildEntryScanCopy(await readObject(await getBucket(), source.s3Key));
+      const { key } = await uploadImageBufferToStore(copy.data, { contentType: copy.mimeType });
+      const image = await createScanImage(key, copy, userId);
 
-  const linked = await dbWrite.$transaction(async (tx) => {
-    // The review row serialises the cap across concurrent attaches.
-    await tx.$queryRaw`SELECT 1 FROM "ServiceDealReview" WHERE "dealId" = ${dealId}::int FOR UPDATE`;
-    return tx.$executeRaw`
-      INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId", "sourceFileId")
-      SELECT r."id", ${image.id}::int, f."id"
-      FROM "ServiceDealReview" r, "ServiceDeal" d, "ServiceDealFile" f
-      WHERE r."dealId" = ${dealId}::int AND f."id" = ${fileId}::int AND ${attachable(userId)}
-        AND ${attachedCount} < ${SERVICE_DEAL_REVIEW_IMAGE_MAX}
-      ON CONFLICT DO NOTHING`;
-  });
-  if (!linked) {
-    logToAxiom({
-      name: 'creator-service-deal-review',
-      type: 'warning',
-      message: 'review image copy left unlinked',
-      payload: { dealId, fileId, imageId: image.id },
-    });
-    throw notAttachable();
-  }
-  return { imageId: image.id };
+      const linked = await dbWrite.$transaction(async (tx) => {
+        // The review row serialises the cap across concurrent attaches.
+        await tx.$queryRaw`SELECT 1 FROM "ServiceDealReview" WHERE "dealId" = ${dealId}::int FOR UPDATE`;
+        return tx.$executeRaw`
+          INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId", "sourceFileId")
+          SELECT r."id", ${image.id}::int, f."id"
+          FROM "ServiceDealReview" r, "ServiceDeal" d, "ServiceDealFile" f
+          WHERE r."dealId" = ${dealId}::int AND f."id" = ${fileId}::int AND ${attachable(userId)}
+            AND ${attachedCount} < ${SERVICE_DEAL_REVIEW_IMAGE_MAX}
+          ON CONFLICT DO NOTHING`;
+      });
+      if (!linked) {
+        // Lost to a change since the check: the copy was never shown, so it goes rather than lingers.
+        const { deleteImages } = await import('~/server/services/image.service');
+        await deleteImages([image.id], {
+          updatePosts: false,
+          actor: { system: 'creator-service-deal-review' },
+        });
+        throw notAttachable();
+      }
+
+      return { imageId: image.id };
+    }
+  );
+  if (!attached)
+    throw new TRPCError({ code: 'CONFLICT', message: 'Another image is being added. Try again.' });
+  return attached;
 }
 
 /**
  * True in SQL when a review image may be shown at `levels` (the viewer's levels, already limited to
- * what the domain serves), with `i` the image and `d` the review's deal: scanned clean of the flags
+ * what the domain serves), with `i` the image, `r` its review and `d` the deal: a review no
+ * moderator hid, scanned clean of the flags
  * a deal preview must pass, rated no higher than the deal, shown at the deal's level (so an X deal's
  * image that scanned PG is still X), and its seller still allows review work.
  */
 export const reviewImageVisibleSql = (levels: number) => Prisma.sql`(
-  i."ingestion" = 'Scanned'::"ImageIngestionStatus" AND NOT i."tosViolation"
+  r."hiddenAt" IS NULL AND i."ingestion" = 'Scanned'::"ImageIngestionStatus" AND NOT i."tosViolation"
   AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
   AND i."nsfwLevel" BETWEEN 1 AND d."maxNsfwLevel"
   AND (GREATEST(i."nsfwLevel", d."maxNsfwLevel") & ${levels}::int) <> 0

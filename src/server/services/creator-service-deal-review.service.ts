@@ -221,6 +221,18 @@ export async function setServiceDealReviewHidden({
       WHERE "id" = ${reviewId}::int AND ("hiddenAt" IS NULL) = ${hidden}
       RETURNING "dealId"`;
     if (!review) return false;
+    // A scan skipped while hidden left its text unsettled: a restore sends it back to its check.
+    if (!hidden)
+      await tx.$executeRaw`
+        UPDATE "ServiceDealReview" SET
+          "scanStatus" = CASE WHEN "scanStatus" IN ('Pending', 'Error') AND "comment" IS NOT NULL
+            THEN 'Pending' ELSE "scanStatus" END,
+          "scanWorkflowId" = CASE WHEN "scanStatus" IN ('Pending', 'Error') THEN NULL ELSE "scanWorkflowId" END,
+          "sellerReplyScanStatus" = CASE WHEN "sellerReplyScanStatus" IN ('Pending', 'Error')
+            THEN 'Pending' ELSE "sellerReplyScanStatus" END,
+          "sellerReplyScanWorkflowId" = CASE WHEN "sellerReplyScanStatus" IN ('Pending', 'Error')
+            THEN NULL ELSE "sellerReplyScanWorkflowId" END
+        WHERE "id" = ${reviewId}::int`;
     await syncDealReviewPublication(tx, review.dealId);
     return true;
   });
@@ -266,19 +278,21 @@ export async function getDealReviewView({
   if (!row?.enrolled) return null;
   const base = { settled: row.settled, finalsClear: row.finalsClear };
   if (row.id === null || row.verdict === null) return { ...base, review: null };
+  // The other party sees a text only once it passed its check and while no moderator hid the review.
   const sees = (author: 'buyer' | 'seller', status: string | null) =>
-    viewerRole === 'moderator' || viewerRole === author || status === 'Scanned';
+    viewerRole === 'moderator' || viewerRole === author || (status === 'Scanned' && !row.hidden);
+  const own = (author: 'buyer' | 'seller') => viewerRole === 'moderator' || viewerRole === author;
   return {
     ...base,
     review: {
       id: row.id,
       verdict: row.verdict,
       comment: sees('buyer', row.scanStatus) ? row.comment : null,
-      scanStatus: row.scanStatus,
+      scanStatus: own('buyer') ? row.scanStatus : null,
       published: !!row.publishedAt,
       editableUntil: row.editableUntil,
       sellerReply: sees('seller', row.sellerReplyScanStatus) ? row.sellerReply : null,
-      sellerReplyScanStatus: row.sellerReplyScanStatus,
+      sellerReplyScanStatus: own('seller') ? row.sellerReplyScanStatus : null,
       hidden: row.hidden,
       images: await getReviewImages({ reviewId: row.id, levels: servableLevels }),
     },
