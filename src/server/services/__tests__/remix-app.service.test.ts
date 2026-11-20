@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { fakeRemixRunner } from '~/__tests__/mocks/remix-runner.fake';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { createHash } from 'crypto';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
 import type * as InputUrls from '~/server/services/generation-input-urls';

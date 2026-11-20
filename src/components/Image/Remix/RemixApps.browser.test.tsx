@@ -112,6 +112,7 @@ const REMIX_MENU_APPS = SEED_REMIX_APPS.map(({ slug, name, description, target, 
   target,
   icon: spec.icon,
   enabled: true,
+  inReview: false,
   engine: 'engine' in spec ? spec.engine : DEFAULT_ENGINE,
   output: 'image' as const,
 }));

@@ -1882,28 +1882,21 @@ describe('a user app', () => {
         expect(written()).toHaveLength(0);
       });
 
-      it.each([
-        ['blocks', () => classify(pass, { author: blocked('nsfw_blocklist') }), ASKING_SOURCE],
-      ])(
-        "B: an author's part that %s sends the app back to review and refuses the run before the viewer's audit",
-        async (_, setUp, source) => {
-          stored = rowOf(source);
-          await bumpRemixAppRegistry();
-          setUp();
-          await expect(runAs(USER_ID)).rejects.toMatchObject({
-            code: 'PRECONDITION_FAILED',
-            message: REMIX_APP_HELD,
-          });
-          expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
-          expect(submits()).toHaveLength(0);
-          const [held] = written();
-          expect(held.status).toBe('remix_disabled');
-          expect(held.manifest.review).toBe('submitted');
-          expect(held.manifest.reviewLog).toEqual([
-            expect.objectContaining({ by: REMIX_SYSTEM_ACTOR, action: 'held-author-prompt' }),
-          ]);
-        }
-      );
+      it("B: an author's part that blocks sends the app back to review and refuses the run before the viewer's audit", async () => {
+        classify(pass, { author: blocked('nsfw_blocklist') });
+        await expect(runAs(USER_ID)).rejects.toMatchObject({
+          code: 'PRECONDITION_FAILED',
+          message: REMIX_APP_HELD,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(submits()).toHaveLength(0);
+        const [held] = written();
+        expect(held.status).toBe('remix_disabled');
+        expect(held.manifest.review).toBe('submitted');
+        expect(held.manifest.reviewLog).toEqual([
+          expect.objectContaining({ by: REMIX_SYSTEM_ACTOR, action: 'held-author-prompt' }),
+        ]);
+      });
 
       it('B: a pass the classifier could not vouch for refuses the run, and holds nothing', async () => {
         classify(pass, { author: { ...pass, externalError: { message: 'down' } } });
