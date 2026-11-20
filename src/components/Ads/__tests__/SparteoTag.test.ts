@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
-import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 
 // next/script keeps a process-wide record of loaded srcs that resetModules cannot clear, so a
@@ -10,7 +9,7 @@ vi.mock('next/script', () => ({
   default: (props: Record<string, unknown>) => React.createElement('script', props),
 }));
 
-const act = (React as unknown as { act: typeof actType }).act;
+const act = (React as unknown as { act: (cb: () => unknown) => Promise<void> }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const SPARTEO = 1028;
