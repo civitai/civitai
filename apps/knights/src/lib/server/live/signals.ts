@@ -1,10 +1,13 @@
 import { env } from '$env/dynamic/private';
+import { logToAxiom } from '../axiom';
 import { storedSettings } from '../settings/runtime';
 
 const TIMEOUT_MS = 3000;
 
 const switchedOff = (raw: string | undefined) =>
   ['true', '1', 'yes', 'on'].includes((raw ?? '').trim().toLowerCase());
+
+const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 const base = () => env.SIGNALS_ENDPOINT?.trim().replace(/\/+$/, '') || undefined;
 
@@ -25,13 +28,33 @@ export async function getSignalsAccessToken(userId: number): Promise<string | nu
     const res = await fetch(`${endpoint}/users/${userId}/accessToken`, {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      tokenFailed({ userId, status: res.status });
+      return null;
+    }
     const data = (await res.json()) as { accessToken?: string | null };
     return data.accessToken ?? null;
-  } catch {
+  } catch (error) {
+    tokenFailed({ userId, error: reason(error) });
     return null;
   }
 }
+
+const tokenFailed = (details: Record<string, unknown>) =>
+  void logToAxiom({
+    type: 'error',
+    name: 'knights-live-token-failed',
+    message: 'The signal service did not mint an access token',
+    details,
+  });
+
+const sendFailed = (details: Record<string, unknown>) =>
+  void logToAxiom({
+    type: 'error',
+    name: 'knights-live-update-failed',
+    message: 'A live update did not reach the signal service',
+    details,
+  });
 
 async function post(path: string, data: unknown) {
   const endpoint = base();
@@ -43,9 +66,9 @@ async function post(path: string, data: unknown) {
       headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    if (!res.ok) console.error('knights: a live update was refused', { path, status: res.status });
+    if (!res.ok) sendFailed({ path, status: res.status });
   } catch (error) {
-    console.error('knights: could not send a live update', { path, error });
+    sendFailed({ path, error: reason(error) });
   }
 }
 

@@ -36,6 +36,7 @@ type fakeRegistry struct {
 // must not be used once its handler returned, nor from two goroutines at once.
 type fakeConn struct {
 	cursor  string
+	auth    string // the Authorization header the subscription carried
 	ops     chan func(w http.ResponseWriter)
 	started bool
 	done    chan struct{}
@@ -63,7 +64,7 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			_, _ = io.WriteString(w, `{"error":"bad_request","message":"unexpected request"}`)
 			return
 		}
-		c := &fakeConn{cursor: req.URL.Query().Get("cursor"),
+		c := &fakeConn{cursor: req.URL.Query().Get("cursor"), auth: req.Header.Get("Authorization"),
 			ops: make(chan func(http.ResponseWriter)), done: make(chan struct{}), gone: req.Context().Done()}
 		select {
 		case r.conns <- c:
@@ -198,6 +199,8 @@ type harness struct {
 	promReg *prometheus.Registry
 	api     *httptest.Server
 	backoff Backoff
+	// tokens, when set before start, is the consumer's token source.
+	tokens TokenSource
 
 	mu     sync.Mutex
 	delays []time.Duration
@@ -230,6 +233,7 @@ func (h *harness) start(t *testing.T, layout int) {
 		Log:     slog.New(slog.DiscardHandler),
 		Metrics: h.m,
 		Backoff: h.backoff,
+		Tokens:  h.tokens,
 		Sleep: func(ctx context.Context, d time.Duration) error {
 			h.mu.Lock()
 			h.delays = append(h.delays, d)

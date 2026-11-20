@@ -1559,7 +1559,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Ideogram,
     defaults: {
-      model: { id: 3375798 },
+      model: { id: 3480351 },
       modelLocked: true,
     },
   },
@@ -2517,6 +2517,7 @@ export const BM = {
   GeminiOmni: 119,
   Fibo2: 120,
   Fibo2Turbo: 121,
+  Ideogram46: 122,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2538,11 +2539,12 @@ export const supportOverrides: SupportOverride[] = [
   // SD3 group - no training (redundant since all SD3 models are disabled, but kept for documentation)
   // { ecosystemId: ECO.SD3, supportType: 'training', enabled: false },
   // { ecosystemId: ECO.SD35M, supportType: 'training', enabled: false },
-  // Not licensed for on-site generation. Ideogram 4.5 shares the ecosystem but is licensed
-  // separately, so this is per base model, never per ecosystem.
+  // Not licensed for on-site generation. Ideogram 4.5 and 4.6 share the ecosystem but are
+  // licensed separately, so this is per base model, never per ecosystem.
   { baseModelId: BM.Ideogram, supportType: 'generation', disabled: true },
-  // An API model with no LoRA input; the ecosystem's LoRA support is Ideogram 4.0's.
+  // API models with no LoRA input; the ecosystem's LoRA support is Ideogram 4.0's.
   { baseModelId: BM.Ideogram45, supportType: 'generation', modelTypes: ['Checkpoint'] },
+  { baseModelId: BM.Ideogram46, supportType: 'generation', modelTypes: ['Checkpoint'] },
 ];
 
 // =============================================================================
@@ -3378,6 +3380,16 @@ export const baseModelRecords: BaseModelRecord[] = [
   {
     id: BM.Ideogram45,
     name: 'Ideogram 4.5',
+    description: "Ideogram, Inc.'s text-to-image and image editing model with strong typography",
+    type: 'image',
+    ecosystemId: ECO.Ideogram,
+    hidden: true,
+    licenseId: 47,
+    matureRestricted: ['generation', 'models', 'images'],
+  },
+  {
+    id: BM.Ideogram46,
+    name: 'Ideogram 4.6',
     description: "Ideogram, Inc.'s text-to-image and image editing model with strong typography",
     type: 'image',
     ecosystemId: ECO.Ideogram,

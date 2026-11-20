@@ -50,10 +50,10 @@ export const isModeratedSql = sql<SqlBool>`COALESCE("KnightsQueueItem"."meta" ? 
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 
 /**
- * Images Knights may show players: a published post, a rated image with no block marker, no review hold, and no
- * real-person or minor flag (those go to the moderators' own queues). Expects `Image as img` joined to `Post as p`.
+ * The image half of `servableImage`, whatever its post's state: a rated still image with no block marker, no review hold,
+ * and no real-person or minor flag (those go to the moderators' own queues). Expects `Image as img` joined to `Post as p`.
  */
-export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
   eb.and([
     eb('img.type', '=', 'image'),
     eb('img.nsfwLevel', 'not in', [0, NsfwLevel.Blocked]),
@@ -63,6 +63,15 @@ export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
     eb('img.acceptableMinor', '=', false),
     eb('img.poi', '=', false),
     eb('img.minor', '=', false),
+  ]);
+
+/**
+ * Images Knights may show players: `servableImageContent` on a published post. Expects `Image as img` joined to
+ * `Post as p`.
+ */
+export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+  eb.and([
+    servableImageContent(eb),
     eb('p.publishedAt', 'is not', null),
     eb('p.publishedAt', '<', sql<Date>`(now() AT TIME ZONE 'utc')`),
   ]);

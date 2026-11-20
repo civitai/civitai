@@ -1,19 +1,24 @@
-import { heldImageSql, heldUserSql, reviewSuspectImageSql } from './held-media';
+import {
+  CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
+  heldImageSql,
+  heldUserSql,
+  reviewSuspectImageSql,
+} from './held-media';
 import {
   BAN_REASONS_ALWAYS_REMOVING_MEDIA,
   evidenceHeldUrlSql,
   heldUrlSql,
   MINOR_UNPUBLISH_REASONS,
+  reportListedUrlSql,
 } from './held-url';
 import { blockedForSignal, type BlockedForPatterns } from './review-batch';
 
 /**
- * Who may see a blocked image on this route:
- * - `plain`: any moderator.
- * - `suspect`: only moderators cleared for CSAM review, for an image carrying a CSAM or minor signal,
- *   a block with no reason or a reason `blockedForSignal` reads as a signal, or an owner named on a
- *   report or held.
- * Held media (`heldImageSql`) and an image under an evidence hold are never served here; the
+ * A blocked image's signal tier, as the review routing reads it: `suspect` for an image carrying a
+ * CSAM or minor signal, a block with no reason or a reason `blockedForSignal` reads as a signal, or
+ * an owner named on a report or held; `plain` otherwise. Which moderators may see it on the
+ * retracted-media routes is `csamRestrictedSql`'s call, not the tier's.
+ * Held media (`heldImageSql`) and an image row under an evidence hold are never served there; the
  * held-media route serves the first. With `cdnLeg`, a scanned image is also eligible while the image
  * CDN has retracted its url, unless the url is held (`heldUrlSql`) or another image row, a moderator
  * delete or a shop takedown shares it.
@@ -22,12 +27,8 @@ export type RetractedTier = 'plain' | 'suspect';
 
 /** Whether this route may serve the "Image" row aliased `image` at all, to anyone: it is blocked
  *  (or, with `cdnLeg`, scanned with its url retracted and not held), not held media, and not under
- *  an evidence hold. With `covered`, held media and held urls are eligible too, never a url carrying
- *  evidence-held bytes; the caller refuses reported bytes (`reportListedUrlSql`) itself. */
-export function retractedImageWhereSql(
-  image: string,
-  { cdnLeg = false, covered = false } = {}
-): string {
+ *  an evidence hold. */
+export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const eligible = cdnLeg
     ? `(${image}.ingestion = 'Blocked' OR (
@@ -35,22 +36,59 @@ export function retractedImageWhereSql(
       AND EXISTS (
         SELECT 1 FROM "ImageCdnAccess" ca WHERE ca.url = ${image}."url" AND ca.state = 'Retracted'
       )
-${
-  covered ? '' : `      AND NOT ${heldUrlSql(`${image}."url"`)}\n`
-}      -- Bytes are per url, the tier per row: another row's signal would not reach this one, so the
+      AND NOT ${heldUrlSql(`${image}."url"`)}
+      -- Bytes are per url, the tier per row: another row's signal would not reach this one, so the
       -- url must be this row's alone, with no deleted or taken-down copy behind it either.
       AND NOT EXISTS (SELECT 1 FROM "Image" so WHERE so.url = ${image}."url" AND so.id <> ${image}.id)
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" sd WHERE sd.url = ${image}."url")
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" st WHERE st.url = ${image}."url")
     ))`
     : `${image}.ingestion = 'Blocked'`;
-  if (covered) return `(${eligible} AND NOT ${evidenceHeldUrlSql(`${image}."url"`)})`;
   return `(
     ${eligible}
     -- NULL for an image with no review flag or block reason, so COALESCE before the NOT.
     AND NOT COALESCE(${heldImageSql(image)}, false)
     AND NOT EXISTS (SELECT 1 FROM "EvidenceHoldImage" rh WHERE rh."imageId" = ${image}.id)
   )`;
+}
+
+/**
+ * Whether the "Image" row aliased `image` is kept to moderators cleared for CSAM review: marked as
+ * CSAM (in the CSAM queue, blocked as CSAM, a CSAM hash, a CSAM scan flag, hold or vote), listed on a
+ * CSAM report, its owner reported, held or banned for minor safety, blocked with no reason, or its
+ * bytes (by url or pHash copy) reported, held or under an evidence hold. A minor signal alone is not
+ * here: any moderator may see it. `blockedFor` text and the scanner's labels are read by the caller.
+ */
+export function csamRestrictedSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+  const id = `${image}.id`;
+  const url = `${image}."url"`;
+  const minorBans = BAN_REASONS_ALWAYS_REMOVING_MEDIA.map((r) => `'${r}'`).join(', ');
+  return `COALESCE((
+    COALESCE(${heldImageSql(image)}, false)
+    OR (${image}."blockedFor" IS NULL AND ${image}.ingestion = 'Blocked')
+    OR EXISTS (SELECT 1 FROM "BlockedImage" cb WHERE cb.hash = ${image}."pHash" AND cb.reason = 'CSAM')
+    OR EXISTS (
+      SELECT 1 FROM "ScanLabelItem" ci
+      WHERE ci."imageId" = ${id} AND (
+        ci."voidReason" = 'csam-hold'
+        OR EXISTS (
+          SELECT 1 FROM "ScanLabelFlag" cf WHERE cf."itemId" = ci.id AND cf.snapshot ->> 'csam' = 'true'
+        )
+        OR EXISTS (
+          SELECT 1 FROM "ScanLabelVote" cv WHERE cv."itemId" = ci.id AND cv.reason = 'csam-realistic'
+        )
+      )
+    )
+    OR (${id})::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
+    OR EXISTS (
+      SELECT 1 FROM "User" cu
+      WHERE cu.id = ${image}."userId" AND cu.meta -> 'banDetails' ->> 'reasonCode' IN (${minorBans})
+    )
+    OR ${reportListedUrlSql(url)}
+    OR ${evidenceHeldUrlSql(url)}
+    OR ${heldUrlSql(url)}
+  ), true)`;
 }
 
 /** Whether the "Image" row aliased `image` has a signal that puts it in the `suspect` tier, read in
@@ -97,8 +135,8 @@ export type ScannerVerdict = 'hit' | 'clear' | 'none';
 /**
  * A process-local cache of scanner verdicts, so a page of tiles, or a video's range requests, does
  * not query ClickHouse once per request. A blocked image's labels are written by its scan, which has
- * finished, so a verdict held for `ttlMs` is not expected to go stale. An unreadable answer (null) is
- * never cached: the next request asks again.
+ * finished, so a `hit` or `clear` held for `ttlMs` is not expected to go stale. An unreadable answer
+ * (null) and `none` are never cached: rows can land after the verdict, so the next request asks again.
  */
 export function createScannerVerdictCache(
   read: (imageId: number) => Promise<ScannerVerdict | null>,
@@ -111,7 +149,7 @@ export function createScannerVerdictCache(
       if (hit && now() - hit.at < ttlMs) return hit.verdict;
       entries.delete(imageId);
       const verdict = await read(imageId);
-      if (verdict === null) return null;
+      if (verdict === null || verdict === 'none') return verdict;
       if (entries.size >= max) entries.delete(entries.keys().next().value as number);
       entries.set(imageId, { verdict, at: now() });
       return verdict;

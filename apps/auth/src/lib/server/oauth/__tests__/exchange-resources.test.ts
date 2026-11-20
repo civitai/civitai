@@ -69,6 +69,7 @@ describe('parseExchangeResources', () => {
           relays: ['relay-1'],
           introspectors: ['origin-1'],
           services: [],
+          serviceSubjects: [],
         },
       ],
       serviceErrors: [],

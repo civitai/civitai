@@ -367,6 +367,12 @@ function ComicReader() {
                     projectName={project.name}
                     chapterName={activeChapter.name}
                     panels={activeChapter.panels}
+                    comicInfo={{
+                      projectId: project.id,
+                      writer: project.username,
+                      chapterPosition: activeChapter.position,
+                      chapterNsfwLevel: activeChapter.nsfwLevel,
+                    }}
                   />
                 )}
               </Group>

@@ -15,7 +15,8 @@ import (
 
 // Config is the service's settings.
 type Config struct {
-	Addr string // CONTENT_POLICY_ADDR: POST /v1/decide, /healthz, /readyz, /metrics
+	Addr        string // CONTENT_POLICY_ADDR: POST /v1/decide, /healthz, /readyz
+	MetricsAddr string // CONTENT_POLICY_METRICS_ADDR: GET /metrics only; must differ from Addr
 
 	// DatabaseURL is the read target for user settings: DATAPACKET_DATABASE_RO_URL, else
 	// DATABASE_REPLICA_URL, else DATABASE_URL (feed-go's order). Only one SELECT by primary key runs.
@@ -33,6 +34,7 @@ type Config struct {
 // Defaults.
 const (
 	DefaultAddr          = ":8080"
+	DefaultMetricsAddr   = ":9090"
 	DefaultLookupTimeout = 250 * time.Millisecond
 	DefaultCacheTTL      = 30 * time.Second
 	DefaultCacheMax      = 100_000
@@ -43,6 +45,12 @@ func Load(getenv func(string) string) (*Config, error) {
 	c := &Config{Addr: getenv("CONTENT_POLICY_ADDR")}
 	if c.Addr == "" {
 		c.Addr = DefaultAddr
+	}
+	if c.MetricsAddr = getenv("CONTENT_POLICY_METRICS_ADDR"); c.MetricsAddr == "" {
+		c.MetricsAddr = DefaultMetricsAddr
+	}
+	if c.MetricsAddr == c.Addr {
+		return nil, fmt.Errorf("CONTENT_POLICY_METRICS_ADDR must differ from CONTENT_POLICY_ADDR (both %q): /metrics has its own listener", c.Addr)
 	}
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "DATABASE_REPLICA_URL", "DATABASE_URL"} {
 		if v := getenv(k); v != "" {

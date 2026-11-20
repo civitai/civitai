@@ -27,6 +27,7 @@ export const seedanceVersionIds = {
   'v2-fast': 2868300,
   'v2-mini': 3069790,
   'v2.5': 3207504,
+  'v2.5-flash': 3480344,
 } as const;
 
 const seedanceVersionOptions = [
@@ -34,6 +35,12 @@ const seedanceVersionOptions = [
   { label: 'v2 fast', value: seedanceVersionIds['v2-fast'] },
   { label: 'v2 mini', value: seedanceVersionIds['v2-mini'] },
   { label: 'v2.5', value: seedanceVersionIds['v2.5'] },
+  { label: 'v2.5 flash', value: seedanceVersionIds['v2.5-flash'] },
+];
+
+const thirtySecondVersionIds: number[] = [
+  seedanceVersionIds['v2.5'],
+  seedanceVersionIds['v2.5-flash'],
 ];
 
 const seedanceAspectRatioList: GenerationAspectRatio[] = [
@@ -90,7 +97,11 @@ export const seedance = defineGraph<FamilyExt>({ scope: familyScope })
     })
   )
   .field('duration', ({ model }) => ({
-    ...sliderDef({ min: 4, max: model?.id === seedanceVersionIds['v2.5'] ? 30 : 15, default: 5 }),
+    ...sliderDef({
+      min: 4,
+      max: model && thirtySecondVersionIds.includes(model.id) ? 30 : 15,
+      default: 5,
+    }),
     scope: perModelScope({ model }),
   }))
   .field('generateAudio', boolDef(false))

@@ -38,7 +38,7 @@ import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import {
   queueArticlesAndComicsForImages,
-  queueModelsForImageChildTagChanges,
+  queueDocumentsForImageMinorChanges,
 } from '~/server/services/image-models-reindex.service';
 import {
   tagIdsForImagesCache,
@@ -1364,7 +1364,7 @@ export async function applyIngestionSideEffects({
     // comics through minorImageIds; otherwise they are queued here.
     const minorChanged = !!outcome.audit && !!outcome.audit.minor !== !!image.minor;
     if (!minorChanged) await queueArticlesAndComicsForImages([image.id]);
-    await queueModelsForImageChildTagChanges({
+    await queueDocumentsForImageMinorChanges({
       levelImageIds: [image.id],
       ...(minorChanged && { minorImageIds: [image.id] }),
     });

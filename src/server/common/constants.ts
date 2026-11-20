@@ -1095,6 +1095,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Seedance: baseLicenses['seedream'],
   'Ideogram 4.0': baseLicenses['ideogram nc'],
   'Ideogram 4.5': baseLicenses['ideogram tos'],
+  'Ideogram 4.6': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
   'MiniMax H3 Image': baseLicenses['minimax h3 image'],
@@ -1305,6 +1306,11 @@ export const IMAGES_SEARCH_INDEX = 'images_v6';
 export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
+/**
+ * Indexes the browser searches through `/api/search` only, never with its search token: their hits
+ * carry pictures rated above the document's own level, which only the server caps per viewer.
+ */
+export const PROXY_ONLY_SEARCH_INDEXES: readonly string[] = [COLLECTIONS_SEARCH_INDEX];
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
 export const TOOLS_SEARCH_INDEX = 'tools_v2';
 export const COMICS_SEARCH_INDEX = 'comics_v1';
