@@ -28,9 +28,12 @@ vi.mock('~/server/clickhouse/tracker', () => ({
   },
 }));
 
-const { applyComFaceHeldVerdict, applyModelNsfwTextScan, finishHeldVerdictApply } = await import(
-  '~/server/services/text-scan/actions/model-nsfw'
-);
+const {
+  applyComFaceHeldVerdict,
+  applyHeldVerdictLeavingPrivate,
+  applyModelNsfwTextScan,
+  finishHeldVerdictApply,
+} = await import('~/server/services/text-scan/actions/model-nsfw');
 const { enqueueJobs } = await import('~/server/services/job-queue.service');
 const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
 const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
@@ -558,9 +561,15 @@ describe('applyComFaceHeldVerdict', () => {
       const sql = Array.isArray(strings)
         ? Prisma.sql(strings as TemplateStringsArray, ...values)
         : (strings as Prisma.Sql);
+      // The moderator activity log is not under test here.
+      if (sql.text.includes('"ModActivity"')) return 1;
       return (await pg.query(sql.text, sql.values)).affectedRows ?? 0;
     },
-    $queryRaw: async () => [],
+    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = Prisma.sql(strings, ...values);
+      return (await pg.query(sql.text, sql.values)).rows;
+    },
+    modActivity: { create: async () => ({}) },
   };
   const held = { comFaceHeldVerdict: { at: '2026-11-20T00:00:00Z', level: NsfwLevel.X } };
   const face = { sfwName: 'Retro', sfwDescription: '<p>Retro.</p>', sfwCoverImageId: 5 };
@@ -652,5 +661,69 @@ describe('applyComFaceHeldVerdict', () => {
     await insert(row);
     expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(false);
     expect((await read()).nsfw).toBe(false);
+  });
+
+  it('keeps the verdict as a lead on a Private model, so leaving Private rates it', async () => {
+    await insert({ availability: 'Private' });
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(false);
+    expect((await read()).meta).toMatchObject({ restrictedNsfwVerdict: { source: 'text-scan' } });
+
+    await pg.query(`UPDATE "Model" SET availability = 'Public' WHERE id = 1`);
+    expect(await applyHeldVerdictLeavingPrivate(db as never, 1)).toBe(true);
+    expect((await read()).nsfw).toBe(true);
+  });
+
+  it('records no lead under a moderator lock: that is already a ruling', async () => {
+    await insert({ locked: ['nsfw'] });
+    await applyComFaceHeldVerdict(db as never, 1);
+    expect((await read()).meta).not.toHaveProperty('restrictedNsfwVerdict');
+  });
+
+  // The scan read the face before the owner's save dropped it, and writes its hold after.
+  it('rates a model whose face was dropped while the scan checked it', async () => {
+    await insert({ meta: {} });
+    const stale = {
+      ...model({ ...face, nsfwLevel: NsfwLevel.PG }),
+      meta: {
+        sfwFaceCheckedAt: {
+          at: 'x',
+          promptId: 7,
+          hash: sfwFaceStampHash({ ...face, versionFields: [] }),
+        },
+      },
+    };
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(stale);
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ nsfwLevel: NsfwLevel.PG });
+    dbMock.dbWrite.$executeRaw.mockImplementation(db.$executeRaw as never);
+    await applyModelNsfwTextScan(args(true), {
+      checkSfwFace: vi.fn(),
+      getOwnVersionFields: vi.fn(async () => []),
+    });
+    const row = await read();
+    expect(row.nsfw).toBe(true);
+    expect(row.meta).not.toHaveProperty('comFaceHeldVerdict');
+  });
+
+  it('holds the verdict while the face is still there (control)', async () => {
+    await insert({ ...face, meta: {} });
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      ...model({ ...face, nsfwLevel: NsfwLevel.PG }),
+      meta: {
+        sfwFaceCheckedAt: {
+          at: 'x',
+          promptId: 7,
+          hash: sfwFaceStampHash({ ...face, versionFields: [] }),
+        },
+      },
+    });
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ nsfwLevel: NsfwLevel.PG });
+    dbMock.dbWrite.$executeRaw.mockImplementation(db.$executeRaw as never);
+    await applyModelNsfwTextScan(args(true), {
+      checkSfwFace: vi.fn(),
+      getOwnVersionFields: vi.fn(async () => []),
+    });
+    const row = await read();
+    expect(row.nsfw).toBe(false);
+    expect(row.meta).toMatchObject({ comFaceHeldVerdict: { level: NsfwLevel.X } });
   });
 });

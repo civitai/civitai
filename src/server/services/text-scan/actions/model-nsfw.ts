@@ -331,6 +331,8 @@ export async function applyComFaceHeldVerdict(db: RawDb, modelId: number) {
     Prisma.sql`AND NOT m.nsfw AND ${asJsonbObjectSql('m.meta')} ? 'comFaceHeldVerdict'
       AND ${noComFaceSql}`
   );
+  // Where the rating may not be overridden, the verdict waits as a moderator's lead instead.
+  if (!flipped) await holdRestrictedVerdict(db, modelId, 'text-scan');
   await db.$executeRaw`
     UPDATE "Model" m
     SET meta = m.meta - 'comFaceHeldVerdict'
@@ -341,14 +343,16 @@ export async function applyComFaceHeldVerdict(db: RawDb, modelId: number) {
   return flipped > 0;
 }
 
+/** Held only while the face is still there, in one statement under the row lock. */
 async function holdComFaceVerdict(db: RawDb, modelId: number, level: number) {
-  await db.$executeRaw`
+  const held = await db.$executeRaw`
     UPDATE "Model" m
     SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       'comFaceHeldVerdict', jsonb_build_object('at', now(), 'level', ${level}::int)
     )
-    WHERE m.id = ${modelId}
+    WHERE m.id = ${modelId} AND NOT ${noComFaceSql}
   `;
+  return held > 0;
 }
 
 async function dropComFaceHeldVerdict(db: RawDb, modelId: number) {
@@ -558,7 +562,7 @@ export async function applyModelNsfwTextScan(
   });
   if (!model) return nothing;
 
-  const result = await applySystemModelNsfwFlag({
+  let result = await applySystemModelNsfwFlag({
     model,
     source: 'text-scan',
     hasCleanComFace: () =>
@@ -575,8 +579,12 @@ export async function applyModelNsfwTextScan(
     result,
     level: outcome.nsfw.detectedLevel,
   });
-  if (result === 'skipped_com_face')
-    await holdComFaceVerdict(dbWrite, entityId, outcome.nsfw.detectedLevel);
+  // A face dropped while the check ran is no face: the scan rates the model after all.
+  if (
+    result === 'skipped_com_face' &&
+    !(await holdComFaceVerdict(dbWrite, entityId, outcome.nsfw.detectedLevel))
+  )
+    result = await applySystemModelNsfwFlag({ model, source: 'text-scan' });
   // A complete .com face already lists it on .com: the notice's advice to add one does not apply.
   if (result !== 'applied' || hasCompleteSfwFace(model)) return nothing;
 
