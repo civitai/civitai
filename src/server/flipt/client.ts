@@ -1,4 +1,4 @@
-import { createFliptClient, fliptEvalErrorRecord } from '@civitai/flipt';
+import { createFliptClient } from '@civitai/flipt';
 import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
 
@@ -838,7 +838,15 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
       'temp-search'
     );
   },
-  onEvalError: (error, flag) => logToAxiom(fliptEvalErrorRecord(error, flag)),
+  // One record per error, the stack in a field, so its stdout copy stays one line.
+  onEvalError: (error, flag) =>
+    logToAxiom({
+      name: 'flipt-eval-error',
+      type: 'error',
+      flag,
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    }),
 }));
 
 // 🔴 THE ENTITY-ID TRAP. All four evaluators below take `(flag, entityId?,

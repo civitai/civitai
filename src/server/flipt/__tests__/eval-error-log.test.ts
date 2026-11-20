@@ -1,6 +1,7 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createAxiomLogger } from '@civitai/axiom/client';
-import { createFliptClient, fliptEvalErrorRecord } from '@civitai/flipt';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import snapshot from '~/server/services/__tests__/fixtures/flipt-store-scope.snapshot.json';
 import {
   startFliptFixtureServer,
@@ -8,74 +9,53 @@ import {
 } from '~/server/services/__tests__/fixtures/flipt-fixture-server';
 
 /**
- * A Flipt evaluation error, as `~/server/flipt/client` logs it: the real client and wasm engine
- * against a snapshot without the key, through a production-mode app logger. That module's
- * `~/env/server` cannot load in a unit run, so its one-line `onEvalError` is repeated here.
+ * The app's own Flipt client (`~/server/flipt/client`, its production options) against a snapshot
+ * without the key: the real wasm engine throws, and its `onEvalError` must log one record.
  */
 
 let server: FliptFixtureServer;
-let errorSpy: ReturnType<typeof vi.spyOn>;
-const sink: { body: string; data: Record<string, unknown> }[] = [];
-
-function build() {
-  const { logToAxiom } = createAxiomLogger(
-    { isProd: true, token: undefined, orgId: undefined, datastream: 'fixture-default' },
-    { emitLog: (body, data) => sink.push({ body, data }) }
-  );
-  return createFliptClient({
-    url: server.url,
-    clientToken: 'test-token',
-    environment: 'civitai-app',
-    log: () => undefined,
-    onInitError: (e) => {
-      throw e;
-    },
-    onEvalError: (error, flag) => logToAxiom(fliptEvalErrorRecord(error, flag)),
-  });
-}
+let flipt: typeof FliptClient;
+let previousClient: typeof globalThis.__civitaiFliptClient;
 
 beforeAll(async () => {
   server = await startFliptFixtureServer(snapshot);
+  setEnv({ FLIPT_URL: server.url, FLIPT_FETCHER_SECRET: 'test-token' });
+  // The client is pinned on globalThis and the module may already be loaded in this worker, so
+  // both are cleared to build one against the fixture server.
+  previousClient = globalThis.__civitaiFliptClient;
+  globalThis.__civitaiFliptClient = undefined;
+  vi.resetModules();
+  flipt = await import('~/server/flipt/client');
 });
 
 afterAll(async () => {
+  flipt?.getFliptClientSync()?.close();
+  globalThis.__civitaiFliptClient = previousClient;
   await server.close();
 });
 
-beforeEach(() => {
-  sink.length = 0;
-  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-});
+const evalErrorRecords = () =>
+  (loggingMock.logToAxiom.mock.calls as unknown[][])
+    .map(([data]) => data as Record<string, unknown>)
+    .filter((data) => data?.name === 'flipt-eval-error');
 
-afterEach(() => {
-  errorSpy.mockRestore();
-});
+describe('~/server/flipt/client evaluation errors', () => {
+  it('log one record with the flag key, the message and the stack', async () => {
+    await flipt.ensureFliptInitialized();
+    // Instrument control: the engine is live, and a key it has evaluates without an error.
+    expect(await flipt.readFliptBoolean('app-blocks-enabled')).toBe(false);
+    const before = evalErrorRecords().length;
 
-describe('a Flipt evaluation error', () => {
-  it('is one single-line structured record carrying the flag key, the message and the stack', async () => {
-    const flipt = build();
-    await flipt.ensureInitialized();
-    // Instrument control: the engine is live, and a key it has evaluates without logging.
-    expect(await flipt.readBoolean('app-blocks-enabled')).toBe(false);
-    expect(errorSpy).not.toHaveBeenCalled();
+    expect(await flipt.isFlipt('fixture-no-such-flag')).toBe(false);
 
-    expect(await flipt.isEnabled('fixture-no-such-flag')).toBe(false);
-
-    expect(errorSpy).toHaveBeenCalledTimes(1);
-    const args = errorSpy.mock.calls[0] as unknown[];
-    expect(args).toHaveLength(1);
-    const line = args[0] as string;
-    expect(line).not.toContain('\n');
-    const record = JSON.parse(line);
-    expect(record).toMatchObject({
-      _axiom: 'fixture-default',
+    const records = evalErrorRecords().slice(before);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
       name: 'flipt-eval-error',
       type: 'error',
       flag: 'fixture-no-such-flag',
     });
-    expect(record.message).toMatch(/fixture-no-such-flag/);
-    expect(record.stack).toContain('\n');
-
-    expect(sink.map((s) => s.body)).toEqual([line]);
+    expect(records[0].message).toMatch(/fixture-no-such-flag/);
+    expect(records[0].stack).toContain('\n');
   });
 });
