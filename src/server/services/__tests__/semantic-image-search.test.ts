@@ -117,6 +117,7 @@ import { searchSemanticImages } from '~/server/services/semantic-image-search.se
 /** A session's views (`credentialViews`); the narrow-key cases pass their own after it. */
 const SESSION_VIEWS = { asModerator: true, asOwner: true };
 import { anchorBrowsingLevel } from '~/server/services/semantic-query-guard';
+import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import type { CandidateSource } from '~/server/services/semantic-search-client';
 
@@ -160,6 +161,7 @@ beforeEach(() => {
   h.isFlipt.mockReset().mockResolvedValue(false);
   h.evalBoolean.mockReset().mockReturnValue({ enabled: false });
   h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
+  dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([] as never);
 });
 
 describe('a stale index cannot surface a hidden image', () => {
@@ -310,6 +312,61 @@ describe('a stale index cannot surface a hidden image', () => {
       })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(calls).toEqual([]);
+  });
+});
+
+describe('the shared held-media rule', () => {
+  const HELD_IMAGE = 202;
+  const HELD_OWNER_IMAGE = 204;
+  const HELD = new Set([HELD_IMAGE, HELD_OWNER_IMAGE]);
+
+  /** Postgres answering the held query: the held ids among those it was asked about. */
+  function heldQuery() {
+    const asked: { ids: number[]; rule: string }[] = [];
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      _strings: TemplateStringsArray,
+      ids: number[],
+      rule: { sql: string }
+    ) => {
+      asked.push({ ids, rule: rule.sql });
+      return ids.filter((id) => HELD.has(id)).map((id) => ({ id }));
+    }) as never);
+    return asked;
+  }
+
+  it('drops held images from the results, for every viewer, moderators included', async () => {
+    for (const user of [VIEWER, { id: 501, isModerator: true } as SessionUser]) {
+      const asked = heldQuery();
+      h.fakeGetAllImages = visibleOnly(new Set([201, HELD_IMAGE, 203, HELD_OWNER_IMAGE]));
+      const { source } = rankedSource([201, HELD_IMAGE, 203, HELD_OWNER_IMAGE]);
+
+      const { items } = await searchSemanticImages({
+        ...SESSION_VIEWS,
+        input: input(),
+        user,
+        candidateSource: source,
+      });
+
+      expect(items.map((x) => x.id)).toEqual([201, 203]);
+      expect(asked.at(-1)?.rule).toBe(semanticImageHeldText('i'));
+    }
+  });
+
+  it('answers "more like this" from a held image as not found', async () => {
+    heldQuery();
+    // Visible to the feed path, so only the held rule can refuse it.
+    h.fakeGetAllImages = visibleOnly(new Set([201, HELD_IMAGE]));
+    const { source, calls } = rankedSource([201]);
+
+    await expect(
+      searchSemanticImages({
+        ...SESSION_VIEWS,
+        input: input({ imageId: HELD_IMAGE }),
+        user: VIEWER,
+        candidateSource: source,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(calls).toHaveLength(0);
   });
 });
 
