@@ -15,11 +15,11 @@ var Sources = []string{"registry", "rest", "none"}
 // `empty` is a stream that holds nothing, which the origin also answers a token it refuses.
 var FallbackReasons = []string{
 	"registry_off", "token_not_exchangeable", "empty", "capacity", "token_capacity", "not_live", "stalled",
-	"cooling_down", "invalid_token", "too_large", "ended", "failed", "closed",
+	"cooling_down", "invalid_token", "exchange_refused", "not_private", "too_large", "ended", "failed", "closed",
 }
 
 // CloseReasons are the `reason` values of app_data_streams_closed_total (session.Close*).
-var CloseReasons = []string{"idle", "age", "invalid_token", "too_large", "end", "malformed", "error", "shutdown"}
+var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "too_large", "end", "malformed", "error", "shutdown"}
 
 // Outcomes are the `outcome` values of app_data_reads_total.
 var Outcomes = []string{"ok", "refused", "bad_request", "unauthenticated", "busy", "error"}

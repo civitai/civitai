@@ -1,9 +1,14 @@
 // Package rest is the fallback read: the site's document-store list, `GET
-// /api/v1/blocks/storage/<collection>` (src/server/services/apps/doc-store-api.ts), made with the
-// caller's own bearer token, so the site judges it exactly as it judges the app calling it directly.
-// An import (`?from=<source blockId>`) is decided there by `decideCollectionRead`, the same predicate
-// the registry adapter's private feed runs; an app's read of its own storage by the site's
-// `resolveStorageAccess`.
+// /api/v1/blocks/storage/<collection>?from=<slug>` (src/server/services/apps/doc-store-api.ts), made
+// with the caller's own hub token, so the site judges it exactly as it judges the app calling it
+// directly. Every read names its source app (`from`), as a registry read names it in its schema.
+//
+// DEPENDS ON A SITE CHANGE NOT IN THIS PR. Today the site refuses every `from` on a hub token
+// (`import_hub_token` in doc-store-access.ts `resolveImportAccess`), so this fallback answers that
+// refusal. A separate site PR lifts it: a hub token may then read another app's collection when the
+// user granted the import, decided by `decideCollectionRead`, the predicate the adapter's private
+// feed runs, and a `from` naming the token's own app reads that app's own storage. Until it merges,
+// only the registry path serves data to a hub token.
 package rest
 
 import (
@@ -54,8 +59,7 @@ type Client struct {
 	MaxRecords int
 }
 
-// List reads every document of collection the token may read: the token's own app's storage, or,
-// with from set, the storage of the app `from` names, through an import.
+// List reads every document of collection, in the app `from` names, that the token may read.
 func (c *Client) List(ctx context.Context, token, collection, from string) ([]Doc, error) {
 	var out []Doc
 	cursor := ""

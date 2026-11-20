@@ -15,15 +15,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
 	"github.com/civitai/civitai/apps/app-data-go/internal/metrics"
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
 )
 
-// End to end: the real handler, the real session manager and registry client over HTTP to a fake
-// registry, and the real REST client to a fake document store. Both fakes judge by bearer token, as
-// the adapter and the site do, and every token's fixtures are distinct.
+// End to end: the real handler; the real session manager, exchanger and registry client over HTTP to
+// a fake hub and a fake adapter; and the real REST client to a fake document store. The fakes judge
+// by bearer token, as the hub, the adapter and the site do, and every token's fixtures are distinct.
+// The fake adapter accepts only tokens the fake hub issued, and counts any other it is shown.
 
 const notesSchema = "urn:schema:apps.civitai.com:todo-app/notes@v1"
 
@@ -31,25 +33,42 @@ const notesSchema = "urn:schema:apps.civitai.com:todo-app/notes@v1"
 // the token is in stall), and stays open; deletes pushed with revoke are sent on every open stream
 // of that token.
 type fakeRegistry struct {
-	srv     *httptest.Server
-	mu      sync.Mutex
-	records map[string][]registry.Entity
-	stall   map[string]bool
-	revokes map[string][]chan string
-	subs    atomic.Int32
-	schemas sync.Map // token → schema last asked
+	srv        *httptest.Server
+	mu         sync.Mutex
+	records    map[string][]registry.Entity
+	stall      map[string]bool
+	revokes    map[string][]chan string
+	subs       atomic.Int32
+	raw        atomic.Int32 // subscriptions that presented a token the hub did not issue
+	notPrivate map[string]bool
+	schemas    sync.Map // token → schema last asked
 }
 
 func newFakeRegistry(t *testing.T) *fakeRegistry {
 	t.Helper()
-	f := &fakeRegistry{records: map[string][]registry.Entity{}, stall: map[string]bool{}, revokes: map[string][]chan string{}}
+	f := &fakeRegistry{records: map[string][]registry.Entity{}, stall: map[string]bool{},
+		revokes: map[string][]chan string{}, notPrivate: map[string]bool{}}
+	t.Cleanup(func() {
+		if n := f.raw.Load(); n != 0 {
+			t.Errorf("🔴 the adapter was shown %d tokens the hub did not issue", n)
+		}
+	})
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.subs.Add(1)
-		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		tok, ok := strings.CutPrefix(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), "x.")
+		if !ok {
+			f.raw.Add(1)
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error":"invalid_token"}`)
+			return
+		}
 		f.schemas.Store(tok, r.URL.Query().Get("schema"))
 		ch := make(chan string, 16)
 		f.mu.Lock()
-		recs, stall := f.records[tok], f.stall[tok]
+		recs, stall, cursor := f.records[tok], f.stall[tok], "p1.empty"
+		if f.notPrivate[tok] {
+			cursor = "c1.0123456789abcdef0123456789abcdef"
+		}
 		f.revokes[tok] = append(f.revokes[tok], ch)
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -59,7 +78,7 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			_, _ = fmt.Fprintf(w, "event: upsert\ndata: %s\n\n", raw)
 		}
 		if !stall {
-			_, _ = io.WriteString(w, "event: live\ndata: {\"cursor\":\"c1\"}\n\n")
+			_, _ = fmt.Fprintf(w, "event: live\ndata: {\"cursor\":%q}\n\n", cursor)
 		}
 		fl.Flush()
 		for {
@@ -83,6 +102,46 @@ func (f *fakeRegistry) revoke(tok, urn string) {
 	for _, ch := range f.revokes[tok] {
 		ch <- urn
 	}
+}
+
+// fakeHub is the hub's token endpoint: it exchanges a user's hub token for "x.<token>", for the
+// relay client and the adapter's resource only.
+type fakeHub struct {
+	srv      *httptest.Server
+	mu       sync.Mutex
+	refuse   map[string]bool
+	subjects []string
+}
+
+func newFakeHub(t *testing.T) *fakeHub {
+	t.Helper()
+	h := &fakeHub{refuse: map[string]bool{}}
+	h.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, secret, _ := r.BasicAuth()
+		_ = r.ParseForm()
+		subject := r.PostForm.Get("subject_token")
+		h.mu.Lock()
+		h.subjects = append(h.subjects, subject)
+		refused := h.refuse[subject]
+		h.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case id != "relay-client" || secret != "relay-secret":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error":"invalid_client"}`)
+		case r.PostForm.Get("grant_type") != exchange.GrantType || r.PostForm.Get("subject_token_type") != exchange.AccessTokenType ||
+			r.PostForm.Get("resource") != "https://apps.invalid" || !strings.HasPrefix(subject, HubTokenPrefix):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"invalid_request"}`)
+		case refused:
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "x." + subject, "token_type": "Bearer", "expires_in": 900})
+		}
+	}))
+	t.Cleanup(h.srv.Close)
+	return h
 }
 
 type restAnswer struct {
@@ -131,6 +190,7 @@ func newFakeStore(t *testing.T) *fakeStore {
 }
 
 type stack struct {
+	hub   *fakeHub
 	reg   *fakeRegistry
 	store *fakeStore
 	mgr   *session.Manager
@@ -141,7 +201,7 @@ type stack struct {
 
 func newStack(t *testing.T, registryOn bool, opts session.Options) *stack {
 	t.Helper()
-	s := &stack{reg: newFakeRegistry(t), store: newFakeStore(t)}
+	s := &stack{hub: newFakeHub(t), reg: newFakeRegistry(t), store: newFakeStore(t)}
 	if opts.MaxStreams == 0 {
 		opts.MaxStreams = 10
 	}
@@ -153,6 +213,9 @@ func newStack(t *testing.T, registryOn bool, opts session.Options) *stack {
 		opts.MaxRecords = 100
 	}
 	opts.MaxBytes = 1 << 20
+	opts.NotPrivateCooldown, opts.ExpiryMargin = time.Hour, 30*time.Second
+	opts.Exchange = (&exchange.Exchanger{Config: exchange.Config{URL: s.hub.srv.URL, ClientID: "relay-client",
+		ClientSecret: "relay-secret", Resource: "https://apps.invalid"}}).Exchange
 	s.mgr = session.New(session.ClientSubscriber{Client: &registry.Client{BaseURL: s.reg.srv.URL}}, opts)
 	t.Cleanup(s.mgr.Close)
 	reg := prometheus.NewRegistry()
@@ -285,17 +348,24 @@ func TestATokenTheHubCannotExchangeReadsRESTOnly(t *testing.T) {
 func TestWithTheRegistryOffEveryReadIsREST(t *testing.T) {
 	s := newStack(t, false, session.Options{})
 	s.store.by["civitai_alice"] = restAnswer{200, `{"items":[],"nextCursor":null}`}
-	g := s.get(t, notesPath+"?import=1", "civitai_alice")
+	g := s.get(t, notesPath, "civitai_alice")
 	if g.status != 200 || g.ans.Source != "rest" || s.reg.subs.Load() != 0 || fallbacks(s, "registry_off") != 1 {
 		t.Fatalf("%d %s", g.status, g.body)
 	}
-	// An import reads the source app through the site's import path.
-	if s.store.froms[0] != "todo-app" {
-		t.Fatalf("from %q", s.store.froms[0])
+	if len(s.hub.subjects) != 0 {
+		t.Fatal("the registry path is off, yet a token was exchanged")
 	}
+}
+
+// Every REST read names the app the request names, so the site can never answer one app's data under
+// another's slug: the token's own app is not the client's to choose.
+func TestTheRESTFallbackAlwaysReadsTheAppTheSlugNames(t *testing.T) {
+	s := newStack(t, false, session.Options{})
+	s.store.by["civitai_alice"] = restAnswer{200, `{"items":[],"nextCursor":null}`}
 	_ = s.get(t, notesPath, "civitai_alice")
-	if s.store.froms[1] != "" {
-		t.Fatalf("an own read sent from=%q", s.store.froms[1])
+	_ = s.get(t, "/v1/apps/other-app/collections/notes/records", "civitai_alice")
+	if strings.Join(s.store.froms, ",") != "todo-app,other-app" {
+		t.Fatalf("from values sent: %q", s.store.froms)
 	}
 }
 
@@ -314,14 +384,13 @@ func TestReadsOverTheStreamCapFallBackToREST(t *testing.T) {
 	if n := s.reg.subs.Load(); n != 1 {
 		t.Fatalf("%d subscriptions, want 1", n)
 	}
-	g = s.get(t, "/v1/apps/todo-app/collections/lists/records", "civitai_alice")
-	_ = g // a second collection for alice is over the process cap too
+	_ = s.get(t, "/v1/apps/todo-app/collections/lists/records", "civitai_alice")
 	if fallbacks(s, "capacity") != 2 {
-		t.Fatalf("capacity fallbacks %v", fallbacks(s, "capacity"))
+		t.Fatalf("capacity fallbacks %v (a second collection for alice is over the process cap too)", fallbacks(s, "capacity"))
 	}
 }
 
-// The deadline: a stream that never reaches Live (a relay stalled, civitai-registry#50) is given up
+// The deadline: a stream that never reaches Live (a slow snapshot) is given up
 // at LiveWait, the read is answered by REST within the request's deadline, and the next read does
 // not wait again.
 func TestAStreamShortOfLiveIsGivenUpAndRESTAnswersInTime(t *testing.T) {
@@ -367,13 +436,13 @@ func TestARevokedGrantLeavesTheCacheAndTheSiteAnswersTheRefusal(t *testing.T) {
 		ent("urn:apps.civitai.com:todo-app/notes/r-2", "GRANTED-2"),
 	}
 	s.store.by["civitai_grantee"] = restAnswer{403, `{"error":"import_not_granted","message":"not granted"}`}
-	if g := s.get(t, notesPath+"?import=1", "civitai_grantee"); len(g.ans.Items) != 2 {
+	if g := s.get(t, notesPath, "civitai_grantee"); len(g.ans.Items) != 2 {
 		t.Fatal(g.body)
 	}
 	s.reg.revoke("civitai_grantee", "urn:apps.civitai.com:todo-app/notes/r-1")
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		g := s.get(t, notesPath+"?import=1", "civitai_grantee")
+		g := s.get(t, notesPath, "civitai_grantee")
 		if len(g.ans.Items) == 1 && !strings.Contains(g.body, "GRANTED-1") {
 			break
 		}
@@ -384,7 +453,7 @@ func TestARevokedGrantLeavesTheCacheAndTheSiteAnswersTheRefusal(t *testing.T) {
 	}
 	s.reg.revoke("civitai_grantee", "urn:apps.civitai.com:todo-app/notes/r-2")
 	for {
-		g := s.get(t, notesPath+"?import=1", "civitai_grantee")
+		g := s.get(t, notesPath, "civitai_grantee")
 		if g.status == 403 {
 			if g.body != `{"error":"import_not_granted","message":"not granted"}` || fallbacks(s, "empty") < 1 {
 				t.Fatalf("refusal not passed on: %s", g.body)
@@ -461,7 +530,6 @@ func TestBadRequests(t *testing.T) {
 		"/v1/apps/todo-app/collections/_x/records":      400,
 		notesPath + "?major=0":                          400,
 		notesPath + "?major=two":                        400,
-		notesPath + "?import=yes":                       400,
 		"/v1/apps/todo-app/collections/notes/records/x": 404,
 	} {
 		if g := s.get(t, path, "civitai_alice"); g.status != want {
@@ -522,6 +590,8 @@ func TestEveryStreamErrorHasAFallbackReason(t *testing.T) {
 		session.ErrEnded:         "ended",
 		session.ErrFailed:        "failed",
 		session.ErrClosed:        "closed",
+		session.ErrRefused:       "exchange_refused",
+		session.ErrNotPrivate:    "not_private",
 	} {
 		got := fallbackReason(err)
 		if got != want {
@@ -534,5 +604,48 @@ func TestEveryStreamErrorHasAFallbackReason(t *testing.T) {
 		if !found {
 			t.Errorf("%q is not a declared fallback reason", got)
 		}
+	}
+}
+
+// 🔴 The user's hub token goes to the hub's exchange and the site's REST read only; the adapter sees
+// the exchanged token. (The fakes' cleanup fails the test if the adapter is shown any other.)
+func TestTheAdapterSeesOnlyTheExchangedToken(t *testing.T) {
+	s := newStack(t, true, session.Options{})
+	s.reg.records["civitai_alice"] = []registry.Entity{ent("urn:apps.civitai.com:todo-app/notes/r-a", "A")}
+	if g := s.get(t, notesPath, "civitai_alice"); g.ans.Source != "registry" {
+		t.Fatal(g.body)
+	}
+	if strings.Join(s.hub.subjects, ",") != "civitai_alice" || s.reg.raw.Load() != 0 {
+		t.Fatalf("hub saw %q, adapter shown %d raw tokens", s.hub.subjects, s.reg.raw.Load())
+	}
+	if v, _ := s.reg.schemas.Load("civitai_alice"); v != notesSchema {
+		t.Fatalf("subscribed to %v", v)
+	}
+}
+
+func TestARefusedExchangeFallsBackToREST(t *testing.T) {
+	s := newStack(t, true, session.Options{})
+	s.hub.refuse["civitai_revoked"] = true
+	s.store.by["civitai_revoked"] = restAnswer{401, `{"error":"unauthenticated"}`}
+	g := s.get(t, notesPath, "civitai_revoked")
+	if g.status != 401 || s.reg.subs.Load() != 0 || fallbacks(s, "exchange_refused") != 1 {
+		t.Fatalf("%d %s, subs %d", g.status, g.body, s.reg.subs.Load())
+	}
+}
+
+// A collection the private feed does not serve is out of contract: REST answers it.
+func TestASharedCollectionIsReadFromREST(t *testing.T) {
+	s := newStack(t, true, session.Options{})
+	s.reg.notPrivate["civitai_alice"] = true
+	s.reg.records["civitai_alice"] = []registry.Entity{ent("urn:apps.civitai.com:todo-app/notes/shared-1", "PUBLIC-FEED")}
+	s.store.by["civitai_alice"] = restAnswer{200, `{"items":[{"key":"shared-1","data":{"text":"REST-SHARED"},"version":1}],"nextCursor":null}`}
+	for range 2 {
+		g := s.get(t, notesPath, "civitai_alice")
+		if g.ans.Source != "rest" || strings.Contains(g.body, "PUBLIC-FEED") {
+			t.Fatalf("%s", g.body)
+		}
+	}
+	if fallbacks(s, "not_private") != 1 || fallbacks(s, "cooling_down") != 1 || s.reg.subs.Load() != 1 {
+		t.Fatalf("not_private %v, cooling_down %v, subs %d", fallbacks(s, "not_private"), fallbacks(s, "cooling_down"), s.reg.subs.Load())
 	}
 }

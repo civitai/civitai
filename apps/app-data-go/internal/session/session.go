@@ -1,6 +1,12 @@
 // Package session holds the per-user registry streams: one lazy, short-lived stream per (bearer
-// token, collection schema), opened with THAT token, so the origin (the registry adapter) stays the
-// only judge of what the user may read. Decided on civitai/civitai-registry#49, option (a).
+// token, collection schema), opened with a token exchanged from THAT user's token, so the origin (the
+// registry adapter) stays the only judge of what the user may read. Decided on
+// civitai/civitai-registry#49, option (a).
+//
+// EXCHANGE. A stream's goroutine first exchanges the user's hub token at the hub, as this service's
+// relay client (package exchange), and subscribes to the adapter with the exchanged token only. The
+// user's own token goes to the hub's exchange endpoint and nowhere else on this path; the goroutine
+// uses it for that call only: the user's token reaches nothing else from here.
 //
 // ISOLATION. A stream and its cache are keyed by the SHA-256 of the token that opened it together
 // with the schema. Nothing here decodes a token or knows whose it is: two tokens are two keys, so a
@@ -9,12 +15,19 @@
 // belongs to one consumer). The token itself is held only by the goroutine that reads its stream.
 //
 // LIFECYCLE. A stream opens on the first read for its key and is closed when no read has used it
-// for IdleTTL, or MaxAge after it opened, whichever comes first, or when it fails. A read is
+// for IdleTTL, MaxAge after it opened, or ExpiryMargin before its exchanged token expires, whichever
+// comes first, or when it fails. The adapter ends a stream whose token expired (`invalid_token`), so
+// a stream never outlives its token here either: the next read opens a new one with a new exchange
+// and a fresh snapshot (DESIGN.md, "Token lifetime"). A read is
 // answered from the cache only once the stream has sent `Live` (the snapshot is complete); before
 // that the read waits, bounded by its context, and then gives up so the caller can read REST
-// instead. A stream that has made one read give up is STALLED: later reads do not wait on it (see
-// DESIGN.md on civitai/civitai-registry#50, a relay that never sends `Live`) and do not count as use,
+// instead. A stream that has made one read give up is STALLED: later reads do not wait on it (a slow
+// snapshot; DESIGN.md, "No relay stall") and do not count as use,
 // so an idle stall is closed by IdleTTL.
+//
+// NOT PRIVATE. Only the adapter's private feed is in this service's contract. A stream whose `Live`
+// carries a cursor of any other feed (a shared collection is served by the public feed) is closed
+// unread (ErrNotPrivate), and its key is not reopened for NotPrivateCooldown: those reads are REST's.
 //
 // CHANGES. After `Live` the stream keeps following: an `Upsert` replaces a record, a `Delete` removes
 // it. A grant the user revokes reaches the stream as a `Delete` of each record it covered (the auth
@@ -37,8 +50,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 )
+
+// PrivateCursorPrefix starts every cursor the adapter's private feed issues
+// (src/server/registry-adapter/private-feed.ts: `p1.<digest>`, or `p1.empty` for a stream that holds
+// nothing). The public feeds' cursors start otherwise (`c1.`). Read only off the adapter's own
+// streams: this service subscribes to the adapter directly, so no relay rewrites its cursors.
+const PrivateCursorPrefix = "p1."
 
 // Stream is one subscription's events (registry.Stream).
 type Stream interface {
@@ -72,6 +92,8 @@ var (
 	ErrCoolingDown   = errors.New("session: this stream failed recently")
 	ErrInvalidToken  = errors.New("session: the registry refused the token")
 	ErrTooLarge      = errors.New("session: the stream outgrew its cache bounds")
+	ErrRefused       = errors.New("session: the hub refused to exchange the token")
+	ErrNotPrivate    = errors.New("session: the collection is not served by the private feed")
 	ErrEnded         = errors.New("session: the registry ended the stream")
 	ErrFailed        = errors.New("session: the stream failed")
 	ErrClosed        = errors.New("session: closed")
@@ -81,6 +103,9 @@ var (
 const (
 	CloseIdle         = "idle"
 	CloseAge          = "age"
+	CloseExpiry       = "expiry"
+	CloseRefused      = "exchange_refused"
+	CloseNotPrivate   = "not_private"
 	CloseInvalidToken = "invalid_token"
 	CloseTooLarge     = "too_large"
 	CloseEnd          = "end"
@@ -99,6 +124,12 @@ type Options struct {
 	MaxBytes    int
 	// Cooldown is how long a key whose stream failed is not reopened.
 	Cooldown time.Duration
+	// NotPrivateCooldown is how long a key the private feed does not serve is not reopened.
+	NotPrivateCooldown time.Duration
+	// Exchange trades the user's hub token for a token toward the adapter (exchange.Exchanger).
+	Exchange func(ctx context.Context, subject string) (exchange.Token, error)
+	// ExpiryMargin closes a stream this long before its exchanged token expires.
+	ExpiryMargin time.Duration
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 	// Opened and Closed observe each stream (metrics); nil is none.
@@ -149,7 +180,8 @@ type session struct {
 	cancel context.CancelFunc
 
 	mu       sync.Mutex
-	stream   Stream // the open subscription, once Subscribe returned; closed by end
+	expires  time.Time // the exchanged token's expiry; zero until the exchange returned
+	stream   Stream    // the open subscription, once Subscribe returned; closed by end
 	isLive   bool
 	stalled  bool
 	ended    bool
@@ -260,7 +292,17 @@ func entitySize(e registry.Entity) int {
 
 // follow reads the stream until it ends, applying each event to the cache. It returns why it ended.
 func (m *Manager) follow(ctx context.Context, s *session, token string) (string, error) {
-	st, err := m.sub.Subscribe(ctx, s.k.schema, token)
+	tok, err := m.opts.Exchange(ctx, token)
+	if err != nil {
+		if errors.Is(err, exchange.ErrRefused) {
+			return CloseRefused, ErrRefused
+		}
+		return CloseError, ErrFailed
+	}
+	s.mu.Lock()
+	s.expires = tok.Expires
+	s.mu.Unlock()
+	st, err := m.sub.Subscribe(ctx, s.k.schema, tok.Access)
 	if err != nil {
 		return classify(err)
 	}
@@ -293,6 +335,9 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 		case registry.Delete:
 			s.remove(ev.URN)
 		case registry.Live:
+			if !strings.HasPrefix(ev.Cursor, PrivateCursorPrefix) {
+				return CloseNotPrivate, ErrNotPrivate
+			}
 			s.markLive()
 		case registry.End:
 			return CloseEnd, ErrEnded
@@ -370,7 +415,9 @@ func (m *Manager) end(s *session, reason string, err error) {
 		}
 	}
 	switch reason {
-	case CloseIdle, CloseAge, CloseShutdown:
+	case CloseIdle, CloseAge, CloseExpiry, CloseShutdown:
+	case CloseNotPrivate:
+		m.cooling[s.k] = m.opts.Now().Add(m.opts.NotPrivateCooldown)
 	default:
 		m.cooling[s.k] = m.opts.Now().Add(m.opts.Cooldown)
 	}
@@ -385,7 +432,8 @@ func (m *Manager) end(s *session, reason string, err error) {
 	}
 }
 
-// Sweep closes every stream idle for IdleTTL or open for MaxAge, and forgets expired cooldowns.
+// Sweep closes every stream idle for IdleTTL, open for MaxAge, or within ExpiryMargin of its token
+// expiry, and forgets expired cooldowns.
 func (m *Manager) Sweep() {
 	now := m.opts.Now()
 	type closing struct {
@@ -399,6 +447,8 @@ func (m *Manager) Sweep() {
 		switch {
 		case now.Sub(s.opened) >= m.opts.MaxAge:
 			out = append(out, closing{s, CloseAge})
+		case !s.expires.IsZero() && !now.Before(s.expires.Add(-m.opts.ExpiryMargin)):
+			out = append(out, closing{s, CloseExpiry})
 		case now.Sub(s.lastRead) >= m.opts.IdleTTL:
 			out = append(out, closing{s, CloseIdle})
 		}

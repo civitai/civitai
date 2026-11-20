@@ -1,17 +1,19 @@
 // Package api is the service's HTTP surface.
 //
-//	GET /v1/apps/{slug}/collections/{collection}/records[?major=N][&import=1]
-//	    Authorization: Bearer <the app's token for the signed-in user>
+//	GET /v1/apps/{slug}/collections/{collection}/records[?major=N]
+//	    Authorization: Bearer <the app's hub access token for the signed-in user>
 //
-// Every private record of one collection the token's user may read through the token's app: the
-// app's own collection (slug is the app itself), or, with import=1, another app's collection the
-// user granted this app. The answer is
+// Every private record of one collection of the app `slug` names that the token's user may read
+// through the token's app: the app's own collection when slug is the app itself, or another app's
+// collection the user granted this app. Which of the two is never the client's to say: both paths
+// name the source by slug and leave the basis to the server (the adapter on the registry path, the
+// site on REST). The answer is
 //
 //	{"source":"registry"|"rest","items":[{"urn"|"key":…,"rev":…,"data":{…}}]}
 //
 // `source: registry` items come from the user's stream (named by URN: the record core's
 // `urn:apps.civitai.com:<slug>/<collection>/<record_id>`); `source: rest` items from the
-// document store's list (named by key). See DESIGN.md, "Open questions", on the two names.
+// document store's list (named by key). See DESIGN.md, "Depends on site changes", on the two names.
 //
 // Also /healthz, /readyz and /metrics.
 package api
@@ -47,9 +49,10 @@ type Lister interface {
 }
 
 // HubTokenPrefix starts every OAuth access token the hub issues (apps/auth OAUTH_TOKEN_PREFIX). Only
-// such a token can reach a private stream: the relay exchanges the subject token by looking it up
-// among the hub's access tokens (apps/auth/src/lib/server/oauth/user-exchange.ts, step 5), so a
-// block token, or a token the hub already exchanged, never can. Any other token reads REST only.
+// such a token can reach a private stream: this service exchanges it at the hub, which looks the
+// subject token up among its own access tokens (apps/auth/src/lib/server/oauth/user-exchange.ts,
+// step 5), so a block token, or a token the hub already exchanged, never can. Any other token reads
+// REST only, and is never sent to the hub.
 const HubTokenPrefix = "civitai_"
 
 // Server serves the API.
@@ -130,15 +133,6 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		}
 		major = n
 	}
-	imported := false
-	switch q.Get("import") {
-	case "", "0":
-	case "1":
-		imported = true
-	default:
-		s.refuse(w, start, http.StatusBadRequest, "bad_request", "import must be 0 or 1", "bad_request")
-		return
-	}
 	schema, err := urn.CollectionSchema(slug, collection, major)
 	if err != nil {
 		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid app, collection or major", "bad_request")
@@ -185,11 +179,9 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		s.refuse(w, start, http.StatusServiceUnavailable, "busy", "too many reads in flight; retry", "busy")
 		return
 	}
-	from := ""
-	if imported {
-		from = slug
-	}
-	docs, err := s.REST.List(ctx, token, collection, from)
+	// Always `from=<slug>`: the site then reads the app the request names, whoever the token's app
+	// is, so a REST answer can never be another app's data under this slug's name.
+	docs, err := s.REST.List(ctx, token, collection, slug)
 	if err != nil {
 		s.restError(w, start, err)
 		return
@@ -217,6 +209,10 @@ func fallbackReason(err error) string {
 		return "cooling_down"
 	case errors.Is(err, session.ErrInvalidToken):
 		return "invalid_token"
+	case errors.Is(err, session.ErrRefused):
+		return "exchange_refused"
+	case errors.Is(err, session.ErrNotPrivate):
+		return "not_private"
 	case errors.Is(err, session.ErrTooLarge):
 		return "too_large"
 	case errors.Is(err, session.ErrEnded):

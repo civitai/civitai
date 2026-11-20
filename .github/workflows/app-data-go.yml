@@ -23,9 +23,7 @@ on:
       - 'apps/app-index-go/internal/registry/**'
       - '.github/workflows/app-data-go.yml'
   push:
-    # TEMPORARY: app-data-go-scaffold runs this workflow on push until it is on main (a workflow that
-    # is not on the default branch cannot be dispatched). Remove before the PR leaves draft.
-    branches: [main, app-data-go-scaffold]
+    branches: [main]
     paths:
       - 'apps/app-data-go/**'
       - 'apps/app-index-go/internal/registry/**'
@@ -100,8 +98,8 @@ jobs:
           # Positive control: a count below these floors means tests stopped being discovered, not that
           # they passed. Raise the floors when tests or packages are added.
           [ "$failed" -eq 0 ]
-          [ "$pkgs" -ge 8 ]
-          [ "$passed" -ge 90 ]
+          [ "$pkgs" -ge 9 ]
+          [ "$passed" -ge 115 ]
 
       # Statement coverage of the unit run (each package's own tests), per package and in total,
       # against the ratchet floors in ci/coverage-floors.txt. A second instrument prints its own total

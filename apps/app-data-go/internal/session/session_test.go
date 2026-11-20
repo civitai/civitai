@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 )
 
@@ -70,17 +71,47 @@ type fakeOrigin struct {
 	streams []*fakeStream
 	opened  atomic.Int32
 	byToken map[string]int
+	raw     int // subscriptions that presented a token the hub did not issue
+	// exchange: what the fake hub refuses, by subject.
+	refuseExchange map[string]error
+	exchanges      map[string]int
+	now            func() time.Time
+	life           time.Duration // of an exchanged token; zero is a day
+}
+
+func (o *fakeOrigin) Exchange(_ context.Context, subject string) (exchange.Token, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.exchanges[subject]++
+	if err := o.refuseExchange[subject]; err != nil {
+		return exchange.Token{}, err
+	}
+	life := o.life
+	if life == 0 {
+		life = 24 * time.Hour
+	}
+	return exchange.Token{Access: exchanged(subject), Expires: o.now().Add(life)}, nil
 }
 
 func newOrigin() *fakeOrigin {
 	return &fakeOrigin{records: map[string][]registry.Entity{}, noLive: map[string]bool{},
-		refuse: map[string]error{}, byToken: map[string]int{}}
+		refuse: map[string]error{}, byToken: map[string]int{},
+		refuseExchange: map[string]error{}, exchanges: map[string]int{}}
 }
 
-func (o *fakeOrigin) Subscribe(_ context.Context, schema, token string) (Stream, error) {
+// exchanged is what the fake hub turns a user's token into.
+func exchanged(subject string) string { return "x." + subject }
+
+func (o *fakeOrigin) Subscribe(_ context.Context, schema, presented string) (Stream, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.opened.Add(1)
+	// 🔴 The origin only ever sees exchanged tokens: a user's own token reaching it is a leak.
+	token, ok := strings.CutPrefix(presented, "x.")
+	if !ok {
+		o.raw++
+		return nil, &registry.Error{Code: registry.InvalidToken}
+	}
 	o.byToken[token]++
 	if err := o.refuse[token]; err != nil {
 		return nil, err
@@ -90,7 +121,7 @@ func (o *fakeOrigin) Subscribe(_ context.Context, schema, token string) (Stream,
 		s.events <- step{ev: registry.Event{Type: registry.Upsert, Entity: e}}
 	}
 	if !o.noLive[token] {
-		s.events <- step{ev: registry.Event{Type: registry.Live, Cursor: "c"}}
+		s.events <- step{ev: registry.Event{Type: registry.Live, Cursor: "p1.empty"}}
 	}
 	o.streams = append(o.streams, s)
 	return s, nil
@@ -147,6 +178,14 @@ type harness struct {
 func newHarness(t *testing.T, opts Options) *harness {
 	t.Helper()
 	h := &harness{o: newOrigin(), c: &clock{t: time.Unix(1_700_000_000, 0)}}
+	h.o.now = h.c.now
+	opts.Exchange = h.o.Exchange
+	if opts.ExpiryMargin == 0 {
+		opts.ExpiryMargin = 10 * time.Second
+	}
+	if opts.NotPrivateCooldown == 0 {
+		opts.NotPrivateCooldown = time.Hour
+	}
 	if opts.MaxStreams == 0 {
 		opts.MaxStreams = 10
 	}
@@ -174,7 +213,12 @@ func newHarness(t *testing.T, opts Options) *harness {
 		n.(*atomic.Int32).Add(1)
 	}
 	h.m = New(h.o, opts)
-	t.Cleanup(h.m.Close)
+	t.Cleanup(func() {
+		h.m.Close()
+		if h.o.raw != 0 {
+			t.Errorf("🔴 %d subscriptions presented a token the hub did not issue", h.o.raw)
+		}
+	})
 	return h
 }
 
@@ -434,7 +478,7 @@ func TestAReadOverTheTokenCapOpensNothing(t *testing.T) {
 }
 
 // The deadline: a stream that has not sent Live gives the read up at its context's deadline, and
-// later reads do not wait on it again (a relay stuck short of Live, civitai-registry#50).
+// later reads do not wait on it again (a snapshot that is slow to finish).
 func TestAStreamShortOfLiveGivesUpAtTheDeadlineAndThenStopsMakingReadsWait(t *testing.T) {
 	h := newHarness(t, Options{})
 	h.o.noLive["tok-a"] = true
@@ -472,7 +516,7 @@ func TestAStreamThatReachesLiveAfterAStallServesAgain(t *testing.T) {
 	cancel()
 	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Upsert,
 		Entity: entity("urn:apps.civitai.com:todo-app/notes/r-late", "late")}})
-	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Live}})
+	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Live, Cursor: "p1.0123"}})
 	eventually(t, "the late Live", func() bool {
 		got, err := read(t, h.m, "tok-a", schemaA)
 		return err == nil && len(got) == 1
@@ -488,7 +532,7 @@ func TestAWaitingReadIsAnsweredByLive(t *testing.T) {
 		done <- err
 	}()
 	eventually(t, "the stream to open", func() bool { return h.o.opened.Load() == 1 })
-	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Live}})
+	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Live, Cursor: "p1.0123"}})
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
@@ -648,5 +692,94 @@ func TestRunSweepsAndClosesOnCancel(t *testing.T) {
 	<-done
 	if _, err := read(t, h.m, "tok-a", schemaA); !errors.Is(err, ErrClosed) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// The stream is opened with the EXCHANGED token, never the user's own.
+func TestAStreamIsOpenedWithTheExchangedTokenOnly(t *testing.T) {
+	h := newHarness(t, Options{})
+	h.o.records["tok-a"] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/r-1", "x")}
+	if got, err := read(t, h.m, "tok-a", schemaA); err != nil || len(got) != 1 {
+		t.Fatalf("%q, %v", urns(got), err)
+	}
+	h.o.mu.Lock()
+	n, raw := h.o.exchanges["tok-a"], h.o.raw
+	h.o.mu.Unlock()
+	if n != 1 || raw != 0 {
+		t.Fatalf("exchanges %d, raw tokens presented %d", n, raw)
+	}
+}
+
+func TestAStreamIsClosedBeforeItsExchangedTokenExpiresAndReopenedWithANewExchange(t *testing.T) {
+	h := newHarness(t, Options{IdleTTL: time.Hour, MaxAge: 2 * time.Hour, ExpiryMargin: 10 * time.Second})
+	h.o.life = time.Minute
+	if _, err := read(t, h.m, "tok-a", schemaA); err != nil {
+		t.Fatal(err)
+	}
+	// The fake hub issues a minute; the stream closes 10 s before.
+	h.c.add(49 * time.Second)
+	h.m.Sweep()
+	if h.m.Stats().Streams != 1 {
+		t.Fatal("closed before its expiry margin")
+	}
+	h.c.add(time.Second)
+	h.m.Sweep()
+	if h.m.Stats().Streams != 0 || h.closedFor(CloseExpiry) != 1 {
+		t.Fatalf("not closed at its expiry margin: %+v", h.m.Stats())
+	}
+	// Not a failure: the next read exchanges again at once.
+	if _, err := read(t, h.m, "tok-a", schemaA); err != nil {
+		t.Fatalf("after expiry: %v", err)
+	}
+	h.o.mu.Lock()
+	n := h.o.exchanges["tok-a"]
+	h.o.mu.Unlock()
+	if n != 2 {
+		t.Fatalf("%d exchanges, want 2", n)
+	}
+}
+
+func TestARefusedExchangeOpensNoStreamAndCoolsDown(t *testing.T) {
+	h := newHarness(t, Options{})
+	h.o.refuseExchange["tok-a"] = fmt.Errorf("%w (HTTP 400, invalid_grant)", exchange.ErrRefused)
+	if _, err := read(t, h.m, "tok-a", schemaA); !errors.Is(err, ErrRefused) {
+		t.Fatalf("got %v, want ErrRefused", err)
+	}
+	if h.o.opened.Load() != 0 || h.closedFor(CloseRefused) != 1 {
+		t.Fatal("a refused exchange subscribed")
+	}
+	if _, err := read(t, h.m, "tok-a", schemaA); !errors.Is(err, ErrCoolingDown) {
+		t.Fatalf("got %v", err)
+	}
+	// A hub that cannot be reached is a failure, not a refusal.
+	h.o.refuseExchange["tok-b"] = errors.New("exchange: token endpoint unreachable")
+	if _, err := read(t, h.m, "tok-b", schemaA); !errors.Is(err, ErrFailed) {
+		t.Fatalf("got %v, want ErrFailed", err)
+	}
+}
+
+// A collection the private feed does not serve (a shared one, on the public feed) is out of
+// contract: closed unread, and not reopened for the long cooldown.
+func TestAStreamThatIsNotThePrivateFeedIsClosedUnread(t *testing.T) {
+	h := newHarness(t, Options{NotPrivateCooldown: time.Hour, Cooldown: time.Second})
+	h.o.noLive["tok-a"] = true
+	h.o.records["tok-a"] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/shared-key", "SHARED")}
+	done := make(chan error, 1)
+	go func() {
+		_, err := read(t, h.m, "tok-a", schemaA)
+		done <- err
+	}()
+	eventually(t, "the stream to open", func() bool { return h.o.opened.Load() == 1 })
+	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Live, Cursor: "c1.0123456789abcdef0123456789abcdef"}})
+	if err := <-done; !errors.Is(err, ErrNotPrivate) {
+		t.Fatalf("got %v, want ErrNotPrivate", err)
+	}
+	h.c.add(time.Minute)
+	h.m.Sweep()
+	if _, err := read(t, h.m, "tok-a", schemaA); !errors.Is(err, ErrCoolingDown) {
+		t.Fatalf("reopened a public-feed collection after %v: %v", time.Minute, err)
+	}
+	if h.closedFor(CloseNotPrivate) != 1 {
+		t.Fatal("not counted")
 	}
 }
