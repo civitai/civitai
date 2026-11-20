@@ -9,7 +9,10 @@ import { NsfwLevel } from '~/server/common/enums';
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import type { AppIndexSearchReason } from '~/server/prom/app-index-search.metrics';
 import type { ListAvailableListingsOpts } from '~/server/services/blocks/app-listing.service';
-import type { StoreGridViewer } from '~/server/services/blocks/app-index-search.service';
+import type {
+  IndexBreaker as IndexBreakerType,
+  StoreGridViewer,
+} from '~/server/services/blocks/app-index-search.service';
 
 const h = {
   listAvailableListings: vi.fn(),
@@ -20,14 +23,23 @@ const {
   listStoreGrid: listStoreGridWith,
   storeGridRequest,
   APP_INDEX_SEARCH_TIMEOUT_MS,
+  IndexBreaker,
 } = await import('~/server/services/blocks/app-index-search.service');
 
-// The database reads are passed in (the service's `reads` parameter), never module-mocked.
+// The database reads are passed in (the service's `reads` parameter), never module-mocked, and
+// so is the breaker: a fresh one per test, so no test inherits another's failures.
+let breaker: IndexBreakerType;
 const listStoreGrid = (...args: Parameters<typeof listStoreGridWith>) =>
-  listStoreGridWith(args[0], args[1], args[2], {
-    listAvailableListings: h.listAvailableListings,
-    listStoreListingsBySlugs: h.listStoreListingsBySlugs,
-  });
+  listStoreGridWith(
+    args[0],
+    args[1],
+    args[2],
+    {
+      listAvailableListings: h.listAvailableListings,
+      listStoreListingsBySlugs: h.listStoreListingsBySlugs,
+    },
+    breaker
+  );
 
 const INDEX_URL = 'http://app-index.invalid/base/';
 
@@ -151,6 +163,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 beforeEach(async () => {
   // Every request compares unless a test says otherwise, so the log lines carry db and overlap.
   setEnv({ APP_INDEX_URL: INDEX_URL, APP_INDEX_SEARCH_COMPARE_SAMPLE: 1 });
+  breaker = new IndexBreaker();
   fetchCalls = [];
   logLines = [];
   h.listAvailableListings.mockReset().mockResolvedValue(DB_PAGE);
@@ -176,6 +189,7 @@ beforeEach(async () => {
   ]);
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -338,11 +352,12 @@ describe('listStoreGrid', () => {
     expect(logLines[0]).toContain(` source=db_fallback reason=${reason} `);
   });
 
-  it('hydration failure: the database page', async () => {
+  it('hydration failure: the database page, counted as the database’s failure', async () => {
     h.listStoreListingsBySlugs.mockRejectedValue(new Error('db'));
     const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
     expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: true });
-    expect(await requestsMoved()).toEqual(['db_fallback/error:1']);
+    // Not `error`: the index answered, so it must not read as an index failure.
+    expect(await requestsMoved()).toEqual(['db_fallback/db_error:1']);
   });
 
   it('a viewer who may see r/x listings is never sent to the index', async () => {
@@ -562,7 +577,8 @@ describe('listStoreGrid with sub-listing cards on the page', () => {
     // The database path, read afresh.
     expect(res).toEqual({ ...SL_DB_PAGE, indexSearchRoutable: true });
     expect(h.listAvailableListings).toHaveBeenCalledTimes(2);
-    expect(await requestsMoved()).toEqual(['db_fallback/error:1']);
+    // The index answered; the database page failed.
+    expect(await requestsMoved()).toEqual(['db_fallback/db_error:1']);
   });
 
   it('a database read that keeps failing is the request’s error, as with the flag off', async () => {
@@ -710,5 +726,257 @@ describe('the store grid request, end to end', () => {
     expect(res.search).toBeUndefined();
     expect(fetchCalls).toEqual([]);
     expect(await requestsMoved()).toEqual([`db_fallback/${reason}:1`]);
+  });
+});
+
+/**
+ * The per-process breaker around the index call (`IndexBreaker`). Threshold and cooldown are set
+ * away from their defaults (5, 30s), so a breaker that ignored the env would be seen.
+ */
+describe('the index breaker', () => {
+  const THRESHOLD = 3;
+  const COOLDOWN_MS = 12_000;
+  const T0 = new Date('2026-11-19T12:00:00Z').getTime();
+  const BREAKER_STATE = 'civitai_app_index_search_breaker_state';
+  const search = () => listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
+  const failing = () => stubIndex(() => new Response('{"error":"internal"}', { status: 500 }));
+  const healthy = () => indexAnswers([indexed(DELTA), indexed(ALPHA)]);
+  async function breakerState() {
+    const metric = instrumentationRegistry.getSingleMetric(BREAKER_STATE);
+    return metric ? (await metric.get()).values[0]?.value : undefined;
+  }
+  const breakerLines = () => logLines.filter((l) => l.startsWith('app-index-search: breaker'));
+  /** Runs `n` searches one after another, as the store's users would. */
+  async function searches(n: number) {
+    for (let i = 0; i < n; i++) await search();
+  }
+  /** Opens the breaker: THRESHOLD failing searches. */
+  async function trip() {
+    failing();
+    await searches(THRESHOLD);
+    expect(fetchCalls).toHaveLength(THRESHOLD);
+  }
+
+  beforeEach(() => {
+    setEnv({
+      APP_INDEX_SEARCH_COMPARE_SAMPLE: 0,
+      APP_INDEX_BREAKER_FAILURE_THRESHOLD: THRESHOLD,
+      APP_INDEX_BREAKER_COOLDOWN_MS: COOLDOWN_MS,
+    });
+    // Only the clock: the index call's deadline and `settle` keep real timers.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0);
+  });
+
+  it('opens after the threshold of consecutive failures, and then calls no index', async () => {
+    failing();
+    await searches(THRESHOLD - 1);
+    expect(fetchCalls).toHaveLength(THRESHOLD - 1);
+    expect(breakerLines()).toEqual([]);
+    await search();
+    expect(fetchCalls).toHaveLength(THRESHOLD);
+    expect(breakerLines()).toEqual([
+      `app-index-search: breaker closed->open consecutive_failures=${THRESHOLD} reason=error`,
+    ]);
+    expect(await breakerState()).toBe(2);
+
+    // Open: the database page, one read per search, and no index call at all.
+    h.listAvailableListings.mockClear();
+    healthy();
+    const res = await search();
+    await searches(4);
+    expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: true });
+    expect(fetchCalls).toHaveLength(THRESHOLD);
+    expect(h.listAvailableListings).toHaveBeenCalledTimes(5);
+    expect(h.listStoreListingsBySlugs).not.toHaveBeenCalled();
+    expect(await requestsMoved()).toEqual([
+      'db_fallback/breaker_open:5',
+      `db_fallback/error:${THRESHOLD}`,
+    ]);
+  });
+
+  it('timeouts count as failures', async () => {
+    stubIndex(() => Promise.reject(new DOMException('The operation timed out.', 'TimeoutError')));
+    await searches(THRESHOLD + 2);
+    expect(fetchCalls).toHaveLength(THRESHOLD);
+    expect(breakerLines()).toEqual([
+      `app-index-search: breaker closed->open consecutive_failures=${THRESHOLD} reason=timeout`,
+    ]);
+    expect(await requestsMoved()).toEqual([
+      'db_fallback/breaker_open:2',
+      `db_fallback/timeout:${THRESHOLD}`,
+    ]);
+  });
+
+  it('only consecutive failures open it: one index answer resets the count', async () => {
+    failing();
+    await searches(THRESHOLD - 1);
+    healthy();
+    await search();
+    failing();
+    await searches(THRESHOLD - 1);
+    // 2 * (THRESHOLD - 1) failures, never THRESHOLD in a row: every search reached the index.
+    expect(fetchCalls).toHaveLength(2 * (THRESHOLD - 1) + 1);
+    expect(breakerLines()).toEqual([]);
+    expect(await requestsMoved()).toEqual([
+      `db_fallback/error:${2 * (THRESHOLD - 1)}`,
+      'index/ok:1',
+    ]);
+  });
+
+  it('a database failure after the index answered never trips it', async () => {
+    h.listStoreListingsBySlugs.mockRejectedValue(new Error('db'));
+    await searches(THRESHOLD * 2);
+    // Every search still reached the index.
+    expect(fetchCalls).toHaveLength(THRESHOLD * 2);
+    // And the index answering is what counts: between two runs of index failures one short of the
+    // threshold, it resets the count even though the database then failed the request.
+    failing();
+    await searches(THRESHOLD - 1);
+    healthy();
+    await search();
+    failing();
+    await searches(THRESHOLD - 1);
+    expect(fetchCalls).toHaveLength(THRESHOLD * 2 + 2 * (THRESHOLD - 1) + 1);
+    expect(breakerLines()).toEqual([]);
+    expect(await requestsMoved()).toEqual([
+      `db_fallback/db_error:${THRESHOLD * 2 + 1}`,
+      `db_fallback/error:${2 * (THRESHOLD - 1)}`,
+    ]);
+  });
+
+  it('stays open for the cooldown, then one probe that succeeds closes it', async () => {
+    await trip();
+    healthy();
+    vi.setSystemTime(T0 + COOLDOWN_MS - 1);
+    await search();
+    expect(fetchCalls).toHaveLength(THRESHOLD);
+
+    // The cooldown is over: the next search is the probe; the ones while it is in flight are not.
+    vi.setSystemTime(T0 + COOLDOWN_MS);
+    // The probe's answer is held until released; any other call fails at once, so a breaker that
+    // let a second search through shows as an extra call rather than a hung test.
+    let answer: () => void = () => undefined;
+    const held = new Promise<Response>((resolve) => {
+      answer = () => resolve(Response.json({ results: [indexed(DELTA), indexed(ALPHA)] }));
+    });
+    let calls = 0;
+    stubIndex(() => (calls++ === 0 ? held : new Response('{"error":"internal"}', { status: 500 })));
+    const probe = search();
+    await settle();
+    const during = await search();
+    expect(during.search).toBeUndefined();
+    expect(fetchCalls).toHaveLength(THRESHOLD + 1);
+    expect(await breakerState()).toBe(1);
+    answer();
+    expect((await probe).search).toBe('index');
+
+    // Closed again: every search calls the index.
+    healthy();
+    await searches(2);
+    expect(fetchCalls).toHaveLength(THRESHOLD + 3);
+    expect(await breakerState()).toBe(0);
+    expect(breakerLines()).toEqual([
+      `app-index-search: breaker closed->open consecutive_failures=${THRESHOLD} reason=error`,
+      'app-index-search: breaker open->half_open cooldown elapsed',
+      'app-index-search: breaker half_open->closed probe succeeded',
+    ]);
+    expect(await requestsMoved()).toEqual([
+      'db_fallback/breaker_open:2',
+      `db_fallback/error:${THRESHOLD}`,
+      'index/ok:3',
+    ]);
+  });
+
+  it('failures still in flight when it opens neither re-open it nor push the cooldown back', async () => {
+    // Twenty searches are in flight against an index that has not answered any of them; each
+    // index call fails only when the test releases it.
+    const pending: Array<() => void> = [];
+    stubIndex(
+      () =>
+        new Promise<Response>((_, reject) => {
+          pending.push(() => reject(new TypeError('fetch failed')));
+        })
+    );
+    const inFlight = Array.from({ length: 20 }, () => search());
+    await settle();
+    expect(pending).toHaveLength(20);
+    // The first THRESHOLD fail at T0 and open it.
+    for (const fail of pending.slice(0, THRESHOLD)) fail();
+    await settle();
+    // The rest fail later, while it is open.
+    vi.setSystemTime(T0 + COOLDOWN_MS - 1);
+    for (const fail of pending.slice(THRESHOLD)) fail();
+    await Promise.all(inFlight);
+    expect(breakerLines()).toEqual([
+      `app-index-search: breaker closed->open consecutive_failures=${THRESHOLD} reason=error`,
+    ]);
+    // The cooldown still counts from T0: the probe is admitted at T0 + COOLDOWN_MS.
+    healthy();
+    vi.setSystemTime(T0 + COOLDOWN_MS);
+    expect((await search()).search).toBe('index');
+    expect(fetchCalls).toHaveLength(21);
+  });
+
+  it('a probe that never reports is replaced by a fresh one after a full cooldown', async () => {
+    await trip();
+    vi.setSystemTime(T0 + COOLDOWN_MS);
+    // The probe's index call never settles (until the test ends); every later call answers.
+    let releaseStuck: () => void = () => undefined;
+    const stuck = new Promise<Response>((resolve) => {
+      releaseStuck = () => resolve(new Response('{"error":"internal"}', { status: 500 }));
+    });
+    let calls = 0;
+    stubIndex(() =>
+      calls++ === 0 ? stuck : Response.json({ results: [indexed(DELTA), indexed(ALPHA)] })
+    );
+    const stuckSearch = search();
+    await settle();
+    expect(fetchCalls).toHaveLength(THRESHOLD + 1);
+
+    // Within a cooldown of the stuck probe: no second probe.
+    vi.setSystemTime(T0 + 2 * COOLDOWN_MS - 1);
+    expect((await search()).search).toBeUndefined();
+    expect(fetchCalls).toHaveLength(THRESHOLD + 1);
+    // A full cooldown after it: a fresh probe, whose answer closes the breaker.
+    vi.setSystemTime(T0 + 2 * COOLDOWN_MS);
+    expect((await search()).search).toBe('index');
+    expect(fetchCalls).toHaveLength(THRESHOLD + 2);
+    expect(await breakerState()).toBe(0);
+
+    releaseStuck();
+    await stuckSearch;
+  });
+
+  it('a failed probe re-opens it for another full cooldown', async () => {
+    await trip();
+    vi.setSystemTime(T0 + COOLDOWN_MS);
+    await search(); // the probe, still failing
+    expect(fetchCalls).toHaveLength(THRESHOLD + 1);
+
+    // Re-opened at the probe: the cooldown counts from there, not from the first open.
+    healthy();
+    vi.setSystemTime(T0 + 2 * COOLDOWN_MS - 1);
+    await search();
+    expect(fetchCalls).toHaveLength(THRESHOLD + 1);
+    vi.setSystemTime(T0 + 2 * COOLDOWN_MS);
+    expect((await search()).search).toBe('index');
+    expect(fetchCalls).toHaveLength(THRESHOLD + 2);
+    expect(breakerLines()).toEqual([
+      `app-index-search: breaker closed->open consecutive_failures=${THRESHOLD} reason=error`,
+      'app-index-search: breaker open->half_open cooldown elapsed',
+      'app-index-search: breaker half_open->open probe failed reason=error',
+      'app-index-search: breaker open->half_open cooldown elapsed',
+      'app-index-search: breaker half_open->closed probe succeeded',
+    ]);
+  });
+
+  it('a viewer the index never answers neither trips it nor is counted as breaker_open', async () => {
+    await trip();
+    await listStoreGrid(INPUT, { ...SFW_OPTS, floor: 'moderators' }, { indexSearch: true });
+    expect(await requestsMoved()).toEqual([
+      `db_fallback/error:${THRESHOLD}`,
+      'db_fallback/unsupported_viewer:1',
+    ]);
   });
 });

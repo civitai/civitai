@@ -1,4 +1,4 @@
-/** Ideogram family handler for the form-graph lane — comfy (4.0) or fal (4.5) imageGen. */
+/** Ideogram family handler for the form-graph lane — comfy (4.0) or fal (4.5, 4.6) imageGen. */
 
 import type {
   ComfyIdeogram4CreateImageGenInput,
@@ -7,34 +7,48 @@ import type {
 import type {
   Ideogram45CreateFalImageGenInput,
   Ideogram45EditFalImageGenInput,
+  Ideogram46CreateFalImageGenInput,
+  Ideogram46EditFalImageGenInput,
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 
+type FalInput =
+  | Ideogram45CreateFalImageGenInput
+  | Ideogram45EditFalImageGenInput
+  | Ideogram46CreateFalImageGenInput
+  | Ideogram46EditFalImageGenInput;
+
+const falModels = { 'v4.5': 'ideogram45', 'v4.6': 'ideogram46' } as const;
+
 export const createIdeogramInput = defineHandler<EcosystemData<'Ideogram'>, [ImageGenStepTemplate]>(
   (data, ctx) => {
-    if (data.ideogramVersion === 'v4.5') {
+    if (data.ideogramVersion === 'v4.5' || data.ideogramVersion === 'v4.6') {
+      // A transparent background needs png or webp output.
+      const transparent = 'transparent' in data && data.transparent;
       const baseInput = {
         engine: 'fal' as const,
-        model: 'ideogram45' as const,
+        model: falModels[data.ideogramVersion],
         prompt: data.prompt ?? '',
         quantity: data.quantity ?? 1,
         seed: data.seed,
         quality: data.quality,
+        ...(transparent && { background: 'transparent' as const, outputFormat: 'png' as const }),
       };
 
       if (!(data.workflow ?? '').startsWith('txt')) {
         return [
           {
             $type: 'imageGen',
-            input: removeEmpty<Ideogram45EditFalImageGenInput>({
+            input: removeEmpty({
               ...baseInput,
               operation: 'editImage',
               imageSize: 'auto',
               images: data.images?.map((x) => x.url) ?? [],
-            }),
+              editPrecision: 'editPrecision' in data ? data.editPrecision : undefined,
+            } as FalInput),
           },
         ];
       }
@@ -42,13 +56,13 @@ export const createIdeogramInput = defineHandler<EcosystemData<'Ideogram'>, [Ima
       return [
         {
           $type: 'imageGen',
-          input: removeEmpty<Ideogram45CreateFalImageGenInput>({
+          input: removeEmpty({
             ...baseInput,
             operation: 'createImage',
             width: data.aspectRatio?.width,
             height: data.aspectRatio?.height,
             enhancePrompt: data.enablePromptExpansion,
-          }),
+          } as FalInput),
         },
       ];
     }
