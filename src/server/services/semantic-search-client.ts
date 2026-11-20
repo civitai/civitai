@@ -356,10 +356,6 @@ function withMatchesFirst(
 }
 
 /**
- * The points holding every query word in `key` first. Embeddings rank meaning, so a query that is a
- * model's name, or a word of it, otherwise loses to look-alike names and spellings.
- */
-/**
  * The query's possible keyword values: the whole query and each word, lowercased, as tags are
  * stored. A multi-word tag matches only as the whole query.
  */
@@ -369,8 +365,10 @@ export function queryKeywords(text: string) {
 }
 
 /**
- * Points that hold every query word in `key` come first. With `orKeywordKey`, so does a point whose
- * keyword field holds the query or one of its words: the same tier, not above it.
+ * The points holding every query word in `key` first. Embeddings rank meaning, so a query that is a
+ * model's name, or a word of it, otherwise loses to look-alike names and spellings. With
+ * `orKeywordKey`, so does a point whose keyword field holds the query or one of its words: the same
+ * tier, not above it.
  */
 export function withWordMatchesFirst(
   source: CandidateSource,

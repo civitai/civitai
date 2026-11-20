@@ -7,7 +7,8 @@ import type { ModelPayload } from './source';
  * quoted-phrase search switch on only once the first two show in the collection's payload_schema.
  * name is also word-indexed, for the search service's all-words name match, and tags is a keyword
  * index for the tag match beside it. username, triggerWords and docHash are stored, never filtered;
- * versionIds is only for the live sync's version-delete lookup. A missing index is built on the live collection when the sync starts.
+ * versionIds is only for the live sync's version-delete lookup. A missing index is built on the
+ * live collection when the sync starts.
  */
 export const MODEL_COLLECTION: CollectionSpec<ModelPayload> = {
   ...SITE_REPLICATION,
