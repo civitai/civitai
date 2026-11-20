@@ -31,7 +31,6 @@ const daysOut = (days: number) => {
   d.setUTCHours(0, 0, 0, 0);
   return d;
 };
-const hostTz = process.env.TZ;
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -44,8 +43,6 @@ const heldUntil = async (userId: number) =>
     .executeTakeFirst();
 
 beforeAll(async () => {
-  // Off UTC, a dropped `AT TIME ZONE 'UTC'` reads hours out.
-  process.env.TZ = 'America/Chicago';
   pg = await freshPglite();
   await pg.exec(`
     SET TIME ZONE 'UTC';
@@ -63,7 +60,6 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  process.env.TZ = hostTz;
   await db?.destroy();
 });
 

@@ -14,7 +14,18 @@ const {
   recordModActivity: vi.fn(),
 }));
 
-vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+// The place action looks the user up; `foundUser` is what that lookup answers.
+const lookup = vi.hoisted(() => ({
+  foundUser: { username: 'held-user' } as { username: string | null } | undefined,
+}));
+vi.mock('$lib/server/db', () => {
+  const chain = {
+    select: () => chain,
+    where: () => chain,
+    executeTakeFirst: async () => lookup.foundUser,
+  };
+  return { dbRead: { selectFrom: () => chain }, dbWrite: {} };
+});
 vi.mock('@civitai/db-queries/evidence-hold', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   countEvidenceHoldsEnding,
@@ -41,11 +52,53 @@ const endingOnly = () => listEvidenceHeldOwners.mock.calls[0][1].endingOnly;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  lookup.foundUser = { username: 'held-user' };
   countEvidenceHoldsEnding.mockResolvedValue({ owners: 2, earliest: new Date() });
   listEvidenceHeldOwners.mockResolvedValue({ items: [], hasMore: false });
 });
 
 describe('evidence holds load', () => {
+  it('marks each hold releasable exactly as the release query would accept it', async () => {
+    const hold = (id: number, over: Record<string, unknown>) => ({
+      id,
+      role: 'manual',
+      reason: 'kept',
+      csamReportId: null,
+      releaseAt: null,
+      extendedUntil: null,
+      extensionRequestedBy: null,
+      extensionReference: null,
+      ...over,
+    });
+    listEvidenceHeldOwners.mockResolvedValue({
+      items: [
+        {
+          userId: 5,
+          username: 'u',
+          heldUntil: null,
+          holds: [
+            hold(1, {}),
+            hold(2, { role: 'subject', csamReportId: 9 }),
+            hold(3, { reason: GENERATOR_EVIDENCE_HOLD_REASON }),
+            hold(4, { extendedUntil: new Date(Date.now() + 86_400_000) }),
+            hold(5, { extendedUntil: new Date(Date.now() - 86_400_000) }),
+          ],
+        },
+      ],
+      hasMore: false,
+    });
+    const data = (await loadAt('?ending=0')) as {
+      items: { holds: { id: number; releasable: boolean }[] }[];
+    };
+    expect(data.items[0].holds.map((h) => [h.id, h.releasable])).toEqual([
+      [1, true],
+      [2, false],
+      [3, false],
+      [4, false],
+      [5, true],
+    ]);
+  });
+
   it('refuses a moderator without the csam permission before reading any hold', async () => {
     await expect(loadAt('', {})).rejects.toMatchObject({ status: 403 });
     expect(countEvidenceHoldsEnding).not.toHaveBeenCalled();
@@ -112,6 +165,22 @@ const post = (
 };
 
 describe('placing a hold', () => {
+  it('refuses a user id that has no account, and places nothing', async () => {
+    lookup.foundUser = undefined;
+    const result = await post('place', { userId: '990000999', reason: 'r' });
+    expect(result.status).toBe(404);
+    expect(placeEvidenceHold).not.toHaveBeenCalled();
+  });
+
+  it('an empty end date means held until released', async () => {
+    placeEvidenceHold.mockResolvedValue({ id: 42, created: true });
+    await post('place', { userId: '5', reason: 'r', releaseAt: '' });
+    expect(placeEvidenceHold).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ releaseAt: null })
+    );
+  });
+
   it('refuses a moderator without the csam permission and writes nothing', async () => {
     const result = await post('place', { userId: '5', reason: 'r' }, {});
     expect(result.status).toBe(403);
@@ -133,7 +202,7 @@ describe('placing a hold', () => {
       releaseAt: new Date('2099-01-16T00:00:00Z'), // held through the chosen day
       createdById: MOD,
     });
-    expect(result).toMatchObject({ holdId: 41, created: true });
+    expect(result).toMatchObject({ holdId: 41, created: true, username: 'held-user' });
     expect(recordModActivity).toHaveBeenCalledWith(
       expect.objectContaining({ userId: MOD, entityId: 41, activity: 'placeEvidenceHold' })
     );
