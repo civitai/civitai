@@ -1389,6 +1389,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
       sfwMessage: null,
       location: 'l',
       showcaseSections: [{ key: 'k' }],
+      showcaseItems: [],
     };
     await archiveUserProfile({
       userId: report.userId,
@@ -1436,6 +1437,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
             sfwMessage: null,
             location: null,
             showcaseSections: [],
+            showcaseItems: [],
           },
         })
       ).rejects.toThrow();

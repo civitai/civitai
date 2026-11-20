@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { clearUserProfileFields, type ProfileClearSnapshot } from '~/server/services/user.service';
+import {
+  clearUserProfileFields,
+  removeUserLinkAsModerator,
+  type ProfileClearSnapshot,
+} from '~/server/services/user.service';
 
 const db = dbMock.dbWrite;
 
@@ -34,6 +38,7 @@ const stored = {
   sfwMessage: null,
   location: 'l',
   showcaseSections: [{ key: 'k' }],
+  showcaseItems: [{ entityType: 'Model', entityId: 1 }],
 };
 let archive: ReturnType<typeof vi.fn<(s: ProfileClearSnapshot) => Promise<unknown>>>;
 
@@ -135,7 +140,7 @@ describe('clearUserProfileFields', () => {
     expect(db.userProfile.updateMany).toHaveBeenCalledTimes(1);
   });
 
-  it('archives the stored text, showcase sections included, before clearing a reported user', async () => {
+  it('archives the stored text, showcase sections and items included, before clearing a reported user', async () => {
     reportNames(true);
     await clear({ fields: ['bio', 'showcaseSections'] });
     expect(archive).toHaveBeenCalledWith({
@@ -164,6 +169,66 @@ describe('clearUserProfileFields', () => {
     archive.mockRejectedValueOnce(new Error('upload failed'));
     await expect(clear()).rejects.toThrow('upload failed');
     expect(db.userProfile.updateMany).not.toHaveBeenCalled();
+    expect(modActivityRows()).toEqual([]);
+  });
+});
+
+describe('a report lookup that answers neither yes nor no', () => {
+  it('archives when the lookup returns no row', async () => {
+    db.$queryRaw.mockImplementation((async () => []) as never);
+    await clear();
+    expect(archive).toHaveBeenCalledTimes(1);
+  });
+
+  it('archives when the lookup returns NULL', async () => {
+    db.$queryRaw.mockImplementation((async (s: readonly string[]) =>
+      s.join('?').includes('"CsamReport"') ? [{ named: null }] : []) as never);
+    await clear();
+    expect(archive).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('removeUserLinkAsModerator', () => {
+  const LINK = 990100003;
+  const LINKS = [{ id: LINK, url: 'https://example.com/x', type: 'Social' }];
+  const remove = () =>
+    removeUserLinkAsModerator({ userId: USER, linkId: LINK, actorId: MOD, archive });
+
+  beforeEach(() => {
+    db.userLink.findMany.mockResolvedValue(LINKS as never);
+    db.userLink.deleteMany.mockResolvedValue({ count: 1 } as never);
+  });
+
+  it('archives a reported user’s links before removing one, owner-scoped, and records it', async () => {
+    reportNames(true);
+    await expect(remove()).resolves.toEqual({ removed: true });
+    expect(archive).toHaveBeenCalledWith(
+      expect.objectContaining({ links: LINKS, clearedFields: ['links'] })
+    );
+    expect(db.userLink.deleteMany).toHaveBeenCalledWith({ where: { id: LINK, userId: USER } });
+    expect(archive.mock.invocationCallOrder[0]).toBeLessThan(
+      db.userLink.deleteMany.mock.invocationCallOrder[0]
+    );
+    expect(modActivityRows()).toEqual([[MOD, 'user', 'removeLink', [USER]]]);
+  });
+
+  it('removes nothing when the archive fails', async () => {
+    reportNames(true);
+    archive.mockRejectedValueOnce(new Error('upload failed'));
+    await expect(remove()).rejects.toThrow('upload failed');
+    expect(db.userLink.deleteMany).not.toHaveBeenCalled();
+    expect(modActivityRows()).toEqual([]);
+  });
+
+  it('removes an unreported user’s link without an archive', async () => {
+    await expect(remove()).resolves.toEqual({ removed: true });
+    expect(archive).not.toHaveBeenCalled();
+    expect(db.userLink.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('records nothing when the link is not that user’s', async () => {
+    db.userLink.deleteMany.mockResolvedValue({ count: 0 } as never);
+    await expect(remove()).resolves.toEqual({ removed: false });
     expect(modActivityRows()).toEqual([]);
   });
 });
