@@ -159,6 +159,10 @@ export const CASH_SETTLED_ALIASES = new Set<string>(['CashSettled', 'cashSettled
 // orchestration.resourceCompensations sources that are platform revenue logged on a creator's version: never
 // paid, never shown as earnings. Creator Studio spells this out itself; keep the two in step.
 export const PLATFORM_REVENUE_SOURCES: ReadonlySet<string> = new Set(['licenseFeeMarkup']);
+/** PLATFORM_REVENUE_SOURCES as a ClickHouse IN list: `source NOT IN (${PLATFORM_REVENUE_SOURCES_SQL})`. */
+export const PLATFORM_REVENUE_SOURCES_SQL = [...PLATFORM_REVENUE_SOURCES]
+  .map((s) => `'${s}'`)
+  .join(', ');
 export const buzzSpendTypes = buzzAccountTypes.filter(
   (type) => buzzTypeConfig[type].type === 'spend' && !buzzTypeConfig[type].disabled
 ) as BuzzSpendType[];

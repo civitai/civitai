@@ -25,6 +25,8 @@ export const updateCompensation = createManualHandler<FetchCompensationData>({
         toDate('${data.date}') as createdAt
       FROM orchestration.resourceCompensations
       WHERE date = '${data.date}'
+        -- Platform revenue, never the creator's: PLATFORM_REVENUE_SOURCES in the main app's buzz.constants.ts.
+        AND source != 'licenseFeeMarkup'
       GROUP BY modelVersionId;
     `;
 

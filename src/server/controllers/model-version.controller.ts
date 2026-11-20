@@ -708,7 +708,7 @@ export const upsertModelVersionHandler = async ({
     // The service migrates the price onto the surviving tier; nothing to reject here.
 
     // A null type means "keep the stored one", as an omitted one does: written through, it would turn a
-    // staff-set percent into Buzz per image (the mini endpoint reads a null type as per-image).
+    // staff-set percent into Buzz per image.
     if (input.licensingFeeType === null) input.licensingFeeType = undefined;
     const percentRefusal = percentOfComputeFeeRefusal({
       isModerator: !!ctx.user.isModerator,

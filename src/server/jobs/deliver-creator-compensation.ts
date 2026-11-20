@@ -115,24 +115,25 @@ type ResourceRow = {
   modelVersionId: number;
   amount: number;
   accountType: BuzzAccountType;
-  source: 'tip' | 'compensation' | 'licenseFee';
+  source: string;
 };
 
 const BATCH_SIZE = 100;
 const COMP_START_DATE = new Date('2024-08-01');
 
 type PayoutSource = 'compensation' | 'tip' | 'licenseFee';
-const PAYABLE_SOURCES = new Set<string>([
+const KNOWN_SOURCES = new Set<string>([
   'compensation',
   'tip',
   'licenseFee',
-] satisfies PayoutSource[]);
+  ...PLATFORM_REVENUE_SOURCES,
+] satisfies string[]);
 
-/** Rows this job does not pay, by source, so a real payout source missing from the allowlist is seen. */
-export function unpaidSourceTotals(rows: { source: string; amount: number }[]) {
+/** Rows by source for the sources this job does not recognise; they are paid as compensation. */
+export function unknownSourceTotals(rows: { source: string; amount: number }[]) {
   const totals: Record<string, { rows: number; amount: number }> = {};
   for (const { source, amount } of rows) {
-    if (PAYABLE_SOURCES.has(source)) continue;
+    if (KNOWN_SOURCES.has(source)) continue;
     const total = (totals[source] ??= { rows: 0, amount: 0 });
     total.rows++;
     total.amount += Number(amount);
@@ -179,9 +180,8 @@ export function buildPayoutTransactions(
       const licenseTotals: Partial<Record<BuzzAccountType, number>> = {};
 
       for (const row of userRows) {
-        // Only the sources this job knows how to pay. Anything else the orchestrator logs here (the
-        // licence-fee markup is platform revenue) would otherwise be minted as compensation.
-        if (!PAYABLE_SOURCES.has(row.source)) continue;
+        // Every other source, one-off recoveries included, is compensation.
+        if (PLATFORM_REVENUE_SOURCES.has(row.source)) continue;
         const isCash = CASH_SETTLED_ALIASES.has(row.accountType);
         const amount =
           row.source === 'licenseFee' && isCash ? Math.floor(row.amount / 10) : row.amount;
@@ -277,21 +277,17 @@ export async function runPayout(lastUpdate: Date) {
     return;
   }
 
-  const unpaid = unpaidSourceTotals(rows);
-  for (const [source, { rows: count, amount }] of Object.entries(unpaid))
-    log(`Not paying ${count} rows (${amount}) with source ${source}`);
-  const unknownSources = Object.keys(unpaid).filter((s) => !PLATFORM_REVENUE_SOURCES.has(s));
-  if (unknownSources.length) {
+  const unknown = unknownSourceTotals(rows);
+  if (!isEmpty(unknown)) {
+    const message = `Creator compensation for ${dateStr} pays sources it does not recognise as compensation: ${Object.keys(
+      unknown
+    ).join(', ')}`;
+    log(`⚠️ ${message}`);
     logToAxiom({
-      type: 'error',
-      name: 'creator-compensation-unpaid-source',
-      message: `Creator compensation for ${dateStr} skipped unknown sources: ${unknownSources.join(
-        ', '
-      )}`,
-      details: {
-        date: dateStr,
-        sources: Object.fromEntries(unknownSources.map((s) => [s, unpaid[s]])),
-      },
+      type: 'warning',
+      name: 'creator-compensation-unknown-source',
+      message,
+      details: { date: dateStr, sources: unknown },
     });
   }
 

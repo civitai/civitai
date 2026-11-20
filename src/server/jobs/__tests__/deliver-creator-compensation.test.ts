@@ -147,9 +147,9 @@ describe('buildPayoutTransactions: generation tips', () => {
     ]);
   });
 
-  // Deliberate: an allowlist, not a skip of one name. The orchestrator writes the licence-fee markup
-  // to the same table on the licensor's version; it is platform revenue and must never be paid out.
-  it('pays nothing for a compensation source it does not know, such as the licence-fee markup', () => {
+  // The orchestrator writes the licence-fee markup to the same table on the licensor's version; it is
+  // platform revenue and must never be paid out.
+  it('pays nothing for the licence-fee markup', () => {
     const withMarkup = [
       ...ROWS,
       row('licenseFeeMarkup', 'CashSettled', 5000),
@@ -524,7 +524,7 @@ describe('the daily job after a failed run', () => {
   });
 });
 
-describe('runPayout: sources it does not pay', () => {
+describe('runPayout: sources beyond compensation, tip and licence fee', () => {
   beforeEach(() => {
     mockClickhouseQuery.mockReset();
     mockCreateBuzzTransactionMany.mockReset();
@@ -534,14 +534,18 @@ describe('runPayout: sources it does not pay', () => {
     loggingMock.logToAxiom.mockClear();
   });
 
-  const unpaidSourceAlerts = () =>
+  const sentTransactions = () =>
+    mockCreateBuzzTransactionMany.mock.calls.flatMap(([batch]) => batch);
+  const unknownSourceNotices = () =>
     loggingMock.logToAxiom.mock.calls.filter(
-      ([entry]) => (entry as { name?: string }).name === 'creator-compensation-unpaid-source'
+      ([entry]) => (entry as { name?: string }).name === 'creator-compensation-unknown-source'
     );
 
-  // The allowlist would otherwise drop a real payout source without a trace, as a one-off
-  // `compensation_recovered_*` source would be.
-  it('alerts on a skipped source it does not know, with its row count and amount', async () => {
+  // Deliberate (money ruling on #9760): a denylist, not an allowlist. A one-off source such as a
+  // `compensation_recovered_*` recovery was paid as compensation before this PR and the earnings view
+  // shows it as earned, so withholding it would show a creator money they never get. Only platform
+  // revenue is skipped; an unknown source is paid and named in a notice.
+  it('pays a source it does not recognise as compensation and names it in a notice', async () => {
     mockClickhouseQuery.mockResolvedValue([
       row('compensation', 'Yellow', 50, 11),
       row('licenseFeeMarkup', 'Yellow', 7, 11),
@@ -551,10 +555,18 @@ describe('runPayout: sources it does not pay', () => {
 
     await runPayout(START);
 
-    const alerts = unpaidSourceAlerts();
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0][0]).toMatchObject({
-      type: 'error',
+    expect(
+      sentTransactions().map(({ externalTransactionId, amount }) => [externalTransactionId, amount])
+    ).toEqual(
+      expect.arrayContaining([
+        ['creator-tip-comp-2026-10-13-7-Yellow', 80],
+        ['creator-tip-comp-2026-10-13-7-Blue', 12],
+      ])
+    );
+    expect(sentTransactions()).toHaveLength(2);
+    const notices = unknownSourceNotices();
+    expect(notices).toHaveLength(1);
+    expect(notices[0][0]).toMatchObject({
       details: {
         date: '2026-10-13',
         sources: { compensation_recovered_20261201: { rows: 2, amount: 42 } },
@@ -562,7 +574,7 @@ describe('runPayout: sources it does not pay', () => {
     });
   });
 
-  it('does not alert on the licence-fee markup, which it skips by design', async () => {
+  it('skips the licence-fee markup without a notice', async () => {
     mockClickhouseQuery.mockResolvedValue([
       row('compensation', 'Yellow', 50, 11),
       row('licenseFeeMarkup', 'CashSettled', 5000, 11),
@@ -570,8 +582,10 @@ describe('runPayout: sources it does not pay', () => {
 
     await runPayout(START);
 
-    expect(unpaidSourceAlerts()).toEqual([]);
-    expect(mockCreateBuzzTransactionMany).toHaveBeenCalled();
+    expect(unknownSourceNotices()).toEqual([]);
+    expect(
+      sentTransactions().map(({ externalTransactionId, amount }) => [externalTransactionId, amount])
+    ).toEqual([['creator-tip-comp-2026-10-13-7-Yellow', 50]]);
   });
 });
 
