@@ -13,7 +13,11 @@ import {
   withConsoleForwardingSuppressed,
 } from '@civitai/axiom/console-forwarding';
 import { otelConsoleRecordsDroppedCounter } from '@civitai/telemetry/otel-logs';
-import { redactCredentials, redactCredentialsInString } from '@civitai/axiom/redact-credentials';
+import {
+  isCredentialField,
+  REDACTED_CREDENTIAL,
+  redactCredentialsInString,
+} from '@civitai/axiom/redact-credentials';
 import { emitConsoleLog, type ConsoleLogSource } from '~/server/logging/structured-log-sink';
 
 export const CONSOLE_BACKSTOP_METHODS = ['log', 'info', 'warn', 'error', 'debug'] as const;
@@ -32,11 +36,10 @@ const SEVERITY: Record<ConsoleMethod, 'error' | 'warn' | 'info'> = {
  * counted. The OTLP export queue this feeds also carries the app logger's alert-feeding records,
  * and many processes run this at once, so the total is these figures times the process count.
  *
- * - 50 records/s: bounds how many records, and how many formatting passes, a console-spamming
- *   library can cost per process.
- * - 64 KiB/s: bounds the bytes, since a library printing large objects fills it well before 50.
- * - 2048-character body: room for a full stack trace; a longer line is cut (stdout keeps it all).
- *   Lower than the createLogger cap because these lines are unstructured and may be anything.
+ * - records/s: bounds the records, and the formatting passes, a console-spamming library can cost.
+ * - bytes/s: bounds the bytes, since a library printing large objects fills it before the record cap.
+ * - body max: room for a full stack trace; a longer line is cut (stdout keeps it all). Lower than
+ *   the createLogger cap because these lines are unstructured and may be anything.
  */
 export const CONSOLE_BACKSTOP_MAX_RECORDS_PER_SECOND = 50;
 export const CONSOLE_BACKSTOP_MAX_BYTES_PER_SECOND = 64 * 1024;
@@ -46,15 +49,31 @@ export const CONSOLE_RECORD_BODY_MAX = 2048;
 // a bounded strip. A multiple of the cap leaves room for the codes that the strip removes.
 const PRE_STRIP_SLICE = CONSOLE_RECORD_BODY_MAX * 4;
 
+// A `key: 'value'` pair as util.inspect prints it, or `"key": "value"` as JSON does. Matching the
+// formatted text, not the arguments, reaches fields inside an Error or a class instance (which
+// inspect expands), and costs no more than the already-cut text.
+const FORMATTED_FIELD_RE =
+  /(['"]?)([A-Za-z_$][\w$-]*)\1(\s*:\s*)(?:'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)")/g;
+
+function redactFormattedFields(text: string): string {
+  return text.replace(
+    FORMATTED_FIELD_RE,
+    (match, quote: string, name: string, sep: string, single?: string) => {
+      if (!isCredentialField(name)) return match;
+      const q = single !== undefined ? "'" : '"';
+      return `${quote}${name}${quote}${sep}${q}${REDACTED_CREDENTIAL}${q}`;
+    }
+  );
+}
+
 /**
- * One record's body: formatted as console formats it, colour codes stripped, credentials redacted
- * (as the structured logger and the span processor do), cut to the cap.
+ * One record's body: formatted as console formats it (depth-limited), cut, colour codes stripped,
+ * credentials redacted by field name and by value shape (as the structured logger and the span
+ * processor do), cut to the cap. Every pass runs on text already cut to PRE_STRIP_SLICE.
  */
 export function consoleRecordBody(args: unknown[]): string {
-  // Fields are redacted by name before formatting, as the structured logger does; the string pass
-  // after it covers what formatting produces (a URL or header inside a message).
-  const formatted = format(...args.map(redactCredentials)).slice(0, PRE_STRIP_SLICE);
-  return redactCredentialsInString(stripVTControlCharacters(formatted)).slice(
+  const formatted = stripVTControlCharacters(format(...args).slice(0, PRE_STRIP_SLICE));
+  return redactCredentialsInString(redactFormattedFields(formatted)).slice(
     0,
     CONSOLE_RECORD_BODY_MAX
   );

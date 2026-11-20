@@ -134,6 +134,28 @@ describe('installConsoleOtlpBackstop', () => {
     expect(emitted[0].body).toContain("url: '/api'");
   });
 
+  it('redacts credential fields inside an Error and a class instance, as inspect prints them', () => {
+    const { target, emitted } = installOnFake();
+    const err = Object.assign(new Error('request failed'), {
+      config: { url: '/v1/x', headers: { authorization: 'Basic c2VjcmV0OnBhc3M=' } },
+    });
+    class Session {
+      cookie = 'sid=s3cr3t-cookie-value';
+      user = 'alice';
+    }
+
+    target.error(err, new Session());
+
+    const body = emitted[0].body;
+    expect(body).toContain('request failed');
+    expect(body).toContain("url: '/v1/x'");
+    expect(body).toContain("user: 'alice'");
+    expect(body).not.toContain('c2VjcmV0OnBhc3M=');
+    expect(body).not.toContain('s3cr3t-cookie-value');
+    expect(body).toContain("authorization: '[redacted]'");
+    expect(body).toContain("cookie: '[redacted]'");
+  });
+
   it('turns console.error(err) into ONE record carrying the whole stack', () => {
     const { target, emitted } = installOnFake();
     const err = new Error('kaboom');

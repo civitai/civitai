@@ -90,7 +90,7 @@ export const otelConsoleRecordsDroppedCounter = registerInstrumentationMetric(
   () =>
     new promClient.Counter({
       name: CONSOLE_DROPPED_METRIC,
-      help: 'Console calls written to stdout but not forwarded over OTLP, over the per-second cap',
+      help: 'Console calls written to stdout but not forwarded over OTLP, over the per-second record or byte budget',
       registers: [instrumentationRegistry],
     })
 );
