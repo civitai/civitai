@@ -215,7 +215,7 @@ export async function assertImageVisibleToViewer({
   );
   if (!visible) throw throwNotFoundError();
   if (userId && !isModerator) {
-    // Imported here: user.service sits in the image.service import cycle.
+    // Imported here, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
     const { amIBlockedByUser } = await import('~/server/services/user.service');
     const blocked = await amIBlockedByUser({
       userId,
