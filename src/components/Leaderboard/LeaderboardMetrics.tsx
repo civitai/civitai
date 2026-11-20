@@ -16,18 +16,23 @@ import {
   IconBox,
   IconBrush,
   IconBulb,
+  IconCalendarWeek,
   IconCheck,
   IconChecks,
   IconDownload,
   IconEye,
   IconFileStar,
+  IconFileText,
   IconHeart,
+  IconHeartHandshake,
   IconHexagonFilled,
   IconMedal,
+  IconMessages,
   IconMoodSmile,
   IconPhoto,
   IconReport,
   IconScoreboard,
+  IconSeedling,
   IconShieldChevron,
   IconStar,
   IconSwords,
@@ -38,6 +43,7 @@ import {
   IconTrophy,
   IconUsers,
   IconVideo,
+  IconWritingSign,
   IconX,
 } from '@tabler/icons-react';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -230,6 +236,34 @@ const metricTypes: Record<
   wins: () => ({
     tooltip: 'Wins',
     icon: <IconMedal {...iconProps} />,
+  }),
+  articles: () => ({
+    tooltip: 'Articles counted',
+    icon: <IconFileText {...iconProps} />,
+  }),
+  readers: () => ({
+    tooltip: 'Readers',
+    icon: <IconUsers {...iconProps} />,
+  }),
+  loyalReaders: () => ({
+    tooltip: 'Readers who came back for 3+ chapters',
+    icon: <IconHeartHandshake {...iconProps} />,
+  }),
+  activeWeeks: () => ({
+    tooltip: 'Weeks with a new chapter, of the last 12',
+    icon: <IconCalendarWeek {...iconProps} />,
+  }),
+  participants: () => ({
+    tooltip: 'People who joined the discussion',
+    icon: <IconMessages {...iconProps} />,
+  }),
+  answers: () => ({
+    tooltip: 'Writers who answered with an article',
+    icon: <IconWritingSign {...iconProps} />,
+  }),
+  firstTimers: () => ({
+    tooltip: 'Of them, writing their first article',
+    icon: <IconSeedling {...iconProps} />,
   }),
 };
 
