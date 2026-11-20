@@ -17,7 +17,6 @@ import { dbRead } from '~/server/db/client';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import type { ImageModelWithIngestion } from '../selectors/image.selector';
 import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
-import { NsfwLevel } from '~/server/common/enums';
 import {
   bountyImageNsfwLevel,
   bountyNsfwFlagLevel,

@@ -37,6 +37,7 @@ const TOS_VIOLATION = 15;
 const ACCEPTABLE_MINOR = 16;
 const NSFW_UNRATED = 17;
 const NSFW_RATED_R = 18;
+const NSFW_TEXT_RATED_R = 19;
 
 let pg: PGlite;
 const db = {
@@ -94,12 +95,14 @@ beforeAll(async () => {
       (${HIDDEN_META}, '{"prompt": "secret"}', 1, NULL, false, true);
   `);
   await pg.exec(`
-    INSERT INTO "Image" (id) VALUES (${NSFW_UNRATED}), (${NSFW_RATED_R});
-    INSERT INTO "Bounty" (id, "userId", nsfw) VALUES (${NSFW_UNRATED}, ${OWNER}, true);
+    INSERT INTO "Image" (id) VALUES (${NSFW_UNRATED}), (${NSFW_RATED_R}), (${NSFW_TEXT_RATED_R});
+    INSERT INTO "Bounty" (id, "userId", nsfw) VALUES (${NSFW_UNRATED}, ${OWNER}, true),
+      (${NSFW_TEXT_RATED_R}, ${OWNER}, true);
     INSERT INTO "Bounty" (id, "userId", nsfw, "moderatorNsfwLevel")
       VALUES (${NSFW_RATED_R}, ${OWNER}, true, ${NsfwLevel.R});
     INSERT INTO "ImageConnection" VALUES (${NSFW_UNRATED}, ${NSFW_UNRATED}, 'Bounty'),
-      (${NSFW_RATED_R}, ${NSFW_RATED_R}, 'Bounty');
+      (${NSFW_RATED_R}, ${NSFW_RATED_R}, 'Bounty'),
+      (${NSFW_TEXT_RATED_R}, ${NSFW_TEXT_RATED_R}, 'Bounty');
   `);
   for (const id of [
     CLEAN,
@@ -178,5 +181,32 @@ describe('bounties search index images', () => {
     const doc = await pull(NSFW_RATED_R);
     expect(doc?.images.map((i) => i.nsfwLevel)).toEqual([NsfwLevel.R]);
     expect(doc?.nsfwLevel).toEqual(parseBitwiseBrowsingLevel(NsfwLevel.R));
+  });
+
+  it('raises a PG image of a mature-marked bounty to the R its text scan rated it', async () => {
+    const queryRaw = dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>;
+    // The scan's moderation row, as the text-rating lookup reads it; any other read finds nothing.
+    queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('').includes('"EntityModeration"')
+        ? [
+            {
+              id: NSFW_TEXT_RATED_R,
+              byScan: true,
+              scanCurrent: true,
+              scanLevel: NsfwLevel.R,
+              scanVersion: '1',
+              content: null,
+            },
+          ]
+        : []
+    );
+    try {
+      const doc = await pull(NSFW_TEXT_RATED_R);
+      expect(doc?.images.map((i) => i.nsfwLevel)).toEqual([NsfwLevel.R]);
+      expect(doc?.nsfwLevel).toEqual(parseBitwiseBrowsingLevel(NsfwLevel.R));
+    } finally {
+      queryRaw.mockReset();
+      queryRaw.mockResolvedValue([]);
+    }
   });
 });
