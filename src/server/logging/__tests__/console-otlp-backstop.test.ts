@@ -117,6 +117,23 @@ describe('installConsoleOtlpBackstop', () => {
     );
   });
 
+  it('redacts credential-named fields of a logged object, leaving the argument itself alone', () => {
+    const { target, originals, emitted } = installOnFake();
+    const config = {
+      url: '/api',
+      token: 'tok-abc-123',
+      headers: { authorization: 'Basic Zm9vOmJhcg==' },
+    };
+
+    target.log('config', config);
+
+    expect(originals.log).toHaveBeenCalledWith('config', config);
+    expect(config.token).toBe('tok-abc-123');
+    expect(emitted[0].body).not.toContain('tok-abc-123');
+    expect(emitted[0].body).not.toContain('Zm9vOmJhcg==');
+    expect(emitted[0].body).toContain("url: '/api'");
+  });
+
   it('turns console.error(err) into ONE record carrying the whole stack', () => {
     const { target, emitted } = installOnFake();
     const err = new Error('kaboom');
@@ -229,6 +246,25 @@ describe('installConsoleOtlpBackstop', () => {
     now += 1_000;
     target.error(wide);
     expect(emitted).toHaveLength(17);
+  });
+
+  it('stops formatting once the record budget is spent, even when bytes were the limit', () => {
+    const now = 9_500_100;
+    const onDrop = vi.fn();
+    const { target, emitted } = installOnFake({
+      now: () => now,
+      onDrop,
+      maxRecordsPerSecond: 5,
+      maxBytesPerSecond: 10,
+    });
+    const inspected = vi.fn(() => 'x'.repeat(50));
+    const big = { [inspect.custom]: inspected };
+
+    for (let i = 0; i < 20; i++) target.log(big);
+
+    expect(emitted).toHaveLength(0);
+    expect(onDrop).toHaveBeenCalledTimes(20);
+    expect(inspected).toHaveBeenCalledTimes(5);
   });
 
   it('applies a byte budget passed in, by body size', () => {

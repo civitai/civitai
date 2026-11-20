@@ -219,7 +219,7 @@ export function createAxiomLogger(
    */
   function writeSelfReport(record: MixedObject) {
     const line = JSON.stringify(record);
-    // Suppressed: the sink call below already forwards this line.
+    // Suppressed so the console backstop does not double-forward what emitLog sends.
     withConsoleForwardingSuppressed(() => console.error(line));
     if (!deps.emitLog) return;
     try {
@@ -387,7 +387,7 @@ export function createAxiomLogger(
         }
       }
 
-      // Suppressed: the sink call below already forwards this line.
+      // Suppressed so the console backstop does not double-forward what emitLog sends.
       withConsoleForwardingSuppressed(() => console.error(line));
 
       // Additional sink, if one was injected. Deliberately AFTER the stderr write and

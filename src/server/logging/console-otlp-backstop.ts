@@ -1,12 +1,10 @@
 // Forwards raw `console.*` output to the structured-log sink, so a line that exists only on stdout
 // (a stack trace from `console.error(err)`, a library warning) is also in the OTLP log stream.
-// Lines printed before it is installed (most of boot) stay stdout-only. Server-only: installed from `src/instrumentation.node.ts`, never imported by
-// a module the client or edge bundles reach.
+// Lines printed before it is installed (most of boot) stay stdout-only. Server-only: installed from
+// `src/instrumentation.node.ts`, never imported by a module the client or edge bundles reach.
 //
-// Writers that already forward their line, or keep it on stdout on purpose, wrap their console call
-// in `withConsoleForwardingSuppressed` (`@civitai/axiom/console-forwarding`), and the wrapper below
-// skips any call made while that mark is up. The wrapper raises the same mark around its own emit,
-// so a console call made synchronously by the sink cannot re-enter it.
+// Writers whose line already reaches the sink wrap their call in withConsoleForwardingSuppressed
+// (@civitai/axiom/console-forwarding).
 import { format, stripVTControlCharacters } from 'node:util';
 import { diag, DiagConsoleLogger, type DiagLogger } from '@opentelemetry/api';
 import { diagLogLevelFromString, getStringFromEnv } from '@opentelemetry/core';
@@ -15,7 +13,7 @@ import {
   withConsoleForwardingSuppressed,
 } from '@civitai/axiom/console-forwarding';
 import { otelConsoleRecordsDroppedCounter } from '@civitai/telemetry/otel-logs';
-import { redactCredentialsInString } from '@civitai/axiom/redact-credentials';
+import { redactCredentials, redactCredentialsInString } from '@civitai/axiom/redact-credentials';
 import { emitConsoleLog, type ConsoleLogSource } from '~/server/logging/structured-log-sink';
 
 export const CONSOLE_BACKSTOP_METHODS = ['log', 'info', 'warn', 'error', 'debug'] as const;
@@ -34,9 +32,9 @@ const SEVERITY: Record<ConsoleMethod, 'error' | 'warn' | 'info'> = {
  * counted. The OTLP export queue this feeds also carries the app logger's alert-feeding records,
  * and many processes run this at once, so the total is these figures times the process count.
  *
- * - 50 records/s: under a tenth of one 512-record export batch.
- * - 64 KiB/s: a library printing large objects reaches the byte budget long before the record
- *   budget (32 full-size bodies), so a burst costs bandwidth in proportion to records, not size.
+ * - 50 records/s: bounds how many records, and how many formatting passes, a console-spamming
+ *   library can cost per process.
+ * - 64 KiB/s: bounds the bytes, since a library printing large objects fills it well before 50.
  * - 2048-character body: room for a full stack trace; a longer line is cut (stdout keeps it all).
  *   Lower than the createLogger cap because these lines are unstructured and may be anything.
  */
@@ -53,7 +51,9 @@ const PRE_STRIP_SLICE = CONSOLE_RECORD_BODY_MAX * 4;
  * (as the structured logger and the span processor do), cut to the cap.
  */
 export function consoleRecordBody(args: unknown[]): string {
-  const formatted = format(...args).slice(0, PRE_STRIP_SLICE);
+  // Fields are redacted by name before formatting, as the structured logger does; the string pass
+  // after it covers what formatting produces (a URL or header inside a message).
+  const formatted = format(...args.map(redactCredentials)).slice(0, PRE_STRIP_SLICE);
   return redactCredentialsInString(stripVTControlCharacters(formatted)).slice(
     0,
     CONSOLE_RECORD_BODY_MAX
@@ -115,13 +115,14 @@ export function installConsoleOtlpBackstop(
         recordsInWindow = 0;
         bytesInWindow = 0;
       }
-      // Checked before formatting, so a call over the record budget costs no format.
+      // Every attempt counts against the record budget before formatting, including one the byte
+      // budget then drops, so formatting runs at most maxRecords times per second.
       if (recordsInWindow >= maxRecords) return opts.onDrop?.();
+      recordsInWindow++;
       withConsoleForwardingSuppressed(() => {
         const body = consoleRecordBody(args);
         const bytes = Buffer.byteLength(body);
         if (bytesInWindow + bytes > maxBytes) return opts.onDrop?.();
-        recordsInWindow++;
         bytesInWindow += bytes;
         opts.emit(body, { source: 'console', name: 'console', type: SEVERITY[method] });
       });
