@@ -197,7 +197,10 @@ import type {
 import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { imagesMetricsSearchIndex } from '~/server/search-index';
-import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
+import {
+  queueDocumentsForBlockedImages,
+  queueDocumentsForImageMinorChanges,
+} from '~/server/services/image-models-reindex.service';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -1481,6 +1484,7 @@ export async function handleBlockImages({
     await clearAccountDeletionImageMarkers({ ids });
     // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
     if (postIds.length) await bustCachesForPosts(postIds);
+    await queueDocumentsForBlockedImages(ids);
     if (include?.includes('phash-block')) {
       logCsamBlocklistNoHash(
         ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
