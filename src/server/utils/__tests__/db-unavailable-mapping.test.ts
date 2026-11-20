@@ -6,6 +6,7 @@ import { createPool } from '@civitai/db/db-helpers';
 import { createCallerFactory, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { handleTRPCError, throwDbCustomError, throwDbError } from '~/server/utils/errorHandling';
+import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 
 // An unreachable database is a transient condition: a client should back off and retry (503), not
 // read it as a server bug (500). A 503's message is NOT masked on the wire (client-safe-error.ts),
@@ -59,6 +60,14 @@ async function pgPoolRefused(): Promise<unknown> {
     await pool.end().catch(() => undefined);
   }
 }
+
+// During a primary failover the pooler answers with a cached login failure, which Prisma wraps in an
+// error that has no P-code.
+const prismaWrappedLoginFailing = () =>
+  new Prisma.PrismaClientUnknownRequestError(
+    `Error in connector: Error querying the database: FATAL: server login has been failing, cached error: connect failed (server_login_retry) at ${HOST}`,
+    { clientVersion: 'test' }
+  );
 
 const caught = (fn: () => unknown): TRPCError => {
   try {
@@ -132,6 +141,7 @@ describe('publicProcedure maps an uncaught unreachable-database error to 503', (
     ['pg server admin shutdown (57P01)', pgAdminShutdown],
     ['pg-pool acquire timeout', () => new Error('timeout exceeded when trying to connect')],
     ['pg connect timeout', () => new Error('Connection terminated due to connection timeout')],
+    ['Prisma unknown error wrapping a pooler login failure', prismaWrappedLoginFailing],
   ])('%s → SERVICE_UNAVAILABLE, generic message', async (_label, make) => {
     const err = (await call(make()).catch((e) => e)) as TRPCError;
     expect(err).toBeInstanceOf(TRPCError);
@@ -187,5 +197,55 @@ describe('publicProcedure maps an uncaught unreachable-database error to 503', (
     const chosen = new TRPCError({ code: 'NOT_FOUND', message: 'gone', cause: p1001() });
     const err = (await call(chosen).catch((e) => e)) as TRPCError;
     expect(err.code).toBe('NOT_FOUND');
+  });
+});
+
+describe('handleEndpointError (REST) maps an unreachable database to 503', () => {
+  function createRes() {
+    let statusCode = 200;
+    let body: unknown;
+    const res = {
+      headersSent: false,
+      status(code: number) {
+        statusCode = code;
+        return res;
+      },
+      json(b: unknown) {
+        body = b;
+        res.headersSent = true;
+        return res;
+      },
+      setHeader: () => res,
+      end: () => res,
+      _status: () => statusCode,
+      _body: () => body,
+    };
+    return res;
+  }
+  const respond = (e: unknown) => {
+    const res = createRes();
+    handleEndpointError(res as never, e);
+    return res;
+  };
+
+  it.each([
+    ['a bare Prisma P1001', p1001],
+    ['a Prisma unknown error wrapping a pooler login failure', prismaWrappedLoginFailing],
+    [
+      'the same, wrapped by throwDbError',
+      () => caught(() => throwDbError(prismaWrappedLoginFailing())),
+    ],
+  ])('%s → 503 with the generic message', (_label, make) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const res = respond(make());
+      expect(res._status()).toBe(503);
+      expect(res._body()).toEqual({
+        message: 'This service is temporarily unavailable. Please try again.',
+      });
+      expect(JSON.stringify(res._body())).not.toContain(HOST);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

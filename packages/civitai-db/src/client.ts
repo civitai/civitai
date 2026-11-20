@@ -3,6 +3,7 @@
 import type { Prisma } from '@civitai/db-schema';
 import { PrismaClient } from '@civitai/db-schema';
 import { loadDbEnv, type DbConfig } from './env';
+import { withReadRetry, type ReadRetryOptions } from './read-retry';
 
 export type PrismaClients = { dbRead: PrismaClient; dbWrite: PrismaClient };
 
@@ -45,6 +46,11 @@ export type CreatePrismaClientsOptions = Partial<DbConfig> & {
   onSlowQuery?: (e: { query: string; duration: number; target: 'read' | 'write' }) => void;
   /** Receives each printed `prisma:error` / `prisma:warn` line after it is written to stdout. */
   onLog?: (e: PrismaLogLine) => void;
+  /**
+   * Retry policy for reads across a brief failover (`withReadRetry`), or `false` for none. Default:
+   * retried, with the READ_RETRY_* constants.
+   */
+  readRetry?: ReadRetryOptions | false;
 };
 
 /**
@@ -117,7 +123,7 @@ export function slowQueryLogger({
  * that calls this. See the `~/server/db/client` shim.
  */
 export function createPrismaClients(options: CreatePrismaClientsOptions = {}): PrismaClients {
-  const { onSlowQuery, onLog, ...envOverrides } = options;
+  const { onSlowQuery, onLog, readRetry, ...envOverrides } = options;
   const config = { ...loadDbEnv(), ...envOverrides };
 
   const singleClient = config.replicaUrl === config.databaseUrl;
@@ -163,5 +169,10 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
     // @ts-ignore - necessary to get the query event
     dbRead.$on('query', logFor('read'));
 
-  return { dbRead, dbWrite };
+  // Last, after every `$on`: the extended client is a new object. A read on the write client
+  // (read-your-writes) is retried too; a write on either never is.
+  if (readRetry === false) return { dbRead, dbWrite };
+  const retryingWrite = withReadRetry(dbWrite, 'write', readRetry);
+  const retryingRead = singleClient ? retryingWrite : withReadRetry(dbRead, 'read', readRetry);
+  return { dbRead: retryingRead, dbWrite: retryingWrite };
 }
