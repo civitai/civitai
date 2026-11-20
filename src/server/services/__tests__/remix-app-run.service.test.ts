@@ -2151,14 +2151,10 @@ describe('a user app', () => {
       });
 
       describe('the runner quarantine', () => {
-        const quarantine = (tripped?: boolean) =>
+        const quarantine = (tripped: boolean) =>
           vi.stubGlobal(
             'fetch',
-            fakeRemixRunner({
-              secret: SECRET,
-              apps: {},
-              quarantined: tripped === undefined ? {} : { tripped },
-            }).fetchImpl
+            fakeRemixRunner({ secret: SECRET, apps: {}, quarantined: { tripped } }).fetchImpl
           );
         const counted = () =>
           (stored.manifest as { runnerQuarantines?: { viewers: unknown[] } }).runnerQuarantines
@@ -2170,6 +2166,8 @@ describe('a user app', () => {
         const held = { code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD };
 
         it('a trip refuses the run as unavailable; three distinct viewers tripping one source hold the app', async () => {
+          const decision = { action: 'approved', by: 88, at: '2026-11-01T00:00:00.000Z' };
+          stored.manifest = { ...stored.manifest, reviewLog: [decision] } as typeof stored.manifest;
           quarantine(true);
           // One viewer, many times: counted once, never a hold.
           for (let i = 0; i < 4; i++) await expect(runAs(101)).rejects.toMatchObject(unavailable);
@@ -2177,12 +2175,10 @@ describe('a user app', () => {
           expect(stored.status).toBe('remix');
           expect(written()).toHaveLength(1);
           // The note carries the count, never anything that names the viewer.
-          expect(reviewLog()).toEqual([
-            expect.objectContaining({
-              action: 'held-runner-quarantine-observed',
-              note: 'viewer 1 of 3',
-            }),
-          ]);
+          const [, observed] = reviewLog();
+          expect(observed).toMatchObject({ action: 'held-runner-quarantine-observed' });
+          expect(observed.note).toContain('1 of 3');
+          expect(observed.note).not.toMatch(/[0-9a-f]{16}|101/);
           // The author's own runs never count.
           await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(unavailable);
           expect(written()).toHaveLength(1);
@@ -2199,6 +2195,9 @@ describe('a user app', () => {
           expect(counted()).toHaveLength(1);
           await expect(runAs(103)).rejects.toMatchObject(unavailable);
           expect(stored.status).toBe('remix');
+          const observedRows = () =>
+            reviewLog().filter(({ action }) => action === 'held-runner-quarantine-observed');
+          expect(observedRows().length).toBeLessThanOrEqual(2);
           // The third distinct viewer on this source holds it.
           await expect(runAs(104)).rejects.toMatchObject(held);
           expect(stored.status).toBe('remix_disabled');
@@ -2207,10 +2206,9 @@ describe('a user app', () => {
             action: 'held-runner-quarantine',
             by: REMIX_SYSTEM_ACTOR,
           });
-          // Observed rows stay fewer than a hold takes: three were written, one is kept.
-          expect(
-            reviewLog().filter(({ action }) => action === 'held-runner-quarantine-observed')
-          ).toHaveLength(1);
+          // Three observed rows were written and one is kept; the mod's decision outlives them all.
+          expect(observedRows()).toHaveLength(1);
+          expect(reviewLog()[0]).toEqual(decision);
         });
 
         // The runner answers every call 423 for ten minutes after one trips it: counting those would
@@ -2261,17 +2259,20 @@ describe('a user app', () => {
           expect(written()).toHaveLength(1);
         });
 
-        it('counts each viewer for a day: a trip older than 24 h no longer counts', async () => {
+        it('counts each trip for a day: one 23 h old still counts, one 25 h old no longer does', async () => {
           vi.useFakeTimers({ toFake: ['Date'] });
           try {
-            vi.setSystemTime(new Date('2026-11-20T00:00:00Z'));
             quarantine(true);
-            for (const viewer of [101, 102])
-              await expect(runAs(viewer)).rejects.toMatchObject(unavailable);
+            vi.setSystemTime(new Date('2026-11-20T00:00:00Z'));
+            await expect(runAs(101)).rejects.toMatchObject(unavailable);
+            vi.setSystemTime(new Date('2026-11-20T23:00:00Z'));
+            await expect(runAs(102)).rejects.toMatchObject(unavailable);
+            // 101's trip is 25 h old: 102 and 103 make two, not three.
             vi.setSystemTime(new Date('2026-11-21T01:00:00Z'));
             await expect(runAs(103)).rejects.toMatchObject(unavailable);
             expect(stored.status).toBe('remix');
-            expect(counted()).toHaveLength(1);
+            // 102's trip, 2 h old, still counts with 103's.
+            await expect(runAs(104)).rejects.toMatchObject(held);
           } finally {
             vi.useRealTimers();
           }
@@ -2348,14 +2349,14 @@ describe('a user app', () => {
               },
             },
           });
-          const cached = fakeRemixRunner({
+          const tripped = fakeRemixRunner({
             secret: SECRET,
             apps: {},
-            quarantined: { tripped: false },
+            quarantined: { tripped: true },
           });
           let calls = 0;
           vi.stubGlobal('fetch', (async (url: string, init: RequestInit) =>
-            (calls++ === 0 ? asks : cached).fetchImpl(url, init)) as unknown as typeof fetch);
+            (calls++ === 0 ? asks : tripped).fetchImpl(url, init)) as unknown as typeof fetch);
           stored = rowOf(CHOICE_SOURCE);
           await bumpRemixAppRegistry();
           await expect(
@@ -2368,6 +2369,7 @@ describe('a user app', () => {
             })
           ).rejects.toMatchObject(unavailable);
           expect(asks.calls).toHaveLength(1);
+          expect(counted()).toHaveLength(1);
         });
       });
 
