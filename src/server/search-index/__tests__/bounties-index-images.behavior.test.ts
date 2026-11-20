@@ -121,7 +121,7 @@ describe('bounties search index owner', () => {
   it("carries the owner's profilePictureId but not the legacy image", async () => {
     const user = (await pull(CLEAN))?.user as Record<string, unknown> | undefined;
     expect(user).toHaveProperty('profilePictureId');
-    expect(user).not.toHaveProperty('image');
+    expect(user).toHaveProperty('image', null);
   });
 });
 

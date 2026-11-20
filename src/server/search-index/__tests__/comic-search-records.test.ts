@@ -28,7 +28,7 @@ describe('getComicSearchRecords', () => {
     const userJson = query?.sql.match(/jsonb_build_object\(([\s\S]*?)\)\s*"user"/)?.[1] ?? '';
     const keys = [...userJson.matchAll(/'(\w+)',/g)].map((m) => m[1]);
     expect(keys).toContain('profilePictureId');
-    expect(keys).not.toContain('image');
+    expect(userJson).toMatch(/'image', NULL,/);
   });
 
   it('asks nothing for no ids', async () => {

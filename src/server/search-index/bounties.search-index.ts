@@ -136,6 +136,7 @@ type BountyForSearchIndex = {
     id: number;
     username: string | null;
     deletedAt: Date | null;
+    image: null;
     profilePictureId: number | null;
     profilePicture: ImageModelWithIngestion | null;
   };
@@ -282,6 +283,8 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
             'id', u.id,
             'username', u.username,
             'deletedAt', u."deletedAt",
+            -- The legacy avatar URL is unrated, so it is stored as null.
+            'image', NULL,
             'profilePictureId', u."profilePictureId"
           ) user
         FROM "User" u

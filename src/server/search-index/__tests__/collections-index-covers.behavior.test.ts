@@ -336,7 +336,7 @@ describe('collections search index owner', () => {
     );
     const user = data.collections[0]?.user as Record<string, unknown>;
     expect(user).toHaveProperty('profilePictureId');
-    expect(user).not.toHaveProperty('image');
+    expect(user).toHaveProperty('image', null);
   });
 });
 

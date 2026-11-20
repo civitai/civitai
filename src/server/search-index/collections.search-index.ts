@@ -117,6 +117,7 @@ type CollectionForSearchIndex = {
     id: number;
     username: string | null;
     deletedAt: Date | null;
+    image: null;
     profilePictureId: number | null;
   };
   cosmetics: {
@@ -238,6 +239,8 @@ export const pullData = async (
         'id', u.id,
         'username', u.username,
         'deletedAt', u."deletedAt",
+        -- The legacy avatar URL is unrated, so it is stored as null.
+        'image', NULL,
         'profilePictureId', u."profilePictureId"
       ) user
     FROM "User" u

@@ -47,7 +47,12 @@ describe('articles search index', () => {
       articles: [article({ coverImage: image(10, 1), bannerImage: null })],
       cosmetics: {},
     });
-    expect(record?.user).toEqual({ id: 7, username: 'author', profilePicture: { id: 70 } });
+    expect(record?.user).toEqual({
+      id: 7,
+      username: 'author',
+      image: null,
+      profilePicture: { id: 70 },
+    });
   });
 
   it('indexes a banner-only article with its banner as the card image', async () => {

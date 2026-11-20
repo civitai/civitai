@@ -9,6 +9,9 @@ describe("the moderator search tools' user refresh documents", () => {
         user: { id: 7, username: 'author', image: 'legacy.png', profilePicture: { id: 70 } },
       },
     ]);
-    expect(doc).toEqual({ id: 1, user: { id: 7, username: 'author', profilePicture: { id: 70 } } });
+    expect(doc).toEqual({
+      id: 1,
+      user: { id: 7, username: 'author', image: null, profilePicture: { id: 70 } },
+    });
   });
 });
