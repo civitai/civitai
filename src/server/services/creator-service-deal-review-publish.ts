@@ -19,13 +19,14 @@ export const reviewPublic = Prisma.sql`(
     AND d."disputeResolution" IS NOT DISTINCT FROM 'Refund'::"ServiceDisputeResolution")
 )`;
 
-/** A buyer counts toward an offering's score only from an account a week old when the deal was accepted. */
+/** A buyer counts toward an offering's score only from an account a week old when they requested the deal. */
 const BUYER_MIN_AGE = Prisma.sql`interval '7 days'`;
 
 /**
  * An offering's happy and total counts from its published reviews, with `offeringId` naming the
  * offering in the surrounding statement. Each buyer counts once, by their latest published review,
- * and only for a deal at the minimum price or more from an account a week old when it was accepted.
+ * and only for a deal at the minimum price or more, from an account a week old when it was requested
+ * and not banned or deleted since (which counts from the next recount).
  */
 export const offeringReviewTotals = (offeringId: Prisma.Sql) => Prisma.sql`(
   SELECT count(*) FILTER (WHERE c."verdict" = 'Happy')::int AS happy, count(*)::int AS total
@@ -36,7 +37,8 @@ export const offeringReviewTotals = (offeringId: Prisma.Sql) => Prisma.sql`(
     JOIN "User" u ON u."id" = r."buyerId"
     WHERE r."offeringId" = ${offeringId} AND r."publishedAt" IS NOT NULL
       AND d."price" >= ${SERVICE_PRICE_MIN}::int
-      AND d."acceptedAt" - u."createdAt" >= ${BUYER_MIN_AGE}
+      AND d."requestedAt" - u."createdAt" >= ${BUYER_MIN_AGE}
+      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
     ORDER BY r."buyerId", r."publishedAt" DESC, r."id" DESC
   ) c
 )`;

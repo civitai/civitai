@@ -144,13 +144,24 @@ const xguardResult = (
   });
 
 const textScan = ({
+  type = 'ServiceDealReview',
   level = NsfwLevel.PG,
   csam = false,
-  workflowId = 'wf-c',
-  text = COMMENT,
-}: { level?: number; csam?: boolean; workflowId?: string; text?: string } = {}) => {
+  workflowId = type === 'ServiceDealReview' ? 'wf-c' : 'wf-r',
+  text = type === 'ServiceDealReview' ? COMMENT : REPLY,
+}: {
+  type?: 'ServiceDealReview' | 'ServiceDealReviewReply';
+  level?: number;
+  csam?: boolean;
+  workflowId?: string;
+  text?: string;
+} = {}) => {
   const subject = { userId: BUYER, declared: {}, fields: [{ heading: 'Review', text }] };
-  return adapter.serviceDealReviewModerationAdapter.applyTextScan!({
+  return (
+    type === 'ServiceDealReview'
+      ? adapter.serviceDealReviewModerationAdapter
+      : adapter.serviceDealReviewReplyModerationAdapter
+  ).applyTextScan!({
     entityId: REVIEW,
     workflowId,
     outcome: {
@@ -163,6 +174,8 @@ const textScan = ({
     textHash: textScanTextHash(subject),
   });
 };
+const replyScan = (opts: Parameters<typeof textScan>[0] = {}) =>
+  textScan({ ...opts, type: 'ServiceDealReviewReply' });
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -194,9 +207,8 @@ beforeEach(async () => {
 describe('a review text check', () => {
   it('shows text at or below the deal level and never text above it', async () => {
     await seed(PG13);
-    await xguardResult('ServiceDealReview');
-    await xguardResult('ServiceDealReviewReply', { nsfw: true });
-    // The fallback check reads nsfw as R, above this PG-13 deal.
+    await textScan();
+    await replyScan({ level: R });
     expect(await statuses()).toEqual({ comment: 'Scanned', reply: 'Blocked' });
   });
 
@@ -210,6 +222,28 @@ describe('a review text check', () => {
     expect((await statuses()).comment).toBe('Blocked');
   });
 
+  it('never shows text the fallback check passed: review text needs the text scan, with csam', async () => {
+    await seed(R);
+    await xguardResult('ServiceDealReview');
+    await xguardResult('ServiceDealReviewReply');
+    expect(await statuses()).toEqual({ comment: 'Pending', reply: 'Pending' });
+  });
+
+  it('records no check while the text scan is off for reviews, so the text stays hidden', async () => {
+    await seed(R);
+    await q(`UPDATE "ServiceDealReview" SET "scanWorkflowId" = NULL`);
+    // With the text scan off, the route falls back to the check this adapter declines.
+    const off = vi.fn(async (args: { xguard: () => Promise<{ id?: string | null } | null> }) =>
+      args.xguard()
+    );
+    await adapter.scanServiceDealReviewText('ServiceDealReview', REVIEW, off as never);
+    const [row] = await q<{ scanWorkflowId: string | null; publishedAt: Date | null }>(
+      `SELECT "scanWorkflowId", "publishedAt" FROM "ServiceDealReview"`
+    );
+    expect(row).toEqual({ scanWorkflowId: null, publishedAt: null });
+    expect((await statuses()).comment).toBe('Pending');
+  });
+
   it('blocks text the check blocked, whatever its level', async () => {
     await seed(X);
     await xguardResult('ServiceDealReview', { blocked: true });
@@ -221,7 +255,7 @@ describe('a review text check', () => {
     await xguardResult('ServiceDealReview', { workflowId: 'wf-old' });
     await textScan({ workflowId: 'wf-old' });
     expect(await statuses()).toEqual({ comment: 'Pending', reply: 'Pending' });
-    await xguardResult('ServiceDealReviewReply');
+    await replyScan();
     expect(await statuses()).toEqual({ comment: 'Pending', reply: 'Scanned' });
   });
 
@@ -238,7 +272,7 @@ describe('a review text check', () => {
     await fail('wf-c');
     expect((await statuses()).comment).toBe('Error');
     // A later passing check still shows it.
-    await xguardResult('ServiceDealReview');
+    await textScan();
     expect((await statuses()).comment).toBe('Scanned');
   });
 
@@ -266,8 +300,8 @@ describe('a review text check', () => {
   it('applies a result that landed before its check was recorded', async () => {
     await seed(PG13);
     await q(
-      `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", blocked, "triggeredLabels")
-       VALUES ('ServiceDealReview', $1, 'wf-new', false, '{nsfw}')`,
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", blocked, "nsfwLevel")
+       VALUES ('ServiceDealReview', $1, 'wf-new', false, 4)`,
       [REVIEW]
     );
     await adapter.scanServiceDealReviewText('ServiceDealReview', REVIEW, submitCheck);
@@ -283,7 +317,7 @@ describe('what a settled check does to the review', () => {
   it('shows a happy review once its comment passes, and unshows it when a moderator removes the text', async () => {
     await seed(R);
     expect(await publishedAt()).toBeNull();
-    await xguardResult('ServiceDealReview');
+    await textScan();
     expect(await publishedAt()).not.toBeNull();
     await adapter.blockServiceDealReviewText('ServiceDealReview', REVIEW);
     expect(await publishedAt()).toBeNull();
@@ -291,7 +325,7 @@ describe('what a settled check does to the review', () => {
 
   it("leaves the review's showing to its comment, not the seller's reply", async () => {
     await seed(R);
-    await xguardResult('ServiceDealReviewReply');
+    await replyScan();
     expect(await publishedAt()).toBeNull();
   });
 });
@@ -368,8 +402,8 @@ describe('a csam verdict on review text', () => {
 
   it("a moderator's removal blocks the text and leaves the other text alone", async () => {
     await seed(X);
-    await xguardResult('ServiceDealReview');
-    await xguardResult('ServiceDealReviewReply');
+    await textScan();
+    await replyScan();
     await adapter.blockServiceDealReviewText('ServiceDealReviewReply', REVIEW);
     expect(await statuses()).toEqual({ comment: 'Scanned', reply: 'Blocked' });
   });

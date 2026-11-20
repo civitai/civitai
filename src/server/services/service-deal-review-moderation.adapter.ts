@@ -3,7 +3,6 @@ import { dbWrite } from '~/server/db/client';
 import { syncReviewPublication } from '~/server/services/creator-service-deal-review-publish';
 import { logToAxiom } from '~/server/logging/client';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
-import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import {
@@ -97,22 +96,12 @@ const settleSkipped = (type: TextType, reviewId: number, reason: SkipReason, tex
         { reviewId }
       );
 
-/** The fallback check asks for nsfw alone, as a label rather than a level. */
-const fallbackLevel = (triggeredLabels: string[] | null | undefined) =>
-  triggeredLabels?.includes('nsfw') ? NsfwLevel.R : NsfwLevel.PG;
-
-/** `fresh`: a new submit, not the retry cron's, so the check gets a full retry budget again. */
-const xguard =
-  (type: TextType, reviewId: number, content: string, { fresh = false } = {}) =>
-  () =>
-    submitTextModeration({
-      entityType: type,
-      entityId: reviewId,
-      content,
-      labels: ['nsfw'],
-      priority: 'low',
-      rearmRetries: fresh,
-    });
+/**
+ * Review text is checked only by the text scan, which asks for csam; the fallback check does not.
+ * While the text scan is off for reviews the fallback is declined, so no check is recorded and the
+ * text stays unshown: turning the text scan on for reviews is a launch gate.
+ */
+const declineFallback = async () => ({ id: null });
 
 /**
  * Records the check submitted for the text as it was read, unless the text changed since. A result
@@ -143,16 +132,12 @@ async function trackSubmit(
     },
     select: { blocked: true, nsfwLevel: true, triggeredLabels: true, result: true },
   });
-  if (early)
+  if (early && (early.blocked || early.nsfwLevel !== null))
     await settleUnlessHeld(
       type,
       reviewId,
       { workflowId },
-      {
-        blocked: !!early.blocked,
-        level: early.nsfwLevel ?? fallbackLevel(early.triggeredLabels),
-        csam: early,
-      }
+      { blocked: !!early.blocked, level: early.nsfwLevel ?? NsfwLevel.PG, csam: early }
     );
   return workflow;
 }
@@ -175,7 +160,7 @@ export async function scanServiceDealReviewText(
         entityType: type,
         entityId: reviewId,
         onActiveSkip: (reason) => settleSkipped(type, reviewId, reason, text),
-        xguard: xguard(type, reviewId, text, { fresh: true }),
+        xguard: declineFallback,
       })
     );
   } catch (e) {
@@ -226,17 +211,20 @@ const createReviewTextAdapter = (type: TextType): ModerationAdapter => ({
         entityId,
         fromRetry: true,
         onActiveSkip: (reason) => settleSkipped(type, entityId, reason, content),
-        xguard: xguard(type, entityId, content),
+        xguard: declineFallback,
       })
     ),
 
-  applyResult: ({ entityId, workflowId, blocked, triggeredLabels }) =>
-    settleUnlessHeld(
-      type,
-      entityId,
-      { workflowId },
-      { blocked, level: fallbackLevel(triggeredLabels) }
-    ),
+  // Only a fallback check submitted before the decline can land here: it may block, never show.
+  applyResult: async ({ entityId, workflowId, blocked }) => {
+    if (blocked)
+      await settleReviewText(
+        type,
+        entityId,
+        { workflowId },
+        { level: NsfwLevel.PG, blocked: true }
+      );
+  },
 
   // A failed check leaves the text unshown; scoped to its own check, so a stale failure for
   // replaced text changes nothing.
