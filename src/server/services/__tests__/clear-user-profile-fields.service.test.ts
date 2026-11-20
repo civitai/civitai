@@ -3,6 +3,27 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { clearUserProfileFields, type ProfileClearSnapshot } from '~/server/services/user.service';
 
 const db = dbMock.dbWrite;
+
+/** ModActivity rows written through `trackModActivity`: [actor, entityType, activity, entityIds]. */
+const modActivityRows = () =>
+  dbMock.dbWrite.$executeRaw.mock.calls
+    .filter(([s]) => (s as unknown as readonly string[]).join('?').includes('"ModActivity"'))
+    .map(([, ...values]) => values);
+/** The next ModActivity write fails; every other raw write succeeds. */
+const failModActivityOnce = () => {
+  let armed = true;
+  dbMock.dbWrite.$executeRaw.mockImplementation((async (s: readonly string[]) => {
+    if (armed && s.join('?').includes('"ModActivity"')) {
+      armed = false;
+      throw new Error('db blip');
+    }
+    return 0;
+  }) as never);
+};
+/** Whether the CSAM report lookup names the user. */
+const reportNames = (named: boolean) =>
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (s: readonly string[]) =>
+    s.join('?').includes('"CsamReport"') ? [{ named }] : []) as never);
 const USER = 990100001;
 const MOD = 990100002;
 const stored = {
@@ -20,8 +41,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   db.userProfile.updateMany.mockResolvedValue({ count: 1 } as never);
   db.userProfile.findUnique.mockResolvedValue(stored as never);
-  db.csamReport.findFirst.mockResolvedValue(null as never);
-  db.modActivity.create.mockResolvedValue({} as never);
+  reportNames(false);
+  db.$executeRaw.mockResolvedValue(0 as never);
   db.userLink.findMany.mockResolvedValue([] as never);
   archive = vi.fn(async () => ({}));
 });
@@ -45,20 +66,8 @@ describe('clearUserProfileFields', () => {
     expect(data).not.toHaveProperty('showcaseSections');
   });
 
-  it('counts the user named second on a report as reported', async () => {
-    await clear();
-    const where = db.csamReport.findFirst.mock.calls[0][0]?.where as { OR: unknown[] };
-    expect(where.OR).toEqual(
-      expect.arrayContaining([
-        { userId: USER },
-        { details: { path: ['secondaryUserId'], equals: USER } },
-        { details: { path: ['secondaryUserId'], equals: String(USER) } },
-      ])
-    );
-  });
-
   it('archives again when the text changes during the upload', async () => {
-    db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+    reportNames(true);
     const edited = { ...stored, bio: 'edited' };
     db.userProfile.findUnique
       .mockResolvedValueOnce(stored as never)
@@ -72,7 +81,7 @@ describe('clearUserProfileFields', () => {
   });
 
   it('refuses to clear a profile that keeps changing while it is archived', async () => {
-    db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+    reportNames(true);
     let reads = 0;
     db.userProfile.findUnique.mockImplementation((async () => {
       // A loop with no cap fails here instead of hanging.
@@ -85,7 +94,7 @@ describe('clearUserProfileFields', () => {
   });
 
   it('archives the social and sponsorship links with the text', async () => {
-    db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+    reportNames(true);
     const links = [{ id: 1, url: 'https://example.invalid/pay', type: 'Sponsorship' }];
     db.userLink.findMany.mockResolvedValue(links as never);
     await clear();
@@ -93,7 +102,7 @@ describe('clearUserProfileFields', () => {
   });
 
   it('archives the links of a user who has links but no profile row', async () => {
-    db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+    reportNames(true);
     db.userProfile.findUnique.mockResolvedValue(null as never);
     const links = [{ id: 1, url: 'https://example.invalid/pay', type: 'Sponsorship' }];
     db.userLink.findMany.mockResolvedValue(links as never);
@@ -102,19 +111,22 @@ describe('clearUserProfileFields', () => {
   });
 
   it('writes no archive and no record when the user has no profile row', async () => {
-    db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+    reportNames(true);
     db.userProfile.findUnique.mockResolvedValue(null as never);
     db.userProfile.updateMany.mockResolvedValue({ count: 0 } as never);
     await clear();
     expect(archive).not.toHaveBeenCalled();
-    expect(db.modActivity.create).not.toHaveBeenCalled();
+    expect(modActivityRows()).toEqual([]);
+  });
+
+  it('returns the committed clear when its record fails to write', async () => {
+    failModActivityOnce();
+    await expect(clear()).resolves.toEqual({ updated: true });
   });
 
   it('records who cleared the profile, on every clear', async () => {
     await clear();
-    expect(db.modActivity.create).toHaveBeenCalledWith({
-      data: { userId: MOD, activity: 'clearProfile', entityType: 'User', entityId: USER },
-    });
+    expect(modActivityRows()).toEqual([[MOD, 'user', 'clearProfile', [USER]]]);
   });
 
   it('does not archive the profile of a user with no CSAM report', async () => {
@@ -124,7 +136,7 @@ describe('clearUserProfileFields', () => {
   });
 
   it('archives the stored text, showcase sections included, before clearing a reported user', async () => {
-    db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+    reportNames(true);
     await clear({ fields: ['bio', 'showcaseSections'] });
     expect(archive).toHaveBeenCalledWith({
       userId: USER,
@@ -148,10 +160,10 @@ describe('clearUserProfileFields', () => {
   });
 
   it('clears nothing when the archive fails', async () => {
-    db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+    reportNames(true);
     archive.mockRejectedValueOnce(new Error('upload failed'));
     await expect(clear()).rejects.toThrow('upload failed');
     expect(db.userProfile.updateMany).not.toHaveBeenCalled();
-    expect(db.modActivity.create).not.toHaveBeenCalled();
+    expect(modActivityRows()).toEqual([]);
   });
 });

@@ -1,4 +1,5 @@
 import type * as ModerationModule from '~/server/services/commentv3/moderation.service';
+import type * as UserService from '~/server/services/user.service';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { recordTx, useTxClients } from '~/__tests__/tx-client';
@@ -391,6 +392,34 @@ describe('textScan.resolveCsamHold', () => {
       const { audit } = mocks.deleteChatMessage.mock.calls[0][0];
       await audit({ type: 'delete' });
       expect(mocks.tracker.chatAudit).toHaveBeenCalledWith({ type: 'delete' });
+    });
+
+    it('finishes a user profile decision when the clear’s record fails to write', async () => {
+      const actual = await vi.importActual<typeof UserService>('~/server/services/user.service');
+      mocks.clearUserProfileFields.mockImplementationOnce(actual.clearUserProfileFields);
+      findFirst.mockResolvedValue(pendingHold({ entityType: 'UserProfile', entityId: 900 }));
+      // No stored text or links, so the archive has nothing to upload.
+      dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(null);
+      dbMock.dbWrite.userLink.findMany.mockResolvedValue([]);
+      dbMock.dbWrite.userProfile.updateMany.mockResolvedValue({ count: 1 });
+      dbMock.dbWrite.$executeRaw.mockImplementation((async (s: readonly string[]) => {
+        if (s.join('?').includes('"ModActivity"')) throw new Error('db blip');
+        return 0;
+      }) as never);
+
+      const res = await call({
+        holdId: 12,
+        textHash: 'h-1',
+        decision: 'remove',
+        reportChoice: 'none',
+      });
+
+      expect(dbMock.dbWrite.userProfile.updateMany).toHaveBeenCalledTimes(1);
+      expect(res.status).toBe(200);
+      expect(labelCalls()).toHaveLength(1);
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'clear-user-profile-mod-activity', userId: 900 })
+      );
     });
 
     it('deletes every message of the judged chat window, the held one included', async () => {

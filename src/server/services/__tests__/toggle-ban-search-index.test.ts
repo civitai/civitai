@@ -129,6 +129,10 @@ const userFindFirst = dbMock.dbWrite.user.findFirst;
 // default for a write verb, so an undeclared one returns `undefined` and the fan-out throws.
 const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
 const imageUpdateMany = dbMock.dbWrite.image.updateMany;
+/** Whether the CSAM report lookup names the user. */
+const reportNames = (named: boolean) =>
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (s: readonly string[]) =>
+    s.join('?').includes('"CsamReport"') ? [{ named }] : []) as never);
 const oldCommentTableWrites = () =>
   dbMock.dbWrite.$executeRaw.mock.calls
     .map(([strings]) => (strings as unknown as string[]).join('?'))
@@ -144,6 +148,7 @@ const call = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  reportNames(false);
   userUpdate.mockResolvedValue({ id: USER_ID, paddleCustomerId: null });
   userFindFirst.mockResolvedValue(null);
   userLinkDeleteMany.mockResolvedValue({ count: 0 });
@@ -410,7 +415,7 @@ describe('toggleBan -> removeMedia', () => {
 
 describe('toggleBan -> profile links', () => {
   beforeEach(() => {
-    dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(null);
+    reportNames(false);
     userFindUnique.mockResolvedValue({
       bannedAt: null,
       meta: {},
@@ -448,7 +453,7 @@ describe('toggleBan -> profile links', () => {
       ...extra,
     } as Parameters<typeof toggleBan>[0]);
   const reported = () => {
-    dbMock.dbWrite.csamReport.findFirst.mockResolvedValue({ id: 77 });
+    reportNames(true);
     dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(null);
     dbMock.dbWrite.userLink.findMany.mockResolvedValue(LINKS);
   };
@@ -509,14 +514,16 @@ describe('toggleBan -> profile links', () => {
     });
 
     it('writes profile.json to the CSAM bucket before deleting a reported user’s links', async () => {
+      let archivedBeforeDelete: boolean | undefined;
       userLinkDeleteMany.mockImplementationOnce(async () => {
-        expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+        archivedBeforeDelete = upload.done.some((k) => k.endsWith('_profile.json'));
         return { count: 1 };
       });
 
       await call();
 
       expect(userLinkDeleteMany).toHaveBeenCalledTimes(1);
+      expect(archivedBeforeDelete).toBe(true);
     });
 
     it('keeps the links when the bucket upload fails', async () => {

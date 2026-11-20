@@ -56,6 +56,7 @@ import {
 } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import { isEqual, uniq } from 'lodash-es';
+import { trackModActivity } from '~/server/services/moderator.service';
 import dayjs from '~/shared/utils/dayjs';
 import {
   banReasonDetails,
@@ -478,10 +479,9 @@ export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
  * Before a moderator changes another user's profile text: when the user is named on a CSAM report,
- * or `alwaysArchive` is set, `archive` stores the current text, and this throws if it rejects so the
- * change does not happen. The text is read again after each upload and archived again if it changed
- * meanwhile (at most three times, then this refuses), so what changes matches the last copy archived
- * to within one read.
+ * or `alwaysArchive` is set, `archive` stores the current text and links, and this throws if it
+ * rejects so the change does not happen. A copy that changed during its upload is taken again, at most
+ * three times.
  */
 export async function archiveProfileBeforeModeratorChange({
   userId,
@@ -496,20 +496,20 @@ export async function archiveProfileBeforeModeratorChange({
   archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
   alwaysArchive?: boolean;
 }) {
+  // Any report, held or not, unlike `legalHoldUserIdsSql`: archiving more is the safe side here.
+  // The secondary user is matched as text, as `legalHoldUserIdsSql` does.
   const mustArchive =
     alwaysArchive ||
     // primary: a report filed a moment ago must not let this change skip the archive.
-    !!(await dbWrite.csamReport.findFirst({
-      where: {
-        OR: [
-          { userId },
-          // The report's secondary user counts as reported too; the id may be stored either way.
-          { details: { path: ['secondaryUserId'], equals: userId } },
-          { details: { path: ['secondaryUserId'], equals: String(userId) } },
-        ],
-      },
-      select: { id: true },
-    }));
+    !!(
+      await dbWrite.$queryRaw<{ named: boolean }[]>`
+        SELECT EXISTS (
+          SELECT 1 FROM "CsamReport" r
+          WHERE r."userId" = ${userId} OR r.details ->> 'secondaryUserId' = ${String(
+        userId
+      )}        ) AS named
+      `
+    )[0]?.named;
   if (mustArchive) {
     let archived: Pick<ProfileClearSnapshot, 'profile' | 'links'> | null = null;
     for (let attempt = 0; ; attempt++) {
@@ -535,7 +535,7 @@ export async function archiveProfileBeforeModeratorChange({
   }
 }
 
-/** The profile text a clear removes, as stored just before the clear. */
+/** A user's profile text and links as stored just before a moderator clear, edit or ban changes them. */
 export type ProfileClearSnapshot = {
   userId: number;
   actorId: number;
@@ -604,10 +604,23 @@ export async function clearUserProfileFields({
   }
   if (fields.includes('showcaseSections')) data.showcaseSections = [];
   const result = await dbWrite.userProfile.updateMany({ where: { userId }, data });
-  if (result.count > 0)
-    await dbWrite.modActivity.create({
-      data: { userId: actorId, activity: 'clearProfile', entityType: 'User', entityId: userId },
-    });
+  // The clear has committed: a failed record must not report it as failed.
+  if (result.count > 0) {
+    try {
+      await trackModActivity(actorId, {
+        entityType: 'user',
+        activity: 'clearProfile',
+        entityId: userId,
+      });
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'clear-user-profile-mod-activity',
+        userId,
+        message: (error as Error).message,
+      });
+    }
+  }
   return { updated: result.count > 0 };
 }
 

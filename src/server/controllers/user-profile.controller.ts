@@ -27,8 +27,8 @@ import {
   archiveProfileBeforeModeratorChange,
 } from '~/server/services/user.service';
 import { archiveUserProfile } from '~/server/services/csam.service-new';
-import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { getShowcaseHatForUser } from '~/server/events/showcase-hat';
 
 export const getUserContentOverviewHandler = async ({
@@ -166,13 +166,10 @@ export const updateUserProfileHandler = async ({
     // The edit has committed: a failed record must not report it as failed.
     if (byModerator) {
       try {
-        await dbWrite.modActivity.create({
-          data: {
-            userId: sessionUser.id,
-            activity: 'editProfile',
-            entityType: 'User',
-            entityId: userId,
-          },
+        await trackModActivity(sessionUser.id, {
+          entityType: 'user',
+          activity: 'editProfile',
+          entityId: userId,
         });
       } catch (error) {
         logToAxiom({

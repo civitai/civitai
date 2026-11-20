@@ -78,6 +78,9 @@ type UserModActivity = {
     // The account was already muted by a moderator, so a scam verdict hid its content and opened no case.
     | 'scamCleanup'
     | 'mutePendingReview'
+    // A moderator cleared, or edited, another user's profile text or links.
+    | 'clearProfile'
+    | 'editProfile'
     | 'overturnPendingReviewMute'
     | 'mute'
     | 'unmute'

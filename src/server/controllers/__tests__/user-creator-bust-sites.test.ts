@@ -42,6 +42,31 @@ vi.mock('@aws-sdk/lib-storage', () => {
   return { Upload, default: { Upload } };
 });
 
+/** ModActivity rows written through `trackModActivity`: [actor, entityType, activity, entityIds]. */
+const modActivityRows = () =>
+  dbMock.dbWrite.$executeRaw.mock.calls
+    .filter(([s]) => (s as unknown as readonly string[]).join('?').includes('"ModActivity"'))
+    .map(([, ...values]) => values);
+/** The next ModActivity write fails; every other raw write succeeds. */
+const failModActivityOnce = () => {
+  let armed = true;
+  dbMock.dbWrite.$executeRaw.mockImplementation((async (s: readonly string[]) => {
+    if (armed && s.join('?').includes('"ModActivity"')) {
+      armed = false;
+      throw new Error('db blip');
+    }
+    return 0;
+  }) as never);
+};
+/** Whether the CSAM report lookup names the user. */
+const reportNames = (named: boolean) =>
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (s: readonly string[]) =>
+    s.join('?').includes('"CsamReport"') ? [{ named }] : []) as never);
+const reportLookups = () =>
+  dbMock.dbWrite.$queryRaw.mock.calls.filter(([s]) =>
+    (s as unknown as readonly string[]).join('?').includes('"CsamReport"')
+  ).length;
+
 const { purgeCache, readCreator, mocks } = vi.hoisted(() => ({
   purgeCache: vi.fn(),
   readCreator: vi.fn(),
@@ -94,6 +119,8 @@ let usernames: Record<number, string>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  reportNames(false);
+  dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-10-17T12:00:00.000Z'));
   installFakeCacheRedis();
@@ -173,19 +200,16 @@ describe('creator-card bust in the profile and user write handlers', () => {
       } as never);
 
     it('records the edit, and archives nothing for a user no report names', async () => {
-      dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(null as never);
+      reportNames(false);
       await edit({ id: MODERATOR, isModerator: true });
-      expect(dbMock.dbWrite.csamReport.findFirst).toHaveBeenCalledTimes(1);
+      expect(reportLookups()).toBe(1);
       expect(dbMock.dbWrite.userProfile.findUnique).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.modActivity.create).toHaveBeenCalledTimes(1);
-      expect(dbMock.dbWrite.modActivity.create).toHaveBeenCalledWith({
-        data: { userId: MODERATOR, activity: 'editProfile', entityType: 'User', entityId: OWNER },
-      });
+      expect(modActivityRows()).toEqual([[MODERATOR, 'user', 'editProfile', [OWNER]]]);
     });
 
     it('returns the committed edit when its record fails to write', async () => {
-      dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(null as never);
-      dbMock.dbWrite.modActivity.create.mockRejectedValueOnce(new Error('db blip'));
+      reportNames(false);
+      failModActivityOnce();
       await expect(edit({ id: MODERATOR, isModerator: true })).resolves.not.toThrow();
       expect(mocks.updateUserProfile).toHaveBeenCalledTimes(1);
     });
@@ -212,7 +236,7 @@ describe('creator-card bust in the profile and user write handlers', () => {
         upload.done = [];
         upload.bodies = [];
         dbMock.dbWrite.userLink.findMany.mockResolvedValue([] as never);
-        dbMock.dbWrite.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+        reportNames(true);
         dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(stored as never);
       });
 
@@ -229,7 +253,7 @@ describe('creator-card bust in the profile and user write handlers', () => {
         upload.fail = new Error('s3 down');
         await expect(edit({ id: MODERATOR, isModerator: true })).rejects.toThrow();
         expect(mocks.updateUserProfile).not.toHaveBeenCalled();
-        expect(dbMock.dbWrite.modActivity.create).not.toHaveBeenCalled();
+        expect(modActivityRows()).toEqual([]);
       });
 
       it('archives before an edit of only the civitai.com copies', async () => {
@@ -274,15 +298,15 @@ describe('creator-card bust in the profile and user write handlers', () => {
           input: { userId: OWNER, coverImageId: null },
           ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
         } as never);
-        expect(dbMock.dbWrite.csamReport.findFirst).not.toHaveBeenCalled();
+        expect(reportLookups()).toBe(0);
         expect(upload.done).toEqual([]);
       });
     });
 
     it('leaves an owner editing their own profile alone', async () => {
       await edit({ id: OWNER, isModerator: false });
-      expect(dbMock.dbWrite.csamReport.findFirst).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.modActivity.create).not.toHaveBeenCalled();
+      expect(reportLookups()).toBe(0);
+      expect(modActivityRows()).toEqual([]);
     });
   });
 
