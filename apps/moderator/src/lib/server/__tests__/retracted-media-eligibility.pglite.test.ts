@@ -34,12 +34,18 @@ const envMock = vi.hoisted(() => ({ env: {} as Record<string, string | undefined
 vi.mock('$env/dynamic/private', () => envMock);
 const insertModActivity = vi.hoisted(() => vi.fn(async (_row: Record<string, unknown>) => {}));
 vi.mock('../mod-activity', () => ({ insertModActivity }));
-const scanner = vi.hoisted(() => ({ verdict: 'clear' as 'hit' | 'clear' | 'none' | null }));
-vi.mock('../review-batch', () => ({ readScannerCsamVerdict: async () => scanner.verdict }));
+const scanner = vi.hoisted(() => ({
+  verdict: 'clear' as 'hit' | 'clear' | 'none' | null,
+  hits: new Set<number>(),
+}));
+vi.mock('../review-batch', () => ({
+  readScannerCsamVerdict: async (id: number) => (scanner.hits.has(id) ? 'hit' : scanner.verdict),
+}));
 
 const { getRetractedMedia, recordRetractedView, scannerVerdicts } = await import(
   '../retracted-media'
 );
+const { URL_SIBLING_CAP } = await import('@civitai/shared/retracted-media-tier');
 beforeEach(() => scannerVerdicts.clear());
 
 const SCHEMA = `
@@ -541,6 +547,39 @@ describe('rows sharing its url, its post text and its articles', () => {
   });
   afterEach(async () => {
     await db.exec(csamCaseCleanupSql(target));
+  });
+
+  it('keeps an image whose url a row the scanner marks shares to cleared moderators', async () => {
+    await db.exec(
+      `INSERT INTO "Image" (id, url, "userId", ingestion) VALUES (990900001, 'key-990900000', 990910001, 'Scanned')`
+    );
+    scanner.hits.add(990900001);
+    try {
+      expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
+      expect(await getRetractedMedia(target.id, { csamReview: true })).toMatchObject({
+        url: target.url,
+      });
+    } finally {
+      scanner.hits.clear();
+    }
+  });
+
+  it('keeps an image whose url more rows share than it reads to cleared moderators', async () => {
+    const ids = Array.from({ length: URL_SIBLING_CAP }, (_, n) => 990900100 + n);
+    await db.exec(
+      `INSERT INTO "Image" (id, url, "userId", ingestion) VALUES ${ids
+        .map((id) => `(${id}, 'key-990900000', 990910001, 'Scanned')`)
+        .join(', ')}`
+    );
+    try {
+      expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
+      await db.exec(`DELETE FROM "Image" WHERE id = ${ids[0]}`);
+      expect(await getRetractedMedia(target.id, { csamReview: false })).toMatchObject({
+        url: target.url,
+      });
+    } finally {
+      await db.exec(`DELETE FROM "Image" WHERE id BETWEEN 990900100 AND 990900199`);
+    }
   });
 
   it.each(CSAM_RESTRICTION_CASES.filter((c) => c.restricts))(

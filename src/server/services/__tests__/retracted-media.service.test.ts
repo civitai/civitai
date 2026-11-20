@@ -28,8 +28,11 @@ vi.mock('~/server/services/blocked-for-patterns', () => ({
 /** The scanner's verdict for every image, or null when it cannot be read. */
 const scanner = vi.hoisted(() => ({
   verdict: 'clear' as 'hit' | 'clear' | 'none' | null,
+  hits: new Set<number>(),
 }));
-const readScannerVerdict = vi.hoisted(() => vi.fn(async () => scanner.verdict));
+const readScannerVerdict = vi.hoisted(() =>
+  vi.fn(async (id: number) => (scanner.hits.has(id) ? 'hit' : scanner.verdict))
+);
 vi.mock('~/server/services/review-batch/review-batch.service', () => ({
   readScannerCsamVerdict: readScannerVerdict,
 }));
@@ -561,6 +564,21 @@ describe('rows sharing its url, its post text and its articles', () => {
   });
   afterEach(async () => {
     await pg.exec(csamCaseCleanupSql(target));
+  });
+
+  it('keeps an image whose url a row the scanner marks shares to cleared moderators', async () => {
+    await pg.exec(
+      `INSERT INTO "Image" (id, url, "userId", ingestion) VALUES (990900001, 'key-990900000', 990910001, 'Scanned')`
+    );
+    scanner.hits.add(990900001);
+    try {
+      expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
+      expect(await getRetractedMedia(target.id, { csamReview: true })).toMatchObject({
+        url: target.url,
+      });
+    } finally {
+      scanner.hits.clear();
+    }
   });
 
   it.each(CSAM_RESTRICTION_CASES.filter((c) => c.restricts))(

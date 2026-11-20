@@ -66,6 +66,8 @@ const TABLES = [
   'PostText',
   'Article',
   'ImageConnection',
+  'ServiceOffering',
+  'UserProfile',
 ];
 
 let db: PGlite;

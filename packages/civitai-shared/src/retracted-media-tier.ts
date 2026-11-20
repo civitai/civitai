@@ -38,18 +38,19 @@ export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): 
 }
 
 /** The aliases `csamRowSql` uses, which its caller's alias must not shadow. */
-const CSAM_ROW_ALIASES = 'cb ci cf cv cu cp cph cmp cmv cth cpt cpth cah ca cic hr hs he'.split(
-  ' '
+const CSAM_ROW_ALIASES = new Set(
+  'cb ci cf cv cu cp cph cmp cmv cth cpt cpth cah ca cic cso csoh cuph cup hr hs he'.split(' ')
 );
 
 /**
  * The CSAM signals read off one "Image" row aliased `image`: marked as CSAM (in the CSAM queue,
  * blocked as CSAM, a CSAM hash, a CSAM scan flag, hold or vote), blocked with no reason, its owner
  * reported, held or banned for minor safety, its post removed by a CSAM hold, or a CSAM text hold
- * that is not dismissed on its post, its post's text, its model or an article it is in.
+ * that is not dismissed on its post, its post's text, its model, an article it is in, or a service
+ * offering or profile it is the cover of.
  */
 function csamRowSql(image: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || CSAM_ROW_ALIASES.includes(image))
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || CSAM_ROW_ALIASES.has(image.toLowerCase()))
     throw new Error(`Bad table alias: ${image}`);
   const id = `${image}.id`;
   const minorBans = BAN_REASONS_ALWAYS_REMOVING_MEDIA.map((r) => `'${r}'`).join(', ');
@@ -108,30 +109,81 @@ function csamRowSql(image: string): string {
         WHERE cic."imageId" = ${id} AND cic."entityType" = 'Article'
       )
     )
+    OR EXISTS (
+      SELECT 1 FROM "ServiceOffering" cso
+      JOIN "TextScanHold" csoh ON csoh."entityType" = 'ServiceOffering' AND csoh."entityId" = cso.id
+      WHERE cso."coverImageId" = ${id} AND ${liveCsamTextHoldText('csoh')}
+    )
+    OR EXISTS (
+      SELECT 1 FROM "TextScanHold" cuph
+      JOIN "UserProfile" cup ON cup."userId" = cuph."entityId"
+      WHERE cuph."entityType" = 'UserProfile' AND ${liveCsamTextHoldText('cuph')}
+        AND (cup."coverImageId" = ${id} OR cup."sfwCoverImageId" = ${id})
+    )
   )`;
 }
 
 /**
  * Whether the "Image" row aliased `image` is kept to moderators cleared for CSAM review: it, or
- * another row on its url, carries a CSAM signal (`csamRowSql`); it is listed on a CSAM report; or
- * its bytes (by url or pHash copy) are reported, held or under an evidence hold. A minor signal
- * alone is not here: any moderator may see it. `blockedFor` text and the scanner's labels are read
- * by the caller.
+ * another row on its url, carries a CSAM signal in Postgres (`csamRowSql`); it is listed on a CSAM
+ * report; or its bytes (by url or pHash copy) are reported, held or under an evidence hold. A minor
+ * signal alone is not here: any moderator may see it. `blockedFor` text and the scanner's labels,
+ * of this row and of `urlSiblingsSql`'s rows, are read by the caller (`siblingsServable`).
  */
 export function csamRestrictedSql(image: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image === 'cs')
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image.toLowerCase() === 'cs')
     throw new Error(`Bad table alias: ${image}`);
   const id = `${image}.id`;
   const url = `${image}."url"`;
   const sibling = csamRowSql('cs');
   return `COALESCE((
     ${csamRowSql(image)}
-    OR EXISTS (SELECT 1 FROM "Image" cs WHERE cs.url = ${url} AND cs.id <> ${id} AND ${sibling})
+    OR EXISTS (
+      SELECT 1 FROM "Image" cs WHERE cs.url = ${url} AND cs.id <> ${id} AND COALESCE(${sibling}, true)
+    )
     OR (${id})::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
     OR ${reportListedUrlSql(url)}
     OR ${evidenceHeldUrlSql(url)}
     OR ${heldUrlSql(url, { exceptImageId: `${image}."id"` })}
   ), true)`;
+}
+
+/** At most this many other rows on a url are read; a url with more is refused (`siblingsServable`). */
+export const URL_SIBLING_CAP = 50;
+
+export type UrlSibling = { id: number; blockedFor: string | null };
+
+/**
+ * The other "Image" rows on the url of the row aliased `image`, as a JSON array of
+ * `UrlSibling`, at most `URL_SIBLING_CAP` of them.
+ */
+export function urlSiblingsSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image.toLowerCase() === 'us')
+    throw new Error(`Bad table alias: ${image}`);
+  return `COALESCE((
+    SELECT json_agg(json_build_object('id', us.id, 'blockedFor', us."blockedFor")) FROM (
+      SELECT us.id, us."blockedFor" FROM "Image" us
+      WHERE us.url = ${image}."url" AND us.id <> ${image}.id
+      LIMIT ${URL_SIBLING_CAP}
+    ) us
+  ), '[]'::json)`;
+}
+
+/**
+ * Whether no row in `siblings` (`urlSiblingsSql`) keeps the shared url from a moderator without the
+ * CSAM grant: `isSignal` holds for no row's `blockedFor`, none is marked by the scanner when `readVerdict` is
+ * given, and the list is under `URL_SIBLING_CAP`. An unreadable verdict refuses.
+ */
+export async function siblingsServable(
+  siblings: UrlSibling[],
+  isSignal: (blockedFor: string | null) => boolean,
+  readVerdict?: (imageId: number) => Promise<ScannerVerdict | null>
+): Promise<boolean> {
+  if (siblings.length >= URL_SIBLING_CAP) return false;
+  if (siblings.some((s) => isSignal(s.blockedFor))) return false;
+  if (!readVerdict) return true;
+  const verdicts = await Promise.all(siblings.map((s) => readVerdict(s.id)));
+  return verdicts.every((v) => v === 'clear' || v === 'none');
 }
 
 export type ScannerVerdict = 'hit' | 'clear' | 'none';
