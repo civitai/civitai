@@ -38,8 +38,8 @@ export function postTextCsamHeldText(text: string): string {
  */
 export function csamQueueHeldText(entityType: string, entity: string): string {
   if (!/^[A-Za-z]+$/.test(entityType)) throw new Error(`Bad entity type: ${entityType}`);
-  const e = /^d{1,18}$/.test(entity) ? entity : sqlRef(entity);
-  if (/^"?(qh|qm|qd)"?./.test(e)) throw new Error(`Alias taken inside csamQueueHeldText: ${e}`);
+  const e = /^\d{1,18}$/.test(entity) ? entity : sqlRef(entity);
+  if (/^"?(qh|qm|qd)"?\./.test(e)) throw new Error(`Alias taken inside csamQueueHeldText: ${e}`);
   return `(
     EXISTS (SELECT 1 FROM "TextScanHold" qh
       WHERE qh."entityType" = '${entityType}' AND qh."entityId" = ${e}

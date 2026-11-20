@@ -624,10 +624,15 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
     await expectTiers('none', [ids.retracted]);
   });
 
-  // 🔴 Do not widen to Denied: a url can be capped at Denied for a hold on a row that has since been
-  // deleted, and nothing here can see that row any more.
-  it('refuses a denied url, one the CDN still serves, and one whose scan is not final', async () => {
-    await expectTiers('none', [ids.denied, ids.served, ids.pending], leg);
+  // A removed model or a banned owner leaves its url denied. A deny capping a hold stays safe: a held
+  // row is not deleted while held (owner deletes wait for the case, moderator deletes are recorded
+  // and refuse the url here), and a held row still present holds the url or restricts it.
+  it('serves a scanned image whose url the CDN denied to any moderator', async () => {
+    await expectTiers('anyMod', [ids.denied], leg);
+  });
+
+  it('refuses a url the CDN still serves, and one whose scan is not final', async () => {
+    await expectTiers('none', [ids.served, ids.pending], leg);
   });
 
   it("reads a scanned image's verdict fresh each time, since a rescan can change it", async () => {
@@ -637,25 +642,22 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
   });
 
   // The route answers a null with 404: a moderator not cleared for CSAM review must not reach the
-  // image of a report's owner or of an owner banned for minor safety through this leg.
-  it.each([
-    [
-      'a CsamReport owner',
-      () =>
-        pg.query(
-          `INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100204, '{}', '[]')`
-        ),
-    ],
-    [
-      'an owner banned for minor safety',
-      () =>
-        pg.query(
-          `INSERT INTO "User" (id, meta) VALUES (990100204, '{"banDetails": {"reasonCode": "SexualMinor"}}')`
-        ),
-    ],
-  ])('refuses the image of %s to a moderator not cleared for CSAM review', async (_label, mark) => {
-    await mark();
+  // image of a report's owner through this leg.
+  it('refuses the image of a CsamReport owner to a moderator not cleared for CSAM review', async () => {
+    await pg.query(
+      `INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100204, '{}', '[]')`
+    );
     expect(await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })).toBeNull();
+  });
+
+  // A minor-safety ban alone is a minor signal, open to any moderator.
+  it('serves the image of an owner banned for minor safety to any moderator', async () => {
+    await pg.query(
+      `INSERT INTO "User" (id, meta) VALUES (990100204, '{"banDetails": {"reasonCode": "SexualMinor"}}')`
+    );
+    expect(
+      await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })
+    ).not.toBeNull();
   });
 });
 
