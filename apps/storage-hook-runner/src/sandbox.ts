@@ -1,7 +1,12 @@
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { newQuickJSWASMModuleFromVariant, newVariant } from 'quickjs-emscripten-core';
-import type { QuickJSContext, QuickJSHandle, QuickJSWASMModule } from 'quickjs-emscripten-core';
+import type {
+  QuickJSContext,
+  QuickJSHandle,
+  QuickJSRuntime,
+  QuickJSWASMModule,
+} from 'quickjs-emscripten-core';
 import variant from '@jitl/quickjs-ng-wasmfile-release-sync';
 import {
   COMPILE_ALLOWANCE_FACTOR,
@@ -35,7 +40,8 @@ import type { HookResult } from './result.ts';
  *
  * WHO IS AT FAULT: a WASM-boundary throw during the hook's own run still answers with a refusal
  * (stack_overflow or error) attributed to the author, since the hook's code drove it there. Every
- * other unsafe ending above is a RUNNER fault: the call rejects (the worker answers 500) and no
+ * other unsafe ending above is a RUNNER fault, as is a failure of the trusted setup that runs
+ * before any author code (SandboxSetupError): the call rejects (the worker answers 500) and no
  * answer computed by it is ever returned.
  *
  * NO CAPABILITIES: the context gets QuickJS's standard intrinsics, minus three non-ES globals
@@ -57,7 +63,7 @@ export type CompiledQuickJS = { variant: typeof variant };
 declare const WebAssembly: { Module: new (bytes: Uint8Array) => object };
 
 /** True unless `ctx.getPromiseState` says the handle is not a promise at all. */
-function isPromiseState(st: ReturnType<QuickJSContext['getPromiseState']>): boolean {
+export function isPromiseState(st: ReturnType<QuickJSContext['getPromiseState']>): boolean {
   return !(st.type === 'fulfilled' && st.notAPromise === true);
 }
 
@@ -98,6 +104,16 @@ export type SandboxOutput = EvaluateOutput & {
  * instance is replaced, and the worker answers 500, which the caller maps to hook_unavailable.
  */
 export class SandboxDisposeError extends Error {}
+
+/**
+ * The trusted setup that runs before any author code (the engine checker, the prelude) failed.
+ * A RUNNER fault, like SandboxDisposeError: never classified as the author's `error`.
+ */
+export class SandboxSetupError extends Error {
+  constructor() {
+    super('sandbox setup failed');
+  }
+}
 
 /**
  * A worker's shared QuickJS instance. `evaluate` runs one call on a fresh runtime inside it and
@@ -142,6 +158,30 @@ export class QuickJSInstance {
 
 /** One call on a fresh runtime and context inside `qjs`. */
 export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): SandboxOutput {
+  return evaluateOn(qjs, args.timeoutMs, (scope) => run(scope, args));
+}
+
+/** What a call's body gets: its fresh context, and the deadline it runs under. */
+export type CallScope = {
+  rt: QuickJSRuntime;
+  ctx: QuickJSContext;
+  keep: (h: QuickJSHandle) => QuickJSHandle;
+  arm: (compileMs: number) => void;
+  wasInterrupted: () => boolean;
+  /** Whether the armed deadline has passed (also true once the interrupt has fired). */
+  pastDeadline: () => boolean;
+};
+
+/**
+ * Runs `body` on a fresh runtime and context inside `qjs`, under a deadline of `timeoutMs` that
+ * `body` arms, and disposes both whatever happens. Every unsafe ending is handled here (see the
+ * header), so a body only decides what its call answers.
+ */
+export function evaluateOn<R>(
+  qjs: QuickJSWASMModule,
+  timeoutMs: number,
+  body: (scope: CallScope) => R | HookResult
+): { result: R | HookResult; elapsedMs: number; poisoned: boolean } {
   const rt = qjs.newRuntime();
   rt.setMemoryLimit(MEMORY_LIMIT_BYTES);
   rt.setMaxStackSize(MAX_STACK_BYTES);
@@ -149,7 +189,7 @@ export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): Sand
   // `interrupted`, set only when THIS handler stopped the VM, decides `timeout`, never an error's
   // name: hook code cannot fake a timeout (or hide one) by throwing a look-alike.
   //
-  // `run` arms the deadline after a compile-only pass. quickjs-emscripten cannot run an already
+  // `loadModule` arms the deadline after a compile-only pass. quickjs-emscripten cannot run an already
   // compiled module, so the evaluation compiles again, and the budget is extended to cover that
   // second compile: see COMPILE_ALLOWANCE_* in limits.ts.
   let interrupted = false;
@@ -158,7 +198,7 @@ export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): Sand
   const arm = (compileMs: number) => {
     start = performance.now();
     deadline =
-      start + COMPILE_ALLOWANCE_FACTOR * compileMs + COMPILE_ALLOWANCE_FLOOR_MS + args.timeoutMs;
+      start + COMPILE_ALLOWANCE_FACTOR * compileMs + COMPILE_ALLOWANCE_FLOOR_MS + timeoutMs;
   };
   rt.setInterruptHandler(() => {
     if (performance.now() >= deadline) {
@@ -175,20 +215,32 @@ export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): Sand
     return h;
   };
 
-  let result: HookResult;
+  let result: R | HookResult | undefined;
   let poisoned = false;
   let disposeFailed = false;
+  let setupError: SandboxSetupError | null = null;
   try {
-    result = run(ctx, keep, args, arm, () => interrupted);
+    result = body({
+      rt,
+      ctx,
+      keep,
+      arm,
+      wasInterrupted: () => interrupted,
+      pastDeadline: () => interrupted || performance.now() >= deadline,
+    });
     // An interrupt can be SWALLOWED: one that fires inside `Error.prepareStackTrace` while QuickJS
     // builds a stack (`new Error()`, `Error.captureStackTrace`, reading `.stack`) is discarded
     // and the hook carries on. Whatever it then returned, past its deadline, is a timeout.
     if (interrupted) result = fault('timeout', 'interrupted at the deadline');
   } catch (err) {
-    // A throw out of the WASM boundary itself (a host stack overflow, a WASM trap). The instance's
-    // state is unknown from here: the caller replaces it.
-    poisoned = true;
-    result = classifyHostError(err, interrupted);
+    if (err instanceof SandboxSetupError) {
+      setupError = err;
+    } else {
+      // A throw out of the WASM boundary itself (a host stack overflow, a WASM trap). The
+      // instance's state is unknown from here: the caller replaces it.
+      poisoned = true;
+      result = classifyHostError(err, interrupted);
+    }
   } finally {
     // A disposal failure (for example an assertion on leaked objects) also leaves the instance
     // in an unknown state.
@@ -206,17 +258,33 @@ export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): Sand
       disposeFailed = true;
     }
   }
+  if (setupError) throw setupError;
   if (disposeFailed) throw new SandboxDisposeError('disposing the call failed');
-  return { result, elapsedMs: performance.now() - start, poisoned };
+  return { result: result as R | HookResult, elapsedMs: performance.now() - start, poisoned };
 }
 
-function run(
-  ctx: QuickJSContext,
-  keep: (h: QuickJSHandle) => QuickJSHandle,
-  args: EvaluateArgs,
-  arm: (compileMs: number) => void,
-  wasInterrupted: () => boolean
-): HookResult {
+/** A module loaded on a fresh context, with the intrinsics captured before its code ran. */
+export type LoadedModule = {
+  ns: QuickJSHandle;
+  engine: EngineIntrinsics;
+  json: QuickJSHandle;
+  parse: QuickJSHandle;
+  stringify: QuickJSHandle;
+  /** The completion value of `prelude`: what it evaluated last. */
+  preludeValue: QuickJSHandle;
+};
+
+/**
+ * Prepares the context, then compiles and evaluates `source` as a module, arming the deadline
+ * between the two. `prelude` is script code run after the standard one and before the module, so
+ * whatever it captures is taken before the module's code can change anything. A fault (a syntax
+ * error, a throw at module level, top-level await) comes back as its `HookResult`.
+ */
+export function loadModule(
+  { ctx, keep, arm, wasInterrupted }: CallScope,
+  source: string,
+  prelude = ''
+): LoadedModule | HookResult {
   // The engine's own out-of-memory error is an InternalError. Its prototype and
   // Object.getPrototypeOf are captured BEFORE any hook code runs, and the InternalError global
   // is then removed, so hook code cannot construct one: `oom` is decided by the error's identity,
@@ -231,21 +299,25 @@ function run(
   );
   if (checker.error) {
     keep(checker.error);
-    throw new Error('sandbox setup failed');
+    throw new SandboxSetupError();
   }
   const engine: EngineIntrinsics = { isInternalError: keep(checker.value) };
 
   // quickjs-ng's base objects include non-ES globals: `performance` (a high-resolution clock, a
   // timing side channel), `queueMicrotask` (a scheduler) and `InternalError` (above). None is
-  // needed by a pure check, so all three are removed before the hook runs. `Date` stays: it is
-  // ECMAScript.
+  // needed by a pure check, so all three are removed before the hook runs. A hook keeps `Date` (it
+  // is ECMAScript); the remix prelude removes it.
   const strip = ctx.evalCode(
-    'delete globalThis.performance; delete globalThis.queueMicrotask; delete globalThis.InternalError;',
+    'delete globalThis.performance; delete globalThis.queueMicrotask; delete globalThis.InternalError;' +
+      prelude,
     'prelude.js',
     { type: 'global', strict: false }
   );
-  if (strip.error) return classifyVmError(ctx, keep(strip.error), wasInterrupted(), engine);
-  keep(strip.value);
+  if (strip.error) {
+    keep(strip.error);
+    throw new SandboxSetupError();
+  }
+  const preludeValue = keep(strip.value);
 
   // Taken BEFORE the hook's module runs, so a module that reassigns `JSON.parse` or
   // `JSON.stringify` cannot change how its own input is decoded or its result encoded.
@@ -256,7 +328,7 @@ function run(
   // Compile-only pass, deadline disarmed: a syntax error is reported from here, and its
   // duration sizes the compile allowance (COMPILE_ALLOWANCE_* in limits.ts).
   const compileStart = performance.now();
-  const compiled = ctx.evalCode(args.source, 'hook.js', {
+  const compiled = ctx.evalCode(source, 'hook.js', {
     type: 'module',
     strict: true,
     compileOnly: true,
@@ -265,7 +337,7 @@ function run(
   keep(compiled.value);
   arm(performance.now() - compileStart);
 
-  const evaluated = ctx.evalCode(args.source, 'hook.js', { type: 'module', strict: true });
+  const evaluated = ctx.evalCode(source, 'hook.js', { type: 'module', strict: true });
   if (evaluated.error) {
     return classifyVmError(ctx, keep(evaluated.error), wasInterrupted(), engine);
   }
@@ -279,6 +351,14 @@ function run(
     if (nsState.type === 'rejected') keep(nsState.error);
     return fault('error', 'top-level await is not supported (v1 hooks are synchronous)');
   }
+  return { ns, engine, json, parse, stringify, preludeValue };
+}
+
+function run(scope: CallScope, args: EvaluateArgs): HookResult {
+  const { ctx, keep, wasInterrupted } = scope;
+  const loaded = loadModule(scope, args.source);
+  if ('allow' in loaded) return loaded;
+  const { ns, engine, json, parse, stringify } = loaded;
 
   const fn = keep(ctx.getProp(ns, 'default'));
   if (ctx.typeof(fn) !== 'function') {
@@ -314,7 +394,7 @@ function run(
   return validateHookReturn(ctx.typeof(text) === 'string' ? ctx.getString(text) : undefined);
 }
 
-type EngineIntrinsics = {
+export type EngineIntrinsics = {
   /** In-VM `(e) => Object.getPrototypeOf(e) === InternalError.prototype`, captured pre-hook. */
   isInternalError: QuickJSHandle;
 };
@@ -343,7 +423,7 @@ function isEngineInternalError(
  *   constructor, so hook code CAN throw a look-alike; that only relabels one author fault as
  *   another (both are refusals, both refunded), so it is accepted rather than worked around.
  */
-function classifyVmError(
+export function classifyVmError(
   ctx: QuickJSContext,
   err: QuickJSHandle,
   interrupted: boolean,

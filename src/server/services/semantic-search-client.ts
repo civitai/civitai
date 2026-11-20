@@ -46,6 +46,7 @@ const GATE_KIND = {
   storylines: 'level',
   collections: 'level',
   bounties: 'level',
+  videos: 'level',
   challenges: 'challenge',
   crucibles: 'crucible',
 } as const satisfies Record<string, ViewerGate['kind']>;

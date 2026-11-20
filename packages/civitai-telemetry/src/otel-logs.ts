@@ -83,6 +83,18 @@ export const otelLogRecordsSkippedCounter = registerInstrumentationMetric(
     })
 );
 
+const CONSOLE_DROPPED_METRIC = PROM_PREFIX + 'otel_console_records_dropped_total';
+
+export const otelConsoleRecordsDroppedCounter = registerInstrumentationMetric(
+  CONSOLE_DROPPED_METRIC,
+  () =>
+    new promClient.Counter({
+      name: CONSOLE_DROPPED_METRIC,
+      help: 'Console calls written to stdout but not forwarded over OTLP, over the per-second record or byte budget',
+      registers: [instrumentationRegistry],
+    })
+);
+
 // ---------------------------------------------------------------------------
 // Severity
 // ---------------------------------------------------------------------------
