@@ -3103,6 +3103,49 @@ async function refreshOwnModelShowcases(userId: number) {
     .catch(handleLogError);
 }
 
+/**
+ * A ban deletes the user's links. For a user named on a CSAM report, or with `alwaysArchive`, the
+ * profile and links are archived first; if that fails the links are kept and the ban still stands.
+ */
+async function deleteBannedUserLinks({
+  userId,
+  actorId,
+  archive = async (snapshot) =>
+    (await import('~/server/services/csam.service-new')).archiveUserProfile(snapshot),
+  alwaysArchive,
+}: {
+  userId: number;
+  actorId: number;
+  archive?: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+  alwaysArchive?: boolean;
+}) {
+  try {
+    await archiveProfileBeforeModeratorChange({
+      userId,
+      actorId,
+      fields: ['links'],
+      archive,
+      alwaysArchive,
+    });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'ban-user-archive-profile',
+      userId,
+      message: (error as Error).message,
+      error,
+    });
+    return;
+  }
+  await dbWrite.userLink.deleteMany({ where: { userId } }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'ban-user-delete-user-links',
+      message: (error as Error).message,
+    })
+  );
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -3116,6 +3159,8 @@ export const toggleBan = async ({
   removeComments,
   mediaBlockedByCaller,
   keepProfileLinks,
+  archiveProfile,
+  alwaysArchiveProfile,
   onlyBan,
   banActivity,
 }: ToggleBanUser & {
@@ -3126,6 +3171,10 @@ export const toggleBan = async ({
   mediaBlockedByCaller?: boolean;
   /** Server-only: a ban an unban may need to undo leaves the profile links, which no unban restores. */
   keepProfileLinks?: boolean;
+  /** Server-only: stores the profile and links before they are deleted; defaults to `archiveUserProfile`. */
+  archiveProfile?: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+  /** Server-only: archive the profile and links even when the user is not named on a CSAM report. */
+  alwaysArchiveProfile?: boolean;
   /**
    * Server-only: never lifts a ban. Reads the primary, because a replica that has not yet seen a
    * moderator's ban or unban would otherwise decide the direction, and throws on an account that is
@@ -3222,13 +3271,12 @@ export const toggleBan = async ({
       // disappear immediately (replaces a manual Retool DELETE step).
       keepProfileLinks
         ? Promise.resolve()
-        : dbWrite.userLink.deleteMany({ where: { userId: id } }).catch((error) =>
-            logToAxiom({
-              type: 'error',
-              name: 'ban-user-delete-user-links',
-              message: (error as Error).message,
-            })
-          ),
+        : deleteBannedUserLinks({
+            userId: id,
+            actorId: userId,
+            archive: archiveProfile,
+            alwaysArchive: alwaysArchiveProfile,
+          }),
 
       // Revoke every live App Block instance of every block this user PUBLISHES.
       // `invalidateSession` above ends their own browser sessions; it does not touch

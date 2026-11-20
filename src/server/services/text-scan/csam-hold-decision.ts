@@ -253,6 +253,7 @@ async function banAuthor(hold: HeldRow, { actor, tracker, holdId }: DecideArgs) 
     detailsInternal: `csam text hold #${holdId}`,
     userId: actor.id,
     isModerator: true,
+    alwaysArchiveProfile: true,
   });
   await tracker.userActivity({ type: 'Banned', targetUserId: userId });
 }

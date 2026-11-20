@@ -2355,7 +2355,7 @@ export async function archiveUserComments(userId: number) {
 
 /**
  * Writes a profile's text to `profile.json` in the CSAM bucket, beside the user's report archives,
- * before a moderator clears it. Each clear writes its own object.
+ * before a moderator clears it or a ban deletes the links. Each call writes its own object.
  */
 export async function archiveUserProfile(snapshot: ProfileClearSnapshot) {
   const sink = new stream.PassThrough();

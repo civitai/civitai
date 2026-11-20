@@ -416,6 +416,74 @@ describe('toggleBan -> profile links', () => {
     expect(userUpdate).toHaveBeenCalled();
     expect(userLinkDeleteMany).not.toHaveBeenCalled();
   });
+
+  const LINKS = [{ id: 1, url: 'https://example.com/me', type: 'Social' }];
+  const banWithArchive = (archive: () => Promise<unknown>, extra: object = {}) =>
+    toggleBan({
+      id: USER_ID,
+      reasonCode: BanReasonCode.Other,
+      userId: ACTOR_ID,
+      isModerator: true,
+      archiveProfile: archive,
+      ...extra,
+    } as Parameters<typeof toggleBan>[0]);
+  const reported = () => {
+    dbMock.dbWrite.csamReport.findFirst.mockResolvedValue({ id: 77 });
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(null);
+    dbMock.dbWrite.userLink.findMany.mockResolvedValue(LINKS);
+  };
+
+  it('archives a reported user’s links before deleting them', async () => {
+    reported();
+    const archive = vi.fn(async () => undefined);
+
+    await banWithArchive(archive);
+
+    expect(archive).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: USER_ID, actorId: ACTOR_ID, links: LINKS })
+    );
+    expect(userLinkDeleteMany).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+    expect(archive.mock.invocationCallOrder[0]).toBeLessThan(
+      userLinkDeleteMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('keeps the links and still bans when the archive fails', async () => {
+    reported();
+    const archive = vi.fn(async () => {
+      throw new Error('bucket down');
+    });
+
+    await banWithArchive(archive);
+
+    expect(userUpdate).toHaveBeenCalled();
+    expect(userLinkDeleteMany).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'ban-user-archive-profile', userId: USER_ID })
+    );
+  });
+
+  it('archives on the CSAM hold path even without a report', async () => {
+    dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(null);
+    dbMock.dbWrite.userLink.findMany.mockResolvedValue(LINKS);
+    const archive = vi.fn(async () => undefined);
+
+    await banWithArchive(archive, { alwaysArchiveProfile: true });
+
+    expect(archive).toHaveBeenCalledWith(expect.objectContaining({ links: LINKS }));
+    expect(userLinkDeleteMany).toHaveBeenCalled();
+  });
+
+  it('does not archive an unreported user’s links, and deletes them', async () => {
+    dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(null);
+    const archive = vi.fn(async () => undefined);
+
+    await banWithArchive(archive);
+
+    expect(archive).not.toHaveBeenCalled();
+    expect(userLinkDeleteMany).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+  });
 });
 
 // The ban has committed by then: a sign-out failure must neither undo it nor skip what follows.
