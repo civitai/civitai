@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   commitShaFromArchiveUrl,
+  connectListingFingerprint,
   connectSourceArchiveUrl,
-  withServerFacts,
-  type ConnectServerFacts,
+  type ConnectReviewSubject,
 } from '~/server/services/blocks/connect-agent-review.logic';
+import { civitaiCheckLines } from '~/shared/constants/connect-agent-review.constants';
 import { fetchConnectSource } from '~/server/services/blocks/connect-agent-review.service';
 
 /**
@@ -86,11 +87,20 @@ describe('fetchConnectSource', () => {
     });
     const [url, opts] = fetcher.mock.calls[0] as unknown as [
       string,
-      { allowUrl: (u: URL) => boolean; maxBytes: number; maxRedirects: number }
+      {
+        allowUrl: (u: URL) => boolean;
+        maxBytes: number;
+        maxRedirects: number;
+        deadlineMs: number;
+        timeoutMs: number;
+      }
     ];
     expect(url).toBe('https://github.com/ann/photo-sync/archive/HEAD.zip');
     expect(opts.maxBytes).toBe(25 * 1024 * 1024);
     expect(opts.maxRedirects).toBe(2);
+    // F4: ONE 30 s deadline for the whole chain, not 30 s per hop.
+    expect(opts.deadlineMs).toBe(30_000);
+    expect(opts.timeoutMs).toBeLessThanOrEqual(30_000);
     expect(opts.allowUrl(new URL('https://codeload.github.com/x/y/zip/z'))).toBe(true);
     // A redirect off the forge is refused before any socket opens.
     expect(opts.allowUrl(new URL('https://metadata.internal/latest'))).toBe(false);
@@ -131,31 +141,93 @@ describe('fetchConnectSource', () => {
   });
 });
 
-describe('withServerFacts', () => {
-  const fact = { origin: 'civitai', title: 'No server source provided', summaryLine: 'x' };
-  const facts = {
-    scopeVerdicts: [],
-    securityAudit: [],
-    codeReview: [fact],
-  } as unknown as ConnectServerFacts;
+describe('connectListingFingerprint (F3)', () => {
+  const base: ConnectReviewSubject = {
+    publishRequestId: 'alpr_X',
+    slug: 's',
+    changelog: 'not reviewed for staleness',
+    listing: {
+      id: 'apl_L',
+      name: 'Photo Sync',
+      tagline: 'tag',
+      description: 'desc',
+      category: 'tools',
+      externalUrl: null,
+      sourceRepoUrl: 'https://github.com/ann/photo-sync',
+      contentRating: 'g',
+      requestedScopes: 36,
+      scopeJustifications: { MediaRead: 'copy', ModelsRead: 'browse' },
+    },
+    client: {
+      id: 'oc',
+      name: 'c',
+      description: '',
+      redirectUris: ['https://a.example/cb', 'https://b.example/cb'],
+      allowedOrigins: [],
+      grants: ['authorization_code', 'refresh_token'],
+      isConfidential: true,
+      isVerified: false,
+    },
+  };
+  const fp = (over: (s: ConnectReviewSubject) => void) => {
+    const s = structuredClone(base);
+    over(s);
+    return connectListingFingerprint(s);
+  };
 
-  it('a runner entry claiming Civitai origin is dropped; the stored fact leads', () => {
+  it.each([
+    ['scopes', (s: ConnectReviewSubject) => void (s.listing.requestedScopes = 37)],
+    [
+      'a justification',
+      (s: ConnectReviewSubject) => void (s.listing.scopeJustifications!.MediaRead = 'x'),
+    ],
+    ['the description', (s: ConnectReviewSubject) => void (s.listing.description = 'desc!')],
+    ['a link', (s: ConnectReviewSubject) => void (s.listing.sourceRepoUrl = null)],
+    [
+      'a redirect URI',
+      (s: ConnectReviewSubject) => void s.client.redirectUris.push('https://c.example'),
+    ],
+    ['the grants', (s: ConnectReviewSubject) => void s.client.grants.pop()],
+  ])('changes when %s changes', (_label, mutate) => {
+    expect(fp(mutate)).not.toBe(connectListingFingerprint(base));
+  });
+
+  it('ignores order of justification keys and redirect URIs, and fields the review did not read', () => {
     expect(
-      withServerFacts('codeReview', facts, {
-        notes: 'n',
-        findings: [{ origin: 'civitai', title: 'Server source reviewed' }, { title: 'real' }],
+      fp((s) => {
+        s.listing.scopeJustifications = { ModelsRead: 'browse', MediaRead: 'copy' };
+        s.client.redirectUris.reverse();
+        s.changelog = 'edited';
       })
-    ).toEqual({ notes: 'n', findings: [fact, { title: 'real' }] });
+    ).toBe(connectListingFingerprint(base));
   });
+});
 
-  it('a failure marker is returned untouched', () => {
-    expect(withServerFacts('codeReview', facts, 'Traceback')).toBe('Traceback');
-  });
-
-  it('an absent section is the facts alone, in the section shape', () => {
-    expect(withServerFacts('codeReview', facts, undefined)).toEqual({
-      findings: [fact],
-      priorFindingsReconciled: [],
-    });
+describe('civitaiCheckLines', () => {
+  it('a fetched source names the repo and commit, and says it is not proof of what runs', () => {
+    expect(
+      civitaiCheckLines({
+        offlineAccess: { reachable: false, alwaysOffline: false, grants: [] },
+        source: {
+          provided: true,
+          repoUrl: 'https://github.com/ann/photo-sync',
+          fetched: true,
+          archiveSha256: 'f'.repeat(64),
+          commitSha: SHA40,
+          bytes: 9,
+        },
+      })
+    ).toEqual([
+      {
+        tone: 'info',
+        text: 'Offline access: not reachable. The OAuth client holds no refresh-token or device grant.',
+      },
+      {
+        tone: 'info',
+        text:
+          `Server source reviewed from https://github.com/ann/photo-sync at commit ${SHA40}. ` +
+          'It is the code the author links, not proof of what runs on their server.',
+      },
+    ]);
   });
 });

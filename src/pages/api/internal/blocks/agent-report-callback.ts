@@ -195,29 +195,29 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  let data = buildReportUpdate(body);
+  const data = buildReportUpdate(body);
 
-  // CONNECT LANE: put back the facts Civitai wrote at dispatch (offline access, source,
-  // privacy policy) ahead of the runner's entries, dropping any runner entry that claims to be
-  // one. Read from the running row itself, so the facts are exactly the ones this run seeded.
+  // CONNECT LANE: a report for a request a moderator has already decided is not stored. Its row is
+  // marked torn-down and its staged ZIP deleted (the decision's own teardown may have raced a slow
+  // start). What Civitai checked itself lives in its own table and is never written here.
   if (agentReviewLaneFor(body.publishRequestId) === 'connect') {
+    const { isConnectRequestStillPending, abandonDecidedConnectReview } = await import(
+      '~/server/services/blocks/connect-agent-review.service'
+    );
+    let pending: boolean;
     try {
-      const { dbWrite } = await import('~/server/db/client');
-      // primary: the row was just inserted by the dispatch this run belongs to.
-      const row = await dbWrite.appReviewAgentReport.findFirst({
-        where: { publishRequestId: body.publishRequestId, status: 'running' },
-        select: { scopeVerdicts: true, securityAudit: true, codeReview: true },
-      });
-      if (row) {
-        const { mergeConnectCallbackData, serverFactsFromStored } = await import(
-          '~/server/services/blocks/connect-agent-review.logic'
-        );
-        data = mergeConnectCallbackData(serverFactsFromStored(row), data);
-        if (typeof data.summaryMd === 'string')
-          data.summaryMd = data.summaryMd.slice(0, MAX_SUMMARY_CHARS);
-      }
+      pending = await isConnectRequestStillPending(body.publishRequestId);
     } catch (e) {
-      res.status(500).json({ error: 'Report read failed', detail: String(e).slice(0, 240) });
+      res.status(500).json({ error: 'Request read failed', detail: String(e).slice(0, 240) });
+      return;
+    }
+    if (!pending) {
+      await abandonDecidedConnectReview(body.publishRequestId);
+      res.status(200).json({
+        ok: true,
+        applied: false,
+        reason: 'the submission was decided before this report arrived',
+      });
       return;
     }
   }

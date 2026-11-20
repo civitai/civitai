@@ -1,7 +1,7 @@
 import type { AppReviewAgentReport } from '@prisma/client';
 // Type-only: the client itself is imported lazily inside each function, as before.
 import type { dbRead as dbReadClient } from '~/server/db/client';
-import type { ConnectServerFacts } from './connect-agent-review.logic';
+import type { ConnectCivitaiChecks } from '~/shared/constants/connect-agent-review.constants';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { AI_MODELS } from '~/server/services/ai/openrouter';
@@ -194,22 +194,14 @@ export async function startAgentReview(
   }
 
   // (d) Insert the running report row, keyed by `slug`. On-site: kind='onsite', `appBlockId`
-  // informational (null for a first version). Connect: kind='external' with the OAuth client,
-  // and every section seeded with the facts Civitai checked itself (offline access, source,
-  // privacy policy), which the callback puts back whatever the runner reports.
+  // informational (null for a first version). Connect: kind='external' with the OAuth client;
+  // what Civitai checked itself goes to its own table just below, never into these sections.
   const { newAppReviewAgentReportId } = await import('~/server/utils/app-block-ids');
   const reportId = newAppReviewAgentReportId();
-  let laneData: Record<string, unknown>;
-  if (subject.lane === 'connect') {
-    const { withServerFacts, serverFactsSummary } = await import('./connect-agent-review.logic');
-    laneData = { kind: 'external', appBlockId: null, oauthClientId: subject.oauthClientId };
-    for (const section of AGENT_REVIEW_SECTIONS) {
-      carried[section] = withServerFacts(section, subject.facts, carried[section]);
-    }
-    carried.summaryMd = serverFactsSummary(subject.facts);
-  } else {
-    laneData = { kind: 'onsite', appBlockId: subject.appBlockId };
-  }
+  const laneData: Record<string, unknown> =
+    subject.lane === 'connect'
+      ? { kind: 'external', appBlockId: null, oauthClientId: subject.oauthClientId }
+      : { kind: 'onsite', appBlockId: subject.appBlockId };
   await dbWrite.appReviewAgentReport.create({
     data: {
       ...carried,
@@ -224,6 +216,8 @@ export async function startAgentReview(
       priorReportId: prior?.id ?? null,
     },
   });
+
+  if (subject.lane === 'connect') await finishConnectInsert(subject, reportId, publishRequestId);
 
   return provisionAndRecordStart({
     args,
@@ -251,7 +245,8 @@ type ConnectSubject = {
   bundleSha256: string;
   bundleObjectKey: string;
   oauthClientId: string;
-  facts: ConnectServerFacts;
+  checks: ConnectCivitaiChecks;
+  fingerprint: string;
 };
 type DbRead = typeof dbReadClient;
 
@@ -286,7 +281,57 @@ async function prepareConnectSubject(
   const loaded = await loadConnectReviewSubject(publishRequestId);
   await assertNoRunningReview(publishRequestId, dbRead);
   const staged = await stageConnectReviewBundle(loaded);
+  // The source fetch can take a while: a moderator may have decided the request meanwhile.
+  // Re-checked on the PRIMARY; decided ⇒ delete what was staged and stop before any row exists.
+  await assertConnectStillPending(publishRequestId);
   return { lane: 'connect', ...staged };
+}
+
+const DECIDED_DURING_START = 'the submission was decided while the review was starting';
+
+async function assertConnectStillPending(publishRequestId: string): Promise<void> {
+  const { isConnectRequestStillPending, abandonDecidedConnectReview } = await import(
+    './connect-agent-review.service'
+  );
+  if (await isConnectRequestStillPending(publishRequestId)) return;
+  await abandonDecidedConnectReview(publishRequestId);
+  throw new Error(DECIDED_DURING_START);
+}
+
+/**
+ * Connect lane, right after the running row exists: store the Civitai checks (failure ⇒ the row is
+ * marked failed and the start refuses), then re-check the request once more. A decision that
+ * landed between the first re-check and the insert found no report to tear down, so it is caught
+ * here instead; one landing after this read finds the row and its teardown takes it down.
+ */
+async function finishConnectInsert(
+  subject: ConnectSubject,
+  reportId: string,
+  publishRequestId: string
+): Promise<void> {
+  const { writeConnectChecks } = await import('./connect-agent-review.service');
+  try {
+    await writeConnectChecks({
+      reportId,
+      publishRequestId,
+      checks: subject.checks,
+      fingerprint: subject.fingerprint,
+    });
+  } catch (err) {
+    const { dbWrite } = await import('~/server/db/client');
+    await dbWrite.appReviewAgentReport
+      .updateMany({
+        where: { id: reportId, status: 'running' },
+        data: {
+          status: 'failed',
+          summaryMd: 'Could not store the Civitai checks for this review.',
+          completedAt: new Date(),
+        },
+      })
+      .catch(() => undefined);
+    throw err;
+  }
+  await assertConnectStillPending(publishRequestId);
 }
 
 /** On-site lane (a)–(b): the pending AppBlockPublishRequest and the ONE object the pod pulls. */
@@ -879,6 +924,8 @@ function buildAgentReviewChatSystemMessage(report: {
   scopeVerdicts?: unknown;
   codeReview?: unknown;
   securityAudit?: unknown;
+  /** Connect lane: what Civitai checked itself (its own table, not the runner's sections). */
+  civitaiChecks?: unknown;
 }): string {
   const MAX_CTX = 8000;
   const grounding = {
@@ -889,6 +936,7 @@ function buildAgentReviewChatSystemMessage(report: {
     scopeVerdicts: report.scopeVerdicts ?? null,
     codeReview: report.codeReview ?? null,
     securityAudit: report.securityAudit ?? null,
+    ...(report.civitaiChecks ? { checkedByCivitai: report.civitaiChecks } : {}),
   };
   let groundingJson: string;
   try {

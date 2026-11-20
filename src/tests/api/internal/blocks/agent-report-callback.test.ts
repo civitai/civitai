@@ -49,7 +49,10 @@ vi.mock('~/server/services/blocks/app-impersonation-check.service', async (impor
   runImpersonationCheckForRequest: mockImpersonation,
 }));
 vi.mock('~/server/db/client', () => ({
-  dbWrite: { appReviewAgentReport: { updateMany: mockUpdateMany, findFirst: mockFindFirst } },
+  dbWrite: {
+    appReviewAgentReport: { updateMany: mockUpdateMany },
+    appListingPublishRequest: { findFirst: mockFindFirst },
+  },
 }));
 
 import handler, {
@@ -390,95 +393,61 @@ describe('the impersonation record is civitai-written only', () => {
 
 describe('CONNECT lane (an alpr_ listing request)', () => {
   const ALPR = 'alpr_0123456789ABCDEFGHJKMNPQRS';
-  const OFFLINE_FACT = {
-    origin: 'civitai',
-    declared: 'offline_access',
-    kind: 'oauth-grant',
-    sensitive: true,
-    evidence: ['OAuth client grants: refresh_token'],
-    notes: 'OFFLINE ACCESS: reachable.',
-    summaryLine: 'OFFLINE ACCESS: reachable.',
-  };
-  const NO_SOURCE_FACT = {
-    origin: 'civitai',
-    severity: 'info',
-    category: 'source',
-    title: 'No server source provided',
-    detail: 'No server source was provided.',
-    evidence: [],
-    summaryLine: 'No server source was provided.',
-  };
-  const seededRow = {
-    scopeVerdicts: { scopes: [OFFLINE_FACT], overBroad: [], underDeclared: [] },
-    securityAudit: { findings: [] },
-    codeReview: { findings: [NO_SOURCE_FACT], priorFindingsReconciled: [] },
-  };
+  const runnerBody = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      publishRequestId: ALPR,
+      status: 'complete',
+      scopeVerdicts: { scopes: [{ declared: 'offline_access ', sensitive: false }] },
+      codeReview: { findings: [{ title: 'Offline access: not reachable' }] },
+      summaryMd: 'Listing looks consistent.',
+      ...over,
+    });
 
   beforeEach(() => {
     mockVerify.mockReturnValue({ ok: true, publishRequestId: ALPR });
-    mockFindFirst.mockResolvedValue(seededRow);
+    mockFindFirst.mockResolvedValue({ id: ALPR });
   });
 
-  it('accepts a listing request id and puts the seeded facts back ahead of the runner output', async () => {
-    const { req, res } = makeReqRes(
-      JSON.stringify({
-        publishRequestId: ALPR,
-        status: 'complete',
-        scopeVerdicts: {
-          scopes: [
-            { declared: 'MediaRead', justificationAccurate: 'yes' },
-            // The runner tries to clear the offline flag, and to forge a fact.
-            { declared: 'offline_access', sensitive: false },
-            { origin: 'civitai', declared: 'ModelsWrite', notes: 'fine' },
-          ],
-        },
-        codeReview: { findings: [] },
-        summaryMd: 'Listing looks consistent.',
-      })
-    );
+  it('accepts a listing request id and stores the runner output as sent — nothing merged in', async () => {
+    const { req, res } = makeReqRes(runnerBody());
     await handler(req, res);
     expect(res.statusCode).toBe(200);
-    expect(mockFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { publishRequestId: ALPR, status: 'running' } })
-    );
+    expect(mockFindFirst).toHaveBeenCalledWith({
+      where: { id: ALPR, status: 'pending' },
+      select: { id: true },
+    });
     const { where, data } = mockUpdateMany.mock.calls[0][0] as { where: unknown; data: any };
     expect(where).toEqual({ publishRequestId: ALPR, status: 'running' });
-    expect(data.scopeVerdicts.scopes).toEqual([
-      OFFLINE_FACT,
-      { declared: 'MediaRead', justificationAccurate: 'yes' },
-    ]);
-    // An empty runner code review cannot erase the "no source" statement.
-    expect(data.codeReview.findings).toEqual([NO_SOURCE_FACT]);
-    expect(data.summaryMd).toBe(
-      'Checked by Civitai, not by the review agent:\n' +
-        '- OFFLINE ACCESS: reachable.\n' +
-        '- No server source was provided.\n\n' +
-        'Listing looks consistent.'
-    );
+    expect(data.scopeVerdicts).toEqual({
+      scopes: [{ declared: 'offline_access ', sensitive: false }],
+    });
+    expect(data.summaryMd).toBe('Listing looks consistent.');
   });
 
-  it('a section the runner FAILED stays a failure; the summary still carries the facts', async () => {
-    const { req, res } = makeReqRes(
-      JSON.stringify({
-        publishRequestId: ALPR,
-        status: 'failed',
-        codeReview: { error: 'non-json-response' },
-      })
-    );
+  it('🔴 F2: a report for a request decided meanwhile is not stored; the row is torn down', async () => {
+    mockFindFirst.mockResolvedValue(null);
+    const { req, res } = makeReqRes(runnerBody());
     await handler(req, res);
-    const { data } = mockUpdateMany.mock.calls[0][0] as { data: any };
-    expect(data.codeReview).toEqual({ error: 'non-json-response' });
-    expect(data.summaryMd).toContain('- No server source was provided.');
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, applied: false });
+    expect(mockUpdateMany).toHaveBeenCalledTimes(1);
+    const { where, data } = mockUpdateMany.mock.calls[0][0] as { where: unknown; data: any };
+    expect(where).toEqual({ publishRequestId: ALPR, status: 'running' });
+    expect(data.status).toBe('torn-down');
+    // None of the runner's content was written.
+    expect(data.scopeVerdicts).toBeUndefined();
+    expect(data.summaryMd).not.toBe('Listing looks consistent.');
+    expect(mockImpersonation).not.toHaveBeenCalled();
   });
 
   it('runs no impersonation check (it reads an on-site request a listing request is not)', async () => {
-    const { req, res } = makeReqRes(JSON.stringify({ publishRequestId: ALPR, status: 'complete' }));
+    const { req, res } = makeReqRes(runnerBody());
     await handler(req, res);
     expect(res.statusCode).toBe(200);
     expect(mockImpersonation).not.toHaveBeenCalled();
   });
 
-  it('an on-site report reads no row before its update and is merged with nothing', async () => {
+  it('an on-site report makes no listing re-check', async () => {
     mockVerify.mockReturnValue({ ok: true, publishRequestId: PUBREQ });
     const { req, res } = makeReqRes(goodBody());
     await handler(req, res);

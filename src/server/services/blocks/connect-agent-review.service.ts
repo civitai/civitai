@@ -3,15 +3,19 @@ import JSZip from 'jszip';
 import {
   buildConnectReviewInput,
   commitShaFromArchiveUrl,
-  connectServerFacts,
+  connectCivitaiChecks,
+  connectListingFingerprint,
   connectSourceArchiveUrl,
   CONNECT_REVIEW_INPUT_FILE,
   CONNECT_REVIEW_SOURCE_FILE,
   CONNECT_REVIEW_VERSION,
   type ConnectReviewSubject,
-  type ConnectServerFacts,
-  type ConnectSourceResult,
 } from './connect-agent-review.logic';
+import type {
+  ConnectCivitaiChecks,
+  ConnectCivitaiChecksView,
+  ConnectSourceResult,
+} from '~/shared/constants/connect-agent-review.constants';
 
 /**
  * AGENT REVIEW, CONNECT LANE: load the listing request and stage what the runner reads.
@@ -28,12 +32,14 @@ import {
 
 /** Cap on the fetched source archive. Bigger repos are reported as "linked, not fetched". */
 export const CONNECT_SOURCE_MAX_BYTES = 25 * 1024 * 1024;
-export const CONNECT_SOURCE_TIMEOUT_MS = 30_000;
+/** ONE deadline for the whole source fetch: every hop and the body read, together. */
+export const CONNECT_SOURCE_DEADLINE_MS = 30_000;
 
 type ArchiveFetcher = (
   url: string,
   opts: {
     timeoutMs: number;
+    deadlineMs: number;
     maxBytes: number;
     allowedContentTypes: readonly string[];
     maxRedirects: number;
@@ -67,7 +73,8 @@ export async function fetchConnectSource(
     const doFetch: ArchiveFetcher =
       fetcher ?? (await import('~/server/utils/safe-fetch')).safeFetch;
     const res = await doFetch(target.url, {
-      timeoutMs: CONNECT_SOURCE_TIMEOUT_MS,
+      timeoutMs: CONNECT_SOURCE_DEADLINE_MS,
+      deadlineMs: CONNECT_SOURCE_DEADLINE_MS,
       maxBytes: CONNECT_SOURCE_MAX_BYTES,
       allowedContentTypes: [
         'application/zip',
@@ -106,6 +113,28 @@ export async function fetchConnectSource(
 export async function loadConnectReviewSubject(
   publishRequestId: string
 ): Promise<ConnectReviewSubject> {
+  const read = await readConnectRequest(publishRequestId);
+  if (!read) throw new Error(`listing publish request ${publishRequestId} not found`);
+  if (read.status !== 'pending') {
+    throw new Error(
+      `listing publish request ${publishRequestId} is not pending (status=${read.status})`
+    );
+  }
+  if (!read.subject) {
+    throw new Error(
+      `listing publish request ${publishRequestId} is not an OAuth-connect listing; only those are reviewed`
+    );
+  }
+  return read.subject;
+}
+
+/**
+ * The request's status and, when it is an OAuth-connect listing, the subject as it is now. No
+ * status check: the stale check reads it for decided requests too. `null` when the request is gone.
+ */
+export async function readConnectRequest(
+  publishRequestId: string
+): Promise<{ status: string; subject: ConnectReviewSubject | null } | null> {
   const { dbRead } = await import('~/server/db/client');
   const request = await dbRead.appListingPublishRequest.findUnique({
     where: { id: publishRequestId },
@@ -144,23 +173,16 @@ export async function loadConnectReviewSubject(
       },
     },
   });
-  if (!request) throw new Error(`listing publish request ${publishRequestId} not found`);
-  if (request.status !== 'pending') {
-    throw new Error(
-      `listing publish request ${publishRequestId} is not pending (status=${request.status})`
-    );
-  }
+  if (!request) return null;
   const listing = request.appListing;
   if (!listing || listing.kind !== 'offsite' || !listing.connectClient) {
-    throw new Error(
-      `listing publish request ${publishRequestId} is not an OAuth-connect listing; only those are reviewed`
-    );
+    return { status: request.status, subject: null };
   }
   // `source_repo_url` is a manual-apply column: read through the helper that degrades to null.
   const { readListingSourceRepoUrl } = await import('./app-listing-source-repo.service');
   const repo = await readListingSourceRepoUrl(listing.id, dbRead);
   const justifications = listing.connectScopeJustifications;
-  return {
+  const subject: ConnectReviewSubject = {
     publishRequestId,
     slug: request.slug,
     changelog: request.changelog ?? null,
@@ -190,6 +212,7 @@ export async function loadConnectReviewSubject(
       isVerified: listing.connectClient.isVerified,
     },
   };
+  return { status: request.status, subject };
 }
 
 export type PreparedConnectReview = {
@@ -198,7 +221,8 @@ export type PreparedConnectReview = {
   bundleSha256: string;
   bundleObjectKey: string;
   oauthClientId: string;
-  facts: ConnectServerFacts;
+  checks: ConnectCivitaiChecks;
+  fingerprint: string;
 };
 
 /** Build the review ZIP for a loaded subject and stage it where the runner pulls from. */
@@ -228,7 +252,91 @@ export async function stageConnectReviewBundle(
     bundleSha256,
     bundleObjectKey,
     oauthClientId: subject.client.id,
-    facts: connectServerFacts(subject, result),
+    checks: connectCivitaiChecks(subject, result),
+    fingerprint: connectListingFingerprint(subject),
+  };
+}
+
+/**
+ * Whether the listing request is still pending, read on the PRIMARY: a moderator may have decided
+ * it while a slow start was fetching source. The dispatch asks before and after inserting the
+ * running row, and the callback asks before storing a report.
+ */
+export async function isConnectRequestStillPending(publishRequestId: string): Promise<boolean> {
+  const { dbWrite } = await import('~/server/db/client');
+  // primary: the decision this guards against is a write that may not have reached the replica.
+  const row = await dbWrite.appListingPublishRequest.findFirst({
+    where: { id: publishRequestId, status: 'pending' },
+    select: { id: true },
+  });
+  return row != null;
+}
+
+/**
+ * A review whose request was decided before it could run or report: mark any running row
+ * `torn-down` (so nothing is stored into it) and delete the staged ZIP. Never throws.
+ */
+export async function abandonDecidedConnectReview(publishRequestId: string): Promise<void> {
+  try {
+    const { dbWrite } = await import('~/server/db/client');
+    await dbWrite.appReviewAgentReport.updateMany({
+      where: { publishRequestId, status: 'running' },
+      data: {
+        status: 'torn-down',
+        completedAt: new Date(),
+        summaryMd: 'The submission was decided before this review finished, so it was not stored.',
+      },
+    });
+  } catch {
+    // Best-effort; the stale-running sweep is the backstop for the row.
+  }
+  const { deleteStagedBundle } = await import('~/utils/bundle-s3');
+  await deleteStagedBundle(publishRequestId);
+}
+
+/** Store the checks for a just-inserted connect report. Only the dispatch writes this table. */
+export async function writeConnectChecks(args: {
+  reportId: string;
+  publishRequestId: string;
+  checks: ConnectCivitaiChecks;
+  fingerprint: string;
+}): Promise<void> {
+  const { dbWrite } = await import('~/server/db/client');
+  await dbWrite.appReviewAgentReportCheck.create({
+    data: {
+      reportId: args.reportId,
+      publishRequestId: args.publishRequestId,
+      checks: args.checks,
+      fingerprint: args.fingerprint,
+    },
+  });
+}
+
+/**
+ * The "Checked by Civitai" view of a connect report: its stored checks, and whether the live
+ * listing still has the fingerprint the review recorded. `null` when the report has no checks
+ * row (or the table is not there yet). A listing that can no longer be read counts as changed.
+ */
+export async function getConnectChecksView(
+  reportId: string,
+  publishRequestId: string
+): Promise<ConnectCivitaiChecksView | null> {
+  const { dbRead } = await import('~/server/db/client');
+  let row: { checks: unknown; fingerprint: string } | null;
+  try {
+    row = await dbRead.appReviewAgentReportCheck.findUnique({
+      where: { reportId },
+      select: { checks: true, fingerprint: true },
+    });
+  } catch {
+    return null;
+  }
+  if (!row) return null;
+  const live = await readConnectRequest(publishRequestId).catch(() => null);
+  const liveFingerprint = live?.subject ? connectListingFingerprint(live.subject) : null;
+  return {
+    checks: row.checks as ConnectCivitaiChecks,
+    stale: liveFingerprint !== row.fingerprint,
   };
 }
 

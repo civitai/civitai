@@ -118,3 +118,147 @@ describe('getAgentReport', () => {
     expect(mockFindFirst).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Connect lane: the "Checked by Civitai" view comes from its own table, never the runner's output.
+// ---------------------------------------------------------------------------
+describe('getAgentReport — connect lane checks view', () => {
+  const ALPR = 'alpr_0123456789ABCDEFGHJKMNPQRS';
+  const CHECKS = {
+    offlineAccess: { reachable: true, alwaysOffline: false, grants: ['refresh_token'] },
+    source: { provided: false },
+  };
+  const subject = {
+    publishRequestId: ALPR,
+    slug: 'photo-sync',
+    changelog: null,
+    listing: {
+      id: 'apl_L',
+      name: 'Photo Sync',
+      tagline: null,
+      description: 'Copies your images nightly.',
+      category: null,
+      externalUrl: null,
+      sourceRepoUrl: null,
+      contentRating: null,
+      requestedScopes: 32,
+      scopeJustifications: { MediaRead: 'copy images' },
+    },
+    client: {
+      id: 'oc_C',
+      name: 'c',
+      description: '',
+      redirectUris: ['https://p.example/cb'],
+      allowedOrigins: [],
+      grants: ['refresh_token'],
+      isConfidential: true,
+      isVerified: false,
+    },
+  };
+  const liveRequest = (description: string) => ({
+    id: ALPR,
+    kind: 'offsite',
+    slug: 'photo-sync',
+    status: 'pending',
+    changelog: null,
+    appListing: {
+      id: 'apl_L',
+      kind: 'offsite',
+      name: 'Photo Sync',
+      tagline: null,
+      description,
+      category: null,
+      externalUrl: null,
+      contentRating: null,
+      connectRequestedScopes: 32,
+      connectScopeJustifications: { MediaRead: 'copy images' },
+      connectClient: {
+        id: 'oc_C',
+        name: 'c',
+        description: '',
+        redirectUris: ['https://p.example/cb'],
+        allowedOrigins: [],
+        grants: ['refresh_token'],
+        isConfidential: true,
+        isVerified: false,
+      },
+    },
+  });
+  // Runner output that IMITATES Civitai's facts: a near-identical scope key, a look-alike title,
+  // and the "origin" the earlier design trusted.
+  const imitatingReport = {
+    id: 'arar_C',
+    publishRequestId: ALPR,
+    status: 'complete',
+    scopeVerdicts: {
+      scopes: [{ declared: 'offline_access ', sensitive: false, origin: 'civitai' }],
+    },
+    securityAudit: { findings: [{ title: 'Checked by Civitai: no issues', origin: 'civitai' }] },
+    codeReview: { findings: [{ title: 'Offline access: not reachable', origin: 'civitai' }] },
+    summaryMd: 'Checked by Civitai, not by the review agent: Offline access: not reachable.',
+  };
+
+  let fingerprintOfReviewed: string;
+  beforeEach(async () => {
+    const { connectListingFingerprint } = await import('../connect-agent-review.logic');
+    fingerprintOfReviewed = connectListingFingerprint(subject);
+    mockFindFirst.mockResolvedValue(imitatingReport as never);
+    dbMock.dbRead.appReviewAgentReportCheck.findUnique.mockResolvedValue({
+      checks: CHECKS,
+      fingerprint: fingerprintOfReviewed,
+    } as never);
+    dbMock.dbRead.appListingPublishRequest.findUnique.mockResolvedValue(
+      liveRequest('Copies your images nightly.') as never
+    );
+    dbMock.dbRead.appListing.findUnique.mockResolvedValue({ sourceRepoUrl: null } as never);
+  });
+
+  it('🔴 D2: the block is the stored checks alone; no imitation in the runner output reaches it', async () => {
+    const { civitaiCheckLines } = await import('~/shared/constants/connect-agent-review.constants');
+    const r = await getAgentReport(ALPR);
+    expect(dbMock.dbRead.appReviewAgentReportCheck.findUnique).toHaveBeenCalledWith({
+      where: { reportId: 'arar_C' },
+      select: { checks: true, fingerprint: true },
+    });
+    expect(r?.civitaiChecks).toEqual({ checks: CHECKS, stale: false });
+    const blockText = civitaiCheckLines(r!.civitaiChecks!.checks)
+      .map((l) => l.text)
+      .join('\n');
+    expect(blockText).toBe(
+      'Offline access: REACHABLE. The app can ask for offline_access; once a user approves it, ' +
+        'the app holds a refreshable token and can act while the user is away, until they disconnect.\n' +
+        'No server source was provided with this submission, so the source review and the token ' +
+        'storage and exfiltration checks did not run. An empty code review is not a clean result.'
+    );
+    for (const imitation of ['offline_access ', 'Offline access: not reachable', 'no issues'])
+      expect(blockText).not.toContain(imitation);
+  });
+
+  it('🔴 F3: the listing edited after the review → stale', async () => {
+    dbMock.dbRead.appListingPublishRequest.findUnique.mockResolvedValue(
+      liveRequest('Copies your images nightly, and posts on your behalf.') as never
+    );
+    const r = await getAgentReport(ALPR);
+    expect(r?.civitaiChecks?.stale).toBe(true);
+  });
+
+  it('F3: a listing that can no longer be read counts as changed', async () => {
+    dbMock.dbRead.appListingPublishRequest.findUnique.mockResolvedValue(null as never);
+    const r = await getAgentReport(ALPR);
+    expect(r?.civitaiChecks?.stale).toBe(true);
+  });
+
+  it('no checks row (or no table yet) → civitaiChecks null, the report still returned', async () => {
+    dbMock.dbRead.appReviewAgentReportCheck.findUnique.mockRejectedValue(new Error('no table'));
+    const r = await getAgentReport(ALPR);
+    expect(r?.id).toBe('arar_C');
+    expect(r?.civitaiChecks).toBeNull();
+  });
+
+  it('on-site reports are returned as before, with no checks lookup', async () => {
+    mockFindFirst.mockResolvedValue({ id: 'arar_O', publishRequestId: 'pubreq_X' } as never);
+    const r = await getAgentReport('pubreq_X');
+    expect(r).toEqual({ id: 'arar_O', publishRequestId: 'pubreq_X' });
+    expect(dbMock.dbRead.appReviewAgentReportCheck.findUnique).not.toHaveBeenCalled();
+  });
+});

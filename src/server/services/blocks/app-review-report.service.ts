@@ -1,6 +1,10 @@
 import semver from 'semver';
 import type { AppReviewAgentReport } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import {
+  agentReviewLaneFor,
+  type ConnectCivitaiChecksView,
+} from '~/shared/constants/connect-agent-review.constants';
 
 // App Blocks — agentic mod code-review report (P0 read/lookup layer).
 //
@@ -33,13 +37,23 @@ export type AppReviewAgentReportStatus = (typeof APP_REVIEW_AGENT_REPORT_STATUSE
  */
 export async function getAgentReport(
   publishRequestId: string
-): Promise<AppReviewAgentReport | null> {
+): Promise<AgentReportWithChecks | null> {
   if (!publishRequestId) return null;
-  return dbRead.appReviewAgentReport.findFirst({
+  const report = await dbRead.appReviewAgentReport.findFirst({
     where: { publishRequestId },
     orderBy: { startedAt: 'desc' },
   });
+  // Connect lane: the "Checked by Civitai" view, from its own server-written table (never from
+  // the runner's sections) with the stale flag. On-site reports are returned exactly as before.
+  if (!report || agentReviewLaneFor(publishRequestId) !== 'connect') return report;
+  const { getConnectChecksView } = await import('./connect-agent-review.service');
+  return { ...report, civitaiChecks: await getConnectChecksView(report.id, publishRequestId) };
 }
+
+/** A report row, plus (connect lane only) what Civitai checked itself. */
+export type AgentReportWithChecks = AppReviewAgentReport & {
+  civitaiChecks?: ConnectCivitaiChecksView | null;
+};
 
 export type GetPriorAgentReportArgs = {
   /** The stable app key (= blockId). Present on every publish request, so a

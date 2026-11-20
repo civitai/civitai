@@ -9,6 +9,7 @@ import {
 } from '@tabler/icons-react';
 import { ReportTabs } from '~/components/Apps/ReportTabs';
 import { AgentReviewChat } from '~/components/Apps/AgentReviewChat';
+import { CivitaiChecksBlock } from '~/components/Apps/CivitaiChecksBlock';
 import {
   degradedReportSummary,
   failedAgentReportSections,
@@ -288,6 +289,7 @@ export function AgentReviewPanel({
         Dispatch an ephemeral, sandboxed agent to code-review + security-audit this pending bundle.
         Advisory decision-support only.
       </Text>
+      {report?.civitaiChecks && <CivitaiChecksBlock view={report.civitaiChecks} />}
 
       {reportQuery.isLoading ? (
         <Group gap={6}>
