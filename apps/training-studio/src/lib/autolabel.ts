@@ -17,7 +17,8 @@ const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_BATCHES_IN_FLIGHT = 2;
 /** Waits before each resend of items turned away for capacity; its length bounds the resends. */
 export const BUSY_RETRY_DELAYS_MS = [15_000, 45_000, 120_000];
-export const BUSY_GAVE_UP = 'Auto-labeling is busy right now. Try again in a few minutes.';
+export const BUSY_GAVE_UP =
+  "Auto-labeling couldn't run on this image just now. Try again in a few minutes.";
 
 // Every submitted item is a charged orchestrator job. However a caller asks — the drain, a format
 // switch, the editor's Re-run — one media URL is sent at most this many times per page session, so a
@@ -166,14 +167,20 @@ export async function runAutoLabel(
   // turned-away item back to the daily quota in the same poll that reports it, before the resend.
   let pending = allowed;
   for (let attempt = 0; pending.length > 0; attempt++) {
-    if (attempt > 0) await abortableDelay(BUSY_RETRY_DELAYS_MS[attempt - 1]!, signal);
+    if (attempt > 0) {
+      // Jittered so every client turned away in the same wave doesn't come back in step.
+      const wait = BUSY_RETRY_DELAYS_MS[attempt - 1]! * (0.75 + Math.random() * 0.5);
+      await abortableDelay(wait, signal).catch((err: unknown) => {
+        releaseSubmits(submitsByMedia, pending);
+        throw err;
+      });
+    }
     const busy: AutoLabelItem[] = [];
     await pool(chunk(pending, BATCH_SIZE), MAX_BATCHES_IN_FLIGHT, async (batch) => {
       busy.push(...(await runBatch(mode, media, batch, onResult, signal)));
     });
     if (attempt >= BUSY_RETRY_DELAYS_MS.length) {
-      // Never ran, so a later Retry from the tile starts with its slot back.
-      releaseSubmits(submitsByMedia, busy);
+      // Keeps its slot: giving it back would let the tile's Retry resend it without end.
       for (const item of busy) onResult({ key: item.key, status: 'failed', error: BUSY_GAVE_UP });
       break;
     }

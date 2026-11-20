@@ -167,33 +167,43 @@ async function reserveDailyItems(userId: number, count: number) {
   return { release, day };
 }
 
+/** The Studio sends an item turned away before it ran up to this many times (apps/training-studio
+ *  autolabel.ts BUSY_RETRY_DELAYS_MS, plus the first send), so busy refusals get their own, wider
+ *  give-back allowance: one refused item must not use up the allowance ordinary failures rely on. */
+const BUSY_SENDS_PER_ITEM = 4;
+type FailedStep = { name: string; busy: boolean };
+
 /** Gives each failed step's item back to the quota it was counted against, once per step however
  *  often the workflow is polled, and only for a workflow this service submitted for this user (its
- *  submit record), never more items than it counted, and at most the daily limit per day. Only today's quota: an earlier day's has no use
+ *  submit record), never more items than it counted, and at most the daily limit per day (busy
+ *  refusals: that times BUSY_SENDS_PER_ITEM, counted apart). Only today's quota: an earlier day's has no use
  *  for it, and a decrement on an expired key would leave a negative counter with no TTL. Best effort:
  *  a poll is never failed by it, and a miss only keeps the item counted, as before. */
-async function releaseFailedItems(workflowId: string, userId: number, failedSteps: string[]) {
+async function releaseFailedItems(workflowId: string, userId: number, failedSteps: FailedStep[]) {
   if (!failedSteps.length) return;
   try {
     const raw = await redis.get(submitKey(workflowId));
     const record = raw ? (JSON.parse(raw) as SubmitRecord) : null;
     if (!record || record.userId !== userId || record.day !== utcDay()) return;
     // Steps are named by index at submit.
-    const counted = failedSteps.filter((name) => /^\d+$/.test(name) && Number(name) < record.count);
-    if (!counted.length) return;
+    const counted = failedSteps.filter(
+      ({ name }) => /^\d+$/.test(name) && Number(name) < record.count
+    );
     const releasedKey = `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED}:${workflowId}` as const;
-    const added = await redis.sAdd(releasedKey, counted);
-    if (added > 0) {
+    for (const busy of [false, true]) {
+      const names = counted.filter((s) => s.busy === busy).map((s) => s.name);
+      if (!names.length) continue;
+      const added = await redis.sAdd(releasedKey, names);
+      if (added === 0) continue;
       await redis.expire(releasedKey, QUOTA_TTL_SECONDS);
-      // Backstop: at most the daily limit comes back per day; past it, failed items stay counted.
-      const releasedDailyKey =
-        `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED_DAILY}:${userId}:${record.day}` as const;
+      // Backstop: at most this many come back per day; past it, failed items stay counted.
+      const limit = STUDIO_AUTO_LABEL_DAILY_ITEMS * (busy ? BUSY_SENDS_PER_ITEM : 1);
+      const releasedDailyKey = `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED_DAILY}:${userId}:${
+        record.day
+      }${busy ? ':busy' : ''}` as const;
       const released = await redis.incrBy(releasedDailyKey, added);
       if (released === added) await redis.expire(releasedDailyKey, QUOTA_TTL_SECONDS);
-      const allowed = Math.min(
-        added,
-        Math.max(0, STUDIO_AUTO_LABEL_DAILY_ITEMS - (released - added))
-      );
+      const allowed = Math.min(added, Math.max(0, limit - (released - added)));
       if (allowed > 0)
         await takeClusterWindowCount(
           'releaseFailedItems',
@@ -225,7 +235,7 @@ export async function pollStudioAutoLabel({
   if (metadata?.kind !== 'studio-auto-label' || metadata.userId !== userId)
     throw throwNotFoundError('Workflow not found');
 
-  const failedSteps: string[] = [];
+  const failedSteps: FailedStep[] = [];
   const results = (data.steps ?? []).map((raw, index): StudioAutoLabelResult => {
     const step = raw as {
       name?: string | null;
@@ -257,11 +267,11 @@ export async function pollStudioAutoLabel({
       return { key, status: 'succeeded' };
     }
     if (TERMINAL_STATUSES.has(step.status)) {
-      failedSteps.push(step.name ?? String(index));
       // The workflow read carries no failure reason. A step that ended without starting was refused
       // at scheduling (no worker free), not by its input.
-      if (!step.startedAt && step.status !== 'canceled')
-        return { key, status: 'failed', error: AUTO_LABEL_BUSY, retryable: true };
+      const busy = !step.startedAt && step.status !== 'canceled';
+      failedSteps.push({ name: step.name ?? String(index), busy });
+      if (busy) return { key, status: 'failed', error: AUTO_LABEL_BUSY, retryable: true };
       return { key, status: 'failed', error: AUTO_LABEL_STEP_FAILED };
     }
     return { key, status: 'pending' };

@@ -224,7 +224,7 @@ describe('auto-label under load', () => {
     expect(sendsByUrl.get('https://x/busy-1.png')).toBe(3);
   });
 
-  it('gives up after its retries, with a reason, and leaves Retry its cap slot', async () => {
+  it('gives up after its retries with a reason, and Retry stays under the cap', async () => {
     vi.useFakeTimers();
     plan.poll = (list) => list.map(busy);
     const url = 'https://x/always-busy.png';
@@ -233,25 +233,30 @@ describe('auto-label under load', () => {
     await done;
     expect(sendsByUrl.get(url)).toBe(BUSY_RETRY_DELAYS_MS.length + 1);
     expect(results).toEqual([{ key: 'k', status: 'failed', error: BUSY_GAVE_UP }]);
-    // Each later Retry still reaches the backend: busy refusals never spent the per-image cap.
-    plan.poll = (list) => list.map(ok);
+    // The resends shared the first send's slot; the run that gave up still spent it.
     vi.useRealTimers();
-    for (let i = 0; i < MAX_SUBMITS_PER_MEDIA; i++) {
-      const again = await run([{ key: 'k', mediaUrl: url }]);
-      expect(await again.done).toBe(1);
-    }
+    plan.poll = (list) => list.map(ok);
+    const sent: number[] = [];
+    for (let i = 0; i < MAX_SUBMITS_PER_MEDIA; i++)
+      sent.push(await (await run([{ key: 'k', mediaUrl: url }])).done);
+    expect(sent).toEqual([...Array(MAX_SUBMITS_PER_MEDIA - 1).fill(1), 0]);
   });
 
-  it('keeps the cap slot of an item that failed after it ran', async () => {
+  it('resends only items marked retryable, and keeps the slot of one that ran', async () => {
+    vi.useFakeTimers();
     plan.poll = (list) => list.map((i) => ({ key: i.key, status: 'failed', error: 'x' }));
     const url = 'https://x/ran-and-failed.png';
     const sent: number[] = [];
-    for (let i = 0; i <= MAX_SUBMITS_PER_MEDIA; i++)
-      sent.push(await (await run([{ key: 'k', mediaUrl: url }])).done);
+    for (let i = 0; i <= MAX_SUBMITS_PER_MEDIA; i++) {
+      const { done } = await run([{ key: 'k', mediaUrl: url }]);
+      await vi.runAllTimersAsync();
+      sent.push(await done);
+    }
     expect(sent).toEqual([1, 1, 1, 0]);
+    expect(sendsByUrl.get(url)).toBe(MAX_SUBMITS_PER_MEDIA);
   });
 
-  it('stops waiting to resend when the run is aborted', async () => {
+  it('stops waiting to resend when the run is aborted, and gives the slot back', async () => {
     vi.useFakeTimers();
     plan.poll = (list) => list.map(busy);
     const controller = new AbortController();
@@ -259,10 +264,17 @@ describe('auto-label under load', () => {
     const { results, done } = await run([{ key: 'k', mediaUrl: url }], controller.signal);
     const settled = done.catch((e: unknown) => e);
     await vi.advanceTimersByTimeAsync(1);
+    // Parked in the resend wait: polled once, one timer (the wait) left.
+    expect(sendsByUrl.get(url)).toBe(1);
+    expect(vi.getTimerCount()).toBe(1);
     controller.abort();
     await expect(settled).resolves.toMatchObject({ name: 'AbortError' });
-    await vi.runAllTimersAsync();
-    expect(sendsByUrl.get(url)).toBe(1);
     expect(results).toEqual([]);
+    vi.useRealTimers();
+    plan.poll = (list) => list.map(ok);
+    const sent: number[] = [];
+    for (let i = 0; i < MAX_SUBMITS_PER_MEDIA; i++)
+      sent.push(await (await run([{ key: 'k', mediaUrl: url }])).done);
+    expect(sent).toEqual(Array(MAX_SUBMITS_PER_MEDIA).fill(1));
   });
 });

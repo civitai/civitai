@@ -324,12 +324,17 @@ describe('Training Studio auto-label', () => {
         return counters.get(k)!;
       }) as never);
     });
-    const workflow = (steps: { name: string; status: string }[]) => ({
+    // Steps ran unless told otherwise: one that never started is a busy refusal, counted apart.
+    const workflow = (steps: { name: string; status: string; startedAt?: string | null }[]) => ({
       data: {
         id: 'wf-q',
         status: 'failed',
         metadata: { kind: 'studio-auto-label', userId: 7 },
-        steps: steps.map((s) => ({ ...s, metadata: { key: `k${s.name}` } })),
+        steps: steps.map((s) => ({
+          startedAt: '2026-11-20T00:00:00Z',
+          ...s,
+          metadata: { key: `k${s.name}` },
+        })),
       },
     });
     const failed = (n: number) =>
@@ -379,6 +384,35 @@ describe('Training Studio auto-label', () => {
       );
       record('wf-q', { userId: 7, day: today(), count: 2 });
       orch.getWorkflow.mockResolvedValue(failed(2));
+      await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
+      expect(counters.get(quotaKey())).toBe(STUDIO_AUTO_LABEL_DAILY_ITEMS - 1);
+    });
+
+    it('gives a busy refusal back, so the resend that follows is not counted twice', async () => {
+      counters.set(quotaKey(), 1);
+      record('wf-q', { userId: 7, day: today(), count: 1 });
+      orch.getWorkflow.mockResolvedValue(
+        workflow([{ name: '0', status: 'failed', startedAt: null }])
+      );
+      await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
+      await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
+      expect(counters.get(quotaKey())).toBe(0);
+    });
+
+    it('counts busy give-backs apart, so they cannot use up the allowance for failures', async () => {
+      counters.set(quotaKey(), STUDIO_AUTO_LABEL_DAILY_ITEMS);
+      // Ordinary failures have used their whole allowance today; busy refusals have used none.
+      counters.set(
+        `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED_DAILY}:7:${today()}`,
+        STUDIO_AUTO_LABEL_DAILY_ITEMS
+      );
+      record('wf-q', { userId: 7, day: today(), count: 2 });
+      orch.getWorkflow.mockResolvedValue(
+        workflow([
+          { name: '0', status: 'failed', startedAt: null },
+          { name: '1', status: 'failed' },
+        ])
+      );
       await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
       expect(counters.get(quotaKey())).toBe(STUDIO_AUTO_LABEL_DAILY_ITEMS - 1);
     });
