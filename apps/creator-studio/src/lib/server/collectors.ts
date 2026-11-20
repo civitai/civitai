@@ -2,10 +2,12 @@ import { error, json, type RequestHandler } from '@sveltejs/kit';
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from '$lib/server/db';
 import { followersAmong } from '$lib/server/followers';
+import { getMetricExcludedUserIds } from '$lib/server/metric-excluded-users';
 import {
   contentFk,
   keysetClause,
   listedToViewer,
+  notMetricExcluded,
   ownsListableContent,
   safeProfilePictureUrl,
   type ReactorEntity,
@@ -28,7 +30,8 @@ import {
  * submitted, and in a shared collection a contributor's add would be pinned on the owner. Returns null when the
  * entity is not the caller's or is a removed image.
  *
- * Keyset-paged on the collection owner's `userId`, newest account first, like the reactors list.
+ * Keyset-paged on the collection owner's `userId`, newest account first, like the reactors list. Accounts the
+ * site's metrics leave out are left out of the total and the list, as on the reactors list.
  */
 export async function getCollectors(
   db: typeof dbRead,
@@ -38,6 +41,7 @@ export async function getCollectors(
   cursor: ReactorCursor
 ): Promise<CollectorPage | null> {
   if (!(await ownsListableContent(db, ownerId, entity, entityId))) return null;
+  const notCounted = await getMetricExcludedUserIds();
 
   const source = sql`
     "CollectionItem" ci
@@ -46,7 +50,8 @@ export async function getCollectors(
   const visible = sql`
     ci.status = 'ACCEPTED' AND c.read = 'Public' AND c.availability = 'Public'
     AND c.mode IS DISTINCT FROM 'Contest' AND ci."addedById" = c."userId"
-    AND ${sql.ref(`ci.${contentFk(entity)}`)} = ${entityId} AND c."userId" <> ${ownerId}`;
+    AND ${sql.ref(`ci.${contentFk(entity)}`)} = ${entityId} AND c."userId" <> ${ownerId}
+    ${notMetricExcluded('c.userId', notCounted)}`;
 
   const totals = await sql<{ n: number }>`
     SELECT count(DISTINCT c."userId")::int AS n FROM ${source} WHERE ${visible}
