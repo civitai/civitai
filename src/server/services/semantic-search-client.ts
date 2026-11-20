@@ -367,8 +367,7 @@ export function queryKeywords(text: string) {
 /**
  * The points holding every query word in `key` first. Embeddings rank meaning, so a query that is a
  * model's name, or a word of it, otherwise loses to look-alike names and spellings. With
- * `orKeywordKey`, so does a point whose keyword field holds the query or one of its words: the same
- * tier, not above it.
+ * `orKeywordKey`, so does a point whose keyword field holds the query or one of its words.
  */
 export function withWordMatchesFirst(
   source: CandidateSource,

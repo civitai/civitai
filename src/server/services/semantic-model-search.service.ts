@@ -168,7 +168,7 @@ export async function searchSemanticModels({
     return result.items;
   };
 
-  // Name matches first (the collection's `name` word index), then by meaning.
+  // Name or tag matches first (the `name` word index, the `tags` keyword index), then by meaning.
   const ranked = withWordMatchesFirst(cachedSource, 'name', 'tags');
   const search = auditedTextCandidates({
     source: (args) => timed('candidates', ranked(args)),
