@@ -42,7 +42,7 @@ describe('rejudgeEntries and the entries it clears', () => {
     );
   });
 
-  it('still clears the entries when the flag cannot be written', async () => {
+  it('still resolves when the flag cannot be written', async () => {
     preventReplicationLag.mockRejectedValue(new Error('redis unavailable'));
     await expect(rejudge()).resolves.toEqual({ entries: 2, comments: 0 });
     expect(logSysRedisFailOpen).toHaveBeenCalledTimes(JUDGED_ENTRIES.length);

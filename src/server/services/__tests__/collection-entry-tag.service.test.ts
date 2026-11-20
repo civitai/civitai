@@ -371,12 +371,16 @@ describe('the existing entry, read right after a write', () => {
       if (String(key).includes('collectionItem:')) throw new Error('redis unavailable');
       return 'OK';
     }) as never);
-    await expect(resave(AUTHOR_ID, TAG_B)).resolves.toBe('added');
-    expect(redisMock.redis.set).toHaveBeenCalledWith(
-      expect.stringContaining(`collectionItem:${COLLECTION_ID}:imageId:${IMAGE_ID}`),
-      expect.anything(),
-      expect.anything()
-    );
+    try {
+      await expect(resave(AUTHOR_ID, TAG_B)).resolves.toBe('added');
+      expect(redisMock.redis.set).toHaveBeenCalledWith(
+        expect.stringContaining(`collectionItem:${COLLECTION_ID}:imageId:${IMAGE_ID}`),
+        expect.anything(),
+        expect.anything()
+      );
+    } finally {
+      redisMock.redis.set.mockImplementation((async () => 'OK') as never);
+    }
   });
 
   it('is read from the replica otherwise (control)', async () => {
@@ -457,6 +461,22 @@ describe('the entry write itself, run on Postgres', () => {
       { id: 7, collectionId: COLLECTION_ID, tagId: TAG_A, addedById: AUTHOR_ID, note: null },
     ]);
     expect(await runSave(TAG_B, { tagId: SYSTEM_TAG })).toEqual([{ tagId: SYSTEM_TAG }]);
+  });
+
+  describe('an entry holding no tag', () => {
+    beforeEach(() => {
+      mockDbRead.collectionItem.findMany.mockResolvedValue([
+        { id: 7, collectionId: COLLECTION_ID, tagId: null, addedById: AUTHOR_ID, note: null },
+      ]);
+    });
+
+    it("is tagged by its author's re-save", async () => {
+      expect(await runSave(TAG_B, { tagId: null })).toEqual([{ tagId: TAG_B }]);
+    });
+
+    it("is tagged by the collection's manager", async () => {
+      expect(await runSave(TAG_B, { tagId: null }, OWNER_ID)).toEqual([{ tagId: TAG_B }]);
+    });
   });
 
   describe('an entry holding a category tag', () => {
