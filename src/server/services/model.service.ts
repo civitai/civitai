@@ -55,6 +55,8 @@ import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { scanRatingKeptMessage } from '~/server/services/scan-rating-kept-message';
+import { PUBLIC_MODEL_STATUSES } from '~/server/services/text-scan/public-content';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {
   readPostModelVersionIdsViaKysely,
@@ -4085,9 +4087,6 @@ function locksWithScanRating(row: { meta: unknown; lockedProperties: string[] | 
   return source && SCAN_RATING_SOURCES.includes(source) ? uniq([...locks, 'nsfw']) : locks;
 }
 
-export const SCAN_RATING_KEPT_MESSAGE =
-  "This model was rated mature from its civitai.red title and description, so it stays marked mature, and a civitai.com version is what lists it on civitai.com. To change that, edit the title and description and save them first; once they're checked and pass, you can change the rating.";
-
 /**
  * Holds the text scan's mature rating, which carries no lock, against an owner's save that unticks
  * mature (face or not) or removes the face that listed a model already not mature. A text edit is no
@@ -4149,7 +4148,15 @@ async function assertScanRatingKept({
   // A row already not mature (an older one): only removing the face that listed it.
   if (!before.nsfw && (faceAfter || !hasFace(before))) return;
   if (await moderatorRuledNsfwSince(modelId, ratedAt, { db })) return;
-  throw throwBadRequestError(SCAN_RATING_KEPT_MESSAGE);
+  // The versions the scan read, for the explanation; a draft version's text is not scanned.
+  const versions = await (db ?? dbWrite).modelVersion.findMany({
+    where: { modelId, status: { in: PUBLIC_MODEL_STATUSES } },
+    select: { name: true, description: true, trainedWords: true },
+    orderBy: { index: 'asc' },
+  });
+  throw throwBadRequestError(
+    scanRatingKeptMessage({ name: before.name, description: before.description, versions })
+  );
 }
 
 export const upsertModel = async (
