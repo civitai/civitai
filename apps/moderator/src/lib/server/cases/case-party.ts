@@ -24,7 +24,7 @@ export type CasePartyDeps = {
 // One answer for a bad token, a token for another case and an unknown reference, so the page can't be
 // used to learn which references exist.
 const noAccess = () =>
-  Object.assign(new Error('This link has expired or is not valid.'), { status: 404 });
+  Object.assign(new Error('This link has expired or is not valid.'), { status: 404, public: true });
 
 /**
  * The party a link opens, checked against the case in the path: a token is bound to one party of one
@@ -55,7 +55,7 @@ async function openParty(input: CasePartyViewInput, deps: CasePartyDeps) {
   if (!row) throw noAccess();
   const parsed = processDefinitionSchema.safeParse(row.definition);
   if (!parsed.success)
-    throw Object.assign(new Error('This case cannot be shown.'), { status: 409 });
+    throw Object.assign(new Error('This case cannot be shown.'), { status: 409, public: true });
   return { ...row, caseId: Number(row.caseId), partyId: Number(row.partyId), def: parsed.data };
 }
 
@@ -78,10 +78,10 @@ async function partyTargets(db: CasesDb, party: Party) {
   return q.execute();
 }
 
-const partyActions = (def: ProcessDefinition, role: string) => {
+const partyActions = (def: ProcessDefinition, role: string, state: string) => {
   const fields = publicDefinition(def).fields;
   return def.publicActions
-    .filter((a) => a.role === role)
+    .filter((a) => a.role === role && actionOpenIn(def, a, state))
     .map((a) => ({
       id: a.id,
       label: a.label,
@@ -103,7 +103,7 @@ export async function casePartyView(input: CasePartyViewInput, deps: CasePartyDe
     state: { id: party.state, label: state?.label ?? party.state, terminal: !!state?.terminal },
     receivedAt: new Date(party.received_at as unknown as string).toISOString(),
     items: await partyTargets(deps.db, party),
-    actions: state?.terminal ? [] : partyActions(party.def, party.role),
+    actions: partyActions(party.def, party.role, party.state),
   };
 }
 
@@ -115,9 +115,12 @@ export async function casePartyAction(input: CasePartyActionInput, deps: CasePar
   const party = await openParty(input, deps);
   const { def } = party;
   const action = def.publicActions.find((a) => a.id === input.actionId && a.role === party.role);
-  if (!action) throw Object.assign(new Error('This action is not open to you.'), { status: 403 });
-  const state = def.states.find((s) => s.id === party.state);
-  if (state?.terminal) throw Object.assign(new Error('This case is closed.'), { status: 409 });
+  if (!action)
+    throw Object.assign(new Error('This action is not open to you.'), {
+      status: 403,
+      public: true,
+    });
+  deps.rateLimit(`party:${party.partyId}`);
 
   const actionDef = { ...def, fields: def.fields.filter((f) => action.fields.includes(f.id)) };
   const fieldErrors = checkIntakeValues(actionDef, input.values);
@@ -126,6 +129,27 @@ export async function casePartyAction(input: CasePartyActionInput, deps: CasePar
   const added = targetsFromUrls(submittedUrls(actionDef, input.values));
 
   return deps.db.transaction().execute(async (tx) => {
+    // Locked, so a moderator's move and this action can't interleave: the state checked is the state
+    // the action is recorded against.
+    const current = await tx
+      .selectFrom('case_record')
+      .select('state')
+      .where('id', '=', party.caseId)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    const seen = await tx
+      .selectFrom('case_event')
+      .select('type')
+      .where('case_id', '=', party.caseId)
+      .where(sql<boolean>`data->>'submissionId' = ${input.submissionId}`)
+      .executeTakeFirst();
+    if (seen) return { recorded: action.records, state: current.state };
+    if (!actionOpenIn(def, action, current.state))
+      throw Object.assign(new Error('This can no longer be done on this case.'), {
+        status: 409,
+        public: true,
+      });
+
     const existing = new Set(
       (
         await tx
@@ -151,7 +175,12 @@ export async function casePartyAction(input: CasePartyActionInput, deps: CasePar
         case_id: party.caseId,
         at: at.toISOString(),
         type: action.records,
-        data: JSON.stringify({ partyId: party.partyId, action: action.id, values: input.values }),
+        data: JSON.stringify({
+          partyId: party.partyId,
+          action: action.id,
+          submissionId: input.submissionId,
+          values: input.values,
+        }),
       })
       .execute();
     if (action.moveTo)
@@ -159,14 +188,26 @@ export async function casePartyAction(input: CasePartyActionInput, deps: CasePar
         .updateTable('case_record')
         .set({ state: action.moveTo, updated_at: sql`now()` })
         .where('id', '=', party.caseId)
-        // Moved by a moderator meanwhile: their move stands and this one is not applied.
-        .where('state', '=', party.state)
         .execute();
-    return { recorded: action.records, state: action.moveTo ?? party.state };
+    return { recorded: action.records, state: action.moveTo ?? current.state };
   });
 }
 
-const limitPerIp = createIntakeRateLimit({ limit: 120, windowMs: 3_600_000 });
+/** An action is open in its `from` states, or, with none listed, in any state that is not terminal. */
+function actionOpenIn(
+  def: ProcessDefinition,
+  action: ProcessDefinition['publicActions'][number],
+  state: string
+) {
+  if (action.from) return action.from.includes(state);
+  return !def.states.find((s) => s.id === state)?.terminal;
+}
+
+// Per ip, and per party for actions (keys `party:<id>`). An unresolved ip is left to the main app's limit.
+const limitPerKey = createIntakeRateLimit({ limit: 120, windowMs: 3_600_000 });
+const limitPerIp = (key: string) => {
+  if (key !== 'unknown') limitPerKey(key);
+};
 
 export const defaultCasePartyDeps = (mainDb: Kysely<DB>): CasePartyDeps => ({
   db: casesDb(),

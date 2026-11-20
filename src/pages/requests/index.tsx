@@ -8,7 +8,7 @@ import { trpc } from '~/utils/trpc';
 export default function RequestsPage() {
   const features = useFeatureFlags();
   const { data: forms, isLoading } = trpc.takedownRequest.forms.useQuery(undefined, {
-    enabled: features.takedownRequests,
+    enabled: !!features.takedownRequests,
   });
   if (!features.takedownRequests) return <NotFound />;
   return (

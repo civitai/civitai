@@ -132,6 +132,7 @@ describe('caseIntake', () => {
   it('files the case and emails a receipt whose link opens that party', async () => {
     const out = await caseIntake(input(), deps());
     expect(out.receipt).toBe('queued');
+    expect(verify.mock.calls).toEqual([['tt', '203.0.113.9']]);
     await settled();
     expect(send).toHaveBeenCalledTimes(1);
     const status = (await pg.query<{ status: string }>('SELECT status FROM case_notice')).rows;

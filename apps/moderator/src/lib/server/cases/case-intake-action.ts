@@ -19,6 +19,8 @@ import { verifyTurnstile } from './turnstile';
 export const PARTY_LINK_DAYS = 365;
 /** Receipts one address gets in a day; past it the case is still filed, without the email. */
 export const RECEIPTS_PER_ADDRESS_PER_DAY = 5;
+/** Receipts sent in any hour, all addresses. */
+export const RECEIPTS_PER_HOUR = 100;
 
 export type CaseIntakeResult = {
   publicRef: string;
@@ -49,7 +51,8 @@ export type CaseIntakeDeps = {
   now?: () => Date;
 };
 
-const notOpen = () => Object.assign(new Error('This form is not open.'), { status: 404 });
+const notOpen = () =>
+  Object.assign(new Error('This form is not open.'), { status: 404, public: true });
 
 /**
  * Files a public takedown request and emails its receipt with the party's private link. The order is
@@ -91,10 +94,14 @@ export async function caseIntake(
   // The case reference only: nothing the submitter wrote goes in an alert.
   if (isMinorFlagged(input.values))
     deps.background(
-      deps.alert(
-        `Minor flagged on takedown case ${filed.publicRef}`,
-        `A ${def.title} request filed as ${filed.publicRef} says the person shown is or was under 18. Open it on /cases.`
-      )
+      deps
+        .alert(
+          `Minor flagged on takedown case ${filed.publicRef}`,
+          `A ${def.title} request filed as ${filed.publicRef} says the person shown is or was under 18. Open it on /cases.`
+        )
+        .catch((e) =>
+          recordEvent(deps.db, filed.caseId, 'minor-alert-unsent', (e as Error)?.name || 'Error')
+        )
     );
   if (!filed.address) return done('no-address');
 
@@ -111,7 +118,15 @@ export async function caseIntake(
       .where('address_hash', '=', addressHash)
       .where('created_at', '>', sql<Date>`now() - interval '1 day'`)
       .executeTakeFirstOrThrow();
-    if (recent >= RECEIPTS_PER_ADDRESS_PER_DAY) {
+    const { lastHour } = await deps.db
+      .selectFrom('case_notice')
+      .select(sql<number>`count(*)::int`.as('lastHour'))
+      .where('notice_id', '=', 'receipt')
+      .where('created_at', '>', sql<Date>`now() - interval '1 hour'`)
+      .executeTakeFirstOrThrow();
+    // Both caps skip only the email, below the send ceiling, so a flood of forms can't pause every
+    // other case notice.
+    if (recent >= RECEIPTS_PER_ADDRESS_PER_DAY || lastHour >= RECEIPTS_PER_HOUR) {
       await recordUnsent(deps.db, filed.caseId, 'capped');
       return done('capped');
     }
@@ -166,14 +181,20 @@ export async function caseIntake(
   }
 }
 
-/** A receipt that did not go, on the case's timeline. The reason is a code, never a message. */
-const recordUnsent = (db: CasesDb, caseId: number, reason: string) =>
+/** Something that did not go, on the case's timeline. The reason is a code, never a message. */
+const recordEvent = (db: CasesDb, caseId: number, type: string, reason: string) =>
   db
     .insertInto('case_event')
-    .values({ case_id: caseId, type: 'receipt-unsent', data: JSON.stringify({ reason }) })
+    .values({ case_id: caseId, type, data: JSON.stringify({ reason }) })
     .execute();
+const recordUnsent = (db: CasesDb, caseId: number, reason: string) =>
+  recordEvent(db, caseId, 'receipt-unsent', reason);
 
-const limitPerIp = createIntakeRateLimit({ limit: 10, windowMs: 3_600_000 });
+const limitIp = createIntakeRateLimit({ limit: 10, windowMs: 3_600_000 });
+// An unresolved ip would put every such caller in one bucket; the main app's limit covers them.
+const limitPerIp = (ip: string) => {
+  if (ip !== 'unknown') limitIp(ip);
+};
 
 export function defaultCaseIntakeDeps(
   more: Pick<CaseIntakeDeps, 'mainDb' | 'appUrl' | 'systemUserId' | 'log'>
@@ -186,7 +207,10 @@ export function defaultCaseIntakeDeps(
     sendDeps: defaultSendDeps,
     alert: async (subject, text) => {
       const to = env.MODERATION_ALERT_EMAIL;
-      if (!to) return console.error('minor-flagged case: MODERATION_ALERT_EMAIL is not set');
+      if (!to)
+        throw Object.assign(new Error('MODERATION_ALERT_EMAIL is not set'), {
+          name: 'NoAlertAddress',
+        });
       await sendEmailStrict({ to, subject, text, html: `<p>${text}</p>` });
     },
     background: (work) =>

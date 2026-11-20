@@ -1,10 +1,12 @@
 import { env } from '$env/dynamic/private';
 
+export const TURNSTILE_ACTION = 'takedown-intake';
 const SITEVERIFY = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
 /** Refused before anything is written: the challenge failed or was already used. */
 export class TurnstileRefusedError extends Error {
   readonly status = 400;
+  readonly public = true;
   constructor() {
     super('The challenge could not be verified. Reload the page and try again.');
     this.name = 'TurnstileRefusedError';
@@ -38,6 +40,10 @@ export async function verifyTurnstile(
   }
   if (!res.ok)
     throw Object.assign(new Error('No response from the challenge service'), { status: 502 });
-  const body = (await res.json().catch(() => null)) as { success?: unknown } | null;
-  if (body?.success !== true) throw new TurnstileRefusedError();
+  const body = (await res.json().catch(() => null)) as {
+    success?: unknown;
+    action?: unknown;
+  } | null;
+  // The form's widget sets this action, so a token solved on another page with the same key fails.
+  if (body?.success !== true || body.action !== TURNSTILE_ACTION) throw new TurnstileRefusedError();
 }

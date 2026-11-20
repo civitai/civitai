@@ -38,12 +38,14 @@ export function RequestFields({
   return (
     <Stack gap="md">
       {fields.map((f) => {
-        const common = {
+        const { maxLength, ...common } = {
           label: f.label,
           description: f.help,
           required: f.required,
           error: errors?.[f.id],
           disabled,
+          // The moderator app's limit for one answer.
+          maxLength: 20_000,
         };
         const text = typeof values[f.id] === 'string' ? (values[f.id] as string) : '';
         switch (f.kind) {
@@ -62,6 +64,7 @@ export function RequestFields({
               <Textarea
                 key={f.id}
                 {...common}
+                maxLength={maxLength}
                 autosize
                 minRows={f.kind === 'urlList' ? 3 : 4}
                 placeholder={f.kind === 'urlList' ? 'One web address per line' : undefined}
@@ -84,6 +87,7 @@ export function RequestFields({
               <TextInput
                 key={f.id}
                 {...common}
+                maxLength={maxLength}
                 type={f.kind === 'email' ? 'email' : f.kind === 'url' ? 'url' : 'text'}
                 value={text}
                 onChange={(e) => onChange(f.id, e.currentTarget.value)}

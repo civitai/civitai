@@ -86,7 +86,7 @@ describe('/api/requests/case/[publicRef]', () => {
   });
 
   it('sets no cookie for a token the moderator app refuses', async () => {
-    moderatorAnswers(404, { message: 'This link has expired or is not valid.' });
+    moderatorAnswers(404, { message: 'This link has expired or is not valid.', public: true });
     const out = await call({ body: { token: TOKEN } });
     expect(out.status).toBe(404);
     expect(out.headers['set-cookie']).toBeUndefined();
@@ -94,7 +94,15 @@ describe('/api/requests/case/[publicRef]', () => {
 
   it('acts with the cookie, never with a token in the action body', async () => {
     const fetchMock = moderatorAnswers(200, { recorded: 'info-added' });
-    const out = await call({ body: { actionId: 'add-info', values: {} }, cookie: TOKEN });
+    const out = await call({
+      body: {
+        actionId: 'add-info',
+        values: {},
+        submissionId: crypto.randomUUID(),
+        token: 'y'.repeat(43),
+      },
+      cookie: TOKEN,
+    });
     expect(out.status).toBe(200);
     const sent = JSON.parse(
       String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body)
@@ -111,5 +119,19 @@ describe('/api/requests/case/[publicRef]', () => {
     });
     expect(out.status).toBe(415);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reloads the case from the cookie alone', async () => {
+    const fetchMock = moderatorAnswers(200, view);
+    const out = await call({ method: 'GET', cookie: TOKEN });
+    expect(out.status).toBe(200);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]!.body))).toMatchObject({ token: TOKEN });
+  });
+
+  it('shows a moderator-app fault as unavailable, not as an expired link, and passes none of its text', async () => {
+    moderatorAnswers(403, { message: 'This credential cannot call this action.' });
+    const out = await call({ method: 'GET', cookie: TOKEN });
+    expect(out.status).toBe(503);
+    expect(JSON.stringify(out.json)).not.toContain('credential');
   });
 });

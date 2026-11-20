@@ -36,6 +36,7 @@ const definition = processDefinitionSchema.parse({
       fields: [],
       records: 'suit-reported',
       moveTo: 'suit-filed',
+      from: ['received'],
     },
   ],
 });
@@ -129,13 +130,18 @@ describe('casePartyView', () => {
     });
     const view = await casePartyView({ ...access(c), token }, deps());
     expect(view.items.map((i) => i.url)).toEqual(['https://civitai.com/images/8']);
+    expect(JSON.stringify(view)).not.toContain('claimant@example.com');
     expect(view.actions).toEqual([]);
   });
 });
 
 describe('casePartyAction', () => {
-  const act = (c: { publicRef: string; token: string }, actionId: string, values = {}) =>
-    casePartyAction({ ...access(c), actionId, values }, deps());
+  const act = (
+    c: { publicRef: string; token: string },
+    actionId: string,
+    values = {},
+    submissionId: string = crypto.randomUUID()
+  ) => casePartyAction({ ...access(c), actionId, values, submissionId }, deps());
 
   it('records the action at the time of the call and moves the case', async () => {
     const c = await fileCase();
@@ -172,5 +178,23 @@ describe('casePartyAction', () => {
     expect(
       (await pg.query("SELECT count(*)::int AS n FROM case_event WHERE type <> 'received'")).rows
     ).toEqual([{ n: 0 }]);
+  });
+
+  it('records a retried filing once', async () => {
+    const c = await fileCase();
+    const id = crypto.randomUUID();
+    await act(c, 'add-info', { urls: ['https://civitai.com/images/9'] }, id);
+    await act(c, 'add-info', { urls: ['https://civitai.com/images/9'] }, id);
+    expect(
+      (await pg.query("SELECT count(*)::int AS n FROM case_event WHERE type = 'info-added'")).rows
+    ).toEqual([{ n: 1 }]);
+  });
+
+  it('refuses an action outside the states it is open in, and stops offering it', async () => {
+    const c = await fileCase();
+    await act(c, 'report-suit');
+    await expect(act(c, 'report-suit')).rejects.toMatchObject({ status: 409 });
+    const view = await casePartyView(access(c), deps());
+    expect(view.actions.map((a) => a.id)).toEqual(['add-info']);
   });
 });

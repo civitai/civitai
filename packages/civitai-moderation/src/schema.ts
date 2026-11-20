@@ -397,6 +397,8 @@ export type CasePartyViewInput = z.infer<typeof casePartyViewInput>;
 
 export const casePartyActionInput = z.object({
   ...partyAccess,
+  /** Made by the page once per filing, so a retry after a timeout records nothing new. */
+  submissionId: z.string().uuid(),
   actionId: processKey,
   values: fieldValues,
 });

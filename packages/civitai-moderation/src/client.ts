@@ -41,7 +41,9 @@ export class ModeratorClientError extends Error {
     message: string,
     readonly status?: number,
     /** A refused takedown form's problems by field id: fixed strings, none quoting the submission. */
-    readonly fieldErrors?: Record<string, string>
+    readonly fieldErrors?: Record<string, string>,
+    /** The moderator app worded this refusal for the person filing. */
+    readonly isPublic = false
   ) {
     super(message);
     this.name = 'ModeratorClientError';
@@ -77,18 +79,21 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
         // message when present (so a 4xx like a conflicting verdict reads well), else the raw body.
         let detail = text;
         let fieldErrors: Record<string, string> | undefined;
+        let isPublic = false;
         try {
           const parsed = JSON.parse(text);
           if (parsed && typeof parsed.message === 'string') detail = parsed.message;
           if (parsed && typeof parsed.fieldErrors === 'object' && parsed.fieldErrors !== null)
             fieldErrors = parsed.fieldErrors;
+          if (parsed && parsed.public === true) isPublic = true;
         } catch {
           // not JSON — keep the raw text
         }
         throw new ModeratorClientError(
           detail || `moderator action "${action}" failed: ${res.status}`,
           res.status,
-          fieldErrors
+          fieldErrors,
+          isPublic
         );
       }
       return await res.json().catch(() => ({}));

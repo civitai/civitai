@@ -1,6 +1,7 @@
 /** Too many requests from one address in the window. */
 export class IntakeRateLimitedError extends Error {
   readonly status = 429;
+  readonly public = true;
   constructor() {
     super('Too many requests. Try again later, or email us.');
     this.name = 'IntakeRateLimitedError';

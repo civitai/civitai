@@ -205,7 +205,7 @@ describe('what must NOT be recorded', () => {
     const { response, resolve } = await run(eventFor({ query: LEGACY_SECRET }));
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({
-      message: 'MOD_INBOUND_TOKEN is not configured on this deployment.',
+      message: 'Neither MOD_INBOUND_TOKEN nor MOD_CASES_TOKEN is configured on this deployment.',
     });
     expect(resolve).not.toHaveBeenCalled();
     expect(logToAxiom).not.toHaveBeenCalled();

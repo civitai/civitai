@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { createModeratorClient, ModeratorClientError } from '@civitai/moderation';
+import { caseIntakeInput, createModeratorClient, ModeratorClientError } from '@civitai/moderation';
 import type {
   CaseIntakeInput,
   CasePartyActionInput,
@@ -54,16 +54,39 @@ export type SubmitResult =
   | { ok: true; publicRef: string }
   | { ok: false; fieldErrors?: Record<string, string>; message: string; status?: number };
 
-/** A refusal the person can act on keeps its message; anything else is the moderator app's fault. */
+/**
+ * Only a refusal the moderator app worded for the person keeps its message. Anything else, including an
+ * ingress 4xx (a bad credential, an action one app doesn't know yet), is "unavailable", so the page
+ * offers the mailbox instead of internal text or a false "link expired".
+ */
 function refusal(e: unknown): Extract<SubmitResult, { ok: false }> {
-  if (e instanceof ModeratorClientError && e.status && e.status >= 400 && e.status < 500)
+  if (e instanceof ModeratorClientError && e.isPublic && e.status)
     return { ok: false, message: e.message, fieldErrors: e.fieldErrors, status: e.status };
   return { ok: false, message: 'unavailable', status: 503 };
 }
 
-export async function submitRequest(input: CaseIntakeInput): Promise<SubmitResult> {
+/** Answers past the wire limits, by field, without logging or echoing what they hold. */
+function oversized(values: unknown): Record<string, string> | null {
+  const parsed = caseIntakeInput.shape.values.safeParse(values);
+  if (parsed.success) return null;
+  const errors: Record<string, string> = {};
+  for (const issue of parsed.error.issues) {
+    const id = issue.path[0];
+    if (typeof id === 'string') errors[id] = 'This answer is too long.';
+  }
+  return Object.keys(errors).length ? errors : { form: 'Some answers are too long.' };
+}
+
+export async function submitRequest(
+  input: Omit<CaseIntakeInput, 'values'> & { values: unknown }
+): Promise<SubmitResult> {
+  const tooLong = oversized(input.values);
+  if (tooLong)
+    return { ok: false, message: 'Some answers are too long.', fieldErrors: tooLong, status: 400 };
   try {
-    const res = z.object({ publicRef: z.string() }).parse(await casesClient.caseIntake(input));
+    const res = z
+      .object({ publicRef: z.string() })
+      .parse(await casesClient.caseIntake(input as CaseIntakeInput));
     return { ok: true, publicRef: res.publicRef };
   } catch (e) {
     return refusal(e);

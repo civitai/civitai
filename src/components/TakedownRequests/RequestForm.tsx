@@ -80,7 +80,7 @@ export function RequestForm({ form }: { form: Form }) {
         <TurnstileWidget
           ref={turnstile}
           siteKey={env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY}
-          options={{ size: 'flexible' }}
+          options={{ size: 'flexible', action: 'takedown-intake' }}
           onSuccess={setToken}
           onExpire={() => setToken(null)}
         />

@@ -13,6 +13,7 @@ import { hashAddress } from './send-notice';
 /** Thrown with every field problem, so the form can show them together. */
 export class IntakeRefusedError extends Error {
   readonly status = 400;
+  readonly public = true;
   constructor(readonly fieldErrors: Record<string, string>) {
     super('The request has problems: ' + Object.keys(fieldErrors).join(', '));
     this.name = 'IntakeRefusedError';

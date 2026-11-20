@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import * as z from 'zod';
 import { caseIntakeInput } from '@civitai/moderation';
 import { rateLimit } from '~/server/middleware.trpc';
 import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
@@ -7,28 +8,26 @@ async function service() {
   return import('~/server/services/takedown-requests.service');
 }
 
-const submitInput = caseIntakeInput.pick({
-  processKey: true,
-  submissionId: true,
-  values: true,
-  turnstileToken: true,
-  isTest: true,
-});
+// Values stay loose here and are checked in the service: a tRPC input refusal logs the whole input,
+// which would put a claimant's contact details in the logs.
+const submitInput = caseIntakeInput
+  .pick({ processKey: true, submissionId: true, turnstileToken: true, isTest: true })
+  .extend({ values: z.record(z.string(), z.unknown()) });
 
 /**
  * The public takedown request forms (/requests). Anyone may file, signed in or not: a claimant needs no
  * account. The moderator app checks the Turnstile token and files the case.
  */
-const formsProcedure = publicProcedure.use(isFlagProtected('takedownRequests'));
+const takedownFormsProcedure = publicProcedure.use(isFlagProtected('takedownRequests'));
 
 export const takedownRequestRouter = router({
-  forms: formsProcedure.query(async () => {
+  forms: takedownFormsProcedure.query(async () => {
     const svc = await service();
     if (!svc.takedownRequestsConfigured()) return [];
     return svc.getRequestForms();
   }),
 
-  submit: formsProcedure
+  submit: takedownFormsProcedure
     .input(submitInput)
     .use(rateLimit({ limit: 10, period: 60 * 60 }))
     .mutation(async ({ ctx, input }) => {

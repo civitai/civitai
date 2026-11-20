@@ -12,8 +12,9 @@ import { appendSetCookie } from '~/server/utils/set-cookie';
 const COOKIE = 'civ-case-link';
 const COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
 
-const openBody = z.object({ token: z.string().min(16).max(256) });
-const actBody = casePartyActionInput.pick({ actionId: true, values: true });
+// Strict, so an action body that also carries a token is an action, read with the cookie's token.
+const openBody = z.strictObject({ token: z.string().min(16).max(256) });
+const actBody = casePartyActionInput.pick({ actionId: true, values: true, submissionId: true });
 
 const readCookie = (req: NextApiRequest) => {
   const v = req.cookies?.[COOKIE];
