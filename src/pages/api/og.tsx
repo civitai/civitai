@@ -511,6 +511,7 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
         name: true,
         description: true,
         nsfw: true,
+        nsfwLevel: true,
         moderatorNsfwLevel: true,
         user: { select: { username: true } },
       },
