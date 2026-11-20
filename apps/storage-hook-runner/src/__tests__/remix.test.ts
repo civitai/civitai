@@ -218,6 +218,29 @@ export default defineRemixApp({
     }
   );
 
+  it('ends as the invalid result, never a short record, when a step runs the stack out', async () => {
+    // Steps taken at every depth near the stack's end: at some, the loop's own calls overflow.
+    const deep = `
+export default defineRemixApp({
+  async run(ctx) {
+    let max = 0;
+    const probe = (n) => { max = n; probe(n + 1); };
+    try { probe(0); } catch {}
+    const at = (n, d) => (n > 0 ? at(n - 1, d) : ctx.ask({ kind: 'text', prompt: 'p' + d, maxLength: 5 }));
+    for (let d = 0; d < 300; d++) {
+      try { await at(max - d, d); break; } catch (e) { if (!(e instanceof RangeError)) break; }
+    }
+    return [];
+  },
+});`;
+    const [result] = await results(deep);
+    // Without the guard a lost step leaves a stopped run with no effect: { effects: [] }.
+    expect(result).not.toEqual({ effects: [] });
+    if (!('cause' in result))
+      expect(result.effects).toEqual([expect.objectContaining({ type: 'ask' })]);
+    else expect(result).toMatchObject({ cause: 'invalid_result' });
+  });
+
   it('auto-answers only when the caller asks, whatever Object.prototype claims', async () => {
     const asker = `Object.prototype.autoAnswer = 'first';
 export default defineRemixApp({

@@ -143,12 +143,13 @@ globalThis.defineRemixApp = (app) => app;
     let stopped = false;
     let answering = false;
     let badAnswer = false;
+    let broken = false;
     const stop = (effect) => {
       stopped = true;
       if (effect) put(effects, effect);
       throw STOP;
     };
-    const step = (effect) => {
+    const record = (effect) => {
       if (stopped) stop();
       // A step taken by a getter while an answer is read is no step of the run.
       if (answering) {
@@ -184,6 +185,20 @@ globalThis.defineRemixApp = (app) => app;
       put(effects, effect);
       return entry.type === 'workflow' ? entry.result : entry.answer;
     };
+    // Anything but a stop thrown while a step is recorded (the app can run the stack out under the
+    // loop's own calls) leaves the effects unsure: the run ends as the app's invalid result.
+    // The catch makes no call, so it cannot run out of stack itself.
+    const step = (effect) => {
+      try {
+        return record(effect);
+      } catch (e) {
+        if (e !== STOP) {
+          broken = true;
+          stopped = true;
+        }
+        throw e;
+      }
+    };
     const ctx = freeze({
       source: freeze(input.source),
       workflow: async (request) => step({ type: 'workflow', request }),
@@ -211,6 +226,7 @@ globalThis.defineRemixApp = (app) => app;
     }
     return () => {
       // A stop is final: an app that caught it and went on still stops there.
+      if (broken) return '{"broken":true}';
       if (stopped) return badAnswer ? '{"badAnswer":true}' : toJson({ effects });
       if (!settled) return '{"pending":true}';
       if (failed) throw value;
@@ -296,6 +312,7 @@ export function validateRemixReturn(json: string | undefined): RemixReplayResult
     short?: unknown;
     tooBig?: unknown;
     badAnswer?: unknown;
+    broken?: unknown;
   } | null;
   try {
     v = JSON.parse(json);
@@ -311,6 +328,8 @@ export function validateRemixReturn(json: string | undefined): RemixReplayResult
       'invalid_result',
       `result is nested past ${MAX_REMIX_RESULT_DEPTH} or longer than ${MAX_REMIX_RESULT_CHARS}`
     );
+  if (v.broken === true)
+    return fault('invalid_result', 'the app ran out of stack while a step was recorded');
   if (v.badAnswer === true)
     return fault(
       'invalid_result',
