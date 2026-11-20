@@ -10,11 +10,7 @@ import {
   type ConsoleBackstop,
   type ConsoleRecord,
 } from '~/server/logging/console-otlp-backstop';
-import {
-  emitConsoleLog,
-  MAX_FORWARDED_LOG_BODY,
-  structuredLogSink,
-} from '~/server/logging/structured-log-sink';
+import { emitConsoleLog, structuredLogSink } from '~/server/logging/structured-log-sink';
 import { createLogger } from '~/utils/logging';
 
 type Emitted = { body: string; record: ConsoleRecord };
@@ -88,10 +84,24 @@ describe('installConsoleOtlpBackstop', () => {
     const { target, emitted } = installOnFake();
 
     target.log('\x1b[31mred\x1b[39m %s=%d', 'n', 42, { deep: { x: [1, 2] } });
-    target.log('y'.repeat(MAX_FORWARDED_LOG_BODY + 99));
+    target.log('y'.repeat(2048 + 99));
 
     expect(emitted[0].body).toBe('red n=42 { deep: { x: [ 1, 2 ] } }');
-    expect(emitted[1].body).toBe('y'.repeat(8192));
+    expect(emitted[1].body).toBe('y'.repeat(2048));
+  });
+
+  it('cuts a very large line before stripping colour, and strips before the final cut', () => {
+    const { target, emitted } = installOnFake();
+    const RED = '\x1b[31m';
+
+    target.log('z'.repeat(20_000_000));
+    // Colour codes before the text count toward the pre-strip cut but not toward the body.
+    target.log(RED + 'r'.repeat(3000));
+    // Past the pre-strip cut (4x the body cap) nothing is read, so a line of codes yields no text.
+    // A 4-character code, so the cut at 8192 falls between codes.
+    target.log('\x1b[1m'.repeat(3000) + 'tail');
+
+    expect(emitted.map((e) => e.body)).toEqual(['z'.repeat(2048), 'r'.repeat(2048), '']);
   });
 
   it('turns console.error(err) into ONE record carrying the whole stack', () => {
@@ -168,11 +178,10 @@ describe('installConsoleOtlpBackstop', () => {
   it('caps records per second, counts the drops, and still writes every call', () => {
     let now = 5_000_250;
     const onDrop = vi.fn();
-    const { target, originals, emitted, backstop } = installOnFake({ now: () => now, onDrop });
+    const { target, originals, emitted } = installOnFake({ now: () => now, onDrop });
 
     for (let i = 0; i < 53; i++) target.log(`line ${i}`);
     expect(emitted).toHaveLength(50);
-    expect(backstop.dropped()).toBe(3);
     expect(onDrop).toHaveBeenCalledTimes(3);
     expect(originals.log).toHaveBeenCalledTimes(53);
 
@@ -183,12 +192,42 @@ describe('installConsoleOtlpBackstop', () => {
   });
 
   it('applies a cap passed in', () => {
-    const { target, emitted, backstop } = installOnFake({ maxRecordsPerSecond: 3, now: () => 7 });
+    const onDrop = vi.fn();
+    const { target, emitted } = installOnFake({ maxRecordsPerSecond: 3, now: () => 7, onDrop });
 
     for (let i = 0; i < 9; i++) target.warn(i);
 
     expect(emitted.map((e) => e.body)).toEqual(['0', '1', '2']);
-    expect(backstop.dropped()).toBe(6);
+    expect(onDrop).toHaveBeenCalledTimes(6);
+  });
+
+  it('caps bytes per second (64 KiB, counted in bytes), and resets the next second', () => {
+    let now = 9_000_100;
+    const onDrop = vi.fn();
+    const { target, originals, emitted } = installOnFake({ now: () => now, onDrop });
+    // 2048 two-byte characters: 4096 bytes per record, so 16 fit in 64 KiB (32 if chars counted).
+    const wide = 'é'.repeat(2048);
+
+    for (let i = 0; i < 20; i++) target.error(wide);
+    expect(emitted).toHaveLength(16);
+    expect(onDrop).toHaveBeenCalledTimes(4);
+    expect(originals.error).toHaveBeenCalledTimes(20);
+
+    now += 1_000;
+    target.error(wide);
+    expect(emitted).toHaveLength(17);
+  });
+
+  it('applies a byte budget passed in, by body size', () => {
+    const onDrop = vi.fn();
+    const { target, emitted } = installOnFake({ maxBytesPerSecond: 10, now: () => 3, onDrop });
+
+    target.log('12345');
+    target.log('123456');
+    target.log('12345');
+
+    expect(emitted.map((e) => e.body)).toEqual(['12345', '12345']);
+    expect(onDrop).toHaveBeenCalledTimes(1);
   });
 
   it('installs once: a second install changes nothing and still sends one record per call', () => {
@@ -222,19 +261,27 @@ describe('installConsoleOtlpBackstop', () => {
 });
 
 describe('armConsoleOtlpBackstop', () => {
-  it('leaves the console alone when OTLP logs are off', () => {
+  it('leaves the console alone unless both gates are on', () => {
     const before = { log: console.log, error: console.error };
 
     expect(armConsoleOtlpBackstop({})).toBeUndefined();
     expect(armConsoleOtlpBackstop({ OTEL_LOGS_ENABLED: 'false' })).toBeUndefined();
+    expect(armConsoleOtlpBackstop({ OTEL_LOGS_ENABLED: 'true' })).toBeUndefined();
+    expect(
+      armConsoleOtlpBackstop({ OTEL_LOGS_ENABLED: 'true', OTEL_CONSOLE_BACKSTOP_ENABLED: 'false' })
+    ).toBeUndefined();
+    expect(armConsoleOtlpBackstop({ OTEL_CONSOLE_BACKSTOP_ENABLED: 'true' })).toBeUndefined();
 
     expect(console.log).toBe(before.log);
     expect(console.error).toBe(before.error);
   });
 
-  it('wraps the global console when OTLP logs are on', () => {
+  it('wraps the global console when OTLP logs and the backstop are both on', () => {
     const before = console.log;
-    const backstop = armConsoleOtlpBackstop({ OTEL_LOGS_ENABLED: 'true' });
+    const backstop = armConsoleOtlpBackstop({
+      OTEL_LOGS_ENABLED: 'true',
+      OTEL_CONSOLE_BACKSTOP_ENABLED: 'true',
+    });
     try {
       expect(backstop).toBeDefined();
       expect(console.log).not.toBe(before);

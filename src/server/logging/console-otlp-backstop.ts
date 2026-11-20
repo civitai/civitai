@@ -1,6 +1,6 @@
 // Forwards raw `console.*` output to the structured-log sink, so a line that exists only on stdout
-// (a stack trace from `console.error(err)`, a library warning, a startup banner) is also in the
-// OTLP log stream. Server-only: installed from `src/instrumentation.node.ts`, never imported by
+// (a stack trace from `console.error(err)`, a library warning) is also in the OTLP log stream.
+// Lines printed before it is installed (most of boot) stay stdout-only. Server-only: installed from `src/instrumentation.node.ts`, never imported by
 // a module the client or edge bundles reach.
 //
 // Writers that already forward their line, or keep it on stdout on purpose, wrap their console call
@@ -15,11 +15,7 @@ import {
   withConsoleForwardingSuppressed,
 } from '@civitai/axiom/console-forwarding';
 import { otelConsoleRecordsDroppedCounter } from '@civitai/telemetry/otel-logs';
-import {
-  emitConsoleLog,
-  MAX_FORWARDED_LOG_BODY,
-  type ConsoleLogSource,
-} from '~/server/logging/structured-log-sink';
+import { emitConsoleLog, type ConsoleLogSource } from '~/server/logging/structured-log-sink';
 
 export const CONSOLE_BACKSTOP_METHODS = ['log', 'info', 'warn', 'error', 'debug'] as const;
 type ConsoleMethod = (typeof CONSOLE_BACKSTOP_METHODS)[number];
@@ -32,14 +28,31 @@ const SEVERITY: Record<ConsoleMethod, 'error' | 'warn' | 'info'> = {
   debug: 'info',
 };
 
-/**
- * Records per second per process; calls over it are still written to stdout, only counted.
+/*
+ * Budgets, per process and per second. A call over either is still written to stdout and is only
+ * counted. The OTLP export queue this feeds also carries the app logger's alert-feeding records,
+ * and many processes run this at once, so the total is these figures times the process count.
  *
- * The OTLP queue this feeds also carries the app logger's alert-feeding records, and it exports at
- * most 512 records per batch. 50/s keeps a console-spamming library under a tenth of one batch,
- * while sitting well above the expected unforwarded console rate (about one line per second).
+ * - 50 records/s: under a tenth of one 512-record export batch, and well above the expected
+ *   unforwarded console rate (about one line per second).
+ * - 64 KiB/s: a library printing large objects reaches the byte budget long before the record
+ *   budget (32 full-size bodies), so a burst costs bandwidth in proportion to records, not size.
+ * - 2048-character body: room for a full stack trace; a longer line is cut (stdout keeps it all).
+ *   Lower than the createLogger cap because these lines are unstructured and may be anything.
  */
 export const CONSOLE_BACKSTOP_MAX_RECORDS_PER_SECOND = 50;
+export const CONSOLE_BACKSTOP_MAX_BYTES_PER_SECOND = 64 * 1024;
+export const CONSOLE_RECORD_BODY_MAX = 2048;
+
+// The formatted string is cut to this before colour codes are stripped, so a huge argument costs
+// a bounded strip. A multiple of the cap leaves room for the codes that the strip removes.
+const PRE_STRIP_SLICE = CONSOLE_RECORD_BODY_MAX * 4;
+
+/** One record's body: formatted as console formats it, colour codes stripped, cut to the cap. */
+export function consoleRecordBody(args: unknown[]): string {
+  const formatted = format(...args).slice(0, PRE_STRIP_SLICE);
+  return stripVTControlCharacters(formatted).slice(0, CONSOLE_RECORD_BODY_MAX);
+}
 
 export type ConsoleRecord = {
   source: Extract<ConsoleLogSource, 'console'>;
@@ -50,17 +63,16 @@ export type ConsoleRecord = {
 export type ConsoleBackstopOptions = {
   /** Receives one already-formatted body per forwarded call (`emitConsoleLog` in production). */
   emit: (body: string, record: ConsoleRecord) => void;
-  /** Called once per call dropped by the rate cap. */
+  /** Called once per call dropped by either budget. */
   onDrop?: () => void;
   maxRecordsPerSecond?: number;
+  maxBytesPerSecond?: number;
   now?: () => number;
   /** The console to wrap; the global one unless a test passes its own. */
   target?: Console;
 };
 
 export type ConsoleBackstop = {
-  /** Calls dropped by the rate cap since install. */
-  dropped: () => number;
   /** Put the original methods back, unless something has replaced the wrappers since. Tests only. */
   uninstall: () => void;
 };
@@ -82,32 +94,29 @@ export function installConsoleOtlpBackstop(
   const target = (opts.target ?? console) as MarkedConsole;
   if (target[INSTALLED]) return undefined;
 
-  const max = opts.maxRecordsPerSecond ?? CONSOLE_BACKSTOP_MAX_RECORDS_PER_SECOND;
+  const maxRecords = opts.maxRecordsPerSecond ?? CONSOLE_BACKSTOP_MAX_RECORDS_PER_SECOND;
+  const maxBytes = opts.maxBytesPerSecond ?? CONSOLE_BACKSTOP_MAX_BYTES_PER_SECOND;
   const now = opts.now ?? Date.now;
   let windowSecond = Number.NaN;
-  let admittedInWindow = 0;
-  let dropped = 0;
-
-  const admit = (): boolean => {
-    const second = Math.floor(now() / 1000);
-    if (second !== windowSecond) {
-      windowSecond = second;
-      admittedInWindow = 0;
-    }
-    if (admittedInWindow < max) {
-      admittedInWindow++;
-      return true;
-    }
-    dropped++;
-    opts.onDrop?.();
-    return false;
-  };
+  let recordsInWindow = 0;
+  let bytesInWindow = 0;
 
   const forward = (method: ConsoleMethod, args: unknown[]) => {
     try {
-      if (!admit()) return;
+      const second = Math.floor(now() / 1000);
+      if (second !== windowSecond) {
+        windowSecond = second;
+        recordsInWindow = 0;
+        bytesInWindow = 0;
+      }
+      // Checked before formatting, so a call over the record budget costs no format.
+      if (recordsInWindow >= maxRecords) return opts.onDrop?.();
       withConsoleForwardingSuppressed(() => {
-        const body = stripVTControlCharacters(format(...args)).slice(0, MAX_FORWARDED_LOG_BODY);
+        const body = consoleRecordBody(args);
+        const bytes = Buffer.byteLength(body);
+        if (bytesInWindow + bytes > maxBytes) return opts.onDrop?.();
+        recordsInWindow++;
+        bytesInWindow += bytes;
         opts.emit(body, { source: 'console', name: 'console', type: SEVERITY[method] });
       });
     } catch {}
@@ -129,7 +138,6 @@ export function installConsoleOtlpBackstop(
   Object.defineProperty(target, INSTALLED, { value: true, configurable: true });
 
   return {
-    dropped: () => dropped,
     uninstall: () => {
       for (const method of CONSOLE_BACKSTOP_METHODS) {
         if (target[method] === wrappers.get(method)) target[method] = originals.get(method)!;
@@ -172,13 +180,16 @@ export function keepOtelDiagOffConsoleBackstop(): boolean {
 }
 
 /**
- * The production install: only when OTLP logs are on, after the logger provider and `NodeSDK` are
- * set up. A no-op on a second call.
+ * The production install, after the logger provider and `NodeSDK` are set up. Off unless both
+ * `OTEL_LOGS_ENABLED` and its own `OTEL_CONSOLE_BACKSTOP_ENABLED` are `'true'`, so it can be turned
+ * off without turning off the OTLP copy of app-logger records. A no-op on a second call.
  */
 export function armConsoleOtlpBackstop(
   env: Record<string, string | undefined> = process.env
 ): ConsoleBackstop | undefined {
-  if (env.OTEL_LOGS_ENABLED !== 'true') return undefined;
+  if (env.OTEL_LOGS_ENABLED !== 'true' || env.OTEL_CONSOLE_BACKSTOP_ENABLED !== 'true') {
+    return undefined;
+  }
   keepOtelDiagOffConsoleBackstop();
   return installConsoleOtlpBackstop({
     emit: emitConsoleLog,
