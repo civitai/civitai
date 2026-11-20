@@ -40,7 +40,7 @@ export function scanRatingKeptMessage({ name, description, versions }: ScanRated
   const versionKinds = [
     versions.some((v) => hasText(v.name)) && 'names',
     versions.some((v) => htmlHasText(v.description)) && 'descriptions',
-    versions.some((v) => hasText(v.trainedWords.join(', '))) && 'trained words',
+    versions.some((v) => v.trainedWords.some(hasText)) && 'trained words',
   ].filter((kind): kind is string => !!kind);
   if (versionKinds.length) {
     const named = versions

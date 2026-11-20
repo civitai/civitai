@@ -1354,19 +1354,30 @@ describe('upsertModel — content flags the row ends up with', () => {
 
       describe('the message names the text the scan read', () => {
         type Version = {
+          modelId?: number;
+          index: number;
           status: ModelStatus;
           name: string;
           description: string | null;
           trainedWords: string[];
         };
-        // Honours the status filter, so a query that read drafts would name them.
+        // Honours the model and status filters and the order, so a query that read another
+        // model's versions or drafts would name them.
         function mockVersions(versions: Version[]) {
           mockDbWrite.modelVersion.findMany.mockImplementation((async (args: {
-            where?: { status?: { in?: ModelStatus[] } };
-          }) =>
-            versions.filter(
-              (v) => !args?.where?.status?.in || args.where.status.in.includes(v.status)
-            )) as never);
+            where?: { modelId?: number; status?: { in?: ModelStatus[] } };
+            orderBy?: { index?: 'asc' | 'desc' };
+          }) => {
+            const found = versions.filter(
+              (v) =>
+                (args?.where?.modelId === undefined ||
+                  (v.modelId ?? MODEL_ID) === args.where.modelId) &&
+                (!args?.where?.status?.in || args.where.status.in.includes(v.status))
+            );
+            return args?.orderBy?.index === 'asc'
+              ? [...found].sort((a, b) => a.index - b.index)
+              : found;
+          }) as never);
         }
         const unticking = () =>
           upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
@@ -1379,18 +1390,34 @@ describe('upsertModel — content flags the row ends up with', () => {
           });
           mockVersions([
             {
+              index: 2,
+              status: ModelStatus.Scheduled,
+              name: 'v2.0',
+              description: null,
+              trainedWords: [],
+            },
+            {
+              modelId: MODEL_ID + 1,
+              index: 0,
+              status: ModelStatus.Published,
+              name: 'other-model',
+              description: '<p>Other</p>',
+              trainedWords: [],
+            },
+            {
+              index: 0,
               status: ModelStatus.Published,
               name: 'v1.0',
               description: '<p>Notes</p>',
               trainedWords: ['tag'],
             },
             {
+              index: 1,
               status: ModelStatus.Draft,
               name: 'draft-only',
               description: '<p>Draft</p>',
               trainedWords: [],
             },
-            { status: ModelStatus.Scheduled, name: 'v2.0', description: null, trainedWords: [] },
           ]);
 
           const error = await unticking().catch((e: Error) => e);
@@ -1411,6 +1438,7 @@ describe('upsertModel — content flags the row ends up with', () => {
           });
           mockVersions([
             {
+              index: 3,
               status: ModelStatus.Published,
               name: 'v1.0',
               description: '<p></p>',
@@ -1427,6 +1455,7 @@ describe('upsertModel — content flags the row ends up with', () => {
           mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
           mockVersions([
             {
+              index: 4,
               status: ModelStatus.Draft,
               name: 'draft-only',
               description: '<p>Draft</p>',
