@@ -92,6 +92,8 @@ const MINOR_PG = image({ id: 10, nsfwLevel: NsfwLevel.PG, minor: true });
 const MINOR_PG13 = image({ id: 11, nsfwLevel: NsfwLevel.PG13, minor: true });
 const POI_PG = image({ id: 12, nsfwLevel: NsfwLevel.PG, poi: true });
 const MINOR_X = image({ id: 13, nsfwLevel: NsfwLevel.X, minor: true });
+const MINOR_PG_R = image({ id: 14, nsfwLevel: NsfwLevel.PG | NsfwLevel.R, minor: true });
+const matureLevels = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
 const NO_TAG_ROWS_PG = {
   ...image({ id: 9, nsfwLevel: NsfwLevel.PG }),
   tags: undefined as unknown as number[],
@@ -205,12 +207,10 @@ async function call(route: Route, host: string) {
 function serve(
   versionNsfwLevel: number,
   images: ReturnType<typeof image>[],
-  sfwName: string | null = null,
-  minorModel = false
+  sfwName: string | null = null
 ) {
   showcase = images;
   const version = modelVersion(versionNsfwLevel, sfwName);
-  version.model.minor = minorModel;
   dbMock.dbRead.$queryRaw.mockResolvedValue([version]);
   dbMock.dbRead.modelFile.findFirst.mockResolvedValue({ modelVersion: version });
   dbMock.dbRead.modelFile.findMany.mockResolvedValue([{ modelVersion: version }]);
@@ -324,18 +324,19 @@ describe.each(ROUTES)('%s, anonymous', (route) => {
   });
 });
 
-describe.each(ROUTES)('%s, a minor-flagged model', (route) => {
+describe.each(ROUTES)('%s, minor-flagged images', (route) => {
   describe.each(HOSTS)('on %s', (host) => {
     it.each([false, true])(
       'serves its SFW minor images and drops the mature ones (restricted: %s)',
       async (restricted) => {
         region.restricted = restricted;
-        serve(
-          NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X,
-          [MINOR_PG, MINOR_PG13, MINOR_R, MINOR_X, UNTAGGED_R],
-          null,
-          true
-        );
+        serve(NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X, [
+          MINOR_PG,
+          MINOR_PG13,
+          MINOR_R,
+          MINOR_X,
+          UNTAGGED_R,
+        ]);
         const { res, version } = await call(route, host);
         expect(res.statusCode).toBe(200);
         expect(servedIds(version)).toEqual(
@@ -344,18 +345,25 @@ describe.each(ROUTES)('%s, a minor-flagged model', (route) => {
       }
     );
 
+    it('drops a minor image whose level has a mature bit beside an SFW one', async () => {
+      serve(NsfwLevel.PG | NsfwLevel.R, [MINOR_PG_R, UNTAGGED_PG]);
+      const { version } = await call(route, host);
+      expect(servedIds(version)).toEqual([UNTAGGED_PG.id]);
+    });
+
     it('still drops SFW poi, people-tagged and mature-only-tagged images beside them', async () => {
-      serve(NsfwLevel.PG, [MINOR_PG, POI_PG, PEOPLE_PG, CHILD_PG, UNTAGGED_PG], null, true);
+      serve(NsfwLevel.PG, [MINOR_PG, POI_PG, PEOPLE_PG, CHILD_PG, UNTAGGED_PG]);
       const { version } = await call(route, host);
       expect(servedIds(version)).toEqual([MINOR_PG.id, UNTAGGED_PG.id]);
     });
 
-    it('drops SFW minor images when the settings exclude minor at SFW levels too', async () => {
-      addons.current = [
-        ...DEFAULT_BROWSING_SETTINGS_ADDONS,
-        { type: 'some', nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13], disableMinor: true },
-      ];
-      serve(NsfwLevel.PG, [MINOR_PG, UNTAGGED_PG], null, true);
+    it.each([
+      ['every SFW level', { type: 'some', nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13] }],
+      // Applies to a viewer browsing PG alone, not to one browsing PG and PG13 together.
+      ['a PG-only viewer', { type: 'none', nsfwLevels: [NsfwLevel.PG13, ...matureLevels] }],
+    ])('drops SFW minor images when the settings exclude minor for %s', async (_, rule) => {
+      addons.current = [...DEFAULT_BROWSING_SETTINGS_ADDONS, { ...rule, disableMinor: true }];
+      serve(NsfwLevel.PG, [MINOR_PG, UNTAGGED_PG]);
       const { version } = await call(route, host);
       expect(servedIds(version)).toEqual([UNTAGGED_PG.id]);
       // The response filter holds it back on its own, without the SQL exclusion.
@@ -369,20 +377,20 @@ describe.each(ROUTES)('%s, a minor-flagged model', (route) => {
 
   describe('the shared cache', () => {
     it('keeps an SFW version whose SFW minor images are served at both levels', async () => {
-      serve(NsfwLevel.PG, [MINOR_PG, UNTAGGED_PG], null, true);
+      serve(NsfwLevel.PG, [MINOR_PG, UNTAGGED_PG]);
       const { res, version } = await call(route, 'civitai.com');
       expect(servedIds(version)).toEqual([MINOR_PG.id, UNTAGGED_PG.id]);
       expect(noStore(res)).toBe(false);
     });
 
     it('keeps out an SFW version whose other exclusions still differ by level', async () => {
-      serve(NsfwLevel.PG, [MINOR_PG, CHILD_PG], null, true);
+      serve(NsfwLevel.PG, [MINOR_PG, CHILD_PG]);
       const { res } = await call(route, 'civitai.com');
       expect(noStore(res)).toBe(true);
     });
 
-    it('keeps out a version with a mature minor image', async () => {
-      serve(NsfwLevel.PG | NsfwLevel.R, [MINOR_PG, MINOR_R], null, true);
+    it('keeps out a version stored as SFW with a mature minor image', async () => {
+      serve(NsfwLevel.PG, [MINOR_PG, MINOR_R]);
       const { res, version } = await call(route, 'civitai.com');
       expect(servedIds(version)).toEqual([MINOR_PG.id]);
       expect(noStore(res)).toBe(true);

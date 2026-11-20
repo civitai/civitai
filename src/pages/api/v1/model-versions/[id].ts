@@ -37,6 +37,8 @@ import { modelVersionToAir } from '~/server/utils/resource-air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
+import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
 import {
   getShowcaseImageFilter,
   resolveShowcaseExclusions,
@@ -236,16 +238,21 @@ const aboveSfw = (nsfwLevel: number) => (nsfwLevel & ~sfwBrowsingLevelsFlag) !==
 
 /**
  * `getShowcaseImageFilter` at `browsingLevel`, but an image within the SFW levels is held to the minor
- * rule as resolved at SFW: the minor exclusion is for mature images, so an SFW image of a minor is
- * served wherever SFW images are. Tag and poi rules still apply at `browsingLevel`.
+ * rule of the SFW levels, at its strictest over every SFW level a viewer could browse at: the minor
+ * exclusion is for mature images, so an SFW image of a minor is served wherever SFW images are. Tag
+ * and poi rules still apply at `browsingLevel`.
  */
 async function getVersionImageFilter(browsingLevel: number) {
-  const [shows, withinSfw] = await Promise.all([
+  const [shows, addonData] = await Promise.all([
     getShowcaseImageFilter({ browsingLevel }),
-    resolveShowcaseExclusions({ browsingLevel: sfwBrowsingLevelsFlag }),
+    getBrowsingSettingAddons(),
   ]);
+  const { disableMinor: minorExcludedWithinSfw } = resolveStrictestPoiMinor(
+    addonData,
+    sfwBrowsingLevelsFlag
+  );
   return (image: Parameters<typeof shows>[0] & { nsfwLevel: number }) =>
-    shows(aboveSfw(image.nsfwLevel) || withinSfw.disableMinor ? image : { ...image, minor: false });
+    shows(aboveSfw(image.nsfwLevel) || minorExcludedWithinSfw ? image : { ...image, minor: false });
 }
 
 /**
