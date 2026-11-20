@@ -1,7 +1,9 @@
 import { useSession } from '~/providers/SessionProvider';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { type FeatureAccess } from '~/server/services/feature-flags.service';
-import { setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
+import { queryClient, setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
+import { setFeedEventsEnabled } from '~/utils/feed-events';
+import { impressionTelemetryOn } from '~/components/TrackView/useTrackImpression';
 import {
   setFeedGoTransportEnabled,
   setFeedGoTransportInfiniteEnabled,
@@ -122,6 +124,7 @@ export const FeatureFlagsProvider = ({
     setFeedGoTransportModelGetAllEnabled(!!featureFlags.feedGoTransportModelGetAll);
     setFeedGoTransportInfiniteEnabled(!!featureFlags.feedGoTransportInfinite);
     setClientShadowCompareEnabled(!!featureFlags.clientShadowCompare);
+    setFeedEventsEnabled(impressionTelemetryOn(featureFlags), queryClient.getQueryCache());
   }
 
   // Bridge `trpcBatching` to the module-scope tRPC link (see `shouldBatch` in
