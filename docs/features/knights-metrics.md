@@ -47,7 +47,7 @@ never errors.
 | `knights_writeback_pending_items`            |                                                          | Resolved, not written back, `applyAttempts > 0`                                    |
 | `knights_buzz_grants_stuck`                  | `state`: failed, pending                                 | Buzz grants failed in the last 24 hours, or pending for more than 15 minutes       |
 | `knights_shop_purchases_stuck`               |                                                          | Shop purchases pending for more than 15 minutes                                    |
-| `knights_reference_pool_items`               | `pool`: trials, hiddenCheck                              | Active reference images                                                            |
+| `knights_reference_pool_items`               | `pool`: trials, hiddenCheck, skillCheck                           | Active reference images                                                            |
 | `knights_harvest_last_run_timestamp_seconds` |                                                          | Latest `KnightsHarvestCursor.updatedAt` (NaN before the first run)                 |
 | `knights_vote_partition_next_month_ready`    |                                                          | 1 when next month's `KnightsVote_YYYY_MM` partition exists                         |
 

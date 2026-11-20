@@ -9,11 +9,18 @@ import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 const { NsfwLevel } =
   'default' in shared ? (shared as { default?: typeof shared }).default ?? shared : shared;
 
-export const REFERENCE_POOL = { trials: 'trials', hiddenCheck: 'hiddenCheck' } as const;
+export const REFERENCE_POOL = {
+  trials: 'trials',
+  hiddenCheck: 'hiddenCheck',
+  /** Mod-confirmed checks from the in-game inquisitor queue, served to Acolytes and Knights alike. */
+  skillCheck: 'skillCheck',
+} as const;
 export const REFERENCE_SOURCE = {
   core: 'core',
   harvested: 'harvested',
   agreement: 'agreement',
+  /** Two agreeing moderators in the in-game inquisitor queue. */
+  inquisitor: 'inquisitor',
 } as const;
 export const REFERENCE_STATUS = {
   active: 'active',
