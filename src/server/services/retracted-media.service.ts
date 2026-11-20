@@ -32,17 +32,23 @@ export async function getRetractedMedia(
 ): Promise<RetractedMedia | null> {
   const [row] = await db.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`);
-    return tx.$queryRaw<(RetractedMedia & { blockedFor: string | null; restricted: boolean })[]>`
-      SELECT i.url, i.type::text AS type, i."mimeType", i."blockedFor",
+    return tx.$queryRaw<
+      (RetractedMedia & { blockedFor: string | null; ingestion: string; restricted: boolean })[]
+    >`
+      SELECT i.url, i.type::text AS type, i."mimeType", i."blockedFor", i.ingestion,
         ${Prisma.raw(csamReview ? 'false' : csamRestrictedSql('i'))} AS restricted
       FROM "Image" i
-      WHERE i.id = ${imageId} AND ${Prisma.raw(retractedImageWhereSql('i'))}
+      WHERE i.id = ${imageId} AND ${Prisma.raw(retractedImageWhereSql('i', { cdnLeg: true }))}
     `;
   });
   if (!row) return null;
   if (!csamReview) {
     if (row.restricted || blockedForSignal(row.blockedFor, blockedForPatterns())) return null;
-    const verdict = await scannerVerdicts.read(imageId);
+    // A scanned image can be rescanned, so its verdict is read fresh rather than from the cache.
+    const verdict =
+      row.ingestion === 'Scanned'
+        ? await readScannerCsamVerdict(imageId)
+        : await scannerVerdicts.read(imageId);
     if (verdict !== 'clear' && verdict !== 'none') return null;
   }
   return { url: row.url, type: row.type, mimeType: row.mimeType };

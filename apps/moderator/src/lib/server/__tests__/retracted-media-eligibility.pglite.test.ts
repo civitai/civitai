@@ -204,10 +204,46 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
     }
   });
 
-  it('takes only a retracted url: not a denied one, and not one the CDN serves', async () => {
-    expect(await tierOf(8)).toBe('none');
+  // A denied url is the reversible form of the same takedown, so it is read exactly as a retracted
+  // one, every guard included (Moderation Lead ruling, 2026-11-20). Do not narrow it back to Retracted.
+  it('takes a retracted or a denied url, and not one the CDN serves', async () => {
+    expect(await tierOf(7)).toBe('plain');
+    expect(await tierOf(8)).toBe('plain');
     expect(await tierOf(9)).toBe('none');
   });
+
+  it.each([
+    [
+      'a CsamReport owner',
+      (userId: number) =>
+        db.query(`INSERT INTO "CsamReport" ("userId", details, images) VALUES ($1, '{}', '[]')`, [
+          userId,
+        ]),
+    ],
+    [
+      'an owner banned for minor safety',
+      (userId: number) =>
+        db.query(
+          `INSERT INTO "User" (id, meta) VALUES ($1, '{"banDetails": {"reasonCode": "SexualMinor"}}')`,
+          [userId]
+        ),
+    ],
+  ])(
+    'refuses a denied url of %s to non-cleared moderators exactly as a retracted one',
+    async (_l, mark) => {
+      try {
+        for (const userId of [307, 308]) await mark(userId);
+        const tiers = { retracted: await tierOf(7), denied: await tierOf(8) };
+        expect(tiers.denied).toBe(tiers.retracted);
+        expect(tiers.denied).not.toBe('plain');
+      } finally {
+        await db.exec(`
+        DELETE FROM "CsamReport" WHERE "userId" IN (307, 308);
+        DELETE FROM "User" WHERE id IN (307, 308);
+      `);
+      }
+    }
+  );
 
   it('takes only a finished scan', async () => {
     for (const id of [10, 11, 12])

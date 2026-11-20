@@ -46,7 +46,7 @@ import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
-import { retractedMediaUrl } from '~/components/RetractedMedia/retracted-media';
+import { retractedMediaUrl, useCdnFailed } from '~/components/RetractedMedia/retracted-media';
 import { useStorylineForPost } from '~/components/Storyline/StorylineBatchProvider';
 import { StorylinePill } from '~/components/Storyline/StorylinePill';
 import clsx from 'clsx';
@@ -100,7 +100,13 @@ function ImagesCardContent({
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
   const isScanned = image.ingestion === ImageIngestionStatus.Scanned;
   const isModerator = currentUser?.isModerator;
-  const retractedSrc = features.modRetractedMedia ? retractedMediaUrl(image, currentUser) : null;
+  const [cdnFailed, onCdnError] = useCdnFailed(image.id);
+  const modUser = features.modRetractedMedia ? currentUser : null;
+  const retractedSrc = retractedMediaUrl(image, modUser, { cdnFailed });
+  // Only where the route could serve it, so everyone else's CDN errors are untouched.
+  const cdnFallback = retractedMediaUrl(image, modUser, { cdnFailed: true })
+    ? onCdnError
+    : undefined;
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
@@ -169,7 +175,7 @@ function ImagesCardContent({
                       src={retractedSrc}
                       type={image.type}
                       alt={image.name ?? undefined}
-                      className={clsx(cardClasses.image, 'opacity-30')}
+                      className={clsx(cardClasses.image, { ['opacity-30']: isBlocked })}
                     />
                   ) : safe ? (
                     <EdgeMedia2
@@ -189,6 +195,8 @@ function ImagesCardContent({
                       contain
                       loading="lazy"
                       imageId={image.id}
+                      onError={cdnFallback}
+                      videoProps={{ onError: cdnFallback }}
                       // fadeIn
                     />
                   ) : (
