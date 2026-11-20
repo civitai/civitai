@@ -7,7 +7,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * Placing a sticker or submitting a remix publishes content onto someone else's
  * image, so it is a posting channel aimed at a specific person — the thing a
  * mute exists to close. `protectedProcedure` refuses a ban and says nothing about a mute, so the
- * create procedures are built from `guardedProcedure`.
+ * create procedures are built from `guardedProcedure`. Starting a sticker auto-track run is too:
+ * it places nothing, but it spends system-account Buzz, and the email-verified check is what keeps
+ * throwaway accounts from multiplying the free daily runs.
  *
  * Asserted at the ROUTER rather than on the services, because the refusal is a
  * property of the procedure the mutation is built from: nothing inside the services would change if
@@ -17,13 +19,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as StickerPlacementService from '~/server/services/sticker-placement.service';
 import type * as RemixGalleryService from '~/server/services/remix-gallery.service';
 import type * as StorylinePlacementService from '~/server/services/storyline-placement.service';
+import type * as StickerAutoTrackService from '~/server/services/sticker-auto-track.service';
 
-const { createStickerPlacement, createRemixGallerySubmission, createStorylinePlacement } =
-  vi.hoisted(() => ({
-    createStickerPlacement: vi.fn(async () => ({ id: 1 })),
-    createRemixGallerySubmission: vi.fn(async () => ({ id: 2 })),
-    createStorylinePlacement: vi.fn(async () => ({ id: 3 })),
-  }));
+const {
+  createStickerPlacement,
+  createRemixGallerySubmission,
+  createStorylinePlacement,
+  startStickerAutoTrack,
+} = vi.hoisted(() => ({
+  createStickerPlacement: vi.fn(async () => ({ id: 1 })),
+  createRemixGallerySubmission: vi.fn(async () => ({ id: 2 })),
+  createStorylinePlacement: vi.fn(async () => ({ id: 3 })),
+  startStickerAutoTrack: vi.fn(async () => ({ workflowId: 'wf-1' })),
+}));
 
 // Spread the real modules and override only the writers: a hand-listed mock would couple this test
 // to every export the router happens to import today.
@@ -38,6 +46,10 @@ vi.mock('~/server/services/remix-gallery.service', async (importOriginal) => ({
 vi.mock('~/server/services/storyline-placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof StorylinePlacementService>()),
   createStorylinePlacement,
+}));
+vi.mock('~/server/services/sticker-auto-track.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof StickerAutoTrackService>()),
+  startStickerAutoTrack,
 }));
 
 import { placementRouter } from '~/server/routers/placement.router';
@@ -62,24 +74,42 @@ import {
  * placement-writing mutations` below asserts against the router itself;
  * `free-placement.service.test.ts` covers the free service's own guard.
  */
-const CREATE_CALLS = [
+const GUARDED_CALLS = [
   {
     name: 'createSticker',
     label: 'sticker',
     writer: createStickerPlacement,
     input: { imageId: 99, data: STICKER_DATA },
+    features: {},
+    calledWith: { placerId: PLACER },
   },
   {
     name: 'submitToRemixGallery',
     label: 'remix gallery',
     writer: createRemixGallerySubmission,
     input: { hostImageId: 11, imageId: 12, expectedPrice: 100 },
+    features: {},
+    calledWith: { placerId: PLACER },
   },
   {
     name: 'submitStorylineContinuation',
     label: 'storyline',
     writer: createStorylinePlacement,
     input: { parentPostId: 11, postId: 12, expectedPrice: 0 },
+    features: {},
+    calledWith: { placerId: PLACER },
+  },
+  {
+    name: 'startStickerAutoTrack',
+    label: 'sticker auto-track',
+    writer: startStickerAutoTrack,
+    input: {
+      imageId: 99,
+      pose: { x: STICKER_DATA.x, y: STICKER_DATA.y, scale: STICKER_DATA.scale, rotation: 0 },
+      startMs: 0,
+    },
+    features: { stickerVideoTracks: true, stickerAutoTrack: true },
+    calledWith: { user: expect.objectContaining({ id: PLACER }) },
   },
 ] as const;
 
@@ -121,17 +151,17 @@ describe('placement router — account state refuses a placement', () => {
    */
   it('guards exactly the placement-writing mutations', () => {
     expect(guardedMiddlewares.length).toBeGreaterThan(0);
-    expect(mutationNames.length).toBeGreaterThan(CREATE_CALLS.length);
+    expect(mutationNames.length).toBeGreaterThan(GUARDED_CALLS.length);
 
     const guarded = mutationNames.filter((name) => isGuarded(procedures[name]));
 
-    expect(guarded.sort()).toEqual(CREATE_CALLS.map((call) => call.name).sort());
+    expect(guarded.sort()).toEqual(GUARDED_CALLS.map((call) => call.name).sort());
   });
 
-  for (const { label, name, writer, input } of CREATE_CALLS) {
+  for (const { label, name, writer, input, features, calledWith } of GUARDED_CALLS) {
     for (const { state, user, message } of REFUSED_STATES) {
       it(`refuses a ${state} user on ${label}`, async () => {
-        await expect(placementCaller({ user })[name](input)).rejects.toMatchObject({
+        await expect(placementCaller({ user, features })[name](input)).rejects.toMatchObject({
           code: 'FORBIDDEN',
           message: expect.stringMatching(message),
         });
@@ -147,9 +177,9 @@ describe('placement router — account state refuses a placement', () => {
     // an account in none of those states — a broken input shape refuses
     // everywhere and reads as a working guard.
     it(`lets an ordinary user through on ${label}`, async () => {
-      await expect(placementCaller()[name](input)).resolves.toBeDefined();
+      await expect(placementCaller({ features })[name](input)).resolves.toBeDefined();
       expect(writer).toHaveBeenCalledTimes(1);
-      expect(writer).toHaveBeenCalledWith(expect.objectContaining({ placerId: PLACER }));
+      expect(writer).toHaveBeenCalledWith(expect.objectContaining(calledWith));
     });
   }
 

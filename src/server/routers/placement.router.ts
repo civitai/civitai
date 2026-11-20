@@ -302,7 +302,7 @@ export const placementRouter = router({
       : []
   ),
 
-  startStickerAutoTrack: protectedProcedure
+  startStickerAutoTrack: guardedProcedure
     .input(startStickerAutoTrackSchema)
     .mutation(({ input, ctx }) => {
       assertPlacementEnabled(ctx);
