@@ -5,16 +5,10 @@ vi.hoisted(() => {
   process.env.SERVER_DOMAIN_GREEN = 'civitai.com';
 });
 
-const { handler, addHandler, addEntityHandler, isAccountMuted } = vi.hoisted(() => ({
+const { handler, addHandler, addEntityHandler } = vi.hoisted(() => ({
   handler: vi.fn(async () => []),
   addHandler: vi.fn(async () => ({ added: true, sections: [] })),
   addEntityHandler: vi.fn(async () => ({})),
-  isAccountMuted: vi.fn(async (_userId: number, sessionValue: boolean) => sessionValue),
-}));
-
-vi.mock('~/server/services/account-standing.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  isAccountMuted,
 }));
 
 vi.mock('~/server/controllers/user-profile.controller', async (importOriginal) => ({
@@ -24,6 +18,7 @@ vi.mock('~/server/controllers/user-profile.controller', async (importOriginal) =
   addEntityToShowcaseHandler: addEntityHandler,
 }));
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { OnboardingComplete } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 const { userProfileRouter } = await import('~/server/routers/user-profile.router');
@@ -58,7 +53,7 @@ beforeEach(() => {
   handler.mockClear();
   addHandler.mockClear();
   addEntityHandler.mockClear();
-  isAccountMuted.mockClear();
+  dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: false, bannedAt: null });
 });
 
 describe('userProfile.setShowcaseSections', () => {
@@ -124,7 +119,8 @@ describe('userProfile.addToShowcaseSection', () => {
 
 // A session minted before the mute still says `muted: false`; the stored standing decides.
 describe('showcase writes from an account muted after its session was issued', () => {
-  const mutedSince = () => isAccountMuted.mockResolvedValueOnce(true);
+  const mutedSince = () =>
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true, bannedAt: null });
 
   it.each([
     [
