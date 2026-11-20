@@ -231,19 +231,35 @@ describe('getUserWithProfile — showcase sections hidden on a site', () => {
   const ids = async (args: Parameters<typeof getUserWithProfile>[0]) =>
     (await getUserWithProfile(args)).profile.showcaseSections.map((s) => s.id);
 
-  it('drops a section hidden on red for a visitor on red', async () => {
-    expect(await ids({ id: USER_ID, domain: 'red' })).toEqual(['everywhere', 'notCom']);
-  });
-
-  it.each(['green', 'blue'] as const)(
-    'drops a section hidden on .com for a visitor on %s',
+  // civitai.red resolves to blue: it is blue's primary host.
+  it.each(['blue', 'red'] as const)(
+    'drops a section hidden on .red for a visitor on %s',
     async (color) => {
       expect(await ids({ id: USER_ID, domain: color, sessionUserId: 5 })).toEqual([
         'everywhere',
-        'notRed',
+        'notCom',
       ]);
     }
   );
+
+  it("drops a hidden section's placement row too", async () => {
+    setProfile({
+      showcaseSections: [section('notRed', 2)],
+      profileSectionsSettings: [
+        { key: 'custom:notRed', enabled: true },
+        { key: 'showcase', enabled: true },
+      ],
+    });
+    const { profile } = await getUserWithProfile({ id: USER_ID, domain: 'blue', sessionUserId: 5 });
+    expect(profile.profileSectionsSettings.map((s) => s.key)).toEqual(['showcase']);
+  });
+
+  it('drops a section hidden on .com for a visitor on green', async () => {
+    expect(await ids({ id: USER_ID, domain: 'green', sessionUserId: 5 })).toEqual([
+      'everywhere',
+      'notRed',
+    ]);
+  });
 
   it('keeps every section for the owner and for a moderator', async () => {
     const all = ['everywhere', 'notRed', 'notCom', 'nowhere'];

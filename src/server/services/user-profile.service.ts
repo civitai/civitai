@@ -198,6 +198,17 @@ export const getUserWithProfile = async ({
     const stickerBookHidden =
       (user.settings as { hideStickerBook?: boolean } | null)?.hideStickerBook === true;
 
+    // The owner and moderators edit every section, so only other viewers lose the ones hidden on
+    // this site, and with them the rows that place them.
+    const showcaseSections = (profile?.showcaseSections ?? []) as ShowcaseSectionSchema[];
+    const hiddenSectionKeys = new Set<string>(
+      canEdit
+        ? []
+        : showcaseSections
+            .filter((section) => isShowcaseHiddenOn(section.hiddenOn, domain))
+            .map((section) => customShowcaseKey(section.id))
+    );
+
     return {
       ...user,
       profilePicture: canEdit
@@ -231,11 +242,12 @@ export const getUserWithProfile = async ({
       profile: {
         ...profile,
         privacySettings: (profile?.privacySettings ?? {}) as PrivacySettingsSchema,
-        profileSectionsSettings: (profile?.profileSectionsSettings ?? []) as ProfileSectionSchema[],
+        profileSectionsSettings: (
+          (profile?.profileSectionsSettings ?? []) as ProfileSectionSchema[]
+        ).filter(({ key }) => !hiddenSectionKeys.has(key)),
         showcaseItems: (profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
-        // The owner and moderators edit every section, so only other viewers lose the hidden ones.
-        showcaseSections: ((profile?.showcaseSections ?? []) as ShowcaseSectionSchema[]).filter(
-          (section) => canEdit || !isShowcaseHiddenOn(section.hiddenOn, domain)
+        showcaseSections: showcaseSections.filter(
+          (section) => !hiddenSectionKeys.has(customShowcaseKey(section.id))
         ),
         bio: (useSfwBio ? profile?.sfwBio : profile?.bio) ?? null,
         message: (useSfwMessage ? profile?.sfwMessage : profile?.message) ?? null,
