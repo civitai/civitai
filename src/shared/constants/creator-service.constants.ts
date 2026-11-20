@@ -4,6 +4,14 @@ import {
   isMatureServiceLevel,
   serviceRequestAllowed,
 } from '~/shared/constants/creator-services.constants';
+import type { ServicePreviewKind } from '~/shared/utils/prisma/enums';
+
+export const SERVICE_PREVIEW_KIND_LABELS: Record<ServicePreviewKind, string> = {
+  Image: 'Image preview',
+  Video: 'Video preview',
+  SampleOutputs: 'Sample outputs',
+  None: 'No preview',
+};
 
 /** Selling services unlocks at Beacon, the same rung (and the same aggregate score) as the Creator Program. */
 export const SERVICES_MIN_CREATOR_SCORE = CREATOR_PROGRAM_MIN_CREATOR_SCORE;

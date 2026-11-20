@@ -1,8 +1,10 @@
 import type { ServiceFeedOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
-import { serviceStorefrontHref } from '~/components/CreatorShop/section-meta';
+import { serviceHref } from '~/components/CreatorShop/section-meta';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ServiceFeedCard({ offering }: { offering: ServiceFeedOffering }) {
+  const features = useFeatureFlags();
   return (
     <ServiceOfferingCard
       offering={offering}
@@ -10,7 +12,11 @@ export function ServiceFeedCard({ offering }: { offering: ServiceFeedOffering })
       sellerId={offering.seller.id}
       sellerUsername={offering.seller.username ?? ''}
       slotsOpen={offering.slotsOpen}
-      href={serviceStorefrontHref(offering.seller.username ?? '', offering.id)}
+      href={serviceHref({
+        username: offering.seller.username ?? '',
+        offering,
+        next: features.creatorServicesNext,
+      })}
     />
   );
 }

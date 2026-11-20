@@ -1,5 +1,5 @@
 import type { SessionUser } from '~/types/session';
-import { isFlipt, isFliptSync } from '~/server/flipt/client';
+import { isFlipt, isFliptSync, readFliptBoolean } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   recordStoreScopeDivergence,
@@ -7,6 +7,7 @@ import {
 } from '~/server/prom/store-scope.metrics';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility';
+import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import {
   narrowStoreScope,
   type StoreVisibilityScope as StoreVisibilityScopeValue,
@@ -280,6 +281,17 @@ export async function isAppBlocksEnabled(opts?: { user?: SessionUser }): Promise
 }
 
 /**
+ * {@link isAppBlocksEnabled}'s per-user evaluation, but `null` when the flag cannot be read (Flipt
+ * unreachable with no stored snapshot, or the key missing), which `isAppBlocksEnabled` answers as
+ * `false`. For a caller that must not take an outage for a refusal: the registry private feed,
+ * where a refusal sends a `Delete` for every record a consumer holds (`private-feed.live.ts`).
+ * Never a gate on its own: the run gate stays `assertAppBlocksEnabledForTokenUser`.
+ */
+export async function readAppBlocksEnabled(user: SessionUser): Promise<boolean | null> {
+  return readFliptBoolean(APP_BLOCKS_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Server-side check for the App Store VISIBILITY flag (W13 — PR-W1a / D8).
  *
  * Gates the STORE-VISIBILITY surfaces only — the public store read procs
@@ -409,8 +421,11 @@ export async function isAppBlocksAuthorEnabled(opts: { user: SessionUser }): Pro
   const user = opts.user;
   // Moderator floor — the `availability: ['mod']` static fallback. Keeps mods'
   // existing author access intact while the Flipt flag is absent (dark window)
-  // and regardless of how the flag's segments are later configured.
-  if (user.isModerator) return true;
+  // and regardless of how the flag's segments are later configured. The same floor
+  // `appDeveloperProcedure` and the author pages apply (`isAppDeveloper`). On tRPC, pass
+  // the account from `appBlocksAuthorAccount`, not `ctx.user`: a moderator on a scoped credential reads as
+  // a non-moderator there, and keeps this capability.
+  if (isAppDeveloper(user)) return true;
   // Per-user eval — same entityId + context shape as isAppBlocksEnabled, so the
   // author cohort segment resolves identically to the client/hasFeature gate.
   return isFlipt(APP_BLOCKS_AUTHOR_FLAG, String(user.id), buildFliptContext(user));

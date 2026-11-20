@@ -1,6 +1,6 @@
 {
-  "name": "fallback-include-tags",
-  "description": "`include: [cosmetics, tags]`: the votable tags (imageTagsCache and the viewer’s votes) are not ported.",
+  "name": "fallback-collection-judge-score",
+  "description": "A collection item whose note holds a judge’s score (9103’s 8202): parseJudgeScore’s value is not rebuilt here.",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "imageIndexFeed": true,
@@ -10,7 +10,7 @@
     "frameCacheNegative": false
   },
   "request": {
-    "input": "{\"json\":{\"include\":[\"cosmetics\",\"tags\"],\"browsingLevel\":1,\"limit\":2}}",
+    "input": "{\"json\":{\"collectionId\":9103,\"sort\":\"Newest\",\"browsingLevel\":1,\"limit\":10}}",
     "headers": {
       "host": "green.example.test"
     },
@@ -24,8 +24,130 @@
     }
   },
   "db": {
-    "images": [],
-    "posts": [],
+    "images": [
+      {
+        "id": 8201,
+        "name": "golden-8201.png",
+        "url": "00000000-0000-4000-8000-000000008201",
+        "nsfwLevel": 1,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8201",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-14T09:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-14T10:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8201"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-14T09:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1001,
+        "postId": 7201,
+        "postTitle": "Golden post 7201",
+        "index": 0,
+        "publishedAt": {
+          "$date": "2026-06-14T10:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": 6401,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": [
+          {
+            "modelVersionId": 6401,
+            "detected": true
+          }
+        ],
+        "_tags": [
+          503,
+          524
+        ]
+      },
+      {
+        "id": 8202,
+        "name": "golden-8202.png",
+        "url": "00000000-0000-4000-8000-000000008202",
+        "nsfwLevel": 1,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8202",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-14T09:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-14T10:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8202"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-14T09:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1001,
+        "postId": 7201,
+        "postTitle": "Golden post 7201",
+        "index": 1,
+        "publishedAt": {
+          "$date": "2026-06-14T10:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": 6401,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": [
+          {
+            "modelVersionId": 6401,
+            "detected": true
+          }
+        ],
+        "_tags": [
+          501,
+          525
+        ]
+      }
+    ],
+    "posts": [
+      {
+        "id": 7201,
+        "modelVersionId": 6401
+      }
+    ],
     "modelVersions": [
       {
         "id": 6001,
@@ -338,9 +460,37 @@
         "rejectionReason": "Not theirs"
       }
     ],
+    "collections": [
+      {
+        "id": 9103,
+        "read": "Public",
+        "userId": 1002,
+        "contributors": []
+      }
+    ],
+    "collectionItems": [
+      {
+        "id": 95201,
+        "collectionId": 9103,
+        "imageId": 8201,
+        "status": "ACCEPTED",
+        "addedById": 1001,
+        "note": null,
+        "tagId": null
+      },
+      {
+        "id": 95202,
+        "collectionId": 9103,
+        "imageId": 8202,
+        "status": "ACCEPTED",
+        "addedById": 1001,
+        "note": "{\"score\":{\"theme\":7,\"wittiness\":5}}",
+        "tagId": null
+      }
+    ],
     "usernames": []
   },
   "expect": {
-    "fallback": "input-include"
+    "fallback": "collection-judge-score"
   }
 }

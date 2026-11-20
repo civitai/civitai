@@ -161,16 +161,41 @@ describe('sharedSlotNavigationSyncUrl', () => {
     url: '/models/1?x=2',
     headers: { 'sec-fetch-mode': 'navigate' },
     cookies,
+    signedIn: true,
     ...extra,
   });
 
-  it('sends a shared-slot-only navigation through the sync in host mode', async () => {
+  // Main web reads the shared slot, so a shared cookie it cannot read as a session is a dead one: syncing it sends the
+  // browser to a hub that cannot verify it either, which answers with its sign-in page and leaves the cookie in place.
+  it('does not sync a shared cookie that resolved no session', async () => {
     process.env.AUTH_SESSION_COOKIE_MODE = 'host';
     const { sharedSlotNavigationSyncUrl } = await import('../shared-slot-sync');
-    expect(sharedSlotNavigationSyncUrl(nav({ [SHARED]: 't' }))).toEqual({
-      location: `/api/auth/authorize?returnUrl=${encodeURIComponent('/models/1?x=2')}`,
-      setCookies: [],
-    });
+    expect(sharedSlotNavigationSyncUrl(nav({ [SHARED]: 'dead' }, { signedIn: false }))).toBeNull();
+  });
+
+  // A token main web still accepts but the hub has revoked comes back from the sync unchanged; the marker stops the
+  // next navigation from sending it again.
+  it('syncs a shared cookie once per value while its marker lives, the marker holding its hash', async () => {
+    process.env.AUTH_SESSION_COOKIE_MODE = 'host';
+    const { sharedSlotNavigationSyncUrl } = await import('../shared-slot-sync');
+    const first = sharedSlotNavigationSyncUrl(nav({ [SHARED]: 'tok-a' }));
+    expect(first?.location).toBe(
+      `/api/auth/authorize?returnUrl=${encodeURIComponent('/models/1?x=2')}`
+    );
+    expect(first?.setCookies).toHaveLength(1);
+    const marker = first!.setCookies[0];
+    expect(marker).toMatch(
+      /^civ_slot_sync=[^;]+; Path=\/; HttpOnly; SameSite=Lax; Max-Age=600; Secure$/
+    );
+    expect(marker).not.toContain('tok-a');
+    const value = marker.slice('civ_slot_sync='.length, marker.indexOf(';'));
+
+    expect(
+      sharedSlotNavigationSyncUrl(nav({ [SHARED]: 'tok-a', civ_slot_sync: value }))
+    ).toBeNull();
+    expect(
+      sharedSlotNavigationSyncUrl(nav({ [SHARED]: 'tok-b', civ_slot_sync: value }))?.location
+    ).toBe(first!.location);
   });
 
   it('does nothing in shared mode, with a host-only cookie, or for a non-navigation', async () => {

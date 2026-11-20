@@ -20,9 +20,9 @@
  *     finds the user may now read different ratings ends it with `cursor_expired`, so the
  *     consumer re-snapshots under them.
  *
- * No stream requires a scope yet, so this source never sends `insufficient_scope`; a verified
- * token carries its scope ({@link VerifiedToken.scope}) for the check that will
- * (`hasScope` in `auth.jwt.ts`).
+ * No stream requires a scope, so this source never sends `insufficient_scope`. The one stream
+ * that reads a scope, an authorized PRIVATE stream (`private-feed.ts`), reads `AppDataRead` from
+ * the principal's {@link PrincipalToken} and, without it, streams nothing rather than refusing.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import {
@@ -55,6 +55,11 @@ export type TokenUser = { showNsfw?: boolean | null; browsingLevel?: number | nu
 export type VerifiedToken =
   | (VerifiedTokenBase & {
       service?: undefined;
+      /**
+       * The user the token acts for. Required of every verifier, and null on a service token, so a
+       * private stream (`private-feed.ts`) reads it, never infers it from {@link subject}.
+       */
+      userId: number;
       user: TokenUser;
     })
   | (VerifiedTokenBase & {
@@ -63,11 +68,16 @@ export type VerifiedToken =
        * allowlist (`auth.jwt.ts`). Its audience is {@link SERVICE_AUDIENCE}.
        */
       service: true;
+      /** No user: a private stream is never served to a service token (`private-feed.ts`). */
+      userId: null;
       user?: undefined;
     });
 
 /** The site's verification of a bearer token: null for one it does not accept. */
 export type VerifyToken = (token: string) => Promise<VerifiedToken | null>;
+
+/** What a private stream's gates read of an accepted token (`private-feed.ts`). */
+export type PrincipalToken = Pick<VerifiedToken, 'userId' | 'clientId' | 'scope' | 'actor'>;
 
 export type Principal = {
   /** null: anonymous. */
@@ -77,6 +87,8 @@ export type Principal = {
   /** The token's OAuth client (`client_id`), and who presented it for that client (`act.sub`). */
   clientId?: string;
   actor?: string | null;
+  /** The accepted token's user, client, scope and actor; null for anonymous. */
+  token: PrincipalToken | null;
   audience: Audience;
   expiresAt: Date | null;
   /** Re-verifies the token now; null for anonymous. */
@@ -91,6 +103,7 @@ export type Recheck = 'active' | 'inactive' | 'audience-changed';
 
 export const ANONYMOUS_PRINCIPAL: Principal = {
   subject: null,
+  token: null,
   audience: ANONYMOUS_AUDIENCE,
   expiresAt: null,
   recheck: null,
@@ -138,6 +151,12 @@ export async function authenticate(
     ...(verified.service === true ? { service: true as const } : {}),
     clientId: verified.clientId,
     actor: verified.actor,
+    token: {
+      userId: verified.userId,
+      clientId: verified.clientId,
+      scope: verified.scope,
+      actor: verified.actor,
+    },
     audience,
     expiresAt: verified.expiresAt,
     recheck: async () => {

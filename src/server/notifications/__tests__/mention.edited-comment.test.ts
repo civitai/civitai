@@ -15,8 +15,8 @@ const commentBranch = () => {
 
 describe('new-mention — a mention added by editing a comment', () => {
   it('rows edited since the last run are re-read', () => {
-    expect(commentBranch()).toMatch(
-      /c."createdAt" > '2026-10-06T23:38:00.000Z' OR c."updatedAt" > '2026-10-06T23:38:00.000Z'/
+    expect(commentBranch()).toContain(
+      `c."createdAt" > '2026-10-06T23:38:00.000Z'::timestamp - interval '5 minutes' OR c."updatedAt" > '2026-10-06T23:38:00.000Z'::timestamp - interval '5 minutes'`
     );
   });
 

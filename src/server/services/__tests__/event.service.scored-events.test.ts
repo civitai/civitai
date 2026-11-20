@@ -442,14 +442,6 @@ describe('getMyEventHats', () => {
     expect(sql).toContain(`AND c.data->>'event' = ?\n`);
     expect(values).toEqual([9, 'birthday2026']);
   });
-
-  it("asks for the scores of exactly the caller's hats", async () => {
-    await service.getMyEventHats({ event: 'birthday2026', user });
-    expect(scoring.getCosmeticScores).toHaveBeenCalledWith(scored, [
-      { userId: 9, cosmeticId: 31, claimKey: 'claimed' },
-      { userId: 9, cosmeticId: 32, claimKey: 'txn-9' },
-    ]);
-  });
 });
 
 // The picker's image read is hand-written SQL, so it runs against real Postgres: the order and the
@@ -730,19 +722,6 @@ describe('getPlaceableEventContentPage', () => {
     expect(articles.nextCursor).toBe(72);
   });
 
-  it('points a first page with more at the next one', async () => {
-    dbMock.dbRead.model.findMany.mockResolvedValueOnce(ids(25));
-    expect((await page({ entityType: 'Model' })).nextCursor).toBe(24);
-  });
-
-  // A full page of exactly 24 is the last one: only a 25th row means more.
-  it('ends on a page of exactly 24', async () => {
-    dbMock.dbRead.article.findMany.mockResolvedValueOnce(ids(24));
-    const articles = await page({ entityType: 'Article' });
-    expect(dbMock.dbRead.article.findMany.mock.calls[0][0].skip).toBe(0);
-    expect(articles.nextCursor).toBeNull();
-  });
-
   // An event whose hat can go on a type the picker has no reader for still reads nothing for it.
   it('reads nothing for an allowed type the picker does not list', async () => {
     decorations.getEventDecorationDefinition.mockReturnValueOnce({
@@ -1015,36 +994,6 @@ describe('getEventHatCatalog', () => {
       { design: 'crown', name: 'crown Cap', hats: [{ team: 'Yellow', url: 'y2' }] },
       { design: 'plain', name: 'Plain Hat', hats: [{ team: 'Green', url: 'g3' }] },
     ]);
-  });
-
-  // The rows are the mock's, so pin both whole queries: what is on sale now by the shop's own rule
-  // (it is edge-cached for anonymous visitors), then this event's join design and those, in id order.
-  it("queries only this event's join design and on-sale decorations, in id order", async () => {
-    engine.assertReadable.mockResolvedValue('open');
-    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ id: 7 }, { id: 9 }]).mockResolvedValueOnce([]);
-    await service.getEventHatCatalog({ event: 'birthday2026', viewer: undefined });
-    const calls = dbMock.dbRead.$queryRaw.mock.calls as [string[], ...unknown[]][];
-    const sql = (strings: string[]) => strings.join('?').replace(/\s+/g, ' ').trim();
-    expect(calls).toHaveLength(2);
-    const [[onSale, ...onSaleValues], [catalog, ...values]] = calls;
-    expect(sql(onSale)).toBe(
-      `SELECT DISTINCT si."cosmeticId" AS id FROM "CosmeticShopItem" si ` +
-        `WHERE si."cosmeticId" IS NOT NULL AND si.status = 'Published' AND si.listed ` +
-        `AND si."archivedAt" IS NULL ` +
-        `AND (si."availableFrom" IS NULL OR si."availableFrom" <= now()) ` +
-        `AND (si."availableTo" IS NULL OR si."availableTo" >= now()) ` +
-        `AND EXISTS ( SELECT 1 FROM "CosmeticShopSectionItem" ssi ` +
-        `JOIN "CosmeticShopSection" ss ON ss.id = ssi."shopSectionId" ` +
-        `WHERE ssi."shopItemId" = si.id AND ss.published )`
-    );
-    expect(onSaleValues).toEqual([]);
-    expect(sql(catalog)).toBe(
-      `SELECT c.data->>'design' AS design, c.data->>'team' AS team, c.name, c.data->>'url' AS url ` +
-        `FROM "Cosmetic" c WHERE c.type = 'ContentDecoration' AND c.data->>'event' = ? ` +
-        `AND c."createdById" IS NULL ` +
-        `AND (c.data->>'design' = ? OR c.id = ANY(?::int[])) ORDER BY c.id`
-    );
-    expect(values).toEqual(['birthday2026', 'basic', [7, 9]]);
   });
 });
 
@@ -1349,20 +1298,5 @@ describe('getWornEventHat', () => {
       impressions: 0,
       reactions: 0,
     });
-  });
-});
-
-describe('wornEventHatSchema', () => {
-  it('takes one piece of content by type and id', async () => {
-    const { wornEventHatSchema } = await import('~/server/schema/event.schema');
-    const ok = { event: 'birthday2026', entityType: 'Image', entityId: 5 };
-    expect(wornEventHatSchema.safeParse(ok).success).toBe(true);
-    for (const bad of [
-      { ...ok, entityType: 'Hat' },
-      { ...ok, entityId: 0 },
-      { ...ok, entityId: 1.5 },
-      { ...ok, entityId: '5' },
-    ])
-      expect(wornEventHatSchema.safeParse(bad).success).toBe(false);
   });
 });

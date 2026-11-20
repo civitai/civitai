@@ -148,7 +148,7 @@ import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
 import {
   imageNotRestrictedSql,
   imageNotRestrictedWhere,
-  isImageNotRestricted,
+  isImageServable,
   withServableImage,
 } from '~/server/common/image-visibility';
 import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
@@ -176,7 +176,7 @@ import {
   afterPostsUnpublish,
 } from '~/server/services/post.service';
 import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
-import { NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { imageResourcesCache, refreshHasReceivedReviews } from '~/server/redis/caches';
 import {
   areCrucibleEntriesClosed,
@@ -914,6 +914,7 @@ export const isCrucibleHiddenByScan = (
   (crucible.ingestion !== CrucibleIngestionStatus.Scanned ||
     crucible.image?.ingestion !== ImageIngestionStatus.Scanned ||
     crucible.image.nsfwLevel === 0 ||
+    crucible.image.nsfwLevel === NsfwLevel.Blocked ||
     crucible.image.needsReview != null ||
     crucible.image.tosViolation);
 
@@ -6305,7 +6306,7 @@ export const getUserActiveCrucibles = async ({
         // On green the ceiling holds for the host too, as on the crucible's own cards.
         imageUrl:
           !entry.crucible.image ||
-          !isImageNotRestricted(entry.crucible.image, userId) ||
+          !isImageServable(entry.crucible.image, userId) ||
           (site.isGreen && isImageHiddenFromGreenViewer(entry.crucible.image.nsfwLevel, userId))
             ? null
             : entry.crucible.image.url,

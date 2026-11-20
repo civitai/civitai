@@ -29,6 +29,9 @@ const (
 	MaxLimit    = 200 // FEED_MAX_LIMIT
 	maxExcluded = 100
 	maxUsers    = 1000
+	// MaxFollowed is MAX_FOLLOWED (= MAX_USER_IDS, the feed service's own ceiling on userIds): a
+	// longer follow list is refused (`followed>10000`), which Node answers with an empty page.
+	MaxFollowed = 10_000
 )
 
 var sorts = map[string]string{
@@ -70,6 +73,13 @@ type Query struct {
 	PostID int
 	// UserID is the creator filter (`userId`, or the id a `username` resolved to), sent as `userIds`.
 	UserID int
+	// Followed is the mapper's `followedOn`: `followed: true` with a signed-in viewer (signed out, the
+	// search path drops the flag). FollowedUserIDs is then the viewer's follow list as
+	// getUserFollows answered it (serveImagesFromFeedService's `followedUserIds`); its positive ids
+	// are sent as `userIds`, in order. The caller answers an empty list itself (serveFromFeed's
+	// empty page), before Map.
+	Followed        bool
+	FollowedUserIDs []int
 	// Tags is the input's own `tags` inclusion list, after enforceBlockedBrowsingTags stripped the
 	// blocked ones.
 	Tags   []int
@@ -247,6 +257,16 @@ func Map(q Query) (string, *Refusal) {
 			return skip(fmt.Sprintf("postIds:limit>%d", MaxLimit))
 		}
 	}
+	// The follow list, after the post ids and before the sort (the mapper's order): too long for the
+	// feed, or beside a creator scope (the feed takes one `userIds`), is an empty page.
+	if q.Followed {
+		if len(q.FollowedUserIDs) > MaxFollowed {
+			return skip(fmt.Sprintf("followed>%d", MaxFollowed))
+		}
+		if q.UserID > 0 {
+			return skip("flag:followed:userId")
+		}
+	}
 	sort, ok := sorts[q.Sort]
 	if !ok {
 		s := q.Sort
@@ -339,6 +359,12 @@ func Map(q Query) (string, *Refusal) {
 	}
 	if q.UserID > 0 {
 		p.set("userIds", strconv.Itoa(q.UserID))
+	}
+	// `ints(followed)`: the positive ids, in order, repeats kept (a creator scope was refused above).
+	if q.Followed {
+		if followed := positive(q.FollowedUserIDs); len(followed) > 0 {
+			p.set("userIds", join(followed))
+		}
 	}
 	if len(q.Types) > 0 {
 		p.set("types", strings.Join(q.Types, ","))

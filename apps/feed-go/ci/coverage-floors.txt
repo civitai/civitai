@@ -17,6 +17,7 @@ internal/config 78
 internal/dbpool 95
 internal/feed 76
 internal/fallback 91
+internal/flipt 88
 internal/feedsvc 92
 internal/hydrate 86
 internal/inputschema 80

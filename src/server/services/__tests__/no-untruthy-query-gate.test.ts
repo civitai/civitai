@@ -133,8 +133,8 @@ function scan() {
     byExt[path.extname(file)] = (byExt[path.extname(file)] ?? 0) + 1;
     const lines = text.split(/\r?\n/);
     lines.forEach((line, i) => {
-      const comments = precedingComments(lines, i);
       if (hasBareGate(line)) {
+        const comments = precedingComments(lines, i);
         // Uncoerced on its own terms — either a violation, or an accounted-for exemption.
         if (comments.some((l) => EXEMPT.test(l))) exempted.push(`${file}:${i + 1}`);
         else offenders.push(`${file}:${i + 1}`);

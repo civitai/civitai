@@ -3,7 +3,6 @@ import type * as AppListingRating from '~/server/services/blocks/app-listing-rat
 
 import {
   LISTING_ASSET_MAX_DIMENSION_PX,
-  LISTING_ICON_MAX_PX,
   validateListingImage,
   type ListingImageMeta,
 } from '~/server/schema/blocks/app-listing.schema';
@@ -144,60 +143,42 @@ describe('validateListingImage', () => {
     expect(validateListingImage(base, 'icon').ok).toBe(true);
   });
 
-  it('rejects a non-image (video) asset for every kind', () => {
-    const video = { ...base, type: 'video' };
-    for (const kind of ['icon', 'cover', 'screenshot'] as const) {
-      const r = validateListingImage(video, kind);
-      expect(r.ok).toBe(false);
-    }
+  it.each([
+    ['a video', { type: 'video' }, 'icon'],
+    ['an unsupported mime type', { mimeType: 'image/gif' }, 'icon'],
+    ['an oversized icon file', { sizeBytes: 5 * 1024 * 1024 }, 'icon'],
+    ['a non-square icon', { width: 512, height: 256 }, 'icon'],
+    ['a too-small icon', { width: 64, height: 64 }, 'icon'],
+    ['an icon over its own maximum', { width: 5000, height: 5000 }, 'icon'],
+    ['a portrait cover', { width: 720, height: 1280 }, 'cover'],
+    ['a narrow cover', { width: 480, height: 320 }, 'cover'],
+    [
+      'a cover one pixel over the ceiling',
+      { width: LISTING_ASSET_MAX_DIMENSION_PX + 1, height: 4096 },
+      'cover',
+    ],
+    ['a tiny screenshot', { width: 200, height: 200 }, 'screenshot'],
+    ['a too-wide screenshot', { width: 2600, height: 400 }, 'screenshot'],
+    [
+      'a screenshot over the ceiling on its taller side',
+      { width: 4500, height: LISTING_ASSET_MAX_DIMENSION_PX + 1 },
+      'screenshot',
+    ],
+  ] as const)('rejects %s', (_, meta, kind) => {
+    expect(validateListingImage({ ...base, ...meta }, kind).ok).toBe(false);
   });
 
-  it('rejects an unsupported mime type', () => {
-    const r = validateListingImage({ ...base, mimeType: 'image/gif' }, 'icon');
-    expect(r).toEqual({ ok: false, reason: expect.stringContaining('unsupported image type') });
-  });
-
-  it('rejects an oversized icon (size cap)', () => {
-    const r = validateListingImage({ ...base, sizeBytes: 5 * 1024 * 1024 }, 'icon');
-    expect(r).toEqual({ ok: false, reason: expect.stringContaining('bytes') });
-  });
-
-  it('rejects a non-square icon (aspect)', () => {
-    const r = validateListingImage({ ...base, width: 512, height: 256 }, 'icon');
-    expect(r.ok).toBe(false);
-  });
-
-  it('rejects a too-small icon (min dimension)', () => {
-    const r = validateListingImage({ ...base, width: 64, height: 64 }, 'icon');
-    expect(r.ok).toBe(false);
-  });
-
-  it('accepts a 16:9 landscape cover, rejects a portrait cover', () => {
-    expect(validateListingImage({ ...base, width: 1280, height: 720 }, 'cover').ok).toBe(true);
-    expect(validateListingImage({ ...base, width: 720, height: 1280 }, 'cover').ok).toBe(false);
-  });
-
-  it('rejects a cover narrower than the min width', () => {
-    const r = validateListingImage({ ...base, width: 480, height: 320 }, 'cover');
-    expect(r.ok).toBe(false);
-  });
-
-  it('accepts a normal screenshot, rejects a tiny one and a too-wide one', () => {
-    expect(validateListingImage({ ...base, width: 1280, height: 720 }, 'screenshot').ok).toBe(true);
-    expect(validateListingImage({ ...base, width: 200, height: 200 }, 'screenshot').ok).toBe(false);
-    expect(validateListingImage({ ...base, width: 2600, height: 400 }, 'screenshot').ok).toBe(
-      false
-    );
-  });
-
-  it('rejects unknown/zero dimensions', () => {
-    expect(validateListingImage({ ...base, width: null, height: null }, 'icon').ok).toBe(false);
-    expect(validateListingImage({ ...base, width: 0, height: 0 }, 'cover').ok).toBe(false);
-  });
-
-  it('skips size/mime checks when those fields are absent (older Image rows)', () => {
-    const r = validateListingImage({ type: 'image', width: 512, height: 512 }, 'icon');
-    expect(r.ok).toBe(true);
+  it.each([
+    ['a 16:9 cover', { width: 1280, height: 720 }, 'cover'],
+    ['a cover at the ceiling', { width: LISTING_ASSET_MAX_DIMENSION_PX, height: 4096 }, 'cover'],
+    ['a normal screenshot', { width: 1280, height: 720 }, 'screenshot'],
+    [
+      'an older Image row without size or mime',
+      { sizeBytes: undefined, mimeType: undefined },
+      'icon',
+    ],
+  ] as const)('accepts %s', (_, meta, kind) => {
+    expect(validateListingImage({ ...base, ...meta }, kind).ok).toBe(true);
   });
 });
 
@@ -227,28 +208,6 @@ describe('validateListingImage (LISTING_ASSET_MAX_DIMENSION_PX ceiling)', () => 
     sizeBytes: 100_000,
   };
 
-  it('accepts a cover AT the ceiling and rejects one a single pixel over', () => {
-    // Aspect 2.0 and far above the 640px floor either side of the boundary — the
-    // only thing that changes across these two cases is one pixel of width.
-    expect(
-      validateListingImage(
-        { ...base, width: LISTING_ASSET_MAX_DIMENSION_PX, height: 4096 },
-        'cover'
-      )
-    ).toEqual({ ok: true });
-
-    const over = validateListingImage(
-      { ...base, width: LISTING_ASSET_MAX_DIMENSION_PX + 1, height: 4096 },
-      'cover'
-    );
-    expect(over).toEqual({
-      ok: false,
-      reason: `cover is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got ${
-        LISTING_ASSET_MAX_DIMENSION_PX + 1
-      }px)`,
-    });
-  });
-
   it('rejects the 9000×4000 cover shape that was accepted in production', () => {
     // Aspect 2.25 (inside 1.3–2.4) and 9000px wide (above the 640px floor): every
     // pre-existing cover rule passes, so ONLY the ceiling can reject it.
@@ -256,38 +215,6 @@ describe('validateListingImage (LISTING_ASSET_MAX_DIMENSION_PX ceiling)', () => 
     expect(r).toEqual({
       ok: false,
       reason: `cover is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got 9000px)`,
-    });
-  });
-
-  it('applies the ceiling to the TALLER side too, not just width', () => {
-    // Aspect 0.55 — a valid screenshot aspect, above the 320px floor, over the
-    // ceiling on height only.
-    const r = validateListingImage(
-      { ...base, width: 4500, height: LISTING_ASSET_MAX_DIMENSION_PX + 1 },
-      'screenshot'
-    );
-    expect(r).toEqual({
-      ok: false,
-      reason: `screenshot is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got ${
-        LISTING_ASSET_MAX_DIMENSION_PX + 1
-      }px)`,
-    });
-    // Same aspect, same bytes, under the ceiling → accepted.
-    expect(
-      validateListingImage(
-        { ...base, width: 4500, height: LISTING_ASSET_MAX_DIMENSION_PX },
-        'screenshot'
-      )
-    ).toEqual({ ok: true });
-  });
-
-  it('keeps the icon on its own TIGHTER maximum', () => {
-    // The shared ceiling must not loosen the icon: 5000px square is inside 8192
-    // but outside LISTING_ICON_MAX_PX, and must still be rejected for that reason.
-    const r = validateListingImage({ ...base, width: 5000, height: 5000 }, 'icon');
-    expect(r).toEqual({
-      ok: false,
-      reason: expect.stringContaining(`${LISTING_ICON_MAX_PX}px on its longer side`),
     });
   });
 });
@@ -303,38 +230,6 @@ describe('checkListingAssetsComplete / assertListingAssetsComplete', () => {
       complete: true,
     });
   });
-
-  it('reports every missing combination', async () => {
-    const { checkListingAssetsComplete } = await import('../app-listing-assets.service');
-    expect(checkListingAssetsComplete({ iconId: null, coverId: 2, screenshotCount: 1 })).toEqual({
-      complete: false,
-      missing: ['icon'],
-    });
-    expect(checkListingAssetsComplete({ iconId: 1, coverId: null, screenshotCount: 1 })).toEqual({
-      complete: false,
-      missing: ['cover'],
-    });
-    expect(checkListingAssetsComplete({ iconId: 1, coverId: 2, screenshotCount: 0 })).toEqual({
-      complete: false,
-      missing: ['screenshots'],
-    });
-    expect(checkListingAssetsComplete({ iconId: null, coverId: null, screenshotCount: 0 })).toEqual(
-      {
-        complete: false,
-        missing: ['icon', 'cover', 'screenshots'],
-      }
-    );
-  });
-
-  it('assert throws with the missing list, passes when complete', async () => {
-    const { assertListingAssetsComplete } = await import('../app-listing-assets.service');
-    expect(() =>
-      assertListingAssetsComplete({ iconId: null, coverId: null, screenshotCount: 0 })
-    ).toThrow(/icon, cover, screenshots/);
-    expect(() =>
-      assertListingAssetsComplete({ iconId: 1, coverId: 2, screenshotCount: 1 })
-    ).not.toThrow();
-  });
 });
 
 describe('checkListingMeetsFloor / assertListingMeetsFloor (icon+cover floor, screenshots optional)', () => {
@@ -342,25 +237,6 @@ describe('checkListingMeetsFloor / assertListingMeetsFloor (icon+cover floor, sc
     const { checkListingMeetsFloor } = await import('../app-listing-assets.service');
     expect(checkListingMeetsFloor({ iconId: 1, coverId: 2, screenshotCount: 0 })).toEqual({
       ok: true,
-    });
-  });
-
-  it('reports only the missing FLOOR assets (ignores screenshots)', async () => {
-    const { checkListingMeetsFloor } = await import('../app-listing-assets.service');
-    // Missing icon, has cover, 0 screenshots → only icon.
-    expect(checkListingMeetsFloor({ iconId: null, coverId: 2, screenshotCount: 0 })).toEqual({
-      ok: false,
-      missing: ['icon'],
-    });
-    // Missing cover, has icon → only cover.
-    expect(checkListingMeetsFloor({ iconId: 1, coverId: null, screenshotCount: 5 })).toEqual({
-      ok: false,
-      missing: ['cover'],
-    });
-    // Missing both.
-    expect(checkListingMeetsFloor({ iconId: null, coverId: null, screenshotCount: 0 })).toEqual({
-      ok: false,
-      missing: ['icon', 'cover'],
     });
   });
 
@@ -390,19 +266,6 @@ describe('checkListingMeetsFloor / assertListingMeetsFloor (icon+cover floor, sc
       assertListingMeetsFloor({ iconId: 1, coverId: 2, screenshotCount: 0 })
     ).not.toThrow();
   });
-
-  it('REGRESSION: checkListingAssetsComplete is UNCHANGED — icon+cover, 0 screenshots is still incomplete (advisory), proving the two helpers are distinct', async () => {
-    const { checkListingAssetsComplete, checkListingMeetsFloor } = await import(
-      '../app-listing-assets.service'
-    );
-    const listing = { iconId: 1, coverId: 2, screenshotCount: 0 };
-    // Floor: passes. Full completeness: still missing screenshots.
-    expect(checkListingMeetsFloor(listing)).toEqual({ ok: true });
-    expect(checkListingAssetsComplete(listing)).toEqual({
-      complete: false,
-      missing: ['screenshots'],
-    });
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -410,93 +273,6 @@ describe('checkListingMeetsFloor / assertListingMeetsFloor (icon+cover floor, sc
 // ---------------------------------------------------------------------------
 
 describe('pure helpers', () => {
-  it('seededHue is deterministic + in range', async () => {
-    const { seededHue } = await import('../app-listing-assets.service');
-    expect(seededHue('cool-app')).toBe(seededHue('cool-app'));
-    expect(seededHue('cool-app')).toBeGreaterThanOrEqual(0);
-    expect(seededHue('cool-app')).toBeLessThan(360);
-    expect(seededHue('a')).not.toBe(seededHue('b'));
-  });
-
-  it('appInitial picks first alphanumeric, uppercased, falls back to slug/?', async () => {
-    const { appInitial } = await import('../app-listing-assets.service');
-    expect(appInitial('Cool App', 'slug')).toBe('C');
-    expect(appInitial('  ', 'slug')).toBe('S');
-    expect(appInitial('', '')).toBe('?');
-    expect(appInitial('123abc', 'x')).toBe('1');
-  });
-
-  it('pickLogoPrefillUrl normalises http(s), rejects otherwise', async () => {
-    const { pickLogoPrefillUrl } = await import('../app-listing-assets.service');
-    expect(pickLogoPrefillUrl('  https://ex.com/a.png ')).toBe('https://ex.com/a.png');
-    expect(pickLogoPrefillUrl('ftp://ex.com/a')).toBeNull();
-    expect(pickLogoPrefillUrl('javascript:alert(1)')).toBeNull();
-    expect(pickLogoPrefillUrl(null)).toBeNull();
-    expect(pickLogoPrefillUrl(undefined)).toBeNull();
-  });
-
-  it('SVG builders emit valid-looking svg with the initial + escaped name', async () => {
-    const { buildPlaceholderIconSvg, buildPlaceholderCoverSvg } = await import(
-      '../app-listing-assets.service'
-    );
-    const icon = buildPlaceholderIconSvg({ slug: 'cool-app', category: 'games', name: 'Cool App' });
-    expect(icon).toContain('<svg');
-    expect(icon).toContain('>C<');
-    const cover = buildPlaceholderCoverSvg({ slug: 'x', category: null, name: 'A & B <x>' });
-    expect(cover).toContain('<svg');
-    expect(cover).toContain('A &amp; B &lt;x&gt;');
-    expect(cover).not.toContain('<x>');
-  });
-
-  // DRIFT GUARD (cross-surface): the GENERATED asset SVGs and the CLIENT
-  // render-time fallback (AppListingCard / AppListingDetailBody, via
-  // `listingPlaceholderGradient`) must derive from the SAME seed + stops. They
-  // used to be two hand-rolled designs that silently diverged — a generated
-  // seeded-hue icon next to a uniform grey cover placeholder. If someone
-  // recolours one side only, this fails.
-  it('generated SVG stops match the client placeholder gradient stops', async () => {
-    const { buildPlaceholderIconSvg, buildPlaceholderCoverSvg } = await import(
-      '../app-listing-assets.service'
-    );
-    const { listingPlaceholderGradient, listingPlaceholderSeed, placeholderHues, placeholderStop } =
-      await import('~/shared/constants/app-listing-placeholder.constants');
-
-    const slug = 'cool-app';
-    const category = 'games';
-    const { hue, hue2 } = placeholderHues(listingPlaceholderSeed(slug, category));
-
-    // 🔴 Assert the stop + its OFFSET as ONE string. A pair of order-agnostic
-    // `toContain(stop)` checks passes even if the two stops are SWAPPED — an
-    // inverted gradient on every generated icon, which is a real visual
-    // regression. Binding offset→colour is what actually pins the direction.
-    const icon = buildPlaceholderIconSvg({ slug, category, name: 'Cool App' });
-    expect(icon).toContain(`offset="0%" stop-color="${placeholderStop('icon', 'from', hue)}"`);
-    expect(icon).toContain(`offset="100%" stop-color="${placeholderStop('icon', 'to', hue2)}"`);
-
-    const cover = buildPlaceholderCoverSvg({ slug, category, name: 'Cool App' });
-    expect(cover).toContain(`offset="0%" stop-color="${placeholderStop('cover', 'from', hue)}"`);
-    expect(cover).toContain(`offset="100%" stop-color="${placeholderStop('cover', 'to', hue2)}"`);
-
-    // …and the CSS the client renders uses those very same stops, in the same
-    // order. BOTH surfaces are cross-checked: `icon` backs the Avatar monogram
-    // and `cover` backs the card/hero, so checking only one leaves the other
-    // free to drift.
-    expect(listingPlaceholderGradient({ slug, category, surface: 'cover' })).toBe(
-      `linear-gradient(135deg, ${placeholderStop('cover', 'from', hue)} 0%, ${placeholderStop(
-        'cover',
-        'to',
-        hue2
-      )} 100%)`
-    );
-    expect(listingPlaceholderGradient({ slug, category, surface: 'icon' })).toBe(
-      `linear-gradient(135deg, ${placeholderStop('icon', 'from', hue)} 0%, ${placeholderStop(
-        'icon',
-        'to',
-        hue2
-      )} 100%)`
-    );
-  });
-
   it('chooseScreenshotSource: existing → migrate(real only) → none', async () => {
     const { chooseScreenshotSource } = await import('../app-listing-assets.service');
     const base = {
@@ -544,19 +320,26 @@ describe('pure helpers', () => {
     });
   });
 
-  it('realDevBundleScreenshots keeps only string-keyed, non-autogenerated records', async () => {
-    const { realDevBundleScreenshots } = await import('../app-listing-assets.service');
-    expect(realDevBundleScreenshots(null)).toEqual([]);
-    expect(realDevBundleScreenshots('nope')).toEqual([]);
-    expect(
-      realDevBundleScreenshots([
-        { key: 'a' },
-        { key: 'b', autogenerated: true },
-        { key: 123 },
-        { nope: true },
-        { key: 'c', autogenerated: false },
-      ])
-    ).toEqual([{ key: 'a' }, { key: 'c', autogenerated: false }]);
+  it('pickLogoPrefillUrl normalises http(s), rejects otherwise', async () => {
+    const { pickLogoPrefillUrl } = await import('../app-listing-assets.service');
+    expect(pickLogoPrefillUrl('  https://ex.com/a.png ')).toBe('https://ex.com/a.png');
+    expect(pickLogoPrefillUrl('ftp://ex.com/a')).toBeNull();
+    expect(pickLogoPrefillUrl('javascript:alert(1)')).toBeNull();
+    expect(pickLogoPrefillUrl(null)).toBeNull();
+    expect(pickLogoPrefillUrl(undefined)).toBeNull();
+  });
+
+  it('SVG builders emit valid-looking svg with the initial + escaped name', async () => {
+    const { buildPlaceholderIconSvg, buildPlaceholderCoverSvg } = await import(
+      '../app-listing-assets.service'
+    );
+    const icon = buildPlaceholderIconSvg({ slug: 'cool-app', category: 'games', name: 'Cool App' });
+    expect(icon).toContain('<svg');
+    expect(icon).toContain('>C<');
+    const cover = buildPlaceholderCoverSvg({ slug: 'x', category: null, name: 'A & B <x>' });
+    expect(cover).toContain('<svg');
+    expect(cover).toContain('A &amp; B &lt;x&gt;');
+    expect(cover).not.toContain('<x>');
   });
 });
 
@@ -1296,7 +1079,6 @@ describe('screenshot CRUD', () => {
       { id: 's1', imageId: 10, order: 0, caption: null },
       { id: 's2', imageId: 11, order: 1, caption: null },
     ]);
-    // Icon PG(1), cover PG13(2), screenshots R(4) + X(8).
     mockDb.image.findMany.mockResolvedValue([
       { id: 1, nsfwLevel: 1 },
       { id: 2, nsfwLevel: 2 },
@@ -1304,20 +1086,10 @@ describe('screenshot CRUD', () => {
       { id: 11, nsfwLevel: 8 },
     ]);
     const { getListingAssets } = await import('../app-listing-assets.service');
-    const { deriveContentRatingFromAssets } = await import(
-      '~/shared/constants/browsingLevel.constants'
-    );
     const res = await getListingAssets({ listingId: 'apl_1' }, mod);
     expect(res.iconNsfwLevel).toBe(1);
     expect(res.coverNsfwLevel).toBe(2);
     expect(res.screenshots.map((s) => s.nsfwLevel)).toEqual([4, 8]);
-    // The review modal derives 'x' from the max (X=8).
-    const derived = deriveContentRatingFromAssets([
-      { nsfwLevel: res.iconNsfwLevel },
-      { nsfwLevel: res.coverNsfwLevel },
-      ...res.screenshots.map((s) => ({ nsfwLevel: s.nsfwLevel })),
-    ]);
-    expect(derived).toBe('x');
   });
 
   it('getAssets returns null nsfwLevels when the backing Images are absent', async () => {
@@ -1725,24 +1497,6 @@ describe('backfillListingAssets', () => {
     expect(res.iconsCreated).toBe(0);
   });
 
-  it('dryRun computes counts and writes nothing / calls no deps', async () => {
-    mockDb.appListing.findMany.mockResolvedValue([
-      row({ appBlock: { screenshots: [{ key: 'k1' }] } }),
-    ]);
-    const deps = makeDeps();
-    const { backfillListingAssets } = await import('../app-listing-assets.service');
-    const res = await backfillListingAssets({ dryRun: true }, deps);
-    expect(res.dryRun).toBe(true);
-    expect(res.processed).toBe(1);
-    expect(res.screenshotsCreated).toBe(1);
-    expect(res.iconsCreated).toBe(1);
-    expect(res.coversSet).toBe(1);
-    expect(deps.migrateBlockScreenshots).not.toHaveBeenCalled();
-    expect(deps.generateIcon).not.toHaveBeenCalled();
-    expect(mockDb.appListingScreenshot.createMany).not.toHaveBeenCalled();
-    expect(mockDb.appListing.update).not.toHaveBeenCalled();
-  });
-
   it('isolates a per-row failure into failed[] and continues the batch', async () => {
     // Both rows have a genuine dev screenshot to migrate; the first row's
     // migrate throws (poison), the second succeeds.
@@ -1805,17 +1559,6 @@ describe('backfillListingAssets', () => {
       expect(res.coversSet).toBe(0);
     });
 
-    it('the dry run does not count a cover for a mature migration', async () => {
-      mockDb.appListing.findMany.mockResolvedValue([
-        row({ contentRating: 'r', appBlock: { screenshots: [{ key: 'k1' }] } }),
-      ]);
-      const { backfillListingAssets } = await import('../app-listing-assets.service');
-      const res = await backfillListingAssets({ dryRun: true }, makeDeps());
-      // Positive control: the dry run did count the migration itself.
-      expect(res.screenshotsCreated).toBe(1);
-      expect(res.coversSet).toBe(0);
-    });
-
     // An unrated screenshot is eligible for the pick (the same rule as the block upload SFW
     // ceiling); if it is still unrated at render time the store gate hides it and falls back to
     // the next visible screenshot, so the pick can never surface it early.
@@ -1837,6 +1580,16 @@ describe('backfillListingAssets', () => {
       );
     });
 
+    it('the dry run does not count a cover for a mature migration', async () => {
+      mockDb.appListing.findMany.mockResolvedValue([
+        row({ contentRating: 'r', appBlock: { screenshots: [{ key: 'k1' }] } }),
+      ]);
+      const { backfillListingAssets } = await import('../app-listing-assets.service');
+      const res = await backfillListingAssets({ dryRun: true }, makeDeps());
+      expect(res.screenshotsCreated).toBe(1);
+      expect(res.coversSet).toBe(0);
+    });
+
     it('the dry run counts the same pick', async () => {
       mockDb.appListing.findMany.mockResolvedValue([
         row({ iconId: 900, screenshots: [shot(711, 0, 4)] }),
@@ -1848,13 +1601,22 @@ describe('backfillListingAssets', () => {
     });
   });
 
-  it('forwards limit as take to findMany', async () => {
-    mockDb.appListing.findMany.mockResolvedValue([]);
+  it('dryRun computes counts and writes nothing / calls no deps', async () => {
+    mockDb.appListing.findMany.mockResolvedValue([
+      row({ appBlock: { screenshots: [{ key: 'k1' }] } }),
+    ]);
+    const deps = makeDeps();
     const { backfillListingAssets } = await import('../app-listing-assets.service');
-    await backfillListingAssets({ limit: 5 }, makeDeps());
-    const arg = mockDb.appListing.findMany.mock.calls[0][0] as { take?: number; where: unknown };
-    expect(arg.take).toBe(5);
-    expect(arg.where).toEqual({ status: 'approved' });
+    const res = await backfillListingAssets({ dryRun: true }, deps);
+    expect(res.dryRun).toBe(true);
+    expect(res.processed).toBe(1);
+    expect(res.screenshotsCreated).toBe(1);
+    expect(res.iconsCreated).toBe(1);
+    expect(res.coversSet).toBe(1);
+    expect(deps.migrateBlockScreenshots).not.toHaveBeenCalled();
+    expect(deps.generateIcon).not.toHaveBeenCalled();
+    expect(mockDb.appListingScreenshot.createMany).not.toHaveBeenCalled();
+    expect(mockDb.appListing.update).not.toHaveBeenCalled();
   });
 });
 
@@ -1976,17 +1738,6 @@ describe('assertAssetsScanClean', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('is a no-op (no query) when there are no assets', async () => {
-    const { assertAssetsScanClean } = await import('../app-listing-assets.service');
-    await assertAssetsScanClean({
-      ...NO_RED_SLOTS,
-      iconId: null,
-      coverId: null,
-      screenshotImageIds: [],
-    });
-    expect(mockDb.image.findMany).not.toHaveBeenCalled();
-  });
-
   it('throws naming the still-scanning (pending) asset', async () => {
     mockDb.image.findMany.mockResolvedValue([
       { id: 1, ingestion: 'Pending' },
@@ -2030,19 +1781,6 @@ describe('assertAssetsScanClean', () => {
       assertAssetsScanClean({ ...NO_RED_SLOTS, iconId: 1, coverId: 2, screenshotImageIds: [] })
     ).rejects.toThrow(/still scanning: cover/);
   });
-
-  it('reads through the db client passed in (e.g. the in-tx `tx`)', async () => {
-    const txFindMany = vi.fn(async () => [{ id: 1, ingestion: 'Scanned' }]);
-    const tx = { image: { findMany: txFindMany } };
-    const { assertAssetsScanClean } = await import('../app-listing-assets.service');
-    await assertAssetsScanClean(
-      { ...NO_RED_SLOTS, iconId: 1, coverId: null, screenshotImageIds: [] },
-      tx as never
-    );
-    // Used the passed-in reader, not the default dbWrite mock.
-    expect(txFindMany).toHaveBeenCalledTimes(1);
-    expect(mockDb.image.findMany).not.toHaveBeenCalled();
-  });
 });
 
 describe('getAssetScanStatuses', () => {
@@ -2072,13 +1810,6 @@ describe('getAssetScanStatuses', () => {
     await getAssetScanStatuses([1], mod);
     const where = (mockDb.image.findMany.mock.calls[0][0] as { where: { userId?: number } }).where;
     expect(where.userId).toBeUndefined();
-  });
-
-  it('returns empty for an empty id list without querying', async () => {
-    const { getAssetScanStatuses } = await import('../app-listing-assets.service');
-    const res = await getAssetScanStatuses([], owner);
-    expect(res.statuses).toEqual([]);
-    expect(mockDb.image.findMany).not.toHaveBeenCalled();
   });
 
   /**

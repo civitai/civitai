@@ -210,6 +210,24 @@ export function createAxiomLogger(
   const ingestFailuresByDatastream = getSharedIngestFailureCounts();
 
   /**
+   * Write one of this logger's own reports: the stderr line, then the injected sink with the same
+   * body, as `logToAxiom` does for an event (the sink is told the logger's default datastream).
+   *
+   * 🔴 Never through `logToAxiom` or `ingestEvents`: these reports describe the Axiom write
+   * failing, so routing them back into it would recurse. The sink is app code and is contained.
+   */
+  function writeSelfReport(record: MixedObject) {
+    const line = JSON.stringify(record);
+    console.error(line);
+    if (!deps.emitLog) return;
+    try {
+      deps.emitLog(line, record, config.datastream);
+    } catch {
+      /* contained, as in logToAxiom */
+    }
+  }
+
+  /**
    * Record the outcome of one dual-write and, on a transition or every Nth failure, say so
    * on the stderr/Loki path that is still working. `'timeout'` is counted as a failure: we
    * stopped waiting, so from the caller's side the event is not known to have landed.
@@ -253,17 +271,15 @@ export function createAxiomLogger(
     const failures = ingestFailuresByDatastream.get(datastream) ?? 0;
     if (outcome === 'ok') {
       if (failures > 0) {
-        console.error(
-          JSON.stringify({
-            name: 'axiom-ingest-recovered',
-            // Recovery is good news: INFO, so it does not page as an error itself.
-            type: 'info',
-            level: 'info',
-            pod: config.podName,
-            datastream,
-            failedSince: failures,
-          })
-        );
+        writeSelfReport({
+          name: 'axiom-ingest-recovered',
+          // Recovery is good news: INFO, so it does not page as an error itself.
+          type: 'info',
+          level: 'info',
+          pod: config.podName,
+          datastream,
+          failedSince: failures,
+        });
         ingestFailuresByDatastream.set(datastream, 0);
       }
       return;
@@ -271,17 +287,15 @@ export function createAxiomLogger(
     const next = failures + 1;
     ingestFailuresByDatastream.set(datastream, next);
     if (next === 1 || next % AXIOM_INGEST_FAILURE_REPORT_EVERY === 0) {
-      console.error(
-        JSON.stringify({
-          name: 'axiom-ingest-failed',
-          type: 'error',
-          level: 'error',
-          pod: config.podName,
-          datastream,
-          reason: outcome,
-          consecutiveFailures: next,
-        })
-      );
+      writeSelfReport({
+        name: 'axiom-ingest-failed',
+        type: 'error',
+        level: 'error',
+        pod: config.podName,
+        datastream,
+        reason: outcome,
+        consecutiveFailures: next,
+      });
     }
   }
 
@@ -308,17 +322,15 @@ export function createAxiomLogger(
   function reportUnprovisionedDatastream(datastream: string) {
     if (unprovisionedReported.has(datastream)) return;
     unprovisionedReported.add(datastream);
-    console.error(
-      JSON.stringify({
-        name: 'axiom-datastream-unprovisioned',
-        type: 'error',
-        level: 'error',
-        pod: config.podName,
-        datastream,
-        message:
-          'No Axiom dataset backs this datastream; skipping the Axiom dual-write. The event is on the stderr/log-store path. Provision the dataset and add it to PROVISIONED_AXIOM_DATASTREAMS (or AXIOM_EXTRA_DATASTREAMS), or drop the datastream argument at the call site.',
-      })
-    );
+    writeSelfReport({
+      name: 'axiom-datastream-unprovisioned',
+      type: 'error',
+      level: 'error',
+      pod: config.podName,
+      datastream,
+      message:
+        'No Axiom dataset backs this datastream; skipping the Axiom dual-write. The event is on the stderr/log-store path. Provision the dataset and add it to PROVISIONED_AXIOM_DATASTREAMS (or AXIOM_EXTRA_DATASTREAMS), or drop the datastream argument at the call site.',
+    });
   }
 
   async function logToAxiom(data: MixedObject, datastream?: string) {

@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *   - nothing known                     → fail CLOSED (kill switch: disabled with a clear message;
  *                                          gate rules: refused with SERVICE_UNAVAILABLE).
  * Fault injection: sysRedis reads that reject, and one that never settles while the read deadline
- * rejects. The service module is re-imported per test, so "known" never leaks between tests.
+ * rejects. The last-known state is reset per test, so "known" never leaks between tests.
  */
 
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -51,14 +51,14 @@ vi.mock('~/server/utils/otel-helpers', () => ({
 // reaches its isFlipt at runtime for a NON-empty user; the tests pass `{}`, so the
 // flag call is short-circuited and never opens a connection.
 
-type Service = typeof GenerationService;
-let svc: Service;
+const svc: typeof GenerationService = await import(
+  '~/server/services/generation/generation.service'
+);
 
-beforeEach(async () => {
+beforeEach(() => {
   resetSharedMocks();
   mockWithSysReadDeadline.mockImplementation((p: Promise<unknown>) => p);
-  vi.resetModules();
-  svc = await import('~/server/services/generation/generation.service');
+  svc.__resetGenerationConfigLastKnownForTests();
 });
 
 const status = (value: object) => JSON.stringify(value);
