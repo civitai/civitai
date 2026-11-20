@@ -92,6 +92,7 @@ const el = (id: number[], ...body: Uint8Array[]) => {
   const payload = concat(...body);
   return concat(new Uint8Array(id), vintSize(payload.length), payload);
 };
+const VOID = new Uint8Array([0xec, 0x80]);
 const ID = {
   ebml: [0x1a, 0x45, 0xdf, 0xa3],
   segment: [0x18, 0x53, 0x80, 0x67],
@@ -148,6 +149,16 @@ describe('readVideoTags', () => {
       prompt: 'hello',
     });
   });
+
+  it('keeps the first of duplicate tags', async () => {
+    const mp4 = mp4WithTags([
+      ['prompt', 'first'],
+      ['prompt', 'second'],
+    ]);
+    expect(await readVideoTags(blob(mp4))).toEqual({ prompt: 'first' });
+    const webm = webmWithTags(simpleTag('PROMPT', 'first'), simpleTag('PROMPT', 'second'));
+    expect(await readVideoTags(blob(webm))).toEqual({ prompt: 'first' });
+  });
 });
 
 describe('getVideoMetadata', () => {
@@ -178,6 +189,10 @@ describe('getVideoMetadata', () => {
 
   it.each(UNTAGGED)('returns undefined for %s', async (name) => {
     expect(await getVideoMetadata(blob(bytes(name)))).toBeUndefined();
+  });
+
+  it.each(['not json', 'null'])('returns undefined for a prompt tag of %s', async (value) => {
+    expect(await getVideoMetadata(blob(mp4WithTags([['prompt', value]])))).toBeUndefined();
   });
 
   // Decision (coordinator, PR #5147): an oversized graph must not refuse the upload the way it
@@ -222,11 +237,90 @@ describe('readVideoTags on hostile input', () => {
     );
   });
 
+  it('ignores a tag nested past the depth limit', async () => {
+    let nested = simpleTag('PROMPT', 'deep');
+    for (let i = 0; i < 10; i++) nested = simpleTag('WRAPPER', 'x', nested);
+    expect(await readVideoTags(blob(webmWithTags(nested)))).toEqual({});
+    const shallow = simpleTag('WRAPPER', 'x', simpleTag('PROMPT', 'shallow'));
+    expect(await readVideoTags(blob(webmWithTags(shallow)))).toEqual({ prompt: 'shallow' });
+  });
+
+  it('shares one budget between the segment walk and the tag walk', async () => {
+    const voids = (n: number) => concat(...Array.from({ length: n }, () => VOID));
+    const junk = (n: number) =>
+      el(ID.simpleTag, ...Array.from({ length: n }, () => el(ID.tagName, encode('x'))));
+    const file = (before: number, inside: number) =>
+      concat(
+        el(ID.ebml),
+        el(
+          ID.segment,
+          voids(before),
+          el(ID.tags, el(ID.tag, junk(inside), simpleTag('PROMPT', 'p')))
+        )
+      );
+    // 6k + 6k elements: under the budget for either walk alone, over it together.
+    expect(await readVideoTags(blob(file(6_000, 6_000)))).toEqual({});
+    expect(await readVideoTags(blob(file(100, 6_000)))).toEqual({ prompt: 'p' });
+    expect(await readVideoTags(blob(file(6_000, 100)))).toEqual({ prompt: 'p' });
+  });
+
+  it('shares one budget between the top-level mp4 walk and the moov walk', async () => {
+    const frees = (n: number) => Array.from({ length: n }, () => box('free'));
+    const file = (before: number, inside: number) =>
+      concat(
+        ftyp,
+        ...frees(before),
+        box('moov', ...frees(inside), box('udta', mdtaMeta([['prompt', 'p']])))
+      );
+    expect(await readVideoTags(blob(file(6_000, 6_000)))).toEqual({});
+    expect(await readVideoTags(blob(file(100, 6_000)))).toEqual({ prompt: 'p' });
+    expect(await readVideoTags(blob(file(6_000, 100)))).toEqual({ prompt: 'p' });
+
+    const inUdta = (before: number, inside: number) =>
+      concat(
+        ftyp,
+        ...frees(before),
+        box('moov', box('udta', ...frees(inside), mdtaMeta([['prompt', 'p']])))
+      );
+    expect(await readVideoTags(blob(inUdta(6_000, 6_000)))).toEqual({});
+    expect(await readVideoTags(blob(inUdta(100, 6_000)))).toEqual({ prompt: 'p' });
+  });
+
+  it('reads the mdta meta after a keys-less meta in the same moov', async () => {
+    const hdlr = box('hdlr', new Uint8Array(8), encode('mdir'), new Uint8Array(13));
+    const itunesMeta = box('meta', new Uint8Array(4), hdlr, box('ilst'));
+    const file = concat(
+      ftyp,
+      box('moov', box('udta', itunesMeta), mdtaMeta([['prompt', 'second']]))
+    );
+    expect(await readVideoTags(blob(file))).toEqual({ prompt: 'second' });
+  });
+
+  it('walks past a valid 64-bit box to the tags after it', async () => {
+    const largeFree = concat(u32(1), encode('free'), u32(0), u32(24), new Uint8Array(8));
+    const tagged = mp4WithTags([['prompt', 'after-largesize']]);
+    const file = blob(ftyp, largeFree, tagged.subarray(ftyp.length));
+    expect(await readVideoTags(file)).toEqual({ prompt: 'after-largesize' });
+  });
+
+  it('reads the high word of a 64-bit box size', async () => {
+    const hugeFree = concat(u32(1), encode('free'), u32(1), u32(24), new Uint8Array(8));
+    const tagged = mp4WithTags([['prompt', 'after-largesize']]);
+    const file = blob(ftyp, hugeFree, tagged.subarray(ftyp.length));
+    expect(await readVideoTags(file)).toEqual({});
+  });
+
   it('stops after its element budget on a file of tiny boxes', async () => {
     const filler = concat(...Array.from({ length: 20_000 }, () => box('free')));
     const file = blob(ftyp, filler, mp4WithTags([['prompt', 'late']]).subarray(ftyp.length));
     expect(await readVideoTags(file)).toEqual({});
     expect(file.slices).toBeLessThanOrEqual(WALKER_BUDGET + 5);
+  });
+
+  it('stops on a 64-bit box whose size would not advance the walk', async () => {
+    const file = blob(ftyp, u32(1), encode('free'), new Uint8Array(8));
+    expect(await readVideoTags(file)).toEqual({});
+    expect(file.slices).toBeLessThan(10);
   });
 
   it('returns only known string tags, within budget, for every truncation and corruption', async () => {
@@ -253,6 +347,10 @@ describe('readVideoTags on hostile input', () => {
       const file = blob(variant);
       const tags = await readVideoTags(file);
       maxSlices = Math.max(maxSlices, file.slices);
+      for (const [key, value] of Object.entries(tags)) {
+        expect(['prompt', 'workflow']).toContain(key);
+        expect(typeof value).toBe('string');
+      }
       if (Object.keys(tags).length) withTags++;
     }
     expect(maxSlices).toBeLessThanOrEqual(WALKER_BUDGET + 5);

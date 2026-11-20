@@ -386,6 +386,37 @@ describe('shop revenue detector', () => {
     expect(await held(CREATOR)).toEqual([]);
     expect(notified.map((g) => g.userId)).toEqual([TESTER]);
   });
+  it('does not count a mystery box sale for the moderator who listed it', async () => {
+    await q(
+      `INSERT INTO "CosmeticShopItem" (id, "addedById", "itemDefinitionId") VALUES (60, $1, 9)`,
+      [QUIET]
+    );
+    await addSales([{ cosmeticId: null, shopItemId: 60, amount: 100000, at: '2026-03-01' }]);
+    await run(SHOP);
+    expect(await held(QUIET)).toEqual([]);
+  });
+  it("does not count a creator's purchase of their own cosmetic as a sale", async () => {
+    await addSales([
+      { cosmeticId: 1, shopItemId: 40, amount: 100000, at: '2026-03-01', buyerId: CREATOR },
+    ]);
+    await run(SHOP);
+    expect(await held(CREATOR)).toEqual([]);
+  });
+  it("a pack never subtracts from its builder's other sales", async () => {
+    await addSales([
+      { id: 'cheap-pack', cosmeticId: null, shopItemId: 50, amount: 50000, at: '2026-03-02' },
+      { id: 'own-sale', cosmeticId: 4, shopItemId: 40, amount: 100000, at: '2026-03-03' },
+    ]);
+    await q(`INSERT INTO "Cosmetic" (id, "createdById") VALUES (4, $1)`, [QUIET]);
+    await q(
+      `INSERT INTO "UserCosmeticShopPurchaseCosmetic" ("buzzTransactionId", "cosmeticId", "unitAmount")
+       VALUES ('cheap-pack', 2, 60000)`
+    );
+    await run(SHOP);
+    const [builder] = await q(activityValuesSql, [QUIET]);
+    expect(builder.revenue).toBe(100000);
+    expect((await held(QUIET)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
+  });
 });
 
 /**
@@ -538,6 +569,17 @@ describe('announcing', () => {
     ).rejects.toThrow('write failed');
     expect(rows.size).toBe(0);
   });
+  it('compares the cutoff in UTC whatever the session zone', async () => {
+    await addModels(CREATOR, ['2026-10-31 00:30']);
+    await addModels(QUIET, ['2026-10-30 23:30']);
+    await q(`SET TIME ZONE 'America/New_York'`);
+    try {
+      const { notified } = await run(MODELS, { watermark: yesterday() });
+      expect(notified.map((g) => g.userId)).toEqual([CREATOR]);
+    } finally {
+      await q(`SET TIME ZONE 'UTC'`);
+    }
+  });
 });
 
 describe('announceFromFor', () => {
@@ -601,6 +643,11 @@ describe('watermark definitions', () => {
       { key: 'create:models-1', seen: true, at: '2026-10-31 12:00' },
     ]);
     expect([...stored.values()][0]).toMatchObject({ definitions: await fingerprintFor(MODELS) });
+  });
+  it('does not depend on the order Postgres returns the rows in', () => {
+    expect(definitionsFingerprint([...rows].reverse(), false)).toBe(
+      definitionsFingerprint(rows, false)
+    );
   });
 });
 
@@ -696,6 +743,28 @@ describe('journey progress values', () => {
     expect(granted).toEqual(reached);
     expect(granted.length).toBeGreaterThan(4);
   });
+  it('clamp a download total past int range instead of failing the page', async () => {
+    await q(
+      `INSERT INTO "ModelMetric" ("modelId", "userId", status, "downloadCount") VALUES
+        (1, $1, 'Published', 2000000000), (2, $1, 'Published', 2000000000)`,
+      [CREATOR]
+    );
+    const [values] = await q<Record<ActivityMeasure, number>>(activityValuesSql, [CREATOR]);
+    expect(values.downloads).toBe(2147483647);
+  });
+  it('read zero for a creator with nothing', async () => {
+    const [values] = await q(activityValuesSql, [QUIET]);
+    expect(values).toEqual({
+      models: 0,
+      articles: 0,
+      downloads: 0,
+      followers: 0,
+      reactions: 0,
+      revenue: 0,
+      wins: 0,
+      crucibleWins: 0,
+    });
+  });
 });
 
 describe('judge-vote detector', () => {
@@ -790,6 +859,16 @@ describe('judge-vote detector', () => {
   ])('refuses %s instead of granting from it', async (_, row) => {
     const { group } = judgeGroup([row]);
     await expect(run(group)).rejects.toThrow('crucible_votes returned a malformed total');
+  });
+  it('does not offer a rank the judge already holds', async () => {
+    await run(judgeGroup([{ userId: CREATOR, votes: '600' }]).group);
+    const { group } = judgeGroup([{ userId: CREATOR, votes: '1200' }]);
+    const candidates = await (
+      group as Extract<MilestoneDetectorGroup, { candidates: unknown }>
+    ).candidates(pg);
+    expect(candidates).toEqual([
+      { userId: CREATOR, milestoneKey: 'community:crucible-votes-1000', achievedAt: null },
+    ]);
   });
 });
 
@@ -1121,5 +1200,50 @@ describe('compete-win detector', () => {
       })
     ).rejects.toThrow('ClickHouse unavailable');
     expect(rows.size).toBe(0);
+  });
+  it('does not offer a rung the winner already holds', async () => {
+    await addChallenge(1);
+    await addChallengeWin(1, CREATOR, '2026-03-01 10:00');
+    await run(competeGroup().group);
+    expect(await held(CREATOR)).toHaveLength(1);
+    expect(await candidatesOf(competeGroup().group)).toEqual([]);
+  });
+  it('counts a daily challenge win however few entered, and a community challenge with no host', async () => {
+    await addChallenge(1, { others: 0 });
+    await addChallengeWin(1, CREATOR, '2026-03-01 10:00');
+    await addChallenge(2, { source: 'User', host: null, others: 9 });
+    await addChallengeWin(2, QUIET, '2026-03-01 10:00');
+    const rows = await candidatesOf(competeGroup().group);
+    expect(rows.map((row) => row.userId).sort()).toEqual([CREATOR, QUIET].sort());
+  });
+  it('counts distinct entrants besides the host toward the floor', async () => {
+    await addChallenge(1, { source: 'User', host: TESTER, others: 0 });
+    for (const entrant of [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, TESTER])
+      for (let i = 0; i < 3; i++)
+        await q(`INSERT INTO "CollectionItem" ("collectionId", "addedById") VALUES (1, $1)`, [
+          entrant,
+        ]);
+    await addChallengeWin(1, CREATOR, '2026-03-01 10:00');
+    await addCrucible(2, { host: TESTER, others: 0 });
+    for (const entrant of [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, TESTER])
+      for (let i = 0; i < 3; i++) await addPlace(2, entrant, null);
+    await addPlace(2, CREATOR, 1);
+
+    expect(await candidatesOf(competeGroup().group)).toEqual([]);
+
+    await q(`INSERT INTO "CollectionItem" ("collectionId", "addedById") VALUES (1, 2009)`);
+    await addPlace(2, 2009, null);
+    const rows = await candidatesOf(competeGroup().group);
+    expect(rows.map(({ userId, milestoneKey }) => ({ userId, milestoneKey }))).toEqual([
+      { userId: CREATOR, milestoneKey: 'compete:wins-1' },
+    ]);
+    const [values] = await q<{ wins: number }>(activityValuesSql, [CREATOR]);
+    expect(values.wins).toBe(2);
+  });
+  it('dates a Crucible without an end by when it was last updated', async () => {
+    await addCrucible(1, { endAt: null, updatedAt: '2026-03-05 12:00' });
+    await addPlace(1, CREATOR, 1);
+    const rows = await candidatesOf(competeGroup().group);
+    expect(rows.map((row) => row.achievedAt?.toISOString())).toEqual(['2026-03-05T12:00:00.000Z']);
   });
 });

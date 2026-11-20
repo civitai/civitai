@@ -34,8 +34,10 @@ vi.mock('~/utils/metadata/audit', async (importOriginal) => {
 
 import { auditMetaData } from '~/utils/metadata/audit';
 import { blockedRegexLazy } from '~/utils/metadata/audit-base';
+import sharp from 'sharp';
 import {
   EMBEDDED_META_BUDGET,
+  metadataRegion,
   readEmbeddedImageMeta,
 } from '~/server/services/blocks/embedded-image-meta';
 
@@ -99,6 +101,23 @@ describe('readEmbeddedImageMeta', () => {
     expect(meta && 'blockPublishedAppId' in meta).toBe(false);
   });
 
+  it('returns undefined when the parser throws', async () => {
+    h.getMetadataOverride = async () => {
+      throw new Error('hostile chunk');
+    };
+    await expect(
+      readEmbeddedImageMeta(await pngWithTextChunks({ parameters: A1111_PARAMETERS }))
+    ).resolves.toBeUndefined();
+  });
+
+  it('audits the prompt against the SFW list', async () => {
+    await readEmbeddedImageMeta(await pngWithTextChunks({ parameters: A1111_PARAMETERS }));
+    expect(vi.mocked(auditMetaData)).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'a lighthouse at dusk, oil painting' }),
+      false
+    );
+  });
+
   it('returns undefined when the parsed meta is over the 1 MB ceiling', async () => {
     const longPrompt = `a lighthouse ${'very '.repeat(220_000)}detailed`;
     const bytes = await pngWithTextChunks({
@@ -158,5 +177,14 @@ describe('metadata budget (checked before parsing)', () => {
     await expect(readEmbeddedImageMeta(under)).resolves.toMatchObject({
       prompt: 'a lighthouse at dusk, oil painting',
     });
+  });
+
+  it('passes a plain WebP', async () => {
+    const webp = await sharp({
+      create: { width: 8, height: 8, channels: 3, background: '#000' },
+    })
+      .webp()
+      .toBuffer();
+    expect(metadataRegion(webp)).not.toBeNull();
   });
 });

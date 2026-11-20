@@ -1472,6 +1472,173 @@ describe('opaqueInputUrlsIn', () => {
     expect(opaqueInputUrlsIn({ list: new Array(262_142).fill(0) }).tooLarge).toBe(true);
   });
 
+  const base64 = (n: number) => 'QUJD'.repeat(Math.ceil(n / 4)).slice(0, n);
+  const MiB = 1024 * 1024;
+
+  it('reads up to 4 MiB of text, and reports more as too large instead of reading it', () => {
+    expect(opaqueInputUrlsIn({ field: base64(4 * MiB - 5) })).toEqual({
+      urls: [],
+      tooDeep: false,
+      tooLarge: false,
+    });
+    expect(opaqueInputUrlsIn({ field: base64(4 * MiB - 4) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ a: base64(2.1 * MiB), b: base64(2.1 * MiB) }).tooLarge).toBe(true);
+  });
+
+  it('counts the text of a value split into lines once', () => {
+    const text = `https://example.com/a\nhttps://example.com/b ${base64(3 * MiB)}`;
+    expect(opaqueInputUrlsIn({ text }).tooLarge).toBe(false);
+  });
+
+  it('reads up to 65,536 line breaks across its strings, and reports more as too large', () => {
+    const breaks = (n: number) => `${'x\n'.repeat(n)}a:`;
+    expect(opaqueInputUrlsIn({ text: breaks(65_536) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ text: breaks(65_537) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ a: breaks(40_000), b: breaks(40_000) }).tooLarge).toBe(true);
+    // Text that does not split counts too, and a run of breaks is one.
+    expect(opaqueInputUrlsIn({ text: 'x\n'.repeat(65_537) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ text: `x${'\r\n'.repeat(70_000)}y` }).tooLarge).toBe(false);
+  });
+
+  it('collects up to 4,096 values of up to 64 KiB in all, and reports more as too large', () => {
+    // Keys overlap: each segment ends one key and its last 8 characters start the next.
+    const keys = (n: number) =>
+      `see 00000000${Array.from(
+        { length: n },
+        (_, i) => `-0000-4000-8000-${i.toString(16).padStart(12, '0')}`
+      ).join('')}`;
+    // As many whole keys as fit in 64 KiB, then one more.
+    expect(opaqueInputUrlsIn({ text: keys(1820) })).toMatchObject({ tooLarge: false });
+    expect(opaqueInputUrlsIn({ text: keys(1820) }).urls).toHaveLength(1820);
+    expect(opaqueInputUrlsIn({ text: keys(1821) }).tooLarge).toBe(true);
+    // More keys than a call takes as arguments: refused, not a stack overflow.
+    expect(opaqueInputUrlsIn({ text: keys(140_000) }).tooLarge).toBe(true);
+    // Short urls, under the length cap in all, but one value too many.
+    const list = Array.from({ length: 4097 }, (_, i) => `http://a/${i.toString(36)}`);
+    expect(opaqueInputUrlsIn({ list }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ list: list.slice(1) }).tooLarge).toBe(false);
+    // A value repeated is collected, and counted, once.
+    const repeated = new Array(10_000).fill(`https://image.civitai.com/x/${OKEY}/original=true`);
+    expect(opaqueInputUrlsIn({ repeated })).toEqual({
+      urls: [repeated[0]],
+      tooDeep: false,
+      tooLarge: false,
+    });
+  });
+
+  it('decodes up to 1 MiB of escaped text, and reports more as too large', () => {
+    const escaped = (n: number) => 'A%41'.repeat(n / 4);
+    expect(opaqueInputUrlsIn({ text: escaped(MiB) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ text: escaped(MiB + 4) }).tooLarge).toBe(true);
+    // Escapes nested eight deep across 4 MiB: refused before it is decoded, not read for seconds.
+    const nested = '%2525252525252525252541'.repeat(Math.floor((4 * MiB - 64) / 23));
+    expect(opaqueInputUrlsIn({ text: nested }).tooLarge).toBe(true);
+    // Split text whose lines are too short to hold a key is still decoded whole.
+    // A url, then prose lines (no scheme to parse) each shorter than a key: only the budget stops it.
+    const shortLines = `https://x.y/\n${'%2525252541 xxxxxxxxxxxxxxxxxxxxxx\n'.repeat(40_000)}`;
+    expect(opaqueInputUrlsIn({ text: shortLines }).tooLarge).toBe(true);
+    // The budget is one per walk: two halves of it add up.
+    const half = escaped(MiB / 2 + 4);
+    expect(opaqueInputUrlsIn({ a: half, b: half }).tooLarge).toBe(true);
+  });
+
+  it('parses up to 32,768 strings that start like a url, and reports more as too large', () => {
+    const list = new Array(32_769).fill('a:b');
+    expect(opaqueInputUrlsIn({ list }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ list: list.slice(1) }).tooLarge).toBe(false);
+    // Text with no scheme is not parsed, so it does not count.
+    expect(opaqueInputUrlsIn({ list: new Array(40_000).fill('ab') }).tooLarge).toBe(false);
+  });
+
+  it('reads text after a url scheme of any length when its host is ASCII', () => {
+    const prose = 'opens fine, and I have tried restarting it more than once today '.repeat(6);
+    for (const u of [
+      `http://localhost:7860 ${prose}`,
+      `HTTPS: why does my site show as insecure ${prose}`,
+      `File: summary of the meeting notes ${prose}`,
+      `https://${'a'.repeat(10_000)}.com/a.png`,
+      `ws://${'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(28_000)}/`,
+      `https://u:${'a'.repeat(400)}@h.example.com/a.png`,
+    ])
+      expect(opaqueInputUrlsIn({ u }).tooLarge).toBe(false);
+    // A scheme a parser does not convert a host for: non-ASCII text after it costs nothing.
+    const distinct = Array.from({ length: 8000 }, (_, j) => String.fromCharCode(0x4e00 + j));
+    expect(opaqueInputUrlsIn({ u: `Note: ${distinct.join('')}` }).tooLarge).toBe(false);
+  });
+
+  it('budgets the work of converting non-ASCII hosts, and reports more as too large', () => {
+    // Distinct characters, as a parser's conversion costs the most for them.
+    const cjk = (n: number, from = 0) =>
+      Array.from({ length: n }, (_, j) => String.fromCharCode(0x4e00 + from + j)).join('');
+    // One host: its length times its distinct characters, plus a parse, is the cost.
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(5791)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(5792)}/` }).tooLarge).toBe(true);
+    // Many short hosts: the fixed cost per parse adds up.
+    const short = (k: number) =>
+      Array.from({ length: k }, (_, i) => `ws://${cjk(64, (i * 64) % 20_000)}/`);
+    expect(opaqueInputUrlsIn({ list: short(2730) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ list: short(2731) }).tooLarge).toBe(true);
+    // Escapes and `xn--` hide what a host decodes to, so they are charged its length squared.
+    expect(opaqueInputUrlsIn({ u: `ws://${'%41'.repeat(1930)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${'%41'.repeat(1931)}/` }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ u: `ws://xn--${'a'.repeat(5800)}/` }).tooLarge).toBe(true);
+    // A host too long to map cheaply is refused unmapped, however few its characters.
+    const accented = String.fromCharCode(0xe9);
+    expect(opaqueInputUrlsIn({ u: `ws://${accented.repeat(64 * 1024)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${accented.repeat(64 * 1024 + 1)}/` }).tooLarge).toBe(true);
+    // A run of combining marks a parser must reorder is charged its length squared, unmapped.
+    const marks = (n: number) =>
+      `a${String.fromCharCode(0x300).repeat(n)}${String.fromCharCode(0x316).repeat(n)}`;
+    const normalize = vi.spyOn(String.prototype, 'normalize');
+    try {
+      // Under the length past which a host is refused unmapped: only the marks refuse it.
+      expect(opaqueInputUrlsIn({ u: `ws://${marks(2 ** 15 - 2)}/` }).tooLarge).toBe(true);
+      // Refused before the reordering is paid for, not after.
+      expect(normalize).not.toHaveBeenCalled();
+    } finally {
+      normalize.mockRestore();
+    }
+    // A run split by marks NFKC makes (halfwidth katakana), or by characters a parser deletes
+    // (a soft hyphen), is one run to the parser: charged whole, refused before it is mapped.
+    const ch = (code: number) => String.fromCharCode(code);
+    const halfwidth = `a${(ch(0x300) + ch(0xff9e)).repeat(32_000)}`;
+    const softSplit = `a${(ch(0x300) + ch(0xad)).repeat(16_000)}${(ch(0x316) + ch(0xad)).repeat(
+      16_000
+    )}`;
+    for (const host of [halfwidth, softSplit]) {
+      const spy = vi.spyOn(String.prototype, 'normalize');
+      try {
+        expect(opaqueInputUrlsIn({ u: `ws://${host}/` }).tooLarge).toBe(true);
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    }
+    expect(opaqueInputUrlsIn({ u: `ws://${marks(2000)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${marks(3000)}/` }).tooLarge).toBe(true);
+    // The marks add to the rest of the host's cost.
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(3000)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(3000)}${marks(2000)}/` }).tooLarge).toBe(true);
+    // A character the parser expands (a square katakana is six) is charged as expanded.
+    const square = String.fromCharCode(0x3316).repeat(2000);
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(2600)}${square}/` }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(2600)}${square.slice(0, 1000)}/` }).tooLarge).toBe(
+      false
+    );
+    // Prose that repeats a few characters costs little, however long: a message after a link.
+    const hiragana = (n: number) =>
+      Array.from({ length: n }, (_, j) => String.fromCharCode(0x3042 + (j % 80))).join('');
+    // A percent sign that is not an escape hides nothing, so it is not charged as one.
+    const messages = Array.from({ length: 6 }, () => `https://civitai.com 50% ${hiragana(8000)}`);
+    expect(opaqueInputUrlsIn({ messages }).tooLarge).toBe(false);
+  });
+
+  it('reports too many values as too large', () => {
+    // The root, the field name and the array are three values.
+    expect(opaqueInputUrlsIn({ list: new Array(262_141).fill(0) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ list: new Array(262_142).fill(0) }).tooLarge).toBe(true);
+  });
+
   it('trims Unicode spaces around a whole url, as a consumer would', () => {
     expect(opaqueInputUrlsIn({ u: ' https://example.com/a.png　', v: `﻿${OCDN}` }).urls).toEqual([
       'https://example.com/a.png',

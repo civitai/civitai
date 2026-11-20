@@ -414,6 +414,24 @@ describe('getMyEventHats', () => {
     expect(placed.movableAt).toEqual(new Date(Date.parse(placedAt) + 10 * 60 * 1000));
   });
 
+  // The page counts down from this rather than comparing movableAt to the browser's clock, so it is
+  // measured on the server's clock and never longer than the cooldown.
+  describe('moveCooldownLeftMs', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+    it.each([
+      ['3 minutes after placing', '2026-11-12T10:03:00.000Z', 7 * 60 * 1000],
+      ['once the cooldown is over', '2026-11-12T10:15:00.000Z', 0],
+      ['when placedAt is ahead of this server', '2026-11-12T09:58:00.000Z', 10 * 60 * 1000],
+    ])('%s', async (_label, now, left) => {
+      vi.useFakeTimers({ now: new Date(now), toFake: ['Date'] });
+      const [placed, unplaced] = await service.getMyEventHats({ event: 'birthday2026', user });
+      expect(placed.moveCooldownLeftMs).toBe(left);
+      expect(unplaced.moveCooldownLeftMs).toBe(0);
+    });
+  });
+
   // The rows are the mock's, so pin what the query asks for: this caller, this event's decorations.
   it("queries only this caller's decorations of this event", async () => {
     await service.getMyEventHats({ event: 'birthday2026', user });
@@ -820,6 +838,20 @@ describe('getEventStandings decoration', () => {
     expect(res.liveTotals).toBe(false);
     // Settled by design, not a fallback: the answer stays edge-cacheable.
     expect(onDegraded).not.toHaveBeenCalled();
+  });
+
+  it('hands the hat scores read the degraded callback', async () => {
+    const onDegraded = vi.fn();
+    const cosmetics = [{ userId: 9, cosmeticId: 31, claimKey: 'claimed' }];
+    await service.getEventCosmeticScores({ event: 'birthday2026', cosmetics, viewer, onDegraded });
+    expect(scoring.getCosmeticScores).toHaveBeenCalledWith(scored, cosmetics, onDegraded);
+  });
+
+  // The settled snapshot is on sysRedis too: an unreachable one must not be edge-cached as zeros.
+  it('hands the settled read the same degraded callback', async () => {
+    const onDegraded = vi.fn();
+    await service.getEventStandings({ event: 'birthday2026', viewer, onDegraded });
+    expect(scoring.getEventStandings).toHaveBeenCalledWith(scored, { onDegraded });
   });
 
   it('keeps the snapshot team totals when the live totals are unreachable', async () => {
@@ -1230,6 +1262,15 @@ describe('getWornEventHat', () => {
     });
     // The route skips the edge cache for this answer.
     expect(onDegraded).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report a live answer as degraded, and hands the settled read the same callback', async () => {
+    wearing();
+    inHatMap('claimed');
+    const onDegraded = vi.fn();
+    await read(onDegraded);
+    expect(onDegraded).not.toHaveBeenCalled();
+    expect(scoring.getCosmeticScores.mock.calls[0][2]).toBe(onDegraded);
   });
 
   // The popover is public and edge-cached: the claim key (a purchase's transaction id) stays home.

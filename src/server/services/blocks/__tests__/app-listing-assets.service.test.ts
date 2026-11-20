@@ -142,6 +142,44 @@ describe('validateListingImage', () => {
   it('accepts a square png icon', () => {
     expect(validateListingImage(base, 'icon').ok).toBe(true);
   });
+
+  it.each([
+    ['a video', { type: 'video' }, 'icon'],
+    ['an unsupported mime type', { mimeType: 'image/gif' }, 'icon'],
+    ['an oversized icon file', { sizeBytes: 5 * 1024 * 1024 }, 'icon'],
+    ['a non-square icon', { width: 512, height: 256 }, 'icon'],
+    ['a too-small icon', { width: 64, height: 64 }, 'icon'],
+    ['an icon over its own maximum', { width: 5000, height: 5000 }, 'icon'],
+    ['a portrait cover', { width: 720, height: 1280 }, 'cover'],
+    ['a narrow cover', { width: 480, height: 320 }, 'cover'],
+    [
+      'a cover one pixel over the ceiling',
+      { width: LISTING_ASSET_MAX_DIMENSION_PX + 1, height: 4096 },
+      'cover',
+    ],
+    ['a tiny screenshot', { width: 200, height: 200 }, 'screenshot'],
+    ['a too-wide screenshot', { width: 2600, height: 400 }, 'screenshot'],
+    [
+      'a screenshot over the ceiling on its taller side',
+      { width: 4500, height: LISTING_ASSET_MAX_DIMENSION_PX + 1 },
+      'screenshot',
+    ],
+  ] as const)('rejects %s', (_, meta, kind) => {
+    expect(validateListingImage({ ...base, ...meta }, kind).ok).toBe(false);
+  });
+
+  it.each([
+    ['a 16:9 cover', { width: 1280, height: 720 }, 'cover'],
+    ['a cover at the ceiling', { width: LISTING_ASSET_MAX_DIMENSION_PX, height: 4096 }, 'cover'],
+    ['a normal screenshot', { width: 1280, height: 720 }, 'screenshot'],
+    [
+      'an older Image row without size or mime',
+      { sizeBytes: undefined, mimeType: undefined },
+      'icon',
+    ],
+  ] as const)('accepts %s', (_, meta, kind) => {
+    expect(validateListingImage({ ...base, ...meta }, kind).ok).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -221,6 +259,13 @@ describe('checkListingMeetsFloor / assertListingMeetsFloor (icon+cover floor, sc
       /cover/
     );
   });
+
+  it('assert does NOT throw with icon+cover and 0 screenshots', async () => {
+    const { assertListingMeetsFloor } = await import('../app-listing-assets.service');
+    expect(() =>
+      assertListingMeetsFloor({ iconId: 1, coverId: 2, screenshotCount: 0 })
+    ).not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -273,6 +318,28 @@ describe('pure helpers', () => {
     expect(chooseScreenshotSource({ ...base, kind: 'offsite', appBlockId: null })).toEqual({
       mode: 'none',
     });
+  });
+
+  it('pickLogoPrefillUrl normalises http(s), rejects otherwise', async () => {
+    const { pickLogoPrefillUrl } = await import('../app-listing-assets.service');
+    expect(pickLogoPrefillUrl('  https://ex.com/a.png ')).toBe('https://ex.com/a.png');
+    expect(pickLogoPrefillUrl('ftp://ex.com/a')).toBeNull();
+    expect(pickLogoPrefillUrl('javascript:alert(1)')).toBeNull();
+    expect(pickLogoPrefillUrl(null)).toBeNull();
+    expect(pickLogoPrefillUrl(undefined)).toBeNull();
+  });
+
+  it('SVG builders emit valid-looking svg with the initial + escaped name', async () => {
+    const { buildPlaceholderIconSvg, buildPlaceholderCoverSvg } = await import(
+      '../app-listing-assets.service'
+    );
+    const icon = buildPlaceholderIconSvg({ slug: 'cool-app', category: 'games', name: 'Cool App' });
+    expect(icon).toContain('<svg');
+    expect(icon).toContain('>C<');
+    const cover = buildPlaceholderCoverSvg({ slug: 'x', category: null, name: 'A & B <x>' });
+    expect(cover).toContain('<svg');
+    expect(cover).toContain('A &amp; B &lt;x&gt;');
+    expect(cover).not.toContain('<x>');
   });
 });
 
@@ -1005,6 +1072,35 @@ describe('screenshot CRUD', () => {
       mockDb.$executeRaw.mockReset().mockImplementation(async () => 0);
     }
   }, 60_000);
+
+  it("getAssets includes each asset's nsfwLevel (icon + cover + screenshots) for the review derive", async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, iconId: 1, coverId: 2 });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([
+      { id: 's1', imageId: 10, order: 0, caption: null },
+      { id: 's2', imageId: 11, order: 1, caption: null },
+    ]);
+    mockDb.image.findMany.mockResolvedValue([
+      { id: 1, nsfwLevel: 1 },
+      { id: 2, nsfwLevel: 2 },
+      { id: 10, nsfwLevel: 4 },
+      { id: 11, nsfwLevel: 8 },
+    ]);
+    const { getListingAssets } = await import('../app-listing-assets.service');
+    const res = await getListingAssets({ listingId: 'apl_1' }, mod);
+    expect(res.iconNsfwLevel).toBe(1);
+    expect(res.coverNsfwLevel).toBe(2);
+    expect(res.screenshots.map((s) => s.nsfwLevel)).toEqual([4, 8]);
+  });
+
+  it('getAssets returns null nsfwLevels when the backing Images are absent', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, iconId: 1, coverId: null });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockDb.image.findMany.mockResolvedValue([]); // no rows found
+    const { getListingAssets } = await import('../app-listing-assets.service');
+    const res = await getListingAssets({ listingId: 'apl_1' }, mod);
+    expect(res.iconNsfwLevel).toBeNull();
+    expect(res.coverNsfwLevel).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1483,6 +1579,44 @@ describe('backfillListingAssets', () => {
         expect.objectContaining({ data: { coverId: 717 } })
       );
     });
+
+    it('the dry run does not count a cover for a mature migration', async () => {
+      mockDb.appListing.findMany.mockResolvedValue([
+        row({ contentRating: 'r', appBlock: { screenshots: [{ key: 'k1' }] } }),
+      ]);
+      const { backfillListingAssets } = await import('../app-listing-assets.service');
+      const res = await backfillListingAssets({ dryRun: true }, makeDeps());
+      expect(res.screenshotsCreated).toBe(1);
+      expect(res.coversSet).toBe(0);
+    });
+
+    it('the dry run counts the same pick', async () => {
+      mockDb.appListing.findMany.mockResolvedValue([
+        row({ iconId: 900, screenshots: [shot(711, 0, 4)] }),
+        row({ id: 'apl_y', iconId: 901, screenshots: [shot(713, 0, 4), shot(714, 1, 1)] }),
+      ]);
+      const { backfillListingAssets } = await import('../app-listing-assets.service');
+      const res = await backfillListingAssets({ dryRun: true }, makeDeps());
+      expect(res.coversSet).toBe(1);
+    });
+  });
+
+  it('dryRun computes counts and writes nothing / calls no deps', async () => {
+    mockDb.appListing.findMany.mockResolvedValue([
+      row({ appBlock: { screenshots: [{ key: 'k1' }] } }),
+    ]);
+    const deps = makeDeps();
+    const { backfillListingAssets } = await import('../app-listing-assets.service');
+    const res = await backfillListingAssets({ dryRun: true }, deps);
+    expect(res.dryRun).toBe(true);
+    expect(res.processed).toBe(1);
+    expect(res.screenshotsCreated).toBe(1);
+    expect(res.iconsCreated).toBe(1);
+    expect(res.coversSet).toBe(1);
+    expect(deps.migrateBlockScreenshots).not.toHaveBeenCalled();
+    expect(deps.generateIcon).not.toHaveBeenCalled();
+    expect(mockDb.appListingScreenshot.createMany).not.toHaveBeenCalled();
+    expect(mockDb.appListing.update).not.toHaveBeenCalled();
   });
 });
 

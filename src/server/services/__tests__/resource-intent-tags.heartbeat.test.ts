@@ -86,6 +86,20 @@ describe('runTagIndexJob', () => {
     expect(rows.has('job:build-resource-intent-tag-index:last-failure')).toBe(false);
   });
 
+  it('a build-success heartbeat that cannot be written fails the run, after retention', async () => {
+    const { kv } = durableKv();
+    const upsert = kv.keyValue.upsert;
+    (kv.keyValue as { upsert: unknown }).upsert = vi.fn(async (a: { where: { key: string } }) => {
+      if (a.where.key === TAG_INDEX_HEARTBEAT_KEYS.buildSuccess) throw new Error('kv down');
+      return upsert(a as never);
+    });
+    const retention = vi.fn(async () => ({}));
+    await expect(
+      runTagIndexJob({ build: async () => ({}), retention, kv, now: () => NOW })
+    ).rejects.toThrow('kv down');
+    expect(retention).toHaveBeenCalledTimes(1);
+  });
+
   it('a failed retention is reported, not thrown, and writes no retention heartbeat', async () => {
     const { kv, rows } = durableKv();
     const result = await runTagIndexJob({

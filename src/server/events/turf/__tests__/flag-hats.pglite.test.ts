@@ -324,6 +324,15 @@ describe('the shared flag summary', () => {
     expect(frozen?.flags[0].winners).toEqual([]);
   });
 
+  it('caches an open or unfrozen day for seconds', async () => {
+    const lastTtl = () => (redisMock.sysRedis.set.mock.calls.at(-1)?.[2] as { EX: number }).EX;
+    await add(5);
+    await getFlagSummary('e', BEFORE);
+    expect(lastTtl()).toBeLessThanOrEqual(10);
+    await getFlagSummary('e', CUT);
+    expect(lastTtl()).toBeLessThanOrEqual(10);
+  });
+
   it('never serves a summary built before the latest swap', async () => {
     await add(5);
     await getFlagSummary('e', BEFORE);

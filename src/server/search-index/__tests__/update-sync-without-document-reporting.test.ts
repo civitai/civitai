@@ -213,6 +213,59 @@ describe('updateSync :: without-document reporting', () => {
     expect(cleanup.mock.calls[0][0].ids).toEqual([9]);
   });
 
+  it('reports nothing when a LATER pull step returns falsy, because that is not provably a drop', async () => {
+    const pullData = vi.fn(async (_ctx: unknown, batch: any, step?: number) =>
+      step === 0 ? (batch.type === 'update' ? batch.ids : []) : null
+    );
+    const index = buildIndex({
+      pullData: pullData as unknown as Processor['pullData'],
+      pullSteps: 2,
+    });
+
+    const result = await drain(index.updateSync(updateItems(3)));
+
+    expect(pullData).toHaveBeenCalledTimes(2);
+    expect(result.idsWithoutDocument).toBe(0);
+  });
+
+  it('counts what the hook subtracted, so a wrong prune cannot hide behind it', async () => {
+    const index = buildIndex({
+      transformData: async (ids: number[]) => ({
+        records: ids.filter((id) => id === 1).map((id) => ({ id })),
+        disqualifiedIds: ids.filter((id) => [2, 3, 4].includes(id)),
+      }),
+      getHandledIds: collectionsSearchIndex.getHandledIds,
+    });
+
+    const result = await drain(index.updateSync(updateItems(5)));
+
+    expect(result.handledWithoutDocument).toBe(3);
+    expect(result.idsWithoutDocument).toBe(1);
+    expect(result.idsWithoutDocumentSample).toEqual([5]);
+  });
+
+  it('survives a hook over a shape whose documents cannot be read', async () => {
+    const index = buildIndex({
+      transformData: async (ids: number[]) => ids.filter((id) => id !== 3),
+      getHandledIds: (ids: number[]) => ids,
+    });
+
+    const result = await drain(index.updateSync(updateItems(4)));
+
+    expect(result.idsWithoutDocument).toBe(1);
+    expect(result.idsWithoutDocumentSample).toEqual([3]);
+    expect(result.handledWithoutDocument).toBe(0);
+  });
+
+  it('caps the sample without capping the count', async () => {
+    const index = buildIndex({ transformData: async () => [], updateSyncChunkSize: 500 });
+
+    const result = await drain(index.updateSync(updateItems(150)));
+
+    expect(result.idsWithoutDocument).toBe(150);
+    expect(result.idsWithoutDocumentSample).toHaveLength(100);
+  });
+
   it('counts a repeated id once even when the copies land in different chunks', async () => {
     // Chunk size 1, so the duplicates cannot share a batch. Deduping per chunk instead of before
     // chunking passes the case above and fails this one — the guarantee would hold only for

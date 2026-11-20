@@ -323,6 +323,18 @@ describe('queues data-integrity — non-destructive fail-open (regression guard)
     expect(hSet).toHaveBeenCalledWith('queues:buckets', 'images_v6:Update', B2);
   });
 
+  it('checkoutQueue: when EVERY sMembers read fails open, nothing is deleted and the list is not rewritten', async () => {
+    hGet.mockResolvedValue(`${B1},${B2}`);
+    sMembers.mockImplementation(() => Promise.reject(new Error('Redis connection lost')));
+
+    const queue = await checkoutQueue('images_v6:Update', false, false);
+    expect(queue.content).toEqual([]);
+    await queue.commit();
+
+    expect(del).not.toHaveBeenCalled();
+    expect(hSet).not.toHaveBeenCalledWith('queues:buckets', 'images_v6:Update', '');
+  });
+
   it('checkoutQueue: a degraded getBucketNames read aborts the checkout — no append write, no delete', async () => {
     hGet.mockImplementation(() => Promise.reject(new Error('Redis connection lost')));
 

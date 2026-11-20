@@ -364,6 +364,27 @@ describe('User.settings — concurrent writers must not discard each other', () 
     expect(welcome.completed).toBe(true);
     expect(welcome.reason).toBe('finished');
   });
+
+  it('keeps a sibling tour untouched when only one tour is written', async () => {
+    await seedUser(holder.db, USER_ID, {
+      tourSettings: {
+        welcome: { currentStep: 3 },
+        auction: { completed: true, reason: 'finished' },
+      },
+    });
+
+    await setUserSettingHandler({
+      input: { tourSettings: { welcome: { completed: true, reason: 'skipped' } } },
+      ctx,
+    });
+
+    const tour = (await readSettings(holder.db, USER_ID)).tourSettings as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(tour.welcome).toEqual({ currentStep: 3, completed: true, reason: 'skipped' });
+    expect(tour.auction).toEqual({ completed: true, reason: 'finished' });
+  });
 });
 
 describe('User.settings — single-request behaviour the writers must keep', () => {
@@ -380,6 +401,15 @@ describe('User.settings — single-request behaviour the writers must keep', () 
     expect(settings.allowAds).toBe(true);
   });
 
+  it('is idempotent — dismissing the same notice twice stores it once', async () => {
+    await seedUser(holder.db, USER_ID, { dismissedAlerts: [] });
+
+    await dismissAlertHandler({ input: { alertId: 'notice-d', dismiss: true }, ctx });
+    await dismissAlertHandler({ input: { alertId: 'notice-d', dismiss: true }, ctx });
+
+    expect(alerts(await readSettings(holder.db, USER_ID))).toEqual(['notice-d']);
+  });
+
   // `dismissAlert({ dismiss: false })` is how the product actually un-dismisses a notice —
   // `user.restoreAlert` has no caller in this repo. Without these two cases a handler that
   // ignored `input.dismiss` and always dismissed passed the whole suite (mutation M16).
@@ -389,6 +419,29 @@ describe('User.settings — single-request behaviour the writers must keep', () 
     await dismissAlertHandler({ input: { alertId: 'notice-g', dismiss: false }, ctx });
 
     expect(alerts(await readSettings(holder.db, USER_ID))).toEqual(['notice-h']);
+  });
+
+  it('dismisses onto a NULL settings column', async () => {
+    await holder.db.query(
+      `INSERT INTO "User" (id, settings) VALUES ($1, NULL)
+                           ON CONFLICT (id) DO UPDATE SET settings = NULL`,
+      [USER_ID]
+    );
+
+    await dismissAlertHandler({ input: { alertId: 'notice-e', dismiss: true }, ctx });
+
+    expect(alerts(await readSettings(holder.db, USER_ID))).toEqual(['notice-e']);
+  });
+
+  it('self-heals a dismissedAlerts value that is not an array', async () => {
+    await seedUser(holder.db, USER_ID, { dismissedAlerts: 'corrupt' as unknown as string[] });
+
+    await dismissAlertHandler({ input: { alertId: 'notice-f', dismiss: true }, ctx });
+    expect(alerts(await readSettings(holder.db, USER_ID))).toEqual(['notice-f']);
+
+    await seedUser(holder.db, USER_ID, { dismissedAlerts: 'corrupt' as unknown as string[] });
+    await restoreAlertHandler({ input: { alertId: 'notice-f' }, ctx });
+    expect(alerts(await readSettings(holder.db, USER_ID))).toEqual([]);
   });
 });
 
@@ -415,6 +468,16 @@ describe('User.settings — a patch overrides the stored value, not the other wa
     expect(settings.allowAds).toBe(true);
     // …and leaves the key it was not asked about alone.
     expect(settings.preferredFiatCurrency).toBe('EUR');
+  });
+
+  it('overwrites an existing value through the tRPC settings handler', async () => {
+    await seedUser(holder.db, USER_ID, { isEarlyAdopter: true, dismissedAlerts: ['keep-me'] });
+
+    await setUserSettingHandler({ input: { isEarlyAdopter: false }, ctx });
+
+    const settings = await readSettings(holder.db, USER_ID);
+    expect(settings.isEarlyAdopter).toBe(false);
+    expect(alerts(settings)).toEqual(['keep-me']);
   });
 
   it('overwrites an existing nested sub-key while keeping its siblings', async () => {
@@ -462,6 +525,13 @@ describe('User.settings — every write busts the caches that mirror the column'
 
     expect(settingsCacheBust).toHaveBeenCalledWith([USER_ID]);
     // The `hideModel*` metric-privacy flags live in this same blob.
+    expect(metricPrivacyBust).toHaveBeenCalledWith(USER_ID);
+  });
+
+  it('busts after a notice dismissal', async () => {
+    await dismissAlertHandler({ input: { alertId: 'notice-a', dismiss: true }, ctx });
+
+    expect(settingsCacheBust).toHaveBeenCalledWith([USER_ID]);
     expect(metricPrivacyBust).toHaveBeenCalledWith(USER_ID);
   });
 
@@ -561,5 +631,10 @@ describe('User.settings — the transactional writers merge rather than replace'
     expect(seen[0]).toContain('SELECT settings FROM "User"');
     expect(seen[0]).not.toContain('UPDATE');
     expect(result.allowAds).toBe(true);
+  });
+
+  it('raises rather than silently succeeding when the user does not exist', async () => {
+    await expect(patchUserSettings(999_999, { set: { allowAds: true } })).rejects.toThrow();
+    await expect(patchUserSettings(999_999, {})).rejects.toThrow();
   });
 });

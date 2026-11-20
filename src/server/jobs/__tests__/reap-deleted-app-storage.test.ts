@@ -240,63 +240,68 @@ describe('reapDeletedAppStorage', () => {
     expect(await rowsOf(id)).toBe(0);
   });
 
-  // A restore that returns the block to draft leaves `storage_deleted_at` set unless
+  // A restore that returns the block to draft or pending leaves `storage_deleted_at` set unless
   // the restore path clears it; the block was written after its deletion, so it is not deleted.
-  it('never purges a block restored to draft after its deletion, however old the deletion', async () => {
-    const id = await app('RESTOREDDRAFT', {
-      status: 'draft',
-      deletedAt: ago(40 * DAY),
-      updatedAt: ago(35 * DAY),
+  for (const status of ['draft', 'pending'] as const) {
+    it(`never purges a block restored to ${status} after its deletion, however old the deletion`, async () => {
+      const id = await app(`RESTORED${status.toUpperCase()}`, {
+        status,
+        deletedAt: ago(40 * DAY),
+        updatedAt: ago(35 * DAY),
+      });
+      const before = await rowsOf(id);
+
+      const out = await reapDeletedAppStorage({ store: maint, now: NOW });
+
+      expect(out.scanned).toBe(0);
+      expect(await rowsOf(id)).toBe(before);
+      expect(await purgedAt(id)).toBeNull();
     });
-    const before = await rowsOf(id);
 
-    const out = await reapDeletedAppStorage({ store: maint, now: NOW });
+    it(`stops within one batch when the block is restored to ${status} mid-purge`, async () => {
+      const id = await app(`MID${status.toUpperCase()}`, {
+        status: 'suspended',
+        deletedAt: ago(PERIOD + DAY),
+      });
+      const before = await rowsOf(id);
+      let checks = 0;
+      const base = dbMock.dbWrite.$queryRaw.getMockImplementation();
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          if (/AS eligible/.test(toSql(strings)) && (checks += 1) === 2)
+            await restoreTo(id, status);
+          return base?.(strings, ...values);
+        }
+      );
 
-    expect(out.scanned).toBe(0);
-    expect(await rowsOf(id)).toBe(before);
-    expect(await purgedAt(id)).toBeNull();
-  });
+      const out = await reapDeletedAppStorage({ store: maint, now: NOW, batchRows: 1 });
 
-  it('stops within one batch when the block is restored to draft mid-purge', async () => {
-    const id = await app('MIDDRAFT', {
-      status: 'suspended',
-      deletedAt: ago(PERIOD + DAY),
+      expect(out).toMatchObject({ scanned: 1, stopped: 1, purged: 0, rows: 1 });
+      expect(await rowsOf(id)).toBe(before - 1);
+      expect(await purgedAt(id)).toBeNull();
     });
-    const before = await rowsOf(id);
-    let checks = 0;
-    const base = dbMock.dbWrite.$queryRaw.getMockImplementation();
-    dbMock.dbWrite.$queryRaw.mockImplementation(
-      async (strings: TemplateStringsArray, ...values: unknown[]) => {
-        if (/AS eligible/.test(toSql(strings)) && (checks += 1) === 2) await restoreTo(id, 'draft');
-        return base?.(strings, ...values);
-      }
-    );
-
-    const out = await reapDeletedAppStorage({ store: maint, now: NOW, batchRows: 1 });
-
-    expect(out).toMatchObject({ scanned: 1, stopped: 1, purged: 0, rows: 1 });
-    expect(await rowsOf(id)).toBe(before - 1);
-    expect(await purgedAt(id)).toBeNull();
-  });
+  }
 
   // The last `proceed` check passed and the data is gone; the restore lands before the stamp.
-  it("doesn't stamp a purge when the block is restored to approved after the last batch", async () => {
-    const id = await app('STAMPAPPROVED', {
-      status: 'suspended',
-      deletedAt: ago(PERIOD + DAY),
+  for (const status of ['approved', 'pending'] as const) {
+    it(`doesn't stamp a purge when the block is restored to ${status} after the last batch`, async () => {
+      const id = await app(`STAMP${status.toUpperCase()}`, {
+        status: 'suspended',
+        deletedAt: ago(PERIOD + DAY),
+      });
+      const base = dbMock.dbWrite.$executeRaw.getMockImplementation();
+      dbMock.dbWrite.$executeRaw.mockImplementation(
+        async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          if (/SET storage_purged_at/.test(toSql(strings))) await restoreTo(id, status);
+          return base?.(strings, ...values);
+        }
+      );
+
+      const out = await reapDeletedAppStorage({ store: maint, now: NOW });
+
+      expect(await rowsOf(id)).toBe(0);
+      expect(out.stopped).toBe(0);
+      expect(await purgedAt(id)).toBeNull();
     });
-    const base = dbMock.dbWrite.$executeRaw.getMockImplementation();
-    dbMock.dbWrite.$executeRaw.mockImplementation(
-      async (strings: TemplateStringsArray, ...values: unknown[]) => {
-        if (/SET storage_purged_at/.test(toSql(strings))) await restoreTo(id, 'approved');
-        return base?.(strings, ...values);
-      }
-    );
-
-    const out = await reapDeletedAppStorage({ store: maint, now: NOW });
-
-    expect(await rowsOf(id)).toBe(0);
-    expect(out.stopped).toBe(0);
-    expect(await purgedAt(id)).toBeNull();
-  });
+  }
 });

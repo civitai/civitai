@@ -107,6 +107,15 @@ describe('computeFileDiff', () => {
     expect(result.removed).toEqual(['old.tsx']);
     expect(result.changed).toEqual(['Dockerfile']);
   });
+
+  it('treats null previous as a first-version add-all', () => {
+    const curr = [makeFile('Dockerfile', 'aa'), makeFile('block.manifest.json', 'bb')];
+    const result = computeFileDiff(curr, null);
+    expect(result.files).toEqual(curr);
+    expect(result.added).toEqual(['Dockerfile', 'block.manifest.json']);
+    expect(result.removed).toEqual([]);
+    expect(result.changed).toEqual([]);
+  });
 });
 
 describe('computeManifestDiff', () => {
@@ -139,6 +148,65 @@ describe('computeManifestDiff', () => {
     const result = computeManifestDiff(curr, prev);
     if (result.kind !== 'update') throw new Error('expected update');
     expect(result.changed).toEqual([]); // semantically equal
+  });
+
+  it('names a collection that stops being published, and a first version that publishes', () => {
+    expect(
+      computeManifestDiff(
+        withStorage({ notes: sharedColl() }),
+        withStorage({
+          notes: sharedColl({ registry: 'public' }),
+        })
+      ).registryExports
+    ).toEqual({ exported: [], added: [], removed: ['notes'] });
+    expect(
+      computeManifestDiff(withStorage({ notes: sharedColl({ registry: 'public' }) }), null)
+        .registryExports
+    ).toEqual({ exported: ['notes'], added: ['notes'], removed: [] });
+  });
+
+  it('says nothing about registries when no version publishes', () => {
+    const diff = computeManifestDiff(withStorage({ notes: sharedColl() }), withStorage({}));
+    expect(Object.hasOwn(diff, 'registryExports')).toBe(false);
+  });
+
+  it('treats null previous as a first-version diff', () => {
+    const curr = { blockId: 'x', version: '0.1.0', name: 'X' };
+    const result = computeManifestDiff(curr, null);
+    expect(result.kind).toBe('first-version');
+    if (result.kind === 'first-version') {
+      expect(result.fields).toEqual(['blockId', 'name', 'version']);
+    }
+  });
+
+  it('detects deep object changes when content differs', () => {
+    const prev = { iframe: { src: 'a', minHeight: 200 } };
+    const curr = { iframe: { src: 'a', minHeight: 300 } };
+    const result = computeManifestDiff(curr, prev);
+    if (result.kind !== 'update') throw new Error('expected update');
+    expect(result.changed.map((c) => c.field)).toEqual(['iframe']);
+  });
+
+  it('summarises large field values without losing the change signal', () => {
+    const big = 'x'.repeat(3000);
+    const prev = { description: big };
+    const curr = { description: big + 'y' };
+    const result = computeManifestDiff(curr, prev);
+    if (result.kind !== 'update') throw new Error('expected update');
+    const change = result.changed[0];
+    expect(change.field).toBe('description');
+    expect(change.from).toMatchObject({ __summarised: true });
+    expect(change.to).toMatchObject({ __summarised: true });
+  });
+
+  it('detects added, removed and changed top-level fields', () => {
+    const prev = { blockId: 'x', name: 'X', version: '0.1.0' };
+    const curr = { blockId: 'x', version: '0.2.0', description: 'd' };
+    const result = computeManifestDiff(curr, prev);
+    if (result.kind !== 'update') throw new Error('expected update');
+    expect(result.added).toEqual(['description']);
+    expect(result.removed).toEqual(['name']);
+    expect(result.changed).toEqual([{ field: 'version', from: '0.1.0', to: '0.2.0' }]);
   });
 });
 
@@ -262,6 +330,37 @@ describe('extractBundleMetadata', () => {
       /zip bomb|decompress/i
     );
   });
+
+  it('sorts files deterministically', async () => {
+    const buf = await makeBundle({
+      'z.txt': 'z',
+      'block.manifest.json': '{"blockId":"x"}',
+      'a.txt': 'a',
+      'm.txt': 'm',
+    });
+    const { files } = await extractBundleMetadata(buf);
+    expect(files.map((f) => f.path)).toEqual(['a.txt', 'block.manifest.json', 'm.txt', 'z.txt']);
+  });
+
+  it('accepts a single file at exactly the 10 MiB cap', async () => {
+    const buf = await makeBundle({
+      'block.manifest.json': '{"blockId":"x"}',
+      'big.bin': 'x'.repeat(MAX_FILE_SIZE_BYTES),
+    });
+    const { files } = await extractBundleMetadata(buf);
+    expect(files.find((f) => f.path === 'big.bin')?.sizeBytes).toBe(MAX_FILE_SIZE_BYTES);
+  });
+
+  it('accepts a bundle at exactly the 2000-file cap', async () => {
+    const zip = new JSZip();
+    zip.file('block.manifest.json', '{"blockId":"x"}');
+    for (let i = 0; i < MAX_FILES_IN_BUNDLE - 1; i += 1) {
+      zip.file(`f${i}.txt`, String(i));
+    }
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+    const { files } = await extractBundleMetadata(buf);
+    expect(files.length).toBe(MAX_FILES_IN_BUNDLE);
+  });
 });
 
 describe('computeBundleLineDiff', () => {
@@ -300,6 +399,76 @@ describe('computeBundleLineDiff', () => {
     expect(result.files[1].skipReason).toBeNull();
     expect(result.files[2].skipReason).toBe('file-cap');
     expect(result.files[2].path).toBe('c.ts');
+  });
+
+  it('treats null previous as a first-version whole-file add', () => {
+    const result = computeBundleLineDiff([f('index.ts', 'a\nb\nc\n')], null);
+    expect(result.truncated).toBe(false);
+    expect(result.files).toHaveLength(1);
+    const file = result.files[0];
+    expect(file.path).toBe('index.ts');
+    expect(file.changeKind).toBe('added');
+    expect(file.skipReason).toBeNull();
+    expect(file.added).toBe(3);
+    expect(file.removed).toBe(0);
+    const contentLines = file.hunks.flatMap((h) => h.lines).filter((l) => !l.startsWith('\\'));
+    expect(contentLines).toEqual(['+a', '+b', '+c']);
+  });
+
+  it('omits files that did not change (byte-identical) and emits only the changed one', () => {
+    const prev = [f('a.ts', 'same\n'), f('b.ts', 'old\n')];
+    const curr = [f('a.ts', 'same\n'), f('b.ts', 'new\n')];
+    const result = computeBundleLineDiff(curr, prev);
+    expect(result.files.map((x) => x.path)).toEqual(['b.ts']);
+    const file = result.files[0];
+    expect(file.changeKind).toBe('changed');
+    expect(file.skipReason).toBeNull();
+  });
+
+  it('marks a binary file (by extension) as skipped without diffing', () => {
+    const prev = [f('logo.png', 'old-bytes\n')];
+    const curr = [f('logo.png', 'new-bytes\n')];
+    const result = computeBundleLineDiff(curr, prev);
+    const file = result.files[0];
+    expect(file.skipReason).toBe('binary');
+    expect(file.hunks).toEqual([]);
+  });
+
+  it('marks a binary file (by NUL-byte sniff, unknown extension) as skipped', () => {
+    const prev = [f('blob.dat', Buffer.from([0x68, 0x69, 0x0a]))]; // "hi\n"
+    const curr = [f('blob.dat', Buffer.from([0x68, 0x00, 0x69, 0x0a]))]; // contains NUL
+    const result = computeBundleLineDiff(curr, prev);
+    const file = result.files[0];
+    expect(file.skipReason).toBe('binary');
+    expect(file.hunks).toEqual([]);
+  });
+
+  it('elides a file whose side exceeds the per-file byte cap', () => {
+    const small = 'x\n';
+    const big = 'y\n'.repeat(100);
+    const prev = [f('huge.ts', small)];
+    const curr = [f('huge.ts', big)];
+    const result = computeBundleLineDiff(curr, prev, { maxFileBytes: 10 });
+    const file = result.files[0];
+    expect(file.skipReason).toBe('too-large');
+    expect(file.hunks).toEqual([]);
+  });
+
+  it('elides a diff that exceeds the per-file line cap', () => {
+    const prev = [f('big.ts', Array.from({ length: 50 }, (_, i) => `old${i}`).join('\n') + '\n')];
+    const curr = [f('big.ts', Array.from({ length: 50 }, (_, i) => `new${i}`).join('\n') + '\n')];
+    const result = computeBundleLineDiff(curr, prev, { maxDiffLines: 10 });
+    const file = result.files[0];
+    expect(file.skipReason).toBe('diff-too-large');
+    expect(file.hunks).toEqual([]);
+    expect(file.added).toBeGreaterThan(0);
+    expect(file.removed).toBeGreaterThan(0);
+  });
+
+  it('emits files in deterministic sorted-path order', () => {
+    const curr = [f('z.ts', 'z\n'), f('a.ts', 'a\n'), f('m.ts', 'm\n')];
+    const result = computeBundleLineDiff(curr, null);
+    expect(result.files.map((x) => x.path)).toEqual(['a.ts', 'm.ts', 'z.ts']);
   });
 });
 
@@ -503,6 +672,28 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
     // The submit path never mints a Forgejo commit — that happens on approve. A
     // fallback between the two would show up here as the sha leaking across.
     expect(data.forgejoCommitSha).toBeUndefined();
+  });
+
+  it('#4059 persists sourceDirty:false as FALSE (a CLAIM of clean, not an absence)', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 1,
+      sourceCommit: SHA,
+      sourceDirty: false,
+    });
+
+    const data = createData();
+    expect(data.sourceDirty).toBe(false);
+  });
+
+  it('#4059 writes NEITHER column when the client sends nothing (NULL = unknown)', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+
+    const data = createData();
+    expect(data.sourceCommit).toBeUndefined();
+    expect(data.sourceDirty).toBeUndefined();
   });
 });
 

@@ -81,6 +81,18 @@ const versionOf = (work: string) =>
   JSON.parse(readFileSync(path.join(work, 'apps/moderator/package.json'), 'utf8')).version;
 
 describe('release-app.mjs refuses to release from a branch behind the released history', () => {
+  it('blocks a patch release and leaves the tree untouched', () => {
+    const { work, git } = makeSandbox('0.0.1', RELEASED_TAGS);
+    const before = git(work, ['rev-parse', 'HEAD']).trim();
+
+    const res = runRelease(work, 'patch');
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain('refusing to release');
+    expect(versionOf(work)).toBe('0.0.1');
+    expect(git(work, ['rev-parse', 'HEAD']).trim()).toBe(before);
+  });
+
   // The dangerous path: 0.1.0 collides with nothing, so without this guard the
   // release SUCCEEDS and becomes the highest tag for the app.
   it('blocks a minor release, which no tag collision would have caught', () => {
@@ -123,5 +135,14 @@ describe('release-app.mjs typechecks only the app it releases', () => {
     expect(versionOf(work)).toBe('0.0.26');
     expect(git(work, ['rev-parse', 'HEAD']).trim()).toBe(before);
     expect(git(work, ['tag', '-l', 'moderator-v0.0.27']).trim()).toBe('');
+  });
+
+  it('releases when the app typecheck passes', () => {
+    const { work } = makeSandbox('0.0.26', RELEASED_TAGS, { typecheck: 'node -e ""' });
+
+    const res = runRelease(work, 'patch');
+
+    expect(res.status).toBe(0);
+    expect(versionOf(work)).toBe('0.0.27');
   });
 });

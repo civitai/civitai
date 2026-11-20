@@ -13,6 +13,7 @@ import {
 import {
   encodeTagIndex,
   encodeTagIndexCooperative,
+  packTagIndex,
 } from '~/server/services/resource-intent-tags/payload';
 import { finalizeAndEncodeTagIndex } from '~/server/services/resource-intent-tags/pipeline';
 import { genTrainingRow, type VersionInfo } from '~/server/services/resource-intent-tags/sources';
@@ -195,6 +196,87 @@ describe('the build at full coverage: memory and order', () => {
     }
     expect(filled().finalize().data.kinds.addon.postings.c).toBeInstanceOf(Float64Array);
     expect(sha(await encodeTagIndex(data, SPEC))).toBe(PINNED_SHA256);
+  });
+
+  it('the cooperative encode consumes the index only when asked, with the same bytes', async () => {
+    const kept = filled().finalize().data;
+    const payload = await encodeTagIndexCooperative(kept, SPEC, async () => undefined);
+    expect(sha(payload)).toBe(PINNED_SHA256);
+    expect(
+      zlib.brotliDecompressSync(payload).equals(packTagIndex(filled().finalize().data, SPEC))
+    ).toBe(true);
+    expect(kept.kinds.addon.postings.resource.length).toBeGreaterThan(0);
+
+    const consumed = filled().finalize().data;
+    const payload2 = await encodeTagIndexCooperative(consumed, SPEC, async () => undefined, {
+      consume: true,
+    });
+    expect(payload2.equals(payload)).toBe(true);
+    for (const kind of ['addon', 'checkpoint'] as const) {
+      const p = consumed.kinds[kind].postings;
+      expect([p.resource.length, p.c.length, p.fit.length]).toEqual([0, 0, 0]);
+    }
+  });
+
+  it('waits for drain when brotli reports a full buffer, before the next write', async () => {
+    const events: string[] = [];
+    const real = zlib.createBrotliCompress;
+    const spy = vi.spyOn(zlib, 'createBrotliCompress').mockImplementation((opts) => {
+      const z = real(opts);
+      const write = z.write.bind(z) as (...a: unknown[]) => boolean;
+      let writes = 0;
+      (z as unknown as { write: typeof write }).write = (...a: unknown[]) => {
+        write(...a);
+        events.push('write');
+        // The first write reports a full buffer; 'drain' follows 20 ms later.
+        if (++writes > 1) return true;
+        setTimeout(() => {
+          events.push('drain');
+          z.emit('drain');
+        }, 20);
+        return false;
+      };
+      return z;
+    });
+    try {
+      await encodeTagIndexCooperative(filled().finalize().data, SPEC, async () => undefined);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(events.slice(0, 3)).toEqual(['write', 'drain', 'write']);
+  });
+
+  it('pauses while checking the content scores, before a byte is written', async () => {
+    // One tag with 70,000 postings: over one 65,536-entry chunk, so the fit count pauses twice and
+    // the score check, which refuses in its second chunk, pauses once after its first.
+    const d = filled().finalize().data;
+    const n = 70_000;
+    const p = d.kinds.addon.postings;
+    p.ptr = new Uint32Array(p.ptr.length).fill(n, 1);
+    p.resource = new Uint32Array(n);
+    p.c = new Float64Array(n).fill(0.5);
+    p.fit = new Float64Array(n).fill(NaN);
+    p.c[66_000] = 0.12345;
+    let pauses = 0;
+    await expect(
+      encodeTagIndexCooperative(d, SPEC, async () => void pauses++, { every: 1 })
+    ).rejects.toThrow('is not a multiple');
+    expect(pauses).toBe(3);
+  });
+
+  it('finalize drops the rows and the models it no longer needs', () => {
+    const acc = filled();
+    const stores = () =>
+      Object.entries(acc as unknown as Record<string, unknown>).flatMap(([k, v]) => {
+        const g = v as { buf?: unknown; length?: number };
+        return g && ArrayBuffer.isView(g.buf) ? [[k, g.length, (g.buf as Uint8Array).length]] : [];
+      });
+    const before = stores();
+    expect(before.length).toBeGreaterThan(10);
+    expect(before.filter(([, n]) => (n as number) > 0).length).toBeGreaterThan(10);
+    acc.finalize();
+    expect(stores()).toEqual(before.map(([k]) => [k, 0, 0]));
+    expect(acc.usedModelIds()).toEqual([]);
   });
 
   it('a model given twice keeps its first content', async () => {

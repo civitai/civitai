@@ -647,6 +647,12 @@ describe('a shell boot adopts the page data into the state a full render would h
     expect(requests).toEqual([]);
   });
 
+  it('a page-data answer without liveNow keeps the shell value', async () => {
+    window.__civShell = Promise.resolve(json(payload({ liveNow: undefined })));
+    await render(shellPageProps({ liveNow: true }));
+    expect(queryClient.getQueryData(liveNowKey)).toBe(true);
+  });
+
   it.each([
     [true, false],
     [false, true],
@@ -832,6 +838,14 @@ describe('a page-data answer other than 200 leaves the shell exactly once', () =
     // RUM is paused once, BEFORE the navigation, so the abandoned shell sends no more beacons.
     expect(pauseRum).toHaveBeenCalledTimes(1);
     expect(pauseRum.mock.invocationCallOrder[0]).toBeLessThan(navigate.mock.invocationCallOrder[0]);
+  });
+
+  it('a network failure falls back like a 5xx', async () => {
+    pageDataAnswer = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+    await render(shellPageProps());
+    expect(navigate.mock.calls).toEqual([['/images/101?civ-shell=0']]);
   });
 
   it('a 200 without a region falls back, so consent cannot open on a missing region', async () => {

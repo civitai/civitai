@@ -317,6 +317,138 @@ describe('a hatted feed card', () => {
       myHats: [...elsewhere, here],
     });
   });
+
+  it('keeps a click inside the popover from reaching anything above the card', () => {
+    renderCard();
+    clickHat();
+    act(() => popover()!.querySelector<HTMLElement>('p')!.click());
+    expect(outerClick).not.toHaveBeenCalled();
+  });
+
+  it('keeps the card link from following the click', () => {
+    renderCard();
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    act(() => {
+      hatButton().dispatchEvent(click);
+    });
+    expect(click.defaultPrevented).toBe(true);
+  });
+
+  it('keeps the popover open, and the key moving, for any other key on the hat', () => {
+    renderCard();
+    clickHat();
+    for (const key of ['Enter', ' ', 'Tab', 'a'])
+      act(() => {
+        hatButton().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      });
+    expect(popover()).not.toBeNull();
+    expect(outerKeyDown).toHaveBeenCalledTimes(4);
+  });
+
+  it('leaves Escape alone while closed', () => {
+    renderCard();
+    hatButton().focus();
+    act(() => {
+      hatButton().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(outerKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on Escape inside the popover', () => {
+    renderCard();
+    clickHat();
+    act(() => {
+      popover()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(popover()).toBeNull();
+  });
+
+  it('closes when the event link is followed', () => {
+    renderCard();
+    clickHat();
+    const link = [...popover()!.querySelectorAll('a')].find((a) =>
+      a.textContent?.includes('See the birthday event')
+    )!;
+    // happy-dom would navigate; only the close is under test.
+    link.addEventListener('click', (e) => e.preventDefault());
+    act(() => link.click());
+    expect(popover()).toBeNull();
+  });
+
+  it('shows the stats without a wearer when the wearer is gone', () => {
+    wornHat.result = { data: { ...WORN, owner: null }, isLoading: false, isError: false };
+    viewer.current = { id: 9 };
+    renderCard();
+    clickHat();
+    expect(popover()!.textContent).not.toContain('Worn by');
+    expect(popover()!.textContent).not.toContain('Your hat');
+    expect(popover()!.textContent).toContain('1.2K');
+  });
+
+  it('shows the hat and its wearer but no stats when the server cannot tell which copy it is', () => {
+    wornHat.result = { data: { ...WORN, topicId: null }, isLoading: false, isError: false };
+    renderCard();
+    clickHat();
+    expect(popover()!.querySelector('[data-testid="hat-stats"]')).toBeNull();
+    expect(popover()!.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
+  });
+
+  it('shows a dash for comments and remixes until the server counts them', () => {
+    const figures = () =>
+      [...popover()!.querySelectorAll<HTMLElement>('[data-way]')].map(
+        (w) => w.children[0].textContent
+      );
+    renderCard();
+    clickHat();
+    expect(figures().slice(2)).toEqual(['–', '–']);
+    act(() => root?.unmount());
+    wornHat.result = {
+      data: { ...WORN, comments: 3, remixes: 0 },
+      isLoading: false,
+      isError: false,
+    };
+    renderCard();
+    clickHat();
+    expect(figures().slice(2)).toEqual(['3', '0']);
+  });
+
+  it('says so instead when the viewer’s hat is no longer here', async () => {
+    viewer.current = { id: 9 };
+    myHats.fetch.mockResolvedValue([
+      { cosmeticId: 31, claimKey: 'd', placedOn: { entityType: 'Image', entityId: 6 } },
+    ]);
+    renderCard();
+    clickHat();
+    await act(async () => {
+      moveButton()!.click();
+    });
+    expect(dialogs.trigger).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('still links to the event when the stats fail', () => {
+    wornHat.result = { data: undefined, isLoading: false, isError: true };
+    renderCard();
+    clickHat();
+    expect(popover()!.textContent).toContain('Stats unavailable');
+    expect(popover()!.textContent).toContain('See the birthday event');
+  });
+
+  it('says there is nothing to show when the hat is not there now', () => {
+    wornHat.result = { data: null, isLoading: false, isError: false };
+    renderCard();
+    clickHat();
+    expect(popover()!.textContent).toContain('No stats to show here.');
+    expect(popover()!.textContent).not.toContain('Stats unavailable');
+  });
+
+  it('shows a skeleton while the stats load', () => {
+    wornHat.result = { data: undefined, isLoading: true, isError: false };
+    renderCard();
+    clickHat();
+    expect(popover()!.querySelector('.mantine-Skeleton-root')).not.toBeNull();
+    expect(popover()!.textContent).not.toContain('No stats to show here.');
+  });
 });
 
 // Positive control for the arms above: a hat with no content behind it (a preview, a try-on) has

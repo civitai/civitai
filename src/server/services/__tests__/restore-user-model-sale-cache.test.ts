@@ -74,6 +74,18 @@ beforeEach(() => {
   bustForModels.mockResolvedValue(undefined);
 });
 
+describe('restoreUser -> model sale badge cache', () => {
+  it('busts the restored models', async () => {
+    await restore();
+    expect(bustForModels).toHaveBeenCalledWith(ORPHANED);
+  });
+
+  it('still restores when the bust fails', async () => {
+    bustForModels.mockRejectedValue(new Error('redis down'));
+    await expect(restore()).resolves.toMatchObject({ id: USER_ID, modelIds: ORPHANED });
+  });
+});
+
 describe('restoreUser -> model ownership history', () => {
   it('records the user as an owner of each model it gives back, with the reclaim', async () => {
     dbMock.dbWrite.$executeRaw.mockImplementation(((sql: Prisma.Sql) => ({

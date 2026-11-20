@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { getRatingLabel, getRatingSummary } from '~/utils/rating-label';
 
 describe('getRatingLabel — rating bands', () => {
@@ -22,6 +23,21 @@ describe('getRatingLabel — rating bands', () => {
     });
     expect(getRatingLabel({ positiveRating: 0.8, totalCount: 3 })).toEqual({
       label: 'Positive',
+      color: 'green',
+    });
+  });
+
+  it('colours the negative band red once it has 10 reviews, and opens the top label at exactly 0.95', () => {
+    expect(getRatingLabel({ positiveRating: 0.05, totalCount: 23 })).toEqual({
+      label: 'Negative',
+      color: 'red',
+    });
+    expect(getRatingLabel({ positiveRating: 0.05, totalCount: 2011 })).toEqual({
+      label: 'Overwhelmingly negative',
+      color: 'red',
+    });
+    expect(getRatingLabel({ positiveRating: 0.95, totalCount: 2011 })).toEqual({
+      label: 'Overwhelmingly Positive',
       color: 'green',
     });
   });
@@ -78,5 +94,38 @@ describe('getRatingLabel — count-bucket edges', () => {
     expect(getRatingLabel({ positiveRating: 0.97, totalCount: 500 }).label).toBe(
       'Overwhelmingly Positive'
     );
+  });
+});
+
+describe('ModelVersionReview', () => {
+  function nodes(el: unknown): unknown[] {
+    if (el == null || typeof el !== 'object') return [];
+    if (Array.isArray(el)) return el.flatMap(nodes);
+    const props = (el as { props?: Record<string, unknown> }).props;
+    return [el, ...(props ? nodes(props.children) : [])];
+  }
+
+  function verdict(up: number, down: number): { label: string; color: unknown } {
+    const tree = ModelVersionReview({
+      modelId: 1,
+      versionId: 2,
+      thumbsUpCount: up,
+      thumbsDownCount: down,
+    });
+    const hit = nodes(tree).find((n) => {
+      const props = (n as { props?: Record<string, unknown> }).props;
+      return (
+        !!props &&
+        typeof props.c === 'string' &&
+        typeof props.children === 'string' &&
+        props.tt === 'capitalize'
+      );
+    }) as { props: { c: string; children: string } };
+    return { label: hit.props.children, color: hit.props.c };
+  }
+
+  it('labels a version from its own thumbs up and down', () => {
+    expect(verdict(431, 68)).toEqual({ label: 'Very Positive', color: 'green' });
+    expect(verdict(4, 133)).toEqual({ label: 'Very Negative', color: 'red' });
   });
 });

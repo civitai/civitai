@@ -5,7 +5,12 @@ import { isAllocationFailure } from '~/server/services/resource-intent-cooc/stor
 import { TagIndexDecodeUnavailableError } from '~/server/services/resource-intent-tags/decode-errors';
 import { decodeTagIndexInWorker } from '~/server/services/resource-intent-tags/decode-worker';
 import { TAG_INDEX_DECODE_WORKER_SOURCE } from '~/server/services/resource-intent-tags/decode-worker.source.generated';
-import { decodeTagIndex, encodeTagIndex } from '~/server/services/resource-intent-tags/payload';
+import {
+  decodeTagIndex,
+  encodeTagIndex,
+  TAG_INDEX_MAX_INFLATED_BYTES,
+  TAG_INDEX_MAX_PAYLOAD_BYTES,
+} from '~/server/services/resource-intent-tags/payload';
 import {
   loadManifestSnapshot,
   TagIndexPayloadCorruptError,
@@ -96,6 +101,72 @@ describe('decodeTagIndexInWorker', () => {
     await expect(
       loadManifestSnapshot({ sql, objects, decode: (b) => decodeTagIndexInWorker(b) }, manifest)
     ).rejects.toBeInstanceOf(TagIndexPayloadCorruptError);
+  });
+
+  it("enforces the caps it is handed by the main thread, not its bundle's copy", async () => {
+    const payload = await encoded();
+    const small = await decodeTagIndexInWorker(Buffer.from(payload), {
+      caps: { maxPayloadBytes: 10, maxInflatedBytes: TAG_INDEX_MAX_INFLATED_BYTES },
+    }).catch((e: Error) => e);
+    expect((small as Error).message).toBe(`tag index payload ${payload.length} bytes exceeds 10`);
+    const inflate = await decodeTagIndexInWorker(Buffer.from(payload), {
+      caps: { maxPayloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES, maxInflatedBytes: 100 },
+    }).catch((e: Error) => e);
+    expect((inflate as Error & { code?: string }).code).toBe('ERR_BUFFER_TOO_LARGE');
+  });
+
+  it("validates against the fit bound the main thread hands it, not a constant of the bundle's", async () => {
+    const payload = await encoded();
+    expect((await decodeTagIndexInWorker(Buffer.from(payload))).specHash).toBe(SPEC);
+    const tight = await decodeTagIndexInWorker(Buffer.from(payload), { fitBound: 1e-6 }).catch(
+      (e: Error) => e
+    );
+    expect((tight as Error).message).toMatch(/fit out of range/);
+  });
+
+  it('takes the payload buffer (transferred, not copied)', async () => {
+    const payload = Buffer.from(await encoded());
+    const own = new Uint8Array(payload.length);
+    own.set(payload);
+    await decodeTagIndexInWorker(own);
+    expect(own.byteLength).toBe(0);
+  });
+
+  it('a worker that answers but would stay alive is terminated', async () => {
+    const terminate = vi.spyOn(Worker.prototype, 'terminate');
+    onTestFinished(() => terminate.mockRestore());
+    const lingering = `
+      const { parentPort } = require('worker_threads');
+      setInterval(() => {}, 1000);
+      parentPort.once('message', () => parentPort.postMessage({
+        ok: false, error: { name: 'Error', message: 'refused' } }));`;
+    const e = await decodeTagIndexInWorker(new Uint8Array(4), { source: lingering }).catch(
+      (x: unknown) => x
+    );
+    expect((e as Error).message).toBe('refused');
+    expect(terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it('an abort while the arrays are being assembled stops the assembly', async () => {
+    const abort = new AbortController();
+    const e = await decodeTagIndexInWorker(Buffer.from(await encoded()), {
+      signal: abort.signal,
+      pause: async () => abort.abort(),
+      assembleEvery: 3,
+    }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(TagIndexDecodeUnavailableError);
+    expect((e as Error).message).toMatch(/aborted while assembling/);
+  });
+
+  it('a signal already aborted rejects before any worker starts', async () => {
+    const abort = new AbortController();
+    abort.abort();
+    const e = await decodeTagIndexInWorker(Buffer.from(await encoded()), {
+      signal: abort.signal,
+      source: `throw new Error('a worker was started')`,
+    }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(TagIndexDecodeUnavailableError);
+    expect((e as Error).message).toMatch(/aborted before it started/);
   });
 });
 

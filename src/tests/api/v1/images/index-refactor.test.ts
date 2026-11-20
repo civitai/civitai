@@ -151,6 +151,12 @@ describe('/api/v1/images refactor — public contract preserved', () => {
     expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
   });
 
+  it('returns the search cursor in metadata', async () => {
+    mockRunImageSearch.mockResolvedValue({ items: [{ id: 1, url: 'x' }], nextCursor: 'cursor-42' });
+    const res = await invoke({});
+    expect(res.body.metadata.nextCursor).toBe('cursor-42');
+  });
+
   it('429s when paging past the offset cap (guard preserved)', async () => {
     const res = await invoke({ page: '11', limit: '100' });
     expect(res.statusCode).toBe(429);
