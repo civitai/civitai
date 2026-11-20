@@ -1,4 +1,6 @@
 import { TRPCError } from '@trpc/server';
+import { Prisma } from '@prisma/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CreatorServiceService from '~/server/services/creator-service.service';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
@@ -169,6 +171,35 @@ describe("creator service router: an offering's reviews", () => {
         code: 'FORBIDDEN',
       });
       expect(mockAssertViewable).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe("creator service router: what an offering's reviews are read with", () => {
+  // The DB is the boundary: the viewer's blocks come back from it, and the review query goes to it.
+  const reviewQueries = () =>
+    dbMock.dbRead.$queryRaw.mock.calls
+      .map(([strings, ...values]) =>
+        Prisma.sql(strings as unknown as TemplateStringsArray, ...(values as Prisma.Sql[]))
+      )
+      .filter((sql) => sql.sql.includes('"ServiceDealReview"'));
+
+  it.each(['getReviews', 'getReviewWork'] as const)(
+    '%s reads at the domain-capped levels, without blocked buyers, from the given cursor',
+    async (procedure) => {
+      mockAssertViewable.mockResolvedValue(undefined);
+      dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+      // A block either way is read from the primary.
+      dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 30, username: 'b' }] as never);
+
+      await callerOn(true)[procedure]({ id: 3, cursor: 99 });
+
+      const [query] = reviewQueries();
+      expect(query.values).toEqual(
+        expect.arrayContaining([3, sfwBrowsingLevelsFlag & allBrowsingLevelsFlag, 30, 99])
+      );
+      // The viewer asked for every level; the SFW site serves only its own.
+      expect(query.values).not.toContain(allBrowsingLevelsFlag);
     }
   );
 });
