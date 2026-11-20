@@ -1,6 +1,7 @@
 import { getWorkflow, type WorkflowEvent } from '@civitai/orchestration-client';
 import type { NextApiRequest } from 'next';
 import { logToAxiom } from '~/server/logging/client';
+import { logFrameLimitHit } from '~/server/services/image-scan-frame-limit';
 import { imageScanWebhookCounter } from '~/server/prom/client';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import {
@@ -80,6 +81,7 @@ async function loadScanEvent(req: NextApiRequest) {
   if (!imageId) throw new Error(`missing workflow metadata.imageId - ${event.workflowId}`);
 
   const steps: unknown[] = data.steps ?? [];
+  logFrameLimitHit({ steps, imageId, workflowId: event.workflowId });
   const input = {
     workflowId: event.workflowId,
     status: event.status,
