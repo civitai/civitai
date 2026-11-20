@@ -276,6 +276,7 @@ const reviewLogEntry = z.strictObject({
     'mature-revoked',
     'held-author-prompt',
     'held-combination-blocks',
+    'held-classifier-error',
   ]),
   sha256: z.string().optional(),
   mature: z.boolean().optional(),

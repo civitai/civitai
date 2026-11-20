@@ -884,7 +884,12 @@ export async function holdUserRemixApp(
   slug: string,
   hold:
     | { action: 'held-author-prompt' }
-    | { action: 'held-combination-blocks'; viewerId: number; firstStrike: boolean }
+    | {
+        /** `held-classifier-error`: a first strike only because the classifier could not answer. */
+        action: 'held-combination-blocks' | 'held-classifier-error';
+        viewerId: number;
+        firstStrike: boolean;
+      }
 ): Promise<boolean> {
   for (let attempt = 1; ; attempt++) {
     const { row, manifest, remix } = await readUserRemixApp(slug);
@@ -892,7 +897,7 @@ export async function holdUserRemixApp(
     if (manifest.review !== 'approved') return false;
     const before = manifest.combinationBlocks ?? [];
     let blocks = before;
-    if (hold.action === 'held-combination-blocks') {
+    if ('viewerId' in hold) {
       const viewer = createHash('sha256').update(`${slug}:${hold.viewerId}`).digest('hex');
       if (!blocks.includes(viewer.slice(0, 16))) blocks = [...blocks, viewer.slice(0, 16)];
     }

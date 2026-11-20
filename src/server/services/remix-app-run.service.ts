@@ -11,6 +11,7 @@ import {
 } from '~/server/services/orchestrator/preset-image-gen.service';
 import {
   classifyPromptServer,
+  type PromptClassification,
   type PromptRefusalCause,
 } from '~/server/services/orchestrator/promptAuditing';
 import { env } from '~/env/server';
@@ -306,18 +307,25 @@ async function cachedOptionPrices(
 }
 
 export const REMIX_APP_HELD = 'This app is back in review. Try another one.';
+export const REMIX_APP_UNCHECKED = 'This app cannot be checked right now. Try again in a moment.';
+
+type AuthorPart = Awaited<ReturnType<NonNullable<RegisteredRemixApp['authorPrompt']>>>;
 
 /**
  * Condition B: the author's part of a user app's prompt, judged alone and recorded against nobody.
  * A block sends the app back to review and refuses the run before the viewer's audit, which would
- * count the author's words against the viewer.
+ * count the author's words against the viewer. So does no part to judge (the masked run went
+ * elsewhere): the viewer's audit would judge the author's words just the same.
  */
-async function assertAuthorPartPasses(slug: string, prompt: string | null, caller: RemixAppCaller) {
-  // Masking the text answers took the app elsewhere: no author part to judge. C still holds.
-  if (prompt == null) return;
-  // A pass with a classifier error goes on: the viewer's audit refuses it, and counts nothing.
-  const { outcome } = await classifyPromptServer({ prompt, isGreen: caller.features.isGreen });
-  if (outcome === 'pass') return;
+async function assertAuthorPartPasses(slug: string, part: AuthorPart) {
+  // Off green on every domain: a hold takes the app out everywhere, and green's own list strikes nobody.
+  const verdict = part && (await classifyPromptServer({ prompt: part.prompt, isGreen: false }));
+  if (verdict?.outcome === 'pass') {
+    // Unjudged, it could still block in the viewer's audit a moment later.
+    if (verdict.externalError)
+      throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNCHECKED });
+    return;
+  }
   await holdUserRemixApp(slug, { action: 'held-author-prompt' }).catch((error: unknown) =>
     logToAxiom({
       name: 'remix-app-run',
@@ -337,33 +345,44 @@ const isPromptRefusal = (error: unknown) =>
 
 const MINOR_TRIGGERS: PromptTriggerCategory[] = ['minor_age', 'inappropriate_minor'];
 
+/** A first strike, and why: a minor-adjacent or listed category, or a classifier that could not say. */
+function firstStrikeOf({ triggers, externalError }: PromptClassification) {
+  if (externalError) return 'error';
+  const listed = env.REMIX_FIRST_STRIKE_CATEGORIES;
+  const strikes =
+    !listed ||
+    triggers.some(
+      ({ category, message }) =>
+        MINOR_TRIGGERS.includes(category) || (category === 'external' && listed.includes(message))
+    );
+  return strikes ? 'listed' : 'none';
+}
+
 /**
- * Condition C: the viewer's own audit refused a run of a user app. One block per distinct viewer;
- * a minor-adjacent one, or any while the operator's list is unset or the prompt cannot be judged
- * again, takes the app out of menus at once. Never masks the viewer's refusal.
+ * Condition C: the viewer's own audit refused a run of a user app that B passed. It counts against
+ * the app only as a combination: words of the viewer's that block alone are theirs. One block per
+ * distinct viewer; a first strike takes the app out of menus at once. Never masks the refusal.
  */
-async function recordCombinationBlock(slug: string, prompt: string, caller: RemixAppCaller) {
-  const firstStrike = await classifyPromptServer({
-    prompt,
-    isGreen: caller.features.isGreen,
-  }).then(
-    ({ triggers }) => {
-      const listed = env.REMIX_FIRST_STRIKE_CATEGORIES;
-      return (
-        !listed ||
-        triggers.some(
-          ({ category, message }) =>
-            MINOR_TRIGGERS.includes(category) ||
-            (category === 'external' && listed.includes(message))
-        )
-      );
-    },
-    () => true
-  );
+async function recordCombinationBlock(
+  slug: string,
+  prompt: string,
+  { answers }: NonNullable<AuthorPart>,
+  viewerId: number
+) {
+  const judge = (text: string) =>
+    classifyPromptServer({ prompt: text, isGreen: false }).then(
+      (verdict) => verdict,
+      () => null
+    );
+  const alone = answers.length ? await judge(answers.join('\n')) : null;
+  if (alone && alone.outcome !== 'pass') return;
+  const whole = await judge(prompt);
+  const strike =
+    !whole || (answers.length && (!alone || alone.externalError)) ? 'error' : firstStrikeOf(whole);
   await holdUserRemixApp(slug, {
-    action: 'held-combination-blocks',
-    viewerId: caller.user.id,
-    firstStrike,
+    action: strike === 'error' ? 'held-classifier-error' : 'held-combination-blocks',
+    viewerId,
+    firstStrike: strike !== 'none',
   }).catch((error: unknown) =>
     logToAxiom({
       name: 'remix-app-run',
@@ -512,9 +531,9 @@ async function advance({
   const { request } = outcome.effect;
   // An author's own run is audited as any other, with the author as the viewer: their words count
   // against them, and their refusals never move their own app's count.
-  const othersApp = !!author && author.userId !== caller.user.id;
-  if (othersApp && authorPrompt && request.kind === 'image')
-    await assertAuthorPartPasses(app.slug, await authorPrompt(source, log), caller);
+  const othersApp = !!author && author.userId !== caller.user.id && request.kind === 'image';
+  const part = othersApp && authorPrompt ? await authorPrompt(source, log) : null;
+  if (othersApp) await assertAuthorPartPasses(app.slug, part);
 
   const tags = remixRunTags({ slug: app.slug, runId, segment: index, runtime: true });
   const remixRun: RemixRunMetadata = { app: app.slug, version: app.version, shape, answers };
@@ -529,8 +548,9 @@ async function advance({
     sourceProvenance: mint ? [mint] : undefined,
     remixRun,
   }).catch(async (error: unknown) => {
-    if (othersApp && request.kind === 'image' && isPromptRefusal(error))
-      await recordCombinationBlock(app.slug, request.prompt, caller);
+    // Green's own list strikes nobody, and holds no app back from the other domains.
+    if (part && request.kind === 'image' && !caller.features.isGreen && isPromptRefusal(error))
+      await recordCombinationBlock(app.slug, request.prompt, part, caller.user.id);
     throw error;
   });
   bustQueriedWorkflowsCache(caller.user.id).catch(() => null);

@@ -111,7 +111,10 @@ export async function getCaller(ctx: Context & { user: SessionUser }): Promise<R
 const remixAppAdminRouter = router({
   list: remixAppAdminProcedure.query(async ({ ctx }) => {
     const rows = await listRemixAppsForAdmin();
-    return ctx.features.remixAppsUserCode ? rows : rows.filter((row) => !('user' in row));
+    // By slug: a user row whose manifest no longer validates carries no `user`.
+    return ctx.features.remixAppsUserCode
+      ? rows
+      : rows.filter((row) => !USER_REMIX_SLUG.test(row.slug));
   }),
   save: remixAppAdminProcedure
     .input(remixAppInputSchema)

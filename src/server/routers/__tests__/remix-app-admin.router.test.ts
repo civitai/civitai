@@ -21,7 +21,12 @@ const h = vi.hoisted(() => ({
   start: vi.fn(),
 }));
 // Not in `h`, whose mocks the first test counts.
-const u = vi.hoisted(() => ({ submit: vi.fn(), review: vi.fn(), clear: vi.fn() }));
+const u = vi.hoisted(() => ({
+  submit: vi.fn(),
+  review: vi.fn(),
+  clear: vi.fn(),
+  validate: vi.fn(),
+}));
 
 vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Registry>()),
@@ -33,6 +38,7 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
   submitUserRemixApp: u.submit,
   reviewUserRemixApp: u.review,
   clearRemixMinorThemed: u.clear,
+  validateUserRemixApp: u.validate,
 }));
 vi.mock('~/server/services/remix-app-run.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RunService>()),
@@ -192,10 +198,12 @@ describe('user app code: submit and review', () => {
     h.list.mockResolvedValue([
       { slug: 'restyle', input: {} },
       { slug: 'u88-probe', user: {} },
+      // A user row whose manifest no longer validates carries no `user`.
+      { slug: 'u88-broken', invalid: ['remix: Required'] },
     ]);
     expect(await as(moderator).list()).toEqual([{ slug: 'restyle', input: {} }]);
-    // POSITIVE CONTROL: with the flag, the user app is listed too.
-    expect(await as(moderator, flags({ remixAppsUserCode: true })).list()).toHaveLength(2);
+    // POSITIVE CONTROL: with the flag, the user apps are listed too.
+    expect(await as(moderator, flags({ remixAppsUserCode: true })).list()).toHaveLength(3);
   });
 
   it('submits only with remixAppsUserCode and remixAppBuilder both on, always as the caller', async () => {
@@ -227,6 +235,20 @@ describe('user app code: submit and review', () => {
     // POSITIVE CONTROL: a moderator with the flag reaches the service, named as the reviewer.
     await as(moderator, on).review(decision());
     expect(u.review).toHaveBeenCalledWith(expect.objectContaining({ moderatorId: moderator.id }));
+  });
+
+  it('dry-runs a user app only as a moderator with remixAppsUserCode on', async () => {
+    const on = flags({ remixAppsUserCode: true });
+    await expect(as(moderator).validate({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    await expect(as(user, on).validate({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(u.validate).not.toHaveBeenCalled();
+    // POSITIVE CONTROL: a moderator with the flag reaches the service.
+    await as(moderator, on).validate({ slug: 'u88-probe' });
+    expect(u.validate).toHaveBeenCalledWith('u88-probe');
   });
 
   it('clears a minor-themed mark only as a moderator with remixAppsUserCode on', async () => {
