@@ -14,7 +14,7 @@ import type * as PreservedViewModule from '../preserved-view';
 const state = vi.hoisted(() => ({
   grants: new Set<string>(),
   verdicts: new Map<number, 'apparent' | 'not'>(),
-  delivered: new Set<number>(),
+  delivered: new Set<string>(),
   failActivity: null as string | null,
   rowExists: true,
   ruleDuringAudit: null as number | null,
@@ -26,7 +26,6 @@ const insertModActivity = vi.hoisted(() =>
     state.order.push(`audit:${String(row.activity)}`);
     if (state.failActivity === row.activity) throw new Error('db down');
     if (state.ruleDuringAudit) state.verdicts.set(state.ruleDuringAudit, 'not');
-    if (row.activity === 'preservedFile:delivered') state.delivered.add(Number(row.entityId));
     return 77;
   })
 );
@@ -34,7 +33,7 @@ const modActivityRowExists = vi.hoisted(() => vi.fn(async (_id: number) => state
 const logToAxiom = vi.hoisted(() => vi.fn(async (_line: Record<string, unknown>) => {}));
 const recordPreservedVerdict = vi.hoisted(() =>
   vi.fn(
-    async (_file: unknown, _reviewer: number, _verdict: string) =>
+    async (_file: unknown, _reviewer: number, _reviewers: unknown, _verdict: string) =>
       'recorded' as 'recorded' | 'already'
   )
 );
@@ -52,8 +51,15 @@ vi.mock('$lib/server/preserved-view', async (importOriginal) => ({
   ...(await importOriginal<typeof PreservedViewModule>()),
   preservedVerdicts: async (files: { n: number }[]) =>
     new Map([...state.verdicts].filter(([n]) => files.some((f) => f.n === n))),
-  deliveredTo: async (files: { n: number }[]) =>
-    new Set([...state.delivered].filter((n) => files.some((f) => f.n === n))),
+  deliveredTo: async (files: { n: number }[], reviewerId: number) =>
+    new Set(files.filter((f) => state.delivered.has(`${reviewerId}:${f.n}`)).map((f) => f.n)),
+  recordDelivery: async (file: { n: number }, reviewerId: number) => {
+    if (state.verdicts.has(file.n)) return 'ruled';
+    if (state.failActivity === 'preservedFile:delivered') return 'failed';
+    state.order.push(DELIVERED);
+    state.delivered.add(`${reviewerId}:${file.n}`);
+    return 'delivered';
+  },
   recordPreservedVerdict,
 }));
 
@@ -68,6 +74,7 @@ const CAP = 10 * 1024 * 1024;
 
 const PAGE = '/csam/preserved-view';
 const REVIEWER = { id: 501, roles: ['moderator:preserved-review'] };
+const REVIEWER_2 = { id: 502, roles: ['moderator:preserved-review'] };
 const ADMIN = { id: 900, roles: ['moderator:admin'] };
 const MANIFEST_KEY = 'fixture/run-1/manifest.json';
 const FILE_KEYS = ['fixture/held/a.png', 'fixture/held/b.png', 'fixture/held/c.png'];
@@ -109,7 +116,7 @@ afterAll(() => send.mockRestore());
 const ENV = {
   PRESERVED_VIEW_MANIFEST_KEY: MANIFEST_KEY,
   PRESERVED_VIEW_MANIFEST_SHA256: sha(MANIFEST),
-  PRESERVED_VIEW_USER_IDS: `${REVIEWER.id}`,
+  PRESERVED_VIEW_USER_IDS: `${REVIEWER.id},${REVIEWER_2.id}`,
   PRESERVED_VIEW_S3_ENDPOINT: 'https://store.test',
   PRESERVED_VIEW_S3_BUCKET: 'held',
   PRESERVED_VIEW_S3_KEY: 'test-key',
@@ -382,7 +389,7 @@ describe('who may open it', () => {
   });
 
   it('refuses a grant holder who is not on the reviewer list', async () => {
-    expect((await get('1', { user: { id: 502, roles: REVIEWER.roles } })).status).toBe(403);
+    expect((await get('1', { user: { id: 503, roles: REVIEWER.roles } })).status).toBe(403);
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -426,7 +433,7 @@ describe('the page', () => {
   }
 
   it('lists each file with no storage key or hash', async () => {
-    state.delivered = new Set([1]);
+    state.delivered = new Set([`${REVIEWER.id}:1`]);
     state.verdicts.set(3, 'apparent');
     const data = (await load({ locals: { user: REVIEWER, grants: {} } } as never)) as {
       files: unknown[];
@@ -441,12 +448,13 @@ describe('the page', () => {
   });
 
   it('records a verdict for a file this reviewer was sent', async () => {
-    state.delivered = new Set([1]);
+    state.delivered = new Set([`${REVIEWER.id}:1`]);
     expect(await verdict({ n: '1', verdict: 'apparent' })).toEqual({ recorded: 1 });
     expect(recordPreservedVerdict).toHaveBeenCalledTimes(1);
     expect(recordPreservedVerdict).toHaveBeenCalledWith(
       { n: 1, key: FILE_KEYS[0], size: FILES[0].byteLength, sha256: sha(FILES[0]) },
       REVIEWER.id,
+      new Set([REVIEWER.id, REVIEWER_2.id]),
       'apparent'
     );
   });
@@ -454,6 +462,13 @@ describe('the page', () => {
   it('records a verdict after a serve that delivered the bytes', async () => {
     expect((await get('1')).status).toBe(200);
     expect(await verdict({ n: '1', verdict: 'not' })).toEqual({ recorded: 1 });
+  });
+
+  it('refuses a verdict on a file another reviewer was sent', async () => {
+    expect((await get('1', { user: REVIEWER_2 })).status).toBe(200);
+    expect(await verdict({ n: '1', verdict: 'not' })).toMatchObject({ status: 409 });
+    expect(recordPreservedVerdict).not.toHaveBeenCalled();
+    expect(await verdict({ n: '1', verdict: 'not' }, REVIEWER_2)).toEqual({ recorded: 1 });
   });
 
   it('refuses a verdict on a file whose serve was refused', async () => {
@@ -464,7 +479,7 @@ describe('the page', () => {
   });
 
   it('refuses a second verdict', async () => {
-    state.delivered = new Set([1]);
+    state.delivered = new Set([`${REVIEWER.id}:1`]);
     recordPreservedVerdict.mockResolvedValueOnce('already');
     expect(await verdict({ n: '1', verdict: 'not' })).toMatchObject({ status: 409 });
   });
@@ -474,13 +489,13 @@ describe('the page', () => {
     [{ verdict: 'not' }, 400],
     [{ n: '4', verdict: 'not' }, 404],
   ])('refuses %o with %i', async (fields, status) => {
-    state.delivered = new Set([1, 4]);
+    state.delivered = new Set([`${REVIEWER.id}:1`, `${REVIEWER.id}:4`]);
     expect(await verdict(fields)).toMatchObject({ status });
     expect(recordPreservedVerdict).not.toHaveBeenCalled();
   });
 
   it('refuses a verdict from an admin who is not the reviewer', async () => {
-    state.delivered = new Set([1]);
+    state.delivered = new Set([`${REVIEWER.id}:1`]);
     expect(await verdict({ n: '1', verdict: 'not' }, ADMIN)).toMatchObject({ status: 403 });
     expect(recordPreservedVerdict).not.toHaveBeenCalled();
   });

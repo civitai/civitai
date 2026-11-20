@@ -39,7 +39,7 @@ export const GET: RequestHandler = async ({ params, locals, request, url }) => {
   const opened = await openPreservedFilesOrError(config);
   const file = opened.files.find((f) => f.n === n);
   if (!file) error(404, 'Not found.');
-  const ruled = async () => (await preservedVerdicts([file])).has(n);
+  const ruled = async () => (await preservedVerdicts([file], config.reviewerIds)).has(n);
   if (await ruled()) error(410, 'This file has a verdict and is no longer served.');
 
   if (!(await auditServe(file, reviewerId))) error(503, 'Could not record this view.');
@@ -58,7 +58,7 @@ export const GET: RequestHandler = async ({ params, locals, request, url }) => {
       sha256Match,
     });
 
-  // The audit write is a window in which a verdict can land; so is the store read below.
+  // A verdict can land while the served row is written; the delivered row closes the later window.
   if (await ruled()) {
     log(410, null, null, null);
     error(410, 'This file has a verdict and is no longer served.');
@@ -86,13 +86,16 @@ export const GET: RequestHandler = async ({ params, locals, request, url }) => {
     log(status, bytes, sizeMatch, sha256Match);
     return new Response(null, { status, headers: NO_STORE });
   }
-  if (await ruled()) {
-    log(410, bytes, sizeMatch, sha256Match);
-    error(410, 'This file has a verdict and is no longer served.');
-  }
-  if (!(await recordDelivery(file, reviewerId))) {
-    log(503, bytes, sizeMatch, sha256Match);
-    error(503, 'Could not record this view.');
+  const delivery = await recordDelivery(file, reviewerId, config.reviewerIds);
+  if (delivery !== 'delivered') {
+    const status = delivery === 'ruled' ? 410 : 503;
+    log(status, bytes, sizeMatch, sha256Match);
+    error(
+      status,
+      delivery === 'ruled'
+        ? 'This file has a verdict and is no longer served.'
+        : 'Could not record this view.'
+    );
   }
   log(200, bytes, sizeMatch, sha256Match);
 

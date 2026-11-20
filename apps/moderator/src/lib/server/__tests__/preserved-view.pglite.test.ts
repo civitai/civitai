@@ -33,6 +33,7 @@ const file = (n: number, hex: string) => ({
 });
 const A = file(1, 'a');
 const B = file(2, 'b');
+const IDS = new Set([REVIEWER]);
 const ENTITY = `preservedFile:${'a'.repeat(16)}`;
 
 let db: PGlite;
@@ -64,10 +65,10 @@ const rows = async () =>
 
 describe('verdicts', () => {
   it('records the first verdict for a file and refuses every later one', async () => {
-    expect(await recordPreservedVerdict(A, REVIEWER, 'apparent')).toBe('recorded');
-    expect(await recordPreservedVerdict(A, REVIEWER, 'not')).toBe('already');
-    expect(await recordPreservedVerdict(A, REVIEWER, 'apparent')).toBe('already');
-    expect(await recordPreservedVerdict(B, REVIEWER, 'not')).toBe('recorded');
+    expect(await recordPreservedVerdict(A, REVIEWER, IDS, 'apparent')).toBe('recorded');
+    expect(await recordPreservedVerdict(A, REVIEWER, IDS, 'not')).toBe('already');
+    expect(await recordPreservedVerdict(A, REVIEWER, IDS, 'apparent')).toBe('already');
+    expect(await recordPreservedVerdict(B, REVIEWER, IDS, 'not')).toBe('recorded');
     expect(await rows()).toEqual([
       {
         activity: 'preservedFile:verdict-apparent',
@@ -82,7 +83,7 @@ describe('verdicts', () => {
         userId: REVIEWER,
       },
     ]);
-    expect(await preservedVerdicts([A, B])).toEqual(
+    expect(await preservedVerdicts([A, B], IDS)).toEqual(
       new Map([
         [1, 'apparent'],
         [2, 'not'],
@@ -91,11 +92,27 @@ describe('verdicts', () => {
   });
 
   it("stays with the file's bytes, wherever a manifest puts them", async () => {
-    expect(await recordPreservedVerdict(A, REVIEWER, 'apparent')).toBe('recorded');
+    expect(await recordPreservedVerdict(A, REVIEWER, IDS, 'apparent')).toBe('recorded');
     const moved = { ...A, n: 3 };
-    expect(await preservedVerdicts([B, moved])).toEqual(new Map([[3, 'apparent']]));
-    expect(await recordPreservedVerdict(moved, REVIEWER, 'not')).toBe('already');
-    expect(await preservedVerdicts([{ ...B, n: 1 }])).toEqual(new Map());
+    expect(await preservedVerdicts([B, moved], IDS)).toEqual(new Map([[3, 'apparent']]));
+    expect(await recordPreservedVerdict(moved, REVIEWER, IDS, 'not')).toBe('already');
+    expect(await preservedVerdicts([{ ...B, n: 1 }], IDS)).toEqual(new Map());
+  });
+
+  it("counts only a listed reviewer's verdict", async () => {
+    await db.exec(`
+      INSERT INTO "ModActivity" ("userId", "activity", "entityType", "entityId") VALUES
+        (777, 'preservedFile:verdict-apparent', '${ENTITY}', 1);`);
+    expect(await preservedVerdicts([A], IDS)).toEqual(new Map());
+    expect(await recordDelivery(A, REVIEWER, IDS)).toBe('delivered');
+    expect(await recordPreservedVerdict(A, REVIEWER, IDS, 'not')).toBe('recorded');
+    expect(await preservedVerdicts([A], new Set([777]))).toEqual(new Map([[1, 'apparent']]));
+  });
+
+  it('writes no delivered row for a file with a verdict', async () => {
+    expect(await recordPreservedVerdict(A, REVIEWER, IDS, 'not')).toBe('recorded');
+    expect(await recordDelivery(A, REVIEWER, IDS)).toBe('ruled');
+    expect((await rows()).map((r) => r.activity)).toEqual(['preservedFile:verdict-not']);
   });
 
   it("counts only this feature's verdict rows", async () => {
@@ -104,15 +121,15 @@ describe('verdicts', () => {
         (1, 'preservedFile:verdict-not', 'image', 1),
         (1, 'preservedFile:served', '${ENTITY}', 1),
         (1, 'preservedFile:delivered', '${ENTITY}', 1);`);
-    expect(await preservedVerdicts([A])).toEqual(new Map());
-    expect(await recordPreservedVerdict(A, REVIEWER, 'not')).toBe('recorded');
+    expect(await preservedVerdicts([A], IDS)).toEqual(new Map());
+    expect(await recordPreservedVerdict(A, REVIEWER, IDS, 'not')).toBe('recorded');
   });
 });
 
 describe('serves', () => {
   it('writes rows that read back, and reports a missing id as missing', async () => {
     expect(await auditServe(B, REVIEWER)).toBe(true);
-    expect(await recordDelivery(B, REVIEWER)).toBe(true);
+    expect(await recordDelivery(B, REVIEWER, IDS)).toBe('delivered');
     const typeB = `preservedFile:${'b'.repeat(16)}`;
     expect(await rows()).toEqual([
       { activity: 'preservedFile:served', entityType: typeB, entityId: 2, userId: REVIEWER },

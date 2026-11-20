@@ -67,7 +67,7 @@ export type NavLink = {
   // sections. Reached and granted by the page's own entry, and kept out of this section's badge and the
   // dashboard so its count is not summed twice.
   shortcut?: true;
-  // Granted and gated like any page, but never listed in the sidebar or on the dashboard: reached by link.
+  // Reached by link only.
   hidden?: true;
   children?: NavLink[];
 };

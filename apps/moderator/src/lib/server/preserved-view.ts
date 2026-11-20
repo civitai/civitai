@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { error } from '@sveltejs/kit';
+import type { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { sql } from '@civitai/db/kysely';
 import { z } from 'zod';
 import { env } from '$env/dynamic/private';
@@ -180,15 +182,11 @@ export async function openPreservedFilesOrError(config: PreservedViewConfig) {
 
 /** Verdicts recorded so far, by file number. Read from the primary, so a verdict just made is seen. */
 export async function preservedVerdicts(
-  files: readonly PreservedFile[]
+  files: readonly PreservedFile[],
+  reviewerIds: ReadonlySet<number>
 ): Promise<Map<number, PreservedVerdict>> {
   if (!files.length) return new Map();
-  const rows = await dbWrite
-    .selectFrom('ModActivity')
-    .select(['entityType', 'activity'])
-    .where('entityType', 'in', files.map(entityTypeOf))
-    .where('activity', 'in', Object.values(PRESERVED_VERDICT_ACTIVITY))
-    .execute();
+  const rows = await verdictRows(dbWrite, files.map(entityTypeOf), reviewerIds);
   const out = new Map<number, PreservedVerdict>();
   for (const file of files) {
     const row = rows.find((r) => r.entityType === entityTypeOf(file));
@@ -216,53 +214,85 @@ export async function deliveredTo(
   return new Set(files.filter((f) => sent.has(entityTypeOf(f))).map((f) => f.n));
 }
 
-async function writeAndReadBack(
-  file: PreservedFile,
-  reviewerId: number,
-  activity: string
-): Promise<boolean> {
+/** The audit row for one serve, written and read back. `false` means call no store and send no bytes. */
+export async function auditServe(file: PreservedFile, reviewerId: number): Promise<boolean> {
   try {
     const id = await insertModActivity({
       userId: reviewerId,
       entityType: entityTypeOf(file),
       entityId: file.n,
-      activity,
+      activity: PRESERVED_SERVED_ACTIVITY,
       credential: 'web',
     });
     return await modActivityRowExists(id);
   } catch (e) {
-    console.error('[preserved-view] audit row not written', activity, errorName(e));
+    console.error('[preserved-view] served row not written', errorName(e));
     return false;
   }
 }
 
-/** The audit row for one serve, written and read back. `false` means call no store and send no bytes. */
-export const auditServe = (file: PreservedFile, reviewerId: number) =>
-  writeAndReadBack(file, reviewerId, PRESERVED_SERVED_ACTIVITY);
+/**
+ * Only a listed reviewer's verdict counts: these rows cannot be deleted, so one written by anything
+ * else would close a file for good.
+ */
+function verdictRows(db: Kysely<DB>, entityTypes: string[], reviewerIds: ReadonlySet<number>) {
+  return db
+    .selectFrom('ModActivity')
+    .select(['entityType', 'activity'])
+    .where('entityType', 'in', entityTypes)
+    .where('activity', 'in', Object.values(PRESERVED_VERDICT_ACTIVITY))
+    .where('userId', 'in', [...reviewerIds])
+    .execute();
+}
 
-/** The row that lets a verdict follow. `false` means send no bytes. */
-export const recordDelivery = (file: PreservedFile, reviewerId: number) =>
-  writeAndReadBack(file, reviewerId, PRESERVED_DELIVERED_ACTIVITY);
+/** Serialises everything that reads or writes one file's verdict. */
+const lockFile = (trx: Kysely<DB>, entityType: string) =>
+  sql`SELECT pg_advisory_xact_lock(hashtext(${entityType}), 0)`.execute(trx);
 
 /**
- * One verdict per file, ever. The advisory lock serialises two submits for the same file, which a
- * check-then-insert alone would let both through.
+ * The row that lets a verdict follow, written under the verdict lock so no verdict can land between
+ * the check and the send. `ruled` and `failed` both mean send no bytes.
  */
+export async function recordDelivery(
+  file: PreservedFile,
+  reviewerId: number,
+  reviewerIds: ReadonlySet<number>
+): Promise<'delivered' | 'ruled' | 'failed'> {
+  const entityType = entityTypeOf(file);
+  try {
+    const id = await dbWrite.transaction().execute(async (trx) => {
+      await lockFile(trx, entityType);
+      if ((await verdictRows(trx, [entityType], reviewerIds)).length) return null;
+      return insertModActivity(
+        {
+          userId: reviewerId,
+          entityType,
+          entityId: file.n,
+          activity: PRESERVED_DELIVERED_ACTIVITY,
+          credential: 'web',
+        },
+        trx
+      );
+    });
+    if (id === null) return 'ruled';
+    return (await modActivityRowExists(id)) ? 'delivered' : 'failed';
+  } catch (e) {
+    console.error('[preserved-view] delivered row not written', errorName(e));
+    return 'failed';
+  }
+}
+
+/** One verdict per file, ever, from a listed reviewer. */
 export async function recordPreservedVerdict(
   file: PreservedFile,
   reviewerId: number,
+  reviewerIds: ReadonlySet<number>,
   verdict: PreservedVerdict
 ): Promise<'recorded' | 'already'> {
   const entityType = entityTypeOf(file);
   return dbWrite.transaction().execute(async (trx) => {
-    await sql`SELECT pg_advisory_xact_lock(hashtext(${entityType}), 0)`.execute(trx);
-    const existing = await trx
-      .selectFrom('ModActivity')
-      .select('id')
-      .where('entityType', '=', entityType)
-      .where('activity', 'in', Object.values(PRESERVED_VERDICT_ACTIVITY))
-      .executeTakeFirst();
-    if (existing) return 'already';
+    await lockFile(trx, entityType);
+    if ((await verdictRows(trx, [entityType], reviewerIds)).length) return 'already';
     await insertModActivity(
       {
         userId: reviewerId,

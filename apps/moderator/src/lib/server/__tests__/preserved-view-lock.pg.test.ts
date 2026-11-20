@@ -28,7 +28,8 @@ vi.mock('../db', () => ({
 vi.mock('../access', () => ({ canAccess: () => true }));
 vi.mock('../axiom', () => ({ logToAxiom: async () => {} }));
 
-const { recordPreservedVerdict } = await import('../preserved-view');
+const { recordDelivery, recordPreservedVerdict } = await import('../preserved-view');
+const IDS = new Set([501, 502]);
 
 const FILE = { n: 1, key: 'fixture/1.png', size: 10, sha256: 'c'.repeat(64) };
 const ENTITY = `preservedFile:${'c'.repeat(16)}`;
@@ -76,7 +77,7 @@ describePg('recordPreservedVerdict against a verdict in another session', () => 
         [ENTITY]
       );
       let settled = false;
-      const mine = recordPreservedVerdict(FILE, 501, 'not').finally(() => (settled = true));
+      const mine = recordPreservedVerdict(FILE, 501, IDS, 'not').finally(() => (settled = true));
       await new Promise((r) => setTimeout(r, 500));
       expect(settled).toBe(false);
       await session.query('COMMIT');
@@ -88,5 +89,28 @@ describePg('recordPreservedVerdict against a verdict in another session', () => 
       `SELECT count(*)::int AS n FROM "ModActivity" WHERE "entityId" = 1`
     );
     expect(rows[0].n).toBe(1);
+  });
+
+  it("holds a delivery until another session's verdict commits, then sends nothing", async () => {
+    const file = { ...FILE, sha256: 'd'.repeat(64) };
+    const entity = `preservedFile:${'d'.repeat(16)}`;
+    const session = await other.pool.connect();
+    try {
+      await session.query('BEGIN');
+      await session.query('SELECT pg_advisory_xact_lock(hashtext($1), 0)', [entity]);
+      await session.query(
+        `INSERT INTO "ModActivity" ("userId", "activity", "entityType", "entityId")
+         VALUES (502, 'preservedFile:verdict-not', $1, 1)`,
+        [entity]
+      );
+      let settled = false;
+      const mine = recordDelivery(file, 501, IDS).finally(() => (settled = true));
+      await new Promise((r) => setTimeout(r, 500));
+      expect(settled).toBe(false);
+      await session.query('COMMIT');
+      expect(await mine).toBe('ruled');
+    } finally {
+      session.release();
+    }
   });
 });

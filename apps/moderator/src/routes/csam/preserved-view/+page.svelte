@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
@@ -17,19 +18,27 @@
   // cannot send, and a fetch is never answered from the page's image cache, so every open is a request.
   let open = $state<{ n: number; url: Promise<string> } | null>(null);
   // The verdict buttons follow an image the browser rendered, never a click alone.
-  let shown = $state<number | null>(null);
+  let shown = $state<number | 'failed' | null>(null);
 
   async function fetchFile(n: number): Promise<string> {
     const res = await fetch(`/api/preserved-view/${n}`, {
       headers: { [PRESERVED_VIEW_HEADER]: 'open' },
       cache: 'no-store',
     });
-    if (!res.ok) throw new Error(`The file could not be shown (${res.status}).`);
+    if (res.status === 410) {
+      await invalidateAll();
+      throw new Error('This file now has a verdict.');
+    }
+    if (!res.ok)
+      throw new Error(
+        `The file could not be shown (${res.status}). No verdict can be recorded for it; tell the Moderation Lead.`
+      );
     return URL.createObjectURL(await res.blob());
   }
 
   function openFile(n: number) {
     shown = null;
+    confirming = null;
     open = { n, url: fetchFile(n) };
   }
 
@@ -45,9 +54,11 @@
 
   const submitVerdict: SubmitFunction = () => {
     submitting = true;
-    return async ({ update }) => {
+    return async ({ update, result }) => {
       try {
         await update();
+        // The file is no longer shown, so its bytes should not stay in the tab either.
+        if (result.type === 'success') open = null;
       } finally {
         submitting = false;
         confirming = null;
@@ -92,12 +103,15 @@
               alt="Preserved file {file.n}"
               class="max-h-[80vh] max-w-full self-center object-contain"
               onload={() => (shown = file.n)}
-              onerror={() => (shown = null)}
+              onerror={() => (shown = 'failed')}
             />
+            {#if shown === 'failed'}
+              <ErrorAlert
+                message="This file did not render. No verdict can be recorded for it; tell the Moderation Lead."
+              />
+            {/if}
           {:catch e}
-            <ErrorAlert
-              message="{e instanceof Error ? e.message : 'The file could not be shown.'} No verdict can be recorded for it; tell the Moderation Lead."
-            />
+            <ErrorAlert message={e instanceof Error ? e.message : 'The file could not be shown.'} />
           {/await}
         {:else}
           <div>
