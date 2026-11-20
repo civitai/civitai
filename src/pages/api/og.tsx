@@ -45,8 +45,7 @@ import {
 import { parseMilestoneShareId } from '~/shared/constants/creator-journey.constants';
 import { decorationFrameBox } from '~/components/UserAvatar/decoration-frame.util';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
-import { isMinorMatureImage } from '~/server/common/image-visibility';
-import { minorContentNotRestrictedWhere } from '~/server/utils/minor-content-gate.sql';
+import { imageNotFlaggedWhere, isImageNotFlagged } from '~/server/common/image-visibility';
 
 // --- Schema & Types ---
 
@@ -162,18 +161,11 @@ function getAspectRatio(img: { width?: number | null; height?: number | null }):
   return 1;
 }
 
-// Link previews have no viewer, so they leave out what getEntityCoverImage keeps for the owner and
-// moderators: acceptable-minor images and minor-flagged images the minor content rule restricts.
-const ogImageNotFlagged = {
-  acceptableMinor: false,
-  AND: [minorContentNotRestrictedWhere()],
-} satisfies Prisma.ImageWhereInput;
+// Link previews have no viewer, so they pick images as getEntityCoverImage does for a signed-out one.
+const ogImageNotFlagged = imageNotFlaggedWhere();
 
-/** `ogImageNotFlagged` over an image already read. */
-function notFlagged<T extends { acceptableMinor: boolean; minor: boolean; nsfwLevel: number }>(
-  image: T | null
-): T | null {
-  return image && !image.acceptableMinor && !isMinorMatureImage(image) ? image : null;
+function notFlagged<T extends Parameters<typeof isImageNotFlagged>[0]>(image: T | null): T | null {
+  return image && isImageNotFlagged(image) ? image : null;
 }
 
 function getSafeImage(image: OgImage | null | undefined): OgImage | null {

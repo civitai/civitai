@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import type { EntityMetric_MetricType_Type, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { NotificationCategory } from '~/server/common/enums';
 import type { ProtectedContext } from '~/server/createContext';
@@ -241,7 +242,8 @@ export const toggleReactionHandler = async ({
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       }).catch(async (error: unknown) => {
-        if (!(await holdsReaction({ ...input, userId: ctx.user.id }))) throw error;
+        const hidden = error instanceof TRPCError && error.code === 'NOT_FOUND';
+        if (!hidden || !(await holdsReaction({ ...input, userId: ctx.user.id }))) throw error;
       });
       // We are only doing this for image contests for now. Because the user
       // gets an instant feedback, this shouldn't have too bad an impact if any at all.

@@ -190,6 +190,16 @@ export const imageNotRestrictedWhere = ({
   ],
 });
 
+/**
+ * Neither acceptable-minor nor held back by the minor content rule, as a Prisma filter: what a
+ * signed-out viewer may be shown on those two counts. `isImageNotFlagged` is its TS twin.
+ */
+export const imageNotFlaggedWhere = () =>
+  ({
+    acceptableMinor: false,
+    AND: [minorContentNotRestrictedWhere()],
+  } satisfies Prisma.ImageWhereInput);
+
 // Ratings a challenge cover may never carry.
 const COVER_EXCLUDED_LEVELS = [0, NsfwLevel.Blocked];
 
@@ -198,9 +208,8 @@ export const challengeCoverWhere = (): Prisma.ImageWhereInput => ({
   AND: [
     { needsReview: null },
     { tosViolation: false },
-    { acceptableMinor: false },
+    imageNotFlaggedWhere(),
     { nsfwLevel: { notIn: COVER_EXCLUDED_LEVELS } },
-    minorContentNotRestrictedWhere(),
     {
       OR: [
         { postId: null },
@@ -384,3 +393,10 @@ export const minorMatureImageVisibleSql = (
   });
   return Prisma.sql`(NOT ${restricted}${ownImage})`;
 };
+
+/** `imageNotFlaggedWhere` over an image already read. */
+export const isImageNotFlagged = (image: {
+  acceptableMinor: boolean;
+  minor?: boolean | null;
+  nsfwLevel: number;
+}) => !image.acceptableMinor && !isMinorMatureImage(image);

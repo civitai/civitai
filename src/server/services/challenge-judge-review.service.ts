@@ -141,7 +141,6 @@ export async function getJudgeCommentForImage({
   userId?: number;
   isModerator?: boolean;
 }) {
-  // An image the viewer may not open reads as one with no judge comment.
   const visible = await assertImageVisibleToViewer({ id: imageId, userId, isModerator }).then(
     () => true,
     (error: unknown) => {
