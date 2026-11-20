@@ -3,10 +3,15 @@ import { Prisma } from '@prisma/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { childBrowsingTagIds } from '@civitai/shared';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  CSAM_LINK_TABLES_SQL,
+  CSAM_RESTRICTION_CASES,
+  csamCaseCleanupSql,
+} from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 /**
  * Which images `/api/mod/retracted-media` serves, and to whom: the shared `retracted-media-tier`
- * SQL, run against real SQL. Each case differs from a `plain` one in a single column or row, so each
+ * SQL, run against real SQL. Each case differs from an `anyMod` one in a single column or row, so each
  * assertion pins one leg of the statement.
  */
 
@@ -23,10 +28,17 @@ vi.mock('~/server/services/blocked-for-patterns', () => ({
 /** The scanner's verdict for every image, or null when it cannot be read. */
 const scanner = vi.hoisted(() => ({
   verdict: 'clear' as 'hit' | 'clear' | 'none' | null,
+  hits: new Set<number>(),
 }));
-const readScannerVerdict = vi.hoisted(() => vi.fn(async () => scanner.verdict));
+const readScannerVerdict = vi.hoisted(() =>
+  vi.fn(async (id: number) => (scanner.hits.has(id) ? 'hit' : scanner.verdict))
+);
 vi.mock('~/server/services/review-batch/review-batch.service', () => ({
   readScannerCsamVerdict: readScannerVerdict,
+  readScannerCsamVerdicts: async (ids: number[]) =>
+    scanner.verdict === null
+      ? null
+      : new Map(ids.map((id) => [id, scanner.hits.has(id) ? 'hit' : scanner.verdict])),
 }));
 
 type Row = {
@@ -75,6 +87,7 @@ const rows: Row[] = [
 
 beforeAll(async () => {
   pg = new PGlite();
+  await pg.exec(CSAM_LINK_TABLES_SQL);
   await pg.exec(`
     CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
     CREATE TABLE "Image" (
@@ -158,7 +171,7 @@ const { getRetractedMedia, scannerVerdicts } = await import(
   '~/server/services/retracted-media.service'
 );
 
-/** Who sees the image: `none` (refused to every moderator), `plain` (any moderator) or `suspect`
+/** Who sees the image: `none` (refused to every moderator), `anyMod` (any moderator) or `cleared`
  *  (only a moderator cleared for CSAM review). */
 const tierOf = async (id: number, { cdnLeg = false } = {}) => {
   const cleared = await getRetractedMedia(id, { csamReview: true, cdnLeg });
@@ -168,7 +181,7 @@ const tierOf = async (id: number, { cdnLeg = false } = {}) => {
     expect(anyMod).toBeNull();
     return 'none';
   }
-  return anyMod ? 'plain' : 'suspect';
+  return anyMod ? 'anyMod' : 'cleared';
 };
 
 const expectTiers = async (tier: string, ids: number[], opts: { cdnLeg?: boolean } = {}) => {
@@ -177,7 +190,7 @@ const expectTiers = async (tier: string, ids: number[], opts: { cdnLeg?: boolean
 
 describe('getRetractedMedia', () => {
   it('serves a blocked image with a known non-minor reason to any moderator', async () => {
-    await expectTiers('plain', [1, 2, 3, 5]);
+    await expectTiers('anyMod', [1, 2, 3, 5]);
     expect(await getRetractedMedia(1, { csamReview: false })).toEqual({
       url: 'key-1',
       type: 'image',
@@ -189,7 +202,7 @@ describe('getRetractedMedia', () => {
     for (const verdict of ['hit', null] as const) {
       scanner.verdict = verdict;
       scannerVerdicts.clear();
-      await expectTiers('suspect', [1]);
+      await expectTiers('cleared', [1]);
       expect(await getRetractedMedia(1, { csamReview: false })).toBeNull();
     }
     expect(readScannerVerdict).toHaveBeenCalledWith(1);
@@ -197,26 +210,26 @@ describe('getRetractedMedia', () => {
 
   it('serves an image the scanner has no verdict for to any moderator', async () => {
     scanner.verdict = 'none';
-    await expectTiers('plain', [1]);
+    await expectTiers('anyMod', [1]);
   });
 
   it('survives a report with a malformed secondary user or image list', async () => {
-    await expectTiers('plain', [1]);
+    await expectTiers('anyMod', [1]);
   });
 
   it('keeps a block with no reason to cleared moderators', async () => {
-    await expectTiers('suspect', [4]);
+    await expectTiers('cleared', [4]);
   });
 
   it('reads any other reason as a signal while the patterns are missing', async () => {
-    await expectTiers('suspect', [10]);
+    await expectTiers('cleared', [10]);
   });
 
-  it('reads a reason by the private patterns: known non-minor is plain, a signal is suspect', async () => {
+  it('reads a reason by the private patterns: known non-minor is open to any moderator, a signal to cleared ones', async () => {
     patterns.current = { signal: [], nonMinor: [/^scan-reason-/u] };
-    await expectTiers('plain', [10]);
+    await expectTiers('anyMod', [10]);
     patterns.current = { signal: [/^scan-reason-x$/u], nonMinor: [/^scan-reason-/u] };
-    await expectTiers('suspect', [10]);
+    await expectTiers('cleared', [10]);
   });
 
   it('never serves held media, which the held-media route serves', async () => {
@@ -233,42 +246,42 @@ describe('getRetractedMedia', () => {
   });
 
   it('serves a minor review flag to any moderator, PG included', async () => {
-    await expectTiers('plain', [14, 15]);
+    await expectTiers('anyMod', [14, 15]);
   });
 
   it('serves a minor-marked or acceptable-minor image to any moderator', async () => {
-    await expectTiers('plain', [16, 17, 25]);
+    await expectTiers('anyMod', [16, 17, 25]);
   });
 
   it('serves a child-tagged image to any moderator', async () => {
-    await expectTiers('plain', [26, 1]);
+    await expectTiers('anyMod', [26, 1]);
   });
 
   it('keeps an image whose hash is a CSAM block to cleared moderators', async () => {
-    await expectTiers('suspect', [27]);
+    await expectTiers('cleared', [27]);
   });
 
   it('keeps an image whose label item is on a csam hold to cleared moderators', async () => {
-    await expectTiers('suspect', [28]);
+    await expectTiers('cleared', [28]);
   });
 
   it('keeps a csam scan flag to cleared moderators, but not a minor or clean one', async () => {
-    await expectTiers('suspect', [29]);
-    await expectTiers('plain', [30, 2]);
+    await expectTiers('cleared', [29]);
+    await expectTiers('anyMod', [30, 2]);
   });
 
   it('keeps a csam vote to cleared moderators, but not a minor vote or another reason', async () => {
-    await expectTiers('suspect', [31]);
-    await expectTiers('plain', [32, 2]);
+    await expectTiers('cleared', [31]);
+    await expectTiers('anyMod', [32, 2]);
   });
 
   it('keeps an AiNotVerified image of a held or reported owner to cleared moderators', async () => {
     // Evidence-held owner, report subject, report secondary user.
-    await expectTiers('suspect', [19, 21, 22]);
+    await expectTiers('cleared', [19, 21, 22]);
   });
 
   it('keeps an image listed on a report, in either list shape, to cleared moderators', async () => {
-    await expectTiers('suspect', [23, 24]);
+    await expectTiers('cleared', [23, 24]);
   });
 
   it('keeps an image of an owner banned for minor safety to cleared moderators', async () => {
@@ -279,9 +292,9 @@ describe('getRetractedMedia', () => {
       `INSERT INTO "User" (id, meta) VALUES (990100110, '{"banDetails": {"reasonCode": "SexualMinor"}}')`
     );
     try {
-      await expectTiers('suspect', [990000110]);
+      await expectTiers('cleared', [990000110]);
       await pg.query(`UPDATE "User" SET meta = '{}' WHERE id = 990100110`);
-      await expectTiers('plain', [990000110]);
+      await expectTiers('anyMod', [990000110]);
     } finally {
       await pg.exec(
         `DELETE FROM "Image" WHERE id = 990000110; DELETE FROM "User" WHERE id = 990100110;`
@@ -315,7 +328,7 @@ describe('the eligibility read', () => {
 });
 
 describe('copies sharing bytes with a restricted image', () => {
-  // 990000101: a plain blocked image whose url another row shares. 990000103: a plain blocked image
+  // 990000101: a blocked image with a routine reason whose url another row shares. 990000103: a blocked image with a routine reason
   // whose pHash another row has. Each test lists or holds the other row, then removes it.
   beforeAll(async () => {
     await pg.exec(`
@@ -346,7 +359,7 @@ describe('copies sharing bytes with a restricted image', () => {
     );
 
   it('serves both images to any moderator while no copy is reported or held', async () => {
-    await expectTiers('plain', [990000101, 990000103]);
+    await expectTiers('anyMod', [990000101, 990000103]);
   });
 
   it.each([
@@ -385,13 +398,13 @@ describe('copies sharing bytes with a restricted image', () => {
     ],
   ])('keeps an image with %s to cleared moderators', async (_label, id, mark) => {
     await mark();
-    await expectTiers('suspect', [id]);
+    await expectTiers('cleared', [id]);
   });
 });
 
 describe('a model version unpublished for its subject', () => {
-  // 990000121: plain blocked image on post 990400121, whose version carries the reason.
-  // 990000122: plain blocked image whose url a row on that post shares.
+  // 990000121: a blocked image with a routine reason on post 990400121, whose version carries the reason.
+  // 990000122: a blocked image with a routine reason whose url a row on that post shares.
   beforeAll(async () => {
     await pg.exec(`
       INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES (990300121, '{"unpublishedReason": "mature-underage"}', NULL);
@@ -560,7 +573,7 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
   });
 
   it('serves a scanned image whose url the CDN retracted to any moderator', async () => {
-    await expectTiers('plain', [ids.retracted], leg);
+    await expectTiers('anyMod', [ids.retracted], leg);
   });
 
   it('is off unless the route asks for it', async () => {
@@ -574,7 +587,7 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
   });
 
   it("reads a scanned image's verdict fresh each time, since a rescan can change it", async () => {
-    await expectTiers('plain', [ids.retracted], leg);
+    await expectTiers('anyMod', [ids.retracted], leg);
     scanner.verdict = 'hit';
     expect(await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })).toBeNull();
   });
@@ -600,4 +613,55 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
     await mark();
     expect(await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })).toBeNull();
   });
+});
+
+describe('rows sharing its url, its post text and its articles', () => {
+  const target = { id: 990900000, url: 'key-990900000' };
+  beforeAll(async () => {
+    await pg.exec(
+      `INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor") VALUES (990900000, 'key-990900000', 990910000, 'Blocked', 'moderated')`
+    );
+  });
+  beforeEach(() => {
+    scanner.verdict = 'clear';
+  });
+  afterEach(async () => {
+    await pg.exec(csamCaseCleanupSql(target));
+  });
+
+  it('keeps an image whose url a row the scanner marks shares to cleared moderators', async () => {
+    await pg.exec(
+      `INSERT INTO "Image" (id, url, "userId", ingestion) VALUES (990900001, 'key-990900000', 990910001, 'Scanned')`
+    );
+    scanner.hits.add(990900001);
+    try {
+      expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
+      expect(await getRetractedMedia(target.id, { csamReview: true })).toMatchObject({
+        url: target.url,
+      });
+    } finally {
+      scanner.hits.clear();
+    }
+  });
+
+  it.each(CSAM_RESTRICTION_CASES.filter((c) => c.restricts))(
+    'keeps an image with $label to cleared moderators',
+    async ({ mark }) => {
+      await pg.exec(mark(target));
+      expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
+      expect(await getRetractedMedia(target.id, { csamReview: true })).toMatchObject({
+        url: target.url,
+      });
+    }
+  );
+
+  it.each(CSAM_RESTRICTION_CASES.filter((c) => !c.restricts))(
+    'serves an image with $label to any moderator',
+    async ({ mark }) => {
+      await pg.exec(mark(target));
+      expect(await getRetractedMedia(target.id, { csamReview: false })).toMatchObject({
+        url: target.url,
+      });
+    }
+  );
 });

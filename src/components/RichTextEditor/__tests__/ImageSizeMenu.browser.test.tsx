@@ -1,11 +1,10 @@
 import type { Editor } from '@tiptap/react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
-import { SizedImage } from '~/shared/tiptap/sized-image.node';
 
 // Uploads only start for a blob: URL, which these tests never use; the hook itself would
 // pull a network layer into a test about the size control.
@@ -13,8 +12,19 @@ vi.mock('~/hooks/useCFImageUpload', () => ({ useCFImageUpload: () => ({ uploadTo
 
 const { EdgeMediaEditNode } = await import('~/components/TipTap/EdgeMediaNode');
 const { ImageSizeMenu } = await import('~/components/RichTextEditor/ImageSizeMenu');
+const { SizedImageEditNode } = await import('~/components/RichTextEditor/SizedImageEditNode');
 
 const IMAGE = 'https://image.civitai.com/test/image.jpeg';
+const COLUMN = 800;
+
+// A blob: URL passes through `useEdgeUrl` untouched, so the image loads at exactly this size.
+async function imageUrl(width: number, height: number) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!)));
+  return URL.createObjectURL(blob);
+}
 
 let editor: Editor | null = null;
 function Harness({ content }: { content: string }) {
@@ -22,18 +32,18 @@ function Harness({ content }: { content: string }) {
     // The article editor's image nodes: the addVideo branch of RichTextEditorComponent.
     extensions: [
       StarterKit.configure({ heading: false }),
-      EdgeMediaEditNode.configure({ accepts: ['image', 'video'], inline: true }),
-      SizedImage.configure({ inline: true }),
+      EdgeMediaEditNode.configure({ accepts: ['image', 'video'], inline: true, resizable: true }),
+      SizedImageEditNode.configure({ inline: true, resizable: true }),
     ],
     content,
     immediatelyRender: true,
   });
   if (!editor) return null;
   return (
-    <>
+    <div style={{ width: COLUMN }}>
       <ImageSizeMenu editor={editor} />
       <EditorContent editor={editor} />
-    </>
+    </div>
   );
 }
 
@@ -52,9 +62,27 @@ const selectFirst = (type: string) => {
   editor!.commands.setNodeSelection(pos);
 };
 
-const sizeControl = () => page.getByRole('radiogroup', { name: 'Image size' });
+const alignControl = () => page.getByRole('radiogroup', { name: 'Image alignment' });
 
-describe('image size menu', () => {
+/** Drag a resize handle of the selected image through each `dx` (pixels from where it started). */
+async function dragHandle(side: 'left' | 'right', ...path: number[]) {
+  const handle = await expect
+    .poll(() => document.querySelector<HTMLElement>(`[data-side="${side}"]`))
+    .not.toBeNull()
+    .then(() => document.querySelector<HTMLElement>(`[data-side="${side}"]`)!);
+  const { left, top, width, height } = handle.getBoundingClientRect();
+  const x = left + width / 2;
+  const y = top + height / 2;
+  const at = (clientX: number) => ({ clientX, clientY: y, bubbles: true, pointerId: 1 });
+  handle.dispatchEvent(new PointerEvent('pointerdown', at(x)));
+  for (const dx of path) window.dispatchEvent(new PointerEvent('pointermove', at(x + dx)));
+  window.dispatchEvent(new PointerEvent('pointerup', at(x + (path.at(-1) ?? 0))));
+}
+
+describe('image placement menu', () => {
+  // Desktop: below 640px small widths are bumped to 60%, which would move the measured sizes.
+  beforeEach(() => page.viewport(1280, 800));
+
   test.each([
     [
       'an uploaded image (edge-media)',
@@ -62,19 +90,90 @@ describe('image size menu', () => {
       'media',
     ],
     ['an older plain image', `<p>text <img src="${IMAGE}"></p>`, 'image'],
-  ])('sizes %s, and Full clears the size', async (_label, content, type) => {
-    await mount(content);
+  ])('aligns %s, and Full width clears size and alignment', async (_label, content, type) => {
+    await mount(
+      content
+        .replace('<edge-media', '<edge-media data-width="40"')
+        .replace('<img', '<img data-width="40"')
+    );
     selectFirst(type);
 
-    await expect.element(sizeControl()).toBeVisible();
-    await expect.element(page.getByRole('radio', { name: 'Full' })).toBeChecked();
+    await expect.element(alignControl()).toBeVisible();
+    // A sized image with no alignment shows as centered.
+    await expect.element(page.getByRole('radio', { name: 'Center' })).toBeChecked();
 
-    await userEvent.click(page.getByText('S', { exact: true }));
-    await expect.poll(() => editor!.getHTML()).toContain('data-width="33"');
-    await expect.element(page.getByRole('radio', { name: 'S' })).toBeChecked();
-    expect(editor!.view.dom.querySelector('img')?.getAttribute('data-width')).toBe('33');
+    await userEvent.click(page.getByLabelText('Float left, text wraps'));
+    await expect.poll(() => editor!.getHTML()).toContain('data-align="float-left"');
 
-    await userEvent.click(page.getByText('Full', { exact: true }));
+    await userEvent.click(page.getByRole('button', { name: 'Full width' }));
+    await expect.poll(() => editor!.getHTML()).not.toContain('data-align');
+    expect(editor!.getHTML()).not.toContain('data-width');
+  });
+
+  // The frame is shared by both image nodes; an edge-media node with a blob: url is an upload in
+  // flight and renders a loader, so the drag is driven on the plain image.
+  test('dragging the right edge sets the width, snapped to 5%', async () => {
+    await mount(`<p><img src="${await imageUrl(COLUMN, 400)}"></p>`);
+    await expect
+      .poll(() => document.querySelector('img')?.getBoundingClientRect().width)
+      .toBe(COLUMN);
+    selectFirst('image');
+
+    // An unsized image starts the line, so only its right edge moves: 800 → 532px is 66.5%.
+    await dragHandle('right', -268);
+
+    await expect.poll(() => editor!.getHTML()).toContain('data-width="65"');
+    await expect
+      .poll(() => document.querySelector('img')?.getBoundingClientRect().width)
+      .toBe(COLUMN * 0.65);
+  });
+
+  test('tapping a handle without dragging leaves the size alone', async () => {
+    await mount(`<p><img src="${await imageUrl(300, 200)}"></p>`);
+    await expect.poll(() => document.querySelector('img')?.getBoundingClientRect().width).toBe(300);
+    selectFirst('image');
+
+    await dragHandle('right', 0);
+    // A later drag proves the handle was live, so the tap above had its chance to save.
+    await dragHandle('right', -60);
+    await expect.poll(() => editor!.getHTML()).toContain('data-width="30"');
+  });
+
+  test('dragging out and back to the start leaves a legacy size alone', async () => {
+    await mount(`<p><img src="${await imageUrl(COLUMN, 400)}" data-width="33"></p>`);
+    selectFirst('image');
+
+    // Pointer events and the attribute update are synchronous, so this reads after the release.
+    await dragHandle('right', 80, 0);
+    expect(editor!.getHTML()).toContain('data-width="33"');
+
+    // A live handle: the same drag without coming back does save.
+    await dragHandle('right', 80);
+    await expect.poll(() => editor!.getHTML()).toContain('data-width="55"');
+  });
+
+  test('shows no resize handles on a phone, where the shown width is not the stored one', async () => {
+    await page.viewport(375, 800);
+    await mount(`<p><img src="${await imageUrl(300, 200)}" data-width="40"></p>`);
+    selectFirst('image');
+
+    const handle = await expect
+      .poll(() => document.querySelector<HTMLElement>('[data-side="right"]'))
+      .not.toBeNull()
+      .then(() => document.querySelector<HTMLElement>('[data-side="right"]')!);
+    expect(getComputedStyle(handle).display).toBe('none');
+  });
+
+  test('dragging a centered image grows it on both sides, and to the edge clears the size', async () => {
+    const src = await imageUrl(COLUMN, 400);
+    await mount(`<p><img src="${src}" data-width="60"></p>`);
+    selectFirst('image');
+
+    // Centered, so 60px of drag is 120px of width: 480 → 600px is 75%.
+    await dragHandle('right', 60);
+    await expect.poll(() => editor!.getHTML()).toContain('data-width="75"');
+
+    await dragHandle('left', -400);
     await expect.poll(() => editor!.getHTML()).not.toContain('data-width');
   });
 
@@ -84,14 +183,14 @@ describe('image size menu', () => {
     );
     // Each absence starts from the menu showing, so it cannot pass before the plugin has run.
     selectFirst('image');
-    await expect.element(sizeControl()).toBeVisible();
+    await expect.element(alignControl()).toBeVisible();
     editor!.commands.setTextSelection({ from: 1, to: 5 });
-    await expect.element(sizeControl()).not.toBeInTheDocument();
+    await expect.element(alignControl()).not.toBeInTheDocument();
 
     selectFirst('image');
-    await expect.element(sizeControl()).toBeVisible();
+    await expect.element(alignControl()).toBeVisible();
     selectFirst('media');
     expect(editor!.state.selection.toJSON().type).toBe('node');
-    await expect.element(sizeControl()).not.toBeInTheDocument();
+    await expect.element(alignControl()).not.toBeInTheDocument();
   });
 });
