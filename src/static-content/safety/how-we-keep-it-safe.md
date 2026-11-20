@@ -47,7 +47,7 @@ We're adding two labels to everything generated on Civitai, on every site and in
 
 ## Is this AI? Check an image
 
-We're building a tool where anyone can check whether an image was made on Civitai. We'll link it here when it's ready.
+[Check an image's Content Credentials](/safety/is-this-ai). It can't yet confirm an image was made on Civitai; it will once our labels go live.
 
 ## For developers
 
