@@ -1,8 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 const { upsertBlocklist } = vi.hoisted(() => ({ upsertBlocklist: vi.fn() }));
+const { BlocklistNotSeededError } = vi.hoisted(() => ({
+  BlocklistNotSeededError: class extends Error {},
+}));
 vi.mock('../../../lib/server/blocklist.service', () => ({
   BlocklistRowMismatchError: class extends Error {},
+  BlocklistNotSeededError,
   getBlocklistDTO: vi.fn(),
   upsertBlocklist,
   removeBlocklistItems: vi.fn(),
@@ -27,6 +31,15 @@ describe('blocklists add action', () => {
   beforeEach(() => {
     upsertBlocklist.mockReset();
     upsertBlocklist.mockResolvedValue({ count: 1, cacheStale: false });
+  });
+
+  it('answers 409, not 500, when the Profanity Word list has not been seeded', async () => {
+    upsertBlocklist.mockRejectedValue(new BlocklistNotSeededError());
+    const result = await add('ProfanityWord', 'zorblat');
+    expect(result).toMatchObject({
+      status: 409,
+      data: { error: expect.stringContaining('not been set up') },
+    });
   });
 
   it('refuses a multi-word Profanity Benign Word entry and saves nothing', async () => {
