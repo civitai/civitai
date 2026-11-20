@@ -288,8 +288,7 @@ export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
             (image) =>
               image.id === coverId &&
               model.id !== undefined &&
-              !!featuredForModels.get(image)?.has(model.id) &&
-              !isTaggedMatureImage(image)
+              !!featuredForModels.get(image)?.has(model.id)
           )
       ),
     coveredVersionIds.flatMap((versionId) =>

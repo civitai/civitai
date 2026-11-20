@@ -655,7 +655,7 @@ async function afterShowcaseChange(modelVersionIds: number[], modelIds: number[]
 }
 
 /**
- * After a save or removal. The cache's refresh drops an entry it can't rebuild, so the next read
+ * After a save or removal. A refresh that can't rebuild an entry marks it stale instead, so a read
  * rebuilds it; the rest is best effort, as the write already committed.
  */
 async function afterShowcaseWrite(modelVersionId: number, modelId: number) {

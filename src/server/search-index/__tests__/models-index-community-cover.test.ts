@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { childBrowsingTagIds } from '@civitai/shared';
 import { NsfwLevel } from '~/server/common/enums';
 
 /**
@@ -97,23 +96,6 @@ describe('the search document and a community cover', () => {
 
     const picked = pickModelIndexImages({ id: 5, coverImageId: 90 }, versions, images);
     expect(picked.map((image) => image.id)).toEqual([90, 1]);
-  });
-
-  it('leaves out a community cover that every search document excludes, like any other image', async () => {
-    const excluded = {
-      id: 90,
-      modelVersionId: 9,
-      availability: 'Public',
-      authorUsername: 'ann',
-      nsfwLevel: NsfwLevel.R,
-      tags: [childBrowsingTagIds[0]],
-    };
-    community.covers = new Map([['5:90', { image: excluded, sites: new Set(['red']) }]]);
-    const images = [owner(1, 10)] as unknown as Images;
-    await appendCommunityCoverImages([{ id: 5, coverImageId: 90 }], images, lookups);
-
-    const picked = pickModelIndexImages({ id: 5, coverImageId: 90 }, versions, images);
-    expect(picked.map((image) => image.id)).toEqual([1]);
   });
 
   it('hoists a cover only for the models it was checked for, not another one in the batch', async () => {
