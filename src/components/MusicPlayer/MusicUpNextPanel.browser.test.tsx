@@ -135,13 +135,17 @@ describe('the Up next panel', () => {
     expect(songCovers.requests).toContainEqual([nowPlaying.id, rain.id, palm.id, chrome.id]);
   });
 
-  test('counts one song in the singular and says so when nothing is queued', async () => {
+  test('counts one song in the singular, and says nothing queued only once', async () => {
     player().playTrack(nowPlaying);
     await openPanel();
     await expect
       .element(panel().getByText('Nothing queued. Add songs with Add to up next.'))
       .toBeInTheDocument();
-    await expect.element(panel().getByText('0 songs')).toBeInTheDocument();
+    expect(
+      panel()
+        .getByText(/\d+ songs?/)
+        .elements()
+    ).toHaveLength(0);
 
     player().addToUpNext(palm);
     await expect.element(panel().getByText('1 song · 3 min')).toBeInTheDocument();

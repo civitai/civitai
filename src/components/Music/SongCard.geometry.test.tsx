@@ -176,3 +176,16 @@ test("the menu's ⋯ is small, and the menu and the duration badge share the cov
   expect(cover.right - badge.getBoundingClientRect().right).toBe(12);
   expect(box.top - cover.top).toBe(12);
 });
+
+test('a song with no cover shows the gradient tile, not a flat grey one', async () => {
+  const height = Math.floor(MUSIC_FEED_COLUMN_WIDTH * SONG_COVER_RATIO + SONG_CARD_TEXT_HEIGHT);
+  await renderAtViewport(
+    <div style={{ width: MUSIC_FEED_COLUMN_WIDTH }}>
+      <SongCard data={songs[1]} height={height} />
+    </div>,
+    { width: 1440, height: 900 }
+  );
+  await vi.waitFor(() => expect(title('Palm Static')).toBeTruthy());
+  const tile = document.querySelector('[data-testid="music-cover-placeholder"]')!.parentElement!;
+  expect(getComputedStyle(tile).backgroundImage).toContain('linear-gradient');
+});

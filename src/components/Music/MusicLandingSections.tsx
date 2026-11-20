@@ -230,6 +230,7 @@ function RisingTile({
           width={large ? 440 : 380}
           iconSize={large ? 64 : 32}
           className="size-full"
+          gradient
         />
       </RoutedDialogLink>
       <div

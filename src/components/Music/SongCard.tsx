@@ -51,7 +51,7 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
           className="absolute inset-0"
           aria-label={`Open ${title}`}
         >
-          <SongArt url={cover?.url} width={320} iconSize={48} className="size-full" />
+          <SongArt url={cover?.url} width={320} iconSize={48} className="size-full" gradient />
         </RoutedDialogLink>
         <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center justify-between">
           <FeedSongPlayButton
