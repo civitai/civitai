@@ -2,7 +2,7 @@ import * as z from 'zod';
 import { describe, expect, it } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import { publicProcedure, router } from '~/server/trpc';
-import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { getRequestBrowsingLevel, getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
@@ -19,10 +19,12 @@ const echo = router({
     .query(({ input }) => input),
 });
 
-const caller = (isModerator: boolean) =>
+const caller = (isModerator: boolean, signedIn = true) =>
   echo.createCaller({
     acceptableOrigin: true,
-    user: { id: 7, isModerator, showNsfw: true, browsingLevel: ALL, onboarding: 0xff },
+    user: signedIn
+      ? { id: 7, isModerator, showNsfw: true, browsingLevel: ALL, onboarding: 0xff }
+      : undefined,
     apiKeyId: null,
     tokenScope: TokenScope.Full,
     req: { headers: {} },
@@ -52,6 +54,23 @@ describe('getRequestBrowsingLevel, from the saved level', () => {
   });
 });
 
+describe('getServerBrowsingLevel, as SSR and direct callers read it', () => {
+  const ssr = (isModerator: boolean, browsingLevel: number) =>
+    getServerBrowsingLevel({
+      canViewNsfw: true,
+      user: { showNsfw: true, browsingLevel, isModerator },
+    });
+
+  it("drops the Blocked bit from a non-moderator's saved level, and keeps a moderator's", () => {
+    expect(ssr(false, 63)).toBe(31);
+    expect(ssr(true, 63)).toBe(63);
+  });
+
+  it('falls back to PG when only the Blocked bit was saved', () => {
+    expect(ssr(false, NsfwLevel.Blocked)).toBe(NsfwLevel.PG);
+  });
+});
+
 describe('procedure input browsing levels, signed in where mature content is allowed', () => {
   it('keeps a level made of browsing bits as sent (control)', async () => {
     expect(await caller(false).levels({ browsingLevel: 13 })).toEqual({ browsingLevel: 13 });
@@ -65,8 +84,14 @@ describe('procedure input browsing levels, signed in where mature content is all
   });
 
   it('keeps the Blocked bit a moderator sent', async () => {
-    expect(await caller(true).levels({ browsingLevel: ALL | NsfwLevel.Blocked })).toEqual({
-      browsingLevel: ALL | NsfwLevel.Blocked,
-    });
+    const level = ALL | NsfwLevel.Blocked;
+    expect(await caller(true).levels({ browsingLevel: level, preCapBrowsingLevel: level })).toEqual(
+      { browsingLevel: level, preCapBrowsingLevel: level }
+    );
+  });
+
+  it('drops the Blocked bit a signed-out caller sent', async () => {
+    const { browsingLevel } = await caller(false, false).levels({ browsingLevel: 63 });
+    expect(browsingLevel & NsfwLevel.Blocked).toBe(0);
   });
 });

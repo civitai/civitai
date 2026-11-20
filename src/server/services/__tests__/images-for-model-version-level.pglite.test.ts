@@ -88,6 +88,13 @@ describe('getImagesForModelVersion with no browsing level', () => {
     expect(await versionImageIds()).toEqual([1]);
   });
 
+  it('leaves out an unrated image', async () => {
+    await image(1, 0, 0);
+    await image(2, 1, XXX);
+
+    expect(await versionImageIds()).toEqual([2]);
+  });
+
   it('leaves out an image rated Blocked and keeps the one beside it', async () => {
     await image(1, 0, BLOCKED);
     await image(2, 1, XXX);

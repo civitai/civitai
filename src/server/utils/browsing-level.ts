@@ -40,12 +40,21 @@ export function getServerBrowsingLevel({
   user,
 }: {
   canViewNsfw: boolean;
-  user?: { showNsfw?: boolean | null; browsingLevel?: number | null } | null;
+  user?: {
+    showNsfw?: boolean | null;
+    browsingLevel?: number | null;
+    isModerator?: boolean | null;
+  } | null;
 }): number {
   // Green (SFW) domain forces a cap that overrides the saved preference.
   if (!canViewNsfw) return user ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
   // Blue/red: honor the user's saved preference; fall back to public when nsfw is off.
-  return user?.showNsfw && user.browsingLevel ? user.browsingLevel : publicBrowsingLevelsFlag;
+  // Only a moderator's browsing picker offers Blocked, so anyone else's saved bit is dropped.
+  const saved =
+    user?.browsingLevel && !user.isModerator
+      ? onlySelectableLevels(user.browsingLevel)
+      : user?.browsingLevel;
+  return user?.showNsfw && saved ? saved : publicBrowsingLevelsFlag;
 }
 
 /**
@@ -70,10 +79,8 @@ export async function getServerImageQueryFilters(
 }
 
 /** `getServerBrowsingLevel` for a request whose feature flags are already resolved. */
-export const getRequestBrowsingLevel = ({ features, user }: Pick<Context, 'features' | 'user'>) => {
-  const level = getServerBrowsingLevel({ canViewNsfw: !!features.canViewNsfw, user });
-  return user?.isModerator ? level : onlySelectableLevels(level);
-};
+export const getRequestBrowsingLevel = ({ features, user }: Pick<Context, 'features' | 'user'>) =>
+  getServerBrowsingLevel({ canViewNsfw: !!features.canViewNsfw, user });
 
 /**
  * What the viewer may see, with the SFW domain applied.
