@@ -6737,6 +6737,8 @@ enum CollectionType {
   Post
   Image
   Model3D
+  /// A playlist: songs only (Image rows of type audio, saved as imageId items).
+  Music
 }
 
 enum CollectionMode {
