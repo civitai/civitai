@@ -124,8 +124,15 @@ describe('setTosViolationHandler blocklist write', () => {
   it('has already hidden the image when the blocklist write throws', async () => {
     svc.addBlockedImage.mockRejectedValue(new Error('no ClickHouse client'));
 
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+
     await expect(remove()).rejects.toThrow();
 
+    // The documents showing it are still looked up.
+    const looked = dbMock.dbWrite.$queryRaw.mock.calls.some(([strings]) =>
+      (strings as string[]).join('?').includes('"Post"')
+    );
+    expect(looked).toBe(true);
     expect(svc.queueImageSearchIndexUpdate).toHaveBeenCalledWith({
       ids: [50],
       action: expect.anything(),

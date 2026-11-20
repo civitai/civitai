@@ -1484,30 +1484,38 @@ export async function handleBlockImages({
     await clearAccountDeletionImageMarkers({ ids });
     // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
     if (postIds.length) await bustCachesForPosts(postIds);
-    if (include?.includes('phash-block')) {
-      logCsamBlocklistNoHash(
-        ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
-        'block'
-      );
-      await bulkAddBlockedImages({
-        data: images
-          .map(({ id, blockedFor }) => {
-            const pHash = pHashes.get(id);
-            if (!pHash) return null;
-            return {
-              hash: pHash,
-              // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
-              reason: removedForCsam.has(id)
-                ? BlockImageReason.CSAM
-                : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
-            };
-          })
-          .filter(isDefined),
-        context: { step: 'block', imageIds: images.map(({ id }) => id), actorUserId: moderatorId },
-      });
+    // The requeue comes after the blocklist write, so a slow requeue cannot hold it up, and runs
+    // when that write throws, since the block has already landed.
+    try {
+      if (include?.includes('phash-block')) {
+        logCsamBlocklistNoHash(
+          ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
+          'block'
+        );
+        await bulkAddBlockedImages({
+          data: images
+            .map(({ id, blockedFor }) => {
+              const pHash = pHashes.get(id);
+              if (!pHash) return null;
+              return {
+                hash: pHash,
+                // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+                reason: removedForCsam.has(id)
+                  ? BlockImageReason.CSAM
+                  : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
+              };
+            })
+            .filter(isDefined),
+          context: {
+            step: 'block',
+            imageIds: images.map(({ id }) => id),
+            actorUserId: moderatorId,
+          },
+        });
+      }
+    } finally {
+      await queueDocumentsForBlockedImages(ids);
     }
-    // After the blocklist write, so a slow requeue cannot hold it up.
-    await queueDocumentsForBlockedImages(ids);
     if (include?.includes('user-notification')) {
       const notified = images.filter(
         (img) => !held.has(img.id) && !isFeedbackCaptureOwner(img.userId)
