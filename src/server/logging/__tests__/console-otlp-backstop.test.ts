@@ -134,6 +134,26 @@ describe('installConsoleOtlpBackstop', () => {
     expect(emitted[0].body).toContain("url: '/api'");
   });
 
+  it('redacts a backtick-quoted credential value and a credential Map entry', () => {
+    const { target, emitted } = installOnFake();
+
+    target.log(
+      { password: `a'b"c-secret`, user: 'bob' },
+      new Map([
+        ['cookie', 'sid=map-secret'],
+        ['page', '2'],
+      ])
+    );
+
+    const body = emitted[0].body;
+    expect(body).not.toContain('c-secret');
+    expect(body).not.toContain('map-secret');
+    expect(body).toContain('password: `[redacted]`');
+    expect(body).toContain("'cookie' => '[redacted]'");
+    expect(body).toContain("user: 'bob'");
+    expect(body).toContain("'page' => '2'");
+  });
+
   it('redacts credential fields inside an Error and a class instance, as inspect prints them', () => {
     const { target, emitted } = installOnFake();
     const err = Object.assign(new Error('request failed'), {
