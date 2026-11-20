@@ -279,6 +279,37 @@ describe('the song stage below md', () => {
     await expect.element(lyricsBox()).not.toBeVisible();
   });
 
+  test('in the lyrics view a play button is still there, and plays the song', async () => {
+    await render(true, 390);
+    await choose('Lyrics');
+    const play = page.getByRole('button', { name: 'Play Midnight Arcade' });
+    await expect.element(play).toBeVisible();
+    await play.click();
+    expect(player().current?.id).toBe(1);
+    expect(player().playing).toBe(true);
+    await expect.element(page.getByRole('button', { name: 'Pause Midnight Arcade' })).toBeVisible();
+  });
+
+  test('the toggle is translucent chrome over the stage in light mode, not a white pill', async () => {
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'light');
+    try {
+      await render(true, 390);
+      const root = toggle('Cover').element().closest('.mantine-SegmentedControl-root')!;
+      const [r, g, b, a = 1] = getComputedStyle(root)
+        .backgroundColor.match(/[\d.]+/g)!
+        .map(Number);
+      // Not an opaque light surface.
+      expect(a < 0.5 || r + g + b < 300).toBe(true);
+      const label = page.getByText('Lyrics', { exact: true }).element();
+      const [lr, lg, lb] = getComputedStyle(label)
+        .color.match(/[\d.]+/g)!
+        .map(Number);
+      expect(lr + lg + lb).toBeGreaterThan(600);
+    } finally {
+      document.documentElement.removeAttribute('data-mantine-color-scheme');
+    }
+  });
+
   test('a song without lyrics shows no toggle', async () => {
     lyrics.lines = null;
     await render(true, 390);

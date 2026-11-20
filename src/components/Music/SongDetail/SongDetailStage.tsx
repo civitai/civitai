@@ -134,15 +134,37 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
           )}
         </div>
         {toggled && (
-          <SegmentedControl
-            aria-label="Show"
-            data={FACES}
-            value={face}
-            onChange={(value) => setFace(value as typeof face)}
-            radius="xl"
-            size="xs"
-            className="self-start @md:hidden"
-          />
+          <div className="flex items-center justify-between gap-3 @md:hidden">
+            <SegmentedControl
+              aria-label="Show"
+              data={FACES}
+              value={face}
+              onChange={(value) => setFace(value as typeof face)}
+              radius="xl"
+              size="xs"
+              // Translucent chrome over the stage in both schemes, as its header buttons are.
+              styles={{
+                root: { backgroundColor: 'rgb(255 255 255 / 0.1)' },
+                indicator: { backgroundColor: 'rgb(255 255 255 / 0.22)', boxShadow: 'none' },
+                label: { color: 'var(--mantine-color-white)' },
+              }}
+            />
+            {/* The cover's play button is hidden with the cover: the lyrics keep one. */}
+            {showLyrics && revealed && (
+              <button
+                type="button"
+                aria-label={`${playing ? 'Pause' : 'Play'} ${title}`}
+                onClick={togglePlay}
+                className="flex size-11 shrink-0 items-center justify-center rounded-full bg-white text-dark-7 shadow-[0_8px_24px_#00000066] transition-transform hover:scale-105"
+              >
+                {playing ? (
+                  <IconPlayerPauseFilled className="size-5" />
+                ) : (
+                  <IconPlayerPlayFilled className="size-5" />
+                )}
+              </button>
+            )}
+          </div>
         )}
         <div className="flex flex-col gap-1">
           <h1 className="m-0 text-[28px] font-extrabold leading-tight @md:text-[34px] @md:font-bold">
