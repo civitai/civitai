@@ -689,6 +689,9 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	collection, hasCollection := goldenArg(args, goldenReCollection, sql)
 	collTag, hasCollTag := goldenArg(args, goldenReCollTag, sql)
 	collOwner, hasCollOwner := goldenArg(args, goldenReCollOwner, sql)
+	if !hasLevel {
+		return nil, errors.New("golden: image query without a level clause")
+	}
 	if hasCollection != strings.Contains(sql, `JOIN ct ON ct."imageId" = i.id`) ||
 		(hasCollection && !strings.Contains(sql, `AND ci."imageId" IS NOT NULL`)) {
 		return nil, errors.New("golden: a collection CTE without its join, or the join without the CTE")
