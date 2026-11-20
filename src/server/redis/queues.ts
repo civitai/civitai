@@ -311,9 +311,8 @@ async function enqueue(
   return true;
 }
 
-// How long a consumer's lease keeps mergeQueue off its key. Above the longest successful run of
-// any committing consumer over a week (a search-index sync, about 17 min); a lapsed lease costs
-// a duplicate pass, never an id.
+// How long a consumer's lease keeps mergeQueue off its key. Must exceed the longest run of any
+// committing consumer; a lapsed lease costs a duplicate pass, never an id.
 const CONSUMER_LEASE_TTL_MS = 60 * 60 * 1000;
 
 function leaseKey(key: string) {
@@ -328,9 +327,7 @@ async function takeConsumerLease(key: string) {
   const token = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
   const lease = leaseKey(key);
   const now = Date.now();
-  // Lapsed leases go on every write as well as in mergeQueue. Redis drops a sorted set with its
-  // last member, so the key of a queue whose consumers all died does not linger: their uncommitted
-  // buckets keep the queue on the hourly merge, which prunes it.
+  // The key has no TTL (sysRedis), so lapsed leases are pruned here and in mergeQueue.
   await safeSysWrite(
     () => sysRedis.zRemRangeByScore(lease, '-inf', now),
     'queues.checkoutQueue lease prune',

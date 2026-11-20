@@ -48,8 +48,8 @@ const { redis, fail } = (() => {
     async exists(key: string) {
       return strings.has(key) ? 1 : 0;
     },
-    /** Whether a sorted set is stored under the key; Redis drops one with its last member. */
-    hasZset: (key: string) => zsets.has(key),
+    /** Members of the sorted set; Redis drops the key with its last member. */
+    zsetSize: (key: string) => zsets.get(key)?.size ?? 0,
     async set(key: string, value: string) {
       strings.set(key, value);
       return 'OK';
@@ -163,10 +163,23 @@ describe('mergeQueue during a consumer checkout', () => {
     tick(2 * 60 * 60 * 1000);
     await mergeQueue(KEY);
     expect(await queued()).toEqual([1, 2, 3]);
-    expect(redis.hasZset(LEASE)).toBe(false);
+    expect(redis.zsetSize(LEASE)).toBe(0);
     tick();
     const next = await checkoutQueue(KEY);
     expect(next.content.sort()).toEqual([1, 2, 3]);
+  });
+
+  it('drops a crashed consumer’s lapsed lease at the next checkout, without a merge', async () => {
+    await addToQueue(KEY, [1]);
+    tick();
+    await checkoutQueue(KEY); // never committed
+    expect(redis.zsetSize(LEASE)).toBe(1);
+
+    tick(2 * 60 * 60 * 1000);
+    const next = await checkoutQueue(KEY);
+    expect(redis.zsetSize(LEASE)).toBe(1);
+    await next.commit();
+    expect(redis.zsetSize(LEASE)).toBe(0);
   });
 
   it('holds off while a second consumer of the key is still uncommitted', async () => {
