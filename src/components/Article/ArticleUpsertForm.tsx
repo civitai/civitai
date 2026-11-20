@@ -385,6 +385,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'align',
                 'civitaiEmbed',
                 'spoiler',
+                'markdown',
               ]}
               withAsterisk
               stickyToolbar

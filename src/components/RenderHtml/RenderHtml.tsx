@@ -27,6 +27,7 @@ export function RenderHtml({
   allowCustomStyles = true,
   withProfanityFilter = false,
   allowStickers = false,
+  allowTables = false,
   className,
   ...props
 }: Props) {
@@ -41,6 +42,7 @@ export function RenderHtml({
       getSanitizedRenderHtml(html, {
         maskProfanity: withProfanityFilter && blurNsfw,
         allowStickers,
+        allowTables,
         allowCustomStyles,
         colorScheme,
         withMentions,
@@ -57,6 +59,7 @@ export function RenderHtml({
       withProfanityFilter,
       thirdPartyAllowed,
       allowStickers,
+      allowTables,
       host,
       ownHosts,
     ]
@@ -156,6 +159,7 @@ type Props = Omit<TypographyStylesProviderProps, 'children'> & {
   html: string;
   withMentions?: boolean;
   allowCustomStyles?: boolean;
+  allowTables?: boolean;
   withProfanityFilter?: boolean;
   /**
    * Opt in to drawing sticker cosmetics. Defaults off so a surface that stores

@@ -38,7 +38,7 @@ export type UpsertModel3DInput = z.infer<typeof upsertModel3DSchema>;
 export const upsertModel3DSchema = z.object({
   id: z.number().optional(),
   name: z.string().trim().min(1).max(150),
-  description: getSanitizedStringSchema().nullish(),
+  description: getSanitizedStringSchema({ allowTables: true }).nullish(),
   licenseId: z.number().int().positive(),
   licenseDetails: z.string().nullish(),
   thumbnailImageId: z.number().int().positive().nullish(),

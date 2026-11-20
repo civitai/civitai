@@ -395,6 +395,7 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
                 value={description}
                 onChange={(value) => setDescription(value ?? '')}
                 includeControls={[
+                  'markdown',
                   'heading',
                   'formatting',
                   'list',

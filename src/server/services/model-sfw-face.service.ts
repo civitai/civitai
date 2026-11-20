@@ -421,7 +421,7 @@ export async function draftSfwFace({
 
   return {
     sfwName: truncateModelName(draft.title.trim()),
-    sfwDescription: sanitizeHtml(draft.description),
+    sfwDescription: sanitizeHtml(draft.description, { allowTables: true }),
   };
 }
 
