@@ -128,6 +128,8 @@ export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'semanticModel3DSearch',
   'semanticStorylineSearch',
   'storyline',
+  // The public takedown forms; the moderator app keeps its own per-address limit behind this one.
+  'takedownRequest',
   'user',
 ];
 

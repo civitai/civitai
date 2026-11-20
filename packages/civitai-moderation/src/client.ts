@@ -37,7 +37,12 @@ export type ModeratorClientConfig = {
 };
 
 export class ModeratorClientError extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(
+    message: string,
+    readonly status?: number,
+    /** A refused takedown form's problems by field id: fixed strings, none quoting the submission. */
+    readonly fieldErrors?: Record<string, string>
+  ) {
     super(message);
     this.name = 'ModeratorClientError';
   }
@@ -71,15 +76,19 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
         // SvelteKit `error(status, message)` responds with `{"message": "..."}` — surface that clean
         // message when present (so a 4xx like a conflicting verdict reads well), else the raw body.
         let detail = text;
+        let fieldErrors: Record<string, string> | undefined;
         try {
           const parsed = JSON.parse(text);
           if (parsed && typeof parsed.message === 'string') detail = parsed.message;
+          if (parsed && typeof parsed.fieldErrors === 'object' && parsed.fieldErrors !== null)
+            fieldErrors = parsed.fieldErrors;
         } catch {
           // not JSON — keep the raw text
         }
         throw new ModeratorClientError(
           detail || `moderator action "${action}" failed: ${res.status}`,
-          res.status
+          res.status,
+          fieldErrors
         );
       }
       return await res.json().catch(() => ({}));
