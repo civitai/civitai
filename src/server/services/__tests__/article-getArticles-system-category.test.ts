@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as CosmeticService from '~/server/services/cosmetic.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // getArticles hands the article category list to the tag filter: without it a category id would
@@ -8,16 +7,6 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // article-system-category-filter.behavior.test.ts.
 
 const STORY = 11;
-
-vi.mock('~/server/services/cosmetic.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof CosmeticService>()),
-  getEventDecorationsForEntity: vi.fn(async () => ({})),
-  getCosmeticsForEntity: vi.fn(async () => ({})),
-}));
-vi.mock('~/server/services/system-cache', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  getCategoryTags: async () => [{ id: STORY, name: 'story' }],
-}));
 
 import { ArticleSort } from '~/server/common/enums';
 import { getArticles } from '~/server/services/article.service';
@@ -29,6 +18,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbRead.$queryRaw.mockResolvedValue([]);
   dbMock.dbRead.image.findMany.mockResolvedValue([]);
+  // getCategoryTags: the 'article category' system tag, then its children.
+  dbMock.dbWrite.tag.findMany.mockImplementation((async (args: { where?: object }) =>
+    args?.where && 'fromTags' in args.where
+      ? [{ id: STORY, name: 'story', color: null, adminOnly: false }]
+      : [{ id: 100, name: 'article category' }]) as never);
 });
 
 const articleQuery = async (filter: Record<string, unknown>) => {
