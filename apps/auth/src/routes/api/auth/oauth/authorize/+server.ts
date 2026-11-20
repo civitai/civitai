@@ -250,6 +250,18 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   if (!isFirstParty && locals.impersonatedBy != null) {
     return failToClient('access_denied', IMPERSONATION_REFUSED, 403);
   }
+  // A code turns into lasting credentials at /token and /session, and an approval stores a remembered
+  // consent, so neither happens on a session the hub accepted without reading the session store. A user
+  // handed over by a fresh sign-in is not this session.
+  if (
+    locals.user &&
+    user.id === locals.user.id &&
+    locals.session &&
+    isUnconfirmedSession(locals.session)
+  ) {
+    return failToClient('temporarily_unavailable', 'Try again in a minute', 503);
+  }
+
   const skipsConsent = isFirstParty
     ? client.skipConsent
     : client.skipConsent &&
@@ -299,17 +311,6 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
       if (typeof value === 'string') consentUrl.searchParams.set(key, value);
     }
     redirect(303, consentUrl.toString());
-  }
-
-  // A code turns into lasting credentials at /token and /session, so it is not issued on a session the hub
-  // accepted without reading the session store. A user handed over by a fresh sign-in is not this session.
-  if (
-    locals.user &&
-    user.id === locals.user.id &&
-    locals.session &&
-    isUnconfirmedSession(locals.session)
-  ) {
-    return failToClient('temporarily_unavailable', 'Try again in a minute', 503);
   }
 
   // Issue the authorization code via the library (PKCE challenge stored, code hashed in Redis). The

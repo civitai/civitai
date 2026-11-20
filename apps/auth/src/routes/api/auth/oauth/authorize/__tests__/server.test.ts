@@ -71,7 +71,8 @@ import { markUnconfirmedSession } from '$lib/server/auth/unconfirmed-session';
 
 function approve(
   scope: bigint,
-  headers: Record<string, string> = { origin: 'https://auth.civitai.com' }
+  headers: Record<string, string> = { origin: 'https://auth.civitai.com' },
+  locals: Record<string, unknown> = { user: { id: 7 } }
 ) {
   const body = new URLSearchParams({
     client_id: 'game-frame',
@@ -88,7 +89,7 @@ function approve(
   return POST({
     request: new Request(url, { method: 'POST', body, headers }),
     url,
-    locals: { user: { id: 7 } },
+    locals,
     getClientAddress: () => '203.0.113.9',
     cookies: { get: () => undefined, set: () => undefined },
   } as never);
@@ -314,6 +315,25 @@ describe('authorize — session accepted without reading the session store', () 
     const res = await start({}, unconfirmed());
     expect(new URL(res.location!).searchParams.get('error')).toBe('temporarily_unavailable');
     expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('stores no remembered consent from an approval on it', async () => {
+    h.skipConsent = false;
+    const pending = approve(TokenScope.UserRead, undefined, unconfirmed());
+    expect(await redirectedError(pending)).toBe('temporarily_unavailable');
+    expect(h.inserts).toHaveLength(0);
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('stores the remembered consent and issues the code once it is confirmed', async () => {
+    h.skipConsent = false;
+    const pending = approve(TokenScope.UserRead, undefined, {
+      user: { id: 7 },
+      session: { sub: '7', jti: 'j', sid: 'family-a' },
+    });
+    expect(await redirectedError(pending)).toBeNull();
+    expect(h.inserts).toHaveLength(1);
+    expect(h.authorize).toHaveBeenCalledTimes(1);
   });
 
   it('issues the code for the same session once it is confirmed', async () => {
