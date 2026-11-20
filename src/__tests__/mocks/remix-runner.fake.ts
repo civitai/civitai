@@ -21,6 +21,9 @@ export function fakeRemixRunner({
     const body = String(init.body);
     const request = JSON.parse(body) as Record<string, unknown>;
     calls.push(request);
+    // The runner's MAX_REMIX_BRANCHES: it refuses a call with more.
+    if (((request.input as ReplayInput).branches?.length ?? 0) > 12)
+      return new Response('too many branches', { status: 400 });
     const results = answer
       ? answer(request)
       : await replayAll(apps[request.sha256 as string], request.input as ReplayInput);

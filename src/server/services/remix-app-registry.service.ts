@@ -86,7 +86,7 @@ export type RegisteredRemixApp = {
   replay: RemixReplayer;
   /** A user app's first workflow, in one runner call. */
   firstRequest?: (source: RemixAppSource) => Promise<RemixWorkflowRequest | null>;
-  /** A user app's own part of the prompt its next workflow sends (Condition D). */
+  /** A user app's own part of the prompt its next workflow sends, its text answers masked. */
   authorPrompt?: ReturnType<typeof userRemixAuthorPrompt>;
   /** A hash of what it runs: a run started on another shape is not replayed. */
   shape: string;
@@ -104,13 +104,13 @@ const unavailable = async (): Promise<never> => {
  * The apps `caller` may see: user apps only behind their flag, and until approved only to their
  * author and moderators, since nobody has reviewed their listing text yet.
  */
-/** Runnable by `caller`: enabled, or their own app while it is in review, never once rejected. */
+/** Runnable by `caller`: enabled, or their own app while it waits on review (submitted or held). */
 export const isRunnableBy = (
   entry: Pick<RegisteredRemixApp, 'enabled' | 'author' | 'review'>,
   caller: { user?: { id: number } }
 ) =>
   entry.enabled ||
-  (!!entry.author && entry.author.userId === caller.user?.id && entry.review !== 'rejected');
+  (!!entry.author && entry.author.userId === caller.user?.id && entry.review === 'submitted');
 
 export function visibleRemixApps<T extends Pick<RegisteredRemixApp, 'author' | 'review'>>(
   apps: T[],
@@ -607,7 +607,7 @@ async function submitUserRemixAppLocked({
       code: 'CONFLICT',
       message: 'This app needs a moderator before it can be edited',
     });
-  // Condition A: a save that changes the code (and so its prompts or steps) is audited first.
+  // A save that changes the code is audited first.
   const before =
     previous?.success && 'source' in previous.data.remix ? previous.data.remix.source : undefined;
   if (source !== before) await auditRemixAppSource({ source, authorId, blockId, isGreen });
@@ -876,7 +876,7 @@ async function holdMatureApp(first: RemixAppRow, moderatorId: number) {
 
 /**
  * The run-time audit sending an approved user app back to review, out of menus: its author's own
- * part of a prompt blocked (B), or viewers' audits refused runs of it (C), counted once per
+ * part of a prompt blocked, or viewers' audits refused runs of it, counted once per
  * distinct viewer and pulled on the {@link REMIX_COMBINATION_BLOCKS_MAX}th, or at once on a
  * `firstStrike`. Re-read and retried when another write lands first. `true` when this pulled it.
  */

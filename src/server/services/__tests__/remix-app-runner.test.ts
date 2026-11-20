@@ -254,6 +254,39 @@ describe("a mod's dry run on the runner", () => {
     expect(branched).toBeLessThan(oneByOne.calls.length);
   });
 
+  it('batches a choice of more options than one call may hold', async () => {
+    const values = Array.from({ length: 9 }, (_, i) => `o${i}`);
+    const wide: Pick<RemixApp, 'run'> = {
+      async run(ctx) {
+        const pick = await ctx.ask({
+          kind: 'choice',
+          prompt: 'Which?',
+          options: values.map((value) => ({ value, label: value })),
+        });
+        return (
+          await ctx.workflow({
+            kind: 'image',
+            prompt: pick,
+            images: [ctx.source],
+            aspectRatio: 'source',
+            quantity: 1,
+          })
+        ).images;
+      },
+    };
+    // Every option's label is a literal of this source.
+    const wideSource = `export default defineRemixApp({ prompt: 'Which?', labels: [${values
+      .map((v) => `'${v}'`)
+      .join(', ')}] });`;
+    const runner = fakeRemixRunner({
+      secret: SECRET,
+      apps: { [createHash('sha256').update(wideSource).digest('hex')]: wide },
+    });
+    const { issues, paths } = await dryRun(runner, wideSource);
+    expect(issues).toEqual([]);
+    expect(paths).toBe(values.length);
+  });
+
   it('reports an app that replays differently, and an ask not fixed in the reviewed code', async () => {
     const random: Pick<RemixApp, 'run'> = {
       async run(ctx) {

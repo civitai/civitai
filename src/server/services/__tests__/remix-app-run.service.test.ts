@@ -1986,6 +1986,41 @@ describe('a user app', () => {
         expect(written()).toHaveLength(0);
       });
 
+      it.each([
+        [
+          'a soft block the viewer could click through',
+          () => classify(blocked('nsfw_blocklist')),
+          true,
+        ],
+        [
+          'a prompt judged again as a soft block',
+          () => classify({ ...blocked('nsfw_blocklist'), outcome: 'soft' }),
+          false,
+        ],
+        ['an over-length refusal', () => classify(blocked('over_length')), false],
+      ])('C: %s counts against nobody, the app included', async (_, setUp, soft) => {
+        vi.mocked(auditPromptServer).mockRejectedValue(
+          new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Your prompt was flagged: x',
+            cause: { blockedFor: ['x'], ...(soft ? { softBlock: true } : {}) },
+          })
+        );
+        setUp();
+        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        expect(written()).toHaveLength(0);
+      });
+
+      it('B: a classifier that throws refuses the run as unavailable, and holds nothing', async () => {
+        vi.mocked(classifyPromptServer).mockRejectedValue(new Error('redis down'));
+        await expect(runAs(USER_ID)).rejects.toMatchObject({
+          code: 'SERVICE_UNAVAILABLE',
+          message: REMIX_APP_UNCHECKED,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(written()).toHaveLength(0);
+      });
+
       it('C: a bad request that is not a prompt refusal never counts', async () => {
         vi.mocked(auditPromptServer).mockRejectedValue(
           new TRPCError({ code: 'BAD_REQUEST', message: 'Something else' })
@@ -2100,11 +2135,35 @@ describe('a user app', () => {
         expect(await listed(101)).toBeUndefined();
         await expect(runAs(101)).rejects.toMatchObject({ code: 'NOT_FOUND' });
 
-        stored = { ...stored, manifest: { ...stored.manifest, review: 'rejected' } };
-        await bumpRemixAppRegistry();
-        expect(await listed(OTHER_AUTHOR)).toMatchObject({ inReview: false });
-        await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+        // Neither once rejected, nor once a mod disables it after approval.
+        for (const review of ['rejected', 'approved']) {
+          stored = { ...stored, manifest: { ...stored.manifest, review } };
+          await bumpRemixAppRegistry();
+          expect(await listed(OTHER_AUTHOR)).toMatchObject({ inReview: false });
+          await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+        }
         expect(submits()).toHaveLength(1);
+      });
+
+      it('a mod dry run plays the stored source and names the hash it reviewed', async () => {
+        const { validateUserRemixApp, remixReviewHash } = await import(
+          '~/server/services/remix-app-registry.service'
+        );
+        const result = await validateUserRemixApp('u5-mine');
+        expect(result.sha256).toBe(remixReviewHash(stored.manifest as never));
+        expect(result.issues).toEqual([]);
+        expect(result.graph).toMatchObject({
+          type: 'ask',
+          spec: { prompt: 'Who is it?' },
+          branches: [
+            {
+              next: {
+                type: 'workflow',
+                request: { prompt: expect.stringMatching(/^a portrait of /) },
+              },
+            },
+          ],
+        });
       });
 
       it('C: an approval starts the count again', async () => {
@@ -2150,24 +2209,49 @@ describe('a user app', () => {
     });
   });
 
-  it('stops its runs at the next step once it is disabled, except for its author or a mod', async () => {
+  it('stops its runs at the next step once it is disabled, except for a mod, or its author while it waits on review', async () => {
     const runId = await runOfMine(flagOn());
     serve(userRow('remix_disabled', OTHER_AUTHOR));
     await expect(advanceRemixRun({ runId, caller: flagOn() })).rejects.toMatchObject({
       code: 'PRECONDITION_FAILED',
       message: 'This app is no longer available',
     });
-    // A mod's run, and the author's own, get past the gate to the replay (which no runner serves yet).
+    // A mod's run, and the author's own of an app in review, get past the gate to the replay (which no runner serves yet).
     await expect(
       advanceRemixRun({ runId, caller: flagOn({ isModerator: true }) })
     ).rejects.toMatchObject({
       code: 'SERVICE_UNAVAILABLE',
     });
     const own = await runOfMine(flagOn(), USER_ID);
-    serve(userRow('remix_disabled', USER_ID));
+    const inReview = userRow('remix_disabled', USER_ID);
+    inReview.manifest.review = 'submitted';
+    serve(inReview);
+    await bumpRemixAppRegistry();
     await expect(advanceRemixRun({ runId: own, caller: flagOn() })).rejects.toMatchObject({
       code: 'SERVICE_UNAVAILABLE',
     });
+    // A mod's disable of an approved app stops its author's runs too.
+    serve(userRow('remix_disabled', USER_ID));
+    await bumpRemixAppRegistry();
+    await expect(advanceRemixRun({ runId: own, caller: flagOn() })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    });
+  });
+
+  it("stops its author's own runs once it is rejected, but not a mod's", async () => {
+    const own = await runOfMine(flagOn(), USER_ID);
+    const rejected = userRow('remix_disabled', USER_ID);
+    rejected.manifest.review = 'rejected';
+    serve(rejected);
+    await bumpRemixAppRegistry();
+    await expect(advanceRemixRun({ runId: own, caller: flagOn() })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: 'This app is no longer available',
+    });
+    // POSITIVE CONTROL: a mod's run gets past the gate to the replay (which no runner serves).
+    await expect(
+      advanceRemixRun({ runId: own, caller: flagOn({ isModerator: true }) })
+    ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
   });
 
   it('never replays a run recorded on another shape of the app, or on none', async () => {

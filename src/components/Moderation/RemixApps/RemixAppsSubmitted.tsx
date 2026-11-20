@@ -39,7 +39,8 @@ export function RemixAppsSubmitted({ rows }: { rows: SubmittedRow[] }) {
     <Stack>
       <Alert color="blue">
         Review the listing and the code itself. A dry run plays the code down every path in the
-        sandbox, on a placeholder image, and shows what each step would send.
+        sandbox, on a placeholder image: code that branches on the image or on what a viewer types
+        can take paths it does not show.
       </Alert>
       {rows.length ? (
         rows.map((row) => (

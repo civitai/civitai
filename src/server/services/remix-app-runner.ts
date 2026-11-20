@@ -189,7 +189,7 @@ export function userRemixFirstRequest(
 export const REMIX_ANSWER_PLACEHOLDER = '___';
 
 /**
- * Condition D: the author's part of the workflow `log` stops at, assembled by running the app with
+ * The author's part of the workflow `log` stops at, assembled by running the app with
  * every text answer replaced by a placeholder, never by cutting the viewer's words out of the
  * prompt (an app may change them: uppercase, quote, repeat). With it, the text answers it masked.
  * `null` when the app, so run, does not reach an image workflow at the same step.

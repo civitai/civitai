@@ -324,8 +324,9 @@ export const remixManifestSchema = z
     /** A rejection as minor-themed: it survives resubmits and bars the mature engine. */
     minorThemed: z.strictObject({ by: z.number().int().positive(), at: z.string() }).optional(),
     /**
-     * Viewers whose own audit refused a run of this source, each as a hash of the slug and their
-     * id: distinct, but no viewer id on the author's row. A submit starts it again; an approval clears it.
+     * Viewers whose own audit refused a run of this source, each as an unkeyed hash of the slug and
+     * their id: distinct, not secret, so no listing returns it. A submit starts it again; an
+     * approval clears it.
      */
     combinationBlocks: z
       .array(z.string().regex(/^[0-9a-f]{16}$/))
