@@ -464,6 +464,41 @@ describe('keep-training base model pin', () => {
   });
 });
 
+describe('keep-training a published run', () => {
+  it("starts unpublished, with no link to the source run's model", async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        metadata: {
+          name: 'phaser',
+          trigger: 'ohwx',
+          matureCount: 0,
+          published: true,
+          modelId: 3057695,
+          modelVersionId: 3478834,
+        },
+        steps: [
+          {
+            $type: 'training',
+            input: { engine: 'ai-toolkit', ecosystem: 'sdxl', epochs: 10, steps: 2000 },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    await continueTraining(
+      client,
+      { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 },
+      { checkText }
+    );
+    const { metadata } = submitWorkflow.mock.calls.at(-1)![0].body;
+    expect(metadata).not.toHaveProperty('published');
+    expect(metadata).not.toHaveProperty('modelId');
+    expect(metadata).not.toHaveProperty('modelVersionId');
+    expect(metadata).toMatchObject({ name: 'phaser (further)', trigger: 'ohwx' });
+  });
+});
+
 describe('keep-training checkpoint reference', () => {
   const source = (input: Record<string, unknown>) => ({
     data: {
