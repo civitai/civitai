@@ -35,6 +35,10 @@ const readScannerVerdict = vi.hoisted(() =>
 );
 vi.mock('~/server/services/review-batch/review-batch.service', () => ({
   readScannerCsamVerdict: readScannerVerdict,
+  readScannerCsamVerdicts: async (ids: number[]) =>
+    scanner.verdict === null
+      ? null
+      : new Map(ids.map((id) => [id, scanner.hits.has(id) ? 'hit' : scanner.verdict])),
 }));
 
 type Row = {

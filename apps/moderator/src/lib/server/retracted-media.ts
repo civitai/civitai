@@ -16,7 +16,7 @@ import {
 import { blockedForPatterns } from './blocked-for-patterns';
 import { dbWrite } from './db';
 import { insertModActivity } from './mod-activity';
-import { readScannerCsamVerdict } from './review-batch';
+import { readScannerCsamVerdict, readScannerCsamVerdicts } from './review-batch';
 
 export const scannerVerdicts = createScannerVerdictCache(readScannerCsamVerdict);
 
@@ -71,8 +71,7 @@ export async function getRetractedMedia(
         : await scannerVerdicts.read(imageId);
     if (verdict !== 'clear' && verdict !== 'none') return null;
     const isSignal = (blockedFor: string | null) => blockedForSignal(blockedFor, patterns);
-    if (!(await siblingsServable(row.siblings, isSignal, (id) => scannerVerdicts.read(id))))
-      return null;
+    if (!(await siblingsServable(row.siblings, isSignal, readScannerCsamVerdicts))) return null;
   }
   return { url: row.url, type: row.type, mimeType: row.mimeType };
 }

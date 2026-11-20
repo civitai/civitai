@@ -40,12 +40,16 @@ const scanner = vi.hoisted(() => ({
 }));
 vi.mock('../review-batch', () => ({
   readScannerCsamVerdict: async (id: number) => (scanner.hits.has(id) ? 'hit' : scanner.verdict),
+  readScannerCsamVerdicts: async (ids: number[]) =>
+    scanner.verdict === null
+      ? null
+      : new Map(ids.map((id) => [id, scanner.hits.has(id) ? 'hit' : scanner.verdict])),
 }));
 
 const { getRetractedMedia, recordRetractedView, scannerVerdicts } = await import(
   '../retracted-media'
 );
-const { URL_SIBLING_CAP } = await import('@civitai/shared/retracted-media-tier');
+const { URL_SIBLING_CAP, csamRestrictedSql } = await import('@civitai/shared/retracted-media-tier');
 beforeEach(() => scannerVerdicts.clear());
 
 const SCHEMA = `
@@ -580,6 +584,30 @@ describe('rows sharing its url, its post text and its articles', () => {
     } finally {
       await db.exec(`DELETE FROM "Image" WHERE id BETWEEN 990900100 AND 990900199`);
     }
+  });
+
+  it('restricts an image whose url a row with an unknown signal shares', async () => {
+    await db.exec(`ALTER TABLE "Image" ALTER COLUMN ingestion DROP NOT NULL;
+      INSERT INTO "Image" (id, url, "userId", ingestion) VALUES (990900001, 'key-990900000', 990910001, NULL)`);
+    try {
+      const { rows } = await db.query<{ restricted: boolean }>(
+        `SELECT ${csamRestrictedSql('i')} AS restricted FROM "Image" i WHERE i.id = 990900000`
+      );
+      expect(rows).toEqual([{ restricted: true }]);
+    } finally {
+      await db.exec(`DELETE FROM "Image" WHERE id = 990900001;
+        ALTER TABLE "Image" ALTER COLUMN ingestion SET NOT NULL`);
+    }
+  });
+
+  it('keeps an image whose url a row with an unfinished scan shares to cleared moderators', async () => {
+    await db.exec(
+      `INSERT INTO "Image" (id, url, "userId", ingestion) VALUES (990900001, 'key-990900000', 990910001, 'Pending')`
+    );
+    expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
+    expect(await getRetractedMedia(target.id, { csamReview: true })).toMatchObject({
+      url: target.url,
+    });
   });
 
   it.each(CSAM_RESTRICTION_CASES.filter((c) => c.restricts))(

@@ -34,7 +34,10 @@ const { patterns } = vi.hoisted(() => ({
 vi.mock('../../blocked-for-patterns', () => ({ blockedForPatterns: () => patterns.current }));
 vi.mock('../../axiom', () => ({ logToAxiom: vi.fn() }));
 
-vi.mock('../../review-batch', () => ({ readScannerCsamVerdict: async () => 'clear' }));
+vi.mock('../../review-batch', () => ({
+  readScannerCsamVerdict: async () => 'clear',
+  readScannerCsamVerdicts: async (ids: number[]) => new Map(ids.map((id) => [id, 'clear'])),
+}));
 vi.mock('../../mod-activity', () => ({ insertModActivity: vi.fn() }));
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 

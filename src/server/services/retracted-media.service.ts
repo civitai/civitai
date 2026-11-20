@@ -11,7 +11,10 @@ import {
 import { blockedForSignal } from '@civitai/shared/review-batch';
 import { dbWrite } from '~/server/db/client';
 import { blockedForPatterns } from '~/server/services/blocked-for-patterns';
-import { readScannerCsamVerdict } from '~/server/services/review-batch/review-batch.service';
+import {
+  readScannerCsamVerdict,
+  readScannerCsamVerdicts,
+} from '~/server/services/review-batch/review-batch.service';
 
 export const scannerVerdicts = createScannerVerdictCache(readScannerCsamVerdict);
 
@@ -56,8 +59,7 @@ export async function getRetractedMedia(
     const verdict = await scannerVerdicts.read(imageId);
     if (verdict !== 'clear' && verdict !== 'none') return null;
     const isSignal = (blockedFor: string | null) => blockedForSignal(blockedFor, patterns);
-    if (!(await siblingsServable(row.siblings, isSignal, (id) => scannerVerdicts.read(id))))
-      return null;
+    if (!(await siblingsServable(row.siblings, isSignal, readScannerCsamVerdicts))) return null;
   }
   return { url: row.url, type: row.type, mimeType: row.mimeType };
 }

@@ -51,52 +51,82 @@ describe('createScannerVerdictCache', () => {
 });
 
 describe('csamRestrictedSql and urlSiblingsSql', () => {
-  it.each(['cs', 'CS', 'cu', 'Cu', 'hr', 'cpth', 'cuph'])(
-    'refuse the alias %s, which their SQL uses',
-    (alias) => {
-      expect(() => csamRestrictedSql(alias)).toThrow(/Bad table alias/);
-    }
-  );
+  const aliases = (sql: string) => [
+    ...new Set([...sql.matchAll(/(?:FROM|JOIN) "\w+" (\w+)/g)].map((m) => m[1])),
+  ];
 
-  it('refuses the alias its own subquery uses', () => {
-    expect(() => urlSiblingsSql('us')).toThrow(/Bad table alias/);
+  it('refuse every alias their SQL declares, in any case', () => {
+    const declared = aliases(csamRestrictedSql('i'));
+    expect(declared).toContain('cs');
+    expect(declared.length).toBeGreaterThan(20);
+    for (const alias of declared) {
+      expect({ alias, refused: refuses(() => csamRestrictedSql(alias)) }).toEqual({
+        alias,
+        refused: true,
+      });
+      const upper = alias.toUpperCase();
+      expect({ upper, refused: refuses(() => csamRestrictedSql(upper)) }).toEqual({
+        upper,
+        refused: true,
+      });
+    }
+    expect(() => urlSiblingsSql('us')).toThrow(/Bad table alias|Alias taken/);
     expect(() => urlSiblingsSql('i')).not.toThrow();
   });
 });
 
-describe('siblingsServable', () => {
-  const routine = (blockedFor: string | null) => blockedFor === 'unlisted';
-  const clear = async (): Promise<ScannerVerdict | null> => 'clear';
+const refuses = (build: () => string) => {
+  try {
+    build();
+    return false;
+  } catch {
+    return true;
+  }
+};
 
-  it('serves a url no other row marks', async () => {
-    expect(await siblingsServable([], routine, clear)).toBe(true);
-    expect(await siblingsServable([{ id: 1, blockedFor: 'moderated' }], routine, clear)).toBe(true);
+describe('siblingsServable', () => {
+  const isSignal = (blockedFor: string | null) => blockedFor === 'unlisted';
+  const row = (id: number, blockedFor: string | null = null, unreadable = false) => ({
+    id,
+    blockedFor,
+    unreadable,
+  });
+  const verdicts =
+    (v: Record<number, ScannerVerdict>) =>
+    async (ids: number[]): Promise<Map<number, ScannerVerdict> | null> =>
+      new Map(ids.map((id) => [id, v[id] ?? 'clear']));
+
+  it('serves a url no other row marks, whether the scanner cleared or never saw them', async () => {
+    expect(await siblingsServable([], isSignal, verdicts({}))).toBe(true);
+    expect(
+      await siblingsServable([row(1, 'moderated'), row(2)], isSignal, verdicts({ 2: 'none' }))
+    ).toBe(true);
   });
 
   it('refuses a url another row has a block-reason signal on', async () => {
-    expect(await siblingsServable([{ id: 1, blockedFor: 'unlisted' }], routine)).toBe(false);
+    expect(await siblingsServable([row(1, 'unlisted')], isSignal)).toBe(false);
   });
 
-  it.each([['hit'], [null]] as const)(
-    'refuses a url another row has a scanner verdict of %s on',
-    async (v) => {
-      const read = vi.fn(async (id: number) => (id === 2 ? v : 'clear'));
-      expect(
-        await siblingsServable(
-          [
-            { id: 1, blockedFor: null },
-            { id: 2, blockedFor: null },
-          ],
-          routine,
-          read
-        )
-      ).toBe(false);
-    }
-  );
+  it('refuses a url another row has not finished its scan on', async () => {
+    expect(await siblingsServable([row(1, null, true)], isSignal, verdicts({}))).toBe(false);
+    const unknown = { id: 1, blockedFor: null, unreadable: null as unknown as boolean };
+    expect(await siblingsServable([unknown], isSignal, verdicts({}))).toBe(false);
+  });
+
+  it('refuses a url another row has a scanner hit on, or when the scanner cannot be read', async () => {
+    expect(await siblingsServable([row(1), row(2)], isSignal, verdicts({ 2: 'hit' }))).toBe(false);
+    expect(await siblingsServable([row(1)], isSignal, async () => null)).toBe(false);
+  });
+
+  it('reads every verdict in one call', async () => {
+    const read = vi.fn(verdicts({}));
+    await siblingsServable([row(1), row(2), row(3)], isSignal, read);
+    expect(read.mock.calls).toEqual([[[1, 2, 3]]]);
+  });
 
   it('refuses a url with as many other rows as it reads', async () => {
-    const rows = Array.from({ length: URL_SIBLING_CAP }, (_, id) => ({ id, blockedFor: null }));
-    expect(await siblingsServable(rows, routine, clear)).toBe(false);
-    expect(await siblingsServable(rows.slice(1), routine, clear)).toBe(true);
+    const rows = Array.from({ length: URL_SIBLING_CAP }, (_, id) => row(id));
+    expect(await siblingsServable(rows, isSignal, verdicts({}))).toBe(false);
+    expect(await siblingsServable(rows.slice(1), isSignal, verdicts({}))).toBe(true);
   });
 });

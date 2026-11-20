@@ -1,4 +1,9 @@
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldImageSql, heldUserSql } from './held-media';
+import {
+  CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
+  heldImageSql,
+  heldUserSql,
+  unreadableImageSql,
+} from './held-media';
 import {
   BAN_REASONS_ALWAYS_REMOVING_MEDIA,
   CSAM_HOLD_POST_UNPUBLISH_REASON,
@@ -37,10 +42,8 @@ export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): 
   )`;
 }
 
-/** The aliases `csamRowSql` uses, which its caller's alias must not shadow. */
-const CSAM_ROW_ALIASES = new Set(
-  'cb ci cf cv cu cp cph cmp cmv cth cpt cpth cah ca cic cso csoh cuph cup hr hs he'.split(' ')
-);
+/** At most this many other rows on a url are read; a url with more is refused (`siblingsServable`). */
+export const URL_SIBLING_CAP = 50;
 
 /**
  * The CSAM signals read off one "Image" row aliased `image`: marked as CSAM (in the CSAM queue,
@@ -50,8 +53,6 @@ const CSAM_ROW_ALIASES = new Set(
  * offering or profile it is the cover of.
  */
 function csamRowSql(image: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || CSAM_ROW_ALIASES.has(image.toLowerCase()))
-    throw new Error(`Bad table alias: ${image}`);
   const id = `${image}.id`;
   const minorBans = BAN_REASONS_ALWAYS_REMOVING_MEDIA.map((r) => `'${r}'`).join(', ');
   return `(
@@ -125,21 +126,28 @@ function csamRowSql(image: string): string {
 
 /**
  * Whether the "Image" row aliased `image` is kept to moderators cleared for CSAM review: it, or
- * another row on its url, carries a CSAM signal in Postgres (`csamRowSql`); it is listed on a CSAM
+ * one of the first `URL_SIBLING_CAP` other rows on its url, carries a CSAM signal in Postgres (`csamRowSql`); it is listed on a CSAM
  * report; or its bytes (by url or pHash copy) are reported, held or under an evidence hold. A minor
  * signal alone is not here: any moderator may see it. `blockedFor` text and the scanner's labels,
  * of this row and of `urlSiblingsSql`'s rows, are read by the caller (`siblingsServable`).
  */
 export function csamRestrictedSql(image: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image.toLowerCase() === 'cs')
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || CSAM_RESTRICTED_ALIASES.has(image.toLowerCase()))
     throw new Error(`Bad table alias: ${image}`);
+  return buildCsamRestrictedSql(image);
+}
+
+function buildCsamRestrictedSql(image: string): string {
   const id = `${image}.id`;
   const url = `${image}."url"`;
   const sibling = csamRowSql('cs');
   return `COALESCE((
     ${csamRowSql(image)}
     OR EXISTS (
-      SELECT 1 FROM "Image" cs WHERE cs.url = ${url} AND cs.id <> ${id} AND COALESCE(${sibling}, true)
+      SELECT 1 FROM (
+        SELECT * FROM "Image" cs WHERE cs.url = ${url} AND cs.id <> ${id} LIMIT ${URL_SIBLING_CAP}
+      ) cs
+      WHERE COALESCE(${sibling}, true)
     )
     OR (${id})::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
     OR ${reportListedUrlSql(url)}
@@ -148,10 +156,14 @@ export function csamRestrictedSql(image: string): string {
   ), true)`;
 }
 
-/** At most this many other rows on a url are read; a url with more is refused (`siblingsServable`). */
-export const URL_SIBLING_CAP = 50;
+/** The table aliases `csamRestrictedSql` declares, which its caller's alias must not shadow. */
+const CSAM_RESTRICTED_ALIASES = new Set(
+  [...buildCsamRestrictedSql('i').matchAll(/(?:FROM|JOIN) "\w+" (\w+)/g)].map((m) =>
+    m[1].toLowerCase()
+  )
+);
 
-export type UrlSibling = { id: number; blockedFor: string | null };
+export type UrlSibling = { id: number; blockedFor: string | null; unreadable: boolean };
 
 /**
  * The other "Image" rows on the url of the row aliased `image`, as a JSON array of
@@ -161,8 +173,10 @@ export function urlSiblingsSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image.toLowerCase() === 'us')
     throw new Error(`Bad table alias: ${image}`);
   return `COALESCE((
-    SELECT json_agg(json_build_object('id', us.id, 'blockedFor', us."blockedFor")) FROM (
-      SELECT us.id, us."blockedFor" FROM "Image" us
+    SELECT json_agg(json_build_object(
+      'id', us.id, 'blockedFor', us."blockedFor", 'unreadable', ${unreadableImageSql('us')}
+    )) FROM (
+      SELECT us.id, us."blockedFor", us.ingestion FROM "Image" us
       WHERE us.url = ${image}."url" AND us.id <> ${image}.id
       LIMIT ${URL_SIBLING_CAP}
     ) us
@@ -171,19 +185,24 @@ export function urlSiblingsSql(image: string): string {
 
 /**
  * Whether no row in `siblings` (`urlSiblingsSql`) keeps the shared url from a moderator without the
- * CSAM grant: `isSignal` holds for no row's `blockedFor`, none is marked by the scanner when `readVerdict` is
- * given, and the list is under `URL_SIBLING_CAP`. An unreadable verdict refuses.
+ * CSAM grant: the list is under `URL_SIBLING_CAP`, every row has finished its scan, `isSignal`
+ * holds for no row's `blockedFor`, and, when `readVerdicts` is given, the scanner marks none. An
+ * unreadable scanner refuses.
  */
 export async function siblingsServable(
   siblings: UrlSibling[],
   isSignal: (blockedFor: string | null) => boolean,
-  readVerdict?: (imageId: number) => Promise<ScannerVerdict | null>
+  readVerdicts?: (imageIds: number[]) => Promise<Map<number, ScannerVerdict> | null>
 ): Promise<boolean> {
   if (siblings.length >= URL_SIBLING_CAP) return false;
-  if (siblings.some((s) => isSignal(s.blockedFor))) return false;
-  if (!readVerdict) return true;
-  const verdicts = await Promise.all(siblings.map((s) => readVerdict(s.id)));
-  return verdicts.every((v) => v === 'clear' || v === 'none');
+  if (siblings.some((s) => s.unreadable !== false || isSignal(s.blockedFor))) return false;
+  if (!readVerdicts || !siblings.length) return true;
+  const verdicts = await readVerdicts(siblings.map((s) => s.id));
+  if (!verdicts) return false;
+  return siblings.every((s) => {
+    const v = verdicts.get(s.id);
+    return v === 'clear' || v === 'none';
+  });
 }
 
 export type ScannerVerdict = 'hit' | 'clear' | 'none';
