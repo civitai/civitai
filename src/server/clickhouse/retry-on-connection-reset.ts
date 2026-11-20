@@ -29,6 +29,9 @@ export function isReadQuery(sql: unknown): boolean {
 }
 
 const MAX_RETRY_DELAY_MS = 50;
+// A socket timer can fire a millisecond or so before the elapsed time reaches the timeout, so a
+// connection error this close to it is treated as the timeout too.
+const TIMEOUT_MARGIN_MS = 50;
 
 /**
  * Re-sends a read query ONCE when it fails at the connection level, so a keep-alive socket dropped
@@ -40,7 +43,7 @@ const MAX_RETRY_DELAY_MS = 50;
  *
  * `requestTimeoutMs` must be the client's own request timeout. That timeout is socket inactivity,
  * so when it fires at least that long has passed since the request started. Past that point a
- * connection error may be the timeout, and it is not retried.
+ * connection error may be the timeout, and it is not retried (with a margin: TIMEOUT_MARGIN_MS).
  */
 export function withConnectionResetRetry<C extends ClickHouseClient>(
   client: C,
@@ -50,7 +53,8 @@ export function withConnectionResetRetry<C extends ClickHouseClient>(
   }: { onRetry: (outcome: ConnectionRetryOutcome) => void; requestTimeoutMs: number }
 ): C {
   const retryable = (error: unknown, startedAt: number) =>
-    isConnectionLevelError(error) && Date.now() - startedAt < requestTimeoutMs;
+    isConnectionLevelError(error) &&
+    performance.now() - startedAt < requestTimeoutMs - TIMEOUT_MARGIN_MS;
 
   // Never re-enters itself: the attempt runs on the unwrapped client, which bounds it at one.
   const retry = async <T>(original: unknown, attempt: () => Promise<T>): Promise<T> => {
@@ -93,7 +97,7 @@ export function withConnectionResetRetry<C extends ClickHouseClient>(
 
   const query = async (params: QueryParams): Promise<ResultSetLike> => {
     if (!isReadQuery(params.query)) return client.query(params);
-    const startedAt = Date.now();
+    const startedAt = performance.now();
     try {
       return withBodyRetry(params, startedAt, await client.query(params));
     } catch (error) {

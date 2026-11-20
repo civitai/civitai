@@ -24,8 +24,8 @@ type Behaviour =
   | 'unknown-table'
   // No response at all, so the client's own request timeout fires.
   | 'silent'
-  // Headers and one row, then nothing: the request timeout fires while the body is read, which
-  // Node reports exactly like a reset (`aborted`, code ECONNRESET).
+  // Headers and one row, then the rest only well after the request timeout: the timeout fires
+  // while the body is read, which Node reports exactly like a reset (`aborted`, code ECONNRESET).
   | 'silent-after-headers';
 
 const ROW = { entityId: 7, metricType: 'Like', value: 13 };
@@ -75,7 +75,7 @@ const httpServer = http.createServer((req, res) => {
       case 'silent-after-headers':
         res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
         res.write(JSON.stringify(ROW) + '\n');
-        return;
+        return setTimeout(() => res.end(), REQUEST_TIMEOUT_MS + 200);
       default:
         res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
         return res.end(JSON.stringify(ROW) + '\n');
@@ -281,10 +281,11 @@ describe('isReadQuery', () => {
     expect(isReadQuery('INSERT INTO t SELECT 1')).toBe(false);
   });
 
-  // A regex that backtracks over the leading whitespace hangs the event loop on this input.
-  it('classifies a long run of leading whitespace in linear time', () => {
+  // Small enough that a backtracking pattern (each extra space doubles its time) fails this in
+  // about a second instead of hanging the synchronous test, large enough to fail it at all.
+  it('classifies leading whitespace without backtracking', () => {
     const start = performance.now();
-    expect(isReadQuery(' '.repeat(10_000) + 'INSERT INTO t VALUES (1)')).toBe(false);
+    expect(isReadQuery(' '.repeat(28) + 'INSERT INTO t VALUES (1)')).toBe(false);
     expect(performance.now() - start).toBeLessThan(50);
   });
 });
