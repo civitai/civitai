@@ -21,6 +21,7 @@ import {
 import { unpublishModelById } from '~/server/services/model.service';
 import { unpublishPostAsModerator } from '~/server/services/post.service';
 import { createStrike } from '~/server/services/strike.service';
+import { archiveUserProfile } from '~/server/services/csam.service-new';
 import { clearUserProfileFields, toggleBan } from '~/server/services/user.service';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
 import type { EntityType } from '~/shared/utils/prisma/enums';
@@ -135,7 +136,12 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
       await bulkSetCommentV3TosViolation({ ids: [entityId], actor });
       return;
     case 'UserProfile':
-      await clearUserProfileFields({ userId: entityId });
+      await clearUserProfileFields({
+        userId: entityId,
+        actorId: actor.id,
+        archive: archiveUserProfile,
+        alwaysArchive: true,
+      });
       return;
     case 'ChatMessage': {
       // The hold judged the sender's recent window, not one message. A soft delete: rows and content are kept.

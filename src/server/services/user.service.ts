@@ -476,21 +476,73 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
 
 export { isUsernamePermitted } from '~/server/services/username-permitted';
 
+/** The profile text a clear removes, as stored just before the clear. */
+export type ProfileClearSnapshot = {
+  userId: number;
+  actorId: number;
+  clearedFields: ProfileClearField[];
+  profile: {
+    bio: string | null;
+    message: string | null;
+    messageAddedAt: Date | null;
+    sfwBio: string | null;
+    sfwMessage: string | null;
+    location: string | null;
+    showcaseSections: Prisma.JsonValue;
+  };
+};
+type ProfileClearField = 'location' | 'bio' | 'message' | 'showcaseSections';
+
 /**
  * Mod-driven: clear public profile fields (location/bio/message/showcaseSections) on UserProfile.
  * No-op if no UserProfile row exists yet.
  *
  * Clearing bio/message also clears its SFW (civitai.com) override — otherwise the
  * copy a moderator just removed keeps rendering on the green domain.
+ *
+ * For a user with a CSAM report, or when `alwaysArchive` is set, `archive` stores the text first and
+ * the clear does not happen if it rejects. Every clear records who ran it in `ModActivity`.
  */
 export async function clearUserProfileFields({
   userId,
   fields = ['location', 'bio', 'message', 'showcaseSections'],
+  actorId,
+  archive,
+  alwaysArchive = false,
 }: {
   userId: number;
-  fields?: Array<'location' | 'bio' | 'message' | 'showcaseSections'>;
+  fields?: ProfileClearField[];
+  actorId: number;
+  archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+  alwaysArchive?: boolean;
 }) {
   if (fields.length === 0) return { updated: false };
+
+  const mustArchive =
+    alwaysArchive ||
+    // primary: a report filed a moment ago must not let this clear skip the archive.
+    !!(await dbWrite.csamReport.findFirst({ where: { userId }, select: { id: true } }));
+  if (mustArchive) {
+    // primary: the archived text must be the text this call clears.
+    const profile = await dbWrite.userProfile.findUnique({
+      where: { userId },
+      select: {
+        bio: true,
+        message: true,
+        messageAddedAt: true,
+        sfwBio: true,
+        sfwMessage: true,
+        location: true,
+        showcaseSections: true,
+      },
+    });
+    if (profile) await archive({ userId, actorId, clearedFields: fields, profile });
+  }
+
+  await dbWrite.modActivity.create({
+    data: { userId: actorId, activity: 'clearProfile', entityType: 'User', entityId: userId },
+  });
+
   const data: Prisma.UserProfileUpdateInput = {};
   if (fields.includes('location')) data.location = null;
   if (fields.includes('bio')) {

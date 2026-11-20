@@ -62,6 +62,7 @@ import {
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
+import type { ProfileClearSnapshot } from '~/server/services/user.service';
 import {
   authorPassPool,
   flattenPages,
@@ -2350,6 +2351,29 @@ export async function archiveUserComments(userId: number) {
     uploadStream({ stream: sink, userId, filename: 'comments.json' }),
   ]);
   return { userId, ...stored, comments };
+}
+
+/**
+ * Writes a profile's text to `profile.json` in the CSAM bucket, beside the user's report archives,
+ * before a moderator clears it. Each clear writes its own object.
+ */
+export async function archiveUserProfile(snapshot: ProfileClearSnapshot) {
+  const sink = new stream.PassThrough();
+  const [, stored] = await Promise.all([
+    writeJsonObject({
+      sink,
+      replacer: bigintReplacer,
+      entries: [
+        ['userId', { value: snapshot.userId }],
+        ['archivedAt', { value: new Date().toISOString() }],
+        ['actorId', { value: snapshot.actorId }],
+        ['clearedFields', { value: snapshot.clearedFields }],
+        ['profile', { value: snapshot.profile }],
+      ],
+    }),
+    uploadStream({ stream: sink, userId: snapshot.userId, filename: 'profile.json' }),
+  ]);
+  return stored;
 }
 
 /**

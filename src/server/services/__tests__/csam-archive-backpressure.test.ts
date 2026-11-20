@@ -317,6 +317,7 @@ let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 import {
   archiveCsamDataForReport,
   archiveUserComments,
+  archiveUserProfile,
   CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
   getCsamsToArchive,
 } from '~/server/services/csam.service-new';
@@ -1372,6 +1373,40 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
 
     await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('statement timeout');
     expect(uploads.has('data.json')).toBe(false);
+  });
+
+  it('archives a profile before it is cleared, beside the report archives', async () => {
+    seedDb();
+    const profile = {
+      bio: 'b',
+      message: null,
+      messageAddedAt: null,
+      sfwBio: null,
+      sfwMessage: null,
+      location: 'l',
+      showcaseSections: [{ key: 'k' }],
+    };
+    await archiveUserProfile({
+      userId: report.userId,
+      actorId: report.userId + 1,
+      clearedFields: ['bio', 'showcaseSections'],
+      profile,
+    });
+
+    const archived = JSON.parse(uploads.get('profile.json')!.toString('utf8'));
+    expect(Object.keys(archived)).toEqual([
+      'userId',
+      'archivedAt',
+      'actorId',
+      'clearedFields',
+      'profile',
+    ]);
+    expect(archived).toMatchObject({
+      userId: report.userId,
+      actorId: report.userId + 1,
+      clearedFields: ['bio', 'showcaseSections'],
+      profile,
+    });
   });
 
   it("archives a held user's comments on their own", async () => {

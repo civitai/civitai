@@ -78,6 +78,7 @@ import markReportedHandler from '~/pages/api/mod/text-scan/csam-hold/mark-report
 import referHandler from '~/pages/api/mod/text-scan/csam-hold/refer';
 import setReportChoiceHandler from '~/pages/api/mod/text-scan/csam-hold/set-report-choice';
 import { decideCsamHold } from '~/server/services/text-scan/csam-hold-decision';
+import { archiveUserProfile } from '~/server/services/csam.service-new';
 
 function call(body: Record<string, unknown>, endpoint: typeof handler = handler) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];
@@ -368,7 +369,13 @@ describe('textScan.resolveCsamHold', () => {
     it('clears the profile text of a user profile hold', async () => {
       findFirst.mockResolvedValue(pendingHold({ entityType: 'UserProfile', entityId: 900 }));
       await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' });
-      expect(mocks.clearUserProfileFields).toHaveBeenCalledWith({ userId: 900 });
+      // Archived first, whether or not the author has a report: the hold path is the CSAM path.
+      expect(mocks.clearUserProfileFields).toHaveBeenCalledWith({
+        userId: 900,
+        actorId: 7,
+        archive: archiveUserProfile,
+        alwaysArchive: true,
+      });
     });
 
     it('soft-deletes a chat message as a moderator, auditing it', async () => {
