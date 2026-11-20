@@ -8,6 +8,7 @@ import {
   prepareImageSearchUploadSchema,
 } from '~/server/schema/semantic-image-search.schema';
 import {
+  claimSearchUploadSearchSlot,
   claimSearchUploadUserDay,
   getSearchUploadStatus,
   withSearchUploadSearch,
@@ -67,6 +68,7 @@ export const imageSearchUploadRouter = router({
       if (ctx.req.method === 'GET') throw new TRPCError({ code: 'METHOD_NOT_SUPPORTED' });
       return withSearchUploadSearch(ctx.user.id, async () => {
         await claimSearchUploadUserDay({ userId: ctx.user.id, action: 'search', req: ctx.req });
+        await claimSearchUploadSearchSlot(ctx.req);
         const views = credentialViews(ctx);
         const uploadAnchor = await resolveSearchUploadAnchor({
           userId: ctx.user.id,

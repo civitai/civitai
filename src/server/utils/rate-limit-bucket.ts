@@ -87,6 +87,13 @@ export const FAIL_CLOSED_RATE_LIMIT_SCOPES: readonly string[] = [
   'training',
 ];
 
+/**
+ * Fail-closed routers that also refuse when the claim script itself errors, rather than deciding on
+ * the read-then-write path.
+ */
+export const SCRIPT_ERROR_REFUSED_SCOPES: readonly string[] = ['imageSearchUpload'];
+const scriptErrorRefusedScopes = new Set(SCRIPT_ERROR_REFUSED_SCOPES);
+
 /** Routers whose rate-limited procedures use the per-process fallback count. See above. */
 export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'appCollaborators',
@@ -587,6 +594,7 @@ export async function claimRateLimitAttempt({
       if (failClosed) throw storeUnavailable();
       degraded = true;
     } else {
+      if (scriptErrorRefusedScopes.has(scope.split(/[.:]/, 1)[0])) throw storeUnavailable();
       // The script errored: this call decides on the read-then-write path below.
       rateLimitClaimPathCounter.inc({ path: 'fallback' });
     }

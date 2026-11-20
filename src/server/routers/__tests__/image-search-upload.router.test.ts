@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   prepare: vi.fn(),
   anchor: vi.fn(),
   claimDay: vi.fn(),
+  searchSlot: vi.fn(),
   search: vi.fn(),
 }));
 
@@ -24,6 +25,7 @@ vi.mock('~/server/services/image-search-upload.service', async (importOriginal) 
   prepareSearchUpload: h.prepare,
   resolveSearchUploadAnchor: h.anchor,
   claimSearchUploadUserDay: h.claimDay,
+  claimSearchUploadSearchSlot: h.searchSlot,
 }));
 vi.mock('~/server/services/semantic-image-search.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SemanticSearch>()),
@@ -55,6 +57,7 @@ beforeEach(() => {
   h.prepare.mockReset().mockResolvedValue({ uploadId: UPLOAD });
   h.anchor.mockReset().mockResolvedValue(ANCHOR);
   h.claimDay.mockReset().mockResolvedValue(undefined);
+  h.searchSlot.mockReset().mockResolvedValue(undefined);
   h.search.mockReset().mockResolvedValue({ items: [], nextCursor: undefined });
 });
 
@@ -186,6 +189,16 @@ describe('imageSearchUpload', () => {
     finish();
     await first;
     await expect(search(MOD)).resolves.toBeDefined();
+  });
+
+  it('counts each search page against the site-wide daily cap, and stops when it is spent', async () => {
+    await search(MOD);
+    expect(h.searchSlot).toHaveBeenCalledTimes(1);
+    h.searchSlot.mockRejectedValue(Object.assign(new Error('busy'), { code: 'TOO_MANY_REQUESTS' }));
+    h.anchor.mockClear();
+    await expect(search(MOD)).rejects.toThrow('busy');
+    expect(h.anchor).not.toHaveBeenCalled();
+    expect(h.search).toHaveBeenCalledTimes(1);
   });
 
   it('stops before searching when the gate refuses the upload', async () => {
