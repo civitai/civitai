@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { caseIntakeInput } from '@civitai/moderation';
 import { rateLimit } from '~/server/middleware.trpc';
-import { publicProcedure, router } from '~/server/trpc';
+import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
 
 async function service() {
   return import('~/server/services/takedown-requests.service');
@@ -19,14 +19,16 @@ const submitInput = caseIntakeInput.pick({
  * The public takedown request forms (/requests). Anyone may file, signed in or not: a claimant needs no
  * account. The moderator app checks the Turnstile token and files the case.
  */
+const formsProcedure = publicProcedure.use(isFlagProtected('takedownRequests'));
+
 export const takedownRequestRouter = router({
-  forms: publicProcedure.query(async () => {
+  forms: formsProcedure.query(async () => {
     const svc = await service();
     if (!svc.takedownRequestsConfigured()) return [];
     return svc.getRequestForms();
   }),
 
-  submit: publicProcedure
+  submit: formsProcedure
     .input(submitInput)
     .use(rateLimit({ limit: 10, period: 60 * 60 }))
     .mutation(async ({ ctx, input }) => {

@@ -23,6 +23,7 @@ const definition = processDefinitionSchema.parse({
     { id: 'urls', label: 'URLs', kind: 'urlList', required: true },
     { id: 'email', label: 'Email', kind: 'email', required: true },
     { id: 'good-faith', label: 'Good faith', kind: 'checkbox', required: true },
+    { id: 'minor', label: 'Under 18', kind: 'checkbox' },
   ],
   states: [{ id: 'received', label: 'Received' }],
   initialState: 'received',
@@ -64,6 +65,7 @@ let send: Mock<SendMail>;
 let verify: Mock<(token: string, ip: string) => Promise<void>>;
 let mint: { fail?: boolean };
 let pending: Promise<unknown>[];
+let alerts: string[][];
 
 beforeEach(async () => {
   ({ pg, db } = await casesPglite());
@@ -86,6 +88,7 @@ beforeEach(async () => {
   verify = vi.fn(async (_token: string, _ip: string) => undefined);
   mint = {};
   pending = [];
+  alerts = [];
 });
 const settled = () => Promise.all(pending);
 
@@ -119,6 +122,7 @@ const deps = () => ({
   systemUserId: -1,
   log: () => undefined,
   background: (p: Promise<unknown>) => void pending.push(p),
+  alert: async (subject: string, text: string) => void alerts.push([subject, text]),
   now: () => new Date('2026-11-20T16:05:00Z'),
 });
 const count = async (table: string) =>
@@ -216,5 +220,25 @@ describe('caseIntake', () => {
     expect(out.receipt).toBe('capped');
     expect(send).not.toHaveBeenCalled();
     expect(await count('case_record')).toBe(RECEIPTS_PER_ADDRESS_PER_DAY + 1);
+  });
+
+  it('flags a case whose submitter says the person shown is a minor, and alerts with the reference only', async () => {
+    const out = await caseIntake(input({ values: { ...values, minor: true } }), deps());
+    await settled();
+    expect((await pg.query('SELECT minor_flag FROM case_record')).rows).toEqual([
+      { minor_flag: true },
+    ]);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].join(' ')).toContain(out.publicRef);
+    expect(alerts[0].join(' ')).not.toContain('example.com');
+  });
+
+  it('raises no alert for an ordinary request', async () => {
+    await caseIntake(input(), deps());
+    await settled();
+    expect((await pg.query('SELECT minor_flag FROM case_record')).rows).toEqual([
+      { minor_flag: false },
+    ]);
+    expect(alerts).toEqual([]);
   });
 });

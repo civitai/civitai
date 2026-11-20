@@ -23,6 +23,13 @@ export class IntakeRefusedError extends Error {
 export const SUBMITTER_ROLE: Record<string, CasePartyRole> = { 'dmca-counter-notice': 'uploader' };
 export const submitterRole = (key: string): CasePartyRole => SUBMITTER_ROLE[key] ?? 'claimant';
 
+/**
+ * The submitter says the person shown is or was a minor (Legal, 2026-11-20). Raised in code whatever
+ * the definition does with it: the case is flagged and moderation alerted at submit.
+ */
+export const MINOR_FIELD = 'minor';
+export const isMinorFlagged = (values: IntakeValues) => values[MINOR_FIELD] === true;
+
 /** Contact details: held apart so erasure and the read-only lockdown can find them. */
 const CONTACT_IDS = new Set(['name', 'email', 'contact', 'address', 'phone']);
 
@@ -137,6 +144,7 @@ export async function fileIntakeCase(
         due_at: due?.toISOString() ?? null,
         warn_at: warn?.toISOString() ?? null,
         is_test: input.isTest ?? false,
+        minor_flag: isMinorFlagged(values),
         submitter_user_id: input.submitterUserId ?? null,
         submitter: JSON.stringify(submitter),
         statements: JSON.stringify(statements),

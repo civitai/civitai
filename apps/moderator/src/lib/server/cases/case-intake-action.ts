@@ -1,4 +1,6 @@
 import type { Kysely } from 'kysely';
+import { sendEmailStrict } from '@civitai/email';
+import { env } from '$env/dynamic/private';
 import type { CaseIntakeInput } from '@civitai/moderation';
 import type { ProcessDefinition } from '@civitai/moderation/process-definition';
 import type { DB } from '@civitai/db-schema/kysely';
@@ -6,7 +8,7 @@ import { mintAccessToken } from '@civitai/db-queries/access-token';
 import { sql } from 'kysely';
 import { casesDb, type CasesDb } from './cases.db';
 import { enabledDefinition } from './definitions';
-import { fileIntakeCase, IntakeRefusedError, submitterRole } from './intake';
+import { fileIntakeCase, IntakeRefusedError, isMinorFlagged, submitterRole } from './intake';
 import { checkIntakeValues } from './intake-values';
 import { createIntakeRateLimit } from './intake-rate-limit';
 import { noticeTime, renderNotice } from './notice-render';
@@ -40,6 +42,8 @@ export type CaseIntakeDeps = {
     receipt?: string;
     outcome?: string;
   }) => void;
+  /** Tells moderation at once, by email, about a minor-flagged case. */
+  alert: (subject: string, text: string) => Promise<unknown>;
   /** Runs the receipt send after the answer has gone. */
   background: (work: Promise<unknown>) => void;
   now?: () => Date;
@@ -84,6 +88,14 @@ export async function caseIntake(
     return { publicRef: filed.publicRef, receipt };
   };
   if (filed.duplicate) return done('duplicate');
+  // The case reference only: nothing the submitter wrote goes in an alert.
+  if (isMinorFlagged(input.values))
+    deps.background(
+      deps.alert(
+        `Minor flagged on takedown case ${filed.publicRef}`,
+        `A ${def.title} request filed as ${filed.publicRef} says the person shown is or was under 18. Open it on /cases.`
+      )
+    );
   if (!filed.address) return done('no-address');
 
   const role = submitterRole(def.key);
@@ -172,6 +184,11 @@ export function defaultCaseIntakeDeps(
     verifyTurnstile: (token, ip) => verifyTurnstile(token, ip),
     rateLimit: limitPerIp,
     sendDeps: defaultSendDeps,
+    alert: async (subject, text) => {
+      const to = env.MODERATION_ALERT_EMAIL;
+      if (!to) return console.error('minor-flagged case: MODERATION_ALERT_EMAIL is not set');
+      await sendEmailStrict({ to, subject, text, html: `<p>${text}</p>` });
+    },
     background: (work) =>
       void work.catch((e) => console.error('case receipt send failed', e?.name)),
     ...more,

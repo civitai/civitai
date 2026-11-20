@@ -1,10 +1,16 @@
 import { Anchor, Container, Loader, Stack, Text, Title } from '@mantine/core';
 import Link from 'next/link';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 export default function RequestsPage() {
-  const { data: forms, isLoading } = trpc.takedownRequest.forms.useQuery();
+  const features = useFeatureFlags();
+  const { data: forms, isLoading } = trpc.takedownRequest.forms.useQuery(undefined, {
+    enabled: features.takedownRequests,
+  });
+  if (!features.takedownRequests) return <NotFound />;
   return (
     <>
       <Meta title="Requests | Civitai" deIndex />
