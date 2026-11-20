@@ -1,0 +1,137 @@
+// Package config reads the service's environment. There is no .env loading: every value comes from
+// the process environment (see ../../.env.example). A bad value fails the start, never a request.
+package config
+
+import (
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Config is the service's settings.
+type Config struct {
+	// Addr is the HTTP listen address (APP_DATA_ADDR, default :8080).
+	Addr string
+	// RESTURL is the site the document-store REST read is made against (APP_DATA_REST_URL,
+	// required): `/api/v1/blocks/storage/…` is appended. Every request can fall back to it.
+	RESTURL string
+	// RegistryURL is the registry the per-user streams are opened on (APP_DATA_REGISTRY_URL). Unset,
+	// the registry path is OFF: every read is the REST read, and no stream is ever opened.
+	RegistryURL string
+
+	// MaxStreams caps the streams open at once in this process (APP_DATA_MAX_STREAMS, default 100).
+	MaxStreams int
+	// MaxStreamsPerToken caps the streams one bearer token holds open (APP_DATA_MAX_STREAMS_PER_TOKEN,
+	// default 4): one per collection it reads. At most MaxStreams.
+	MaxStreamsPerToken int
+	// IdleTTL closes a stream no request has read for this long (APP_DATA_STREAM_IDLE_TTL_MS,
+	// default 300000).
+	IdleTTL time.Duration
+	// MaxAge closes a stream this long after it opened, read or not (APP_DATA_STREAM_MAX_AGE_MS,
+	// default 1800000). At least IdleTTL.
+	MaxAge time.Duration
+	// LiveWait bounds how long a request waits for a new stream's snapshot (`Live`) before it reads
+	// REST instead (APP_DATA_LIVE_WAIT_MS, default 1500). Less than RequestDeadline.
+	LiveWait time.Duration
+	// RequestDeadline bounds one request, the REST fallback included (APP_DATA_REQUEST_DEADLINE_MS,
+	// default 4000).
+	RequestDeadline time.Duration
+	// MaxRecords and MaxBytes bound one stream's cache (APP_DATA_MAX_RECORDS_PER_STREAM default 1000,
+	// APP_DATA_MAX_BYTES_PER_STREAM default 2097152). A stream that outgrows either is closed and its
+	// reads go to REST. Memory held by caches is at most MaxStreams × MaxBytes.
+	MaxRecords int
+	MaxBytes   int
+	// RESTMaxInFlight caps concurrent REST reads (APP_DATA_REST_MAX_INFLIGHT, default 64): when the
+	// registry stalls every read falls back, and this keeps that from becoming unbounded load on the
+	// site. A read over it answers 503.
+	RESTMaxInFlight int
+}
+
+// Load reads the environment.
+func Load() (*Config, error) { return FromEnv(os.Getenv) }
+
+// FromEnv reads settings through getenv.
+func FromEnv(getenv func(string) string) (*Config, error) {
+	c := &Config{
+		Addr:        getenv("APP_DATA_ADDR"),
+		RESTURL:     getenv("APP_DATA_REST_URL"),
+		RegistryURL: getenv("APP_DATA_REGISTRY_URL"),
+	}
+	if c.Addr == "" {
+		c.Addr = ":8080"
+	}
+	if c.RESTURL == "" {
+		return nil, errors.New("APP_DATA_REST_URL is required")
+	}
+	// Both carry the user's bearer token, so plain http only inside the cluster.
+	if !secureURL(c.RESTURL) {
+		return nil, errors.New("APP_DATA_REST_URL must be an https URL (http only to a cluster-local *.svc host)")
+	}
+	if c.RegistryURL != "" && !secureURL(c.RegistryURL) {
+		return nil, errors.New("APP_DATA_REGISTRY_URL must be an https URL (http only to a cluster-local *.svc host)")
+	}
+
+	var err error
+	num := func(name string, def, lo, hi int) int {
+		if err != nil {
+			return 0
+		}
+		v, e := intEnv(getenv, name, def, lo, hi)
+		err = e
+		return v
+	}
+	ms := func(name string, def, lo, hi int) time.Duration {
+		return time.Duration(num(name, def, lo, hi)) * time.Millisecond
+	}
+	c.MaxStreams = num("APP_DATA_MAX_STREAMS", 100, 1, 10_000)
+	c.MaxStreamsPerToken = num("APP_DATA_MAX_STREAMS_PER_TOKEN", 4, 1, 50)
+	c.IdleTTL = ms("APP_DATA_STREAM_IDLE_TTL_MS", 300_000, 1_000, 3_600_000)
+	c.MaxAge = ms("APP_DATA_STREAM_MAX_AGE_MS", 1_800_000, 1_000, 86_400_000)
+	c.LiveWait = ms("APP_DATA_LIVE_WAIT_MS", 1_500, 10, 60_000)
+	c.RequestDeadline = ms("APP_DATA_REQUEST_DEADLINE_MS", 4_000, 100, 60_000)
+	c.MaxRecords = num("APP_DATA_MAX_RECORDS_PER_STREAM", 1_000, 1, 100_000)
+	c.MaxBytes = num("APP_DATA_MAX_BYTES_PER_STREAM", 2<<20, 64<<10, 64<<20)
+	c.RESTMaxInFlight = num("APP_DATA_REST_MAX_INFLIGHT", 64, 1, 10_000)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case c.MaxStreamsPerToken > c.MaxStreams:
+		return nil, errors.New("APP_DATA_MAX_STREAMS_PER_TOKEN must be at most APP_DATA_MAX_STREAMS")
+	case c.MaxAge < c.IdleTTL:
+		return nil, errors.New("APP_DATA_STREAM_MAX_AGE_MS must be at least APP_DATA_STREAM_IDLE_TTL_MS")
+	case c.LiveWait >= c.RequestDeadline:
+		return nil, errors.New("APP_DATA_LIVE_WAIT_MS must be less than APP_DATA_REQUEST_DEADLINE_MS, so the REST fallback has time")
+	}
+	return c, nil
+}
+
+func secureURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	return u.Scheme == "https" || (u.Scheme == "http" && clusterLocal(u.Hostname()))
+}
+
+// clusterLocal reports whether host is a Kubernetes service name: `*.svc` or `*.svc.cluster.local`.
+func clusterLocal(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return strings.HasSuffix(host, ".svc") || strings.HasSuffix(host, ".svc.cluster.local")
+}
+
+func intEnv(getenv func(string) string, name string, def, lo, hi int) (int, error) {
+	raw := getenv(name)
+	if raw == "" {
+		return def, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < lo || v > hi {
+		return 0, fmt.Errorf("%s must be an integer from %d to %d", name, lo, hi)
+	}
+	return v, nil
+}
