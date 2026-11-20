@@ -5,6 +5,7 @@ import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
+import { INQUISITOR_IMAGE_SCHEMA } from './inquisitor-schema';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
@@ -117,11 +118,7 @@ const item = async (id: number) =>
 
 beforeAll(async () => {
   db = await freshPglite();
-  await db.exec(`CREATE TABLE "Image" (
-    "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
-    "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false,
-    "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT
-  );`);
+  await db.exec(INQUISITOR_IMAGE_SCHEMA);
   await db.exec(migration('20261210120000_knights_v2_tables'));
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -170,6 +167,21 @@ describe('getInquisitorQueue', () => {
     expect(queue[0].votes).toEqual([
       { answer: '8', label: 'X', votes: 2, weight: 2.5, stages: [{ stage: 'Knight', votes: 2 }] },
       { answer: '2', label: 'PG-13', votes: 1, weight: 2, stages: [{ stage: 'Knight', votes: 1 }] },
+    ]);
+  });
+
+  it('carries the level the image had when the item was escalated, or null when none was recorded', async () => {
+    await insertItem(1, 1, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'pushed-down' });
+    await insertItem(2, 3, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'no-consensus' });
+    await db.query(
+      `UPDATE "KnightsQueueItem" SET "meta" = '{"escalatedFromLevel": 16}'::jsonb WHERE "id" = 1`
+    );
+
+    const queue = await getInquisitorQueue();
+
+    expect(queue.map((row) => [row.id, row.currentLevel, row.escalatedFromLevel])).toEqual([
+      [1, 4, 16],
+      [2, 2, null],
     ]);
   });
 

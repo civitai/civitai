@@ -10,7 +10,7 @@ import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 import { tagCache, tagCacheByName } from '~/server/redis/caches';
 import { bustGetTagsCache } from '~/server/services/tag.service';
 import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 
 const schema = z.object({
   tags: commaDelimitedStringArray(),
@@ -83,7 +83,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       await query.result();
       // Avatars are gated on their cached rating; one raised here must be re-read.
       await refreshProfilePicturesForImagesLazy(batch);
-      await queueModelsForImageChildTagChanges({ levelImageIds: batch });
+      await queueDocumentsForImageMinorChanges({ levelImageIds: batch });
       console.log(`Updated ${batchNumber} of ${batchCount}`);
     },
   });

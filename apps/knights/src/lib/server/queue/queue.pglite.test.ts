@@ -21,6 +21,7 @@ import {
   escalateExpired,
   getFeed as serveFeed,
   MAX_APPLY_ATTEMPTS,
+  type MovedItem,
   type QueueDeps,
   bucketLevelSql,
   servableItems,
@@ -699,6 +700,7 @@ describe('resolution', () => {
       resolvedValue: null,
       questionKey: Q,
       escalationReason: 'pushed-down',
+      meta: { escalatedFromLevel: 16 },
     });
     expect(applyConsensus).not.toHaveBeenCalled();
     expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
@@ -1594,8 +1596,13 @@ describe('closeModeratorRuledItems', () => {
     await vote(2, id, '8');
     await lockImage(pg, 10, { reason: 'Moderator review', level: 4 });
     const before = { right: await exp(1), wrong: await exp(2) };
+    const moved = vi.fn();
 
-    expect(await sweep()).toEqual({ closed: 1, failed: 0 });
+    expect(await closeModeratorRuledItems(db, { now: NOW, moved })).toEqual({
+      closed: 1,
+      failed: 0,
+    });
+    expect(moved).toHaveBeenCalledWith([{ id, status: 'Open', minRank: 'Knight' }]);
     expect(await itemRow(id)).toMatchObject({
       status: 'Closed',
       reason: 'moderator-ruled',
@@ -1645,6 +1652,69 @@ describe('closeModeratorRuledItems', () => {
 
     expect(await sweep()).toEqual({ closed: 0, failed: 0 });
     expect(await snapshot()).toEqual(before);
+  });
+
+  it('closes an item waiting on the Inquisitors when a moderator rules on its image elsewhere, and pays its votes', async () => {
+    await fiveKnights();
+    await image(10, 16);
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '1');
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      escalationReason: 'pushed-down',
+    });
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 1 });
+    const before = await exp(1);
+    const moved = vi.fn();
+
+    // Players were never served it, so the live queue must not be told an Open item left.
+    expect(await closeModeratorRuledItems(db, { now: NOW, moved })).toEqual({
+      closed: 1,
+      failed: 0,
+    });
+    expect(moved).toHaveBeenCalledWith([{ id, status: 'Inquisitor', minRank: 'Inquisitor' }]);
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Closed',
+      reason: 'moderator-ruled',
+      resolvedValue: '1',
+    });
+    expect((await verdicts(id)).map((v) => v.verdict)).toEqual([
+      'correct',
+      'correct',
+      'correct',
+      'correct',
+    ]);
+    expect(await settled(id)).toEqual([true, true, true, true]);
+    expect(await exp(1)).toBe(before + PROGRESSION.correctXp);
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+  });
+
+  it('leaves a Blocked consensus waiting on the Inquisitors even when the image carries a moderator lock', async () => {
+    await fiveKnights();
+    await image(10, 2);
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 2 });
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '32');
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+    const before = { item: await itemRow(id), votes: await verdicts(id) };
+
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+    expect({ item: await itemRow(id), votes: await verdicts(id) }).toEqual(before);
+  });
+
+  it('leaves an Inquisitor item alone while a moderator is ruling on it', async () => {
+    await fiveKnights();
+    await image(10, 16);
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '1');
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Ruling', "resolvedBy"=7 WHERE id=$1`, [
+      id,
+    ]);
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 1 });
+    const before = { item: await itemRow(id), votes: await verdicts(id) };
+
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+    expect({ item: await itemRow(id), votes: await verdicts(id) }).toEqual(before);
   });
 });
 
@@ -1715,6 +1785,7 @@ describe('closeUnservableItems', () => {
       unservable: 2,
       publishesAfterExpiry: 2,
       unpublishedDrafts: 0,
+      imageUnservable: 0,
     });
 
     expect(
@@ -1760,6 +1831,7 @@ describe('closeUnservableItems', () => {
       unservable: 0,
       publishesAfterExpiry: 0,
       unpublishedDrafts: 0,
+      imageUnservable: 0,
     });
   });
 
@@ -1790,6 +1862,7 @@ describe('closeUnservableItems', () => {
       unservable: 1,
       publishesAfterExpiry: 0,
       unpublishedDrafts: 0,
+      imageUnservable: 0,
     });
     expect(await statusOf([hidden, yesNo, voted, escalated, neverExpires, escalatedGone])).toEqual([
       ['Open', null],
@@ -1810,12 +1883,14 @@ describe('closeUnservableItems', () => {
       unservable: 3,
       publishesAfterExpiry: 0,
       unpublishedDrafts: 0,
+      imageUnservable: 0,
     });
     expect((await statusOf(ids)).filter(([status]) => status === 'Closed')).toHaveLength(3);
     expect(await sweep(3)).toEqual({
       unservable: 2,
       publishesAfterExpiry: 0,
       unpublishedDrafts: 0,
+      imageUnservable: 0,
     });
     expect((await statusOf(ids)).every(([status]) => status === 'Closed')).toBe(true);
   });
@@ -1855,6 +1930,7 @@ describe('closeUnservableItems', () => {
       unservable: 1,
       publishesAfterExpiry: 1,
       unpublishedDrafts: 4,
+      imageUnservable: 0,
     });
 
     expect(
@@ -1902,6 +1978,7 @@ describe('closeUnservableItems', () => {
       unservable: 0,
       publishesAfterExpiry: 0,
       unpublishedDrafts: 0,
+      imageUnservable: 0,
     });
   });
 
@@ -1920,11 +1997,167 @@ describe('closeUnservableItems', () => {
       unservable: 0,
       publishesAfterExpiry: 0,
       unpublishedDrafts: 0,
+      imageUnservable: 0,
     });
     expect(await statusOf([hidden, yesNo])).toEqual([
       ['Open', null],
       ['Open', null],
     ]);
+  });
+
+  it('closes an open item whose image became blocked, held, flagged or unrated on a live post, votes set aside, at the next tick', async () => {
+    await fiveKnights();
+    const exp = async (userId: number) =>
+      (
+        await pg.query<{ exp: number }>(`SELECT exp FROM "NewOrderPlayer" WHERE "userId"=$1`, [
+          userId,
+        ])
+      ).rows[0].exp;
+    const unservable: Record<string, string> = {
+      70: `"nsfwLevel"=32`,
+      71: `ingestion='Blocked'`,
+      72: `"blockedFor"='tos'`,
+      73: `"needsReview"='minor'`,
+      74: `poi=true`,
+      75: `minor=true`,
+      76: `"acceptableMinor"=true`,
+      77: `"nsfwLevel"=0`,
+    };
+    const ids: Record<string, number> = {};
+    for (const imageId of Object.keys(unservable)) ids[imageId] = await queued(Number(imageId));
+    expect((await vote(1, ids[70], '4')).status).toBe('recorded');
+    const servable = await queued(78);
+    // Drafts and scheduled posts are left to their own rules, whatever the image.
+    const draft = await queued(79, { publishedAt: null });
+    const scheduled = await queued(80, { publishedAt: at(100) });
+    // A level a moderator locked is `closeModeratorRuledItems`' to close, against that level.
+    const moderatorLocked = await queued(81);
+    for (const [imageId, change] of Object.entries(unservable))
+      await pg.query(`UPDATE "Image" SET ${change} WHERE id=$1`, [Number(imageId)]);
+    await pg.query(`UPDATE "Image" SET "nsfwLevel"=32 WHERE id IN (79, 80)`);
+    await pg.query(`UPDATE "Image" SET poi=true WHERE id=81`);
+    await lockImage(pg, 81, { reason: 'Moderator review', level: 4 });
+    const before = {
+      exp: await exp(1),
+      metric: await counterValue('knights_escalations_total', { reason: 'image-unservable' }),
+    };
+    const moved: MovedItem[] = [];
+
+    expect(
+      await closeUnservableItems(db, { now: NOW, moved: (items) => moved.push(...items) })
+    ).toEqual({
+      unservable: 0,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+      imageUnservable: 8,
+    });
+    // Players holding one in their buffer are told it left.
+    expect(moved.sort((a, b) => a.id - b.id)).toEqual(
+      Object.values(ids)
+        .sort((a, b) => a - b)
+        .map((id) => ({ id, status: 'Open', minRank: 'Knight' }))
+    );
+
+    expect(await statusOf(Object.values(ids))).toEqual(
+      Object.values(ids).map(() => ['Closed', 'image-unservable'])
+    );
+    expect(await statusOf([servable, draft, scheduled, moderatorLocked])).toEqual([
+      ['Open', null],
+      ['Open', null],
+      ['Open', null],
+      ['Open', null],
+    ]);
+    expect(await itemRow(ids[70])).toMatchObject({ resolvedValue: null, escalationReason: null });
+    expect(await counterValue('knights_escalations_total', { reason: 'image-unservable' })).toBe(
+      before.metric + 8
+    );
+    expect(await verdicts(ids[70])).toEqual([
+      { playerId: 1, verdict: 'inconclusive', stage: 'Knight' },
+    ]);
+    expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ votes: 1, failed: 0 });
+    expect(
+      (await pg.query(`SELECT "goldEarned" FROM "NewOrderPlayer" WHERE "userId"=1`)).rows[0]
+    ).toEqual({ goldEarned: 0 });
+    // The XP the vote earned when cast stays.
+    expect(before.exp).toBeGreaterThan(0);
+    expect(await exp(1)).toBe(before.exp);
+    expect(await applyPendingResolutions(db, deps())).toMatchObject({ applied: 0 });
+    expect(applyConsensus).not.toHaveBeenCalled();
+    expect(await closeModeratorRuledItems(db, { now: NOW })).toEqual({ closed: 1, failed: 0 });
+  });
+
+  it('leaves an item whose image has not finished scanning open, and it is servable once the scan lands', async () => {
+    const ownerRating = await queued(95, { source: 'owner-rating' });
+    await pg.query(`UPDATE "Image" SET ingestion='Pending', "nsfwLevel"=0 WHERE id=95`);
+
+    expect(await sweep()).toEqual({
+      unservable: 0,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+      imageUnservable: 0,
+    });
+    expect(await statusOf([ownerRating])).toEqual([['Open', null]]);
+
+    await pg.query(`UPDATE "Image" SET ingestion='Scanned', "nsfwLevel"=4 WHERE id=95`);
+    expect((await sweep()).imageUnservable).toBe(0);
+    expect(await statusOf([ownerRating])).toEqual([['Open', null]]);
+    expect(await countOpenServableKnightItems(db, 10)).toBe(1);
+  });
+
+  it('closes an Inquisitor item whose image is gone, votes set aside, and leaves blocked images, held evidence and rulings in progress', async () => {
+    const atInquisitors = async (
+      imageId: number,
+      { status = 'Inquisitor', leaseUntil = null as Date | null } = {}
+    ) => {
+      const id = await queued(imageId);
+      await pg.query(
+        `UPDATE "KnightsQueueItem" SET status=$1, "minRank"='Inquisitor', "escalationReason"='blocked', "nextAttemptAt"=$2 WHERE id=$3`,
+        [status, leaseUntil, id]
+      );
+      return id;
+    };
+    const imageGone = await atInquisitors(90);
+    await countedVote(imageGone, 3, 90);
+    // An evidence hold keeps the image when its post is deleted: the moderators can still rule on it.
+    const postGone = await atInquisitors(91);
+    // Blocked escalations wait for a moderator by design.
+    const blocked = await atInquisitors(92);
+    await pg.query(`UPDATE "Image" SET "nsfwLevel"=32, ingestion='Blocked' WHERE id=92`);
+    const midRuling = await atInquisitors(93, { status: 'Ruling', leaseUntil: at(0.1) });
+    const lapsedRuling = await atInquisitors(94, { status: 'Ruling', leaseUntil: at(-0.1) });
+    await pg.query(`DELETE FROM "Image" WHERE id IN (90, 93, 94)`);
+    await pg.query(`UPDATE "Image" SET "postId"=NULL WHERE id=91`);
+    const before = await counterValue('knights_escalations_total', { reason: 'unservable' });
+    const moved: MovedItem[] = [];
+
+    expect(
+      await closeUnservableItems(db, { now: NOW, moved: (items) => moved.push(...items) })
+    ).toEqual({
+      unservable: 2,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+      imageUnservable: 0,
+    });
+
+    expect(await statusOf([imageGone, postGone, blocked, midRuling, lapsedRuling])).toEqual([
+      ['Closed', 'unservable'],
+      ['Inquisitor', null],
+      ['Inquisitor', null],
+      ['Ruling', null],
+      ['Closed', 'unservable'],
+    ]);
+    // Never in a player's buffer: nothing to announce.
+    expect(moved).toEqual([]);
+    expect(await counterValue('knights_escalations_total', { reason: 'unservable' })).toBe(
+      before + 2
+    );
+    expect(await verdicts(imageGone)).toEqual([
+      { playerId: 3, verdict: 'inconclusive', stage: 'Knight' },
+    ]);
+    expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ votes: 1, failed: 0 });
+    expect(
+      (await pg.query(`SELECT "goldEarned" FROM "NewOrderPlayer" WHERE "userId"=3`)).rows[0]
+    ).toEqual({ goldEarned: 0 });
   });
 
   it('shares the batch limit between every reason, oldest item first', async () => {
@@ -1939,6 +2172,7 @@ describe('closeUnservableItems', () => {
       unservable: 1,
       publishesAfterExpiry: 0,
       unpublishedDrafts: 1,
+      imageUnservable: 0,
     });
     expect(await statusOf([draft, gone, laterDraft, late])).toEqual([
       ['Closed', 'unpublished-draft'],
@@ -1950,6 +2184,7 @@ describe('closeUnservableItems', () => {
       unservable: 0,
       publishesAfterExpiry: 1,
       unpublishedDrafts: 1,
+      imageUnservable: 0,
     });
   });
 });

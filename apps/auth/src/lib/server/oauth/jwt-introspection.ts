@@ -87,7 +87,7 @@ export async function introspectAccessTokenJwt(
     const record = await readExchangeRecord(jti);
     if (!record) return inactive('no exchange record', log);
     if (
-      record.kind === 'service' ||
+      record.kind !== undefined ||
       record.resource !== aud ||
       record.clientId !== clientId ||
       record.actor !== actor ||

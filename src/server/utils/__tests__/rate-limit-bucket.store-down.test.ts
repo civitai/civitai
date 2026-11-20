@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest } from 'next';
 import { unpack } from 'msgpackr';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 /**
  * The rate limiter when its store (the cluster cache) is unavailable.
@@ -32,8 +32,16 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const hGet = redisMock.redis.packed.hGet;
 const HUNG = Symbol('hung');
-const within = <T>(p: Promise<T>, ms: number) =>
-  Promise.race([p, new Promise<typeof HUNG>((r) => setTimeout(() => r(HUNG), ms))]);
+/** Under fake timers: what `p` settled to within `ms` of clock time, or HUNG. */
+const within = async <T>(p: Promise<T>, ms: number): Promise<T | unknown> => {
+  let outcome: T | unknown = HUNG;
+  p.then(
+    (v) => (outcome = v),
+    (e: unknown) => (outcome = e)
+  );
+  await vi.advanceTimersByTimeAsync(ms);
+  return outcome;
+};
 
 let ipCounter = 0;
 /** A distinct client address per test, so one test's local attempts never reach another's bucket. */
@@ -70,20 +78,15 @@ describe('claimRateLimitAttempt with the store unavailable', () => {
   });
 
   it('a store that never answers decides each attempt within 750ms and still refuses past the limit', async () => {
+    vi.useFakeTimers();
     hGet.mockImplementation(() => new Promise(() => undefined));
     const req = freshReq();
 
     for (let i = 0; i < 3; i++) {
-      const started = Date.now();
-      const outcome = await within(attempt(req), 2000);
-      expect(outcome).not.toBe(HUNG);
-      expect(Date.now() - started).toBeLessThan(750);
+      expect(await within(attempt(req), 750)).toBeUndefined();
     }
 
-    const refused = await within(
-      attempt(req).catch((e: unknown) => e),
-      2000
-    );
+    const refused = await within(attempt(req), 750);
     expect(refused).toBeInstanceOf(TRPCError);
     expect((refused as TRPCError).code).toBe('TOO_MANY_REQUESTS');
   });
@@ -299,6 +302,106 @@ describe('the local fallback count holds bounded memory', () => {
   });
 });
 
+describe('claimRateLimitAttempt when the claim script does not answer', () => {
+  it('decides on the local count within 750ms, and a refund releases the slot without hanging', async () => {
+    vi.useFakeTimers();
+    hGet.mockResolvedValue([]);
+    redisMock.redis.eval.mockImplementation(() => new Promise(() => undefined));
+    onTestFinished(() => {
+      redisMock.redis.eval.mockReset();
+    });
+    const req = freshReq();
+    const claimOnce = () =>
+      claimRateLimitAttempt({
+        rules: [{ limit: 1, period: 60 }],
+        keyName: 'script-hung:test',
+        user: undefined,
+        req,
+      });
+
+    const first = await within(claimOnce(), 750);
+    expect(first).not.toBe(HUNG);
+
+    // The hung claim counts locally: the next call is refused.
+    const refused = await within(claimOnce(), 750);
+    expect((refused as TRPCError).code).toBe('TOO_MANY_REQUESTS');
+
+    expect(await within((first as Awaited<ReturnType<typeof claimOnce>>).refund(), 2000)).not.toBe(
+      HUNG
+    );
+    await expect(within(claimOnce(), 2000)).resolves.not.toBe(HUNG);
+  });
+});
+
+describe('claimRateLimitAttempt when the claim script fails on a fail-closed scope', () => {
+  const claimOn = (keyName: string) =>
+    claimRateLimitAttempt({
+      rules: [{ limit: 5, period: 60 }],
+      keyName,
+      user: undefined,
+      req: freshReq(),
+    });
+  const scriptOps = () =>
+    redisMock.redis.eval.mock.calls.map((c) => (c[1] as { arguments: string[] }).arguments[0]);
+
+  beforeEach(() => {
+    hGet.mockResolvedValue([]);
+    onTestFinished(() => {
+      redisMock.redis.eval.mockReset();
+    });
+  });
+
+  it('a script that never answers refuses with SERVICE_UNAVAILABLE and releases nothing', async () => {
+    vi.useFakeTimers();
+    redisMock.redis.eval.mockImplementation(() => new Promise(() => undefined));
+    const outcome = await within(claimOn('buzz:script-hung'), 4000);
+    expect((outcome as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    expect(scriptOps()).toEqual(['claim']);
+  });
+
+  it('a store that refuses the call itself refuses with SERVICE_UNAVAILABLE', async () => {
+    redisMock.redis.eval.mockRejectedValue(
+      new Error(
+        "READONLY You can't write against a read only replica. script: 3f1c0b, on @user_script:61."
+      )
+    );
+    const outcome = await claimOn('buzz:script-readonly').catch((e: unknown) => e);
+    expect((outcome as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    expect(hSetWithTTL).not.toHaveBeenCalled();
+  });
+
+  it('a script error falls back to the read-then-write path and admits', async () => {
+    redisMock.redis.eval.mockRejectedValue(
+      new Error('ERR user_script:12: attempt to index a nil value')
+    );
+    const record = await claimOn('buzz:script-error');
+    await record();
+    expect(hSetWithTTL).toHaveBeenCalledTimes(1);
+  });
+
+  it('on a fallback scope a store that refuses the call counts locally, so the next call is refused', async () => {
+    redisMock.redis.eval.mockRejectedValue(
+      new Error(
+        'OOM command not allowed when used memory > maxmemory. script: 3f1c0b, on @user_script:61.'
+      )
+    );
+    const req = freshReq();
+    const once = () =>
+      claimRateLimitAttempt({
+        rules: [{ limit: 1, period: 60 }],
+        keyName: 'model:script-oom',
+        user: undefined,
+        req,
+      });
+    const record = await once();
+    await record();
+    expect(hSetWithTTL).not.toHaveBeenCalled();
+
+    const refused = await once().catch((e: unknown) => e);
+    expect((refused as TRPCError).code).toBe('TOO_MANY_REQUESTS');
+  });
+});
+
 describe('readRateLimitAttempts (the usage report) with the store unavailable', () => {
   const bucket = () => rateLimitBucket('peek:test', undefined, freshReq());
 
@@ -309,18 +412,12 @@ describe('readRateLimitAttempts (the usage report) with the store unavailable', 
   });
 
   it('a read that never answers rejects within 750ms', async () => {
+    vi.useFakeTimers();
     hGet.mockImplementation(() => new Promise(() => undefined));
-    const started = Date.now();
     const outcome = await within(
-      readRateLimitAttempts(bucket()).then(
-        () => 'resolved',
-        (e: unknown) => e
-      ),
-      2000
+      readRateLimitAttempts(bucket()).then(() => 'resolved'),
+      750
     );
-    expect(outcome).not.toBe(HUNG);
     expect(outcome).toBeInstanceOf(Error);
-    expect(outcome).not.toBe('resolved');
-    expect(Date.now() - started).toBeLessThan(750);
   });
 });

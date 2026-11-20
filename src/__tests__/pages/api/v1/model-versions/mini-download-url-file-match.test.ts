@@ -64,6 +64,9 @@ vi.mock('~/server/db/client', () => ({
 }));
 
 vi.mock('~/server/services/generation/generation.service', () => ({
+  getGateRuleState: vi.fn(async () => ({ known: true, value: [] })),
+  getGateSubjects: vi.fn(async () => new Map()),
+  gatedVersionIds: vi.fn(() => new Set()),
   resolveCanGenerateForVersions: mockResolveCanGenerateForVersions,
   getShouldChargeForResources: mockGetShouldChargeForResources,
 }));

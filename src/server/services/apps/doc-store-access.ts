@@ -81,8 +81,9 @@ export type StorageAccess = {
   /** The imports this app's reviewed manifest declares (source blockId → import). */
   imports: DeclaredStorageImports;
   /**
-   * Which kind of token this is: only an ordinary `app` token may import (`resolveImportAccess`).
-   * `hub` is a hub-issued OAuth bearer of an approved app; `dev` any token carrying `dev: true`
+   * Which kind of token this is: an ordinary `app` token and a `hub` token may import
+   * (`resolveImportAccess`), under the same declaration, export and grant checks; `dev` and
+   * `review` may not. `hub` is a hub-issued OAuth bearer of an approved app; `dev` any token carrying `dev: true`
    * (the dev-token route, the tunnels — including a tunnel's hub bearer); `review` the
    * run-for-real review mint.
    */
@@ -309,9 +310,6 @@ export async function resolveImportAccess(
   }
   if (consumer.tokenKind === 'dev') {
     throw notEligible('import_dev_token', 'a development token cannot reach another app');
-  }
-  if (consumer.tokenKind === 'hub') {
-    throw notEligible('import_hub_token', 'a hub token cannot reach another app');
   }
   // The predicate checks this too; it is read here first because the write check below needs the
   // declared access, and both answer before any database read.

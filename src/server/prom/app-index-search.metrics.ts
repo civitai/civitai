@@ -31,6 +31,11 @@ export const APP_INDEX_SEARCH_REASONS = [
   'error',
   // The index answered 2xx with a body that is not a search response.
   'bad_response',
+  // Not sent: the breaker is open after consecutive index failures (`IndexBreaker`).
+  'breaker_open',
+  // The index answered, but a database read the answer needed failed. Not an index failure: it
+  // never moves the breaker.
+  'db_error',
 ] as const;
 export type AppIndexSearchReason = (typeof APP_INDEX_SEARCH_REASONS)[number];
 
@@ -53,6 +58,44 @@ const appIndexSearchCounter = registerInstrumentationMetric(
 
 export function recordAppIndexSearch(source: AppIndexSearchSource, reason: AppIndexSearchReason) {
   appIndexSearchCounter.inc({ source, reason });
+}
+
+/** The breaker's states, as the gauge's values. */
+export const APP_INDEX_BREAKER_STATES = { closed: 0, half_open: 1, open: 2 } as const;
+export type AppIndexBreakerState = keyof typeof APP_INDEX_BREAKER_STATES;
+
+const BREAKER_STATE = 'civitai_app_index_search_breaker_state';
+
+// Per process: the state of this process's breaker around the index call, as
+// APP_INDEX_BREAKER_STATES. 0 (closed) until the first transition.
+const breakerStateGauge = registerInstrumentationMetric(
+  BREAKER_STATE,
+  () =>
+    new client.Gauge({
+      name: BREAKER_STATE,
+      help: 'App index search breaker state in this process: 0 closed, 1 half-open, 2 open.',
+      registers: [instrumentationRegistry],
+    })
+);
+
+const BREAKER_TRANSITIONS = 'civitai_app_index_search_breaker_transitions_total';
+
+// One increment per breaker state change, by the state entered. An open that closes again
+// between two scrapes never shows on the gauge; it shows here.
+const breakerTransitionsCounter = registerInstrumentationMetric(
+  BREAKER_TRANSITIONS,
+  () =>
+    new client.Counter({
+      name: BREAKER_TRANSITIONS,
+      help: 'App index search breaker state changes, by the state entered.',
+      labelNames: ['to'],
+      registers: [instrumentationRegistry],
+    })
+);
+
+export function recordAppIndexBreakerTransition(to: AppIndexBreakerState) {
+  breakerStateGauge.set(APP_INDEX_BREAKER_STATES[to]);
+  breakerTransitionsCounter.inc({ to });
 }
 
 /** The app entity fields the index returns that map onto a store card, compared per result. */

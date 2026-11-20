@@ -1,0 +1,527 @@
+{
+  "name": "minor-mature-cover-stranger",
+  "description": "A model whose cover is a minor-flagged R image, for another signed-in viewer (whose addons also hide every minor-flagged image): the image is left out of the card and is not its cover.",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "baseModelMetrics": true,
+    "modelImagesSlim": true,
+    "coverageNext": true,
+    "loadingOpenToAll": true,
+    "decorationEvents": []
+  },
+  "request": {
+    "input": "{\"json\":{\"sort\":\"Highest Rated\",\"limit\":1,\"browsingLevel\":31}}",
+    "headers": {
+      "host": "blue.example.test"
+    },
+    "session": {
+      "userId": 1003
+    }
+  },
+  "redis": {
+    "packed:caches:basic-tags:702": {
+      "value": {
+        "id": 702,
+        "name": "style",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQK+pG5hbWWlc3R5bGWpbnNmd0xldmVsAaR0eXBlrVVzZXJHZW5lcmF0ZWSoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:basic-users:1001": {
+      "value": {
+        "id": 1001,
+        "username": "artist_one",
+        "image": "00000000-0000-4000-8000-000000000901",
+        "deletedAt": null,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPpqHVzZXJuYW1lqmFydGlzdF9vbmWlaW1hZ2XZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDkwMalkZWxldGVkQXTAqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:cosmetics2:301": {
+      "value": {
+        "id": 301,
+        "name": "Golden Badge",
+        "type": "Badge",
+        "data": {
+          "url": "00000000-0000-4000-8000-000000003011"
+        },
+        "source": "Trophy",
+        "flags": 0,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAHomlkzQEtpG5hbWWsR29sZGVuIEJhZGdlpHR5cGWlQmFkZ2WkZGF0Yd4AAaN1cmzZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMzAxMaZzb3VyY2WmVHJvcGh5pWZsYWdzAKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:cosmetics2:Model:5012": {
+      "value": {
+        "equippedToId": 5012,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrGVxdWlwcGVkVG9JZM0TlKhub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:creator-membership-valid:1001": {
+      "value": true,
+      "packed": "ww=="
+    },
+    "packed:caches:data-for-model-2:5012": {
+      "value": {
+        "modelId": 5012,
+        "hashes": [
+          "HASH5012"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6015,
+            "index": 0,
+            "name": "v6015",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Pony",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>about 6015</p>",
+            "trainedWords": [
+              "word"
+            ],
+            "vaeId": null,
+            "covered": true,
+            "coveredNext": true
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFp21vZGVsSWTNE5SmaGFzaGVzkahIQVNINTAxMqR0YWdzkKh2ZXJzaW9uc5HeABKiaWTNF3+laW5kZXgApG5hbWWldjYwMTW0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKRQb255rWJhc2VNb2RlbFR5cGWoU3RhbmRhcmSpY3JlYXRlZEF01v9qHVggrnRyYWluaW5nU3RhdHVzwKtwdWJsaXNoZWRBdNb/ah6poKZzdGF0dXOpUHVibGlzaGVkpWZsYWdzAKxhdmFpbGFiaWxpdHmmUHVibGljqW5zZndMZXZlbAGrZGVzY3JpcHRpb26xPHA+YWJvdXQgNjAxNTwvcD6sdHJhaW5lZFdvcmRzkaR3b3JkpXZhZUlkwKdjb3ZlcmVkw6tjb3ZlcmVkTmV4dMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:images-for-model-version-2:6015": {
+      "value": {
+        "modelVersionId": 6015,
+        "images": [
+          {
+            "id": 8150,
+            "userId": 1001,
+            "name": "img-8150.png",
+            "url": "00000000-0000-4000-8000-000000008150",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8150",
+            "modelVersionId": 6015,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": true
+          },
+          {
+            "id": 8151,
+            "userId": 1001,
+            "name": "img-8151.png",
+            "url": "00000000-0000-4000-8000-000000008151",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8151",
+            "modelVersionId": 6015,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8152,
+            "userId": 1001,
+            "name": "img-8152.png",
+            "url": "00000000-0000-4000-8000-000000008152",
+            "nsfwLevel": 2,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8152",
+            "modelVersionId": 6015,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": true
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRd/pmltYWdlc5PeABKiaWTNH9amdXNlcklkzQPppG5hbWWsaW1nLTgxNTAucG5no3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MTUwqW5zZndMZXZlbASld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MTUwrm1vZGVsVmVyc2lvbklkzRd/pHR5cGWlaW1hZ2WobWV0YWRhdGHeAAKld2lkdGjNA0CmaGVpZ2h0zQTArGF2YWlsYWJpbGl0eaZQdWJsaWOmb25TaXRlwqdoYXNNZXRhw6lyZW1peE9mSWTAsWhhc1Bvc2l0aXZlUHJvbXB0w6Nwb2nCpW1pbm9yw94AEqJpZM0f16Z1c2VySWTNA+mkbmFtZaxpbWctODE1MS5wbmejdXJs2SQwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDgxNTGpbnNmd0xldmVsBKV3aWR0aM0DQKZoZWlnaHTNBMCkaGFzaKlVSEFTSDgxNTGubW9kZWxWZXJzaW9uSWTNF3+kdHlwZaVpbWFnZahtZXRhZGF0Yd4AAqV3aWR0aM0DQKZoZWlnaHTNBMCsYXZhaWxhYmlsaXR5plB1YmxpY6ZvblNpdGXCp2hhc01ldGHDqXJlbWl4T2ZJZMCxaGFzUG9zaXRpdmVQcm9tcHTDo3BvacKlbWlub3LC3gASomlkzR/YpnVzZXJJZM0D6aRuYW1lrGltZy04MTUyLnBuZ6N1cmzZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwODE1Mqluc2Z3TGV2ZWwCpXdpZHRozQNApmhlaWdodM0EwKRoYXNoqVVIQVNIODE1Mq5tb2RlbFZlcnNpb25JZM0Xf6R0eXBlpWltYWdlqG1ldGFkYXRh3gACpXdpZHRozQNApmhlaWdodM0EwKxhdmFpbGFiaWxpdHmmUHVibGljpm9uU2l0ZcKnaGFzTWV0YcOpcmVtaXhPZklkwLFoYXNQb3NpdGl2ZVByb21wdMOjcG9pwqVtaW5vcsOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:model-tags:5012": {
+      "value": {
+        "modelId": 5012,
+        "tagIds": [
+          702
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp21vZGVsSWTNE5SmdGFnSWRzkc0CvqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:profile-pictures:v4:1001": {
+      "value": {
+        "id": 8901,
+        "name": null,
+        "url": "00000000-0000-4000-8000-000000008901",
+        "nsfwLevel": 1,
+        "hash": "UPROFILE",
+        "userId": 1001,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 512,
+        "height": 512,
+        "metadata": {
+          "width": 512,
+          "height": 512
+        },
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaKhVUFJPRklMRaZ1c2VySWTNA+mpaW5nZXN0aW9up1NjYW5uZWSkdHlwZaVpbWFnZaV3aWR0aM0CAKZoZWlnaHTNAgCobWV0YWRhdGHeAAKld2lkdGjNAgCmaGVpZ2h0zQIAqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:tag-ids-for-images:8150": {
+      "value": {
+        "imageId": 8150,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH9akdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8151": {
+      "value": {
+        "imageId": 8151,
+        "tags": [
+          501
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH9ekdGFnc5HNAfWoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8152": {
+      "value": {
+        "imageId": 8152,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH9ikdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:user-cosmetics:1001": {
+      "value": {
+        "userId": 1001,
+        "cosmetics": [
+          {
+            "cosmeticId": 301,
+            "data": null
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADpnVzZXJJZM0D6aljb3NtZXRpY3OR3gACqmNvc21ldGljSWTNAS2kZGF0YcCoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:user-metric-privacy-defaults:1001": {
+      "value": {
+        "hideModelBuzz": false,
+        "hideModelDownloads": false,
+        "hideModelGenerations": true
+      },
+      "packed": "3gADrWhpZGVNb2RlbEJ1enrCsmhpZGVNb2RlbERvd25sb2Fkc8K0aGlkZU1vZGVsR2VuZXJhdGlvbnPD"
+    },
+    "session:data2:1003": {
+      "value": {
+        "id": 1003,
+        "username": "viewer_three",
+        "isModerator": false,
+        "bannedAt": null,
+        "tier": null
+      },
+      "packed": "3gAFomlkzQPrqHVzZXJuYW1lrHZpZXdlcl90aHJlZatpc01vZGVyYXRvcsKoYmFubmVkQXTApHRpZXLA"
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[{\"id\":703,\"name\":\"BlockedName\"}]"
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    }
+  },
+  "db": {
+    "modelPages": [
+      {
+        "cursor": null,
+        "bound": null,
+        "rows": [
+          {
+            "id": 5012,
+            "name": "Golden model 5012",
+            "sfwName": null,
+            "coverImageId": 8150,
+            "sfwCoverImageId": null,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": false,
+            "nsfwLevel": 1,
+            "status": "Published",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "lastVersionAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "locked": false,
+            "meta": null,
+            "mode": null,
+            "availability": "Public",
+            "rank": {
+              "downloadCount": 1,
+              "thumbsUpCount": 1,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "userId": 1001,
+            "cursorId": "1|1|5012"
+          }
+        ]
+      }
+    ],
+    "paidAccess": [],
+    "coverImages": [
+      {
+        "id": 8150,
+        "userId": 1001,
+        "modelVersionId": 6015,
+        "modelId": 5012
+      }
+    ],
+    "tags": [],
+    "creators": []
+  },
+  "expect": {
+    "envelope": {
+      "json": {
+        "items": [
+          {
+            "id": 5012,
+            "name": "Golden model 5012",
+            "coverImageId": 8150,
+            "sfwCoverImageId": null,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": false,
+            "nsfwLevel": 1,
+            "status": "Published",
+            "createdAt": "2026-06-01T10:00:00.000Z",
+            "lastVersionAt": "2026-06-02T10:00:00.000Z",
+            "publishedAt": "2026-06-02T10:00:00.000Z",
+            "locked": false,
+            "mode": null,
+            "availability": "Public",
+            "userId": 1001,
+            "earlyAccessDeadline": null,
+            "hasActivePaidAccess": false,
+            "hasSfwFace": false,
+            "baseModels": [
+              "Pony"
+            ],
+            "user": {
+              "id": 1001,
+              "username": "artist_one",
+              "deletedAt": null,
+              "image": "00000000-0000-4000-8000-000000000901",
+              "profilePicture": {
+                "id": 8901,
+                "name": null,
+                "url": "00000000-0000-4000-8000-000000008901",
+                "nsfwLevel": 1,
+                "hash": "UPROFILE",
+                "userId": 1001,
+                "ingestion": "Scanned",
+                "type": "image",
+                "width": 512,
+                "height": 512,
+                "metadata": {
+                  "width": 512,
+                  "height": 512
+                }
+              },
+              "cosmetics": [
+                {
+                  "cosmeticId": 301,
+                  "data": null,
+                  "cosmetic": {
+                    "id": 301,
+                    "name": "Golden Badge",
+                    "type": "Badge",
+                    "data": {
+                      "url": "00000000-0000-4000-8000-000000003011"
+                    },
+                    "source": "Trophy",
+                    "flags": 0
+                  }
+                }
+              ]
+            },
+            "cosmetic": null,
+            "eventDecoration": null,
+            "tags": [
+              702
+            ],
+            "hashes": [
+              "hash5012"
+            ],
+            "hiddenMetrics": {
+              "buzz": false,
+              "downloads": false,
+              "generations": true
+            },
+            "rank": {
+              "downloadCount": 1,
+              "thumbsUpCount": 1,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "version": {
+              "id": 6015,
+              "index": 0,
+              "name": "v6015",
+              "earlyAccessTimeFrame": 0,
+              "baseModel": "Pony",
+              "baseModelType": "Standard",
+              "createdAt": "2026-06-01T10:00:00.000Z",
+              "trainingStatus": null,
+              "publishedAt": "2026-06-02T10:00:00.000Z",
+              "status": "Published",
+              "flags": 0,
+              "availability": "Public",
+              "nsfwLevel": 1,
+              "description": "<p>about 6015</p>",
+              "trainedWords": [
+                "word"
+              ],
+              "vaeId": null,
+              "covered": true,
+              "coveredNext": true
+            },
+            "images": [
+              {
+                "id": 8151,
+                "userId": 1001,
+                "name": "img-8151.png",
+                "url": "00000000-0000-4000-8000-000000008151",
+                "nsfwLevel": 4,
+                "width": 832,
+                "height": 1216,
+                "hash": "UHASH8151",
+                "type": "image",
+                "metadata": {
+                  "width": 832,
+                  "height": 1216
+                },
+                "remixOfId": null,
+                "poi": false,
+                "minor": false,
+                "tags": [
+                  501
+                ]
+              }
+            ],
+            "canGenerate": true
+          }
+        ],
+        "nextCursor": null
+      },
+      "meta": {
+        "values": {
+          "items.0.createdAt": [
+            "Date"
+          ],
+          "items.0.lastVersionAt": [
+            "Date"
+          ],
+          "items.0.publishedAt": [
+            "Date"
+          ],
+          "items.0.version.createdAt": [
+            "Date"
+          ],
+          "items.0.version.publishedAt": [
+            "Date"
+          ],
+          "nextCursor": [
+            "undefined"
+          ]
+        },
+        "v": 1
+      }
+    },
+    "writes": {}
+  }
+}

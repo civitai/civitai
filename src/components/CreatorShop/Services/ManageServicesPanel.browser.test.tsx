@@ -1,10 +1,14 @@
-import { describe, expect, test, vi } from 'vitest';
+// Mantine's stylesheet, so the row lays out as it does in the app (the harness loads none).
+import '@mantine/core/styles.css';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
 // Sellers could see only their open incoming requests, so a request they declined was gone.
+
+const { mine } = vi.hoisted(() => ({ mine: { items: [] as unknown[], hiddenOffDomain: 0 } }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
@@ -13,7 +17,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       useQuery: () => ({ data: { canSell: true }, isLoading: false }),
     },
     'creatorService.getMine': {
-      useQuery: () => ({ data: { items: [], hiddenOffDomain: 0 }, isLoading: false }),
+      useQuery: () => ({ data: mine, isLoading: false }),
     },
   }),
 }));
@@ -32,6 +36,8 @@ vi.mock('~/hooks/useSyncAccount', () => ({ useSyncAccount: () => (url: string) =
 vi.mock('next/router', () => ({ useRouter: () => ({ asPath: '/user/seller/shop/manage' }) }));
 
 import { ManageServicesPanel } from '~/components/CreatorShop/Services/ManageServicesPanel';
+import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 describe('incoming requests on the seller panel', () => {
   test('lists open requests first, and closed ones from the Closed tab', async () => {
@@ -41,5 +47,44 @@ describe('incoming requests on the seller panel', () => {
     await page.getByRole('tab', { name: 'Closed' }).click();
     await expect.element(page.getByText('deals:seller:closed')).toBeInTheDocument();
     await expect.element(page.getByText('deals:seller:open')).not.toBeInTheDocument();
+  });
+});
+
+describe('a service row on a phone', () => {
+  afterEach(async () => {
+    mine.items = [];
+    await page.viewport(1280, 720);
+  });
+
+  test('keeps the actions button visible and tappable beside a long title and every badge', async () => {
+    mine.items = [
+      {
+        id: 1,
+        title: 'Fully custom character sheet with three poses, colour palette and prompt notes',
+        status: 'Draft',
+        maxNsfwLevel: 8,
+        review: 'reviewing',
+        deliveryDays: 5,
+        revisionsIncluded: 2,
+        maxOpenDeals: 3,
+        price: 125000,
+        termsAffirmed: false,
+      },
+    ];
+    await page.viewport(390, 844);
+    renderWithProviders(
+      <FeatureFlagsProvider flags={{ isGreen: true } as FeatureAccess}>
+        <ManageServicesPanel />
+      </FeatureFlagsProvider>
+    );
+    await expect.element(page.getByRole('button', { name: 'Service actions' })).toBeVisible();
+
+    const button = document.querySelector<HTMLElement>('[aria-label="Service actions"]')!;
+    const box = button.getBoundingClientRect();
+    const icon = button.querySelector('svg')!.getBoundingClientRect();
+    expect(icon.width).toBeGreaterThanOrEqual(16);
+    expect(box.right).toBeLessThanOrEqual(390);
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    expect(button.contains(hit)).toBe(true);
   });
 });

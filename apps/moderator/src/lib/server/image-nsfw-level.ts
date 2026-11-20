@@ -8,7 +8,7 @@ import { bustProfilePictures } from './profile-picture-cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { syncKonoFinalize } from './kono';
 import { recordModActivity } from './mod-activity';
-import { queueModelsForImageChildTagChanges } from './image-models-reindex';
+import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
@@ -93,6 +93,6 @@ export async function updateImageNsfwLevel({
     ])
   );
 
-  if (image.postId != null) await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
+  if (image.postId != null) await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
   void syncKonoFinalize(id, nsfwLevel);
 }

@@ -4,10 +4,11 @@ import {
   createSessionTokenClient,
   readSessionToken,
   type CookieSlot,
+  type RefreshFailure,
 } from '@civitai/auth';
 import { setSessionCookie, type CookieWritable } from './civ-cookie';
 import { isRevoked } from './session-verifier';
-import { decodeTokenClaim } from './token-claims';
+import { decodeTokenClaim, decodeTokenPayload } from './token-claims';
 import { refuseModerationAccountSession } from './moderation-account';
 import { observeSessionLeg, observeSessionRollFailed } from './session-metrics';
 
@@ -66,6 +67,28 @@ export async function getHubSession(req: {
 const UPDATE_AGE_MS = (Number(process.env.AUTH_SESSION_UPDATE_AGE) || 24 * 60 * 60) * 1000; // default 24h
 const HUB_ORIGIN = process.env.AUTH_JWT_ISSUER;
 
+// After the hub answers 503 for a token, this process does not ask again for that token for a while: an SSR
+// render awaits the roll, so retrying on every request would add the round trip to each one.
+const UNAVAILABLE_BACKOFF_MS = 5 * 60 * 1000;
+const UNAVAILABLE_BACKOFF_MAX = 10_000;
+const rollBackoff = new Map<string, number>();
+
+function backingOff(jti: string, now: number): boolean {
+  const until = rollBackoff.get(jti);
+  if (until === undefined) return false;
+  if (now < until) return true;
+  rollBackoff.delete(jti);
+  return false;
+}
+
+function backOff(jti: string, now: number): void {
+  if (rollBackoff.size >= UNAVAILABLE_BACKOFF_MAX) {
+    for (const [key, until] of rollBackoff) if (until <= now) rollBackoff.delete(key);
+    if (rollBackoff.size >= UNAVAILABLE_BACKOFF_MAX) rollBackoff.clear();
+  }
+  rollBackoff.set(jti, now + UNAVAILABLE_BACKOFF_MS);
+}
+
 /**
  * Rolling session: when the civ-token's age exceeds AUTH_SESSION_UPDATE_AGE, ask the hub to mint a fresh
  * token (same session/jti, new window) and re-set the cookie on the same `.civitai.com` domain the hub used.
@@ -84,12 +107,16 @@ export async function maybeRollHubCookie(
   if (!HUB_ORIGIN || !token || typeof res.setHeader !== 'function') return;
   const iat = decodeTokenClaim(token, 'iat');
   if (!iat || Date.now() - iat * 1000 < UPDATE_AGE_MS) return; // fresh enough — no work
+  const jti = decodeTokenPayload(token)?.jti;
+  if (typeof jti === 'string' && backingOff(jti, Date.now())) return;
 
   try {
     // Only the hub can mint — the package helper forwards the bearer token (+ device cookie) and times out.
-    const fresh = (
-      await sessionTokenClient.refresh(token, { deviceCookie, onFailure: observeSessionRollFailed })
-    )?.token;
+    const onFailure = (reason: RefreshFailure) => {
+      observeSessionRollFailed(reason);
+      if (reason === 'unavailable' && typeof jti === 'string') backOff(jti, Date.now());
+    };
+    const fresh = (await sessionTokenClient.refresh(token, { deviceCookie, onFailure }))?.token;
     if (!fresh) return;
     // Re-set the civ-token + roll the device cookie in lockstep (both live 30 rolling days from last activity).
     setSessionCookie(res, fresh, { deviceCookie, host, slot, requestCookies });

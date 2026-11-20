@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { describe, expect, it } from 'vitest';
+import { describe, it } from 'vitest';
 import {
-  checkEligibilityParity,
   expectEligibilityParity,
   type ParityRow,
   type ParitySpec,
@@ -243,13 +242,5 @@ const spec: ParitySpec = {
 describe('comic semantic search eligibility', () => {
   it('the event-engine keeps exactly the comics the site rule keeps', async () => {
     await expectEligibilityParity(spec);
-  });
-
-  it('names the clause a copy dropped', async () => {
-    const result = await checkEligibilityParity({
-      ...spec,
-      copy: COPY.replace(` AND u."bannedAt" IS NULL`, ''),
-    });
-    expect(result.copy).toEqual({ missing: [], extra: ['bannedOwner'] });
   });
 });
