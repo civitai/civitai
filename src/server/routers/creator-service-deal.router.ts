@@ -50,6 +50,8 @@ export const creatorServiceDealRouter = router({
       expectedPrice: input.expectedPrice,
       expectedRevisionsIncluded: input.expectedRevisionsIncluded,
       expectedDeliveryDays: input.expectedDeliveryDays,
+      expectedLicense: input.expectedLicense,
+      licenseAgreed: input.licenseAgreed,
       requestText: input.requestText,
       disclosureVersion: input.disclosureVersion,
       buyerId: ctx.user.id,

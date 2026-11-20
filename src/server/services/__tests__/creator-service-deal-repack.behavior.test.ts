@@ -209,6 +209,7 @@ const MIGRATIONS = [
   '20270106120000_service_offering_content_scan',
   '20271118230000_service_deal_file_purge',
   '20271119070000_service_deal_file_scanned_etag',
+  '20271120030000_service_license_presets',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );

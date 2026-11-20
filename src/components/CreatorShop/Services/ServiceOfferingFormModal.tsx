@@ -1,4 +1,5 @@
 import { Button, Group, Modal, SimpleGrid, Stack } from '@mantine/core';
+import { useWatch } from 'react-hook-form';
 import { useState } from 'react';
 import type * as z from 'zod';
 import { SellerAffirmationCheckbox } from '~/components/CreatorShop/Services/SellerAffirmation';
@@ -10,6 +11,7 @@ import {
   InputNumber,
   InputSelect,
   InputSimpleImageUpload,
+  InputSwitch,
   InputText,
   InputTextArea,
   useForm,
@@ -32,7 +34,19 @@ import {
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { isMatureServiceLevel } from '~/shared/constants/creator-services.constants';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { ServiceOfferingStatus, ServicePreviewKind } from '~/shared/utils/prisma/enums';
+import {
+  ServiceLicensePreset,
+  ServiceOfferingStatus,
+  ServicePreviewKind,
+} from '~/shared/utils/prisma/enums';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  SERVICE_LICENSE_CUSTOM_TEXT_MAX,
+  SERVICE_LICENSE_PRESET_LABELS,
+  SERVICE_LICENSE_PRESET_TERMS,
+  SERVICE_LICENSE_RESALE_LABEL,
+  serviceLicenseHasResaleToggle,
+} from '~/shared/constants/creator-service-license.constants';
 
 const formSchema = upsertServiceOfferingSchema.omit({
   id: true,
@@ -44,6 +58,11 @@ type FormValues = z.infer<typeof formSchema>;
 const previewKindOptions = Object.values(ServicePreviewKind).map((value) => ({
   value,
   label: SERVICE_PREVIEW_KIND_LABELS[value],
+}));
+
+const licenseOptions = Object.values(ServiceLicensePreset).map((value) => ({
+  value,
+  label: SERVICE_LICENSE_PRESET_LABELS[value],
 }));
 
 const ratingOptions = SERVICE_OFFERING_RATINGS.map((rating) => ({
@@ -69,6 +88,8 @@ export function ServiceOfferingFormModal({
   const dialog = useDialogContext();
   const { upsert } = useMutateMyServices();
   const source = offering ?? copyOf;
+  // Outside the rollout the license is neither shown nor sent, and the server leaves it as it is.
+  const licenseEditor = !!useOptionalFeatureFlags()?.creatorServicesNext;
 
   const form = useForm({
     schema: formSchema,
@@ -90,13 +111,21 @@ export function ServiceOfferingFormModal({
             metadata: (offering.coverImage.metadata as MixedObject | null) ?? undefined,
           }
         : null,
+      ...(licenseEditor
+        ? {
+            licensePreset: source?.licensePreset ?? null,
+            licenseCustomText: source?.licenseCustomText ?? '',
+            licenseAllowResale: source?.licenseAllowResale ?? false,
+          }
+        : {}),
     },
   });
+  const licensePreset = useWatch({ control: form.control, name: 'licensePreset' });
 
   const isActive = offering?.status === ServiceOfferingStatus.Active;
   const needsAffirmation = !offering?.termsAffirmed;
   const [affirmed, setAffirmed] = useState(false);
-  const canPublish = !needsAffirmation || affirmed;
+  const canPublish = (!needsAffirmation || affirmed) && (!licenseEditor || !!licensePreset);
   const save = (publish: boolean) =>
     form.handleSubmit(async (values: FormValues) => {
       await upsert.mutateAsync({
@@ -178,6 +207,33 @@ export function ServiceOfferingFormModal({
             data={ratingOptions}
             withAsterisk
           />
+          {licenseEditor && (
+            <>
+              <InputSelect
+                name="licensePreset"
+                label="License for buyers"
+                description={
+                  (licensePreset && SERVICE_LICENSE_PRESET_TERMS[licensePreset]) ??
+                  'What buyers may do with what you deliver. Required to publish.'
+                }
+                data={licenseOptions}
+                withAsterisk
+              />
+              {licensePreset === ServiceLicensePreset.Custom && (
+                <InputTextArea
+                  name="licenseCustomText"
+                  label="Your license terms"
+                  autosize
+                  minRows={3}
+                  maxLength={SERVICE_LICENSE_CUSTOM_TEXT_MAX}
+                  withAsterisk
+                />
+              )}
+              {serviceLicenseHasResaleToggle(licensePreset ?? null) && (
+                <InputSwitch name="licenseAllowResale" label={SERVICE_LICENSE_RESALE_LABEL} />
+              )}
+            </>
+          )}
           {!isActive && needsAffirmation && (
             <SellerAffirmationCheckbox checked={affirmed} onChange={setAffirmed} />
           )}

@@ -6,11 +6,11 @@ import {
 } from '~/shared/constants/creator-services.constants';
 
 /** Bump with any wording change below; records keep the text that was actually agreed to. */
-export const SERVICES_TERMS_VERSION = 'services-terms-2026-10-24';
+export const SERVICES_TERMS_VERSION = 'services-terms-2026-11-20';
 
 export const SELLER_AFFIRMATION_INTRO = 'I confirm that:';
 export const SELLER_AFFIRMATION_ITEMS = [
-  "I own or have the rights to everything I deliver, and it doesn't infringe anyone else's rights.",
+  "I own or have the rights to everything I deliver, including any training data I use to make it, and it doesn't infringe anyone else's rights.",
   "This service doesn't depict or imitate a real person.",
   "I'll follow Civitai's Terms of Service and content rules, and I'll take payment only through Civitai.",
   "I'm responsible for any taxes on what I earn.",

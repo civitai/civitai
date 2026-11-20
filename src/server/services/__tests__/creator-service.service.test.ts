@@ -764,3 +764,156 @@ describe("an offering's content checks on save", () => {
     expect(lastData()?.coverImageId).toBeNull();
   });
 });
+
+describe('license terms', () => {
+  const NO_LICENSE = /Pick license terms/;
+  const affirmed = { version: SERVICES_TERMS_VERSION };
+  const draft = (extra: object = {}) =>
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Draft,
+      sellerAffirmation: affirmed,
+      title: fields.title,
+      description: fields.description,
+      licensePreset: null,
+      licenseCustomText: null,
+      ...extra,
+    } as never);
+  const written = () =>
+    (dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1) as [{ data: object }])[0].data;
+
+  it('refuses a seller in the rollout who publishes without picking one, and writes nothing', async () => {
+    seller();
+    draft();
+    expect(
+      await rejects(
+        upsertServiceOffering({
+          sellerId: SELLER,
+          input: { ...fields, id: 5, publish: true },
+          licenseEditor: true,
+        })
+      )
+    ).toMatch(NO_LICENSE);
+    expect(
+      await rejects(
+        upsertServiceOffering({
+          sellerId: SELLER,
+          input: { ...fields, publish: true, affirmedTermsVersion: SERVICES_TERMS_VERSION },
+          licenseEditor: true,
+        })
+      )
+    ).toMatch(NO_LICENSE);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.serviceOffering.create).not.toHaveBeenCalled();
+  });
+
+  it('publishes with a preset and stores it', async () => {
+    seller();
+    draft();
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: {
+        ...fields,
+        id: 5,
+        publish: true,
+        licensePreset: 'CommercialCredit',
+        licenseAllowResale: true,
+      },
+      licenseEditor: true,
+    });
+    expect(written()).toMatchObject({
+      status: ServiceOfferingStatus.Active,
+      licensePreset: 'CommercialCredit',
+      licenseCustomText: null,
+      licenseAllowResale: true,
+    });
+  });
+
+  it('never stores resale with Personal use, or custom text with a preset', async () => {
+    seller();
+    draft();
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: {
+        ...fields,
+        id: 5,
+        licensePreset: 'Personal',
+        licenseAllowResale: true,
+        licenseCustomText: 'left over from Custom',
+      },
+      licenseEditor: true,
+    });
+    expect(written()).toMatchObject({
+      licensePreset: 'Personal',
+      licenseCustomText: null,
+      licenseAllowResale: false,
+    });
+  });
+
+  it('refuses Custom without text', async () => {
+    seller();
+    draft();
+    expect(
+      await rejects(
+        upsertServiceOffering({
+          sellerId: SELLER,
+          input: { ...fields, id: 5, licensePreset: 'Custom', licenseCustomText: '  ' },
+          licenseEditor: true,
+        })
+      )
+    ).toMatch(/Write your license terms/);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('sends new custom text to the content check and the blocklist', async () => {
+    seller();
+    draft({ licensePreset: 'Custom', licenseCustomText: 'Old terms.' });
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...fields, id: 5, licensePreset: 'Custom', licenseCustomText: 'New terms.' },
+      licenseEditor: true,
+    });
+    expect(written()).toMatchObject({ ingestion: ServiceOfferingIngestionStatus.Pending });
+    expect(checks.scanServiceOffering).toHaveBeenCalledWith(5);
+    expect(vi.mocked(throwOnBlockedUserContent).mock.calls.at(-1)?.[0]).toContain('New terms.');
+  });
+
+  it('outside the rollout, neither requires a license nor writes one sent anyway', async () => {
+    seller();
+    draft();
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...fields, id: 5, publish: true, licensePreset: 'CommercialNoCredit' },
+    });
+    expect(written()).toMatchObject({ status: ServiceOfferingStatus.Active });
+    expect(written()).not.toHaveProperty('licensePreset');
+  });
+
+  it('refuses activation through setStatus in the rollout until a license is set', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      sellerAffirmation: affirmed,
+      licensePreset: null,
+    } as never);
+    expect(
+      await rejects(
+        setServiceOfferingStatus({
+          sellerId: SELLER,
+          input: { id: 3, status: 'Active' },
+          licenseRequired: true,
+        })
+      )
+    ).toMatch(NO_LICENSE);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      sellerAffirmation: affirmed,
+      licensePreset: 'Personal',
+    } as never);
+    await setServiceOfferingStatus({
+      sellerId: SELLER,
+      input: { id: 3, status: 'Active' },
+      licenseRequired: true,
+    });
+    expect(written()).toMatchObject({ status: ServiceOfferingStatus.Active });
+  });
+});

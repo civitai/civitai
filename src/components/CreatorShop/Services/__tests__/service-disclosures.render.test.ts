@@ -69,6 +69,55 @@ describe('buyer disclosure in the request modal', () => {
   });
 });
 
+describe('license in the request modal', () => {
+  const base = { id: 9, title: 'Badge', price: 2500, deliveryDays: 4, revisionsIncluded: 1 };
+  // No flags provider: a buyer outside the creatorServicesNext rollout.
+  const render = (license: object) =>
+    html(
+      createElement(ServiceRequestModal, {
+        offering: { ...base, ...license },
+        sellerUsername: 'seller',
+      } as never)
+    );
+
+  it("shows a licensed offering's terms and the agree box to a buyer outside the rollout", () => {
+    const out = render({
+      licensePreset: 'CommercialCredit',
+      licenseCustomText: null,
+      licenseAllowResale: false,
+    });
+    expect(out).toContain('License: Commercial, credit required');
+    expect(out).toContain(
+      'Credit the seller when you publish the files or a model built from them.'
+    );
+    expect(out).toContain(
+      'The seller keeps copyright. This is a license to use the work, not a transfer.'
+    );
+    expect(out).toContain(
+      escaped("These are the seller's license terms, between you and the seller.")
+    );
+    expect(out).toContain(escaped("I agree to the seller's license terms above."));
+  });
+
+  it("shows a Custom license's own text as written", () => {
+    const out = render({
+      licensePreset: 'Custom',
+      licenseCustomText: 'Print runs under 500 only.',
+      licenseAllowResale: true,
+    });
+    expect(out).toContain('License: Custom');
+    expect(out).toContain('Print runs under 500 only.');
+    expect(out).toContain('May re-share or resell the files');
+  });
+
+  it('shows no license block for an offering without one, outside the rollout', () => {
+    const out = render({ licensePreset: null, licenseCustomText: null, licenseAllowResale: false });
+    expect(out).not.toContain('License:');
+    expect(out).not.toContain('No license terms set');
+    expect(out).not.toContain('I agree to the seller');
+  });
+});
+
 describe('seller confirmation before publishing', () => {
   const out = html(
     createElement(PublishServiceModal, {

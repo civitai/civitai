@@ -1360,6 +1360,15 @@ export const ServicePreviewKind = {
 
 export type ServicePreviewKind = (typeof ServicePreviewKind)[keyof typeof ServicePreviewKind];
 
+export const ServiceLicensePreset = {
+  Personal: 'Personal',
+  CommercialCredit: 'CommercialCredit',
+  CommercialNoCredit: 'CommercialNoCredit',
+  Custom: 'Custom',
+} as const;
+
+export type ServiceLicensePreset = (typeof ServiceLicensePreset)[keyof typeof ServiceLicensePreset];
+
 export const ServiceBuzzType = {
   yellow: 'yellow',
   blue: 'blue',
