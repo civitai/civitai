@@ -219,6 +219,8 @@ describe('shared-slot sync on civitai.red', () => {
     url: '/models/1',
     headers: { host: 'civitai.red', 'sec-fetch-mode': 'navigate' },
     cookies,
+    // A host-only site never reads the shared slot as its session, so it syncs on the cookie alone.
+    signedIn: false,
   });
 
   it('syncs a shared-only browser once: the redirect expires the shared cookies at both scopes', async () => {
