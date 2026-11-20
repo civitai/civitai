@@ -238,9 +238,16 @@ The port is registered in `ports/manifest.json` (`contentPolicy.registrySubscrip
 2. **Read the comparison.** Expected disagreements: a user who changed their settings within the
    cache TTL or the adapter's token re-check (five minutes), on either side. Anything else is a bug
    in one of the two; the vectors say which.
-3. **Switch.** The caller decides from the service's answer, falling back to the SFW decision on any
-   error or timeout, and keeps its own code only as that fallback until the switch has soaked. A
-   change to a rule then lands here, once, as a context rule with its vectors.
+3. **Switch.** The caller decides from the service's answer, falling back to its own decision on any
+   error, timeout or fail-closed (`fallback: true`) answer, and keeps its own code only as that
+   fallback until the switch has soaked. A change to a rule then lands here, once, as a context rule
+   with its vectors. The registry adapter's switch is `REGISTRY_ADAPTER_POLICY_ENFORCE=1`
+   (`src/server/registry-adapter/policy-enforce.ts`, off by default): a signed-in subscription
+   waits for the answer (at most the shadow's timeout) and streams it, a disagreement included;
+   every failure keeps the adapter's own answer rather than narrowing to SFW, counted in
+   `registry_adapter_policy_enforce_total{source,reason}`. Anonymous subscriptions and service
+   principals keep the adapter's decision and are only compared. Flip it once the shadow has shown
+   no disagreement over 24 hours and at least 5,000 comparisons; unset it to roll back.
 4. **Delete** the caller's own copy.
 
 The registry app index follows once it has a service identity to call with. The site and feed-go are

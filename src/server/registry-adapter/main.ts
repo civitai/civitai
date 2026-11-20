@@ -49,6 +49,11 @@
  *                                  is served on REGISTRY_ADAPTER_METRICS_PORT (default 7132).
  *                                  REGISTRY_ADAPTER_POLICY_TIMEOUT_MS bounds one comparison
  *                                  (default 250). Unset: no comparison and no metrics port
+ *   REGISTRY_ADAPTER_POLICY_ENFORCE "1" (with REGISTRY_ADAPTER_POLICY_URL): a signed-in user's
+ *                                  subscription streams the service's audience instead, waiting
+ *                                  at most the timeout above, and this source's own on any
+ *                                  failure; anonymous and service principals stay local
+ *                                  (`policy-enforce.ts`). Unset (the default): off
  *
  * Auth (the registry's auth extension, `auth.ts`): no token is anonymous; a civitai OAuth access
  * token is verified as every `/api/v1` route verifies it, and an access token the auth hub issued
@@ -83,7 +88,7 @@ import {
   createSubscriptionLimiter,
   subscriptionLimitsFromEnv,
 } from '~/server/registry-adapter/limits';
-import { startPolicyShadow } from '~/server/registry-adapter/policy-shadow';
+import { startPolicy } from '~/server/registry-adapter/policy-enforce';
 import { createRegistryServer, keepAliveTimeoutFromEnv } from '~/server/registry-adapter/serve';
 import { describeRegionConfig } from '~/server/registry-adapter/request-origin';
 import { createRedisSnapshotStore } from '~/server/registry-adapter/snapshot-store.redis';
@@ -149,10 +154,11 @@ function main() {
     );
   }
   const onRegion = (line: string) => console.log('registry-adapter:', line);
-  // Shadow mode: off unless REGISTRY_ADAPTER_POLICY_URL is set; it never changes a decision, and a
-  // misconfiguration of it never stops the adapter (`startPolicyShadow`).
-  const { shadow: policyShadow } = startPolicyShadow(process.env);
-  const auth = { verifyToken, resource, limiter, onRegion, policyShadow };
+  // Shadow mode: off unless REGISTRY_ADAPTER_POLICY_URL is set; it never changes a decision.
+  // Enforcement: off unless REGISTRY_ADAPTER_POLICY_ENFORCE=1 as well. A misconfiguration of
+  // either never stops the adapter (`startPolicy`).
+  const { shadow: policyShadow, enforce: policyEnforce } = startPolicy(process.env);
+  const auth = { verifyToken, resource, limiter, onRegion, policyShadow, policyEnforce };
 
   const deps = liveCatalogReadDeps();
   // Every subscription polls; they share one catalog read per half poll interval.
