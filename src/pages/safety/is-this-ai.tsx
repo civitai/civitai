@@ -105,7 +105,7 @@ function Result({ result }: { result: ContentCredentialsResult }) {
         <Text fw={600}>
           {result.credentials === 'valid'
             ? 'Content Credentials found, and the file is unchanged since it was signed.'
-            : 'Content Credentials found, but the file was changed after it was signed.'}
+            : "Content Credentials found, but they don't check out: the file was changed after signing, or the signature itself isn't valid."}
         </Text>
         <Text size="sm">Says it was made with AI: {aiGenerated ? 'yes' : 'not stated'}</Text>
         {generator && <Text size="sm">Made with: {generator}</Text>}

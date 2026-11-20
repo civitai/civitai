@@ -148,9 +148,12 @@ function ascii(b: Uint8Array, start: number, end: number) {
 const FTYP_BRANDS: Record<string, string> = {
   avif: 'image/avif',
   avis: 'image/avif',
-  heic: 'image/heic',
-  heix: 'image/heic',
-  mif1: 'image/heic',
+  ...Object.fromEntries(
+    ['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1'].map((b) => [
+      b,
+      'image/heic',
+    ])
+  ),
 };
 
 export function sniffImageType(bytes: Uint8Array) {
