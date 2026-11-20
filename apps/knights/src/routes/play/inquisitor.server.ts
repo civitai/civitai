@@ -12,6 +12,7 @@ import {
   type ReviewVoteRejection,
 } from '$lib/server/inquisitor/review.service';
 import { queueDeps } from '$lib/server/queue/runtime';
+import { ratingGuide } from '$lib/server/rules';
 import { skillChecks } from '$lib/server/skill-check/runtime';
 import { feedSecret } from '$lib/server/smites/runtime';
 
@@ -64,6 +65,10 @@ export async function inquisitorView(moderatorId: number) {
     mode: 'inquisitor' as const,
     stats,
     levels: LEVELS,
+    /** The rating guide's words for each level, shown on hover and focus as in the player game. */
+    hints: Object.fromEntries(
+      ratingGuide().map((entry) => [String(entry.level), `${entry.label}: ${entry.description}`])
+    ),
     review: review && {
       token: sealReview(feedSecret(), moderatorId, review.reviewId),
       src: imageUrl(review.imageKey),

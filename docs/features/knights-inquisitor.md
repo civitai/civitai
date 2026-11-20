@@ -67,7 +67,10 @@ Closes count as `knights_inquisitor_reviews_closed_total{outcome}`.
 A moderator opening `/play` gets this queue instead of the player game (`routes/play/inquisitor.server.ts`,
 `InquisitorPlay.svelte`); the page needs no player record and pays nothing. Beside the image it shows the Knights' consensus
 and the image's current level, how the Order voted (per answer, by the stage the votes came at), the moderator votes so far,
-the prompt, and links to the image, its post and its creator on civitai.red, where tags and resources are listed. The
+the prompt (clamped, with "Show full prompt"), the image's tags, and links to the image, its post and its creator on
+civitai.red, where resources are listed. The image and its answer row always fit the screen (the sidebar scrolls on its
+own); the levels are the player game's answer pills (`$lib/AnswerPill.svelte`), and the number keys vote them in order.
+"Should be Blocked" sits last in the sidebar and asks to confirm before it sends the image to the Inquisitors. The
 moderator's own stats sit on top: votes this week, reviews waiting for them (counted up to 1,000), and how often they agreed with the other
 moderator. Reviews are addressed by a sealed token bound to the moderator, under a key of its own, so a review token never
 opens as a feed item. Both actions (`inquisitorVote`, `sendToInquisitor`) are form posts that refuse anyone but a moderator.

@@ -16,15 +16,19 @@ export type ReviewSidebar = {
   imageUrl: string;
   postUrl: string | null;
   prompt: string | null;
+  /** The image's enabled tags, most confident first, at most `SIDEBAR_TAGS`. */
+  tags: string[];
   creator: { username: string; url: string } | null;
 };
+
+const SIDEBAR_TAGS = 30;
 
 /** What a moderator sees beside a review: the Knights' verdict and where to look the image up on the site. */
 export async function reviewSidebar(
   db: Kysely<DB>,
   review: Pick<ReviewOffer, 'queueItemId' | 'imageId' | 'consensusValue' | 'currentLevel'>
 ): Promise<ReviewSidebar> {
-  const [question, tallies, image] = await Promise.all([
+  const [question, tallies, image, tags] = await Promise.all([
     db
       .selectFrom('KnightsQuestion')
       .select('options')
@@ -41,6 +45,16 @@ export async function reviewSidebar(
       ])
       .where('img.id', '=', review.imageId)
       .executeTakeFirst(),
+    db
+      .selectFrom('TagsOnImageDetails as td')
+      .innerJoin('Tag as t', 't.id', 'td.tagId')
+      .select('t.name')
+      .where('td.imageId', '=', review.imageId)
+      .where('td.disabled', '=', false)
+      .orderBy('td.confidence', 'desc')
+      .orderBy('t.name', 'asc')
+      .limit(SIDEBAR_TAGS)
+      .execute(),
   ]);
   const options = Array.isArray(question?.options)
     ? (question.options as { value: string; label: string }[])
@@ -53,7 +67,8 @@ export async function reviewSidebar(
     votes: tallyByAnswer(tallies, labels),
     imageUrl: `${site}/images/${review.imageId}`,
     postUrl: image?.postId ? `${site}/posts/${image.postId}` : null,
-    prompt: image?.prompt ?? null,
+    prompt: image?.prompt || null,
+    tags: tags.map((t) => t.name),
     creator: image?.username
       ? { username: image.username, url: `${site}/user/${encodeURIComponent(image.username)}` }
       : null,

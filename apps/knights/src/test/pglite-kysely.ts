@@ -105,7 +105,13 @@ CREATE TABLE "ImageReport" ("reportId" INTEGER NOT NULL, "imageId" INTEGER NOT N
 CREATE TABLE "PostReport" ("reportId" INTEGER PRIMARY KEY, "postId" INTEGER NOT NULL);
 CREATE TABLE "ModelReport" ("reportId" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL);
 CREATE TABLE "UserReport" ("reportId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
-CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER NOT NULL, "tagId" INTEGER NOT NULL, "disabled" BOOLEAN NOT NULL DEFAULT false);
+CREATE TABLE "TagsOnImageDetails" (
+  "imageId" INTEGER NOT NULL,
+  "tagId" INTEGER NOT NULL,
+  "disabled" BOOLEAN NOT NULL DEFAULT false,
+  "confidence" INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE "Tag" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL);
 CREATE TABLE "BlockedImage" ("hash" BIGINT PRIMARY KEY, "reason" TEXT NOT NULL);
 CREATE TABLE "ImageFlag" (
   "imageId" INTEGER PRIMARY KEY,

@@ -22,7 +22,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsInquisitorVote","KnightsInquisitorReview","KnightsVote","KnightsQueueItem","Image","Post","User" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsInquisitorVote","KnightsInquisitorReview","KnightsVote","KnightsQueueItem","Image","Post","User","TagsOnImageDetails","Tag" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -58,6 +58,10 @@ describe('reviewSidebar', () => {
     await playerVote(itemId, 2, '4', 'Templar', 2);
     await playerVote(itemId, 3, '8', 'Knight');
     await playerVote(itemId, 4, '8', 'Knight', 0);
+    await pg.query(`INSERT INTO "Tag" ("id","name") VALUES (1,'castle'),(2,'dusk'),(3,'hidden')`);
+    await pg.query(
+      `INSERT INTO "TagsOnImageDetails" ("imageId","tagId","disabled","confidence") VALUES (1,1,false,90),(1,2,false,70),(1,3,true,99)`
+    );
 
     const sidebar = await reviewSidebar(db, {
       queueItemId: itemId,
@@ -70,8 +74,9 @@ describe('reviewSidebar', () => {
       consensus: 'R',
       current: 'R',
       prompt: 'a castle at dusk',
+      tags: ['castle', 'dusk'],
       creator: { username: 'maker', url: expect.stringMatching(/\/user\/maker$/) },
-      imageUrl: expect.stringMatching(/\/images\/1$/),
+      imageUrl: 'https://civitai.red/images/1',
       postUrl: expect.stringMatching(/\/posts\/1$/),
     });
     expect(sidebar.votes).toEqual([

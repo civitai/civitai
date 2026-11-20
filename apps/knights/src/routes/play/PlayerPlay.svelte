@@ -18,6 +18,8 @@
   import ResetNotice from './ResetNotice.svelte';
   import Countdown from '$lib/Countdown.svelte';
   import Icon from '$lib/Icon.svelte';
+  import AnswerPill from '$lib/AnswerPill.svelte';
+  import '$lib/answer-row.css';
   import { sound } from '$lib/sound';
   import WatchMeta from '$lib/WatchMeta.svelte';
   import { heartsLeft, landVote, pendingGoldVotes, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
@@ -682,17 +684,12 @@
 />
 
 {#snippet pill(option: { value: string; label: string }, index: number, locked: boolean, asksReason: boolean)}
-  {@const blocked = option.label.toLowerCase() === 'blocked'}
-  {@const yesNoIcon = yesNo ? (option.value === 'yes' ? 'check' : 'x') : null}
-  <button
-    type="submit"
-    class="pill"
-    class:blocked
-    class:picked={picked === option.value}
-    name="answer"
-    value={option.value}
-    title={levelHint.get(option.value)}
-    aria-label={blocked ? 'Blocked' : undefined}
+  <AnswerPill
+    {option}
+    {index}
+    picked={picked === option.value}
+    hint={levelHint.get(option.value)}
+    yesNo={yesNo}
     disabled={submitting || locked}
     onclick={asksReason && option.value === BLOCKED_ANSWER
       ? (event) => {
@@ -700,12 +697,7 @@
           reasonItem = view?.item.key ?? null;
         }
       : undefined}
-  >
-    {#if yesNoIcon}<Icon name={yesNoIcon} />{/if}
-    {#if blocked}<span class="ban"><Icon name="ban" size={20} /></span>{/if}
-    <span class="level">{option.label}</span>
-    <kbd class="key" aria-hidden="true">{index + 1}</kbd>
-  </button>
+  />
 {/snippet}
 
 {#snippet soundToggle()}
@@ -829,7 +821,7 @@
         {@render ruling(true)}
       </div>
       <div class="controls" class:yesno={yesNo}>
-        <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
+        <form class="answers answer-row" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
           <input type="hidden" name="kind" value={apprentice.item.kind} />
           <input type="hidden" name="referenceId" value={apprentice.item.referenceId} />
           <input type="hidden" name="version" value={apprentice.item.version ?? ''} />
@@ -933,7 +925,7 @@
         {/if}
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
-        <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
+        <form class="answers answer-row" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
           <input type="hidden" name="item" value={shown.item.id} />
           {#each shown.question.options as option, index (option.value)}
             {@render pill(option, index, imageFailed || settledOnScreen, asksBlockReason(shown.question.key))}
@@ -1182,119 +1174,8 @@
     align-items: center;
     gap: 16px;
   }
-  .answers {
-    display: flex;
-    flex: 1 1 auto;
-    gap: 8px;
-    min-width: 0;
-  }
   .controls.yesno .answers {
     gap: 12px;
-  }
-  .pill {
-    display: flex;
-    flex: 1 1 0;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    min-width: 0;
-    height: 40px;
-    padding: 0 8px;
-    border: 1px solid var(--io-gold-muted);
-    border-radius: 6px;
-    background: var(--io-bg);
-    color: var(--io-parchment);
-    font: 700 14px/1 var(--io-font-ui);
-    transition:
-      border-color var(--motion-fast) var(--ease-out-quart),
-      background-color var(--motion-fast) var(--ease-out-quart),
-      color var(--motion-fast) var(--ease-out-quart),
-      box-shadow var(--motion-fast) var(--ease-out-quart),
-      transform var(--motion-base) var(--ease-out-quart);
-  }
-  /* The design's M1: the answer presses in (0.97) and holds a gold ring until the next image replaces it. The answer is
-     already submitted at the press; nothing here waits for the release. */
-  .pill:active:not(:disabled),
-  .pill.picked,
-  .pill.picked:disabled {
-    transform: scale(0.97);
-    box-shadow:
-      0 0 0 2px var(--io-gold),
-      0 0 14px rgb(201 162 74 / 0.4);
-    transition-duration: var(--motion-fast);
-  }
-  .pill.blocked.picked,
-  .pill.blocked:active:not(:disabled) {
-    box-shadow:
-      0 0 0 2px var(--io-crimson-text),
-      0 0 14px rgb(224 138 130 / 0.35);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .category.glow {
-      animation: none;
-    }
-    .pill,
-    .pill:active:not(:disabled),
-    .pill.picked,
-    .pill.picked:disabled {
-      transform: none;
-      transition-duration: 120ms;
-    }
-  }
-  .controls.yesno .pill {
-    padding: 0 16px;
-  }
-  .pill:hover:not(:disabled) {
-    border-color: var(--io-gold);
-    background: var(--io-bg);
-  }
-  .pill.picked,
-  .pill.picked:disabled {
-    border-color: var(--io-gold);
-    background: var(--io-surface);
-    color: var(--io-gold);
-    opacity: 1;
-  }
-  .pill.blocked {
-    border-color: var(--io-crimson);
-    color: var(--io-crimson-text);
-  }
-  .pill.blocked:hover:not(:disabled) {
-    border-color: var(--io-crimson-text);
-  }
-  .pill.blocked.picked {
-    border-color: var(--io-crimson-text);
-    color: var(--io-crimson-text);
-  }
-  .pill :global(svg) {
-    flex: none;
-  }
-  /* A label never wraps: at mid widths the key chip gives way first (see below). */
-  .level {
-    white-space: nowrap;
-  }
-  .key {
-    display: grid;
-    place-items: center;
-    width: 20px;
-    height: 20px;
-    border-radius: 6px;
-    background: var(--io-bg);
-    color: var(--io-parchment-muted);
-    font: 700 12px/1 var(--io-font-ui);
-    order: -1;
-  }
-  .controls.yesno .key {
-    order: 1;
-    width: auto;
-    background: none;
-  }
-  .picked .key {
-    background: var(--io-bg);
-    color: var(--io-parchment-muted);
-  }
-  .ban {
-    display: none;
   }
   .skip {
     display: contents;
@@ -1340,23 +1221,10 @@
     color: var(--io-gold);
     font-weight: 700;
   }
-  .controls.failed .pill {
+  .controls.failed :global(.pill) {
     opacity: 0.4;
   }
 
-  /* Up to 80rem the six pills share the row with Skip, the guide, sound (and from 64rem the rail): the chips go so every
-     label fits. */
-  @media (max-width: 80rem) {
-    .controls:not(.yesno) .key {
-      display: none;
-    }
-  }
-  /* Touch and narrow screens: no key chips. */
-  @media (max-width: 40rem), (hover: none) {
-    .key {
-      display: none;
-    }
-  }
   @media (max-width: 40rem) {
     .column {
       gap: 8px;
@@ -1401,24 +1269,6 @@
     .controls {
       gap: 6px;
     }
-    .answers {
-      gap: 6px;
-    }
-    .pill {
-      min-height: 0;
-      height: 40px;
-      padding: 0 2px;
-      font-size: 12px;
-    }
-    .pill.blocked .level {
-      display: none;
-    }
-    .pill.blocked .ban {
-      display: inline-flex;
-    }
-    .controls.yesno .pill {
-      font-size: 14px;
-    }
     .skip {
       display: block;
       flex: none;
@@ -1448,11 +1298,6 @@
     }
     .panel {
       padding: 0.5rem 1rem 1.5rem;
-    }
-  }
-  @media (max-width: 22rem) {
-    .pill {
-      font-size: 11px;
     }
   }
 </style>
