@@ -277,6 +277,7 @@ import {
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
+  allBrowsingLevelsFlag,
   browsingLevels as selectableBrowsingLevels,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
@@ -4533,11 +4534,7 @@ export const getImagesForModelVersion = async ({
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
-    imageWhere.push(
-      browsingLevel
-        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
-        : Prisma.sql`i."nsfwLevel" != 0`
-    );
+    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel || allBrowsingLevelsFlag}) != 0`);
     imageWhere.push(imageReviewedSql());
   }
   imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
@@ -5646,7 +5643,7 @@ export const getEntityCoverImage = async ({
   })}`;
 
   // An unrated image is never a cover for anyone but moderators, owner included.
-  const coverRated = Prisma.sql`(i."nsfwLevel" != 0 OR ${isModerator}::boolean)`;
+  const coverRated = Prisma.sql`(i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) OR ${isModerator}::boolean)`;
 
   // A minor or SFW-only model's image above its gallery level is its owner's and moderators'
   // alone. Placed before DISTINCT ON, so a held first image falls back to the next one.

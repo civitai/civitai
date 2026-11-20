@@ -570,8 +570,8 @@ export function RegistryExportsNotice({ exports }: { exports: RegistryExportDiff
  *
  * 🔴 THE GATE IS THE COMPONENT, so no caller can re-spell it. On-site PENDING only, and
  * DARK unless the mod-only `app-blocks-agentic-review` CLIENT flag resolves — fail-closed,
- * so an absent Flipt flag means this renders nothing. External/connect requests are out of
- * scope and hidden. Two surfaces mount it now (the modal body and the page's Agent report
+ * so an absent Flipt flag means this renders nothing. External/connect requests are hidden
+ * here; the off-site modal mounts the connect lane behind `app-listings-agentic-review`. Two surfaces mount it now (the modal body and the page's Agent report
  * tab); a copied `mode === 'pending' && !!features?.… && isOnsiteReviewRequest(…)` at each
  * would be the same predicate twice, wrong at one of them eventually.
  */

@@ -1,4 +1,5 @@
 import { captureImageStateHeldSql } from '~/server/services/legal-hold.service';
+import { constants } from '~/server/common/constants';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
@@ -43,7 +44,7 @@ import {
   SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
   SERVICE_FINAL_EXTENSIONS,
   SERVICE_FINAL_VIDEO_EXTENSIONS,
-  SERVICE_FINAL_VIDEO_MAX_BYTES,
+  SERVICE_FINAL_VIDEO_TOO_LARGE,
   SERVICE_FINAL_MAX_BYTES,
   SERVICE_FINAL_MAX_FILES,
   SERVICE_PREVIEW_ANIMATED_MAX_BYTES,
@@ -144,10 +145,8 @@ export function assertFinalFileType(fileName: string, { video = true } = {}) {
 function assertScannableFile(fileName: string, size: number, { video = true } = {}) {
   assertFinalFileType(fileName, { video });
   if (size > SERVICE_FINAL_MAX_BYTES) throw throwBadRequestError('That file is too large.');
-  if (isFinalVideoName(fileName) && size > SERVICE_FINAL_VIDEO_MAX_BYTES)
-    throw throwBadRequestError(
-      `A video cannot be more than ${SERVICE_FINAL_VIDEO_MAX_BYTES / (1024 * 1024)} MB.`
-    );
+  if (isFinalVideoName(fileName) && size > constants.mediaUpload.maxVideoFileSize)
+    throw throwBadRequestError(SERVICE_FINAL_VIDEO_TOO_LARGE);
   // An image is scanned whole, so it has its own, lower, cap.
   if (
     (SERVICE_ZIP_IMAGE_EXTENSIONS as readonly string[]).includes(

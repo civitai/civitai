@@ -1,8 +1,11 @@
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
+import { dbRead } from '~/server/db/client';
 import { getAllImages } from '~/server/services/image.service';
+import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
@@ -51,6 +54,18 @@ type HydratedImage = Awaited<ReturnType<typeof getAllImages>>['items'][number];
 const searchServiceCandidates = searchServiceSource(IMAGE_COLLECTION, {
   notFoundMessage: 'Image not found',
 });
+
+/** `items` without the images the shared held-media rule holds, for every viewer, moderators included. */
+async function withoutHeldImages<T extends { id: number }>(items: T[]) {
+  if (!items.length) return items;
+  const held = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT i.id FROM "Image" i
+    WHERE i.id = ANY(${items.map((item) => item.id)}::int[])
+      AND ${Prisma.raw(semanticImageHeldText('i'))}`;
+  if (!held.length) return items;
+  const heldIds = new Set(held.map((row) => row.id));
+  return items.filter((item) => !heldIds.has(item.id));
+}
 
 const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
 
@@ -191,7 +206,7 @@ export async function searchSemanticImages({
       domain,
       headers: { src: 'semanticImageSearch' },
     });
-    return items;
+    return withoutHeldImages(items);
   };
 
   // "More like this" from an image the viewer cannot see would reveal what it resembles.
@@ -243,7 +258,11 @@ export async function searchSemanticImages({
       nsfwLevels: Flags.instanceToArray(refuseNarrowing ? allBrowsingLevelsFlag : level),
     },
     tagIds,
-    anyOf: { baseModels: input.baseModels, type: input.types },
+    anyOf: {
+      baseModels: input.baseModels,
+      type: input.types,
+      modelVersionIds: input.modelVersionIds,
+    },
     userIds,
     range: {
       key: 'sortAt',

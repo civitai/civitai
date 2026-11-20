@@ -717,7 +717,7 @@ export const updateUserProfile = async ({
             toUpdate.map(
               async (userLink) =>
                 await tx.userLink.updateMany({
-                  where: { id: userLink.id },
+                  where: { id: userLink.id, userId },
                   data: userLink,
                 })
             )

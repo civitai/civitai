@@ -1,11 +1,12 @@
+import { constants } from '~/server/common/constants';
 import {
   SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FINAL_EXTENSIONS,
   SERVICE_FINAL_MAX_BYTES,
   SERVICE_FINAL_MAX_FILES,
   SERVICE_FINAL_VIDEO_EXTENSIONS,
-  SERVICE_FINAL_VIDEO_MAX_BYTES,
-  SERVICE_FINAL_VIDEO_MAX_SECONDS,
+  SERVICE_FINAL_VIDEO_NOT_MP4_OR_WEBM,
+  SERVICE_FINAL_VIDEO_TOO_LARGE,
   SERVICE_PREVIEW_ANIMATED_MAX_BYTES,
   SERVICE_PREVIEW_MAX_BYTES,
   SERVICE_PREVIEW_MAX_FILES,
@@ -99,14 +100,13 @@ export function uploadRefusal(
   // A video is never sent to a .zip: one inside an archive is refused.
   if (kind === 'Attachment' && (finalVideo || isVideoLike(file, extension)))
     return "Videos can't be attached.";
-  if (!finalVideo && isVideoLike(file, extension))
-    return `Upload a video as .mp4 or .webm, up to ${SERVICE_FINAL_VIDEO_MAX_SECONDS} seconds.`;
+  if (!finalVideo && isVideoLike(file, extension)) return SERVICE_FINAL_VIDEO_NOT_MP4_OR_WEBM;
   if (!(SERVICE_FINAL_EXTENSIONS as readonly string[]).includes(extension))
     return `.${extension || '(none)'} files can't be ${verb}. Use a .zip for anything else.`;
   if (file.size > SERVICE_FINAL_MAX_BYTES)
     return `That file is too large to be ${verb} (max 2 GB).`;
-  if (finalVideo && file.size > SERVICE_FINAL_VIDEO_MAX_BYTES)
-    return `A video cannot be more than ${megabytes(SERVICE_FINAL_VIDEO_MAX_BYTES)}.`;
+  if (finalVideo && file.size > constants.mediaUpload.maxVideoFileSize)
+    return SERVICE_FINAL_VIDEO_TOO_LARGE;
   return null;
 }
 
