@@ -33,8 +33,8 @@ export const ARTICLE_MENTION_EDIT_WINDOW = '30 days';
 /**
  * How far behind its cursor the article read looks, as for new articles from followed creators: the
  * app stamps an article before the row commits and the job takes its cursor before reading the
- * replica, so a row stamped just before a run can first be visible after it. Re-reading is safe for
- * the same reason edits are.
+ * replica, so a row stamped just before a run can first be visible after it. Re-reading tells nobody
+ * twice: UserNotification is unique per (notification, user).
  */
 const ARTICLE_MENTION_LOOKBACK = '5 minutes';
 // GREATEST skips NULLs, so a never-scanned article still counts its publish and edit times.
