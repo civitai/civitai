@@ -195,7 +195,7 @@ function ShowcaseShell({
             <ShowcaseGrid
               itemCount={count}
               rows={expanded ? count : rows}
-              onHiddenCountChange={setHidden}
+              onHiddenCountChange={expanded ? undefined : setHidden}
             >
               {children}
             </ShowcaseGrid>
@@ -204,6 +204,7 @@ function ShowcaseShell({
                 <Button
                   variant="subtle"
                   size="compact-sm"
+                  aria-expanded={expanded}
                   onClick={() => setExpanded((open) => !open)}
                 >
                   {expanded ? 'Show less' : `View all ${count}`}
