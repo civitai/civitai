@@ -327,7 +327,10 @@ func TestMetricsEndpoint(t *testing.T) {
 	s.Metrics.Info.WithLabelValues(s.Engine.PolicyVersion()).Set(1)
 	post(t, s, `{"context":"public-api","country":"NL"}`)
 	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil))
+	s.MetricsHandler().ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /metrics on the metrics listener = %d, want 200", rec.Code)
+	}
 	body := rec.Body.String()
 	for _, want := range []string{
 		`content_policy_decisions_total{context="public-api",reason="unrestricted",region_hold="none"} 1`,
@@ -343,6 +346,42 @@ func TestMetricsEndpoint(t *testing.T) {
 	}
 	if strings.Contains(body, `endpoint="`) {
 		t.Error("a series carries a label named endpoint")
+	}
+}
+
+// /metrics is served only on the metrics listener, so a network policy can admit Prometheus there
+// without admitting it to /v1/decide (which has no authentication of its own).
+func TestMetricsNotOnTheAPIListener(t *testing.T) {
+	s, _ := newServer(t, &fakeUsers{})
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "content_policy_") {
+		t.Fatalf("GET /metrics on the API listener = %d %q, want 404 and no series", rec.Code, rec.Body.String())
+	}
+}
+
+// The metrics listener serves /metrics and nothing else: no decision, no probes.
+func TestOnlyMetricsOnTheMetricsListener(t *testing.T) {
+	s, _ := newServer(t, &fakeUsers{})
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodPost, "/v1/decide", `{"context":"public-api","country":"NL"}`},
+		{http.MethodGet, "/healthz", ""},
+		{http.MethodGet, "/readyz", ""},
+		{http.MethodGet, "/", ""},
+	} {
+		rec := httptest.NewRecorder()
+		s.MetricsHandler().ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), tc.method, tc.path, strings.NewReader(tc.body)))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s on the metrics listener = %d, want 404", tc.method, tc.path, rec.Code)
+		}
+	}
+	if got := testutil.ToFloat64(s.Metrics.Decisions.WithLabelValues("public-api", "unrestricted", "none")); got != 0 {
+		t.Fatalf("a decision was made through the metrics listener (%v)", got)
+	}
+	rec := httptest.NewRecorder()
+	s.MetricsHandler().ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/metrics", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /metrics = %d, want 405", rec.Code)
 	}
 }
 

@@ -15,7 +15,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Addr != ":8080" || c.DatabaseURL != dsn || c.DBMaxConns != 0 || c.LookupTimeout != 250*time.Millisecond ||
+	if c.Addr != ":8080" || c.MetricsAddr != ":9090" || c.DatabaseURL != dsn || c.DBMaxConns != 0 || c.LookupTimeout != 250*time.Millisecond ||
 		c.CacheTTL != 30*time.Second || c.CacheMax != 100_000 {
 		t.Fatalf("defaults: %+v", c)
 	}
@@ -44,6 +44,7 @@ func TestSettings(t *testing.T) {
 	c, err := Load(env(map[string]string{
 		"DATABASE_URL":                     dsn,
 		"CONTENT_POLICY_ADDR":              ":9999",
+		"CONTENT_POLICY_METRICS_ADDR":      ":9998",
 		"CONTENT_POLICY_DB_MAX_CONNS":      "6",
 		"CONTENT_POLICY_LOOKUP_TIMEOUT_MS": "75",
 		"CONTENT_POLICY_CACHE_TTL_MS":      "0",
@@ -54,7 +55,7 @@ func TestSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Addr != ":9999" || c.DBMaxConns != 6 || c.LookupTimeout != 75*time.Millisecond || c.CacheTTL != 0 || c.CacheMax != 17 {
+	if c.Addr != ":9999" || c.MetricsAddr != ":9998" || c.DBMaxConns != 6 || c.LookupTimeout != 75*time.Millisecond || c.CacheTTL != 0 || c.CacheMax != 17 {
 		t.Fatalf("settings: %+v", c)
 	}
 	if len(c.Restricted) != 2 || c.Restricted[1].Region != "US:NY" || len(c.Blocked) != 1 || c.Blocked[0].Region != "IT" {
@@ -74,6 +75,21 @@ func TestInvalid(t *testing.T) {
 		_, err := Load(env(map[string]string{"DATABASE_URL": dsn, k: v}))
 		if err == nil || !strings.Contains(err.Error(), k) {
 			t.Errorf("%s=%q: err %v, want one naming %s", k, v, err, k)
+		}
+	}
+}
+
+// /metrics has its own listener; one address for both would fail to listen, or (were it allowed)
+// put /metrics back beside /v1/decide.
+func TestMetricsAddrMustDiffer(t *testing.T) {
+	for _, m := range []map[string]string{
+		{"CONTENT_POLICY_METRICS_ADDR": ":8080"},
+		{"CONTENT_POLICY_ADDR": ":9090"},
+		{"CONTENT_POLICY_ADDR": ":7000", "CONTENT_POLICY_METRICS_ADDR": ":7000"},
+	} {
+		m["DATABASE_URL"] = dsn
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "CONTENT_POLICY_METRICS_ADDR") {
+			t.Errorf("%v: err %v, want one naming CONTENT_POLICY_METRICS_ADDR", m, err)
 		}
 	}
 }
