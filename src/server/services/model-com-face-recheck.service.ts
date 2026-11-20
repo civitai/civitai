@@ -10,6 +10,7 @@ import {
   getOwnTriggerWords,
 } from '~/server/services/model-sfw-face.service';
 import type { SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
+import type { NotifyTextScanRatingRaisedArgs } from '~/server/services/text-scan/notify';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import { backoffDelay } from '~/utils/backoff';
 
@@ -171,6 +172,7 @@ async function removeComFace(
     reason,
     ...(detail && { detail }),
   };
+  let notice: NotifyTextScanRatingRaisedArgs | null = null;
   const removed = await dbWrite.$transaction(async (tx) => {
     const updated = await tx.$executeRaw(comFaceRemovalSql(modelId, coverId, marker));
     if (updated) {
@@ -178,7 +180,7 @@ async function removeComFace(
       const { applyComFaceHeldVerdict } = await import(
         '~/server/services/text-scan/actions/model-nsfw'
       );
-      await applyComFaceHeldVerdict(tx, modelId);
+      notice = await applyComFaceHeldVerdict(tx, modelId);
     }
     if (updated)
       await tx.modActivity.create({
@@ -191,6 +193,12 @@ async function removeComFace(
     return updated > 0;
   });
   if (removed) await finishRemoval(modelId);
+  if (notice) {
+    const { notifyComFaceHeldVerdictApplied } = await import(
+      '~/server/services/text-scan/actions/model-nsfw'
+    );
+    await notifyComFaceHeldVerdictApplied([notice]);
+  }
   return removed;
 }
 

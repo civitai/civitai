@@ -27,6 +27,7 @@ import {
 
 export { getOwnTriggerWords };
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { getActiveTextScanPrompts } from '~/server/services/text-scan/prompt';
 import { previewComFaceIntent, previewTextScanNsfw } from '~/server/services/text-scan/preview';
 import type { TextScanField } from '~/server/services/text-scan/types';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -84,6 +85,13 @@ async function checkFields(fields: TextScanField[]): Promise<SfwFaceVerdict> {
     });
     return { status: 'unavailable' };
   }
+}
+
+/** The id of the nsfw prompt version the face check runs on now; undefined when it cannot be read. */
+export async function activeSfwFacePromptId(): Promise<number | undefined> {
+  return getActiveTextScanPrompts()
+    .then((prompts) => prompts['label:nsfw']?.id)
+    .catch(() => undefined);
 }
 
 /**

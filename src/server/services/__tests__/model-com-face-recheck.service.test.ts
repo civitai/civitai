@@ -233,7 +233,11 @@ describe('the .com face listing re-check', () => {
   it('clears the cover and records the removal in one transaction', async () => {
     arrange({ fresh: [MODEL_ID] });
     mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
-    const tx = { $executeRaw: vi.fn(async () => 1), modActivity: { create: vi.fn() } };
+    const tx = {
+      $executeRaw: vi.fn(async () => 1),
+      $queryRaw: vi.fn(async () => []),
+      modActivity: { create: vi.fn() },
+    };
     db.$transaction.mockImplementationOnce((async (fn: (client: typeof tx) => unknown) =>
       fn(tx)) as never);
 

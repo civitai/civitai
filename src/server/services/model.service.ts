@@ -210,6 +210,7 @@ import {
   reassertModelPoiRestrictions,
 } from '~/server/services/text-scan/actions/model-poi-minor';
 import type { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import type { NotifyTextScanRatingRaisedArgs } from '~/server/services/text-scan/notify';
 import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
@@ -4557,6 +4558,10 @@ export const upsertModel = async (
     let lockedBeforeUpdate: string[] | undefined;
 
     let heldVerdictApplied = false;
+    let faceLossNotice: NotifyTextScanRatingRaisedArgs | null = null;
+    const listingChanged =
+      (data.name !== undefined && data.name !== beforeUpdate.name) ||
+      (data.description !== undefined && data.description !== beforeUpdate.description);
     const result = await dbWrite.$transaction(
       async (tx) => {
         // Merged over the row as it is now: a wipe, a moderator or a scan may have written its meta
@@ -4848,11 +4853,14 @@ export const upsertModel = async (
           data.availability !== Availability.Private
         )
           heldVerdictApplied = await heldVerdict.applyHeldVerdictLeavingPrivate(tx, updated.id);
-        if (
-          losesSfwFace(beforeUpdate, data) &&
-          (await heldVerdict.applyComFaceHeldVerdict(tx, updated.id))
-        )
-          heldVerdictApplied = true;
+        // The held verdict was read from the listing text before this save: one that also edits
+        // that text drops it, and the rescan after the face loss reads the new text instead.
+        if (losesSfwFace(beforeUpdate, data) && listingChanged)
+          await heldVerdict.dropComFaceHeldVerdict(tx, updated.id);
+        else if (losesSfwFace(beforeUpdate, data)) {
+          faceLossNotice = await heldVerdict.applyComFaceHeldVerdict(tx, updated.id);
+          if (faceLossNotice) heldVerdictApplied = true;
+        }
 
         return updated;
       },
@@ -4860,19 +4868,17 @@ export const upsertModel = async (
     );
     // First after commit, so a later post-save step that throws cannot drop it. Re-checked even when
     // the gate ran: it read the description before blurb expansion, not the text stored.
-    const listingChanged =
-      (data.name !== undefined && data.name !== beforeUpdate.name) ||
-      (data.description !== undefined && data.description !== beforeUpdate.description);
     const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
     if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
       await queueComFaceRecheck(id);
     if (!isModerator && listingChanged) await queueComFaceRestore(id);
     if (losesSfwFace(beforeUpdate, data)) await rescanTextAfterFaceLoss(id);
     if (heldVerdictApplied) {
-      const { finishHeldVerdictApply } = await import(
+      const { finishHeldVerdictApply, notifyComFaceHeldVerdictApplied } = await import(
         '~/server/services/text-scan/actions/model-nsfw'
       );
       await finishHeldVerdictApply(id);
+      await notifyComFaceHeldVerdictApplied([faceLossNotice]);
     }
     await preventReplicationLag('model', id);
     await userModelCountCache.refresh(userId);
@@ -7344,7 +7350,7 @@ export async function migrateResourceToCollection({
   const faceMoves = remainingVersions.some((v) => v.id === coverVersionId);
   const noFace = { sfwName: null, sfwDescription: null, sfwCoverImageId: null };
 
-  const { collection, modelIds, faceless } = await dbWrite.$transaction(
+  const { collection, modelIds, faceless, faceLossNotices } = await dbWrite.$transaction(
     async (tx) => {
       // Create the collection
       const collection = await tx.collection.create({
@@ -7437,9 +7443,10 @@ export async function migrateResourceToCollection({
         '~/server/services/text-scan/actions/model-nsfw'
       );
       const faceless = hasSfwFaceParts(model) ? modelIds.filter((id) => id !== faceModelId) : [];
-      for (const id of faceless) await applyComFaceHeldVerdict(tx, id);
+      const faceLossNotices = [];
+      for (const id of faceless) faceLossNotices.push(await applyComFaceHeldVerdict(tx, id));
 
-      return { collection, modelIds, faceless };
+      return { collection, modelIds, faceless, faceLossNotices };
     },
     { timeout: 60000, maxWait: 10000 }
   );
@@ -7485,6 +7492,12 @@ export async function migrateResourceToCollection({
   modelIds.forEach((id) => scanModelAndRules(id, { rules: !isModerator }));
   // Past the unchanged-text skip: a face this split took away was what let the text stand.
   await Promise.all(faceless.map((id) => rescanTextAfterFaceLoss(id)));
+  if (faceLossNotices.some(Boolean)) {
+    const { notifyComFaceHeldVerdictApplied } = await import(
+      '~/server/services/text-scan/actions/model-nsfw'
+    );
+    await notifyComFaceHeldVerdictApplied(faceLossNotices);
+  }
 
   return { ok: true };
 }

@@ -150,6 +150,7 @@ const {
   mockDropLiftedBy,
   mockHoldLead,
   mockHoldLeadAfterSfwOnlyLift,
+  mockNotifyHeld,
 } = vi.hoisted(() => ({
   mockHoldLeadAfterSfwOnlyLift: vi.fn(async (..._args: unknown[]) => undefined),
   mockDropLiftedBy: vi.fn(async (..._args: unknown[]) => undefined),
@@ -157,12 +158,14 @@ const {
   mockApplyHeldVerdict: vi.fn(async (): Promise<null> => null),
   mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
   mockFinishApply: vi.fn(async (_id: number) => undefined),
+  mockNotifyHeld: vi.fn(async (_notices: unknown[]) => undefined),
 }));
 vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelNsfw>()),
   applyHeldRestrictedVerdict: mockApplyHeldVerdict,
   applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
   finishHeldVerdictApply: mockFinishApply,
+  notifyComFaceHeldVerdictApplied: mockNotifyHeld,
   dropLiftedBy: mockDropLiftedBy,
   holdLeadAfterFlagLift: mockHoldLead,
   holdLeadAfterSfwOnlyLift: mockHoldLeadAfterSfwOnlyLift,
@@ -1913,6 +1916,52 @@ describe('a .com face going away', () => {
     const flip = heldFlip();
     expect(flip).toBeDefined();
     expect(flip).toContain(MODEL_ID);
+  });
+
+  /** The held verdict as the save transaction reads it before spending it. */
+  const heldRow = () => {
+    const original = mockDbWrite.$queryRaw.getMockImplementation();
+    mockDbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      Array.isArray(strings) && strings.join('?').includes("'comFaceHeldVerdict'->>'at'")
+        ? [{ name: 'Test Model', userId: OWNER_ID, at: 'x', level: 16 }]
+        : original?.(strings, ...values)) as never);
+  };
+  const heldDrop = () =>
+    mockDbWrite.$executeRaw.mock.calls.find(
+      ([strings]) =>
+        Array.isArray(strings) &&
+        (strings as readonly string[])
+          .join('?')
+          .includes("SET meta = m.meta - 'comFaceHeldVerdict'")
+    );
+
+  it('tells the owner, after the save, when the held verdict rates the model', async () => {
+    heldRow();
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
+    expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockNotifyHeld).toHaveBeenCalledWith([
+      expect.objectContaining({
+        entityType: 'Model',
+        entityId: MODEL_ID,
+        userId: OWNER_ID,
+        level: 16,
+        workflowId: 'com-face-held-x',
+      }),
+    ]);
+  });
+
+  it('leaves the verdict to the rescan when the same save also edits the listing text', async () => {
+    heldRow();
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '', name: 'A Different Name' });
+    expect(heldFlip()).toBeUndefined();
+    expect(heldDrop()).toBeDefined();
+    expect(mockNotifyHeld).not.toHaveBeenCalled();
+    expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledWith(MODEL_ID);
   });
 
   it('does not try it when the face stays (control)', async () => {
