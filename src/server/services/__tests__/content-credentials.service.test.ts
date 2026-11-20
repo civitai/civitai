@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
+import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -69,6 +70,18 @@ describe('readContentCredentials', () => {
 
       await readContentCredentials(pointing, 'image/jpeg');
       expect(requests).toBe(0);
+
+      // Control: the SDK's defaults do follow this pointer, so the 0 above is the guard working.
+      const c2pa = await import('@contentauth/c2pa-wasm');
+      c2pa.initSync({
+        module: readFileSync(
+          createRequire(path.join(process.cwd(), 'package.json')).resolve(
+            '@contentauth/c2pa-wasm/c2pa.wasm'
+          )
+        ),
+      });
+      await c2pa.WasmReader.fromBytes('image/jpeg', pointing).catch(() => undefined);
+      expect(requests).toBe(1);
     } finally {
       server.close();
     }
