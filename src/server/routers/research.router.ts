@@ -10,7 +10,6 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
 import { queueNewRaterLevelWebhook } from '~/server/webhooks/research.webhooks';
 import { getRandomInt } from '~/utils/number-helpers';
-import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 
 const raterGetImagesSchema = z.object({
@@ -138,7 +137,10 @@ export const researchRouter = router({
         sanityImages = await dbRead.$queryRaw<RaterImage[]>`
         SELECT i.id, i.url, null as "nsfwLevel"
         FROM "Image" i
-        WHERE i.id IN (${Prisma.join(sanityIds)}) AND ${imageNotRestrictedSql()};
+        LEFT JOIN "Post" p ON p.id = i."postId"
+        WHERE i.id IN (${Prisma.join(sanityIds)})
+          AND ${Prisma.join(imageVisibilityConditions({}), ' AND ')}
+          AND i."tosViolation" = FALSE;
       `;
       }
 

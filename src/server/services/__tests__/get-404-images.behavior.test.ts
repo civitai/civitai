@@ -18,6 +18,9 @@ const CLEAN = 1;
 const ACCEPTABLE_MINOR = 2;
 const HELD = 3;
 const HIDDEN_META = 4;
+const BLOCKED_FOR = 5;
+const TOS_VIOLATION = 6;
+const POSTLESS = 7;
 
 beforeAll(async () => {
   const db = new PGlite();
@@ -59,9 +62,14 @@ beforeAll(async () => {
       (${ACCEPTABLE_MINOR}, 1, 'img-acceptable-minor', NULL, true, NULL, false),
       (${HELD}, 1, 'img-held', NULL, false, 'minor', false),
       (${HIDDEN_META}, 1, 'img-hidden-meta', '{"prompt": "hidden prompt"}', false, NULL, true);
+    INSERT INTO "Image" (id, "postId", url, "blockedFor", "tosViolation") VALUES
+      (${BLOCKED_FOR}, 1, 'img-blocked', 'tos', false),
+      (${TOS_VIOLATION}, 1, 'img-tos', NULL, true),
+      (${POSTLESS}, NULL, 'img-postless', NULL, false);
     INSERT INTO "CollectionItem" VALUES
       (1, ${CLEAN}, 'ACCEPTED'), (1, ${ACCEPTABLE_MINOR}, 'ACCEPTED'), (1, ${HELD}, 'ACCEPTED'),
-      (1, ${HIDDEN_META}, 'ACCEPTED');
+      (1, ${HIDDEN_META}, 'ACCEPTED'), (1, ${BLOCKED_FOR}, 'ACCEPTED'), (1, ${TOS_VIOLATION}, 'ACCEPTED'),
+      (1, ${POSTLESS}, 'ACCEPTED');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -75,6 +83,9 @@ describe('get404Images', () => {
   it.each([
     ['marked acceptable-minor', 'img-acceptable-minor'],
     ['held for review', 'img-held'],
+    ['carrying a block reason', 'img-blocked'],
+    ['marked as a ToS violation', 'img-tos'],
+    ['on no post', 'img-postless'],
   ])('leaves out an entry %s', async (_, url) => {
     expect((await get404Images()).map(([, u]) => u)).not.toContain(url);
   });

@@ -6159,6 +6159,7 @@ export async function get404Images() {
       AND i."ingestion" = 'Scanned'
       AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
       AND ${Prisma.join(imageVisibilityConditions({}), ' AND ')}
+      AND i."tosViolation" = FALSE
       AND ci.status = 'ACCEPTED';
   `;
 

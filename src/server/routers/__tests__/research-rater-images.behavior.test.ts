@@ -25,6 +25,9 @@ const TOS_VIOLATION = 5;
 beforeAll(async () => {
   // The rater is mid-track at its start, so the read is the next page from the first image.
   redisMock.redis.hGetAll.mockResolvedValue({ currentTrack: 't1', 'track:t1': '0' });
+  // Every fixture image is a sanity image, and the rater has no strikes.
+  redisMock.sysRedis.sMembers.mockResolvedValue(['1', '2', '3', '4', '5']);
+  redisMock.redis.hGet.mockResolvedValue('0');
   redisMock.sysRedis.hGetAll.mockResolvedValue({
     t1: JSON.stringify({ startingPoint: 0, startTime: '2020-01-01T00:00:00Z' }),
   });
@@ -58,6 +61,7 @@ beforeAll(async () => {
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int);
     INSERT INTO "Post" (id, "publishedAt") VALUES (1, now() - interval '1 day');
     CREATE TABLE research_ratings ("userId" int, "imageId" int, "createdAt" timestamp);
+    CREATE TABLE research_ratings_resets ("userId" int, "createdAt" timestamp);
     INSERT INTO "Image" (id, "postId", url, "acceptableMinor", "needsReview", "blockedFor", "tosViolation") VALUES
       (${CLEAN}, 1, 'img-clean', false, NULL, NULL, false),
       (${ACCEPTABLE_MINOR}, 1, 'img-acceptable-minor', true, NULL, NULL, false),
@@ -69,8 +73,8 @@ beforeAll(async () => {
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
 });
 
-const raterImages = async () => {
-  const caller = createCallerFactory(researchRouter)({
+const callerForRater = () =>
+  createCallerFactory(researchRouter)({
     user: { id: RATER, onboarding: 15, emailVerified: new Date(0), meta: {} },
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
@@ -81,9 +85,11 @@ const raterImages = async () => {
     req: { headers: {} },
     res: undefined,
   } as never);
-  const { images } = await caller.raterGetImages({ level: 1 });
-  return images.map((i) => i.id);
-};
+
+const raterImages = async () =>
+  (await callerForRater().raterGetImages({ level: 1 })).images.map((i) => i.id);
+const sanityImages = async () =>
+  (await callerForRater().raterGetStatus()).sanityImages.map((i) => i.id);
 
 describe('research.raterGetImages', () => {
   it('serves a published, reviewed image (control)', async () => {
@@ -97,5 +103,20 @@ describe('research.raterGetImages', () => {
     ['marked as a ToS violation', TOS_VIOLATION],
   ])("does not serve another user's image %s", async (_, id) => {
     expect(await raterImages()).not.toContain(id);
+  });
+
+  describe('sanity images', () => {
+    it('serves a published, reviewed sanity image (control)', async () => {
+      expect(await sanityImages()).toContain(CLEAN);
+    });
+
+    it.each([
+      ['marked acceptable-minor', ACCEPTABLE_MINOR],
+      ['held for review', HELD],
+      ['carrying a block reason', BLOCKED_FOR],
+      ['marked as a ToS violation', TOS_VIOLATION],
+    ])('does not serve a sanity image %s', async (_, id) => {
+      expect(await sanityImages()).not.toContain(id);
+    });
   });
 });
