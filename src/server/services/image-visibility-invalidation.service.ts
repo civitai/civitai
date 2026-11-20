@@ -1,6 +1,7 @@
 import { ogImageUrl, modelOgEndpoint } from '~/components/Meta/og-image-url';
 import { env } from '~/env/server';
 import { purgeCache } from '~/server/cloudflare/client';
+import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
@@ -84,7 +85,6 @@ export async function invalidateImageVisibilityCaches(imageId: number) {
 }
 
 async function purgeImageVisibilityCaches(imageId: number) {
-  // Each step runs and fails on its own, so one failure leaves the other copies purged.
   const logFailure = (name: string) => (error: unknown) =>
     logToAxiom({
       type: 'warning',
@@ -113,14 +113,11 @@ async function bustImageGalleryCaches(imageId: number) {
     where: { id: imageId },
     select: { postId: true, post: { select: { modelVersionId: true } } },
   });
-  // Lazy: post.service and image.service sit in the image.service import cycle.
-  const [{ bustCachesForPosts }, { deleteImagesForModelVersionCache }] = await Promise.all([
-    import('~/server/services/post.service'),
-    import('~/server/services/image.service'),
-  ]);
+  // Lazy: image.service imports this module.
+  const { deleteImagesForModelVersionCache } = await import('~/server/services/image.service');
   const modelVersionId = image?.post?.modelVersionId;
   await Promise.all([
-    image?.postId ? bustCachesForPosts(image.postId) : undefined,
+    image?.postId ? bustPostCachesLazy(image.postId) : undefined,
     modelVersionId ? deleteImagesForModelVersionCache(modelVersionId) : undefined,
   ]);
 }
