@@ -6,6 +6,7 @@ import { BLOCKLIST_TYPES } from '$lib/blocklist';
 import { callModEndpoint } from '$lib/server/user-actions.service';
 import { inertEntries, inertEntriesError, parseRowId } from './form';
 import {
+  BlocklistNotSeededError,
   BlocklistRowMismatchError,
   getBlocklistDTO,
   upsertBlocklist,
@@ -80,6 +81,10 @@ export const actions: Actions = {
       if (error instanceof BlocklistRowMismatchError)
         return fail(409, {
           error: 'That list has changed since this page loaded. Reload and try again.',
+        });
+      if (error instanceof BlocklistNotSeededError)
+        return fail(409, {
+          error: 'This list has not been set up yet. Ask an engineer to load the starting list.',
         });
       throw error;
     }

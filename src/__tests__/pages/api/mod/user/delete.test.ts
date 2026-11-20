@@ -62,7 +62,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => hasModeratorGrant(...a),
 }));
 
-import handler from '~/pages/api/mod/user/delete';
+import handler from '~/server/api-routes/mod/user/delete';
 import { LegalHoldError, LegalHoldUnconfirmedError } from '~/server/services/legal-hold.service';
 import {
   GENERIC_SERVER_ERROR_MESSAGE,

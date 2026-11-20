@@ -26,7 +26,9 @@ ordinary vote in every way a player can see.
   `KEEP_MIN_PLAYERS` players answered or that most of its players answered differently, plus any `--exclude` image ids.
   It changes only `status`, never deletes, and is a dry run without `--apply` (local database only). For a run
   elsewhere, `--print-sql` prints the SELECT of the ids to retire, and `--print-sql --ids <ids>` a transaction that retires exactly
-  those ids and commits only if it retired all of them, both with their values written in.
+  those ids and commits only if it retired all of them, both with their values written in. `--pool trials` retires
+  active harvested `trials` references by the same rule, counting the Acolytes' apprenticeship answers instead of Knight
+  votes; it leaves pending ones, which wait for a moderator spot-check, alone.
 - Probation (`trials/agreement-intake.service.ts`, `trials/probation.service.ts`, both run by the harvest job): while the
   probation share is above 0, agreed Knight-stage verdicts are taken in as `probation` checks (source `agreement`), a
   bounded number per level bucket. A probation check grades nobody. Once enough independent players have answered it, the

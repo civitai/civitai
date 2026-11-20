@@ -9,9 +9,8 @@
  * This is that second half, for two of the ticket's three entity types.
  *
  * A script rather than an admin endpoint because an endpoint cannot run until it is
- * merged, released and deployed, and the work here is under a second of database time:
- * the whole `ArticleReaction` id space aggregates in ~166 ms and `BountyEntryReaction` in
- * ~643 ms (prod replica, 2026-09-21). Delete it once the run is done.
+ * merged, released and deployed, and the work here is a sub-second of database time.
+ * Delete it once the run is done.
  *
  * POST is deliberately NOT here. Its shape reads ~3.4 TB through a 60 GB shared_buffers
  * on the primary to change ~1M rows, because it walks all 31M post ids to discover ~1M
@@ -219,9 +218,9 @@ export function buildSql(spec: EntitySpec, args: { start: number; end: number; e
 }
 
 /**
- * Inclusive at both ends and gapless. The repo's own `backfill-post-metrics.ts` template
- * bounds batches with `> start`, which skips the first id of every batch — silently,
- * because the run still reports rows.
+ * Inclusive at both ends and gapless. When each batch starts one past the previous end, as
+ * here, bounding it with `> start` skips the first id of every batch — silently, because the
+ * run still reports rows.
  */
 export function planRanges(start: number, end: number, batchSize: number) {
   const ranges: Array<[number, number]> = [];

@@ -31,6 +31,7 @@ vi.mock('~/server/utils/rate-limit-bucket', async (importOriginal) => ({
 }));
 
 import {
+  claimSearchUploadSearchSlot,
   claimSearchUploadSlot,
   claimSearchUploadUserDay,
   withSearchUploadSearch,
@@ -38,6 +39,7 @@ import {
   prepareSearchUpload,
   resolveSearchUploadAnchor,
   SEARCH_UPLOAD_GLOBAL_DAILY_CAP,
+  SEARCH_UPLOAD_GLOBAL_DAILY_SEARCH_CAP,
   SEARCH_UPLOAD_REFUSED_MESSAGE,
   SEARCH_UPLOAD_SCAN_TIMEOUT_MS,
   SEARCH_UPLOAD_SOURCE_MESSAGE,
@@ -86,6 +88,21 @@ describe('the global daily upload cap', () => {
         rules: [expect.objectContaining({ limit: SEARCH_UPLOAD_GLOBAL_DAILY_CAP, period: 86400 })],
       })
     );
+  });
+
+  it('draws search pages from their own site-wide bucket, in a fail-closed scope', async () => {
+    await claimSearchUploadSearchSlot(req);
+    expect(h.claim).toHaveBeenCalledWith(
+      expect.objectContaining({
+        keyName: 'imageSearchUpload:global-search',
+        scope: 'imageSearchUpload.search',
+        user: { id: 0 },
+        rules: [
+          expect.objectContaining({ limit: SEARCH_UPLOAD_GLOBAL_DAILY_SEARCH_CAP, period: 86400 }),
+        ],
+      })
+    );
+    expect(isFailClosedRateLimitScope('imageSearchUpload.search')).toBe(true);
   });
 
   it('counts the upload against the bucket once admitted', async () => {

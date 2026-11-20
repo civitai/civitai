@@ -3046,6 +3046,10 @@ const REDIS_KEYS_UNPREFIXED = {
   POST_INTENT: {
     RATE_LIMIT: 'post-intent:rate-limit',
   },
+  STICKER_AUTO_TRACK: {
+    // Suffix `:<userId>:<UTC day>`.
+    DAILY_RUNS: 'sticker-auto-track:daily-runs',
+  },
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
     TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',
@@ -3773,6 +3777,7 @@ export const REDIS_SUB_KEYS = {
   },
   QUEUES: {
     MERGING: 'merging', // sys
+    CONSUMING: 'consuming', // sys
   },
 } as const;
 

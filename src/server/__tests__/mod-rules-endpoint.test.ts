@@ -13,7 +13,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 vi.mock('~/server/services/image.service', () => ({ bustImageModRulesCache }));
 
-const { default: handler } = (await import('~/pages/api/mod/mod-rules')) as unknown as {
+const { default: handler } = (await import('~/server/api-routes/mod/mod-rules')) as unknown as {
   default: (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>;
 };
 

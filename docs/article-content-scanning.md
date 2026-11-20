@@ -218,7 +218,7 @@ await linkArticleContentImages({
 **Optimizations**:
 - **Batch queries**: 50 images → 3 queries (not 150 queries)
 - **Transaction safety**: All-or-nothing atomicity
-- **Orphaned cleanup**: Removes connections for deleted images and queues the unused ones for `image-deletes`
+- **Orphaned cleanup**: Removes connections for deleted images and queues the unused ones as pending cleanups for `pending-deletes`
 - **Race protection**: `skipDuplicates` handles concurrent saves
 - **Content change detection**: Only processes if content actually changed
 
@@ -1005,7 +1005,7 @@ console.log('Article Image Scanning:', flags.articleImageScanning);
 - `src/env/server-schema.ts` - `TEXT_MODERATION_CALLBACK` env var
 
 ### Migration
-- `src/pages/api/admin/temp/migrate-article-images.ts` - Migration webhook (supports `mode=images|text-moderation|both`)
+- `src/server/api-routes/admin/temp/migrate-article-images.ts` - Migration webhook (supports `mode=images|text-moderation|both`)
 
 ---
 

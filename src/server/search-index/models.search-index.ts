@@ -6,6 +6,7 @@ import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
 import { allowsDifferentLicenseOnMerges, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { dbRead } from '~/server/db/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { modelTagCache } from '~/server/redis/caches';
@@ -111,7 +112,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   // live in ./displayed-attributes.ts so that this writer and the admin apply route cannot drift.
   // 🔴 This runs ONLY from `reset()`, against `<index>_NEW`, and that job is `UNRUNNABLE_JOB_CRON`,
   // so editing the list does NOT change what a live index returns. To narrow a LIVE index use
-  // `src/pages/api/admin/temp/apply-models-index-displayed-attributes.ts`.
+  // `src/server/api-routes/admin/temp/apply-models-index-displayed-attributes.ts`.
   // 🔴 The module export is passed straight through — no local copy. A local one could be mutated
   // between its declaration and this call, which re-opened the leak once and passed every test.
   // ⚠️ That alone is NOT what makes this safe, and an earlier version of this comment claimed it
@@ -300,13 +301,44 @@ export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
   );
 }
 
-/** The document is shared by every searcher: a held model's showcase at its gallery level. */
-async function holdSearchShowcase<E extends { images: { nsfwLevel: number }[] }>(
+/** Of these image ids, the ones listed on a CSAM report, whatever its state. */
+export async function reportListedImageIds(
+  imageIds: number[],
+  db: Pick<typeof dbRead, '$queryRaw'> = dbRead
+) {
+  if (!imageIds.length) return new Set<number>();
+  const rows = await db.$queryRaw<{ id: number }[]>`
+    SELECT i.id FROM "Image" i
+    WHERE i.id = ANY(${imageIds}::int[])
+      AND (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})
+  `;
+  return new Set(rows.map((r) => r.id));
+}
+
+/** Each version's images less the listed ones. */
+export function withoutListedImages<E extends { images: { id: number }[] }>(
+  byVersion: Record<number, E>,
+  listed: Set<number>
+): Record<number, E> {
+  if (!listed.size) return byVersion;
+  return Object.fromEntries(
+    Object.entries(byVersion).map(([versionId, entry]) => [
+      versionId,
+      { ...entry, images: entry.images.filter((image) => !listed.has(image.id)) },
+    ])
+  ) as Record<number, E>;
+}
+
+/**
+ * The document is shared by every searcher: a held model's showcase at its gallery level, without
+ * the images listed on a CSAM report.
+ */
+export async function holdSearchShowcase<E extends { images: { id: number; nsfwLevel: number }[] }>(
   byVersion: Record<number, E>,
   models: { id: number; minor: boolean; sfwOnly: boolean; modelVersions: { id: number }[] }[]
 ) {
   const { holdShowcaseImages } = await import('~/server/services/model.service');
-  return holdShowcaseImages(
+  const held = await holdShowcaseImages(
     byVersion,
     new Map(
       models.flatMap((m) =>
@@ -316,6 +348,10 @@ async function holdSearchShowcase<E extends { images: { nsfwLevel: number }[] }>
       )
     )
   );
+  const listed = await reportListedImageIds(
+    Object.values(held).flatMap((entry) => entry.images.map((image) => image.id))
+  );
+  return withoutListedImages(held, listed);
 }
 
 const transformData = async ({ models, tags, cosmetics, images }: PullDataResult) => {

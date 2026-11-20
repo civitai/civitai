@@ -38,6 +38,11 @@ export type AppBlockModerationNotificationDetails = {
   hasPage?: boolean;
   /** Approve only: a mature (r/x) app, whose run page 404s off the red host the email links to. */
   mature?: boolean;
+  /**
+   * Approve only: the SUBMITTER could open run pages when it was sent. The run page 404s for a
+   * viewer outside its two flags (`canOpenAppRunPages`), and the submitter may be outside them.
+   */
+  canOpenRunPage?: boolean;
 };
 
 /**
@@ -49,14 +54,19 @@ export type AppBlockModerationNotificationDetails = {
 const SUBMITTER_SUBMISSIONS_URL = MY_APPS_HREF;
 
 /**
- * The approved app's full-page run route. The run page 404s for an app that declares no page, and
- * for a mature app on the primary host the email links to, so only a notification that says
- * `hasPage: true` and not `mature: true` links there. Anything else falls back to the submissions
- * view: no slug, no page, a mature app, or an older notification that predates `hasPage`.
+ * The approved app's full-page run route. The run page 404s for an app that declares no page, for
+ * a mature app on the primary host the email links to, and for a viewer outside the run-page
+ * flags, so only a notification that says `hasPage: true`, `canOpenRunPage: true` and not
+ * `mature: true` links there. Anything else falls back to the submissions view: no slug, no page,
+ * a mature app, a submitter who cannot open run pages, or an older notification that predates
+ * either field.
  */
 export function approvedAppUrl(details: AppBlockModerationNotificationDetails): string {
   const slug = typeof details.slug === 'string' ? details.slug.trim() : '';
-  return slug && details.hasPage === true && details.mature !== true
+  return slug &&
+    details.hasPage === true &&
+    details.canOpenRunPage === true &&
+    details.mature !== true
     ? `/apps/run/${encodeURIComponent(slug)}`
     : SUBMITTER_SUBMISSIONS_URL;
 }

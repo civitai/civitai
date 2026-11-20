@@ -1,7 +1,9 @@
 import type { NextApiRequest } from 'next';
 import { dbRead } from '~/server/db/client';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
-import { countGiftClaims } from '~/server/services/gift-claim-count';
+import { countCreatorGiftClaims } from '~/server/services/gift-claim-count';
+import { redis } from '~/server/redis/client';
+import { stickerAutoTrackRunsKey } from '~/server/utils/sticker-auto-track';
 import type { UsageLimitId } from '~/shared/constants/usage-limits';
 import type { SessionUser } from '~/types/session';
 
@@ -24,7 +26,12 @@ export type UsageLimitCounter = (args: {
 export const usageLimitCounters: Partial<Record<UsageLimitId, UsageLimitCounter>> = {
   'gifts.monthly': async ({ user, req, start, end }) =>
     (await getFeatureFlagsAsync({ user, req })).modelGiftLinks
-      ? countGiftClaims(dbRead, user.id, start, end)
+      ? countCreatorGiftClaims(dbRead, user.id, start, end)
+      : null,
+  // Moderators get null: their cap is STICKER_AUTO_TRACK_MODERATOR_DAILY_RUNS, not this entry's limit.
+  'stickers.auto-track-daily': async ({ user, req, start }) =>
+    !user.isModerator && (await getFeatureFlagsAsync({ user, req })).stickerAutoTrack
+      ? Number((await redis.get(stickerAutoTrackRunsKey(user.id, start))) ?? 0)
       : null,
 };
 

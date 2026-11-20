@@ -114,7 +114,7 @@ vi.mock('~/server/search-index/base.search-index', async (importOriginal) => ({
  * ⚠️ An earlier version of this paragraph said "the attribute lists reach a live index only
  * through a manual full reset", which is FALSE for the filterable list and is a claim
  * ../filterable-attributes.ts explicitly retracts beside its own `insight` entry:
- * src/pages/api/admin/temp/apply-models-index-filterable-attributes.ts applies THAT list to the
+ * src/server/api-routes/admin/temp/apply-models-index-filterable-attributes.ts applies THAT list to the
  * live index with no reset. Only `sortableAttributes` and `displayedAttributes` are
  * reset-only. The separability argument above does not need the false half, so it no longer
  * carries it.
@@ -642,7 +642,7 @@ describe('models search index projects insight.qualityScore', () => {
     // LEDGER, this argument pin, and the no-local ban. Only the latter two were copied here, and
     // both walk `models.search-index.ts` alone — so the one tree-wide member was missing and a
     // writer in a SECOND FILE was invisible to the whole set. Measured: a new
-    // `src/pages/api/admin/temp/apply-models-index-searchable-attributes.ts` doing
+    // `src/server/api-routes/admin/temp/apply-models-index-searchable-attributes.ts` doing
     // `index.updateSearchableAttributes(['*'])` left this suite fully green and
     // typecheck at 0 errors while the live index would take `["*"]`. The third guard now exists —
     // `has exactly nine writers of searchableAttributes, tree-wide` in

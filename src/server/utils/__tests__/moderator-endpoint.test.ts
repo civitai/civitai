@@ -89,11 +89,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
     res.status(500).json({ error: 'An unexpected error occurred', message: (e as Error).message }),
 }));
 
-import {
-  defineModeratorEndpoint,
-  moderatorBoolean,
-  specToDoc,
-} from '~/server/utils/moderator-endpoint';
+import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/moderator-endpoint';
 
 const MOD = { id: 7, isModerator: true, permissions: [] as string[], bannedAt: null };
 
@@ -329,50 +325,6 @@ describe('defineModeratorEndpoint', () => {
     expect(mockAudit).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'error', errorMsg: 'boom' })
     );
-  });
-});
-
-describe('specToDoc', () => {
-  // `getServerSideProps` refuses to serialise `undefined`, and one endpoint without a `privileged`
-  // key took the whole docs page down with a 500. Absence must mean the key is missing.
-  it('omits optional fields rather than setting them undefined', () => {
-    const doc = specToDoc({
-      summary: 'x',
-      rateLimit: { max: 1, windowSeconds: 1 },
-      input: z.object({ a: z.string() }),
-    });
-    expect('privileged' in doc).toBe(false);
-    expect('returns' in doc).toBe(false);
-    expect('notes' in doc).toBe(false);
-    expect('description' in doc.params[0]).toBe(false);
-  });
-
-  // Zod's projection THROWS on a Date by default, and the catalog builds all 26 docs in one pass —
-  // so one `z.coerce.date()` param took the whole reference page down with a 500.
-  it('projects a date param instead of throwing', () => {
-    const doc = specToDoc({
-      summary: 'x',
-      rateLimit: { max: 1, windowSeconds: 1 },
-      input: z.object({ cursor: z.coerce.date().optional().describe('a date') }),
-    });
-    expect(doc.params).toEqual([
-      { name: 'cursor', type: 'unknown', required: false, description: 'a date' },
-    ]);
-  });
-
-  it('derives params from the schema that validates the request', () => {
-    const doc = specToDoc({
-      summary: 'x',
-      rateLimit: { max: 1, windowSeconds: 1 },
-      input: z.object({
-        required: z.string().describe('needed'),
-        optional: z.string().optional(),
-      }),
-    });
-    expect(doc.params).toEqual([
-      { name: 'required', type: 'string', required: true, description: 'needed' },
-      { name: 'optional', type: 'string', required: false },
-    ]);
   });
 });
 

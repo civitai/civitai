@@ -483,6 +483,191 @@ describe('flag on: the offline grant', () => {
   });
 });
 
+describe('App Store connect clients: offline access only with an approved declaration', () => {
+  // A connect listing pointing at CLIENT, as the main app stores it (listing-offline.ts reads it).
+  const listing = (status: string, justifications: unknown, over: Record<string, unknown> = {}) =>
+    (h.tables.app_listings = [
+      ...(h.tables.app_listings ?? []),
+      {
+        id: `apl_${(h.tables.app_listings ?? []).length}`,
+        kind: 'offsite',
+        status,
+        connect_client_id: CLIENT,
+        connect_scope_justifications: justifications,
+        revision_of_id: null,
+        ...over,
+      },
+    ]);
+  const ASK = `offline_access ${TokenScope.ModelsRead}`;
+
+  describe('flag on', () => {
+    beforeEach(() => {
+      h.flag = true;
+    });
+
+    it('a declared, approved listing: the approved line earns a refresh token, as before', async () => {
+      listing('approved', { offline_access: 'syncs your images nightly' });
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(res.status).toBe(200);
+      expect(typeof res.body.refresh_token).toBe('string');
+      expect(h.tables.OauthConsent[0]).toMatchObject({ offlineGrantedAt: NOW });
+    });
+
+    it('🔴 an UNDECLARED listing: even a posted approval grants nothing, and no refresh token is issued', async () => {
+      listing('approved', { ModelsWrite: 'uploads' });
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(res.status).toBe(200);
+      expect(typeof res.body.access_token).toBe('string');
+      expect(res.body).not.toHaveProperty('refresh_token');
+      // No offline grant was written for the approval.
+      expect((h.tables.OauthConsent ?? []).every((c) => c.offlineGrantedAt == null)).toBe(true);
+      expect(h.tables.ApiKey.map((k) => k.type)).toEqual(['Access']);
+    });
+
+    it('🔴 a declaration on a PENDING listing does not count (beside a live undeclared one)', async () => {
+      listing('approved', { ModelsWrite: 'uploads' });
+      listing('pending', { offline_access: 'syncs your images nightly' }, { revision_of_id: null });
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(res.body).not.toHaveProperty('refresh_token');
+    });
+
+    // A FORMERLY-LIVE listing back in `pending`. Each fixture carries exactly one of the durable
+    // "was approved" markers, so each marker is proven on its own.
+    it('🔴 approved → a moderator reset to pending (an approved publish request on record): still listed', async () => {
+      listing('pending', { ModelsWrite: 'uploads' });
+      h.tables.app_listing_publish_requests = [
+        { id: 'alpr_first', app_listing_id: 'apl_0', status: 'approved' },
+        { id: 'alpr_reset', app_listing_id: 'apl_0', status: 'pending' },
+      ];
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(res.body).not.toHaveProperty('refresh_token');
+    });
+
+    it('🔴 removed → pending after an asset change (its moderation events on record): still listed', async () => {
+      listing('pending', { ModelsWrite: 'uploads' });
+      h.tables.app_listing_moderation_events = [
+        { id: 'alme_1', app_listing_id: 'apl_0', action: 'owner-unpublish' },
+        { id: 'alme_2', app_listing_id: 'apl_0', action: 'owner-republish' },
+      ];
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(res.body).not.toHaveProperty('refresh_token');
+    });
+
+    it('a FIRST submission still pending (only its pending request, no events) stays unlisted', async () => {
+      listing('pending', { ModelsWrite: 'uploads' });
+      h.tables.app_listing_publish_requests = [
+        { id: 'alpr_first', app_listing_id: 'apl_0', status: 'pending' },
+      ];
+      h.tables.app_listing_moderation_events = [
+        // Another listing's history does not count for this one.
+        { id: 'alme_x', app_listing_id: 'apl_other', action: 'delist' },
+      ];
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(typeof res.body.refresh_token).toBe('string');
+    });
+
+    it.each(['draft', 'pending', 'rejected'])(
+      '🔴 a client whose only listing is %s (never live) keeps the unlisted behaviour',
+      async (status) => {
+        listing(status, { ModelsWrite: 'uploads' });
+        const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+        expect(typeof res.body.refresh_token).toBe('string');
+        expect(h.tables.OauthConsent[0]).toMatchObject({ offlineGrantedAt: NOW });
+      }
+    );
+
+    it('🔴 a declaration only on the SHADOW revision (not yet approved) does not count', async () => {
+      listing('approved', {});
+      listing('draft', { offline_access: 'syncs nightly' }, { revision_of_id: 'apl_0' });
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(res.body).not.toHaveProperty('refresh_token');
+    });
+
+    it('🔴 a DELISTED app does not fall back to the unlisted rule', async () => {
+      listing('removed', { offline_access: 'syncs nightly' });
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(res.body).not.toHaveProperty('refresh_token');
+    });
+
+    it('🔴 a declaration withdrawn between the approval and the code exchange: no refresh token', async () => {
+      listing('approved', { offline_access: 'syncs nightly' });
+      const redirect = await authorize(authorizeParams(ASK), { offline: 'true' });
+      h.tables.app_listings[0].connect_scope_justifications = {};
+      const res = await exchangeCode(redirect);
+      expect(res.body).not.toHaveProperty('refresh_token');
+    });
+
+    it('🔴 a declaration withdrawn later: the chain stops sliding and keeps its expiry', async () => {
+      listing('approved', { offline_access: 'syncs nightly' });
+      const first = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      h.tables.app_listings[0].connect_scope_justifications = {};
+      vi.setSystemTime(new Date(NOW.getTime() + 10 * DAY));
+      const res = await refresh(String(first.body.refresh_token));
+      expect(res.status).toBe(200);
+      expect(row(res.body.refresh_token)).toMatchObject({
+        expiresAt: new Date(NOW.getTime() + 30 * DAY),
+      });
+    });
+
+    // Listings that cannot be read: a getter that throws on the table the hub reads.
+    const breakListings = () =>
+      Object.defineProperty(h.tables, 'app_listings', {
+        configurable: true,
+        enumerable: true,
+        get() {
+          throw new Error('db down');
+        },
+      });
+
+    it('🔴 fail-closed at the CODE EXCHANGE: a read failure there means no refresh token', async () => {
+      listing('approved', { offline_access: 'syncs nightly' });
+      const redirect = await authorize(authorizeParams(ASK), { offline: 'true' });
+      breakListings();
+      const res = await exchangeCode(redirect);
+      expect(res.status).toBe(200);
+      expect(res.body).not.toHaveProperty('refresh_token');
+    });
+
+    it('🔴 fail-closed at REFRESH: a read failure stops the chain sliding', async () => {
+      listing('approved', { offline_access: 'syncs nightly' });
+      const first = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      breakListings();
+      vi.setSystemTime(new Date(NOW.getTime() + 10 * DAY));
+      const res = await refresh(String(first.body.refresh_token));
+      expect(res.status).toBe(200);
+      expect(row(res.body.refresh_token)).toMatchObject({
+        expiresAt: new Date(NOW.getTime() + 30 * DAY),
+      });
+    });
+
+    it('🔴 an UNTICK is honoured even when the listing read fails at the POST', async () => {
+      // The user held the grant from an earlier visit, and a refresh token with it.
+      consent({ offlineGrantedAt: new Date(NOW.getTime() - DAY) });
+      legacyRefresh(new Date(NOW.getTime() + 20 * DAY));
+      breakListings();
+      await authorize(authorizeParams(ASK), { offline: 'false' });
+      expect(h.tables.OauthConsent[0].offlineGrantedAt).toBeNull();
+      expect(h.tables.ApiKey.filter((k) => k.type === 'Refresh' && k.clientId === CLIENT)).toEqual(
+        []
+      );
+    });
+
+    it('a client no listing points at is unchanged (another client listed does not matter)', async () => {
+      listing('approved', {}, { connect_client_id: OTHER_CLIENT });
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(typeof res.body.refresh_token).toBe('string');
+    });
+  });
+
+  describe('flag off', () => {
+    it('an undeclared listed client still gets a refresh token, exactly as before', async () => {
+      listing('approved', { ModelsWrite: 'uploads' });
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(typeof res.body.refresh_token).toBe('string');
+    });
+  });
+});
+
 describe('flag on: refresh expiry', () => {
   beforeEach(() => {
     h.flag = true;

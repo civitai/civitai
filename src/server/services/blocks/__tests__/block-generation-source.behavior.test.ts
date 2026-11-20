@@ -43,6 +43,8 @@ vi.mock('~/server/flipt/client', () => ({
     APP_BLOCK_REFUSE_EXTERNAL_SOURCES: 'app-block-refuse-external-sources',
   },
   isFlipt: async (flag: string) => flag === 'app-block-source-scanned-rows' && holder.scannedRows,
+  isFliptSync: (flag: string) => flag === 'app-block-source-scanned-rows' && holder.scannedRows,
+  ensureFliptInitialized: async () => undefined,
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: async () => [] } }));
 vi.mock('~/env/client', async (importOriginal) => {
@@ -120,9 +122,9 @@ function workflow(over: Record<string, unknown> = {}) {
         $type: 'textToImage',
         output: {
           images: [
-            { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320 },
-            { url: OFF_HOST_OUTPUT, available: true, width: 640, height: 320 },
-            { url: SECOND_OUTPUT, available: true, width: 640, height: 320 },
+            { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            { url: OFF_HOST_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
           ],
         },
       },
@@ -443,9 +445,18 @@ describe('ownership: refused before anything is fetched or written', () => {
       expect(createImage).toHaveBeenCalledTimes(1);
     });
 
-    it('CONTROL: with serving off the `na` output persists', async () => {
+    it('with serving off the `na` output is refused too, and nothing is fetched or written', async () => {
+      await expect(persist({ imageIndex: 0 }, withNa())).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'output 0 is restricted',
+      });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(createImage).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: with serving off the rated output beside it persists', async () => {
       const wf = withNa();
-      await persistAfterScan({ imageIndex: 0, getWorkflow: async () => wf });
+      await persistAfterScan({ imageIndex: 1, getWorkflow: async () => wf });
       expect(createImage).toHaveBeenCalledTimes(1);
     });
   });

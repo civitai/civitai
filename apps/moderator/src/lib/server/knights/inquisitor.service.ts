@@ -14,6 +14,7 @@ import {
 import {
   csamRestrictedSql,
   retractedImageWhereSql,
+  upgradedRetractionSql,
   siblingsServable,
   urlSiblingsSql,
   type UrlSibling,
@@ -269,12 +270,15 @@ async function readViewable(imageIds: number[]): Promise<Set<number>> {
   const rows = await dbWrite.transaction().execute(async (trx) => {
     await sql.raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`).execute(trx);
     return trx
-      .selectFrom('Image as i')
+      .selectFrom((eb) =>
+        // OFFSET 0 keeps the id lookup a subquery, so the rest is read for these rows only.
+        eb.selectFrom('Image').selectAll().where('id', 'in', imageIds).offset(0).as('i')
+      )
       .select(['i.id', 'i.blockedFor'])
       .select(sql<UrlSibling[]>`${sql.raw(urlSiblingsSql('i'))}`.as('siblings'))
-      .where('i.id', 'in', imageIds)
       .where(sql<boolean>`${sql.raw(retractedImageWhereSql('i'))}`)
       .where(sql<boolean>`NOT ${sql.raw(csamRestrictedSql('i'))}`)
+      .where(sql<boolean>`NOT ${sql.raw(upgradedRetractionSql('i'))}`)
       .execute();
   });
   const patterns = blockedForPatterns();

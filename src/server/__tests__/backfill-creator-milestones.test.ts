@@ -20,7 +20,7 @@ vi.mock('~/server/services/creator-milestone-grant.service', async (importOrigin
 
 import type * as FliptClient from '~/server/flipt/client';
 import type * as GrantService from '~/server/services/creator-milestone-grant.service';
-import handler from '~/pages/api/admin/temp/backfill-creator-milestones';
+import handler from '~/server/api-routes/admin/temp/backfill-creator-milestones';
 
 function call(query: Record<string, string>) {
   let status = 200;

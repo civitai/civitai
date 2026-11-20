@@ -13,23 +13,26 @@ import type * as ImpersonationCheckService from '~/server/services/blocks/app-im
  *   - UPDATE guarded to status='running' — a torn-down/decided review is a no-op
  */
 
-const { mockFlag, mockVerify, mockUpdateMany, mockTs, mockImpersonation } = vi.hoisted(() => ({
-  mockImpersonation: vi.fn(async (_id: string) => 'checked'),
-  mockFlag: { enabled: true },
-  mockVerify: vi.fn((): { ok: boolean; publishRequestId?: string } => ({
-    ok: true,
-    publishRequestId: 'x',
-  })),
-  mockUpdateMany: vi.fn(async (_args: { where: unknown; data: any }) => ({ count: 1 })),
-  // Faithful ±300s stand-in for the reused checkCallbackTimestamp.
-  mockTs: vi.fn((ts: unknown) => {
-    if (ts === undefined || ts === null) return { ok: true };
-    if (typeof ts !== 'number' || !Number.isFinite(ts)) return { ok: false, reason: 'bad' };
-    return Math.abs(Math.floor(Date.now() / 1000) - ts) > 300
-      ? { ok: false, reason: 'skew' }
-      : { ok: true };
-  }),
-}));
+const { mockFlag, mockVerify, mockUpdateMany, mockFindFirst, mockTs, mockImpersonation } =
+  vi.hoisted(() => ({
+    // Connect lane: the running row's seeded sections, read before the update.
+    mockFindFirst: vi.fn(async (_args: unknown) => null as Record<string, unknown> | null),
+    mockImpersonation: vi.fn(async (_id: string) => 'checked'),
+    mockFlag: { enabled: true },
+    mockVerify: vi.fn((): { ok: boolean; publishRequestId?: string } => ({
+      ok: true,
+      publishRequestId: 'x',
+    })),
+    mockUpdateMany: vi.fn(async (_args: { where: unknown; data: any }) => ({ count: 1 })),
+    // Faithful ±300s stand-in for the reused checkCallbackTimestamp.
+    mockTs: vi.fn((ts: unknown) => {
+      if (ts === undefined || ts === null) return { ok: true };
+      if (typeof ts !== 'number' || !Number.isFinite(ts)) return { ok: false, reason: 'bad' };
+      return Math.abs(Math.floor(Date.now() / 1000) - ts) > 300
+        ? { ok: false, reason: 'skew' }
+        : { ok: true };
+    }),
+  }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
@@ -46,7 +49,10 @@ vi.mock('~/server/services/blocks/app-impersonation-check.service', async (impor
   runImpersonationCheckForRequest: mockImpersonation,
 }));
 vi.mock('~/server/db/client', () => ({
-  dbWrite: { appReviewAgentReport: { updateMany: mockUpdateMany } },
+  dbWrite: {
+    appReviewAgentReport: { updateMany: mockUpdateMany },
+    appListingPublishRequest: { findFirst: mockFindFirst },
+  },
 }));
 
 import handler, {
@@ -382,5 +388,79 @@ describe('the impersonation record is civitai-written only', () => {
       )
     );
     expect(data.securityAudit).toEqual({ findings: [{ severity: 'low', title: 'x' }] });
+  });
+});
+
+describe('CONNECT lane (an alpr_ listing request)', () => {
+  const ALPR = 'alpr_0123456789ABCDEFGHJKMNPQRS';
+  const runnerBody = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      publishRequestId: ALPR,
+      status: 'complete',
+      scopeVerdicts: { scopes: [{ declared: 'offline_access ', sensitive: false }] },
+      codeReview: { findings: [{ title: 'Offline access: not reachable' }] },
+      summaryMd: 'Listing looks consistent.',
+      ...over,
+    });
+
+  beforeEach(() => {
+    mockVerify.mockReturnValue({ ok: true, publishRequestId: ALPR });
+    mockFindFirst.mockResolvedValue({ id: ALPR });
+  });
+
+  it('accepts a listing request id and stores the runner output as sent — nothing merged in', async () => {
+    const { req, res } = makeReqRes(runnerBody());
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockFindFirst).toHaveBeenCalledWith({
+      where: { id: ALPR, status: 'pending' },
+      select: { id: true },
+    });
+    const { where, data } = mockUpdateMany.mock.calls[0][0] as { where: unknown; data: any };
+    expect(where).toEqual({ publishRequestId: ALPR, status: 'running' });
+    expect(data.scopeVerdicts).toEqual({
+      scopes: [{ declared: 'offline_access ', sensitive: false }],
+    });
+    expect(data.summaryMd).toBe('Listing looks consistent.');
+  });
+
+  it('🔴 F2: a report for a request decided meanwhile is not stored; the row is torn down', async () => {
+    mockFindFirst.mockResolvedValue(null);
+    const { req, res } = makeReqRes(runnerBody());
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, applied: false });
+    expect(mockUpdateMany).toHaveBeenCalledTimes(1);
+    const { where, data } = mockUpdateMany.mock.calls[0][0] as { where: unknown; data: any };
+    expect(where).toEqual({ publishRequestId: ALPR, status: 'running' });
+    expect(data.status).toBe('torn-down');
+    // None of the runner's content was written.
+    expect(data.scopeVerdicts).toBeUndefined();
+    expect(data.summaryMd).not.toBe('Listing looks consistent.');
+    expect(mockImpersonation).not.toHaveBeenCalled();
+  });
+
+  it('runs no impersonation check (it reads an on-site request a listing request is not)', async () => {
+    const { req, res } = makeReqRes(runnerBody());
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockImpersonation).not.toHaveBeenCalled();
+  });
+
+  it('an on-site report makes no listing re-check', async () => {
+    mockVerify.mockReturnValue({ ok: true, publishRequestId: PUBREQ });
+    const { req, res } = makeReqRes(goodBody());
+    await handler(req, res);
+    expect(mockFindFirst).not.toHaveBeenCalled();
+    const { data } = mockUpdateMany.mock.calls[0][0] as { data: any };
+    expect(data.summaryMd).toBe('# Looks fine');
+  });
+
+  it('still refuses an id that is neither shape', async () => {
+    const { req, res } = makeReqRes(
+      JSON.stringify({ publishRequestId: 'alpr_short', status: 'complete' })
+    );
+    await handler(req, res);
+    expect(res.statusCode).toBe(400);
   });
 });

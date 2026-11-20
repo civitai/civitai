@@ -55,6 +55,8 @@ describe('previewTextScanNsfw', () => {
       status: 'ok',
       level: NsfwLevel.X,
       reason: 'names nudity',
+      // The face stamp records which prompt passed it.
+      promptId: 2,
     });
   });
 

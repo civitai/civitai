@@ -1,6 +1,6 @@
 import { Button, Text } from '@mantine/core';
 import { IconArrowRight, IconExternalLink, IconLayoutGrid } from '@tabler/icons-react';
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useQueryArticles } from '~/components/Article/article.utils';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { ImageCard } from '~/components/Cards/ImageCard';
@@ -166,6 +166,8 @@ function ShowcaseShell({
   rows: number;
   children: React.ReactNode;
 }) {
+  const [hidden, setHidden] = useState(0);
+  const [expanded, setExpanded] = useState(false);
   if (inView && !isLoading && !count) return null;
 
   return (
@@ -189,9 +191,26 @@ function ShowcaseShell({
             icon={<IconLayoutGrid />}
             action={section.button && <ShowcaseButton {...section.button} />}
           >
-            <ShowcaseGrid itemCount={count} rows={rows}>
+            {/* Unfolded, every item gets a row: the grid's empty rows take no height. */}
+            <ShowcaseGrid
+              itemCount={count}
+              rows={expanded ? count : rows}
+              onHiddenCountChange={expanded ? undefined : setHidden}
+            >
               {children}
             </ShowcaseGrid>
+            {(hidden > 0 || expanded) && (
+              <div className="flex justify-center">
+                <Button
+                  variant="subtle"
+                  size="compact-sm"
+                  aria-expanded={expanded}
+                  onClick={() => setExpanded((open) => !open)}
+                >
+                  {expanded ? 'Show less' : `View all ${count}`}
+                </Button>
+              </div>
+            )}
           </ProfileSection>
         ))}
     </div>

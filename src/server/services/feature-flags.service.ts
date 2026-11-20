@@ -10,6 +10,7 @@ import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { KNIGHTS_APP_FLIPT_FLAG } from '~/shared/constants/knights.constants';
+import { APP_LISTINGS_AGENTIC_REVIEW_FLAG } from '~/shared/constants/connect-agent-review.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
@@ -493,6 +494,8 @@ const featureFlags = createFeatureFlags({
   // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
   // does, Flipt decides both ways, so keep mods in its rule.
   imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
+  // Mods until the Flipt flag exists; once it does, Flipt decides both ways, so keep mods in its rule.
+  semanticVideoSearch: { availability: ['mod'], fliptKey: 'semantic-video-search' },
   // Search v3: the header bar filters the feed you are on (?query=) instead of opening /search/*.
   // Images first. It switches between the old and the new search on its own (it opens the semantic
   // search procedure without `imageSearch`), so a Flipt rollout moves people over; off is the old UI.
@@ -628,6 +631,7 @@ const featureFlags = createFeatureFlags({
   // Stickers that follow a video's time. Gates sending a track on create, reading tracks
   // (`getStickerTracks`) and the pin control. Without it a track sticker draws at its `data` pose.
   stickerVideoTracks: { availability: ['mod'], fliptKey: 'sticker-video-tracks' },
+  stickerAutoTrack: { availability: ['mod'], fliptKey: 'sticker-auto-track' },
   // The sticker book profile tab. Its own flag rather than riding `stickers`:
   // the tab publishes what a creator owns and what their work has collected on a
   // PUBLIC profile, which is a disclosure decision separate from whether
@@ -948,6 +952,10 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // The agent review's CONNECT lane: the `AgentReviewPanel` in the off-site review modal, for an
+  // OAuth-connect listing request. `[]` for the `appBlocksAgenticReview` reason; the server half
+  // is `isAppListingsAgenticReviewEnabled`, on the same key.
+  appListingsAgenticReview: { availability: [], fliptKey: APP_LISTINGS_AGENTIC_REVIEW_FLAG },
   appDeveloperRateCard: { availability: [], fliptKey: 'app-developer-rate-card' },
   // App Assistant (on `/apps/build`); read only through `canAccessAppAssistant`. `[]` rather than
   // `['mod']` for the `appBlocksAgenticReview` reason: client and server agree while the flag is absent.

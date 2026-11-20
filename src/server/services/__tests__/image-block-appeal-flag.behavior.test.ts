@@ -272,6 +272,54 @@ describe('handleBlockImages', () => {
   });
 });
 
+describe('a moderator block and its audit row', () => {
+  /** The raw writes made through the next transaction's client. */
+  const captureTx = () => {
+    const inTx: string[] = [];
+    dbMock.dbWrite.$transaction.mockImplementationOnce((async (fn: (tx: unknown) => unknown) =>
+      fn({
+        $queryRaw: dbMock.dbWrite.$queryRaw,
+        $executeRaw: (strings: TemplateStringsArray, ...v: unknown[]) => {
+          inTx.push(Prisma.sql(strings, ...(v as never[])).text);
+          return dbMock.dbWrite.$executeRaw(strings, ...(v as never[]));
+        },
+      })) as never);
+    return inTx;
+  };
+  const expectBoth = (inTx: string[]) => {
+    expect(
+      inTx.some((text) => text.includes('UPDATE "Image" SET')),
+      'the block'
+    ).toBe(true);
+    expect(
+      inTx.some((text) => text.includes('INSERT INTO "ModActivity"')),
+      'its audit row'
+    ).toBe(true);
+  };
+
+  it('handleBlockImages writes it through the block transaction', async () => {
+    const inTx = captureTx();
+    await handleBlockImages({ ids: [FLAGGED], moderatorId: 7 });
+    expectBoth(inTx);
+  });
+
+  it('setTosViolationHandler writes it through the block transaction', async () => {
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
+      nsfwLevel: 32,
+      userId: 7,
+      postId: null,
+      pHash: null,
+      post: null,
+    } as never);
+    const inTx = captureTx();
+    await setTosViolationHandler({
+      input: { id: FLAGGED },
+      ctx: { user: { id: 2, isModerator: true }, ip: '127.0.0.1', track: { images: vi.fn() } },
+    } as never);
+    expectBoth(inTx);
+  });
+});
+
 // Only that flag's own queue or a filed report may clear it; the purge holds the image until then.
 describe('blocking keeps the moderator-only review flag', () => {
   it('handleBlockImages', async () => {
