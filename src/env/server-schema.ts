@@ -401,6 +401,19 @@ export const serverSchema = z
     CLICKHOUSE_USERNAME: isProd ? z.string() : z.string().optional(),
     CLICKHOUSE_PASSWORD: isProd ? z.string() : z.string().optional(),
     CLICKHOUSE_TRACKER_URL: z.url().optional(),
+    // A dedicated ClickHouse for entity metrics, read ONLY by the image MetricService
+    // (`getImageMetricService` in image.service) and only while the
+    // `image-metrics-dedicated-clickhouse` flag is on. Same shape as CLICKHOUSE_HOST/USERNAME/
+    // PASSWORD: the host is the full URL (protocol and port included). Optional everywhere, prod
+    // included: unset HOST or USERNAME means no such client is built and the flag has no effect.
+    CLICKHOUSE_METRICS_HOST: z.string().optional(),
+    CLICKHOUSE_METRICS_USERNAME: z.string().optional(),
+    CLICKHOUSE_METRICS_PASSWORD: z.string().optional(),
+    // The dedicated client's socket idle timeout (`request_timeout`). Far below the shared client's
+    // 300s, so a hung dedicated server releases the image-metrics-swr refresher's slots and the
+    // per-id populate locks within seconds. Keep it above CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS and
+    // the server-side lookup cap. .int().positive() for the same reason as that timeout.
+    CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
     // OAuth LOGIN provider secrets now live ONLY in the hub (apps/auth) — the spoke fetches the enabled-provider
     // list from GET {hub}/api/auth/providers and never holds login secrets. Discord's creds REMAIN here because
     // the Discord ROLE-CONNECTION integration (src/server/integrations/discord.ts) uses them — that's a separate

@@ -43,6 +43,7 @@ import {
 } from '~/server/services/orchestrator/trusted-blob-url';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
+import { clickhouseMetrics } from '~/server/clickhouse/metrics-client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
 import {
   feedRequestCapture,
@@ -128,6 +129,7 @@ import {
   resolveMetricsStaleWhileRevalidate,
   type MetricRefresher,
 } from '~/server/services/image-metrics-swr';
+import { readsDedicatedImageMetricsClickhouse } from '~/server/services/image-metrics-clickhouse';
 import { postMetrics } from '~/server/metrics';
 import {
   imageScanSubmittedCounter,
@@ -3852,12 +3854,30 @@ async function resolveHubForFeed(searchInput: CapturableSearchInput) {
 
 // Lazily-built MetricService over the watcher-fed `metrics:*` cache, reused
 // across calls (this is the hot feed path) rather than reconstructed per call.
+//
+// One instance per ClickHouse client: the shared one, and the dedicated entity-metrics one
+// (`image-metrics-dedicated-clickhouse`). The choice is made on EVERY call, so a flag flip takes
+// effect within the gate's refresh window without a restart, and each instance is built once.
+// The two share only Redis (the `metrics:*` hashes and their populate locks), which is what keeps
+// a flip from re-querying ids the other instance is already populating.
+//
+// A failed read on the dedicated client is NOT retried on the shared one: it degrades the way a
+// failed shared read does (`getImageMetricsObjectDirect` serves the cache). A retry would put the
+// whole read back on the shared ClickHouse exactly when the dedicated one is down, and spend the
+// same latency budget twice; the kill switch is the flag.
 let _imageMetricService: MetricService | null = null;
-const getImageMetricService = () =>
-  (_imageMetricService ??= new MetricService(
+let _imageMetricServiceDedicated: MetricService | null = null;
+const getImageMetricService = () => {
+  if (readsDedicatedImageMetricsClickhouse(clickhouseMetrics !== undefined))
+    return (_imageMetricServiceDedicated ??= new MetricService(
+      clickhouseMetrics as IClickhouseClient,
+      redis as unknown as IRedisClient
+    ));
+  return (_imageMetricService ??= new MetricService(
     clickhouse as IClickhouseClient,
     redis as unknown as IRedisClient
   ));
+};
 
 type ImageMetricsObject = Record<
   number,
@@ -6153,6 +6173,7 @@ export async function get404Images() {
     JOIN "Image" i ON i.id = ci."imageId"
     LEFT JOIN "Post" p ON p.id = i."postId"
     JOIN "User" u ON u.id = i."userId" AND username IS NOT NULL
+      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
     JOIN "Collection" c ON c.id = ci."collectionId"
     WHERE c."userId" = -1
       AND c.name = '404 Contest'

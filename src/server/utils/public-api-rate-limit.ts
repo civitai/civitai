@@ -62,6 +62,7 @@ export type PublicApiRateLimitFamily =
   | 'articles'
   | 'collections'
   | 'posts'
+  | 'comics'
   | 'verify'
   | 'verify-signed-in-ip';
 

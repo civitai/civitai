@@ -1268,6 +1268,7 @@ export const getBountyImages = async ({
   const imageIds = await getVisibleBountyImageIds({ bountyIds: [id], userId, isModerator });
 
   const connections = await dbRead.imageConnection.findMany({
+    // image-connection-orphan-safe: imageIds were read from Image just above.
     where: { entityId: id, entityType: 'Bounty', imageId: { in: imageIds } },
     select: { image: { select: { ...imageSelect, poi: true, minor: true } } },
   });
@@ -1413,6 +1414,7 @@ export const getImagesForBounties = async ({
   const imageIds = await getVisibleBountyImageIds({ bountyIds, userId, isModerator });
 
   const connections = await dbRead.imageConnection.findMany({
+    // image-connection-orphan-safe: imageIds were read from Image just above.
     where: { entityType: 'Bounty', entityId: { in: bountyIds }, imageId: { in: imageIds } },
     select: {
       entityId: true,
