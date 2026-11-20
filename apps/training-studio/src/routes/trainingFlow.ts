@@ -1021,15 +1021,16 @@ export function withTags(tags: string[], text: string): string[] {
 }
 
 /** What a key does in the tag-entry box: Enter adds the typed tags, Shift+Enter keeps a newline (it splits
- *  like a comma), and Backspace in an empty box removes the last tag. */
+ *  like a comma), and a fresh Backspace press in an empty box removes the last tag. Auto-repeat is ignored so
+ *  holding Backspace to clear the draft stops at the empty box instead of eating the assigned tags. */
 export function tagEntryKey(
-  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing' | 'keyCode'>,
+  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing' | 'keyCode' | 'repeat'>,
   draft: string,
   tagCount: number
 ): 'commit' | 'removeLast' | null {
   // keyCode 229: Safari reports the Enter that confirms an IME conversion with isComposing false.
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) return 'commit';
-  if (e.key === 'Backspace' && draft === '' && tagCount > 0) return 'removeLast';
+  if (e.key === 'Backspace' && !e.repeat && draft === '' && tagCount > 0) return 'removeLast';
   return null;
 }
 
