@@ -314,13 +314,18 @@ async function flipRow(
   `;
 }
 
-const noComFaceSql = Prisma.sql`(m."sfwName" IS NULL OR m."sfwDescription" IS NULL
+/**
+ * No complete .com face, as `hasSfwFaceParts` reads it: a save stores an empty field as NULL, but
+ * markup with no text in it (`<p> </p>`) can still be stored, so the description counts by its text.
+ */
+const noComFaceSql = Prisma.sql`(btrim(COALESCE(m."sfwName", '')) = ''
+  OR btrim(replace(regexp_replace(COALESCE(m."sfwDescription", ''), '<[^>]*>', '', 'g'), '&nbsp;', ' ')) = ''
   OR m."sfwCoverImageId" IS NULL)`;
 
 /**
  * Rates a model the text scan left unrated for its .com face, once the face is gone. Run in the
  * transaction that takes the face away, so the model is never listed as safe without one. Returns
- * whether it flipped; the caller refreshes the level (`finishHeldVerdictApply`).
+ * whether it flipped; the level is not refreshed here.
  */
 export async function applyComFaceHeldVerdict(db: RawDb, modelId: number) {
   const flipped = await flipRow(
@@ -331,8 +336,14 @@ export async function applyComFaceHeldVerdict(db: RawDb, modelId: number) {
     Prisma.sql`AND NOT m.nsfw AND ${asJsonbObjectSql('m.meta')} ? 'comFaceHeldVerdict'
       AND ${noComFaceSql}`
   );
-  // Where the rating may not be overridden, the verdict waits as a moderator's lead instead.
-  if (!flipped) await holdRestrictedVerdict(db, modelId, 'text-scan');
+  // Where the rating may not be overridden, the verdict waits as a moderator's lead instead: only a
+  // verdict the scan held, for a face that is gone.
+  if (!flipped)
+    await holdRestrictedVerdict(db, modelId, 'text-scan', {
+      guard: Prisma.sql`AND ${asJsonbObjectSql(
+        'm.meta'
+      )} ? 'comFaceHeldVerdict' AND ${noComFaceSql}`,
+    });
   await db.$executeRaw`
     UPDATE "Model" m
     SET meta = m.meta - 'comFaceHeldVerdict'
@@ -539,7 +550,7 @@ export async function applyModelNsfwTextScan(
     await dropComFaceHeldVerdict(dbWrite, entityId);
     return nothing;
   }
-  // R+ rates a Model whatever it declared: an already-mature one gets the scan's marker.
+  // Not just a raised level: an already-mature model still needs the scan marker.
   if (!outcome.nsfw) return nothing;
   const model = await dbWrite.model.findUnique({
     where: { id: entityId },
@@ -580,13 +591,12 @@ export async function applyModelNsfwTextScan(
     level: outcome.nsfw.detectedLevel,
   });
   // A face dropped while the check ran is no face: the scan rates the model after all.
-  if (
+  const faceDropped =
     result === 'skipped_com_face' &&
-    !(await holdComFaceVerdict(dbWrite, entityId, outcome.nsfw.detectedLevel))
-  )
-    result = await applySystemModelNsfwFlag({ model, source: 'text-scan' });
+    !(await holdComFaceVerdict(dbWrite, entityId, outcome.nsfw.detectedLevel));
+  if (faceDropped) result = await applySystemModelNsfwFlag({ model, source: 'text-scan' });
   // A complete .com face already lists it on .com: the notice's advice to add one does not apply.
-  if (result !== 'applied' || hasCompleteSfwFace(model)) return nothing;
+  if (result !== 'applied' || (!faceDropped && hasCompleteSfwFace(model))) return nothing;
 
   const notice: NotifyTextScanRatingRaisedArgs = {
     entityType: 'Model',

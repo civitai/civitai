@@ -281,11 +281,6 @@ describe('applyModelNsfwTextScan and the .com face', () => {
     expect(held).toContain(NsfwLevel.X);
   });
 
-  it('drops the held verdict when the text reads PG-13', async () => {
-    await scan(rated(NsfwLevel.PG13, NsfwLevel.PG13));
-    expect(sqlWith("m.meta - 'comFaceHeldVerdict'")).toBeDefined();
-  });
-
   it.each([
     ['no .com description', { sfwDescription: null }],
     ['a .com description that is only markup', { sfwDescription: '<p> </p>' }],
@@ -673,6 +668,51 @@ describe('applyComFaceHeldVerdict', () => {
     expect((await read()).nsfw).toBe(true);
   });
 
+  it.each([
+    ['Private', { availability: 'Private' }],
+    ['minor', { minor: true }],
+  ])(
+    'writes no lead for a %s model the scan held nothing for, and leaving Private changes nothing',
+    async (_, row) => {
+      await insert({ ...row, meta: {} });
+      expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(false);
+      expect((await read()).meta).not.toHaveProperty('restrictedNsfwVerdict');
+
+      await pg.query(`UPDATE "Model" SET availability = 'Public', minor = false WHERE id = 1`);
+      expect(await applyHeldVerdictLeavingPrivate(db as never, 1)).toBe(false);
+      expect((await read()).nsfw).toBe(false);
+    }
+  );
+
+  it('counts a description that is only markup as no face', async () => {
+    await insert({ ...face, sfwDescription: '<p> </p>' });
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(true);
+  });
+
+  it.each([
+    ['held', held, false],
+    ['nothing held (control)', {}, false],
+  ])('a PG-13 read leaves %s: no held verdict afterwards', async (_, meta) => {
+    await insert({ ...face, meta });
+    dbMock.dbWrite.$executeRaw.mockImplementation(db.$executeRaw as never);
+    await applyModelNsfwTextScan({
+      ...args(false),
+      outcome: {
+        nsfw: {
+          detectedLevel: NsfwLevel.PG13,
+          declaredLevel: NsfwLevel.PG13,
+          raised: false,
+          reason: 'r',
+        },
+        triggeredLabels: [],
+        nsfwLevel: NsfwLevel.PG13,
+      },
+    });
+    const row = await read();
+    expect(row.meta).not.toHaveProperty('comFaceHeldVerdict');
+    expect(row.nsfw).toBe(false);
+  });
+
   it('records no lead under a moderator lock: that is already a ruling', async () => {
     await insert({ locked: ['nsfw'] });
     await applyComFaceHeldVerdict(db as never, 1);
@@ -702,6 +742,8 @@ describe('applyComFaceHeldVerdict', () => {
     const row = await read();
     expect(row.nsfw).toBe(true);
     expect(row.meta).not.toHaveProperty('comFaceHeldVerdict');
+    // The face is gone, so the owner is told, as for any model rated without one.
+    expect(createNotification).toHaveBeenCalledTimes(1);
   });
 
   it('holds the verdict while the face is still there (control)', async () => {

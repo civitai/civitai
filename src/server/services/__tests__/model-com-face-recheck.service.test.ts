@@ -245,7 +245,12 @@ describe('the .com face listing re-check', () => {
       return Array.isArray(first) ? first.join('?') : (first as { sql: string }).sql;
     });
     expect(statements[0]).toMatch(/SET "sfwCoverImageId" = NULL/);
-    expect(statements.some((sql) => sql.includes('SET nsfw = TRUE'))).toBe(true);
+    const flip = tx.$executeRaw.mock.calls.find((call: unknown[]) => {
+      const [first] = call as [readonly string[]];
+      return Array.isArray(first) && first.join('?').includes('SET nsfw = TRUE');
+    });
+    expect(flip).toBeDefined();
+    expect(flip).toContain(MODEL_ID);
     expect(tx.modActivity.create).toHaveBeenCalledTimes(1);
     expect(db.$executeRaw).not.toHaveBeenCalled();
     expect(db.modActivity.create).not.toHaveBeenCalled();
