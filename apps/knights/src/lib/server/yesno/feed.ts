@@ -6,7 +6,10 @@ import { stagesWorkedBy } from '../queue/ranks';
 import { isRank } from '../ranks';
 import { headingOf } from './headings';
 import { playableItems } from './items';
-import { YESNO_KEY_PREFIX } from './keys';
+import { MOD_TAG_REVIEW_AXIS } from '@civitai/db/knights';
+import { axisKey, YESNO_KEY_PREFIX } from './keys';
+
+const TAG_REVIEW_KEY = axisKey(MOD_TAG_REVIEW_AXIS);
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
@@ -31,7 +34,7 @@ function unanswered(
   exclude: number[]
 ) {
   return (
-    playableItems(db)
+    playableItems(db, { tagReview: axis === TAG_REVIEW_KEY })
       .where('i.questionKey', '=', axis)
       .where('i.minRank', 'in', stages)
       .where('img.userId', 'is distinct from', userId)
@@ -129,6 +132,8 @@ export async function pickYesNo(
     secret: string;
     share: number;
     stretch: number;
+    /** The moderator tag review source is switched on: its axis is offered, whatever `share` says. */
+    tagReview?: boolean;
     force?: boolean;
     /** Question ids the player has skipped. */
     exclude?: number[];
@@ -161,7 +166,10 @@ export async function pickYesNo(
       .where('key', 'like', `${YESNO_KEY_PREFIX}%`)
       .orderBy('key', 'asc')
       .execute()
-  ).map((q) => q.key);
+  )
+    .map((q) => q.key)
+    // The tag review axis follows its own switch; every other axis follows the share.
+    .filter((key) => (key === TAG_REVIEW_KEY ? input.tagReview === true : input.share > 0));
   if (axes.length === 0) return null;
 
   const { axis: current, run } = await currentStretch(

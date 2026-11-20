@@ -1,4 +1,5 @@
 import type { Kysely } from 'kysely';
+import { MOD_TAG_REVIEW_SOURCE } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import { closeOpenYesNoItem } from './close';
@@ -42,7 +43,7 @@ export async function closeStrandedYesNo(
   while (closed < limit && Date.now() < deadline) {
     const page = await db
       .selectFrom('KnightsQueueItem')
-      .select(['id', 'updatedAt'])
+      .select(['id', 'updatedAt', 'source'])
       .where('status', '=', 'Open')
       .where('audience', '=', 'players')
       .where('voteCount', '>', 0)
@@ -53,18 +54,18 @@ export async function closeStrandedYesNo(
     if (page.length === 0) break;
     after = page[page.length - 1].id;
 
-    const playable = new Set(
-      (
-        await playableItems(db)
-          .select('i.id')
-          .where(
-            'i.id',
-            'in',
-            page.map((p) => p.id)
-          )
-          .execute()
-      ).map((r) => r.id)
-    );
+    const playable = new Set<number>();
+    for (const tagReview of [false, true]) {
+      const ids = page
+        .filter((p) => (p.source === MOD_TAG_REVIEW_SOURCE) === tagReview)
+        .map((p) => p.id);
+      if (ids.length === 0) continue;
+      for (const r of await playableItems(db, { tagReview })
+        .select('i.id')
+        .where('i.id', 'in', ids)
+        .execute())
+        playable.add(r.id);
+    }
 
     for (const item of page) {
       if (closed >= limit) break;

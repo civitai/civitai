@@ -346,7 +346,7 @@ export async function importYesNo(
 }
 
 /** The file never carries the moderation record a moderator's action merges into `meta`, so it is left out of the comparison. */
-const sameMeta = (a: unknown, b: Record<string, string>) => {
+const sameMeta = (a: unknown, b: Record<string, string | number>) => {
   const { [MODERATION_META_KEY]: _moderation, ...stored } = (a ?? {}) as Record<string, unknown>;
   return JSON.stringify(Object.entries(stored).sort()) === JSON.stringify(Object.entries(b).sort());
 };
