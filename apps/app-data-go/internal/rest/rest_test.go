@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -81,5 +82,29 @@ func TestListErrors(t *testing.T) {
 	defer cancel()
 	if _, err := c.List(ctx, "t", "notes", ""); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadline: %v", err)
+	}
+}
+
+// A redirect is never followed: it would re-send the user's token to Location.
+func TestListNeverFollowsARedirect(t *testing.T) {
+	var reached atomic.Int32
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached.Add(1)
+		_, _ = io.WriteString(w, `{"items":[],"nextCursor":null}`)
+	}))
+	t.Cleanup(elsewhere.Close)
+	for _, hc := range []*http.Client{nil, {Timeout: 5 * time.Second}} {
+		c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, elsewhere.URL+"/api/v1/blocks/storage/notes", http.StatusFound)
+		})
+		c.HTTP = hc
+		_, err := c.List(context.Background(), "civitai_tok", "notes", "src-app")
+		var re *Error
+		if !errors.As(err, &re) || re.Status != http.StatusFound {
+			t.Fatalf("got %v, want the 302 as the answer", err)
+		}
+	}
+	if n := reached.Load(); n != 0 {
+		t.Fatalf("🔴 the redirect target was reached %d times", n)
 	}
 }

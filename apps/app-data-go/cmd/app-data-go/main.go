@@ -30,11 +30,13 @@ import (
 
 // Stream timings that are not configuration: how long a stream that failed is not reopened; how
 // long a collection the private feed does not serve is left to REST; how long before its exchanged
-// token expires a stream is closed; how long one exchange may take.
+// token expires a stream is closed; how often a live stream re-checks its user's token; how long one
+// exchange may take.
 const (
 	streamCooldown     = 30 * time.Second
 	notPrivateCooldown = 15 * time.Minute
 	expiryMargin       = 30 * time.Second
+	tokenRecheck       = 2 * time.Minute
 	exchangeTimeout    = 5 * time.Second
 )
 
@@ -92,7 +94,7 @@ func run(log *slog.Logger) error {
 			IdleTTL: cfg.IdleTTL, MaxAge: cfg.MaxAge,
 			MaxRecords: cfg.MaxRecords, MaxBytes: cfg.MaxBytes,
 			Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
-			Exchange: ex.Exchange, ExpiryMargin: expiryMargin,
+			Exchange: ex.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
 			Opened: m.StreamsOpened.Inc,
 			Closed: func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
 		})

@@ -121,7 +121,7 @@ func (o *fakeOrigin) Subscribe(_ context.Context, schema, presented string) (Str
 		s.events <- step{ev: registry.Event{Type: registry.Upsert, Entity: e}}
 	}
 	if !o.noLive[token] {
-		s.events <- step{ev: registry.Event{Type: registry.Live, Cursor: "p1.empty"}}
+		s.events <- step{ev: registry.Event{Type: registry.Live, Cursor: liveCursor}}
 	}
 	o.streams = append(o.streams, s)
 	return s, nil
@@ -150,6 +150,13 @@ func entity(urn, canary string) registry.Entity {
 	body, _ := json.Marshal(map[string]string{"text": canary})
 	return registry.Entity{URN: urn, Rev: "r1", Schemas: []string{schemaA}, Body: body}
 }
+
+// The cursors as the adapter sends them: every one wrapped as `b1.<24 hex binding>.<inner>`
+// (subscription.ts bindCursor), around the private feed's `p1.` or the public document feed's `f1.`.
+const (
+	liveCursor   = "b1.0a1b2c3d4e5f60718293a4b5.p1.empty"
+	publicCursor = "b1.0a1b2c3d4e5f60718293a4b5.f1.0123456789abcdef0123456789abcdef"
+)
 
 const (
 	schemaA = "urn:schema:apps.civitai.com:todo-app/notes@v1"
@@ -220,6 +227,13 @@ func newHarness(t *testing.T, opts Options) *harness {
 		}
 	})
 	return h
+}
+
+// exchangesA counts the fake hub's exchanges of tok-a.
+func (h *harness) exchangesA() int {
+	h.o.mu.Lock()
+	defer h.o.mu.Unlock()
+	return h.o.exchanges["tok-a"]
 }
 
 func (h *harness) closedFor(reason string) int32 {
@@ -516,7 +530,7 @@ func TestAStreamThatReachesLiveAfterAStallServesAgain(t *testing.T) {
 	cancel()
 	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Upsert,
 		Entity: entity("urn:apps.civitai.com:todo-app/notes/r-late", "late")}})
-	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Live, Cursor: "p1.0123"}})
+	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Live, Cursor: liveCursor}})
 	eventually(t, "the late Live", func() bool {
 		got, err := read(t, h.m, "tok-a", schemaA)
 		return err == nil && len(got) == 1
@@ -532,7 +546,7 @@ func TestAWaitingReadIsAnsweredByLive(t *testing.T) {
 		done <- err
 	}()
 	eventually(t, "the stream to open", func() bool { return h.o.opened.Load() == 1 })
-	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Live, Cursor: "p1.0123"}})
+	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Live, Cursor: liveCursor}})
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
@@ -770,7 +784,7 @@ func TestAStreamThatIsNotThePrivateFeedIsClosedUnread(t *testing.T) {
 		done <- err
 	}()
 	eventually(t, "the stream to open", func() bool { return h.o.opened.Load() == 1 })
-	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Live, Cursor: "c1.0123456789abcdef0123456789abcdef"}})
+	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Live, Cursor: publicCursor}})
 	if err := <-done; !errors.Is(err, ErrNotPrivate) {
 		t.Fatalf("got %v, want ErrNotPrivate", err)
 	}
@@ -781,5 +795,141 @@ func TestAStreamThatIsNotThePrivateFeedIsClosedUnread(t *testing.T) {
 	}
 	if h.closedFor(CloseNotPrivate) != 1 {
 		t.Fatal("not counted")
+	}
+}
+
+// The private-feed check reads the cursor in its real wire form: the adapter's `b1.` wrapping,
+// unwrapped by exactly its grammar, around the private feed's `p1.`.
+func TestPrivateFeedCursorReadsTheAdaptersWireForm(t *testing.T) {
+	for cursor, want := range map[string]bool{
+		"b1.0a1b2c3d4e5f60718293a4b5.p1.empty":                            true,
+		"b1.ffffffffffffffffffffffff.p1.0123456789abcdef0123456789abcdef": true,
+		// The public document feed (doc-feed.ts), and the other entity feeds.
+		"b1.0a1b2c3d4e5f60718293a4b5.f1.0123456789abcdef0123456789abcdef": false,
+		"b1.0a1b2c3d4e5f60718293a4b5.c1.0123456789abcdef0123456789abcdef": false,
+		// Unwrapped, or wrapped wrongly: not the adapter's grammar, so not private.
+		"p1.empty":                              false,
+		"p1.0123456789abcdef0123456789abcdef":   false,
+		"b1.0a1b2c3d4e5f60718293a4b.p1.empty":   false, // 23 hex
+		"b1.0A1B2C3D4E5F60718293A4B5.p1.empty":  false, // upper-case hex
+		"b2.0a1b2c3d4e5f60718293a4b5.p1.empty":  false,
+		"b1.0a1b2c3d4e5f60718293a4b5.":          false,
+		"b1.0a1b2c3d4e5f60718293a4b5.xp1.empty": false,
+		"":                                      false,
+	} {
+		if got := PrivateFeedCursor(cursor); got != want {
+			t.Errorf("PrivateFeedCursor(%q) = %v, want %v", cursor, got, want)
+		}
+	}
+}
+
+// A stream whose Live carries the private feed's cursor in its real wire form serves; one whose Live
+// carries a bare `p1.` cursor, which the adapter never sends, does not.
+func TestAStreamWhoseLiveIsThePrivateFeedInItsWireFormServes(t *testing.T) {
+	for _, tc := range []struct {
+		cursor string
+		serves bool
+	}{
+		{"b1.0a1b2c3d4e5f60718293a4b5.p1.0123456789abcdef0123456789abcdef", true},
+		{"p1.0123456789abcdef0123456789abcdef", false},
+		{publicCursor, false},
+	} {
+		t.Run(tc.cursor, func(t *testing.T) {
+			h := newHarness(t, Options{})
+			h.o.noLive["tok-a"] = true
+			h.o.records["tok-a"] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/r-1", "PRIVATE-1")}
+			done := make(chan error, 1)
+			var got []registry.Entity
+			go func() {
+				var err error
+				got, err = read(t, h.m, "tok-a", schemaA)
+				done <- err
+			}()
+			eventually(t, "the stream to open", func() bool { return h.o.opened.Load() == 1 })
+			h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Live, Cursor: tc.cursor}})
+			err := <-done
+			if tc.serves && (err != nil || len(got) != 1) {
+				t.Fatalf("the private feed's wire-form Live did not serve: %q, %v", urns(got), err)
+			}
+			if !tc.serves && !errors.Is(err, ErrNotPrivate) {
+				t.Fatalf("got %q, %v; want ErrNotPrivate", urns(got), err)
+			}
+		})
+	}
+}
+
+// A revoked user token: the exchanged token outlives it, so a read re-checks the user's token once
+// the last check is Recheck old. Fixture times overshoot the 2-minute boundary on both sides.
+func TestARevokedUserTokenStopsBeingServedWithinTheRecheckInterval(t *testing.T) {
+	h := newHarness(t, Options{Recheck: 2 * time.Minute, IdleTTL: time.Hour, MaxAge: time.Hour})
+	h.o.records["tok-a"] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/r-1", "CACHED-CANARY")}
+	if got, err := read(t, h.m, "tok-a", schemaA); err != nil || len(got) != 1 {
+		t.Fatalf("%q, %v", urns(got), err)
+	}
+	h.o.mu.Lock()
+	h.o.refuseExchange["tok-a"] = fmt.Errorf("%w (HTTP 400, invalid_grant)", exchange.ErrRefused)
+	h.o.mu.Unlock()
+
+	// 1m30s after the last check: still cached, no check made.
+	h.c.add(90 * time.Second)
+	if got, err := read(t, h.m, "tok-a", schemaA); err != nil || len(got) != 1 {
+		t.Fatalf("within the interval: %q, %v", urns(got), err)
+	}
+	if n := h.exchangesA(); n != 1 {
+		t.Fatalf("%d exchanges within the interval, want 1", n)
+	}
+	// 2m30s after it: the read re-checks, the hub refuses, nothing cached is served.
+	h.c.add(60 * time.Second)
+	got, err := read(t, h.m, "tok-a", schemaA)
+	if !errors.Is(err, ErrRefused) || len(got) != 0 {
+		t.Fatalf("after the interval: %q, %v; want ErrRefused and no records", urns(got), err)
+	}
+	if st := h.m.Stats(); st.Streams != 0 || st.Records != 0 || h.closedFor(CloseRevoked) != 1 {
+		t.Fatalf("the revoked stream's cache survived: %+v", st)
+	}
+	if _, err := read(t, h.m, "tok-a", schemaA); !errors.Is(err, ErrCoolingDown) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// A check that FAILS (the hub unreachable) is not a revocation: the stream keeps serving, and the
+// next check waits another interval rather than hammering the hub on every read.
+func TestAFailedRecheckKeepsServingUntilTheNextCheck(t *testing.T) {
+	h := newHarness(t, Options{Recheck: 2 * time.Minute, IdleTTL: time.Hour, MaxAge: time.Hour})
+	h.o.records["tok-a"] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/r-1", "x")}
+	if _, err := read(t, h.m, "tok-a", schemaA); err != nil {
+		t.Fatal(err)
+	}
+	h.o.mu.Lock()
+	h.o.refuseExchange["tok-a"] = errors.New("exchange: token endpoint answered HTTP 503 (none)")
+	h.o.mu.Unlock()
+	h.c.add(150 * time.Second)
+	if got, err := read(t, h.m, "tok-a", schemaA); err != nil || len(got) != 1 {
+		t.Fatalf("a failed check stopped serving: %q, %v", urns(got), err)
+	}
+	h.c.add(90 * time.Second)
+	if got, err := read(t, h.m, "tok-a", schemaA); err != nil || len(got) != 1 {
+		t.Fatalf("%q, %v", urns(got), err)
+	}
+	if n := h.exchangesA(); n != 2 {
+		t.Fatalf("%d exchanges, want 2 (the open and one failed check)", n)
+	}
+	h.c.add(60 * time.Second)
+	_, _ = read(t, h.m, "tok-a", schemaA)
+	if n := h.exchangesA(); n != 3 {
+		t.Fatalf("%d exchanges, want 3 (the next check, an interval later)", n)
+	}
+}
+
+// No read, no check: re-checking runs on the read path only.
+func TestNoReadMeansNoRecheck(t *testing.T) {
+	h := newHarness(t, Options{Recheck: 2 * time.Minute, IdleTTL: time.Hour, MaxAge: time.Hour})
+	if _, err := read(t, h.m, "tok-a", schemaA); err != nil {
+		t.Fatal(err)
+	}
+	h.c.add(10 * time.Minute)
+	h.m.Sweep()
+	if n := h.exchangesA(); n != 1 {
+		t.Fatalf("%d exchanges without a read, want 1", n)
 	}
 }

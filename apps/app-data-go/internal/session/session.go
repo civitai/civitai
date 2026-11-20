@@ -12,13 +12,22 @@
 // with the schema. Nothing here decodes a token or knows whose it is: two tokens are two keys, so a
 // record one token's stream received can only ever be read back with that same token. Two tokens of
 // the same user are two streams too (the auth extension, Relays rule 2: an authorized stream
-// belongs to one consumer). The token itself is held only by the goroutine that reads its stream.
+// belongs to one consumer). No token is stored: a stream's goroutine holds the user's token for its
+// first exchange, and a re-check uses the reading request's own token, which hashes to the same key.
 //
 // LIFECYCLE. A stream opens on the first read for its key and is closed when no read has used it
 // for IdleTTL, MaxAge after it opened, or ExpiryMargin before its exchanged token expires, whichever
 // comes first, or when it fails. The adapter ends a stream whose token expired (`invalid_token`), so
 // a stream never outlives its token here either: the next read opens a new one with a new exchange
-// and a fresh snapshot (DESIGN.md, "Token lifetime"). A read is
+// and a fresh snapshot (DESIGN.md, "Token lifetime").
+//
+// REVOCATION OF THE USER'S TOKEN. The exchanged token stays valid after the user's own token is
+// revoked, so a live stream re-checks the user's token by exchanging it again, on the read path: a
+// read that finds the last check older than Recheck runs one before it is answered. A refusal closes
+// the stream, drops its cache and answers ErrRefused (the caller reads REST); a failure (the hub
+// unreachable, a 5xx, a timeout) is not a revocation, so the stream keeps serving until the next
+// check. So a revoked user token is served from cache for at most Recheck after its revocation, and
+// only to reads holding that very token. A read is
 // answered from the cache only once the stream has sent `Live` (the snapshot is complete); before
 // that the read waits, bounded by its context, and then gives up so the caller can read REST
 // instead. A stream that has made one read give up is STALLED: later reads do not wait on it (a slow
@@ -45,6 +54,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"io"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -56,9 +66,21 @@ import (
 
 // PrivateCursorPrefix starts every cursor the adapter's private feed issues
 // (src/server/registry-adapter/private-feed.ts: `p1.<digest>`, or `p1.empty` for a stream that holds
-// nothing). The public feeds' cursors start otherwise (`c1.`). Read only off the adapter's own
+// nothing). The public document feed's start `f1.` (doc-feed.ts). Read only off the adapter's own
 // streams: this service subscribes to the adapter directly, so no relay rewrites its cursors.
 const PrivateCursorPrefix = "p1."
+
+// boundCursorRE is the adapter's wrapping of every cursor it sends, `b1.<24 hex binding>.<inner>`
+// (src/server/registry-adapter/subscription.ts: bindCursor, BOUND_CURSOR_RE). `Live` carries it too.
+var boundCursorRE = regexp.MustCompile(`^b1\.([0-9a-f]{24})\.(.+)$`)
+
+// PrivateFeedCursor reports whether cursor, as the adapter sent it, is one its private feed issued:
+// the bound wrapping, around a private-feed cursor. Anything else, a bare inner cursor included, is
+// not private.
+func PrivateFeedCursor(cursor string) bool {
+	m := boundCursorRE.FindStringSubmatch(cursor)
+	return m != nil && strings.HasPrefix(m[2], PrivateCursorPrefix)
+}
 
 // Stream is one subscription's events (registry.Stream).
 type Stream interface {
@@ -106,6 +128,7 @@ const (
 	CloseExpiry       = "expiry"
 	CloseRefused      = "exchange_refused"
 	CloseNotPrivate   = "not_private"
+	CloseRevoked      = "revoked"
 	CloseInvalidToken = "invalid_token"
 	CloseTooLarge     = "too_large"
 	CloseEnd          = "end"
@@ -130,6 +153,9 @@ type Options struct {
 	Exchange func(ctx context.Context, subject string) (exchange.Token, error)
 	// ExpiryMargin closes a stream this long before its exchanged token expires.
 	ExpiryMargin time.Duration
+	// Recheck is how old the last check of a live stream's user token may be before a read checks it
+	// again (see REVOCATION OF THE USER'S TOKEN). Zero never re-checks.
+	Recheck time.Duration
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 	// Opened and Closed observe each stream (metrics); nil is none.
@@ -187,6 +213,8 @@ type session struct {
 	ended    bool
 	err      error
 	lastRead time.Time
+	checked  time.Time // the last exchange of the user's token, refused or not
+	checking bool      // a read is re-checking the user's token now
 	records  map[string]registry.Entity
 	bytes    int
 }
@@ -218,7 +246,7 @@ func (m *Manager) Read(ctx context.Context, token, schema string) ([]registry.En
 		s = m.open(k, token, now) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
 	}
 	m.mu.Unlock()
-	return s.read(ctx, m.opts.Now)
+	return m.read(ctx, s, token)
 }
 
 // open starts a session's stream. m.mu is held.
@@ -243,13 +271,28 @@ func (m *Manager) open(k key, token string, now time.Time) *session {
 	return s
 }
 
-func (s *session) read(ctx context.Context, now func() time.Time) ([]registry.Entity, error) {
+func (m *Manager) read(ctx context.Context, s *session, token string) ([]registry.Entity, error) {
+	now := m.opts.Now
 	s.mu.Lock()
 	switch {
 	case s.ended:
 		err := s.err
 		s.mu.Unlock()
 		return nil, err
+	case s.isLive && m.opts.Recheck > 0 && !s.checking && now().Sub(s.checked) >= m.opts.Recheck:
+		// One read re-checks; reads arriving meanwhile are answered from the cache, still within
+		// the previous check's window.
+		s.checking = true
+		s.mu.Unlock()
+		_, err := m.opts.Exchange(ctx, token)
+		s.mu.Lock()
+		s.checking, s.checked = false, now()
+		s.mu.Unlock()
+		if errors.Is(err, exchange.ErrRefused) {
+			m.end(s, CloseRevoked, ErrRefused)
+			return nil, ErrRefused
+		}
+		return m.read(ctx, s, token)
 	case s.isLive:
 		defer s.mu.Unlock()
 		s.lastRead = now()
@@ -261,9 +304,9 @@ func (s *session) read(ctx context.Context, now func() time.Time) ([]registry.En
 	s.mu.Unlock()
 	select {
 	case <-s.live:
-		return s.read(ctx, now)
+		return m.read(ctx, s, token)
 	case <-s.done:
-		return s.read(ctx, now)
+		return m.read(ctx, s, token)
 	case <-ctx.Done():
 		s.mu.Lock()
 		s.stalled = !s.isLive
@@ -300,7 +343,7 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 		return CloseError, ErrFailed
 	}
 	s.mu.Lock()
-	s.expires = tok.Expires
+	s.expires, s.checked = tok.Expires, m.opts.Now()
 	s.mu.Unlock()
 	st, err := m.sub.Subscribe(ctx, s.k.schema, tok.Access)
 	if err != nil {
@@ -335,7 +378,7 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 		case registry.Delete:
 			s.remove(ev.URN)
 		case registry.Live:
-			if !strings.HasPrefix(ev.Cursor, PrivateCursorPrefix) {
+			if !PrivateFeedCursor(ev.Cursor) {
 				return CloseNotPrivate, ErrNotPrivate
 			}
 			s.markLive()

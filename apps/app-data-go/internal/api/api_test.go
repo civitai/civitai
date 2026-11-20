@@ -76,9 +76,10 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		f.schemas.Store(tok, r.URL.Query().Get("schema"))
 		ch := make(chan string, 16)
 		f.mu.Lock()
-		recs, stall, cursor := f.records[tok], f.stall[tok], "p1.empty"
+		// The adapter's wire form: every cursor wrapped as b1.<24 hex binding>.<inner>.
+		recs, stall, cursor := f.records[tok], f.stall[tok], "b1.0a1b2c3d4e5f60718293a4b5.p1.empty"
 		if f.notPrivate[tok] {
-			cursor = "c1.0123456789abcdef0123456789abcdef"
+			cursor = "b1.0a1b2c3d4e5f60718293a4b5.f1.0123456789abcdef0123456789abcdef"
 		}
 		f.revokes[tok] = append(f.revokes[tok], ch)
 		f.mu.Unlock()

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -104,5 +105,28 @@ func TestExchangeTransportFailures(t *testing.T) {
 	defer cancel()
 	if _, err := e.Exchange(ctx, "t"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadline: %v", err)
+	}
+}
+
+// A redirect is never followed: a 307 would re-send the form, the user's token in it, to Location.
+func TestExchangeNeverFollowsARedirect(t *testing.T) {
+	var reached atomic.Int32
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached.Add(1)
+		_, _ = io.WriteString(w, `{"access_token":"x","expires_in":900}`)
+	}))
+	t.Cleanup(elsewhere.Close)
+	for _, hc := range []*http.Client{nil, {Timeout: 5 * time.Second}} {
+		e := hub(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, elsewhere.URL+"/token", http.StatusTemporaryRedirect)
+		})
+		e.HTTP = hc
+		_, err := e.Exchange(context.Background(), "civitai_user-token")
+		if err == nil || errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "HTTP 307") {
+			t.Fatalf("got %v, want a non-refusal failure naming the 307", err)
+		}
+	}
+	if n := reached.Load(); n != 0 {
+		t.Fatalf("🔴 the redirect target was reached %d times", n)
 	}
 }

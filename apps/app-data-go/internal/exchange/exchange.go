@@ -82,10 +82,7 @@ func (e *Exchanger) Exchange(ctx context.Context, subject string) (Token, error)
 	req.Header.Set("Accept", "application/json")
 	// RFC 6749 §2.3.1: the id and secret are form-encoded before Basic encoding.
 	req.SetBasicAuth(url.QueryEscape(e.ClientID), url.QueryEscape(e.ClientSecret))
-	hc := e.HTTP
-	if hc == nil {
-		hc = http.DefaultClient
-	}
+	hc := NoRedirects(e.HTTP)
 	now := time.Now
 	if e.Now != nil {
 		now = e.Now
@@ -118,6 +115,18 @@ func (e *Exchanger) Exchange(ctx context.Context, subject string) (Token, error)
 	}
 	// Measured from before the call, so the expiry is never later than the hub's.
 	return Token{Access: body.AccessToken, Expires: start.Add(time.Duration(body.ExpiresIn * float64(time.Second)))}, nil
+}
+
+// NoRedirects is a copy of hc (nil: the default client) that never follows a redirect: the 3xx is
+// returned as the answer. A followed redirect would re-send the request, a 307 or 308 with its body
+// (the user's token) and, to the same host, its credentials, wherever the Location points.
+func NoRedirects(hc *http.Client) *http.Client {
+	c := http.Client{}
+	if hc != nil {
+		c = *hc
+	}
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &c
 }
 
 func safeCode(code string) string {

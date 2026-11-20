@@ -19,7 +19,7 @@ var FallbackReasons = []string{
 }
 
 // CloseReasons are the `reason` values of app_data_streams_closed_total (session.Close*).
-var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "too_large", "end", "malformed", "error", "shutdown"}
+var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown"}
 
 // Outcomes are the `outcome` values of app_data_reads_total.
 var Outcomes = []string{"ok", "refused", "bad_request", "unauthenticated", "busy", "error"}

@@ -63,10 +63,13 @@ also what makes a fully revoked grant answer the site's refusal rather than an e
 **Only private collections are in contract.** The private feed serves only collections declared
 `private`; a shared collection's schema is served by the adapter's public feed, which answers
 something else than the REST list. The service tells the two apart by the cursor of the stream's
-`Live`:
+`Live`. The adapter wraps every cursor it sends as `b1.<24 hex binding>.<inner>` (`subscription.ts`
+`bindCursor`, `BOUND_CURSOR_RE`); the service unwraps exactly that grammar (`PrivateFeedCursor`), and
+then:
 
-- the private feed's cursors start with `p1.` (`PrivateCursorPrefix`);
-- the public feeds' cursors start with `c1.`.
+- the private feed's inner cursors start with `p1.` (`PrivateCursorPrefix`);
+- the public document feed's start with `f1.` (`doc-feed.ts`);
+- a cursor outside the `b1.` grammar, a bare `p1.` included, is not private.
 
 A stream whose `Live` is not the private feed's is closed unread, its key is left to REST for 15
 minutes (`not_private`), and the read is answered by REST. This reads the adapter's cursors
@@ -107,6 +110,11 @@ never granted the app `AppDataRead` gets a refused exchange, and the read goes t
 fake hub issues the whole ceiling to a request naming no scope, and the fake adapter fails any test
 shown a token wider than `AppDataRead` (`TestTheExchangedTokenHoldsOnlyAppDataRead`).
 
+Neither the exchange client nor the REST client follows a redirect: the `3xx` is the answer (an
+exchange failure, a `502` from REST). A followed `307`/`308` would re-send the request body (the
+user's token in the exchange form) and, to the same host, its `Authorization`, wherever `Location`
+points.
+
 The client secret is read from a file (`APP_DATA_CLIENT_SECRET_FILE`, preferred) or the environment,
 never both, and no error, log or metric carries it or any token.
 
@@ -130,7 +138,26 @@ per active user per ~14.5 minutes. The cost of reopening is one exchange plus on
 first read after expiry, within `LIVE_WAIT_MS` or answered by REST.
 
 **Max age.** `STREAM_MAX_AGE_MS` defaults to 14 minutes and is refused above 15, so no setting can
-keep a stream past its token. The expiry close is the one that normally fires.
+keep a stream past its exchanged token. The expiry close is the one that normally fires.
+
+**A stream never outlives its user's token either: revocation is bounded at 2 minutes.** The
+exchanged token stays valid when the user's own hub token is revoked (signed out, the app's tokens
+revoked, the user banned), and the adapter's re-check of it may come later. So a live stream
+re-checks the user's token on the read path:
+
+- a read that finds the last check older than 2 minutes exchanges the user's token again before it
+  is answered (one read checks; reads arriving meanwhile are answered within the previous window);
+- a **refusal** (`400`/`401`: the hub no longer exchanges that token) closes the stream, drops its
+  cache and answers the read from REST (`reason="revoked"`), whose answer is the site's;
+- a **failure** (the hub unreachable, a `5xx`, a timeout) keeps serving, and the next check is
+  another 2 minutes later. A hub outage is not evidence of a revocation; treating it as one would
+  turn every outage into a REST surge, and retrying on every read would hammer a hub that is down;
+- with no read, nothing is checked: the cache is only ever served to a read, and every read is
+  checked within the bound.
+
+So a revoked user token is served from the cache for at most 2 minutes after its revocation (plus
+one exchange's time), only to reads that hold that same token. Each check is one exchange per live
+stream per 2 minutes of use; the token it returns is discarded.
 
 ## Isolation
 
@@ -217,19 +244,17 @@ The tests are `TestADeleteRemovesTheRecordFromTheCache` and
 too (the spec's Validity rule 2). A change the cache cannot apply (a malformed upsert, delete or
 `Live`) ends the stream rather than risk serving a record that should have left.
 
-A revoked user token ends the stream at the next exchange, at most ~14.5 minutes later. The lag is
-the adapter's poll plus the time to the next read. REST reads see a revocation at once.
+A revoked user token is served for at most 2 minutes ("Token lifetime" above). A revoked grant's
+lag is the adapter's poll plus the time to the next read. REST reads see a revocation at once.
 
 ## Depends on site changes not in this PR
 
-- **Hub-token imports on REST.** Today the site refuses every `from` on a hub token
-  (`import_hub_token`), so the REST fallback answers that refusal and only the registry path serves a
-  hub token. The operator decided that hub tokens may import when the user grants it, and a separate
-  site PR lifts the refusal. After it:
-  - an import is judged by `decideCollectionRead`, the predicate the private feed runs;
-  - a `from` naming the token's own app reads that app's own storage. That is how every fallback
-    read names its source here, so the site PR must keep a self-`from` an own read rather than
-    refuse it as an import of itself.
+- **An app's own collection on REST.** Hub tokens may import on REST now (#9783): an import is judged
+  by `decideCollectionRead`, the predicate the private feed runs. Every fallback read names its source
+  as `from=<slug>`, so a read of the token's OWN app's collection needs the storage route to treat a
+  `from` naming the token's own app as an own read; today it refuses it (`import_not_declared`: no app declares an import of itself). A
+  separate site PR in progress makes that change. Until it merges, an own-collection read falls back
+  to that refusal, and only the registry path serves it.
 - **Record names (Q2).** A stream names a record by its record core URN (`…/<record_id>`), the REST
   list by its key, and an app cannot match the two. The REST list should expose `recordId`: the
   store reads it (`doc-store.ts`), but `presentDocs` in `doc-store-api.ts` does not return it.

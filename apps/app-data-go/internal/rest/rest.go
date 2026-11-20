@@ -3,12 +3,13 @@
 // with the caller's own hub token, so the site judges it exactly as it judges the app calling it
 // directly. Every read names its source app (`from`), as a registry read names it in its schema.
 //
-// DEPENDS ON A SITE CHANGE NOT IN THIS PR. Today the site refuses every `from` on a hub token
-// (`import_hub_token` in doc-store-access.ts `resolveImportAccess`), so this fallback answers that
-// refusal. A separate site PR lifts it: a hub token may then read another app's collection when the
-// user granted the import, decided by `decideCollectionRead`, the predicate the adapter's private
-// feed runs, and a `from` naming the token's own app reads that app's own storage. Until it merges,
-// only the registry path serves data to a hub token.
+// A hub token may read another app's collection through `from` when the user granted the import
+// (#9783), decided by `decideCollectionRead`, the predicate the adapter's private feed runs.
+//
+// DEPENDS ON A SITE CHANGE IN PROGRESS. A `from` naming the token's OWN app is refused today
+// (`import_not_declared`: no app declares an import of itself); a separate site PR makes the storage route treat it as an own read. Until it
+// merges, this fallback answers an own-collection read with that refusal, and only the registry path
+// serves it.
 package rest
 
 import (
@@ -21,6 +22,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
 )
 
 // PageSize is the store's largest list page (doc-store.types.ts DOC_STORE_BOUNDS.listLimitMax).
@@ -103,10 +106,8 @@ func (c *Client) page(ctx context.Context, token, collection, from, cursor strin
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	hc := c.HTTP
-	if hc == nil {
-		hc = http.DefaultClient
-	}
+	// A redirect is never followed: it would re-send the user's token wherever Location points.
+	hc := exchange.NoRedirects(c.HTTP)
 	res, err := hc.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
