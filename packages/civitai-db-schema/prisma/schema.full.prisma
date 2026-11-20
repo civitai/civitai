@@ -11539,6 +11539,14 @@ enum ServicePreviewKind {
   None
 }
 
+/// The license an offering grants its buyers. Wording per preset: creator-service-license.constants.ts.
+enum ServiceLicensePreset {
+  Personal
+  CommercialCredit
+  CommercialNoCredit
+  Custom
+}
+
 /// The Buzz a deal is paid in. One per deal, fixed at request time, so every leg
 /// draws from and returns to the same account type.
 enum ServiceBuzzType {
@@ -11651,6 +11659,11 @@ model ServiceOffering {
   deliveryDays      Int
   revisionsIncluded Int                   @default(0)
   maxOpenDeals      Int?
+  /// Null: no license terms set. Copied onto each deal at request time.
+  licensePreset      ServiceLicensePreset?
+  /// The seller's own terms; set only with the Custom preset.
+  licenseCustomText  String?
+  licenseAllowResale Boolean               @default(false)
   status            ServiceOfferingStatus @default(Draft)
   /// Set only when a moderator removes the offering: a key of the moderator reason list in code.
   /// Null on a seller's own remove, which is how the two are told apart.
@@ -11711,6 +11724,12 @@ model ServiceDeal {
   revisionsUsed             Int                     @default(0)
   deliveryDays              Int
   previewKind               ServicePreviewKind
+  /// The offering's license when requested, as the buyer agreed to it; never re-read from it.
+  licensePreset             ServiceLicensePreset?
+  licenseCustomText         String?
+  licenseAllowResale        Boolean                 @default(false)
+  /// When the buyer ticked the license checkbox. Null on a deal whose offering had no license.
+  licenseAgreedAt           DateTime?
   /// The offering's maxNsfwLevel when requested; never re-read from the offering.
   maxNsfwLevel              Int                     @default(2)
   status                    ServiceDealStatus       @default(Requested)

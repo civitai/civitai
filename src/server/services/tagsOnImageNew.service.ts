@@ -9,7 +9,7 @@ import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const imageService = () => import('~/server/services/image.service');
 
 type TagsOnImageNewArgs = {

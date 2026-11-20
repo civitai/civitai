@@ -274,6 +274,8 @@ export type ServiceOfferingIngestionStatus = "Pending" | "Scanned" | "Blocked" |
 
 export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
 
+export type ServiceLicensePreset = "Personal" | "CommercialCredit" | "CommercialNoCredit" | "Custom";
+
 export type ServiceBuzzType = "yellow" | "blue" | "green";
 
 export type ServiceDealStatus = "Requested" | "Accepted" | "Delivered" | "InRevision" | "Completed" | "Declined" | "Expired" | "CancellationRequested" | "Cancelled" | "Disputed";
@@ -7149,6 +7151,9 @@ export interface ServiceOffering {
   deliveryDays: number;
   revisionsIncluded: number;
   maxOpenDeals: number | null;
+  licensePreset: ServiceLicensePreset | null;
+  licenseCustomText: string | null;
+  licenseAllowResale: boolean;
   status: ServiceOfferingStatus;
   removedReason: string | null;
   removedDetails: string | null;
@@ -7188,6 +7193,10 @@ export interface ServiceDeal {
   revisionsUsed: number;
   deliveryDays: number;
   previewKind: ServicePreviewKind;
+  licensePreset: ServiceLicensePreset | null;
+  licenseCustomText: string | null;
+  licenseAllowResale: boolean;
+  licenseAgreedAt: Date | null;
   maxNsfwLevel: number;
   status: ServiceDealStatus;
   heldAt: Date | null;
