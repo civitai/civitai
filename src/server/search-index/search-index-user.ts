@@ -7,3 +7,8 @@ export function withoutUserImage<T extends { image?: unknown }>(user: T): Omit<T
   const { image: _image, ...rest } = user;
   return rest;
 }
+
+/** Documents for a refresh of only the `user` of each document (the moderator search tools). */
+export const userRefreshDocuments = <T extends { image?: unknown }>(
+  records: { id: number; user: T }[]
+) => records.map(({ id, user }) => ({ id, user: withoutUserImage(user) }));

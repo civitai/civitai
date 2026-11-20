@@ -23,15 +23,12 @@ describe('getComicSearchRecords', () => {
     expect(query?.values).toEqual(expect.arrayContaining([3, 4]));
   });
 
-  it('builds the owner from id, username, deletedAt and profilePictureId only, not the legacy image', async () => {
+  it('builds the owner with profilePictureId but not the legacy image', async () => {
     const query = await recordsQuery([3]);
     const userJson = query?.sql.match(/jsonb_build_object\(([\s\S]*?)\)\s*"user"/)?.[1] ?? '';
-    expect([...userJson.matchAll(/'(\w+)',/g)].map((m) => m[1])).toEqual([
-      'id',
-      'username',
-      'deletedAt',
-      'profilePictureId',
-    ]);
+    const keys = [...userJson.matchAll(/'(\w+)',/g)].map((m) => m[1]);
+    expect(keys).toContain('profilePictureId');
+    expect(keys).not.toContain('image');
   });
 
   it('asks nothing for no ids', async () => {

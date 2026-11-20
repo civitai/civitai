@@ -72,7 +72,7 @@ const modelRow = (mode: ModelModifier | null) => ({
   allowDerivatives: true,
   allowDifferentLicense: true,
   hashes: [],
-  user: { id: 5, username: 'creator', deletedAt: null, image: null, profilePicture: null },
+  user: { id: 5, username: 'creator', deletedAt: null, image: 'legacy.png', profilePicture: null },
   metrics: [],
   tagsOnModels: [],
   modelVersions: [
@@ -134,6 +134,12 @@ const documentFor = async (mode: ModelModifier | null) => {
 };
 
 describe("a model's search document, built by the real transform", () => {
+  it("carries the creator's profilePicture but not the legacy image", async () => {
+    const { user } = (await documentFor(null)) as unknown as { user: Record<string, unknown> };
+    expect(user).toHaveProperty('profilePicture');
+    expect(user).not.toHaveProperty('image');
+  });
+
   it('lists a taken-down model with no images and no cover ids', async () => {
     const doc = await documentFor(ModelModifier.TakenDown);
     expect(doc.images).toEqual([]);
