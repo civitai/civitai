@@ -301,6 +301,26 @@ environment, and they must never switch the reader on. Without a reader the miss
   `FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT` reads at once (default 4); a read past it is refused at once.
   A failed, refused or late read falls back `metrics-miss-failed` (Node then answers those images
   from the cache, i.e. `statsUnknown: true`; Go leaves that answer to Node).
+- A dedicated ClickHouse for entity metrics (the Node twin: `getImageMetricService` in
+  `src/server/services/image.service.ts`). Configured from the Node app's own variables, so one secret
+  feeds both runtimes: `CLICKHOUSE_METRICS_HOST` (full URL, protocol and port included),
+  `CLICKHOUSE_METRICS_USERNAME`, `CLICKHOUSE_METRICS_PASSWORD` (never filled from another login), and
+  only alongside the reader above (it never turns the computation on). Each request to it is bounded
+  by `CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS` (default 10000); it shares the read cap's value but has
+  its own slots. A populate reads it instead of the reader above only while the Flipt flag
+  `image-metrics-dedicated-clickhouse` is on: the Node app's key, so one switch moves both runtimes.
+  feed-go evaluates no other Flipt flag (§8): this one is read by `internal/flipt` (stdlib, the
+  server's `POST /evaluate/v1/boolean` with `FLIPT_URL`, `FLIPT_FETCHER_SECRET`, `FLIPT_ENVIRONMENT`,
+  entity `global`, no context: the arguments Node's global gate passes; the flag's plain on/off only, the server's evaluator is not the engine Node runs) every 5 s in the background, so a
+  flip takes effect within 5 s with no restart and no request waits on Flipt. Never read yet, an
+  unknown key (404) or no `FLIPT_URL` read off; any other failed read keeps the last good value (as
+  Node's client keeps its last snapshot) until no read has succeeded for 10 minutes, then reads off
+  (logged once per outage). The choice is made once per populate (all its
+  batches go to one server). The query text and settings are unchanged, and inside the dedicated
+  user's constraints (`max_threads` 1, `max_execution_time` 6, nothing else capped). A failed read
+  there falls back `metrics-miss-failed` exactly as above and is never retried on the shared reader:
+  a retry would put the load back on the shared server exactly when the dedicated one is down; the
+  kill switch is the flag.
 - The kept answer (`lookupShared`, write-back off) holds a computed count for 10 s; a reaction in that
   window is not in it (Node's own hash takes the watcher's increments; a §9 divergence).
 - Not ported (cache HITS, unchanged here): the TTL slide on 10% of hits and the background refresh
@@ -466,6 +486,40 @@ the authenticated viewer or for nobody.
   cookie caller). The shadow endpoint does not apply it: Node only samples requests it already accepted.
 - The shadow endpoint receives the original `Cookie` header and verifies it the same way — it never
   trusts an identity asserted by the caller.
+
+### 4.1 The minor content visibility rule
+
+The Node image reads apply one rule (`minorMatureImageVisibleSql` and `isMinorMatureImage` in
+`src/server/common/image-visibility.ts`, the rating test `minorContentRestrictedSql` /
+`isMinorContentRestricted`): an image whose `minor` flag is set (`COALESCE(minor, false)`) and whose
+`nsfwLevel` is NULL, 0 or at least R is shown only to its owner (`i."userId"` = the viewer) and to
+moderators, whatever the viewer's browsing settings (`disableMinor` is a separate, older clause and
+does not replace it). With no viewer it is shown to nobody. This service applies it on every read that
+serves a Node read applying it, through one set of helpers in `internal/hydrate/minormature.go`:
+
+| Go read | Node read | How |
+|---|---|---|
+| `feed.ImagesQuery.Build`: every image page of the gallery, `image.getInfinite` and `GET /api/v1/images` (Postgres pages, post completions, pinned and sponsored posts, the hydrate of the feed service's ids, the legacy `ids` batch) | `getAllImagesUncaptured` (`minorMatureImageVisibleSql({ userId: ownerId, isModerator })`) | `MinorMatureImageVisibleSQL` in the WHERE clause, after the `disableMinor` clause as in Node: the viewer's own images exempt, signed out exempting no one, `TRUE` for a moderator |
+| the showcase cache's miss lookup (`sqlVersionImages`) | `imagesForModelVersionsCache`'s lookupFn (`getImagesForModelVersion` with no user) | `MinorMatureImageHiddenSQL`: the rule with no viewer |
+| `hydrate.Sources.VersionImages` (`model.getAll`'s showcase images and covers) and `GET /api/v1/models`' showcase read | `imagesForModelVersionsCache`'s appendFn (`!isMinorMatureImage(i)`), on every read | `WithoutMinorMatureImages`, before the image tags are read and before any hold or per-viewer filter: for every viewer, owners and moderators included, since the cache is shared between viewers (an entry cached before the lookup left an image out still holds it) |
+
+The feed service's index is not what applies it: Node's query mapper sends the feed only
+`excludeMinor` (for `disableMinor`), so the feed can name such an image, and Node drops it in the
+hydrate, which reads through `getAllImagesUncaptured`. The hydrate here is `Build` with the feed's ids,
+so it drops it the same way. `model.getAll`'s cover is picked from the filtered showcase images, and a
+cover located on another version is read from the same filtered cache, so a restricted cover is no
+cover. Node keeps the `minor` member on these wires (it removes it only on article, bounty and webhook
+payloads, which this service does not serve), and so does this service.
+
+Reads that do not apply it, each for its own reason: the post image count (`getPostImageCounts`, an
+upper bound before any visibility filter), the cover locate step (it reads a cover's post and version,
+not the image), the image meta and video thumbnail lookups (of images a filtered read already chose)
+and profile pictures (Node's profile-picture reads do not apply it). `TestMinorMatureCallSites`
+(`internal/hydrate`) holds the ledger of every source file that reads Image rows or the showcase cache
+or calls the rule, so a new read fails it until it applies the rule or says why it need not. On these
+paths a signed-out viewer is already held to PG (the tRPC domain cap) or has every minor image removed
+(`GET /api/v1/images` always sets `disableMinor`), so signed out the rule changes no answer today; it is
+applied all the same.
 
 ## 5. Wire format
 
@@ -977,8 +1031,9 @@ definitions, so read both figures over a window that begins after it.
 
 ## 8. Flags the Node path reads, and what this service does with them
 
-This service does not evaluate Flipt (a Go Flipt client is a follow-up). Each flag below is either
-irrelevant to the DB path, mirrored by an env var, or makes the affected requests fall back while on.
+This service evaluates one Flipt flag, `image-metrics-dedicated-clickhouse`, itself (`internal/flipt`,
+§3.1; a general Go Flipt client is a follow-up). Every other flag below is either irrelevant to the
+DB path, mirrored by an env var, or makes the affected requests fall back while on.
 The mirrors default to the fail-safe value (fall back) and must be set to the flag's real value.
 
 | Flag | Node effect | Here |
@@ -993,6 +1048,7 @@ The mirrors default to the fail-safe value (fall back) and must be set to the fl
 | event decoration flags (flag `birthday-2026` for event `birthday2026`, …) | which event hats are visible to which viewer: `getVisibleDecorationEvents` asks the event engine and the event's Flipt flag per viewer (signed out: the flag's base; signed in: the flag for that user; a moderator session: always on) | `FEED_GO_DECORATION_EVENTS`: comma-separated event names (the event's `name`, e.g. `birthday2026`, not its flag key) whose hats Node shows to **every** viewer now, i.e. the event has started and its flag's base is on. It must name each such event: left empty while one is live, every image wearing that hat is `null` here and an object in Node (`items.*.images.*.eventDecoration` `type` diffs). After the event ends the hats stay visible (`canWearEventDecorations` includes `ended`), so the value does not change at the end date. Base off (the kill switch) → remove the event; then moderators and testers still see hats in Node and not here (a parity gap, §9) |
 | `use-model-version-cache-for-images` | `image.getInfinite` only: a `prioritizedUserIds` request on the Postgres path takes its ids from `imagesForModelVersionsCache` and is re-sorted into that cache's order; off in production (enabled: false, no rollout) | `FEED_GO_PRIORITIZED_VERSION_CACHE` (default off): on, those requests fall back (`prioritized-version-cache`); off, the SQL branch is ported (§14.2) |
 | `frame-cache-negative` | whether the image frame cache's notFound markers are live (read as "no frame", written for an hour on a miss) | `FEED_GO_FRAME_CACHE_NEGATIVE` (default off, as Node reads a flag it cannot evaluate): off, a marker is a miss (looked up, §3.1) and none is written, as in Node |
+| `image-metrics-dedicated-clickhouse` | the image MetricService reads a dedicated ClickHouse for entity metrics instead of the shared one | read from Flipt (not mirrored): every 5 s in the background; on with `CLICKHOUSE_METRICS_*` set, the metric-hash populate reads the dedicated reader (§3.1) |
 | `kysely-image-reactions`, `image-metrics-swr`, cache L1 switches | same results by another route | nothing to do |
 
 ## 9. Not at parity (yet)

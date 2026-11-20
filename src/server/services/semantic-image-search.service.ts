@@ -1,9 +1,12 @@
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { NsfwLevel } from '~/server/common/enums';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
+import { dbRead } from '~/server/db/client';
 import { getAllImages } from '~/server/services/image.service';
+import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
@@ -58,13 +61,16 @@ const searchServiceCandidates: Record<MediaCollection, CandidateSource> = {
   videos: searchServiceSource('videos', { notFoundMessage: 'Video not found' }),
 };
 
-/** The ids among `ids` that are held media. */
-export async function heldImageIds(ids: number[]): Promise<Set<number>> {
-  if (!ids.length) return new Set();
-  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+/** `items` without the images the shared held-media rule holds, for every viewer, moderators included. */
+async function withoutHeldImages<T extends { id: number }>(items: T[]) {
+  if (!items.length) return items;
+  const held = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT i.id FROM "Image" i
-    WHERE i.id = ANY(${ids}::int[]) AND ${Prisma.raw(semanticImageHeldText('i'))}`;
-  return new Set(rows.map((r) => r.id));
+    WHERE i.id = ANY(${items.map((item) => item.id)}::int[])
+      AND ${Prisma.raw(semanticImageHeldText('i'))}`;
+  if (!held.length) return items;
+  const heldIds = new Set(held.map((row) => row.id));
+  return items.filter((item) => !heldIds.has(item.id));
 }
 
 const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
@@ -113,7 +119,6 @@ export async function searchSemanticImages({
     user,
     await isNonModClampOn(user)
   );
-  // Video search serves the Blocked level to moderators only.
   if (collection === 'videos' && !user?.isModerator) {
     browsingLevel = Flags.removeFlag(browsingLevel, NsfwLevel.Blocked);
     if (!browsingLevel) return emptyPage();
@@ -215,9 +220,7 @@ export async function searchSemanticImages({
       domain,
       headers: { src: 'semanticImageSearch' },
     });
-    if (collection !== 'videos') return items;
-    const held = await heldImageIds(items.map((i) => i.id));
-    return items.filter((i) => !held.has(i.id));
+    return withoutHeldImages(items);
   };
 
   // "More like this" from an image the viewer cannot see would reveal what it resembles.
@@ -276,6 +279,7 @@ export async function searchSemanticImages({
     anyOf: {
       baseModels: input.baseModels,
       type: collection === 'videos' ? undefined : input.types,
+      modelVersionIds: input.modelVersionIds,
     },
     userIds,
     range: {

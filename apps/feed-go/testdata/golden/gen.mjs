@@ -218,6 +218,7 @@ for (const [id, userId, versionId, publishedAt] of [
   [7401, 1001, 6201, day(11)],
   [7011, 1002, null, day(6, 12)],
   [7501, 1001, null, day(9, 14)],
+  [7013, 1002, 6401, day(13)],
 ])
   POSTS[id] = { id, userId, modelVersionId: versionId, publishedAt };
 
@@ -316,6 +317,12 @@ image(8030, 7011, { hideMeta: true, hasMeta: false });
 // An acceptableMinor image (1001's), listed only in a collection, and there only to its owner and to
 // moderators.
 image(8501, 7501);
+// A post of the minor content rule's fixtures (minor-mature-*): a minor-flagged R image the rule shows
+// only to its owner (1002) and moderators, an unflagged R image and a minor-flagged PG-13 image (both
+// shown to every viewer at their level: the controls).
+image(8701, 7013, { index: 0, nsfwLevel: 4, minor: true });
+image(8702, 7013, { index: 1, nsfwLevel: 4 });
+image(8703, 7013, { index: 2, nsfwLevel: 2, minor: true });
 IMAGES[8501].acceptableMinor = true;
 
 // Collections (Collection rows, getUserCollectionPermissionsByIds' read) and their CollectionItem
@@ -479,6 +486,9 @@ const ADDONS = [
   { type: 'some', nsfwLevels: [4, 8, 16], disableMinor: true, excludedTagIds: [9911] },
   { type: 'some', nsfwLevels: [1, 2, 4, 8, 16], disablePoi: true, excludedTagIds: [9901] },
 ];
+// ADDONS without its minor exclusion: what a fixture of the minor content rule reads (`spec.addons`),
+// so that no `disableMinor` hides a minor-flagged image and the rule alone decides on it.
+const ADDONS_NO_MINOR = [ADDONS[1]];
 
 // ---------------------------------------------------------------------------------------------
 // Redis: the world's cache entries, as Node writes them ({...result, cachedAt}, or a marker)
@@ -818,8 +828,8 @@ function resolveAddons(data, browsingLevel, { isModerator } = {}) {
 
 /** getBrowsingSettingAddons: the system key, read raw. */
 function getAddons() {
-  T.raw.set('sys:system:browsing-setting-addons', JSON.stringify(ADDONS));
-  return ADDONS;
+  T.raw.set('sys:system:browsing-setting-addons', JSON.stringify(T.addons));
+  return T.addons;
 }
 
 /** getBlockedBrowsingTags (system-cache.ts): the cache key, read raw. Node reads it on every call;
@@ -1017,6 +1027,10 @@ class NodeError extends Error {
 }
 
 // --- getAllImagesUncaptured: the SQL (over the world), hydration and per-image transform ----------
+/** isMinorMatureImage (src/server/common/image-visibility.ts) over isMinorContentRestricted
+ *  (packages/civitai-shared/src/minor-content-gate.ts): `minor === true` and a level that is
+ *  missing, 0 or at least R. */
+const isMinorMatureImage = (i) => i.minor === true && (i.nsfwLevel == null || i.nsfwLevel === 0 || i.nsfwLevel >= FLAGS.R);
 /** The rows Node's getAllImages SQL returns, for the clauses these inputs reach. */
 function imageSql(q) {
   if (q.techniques?.length) T.techniquesRead = true;
@@ -1056,6 +1070,9 @@ function imageSql(q) {
     }
     if (q.disablePoi && !(i.poi !== true || p.userId === userId)) return false;
     if (q.disableMinor && !(i.minor !== true || (userId && i.userId === userId))) return false;
+    // minorMatureImageVisibleSql({ userId: ownerId, isModerator }) (image-visibility.ts): whatever
+    // disableMinor says, a restricted minor-flagged image is its owner's and moderators' only.
+    if (without !== 'minorMature' && !isModerator && isMinorMatureImage(i) && !(userId && i.userId === userId)) return false;
     if (q.excludedTagIds?.length && tagIdsOf(i.id).some((t) => q.excludedTagIds.includes(t)) && !(userId && i.userId === userId)) return false;
     if (q.modelVersionId && !RESOURCES[i.id].some((r) => r.modelVersionId === q.modelVersionId)) return false;
     if (!q.modelVersionId && q.modelId && !RESOURCES[i.id].some((r) => VERSIONS[r.modelVersionId] === q.modelId)) return false;
@@ -1097,6 +1114,13 @@ function imageSql(q) {
     for (const i of Object.values(IMAGES)) if (passes(i, true)) T[`${key}CandidatePosts`].add(i.postId);
     without = undefined;
   }
+  // Each row the minor content rule alone drops (in a collection, of its items): the fixture's tables
+  // must hold it, or a feed-go without the rule would answer the same.
+  const shown = new Set(Object.values(IMAGES).filter((i) => passes(i, true)).map((i) => i.id));
+  without = 'minorMature';
+  for (const i of Object.values(IMAGES))
+    if (passes(i, true) && !shown.has(i.id) && (!collectionItems || collectionItems.some((ci) => ci.imageId === i.id))) T.posts.add(i.postId);
+  without = undefined;
   // The same for the follow clause.
   if (follows?.length) {
     without = 'followed';
@@ -2260,6 +2284,25 @@ const AS_POSTS = [
     goConfig: { creatorPromotions: '' },
     input: { modelId: 5005, modelVersionId: 6401, sort: 'Most Reactions', browsingLevel: 1, limit: 5 },
   },
+  // The minor content rule (minorMatureImageVisibleSql) on the gallery's Postgres path: post 7013 on
+  // version 6401 holds 8701 (minor-flagged, R, by 1002), 8702 (R) and 8703 (minor-flagged, PG-13). The
+  // addons carry no minor exclusion, so the rule alone decides on 8701.
+  ...[
+    [1003, 'stranger', 'another signed-in viewer: 8701 is left out of the page and of the post completion'],
+    [1002, 'owner', 'its owner: 8701 is kept'],
+    [1004, 'moderator', 'a moderator: 8701 is kept'],
+  ].map(([viewer, who, what]) => ({
+    name: `minor-mature-db-path-${who}`,
+    ...(who === 'stranger' ? { alsoCached: [8701] } : {}),
+    description: `image-index-feed off, level 31 on an NSFW host, the addons without the minor exclusion, for ${what}; 8702 and 8703 are shown to every viewer.`,
+    viewer,
+    host: HOST.blue,
+    addons: ADDONS_NO_MINOR,
+    nodeFlags: { imageIndexFeed: false },
+    goConfig: { imageIndexFeed: false },
+    input: { modelId: 5005, modelVersionId: 6401, sort: 'Newest', browsingLevel: 31, limit: 1 },
+    replies: {},
+  })),
 ];
 
 const V1 = [
@@ -2913,6 +2956,35 @@ const INFINITE = [
     host: HOST.green,
     input: { collectionTagId: 31, browsingLevel: 1, limit: 10 },
   },
+  // The minor content rule (minorMatureImageVisibleSql) on image.getInfinite, on the feed-service
+  // hydrate and on the Postgres path (a post's own media), over post 7013 (see the gallery fixtures):
+  // 8701 is shown only to its owner (1002) and moderators.
+  ...[
+    [1003, 'stranger', 'another signed-in viewer: 8701 is left out', 'levels=1%2C2%2C4%2C8%2C16&excludedTags=9901&excludePoi=1&viewerId=1003&sort=newest&limit=10'],
+    [1002, 'owner', 'its owner: 8701 is kept', 'levels=1%2C2%2C4%2C8%2C16&excludedTags=9901&excludePoi=1&viewerId=1002&sort=newest&limit=10'],
+    [1004, 'moderator', 'a moderator: 8701 is kept', 'levels=1%2C2%2C4%2C8%2C16&sort=newest&limit=10'],
+  ].flatMap(([viewer, who, what, query]) => [
+    {
+      name: `minor-mature-feed-hydrate-${who}`,
+      ...(who === 'stranger' ? { alsoCached: [8701] } : {}),
+      description: `The global feed at level 31 on an NSFW host, the addons without the minor exclusion: the feed names 8701, 8702 and 8703, and the hydrate decides, for ${what}.`,
+      viewer,
+      host: HOST.blue,
+      addons: ADDONS_NO_MINOR,
+      input: { sort: 'Newest', browsingLevel: 31, limit: 10 },
+      replies: { [query]: { body: { items: [8701, 8702, 8703] } } },
+    },
+    {
+      name: `minor-mature-post-scope-${who}`,
+      ...(who === 'stranger' ? { alsoCached: [8701] } : {}),
+      description: `Post 7013's own media (the Postgres path) at level 31 on an NSFW host, the addons without the minor exclusion, for ${what}.`,
+      viewer,
+      host: HOST.blue,
+      addons: ADDONS_NO_MINOR,
+      input: { postId: 7013, browsingLevel: 31, limit: 5 },
+      replies: {},
+    },
+  ]),
 ];
 
 // ---------------------------------------------------------------------------------------------
@@ -3046,8 +3118,19 @@ function newTrace(name, spec) {
   T.usedReplies = new Set();
   T.events = new Set(spec.events ?? []);
   T.cold = new Set(spec.cold ?? []);
+  T.addons = spec.addons ?? ADDONS;
   T.usernames = new Set();
   T.metaRead = false;
+}
+
+/** `spec.alsoCached`: images whose per-image cache entries (tag ids, frame, metric hash) the fixture
+ *  holds although Node's answer reads none of them (an image the answer leaves out), so a feed-go that
+ *  kept the image fails on its answer, not on a cache miss. */
+function alsoCached(spec) {
+  for (const id of spec.alsoCached ?? []) {
+    for (const k of [K.tagIds, K.frames]) T.packed.set(`${k}:${id}`, worldPacked(k, id));
+    T.hashes.set(`metrics:Image:${id}`, metricsOf(id));
+  }
 }
 
 function checkReplies(spec) {
@@ -3077,6 +3160,7 @@ function emitAsPosts() {
     } else {
       const { value, cacheable } = runAsPosts({ ...spec, nodeFlags });
       checkReplies(spec);
+      alsoCached(spec);
       expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
     }
     writeFixture(dir, spec.name, {
@@ -3091,7 +3175,7 @@ function emitAsPosts() {
       },
       feed: T.feed,
       redis: redisEntries(spec.dropKeys),
-      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(ADDONS) } },
+      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(T.addons) } },
       db: dbTables(),
       expect,
     });
@@ -3127,7 +3211,7 @@ function emitV1() {
       },
       feed: T.feed,
       redis: redisEntries(),
-      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(ADDONS) } },
+      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(T.addons) } },
       db: { ...dbTables({ meta: T.metaRead }), usernames: [...T.usernames] },
       expect,
     });
@@ -3153,6 +3237,7 @@ function emitInfinite() {
     } else {
       const { value, cacheable } = runInfinite({ ...spec, nodeFlags });
       checkReplies(spec);
+      alsoCached(spec);
       expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
     }
     // Every image the feed named is in the tables, so a row the hydrate's own filters drop (the tag
@@ -3170,7 +3255,7 @@ function emitInfinite() {
       },
       feed: T.feed,
       redis: redisEntries(spec.dropKeys),
-      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(ADDONS) } },
+      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(T.addons) } },
       db: { ...dbTables({ tags: true }), usernames: [...T.usernames] },
       expect,
     });

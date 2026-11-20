@@ -493,7 +493,6 @@ const featureFlags = createFeatureFlags({
   // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
   // does, Flipt decides both ways, so keep mods in its rule.
   imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
-  // Video search: Video in /search/semantic's Media type filter, and semanticImageSearch.searchVideos.
   // Mods until the Flipt flag exists; once it does, Flipt decides both ways, so keep mods in its rule.
   semanticVideoSearch: { availability: ['mod'], fliptKey: 'semantic-video-search' },
   // Search v3: the header bar filters the feed you are on (?query=) instead of opening /search/*.
@@ -585,6 +584,9 @@ const featureFlags = createFeatureFlags({
   // Search v3 on pages that filter their own list (PAGE_SEARCH in search-target.ts): the header bar
   // writes the page's ?query= and the page filters by it, instead of a search box of its own.
   pageSearch: { availability: [], fliptKey: 'search-v3-pages' },
+  // Image search by the model versions an image used. Off until the image collection's
+  // modelVersionIds payload is backfilled and indexed: an unindexed filter scans every point.
+  imageSearchResources: { availability: [], fliptKey: 'image-search-resources' },
   // Only takes effect with `feedSearch` on too.
   videoFeedSearch: { availability: [], fliptKey: 'video-feed-search' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per

@@ -113,7 +113,14 @@ describe('an image made with a base model that restricts mature images', () => {
   it.each([
     ['SFW with the flag', image(PG)],
     ['mature without the flag', image(R, false)],
+    ['XXX without the flag', image(16, false)],
   ])('is served to anyone when %s', (_, img) => {
     expect(servedPanel(img, undefined).imageUrl).toBe('u');
+  });
+
+  it('is withheld when rated Blocked, from anyone but its uploader', () => {
+    for (const viewerId of [reader.id, undefined])
+      expect(servedPanel(image(32, false), viewerId).imageUrl).toBeNull();
+    expect(servedPanel(image(32, false), OWNER).imageUrl).toBe('u');
   });
 });

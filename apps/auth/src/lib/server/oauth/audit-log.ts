@@ -14,6 +14,8 @@ export type OAuthEventType =
   | 'token.issued'
   | 'token.refreshed'
   | 'token.revoked'
+  // A rotated (tombstoned) refresh token was presented again; its chain was revoked (offline-grant.ts).
+  | 'token.reuse_detected'
   | 'origin.rejected'
   | 'worker.token.issued'
   | 'invite.sent'

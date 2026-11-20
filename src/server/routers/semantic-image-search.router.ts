@@ -95,6 +95,12 @@ export const semanticImageSearchRouter = router({
       const started = Date.now();
       const { ownImagesOf } = ctx;
       const searched = ownImagesOf ? ownImagesInput(input, ownImagesOf) : input;
+      // Refused, not dropped: results unfiltered by the resource asked for would read as filtered.
+      if (searched.modelVersionIds?.length && !guardFlagEnabled(ctx, 'imageSearchResources'))
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Searching by resource is not available yet',
+        });
       const result = await searchSemanticImages({
         input: searched,
         user: ctx.user,

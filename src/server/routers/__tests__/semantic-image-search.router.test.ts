@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   flagOn: false,
   feedOn: false,
   videoOn: false,
+  resourcesOn: false,
   search: vi.fn(),
   createFeedback: vi.fn(),
   trackSearch: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
     imageSearch: h.flagOn,
     feedSearch: h.feedOn,
     semanticVideoSearch: h.videoOn,
+    imageSearchResources: h.resourcesOn,
   }),
 }));
 vi.mock('~/server/services/semantic-image-search.service', async (importOriginal) => ({
@@ -61,6 +63,7 @@ const caller = (user: typeof VIEWER | null = VIEWER, credential: object = {}) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.resourcesOn = false;
   h.search.mockResolvedValue({ items: [], nextCursor: undefined });
   h.createFeedback.mockResolvedValue({ id: 1 });
   h.trackSearch.mockResolvedValue(undefined);
@@ -106,6 +109,23 @@ describe('semanticImageSearch router', () => {
     await expect(caller(null).feedback({ rating: 'up' })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
+  });
+
+  // The service filters on an index that may not exist yet; without its flag the filter is refused.
+  it.each([
+    [false, 'refuses'],
+    [true, 'serves'],
+  ])('with imageSearchResources %s, %s a search by model version', async (resourcesOn) => {
+    h.flagOn = true;
+    h.resourcesOn = resourcesOn;
+    const search = caller().search({ query: 'fox', modelVersionIds: [128078] });
+    if (resourcesOn) {
+      await search;
+      expect(h.search.mock.calls[0][0].input.modelVersionIds).toEqual([128078]);
+    } else {
+      await expect(search).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(h.search).not.toHaveBeenCalled();
+    }
   });
 
   it('serves both with the flag', async () => {

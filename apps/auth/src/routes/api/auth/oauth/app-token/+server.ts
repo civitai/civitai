@@ -9,6 +9,7 @@ import { hasScope, isScopeGrantable, scopeFromColumn } from '$lib/server/oauth/s
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { AppBlockSuspendedError, createAppAccessToken } from '$lib/server/oauth/token-helpers';
+import { isOfflineGrantOn } from '$lib/server/oauth/offline-grant';
 import {
   APP_TOKEN_DEFAULT_TTL,
   APP_TOKEN_MAX_TTL,
@@ -83,6 +84,8 @@ export const POST: RequestHandler = async ({ request }) => {
   try {
     minted = await createAppAccessToken(userId, clientId, scope, ttlSeconds, {
       refuseSuspendedAppBlock: true,
+      // Offline-grant flag on: the token records that it was minted for a user on the site.
+      ...((await isOfflineGrantOn()) && { mintOrigin: 'app_token' as const }),
     });
   } catch (err) {
     if (err instanceof AppBlockSuspendedError) {

@@ -20,9 +20,8 @@
  *     finds the user may now read different ratings ends it with `cursor_expired`, so the
  *     consumer re-snapshots under them.
  *
- * No stream requires a scope, so this source never sends `insufficient_scope`. The one stream
- * that reads a scope, an authorized PRIVATE stream (`private-feed.ts`), reads `AppDataRead` from
- * the principal's {@link PrincipalToken} and, without it, streams nothing rather than refusing.
+ * This source never sends `insufficient_scope`; a stream whose scope is missing sends nothing
+ * instead (`private-feed.ts`).
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import {

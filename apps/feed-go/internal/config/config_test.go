@@ -487,6 +487,72 @@ func TestLoadClickHouse(t *testing.T) {
 	}
 }
 
+// The dedicated entity-metrics reader is configured from CLICKHOUSE_METRICS_* only (the Node app's
+// names): the miss computation on and both its host and username set. Its password is its own: unset
+// stays empty, never feed-go's or the app's. Its request timeout defaults to 10 s. FLIPT_* are read
+// only alongside it (FLIPT_ENVIRONMENT defaulting to civitai-app).
+func TestLoadMetricsClickHouse(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "CLICKHOUSE_METRICS_HOST", "CLICKHOUSE_METRICS_USERNAME", "CLICKHOUSE_METRICS_PASSWORD",
+		"CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", "FLIPT_URL", "FLIPT_FETCHER_SECRET", "FLIPT_ENVIRONMENT"} {
+		t.Setenv(k, "")
+	}
+	// Every other login set, so a fall-through to any of them shows.
+	t.Setenv("CLICKHOUSE_HOST", "https://app-ch.example.test:8443")
+	t.Setenv("CLICKHOUSE_USERNAME", "app-writer")
+	t.Setenv("CLICKHOUSE_PASSWORD", "app-pw")
+	t.Setenv("FEED_GO_CLICKHOUSE_HOST", "https://ch.example.test:8443")
+	t.Setenv("FEED_GO_CLICKHOUSE_USERNAME", "feed-go-reader")
+	t.Setenv("FEED_GO_CLICKHOUSE_PASSWORD", "feed-go-pw")
+	t.Setenv("FLIPT_URL", "http://flipt.example.test")
+	t.Setenv("FLIPT_FETCHER_SECRET", "flipt-tok")
+	load := func() *Config {
+		t.Helper()
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	if c := load(); c.MetricsClickHouseURL != "" || c.MetricsClickHouseUsername != "" || c.FliptURL != "" ||
+		c.MetricsClickHouseRequestTimeout != 10*time.Second {
+		t.Fatalf("unset: %q %q flipt %q timeout %v; want no reader, no flag read, 10s", c.MetricsClickHouseURL,
+			c.MetricsClickHouseUsername, c.FliptURL, c.MetricsClickHouseRequestTimeout)
+	}
+	t.Setenv("CLICKHOUSE_METRICS_HOST", "https://metrics-ch.example.test:8443")
+	if c := load(); c.MetricsClickHouseURL != "" {
+		t.Fatalf("host without username: %q, want unset", c.MetricsClickHouseURL)
+	}
+	t.Setenv("CLICKHOUSE_METRICS_USERNAME", "metrics-reader")
+	c := load()
+	if c.MetricsClickHouseURL != "https://metrics-ch.example.test:8443" || c.MetricsClickHouseUsername != "metrics-reader" || c.MetricsClickHousePassword != "" {
+		t.Fatalf("host and username, no password: %q %q %q; want no other login's password", c.MetricsClickHouseURL,
+			c.MetricsClickHouseUsername, c.MetricsClickHousePassword)
+	}
+	if c.FliptURL != "http://flipt.example.test" || c.FliptClientToken != "flipt-tok" || c.FliptEnvironment != "civitai-app" {
+		t.Fatalf("flipt %q %q %q; want FLIPT_URL, FLIPT_FETCHER_SECRET, civitai-app", c.FliptURL, c.FliptClientToken, c.FliptEnvironment)
+	}
+	if c.ClickHouseURL != "https://ch.example.test:8443" || c.ClickHouseUsername != "feed-go-reader" || c.ClickHousePassword != "feed-go-pw" {
+		t.Fatalf("shared reader changed: %q %q %q", c.ClickHouseURL, c.ClickHouseUsername, c.ClickHousePassword)
+	}
+	t.Setenv("CLICKHOUSE_METRICS_PASSWORD", "metrics-pw")
+	t.Setenv("CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", "7500")
+	t.Setenv("FLIPT_ENVIRONMENT", "other-env")
+	if c := load(); c.MetricsClickHousePassword != "metrics-pw" || c.MetricsClickHouseRequestTimeout != 7500*time.Millisecond || c.FliptEnvironment != "other-env" {
+		t.Fatalf("set: %q %v %q", c.MetricsClickHousePassword, c.MetricsClickHouseRequestTimeout, c.FliptEnvironment)
+	}
+	t.Setenv("CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", "0")
+	if c := load(); c.MetricsClickHouseRequestTimeout != 10*time.Second {
+		t.Fatalf("zero timeout: %v, want the 10s default", c.MetricsClickHouseRequestTimeout)
+	}
+	t.Setenv("FEED_GO_COMPUTE_MISSES", "false")
+	if c := load(); c.MetricsClickHouseURL != "" || c.FliptURL != "" {
+		t.Fatalf("compute off: %q flipt %q, want unset", c.MetricsClickHouseURL, c.FliptURL)
+	}
+}
+
 // FEED_GO_METRICS_LOCK_WAIT_MS bounds the wait on another process's populate lock: 500 ms by default;
 // a positive integer is that many ms; zero, negative or junk is the default (as every FEED_GO_*_MS),
 // never a zero bound that would fall back on every held lock without a read. It is independent of

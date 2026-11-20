@@ -1,0 +1,79 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`simpleEmailWithTemplate > renders the shared shell 1`] = `
+"<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html lang="en" dir="ltr" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="supported-color-schemes" content="light dark" />
+  <title>Your app &quot;Pixel Pal&quot; is approved</title>
+  <!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->
+  <style>
+  :root { color-scheme: light dark; supported-color-schemes: light dark; }
+  @media (prefers-color-scheme: dark) {
+    .em-body, .em-outer { background-color: #101113 !important; }
+    .em-card { background-color: #25262B !important; border-color: #373A40 !important; }
+    .em-text, .em-h1 { color: #C1C2C5 !important; }
+    .em-footer, .em-muted { color: #A6A7AB !important; border-color: #373A40 !important; }
+    .em-card a:not(.em-btn) { color: #4DABF7 !important; }
+  }
+</style>
+  <!--[if mso]><style>
+  table, td, h1, p, a { font-family: Arial, Helvetica, sans-serif !important; }
+  .em-btn-cell { mso-padding-alt: 12px 24px !important; }
+</style><![endif]-->
+</head>
+<body class="em-body" style="margin: 0; padding: 0; width: 100%; background-color: #f8f9fa; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <div class="em-preheader" style="display: none; max-height: 0; max-width: 0; overflow: hidden; mso-hide: all; font-size: 1px; line-height: 1px; opacity: 0; color: #f8f9fa;">Preview line for the inbox&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>
+  <table role="presentation" class="em-outer" width="100%" border="0" cellspacing="0" cellpadding="0" bgcolor="#f8f9fa" style="background-color: #f8f9fa;">
+    <tr>
+      <td align="center" style="padding: 24px 12px;">
+        <!--[if mso]><table role="presentation" align="center" width="600" border="0" cellspacing="0" cellpadding="0"><tr><td><![endif]-->
+        <table role="presentation" class="em-card" width="100%" border="0" cellspacing="0" cellpadding="0" bgcolor="#fefefe" style="max-width: 600px; margin: 0 auto; background-color: #fefefe; border: 1px solid #dee2e6; border-radius: 4px;">
+          <tr>
+            <td class="em-band" align="left" bgcolor="#1A1B1E" style="padding: 20px 32px; background-color: #1A1B1E; background-image: linear-gradient(#1A1B1E, #1A1B1E); border-radius: 4px 4px 0 0;">
+              <img src="https://civitai.com/images/email/logo-dark-band@2x.png" width="142" height="30" alt="Civitai" style="display: block; border: 0; outline: none; text-decoration: none; width: 142px; height: 30px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 22px; line-height: 30px; font-weight: bold; color: #ffffff;" />
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 32px 32px 8px 32px;">
+              <h1 class="em-h1" style="margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 24px; line-height: 32px; font-weight: bold; color: #212529;">Your app &quot;Pixel Pal&quot; is approved</h1>
+            </td>
+          </tr>
+          <tr>
+            <td class="em-text" style="padding: 8px 32px 16px 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 16px; line-height: 24px; color: #212529;">
+              <p style="margin: 0;">Body copy</p>
+            </td>
+          </tr>
+            <tr>
+              <td align="center" style="padding: 8px 32px 24px 32px;">
+                <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin: 0 auto;">
+                  <tr>
+                    <td class="em-btn-cell" align="center" bgcolor="#1971C2" style="border-radius: 4px; background-color: #1971C2; mso-padding-alt: 12px 24px;">
+                      <a class="em-btn" href="https://civitai.com/apps/run/pixel-pal" target="_blank" style="display: inline-block; padding: 12px 24px; border: 1px solid #1971C2; border-radius: 4px; background-color: #1971C2; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 16px; line-height: 24px; font-weight: bold; color: #ffffff; text-decoration: none;">Open your app</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td class="em-text" style="padding: 0 32px 24px 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 16px; line-height: 24px; color: #212529;">
+                <p style="margin: 0;">After the button</p>
+              </td>
+            </tr>
+            <tr>
+              <td class="em-footer" style="padding: 16px 32px 24px 32px; border-top: 1px solid #dee2e6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 13px; line-height: 20px; color: #5C5F66;">
+                Footer small print
+              </td>
+            </tr>
+        </table>
+        <!--[if mso]></td></tr></table><![endif]-->
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"
+`;

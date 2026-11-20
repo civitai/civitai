@@ -8,6 +8,8 @@ import { db } from '$lib/server/db/db';
 import { apiKeyScopeInsert } from './scope';
 import { lockAppBlockSuspended } from './app-block-mint-lock';
 import { OAUTH_TOKEN_PREFIX, ACCESS_TOKEN_TTL, REFRESH_TOKEN_TTL } from './constants';
+import { offlineDb, type MintOrigin } from './offline-columns';
+import type { MintPlan } from './offline-grant';
 
 interface TokenPair {
   accessToken: string;
@@ -15,6 +17,17 @@ interface TokenPair {
   refreshToken: string;
   refreshTokenExpiresAt: Date;
 }
+
+/** A grant's tokens under the offline-grant flag: the refresh token only when the plan has one. */
+interface PlannedTokens {
+  accessToken: string;
+  accessTokenExpiresAt: Date;
+  refreshToken?: string;
+  refreshTokenExpiresAt?: Date;
+}
+
+/** The offline-grant columns of one row. Present only with the `oauth-offline-grant` flag on. */
+type OfflineColumns = { mintOrigin: MintOrigin | null; refreshFamilyId?: string };
 
 /** The ApiKey `name` prefix of an access token minted by the client_credentials grant. */
 export const CLIENT_CREDENTIALS_TOKEN_NAME_PREFIX = 'oauth-cc:';
@@ -27,23 +40,30 @@ async function insertToken(opts: {
   type: 'Access' | 'Refresh';
   expiresAt: Date;
   clientCredentials?: boolean;
+  /** Only with the offline-grant flag on; absent, the row is written exactly as before the flag. */
+  offline?: OfflineColumns;
 }): Promise<string> {
   const token = OAUTH_TOKEN_PREFIX + generateKey(36);
   const prefix = opts.clientCredentials
     ? CLIENT_CREDENTIALS_TOKEN_NAME_PREFIX
     : `${opts.type === 'Access' ? 'oauth' : 'oauth-refresh'}:`;
-  await (opts.executor ?? db)
-    .insertInto('ApiKey')
-    .values({
-      key: generateSecretHash(token),
-      name: `${prefix}${opts.clientId}`,
-      ...apiKeyScopeInsert(opts.scope),
-      userId: opts.userId,
-      type: opts.type,
-      expiresAt: opts.expiresAt,
-      clientId: opts.clientId,
-    })
-    .execute();
+  const values = {
+    key: generateSecretHash(token),
+    name: `${prefix}${opts.clientId}`,
+    ...apiKeyScopeInsert(opts.scope),
+    userId: opts.userId,
+    type: opts.type,
+    expiresAt: opts.expiresAt,
+    clientId: opts.clientId,
+  };
+  if (opts.offline) {
+    await offlineDb(opts.executor ?? db)
+      .insertInto('ApiKey')
+      .values({ ...values, ...opts.offline })
+      .execute();
+  } else {
+    await (opts.executor ?? db).insertInto('ApiKey').values(values).execute();
+  }
   return token;
 }
 
@@ -115,6 +135,46 @@ export async function createOAuthTokenPair(
 }
 
 /**
+ * `createOAuthTokenPair` under the `oauth-offline-grant` flag: the same account checks and UserRead
+ * baseline, with each row's mint origin recorded, and a refresh token (with its family and expiry)
+ * only when `plan.refresh` says so.
+ */
+export async function createPlannedOAuthTokens(
+  userId: number,
+  clientId: string,
+  scope: bigint,
+  plan: MintPlan
+): Promise<PlannedTokens> {
+  if (isRefusedModerationAccount({ id: userId }, 'oauth-token'))
+    error(403, 'This account cannot sign in.');
+  await assertScopeAllowedForAccount(userId, scope);
+  const now = new Date();
+  scope = scope | TokenScope.UserRead;
+
+  const accessTokenExpiresAt = new Date(now.getTime() + ACCESS_TOKEN_TTL * 1000);
+  const accessToken = await insertToken({
+    userId,
+    clientId,
+    scope,
+    type: 'Access',
+    expiresAt: accessTokenExpiresAt,
+    offline: { mintOrigin: plan.accessOrigin },
+  });
+  if (!plan.refresh) return { accessToken, accessTokenExpiresAt };
+
+  const refreshTokenExpiresAt = plan.refresh.expiresAt;
+  const refreshToken = await insertToken({
+    userId,
+    clientId,
+    scope,
+    type: 'Refresh',
+    expiresAt: refreshTokenExpiresAt,
+    offline: { mintOrigin: plan.refresh.rootOrigin, refreshFamilyId: plan.refresh.familyId },
+  });
+  return { accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt };
+}
+
+/**
  * Access-only mint for app blocks and the client_credentials grant: no refresh token, caller-bounded TTL,
  * same prefix/hash as the pair. A client_credentials token is named `oauth-cc:<clientId>`.
  */
@@ -123,7 +183,12 @@ export async function createAppAccessToken(
   clientId: string,
   scope: bigint,
   ttlSeconds: number,
-  opts: { clientCredentials?: boolean; refuseSuspendedAppBlock?: boolean } = {}
+  opts: {
+    clientCredentials?: boolean;
+    refuseSuspendedAppBlock?: boolean;
+    /** Recorded on the row only when set, i.e. with the offline-grant flag on. */
+    mintOrigin?: MintOrigin;
+  } = {}
 ): Promise<{ accessToken: string; expiresAt: Date }> {
   await assertScopeAllowedForAccount(userId, scope);
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
@@ -136,6 +201,7 @@ export async function createAppAccessToken(
       type: 'Access',
       expiresAt,
       clientCredentials: opts.clientCredentials,
+      offline: opts.mintOrigin ? { mintOrigin: opts.mintOrigin } : undefined,
     });
   if (!opts.refuseSuspendedAppBlock) return { accessToken: await insert(), expiresAt };
 
