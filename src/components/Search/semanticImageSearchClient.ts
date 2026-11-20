@@ -266,6 +266,9 @@ export type OwnerImageUser = {
  * caller's own name). An empty one lists the caller's recent published images, which the semantic
  * search cannot, at the viewer's browsing level.
  */
+/** How many of the owner's newest images and videos the empty picker lists, scrolled. */
+export const OWNER_LIST_LIMIT = 100;
+
 export function createOwnerImageSearch({
   searchImages = createSemanticImageSearch(),
   getMyImages = (input: MyImagesInput) => trpcVanilla.image.getMyImages.query(input),
@@ -285,8 +288,9 @@ export function createOwnerImageSearch({
     if (!hitsPerPage || params.page) return empty;
     const browsingLevel = readBrowsingLevel(params.filters);
     const { items } = await getMyImages({
-      limit: hitsPerPage,
-      mediaTypes: [MediaType.image],
+      limit: Math.max(hitsPerPage, OWNER_LIST_LIMIT),
+      // The owner's own list, not the semantic search, so videos can be offered here.
+      mediaTypes: [MediaType.image, MediaType.video],
       publishedOnly: true,
     });
     const user = getUser();
