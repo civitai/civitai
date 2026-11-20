@@ -93,11 +93,12 @@ const day = (ids: number[]) => ({
   closesAt: new Date(Date.now() + 3_600_000),
   frozen: false,
   teamPoints: {},
+  // Each flag its own pot and leader, so a badge shows which flag it was built for.
   flags: ids.map((imageId, i) => ({
     imageId,
-    hatsByTeam: { Green: 3 + i },
+    hatsByTeam: { [['Green', 'Blue', 'Pink', 'Yellow'][i % 4]]: 3 + i },
     players: 3 + i,
-    pot: 1000,
+    pot: 1000 * (i + 1),
     winners: [],
   })),
   nextCrucible: null,
@@ -177,13 +178,13 @@ describe('the Flag Race home row for a viewer a flag creator has blocked', () =>
     expect(hiddenCards()).toBe(1);
     // The hidden flag's own points and holder, from the day's summary (102 is the second flag).
     const hidden = document.querySelector('[data-testid="flag-hidden-for-you"]')!;
-    expect(hidden.querySelector('[data-testid="flag-badge-pot"]')?.textContent).toBe('1k pts');
+    expect(hidden.querySelector('[data-testid="flag-badge-pot"]')?.textContent).toBe('2k pts');
     expect(hidden.querySelector('[data-testid="flag-badge"]')?.getAttribute('data-leader')).toBe(
-      'Green'
+      'Blue'
     );
     expect(panel()).not.toBeNull();
-    expect(panel()?.textContent).toContain('3k points up for grabs');
-    expect(panel()?.querySelector('[aria-label="Green holds 3 flags"]')).not.toBeNull();
+    expect(panel()?.textContent).toContain('6k points up for grabs');
+    expect(panel()?.querySelector('[aria-label="Blue holds 1 flag"]')).not.toBeNull();
   });
 
   test('keeps the race panel even when every flag is by a creator who blocked the viewer', async () => {

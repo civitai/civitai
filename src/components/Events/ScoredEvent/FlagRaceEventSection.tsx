@@ -32,7 +32,7 @@ export function FlagRaceEventSection({
   const features = useFeatureFlags();
   const row = useFlagRow(features.flagRace ? event : undefined);
   const ids = useMemo(() => row?.summary.flags.map((f) => f.imageId) ?? [], [row]);
-  const { images, isLoading } = useQueryImages(
+  const { images, isLoading, isError } = useQueryImages(
     {
       ids,
       period: MetricTimeframe.AllTime,
@@ -69,7 +69,8 @@ export function FlagRaceEventSection({
                   {slots.map(({ id, image }) =>
                     image ? (
                       <ImageCard key={id} data={image} />
-                    ) : (
+                    ) : // A failed fetch hides nothing from the viewer: no card claims it does.
+                    isError ? null : (
                       <HiddenFlagCard key={id} imageId={id} />
                     )
                   )}
