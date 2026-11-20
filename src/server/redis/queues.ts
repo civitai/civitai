@@ -327,15 +327,18 @@ function leaseKey(key: string) {
 async function takeConsumerLease(key: string) {
   const token = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
   const lease = leaseKey(key);
+  const now = Date.now();
+  // Lapsed leases go on every write as well as in mergeQueue. Redis drops a sorted set with its
+  // last member, so the key of a queue whose consumers all died does not linger: their uncommitted
+  // buckets keep the queue on the hourly merge, which prunes it.
   await safeSysWrite(
-    () => sysRedis.zAdd(lease, { score: Date.now() + CONSUMER_LEASE_TTL_MS, value: token }),
-    'queues.checkoutQueue lease zAdd',
+    () => sysRedis.zRemRangeByScore(lease, '-inf', now),
+    'queues.checkoutQueue lease prune',
     { key }
   );
-  // The key outlives no lease in it, so one whose consumers all died does not linger.
   await safeSysWrite(
-    () => sysRedis.expire(lease, Math.ceil(CONSUMER_LEASE_TTL_MS / 1000)),
-    'queues.checkoutQueue lease expire',
+    () => sysRedis.zAdd(lease, { score: now + CONSUMER_LEASE_TTL_MS, value: token }),
+    'queues.checkoutQueue lease zAdd',
     { key }
   );
   return async () => {

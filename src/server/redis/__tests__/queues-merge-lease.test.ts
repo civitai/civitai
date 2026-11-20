@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_SUB_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { addToQueue, checkoutQueue, mergeQueue } from '~/server/redis/queues';
 
 // A stateful in-memory sysRedis: the race is an interleaving of a consumer's checkout and the
@@ -48,13 +48,11 @@ const { redis, fail } = (() => {
     async exists(key: string) {
       return strings.has(key) ? 1 : 0;
     },
+    /** Whether a sorted set is stored under the key; Redis drops one with its last member. */
+    hasZset: (key: string) => zsets.has(key),
     async set(key: string, value: string) {
       strings.set(key, value);
       return 'OK';
-    },
-    async expire() {
-      guard('expire');
-      return true;
     },
     async zAdd(key: string, { score, value }: { score: number; value: string }) {
       guard('zAdd');
@@ -64,7 +62,10 @@ const { redis, fail } = (() => {
     },
     async zRem(key: string, member: string) {
       guard('zRem');
-      return zsets.get(key)?.delete(member) ? 1 : 0;
+      const zset = zsets.get(key);
+      const removed = zset?.delete(member) ? 1 : 0;
+      if (zset && !zset.size) zsets.delete(key);
+      return removed;
     },
     async zRemRangeByScore(key: string, min: number | string, max: number | string) {
       guard('zRemRangeByScore');
@@ -76,6 +77,7 @@ const { redis, fail } = (() => {
           zset.delete(member);
           removed++;
         }
+      if (!zset.size) zsets.delete(key);
       return removed;
     },
     async zCount(key: string, min: number | string, max: number | string) {
@@ -100,7 +102,6 @@ const COMMANDS = [
   'del',
   'exists',
   'set',
-  'expire',
   'zAdd',
   'zRem',
   'zRemRangeByScore',
@@ -108,6 +109,7 @@ const COMMANDS = [
 ] as const;
 
 const KEY = 'models_v9:Update';
+const LEASE = `${REDIS_SYS_KEYS.QUEUES.BUCKETS}:${KEY}:${REDIS_SUB_KEYS.QUEUES.CONSUMING}`;
 // Bucket names carry Date.now(), so each step gets its own millisecond.
 let clock = Date.UTC(2026, 10, 15, 18);
 const tick = (ms = 1) => vi.setSystemTime((clock += ms));
@@ -161,6 +163,7 @@ describe('mergeQueue during a consumer checkout', () => {
     tick(2 * 60 * 60 * 1000);
     await mergeQueue(KEY);
     expect(await queued()).toEqual([1, 2, 3]);
+    expect(redis.hasZset(LEASE)).toBe(false);
     tick();
     const next = await checkoutQueue(KEY);
     expect(next.content.sort()).toEqual([1, 2, 3]);
