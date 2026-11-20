@@ -297,10 +297,12 @@ describe('a scanned image the CDN refuses', () => {
     await expect.poll(routeImg).not.toBeNull();
   });
 
-  test("moves a moderator's card to the retracted-media route", async () => {
+  test("moves a moderator's card to the retracted-media route, at full opacity", async () => {
     setUp(true, true);
     await renderScanned();
     await expect.poll(routeImg).not.toBeNull();
+    // Dimmed is for a blocked image; a scanned one served this way is shown as it is.
+    expect(routeImg()!.classList.contains('opacity-30')).toBe(false);
   });
 
   test('keeps everyone else, and a moderator with the leg off, on the CDN', async () => {
