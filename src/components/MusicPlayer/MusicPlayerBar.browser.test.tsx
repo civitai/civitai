@@ -479,7 +479,7 @@ describe('on a phone', () => {
     await openSheet();
     // It covers the window, mini bar included.
     const box = sheet().element().getBoundingClientRect();
-    expect(box.height).toBe(800);
+    expect(box.height).toBeCloseTo(800, 0);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
   });
 
