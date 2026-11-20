@@ -41,10 +41,16 @@ describe('canOpenAppRunPages (the run page gate)', () => {
 
 describe('canUserOpenAppRunPages', () => {
   it('🔴 true only with both run-page flags, evaluated for the hydrated user', async () => {
-    const r = readers();
-    await expect(canUserOpenAppRunPages(4242, r)).resolves.toBe(true);
-    expect(r.getSessionUser.mock.calls).toEqual([[4242]]);
-    expect(r.getFeatureFlags.mock.calls).toEqual([[USER]]);
+    const getSessionUser = vi.fn<RunPageAccessReaders['getSessionUser']>(async () => USER);
+    const getFeatureFlags = vi.fn<RunPageAccessReaders['getFeatureFlags']>(async () => ({
+      appBlocks: true,
+      appBlocksPages: true,
+    }));
+    await expect(canUserOpenAppRunPages(4242, { getSessionUser, getFeatureFlags })).resolves.toBe(
+      true
+    );
+    expect(getSessionUser.mock.calls).toEqual([[4242]]);
+    expect(getFeatureFlags.mock.calls).toEqual([[USER]]);
   });
 
   it.each([

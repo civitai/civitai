@@ -17,6 +17,10 @@ vi.mock('~/server/services/notification.service', () => ({
 
 const { notifyAppBlockSubmitter } = await import('~/server/services/blocks/app-block-notify');
 
+/** The details the one notification was created with. */
+const sentDetails = () =>
+  (mockCreateNotification.mock.calls[0][0] as { details: Record<string, unknown> }).details;
+
 beforeEach(() => {
   mockCreateNotification.mockReset().mockResolvedValue(undefined);
 });
@@ -58,7 +62,7 @@ describe('notifyAppBlockSubmitter', () => {
     const arg = mockCreateNotification.mock.calls[0][0];
     expect(arg.type).toBe('app-block-rejected');
     expect(arg.details.reason).toBe('nope');
-    expect(arg.details).not.toHaveProperty('canOpenRunPage');
+    expect(sentDetails()).not.toHaveProperty('canOpenRunPage');
     expect(canOpen).not.toHaveBeenCalled();
   });
 
@@ -76,7 +80,7 @@ describe('notifyAppBlockSubmitter', () => {
         canOpen
       );
       expect(canOpen.mock.calls).toEqual([[77]]);
-      expect(mockCreateNotification.mock.calls[0][0].details).toEqual({
+      expect(sentDetails()).toEqual({
         slug: 'cool-app',
         hasPage: true,
         canOpenRunPage: answer,
@@ -95,6 +99,6 @@ describe('notifyAppBlockSubmitter', () => {
       async () => Promise.reject(new Error('flags unreadable'))
     );
     expect(mockCreateNotification).toHaveBeenCalledTimes(1);
-    expect(mockCreateNotification.mock.calls[0][0].details.canOpenRunPage).toBe(false);
+    expect(sentDetails().canOpenRunPage).toBe(false);
   });
 });
