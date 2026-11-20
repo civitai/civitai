@@ -158,6 +158,11 @@ export const semanticImageSearchRouter = router({
     .input(semanticImageSearchSchema)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
+      if (input.modelVersionIds?.length && !guardFlagEnabled(ctx, 'imageSearchResources'))
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Searching by resource is not available yet',
+        });
       const result = await searchSemanticImages({
         input,
         user: ctx.user,

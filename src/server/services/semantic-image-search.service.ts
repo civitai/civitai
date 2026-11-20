@@ -32,9 +32,6 @@ import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { Flags } from '~/shared/utils/flags';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import { Prisma } from '@prisma/client';
-import { dbRead } from '~/server/db/client';
-import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 import {

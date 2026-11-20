@@ -341,4 +341,12 @@ describe('semanticImageSearch.searchVideos', () => {
     expect(h.search).toHaveBeenCalledTimes(1);
     expect(h.search).toHaveBeenCalledWith(expect.objectContaining({ collection: 'videos' }));
   });
+
+  it('refuses a search by model version without imageSearchResources, as search does', async () => {
+    h.videoOn = true;
+    await expect(
+      caller().searchVideos({ query: 'fox', modelVersionIds: [128078] })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(h.search).not.toHaveBeenCalled();
+  });
 });

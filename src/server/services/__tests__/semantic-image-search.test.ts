@@ -525,6 +525,28 @@ describe("the own-images search's image query", () => {
   });
 });
 
+// The video path fakes hydration elsewhere; here the real image query runs, so a restricted clip
+// stays a candidate and is dropped by the licence rule, as for images.
+describe('the video query', () => {
+  it.each([
+    ['the base-model licence rule', /OR NOT i\."modelRestricted"/],
+    ['no blocked ingestion', /i\."ingestion" != 'Blocked'/],
+    ["the viewer's browsing level", /i\."nsfwLevel" & \$\d+/],
+  ])('keeps %s', async (_clause, clause) => {
+    const { source } = rankedSource([101, 102, 103]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ query: 'a red fox', imageId: undefined }),
+      user: VIEWER,
+      candidateSource: source,
+      collection: 'videos',
+    }).catch(() => undefined);
+    expect(h.queryWithTimeout, 'the search no longer reaches the image query').toHaveBeenCalled();
+    const stmt = h.queryWithTimeout.mock.calls[0][2] as { text: string };
+    expect(stmt.text.replace(/\s+/g, ' ')).toMatch(clause);
+  });
+});
+
 describe.each([
   ['a text query', { query: 'a red fox', imageId: undefined }],
   ['the "more like this" anchor check', {}],
