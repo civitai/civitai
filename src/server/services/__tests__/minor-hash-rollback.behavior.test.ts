@@ -58,7 +58,7 @@ vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
 }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
 vi.mock('~/server/services/image-models-reindex.service', () => ({
-  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
 }));
 
 // Inlined as literals: the statements bind JSON keys untyped (`meta ? $1`), which the real driver
@@ -89,7 +89,7 @@ const { rollbackMinorHashAutoFlags, revertMinorHashAutoFlag, findMinorHashMatche
   '~/server/services/minor-hash.service'
 );
 const { ruleModelTextScanFlag } = await import('~/server/services/text-scan/actions/flag-ruling');
-const { queueModelsForImageChildTagChanges } = await import(
+const { queueDocumentsForImageMinorChanges } = await import(
   '~/server/services/image-models-reindex.service'
 );
 dbMock.dbWrite.model.findUnique.mockImplementation(
@@ -368,14 +368,14 @@ describe('a rollback on a model that was not minor before the flag', () => {
     await seed({ snapshot: { ...mature, prevMinor: false, prevMinorImageIds: [5] } });
 
     await unset();
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ minorImageIds: [5] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ minorImageIds: [5] });
   });
 
   it('requeues nothing when the snapshot recorded no minor images (control)', async () => {
     await seed({ snapshot: { ...mature, prevMinor: false } });
 
     await unset();
-    expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalled();
+    expect(queueDocumentsForImageMinorChanges).not.toHaveBeenCalled();
   });
 
   // An SFW-only pre-state that the snapshot says was not minor is just an SFW-only model.

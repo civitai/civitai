@@ -1580,7 +1580,8 @@ describe('a user app', () => {
         source: 'export default defineRemixApp({ async run(ctx) { return []; } });',
       },
       author: { userId: author },
-      review: status === 'remix' ? 'approved' : 'rejected',
+      // Approved, then disabled: a disabled app's runs stop whatever its review says.
+      review: 'approved',
     },
   });
   const flagOn = (over: Partial<RemixAppCaller['user']> = {}) =>

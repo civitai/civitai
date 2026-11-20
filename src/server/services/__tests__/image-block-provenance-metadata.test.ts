@@ -198,6 +198,23 @@ describe('createImage', () => {
     expect(createdMetadata()).toEqual(UNRELATED);
   });
 
+  it('drops a client moderation rule id, which decides whether a removal reads as a rule block', async () => {
+    const parsed = imageSchema.parse({
+      url: KEY,
+      metadata: { size: 1, ruleId: 999999999, ruleReason: 'x' },
+    });
+    expect(parsed.metadata).toEqual({ size: 1 });
+
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA, ruleId: 999999999, ruleReason: 'x' },
+    } as never);
+    expect(createdMetadata()).toEqual(UNRELATED);
+  });
+
   it('leaves metadata absent when neither is given', async () => {
     await createImage({ url: KEY, userId: 1, type: 'image', skipIngestion: true } as never);
 
