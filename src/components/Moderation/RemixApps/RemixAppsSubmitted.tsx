@@ -17,7 +17,11 @@ import { useState } from 'react';
 import type { AdminRow } from '~/components/Moderation/RemixApps/RemixAppsAdmin';
 import { moderatorAppUrl } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { moderatorUserLookupPath } from '~/shared/constants/moderator-app';
-import { REMIX_REJECT_REASONS, type RemixRejectReason } from '~/shared/remix-apps/row.schema';
+import {
+  REMIX_REJECT_REASONS,
+  REMIX_SYSTEM_ACTOR,
+  type RemixRejectReason,
+} from '~/shared/remix-apps/row.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -203,7 +207,8 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
             .slice(0, 10)
             .map((entry, i) => (
               <Text key={i} size="xs" c="dimmed">
-                {entry.at} · {entry.action} by {entry.by}
+                {entry.at} · {entry.action} by{' '}
+                {entry.by === REMIX_SYSTEM_ACTOR ? 'the run-time audit' : entry.by}
                 {entry.mature ? ' · mature' : ''}
                 {entry.reason ? ` · ${entry.reason}` : ''}
                 {entry.note ? ` · "${entry.note}"` : ''}

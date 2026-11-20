@@ -809,6 +809,10 @@ export const serverSchema = z
     // 🔴 The value stays in the environment deliberately rather than defaulting here: the
     // mapping is content-safety policy and this repo is public (CLAUDE.md → Security).
     EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
+    // The mapped categories above whose block of a user remix app's run takes the app out of
+    // menus at once, not on the third viewer. Unset: every block does (fails closed). Policy, so
+    // kept in the environment like the map.
+    REMIX_FIRST_STRIKE_CATEGORIES: commaDelimitedStringArray().optional(),
     // Only consulted when EXTERNAL_MODERATION_CATEGORIES is unset; in category mode
     // membership decides and the score is never read.
     EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),

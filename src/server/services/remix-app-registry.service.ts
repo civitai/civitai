@@ -32,6 +32,8 @@ import {
   remixAppSlugSchema,
   REMIX_USER_APPS_PER_AUTHOR,
   REMIX_REVIEW_LOG_MAX,
+  REMIX_COMBINATION_BLOCKS_MAX,
+  REMIX_SYSTEM_ACTOR,
   type REMIX_REVIEW_STATES,
   type RemixRejectReason,
   type RemixReviewLogEntry,
@@ -40,7 +42,11 @@ import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import type { Prisma } from '@prisma/client';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
-import { userRemixFirstRequest, userRemixReplayer } from '~/server/services/remix-app-runner';
+import {
+  userRemixAuthorPrompt,
+  userRemixFirstRequest,
+  userRemixReplayer,
+} from '~/server/services/remix-app-runner';
 import {
   auditRemixAppSource,
   REMIX_SOURCE_UNREADABLE,
@@ -78,6 +84,8 @@ export type RegisteredRemixApp = {
   replay: RemixReplayer;
   /** A user app's first workflow, in one runner call. */
   firstRequest?: (source: RemixAppSource) => Promise<RemixWorkflowRequest | null>;
+  /** A user app's own part of the prompt its next workflow sends (Condition D). */
+  authorPrompt?: ReturnType<typeof userRemixAuthorPrompt>;
   /** A hash of what it runs: a run started on another shape is not replayed. */
   shape: string;
 };
@@ -163,6 +171,8 @@ function register(
       : (source, log) => replayRemixApp(app, source, log);
   const firstRequest =
     'source' in spec ? userRemixFirstRequest(slug, remixBlockId(slug), loadSource) : undefined;
+  const authorPrompt =
+    'source' in spec ? userRemixAuthorPrompt(slug, remixBlockId(slug), loadSource) : undefined;
   const shape = createHash('sha256').update(runShape(spec)).digest('hex').slice(0, 16);
   const { version: _, ...rest } = listing;
   return {
@@ -172,6 +182,7 @@ function register(
     replay,
     shape,
     ...(firstRequest ? { firstRequest } : {}),
+    ...(authorPrompt ? { authorPrompt } : {}),
   };
 }
 
@@ -266,14 +277,11 @@ const sha256Of = (text: string) => createHash('sha256').update(text).digest('hex
 async function readRegistryRows(): Promise<RemixAppRow[]> {
   return (await readRemixAppRows()).map((row) => {
     const manifest = row.manifest as { remix?: { source?: unknown } } | null;
-    const source = manifest?.remix?.source;
-    if (typeof source !== 'string') return row;
+    const remix = manifest?.remix;
+    if (!manifest || !remix || typeof remix.source !== 'string') return row;
     return {
       ...row,
-      manifest: {
-        ...manifest,
-        remix: { ...manifest.remix, source: SOURCE_REF + sha256Of(source) },
-      },
+      manifest: { ...manifest, remix: { ...remix, source: SOURCE_REF + sha256Of(remix.source) } },
     };
   });
 }
@@ -729,9 +737,11 @@ export async function reviewUserRemixApp({
   const minorThemed =
     stored.minorThemed ??
     (reason === 'minor-themed' ? { by: moderatorId, at: new Date().toISOString() } : undefined);
+  // A mod who approves has read the source the refused runs ran: the count starts again.
+  const { combinationBlocks: _blocks, ...unblocked } = stored;
   const manifest = withReviewLog(
     {
-      ...stored,
+      ...(decision === 'approved' ? unblocked : stored),
       version: `${runVersion}.0.0`,
       remix: spec,
       review: decision,
@@ -849,6 +859,64 @@ async function holdMatureApp(first: RemixAppRow, moderatorId: number) {
         select: remixAppRowSelect,
       });
     }
+  }
+}
+
+/**
+ * The run-time audit sending an approved user app back to review, out of menus: its author's own
+ * part of a prompt blocked (B), or viewers' audits refused runs of it (C), counted once per
+ * distinct viewer and pulled on the {@link REMIX_COMBINATION_BLOCKS_MAX}th, or at once on a
+ * `firstStrike`. Re-read and retried when another write lands first. `true` when this pulled it.
+ */
+export async function holdUserRemixApp(
+  slug: string,
+  hold:
+    | { action: 'held-author-prompt' }
+    | { action: 'held-combination-blocks'; viewerId: number; firstStrike: boolean }
+): Promise<boolean> {
+  for (let attempt = 1; ; attempt++) {
+    const { row, manifest, remix } = await readUserRemixApp(slug);
+    // Runs of an app not approved are its author's or a mod's tests; a mod reviews it anyway.
+    if (manifest.review !== 'approved') return false;
+    const before = manifest.combinationBlocks ?? [];
+    let blocks = before;
+    if (hold.action === 'held-combination-blocks') {
+      const viewer = createHash('sha256').update(`${slug}:${hold.viewerId}`).digest('hex');
+      if (!blocks.includes(viewer.slice(0, 16))) blocks = [...blocks, viewer.slice(0, 16)];
+    }
+    const pull =
+      hold.action === 'held-author-prompt' ||
+      hold.firstStrike ||
+      blocks.length >= REMIX_COMBINATION_BLOCKS_MAX;
+    if (!pull && blocks === before) return false;
+    const counted = { ...manifest, combinationBlocks: blocks.slice(-REMIX_COMBINATION_BLOCKS_MAX) };
+    try {
+      if (!pull) await writeUserRemixApp(row, { manifest: counted });
+      else
+        await writeUserRemixApp(row, {
+          manifest: withReviewLog(
+            { ...counted, review: 'submitted' },
+            {
+              by: REMIX_SYSTEM_ACTOR,
+              action: hold.action,
+              sha256: remixReviewHash({ ...manifest, remix }),
+            }
+          ),
+          status: REMIX_STATUS.disabled,
+        });
+    } catch (error) {
+      if (attempt === SWEEP_ATTEMPTS || !(error instanceof TRPCError && error.code === 'CONFLICT'))
+        throw error;
+      continue;
+    }
+    if (pull)
+      logToAxiom({
+        name: 'remix-app-registry',
+        type: 'info',
+        message: 'The run-time audit sent a user remix app back to review',
+        payload: { slug, action: hold.action, blocks: blocks.length },
+      });
+    return pull;
   }
 }
 

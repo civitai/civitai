@@ -117,6 +117,7 @@ vi.mock('~/server/services/orchestrator/remix-provenance', async (importOriginal
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(async () => undefined),
+  classifyPromptServer: vi.fn(async () => ({ outcome: 'pass', triggers: [] })),
 }));
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   createXGuardModerationRequest: vi.fn(async () => undefined),
@@ -384,11 +385,16 @@ import {
   advanceRemixRun,
   MAX_RUN_SEGMENTS,
   postRemixResult,
+  REMIX_APP_HELD,
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
+import { REMIX_SYSTEM_ACTOR } from '~/shared/remix-apps/row.schema';
 import type { RemixAppCaller } from '~/server/services/remix-app.service';
 import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
-import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import {
+  auditPromptServer,
+  classifyPromptServer,
+} from '~/server/services/orchestrator/promptAuditing';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 
@@ -1695,6 +1701,212 @@ describe('a user app', () => {
       await bumpRemixAppRegistry();
       await expect(startOn(MATURE_SOURCE)).rejects.toThrow('Mine does not run on mature images.');
       expect(submits()).toHaveLength(1);
+    });
+
+    describe('the run-time audit', () => {
+      const ASKING_SOURCE =
+        "export default defineRemixApp({ async run(ctx) { const who = await ctx.ask({ kind: 'text', prompt: 'Who is it?', maxLength: 40 }); const out = await ctx.workflow({ kind: 'image', prompt: 'a portrait of ' + who, images: [ctx.source], aspectRatio: 'source', quantity: 1 }); return out.images; } });";
+      const AUTHOR_PART = 'a portrait of ___';
+      const pass = {
+        outcome: 'pass',
+        source: null,
+        triggers: [],
+        blockedFor: [],
+        categories: [],
+        externalError: null,
+      };
+      const blocked = (category: string, message = category) => ({
+        outcome: 'hard',
+        source: category === 'external' ? 'external' : 'regex',
+        triggers: [{ category, message, matchedWord: message }],
+        blockedFor: [message],
+        categories: [],
+        externalError: null,
+      });
+      let stored: ReturnType<typeof userRow>;
+      const askingRow = () => {
+        const row = userRow();
+        row.manifest.remix.source = ASKING_SOURCE;
+        return row;
+      };
+      const written = () =>
+        dbMock.dbWrite.appBlock.updateMany.mock.calls.map(
+          ([args]) =>
+            (args as { data: { status?: string; manifest: Record<string, unknown> } }).data
+        );
+      const runAs = (viewerId: number, who = 'Ada') =>
+        startRemixRun({
+          slug: 'u5-mine',
+          imageId: SOURCE_ID,
+          nonce: `nonce-audit-${viewerId}-${nonce++}`,
+          answers: [who],
+          quote: 30,
+          caller: flagOn({ id: viewerId }),
+        });
+      const refusal = () =>
+        new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Your prompt was flagged: x',
+          cause: { blockedFor: ['x'] },
+        });
+
+      beforeEach(async () => {
+        const runner = fakeRemixRunner({
+          secret: SECRET,
+          apps: {
+            [createHash('sha256').update(ASKING_SOURCE).digest('hex')]: {
+              async run(ctx) {
+                const who = await ctx.ask({ kind: 'text', prompt: 'Who is it?', maxLength: 40 });
+                const out = await ctx.workflow({
+                  kind: 'image',
+                  prompt: 'a portrait of ' + who,
+                  images: [ctx.source],
+                  aspectRatio: 'source',
+                  quantity: 1,
+                });
+                return out.images;
+              },
+            },
+          },
+        });
+        vi.stubGlobal('fetch', runner.fetchImpl);
+        stored = askingRow();
+        dbMock.dbWrite.appBlock.findMany.mockImplementation(async () => [stored] as never);
+        dbMock.dbWrite.appBlock.findUnique.mockImplementation(async () => stored as never);
+        dbMock.dbWrite.appBlock.updateMany.mockImplementation((async ({
+          data,
+        }: {
+          data: object;
+        }) => {
+          stored = { ...stored, ...data } as typeof stored;
+          return { count: 1 };
+        }) as never);
+        await bumpRemixAppRegistry();
+        vi.mocked(classifyPromptServer).mockResolvedValue(pass as never);
+        vi.mocked(auditPromptServer).mockImplementation(async () => undefined);
+        setEnv({ REMIX_FIRST_STRIKE_CATEGORIES: ['synthetic-minor'] });
+      });
+      afterEach(() => {
+        setEnv({ REMIX_FIRST_STRIKE_CATEGORIES: undefined });
+        // clearAllMocks keeps implementations: these would refuse every later test's runs.
+        vi.mocked(auditPromptServer).mockImplementation(async () => undefined);
+        vi.mocked(classifyPromptServer).mockResolvedValue(pass as never);
+        dbMock.dbWrite.appBlock.updateMany.mockReset();
+        dbMock.dbWrite.appBlock.findMany.mockReset();
+      });
+
+      it("B: judges the author's part alone, and the viewer's audit stays the generator's own on the whole prompt", async () => {
+        await expect(runAs(USER_ID)).resolves.toMatchObject({ status: 'running' });
+        expect(vi.mocked(classifyPromptServer)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(classifyPromptServer)).toHaveBeenCalledWith({
+          prompt: AUTHOR_PART,
+          isGreen: false,
+        });
+        // The viewer's audit: once, on the prompt with their words, as the viewer.
+        expect(vi.mocked(auditPromptServer)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(auditPromptServer)).toHaveBeenCalledWith(
+          expect.objectContaining({ prompt: 'a portrait of Ada', userId: USER_ID, isGreen: false })
+        );
+        expect(written()).toHaveLength(0);
+      });
+
+      it("B: an author's part that blocks sends the app back to review and refuses the run before the viewer's audit", async () => {
+        vi.mocked(classifyPromptServer).mockResolvedValue(blocked('nsfw_blocklist') as never);
+        await expect(runAs(USER_ID)).rejects.toMatchObject({
+          code: 'PRECONDITION_FAILED',
+          message: REMIX_APP_HELD,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(submits()).toHaveLength(0);
+        const [held] = written();
+        expect(held.status).toBe('remix_disabled');
+        expect(held.manifest.review).toBe('submitted');
+        expect(held.manifest.reviewLog).toEqual([
+          expect.objectContaining({ by: REMIX_SYSTEM_ACTOR, action: 'held-author-prompt' }),
+        ]);
+      });
+
+      it('C: a viewer refusal counts once per distinct viewer, and the third takes the app out of menus', async () => {
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        vi.mocked(classifyPromptServer).mockImplementation((async ({
+          prompt,
+        }: {
+          prompt: string;
+        }) => (prompt === AUTHOR_PART ? pass : blocked('external', 'synthetic-other'))) as never);
+        // The viewer sees their own refusal, unchanged.
+        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        await expect(runAs(101)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        await expect(runAs(102)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(stored.status).toBe('remix');
+        expect(stored.manifest).toMatchObject({ review: 'approved' });
+        expect(
+          (stored.manifest as { combinationBlocks?: string[] }).combinationBlocks
+        ).toHaveLength(2);
+        // No viewer id on the author's row.
+        expect(JSON.stringify(stored.manifest)).not.toMatch(/\b10[12]\b/);
+
+        await expect(runAs(103)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(stored.status).toBe('remix_disabled');
+        expect(stored.manifest).toMatchObject({
+          review: 'submitted',
+          reviewLog: [
+            expect.objectContaining({ action: 'held-combination-blocks', by: REMIX_SYSTEM_ACTOR }),
+          ],
+        });
+      });
+
+      it.each([
+        [
+          'an operator-listed category',
+          blocked('external', 'synthetic-minor'),
+          ['synthetic-minor'],
+        ],
+        ['a minor-age regex block', blocked('minor_age'), []],
+        [
+          'any block while the operator list is unset',
+          blocked('external', 'synthetic-other'),
+          undefined,
+        ],
+        ['a refusal the classifier cannot judge again', null, ['synthetic-minor']],
+      ])('C: %s takes the app out on the first refusal', async (_, verdict, listed) => {
+        setEnv({ REMIX_FIRST_STRIKE_CATEGORIES: listed as string[] | undefined });
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        vi.mocked(classifyPromptServer).mockImplementation((async ({
+          prompt,
+        }: {
+          prompt: string;
+        }) => {
+          if (prompt === AUTHOR_PART) return pass;
+          if (!verdict) throw new Error('classifier down');
+          return verdict;
+        }) as never);
+        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        expect(stored.status).toBe('remix_disabled');
+        expect(stored.manifest).toMatchObject({ review: 'submitted' });
+      });
+
+      it('C: an approval starts the count again', async () => {
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        vi.mocked(classifyPromptServer).mockImplementation((async ({
+          prompt,
+        }: {
+          prompt: string;
+        }) => (prompt === AUTHOR_PART ? pass : blocked('external', 'synthetic-other'))) as never);
+        for (const viewer of [101, 102, 103])
+          await expect(runAs(viewer)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(stored.manifest).toMatchObject({ review: 'submitted' });
+        const { reviewUserRemixApp, remixReviewHash } = await import(
+          '~/server/services/remix-app-registry.service'
+        );
+        await reviewUserRemixApp({
+          slug: 'u5-mine',
+          sha256: remixReviewHash(stored.manifest as never),
+          seenReview: 'submitted',
+          decision: 'approved',
+          moderatorId: 88,
+        });
+        expect(stored.manifest).not.toHaveProperty('combinationBlocks');
+      });
     });
   });
 

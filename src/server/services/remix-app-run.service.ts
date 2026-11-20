@@ -9,6 +9,12 @@ import {
   submitPresetImageGen,
   whatIfPresetImageGen,
 } from '~/server/services/orchestrator/preset-image-gen.service';
+import {
+  classifyPromptServer,
+  type PromptRefusalCause,
+} from '~/server/services/orchestrator/promptAuditing';
+import { env } from '~/env/server';
+import type { PromptTriggerCategory } from '~/utils/metadata/audit';
 import { signProvenance, verifyProvenance } from '~/server/services/orchestrator/remix-provenance';
 import {
   getWorkflow,
@@ -38,6 +44,7 @@ import {
 } from '~/server/services/remix-app.service';
 import {
   getRegisteredRemixApp,
+  holdUserRemixApp,
   type RegisteredRemixApp,
 } from '~/server/services/remix-app-registry.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
@@ -298,6 +305,75 @@ async function cachedOptionPrices(
   return prices;
 }
 
+export const REMIX_APP_HELD = 'This app is back in review. Try another one.';
+
+/**
+ * Condition B: the author's part of a user app's prompt, judged alone and recorded against nobody.
+ * A block sends the app back to review and refuses the run before the viewer's audit, which would
+ * count the author's words against the viewer.
+ */
+async function assertAuthorPartPasses(slug: string, prompt: string | null, caller: RemixAppCaller) {
+  // Masking the text answers took the app elsewhere: no author part to judge. C still holds.
+  if (prompt == null) return;
+  // A pass with a classifier error goes on: the viewer's audit refuses it, and counts nothing.
+  const { outcome } = await classifyPromptServer({ prompt, isGreen: caller.features.isGreen });
+  if (outcome === 'pass') return;
+  await holdUserRemixApp(slug, { action: 'held-author-prompt' }).catch((error: unknown) =>
+    logToAxiom({
+      name: 'remix-app-run',
+      type: 'error',
+      message: "Could not send a user remix app back to review on its author's prompt",
+      payload: { slug, error: error instanceof Error ? error.message : String(error) },
+    })
+  );
+  throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD });
+}
+
+/** The refusal `auditPromptServer` throws on a block. */
+const isPromptRefusal = (error: unknown) =>
+  error instanceof TRPCError &&
+  error.code === 'BAD_REQUEST' &&
+  Array.isArray((error.cause as Partial<PromptRefusalCause> | undefined)?.blockedFor);
+
+const MINOR_TRIGGERS: PromptTriggerCategory[] = ['minor_age', 'inappropriate_minor'];
+
+/**
+ * Condition C: the viewer's own audit refused a run of a user app. One block per distinct viewer;
+ * a minor-adjacent one, or any while the operator's list is unset or the prompt cannot be judged
+ * again, takes the app out of menus at once. Never masks the viewer's refusal.
+ */
+async function recordCombinationBlock(slug: string, prompt: string, caller: RemixAppCaller) {
+  const firstStrike = await classifyPromptServer({
+    prompt,
+    isGreen: caller.features.isGreen,
+  }).then(
+    ({ triggers }) => {
+      const listed = env.REMIX_FIRST_STRIKE_CATEGORIES;
+      return (
+        !listed ||
+        triggers.some(
+          ({ category, message }) =>
+            MINOR_TRIGGERS.includes(category) ||
+            (category === 'external' && listed.includes(message))
+        )
+      );
+    },
+    () => true
+  );
+  await holdUserRemixApp(slug, {
+    action: 'held-combination-blocks',
+    viewerId: caller.user.id,
+    firstStrike,
+  }).catch((error: unknown) =>
+    logToAxiom({
+      name: 'remix-app-run',
+      type: 'error',
+      message: 'Could not record a refused run of a user remix app',
+      payload: { slug, error: error instanceof Error ? error.message : String(error) },
+    })
+  );
+}
+
 const isSameAnswers = (a: RemixAnswer[], b: RemixAnswer[]) =>
   a.length === b.length && a.every((answer, i) => answer === b[i]);
 
@@ -315,7 +391,7 @@ function recordTail(workflowId: string, tail: RemixAnswer[], caller: RemixAppCal
  */
 async function advance({
   runId,
-  entry: { app, replay: replayer, shape },
+  entry: { app, replay: replayer, shape, author, authorPrompt },
   image,
   segments,
   answers: given,
@@ -324,7 +400,7 @@ async function advance({
   priceOptions = true,
 }: {
   runId: string;
-  entry: Pick<RegisteredRemixApp, 'app' | 'replay' | 'shape'>;
+  entry: Pick<RegisteredRemixApp, 'app' | 'replay' | 'shape' | 'author' | 'authorPrompt'>;
   image: RemixSourceImage;
   segments: Segment[];
   answers: RemixAnswer[];
@@ -433,6 +509,10 @@ async function advance({
   if (quote == null) return { status: 'priced', runId, ...priced };
   assertWithinQuote(priced.cost, quote);
 
+  const { request } = outcome.effect;
+  if (author && authorPrompt && request.kind === 'image')
+    await assertAuthorPartPasses(app.slug, await authorPrompt(source, log), caller);
+
   const tags = remixRunTags({ slug: app.slug, runId, segment: index, runtime: true });
   const remixRun: RemixRunMetadata = { app: app.slug, version: app.version, shape, answers };
   // A segment after the first reads the previous segment's output, which carries no source; the
@@ -445,6 +525,10 @@ async function advance({
     externalId: segmentExternalId(caller.user.id, runId, index),
     sourceProvenance: mint ? [mint] : undefined,
     remixRun,
+  }).catch(async (error: unknown) => {
+    if (author && request.kind === 'image' && isPromptRefusal(error))
+      await recordCombinationBlock(app.slug, request.prompt, caller);
+    throw error;
   });
   bustQueriedWorkflowsCache(caller.user.id).catch(() => null);
   return { status: 'running', runId, workflowId: result.id as string };
