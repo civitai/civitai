@@ -6,7 +6,7 @@
 # Runtime needs real env vars (see .env.example); there is no .env loading in the binary.
 # Both base images are pinned by digest (the same ones apps/feed-go/Dockerfile uses).
 
-FROM golang:1.26-alpine@sha256:30b1e546a9c7fa3b747c2bdba3a0c7bdf3a02ebb4c5b8405d2f948d7e8aac4ec AS build
+FROM golang:1.27-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
