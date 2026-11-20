@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/setup';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -171,6 +171,145 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
       importingApp([SCOPE]);
       const { claims } = await drive('civ_oauth_import');
       expect([...(claims?.scopes ?? [])].sort()).toEqual(['apps:storage', SCOPE]);
+    });
+  });
+
+  /**
+   * 🔴 SEAM: the claims the REAL hub path builds (`withBlockScope` → `resolveHubTokenClaims`), fed
+   * into the REAL storage resolvers (`resolveStorageAccess` → `resolveImportAccess` → the
+   * collection-read predicate). The ledger row is what an INSTALL records
+   * (`BlockRegistry.recordInstallConsent`: every consent-gated scope of the approved manifest, no
+   * prompt), so the hub token carries `apps:storage:import` without the viewer ever being shown a
+   * source. For a hub token, nothing withholds it (the block mint's `withholdUncoveredImportScope`
+   * does not run here): the per-source grant is the ONLY consent check, and these cases pin it.
+   */
+  describe('seam: real hub claims into the real import resolver', () => {
+    const IMPORT = 'apps:storage:import';
+    const SOURCE_ID = 'apb_src_5521';
+    const SOURCE_BLOCK = 'journal-src-5521';
+    // `user:read:self` is the scope the driven route requires.
+    const consumerManifest = {
+      scopes: [SCOPE, 'apps:storage', IMPORT],
+      storage: {
+        collections: { scratch: { visibility: 'private' } },
+        imports: [{ from: SOURCE_BLOCK, collections: ['entries'], access: 'read' }],
+      },
+    };
+    const sourceManifest = {
+      contentRating: 'pg',
+      scopes: ['apps:storage'],
+      storage: { collections: { entries: { visibility: 'private' } } },
+    };
+    /** The per-source grant rows (`app_storage_import_grants`), read on the primary. */
+    let perSourceGrant: { collections: string[]; access: 'read' | 'readwrite' } | null;
+    let grantReads: unknown[][];
+
+    beforeEach(async () => {
+      perSourceGrant = null;
+      grantReads = [];
+      sessionMock.mockResolvedValue({
+        user: { id: USER_ID },
+        apiKeyId: 58,
+        subject: { type: 'oauth', id: CLIENT_ID },
+      });
+      dbMock.dbRead.appBlock.findFirst.mockResolvedValue({
+        id: APP_BLOCK_ID,
+        blockId: BLOCK_ID,
+        manifest: consumerManifest,
+        approvedScopes: [SCOPE, 'apps:storage', IMPORT],
+      });
+      // What an install writes: the consent-gated subset of the effective scopes, via the same
+      // helpers `recordInstallConsent` calls.
+      const { effectiveBlockScopes } = await import('~/shared/constants/block-effective-scopes');
+      const { consentGatedScopes } = await import('~/server/services/blocks/scope-grant.service');
+      const installed = consentGatedScopes(
+        effectiveBlockScopes(consumerManifest, [SCOPE, 'apps:storage', IMPORT])
+      );
+      expect(installed).toContain(IMPORT);
+      dbMock.dbRead.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: installed,
+        revokedAt: null,
+        revokedScopes: [],
+      });
+      // The strict approval of the consumer, and the source's row for the predicate.
+      dbMock.dbRead.appBlock.findUnique.mockImplementation(
+        async ({
+          where,
+        }: {
+          where: { blockId?: string; id?: string; appId_blockId?: { appId: string } };
+        }) => {
+          if (where.appId_blockId) {
+            return where.appId_blockId.appId === CLIENT_ID
+              ? { id: APP_BLOCK_ID, status: 'approved', manifest: consumerManifest }
+              : null;
+          }
+          if (where.blockId === SOURCE_BLOCK) {
+            return {
+              id: SOURCE_ID,
+              appId: 'app_src_5521',
+              status: 'approved',
+              manifest: sourceManifest,
+              updatedAt: null,
+            };
+          }
+          if (where.id === APP_BLOCK_ID) return { manifest: consumerManifest, updatedAt: null };
+          return { status: 'approved' };
+        }
+      );
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          if (!strings.join('?').includes('app_storage_import_grants')) return [];
+          grantReads.push(values);
+          return perSourceGrant ? [{ sourceAppBlockId: SOURCE_ID, ...perSourceGrant }] : [];
+        }
+      );
+      // The run gate on the viewer: they may run apps.
+      isFliptMock.mockImplementation(async () => true);
+      const { sessionClient } = await import('~/server/auth/session-client');
+      vi.spyOn(sessionClient, 'getSessionUserById').mockResolvedValue({
+        id: USER_ID,
+        isModerator: false,
+        tier: 'free',
+        onboarding: 0,
+      } as never);
+    });
+
+    afterEach(() => {
+      // Back to the file's defaults, so no later case inherits the open run gate or the spy.
+      isFliptMock.mockImplementation(async (flag: string) => flag === 'app-blocks-runtime-enabled');
+      vi.restoreAllMocks();
+    });
+
+    async function importThroughRealHubClaims() {
+      const { claims } = await drive('civ_oauth_seam');
+      expect(claims).toBeDefined();
+      // The install-recorded ledger scope rides on the real hub claims, with no source shown.
+      expect(claims!.scopes).toContain(IMPORT);
+      const { resolveStorageAccess, resolveImportAccess } = await import(
+        '~/server/services/apps/doc-store-access'
+      );
+      const own = await resolveStorageAccess(claims!, { consentUnavailable: false });
+      expect(own.tokenKind).toBe('hub');
+      return resolveImportAccess(own, { from: SOURCE_BLOCK, collection: 'entries', op: 'read' });
+    }
+
+    it('🔴 an install-recorded ledger scope with NO per-source grant is refused consent_required', async () => {
+      await expect(importThroughRealHubClaims()).rejects.toMatchObject({
+        code: 'consent_required',
+        details: { scope: IMPORT, from: SOURCE_BLOCK },
+      });
+      // The refusal came from the per-source grant read, for this viewer, consumer and source.
+      expect(grantReads).toEqual([[USER_ID, APP_BLOCK_ID, SOURCE_ID]]);
+    });
+
+    it('POSITIVE CONTROL: with the per-source grant covering the import, it is allowed', async () => {
+      perSourceGrant = { collections: ['entries'], access: 'read' };
+      await expect(importThroughRealHubClaims()).resolves.toMatchObject({
+        ctx: { appId: SOURCE_ID, ns: 'prod', viewerUid: USER_ID },
+        tokenKind: 'hub',
+        importedFrom: SOURCE_BLOCK,
+        importer: BLOCK_ID,
+      });
     });
   });
 
