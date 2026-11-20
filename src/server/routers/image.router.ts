@@ -55,6 +55,10 @@ import {
 import { withSharedFeedUsers } from '~/server/utils/feed-shared-users';
 import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
+  IMAGE_404_CACHE_TAG,
+  imageResourcesEdgeTag,
+} from '~/server/services/image-visibility-invalidation.service';
+import {
   addOrRemoveImageTechniquesSchema,
   addOrRemoveImageToolsSchema,
   getEntitiesCoverImage,
@@ -156,6 +160,7 @@ export const imageRouter = router({
     .use(
       edgeCacheIt({
         ttl: CacheTTL.sm,
+        tags: (input: { id: number }) => [imageResourcesEdgeTag(input.id)],
       })
     )
     .query(getImageResourcesHandler),
@@ -171,8 +176,14 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     // A moderation flag on an entry reaches this shared, signed-out list only when these expire.
     // The versioned key drops entries cached before the gallery used the shared image rule.
-    .use(edgeCacheIt({ ttl: CacheTTL.day }))
-    .use(cacheIt({ key: 'image:get404Images:v2', ttl: CacheTTL.day }))
+    .use(edgeCacheIt({ ttl: CacheTTL.day, tags: () => [IMAGE_404_CACHE_TAG] }))
+    .use(
+      cacheIt({
+        key: 'image:get404Images:v2',
+        ttl: CacheTTL.day,
+        tags: () => [IMAGE_404_CACHE_TAG],
+      })
+    )
     .query(() => get404Images()),
   reportCsamImages: moderatorProcedure
     .input(reportCsamImagesSchema)

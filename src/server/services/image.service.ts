@@ -7552,6 +7552,11 @@ export async function updateImageAcceptableMinor({
   if (acceptableMinor) {
     await invalidateManyImageExistence([id]);
   }
+  // Lazy: the invalidation reads post.service, which sits in this module's import cycle.
+  const { invalidateImageVisibilityCaches } = await import(
+    '~/server/services/image-visibility-invalidation.service'
+  );
+  await invalidateImageVisibilityCaches(id);
 
   return image;
 }
