@@ -118,6 +118,7 @@ const { creatorServiceDealsJob } = await import('~/server/jobs/creator-service-d
 const reviews = await import('~/server/services/creator-service-dispute-review.service');
 const escrow = await import('~/server/services/creator-service-escrow.service');
 const dealReviews = await import('~/server/services/creator-service-deal-review.service');
+const publish = await import('~/server/services/creator-service-deal-review-publish');
 const { creatorServiceNotifications } = await import(
   '~/server/notifications/creator-service.notifications'
 );
@@ -296,7 +297,7 @@ const deliver = async (id: number) => {
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false, "createdAt" timestamp(3) NOT NULL DEFAULT now() - interval '1 year');
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TABLE "Report" (id serial PRIMARY KEY);
@@ -3542,6 +3543,113 @@ describe('buyer reviews', () => {
     expect((await deal(id)).releaseAt).toEqual(before);
     expect(await happyEvents(id)).toBe(0);
     expect(await reviewRows(id)).toMatchObject([{ verdict: 'NotQuite', scanStatus: 'Scanned' }]);
+  });
+});
+
+describe('review publishing and counters', () => {
+  const completedBy = async (buyerId = BUYER) => {
+    const { id } = await request({ buyerId, reviewEnabled: true });
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    await deliver(id);
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: buyerId });
+    return id;
+  };
+  const review = (
+    dealId: number,
+    verdict: 'Happy' | 'NotQuite',
+    buyerId = BUYER,
+    comment?: string
+  ) =>
+    dealReviews.reviewServiceDeal({ dealId, userId: buyerId, verdict, comment, reviewFlag: true });
+  const published = async (dealId: number) =>
+    (
+      await q<{ publishedAt: Date | null }>(
+        `SELECT "publishedAt" FROM "ServiceDealReview" WHERE "dealId" = $1`,
+        [dealId]
+      )
+    )[0]?.publishedAt ?? null;
+  const counters = async () =>
+    (
+      await q<{ happyCount: number; reviewCount: number; happySortKey: number }>(
+        `SELECT "happyCount", "reviewCount", "happySortKey" FROM "ServiceOffering" WHERE id = 1`
+      )
+    )[0];
+  const buyers = [10, 11, 12];
+  beforeEach(async () => {
+    await q(`INSERT INTO "User" (id) VALUES (10), (11), (12)`);
+  });
+
+  it('shows a happy review with no comment at once, and counts it', async () => {
+    const id = await completedBy();
+    await review(id, 'Happy');
+    expect(await published(id)).not.toBeNull();
+    expect(await counters()).toEqual({ happyCount: 1, reviewCount: 1, happySortKey: -1 });
+  });
+
+  it("waits on a comment's check before showing the review", async () => {
+    const id = await completedBy();
+    await review(id, 'Happy', BUYER, 'Lovely');
+    expect(await published(id)).toBeNull();
+    expect((await counters()).reviewCount).toBe(0);
+
+    const [{ id: reviewId }] = await q<{ id: number }>(
+      `UPDATE "ServiceDealReview" SET "scanStatus" = 'Scanned' WHERE "dealId" = $1 RETURNING id`,
+      [id]
+    );
+    await publish.syncReviewPublication(reviewId);
+    expect(await published(id)).not.toBeNull();
+    expect((await counters()).happyCount).toBe(1);
+  });
+
+  it('shows a not-quite review only once the deal has settled', async () => {
+    const id = await completedBy();
+    await review(id, 'NotQuite');
+    expect(await published(id)).toBeNull();
+    await q(`UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute' WHERE id = $1`, [
+      id,
+    ]);
+    await escrow.sweepServiceDealReleases();
+    expect((await deal(id)).settledAt).not.toBeNull();
+    expect(await published(id)).not.toBeNull();
+    expect(await counters()).toEqual({ happyCount: 0, reviewCount: 1, happySortKey: -1 });
+  });
+
+  it('scores the happy share once three buyers count, each buyer once', async () => {
+    for (const [i, buyerId] of buyers.entries())
+      await review(await completedBy(buyerId), i < 2 ? 'Happy' : 'NotQuite', buyerId);
+    // Not quite is counted only once settled.
+    await q(
+      `UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute' WHERE "buyerId" = 12`
+    );
+    await escrow.sweepServiceDealReleases();
+    expect(await counters()).toEqual({ happyCount: 2, reviewCount: 3, happySortKey: 2 / 3 });
+
+    // A second deal with the same buyer replaces their vote rather than adding one.
+    await review(await completedBy(12), 'Happy', 12);
+    expect(await counters()).toEqual({ happyCount: 3, reviewCount: 3, happySortKey: 1 });
+  });
+
+  it('does not count a deal under the minimum price or a buyer under a week old at accept', async () => {
+    const cheap = await completedBy(10);
+    await q(`UPDATE "ServiceDeal" SET price = 1 WHERE id = $1`, [cheap]);
+    await review(cheap, 'Happy', 10);
+    await q(`UPDATE "User" SET "createdAt" = now() WHERE id = 11`);
+    await review(await completedBy(11), 'Happy', 11);
+    // Both are shown; neither counts.
+    expect(await published(cheap)).not.toBeNull();
+    expect(await counters()).toEqual({ happyCount: 0, reviewCount: 0, happySortKey: -1 });
+  });
+
+  it('unshows a happy review while a failed final holds the deal, and uncounts it', async () => {
+    const id = await completedBy();
+    await review(id, 'Happy');
+    expect((await counters()).happyCount).toBe(1);
+    // Held before the early release ran.
+    await q(`DELETE FROM "ServiceDealTransaction" WHERE "dealId" = $1 AND leg = 'Release'`, [id]);
+    await q(`UPDATE "ServiceDeal" SET "settledAt" = NULL WHERE id = $1`, [id]);
+    expect(await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED)).toBe(true);
+    expect(await published(id)).toBeNull();
+    expect((await counters()).happyCount).toBe(0);
   });
 });
 

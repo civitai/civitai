@@ -1,5 +1,6 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { syncReviewPublication } from '~/server/services/creator-service-deal-review-publish';
 import { logToAxiom } from '~/server/logging/client';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
@@ -60,6 +61,7 @@ async function settleReviewText(
       AND r.${cols.status} IN ('Pending', 'Error')
       AND (${workflowId ?? null}::text IS NULL OR r.${cols.workflow} = ${workflowId ?? null}::text)
       AND (${text ?? null}::text IS NULL OR r.${cols.text} = ${text ?? null}::text)`;
+  if (type === 'ServiceDealReview') await syncReviewPublication(reviewId);
 }
 
 /** Settles a check, blocked instead while the csam queue holds the text. */
@@ -194,6 +196,7 @@ export async function blockServiceDealReviewText(type: TextType, reviewId: numbe
   await dbWrite.$executeRaw`
     UPDATE "ServiceDealReview" SET ${cols.status} = 'Blocked'
     WHERE "id" = ${reviewId}::int AND ${cols.text} IS NOT NULL`;
+  if (type === 'ServiceDealReview') await syncReviewPublication(reviewId);
 }
 
 /**

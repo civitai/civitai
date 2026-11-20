@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { assertDealText, transitionDeal } from '~/server/services/creator-service-deal.service';
+import { syncDealReviewPublication } from '~/server/services/creator-service-deal-review-publish';
 import { releaseDeal } from '~/server/services/creator-service-escrow.service';
 import { scanServiceDealReviewText } from '~/server/services/service-deal-review-moderation.adapter';
 import { SERVICE_DEAL_REVIEW_EDIT_MS } from '~/shared/constants/creator-services.constants';
@@ -82,6 +83,7 @@ export async function reviewServiceDeal({
       set: Prisma.sql`, "releaseAt" = now()`,
       then: async (tx) => {
         reviewId = await insertReview(tx, dealId, 'Happy', text);
+        await syncDealReviewPublication(tx, dealId);
       },
     });
     if (!moved || reviewId === undefined) throw dealChanged();
@@ -107,7 +109,9 @@ export async function reviewServiceDeal({
         AND d."status" = 'Completed'::"ServiceDealStatus" AND d."reviewEnabledAt" IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM "ServiceDealReview" r WHERE r."dealId" = d."id")`;
     if (!eligible) return undefined;
-    return insertReview(tx, dealId, 'NotQuite', text);
+    const id = await insertReview(tx, dealId, 'NotQuite', text);
+    await syncDealReviewPublication(tx, dealId);
+    return id;
   });
   if (inserted === undefined) throw dealChanged();
   await scanComment(inserted, text);

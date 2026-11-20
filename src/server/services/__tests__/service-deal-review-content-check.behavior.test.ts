@@ -161,7 +161,7 @@ const textScan = ({
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false, "createdAt" timestamp(3) NOT NULL DEFAULT now() - interval '1 year');
     CREATE TABLE "Report" (id serial PRIMARY KEY);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
@@ -266,6 +266,27 @@ describe('a review text check', () => {
     );
     await adapter.scanServiceDealReviewText('ServiceDealReview', REVIEW, submitCheck);
     expect((await statuses()).comment).toBe('Blocked');
+  });
+});
+
+describe('what a settled check does to the review', () => {
+  const publishedAt = async () =>
+    (await q<{ publishedAt: Date | null }>(`SELECT "publishedAt" FROM "ServiceDealReview"`))[0]
+      .publishedAt;
+
+  it('shows a happy review once its comment passes, and unshows it when a moderator removes the text', async () => {
+    await seed(R);
+    expect(await publishedAt()).toBeNull();
+    await xguardResult('ServiceDealReview');
+    expect(await publishedAt()).not.toBeNull();
+    await adapter.blockServiceDealReviewText('ServiceDealReview', REVIEW);
+    expect(await publishedAt()).toBeNull();
+  });
+
+  it("leaves the review's showing to its comment, not the seller's reply", async () => {
+    await seed(R);
+    await xguardResult('ServiceDealReviewReply');
+    expect(await publishedAt()).toBeNull();
   });
 });
 

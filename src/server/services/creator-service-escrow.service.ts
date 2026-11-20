@@ -22,6 +22,7 @@ import {
   MAX_LEG_ATTEMPTS,
 } from '~/server/services/placement-escrow.service';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { syncDealReviewPublication } from '~/server/services/creator-service-deal-review-publish';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
@@ -174,6 +175,8 @@ async function holdForReview(
   await tx.$executeRaw`
     INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "comment")
     VALUES (${dealId}::int, -1, 'Disputed'::"ServiceDealEventType", ${reason}::text)`;
+  // A happy review shown before the hold is unshown until it resolves.
+  await syncDealReviewPublication(tx, dealId);
   return true;
 }
 
@@ -388,10 +391,13 @@ async function markSettled(tx: Db, dealId: number, event: 'Refunded' | 'Released
   const marked = await tx.$executeRaw`
     UPDATE "ServiceDeal" SET "settledAt" = now(), "updatedAt" = now()
     WHERE "id" = ${dealId}::int AND "settledAt" IS NULL`;
-  if (marked > 0)
+  if (marked > 0) {
     await tx.$executeRaw`
       INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type")
       VALUES (${dealId}::int, -1, ${event}::"ServiceDealEventType")`;
+    // A settled deal's review is shown whatever its verdict.
+    await syncDealReviewPublication(tx, dealId);
+  }
   return marked > 0;
 }
 
