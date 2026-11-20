@@ -177,6 +177,17 @@ describe('dedicated metrics ClickHouse client: one retry on a connection-level e
     expect(await counted()).toEqual({ ok: before.ok, failed: before.failed + 1 });
   });
 
+  it('a body read that fails again on retry rethrows the FIRST error and counts one failed retry', async () => {
+    const before = await counted();
+    server.queue = ['reset-mid-body', 'hangup'];
+
+    const error = await rejection(pointLookup());
+    expect(error.message).toBe('aborted');
+    expect(error.code).toBe('ECONNRESET');
+    expect(server.requests).toHaveLength(2);
+    expect(await counted()).toEqual({ ok: before.ok, failed: before.failed + 1 });
+  });
+
   it('a refused connection is retried once, then rethrown as ECONNREFUSED', async () => {
     const { port } = httpServer.address() as AddressInfo;
     // Bound and released, so nothing listens on it.
