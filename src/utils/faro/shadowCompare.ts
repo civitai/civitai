@@ -14,8 +14,8 @@ import { claimShadowCompareSlot } from '~/utils/trpc-shadow-compare';
  * data that changes between two sequential calls does not read as a mismatch.
  *
  * The beacon carries the verdict, the procedure, the candidate's id, both byte lengths, both
- * latencies, both HTTP statuses, and on a mismatch where the texts first differ as a path of keys
- * and indices. Never a response body, a value from one, the request URL (it carries the input) or
+ * latencies, both HTTP statuses, who answered the candidate request (`candidate_served_by`), and
+ * on a mismatch where the texts first differ as a path of keys and indices. Never a response body, a value from one, the request URL (it carries the input) or
  * an error message.
  */
 
@@ -24,10 +24,22 @@ export type ShadowVerdict =
   | 'mismatch'
   | 'candidate_error'
   | 'candidate_timeout'
+  | 'candidate_fallback'
   | 'control_error';
 
 /** One leg's answer: its HTTP status and the response body exactly as received. */
-export type ShadowLegResponse = { status: number; text: string };
+export type ShadowLegResponse = {
+  status: number;
+  text: string;
+  /**
+   * The candidate did not produce this answer itself (it handed the request back to the old route's
+   * backend). Compared bytes would then be the old route's own, so the compare is
+   * `candidate_fallback`, never `match` or `mismatch`.
+   */
+  fallback?: boolean;
+  /** Who answered, as the candidate reports it. Beaconed; keep it to a few fixed values. */
+  servedBy?: string;
+};
 
 /** The control leg's request as it was sent, for a candidate to ask the same question. */
 export type ShadowCandidateRequest = {
@@ -56,9 +68,19 @@ export interface ShadowCandidate {
 
 const CONTROL_PATH_PREFIX = /^((?:https?:\/\/[^/?#]+)?)\/api\/trpc\//;
 
+/** The Go service names who answered each request; only `go` is its own answer. */
+export const GO_SERVED_HEADER = 'x-feed-go-served';
+
+function goServedBy(value: string | null): string {
+  if (value === null) return 'absent';
+  return value === 'go' || value === 'node' ? value : 'other';
+}
+
 /**
  * The same query over the Go transport path (`GO_TRANSPORT_URL`): the control URL with its
- * `/api/trpc/` prefix swapped, so input encoding and headers are the control leg's own.
+ * `/api/trpc/` prefix swapped, so input encoding and headers are the control leg's own. Anything but
+ * `go` in `GO_SERVED_HEADER` is a fallback: `node` when the Go service proxied it, absent when no
+ * route sent it to the Go service at all (the app's own rewrite answered).
  */
 export const goTransportCandidate: ShadowCandidate = {
   id: 'go-transport',
@@ -67,7 +89,13 @@ export const goTransportCandidate: ShadowCandidate = {
     if (!CONTROL_PATH_PREFIX.test(controlUrl)) throw new Error('not a tRPC query URL');
     const url = controlUrl.replace(CONTROL_PATH_PREFIX, `$1${GO_TRANSPORT_URL}/`);
     const response = await globalThis.fetch(url, { ...controlInit, signal });
-    return { status: response.status, text: await response.text() };
+    const servedBy = goServedBy(response.headers.get(GO_SERVED_HEADER));
+    return {
+      status: response.status,
+      text: await response.text(),
+      fallback: servedBy !== 'go',
+      servedBy,
+    };
   },
 };
 
@@ -220,6 +248,7 @@ async function settle(
   if (!control.ok || !controlBytes) verdict = 'control_error';
   else if (timedOut()) verdict = 'candidate_timeout';
   else if (!candidate.ok || !candidateBytes) verdict = 'candidate_error';
+  else if (candidate.response.fallback === true) verdict = 'candidate_fallback';
   else if (await sameBytes(controlBytes, candidateBytes)) verdict = 'match';
   else {
     verdict = 'mismatch';
@@ -245,6 +274,9 @@ async function settle(
   const candidateStatus = candidate.ok ? candidate.response.status : candidate.status;
   if (controlStatus !== undefined) context.control_status = String(controlStatus);
   if (candidateStatus !== undefined) context.candidate_status = String(candidateStatus);
+  if (candidate.ok && candidate.response.servedBy !== undefined) {
+    context.candidate_served_by = candidate.response.servedBy;
+  }
   if (diff) {
     context.diff_path = diff.path;
     context.diff_kind = diff.kind;

@@ -41,6 +41,8 @@ type Reply = {
   hang?: boolean;
   /** Answer only once this resolves. */
   gate?: Promise<void>;
+  /** The Go path's `x-feed-go-served`: `go` unless set; `null` sends none. */
+  servedBy?: string | null;
 };
 type Sent = {
   leg: Leg;
@@ -127,10 +129,10 @@ beforeEach(() => {
         });
       });
     }
-    return new Response(reply.body, {
-      status: reply.status,
-      headers: { 'content-type': 'application/json' },
-    });
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (leg === 'go' && reply.servedBy !== null)
+      headers['x-feed-go-served'] = reply.servedBy ?? 'go';
+    return new Response(reply.body, { status: reply.status, headers });
   });
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -178,10 +180,18 @@ async function callMutation(path: string, input: Record<string, unknown>): Promi
 const browser = (isAuthed: boolean) => {
   (globalThis as { window?: unknown }).window = { isAuthed };
 };
+const allTransport = (enabled: boolean) => {
+  setFeedGoTransportEnabled(enabled);
+  setFeedGoTransportModelGetAllEnabled(enabled);
+  setFeedGoTransportInfiniteEnabled(enabled);
+};
+/** Signed in, shadow on, and every procedure's own Go-transport flag on (shadow needs both). */
 const shadowOn = () => {
   browser(true);
+  allTransport(true);
   setClientShadowCompareEnabled(true);
 };
+const nodeRequests = () => sent.filter((s) => s.leg === 'node');
 
 type Push = [
   { type: string; values: Record<string, number> },
@@ -220,16 +230,18 @@ describe('the allowlist', () => {
 });
 
 describe('gating: no candidate request at all', () => {
-  it('flag off, signed in: one request, no beacon', async () => {
+  it('flag off, signed in, transport on: one request, on the Go path, no beacon', async () => {
     browser(true);
+    allTransport(true);
     await callQuery(INFINITE, INFINITE_INPUT);
     await settleAll();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(sent[0].url).toContain('/api/trpc/image.getInfinite?');
+    expect(sent[0].url).toContain('/api/trpc-go/image.getInfinite?');
     expect(shadowPushes()).toHaveLength(0);
   });
 
   it('SSR (no window), flag on: one request', async () => {
+    allTransport(true);
     setClientShadowCompareEnabled(true);
     await callQuery(INFINITE, INFINITE_INPUT);
     await settleAll();
@@ -239,6 +251,7 @@ describe('gating: no candidate request at all', () => {
 
   it('signed out, flag on: one request (the edge-cacheable path stays alone)', async () => {
     browser(false);
+    allTransport(true);
     setClientShadowCompareEnabled(true);
     await callQuery(INFINITE, INFINITE_INPUT);
     await settleAll();
@@ -275,15 +288,39 @@ describe('gating: no candidate request at all', () => {
     expect(goRequests()).toHaveLength(0);
   });
 
-  it('already on the Go transport, flag on: one request, never compared against itself', async () => {
-    shadowOn();
-    setFeedGoTransportInfiniteEnabled(true);
-    await callQuery(INFINITE, INFINITE_INPUT);
-    await settleAll();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(sent[0].url).toContain('/api/trpc-go/image.getInfinite?');
-    expect(shadowPushes()).toHaveLength(0);
-  });
+  // Shadow only where Go already serves: each procedure needs its OWN transport flag on for this
+  // user. Literal per-procedure cases, so a gate keyed on the wrong flag turns one of them red.
+  const transportCases: Array<[string, Record<string, unknown>, (on: boolean) => void]> = [
+    ['image.getImagesAsPostsInfinite', { modelId: 3, limit: 50 }, setFeedGoTransportEnabled],
+    ['model.getAll', MODELS_INPUT, setFeedGoTransportModelGetAllEnabled],
+    ['image.getInfinite', INFINITE_INPUT, setFeedGoTransportInfiniteEnabled],
+  ];
+  for (const [procedure, input, setOwnTransport] of transportCases) {
+    it(`${procedure}: its transport flag off, flag on: one request to /api/trpc`, async () => {
+      shadowOn();
+      // Every OTHER procedure's transport flag stays on: only this one's own flag may count.
+      setOwnTransport(false);
+      await callQuery(procedure, input);
+      await settleAll();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(sent[0].url).toContain(`/api/trpc/${procedure}?`);
+      expect(goRequests()).toHaveLength(0);
+      expect(shadowPushes()).toHaveLength(0);
+    });
+
+    it(`${procedure}: its transport flag on, flag on: control on /api/trpc, candidate on the Go path`, async () => {
+      browser(true);
+      setClientShadowCompareEnabled(true);
+      setOwnTransport(true);
+      await callQuery(procedure, input);
+      await settleAll();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(nodeRequests()[0].url).toContain(`/api/trpc/${procedure}?`);
+      expect(goRequests()[0].url).toContain(`/api/trpc-go/${procedure}?`);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      expect(shadowPushes()[0][1].context.procedure).toBe(procedure);
+    });
+  }
 
   // Control for the block above: the same call with the flag on and nothing else ruling it out
   // does send the candidate, so the zeros above are the gates speaking.
@@ -299,12 +336,14 @@ describe('gating: no candidate request at all', () => {
 
 describe('the two legs', () => {
   it('the control leg is byte-for-byte the request the flag-off app sends', async () => {
+    // The old route, as a signed-in user with no Go-transport flag sends it.
     browser(true);
     await callQuery(INFINITE, INFINITE_INPUT);
     const flagOff = sent[0];
+    expect(flagOff.url).toContain('/api/trpc/image.getInfinite?');
 
     sent = [];
-    setClientShadowCompareEnabled(true);
+    shadowOn();
     await callQuery(INFINITE, INFINITE_INPUT);
     const control = sent.find((s) => s.leg === 'node');
 
@@ -376,6 +415,7 @@ describe('verdicts', () => {
           verdict: 'match',
           control_status: '200',
           candidate_status: '200',
+          candidate_served_by: 'go',
         },
       },
     ]);
@@ -399,6 +439,7 @@ describe('verdicts', () => {
       verdict: 'mismatch',
       control_status: '200',
       candidate_status: '200',
+      candidate_served_by: 'go',
       diff_path: '$.result.data.json.items[1].id',
       diff_kind: 'value',
     });
@@ -413,6 +454,62 @@ describe('verdicts', () => {
       verdict: 'mismatch',
       diff_path: '$.result.data.json',
       diff_kind: 'key_order',
+    });
+  });
+
+  it('candidate_fallback: the Go service handed it to Node, so identical bytes are not a match', async () => {
+    shadowOn();
+    replies.go = { status: 200, body: CONTROL_BODY, servedBy: 'node' };
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    expect(shadowPushes()[0]).toEqual([
+      {
+        type: 'shadow_compare',
+        values: { control_ms: 0, candidate_ms: 0, control_bytes: 122, candidate_bytes: 122 },
+      },
+      {
+        skipDedupe: true,
+        context: {
+          procedure: 'image.getInfinite',
+          candidate: 'go-transport',
+          verdict: 'candidate_fallback',
+          control_status: '200',
+          candidate_status: '200',
+          candidate_served_by: 'node',
+        },
+      },
+    ]);
+  });
+
+  it('candidate_fallback: a different body from a fallback is not a mismatch either', async () => {
+    shadowOn();
+    replies.go = { status: 200, body: CANDIDATE_BODY, servedBy: 'node' };
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    const context = shadowPushes()[0][1].context;
+    expect(context.verdict).toBe('candidate_fallback');
+    expect(context.diff_path).toBeUndefined();
+  });
+
+  it('candidate_fallback: no served-by header at all (the request never reached the Go service)', async () => {
+    shadowOn();
+    replies.go = { status: 200, body: CONTROL_BODY, servedBy: null };
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    expect(shadowPushes()[0][1].context).toMatchObject({
+      verdict: 'candidate_fallback',
+      candidate_served_by: 'absent',
+    });
+  });
+
+  it('candidate_fallback: an unknown served-by value is not trusted as Go, and is not beaconed', async () => {
+    shadowOn();
+    replies.go = { status: 200, body: CONTROL_BODY, servedBy: 'zq-unknown-value' };
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    expect(shadowPushes()[0][1].context).toMatchObject({
+      verdict: 'candidate_fallback',
+      candidate_served_by: 'other',
     });
   });
 
@@ -457,6 +554,7 @@ describe('verdicts', () => {
       verdict: 'control_error',
       control_status: '500',
       candidate_status: '200',
+      candidate_served_by: 'go',
     });
   });
 
@@ -564,7 +662,7 @@ describe('the app only ever gets the control leg', () => {
     replies.node = { status: 500, body: ERROR_500_BODY };
     const flagOff = await callQuery(INFINITE, INFINITE_INPUT);
 
-    setClientShadowCompareEnabled(true);
+    shadowOn();
     const flagOn = await callQuery(INFINITE, INFINITE_INPUT);
     expect((flagOn.error as Error).message).toBe((flagOff.error as Error).message);
     expect((flagOn.error as Error).message).toBe('boom');
@@ -591,7 +689,9 @@ describe('per page-load cap', () => {
     shadowOn();
     for (let i = 0; i < 21; i++) await callQuery(INFINITE, { ...INFINITE_INPUT, cursor: i });
     await settleAll();
-    expect(goRequests()).toHaveLength(20);
+    // 20 compares (a control and a candidate each), then the 21st goes on the Go path alone.
+    expect(nodeRequests()).toHaveLength(20);
+    expect(goRequests()).toHaveLength(21);
     expect(fetchMock).toHaveBeenCalledTimes(41);
     await vi.waitFor(() => expect(shadowPushes()).toHaveLength(20));
   });
@@ -602,7 +702,9 @@ describe('per page-load cap', () => {
       Array.from({ length: 25 }, (_, i) => callQuery(INFINITE, { ...INFINITE_INPUT, cursor: i }))
     );
     await settleAll();
+    // All 25 took the shadow link; the 5 past the cap are sent as the control alone.
     expect(goRequests()).toHaveLength(20);
+    expect(nodeRequests()).toHaveLength(25);
     expect(fetchMock).toHaveBeenCalledTimes(45);
     await vi.waitFor(() => expect(shadowPushes()).toHaveLength(20));
   });

@@ -3,10 +3,10 @@
  * `~/utils/trpc-go-transport`: `FeatureFlagsProvider` writes it, and component tests mock the tRPC
  * client module with a fixed export list.
  *
- * With the flag on, `shouldShadowCompare` in `~/utils/trpc` sends an allowlisted query down its
- * normal route AND to a candidate route at the same time, and `~/utils/faro/shadowCompare` beacons
- * whether the two raw responses were byte-identical. The app only ever sees the normal route's
- * response.
+ * With the flag on, `shouldShadowCompare` in `~/utils/trpc` sends an allowlisted query whose
+ * Go-transport flag is also on down the old `/api/trpc` route (the control) AND to the candidate at
+ * the same time, and `~/utils/faro/shadowCompare` beacons whether the two raw responses were
+ * byte-identical. The app only ever sees the control's response.
  */
 
 let clientShadowCompareEnabled = false;

@@ -393,15 +393,19 @@ export function shouldUseGoTransport(op: { type: string; path: string; input: un
 /**
  * Shadow-compare this operation (`clientShadowCompare`, `~/utils/faro/shadowCompare`) only when
  * ALL hold: it's a `query` for a procedure in `SHADOW_COMPARE_PROCEDURES` with the flag on and the
- * page load's compare cap not spent, in an authenticated browser (signed-out GETs are edge-cached,
- * and the candidate path is not), and it would leave as a GET (`shouldSendQueryAsPost` false).
- * Only evaluated on the node branch of `terminatingLink`, so a request already on the Go transport
- * is never shadowed against itself.
+ * page load's compare cap not spent, AND that procedure's own Go-transport flag is on for this user
+ * (`isGoTransportEnabledFor`), in an authenticated browser, as a GET (`shouldSendQueryAsPost` false).
+ * Requiring the transport flag ties every compare to a procedure the Go service is already ramped to
+ * serve: at 0% transport nobody is shadowed, and killing the transport flag kills its shadow too.
+ * Evaluated only on the Go branch of `terminatingLink`. A shadowed request's control leg is the old
+ * `/api/trpc` route, so for those requests the app uses the old route's answer and the Go answer is
+ * only compared.
  */
 export function shouldShadowCompare(op: { type: string; path: string; input: unknown }) {
   return (
     op.type === 'query' &&
     isShadowCompareEnabledFor(op.path) &&
+    isGoTransportEnabledFor(op.path) &&
     isAuthedBrowser() &&
     !shouldSendQueryAsPost(op)
   );
@@ -459,21 +463,22 @@ function terminatingLink({
   });
   return splitLink({
     condition: shouldUseGoTransport,
-    true: [
-      feedTransportTimingLink({ transport: 'go', isAuthed: isAuthedBrowser }),
-      httpLink({ transformer: clientTransformer, url: GO_TRANSPORT_URL, headers }),
-    ],
+    // A shadowed request is in neither `feed_transport` arm: it is two requests, one per route.
+    true: splitLink({
+      condition: shouldShadowCompare,
+      true: shadowCompareLink({ url, headers }),
+      false: [
+        feedTransportTimingLink({ transport: 'go', isAuthed: isAuthedBrowser }),
+        httpLink({ transformer: clientTransformer, url: GO_TRANSPORT_URL, headers }),
+      ],
+    }),
     false: [
       feedTransportTimingLink({
         transport: 'node',
         isAuthed: isAuthedBrowser,
         skip: shouldSendQueryAsPost,
       }),
-      splitLink({
-        condition: shouldShadowCompare,
-        true: shadowCompareLink({ url, headers }),
-        false: defaultLink,
-      }),
+      defaultLink,
     ],
   });
 }
