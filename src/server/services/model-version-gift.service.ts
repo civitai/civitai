@@ -23,7 +23,7 @@ import {
 import {
   GIFT_CLAIM_NOTICE,
   GIFT_CLAIMER_NAMES_VISIBLE_SINCE,
-  GIFT_CLAIM_LOCK_CLASS,
+  GIFT_CREATOR_LIMIT_LOCK_CLASS,
   GIFT_CLAIMS_PAGE_MAX,
   GIFT_INDEX_PAGE_MAX,
   GIFT_LIVE_CODES_MAX_PER_VERSION,
@@ -33,7 +33,10 @@ import {
 } from '~/server/services/model-version-gift.constants';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
 import { throwRateLimited } from '~/server/utils/rate-limit-error';
-import { countGiftClaims } from '~/server/services/gift-claim-count';
+import { sessionClient } from '~/server/auth/session-client';
+import { countCreatorGiftClaims } from '~/server/services/gift-claim-count';
+import { createNotification } from '~/server/services/notification.service';
+import { NotificationCategory } from '~/server/common/enums';
 import { calendarWindow } from '~/server/services/usage-limit-counters';
 import { resolveUsageLimit } from '~/server/services/usage-limit-config.service';
 import { type UsageLimitSubject, usageLimitMessage } from '~/shared/constants/usage-limits';
@@ -624,7 +627,8 @@ export async function revokeGiftLinks({
 }
 
 /**
- * Takes back what one claim granted, in one transaction. The claim's slot stays spent, and the
+ * Takes back what one claim granted, in one transaction. The claim's slot on the link stays spent
+ * (its `redemptionCount`), though it no longer counts toward the creator's monthly limit, and the
  * claimer can't claim that link again. Access stays while another of the claimer's claims on the
  * version stands; otherwise the gift's bits go, except those a purchase on the row pays for.
  * Claims from before `visibleSince` are refused like missing ones: their claimers are not named.
@@ -751,8 +755,8 @@ export async function redeemGiftLink(
     modelVersionId: number;
     permissions: number;
     addedById: number;
-    /** The claimer's monthly allowance; a new redemption past `limit` in [start, end) is refused. */
-    allowance?: { limit: number; start: Date; end: Date };
+    /** The link creator's monthly limit; a new redemption past `limit` in [start, end) is refused. */
+    allowance?: { creatorId: number; limit: number; start: Date; end: Date };
   }
 ): Promise<GiftRedemptionOutcome> {
   try {
@@ -763,10 +767,15 @@ export async function redeemGiftLink(
         ON CONFLICT DO NOTHING
       `;
       if (inserted === 1 && allowance) {
-        // Serialises the claimer's new redemptions, so two claims at limit - 1 cannot both count
+        // Serialises new claims of the creator's links, so two claims at limit - 1 cannot both count
         // under it: the second count runs after the first commits and sees its row.
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${GIFT_CLAIM_LOCK_CLASS}::int, ${userId}::int)`;
-        const used = await countGiftClaims(tx, userId, allowance.start, allowance.end);
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${GIFT_CREATOR_LIMIT_LOCK_CLASS}::int, ${allowance.creatorId}::int)`;
+        const used = await countCreatorGiftClaims(
+          tx,
+          allowance.creatorId,
+          allowance.start,
+          allowance.end
+        );
         if (used > allowance.limit) throw new GiftAllowanceUsed(used - 1);
       }
       // A repeat claim takes no new slot. It re-grants while the link is live and the claim not
@@ -814,20 +823,14 @@ export async function redeemGiftLink(
 
 class GiftUnavailable extends Error {}
 
-/** A new claim past the claimer's monthly allowance; rolls the claim back. */
+/** A new claim past the creator's monthly limit; rolls the claim back. */
 class GiftAllowanceUsed extends Error {
   constructor(readonly used: number) {
     super('Gift allowance used');
   }
 }
 
-export async function claimGift({
-  user,
-  code,
-}: {
-  user: UsageLimitSubject & { id: number };
-  code: string;
-}) {
+export async function claimGift({ user, code }: { user: { id: number }; code: string }) {
   const userId = user.id;
   // Before the lookup, so failed guesses count against the limit too.
   await assertRateLimit('claim', userId, GIFT_CLAIM_RATE_LIMIT);
@@ -855,7 +858,18 @@ export async function claimGift({
   const held = await getModelVersionAccessPermissions(userId, version.id);
   if ((held & permissions) === permissions) return { ...result, alreadyHadAccess: true };
 
-  const resolved = await resolveUsageLimit('gifts.monthly', user);
+  // The limit is the creator's: it caps how often their links are claimed, by their membership.
+  // A hub failure also reads as null; resolving that as the free tier would refuse a paying
+  // creator's claimers, so nothing is granted or spent until the tier is known.
+  const creator = (await sessionClient.getSessionUserById(
+    link.createdById
+  )) as UsageLimitSubject | null;
+  if (!creator)
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Could not check this gift right now. Try again in a moment.',
+    });
+  const resolved = await resolveUsageLimit('gifts.monthly', creator);
   const now = Date.now();
   const window = calendarWindow('utc-month', now);
   let outcome: GiftRedemptionOutcome;
@@ -868,25 +882,22 @@ export async function claimGift({
       // The claimer, as purchases record the buyer: the personal-data export keys EntityAccess on
       // addedById, so the creator here would put every recipient in the creator's export.
       addedById: userId,
-      allowance: resolved.applies ? { limit: resolved.limit, ...window } : undefined,
+      allowance: resolved.applies
+        ? { creatorId: link.createdById, limit: resolved.limit, ...window }
+        : undefined,
     });
   } catch (error) {
     if (!(error instanceof GiftAllowanceUsed)) throw error;
+    await notifyGiftLimitReached(link.createdById, resolved.limit, window.start).catch(
+      () => undefined
+    );
     const message = usageLimitMessage(resolved.def, resolved) ?? 'Monthly gift limit reached.';
     const retryAfterSeconds = Math.max(1, Math.ceil((window.end.getTime() - now) / 1000));
     const resetAt = window.end.toISOString();
+    // No limit, used or remaining: they are the creator's, and would tell the claimer the
+    // creator's membership tier and how often their links are claimed.
     throwRateLimited(
-      {
-        retryAfterSeconds,
-        retryAt: resetAt,
-        id: 'gifts.monthly',
-        kind: 'product',
-        limit: resolved.limit,
-        used: error.used,
-        remaining: 0,
-        windowSeconds: (window.end.getTime() - window.start.getTime()) / 1000,
-        resetAt,
-      },
+      { retryAfterSeconds, retryAt: resetAt, id: 'gifts.monthly', kind: 'product', resetAt },
       message
     );
   }
@@ -898,3 +909,18 @@ export async function claimGift({
 }
 
 export type ClaimGiftResult = Awaited<ReturnType<typeof claimGift>>;
+
+/**
+ * Tells the creator their links are full for the month: once per limit per UTC month (the key
+ * dedupes), so a creator who upgrades and fills the higher limit hears again.
+ */
+async function notifyGiftLimitReached(creatorId: number, limit: number, monthStart: Date) {
+  const month = monthStart.toISOString().slice(0, 7);
+  await createNotification({
+    userId: creatorId,
+    category: NotificationCategory.System,
+    type: 'gift-links-monthly-limit',
+    key: `gift-links-monthly-limit:${creatorId}:${month}:${limit}`,
+    details: { limit },
+  });
+}

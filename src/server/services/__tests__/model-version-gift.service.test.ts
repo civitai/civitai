@@ -30,6 +30,12 @@ const {
   revokeGiftLinks,
 } = await import('~/server/services/model-version-gift.service');
 
+const { sessionClient } = await import('~/server/auth/session-client');
+const { notifications } = await import('~/server/notifications/client');
+// The creator's tier comes from the auth hub, and the notice goes to the notifications app.
+const mockGetSessionUserById = vi.spyOn(sessionClient, 'getSessionUserById');
+const mockCreateNotification = vi.spyOn(notifications, 'createNotification');
+
 const OWNER = 10;
 const CLAIMER = 20;
 const VERSION_ID = 555;
@@ -67,7 +73,11 @@ function seed({
   redisMock.redis.ttl.mockResolvedValue(60);
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockGetSessionUserById.mockResolvedValue({ id: OWNER } as never);
+  mockCreateNotification.mockResolvedValue(undefined as never);
+});
 
 /** The values bound into the EntityAccess grant: version, user, permissions, meta, addedBy. */
 const grantValues = () => {
@@ -290,14 +300,15 @@ describe('claimGift', () => {
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
-  describe('monthly allowance', () => {
+  describe("monthly limit on claims of the creator's links", () => {
     const allowanceLocks = () =>
       dbMock.dbWrite.$executeRaw.mock.calls.filter((c: unknown[]) =>
         (c[0] as string[]).join('?').includes('pg_advisory_xact_lock')
       );
-    /** The claimer has `used` claims this month, counting the one being made. */
-    const seedUsed = (used: number) => {
+    /** The creator's links have `used` claims this month, counting the one being made. */
+    const seedUsed = (used: number, creatorTier?: string) => {
       seed();
+      mockGetSessionUserById.mockResolvedValue({ id: OWNER, tier: creatorTier } as never);
       dbMock.dbWrite.$queryRaw.mockResolvedValue([{ used }]);
     };
 
@@ -309,39 +320,50 @@ describe('claimGift', () => {
     });
     afterEach(() => vi.useRealTimers());
 
-    it('refuses the claim past the limit with the product rate-limit metadata', async () => {
+    it('refuses the claim past the limit, tells the claimer why, and notifies the creator', async () => {
       seedUsed(4);
       const refusal = claimGift({ user: { id: CLAIMER }, code });
       await expect(refusal).rejects.toMatchObject({
         code: 'TOO_MANY_REQUESTS',
-        message:
-          "You've claimed your 3 gifts for this month. To get this one, reach out to the person who gave you the link.",
+        message: "This creator's gift links have reached this month's limit.",
         cause: {
           rateLimit: {
             id: 'gifts.monthly',
             kind: 'product',
-            limit: 3,
-            used: 3,
-            remaining: 0,
-            windowSeconds: 30 * 24 * 60 * 60,
             retryAfterSeconds: 10.5 * 24 * 60 * 60,
             retryAt: '2026-12-01T00:00:00.000Z',
             resetAt: '2026-12-01T00:00:00.000Z',
           },
         },
       });
+      // The counts are the creator's: they would tell the claimer the creator's tier and volume.
+      const { rateLimit } = ((await refusal.catch((e) => e)) as { cause: { rateLimit: object } })
+        .cause;
+      expect(rateLimit).not.toHaveProperty('limit');
+      expect(rateLimit).not.toHaveProperty('used');
+      expect(rateLimit).not.toHaveProperty('remaining');
       expect(grantValues()).toEqual([]);
       expect(mockBustOrchestrator).not.toHaveBeenCalled();
-      // Counted under the claimer's lock, over this UTC month.
+      // Counted under the creator's lock, over this UTC month, for the creator's links.
       expect(allowanceLocks()).toHaveLength(1);
+      expect(allowanceLocks()[0].slice(1)).toEqual([expect.any(Number), OWNER]);
       const count = dbMock.dbWrite.$queryRaw.mock.calls.find((c: unknown[]) =>
         (c[0] as string[]).join('?').includes('"claimedAt" >=')
       );
       expect(count?.slice(1)).toEqual([
-        CLAIMER,
+        OWNER,
         new Date('2026-11-01T00:00:00.000Z'),
         new Date('2026-12-01T00:00:00.000Z'),
       ]);
+      // One notice per creator per month: the key is what the notifications app dedupes on.
+      expect(mockCreateNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: OWNER,
+          type: 'gift-links-monthly-limit',
+          key: `gift-links-monthly-limit:${OWNER}:2026-11:3`,
+          details: { limit: 3 },
+        })
+      );
     });
 
     it.each([
@@ -350,14 +372,46 @@ describe('claimGift', () => {
       ['bronze', 15],
       ['silver', 30],
       ['gold', 60],
-    ])('gives tier %s %i claims a month', async (tier, limit) => {
-      const user = { id: CLAIMER, tier };
-      seedUsed(limit);
-      await expect(claimGift({ user, code })).resolves.toMatchObject({ alreadyHadAccess: false });
-      seedUsed(limit + 1);
-      await expect(claimGift({ user, code })).rejects.toMatchObject({
-        cause: { rateLimit: { limit } },
+    ])(
+      "gives a creator on tier %s %i claims a month, whatever the claimer's tier",
+      async (tier, limit) => {
+        const user = { id: CLAIMER, tier: 'gold' };
+        seedUsed(limit, tier);
+        await expect(claimGift({ user, code })).resolves.toMatchObject({ alreadyHadAccess: false });
+        expect(mockGetSessionUserById).toHaveBeenCalledWith(OWNER);
+        seedUsed(limit + 1, tier);
+        await expect(claimGift({ user, code })).rejects.toMatchObject({
+          code: 'TOO_MANY_REQUESTS',
+        });
+        expect(mockCreateNotification).toHaveBeenCalledWith(
+          expect.objectContaining({ details: { limit } })
+        );
+      }
+    );
+
+    it('still refuses with the limit when the notice fails to send', async () => {
+      seedUsed(4);
+      mockCreateNotification.mockRejectedValue(new Error('notifications app down'));
+      await expect(claimGift({ user: { id: CLAIMER }, code })).rejects.toMatchObject({
+        code: 'TOO_MANY_REQUESTS',
       });
+      expect(mockCreateNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it("grants and spends nothing when the creator's tier cannot be read", async () => {
+      seedUsed(1);
+      mockGetSessionUserById.mockResolvedValue(null);
+      await expect(claimGift({ user: { id: CLAIMER }, code })).rejects.toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+      });
+      expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+      expect(mockCreateNotification).not.toHaveBeenCalled();
+    });
+
+    it('sends no notice for a claim under the limit', async () => {
+      seedUsed(3);
+      await claimGift({ user: { id: CLAIMER }, code });
+      expect(mockCreateNotification).not.toHaveBeenCalled();
     });
 
     it('counts nothing while an override disables the limit', async () => {
