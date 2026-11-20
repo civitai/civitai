@@ -26,7 +26,7 @@ const { snapshotFromWorkflow, projectAppWorkflowWithPositions, BLOCK_STEP_NAME }
 const { blockOutputCeilingFromClaims, classifyBlockOutput } = await import(
   '~/server/services/blocks/block-output-restriction'
 );
-const { mintBlockOutput, applyServingRules } = await import(
+const { mintBlockOutput, applyServingRules, applyServingOffRules } = await import(
   '~/server/services/blocks/block-output-mint'
 );
 const { openBlockMediaRef, openBlockMediaTicket, sealBlockMediaTicket } = await import(
@@ -263,9 +263,26 @@ describe('🔴 the poll and the route agree on what serving hides', () => {
     expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
   });
 
-  it('CONTROL: with serving off the never-rated video is delivered, as on the site', () => {
+  it('with serving off the never-rated video is restricted too, with no url', () => {
     const snap = snapshotFromWorkflow(wf([videoStep(video('k1', null), 'kling')]), OFF);
-    expect(snap.imageUrls).toStrictEqual([blobUrl('k1')]);
+    expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('with serving off an unrated video from a rated engine is held, for an all-ratings viewer too', () => {
+    const snap = snapshotFromWorkflow(wf([videoStep(video('w0', null), 'wan')]), OFF);
+    expect(snap.outputs).toStrictEqual([{ pending: true }]);
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('with serving off a RATED video from a never-rated engine is restricted too', () => {
+    const snap = snapshotFromWorkflow(wf([videoStep(video('k2', 'pg'), 'kling')]), OFF);
+    expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+  });
+
+  it('CONTROL: with serving off a rated video from a rated engine keeps its url', () => {
+    const snap = snapshotFromWorkflow(wf([videoStep(video('w1', 'pg'), 'wan')]), OFF);
+    expect(snap.imageUrls).toStrictEqual([blobUrl('w1')]);
   });
 
   it('CONTROL: a rated video from an engine that is rated gets a ticket the route serves', async () => {
@@ -286,9 +303,36 @@ describe('🔴 the poll and the route agree on what serving hides', () => {
     ).toStrictEqual({ state: 'hidden', reason: 'unrated' });
   });
 
-  it('CONTROL: with serving off `na` is delivered as before', () => {
+  it('with serving off `na` is restricted too', () => {
     const snap = snapshotFromWorkflow(wf([textToImage([image('n1', 'na')])]), OFF);
-    expect(snap.outputs).toStrictEqual([{ url: blobUrl('n1') }]);
+    expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('with serving off an unrated image is held, for an all-ratings viewer too', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('u0', null)])]), OFF);
+    expect(snap.outputs).toStrictEqual([{ pending: true }]);
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('CONTROL: with serving off a rated image keeps its url', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('r0', 'pg')])]), OFF);
+    expect(snap.imageUrls).toStrictEqual([blobUrl('r0')]);
+  });
+
+  it('with serving off an output of an unknown blob type is restricted, as with serving on', () => {
+    const shown = { url: blobUrl('u1') } as const;
+    const slot = { url: blobUrl('u1'), type: 'movie', nsfwLevel: null };
+    expect(applyServingOffRules(shown, slot, { neverRatedVideoStep: false })).toStrictEqual({
+      restricted: true,
+      reason: 'unrecognised_url',
+    });
+  });
+
+  it("CONTROL: with serving off the owner's `na` audio keeps its url", () => {
+    const AUDIO = { url: blobUrl('a1'), type: 'audio', nsfwLevel: 'na' };
+    const shown = { url: blobUrl('a1') } as const;
+    expect(applyServingOffRules(shown, AUDIO, { neverRatedVideoStep: false })).toStrictEqual(shown);
   });
 
   it('the floor: a PG-only viewer is shown PG-13 on the poll, and the ticket serves it', async () => {

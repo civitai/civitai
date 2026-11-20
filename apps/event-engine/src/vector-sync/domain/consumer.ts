@@ -84,7 +84,12 @@ export async function runSyncConsumer(opts: {
       logger.warn(`${domain.name}-sync: embedding is off (VECTOR_SYNC_EMBED_ENABLED or its own)`);
     lanes.push({
       domain,
-      deps: { pg, store, embedder: enabled ? Embedder.fromConfig('normal') : null },
+      deps: {
+        pg,
+        store,
+        embedder: enabled ? Embedder.fromConfig('normal') : null,
+        rejected: enabled ? await domain.rejected?.() : undefined,
+      },
     });
   }
 

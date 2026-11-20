@@ -17,6 +17,7 @@ import {
   installApiRouteServerHook,
   methodLabel,
   observeApiRequest,
+  registerApiRouteMetrics,
 } from '~/server/prom/api-route.metrics';
 import { apiRouteLabel } from '~/server/utils/page-routes';
 import { usePagesManifestFixture } from '~/server/utils/__tests__/pages-manifest.fixture';
@@ -277,5 +278,23 @@ describe('installApiRouteServerHook delegation', () => {
     const self = { name: 'server' };
     expect(own.emit.call(self, 'listening')).toBe(true);
     expect(calls).toEqual([{ self, args: ['listening'] }]);
+  });
+});
+
+describe('registerApiRouteMetrics', () => {
+  it('installs nothing unless API_ROUTE_METRICS=true', () => {
+    class Dark extends http.Server {}
+    const before = Dark.prototype.emit;
+    for (const env of [{}, { API_ROUTE_METRICS: 'false' }, { API_ROUTE_METRICS: '1' }]) {
+      expect(registerApiRouteMetrics(env, Dark.prototype)).toBe(false);
+      expect(Dark.prototype.emit).toBe(before);
+    }
+  });
+
+  it('installs the hook when API_ROUTE_METRICS=true', () => {
+    class Lit extends http.Server {}
+    const before = Lit.prototype.emit;
+    expect(registerApiRouteMetrics({ API_ROUTE_METRICS: 'true' }, Lit.prototype)).toBe(true);
+    expect(Lit.prototype.emit).not.toBe(before);
   });
 });

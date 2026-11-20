@@ -78,7 +78,18 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
           flag,
           ...rest
         )) as typeof actual.isFlipt;
-  return { ...actual, isFlipt };
+  // The App Blocks source flags' read. Scanned rows answers off, as an unconfigured Flipt
+  // answered through isFlipt before those flags failed closed.
+  const isFliptSync = ((flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES
+      ? flags.refuseExternalApp
+      : flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS
+      ? false
+      : (actual.isFliptSync as (...a: unknown[]) => boolean | null)(
+          flag,
+          ...rest
+        )) as typeof actual.isFliptSync;
+  return { ...actual, isFlipt, isFliptSync, ensureFliptInitialized: async () => undefined };
 });
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: () => h.getOrchestratorToken(),

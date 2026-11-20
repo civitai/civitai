@@ -112,7 +112,7 @@ export const reportNotifications = createNotificationProcessor({
             Array.isArray(details.unlocked) ? details.unlocked : [],
             { reason: details.reason, resolvedAt: details.resolvedAt }
           ),
-          url: `/models/${details.entityId}`,
+          url: details.url ?? `/models/${details.entityId}`,
         };
       return {
         message: `Your appeal regarding your ${
@@ -120,7 +120,7 @@ export const reportNotifications = createNotificationProcessor({
         } has been ${details.status.toLowerCase()}${
           details.resolvedMessage ? `: ${details.resolvedMessage}.` : '.'
         }`,
-        url: `${entityUrlMap[details.entityType as EntityType]}/${details.entityId}`,
+        url: details.url ?? `${entityUrlMap[details.entityType as EntityType]}/${details.entityId}`,
       };
     },
   },

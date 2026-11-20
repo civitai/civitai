@@ -37,7 +37,7 @@ import {
 import { OriginNotAllowedError } from './errors';
 import { redirectUriMatches } from './redirect-uri';
 import { isAppBlockOauthClientId } from './block-guard';
-import { firstPartyClientForOrigin, originOf } from './first-party';
+import { firstPartyClientForOrigin, originOf, type FirstPartyOriginUse } from './first-party';
 import {
   apiKeyRowScope,
   hasScope,
@@ -92,7 +92,7 @@ export const oauthModel = {
       // /authorize endpoint stashed in AsyncLocalStorage for exactly this call.
       const origin =
         redirectOriginFromRequest(request) ?? originOf(authorizeRedirectUriStore.getStore());
-      const fp = origin ? await firstPartyClientForOrigin(origin) : undefined;
+      const fp = origin ? await firstPartyClientForOrigin(origin, 'authorize_client') : undefined;
       if (!fp || fp.clientId !== clientId) return false;
       return {
         id: fp.clientId,
@@ -259,7 +259,7 @@ export const oauthModel = {
     if (!data) return false;
 
     // Resolve the code's client (DB, or first-party by the stored redirect_uri origin) — shared with /authorize.
-    const client = await resolveClientLite(data.clientId, data.redirectUri);
+    const client = await resolveClientLite(data.clientId, data.redirectUri, 'code_exchange');
     if (!client) return false;
 
     return {
@@ -550,7 +550,8 @@ async function issueToken(token: Token, client: Client, user: User): Promise<Tok
  */
 export async function resolveClientLite(
   clientId: string,
-  redirectUri?: string
+  redirectUri: string | undefined,
+  use: FirstPartyOriginUse
 ): Promise<
   | {
       id: string;
@@ -601,7 +602,7 @@ export async function resolveClientLite(
   // requiring the client_id to be the one derived from that origin. This synthesized path is the ONLY
   // first-party case.
   const origin = originOf(redirectUri);
-  const fp = origin ? await firstPartyClientForOrigin(origin) : undefined;
+  const fp = origin ? await firstPartyClientForOrigin(origin, use) : undefined;
   return fp && fp.clientId === clientId
     ? {
         id: fp.clientId,

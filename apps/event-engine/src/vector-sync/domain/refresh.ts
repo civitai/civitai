@@ -17,17 +17,21 @@ export const orphanBrake = (orphans: number, points: number) =>
  */
 export async function nextRefreshIds(
   pg: Pick<Pool, 'query'>,
-  domain: Pick<Domain<any>, 'table'>,
+  domain: Pick<Domain<any>, 'table' | 'where'>,
   cursor: number,
   batch: number
 ): Promise<{ ids: number[]; next: number }> {
   const { rows } = await pg.query<{ id: number }>(
-    `SELECT id FROM "${domain.table}" WHERE id > $1 ORDER BY id LIMIT $2`,
+    `SELECT id FROM "${domain.table}" WHERE id > $1${andWhere(domain)} ORDER BY id LIMIT $2`,
     [cursor, batch]
   );
   const ids = rows.map((r) => Number(r.id));
   return { ids, next: ids.length < batch ? 0 : ids[ids.length - 1] };
 }
+
+/** The domain's slice of its table, as a clause to append to a WHERE. */
+export const andWhere = (domain: Pick<Domain<any>, 'where'>) =>
+  domain.where ? ` AND (${domain.where})` : '';
 
 type RefreshQueue = {
   lanes: Map<string, { add(ref: DomainRef): void }>;
@@ -104,9 +108,10 @@ export function startRefreshers(
         const recheck = orphans.filter((id) => heldLastPass.has(id));
         if (recheck.length) {
           const present = await pg
-            .query<{ id: number }>(`SELECT id FROM "${domain.table}" WHERE id = ANY($1::int[])`, [
-              recheck,
-            ])
+            .query<{ id: number }>(
+              `SELECT id FROM "${domain.table}" WHERE id = ANY($1::int[])${andWhere(domain)}`,
+              [recheck]
+            )
             .then(({ rows: found }) => new Set(found.map((r) => Number(r.id))))
             .catch((err) => {
               logger.error(
