@@ -1,5 +1,5 @@
 import type * as CardStickerOverlayModule from '~/components/Sticker/CardStickerOverlay';
-import type { ReactNode } from 'react';
+import { act, type ReactNode } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
 import type * as Trpc from '~/utils/trpc';
@@ -310,8 +310,11 @@ describe('a scanned image the CDN refuses', () => {
     ] as const) {
       setUp(isModerator, cdnLeg);
       const { unmount } = await renderScanned();
-      // The mock refuses in its first effect, so a fallback would already be committed.
-      await expect.poll(() => document.querySelector('[data-testid="cdn-mock"]')).not.toBeNull();
+      await expect
+        .poll(() => document.querySelector('[data-testid="cdn-mock"], img[src^="/api/mod/"]'))
+        .not.toBeNull();
+      // The mock refuses in its first effect; act flushes it, so a fallback would be committed here.
+      await act(async () => undefined);
       expect({ isModerator, cdnLeg, route: !!routeImg() }).toEqual({
         isModerator,
         cdnLeg,

@@ -539,7 +539,6 @@ describe('a model version unpublished for its subject', () => {
 });
 
 describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
-  // 990000201..: each the only row on its url, each with its own plain owner.
   const ids = { retracted: 990000204, denied: 990000201, served: 990000202, pending: 990000203 };
   const leg = { cdnLeg: true };
   beforeAll(async () => {

@@ -55,8 +55,7 @@ export type ModActivityCount = { activity: string; entityType: string; count: nu
 /** A purge whose answer was lost: sent, and it may or may not have run. Never a confirmed purge. */
 export const PURGE_UNCONFIRMED_ACTIVITY = 'purgeAllContentUnconfirmed';
 
-/** Activities whose recorded name, read on its own, would claim more than happened or reads as a
- *  code. */
+/** Activities whose recorded name would mislead, or read as a bare code, in a list. */
 const ACTIVITY_LABELS: Record<string, string> = {
   [PURGE_UNCONFIRMED_ACTIVITY]: 'Purge sent, not confirmed',
   [RETRACTED_SERVED_ACTIVITY]: 'Viewed retracted media',
