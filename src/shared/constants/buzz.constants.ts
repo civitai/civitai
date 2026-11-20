@@ -157,7 +157,8 @@ export const buzzAccountTypes = Object.keys(buzzTypeConfig) as BuzzAccountType[]
 // CH-side accountType aliases that resolve to the cashSettled buzz account.
 export const CASH_SETTLED_ALIASES = new Set<string>(['CashSettled', 'cashSettled', 'cash-settled']);
 // orchestration.resourceCompensations sources that are platform revenue logged on a creator's version: never
-// paid, never shown as earnings. Creator Studio spells this out itself; keep the two in step.
+// paid, never shown as earnings. Creator Studio (models-earnings.ts) and event-engine (update-compensation.ts)
+// spell it out themselves; keep all three in step.
 export const PLATFORM_REVENUE_SOURCES: ReadonlySet<string> = new Set(['licenseFeeMarkup']);
 /** PLATFORM_REVENUE_SOURCES as a ClickHouse IN list: `source NOT IN (${PLATFORM_REVENUE_SOURCES_SQL})`. */
 export const PLATFORM_REVENUE_SOURCES_SQL = [...PLATFORM_REVENUE_SOURCES]
