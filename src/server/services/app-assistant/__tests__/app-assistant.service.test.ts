@@ -414,7 +414,7 @@ describe('mintAppAssistantToken', () => {
   it('mints the spending scope for the chat against an existing consent, writing nothing', async () => {
     dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue({ scope: SCOPE });
 
-    expect(await mintAppAssistantToken(USER_ID, 'chat')).toEqual({
+    expect(await mintAppAssistantToken(USER_ID, 'chat', null)).toEqual({
       token: 'civ_assistant_oauth',
       expiresAt: '2099-01-01T01:00:00Z',
     });
@@ -422,6 +422,7 @@ describe('mintAppAssistantToken', () => {
       userId: USER_ID,
       clientId: CLIENT_ID,
       scope: SCOPE,
+      impersonatedBy: null,
     });
     expect(dbMock.dbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.oauthClient.upsert).not.toHaveBeenCalled();
@@ -429,11 +430,12 @@ describe('mintAppAssistantToken', () => {
 
   it('mints UserRead alone for the sandbox service', async () => {
     dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue({ scope: SCOPE });
-    await mintAppAssistantToken(USER_ID, 'sandbox');
+    await mintAppAssistantToken(USER_ID, 'sandbox', null);
     expect(mintAppTokenMock).toHaveBeenCalledWith({
       userId: USER_ID,
       clientId: CLIENT_ID,
       scope: TokenScope.UserRead,
+      impersonatedBy: null,
     });
   });
 
@@ -443,7 +445,7 @@ describe('mintAppAssistantToken', () => {
     ['a consent without the spend bit, for the chat', { scope: TokenScope.UserRead }, 'chat'],
   ] as const)('returns null and re-grants nothing: %s', async (_label, consent, purpose) => {
     dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue(consent);
-    expect(await mintAppAssistantToken(USER_ID, purpose)).toBeNull();
+    expect(await mintAppAssistantToken(USER_ID, purpose, null)).toBeNull();
     expect(mintAppTokenMock).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.oauthClient.upsert).not.toHaveBeenCalled();

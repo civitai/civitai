@@ -79,3 +79,26 @@ export function withModeratorRightsFor<T extends { id: number; isModerator?: boo
   if (!user?.isModerator || isSessionOrFullUserKey(credential)) return user;
   return withholdsModerator(user, credential) ? { ...user, isModerator: false } : user;
 }
+
+/**
+ * The account the App Blocks AUTHOR capability is evaluated for: the request's user as the session
+ * resolved it, before `withModeratorRightsFor` withheld moderator rights.
+ *
+ * Read it ONLY for the author capability. It is no moderator check: `ctx.user.isModerator` is.
+ *
+ * A banned session reads as no one (`trpcViewer` moves it to `bannedUser`), except behind
+ * `isAuthedAllowRestricted`, which restores it to `ctx.user`: put no author gate on such a
+ * procedure without refusing banned accounts first.
+ *
+ * Its readers are a ledger (`no-unledgered-app-author-subject-read`): add one only for the author
+ * capability.
+ */
+export function appBlocksAuthorAccount<T extends { id: number }>(ctx: {
+  user?: T | null;
+  appBlocksAuthorSubject?: T | null;
+}): T | undefined {
+  const user = ctx.user;
+  if (!user) return undefined;
+  const subject = ctx.appBlocksAuthorSubject;
+  return subject && subject.id === user.id ? subject : user;
+}

@@ -49,6 +49,8 @@ const files = roots.flatMap((dir) => walk(dir)).filter((f) => f !== __filename);
 const stripComments = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
 
+const sources = files.map((file) => ({ file, code: stripComments(readFileSync(file, 'utf8')) }));
+
 /** Any import/require of `next/legacy/image`, static or dynamic. */
 const legacyImport = /['"]next\/legacy\/image['"]/;
 
@@ -159,16 +161,16 @@ describe(`🔴 ${MESSAGE}`, () => {
   });
 
   it('no next/image component re-enables the optimizer', () => {
-    const offenders = files
-      .filter((file) => overridesOptimizer(stripComments(readFileSync(file, 'utf8'))))
-      .map((f) => path.relative(ROOT, f));
+    const offenders = sources
+      .filter(({ code }) => overridesOptimizer(code))
+      .map(({ file }) => path.relative(ROOT, file));
     expect(offenders, `${MESSAGE} Remove \`unoptimized={false}\` / \`loader=\`.`).toEqual([]);
   });
 
   it('nothing imports next/legacy/image', () => {
-    const offenders = files
-      .filter((file) => legacyImport.test(stripComments(readFileSync(file, 'utf8'))))
-      .map((f) => path.relative(ROOT, f));
+    const offenders = sources
+      .filter(({ code }) => legacyImport.test(code))
+      .map(({ file }) => path.relative(ROOT, file));
     expect(offenders, `${MESSAGE} Use next/image, not next/legacy/image.`).toEqual([]);
   });
 });

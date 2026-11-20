@@ -18,6 +18,7 @@ export const config = {
 import { isSystemAccountMeta } from '@civitai/auth';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
+import { refuseWhileImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
@@ -379,6 +380,7 @@ async function mintDevTunnelOauth(args: {
   userId: number;
   clientId: string;
   scopes: string[];
+  impersonatedBy: number | null;
 }): Promise<{ token: string; expiresAt: string }> {
   const { mintDevTunnelOauthToken } = await import(
     '~/server/services/blocks/dev-tunnel-oauth.service'
@@ -396,8 +398,9 @@ async function mintOauthAppToken(args: {
   appBlockId: string;
   clientId: string;
   scopes: string[];
+  impersonatedBy: number | null;
 }): Promise<OauthMintOutcome> {
-  const { userId, appBlockId, clientId, scopes } = args;
+  const { userId, appBlockId, clientId, scopes, impersonatedBy } = args;
   const [{ syncOauthConsentFromGrant }, { mintAppToken }] = await Promise.all([
     import('~/server/services/blocks/oauth-consent-sync.service'),
     import('@civitai/auth'),
@@ -405,7 +408,12 @@ async function mintOauthAppToken(args: {
   const consent = await syncOauthConsentFromGrant({ userId, appBlockId, scopes });
   if (!consent) return { outcome: 'consent_required', withheld: consentGatedScopes(scopes) };
   try {
-    const minted = await mintAppToken({ userId, clientId, scope: oauthScopeBitsFor(scopes) });
+    const minted = await mintAppToken({
+      userId,
+      clientId,
+      scope: oauthScopeBitsFor(scopes),
+      impersonatedBy,
+    });
     return { outcome: 'minted', token: minted.accessToken, expiresAt: minted.expiresAt };
   } catch (err) {
     if (isConsentRequiredError(err)) {
@@ -472,8 +480,10 @@ async function tryDevTunnelScopedMint(args: {
   slotId: string;
   sessionUser: SessionUser | undefined;
   userId: number | null;
+  impersonatedBy: number | null;
 }): Promise<'handled' | 'continue'> {
-  const { req, res, appBlockId, blockInstanceId, slotId, sessionUser, userId } = args;
+  const { req, res, appBlockId, blockInstanceId, slotId, sessionUser, userId, impersonatedBy } =
+    args;
 
   // Cookie-authed author only; only the ephemeral synthetic namespace is a
   // pre-approval dev mint. Anything else → not our branch.
@@ -548,6 +558,7 @@ async function tryDevTunnelScopedMint(args: {
           userId,
           clientId: await devTunnelClientIdFor(userId, slug),
           scopes: granted,
+          impersonatedBy,
         })
       : null;
 
@@ -679,8 +690,10 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   slotId: string;
   sessionUser: SessionUser | undefined;
   userId: number | null;
+  impersonatedBy: number | null;
 }): Promise<'handled' | 'continue'> {
-  const { req, res, appBlockId, blockInstanceId, slotId, sessionUser, userId } = args;
+  const { req, res, appBlockId, blockInstanceId, slotId, sessionUser, userId, impersonatedBy } =
+    args;
 
   // Cookie-authed author only. This branch is the REAL-id companion to
   // tryDevTunnelScopedMint — the synthetic ephemeral namespace is handled THERE, so
@@ -757,6 +770,7 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
           userId,
           clientId: app.appId,
           scopes: granted,
+          impersonatedBy,
         }).catch((err) => {
           if (isAppTokenRefusedError(err)) return null;
           throw err;
@@ -1137,6 +1151,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
   if (session === false) return;
   if (!requireFullScopeSession(req, res)) return;
+  if (refuseWhileImpersonating(session, res)) return;
   const userId = session?.user?.id ?? null;
 
   // Graduation gate: who may mint a block token is governed by the `appBlocks`
@@ -1244,6 +1259,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         slotId: slotContext.slotId,
         sessionUser: session?.user,
         userId,
+        impersonatedBy: session?.impersonatedBy ?? null,
       });
       if (devMint === 'handled') return;
       // PHASE 2 (owned non-approved) — a REAL `apb_…` page id the caller OWNS but
@@ -1260,6 +1276,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         slotId: slotContext.slotId,
         sessionUser: session?.user,
         userId,
+        impersonatedBy: session?.impersonatedBy ?? null,
       });
       if (ownedMint === 'handled') return;
       // PHASE 3 — PRIVATE RUN of a DELISTED / SUSPENDED app's already-DEPLOYED bundle,
@@ -1707,6 +1724,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
           appBlockId: block.id,
           clientId: block.appId,
           scopes: manifestScopes,
+          impersonatedBy: session?.impersonatedBy ?? null,
         })
       : null;
   if (oauth?.outcome === 'consent_required') {

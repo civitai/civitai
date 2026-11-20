@@ -1,63 +1,69 @@
 import { sql } from '@civitai/db/kysely';
 import { env } from '$env/dynamic/private';
-import { RETRACTED_SERVED_ACTIVITY } from '@civitai/shared/retracted-media';
+import {
+  RETRACTED_MEDIA_READ_TIMEOUT_MS,
+  RETRACTED_SERVED_ACTIVITY,
+} from '@civitai/shared/retracted-media';
+import { blockedForSignal } from '@civitai/shared/review-batch';
 import {
   createScannerVerdictCache,
+  csamRestrictedSql,
   retractedImageWhereSql,
-  retractedSuspectSql,
-  retractedTier,
-  type RetractedTier,
 } from '@civitai/shared/retracted-media-tier';
 import { blockedForPatterns } from './blocked-for-patterns';
 import { dbWrite } from './db';
 import { insertModActivity } from './mod-activity';
-import { readScannerVerdict } from './review-batch';
+import { readScannerCsamVerdict } from './review-batch';
 
-/** No scanner verdict for the image: the route tells the moderator it needs CSAM-queue access. */
-export const NEEDS_CSAM_QUEUE = 'needs-csam-queue';
-
-export const scannerVerdicts = createScannerVerdictCache(readScannerVerdict);
+export const scannerVerdicts = createScannerVerdictCache(readScannerCsamVerdict);
 
 export type RetractedMedia = {
   url: string;
   type: string;
   mimeType: string | null;
-  tier: RetractedTier;
 };
 
 /**
  * The image's storage key and type while this moderator may see it on `/api/retracted-media`;
- * `null` otherwise, so an image they may not see is answered exactly as a missing one. A `suspect`
- * image needs `csamReview`. The same rules as the main app's `/api/mod/retracted-media`, read on the
- * primary for the same reason: a flag or hold the replica has not seen would serve as `plain`.
+ * `null` otherwise, so an image they may not see is answered exactly as a missing one. CSAM-restricted
+ * media (`csamRestrictedSql`, a `blockedFor` signal, or the scanner's CSAM label) needs `csamReview`;
+ * a minor signal alone does not. The same rules as the main app's `/api/mod/retracted-media`, read on the
+ * primary for the same reason: a flag or hold the replica has not seen would otherwise be missed.
  */
 export async function getRetractedMedia(
   imageId: number,
   { csamReview }: { csamReview: boolean }
-): Promise<RetractedMedia | typeof NEEDS_CSAM_QUEUE | null> {
-  const row = await dbWrite
-    .selectFrom('Image as i')
-    .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor', 'i.ingestion'])
-    .select(sql<boolean>`${sql.raw(retractedSuspectSql('i'))}`.as('suspect'))
-    .where('i.id', '=', imageId)
-    .where(
-      sql<boolean>`${sql.raw(retractedImageWhereSql('i', { cdnLeg: retractedMediaCdnLeg() }))}`
-    )
-    .executeTakeFirst();
+): Promise<RetractedMedia | null> {
+  const row = await dbWrite.transaction().execute(async (trx) => {
+    await sql.raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`).execute(trx);
+    return (
+      trx
+        .selectFrom('Image as i')
+        .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor', 'i.ingestion'])
+        // Read only for a moderator who could be refused on it.
+        .select(
+          sql<boolean>`${sql.raw(csamReview ? 'false' : csamRestrictedSql('i'))}`.as('restricted')
+        )
+        .where('i.id', '=', imageId)
+        .where(
+          sql<boolean>`${sql.raw(retractedImageWhereSql('i', { cdnLeg: retractedMediaCdnLeg() }))}`
+        )
+        .executeTakeFirst()
+    );
+  });
   if (!row) return null;
-  const tier = retractedTier(row, blockedForPatterns());
+  const patterns = blockedForPatterns();
   if (!csamReview) {
-    if (tier === 'suspect') return null;
-    // Refused when the scanner marks it, has no verdict for it, or cannot be read.
-    // A scanned image can be rescanned, so its verdict is read fresh rather than from the cache.
+    if (row.restricted || blockedForSignal(row.blockedFor, patterns)) return null;
+    // Refused when the scanner's CSAM label marks it, or the scanner cannot be read. A scanned image
+    // can be rescanned, so its verdict is read fresh rather than from the cache.
     const verdict =
       row.ingestion === 'Scanned'
-        ? await readScannerVerdict(imageId)
+        ? await readScannerCsamVerdict(imageId)
         : await scannerVerdicts.read(imageId);
-    if (verdict === 'none') return NEEDS_CSAM_QUEUE;
-    if (verdict !== 'clear') return null;
+    if (verdict !== 'clear' && verdict !== 'none') return null;
   }
-  return { url: row.url, type: row.type, mimeType: row.mimeType, tier };
+  return { url: row.url, type: row.type, mimeType: row.mimeType };
 }
 
 /** Every response carrying bytes, ranges included. Throws when the row is not written, so the bytes
