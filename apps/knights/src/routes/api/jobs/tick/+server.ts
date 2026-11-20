@@ -26,6 +26,7 @@ import { resetDeps } from '$lib/server/smites/runtime';
 import { expireSmites, resetPendingPlayers } from '$lib/server/smites/smites.service';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { closeStrandedYesNo } from '$lib/server/yesno/sweep';
+import { sweepMissingReviews } from '$lib/server/inquisitor/review.service';
 import type { RequestHandler } from './$types';
 
 async function settle<T>(step: string, run: () => Promise<T>) {
@@ -55,6 +56,9 @@ export const POST: RequestHandler = async ({ request }) => {
   // Before the settle step, which pays out (nothing) the votes these closes leave inconclusive.
   const unservable = await settle('unservable sweep', () =>
     closeUnservableItems(db, { now: new Date(), moved: collect })
+  );
+  const reviews = await settle('inquisitor review sweep', () =>
+    sweepMissingReviews(db, { now: new Date() })
   );
   const progression = await settle('progression', () =>
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
@@ -118,6 +122,7 @@ export const POST: RequestHandler = async ({ request }) => {
     !writeBacks.ok ||
     !moderatorRuled.ok ||
     !unservable.ok ||
+    !reviews.ok ||
     !progression.ok ||
     !hidden.ok ||
     !yesNo.ok ||
@@ -162,6 +167,7 @@ export const POST: RequestHandler = async ({ request }) => {
     resets: resets.value.due,
     conversionsRetried: conversions.value.retried,
     purchasesRetried: purchases.value.retried,
+    reviewsOpened: reviews.value,
     labels: labels.value,
   });
 };

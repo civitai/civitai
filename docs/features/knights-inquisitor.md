@@ -1,0 +1,35 @@
+# Knights: the in-game inquisitor queue
+
+Moderators review settled player ratings inside the Knights game. Two moderators who give an image the same level make it a
+mod-confirmed skill check ([hidden checks and smites](knights-hidden-checks-and-smites.md)), served to Acolytes and Knights.
+Code: `apps/knights/src/lib/server/inquisitor/`. Tables: `KnightsInquisitorReview`, `KnightsInquisitorVote` (migration
+`20271120160000_knights_inquisitor_review`, applied by hand).
+
+## Entry
+
+Every rating item the players settle opens one review once its level is written to the image (`markApplied`), whether it
+settled by agreement or by a re-rate. A review stores the players' level (`consensusValue`). Opening it never undoes the
+write-back or the payout; if it fails, the tick's sweep (`sweepMissingReviews`, `reviewsOpened` in the tick response) opens it
+for items written back in the last 48 hours. Hidden checks, yes/no items and items rerouted instead of written get none.
+
+## Two votes
+
+A moderator is served the open reviews they have not voted on and that are not of their own image: reviews another moderator
+already voted on first, then the oldest. They answer with a rating level (Blocked is not a vote; see below). The first vote
+is recorded. The second closes the review:
+
+- the same level: `confirmed`, and the image enters the skill-check pool at that level;
+- another level: `split`, no check, the image keeps the players' level, both votes are kept.
+
+Moderator votes earn no XP, gold or Watch, need no player record, and never change the players' votes, verdicts, XP or gold.
+
+## Excluded reviews
+
+A review is closed `excluded`, with no vote recorded, when at serve or at vote a moderator has ruled on the image, it was
+blocked, it moved off the players' level, or it fell under a review or hold (the skill-check pool's exclusions).
+
+"Send to Inquisitor" is the one-moderator way to say an image should be blocked: it opens a new item at the Inquisitors
+(escalation `blocked`, shown in the moderator app's Inquisitor queue) and excludes the review. The settled item and its
+players' votes stay as they were.
+
+Closes count as `knights_inquisitor_reviews_closed_total{outcome}`.
