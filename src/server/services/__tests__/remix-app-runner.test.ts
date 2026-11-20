@@ -108,6 +108,14 @@ describe('a runner reply the host refuses on its own', () => {
     );
   });
 
+  it('refuses a choice whose option value is longer than the log carries back', () => {
+    const long = { ...choice, options: [{ value: 'x'.repeat(1001), label: 'A' }] };
+    // POSITIVE CONTROL: at the limit, the same ask is where the run stops.
+    const atCap = { ...choice, options: [{ value: 'x'.repeat(1000), label: 'A' }] };
+    expect(check([{ type: 'ask', spec: atCap }]).outcome).toMatchObject({ status: 'effect' });
+    expect(() => check([{ type: 'ask', spec: long }])).toThrow(RemixReplayError);
+  });
+
   it('refuses an auto-answer the host would not give', () => {
     const two = { ...choice, options: [...choice.options, { value: 'b', label: 'B' }] };
     expect(() => check([{ type: 'ask', spec: two, answer: 'b' }], () => 'a')).toThrow(

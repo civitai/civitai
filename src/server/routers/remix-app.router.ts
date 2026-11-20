@@ -46,6 +46,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
+import { REMIX_RUN_LIMITS } from '~/shared/remix-apps/replay';
 
 const remixAppProcedure = protectedProcedure.use(isFlagProtected('remixApps'));
 const remixAppAdminProcedure = moderatorProcedure.use(isFlagProtected('remixApps'));
@@ -91,7 +92,10 @@ const gallery = z
       });
   });
 
-const answer = z.union([z.string().max(1000), z.number().int().nonnegative()]);
+const answer = z.union([
+  z.string().max(REMIX_RUN_LIMITS.answerLength),
+  z.number().int().nonnegative(),
+]);
 
 function callerOf(ctx: Context & { user: SessionUser }): Omit<RemixAppCaller, 'token'> {
   return {

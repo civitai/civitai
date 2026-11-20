@@ -40,6 +40,8 @@ export const REMIX_RUN_LIMITS = {
   pickImages: 4,
   /** The widest or tallest image the runner's log accepts. */
   imageDimension: 100_000,
+  /** The longest text answer the runner's log accepts. */
+  answerLength: 1000,
 } as const;
 
 /** An image size as a log the runner replays may carry it; any other is left out. */
@@ -78,7 +80,13 @@ const effectSchema = z.discriminatedUnion('type', [
         kind: z.literal('choice'),
         prompt: z.string(),
         options: z
-          .array(z.strictObject({ value: z.string(), label: z.string() }))
+          .array(
+            z.strictObject({
+              // The answer it becomes goes back in the log, which takes no longer one.
+              value: z.string().max(REMIX_RUN_LIMITS.answerLength),
+              label: z.string(),
+            })
+          )
           .min(1)
           .max(REMIX_RUN_LIMITS.choiceOptions),
         image: image.optional(),
