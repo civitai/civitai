@@ -43,6 +43,7 @@ import type { Prisma } from '@prisma/client';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
 import {
+  type RemixQuarantinedError,
   userRemixAuthorPrompt,
   userRemixBranchReplayer,
   userRemixFirstRequest,
@@ -949,13 +950,36 @@ export async function validateUserRemixApp(slug: string) {
 const QUARANTINE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * The runner refused a viewer's run of an approved user app as quarantined (a call of this source
- * outran the interrupt). Each viewer counts once per source and day; the
- * {@link REMIX_COMBINATION_BLOCKS_MAX}th distinct one sends the app back to review, since a fault
- * of the shared pool will not keep landing on one source for different viewers. `true` when this
- * pulled it.
+ * The runner refused a viewer's call of a user app as quarantined; `true` when that held the app.
+ * Only a call that tripped the quarantine counts: every viewer refused while it is cached would
+ * otherwise count as another. The author's calls never count.
  */
-export async function recordRunnerQuarantine(
+export async function noteRunnerQuarantine(
+  { slug, author }: Pick<RegisteredRemixApp, 'slug' | 'author'>,
+  viewerId: number,
+  { sha256, tripped }: RemixQuarantinedError
+) {
+  if (!tripped || !author || author.userId === viewerId) return false;
+  return recordRunnerQuarantine(slug, { viewerId, sha256 }).catch((error: unknown) => {
+    logToAxiom({
+      name: 'remix-app-run',
+      type: 'error',
+      message: 'Could not record a quarantined run of a user remix app',
+      payload: { slug, error: error instanceof Error ? error.message : String(error) },
+    });
+    return false;
+  });
+}
+
+const QUARANTINE_OBSERVED = 'held-runner-quarantine-observed';
+
+/**
+ * A trip of an approved user app's source by a viewer. Each viewer counts once per source and day;
+ * the {@link REMIX_COMBINATION_BLOCKS_MAX}th distinct one sends the app back to review, since a
+ * fault of the shared pool will not keep landing on one source for different viewers. `true`
+ * when this pulled it.
+ */
+async function recordRunnerQuarantine(
   slug: string,
   { viewerId, sha256 }: { viewerId: number; sha256: string }
 ): Promise<boolean> {
@@ -978,8 +1002,16 @@ export async function recordRunnerQuarantine(
     const entry = {
       by: REMIX_SYSTEM_ACTOR,
       sha256: remixReviewHash({ ...manifest, remix }),
-      note: `viewer ${key}`,
+      note: `viewer ${viewers.length} of ${REMIX_COMBINATION_BLOCKS_MAX}`,
     };
+    // Fewer observed rows than a hold takes, so they never push a mod's decision out of the log.
+    const observed = (manifest.reviewLog ?? []).filter(
+      ({ action }) => action === QUARANTINE_OBSERVED
+    );
+    const dropped = new Set(
+      observed.slice(0, Math.max(0, observed.length - (REMIX_COMBINATION_BLOCKS_MAX - 2)))
+    );
+    counted.reviewLog = manifest.reviewLog?.filter((row) => !dropped.has(row));
     try {
       await writeUserRemixApp(
         row,
@@ -994,7 +1026,7 @@ export async function recordRunnerQuarantine(
           : {
               manifest: withReviewLog(counted, {
                 ...entry,
-                action: 'held-runner-quarantine-observed',
+                action: QUARANTINE_OBSERVED,
               }),
             }
       );

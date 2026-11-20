@@ -47,7 +47,7 @@ import {
   getRegisteredRemixApp,
   holdUserRemixApp,
   isRunnableBy,
-  recordRunnerQuarantine,
+  noteRunnerQuarantine,
   REMIX_APP_HELD,
   REMIX_APP_UNAVAILABLE,
   type RegisteredRemixApp,
@@ -482,25 +482,9 @@ async function advance({
 
   const source = runtimeSourceOf(image);
   const currencies = getAllowedAccountTypes(caller.features, ['blue']);
-  // The runner's quarantine counts once per other viewer; it holds the app only on several.
   const quarantined = async (error: unknown) => {
     if (!(error instanceof RemixQuarantinedError)) return error;
-    const counts = !!author && author.userId !== caller.user.id;
-    const held =
-      counts &&
-      (await recordRunnerQuarantine(app.slug, {
-        viewerId: caller.user.id,
-        sha256: error.sha256,
-      }).catch((e: unknown) => {
-        logToAxiom({
-          name: 'remix-app-run',
-          type: 'error',
-          message: 'Could not record a quarantined run of a user remix app',
-          payload: { slug: app.slug, error: e instanceof Error ? e.message : String(e) },
-        });
-        return false;
-      }));
-    return held
+    return (await noteRunnerQuarantine({ slug: app.slug, author }, caller.user.id, error))
       ? new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD })
       : new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
   };
@@ -554,7 +538,19 @@ async function advance({
       shown && gateOf(shown.url, levels, caller) === 'shown' ? { ...choice, image: shown } : choice;
     if (!priceOptions) return { status: 'ask', runId, ask };
     const prices = await cachedOptionPrices([runId, segments.length, outcome.index], () =>
-      optionPrices({ app, replay: replayer, image, source, log, spec, caller, currencies })
+      optionPrices({
+        app,
+        replay: (...args) =>
+          replayer(...args).catch(async (error) => {
+            throw error instanceof RemixReplayError ? error : await quarantined(error);
+          }),
+        image,
+        source,
+        log,
+        spec,
+        caller,
+        currencies,
+      })
     );
     return { status: 'ask', runId, ask, prices };
   }

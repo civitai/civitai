@@ -392,7 +392,11 @@ import {
 } from '~/server/services/remix-app-run.service';
 import { REMIX_APP_UNAVAILABLE } from '~/server/services/remix-app-registry.service';
 import { REMIX_SYSTEM_ACTOR } from '~/shared/remix-apps/row.schema';
-import { listRemixApps, type RemixAppCaller } from '~/server/services/remix-app.service';
+import {
+  listRemixApps,
+  quoteRemixApps,
+  type RemixAppCaller,
+} from '~/server/services/remix-app.service';
 import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
 import {
   auditPromptServer,
@@ -2146,75 +2150,225 @@ describe('a user app', () => {
         expect(submits()).toHaveLength(1);
       });
 
-      it('a quarantine refuses the run as unavailable; three distinct viewers on one source hold the app', async () => {
-        vi.stubGlobal(
-          'fetch',
-          fakeRemixRunner({ secret: SECRET, apps: {}, quarantined: true }).fetchImpl
-        );
-        // One viewer, many times: counted once, never a hold.
-        for (let i = 0; i < 4; i++)
-          await expect(runAs(101)).rejects.toMatchObject({
-            code: 'SERVICE_UNAVAILABLE',
-            message: REMIX_APP_UNAVAILABLE,
-          });
-        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
-        expect(stored.status).toBe('remix');
-        expect(written()).toHaveLength(1);
-        expect(stored.manifest).toMatchObject({
-          reviewLog: [expect.objectContaining({ action: 'held-runner-quarantine-observed' })],
-        });
-        // The author's own runs never count.
-        await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
-        expect(written()).toHaveLength(1);
-        // A new source starts the count again.
-        stored = {
-          ...stored,
-          manifest: { ...stored.manifest, remix: { ...stored.manifest.remix, source: TWO_SOURCE } },
-        };
-        await bumpRemixAppRegistry();
-        await expect(runAs(102)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
-        expect(
+      describe('the runner quarantine', () => {
+        const quarantine = (tripped?: boolean) =>
+          vi.stubGlobal(
+            'fetch',
+            fakeRemixRunner({
+              secret: SECRET,
+              apps: {},
+              quarantined: tripped === undefined ? {} : { tripped },
+            }).fetchImpl
+          );
+        const counted = () =>
           (stored.manifest as { runnerQuarantines?: { viewers: unknown[] } }).runnerQuarantines
-            ?.viewers
-        ).toHaveLength(1);
-        await expect(runAs(103)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
-        expect(stored.status).toBe('remix');
-        // The third distinct viewer on this source holds it.
-        await expect(runAs(104)).rejects.toMatchObject({
-          code: 'PRECONDITION_FAILED',
-          message: REMIX_APP_HELD,
-        });
-        expect(stored.status).toBe('remix_disabled');
-        expect(stored.manifest).toMatchObject({ review: 'submitted' });
-        expect(
-          (stored.manifest as unknown as { reviewLog: { action: string }[] }).reviewLog.at(-1)
-        ).toMatchObject({
-          action: 'held-runner-quarantine',
-          by: REMIX_SYSTEM_ACTOR,
-        });
-      });
+            ?.viewers ?? [];
+        const reviewLog = () =>
+          (stored.manifest as unknown as { reviewLog?: { action: string; note?: string }[] })
+            .reviewLog ?? [];
+        const unavailable = { code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE };
+        const held = { code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD };
 
-      it.each([
-        ['an unsigned 423', 'wrong-secret'.padEnd(32, 'x'), 'quarantined'],
-        ['a signed 423 of another kind', SECRET, 'overloaded'],
-      ])('%s is not a quarantine: unavailable, nothing recorded', async (_, signer, code) => {
-        vi.stubGlobal('fetch', (async (_url: string, init: RequestInit) => {
-          const request = JSON.parse(String(init.body)) as { ts: number };
-          const response = JSON.stringify({
-            ts: request.ts,
-            req: createHash('sha256').update(String(init.body)).digest('hex'),
-            error: { code, message: 'x' },
+        it('a trip refuses the run as unavailable; three distinct viewers tripping one source hold the app', async () => {
+          quarantine(true);
+          // One viewer, many times: counted once, never a hold.
+          for (let i = 0; i < 4; i++) await expect(runAs(101)).rejects.toMatchObject(unavailable);
+          expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+          expect(stored.status).toBe('remix');
+          expect(written()).toHaveLength(1);
+          // The note carries the count, never anything that names the viewer.
+          expect(reviewLog()).toEqual([
+            expect.objectContaining({
+              action: 'held-runner-quarantine-observed',
+              note: 'viewer 1 of 3',
+            }),
+          ]);
+          // The author's own runs never count.
+          await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(unavailable);
+          expect(written()).toHaveLength(1);
+          // A new source starts the count again.
+          stored = {
+            ...stored,
+            manifest: {
+              ...stored.manifest,
+              remix: { ...stored.manifest.remix, source: TWO_SOURCE },
+            },
+          };
+          await bumpRemixAppRegistry();
+          await expect(runAs(102)).rejects.toMatchObject(unavailable);
+          expect(counted()).toHaveLength(1);
+          await expect(runAs(103)).rejects.toMatchObject(unavailable);
+          expect(stored.status).toBe('remix');
+          // The third distinct viewer on this source holds it.
+          await expect(runAs(104)).rejects.toMatchObject(held);
+          expect(stored.status).toBe('remix_disabled');
+          expect(stored.manifest).toMatchObject({ review: 'submitted' });
+          expect(reviewLog().at(-1)).toMatchObject({
+            action: 'held-runner-quarantine',
+            by: REMIX_SYSTEM_ACTOR,
           });
-          return new Response(response, {
-            status: 423,
-            headers: {
-              'x-storage-hook-sig': createHmac('sha256', signer).update(response).digest('hex'),
+          // Observed rows stay fewer than a hold takes: three were written, one is kept.
+          expect(
+            reviewLog().filter(({ action }) => action === 'held-runner-quarantine-observed')
+          ).toHaveLength(1);
+        });
+
+        // The runner answers every call 423 for ten minutes after one trips it: counting those would
+        // let two passers-by complete a hold one runaway call earned.
+        it('a cached refusal counts for nobody: one trip and two cached refusals hold nothing, three trips do', async () => {
+          quarantine(true);
+          await expect(runAs(101)).rejects.toMatchObject(unavailable);
+          quarantine(false);
+          for (const viewer of [102, 103])
+            await expect(runAs(viewer)).rejects.toMatchObject(unavailable);
+          expect(counted()).toHaveLength(1);
+          expect(stored.status).toBe('remix');
+          quarantine(true);
+          await expect(runAs(102)).rejects.toMatchObject(unavailable);
+          await expect(runAs(103)).rejects.toMatchObject(held);
+          expect(stored.status).toBe('remix_disabled');
+        });
+
+        it.each([
+          [
+            'an unsigned 423 claiming a trip',
+            'wrong-secret'.padEnd(32, 'x'),
+            { code: 'quarantined', tripped: true },
+          ],
+          ['a signed 423 of another kind', SECRET, { code: 'overloaded', tripped: true }],
+          ['a trip from a runner that never says tripped', SECRET, { code: 'quarantined' }],
+        ])('%s is not counted: unavailable, nothing recorded', async (_, signer, error) => {
+          vi.stubGlobal('fetch', (async (_url: string, init: RequestInit) => {
+            const request = JSON.parse(String(init.body)) as { ts: number };
+            const response = JSON.stringify({
+              ts: request.ts,
+              req: createHash('sha256').update(String(init.body)).digest('hex'),
+              error: { ...error, message: 'x' },
+            });
+            return new Response(response, {
+              status: 423,
+              headers: {
+                'x-storage-hook-sig': createHmac('sha256', signer).update(response).digest('hex'),
+              },
+            });
+          }) as unknown as typeof fetch);
+          for (const viewer of [101, 102, 103])
+            await expect(runAs(viewer)).rejects.toMatchObject(unavailable);
+          expect(written()).toHaveLength(0);
+          // POSITIVE CONTROL: a signed trip on the same row is counted.
+          quarantine(true);
+          await expect(runAs(101)).rejects.toMatchObject(unavailable);
+          expect(written()).toHaveLength(1);
+        });
+
+        it('counts each viewer for a day: a trip older than 24 h no longer counts', async () => {
+          vi.useFakeTimers({ toFake: ['Date'] });
+          try {
+            vi.setSystemTime(new Date('2026-11-20T00:00:00Z'));
+            quarantine(true);
+            for (const viewer of [101, 102])
+              await expect(runAs(viewer)).rejects.toMatchObject(unavailable);
+            vi.setSystemTime(new Date('2026-11-21T01:00:00Z'));
+            await expect(runAs(103)).rejects.toMatchObject(unavailable);
+            expect(stored.status).toBe('remix');
+            expect(counted()).toHaveLength(1);
+          } finally {
+            vi.useRealTimers();
+          }
+        });
+
+        it('an approval starts the count again', async () => {
+          quarantine(true);
+          for (const viewer of [101, 102]) await expect(runAs(viewer)).rejects.toThrow();
+          await expect(runAs(103)).rejects.toMatchObject(held);
+          expect(counted()).toHaveLength(3);
+          const { reviewUserRemixApp, remixReviewHash } = await import(
+            '~/server/services/remix-app-registry.service'
+          );
+          await reviewUserRemixApp({
+            slug: 'u5-mine',
+            sha256: remixReviewHash(stored.manifest as never),
+            seenReview: 'submitted',
+            decision: 'approved',
+            moderatorId: 88,
+          });
+          expect(stored.manifest).not.toHaveProperty('runnerQuarantines');
+        });
+
+        it("a trip on the author's part of the prompt counts as the run's does", async () => {
+          const real = globalThis.fetch;
+          const trip = fakeRemixRunner({
+            secret: SECRET,
+            apps: {},
+            quarantined: { tripped: true },
+          });
+          // The author part replays with the viewer's text answers masked.
+          vi.stubGlobal('fetch', (async (url: string, init: RequestInit) =>
+            (String(init.body).includes('"answer":"___"') ? trip.fetchImpl : real)(
+              url,
+              init
+            )) as unknown as typeof fetch);
+          await expect(runAs(101)).rejects.toMatchObject(unavailable);
+          expect(submits()).toHaveLength(0);
+          expect(counted()).toHaveLength(1);
+        });
+
+        it('pricing a user app counts a trip as a run does, and names the hold', async () => {
+          quarantine(true);
+          const quoteAs = (id: number) =>
+            quoteRemixApps({ imageId: SOURCE_ID, slug: 'u5-mine', caller: flagOn({ id }) });
+          expect(await quoteAs(101)).toEqual({
+            prices: [{ slug: 'u5-mine', refusal: 'Price unavailable' }],
+          });
+          await quoteAs(OTHER_AUTHOR);
+          expect(counted()).toHaveLength(1);
+          await quoteAs(102);
+          expect(await quoteAs(103)).toEqual({
+            prices: [{ slug: 'u5-mine', refusal: REMIX_APP_HELD }],
+          });
+          expect(stored.status).toBe('remix_disabled');
+        });
+
+        it("a quarantine while pricing a choice's options refuses as unavailable, not a server error", async () => {
+          const CHOICE_SOURCE =
+            "export default defineRemixApp({ async run(ctx) { await ctx.ask({ kind: 'choice', prompt: 'Which?', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }] }); return []; } });";
+          const sha = createHash('sha256').update(CHOICE_SOURCE).digest('hex');
+          const asks = fakeRemixRunner({
+            secret: SECRET,
+            apps: {
+              [sha]: {
+                async run(ctx) {
+                  const options = [
+                    { value: 'a', label: 'A' },
+                    { value: 'b', label: 'B' },
+                  ];
+                  await ctx.ask({ kind: 'choice', prompt: 'Which?', options });
+                  return [];
+                },
+              },
             },
           });
-        }) as unknown as typeof fetch);
-        for (const viewer of [101, 102, 103])
-          await expect(runAs(viewer)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
-        expect(written()).toHaveLength(0);
+          const cached = fakeRemixRunner({
+            secret: SECRET,
+            apps: {},
+            quarantined: { tripped: false },
+          });
+          let calls = 0;
+          vi.stubGlobal('fetch', (async (url: string, init: RequestInit) =>
+            (calls++ === 0 ? asks : cached).fetchImpl(url, init)) as unknown as typeof fetch);
+          stored = rowOf(CHOICE_SOURCE);
+          await bumpRemixAppRegistry();
+          await expect(
+            startRemixRun({
+              slug: 'u5-mine',
+              imageId: SOURCE_ID,
+              nonce: `nonce-choice-${nonce++}`,
+              quote: 30,
+              caller: flagOn({ id: 101 }),
+            })
+          ).rejects.toMatchObject(unavailable);
+          expect(asks.calls).toHaveLength(1);
+        });
       });
 
       it("calls the remix runner's own URL and secret, never the permission-check runner's", async () => {

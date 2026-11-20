@@ -10,14 +10,14 @@ export function fakeRemixRunner({
   secret,
   apps,
   answer,
-  quarantined = false,
+  quarantined,
 }: {
   secret: string;
   /** By the sha256 of the source the request sends. */
   apps: Record<string, Pick<RemixApp, 'run'>>;
   answer?: (request: Record<string, unknown>) => unknown;
-  /** Answer every call as the runner answers an app it quarantined. */
-  quarantined?: boolean;
+  /** Answer every call as the runner answers an app it quarantined; `{}` as a runner that predates `tripped`. */
+  quarantined?: { tripped?: boolean };
 }) {
   const calls: Record<string, unknown>[] = [];
   const fetchImpl = (async (_url: string, init: RequestInit) => {
@@ -30,7 +30,11 @@ export function fakeRemixRunner({
     const req = createHash('sha256').update(body).digest('hex');
     const message = 'this app outran the interrupt and is quarantined';
     const response = quarantined
-      ? JSON.stringify({ ts: request.ts, req, error: { code: 'quarantined', message } })
+      ? JSON.stringify({
+          ts: request.ts,
+          req,
+          error: { code: 'quarantined', message, ...quarantined },
+        })
       : JSON.stringify({
           ts: request.ts,
           req,

@@ -15,9 +15,12 @@ import {
   getEnabledRemixApps,
   getRemixAppRegistry,
   isRunnableBy,
+  noteRunnerQuarantine,
+  REMIX_APP_HELD,
   visibleRemixApps,
   type RegisteredRemixApp,
 } from '~/server/services/remix-app-registry.service';
+import { RemixQuarantinedError } from '~/server/services/remix-app-runner';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
 import {
@@ -359,7 +362,12 @@ export async function quoteRemixApps({
   const prices = await Promise.all(
     apps.map((entry) =>
       // One app that can't be priced refuses only itself.
-      quoteRuntimeApp(entry, image, caller, pricing).catch((error) => {
+      quoteRuntimeApp(entry, image, caller, pricing).catch(async (error) => {
+        // Pricing a user app runs its source, so a quarantine here counts as a run's does.
+        if (error instanceof RemixQuarantinedError) {
+          const held = await noteRunnerQuarantine(entry, caller.user.id, error);
+          return { slug: entry.slug, refusal: held ? REMIX_APP_HELD : PRICE_UNAVAILABLE };
+        }
         logToAxiom({
           name: 'remix-app-quote',
           type: 'warning',

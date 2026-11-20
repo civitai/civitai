@@ -63,9 +63,12 @@ export function remixRunnerConfig(): HookRunnerConfig | null {
   return { url: url.replace(/\/+$/, ''), secret };
 }
 
-/** The runner quarantined this source of the app: one of its calls outran the interrupt. */
+/**
+ * The runner quarantined this source of the app: one of its calls outran the interrupt. `tripped`
+ * on that call only, never on the refusals it caches after (nor from a runner that predates it).
+ */
 export class RemixQuarantinedError extends Error {
-  constructor(readonly sha256: string) {
+  constructor(readonly sha256: string, readonly tripped: boolean) {
     super('quarantined by the runner');
   }
 }
@@ -97,11 +100,10 @@ export async function callRemixRunner(
     remixRunnerTimeoutMs(1 + branches.length),
     { ...opts, alsoStatuses: [QUARANTINED_STATUS] }
   );
-  if (
-    answer.kind === 'ok' &&
-    (answer.body.error as { code?: unknown } | undefined)?.code === 'quarantined'
-  )
-    throw new RemixQuarantinedError(sha256);
+  const error =
+    answer.kind === 'ok' ? (answer.body.error as Record<string, unknown> | undefined) : undefined;
+  if (error?.code === 'quarantined')
+    throw new RemixQuarantinedError(sha256, error.tripped === true);
   const results =
     answer.kind === 'ok' && Array.isArray(answer.body.results)
       ? answer.body.results.map(readResult)
