@@ -43,7 +43,7 @@ async function openColorControl() {
 describe('text colour control', () => {
   test('a typed hex colour, with or without #, is applied and survives the sanitiser', async () => {
     await openColorControl();
-    await userEvent.fill(page.getByRole('textbox', { name: 'Hex color' }), '1a2B3c');
+    await userEvent.fill(page.getByRole('textbox', { name: 'Hex color' }), ' 1A2b3C ');
     await userEvent.keyboard('{Enter}');
 
     await expect.poll(spanColor).toBe('rgb(26, 43, 60)');

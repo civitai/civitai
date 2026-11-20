@@ -28,6 +28,7 @@ export function TextColorControl({ colors }: { colors: readonly string[] }) {
     if (!keepOpen) close();
   };
   const applyHex = () => {
+    if (!hex.trim()) return close();
     const color = parseHexColor(hex);
     if (color) apply(color);
     else setInvalid(true);
@@ -68,6 +69,7 @@ export function TextColorControl({ colors }: { colors: readonly string[] }) {
                 radius="xs"
                 style={{ cursor: 'pointer' }}
                 aria-label={`Set color ${color}`}
+                title={color}
                 onClick={() => apply(color)}
               />
             ))}
@@ -90,6 +92,10 @@ export function TextColorControl({ colors }: { colors: readonly string[] }) {
             placeholder="#ff8800"
             size="xs"
             w={120}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             value={hex}
             error={invalid}
             onChange={(e) => {
@@ -102,7 +108,12 @@ export function TextColorControl({ colors }: { colors: readonly string[] }) {
               applyHex();
             }}
           />
-          <ActionIcon variant="default" onClick={applyHex} aria-label="Apply hex color">
+          <ActionIcon
+            variant="default"
+            onClick={applyHex}
+            aria-label="Apply hex color"
+            title="Apply hex color"
+          >
             <IconCheck size={16} />
           </ActionIcon>
           <ActionIcon
@@ -112,6 +123,7 @@ export function TextColorControl({ colors }: { colors: readonly string[] }) {
               close();
             }}
             aria-label="Clear color"
+            title="Clear color"
           >
             <IconCircleOff size={16} />
           </ActionIcon>
@@ -119,6 +131,7 @@ export function TextColorControl({ colors }: { colors: readonly string[] }) {
             variant="default"
             onClick={() => setMode(mode === 'palette' ? 'picker' : 'palette')}
             aria-label={mode === 'palette' ? 'Color picker' : 'Color palette'}
+            title={mode === 'palette' ? 'Color picker' : 'Color palette'}
           >
             {mode === 'palette' ? <IconColorPicker size={16} /> : <IconPalette size={16} />}
           </ActionIcon>
