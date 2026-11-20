@@ -123,7 +123,7 @@ export const KOHYA_PARAM_FIELDS = [
 
 export function kohyaFieldSupported(field: string, ecosystem: string): boolean {
   if (field === 'negativePrompt') return ecosystem !== 'flux1';
-  if (field === 'clipSkip') return ecosystem === 'sd1';
+  if (field === 'clipSkip') return !isKohyaFlow(ecosystem);
   if (field === 'fp8Base' || field === 'blocksToSwap') return isKohyaFlux(ecosystem);
   if (field === 'vParameterization' || field === 'zeroTerminalSnr') return !isKohyaFlow(ecosystem);
   return true;

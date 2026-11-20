@@ -525,7 +525,7 @@ export const PARAM_HELP: Record<keyof RunParams, string> = {
     'Repeats each image within a dataset epoch. The Steps field still sets the total training budget.',
   enableBucket: 'Groups images with similar aspect ratios to reduce cropping.',
   clipSkip:
-    'Text encoder layer skip for SD 1.5. Anime defaults to 2; other SD 1.5 models default to 1.',
+    'Text encoder layer skip, also used for the preview images. SDXL models and SD 1.5 anime default to 2; other SD 1.5 models default to 1.',
   lrSchedulerNumCycles:
     'Number of cycles for cosine_with_restarts. Other schedulers ignore this value.',
   seed: 'Random seed for training and preview samples.',
@@ -684,7 +684,7 @@ export function defaultRunParams(run: Run, trigger = '', loraType = ''): RunPara
     negativePrompt: '',
     numRepeats: '1',
     enableBucket: true,
-    clipSkip: version.key === 'anime' ? '2' : '1',
+    clipSkip: version.key === 'anime' || kohyaFamily(version.ecosystem) === 'sdxl' ? '2' : '1',
     lrSchedulerNumCycles: '3',
     seed: '42',
     fp8Base: true,

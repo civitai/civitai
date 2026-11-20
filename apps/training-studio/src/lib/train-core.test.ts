@@ -1476,6 +1476,7 @@ describe('Kohya training', () => {
       lrSchedulerNumCycles: 4,
       vParameterization: true,
       seed: 123,
+      clipSkip: 3,
     },
     shuffleTokens: true,
     keepTokens: 1,
@@ -1516,6 +1517,7 @@ describe('Kohya training', () => {
       keepTokens: 1,
       lrSchedulerNumCycles: 4,
       vParameterization: true,
+      clipSkip: 3,
     });
     expect(trainingData.items.map((item: { caption: string }) => item.caption)).toEqual([
       'ohwx, 1girl',
@@ -1534,12 +1536,14 @@ describe('Kohya training', () => {
       getResource.mockResolvedValueOnce({ data: { air: customModel, fileFormat: 'SafeTensor' } });
       headBlob.mockResolvedValue({ data: {}, response: { ok: true } });
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom-kohya' } });
-      await submitTrainingBatch(client, [{ ...run(), ecosystem, customModel }], {
+      await submitTrainingBatch(client, [{ ...run(), ecosystem, customModel, kohya: {} }], {
         checkText,
         kohyaAllowed: true,
       });
       const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
       expect(input.model).toBe(customModel);
+      if (family === 'sd1') expect(input.clipSkip).toBe(1);
+      if (ecosystem === 'sdxl') expect(input.clipSkip).toBe(2);
       if (family === 'flux1' || family === 'chroma' || family === 'anima') {
         expect(input).toMatchObject({ noiseOffset: 0, minSnrGamma: 0, clipSkip: 1 });
         expect(input).not.toHaveProperty('vParameterization');
