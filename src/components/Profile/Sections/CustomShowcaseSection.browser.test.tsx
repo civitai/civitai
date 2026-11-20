@@ -150,6 +150,20 @@ describe('CustomShowcaseSection', () => {
       await vi.waitFor(() => expect(shown()).toBeLessThan(12));
     });
 
+    // 13 model cards at a 1440px desktop width: more than two rows hold, so the button is offered.
+    test('offers View all for 13 items at a 1440px desktop width', async () => {
+      feedReturns(Array.from({ length: 13 }, (_, i) => i + 1));
+      await renderWithProviders(
+        <div style={{ width: 1440 }}>
+          <CustomShowcaseSection
+            section={{ ...sectionOf('Model'), items: Array.from({ length: 13 }, (_, i) => i + 1) }}
+            user={user}
+          />
+        </div>
+      );
+      await vi.waitFor(() => expect(document.body.textContent).toContain('View all 13'));
+    });
+
     test('offers nothing when every item already shows', async () => {
       await renderWide([1, 2]);
       await vi.waitFor(() => expect(shown()).toBe(2));
