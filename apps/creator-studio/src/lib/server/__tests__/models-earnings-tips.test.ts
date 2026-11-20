@@ -21,7 +21,7 @@ vi.mock('$lib/server/clickhouse', () => ({
       if (!/GROUP BY modelVersionId, accountType, source/.test(sql))
         throw new Error(`fake ClickHouse expects the per-source earnings read: ${sql.slice(0, 120)}`);
       // Honour the one source predicate the earnings reads carry, as ClickHouse would.
-      const rows = /source != 'licenseFeeMarkup'/.test(sql)
+      const rows = /source NOT IN \('licenseFeeMarkup'\)/.test(sql)
         ? state.earnRows.filter((r) => r.source !== 'licenseFeeMarkup')
         : state.earnRows;
       return rows.map((r) => ({

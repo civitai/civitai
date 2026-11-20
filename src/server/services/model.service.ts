@@ -1,6 +1,6 @@
 import { deletePostRows } from '@civitai/db-queries/content-deletion';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
-import { PLATFORM_REVENUE_SOURCES_SQL } from '~/shared/constants/buzz.constants';
+import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';

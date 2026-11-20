@@ -59,9 +59,9 @@ import {
   buzzSpendTypes,
   CASH_SETTLED_ALIASES,
   coercePurchasedBuzzType,
-  PLATFORM_REVENUE_SOURCES_SQL,
   TransactionType,
 } from '~/shared/constants/buzz.constants';
+import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
 import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { paymentIntentMetadataSchema } from '~/server/schema/stripe.schema';

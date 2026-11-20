@@ -8,12 +8,12 @@ import { withRetries } from '~/server/utils/errorHandling';
 import dayjs from 'dayjs';
 import { formatDate } from '~/utils/date-helpers';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { PLATFORM_REVENUE_SOURCES } from '@civitai/buzz';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import {
   CASH_SETTLED_ALIASES,
   GENERATION_TIP_TRANSACTION_PREFIX,
-  PLATFORM_REVENUE_SOURCES,
   TransactionType,
 } from '~/shared/constants/buzz.constants';
 import {

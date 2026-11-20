@@ -12,6 +12,17 @@ export const MAX_LICENSING_FEE = 100;
 export const MAX_PERCENT_OF_COMPUTE_FEE = 100;
 
 /**
+ * orchestration.resourceCompensations sources that are platform revenue logged on a creator's version
+ * (the licence-fee markup): never paid, never shown as earnings. event-engine has no workspace
+ * dependencies, so update-compensation.ts spells it out; keep the two in step.
+ */
+export const PLATFORM_REVENUE_SOURCES: ReadonlySet<string> = new Set(['licenseFeeMarkup']);
+/** PLATFORM_REVENUE_SOURCES as a ClickHouse IN list: `source NOT IN (${PLATFORM_REVENUE_SOURCES_SQL})`. */
+export const PLATFORM_REVENUE_SOURCES_SQL = [...PLATFORM_REVENUE_SOURCES]
+  .map((s) => `'${s}'`)
+  .join(', ');
+
+/**
  * Why a write that touches a percent-of-compute fee is refused, or null when it may proceed. Staff only
  * until creators get a capped percent fee: an owner may keep, lower or clear a percent fee staff set,
  * never start one, convert one to per-image, or raise one.

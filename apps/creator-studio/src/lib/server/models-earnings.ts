@@ -1,3 +1,4 @@
+import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
 import { getClickhouse } from '$lib/server/clickhouse';
 import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
@@ -103,9 +104,8 @@ const TOP_N = 100;
 // The table is written by the external .NET orchestrator and carries known garbage rows (binary-junk accountType,
 // absurd amounts up to ~2e267). A letters-only accountType + a sane amount bound keep those out of the sum.
 const CORRUPT_FILTER = `match(accountType, '^[A-Za-z]+$') AND amount > 0 AND amount < 1e12`;
-// Platform revenue the orchestrator logs on the creator's version; the payout job never pays it. Mirrors
-// PLATFORM_REVENUE_SOURCES in the main app's buzz.constants.ts.
-const EARNINGS_FILTER = `${CORRUPT_FILTER} AND source != 'licenseFeeMarkup'`;
+// Platform revenue the orchestrator logs on the creator's version; the payout job never pays it.
+const EARNINGS_FILTER = `${CORRUPT_FILTER} AND source NOT IN (${PLATFORM_REVENUE_SOURCES_SQL})`;
 
 const lowerFirst = (s: string) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
 
