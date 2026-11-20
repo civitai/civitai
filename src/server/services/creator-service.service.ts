@@ -14,7 +14,10 @@ import {
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
-import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
+import {
+  countOpenDealsByOffering,
+  getServiceDealRecord,
+} from '~/server/services/creator-service-deal.service';
 import { getServicesMinCreatorScore } from '~/server/services/creator-service-min-score';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -25,6 +28,7 @@ import {
 import { NotificationCategory } from '~/server/common/enums';
 import { SERVICE_DEAL_OPEN_STATUSES } from '~/shared/constants/creator-services.constants';
 import type {
+  GetServiceOfferingByIdInput,
   GetServiceOfferingFeedInput,
   GetShopServiceOfferingsInput,
   ServiceOfferingFeedSort,
@@ -349,6 +353,61 @@ export async function getShopServiceOfferings({
   // No viewer: a restricted cover is withheld from its seller too, as the storefront shows what
   // visitors see. The offering stays listed without it.
   return withOpenSlots(offerings.map((offering) => withServableImage(offering, 'coverImage')));
+}
+
+/**
+ * One offering for its own page. Visitors get it only where the storefront and the feed would list
+ * it (`listableServiceOfferingWhere`, a published shop, no block either way, not a creator they
+ * hid); its seller also sees it unlisted (Draft, Paused, under review) and moderators see any
+ * status. Nobody is sent a rating the domain may not serve.
+ */
+export async function getServiceOfferingById({
+  id,
+  browsingLevel,
+  servable,
+  viewerId,
+  isModerator,
+}: GetServiceOfferingByIdInput & {
+  /** What this domain may be sent: `domainServableLevels(ctx)`. */
+  servable: number;
+  viewerId?: number;
+  isModerator?: boolean;
+}) {
+  const offering = await dbRead.serviceOffering.findFirst({
+    where: {
+      id,
+      maxNsfwLevel: { in: servableServiceRatings(servable) },
+      ...(isModerator
+        ? {}
+        : {
+            OR: [
+              listableServiceOfferingWhere({ browsingLevel, servable }),
+              ...(viewerId
+                ? [{ sellerId: viewerId, status: { not: ServiceOfferingStatus.Removed } }]
+                : []),
+            ],
+          }),
+    },
+    select: {
+      ...serviceOfferingSelect,
+      seller: { select: { ...userWithCosmeticsSelect, createdAt: true } },
+    },
+  });
+  if (!offering) throw throwNotFoundError('Service not found');
+
+  const sellerId = offering.seller.id;
+  const seesUnlisted = isModerator || viewerId === sellerId;
+  await assertCreatorShopVisible({ userId: sellerId, viewerId, isModerator });
+  if (!seesUnlisted && viewerId) {
+    const hidden = await getHiddenOrBlockedUserIds(viewerId);
+    if (hidden.includes(sellerId)) throw throwNotFoundError('Service not found');
+  }
+
+  const [[withSlots], record] = await Promise.all([
+    withOpenSlots([withServableImage(offering, 'coverImage')]),
+    getServiceDealRecord({ sellerId, offeringId: id }),
+  ]);
+  return { ...withSlots, record };
 }
 
 const feedOrderBy = {

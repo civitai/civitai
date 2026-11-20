@@ -6,6 +6,8 @@ export interface MintAppTokenInput {
   clientId: string;
   scope: bigint;
   ttlSeconds?: number;
+  /** The moderator acting as `userId`, or null. The hub mints nothing for an impersonation. */
+  impersonatedBy: number | null;
 }
 
 export interface MintedAppToken {

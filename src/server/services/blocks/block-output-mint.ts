@@ -1,5 +1,8 @@
 import type { BlockWorkflowOutput } from '~/server/schema/blocks/workflow.schema';
-import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
+import {
+  PENDING,
+  type BlockOutputCeiling,
+} from '~/server/services/blocks/block-output-restriction';
 import {
   blockMediaUrl,
   sealBlockMediaRef,
@@ -78,6 +81,27 @@ export function applyServingRules(
   // their owner only. Every non-owner read (publish, post, persist) still refuses them.
   if (forOwner && mediaType && isOwnerOnlyMediaType(mediaType)) return output;
   return UNRATED;
+}
+
+/**
+ * While serving is off the app gets the orchestrator url itself, and no route judges the
+ * blob later. So what serving hides is hidden here too, and an unrated image or video is
+ * held until its rating lands, or hidden when no rating will ever come.
+ * Owner-only media keeps its url, as it does on the owner's poll with serving on.
+ */
+export function applyServingOffRules(
+  output: BlockWorkflowOutput,
+  slot: BlockOutputMintSlot,
+  step: Pick<BlockOutputMintStep, 'neverRatedVideoStep'>,
+  { neverRated = false }: { neverRated?: boolean } = {}
+): BlockWorkflowOutput {
+  const served = applyServingRules(output, slot, step, { forOwner: true });
+  if (!('url' in served)) return served;
+  const mediaType = mediaTypeOf(slot.type);
+  // An unknown blob type could be a video: refused, as serving on refuses it.
+  if (!mediaType) return UNRECOGNISED;
+  if ((mediaType !== 'image' && mediaType !== 'video') || slot.nsfwLevel?.trim()) return served;
+  return neverRated ? UNRATED : PENDING;
 }
 
 /** Media the route serves to its owner alone, with no rating. */

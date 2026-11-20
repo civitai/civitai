@@ -23,6 +23,14 @@
 
   // The last day the ledger has data for in this range. Everything after it is unelapsed, not zero.
   const through = $derived(daily?.through ?? null);
+  const monthFmt = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  const monthLabel = $derived(
+    daily?.days[0] ? monthFmt.format(Date.parse(`${daily.days[0]}T00:00:00Z`)) : 'this month'
+  );
 
   const chartData = $derived.by(() => {
     if (!daily) return { labels: [], datasets: [] };
@@ -122,7 +130,7 @@
   {#if !daily}
     <p class="placeholder">The chart is unavailable right now.</p>
   {:else if !hasData}
-    <p class="placeholder">No creator payouts in this month.</p>
+    <p class="placeholder">No creator payouts in {monthLabel}.</p>
   {:else}
     <div class="h-72">
       <!-- Chart.js mutates its config in place, so the chart is rebuilt when the type changes rather
@@ -134,7 +142,7 @@
 
     {#if cash.length > 0}
       <div class="mt-3 flex flex-wrap gap-x-6 gap-y-1 border-t border-dark-4 pt-3 text-xs">
-        <span class="text-dark-2">Cash paid this month</span>
+        <span class="text-dark-2">Cash paid in {monthLabel}</span>
         {#each cash as c (c.currency)}
           <span class="tabular-nums text-white">
             <CurrencyDisplay amount={c.total} currency={c.currency} />

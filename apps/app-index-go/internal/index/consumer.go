@@ -15,6 +15,12 @@
 //   - Any other end of the stream (a dropped connection, `unavailable`, `slow_consumer`, an error
 //     this consumer does not know) reconnects with the same cursor after a bounded exponential
 //     backoff with jitter. Every reconnect waits; there is no tight loop.
+//   - With a token source (Consumer.Tokens: the index's own client-credentials token), every
+//     subscription carries its token. `invalid_token` drops the token and reconnects from the
+//     stored cursor, never an empty one, with a new token after the ordinary backoff, which grows
+//     while the registry keeps refusing. A token that cannot be fetched is retried the same way,
+//     without opening a subscription. Without one, the static token (or none) is sent and
+//     `invalid_token` waits the longest backoff, as before.
 //   - An upsert whose body is unusable is treated as deleted. An event that cannot be decoded at all
 //     (no usable urn, unreadable data) is skipped and counted, advancing the cursor only when it
 //     carried one, so one bad event never wedges the stream.
@@ -45,6 +51,14 @@ type Events interface {
 // Subscriber opens subscriptions.
 type Subscriber interface {
 	Subscribe(ctx context.Context, req registry.Request) (Events, error)
+}
+
+// TokenSource hands out the bearer token of each subscription (token.Source).
+type TokenSource interface {
+	// Token is a token to subscribe with.
+	Token(ctx context.Context) (string, error)
+	// Invalidate drops the current token: the registry refused it.
+	Invalidate()
 }
 
 // ClientSubscriber is a Subscriber over the HTTP binding.
@@ -92,6 +106,9 @@ type Consumer struct {
 	Backoff Backoff
 	// Sleep waits d or until ctx ends; nil is a timer. Tests replace it to observe the delays.
 	Sleep func(ctx context.Context, d time.Duration) error
+	// Tokens, when set, supplies every subscription's bearer token, and is told when the registry
+	// refuses one. Nil: the registry.Client's own token (or none) is sent, unchanged.
+	Tokens TokenSource
 }
 
 // maxAttempt caps the backoff exponent (the delay is capped at Backoff.Max long before).
@@ -104,6 +121,12 @@ type storeError struct{ err error }
 
 func (e storeError) Error() string { return "store: " + e.err.Error() }
 func (e storeError) Unwrap() error { return e.err }
+
+// tokenError marks a failure to get a token: no subscription was opened.
+type tokenError struct{ err error }
+
+func (e tokenError) Error() string { return "token: " + e.err.Error() }
+func (e tokenError) Unwrap() error { return e.err }
 
 // Run follows the stream until ctx ends.
 func (c *Consumer) Run(ctx context.Context) error {
@@ -181,6 +204,7 @@ func (c *Consumer) wait(ctx context.Context, d time.Duration) {
 // longest backoff (End, bad_request, auth: retrying sooner would not change the answer).
 func (c *Consumer) handle(ctx context.Context, gen store.Generation, err error) (reason string, longWait bool) {
 	var se storeError
+	var te tokenError
 	switch {
 	case errors.Is(err, errEnded):
 		c.Log.Warn("registry sent End; subscribing again later", "generation", gen.ID)
@@ -188,6 +212,9 @@ func (c *Consumer) handle(ctx context.Context, gen store.Generation, err error) 
 	case errors.As(err, &se):
 		c.Log.Warn("store write failed; reconnecting from the stored cursor", "err", se.err, "generation", gen.ID)
 		return "store", false
+	case errors.As(err, &te):
+		c.Log.Warn("no token; retrying from the stored cursor", "err", te.err, "generation", gen.ID)
+		return "token", false
 	}
 	code := registry.CodeOf(err)
 	switch code {
@@ -211,6 +238,13 @@ func (c *Consumer) handle(ctx context.Context, gen store.Generation, err error) 
 		c.Log.Error("registry refused the request", "err", err)
 		return "bad_request", true
 	case registry.InvalidToken, registry.InsufficientScope:
+		if code == registry.InvalidToken && c.Tokens != nil {
+			// The token expired or was revoked: a new one may be accepted. The stored cursor is
+			// kept; the next subscription resumes from it.
+			c.Tokens.Invalidate()
+			c.Log.Warn("registry refused the token; resuming from the stored cursor with a new one", "generation", gen.ID)
+			return "auth", false
+		}
 		c.Log.Error("registry refused the token", "code", string(code))
 		return "auth", true
 	default:
@@ -278,7 +312,15 @@ func (c *Consumer) setServing(g *store.Generation) {
 // follow subscribes from gen's cursor and applies events until the stream ends. live reports
 // whether it reached Live, i.e. the subscription worked.
 func (c *Consumer) follow(ctx context.Context, gen *store.Generation) (live bool, err error) {
-	events, err := c.Sub.Subscribe(ctx, registry.Request{Schema: c.Schema, Cursor: gen.Cursor})
+	req := registry.Request{Schema: c.Schema, Cursor: gen.Cursor}
+	if c.Tokens != nil {
+		tok, err := c.Tokens.Token(ctx)
+		if err != nil {
+			return false, tokenError{err}
+		}
+		req.Token = tok
+	}
+	events, err := c.Sub.Subscribe(ctx, req)
 	if err != nil {
 		return false, err
 	}

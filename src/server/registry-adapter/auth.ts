@@ -11,23 +11,29 @@
  *     rule from a region the site restricts to SFW content, and its cursor is
  *     tied to the token's subject (`subscription.ts`) and, for a document, app, release or
  *     schema stream, to its audience (`doc-feed.ts`, `cursor.ts`).
+ *   - A service token (a client acting as itself, no user; `auth.jwt.ts`) is accepted only for a
+ *     client on this source's service allowlist, and reads {@link SERVICE_AUDIENCE}: every
+ *     rating, with no region hold. The allowlist is empty unless configured, so by default every
+ *     service token is `invalid_token`, as a token with no user always was.
  *   - A stream never outlives its token: {@link watchPrincipal} ends it with `invalid_token` at
  *     the token's expiry, or when a re-check finds it no longer active; and a re-check that
  *     finds the user may now read different ratings ends it with `cursor_expired`, so the
  *     consumer re-snapshots under them.
  *
- * No stream requires a scope yet, so this source never sends `insufficient_scope`; a verified
- * token carries its scope ({@link VerifiedToken.scope}) for the check that will
- * (`hasScope` in `auth.jwt.ts`).
+ * This source never sends `insufficient_scope`; a stream whose scope is missing sends nothing
+ * instead (`private-feed.ts`).
  */
 import type { Audience } from '~/server/registry-adapter/audience';
-import { ANONYMOUS_AUDIENCE, audienceForUser } from '~/server/registry-adapter/audience';
+import {
+  ANONYMOUS_AUDIENCE,
+  SERVICE_AUDIENCE,
+  audienceForUser,
+} from '~/server/registry-adapter/audience';
 import type { ErrorCode } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
 
-/** A token the site accepted. */
-export type VerifiedToken = {
-  /** Stable for the token's user and client, across token refreshes. */
+type VerifiedTokenBase = {
+  /** Stable for the token's user (or service) and client, across token refreshes. */
   subject: string;
   /** The OAuth client the token was issued to (the JWT's `client_id`). */
   clientId: string;
@@ -36,19 +42,52 @@ export type VerifiedToken = {
    * nothing (`scopeGrantBits` in `auth.jwt.ts`). Read it with `hasScope`.
    */
   scope: bigint;
-  /** Who presents the token on the user's behalf (the JWT's `act.sub`); null when no one does. */
+  /** Who presents the token on the client's behalf (the JWT's `act.sub`); null when no one does. */
   actor: string | null;
-  /** The user's browsing settings, which set the token's {@link Audience}. */
-  user: { showNsfw?: boolean | null; browsingLevel?: number | null };
   expiresAt: Date | null;
 };
+
+/** The user's browsing settings, which set a user token's {@link Audience}. */
+export type TokenUser = { showNsfw?: boolean | null; browsingLevel?: number | null };
+
+/** A token the site accepted: a user's, or an allowlisted service's (`service: true`). */
+export type VerifiedToken =
+  | (VerifiedTokenBase & {
+      service?: undefined;
+      /**
+       * The user the token acts for. Required of every verifier, and null on a service token, so a
+       * private stream (`private-feed.ts`) reads it, never infers it from {@link subject}.
+       */
+      userId: number;
+      user: TokenUser;
+    })
+  | (VerifiedTokenBase & {
+      /**
+       * A client acting as itself, with no user, whose client is on this source's service
+       * allowlist (`auth.jwt.ts`). Its audience is {@link SERVICE_AUDIENCE}.
+       */
+      service: true;
+      /** No user: a private stream is never served to a service token (`private-feed.ts`). */
+      userId: null;
+      user?: undefined;
+    });
 
 /** The site's verification of a bearer token: null for one it does not accept. */
 export type VerifyToken = (token: string) => Promise<VerifiedToken | null>;
 
+/** What a private stream's gates read of an accepted token (`private-feed.ts`). */
+export type PrincipalToken = Pick<VerifiedToken, 'userId' | 'clientId' | 'scope' | 'actor'>;
+
 export type Principal = {
   /** null: anonymous. */
   subject: string | null;
+  /** Set for an allowlisted service token: its audience is {@link SERVICE_AUDIENCE}. */
+  service?: true;
+  /** The token's OAuth client (`client_id`), and who presented it for that client (`act.sub`). */
+  clientId?: string;
+  actor?: string | null;
+  /** The accepted token's user, client, scope and actor; null for anonymous. */
+  token: PrincipalToken | null;
   audience: Audience;
   expiresAt: Date | null;
   /** Re-verifies the token now; null for anonymous. */
@@ -63,6 +102,7 @@ export type Recheck = 'active' | 'inactive' | 'audience-changed';
 
 export const ANONYMOUS_PRINCIPAL: Principal = {
   subject: null,
+  token: null,
   audience: ANONYMOUS_AUDIENCE,
   expiresAt: null,
   recheck: null,
@@ -85,7 +125,8 @@ const expired = (token: VerifiedToken, now: number) =>
  * SFW one (`audienceForUser`). It is required, so every caller decides it. It is
  * asked again at each re-check, with the same answer for the same request until a restriction's
  * effective date passes, so a re-check compares like with like and a restriction that starts
- * mid-stream ends the stream with `cursor_expired`.
+ * mid-stream ends the stream with `cursor_expired`. A service token is never held to it: its
+ * audience is {@link SERVICE_AUDIENCE} wherever the request comes from.
  */
 export async function authenticate(
   authorization: string | undefined,
@@ -99,11 +140,22 @@ export async function authenticate(
   const verified = await verify(token);
   if (!verified) throw invalidToken('the token is not active');
   if (expired(verified, now())) throw invalidToken('the token has expired');
-  const audienceOf = (user: VerifiedToken['user']) =>
-    audienceForUser(user, { regionRestricted: regionRestricted() });
-  const audience = audienceOf(verified.user);
+  const audienceOf = (v: VerifiedToken) =>
+    v.service === true
+      ? SERVICE_AUDIENCE
+      : audienceForUser(v.user, { regionRestricted: regionRestricted() });
+  const audience = audienceOf(verified);
   return {
     subject: verified.subject,
+    ...(verified.service === true ? { service: true as const } : {}),
+    clientId: verified.clientId,
+    actor: verified.actor,
+    token: {
+      userId: verified.userId,
+      clientId: verified.clientId,
+      scope: verified.scope,
+      actor: verified.actor,
+    },
     audience,
     expiresAt: verified.expiresAt,
     recheck: async () => {
@@ -111,7 +163,7 @@ export async function authenticate(
       if (again === null || again.subject !== verified.subject || expired(again, now())) {
         return 'inactive';
       }
-      return audienceOf(again.user).key === audience.key ? 'active' : 'audience-changed';
+      return audienceOf(again).key === audience.key ? 'active' : 'audience-changed';
     },
   };
 }

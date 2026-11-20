@@ -12,7 +12,13 @@
  *     `agree`, `disagree`, `error` (the service answered an error, its SFW fallback, or a body that
  *     is not a decision) or `timeout`;
  *   - on a disagreement it logs one line naming the first field that differs and both values, and
- *     nothing that identifies the viewer (no user id, address or token).
+ *     nothing that identifies the viewer (no user id, address or token);
+ *   - a service principal (an allowlisted service token, `auth.ts`) is not compared: it has no
+ *     viewer, and its audience is the adapter's own allowlist decision, not the policy's, so it is
+ *     counted `service` and nothing is sent, never `error`.
+ *
+ * Enforcement (`policy-enforce.ts`, `REGISTRY_ADAPTER_POLICY_ENFORCE=1`) runs this same comparison
+ * and awaits it; everything below is shadow mode, which is what runs without that flag.
  *
  * 🔴 It never changes the live decision: the call is not awaited by the subscription, it is handed
  * copies of values already decided, and every failure inside it is caught here. The subscription
@@ -32,7 +38,14 @@ export const POLICY_RATINGS = ['g', 'pg', 'pg13', 'r', 'x', 'xxx'] as const;
 /** The service's caller context for a subscription. */
 export const POLICY_CONTEXT = 'registry-subscription';
 
-export const SHADOW_RESULTS = ['agree', 'disagree', 'error', 'timeout', 'dropped'] as const;
+export const SHADOW_RESULTS = [
+  'agree',
+  'disagree',
+  'error',
+  'timeout',
+  'dropped',
+  'service',
+] as const;
 export type ShadowResult = (typeof SHADOW_RESULTS)[number];
 
 export const DEFAULT_POLICY_TIMEOUT_MS = 250;
@@ -62,7 +75,7 @@ export type PolicyRequest = {
 };
 
 /** The part of the service's answer the shadow compares. */
-type PolicyAnswer = {
+export type PolicyAnswer = {
   ratings: string[];
   unknownRating: boolean;
   regionHold: string;
@@ -111,6 +124,10 @@ export function policyRequest(origin: RequestOrigin, principal: Principal): Poli
   return body;
 }
 
+/** Whether the service's answer holds the request's region to SFW: any `regionHold` but `none`. */
+export const answerHolds = (answer: Pick<PolicyAnswer, 'regionHold'>): boolean =>
+  answer.regionHold !== 'none';
+
 /** The first field where the two decisions differ, or null when they agree. */
 export function compareDecisions(
   ours: OurDecision,
@@ -125,7 +142,7 @@ export function compareDecisions(
       ours: String(ours.unknownRating),
       service: String(service.unknownRating),
     };
-  const serviceHeld = service.regionHold !== 'none';
+  const serviceHeld = answerHolds(service);
   if (ours.held !== serviceHeld)
     return {
       field: 'regionHold',
@@ -154,11 +171,34 @@ export type PolicyShadow = (s: {
   held: boolean;
 }) => Promise<ShadowResult>;
 
+/**
+ * Why a comparison found no usable decision, finer than its {@link ShadowResult}: `error` is split
+ * into the service's own `fallback` answer, a body that is not a decision (`malformed`), a subject
+ * with no user id (`no_user_id`) and everything else (`error`: a refused connection, an HTTP error
+ * without a fallback body).
+ */
+export type NoDecision = 'error' | 'timeout' | 'dropped' | 'fallback' | 'malformed' | 'no_user_id';
+
+/**
+ * One comparison in full: its {@link ShadowResult} (already counted), and the service's answer
+ * when it gave one that is a decision (`agree` / `disagree`), or why there is none.
+ */
+export type Comparison =
+  | { result: 'agree' | 'disagree'; answer: PolicyAnswer }
+  | { result: 'service' }
+  | { result: 'error' | 'timeout' | 'dropped'; why: NoDecision };
+
+/**
+ * The comparison both modes run: shadow ({@link createPolicyShadow}) and enforcement
+ * (`policy-enforce.ts`, which bounds its own wait for it). Resolves; never rejects.
+ */
+export type PolicyComparison = (s: Parameters<PolicyShadow>[0]) => Promise<Comparison>;
+
 /** The counter, on its own registry: the adapter has no other metrics. */
 export function createShadowMetrics(registry = new Registry()) {
   const counter = new Counter({
     name: 'registry_adapter_policy_shadow_total',
-    help: 'Subscriptions compared with the content-policy service, by result: agree, disagree, error (an error answer, its SFW fallback, or no decision in the body), timeout, dropped (not sent: the in-flight cap was full).',
+    help: 'Subscriptions compared with the content-policy service, by result: agree, disagree, error (an error answer, its SFW fallback, or no decision in the body), timeout, dropped (not sent: the in-flight cap was full), service (not sent: an allowlisted service principal, which has no viewer).',
     labelNames: ['result'],
     registers: [registry],
   });
@@ -167,7 +207,7 @@ export function createShadowMetrics(registry = new Registry()) {
   return { registry, counter };
 }
 
-export function createPolicyShadow(opts: {
+type ComparisonOptions = {
   /** The service's base URL; `/v1/decide` is resolved against it. */
   url: string;
   timeoutMs?: number;
@@ -176,51 +216,84 @@ export function createPolicyShadow(opts: {
   fetch?: typeof fetch;
   /** Comparisons waiting on the service at once; past it, `dropped` ({@link DEFAULT_MAX_IN_FLIGHT}). */
   maxInFlight?: number;
-}): PolicyShadow {
+  /** The repo's outbound deadline, replaceable so a test can throw its off-switch. */
+  outboundSignal?: (ms: number) => AbortSignal | undefined;
+};
+
+const isTimeout = (err: unknown) =>
+  err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+
+export function createPolicyComparison(opts: ComparisonOptions): PolicyComparison {
   const endpoint = new URL('/v1/decide', opts.url).toString();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_POLICY_TIMEOUT_MS;
   const doFetch = opts.fetch ?? fetch;
   const log = opts.log ?? ((line: string) => console.warn(line));
-  const count = (result: ShadowResult) => {
-    opts.counter.inc({ result });
-    return result;
+  const count = (result: ShadowResult) => opts.counter.inc({ result });
+  const none = (result: 'error' | 'timeout' | 'dropped', why: NoDecision): Comparison => {
+    count(result);
+    return { result, why };
   };
   const maxInFlight = opts.maxInFlight ?? DEFAULT_MAX_IN_FLIGHT;
+  const outboundSignal = opts.outboundSignal ?? fetchTimeoutSignal;
   let inFlight = 0;
   return async ({ origin, principal, held }) => {
-    if (inFlight >= maxInFlight) return count('dropped');
+    // No viewer to ask about: the service audience is this source's allowlist, not the policy's.
+    if (principal.service === true) {
+      count('service');
+      return { result: 'service' };
+    }
+    if (inFlight >= maxInFlight) return none('dropped', 'dropped');
     inFlight++;
     try {
       const ours = ourDecision(principal, held);
       const body = policyRequest(origin, principal);
-      if (!body) return count('error');
+      if (!body) return none('error', 'no_user_id');
       const res = await doFetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
-        // The repo's outbound deadline (`outbound-fetch-timeouts-off` can drop it; the comparison is
-        // never awaited by the subscription, so even without one it cannot hold a stream).
-        signal: fetchTimeoutSignal(timeoutMs),
+        // The repo's outbound deadline, which `outbound-fetch-timeouts-off` can drop: a shadow
+        // comparison is never awaited by the subscription, and enforcement bounds its own wait,
+        // so even without one it cannot hold a stream.
+        signal: outboundSignal(timeoutMs),
       });
-      const answer: unknown = await res.json();
-      if (!res.ok || !isAnswer(answer) || answer.fallback) return count('error');
+      const text = await res.text();
+      let answer: unknown;
+      try {
+        answer = JSON.parse(text);
+      } catch {
+        return none('error', res.ok ? 'malformed' : 'error');
+      }
+      if (isAnswer(answer) && answer.fallback) return none('error', 'fallback');
+      if (!res.ok) return none('error', 'error');
+      if (!isAnswer(answer)) return none('error', 'malformed');
       const diff = compareDecisions(ours, answer);
-      if (!diff) return count('agree');
+      if (!diff) {
+        count('agree');
+        return { result: 'agree', answer };
+      }
       log(
         `registry-adapter: policy shadow disagree field=${diff.field} ours=${diff.ours} ` +
           `service=${diff.service} context=${POLICY_CONTEXT}`
       );
-      return count('disagree');
+      count('disagree');
+      return { result: 'disagree', answer };
     } catch (err) {
-      return count(
-        err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
-          ? 'timeout'
-          : 'error'
-      );
+      return isTimeout(err) ? none('timeout', 'timeout') : none('error', 'error');
     } finally {
       inFlight--;
     }
   };
+}
+
+/** A comparison as a shadow: its only output is its counted result. */
+export const shadowOf =
+  (compare: PolicyComparison): PolicyShadow =>
+  async (s) =>
+    (await compare(s)).result;
+
+export function createPolicyShadow(opts: ComparisonOptions): PolicyShadow {
+  return shadowOf(createPolicyComparison(opts));
 }
 
 /**
@@ -286,7 +359,16 @@ export function startPolicyShadow(
     log = (line: string) => console.log(line),
     warn = (line: string) => console.warn(line),
   }: { log?: (line: string) => void; warn?: (line: string) => void } = {}
-): { shadow?: PolicyShadow; server?: Server } {
+): {
+  shadow?: PolicyShadow;
+  server?: Server;
+  /** The comparison the shadow runs, for enforcement to share (`policy-enforce.ts`). */
+  compare?: PolicyComparison;
+  /** How long one comparison waits (REGISTRY_ADAPTER_POLICY_TIMEOUT_MS). */
+  timeoutMs?: number;
+  /** The registry `/metrics` serves, for enforcement's counter. */
+  registry?: Registry;
+} {
   let config: ReturnType<typeof policyShadowFromEnv>;
   try {
     config = policyShadowFromEnv(env);
@@ -297,7 +379,8 @@ export function startPolicyShadow(
   if (!config) return {};
   const { url, timeoutMs, metricsPort } = config;
   const metrics = createShadowMetrics();
-  const shadow = createPolicyShadow({ url, timeoutMs, counter: metrics.counter });
+  const compare = createPolicyComparison({ url, timeoutMs, counter: metrics.counter });
+  const shadow = shadowOf(compare);
   const server = createMetricsServer(metrics.registry);
   server.on('error', (err: NodeJS.ErrnoException) =>
     warn(
@@ -308,7 +391,7 @@ export function startPolicyShadow(
   server.listen(metricsPort, () =>
     log(`registry-adapter: policy shadow on; /metrics on :${metricsPort}`)
   );
-  return { shadow, server };
+  return { shadow, server, compare, timeoutMs, registry: metrics.registry };
 }
 
 /** A server answering `GET /metrics` from `registry`, and 404 for anything else. */

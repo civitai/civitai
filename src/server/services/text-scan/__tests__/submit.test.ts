@@ -132,6 +132,15 @@ describe('scanEntity', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it('still skips when the missing-prompt log throttle cannot be claimed', async () => {
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValue({ base: PROMPTS.base });
+    redisMock.redis.set.mockRejectedValueOnce(new Error('redis down'));
+    expect(await scanEntity({ entityType: 'Post', entityId: 7 })).toEqual({
+      status: 'skipped',
+      reason: 'missing-prompt',
+    });
+  });
+
   it('measures minChars on raw field text, not the composed message with headings', async () => {
     // "## A long heading here\nhi" is 25 chars; the raw text is 2.
     load.mockResolvedValue(

@@ -132,6 +132,7 @@ import { archiveStudioTrainingDatasetsJob } from '~/server/jobs/archive-studio-t
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
+import { knightsPublishSampling } from '~/server/jobs/knights-publish-sampling';
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { auditWildcardSetCategoriesJob } from '~/server/jobs/audit-wildcard-set-categories';
 import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor';
@@ -188,7 +189,7 @@ import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-image
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
 import { purgeFeedbackCaptures } from '~/server/jobs/purge-feedback-captures';
 import { imageStorageDeletes } from '~/server/jobs/image-storage-deletes';
-import { imageDeletes } from '~/server/jobs/image-deletes';
+import { pendingDeletes } from '~/server/jobs/pending-deletes';
 import { retryUploadPromptScansJob } from '~/server/jobs/retry-upload-prompt-scans';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
@@ -238,9 +239,10 @@ export const jobs: Job[] = [
   removeReplacedImages,
   purgeFeedbackCaptures,
   imageStorageDeletes,
-  imageDeletes,
+  pendingDeletes,
   retryUploadPromptScansJob,
   processScheduledPublishing,
+  knightsPublishSampling,
   // refreshImageGenerationCoverage,
   cleanImageResources,
   deleteOldTrainingData,

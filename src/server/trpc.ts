@@ -3,6 +3,7 @@ import {
   clampRequestBrowsingLevels,
   requestDomainBrowsingLevelCap,
   type RequestBrowsingLevels,
+  stripBlockedForNonModerator,
 } from '~/server/utils/browsing-level';
 import { EMAIL_VERIFICATION_REQUIRED_MESSAGE } from '~/server/common/content-restriction';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
@@ -41,6 +42,8 @@ import {
 import { errorFormatter } from '~/server/trpc/error-formatter';
 import { toDbUnavailableError } from '~/server/utils/errorHandling';
 import type { Context } from './createContext';
+import { appBlocksAuthorAccount } from '~/server/auth/full-user-credential';
+import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 
 // Attribute + ship each devalue-write fallback (a non-POJO response payload that
 // fell back to superjson — see writeSerializeWithFallback). Path comes from the
@@ -198,6 +201,7 @@ const applyDomainFeature = t.middleware(async (options) => {
   // v11: `rawInput` became the async `getRawInput()`.
   const input = ((await options.getRawInput()) ?? {}) as RequestBrowsingLevels;
 
+  stripBlockedForNonModerator(input, ctx.user?.isModerator);
   const maxAllowed = requestDomainBrowsingLevelCap(ctx);
 
   if (maxAllowed !== undefined) clampRequestBrowsingLevels(input, maxAllowed);
@@ -477,9 +481,15 @@ export const moderatorProcedure = protectedProcedure.use(isMod);
  * Fail-CLOSED: the flag evaluator resolves `appBlocksAuthor` from Flipt when the
  * flag exists, else falls back to the static `availability: ['mod']` — so an
  * absent flag / Flipt-down yields mods only, never open-to-all.
+ *
+ * Moderators are a floor, read off the ACCOUNT (`appBlocksAuthorAccount`), as the REST author
+ * routes and the author pages read it (`isAppDeveloper`). A moderator on a scoped key or an app
+ * token has no moderator rights here (`ctx.user.isModerator` is false), and keeps this capability:
+ * the flag alone would be evaluated without the moderators segment and refuse them.
  */
 const hasAppBlocksAuthor = t.middleware(({ ctx, next }) => {
-  if (!guardFlagEnabled(ctx, 'appBlocksAuthor'))
+  const appBlocksAuthor = guardFlagEnabled(ctx, 'appBlocksAuthor');
+  if (!isAppDeveloper(appBlocksAuthorAccount(ctx), { appBlocksAuthor }))
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'You do not have access to Apps authoring',

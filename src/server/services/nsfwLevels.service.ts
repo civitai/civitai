@@ -8,6 +8,7 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
+import { userModelCountCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { articlesSearchIndex } from '~/server/search-index/articles.search-index';
 import { bountiesSearchIndex } from '~/server/search-index/bounties.search-index';
@@ -620,7 +621,7 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
 
 export async function updateModelNsfwLevels(modelIds: number[]) {
   if (!modelIds.length) return;
-  const models = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+  const models = await dbWrite.$queryRaw<{ id: number; userId: number }[]>(Prisma.sql`
     WITH level AS (
       SELECT
         mv."modelId" as "id",
@@ -658,11 +659,14 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
     )
     FROM level
     WHERE level.id = m.id AND (level."nsfwLevel" != m."nsfwLevel" OR m.nsfw = TRUE)
-    RETURNING m.id;
+    RETURNING m.id, m."userId";
   `);
   await modelsSearchIndex.queueUpdate(
     models.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
+  // The profile's sfw/public model counts filter on the level just written.
+  const userIds = uniq(models.map(({ userId }) => userId));
+  if (userIds.length) await userModelCountCache.refresh(userIds);
 }
 
 /**

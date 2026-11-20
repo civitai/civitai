@@ -85,7 +85,7 @@ Supported today:
 | Area | Supported | Falls back |
 |---|---|---|
 | Input | model / version / Model3D / global feed; sorts Most Reactions, Most Comments, Most Collected, Newest, Oldest; period filters; `types`, `generation`, `withMeta`, `fromPlatform`, `disablePoi`, `disableMinor`, `hideChallenges`, `excludedTagIds`, `excludedUserIds`, `tools` (images holding every listed tool: the `ImageTool` clause on every Postgres read, the positive ids as the feed query's `tools`), `techniques` (images with an `ImageTechnique` row for any listed id, likewise; the positive ids as the feed query's `techniques`, none sent when none is positive), `tags` (the blocked browsing tags stripped first, `blocked-tags-*` when that list cannot be read, only blocked ones an empty gallery; then images carrying any of the rest on every Postgres read, never cached, the positive ids as the feed query's `tags`); cursors: on the feed-service path `feed:<a>:<b>`, `offset\|entry`, a number (an offset there); on the Postgres path a positive integer | `hidden`, user / username / collection / post / reactions / followed / baseModels / pending / scheduled / jumpTo / hub inputs, `include` beyond the default, Random / Recently Added sorts; a `tools` or `techniques` entry that is not an int4 (`input-tools`, `input-techniques`: Node binds it against an integer type, and that cast is not reproduced); cursors Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`, `input-cursor` on the Postgres path) |
-| Viewer | signed out; `civ-token` cookie sessions | API keys / OAuth bearer tokens, two session cookies at once, a session user not in the shared cache, verified crawlers |
+| Viewer | signed out; `civ-token` cookie sessions, either slot or both (read in the main app's order, §4); a full-scope personal API key the app's principal cache holds (`FEED_GO_BEARER_AUTH`, §4.2) | every other API key and OAuth bearer token (§4.2), a session user not in the shared cache, verified crawlers |
 | Gallery gates | settings from cache, held level, taken-down models; page-1 pinned posts (narrowed to the version, pinned-first ordering); the page-1 sponsored post (see below) | a settings key Node would rebuild; a sponsored post for a viewer whose `creator-promotions` value is unknown here (`sponsored-post`); two or more live runs on one version (`sponsored-rotation`, Node picks one at random); a failed promotion lookup (`sponsored-lookup`); a payload or gallery level this service does not read as Node does (`sponsored-data`) |
 | Pages | the feed-service path (flag on) and the Postgres path (flag off); the lazy post completion on both | a failed or non-200 feed call (`feed-unavailable`, `feed-status`); a hydrate that filters out every id (`feed-hydrate-empty`) |
 | Hydration | every cache hit; Postgres miss paths for basic user data, cosmetics, profile pictures, thumbnails; computed misses (§3.1) on user cosmetics, image frames, tag ids and event decorations, and with a ClickHouse reader on metric hashes | misses on metric hashes without a ClickHouse reader (`metrics-miss`); a failed miss computation (`<reason>-failed`) |
@@ -207,7 +207,7 @@ internal/fallback    the fallback error and its reasons
 
 ### 3.1 Cache misses this service computes
 
-Eight per-entity caches are filled on read by their `createCachedObject` lookup. In serving mode Go
+The per-entity caches below are filled on read by their `createCachedObject` lookup. In serving mode Go
 runs before Node, so these misses are Go's to answer (in shadow mode Node has just filled them).
 `internal/hydrate/misses.go` runs the Node lookup's own query, once per page and cache for every
 missed id, and builds the entry exactly as the Node lookup builds it; the entry is then packed with
@@ -226,6 +226,8 @@ produce. `FEED_GO_COMPUTE_MISSES=false` restores the fallbacks.
 | `model-decoration-miss` | `eventDecorationEntityCaches.Model` (`packed:caches:cosmetics2:event:v2:Model:<modelId>`): model.getAll | the Image cache's lookupFn over `'Model'` | as `event-decoration-miss`, `equippedToType = 'Model'` (and the entry's `equippedToType: 'Model'`); read only while an event is visible, as Node's `decorationsForEvents` returns before its fetch otherwise |
 | `model-data-miss` | `dataForModelsCache` (`packed:caches:data-for-model-2:<modelId>`): model.getAll | `src/server/redis/caches.ts` lookupFn: a plain fetch's miss reads `getDbWithoutLagBatch('model', ids)` (`fromWrite`, the primary, is `refresh()` only) | the lookupFn's two statements on the database that decides: the versions (`ModelVersion` with the linked-VAE `RecommendedResource` subquery and `GenerationCoverage`, ordered by model and `index`) and the SHA256 model hashes (`ModelHash`); per model with a version `{modelId, hashes, tags: [], versions}`, a model with none left out and nothing written for it (`cacheNotFound: false`). With write-back on it reads the primary when any model carries the lag flag a recent write set (`lag-helper:model:<id>`, as Node's batch check; a failed flag read counts as unflagged), else the replica; with it off the replica. The appendFn's tags (below) are applied on read, as for a hit |
 | `model-tags-miss` | `modelTagCache` (`packed:caches:model-tags:<modelId>`): model.getAll, asked for the models the data cache answered (the data cache's appendFn) | the same file's lookupFn (a plain fetch's `dbRead`) | `TagsOnModels` of the models on the replica (with write-back on too), `{modelId, tagIds}` in row order, a `notFound` marker for a model with none (whose data entry then keeps its own `tags`); the tag records from `basic-tags` as for a hit |
+| `image-tags-miss` | `imageTagsCache` (`packed:caches:image-tags:<imageId>`): image.getInfinite with `include: ['tags']` | `src/server/redis/caches.ts` lookupFn: `readImageTagsForImages` → `listImageTagsForImages` (`packages/civitai-db-queries/src/hot-reads.db.ts`, the fetch's `kyselyRead`) | the `ImageTag` view's `imageTagCompositeSelect` columns on the replica, `score DESC, tagId ASC`, the numeric `score` and bigint vote counts read as numbers (as `@civitai/db/kysely` parses them), `lastUpvote` a Date; `{imageId, tags}` per image with a row, a `notFound` marker otherwise. ttl an hour, `staleWhileRevalidate` off (an entry is never stale). Not in `FEED_GO_CACHE_WRITEBACK`'s names: computed entries are never written (only kept in process for `recentTTL`) |
+| `user-follows-miss` | `userFollowsCache` (`packed:caches:user-follows:<userId>`): image.getInfinite with `followed: true`, signed in | `src/server/redis/caches.ts` lookupFn (a plain fetch's `dbRead`) | `UserEngagement` rows of type `Follow` on the replica, no `ORDER BY` (Prisma sends none), `{userId, follows}` with the target ids in row order, a `notFound` marker (no follows) for a user with none. ttl a day, `staleWhileRevalidate` off. Not in `FEED_GO_CACHE_WRITEBACK`'s names: computed entries are never written, and not kept in process either (the viewer's own follow set, read back after they change it) |
 
 The tag-ids values are `{imageId, tags}` with the tag ids in row order (Node's lookup has no `ORDER
 BY` either; both read the same rows), `tags: []` for an image whose every tag was dropped, and the
@@ -299,6 +301,26 @@ environment, and they must never switch the reader on. Without a reader the miss
   `FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT` reads at once (default 4); a read past it is refused at once.
   A failed, refused or late read falls back `metrics-miss-failed` (Node then answers those images
   from the cache, i.e. `statsUnknown: true`; Go leaves that answer to Node).
+- A dedicated ClickHouse for entity metrics (the Node twin: `getImageMetricService` in
+  `src/server/services/image.service.ts`). Configured from the Node app's own variables, so one secret
+  feeds both runtimes: `CLICKHOUSE_METRICS_HOST` (full URL, protocol and port included),
+  `CLICKHOUSE_METRICS_USERNAME`, `CLICKHOUSE_METRICS_PASSWORD` (never filled from another login), and
+  only alongside the reader above (it never turns the computation on). Each request to it is bounded
+  by `CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS` (default 10000); it shares the read cap's value but has
+  its own slots. A populate reads it instead of the reader above only while the Flipt flag
+  `image-metrics-dedicated-clickhouse` is on: the Node app's key, so one switch moves both runtimes.
+  feed-go evaluates no other Flipt flag (§8): this one is read by `internal/flipt` (stdlib, the
+  server's `POST /evaluate/v1/boolean` with `FLIPT_URL`, `FLIPT_FETCHER_SECRET`, `FLIPT_ENVIRONMENT`,
+  entity `global`, no context: the arguments Node's global gate passes; the flag's plain on/off only, the server's evaluator is not the engine Node runs) every 5 s in the background, so a
+  flip takes effect within 5 s with no restart and no request waits on Flipt. Never read yet, an
+  unknown key (404) or no `FLIPT_URL` read off; any other failed read keeps the last good value (as
+  Node's client keeps its last snapshot) until no read has succeeded for 10 minutes, then reads off
+  (logged once per outage). The choice is made once per populate (all its
+  batches go to one server). The query text and settings are unchanged, and inside the dedicated
+  user's constraints (`max_threads` 1, `max_execution_time` 6, nothing else capped). A failed read
+  there falls back `metrics-miss-failed` exactly as above and is never retried on the shared reader:
+  a retry would put the load back on the shared server exactly when the dedicated one is down; the
+  kill switch is the flag.
 - The kept answer (`lookupShared`, write-back off) holds a computed count for 10 s; a reaction in that
   window is not in it (Node's own hash takes the watcher's increments; a §9 divergence).
 - Not ported (cache HITS, unchanged here): the TTL slide on 10% of hits and the background refresh
@@ -380,7 +402,8 @@ or "no row") is also kept in process for 10 s (at most 50 000 ids; expired ones 
 once a second, and while it is full of live ones a new id is not kept), so the same miss within seconds
 sends no query: without a write, Node's next fill is the only thing that would otherwise end the
 repeats. For a written-back cache nothing is kept (the written entry answers repeats). Every computed cache
-is kept but the image meta (§13): the tag ids, model frames, model decorations, model data, model
+is kept but the image meta (§13) and the user follows (§14.2: the viewer's own follow set, read back
+after they change it): the tag ids, model frames, model decorations, model data, model
 tags and the official models too, as none depends on the viewer
 and Node already serves tag ids from a per-process copy for longer than 10 s. The kept answer is a
 §9 divergence.
@@ -404,6 +427,32 @@ The procedure is public, but its answer depends on the viewer: their own schedul
 minor images, private-post images, their reactions. The invariant is that a response is computed for
 the authenticated viewer or for nobody.
 
+- The session token is read from the session cookies in the order the main app reads them
+  (`readSessionToken` in `packages/civitai-auth/src/cookies.ts`, called by `getHubSession`). A
+  request may carry two slots, the shared `__Secure-civ-token` and the host-only `__Host-civ-token`
+  (http dev has only the bare `civ-token`). The mode for the request's `Host` is its site's
+  `AUTH_SESSION_COOKIE_MODE_BY_SITE` entry (`<registrable domain>:host|shared`), else
+  `AUTH_SESSION_COOKIE_MODE` (only the exact value `host` is host mode; anything else is shared). The
+  order is the mode's own slot, then the other one; the shared slot is skipped altogether when the
+  legacy read is off, which is a site listed `host`, or, for an unlisted site, `AUTH_LEGACY_READ` set
+  to `false`, `0`, `off` or `no` (any case). A site listed `shared` always reads it.
+
+  | Mode | Legacy read | Order read |
+  |---|---|---|
+  | shared | on (default) | `__Secure-civ-token`, `__Host-civ-token` |
+  | host | on (default) | `__Host-civ-token`, `__Secure-civ-token` |
+  | host or shared | off | `__Host-civ-token` |
+
+  The first slot in that order the request carries with a non-empty value is the token, whatever it
+  holds: presence alone decides, validity is never consulted. When that token does not verify, is
+  revoked or is the moderation account, the request is **signed out**; the other slot is not tried,
+  because `getHubSession` does not try it. Two valid cookies for different users therefore resolve
+  to the user in the first slot read, as in Node. The `Cookie` header is read as Next's `req.cookies`
+  (the `cookie` package's `parse()`) reads it: several header lines are joined with `; `, the first
+  occurrence of a name wins even when its value is empty (so an empty first copy leaves that slot
+  absent), a value starting with `"` loses its first and last character, and a value that does not
+  URL-decode is kept raw. Each resolved session's slot is counted
+  (`feed_go_session_cookie_slot_total{slot}`).
 - The viewer id comes **only** from the `sub` of a session token whose ES256 signature verifies
   against the auth hub's JWKS, with the same checks as `packages/civitai-auth/src/verify.ts`:
   algorithm pinned (never taken from the token), issuer, expiry, no `aud`, not a `swap` token,
@@ -456,13 +505,110 @@ the authenticated viewer or for nobody.
   user, so the `creator-promotions` mirror treats that session as its own case (§8).
 - Only a response computed with **no** session user gets the public cache headers. Every per-viewer
   clause binds the verified id; signed out binds `NULL`, which makes each carve-out false.
-- API keys / OAuth tokens fall back: they carry scopes and change the moderator rule (`moderatorView`).
+- API keys are resolved as the app resolves them when `FEED_GO_BEARER_AUTH` is on (default off), and
+  only where the app's answer is decided by data this service reads at the same freshness: §4.2.
+  Everything else, OAuth tokens included, falls back. Off, every API credential falls back
+  (`bearer-token`).
 - On the public route, a request whose `Origin` (else `Referer`) host is not on the app's allow-list
   (`SERVER_DOMAIN_*` hosts and aliases, `TRPC_ORIGINS`, `NEXTAUTH_URL`; `isAcceptableOrigin`) is handed
   to the Node app before anything is computed, so it answers as it does today (401 in production for a
-  cookie caller). The shadow endpoint does not apply it: Node only samples requests it already accepted.
+  cookie caller). The exception is the app's own: a request whose API key resolves to a session is
+  accepted from any origin (`isBearerAuth`, `src/server/createContext.ts:45-46`). Such a request is
+  resolved first, inside the serve slot, and computed only when the key resolved to a viewer (§4.2);
+  a key that resolves to no session is held to the origin like a cookie caller (`origin`). The
+  shadow endpoint does not apply it: Node only samples requests it already accepted.
 - The shadow endpoint receives the original `Cookie` header and verifies it the same way — it never
   trusts an identity asserted by the caller.
+
+### 4.1 The minor content visibility rule
+
+The Node image reads apply one rule (`minorMatureImageVisibleSql` and `isMinorMatureImage` in
+`src/server/common/image-visibility.ts`, the rating test `minorContentRestrictedSql` /
+`isMinorContentRestricted`): an image whose `minor` flag is set (`COALESCE(minor, false)`) and whose
+`nsfwLevel` is NULL, 0 or at least R is shown only to its owner (`i."userId"` = the viewer) and to
+moderators, whatever the viewer's browsing settings (`disableMinor` is a separate, older clause and
+does not replace it). With no viewer it is shown to nobody. This service applies it on every read that
+serves a Node read applying it, through one set of helpers in `internal/hydrate/minormature.go`:
+
+| Go read | Node read | How |
+|---|---|---|
+| `feed.ImagesQuery.Build`: every image page of the gallery, `image.getInfinite` and `GET /api/v1/images` (Postgres pages, post completions, pinned and sponsored posts, the hydrate of the feed service's ids, the legacy `ids` batch) | `getAllImagesUncaptured` (`minorMatureImageVisibleSql({ userId: ownerId, isModerator })`) | `MinorMatureImageVisibleSQL` in the WHERE clause, after the `disableMinor` clause as in Node: the viewer's own images exempt, signed out exempting no one, `TRUE` for a moderator |
+| the showcase cache's miss lookup (`sqlVersionImages`) | `imagesForModelVersionsCache`'s lookupFn (`getImagesForModelVersion` with no user) | `MinorMatureImageHiddenSQL`: the rule with no viewer |
+| `hydrate.Sources.VersionImages` (`model.getAll`'s showcase images and covers) and `GET /api/v1/models`' showcase read | `imagesForModelVersionsCache`'s appendFn (`!isMinorMatureImage(i)`), on every read | `WithoutMinorMatureImages`, before the image tags are read and before any hold or per-viewer filter: for every viewer, owners and moderators included, since the cache is shared between viewers (an entry cached before the lookup left an image out still holds it) |
+
+The feed service's index is not what applies it: Node's query mapper sends the feed only
+`excludeMinor` (for `disableMinor`), so the feed can name such an image, and Node drops it in the
+hydrate, which reads through `getAllImagesUncaptured`. The hydrate here is `Build` with the feed's ids,
+so it drops it the same way. `model.getAll`'s cover is picked from the filtered showcase images, and a
+cover located on another version is read from the same filtered cache, so a restricted cover is no
+cover. Node keeps the `minor` member on these wires (it removes it only on article, bounty and webhook
+payloads, which this service does not serve), and so does this service.
+
+Reads that do not apply it, each for its own reason: the post image count (`getPostImageCounts`, an
+upper bound before any visibility filter), the cover locate step (it reads a cover's post and version,
+not the image), the image meta and video thumbnail lookups (of images a filtered read already chose)
+and profile pictures (Node's profile-picture reads do not apply it). `TestMinorMatureCallSites`
+(`internal/hydrate`) holds the ledger of every source file that reads Image rows or the showcase cache
+or calls the rule, so a new read fails it until it applies the rule or says why it need not. On these
+paths a signed-out viewer is already held to PG (the tRPC domain cap) or has every minor image removed
+(`GET /api/v1/images` always sets `disableMinor`), so signed out the rule changes no answer today; it is
+applied all the same.
+
+
+### 4.2 API keys (`Authorization`), `FEED_GO_BEARER_AUTH`
+
+On the three tRPC procedures (`image.getImagesAsPostsInfinite`, `image.getInfinite`, `model.getAll`)
+an API key is resolved as `resolveSession` (`src/server/auth/get-server-auth-session.ts`) resolves it,
+in this order (`internal/auth/bearer.go`). "Signed out" is the app's null session: served as for an
+anonymous visitor (public cache headers, the origin check applies). "Fallback" is the request handed to
+the Node app unchanged, with the reason on `feed_go_fallback_total`.
+
+| # | The app's rule (file:line) | Here |
+|---|---|---|
+| 1 | The token is `authorization.split(' ')[1]`, whatever the scheme; a header with no second part (or an empty one) gives no token and the `?token=` key is then not read (`request-bearer-token.ts:9`) | the same split; no token → the cookies are read as §4 |
+| 2 | Without the header, the first `?token=` value is the token unless it is the webhook token (`request-bearer-token.ts:10-14`) | fallback `bearer-query-token` (the webhook token is not known here) |
+| 3 | A token, valid or not, decides the session: the cookies are never read (`get-server-auth-session.ts:67-85`) | the same: a key that signs out, or falls back, never yields to a cookie |
+| 4 | A key containing `:` (a provider download token) is no session, without a lookup (`bearer-token.ts:77`) | signed out |
+| 5 | The orchestrator service token is no session, without a lookup (`bearer-token.ts:80`, `orchestrator-service-token.ts:13-18`) | signed out, compared as digests against `ORCHESTRATOR_SERVICE_TOKEN` |
+| 6 | The row is found by `generateSecretHash(key.trim())`, SHA-512 hex of key + `NEXTAUTH_SECRET` (`bearer-token.ts:81`, `packages/civitai-auth/src/secret-hash.ts:24`) | the same hash (`NEXTAUTH_SECRET`; unset → `bearer-unconfigured`); a key with a byte outside printable ASCII → `bearer-malformed` (Node reads the header as latin-1 and trims Unicode space) |
+| 7 | The row comes from the principal cache when it holds a live entry, else from the PRIMARY database (`bearer-token.ts:88-117`; `api-key-principal-cache.ts:115-137`) | the cache only: absent, a read error or an undecodable value → `bearer-key-cache-miss` (an unknown key is always this: the cache holds only known keys) |
+| 8 | A revocation tombstone `{revoked: true}` reads the primary (`api-key-principal-cache.ts:129`) | `bearer-key-revoked` |
+| 9 | Only a key with `clientId === null` and type `User` or `System` is served from the cache; anything else (OAuth `Access` tokens, `Refresh`, a missing `clientId`) reads the primary (`api-key-principal-cache.ts:87-92,133`; allow-list `bearer-token.ts:96`) | `bearer-key-uncacheable` |
+| 10 | An entry is live while `expiresAt` is null or not before now; else the primary, which also refuses an expired key (`api-key-principal-cache.ts:94-95,133`; `bearer-token.ts:97`) | live only with at least 5 s to spare (`BearerClockMargin`: the app's pod reads its own clock); else `bearer-key-expiry` |
+| 11 | The scope is `BigInt(tokenScopeWide ?? tokenScope)` (`packages/civitai-auth/src/token-scope.ts:184`) | the same; a value `BigInt` would not read as an integer → `bearer-key-cache-shape` |
+| 12 | A key holding a client-credentials-only bit (`AppStoreCatalogWrite`, `DownloadLink`) is no session on these routes (`bearer-token.ts:120`) | signed out |
+| 13 | `lastUsedAt` is written (fire-and-forget) when the cached value is null or more than an hour old (`bearer-token.ts:125-130`, `api-key-principal-cache.ts:200-216`) | `bearer-last-used`: this service writes no row. Within the hour (minus the 5 s margin) the app writes nothing either |
+| 14 | The user is the shared session cache entry `session:data2:<userId>`, else the auth hub (`bearer-token.ts:40`, `packages/civitai-auth/src/session-client.ts:192-196`) | the §4 session read: a miss `session-cache-miss`, a cleared entry `session-cache-cleared`, another id `session-id-mismatch` |
+| 15 | A banned user (`bannedAt` truthy) is no session (`bearer-token.ts:47`) | signed out (so, unlike a banned cookie session, the response is public, as the app's `cacheable` is) |
+| 16 | The moderation account, by id or username, is no session (`bearer-token.ts:48`) | signed out |
+| 17 | A system account (`meta.systemAccount` truthy) with any scope bit outside `ReadOnly` reads its moderator access from the primary (`bearer-token.ts:52-66`) | `bearer-system-account` |
+| 18 | The app does not check `deletedAt`: a deleted user is one the hub does not know (rule 14) | the same: a cached entry is served |
+| 19 | Only a full-scope (`tokenScope === Full`) personal `User` key with no OAuth client gives a cookie session's views: moderator rights (`withModeratorRightsFor`), the owner and moderator feed views (`credentialViews`, `moderatorView`, `galleryOwnerId`) and the per-procedure scope pass (`enforceTokenScope`) (`full-user-credential.ts:18-24,39-46,63-71`; `enforce-token-scope.ts:130`; `createContext.ts:94`) | served as that user, moderator flag kept; any other key (a `System` key, a scoped key, Full plus an opt-in bit) → `bearer-scoped-key`, because the ported feeds do not model a viewer without the owner view |
+| 20 | A key that resolved to a session is accepted from any origin (`createContext.ts:45-46`) and is not edge-cacheable (`createContext.ts:60`) | the same (§4, origin) |
+
+Signed-in answers carry no public cache headers, as for a cookie session. Nothing is written: no
+principal-cache fill (the app fills it on its next read), no `lastUsedAt`, no claim key.
+
+**What still falls back, and why.**
+- A key the principal cache does not hold: the app reads the primary database. The cache keeps a key
+  for 30 s after the app last read it, so a key in steady use is mostly held; a cold one is not.
+- The hourly `lastUsedAt` write, a system account's write key, OAuth tokens (never cached), and every
+  scoped key (rule 19).
+- `?token=` (the webhook token), several `Authorization` header lines (Node keeps the first, a proxy in
+  between may not), and a key with a byte outside printable ASCII.
+- The REST routes (`/api/v1/images`, `/api/v1/models`, `/api/v1/models/[id]`) keep every API
+  credential a `bearer-token` fallback: `PublicEndpoint` shapes the cache headers on whether a
+  credential was presented, `/api/v1/images` applies `REST_SCOPE_ENFORCE`, and the models routes have
+  their own block-scope middleware, none of it ported. They are shadow-only and the sampler never sends
+  a credential.
+- Shadow and probe samples: the sampler forwards `authorization: present`, never the key, so a sample's
+  API credential stays `bearer-token` (`auth.WithRedactedCredentials`).
+
+**Residual, stated.** `ORCHESTRATOR_SERVICE_TOKEN` must be the app's value: unset here while set in the
+app, that token would be looked up as an ordinary key (rule 5). It is not an issued API key, so the
+principal cache holds no entry under its hash and the lookup falls back; the residual is only a service
+token equal to a user's API key. The clock margin (rules 10, 13) narrows, but by its nature cannot
+remove, a decision the app's pod makes a few seconds differently.
 
 ## 5. Wire format
 
@@ -974,8 +1120,9 @@ definitions, so read both figures over a window that begins after it.
 
 ## 8. Flags the Node path reads, and what this service does with them
 
-This service does not evaluate Flipt (a Go Flipt client is a follow-up). Each flag below is either
-irrelevant to the DB path, mirrored by an env var, or makes the affected requests fall back while on.
+This service evaluates one Flipt flag, `image-metrics-dedicated-clickhouse`, itself (`internal/flipt`,
+§3.1; a general Go Flipt client is a follow-up). Every other flag below is either irrelevant to the
+DB path, mirrored by an env var, or makes the affected requests fall back while on.
 The mirrors default to the fail-safe value (fall back) and must be set to the flag's real value.
 
 | Flag | Node effect | Here |
@@ -990,6 +1137,7 @@ The mirrors default to the fail-safe value (fall back) and must be set to the fl
 | event decoration flags (flag `birthday-2026` for event `birthday2026`, …) | which event hats are visible to which viewer: `getVisibleDecorationEvents` asks the event engine and the event's Flipt flag per viewer (signed out: the flag's base; signed in: the flag for that user; a moderator session: always on) | `FEED_GO_DECORATION_EVENTS`: comma-separated event names (the event's `name`, e.g. `birthday2026`, not its flag key) whose hats Node shows to **every** viewer now, i.e. the event has started and its flag's base is on. It must name each such event: left empty while one is live, every image wearing that hat is `null` here and an object in Node (`items.*.images.*.eventDecoration` `type` diffs). After the event ends the hats stay visible (`canWearEventDecorations` includes `ended`), so the value does not change at the end date. Base off (the kill switch) → remove the event; then moderators and testers still see hats in Node and not here (a parity gap, §9) |
 | `use-model-version-cache-for-images` | `image.getInfinite` only: a `prioritizedUserIds` request on the Postgres path takes its ids from `imagesForModelVersionsCache` and is re-sorted into that cache's order; off in production (enabled: false, no rollout) | `FEED_GO_PRIORITIZED_VERSION_CACHE` (default off): on, those requests fall back (`prioritized-version-cache`); off, the SQL branch is ported (§14.2) |
 | `frame-cache-negative` | whether the image frame cache's notFound markers are live (read as "no frame", written for an hour on a miss) | `FEED_GO_FRAME_CACHE_NEGATIVE` (default off, as Node reads a flag it cannot evaluate): off, a marker is a miss (looked up, §3.1) and none is written, as in Node |
+| `image-metrics-dedicated-clickhouse` | the image MetricService reads a dedicated ClickHouse for entity metrics instead of the shared one | read from Flipt (not mirrored): every 5 s in the background; on with `CLICKHOUSE_METRICS_*` set, the metric-hash populate reads the dedicated reader (§3.1) |
 | `kysely-image-reactions`, `image-metrics-swr`, cache L1 switches | same results by another route | nothing to do |
 
 ## 9. Not at parity (yet)
@@ -1007,7 +1155,7 @@ will show.
 - a failed miss computation (§3.1, `<reason>-failed`; for tag ids also a browsing gate this service
   cannot read when a row needs it), cache misses on metric hashes without a ClickHouse reader
   (`metrics-miss`), session users (auth hub fetch not ported), gallery settings (rebuild not ported);
-- bearer tokens, two session cookies, verified crawlers, POST (`methodOverride`) requests;
+- API keys other than those §4.2 serves, verified crawlers, POST (`methodOverride`) requests;
 - public requests from an origin the app's allow-list does not hold (reason `origin`, see §4).
 
 **Matched behaviour worth knowing:** a page query that runs past the 20s statement timeout answers an
@@ -1367,6 +1515,12 @@ None of this is in this PR.
   (§3.1): a dedicated SELECT-only login on what the populate reads, in feed-go's own Secret. The
   app's `CLICKHOUSE_*` keys reach feed-go through the shared app config but are ignored, so until
   that Secret exists the misses fall back (`metrics-miss`).
+- **API keys are a separate operator decision.** Turning `FEED_GO_BEARER_AUTH` on (§4.2) requires giving
+  feed-go `NEXTAUTH_SECRET`, the salt of the API-key hash. Node also uses that same secret for other
+  signed tokens, so with it feed-go holds a credential well beyond what key lookups need. Enabling the
+  switch therefore needs its own decision, not just a default deployment step. It also needs
+  `ORCHESTRATOR_SERVICE_TOKEN` at the app's value. Until both are provided, leave the switch off: every
+  API credential then falls back.
 - **Network:** Node pods → feed-go `:9090` (shadow); feed-go → replica, both Redis (and the system
   Redis Sentinels), the JWKS endpoint, the image feed service, the primary (only with a primary-reading cache written back),
   ClickHouse's HTTP endpoint (only with a reader configured), and (serving) the Node service.
@@ -1625,15 +1779,24 @@ domain cap.
 5. **One page.** No overscan, no grouping. Feed path (`getAllImagesIndex`): `prepareImageFeedRequest`
    (`enforceBlockedBrowsingTags`: blocked tag ids stripped from `tags`, all of them blocked → an empty
    page; the addon exclusions, the tag ones off on the viewer's own feed by id or by name; the
-   hide-challenges tag; a `username` resolved to its id, unknown → 404), the feed query
-   (`mapSearchInputToFeedQuery(input, 'primary', 'website')`, `tags` and `userIds` included), then the
-   rows by `feedHydrateQuery` (no paging, period or model scope; `tags` and the creator kept). Postgres
+   hide-challenges tag; a `username` resolved to its id, unknown → 404), for `followed` with a
+   signed-in viewer their follow list (`getUserFollows`; none: an empty page before the mapping), the
+   feed query (`mapSearchInputToFeedQuery(input, 'primary', 'website')`, `tags` and `userIds` included,
+   the follow list as `userIds`), then the rows by `feedHydrateQuery` (no paging, period or model scope;
+   `tags`, the creator and `followed` kept, so the hydrate reads the follow list again and filters by
+   it). Postgres
    path: one `getAllImages` call; a post's media are ordered `i."index", i."id"` and paged on the index,
-   so `nextCursor` is the look-ahead row's index (a number, `0`, or `null`).
+   so `nextCursor` is the look-ahead row's index (a number, `0`, or `null`). A `collectionId` first
+   reads the viewer's permission on the collection (`getUserCollectionPermissionsById`): no read is
+   `{ nextCursor: undefined, items: [] }`; otherwise the page joins the collection's items (the `ct`
+   CTE, below).
 6. **Wire.** Each image as `getAllImagesUncaptured` builds it under `stripImageForInfiniteWire` only:
    the gallery's image plus `availability`, `meta` (`null` without `metaSelect`), `baseModel`
-   (undefined without `includeBaseModel`) and `judgeScore` (`null` outside a collection). Profile
-   pictures only when `include` holds `profilePictures` (the handler adds `tagIds` alone). The result is
+   (undefined without `includeBaseModel`) and `judgeScore` (`null` outside a collection; in one,
+   `parseJudgeScore` of the item's note), and on a collection page the item's `collectionItemStatus`
+   and `collectionItemAddedById` (its note is selected but not on the wire). Profile
+   pictures only when `include` holds `profilePictures` (the handler adds `tagIds` alone); the votable
+   `tags` (and the viewer's votes on them) only when it holds `tags`. The result is
    `{ items, nextCursor, source: 'feed' }` (feed), `{ nextCursor, items, source: 'db' }` (Postgres), and
    the bare `{ items, nextCursor }` of the gates and of an all-blocked tag scope on the feed path.
 7. **`withSharedFeedUsers`** (`image-feed-shared-users` and `trpc-fast-superjson-shared-refs` both on):
@@ -1644,16 +1807,19 @@ domain cap.
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | the global feed; `modelVersionId` (with or without `modelId`), `model3dId`; a `modelId` alone (Postgres); the creator scope (`userId`, `username`); the post scope (`postId`, Postgres); the tag scope (`tags`); `baseModels` (below); `prioritizedUserIds`, `pending` and an `include` without `cosmetics` (below); `include` values Node never reads (`count`, `report`: answered as the list without them); the stripped keys of §5.1 (`view`, `section`, `query`, `similarTo`, `useIndex`, `search`); every sort, period, browsing level, filter and cursor §2 ports, with the same cursor refusals | Hat Turf keys (`infinite-hat-turf`); `hubId`, `collectionId` and every other key in §2's right-hand column but `baseModels` (`input-<key>`); `include` holding `tags` (the votable tags: `imageTagsCache`, its lookup over the `ImageTag` view and the viewer's `TagsOnImageVote` rows) or `metaSelect` (`input-include`, the entry in the safe detail); `userId: 0` (`infinite-user-zero`: the feed and the hydrate read it differently) |
+| Input | the global feed; `modelVersionId` (with or without `modelId`), `model3dId`; a `modelId` alone (Postgres); the creator scope (`userId`, `username`); the post scope (`postId`, Postgres); the tag scope (`tags`); `baseModels` (below); `prioritizedUserIds`, `pending` and an `include` without `cosmetics` (below); `include` values Node never reads (`count`, `report`: answered as the list without them); `include` holding `tags` (below); `followed` (below); `collectionId` with `collectionTagId` and the Recently Added sort (below); the stripped keys of §5.1 (`view`, `section`, `query`, `similarTo`, `useIndex`, `search`); every sort, period, browsing level, filter and cursor §2 ports, with the same cursor refusals | Hat Turf keys (`infinite-hat-turf`); `hubId` and every other key in §2's right-hand column but `baseModels`, `followed`, `collectionId` and `collectionTagId` (`input-<key>`); `include` holding `metaSelect` or any other value not listed here (`input-include`, the entry in the safe detail; the gallery still falls back on `tags` too); `userId: 0` (`infinite-user-zero`: the feed and the hydrate read it differently) |
 | `baseModels` | `z.string().array()`, read as sent (no list of names is consulted: the schema has no enum, and the match is on `ModelVersion."baseModel"` text). Feed path: the non-empty names, in order with repeats, as the feed query's `baseModels` after the POI exclusion (`.map(String).filter(Boolean)`, written as URLSearchParams writes it); the hydrate, and every Postgres read, binds the whole list into getAllImages' `EXISTS (… "ModelVersion" mv RIGHT JOIN "ImageResourceNew" ir … WHERE mv."baseModel" = ANY(…))`; the cache policy is unchanged (Node does not mark it personalized). `image-resource-use-write` would send these reads to the primary in Node; it is not mirrored (§8) | not a list, or an entry that is not a string (`input-invalid`: Node's BAD_REQUEST) |
 | `prioritizedUserIds` (the model page's showcase carousel: `modelVersionId`, the owner's id, `pending`, `include: []`) | with a `modelId` or `modelVersionId`, the Postgres page of `getAllImages`' prioritizeUser branch with the version cache off: no `ImageResourceNew` join (`p."modelVersionId" = <version>` when there is one, no model scope at all for a model alone), `i."userId" = ANY(<ids>)`, ordered `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"`, the cursor column still the sort's (`nextCursor` is the look-ahead row's id), never cached; without a model, the feed path's empty page (the mapper refuses `input:prioritizedUserIds`) | a truthy cursor (`prioritized-cursor`: Node's BAD_REQUEST); `[-1]` alone (`prioritized-system-user`: one more read, then an `IIF` order over every creator); `FEED_GO_PRIORITIZED_VERSION_CACHE` on (`prioritized-version-cache`) |
 | `pending` | no published-before-now clause; a moderator's view `(nsfwLevel & level) != 0 OR nsfwLevel = 0`, a signed-in viewer's `pendingViewerImageSql` (no `reviewCollectionId`: server-set), signed out the reviewed view; the pending view is never cached; on the feed path the mapper's empty page (`flag:pending`) | |
 | `include` without `cosmetics` | no user-cosmetic, frame or cosmetic read (nor their miss lookups): `user.cosmetics` `[]`, `cosmetic` `null`; the probe checks the same keys | (the gallery still falls back: `input-include-no-cosmetics`) |
+| `include` holding `tags` | the votable tags (`getImageTagsForImages`): `imageTagsCache` (`packed:caches:image-tags:<imageId>`) read in the page's first pipeline, each tag `{...rest, imageId, id: tagId, type: tagType, nsfwLevel: tagNsfwLevel, name: tagName}` in cached order; for a signed-in viewer their `TagsOnImageVote` rows on the page's images (replica, as Node's `dbRead`) merged as `vote` (`1` for a vote > 0, else `-1`) on the tags they voted; an image whose entry is a `notFound` marker or holds no tag has `tags: undefined`. A miss is computed (§3.1, `image-tags-miss`), never written back; the probe checks the same keys | a miss without the miss computation (`image-tags-miss`), a failed lookup (`image-tags-miss-failed`), an entry Node's `.tags.map` would throw on (`image-tags-shape`); the gallery still falls back (`input-include`) |
+| `followed` | `z.boolean()`, not coerced. Signed out: dropped on both paths (no follow read). Signed in: the viewer's follow list (`getUserFollows`: `userFollowsCache`, `packed:caches:user-follows:<userId>`, `userFollows[userId]?.follows ?? []`, a `notFound` marker as none), read once per request where Node reads it twice (the feed call and the hydrate). Feed path: no follows is `serveFromFeed`'s empty page before the mapping (an unreadable cursor included); more than 10,000 (`followed>10000`) or beside a creator scope, `userId` or a resolved `username` (`flag:followed:userId`), the mapper's empty page, refused after the post ids and before the sort and cursor; otherwise the positive ids, in cached order, as `userIds`, and the hydrate binds the list as `i."userId" = ANY(…)` after the creator clause (Node inlines `IN (…)`). Postgres path: the same clause for a non-empty list, none for an empty one (the unfiltered page, as `prefetchedUserFollows?.length` reads it). Personalized: never cached. A miss is computed (§3.1, `user-follows-miss`), never written back | not a boolean (`input-invalid`); a miss without the miss computation (`user-follows-miss`), a failed lookup (`user-follows-miss-failed`), an entry Node would read differently: another user's record under the key, a `follows` that is not a list of integers (`user-follows-shape`); on the Postgres path a list longer than 10,000 (`followed-db-many`: Node binds one parameter per id); beside `newCreators`, `hubId` or a Hat Turf key, those keys' own fallbacks; the gallery still falls back (`input-followed`) |
+| `collectionId` | `z.number()`, a positive int4; always the Postgres path (`requiresImageDbPath`). After this service's own refusals (the cursor, `prioritizedUserIds`), the permission read on the replica: the `Collection` row's `read` and owner, and for a signed-in viewer their `CollectionContributor` permissions (Node's accepted-invite join only feeds `isCollaborator`, so it is not read). Answered: a Public or Unlisted collection (to anyone, a moderator included), a collection the viewer owns, and no read at all (a collection that does not exist, a private one signed out, to a contributor without VIEW, or to anyone else): Node's `{ nextCursor: undefined, items: [] }`, stamped `source: 'db'`, with no page query. The page: the `ct` CTE over `CollectionItem` (`ci."collectionId"`, `ci."imageId" IS NOT NULL`, the status filter `ci."status" = 'ACCEPTED'`, for a signed-in viewer `OR (ci."status" <> 'REJECTED' AND ci."addedById" = <viewer>)`, the empty-seed `sortKey` hash Node computes outside Random), `JOIN ct ON ct."imageId" = i.id` after the Post join, `ct.note`, `ct.status` and `ct."addedById"` selected after the cursor column; outside the pending view the acceptableMinor clause is `= FALSE` signed out, `(= FALSE OR i."userId" = <viewer>)` signed in, none for a moderator. Not personalized: the cache policy is the scope's (a version, model or Model3D gallery in a collection is cached as without it). The collection, tag and viewer are bound where Node inlines the tag and the viewer. `collectionTagId` (truthy only: `0` is none) adds `AND ci."tagId" = <tag>`. Recently Added (only beside a collection) orders `ct."collectionItemId" DESC`, the cursor on it (inclusive), so `nextCursor` is the look-ahead item's id. Each item's `collectionItemStatus` and `collectionItemAddedById` on the wire; `judgeScore` is `parseJudgeScore(note)`, answered only when it is null | not a number (`input-invalid`); `0`, a negative, a fraction or past int4 (`collection-id`); read granted only by the moderator branch (`collection-moderator`) or only by a contributor row holding VIEW (`collection-contributor`): a private collection's items are answered only to its owner; a failed permission read (the request's error); an item whose note holds a score that is not null (`collection-judge-score`); the Random sort (`input-sort`: the hourly seed and the `seed:sortKey:id` cursor); `collectionTagId` that is not an int4 integer (`collection-tag-id`: Node inlines it) or without a collection (`input-collectionTagId`: Node's BAD_REQUEST); Recently Added without one (`input-sort`); `pendingReviewOnly` (`input-pendingReviewOnly`); the gallery still falls back (`input-collectionId`) |
 | Viewer | as §4 (signed out, cookie sessions, a banned session as signed out); the session's username for the own-feed rule | as §4 |
 | Gates | withheld, held level, a version or post that cannot be found; moderators exempt | a held model whose settings carry no level (`held-level-unset`), a settings key Node would rebuild (`gallery-settings-miss`) |
 | Tag scope | `system:blocked-browsing-tags` read from the cache cluster | that key absent (`blocked-tags-miss`) or not a `[{id}]` list (`blocked-tags-stale`): Node rebuilds it from the database |
-| Pages | the feed's page and cursor, the empty-page answers; the Postgres page for a post or a model alone | a feed failure or non-200 (`feed-unavailable`, `feed-status`), a refusal Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`), a feed cursor on the Postgres path (`input-cursor`), a hydrate that errors or empties the page (`feed-hydrate-error`, `feed-hydrate-empty`), a username the replica does not hold (`username-miss`) |
-| Hydration | as §2 (the same `hydrate.Sources.Page`, profile pictures skipped without the include) | as §2 |
+| Pages | the feed's page and cursor, the empty-page answers; the Postgres page for a post, a collection or a model alone | a feed failure or non-200 (`feed-unavailable`, `feed-status`), a refusal Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`), a feed cursor on the Postgres path (`input-cursor`), a hydrate that errors or empties the page (`feed-hydrate-error`, `feed-hydrate-empty`), a username the replica does not hold (`username-miss`) |
+| Hydration | as §2 (the same `hydrate.Sources.Page`, profile pictures skipped without the include, the votable tags read only with it) | as §2 |
 | Config | | no `FEED_SERVICE_URL` with the index mirror on (`index-feed-unconfigured`) |
 
 ### 14.3 Flags
@@ -1720,6 +1886,15 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="infinite",m
 - the blocked tag list is read from its cache key and memoized in-process for 30 s (single flight, an
   error never memoized), as Node's `createTtlMemo` does: a changed list reaches both within that
   window, each pod on its own clock.
+- `include: ['tags']`: Node's `imageTagsCache` has a per-pod L1 (`localTtl` 15 s) this service does
+  not mirror; it reads the cache cluster on every page (and keeps a computed miss in process for
+  `recentTTL`). After a tag vote or edit busts the entry, a Node pod holding a copy can answer the old
+  tags for up to 15 s while this service answers the new ones; a shadow diff on `items.*.tags` inside
+  that window is this, not a port error.
+- `followed`: Node reads the follow list twice per request (`serveImagesFromFeedService`, then the
+  hydrate's `getAllImagesUncaptured`), this service once and uses it for both. A follow or unfollow
+  landing between Node's two reads makes the hydrate drop (or keep) a creator the feed call named
+  differently; this service's answer is the one both reads agreeing would give.
 
 ### 14.8 Serving (`FEED_GO_SERVE_INFINITE`, default off)
 

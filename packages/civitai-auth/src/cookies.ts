@@ -180,8 +180,9 @@ export const deviceCookieNameForSlot = (slot: CookieSlot, secure: boolean = isSe
   slot === 'host' ? hostDeviceCookieName(secure) : deviceCookieName(secure);
 
 // Presence-based: the mode's own slot wins whenever it is present, valid or not; the other slot is read only
-// when the mode's slot is absent. Validity is never consulted, so a stale cookie in one slot can't make the
-// reader pick a different identity from the other.
+// when the mode's slot is absent. Validity is never consulted here, so a stale cookie in one slot can't make the
+// reader pick a different identity from the other. (createSpokeGuard does fall back to the host slot when a shared
+// token is invalid; see spoke-guard.ts.)
 function readSlot(
   cookies: CookieJar,
   nameFor: (slot: CookieSlot, secure: boolean) => string,

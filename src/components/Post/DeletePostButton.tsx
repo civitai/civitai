@@ -1,3 +1,7 @@
+import {
+  isDeleteAfterReview,
+  notifyDeleteAfterReview,
+} from '~/components/Image/hooks/useDeleteImage';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { Text } from '@mantine/core';
@@ -25,12 +29,13 @@ export function DeletePostButton({
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const { mutate, isPending: isLoading } = trpc.post.delete.useMutation({
-    async onSuccess(_, { id }) {
-      // router.push('/posts');
-      showSuccessNotification({
-        title: 'Post deleted',
-        message: 'Successfully deleted post',
-      });
+    async onSuccess(result, { id }) {
+      if (isDeleteAfterReview(result)) notifyDeleteAfterReview();
+      else
+        showSuccessNotification({
+          title: 'Post deleted',
+          message: 'Successfully deleted post',
+        });
       if (returnUrl) router.replace(returnUrl);
       else if (currentUser?.username) router.replace(`/user/${currentUser.username}/posts`);
       else router.replace('/posts');

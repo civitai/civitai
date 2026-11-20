@@ -81,7 +81,8 @@ export async function getModelDocs(
       type: row.type,
       checkpointType: row.checkpointType,
       baseModels,
-      tags,
+      // Lowercased, as the search's tag match sends the query; the embedded text keeps them as typed.
+      tags: [...new Set(tags.map((tag) => tag.toLowerCase()))],
       triggerWords,
       versionIds: row.versions.map((v) => v.id),
       nsfwLevel: nsfwLevels(row.nsfwLevel),

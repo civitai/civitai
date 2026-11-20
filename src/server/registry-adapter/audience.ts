@@ -61,7 +61,8 @@ export type Audience = {
 // The key names each mature rating the audience may read. An audience without XXX keeps the key
 // it had before audiences recorded XXX (`m`, `mr`, `mx`, `mrx`), so its cursors stay valid; one
 // with XXX gains `+xxx` (`mrx+xxx`), a key no audience had, so a cursor issued before is refused.
-const audienceOf = (allowed: MatureRatingsAllowed): Audience => ({
+// Exported for `policy-enforce.ts`, which builds the content-policy service's answer into one.
+export const audienceOf = (allowed: MatureRatingsAllowed): Audience => ({
   key: `m${allowed.r ? 'r' : ''}${allowed.x ? 'x' : ''}${allowed.xxx ? '+xxx' : ''}`,
   allowed: { r: allowed.r, x: allowed.x, xxx: allowed.xxx },
 });
@@ -70,6 +71,15 @@ const audienceOf = (allowed: MatureRatingsAllowed): Audience => ({
 export const ANONYMOUS_AUDIENCE: Audience = audienceOf(
   matureRatingsAllowed(true, getServerBrowsingLevel({ canViewNsfw: true, user: null }))
 );
+
+/**
+ * An allowlisted service reading as itself (`auth.jwt.ts`): every rating (`r`, `x`, `xxx`), and
+ * no region hold, since a service has no region of its own. It is the key a user who may read
+ * every rating has (`mrx+xxx`): the same entities, so the same states. Only a service whose
+ * client the source's allowlist names reads it; keeping mature apps from the service's own
+ * viewers is then that service's job.
+ */
+export const SERVICE_AUDIENCE: Audience = audienceOf({ r: true, x: true, xxx: true });
 
 /**
  * The audience of a signed-in user, from their saved browsing settings. From a region the site

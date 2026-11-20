@@ -5,6 +5,7 @@ import {
   isTypingTarget,
   listKeyAction,
   reasonPickerKeyAction,
+  refusedDecisionKey,
   TYPING_SELECTOR,
   triageKeyAction,
 } from '../keys';
@@ -78,6 +79,43 @@ describe('triageKeyAction with more than two decisions', () => {
 describe('triageKeyAction while the reason list is open', () => {
   it('leaves every key to the list, row navigation included', () => {
     for (const k of ['j', 'k', '1', '2']) expect(key(k, { picking: true })).toBeNull();
+  });
+});
+
+describe('refusedDecisionKey', () => {
+  const press = (k: string, over: Partial<Parameters<typeof refusedDecisionKey>[0]> = {}) =>
+    refusedDecisionKey({
+      key: k,
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      isComposing: false,
+      typing: false,
+      decisionEnabled: [false, false, true],
+      ...over,
+    });
+
+  it('names the disabled decision a digit pressed, so the page can say why nothing happened', () => {
+    expect(press('1')).toBe(0);
+    expect(press('2')).toBe(1);
+  });
+
+  it('is null for an enabled decision, a digit past the decisions, and any other key', () => {
+    expect(press('0')).toBeNull();
+    expect(press('3')).toBeNull();
+    expect(press('4')).toBeNull();
+    expect(press('j')).toBeNull();
+  });
+
+  it('is null while typing, with a modifier, or while the reason list is open', () => {
+    expect(press('1', { typing: true })).toBeNull();
+    expect(press('1', { metaKey: true })).toBeNull();
+    expect(press('1', { picking: true })).toBeNull();
+  });
+
+  it('is null once the item has been acted on (no decisions offered)', () => {
+    expect(press('1', { decisionEnabled: [] })).toBeNull();
   });
 });
 

@@ -19,6 +19,7 @@ import {
   getGenerationStatus,
   getGenerationStatusState,
   getGateRules,
+  getGateRuleState,
   getGeneratorMessages,
   getGenerationConfig,
   getResourceData,
@@ -37,6 +38,7 @@ import {
   setPartnerDisclosure,
 } from '~/server/services/generation/generation.service';
 import { generatorMessageSchema } from '~/shared/generation/messages';
+import { clearOrchestratorForGateChange } from '~/server/services/orchestrator/models';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { resolveWildcardPackForUser } from '~/server/services/wildcard-pack.service';
@@ -54,6 +56,12 @@ import {
   coverageAudience,
   generatorAcceptsBoostRequired,
 } from '~/server/services/generation/coverage-source';
+
+/** The stored rule with this id, if the rules can be read. */
+async function storedGateRule(id: string) {
+  const state = await getGateRuleState();
+  return state.known ? state.value.find((rule) => rule.id === id) : undefined;
+}
 
 export const generationRouter = router({
   getWorkflowDefinitions: publicProcedure
@@ -150,12 +158,20 @@ export const generationRouter = router({
       })
     ),
   getGateRules: moderatorProcedure.query(() => getGateRules()),
-  saveGateRule: moderatorProcedure
-    .input(gateRuleSchema)
-    .mutation(({ input }) => saveGateRule(input)),
+  // Each change clears the orchestrator's cached answers for what the rule covered before and after.
+  saveGateRule: moderatorProcedure.input(gateRuleSchema).mutation(async ({ input }) => {
+    const before = await storedGateRule(input.id);
+    const saved = await saveGateRule(input);
+    const orchestrator = await clearOrchestratorForGateChange([before, saved]);
+    return { ...saved, orchestrator };
+  }),
   deleteGateRule: moderatorProcedure
     .input(z.object({ id: z.string() }))
-    .mutation(({ input }) => deleteGateRule(input.id)),
+    .mutation(async ({ input }) => {
+      const before = await storedGateRule(input.id);
+      await deleteGateRule(input.id);
+      return { orchestrator: await clearOrchestratorForGateChange([before]) };
+    }),
   getGeneratorMessages: moderatorProcedure.query(() => getGeneratorMessages()),
   saveGeneratorMessage: moderatorProcedure
     .input(generatorMessageSchema)

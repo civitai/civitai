@@ -38,7 +38,7 @@ async function check(userId: number | undefined, isModerator = false) {
     { entityId: CONTROL_VERSION, hasAccess: true },
   ]);
   dbMock.dbRead.modelVersion.findMany.mockImplementation(async (args: any) =>
-    args.where.model.poi === true && args.where.id.in.includes(FLAGGED_VERSION)
+    args.where.model?.poi === true && args.where.id.in.includes(FLAGGED_VERSION)
       ? [{ id: FLAGGED_VERSION, model: { userId: OWNER } }]
       : []
   );

@@ -5,16 +5,24 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import type { TagBuildStats } from '~/server/services/resource-intent-tags/build';
-import { decodeTagIndex, encodeTagIndex } from '~/server/services/resource-intent-tags/payload';
+import {
+  decodeTagIndex,
+  encodeTagIndex,
+  TAG_INDEX_MAX_PAYLOAD_BYTES,
+} from '~/server/services/resource-intent-tags/payload';
 import {
   latestReadyManifest,
   loadLatestSnapshot,
   putSnapshot,
+  TagIndexManifestInsertError,
   TagIndexObjectMissingError,
   TagIndexPayloadCorruptError,
   TagIndexPayloadHashError,
+  TagIndexSnapshotTableBoundError,
   TagIndexSnapshotUnservableError,
+  TagIndexSpecHashMismatchError,
   TagIndexVocabularyNotFrozenError,
+  TagIndexVocabVersionMismatchError,
   type PutTagIndexSnapshotMeta,
   type TagIndexObjectStore,
   type TagIndexStoreDeps,
@@ -24,6 +32,9 @@ import { smallTagIndexData } from './resource-intent-tags.fixture';
 
 /** The tag-index snapshot store against both real migrations in PGlite and an in-memory object store. */
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
+
+const allocationFailure = () =>
+  Object.assign(new Error('memory'), { code: 'ERR_MEMORY_ALLOCATION_FAILED' });
 
 const migration = (name: string) =>
   readFileSync(
@@ -119,6 +130,217 @@ const meta = (over: Partial<PutTagIndexSnapshotMeta> = {}): PutTagIndexSnapshotM
   ...over,
 });
 
+type Row = {
+  status: string;
+  retiredAt: string | null;
+  vocabVersion: string;
+  specHash: string;
+  payloadSha256: string;
+  payloadBytes: number;
+  objectKey: string;
+  buildStats: string;
+  createdAt: string | null;
+};
+const ROW_SHA = sha(Buffer.from('x'));
+function insertRow(db: PGlite, over: Partial<Row> = {}) {
+  const r: Row = {
+    status: 'ready',
+    retiredAt: null,
+    vocabVersion: V1.vocabVersion,
+    specHash: SPEC,
+    payloadSha256: ROW_SHA,
+    payloadBytes: 1,
+    objectKey: `p/${over.payloadSha256 ?? ROW_SHA}`,
+    buildStats: '{}',
+    createdAt: null,
+    ...over,
+  };
+  return db.query(
+    `INSERT INTO "ResourceIntentTagIndexSnapshot"
+       ("status", "retiredAt", "vocabVersion", "specHash", "payloadSha256", "payloadBytes",
+        "objectKey", "buildStats", "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, COALESCE($9::timestamp, now()))`,
+    [
+      r.status,
+      r.retiredAt,
+      r.vocabVersion,
+      r.specHash,
+      r.payloadSha256,
+      r.payloadBytes,
+      r.objectKey,
+      r.buildStats,
+      r.createdAt,
+    ]
+  );
+}
+
+/** A manifest row for `bytes` written by hand, for payloads `putSnapshot` itself would refuse. */
+async function insertManifest(
+  db: PGlite,
+  bytes: Buffer,
+  over: { specHash?: string; vocabVersion?: string } = {}
+) {
+  const s = sha(bytes);
+  const objectKey = `${PREFIX}/${s}`;
+  await insertRow(db, { ...over, payloadSha256: s, payloadBytes: bytes.length, objectKey });
+  return objectKey;
+}
+
+const ahead = (days: number) => new Date(Date.now() + days * DAY).toISOString();
+
+describe('ResourceIntentTagIndexSnapshot migration', () => {
+  it('a row names an existing vocabulary, which cannot then be deleted', async () => {
+    const { db } = await freshDb();
+    // The guard's frozen check would refuse first; with only it off, the foreign key refuses.
+    const T = '"ResourceIntentTagIndexSnapshot"';
+    await db.exec(`ALTER TABLE ${T} DISABLE TRIGGER "ResourceIntentTagIndexSnapshot_guard"`);
+    await expect(insertRow(db, { vocabVersion: V2.vocabVersion })).rejects.toThrow(
+      /vocabVersion_fkey/
+    );
+    await db.exec(`ALTER TABLE ${T} ENABLE TRIGGER "ResourceIntentTagIndexSnapshot_guard"`);
+    await insertRow(db);
+    await expect(db.query(`DELETE FROM "ResourceIntentVocabulary"`)).rejects.toThrow(
+      /vocabVersion_fkey/
+    );
+  });
+
+  it('a row needs a frozen vocabulary when inserted', async () => {
+    const V3 = vocabulary('three');
+    const { db } = await freshDb([
+      [V1, 'frozen'],
+      [V2, 'candidate'],
+      [V3, 'retired'],
+    ]);
+    await expect(insertRow(db, { vocabVersion: V2.vocabVersion })).rejects.toThrow(
+      /needs a frozen vocabulary/
+    );
+    await expect(insertRow(db, { vocabVersion: V3.vocabVersion })).rejects.toThrow(
+      /needs a frozen vocabulary/
+    );
+    await expect(insertRow(db)).resolves.toBeDefined();
+  });
+
+  it('a vocabulary a ready row names cannot go back to candidate, but may be retired', async () => {
+    const { db } = await freshDb();
+    await insertRow(db);
+    const toCandidate = () =>
+      db.query(
+        `UPDATE "ResourceIntentVocabulary" SET "status" = 'candidate', "frozenAt" = NULL, "frozenBy" = NULL`
+      );
+    await expect(toCandidate()).rejects.toThrow(/retire the snapshot first/);
+    await db.query(`UPDATE "ResourceIntentVocabulary" SET "status" = 'retired'`);
+    await expect(toCandidate()).rejects.toThrow(/retire the snapshot first/);
+    await db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "status" = 'retired'`);
+    await expect(toCandidate()).resolves.toBeDefined();
+  });
+
+  it.each<[string, Partial<Row>, RegExp]>([
+    ['a key with an empty prefix', { objectKey: `/${ROW_SHA}` }, /payload_check/],
+    ['a key with no prefix', { objectKey: ROW_SHA }, /payload_check/],
+    ['a key naming other bytes', { objectKey: `p/${'0'.repeat(64)}` }, /payload_check/],
+    ['an uppercase sha256', { payloadSha256: ROW_SHA.toUpperCase() }, /payload_check/],
+    ['a short spec hash', { specHash: 'd'.repeat(63) }, /payload_check/],
+    ['zero bytes', { payloadBytes: 0 }, /payload_check/],
+    ['bytes over the cap', { payloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES + 1 }, /payload_check/],
+    ['stats that are not an object', { buildStats: '[]' }, /payload_check/],
+    ['a ready row with retiredAt', { retiredAt: ahead(0) }, /status_check/],
+  ])('refuses %s', async (_, over, error) => {
+    const { db } = await freshDb();
+    await expect(insertRow(db, over)).rejects.toThrow(error);
+  });
+
+  it('accepts the boundary values those CHECKs allow', async () => {
+    const { db } = await freshDb();
+    await insertRow(db, { payloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES });
+    expect((await db.query(`SELECT 1 FROM "ResourceIntentTagIndexSnapshot"`)).rows).toHaveLength(1);
+  });
+
+  it.each<[string, unknown]>([
+    ['id', 'another-id'],
+    ['vocabVersion', V2.vocabVersion],
+    ['specHash', OTHER_SPEC],
+    ['payloadSha256', 'f'.repeat(64)],
+    ['payloadBytes', 2],
+    ['objectKey', `q/${ROW_SHA}`],
+    ['buildStats', '{"a":1}'],
+    ['createdAt', '2000-01-01'],
+  ])('the guard refuses a change to %s', async (column, value) => {
+    const { db } = await freshDb([
+      [V1, 'frozen'],
+      [V2, 'frozen'],
+    ]);
+    await insertRow(db);
+    await expect(
+      db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "${column}" = $1`, [value])
+    ).rejects.toThrow(/only its status can change/);
+  });
+
+  it('the guard refuses a change to retiredAt', async () => {
+    const { db } = await freshDb();
+    await insertRow(db);
+    await db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "status" = 'retired'`);
+    await expect(
+      db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "retiredAt" = $1`, [ahead(1)])
+    ).rejects.toThrow(/retiredAt cannot change/);
+  });
+
+  it('the guard sets createdAt, inserts only ready rows, and allows only ready -> retired', async () => {
+    const { db } = await freshDb();
+    await expect(insertRow(db, { status: 'retired', retiredAt: ahead(0) })).rejects.toThrow(
+      /inserted ready/
+    );
+    await insertRow(db, { createdAt: '2000-01-01' });
+    const [{ createdAt }] = (
+      await db.query<{ createdAt: Date }>(
+        `SELECT "createdAt" FROM "ResourceIntentTagIndexSnapshot"`
+      )
+    ).rows;
+    expect(Math.abs(createdAt.getTime() - Date.now())).toBeLessThan(60_000);
+    await expect(
+      db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "specHash" = $1`, [OTHER_SPEC])
+    ).rejects.toThrow(/only its status can change/);
+    await db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "status" = 'retired'`);
+    const [r] = (
+      await db.query<{ retiredAt: Date | null }>(
+        `SELECT "retiredAt" FROM "ResourceIntentTagIndexSnapshot"`
+      )
+    ).rows;
+    expect(r.retiredAt).toBeInstanceOf(Date);
+    await expect(
+      db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "status" = 'ready'`)
+    ).rejects.toThrow(/retire is one-way/);
+  });
+});
+
+describe('the payload-cap migration (20261106120000)', () => {
+  const OLD_BOUND = 134_217_728;
+  const NEW_BOUND = 268_435_456;
+
+  it('after both migrations in order: old bound + 1 and the new bound are accepted, new bound + 1 refused', async () => {
+    const db = await utcPglite(VOCAB_SQL, SNAPSHOT_SQL, PAYLOAD_CAP_SQL);
+    await insertVocab(db, V1, 'frozen');
+    await expect(insertRow(db, { payloadBytes: OLD_BOUND + 1 })).resolves.toBeDefined();
+    const sha2 = sha(Buffer.from('y'));
+    await expect(
+      insertRow(db, { payloadBytes: NEW_BOUND, payloadSha256: sha2 })
+    ).resolves.toBeDefined();
+    await expect(
+      insertRow(db, { payloadBytes: NEW_BOUND + 1, payloadSha256: sha(Buffer.from('z')) })
+    ).rejects.toThrow(/payload_check/);
+  });
+
+  it('is re-runnable with a row standing', async () => {
+    const db = await utcPglite(VOCAB_SQL, SNAPSHOT_SQL, PAYLOAD_CAP_SQL);
+    await insertVocab(db, V1, 'frozen');
+    await insertRow(db, { payloadBytes: NEW_BOUND });
+    await expect(db.exec(PAYLOAD_CAP_SQL)).resolves.toBeDefined();
+    expect((await db.query(`SELECT 1 FROM "ResourceIntentTagIndexSnapshot"`)).rows).toHaveLength(1);
+    await expect(
+      insertRow(db, { payloadBytes: NEW_BOUND + 1, payloadSha256: sha(Buffer.from('z')) })
+    ).rejects.toThrow(/payload_check/);
+  });
+});
+
 describe('putSnapshot', () => {
   it('uploads to a content-addressed key, then inserts a ready manifest', async () => {
     const { deps, store, log, rows } = await freshDb();
@@ -156,6 +378,22 @@ describe('putSnapshot', () => {
       expect(await setup.rows()).toEqual([]);
     };
 
+    it('a payload over the bound the table still holds, before the cap migration', async () => {
+      // The table at its P6c bound (128 MiB), and a payload one byte over it, under the code's cap.
+      const setup = await freshDb([[V1, 'frozen']], [VOCAB_SQL, SNAPSHOT_SQL]);
+      const over = Buffer.alloc(134_217_728 + 1);
+      await refused(
+        setup,
+        over,
+        meta(),
+        TagIndexSnapshotTableBoundError,
+        /admits payloads up to 134217728 bytes.*apply migration 20261106120000_resource_intent_tag_index_snapshot_payload_cap/
+      );
+      expect(setup.log.filter((l) => l.startsWith('put '))).toEqual([]);
+      // Control: the same bytes after the migration get past the bound (to the decode).
+      await refused(await freshDb(), over, meta(), TagIndexPayloadCorruptError, /payload/);
+    });
+
     it.each(['candidate', 'retired'] as const)('a build naming a %s vocabulary', async (status) => {
       const payload = await payloadOf(V1.vocabVersion);
       await refused(
@@ -171,6 +409,56 @@ describe('putSnapshot', () => {
       const junk = Buffer.from('not a tag index');
       await refused(await freshDb(), junk, meta(), TagIndexPayloadCorruptError, /payload/);
     });
+
+    it('a payload built under another spec hash', async () => {
+      const payload = await payloadOf(V1.vocabVersion, OTHER_SPEC);
+      await refused(
+        await freshDb(),
+        payload,
+        meta(),
+        TagIndexSpecHashMismatchError,
+        new RegExp(`specHash ${OTHER_SPEC}`)
+      );
+    });
+
+    it('a payload built on another vocabulary', async () => {
+      const payload = await payloadOf(V2.vocabVersion);
+      await refused(
+        await freshDb([
+          [V1, 'frozen'],
+          [V2, 'frozen'],
+        ]),
+        payload,
+        meta(),
+        TagIndexVocabVersionMismatchError,
+        new RegExp(`vocabVersion ${V2.vocabVersion}`)
+      );
+    });
+
+    it('a failed upload', async () => {
+      const setup = await freshDb();
+      setup.objects.failPut = new Error('bucket unreachable');
+      await refused(setup, await payloadOf(V1.vocabVersion), meta(), Error, /bucket unreachable/);
+    });
+  });
+
+  it('an insert failing after the upload leaves the object unreferenced, and a retry lands', async () => {
+    const setup = await freshDb();
+    const payload = await payloadOf(V1.vocabVersion);
+    // An empty prefix fails the table's key CHECK: a real database refusal, after the upload.
+    setup.objects.prefix = '';
+    const err = await putSnapshot(setup.deps, payload, meta()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TagIndexManifestInsertError);
+    expect((err as TagIndexManifestInsertError).objectKey).toBe(`/${sha(payload)}`);
+    expect((err as Error).message).toMatch(/payload_check/);
+    expect([...setup.store.keys()]).toEqual([`/${sha(payload)}`]);
+    expect(await setup.rows()).toEqual([]);
+    expect(await loadLatestSnapshot(setup.deps, SPEC)).toBeNull();
+
+    setup.objects.prefix = PREFIX;
+    const { created } = await putSnapshot(setup.deps, payload, meta());
+    expect(created).toBe(true);
+    expect(await setup.rows()).toHaveLength(1);
   });
 
   it('the same payload again returns the standing row', async () => {
@@ -181,6 +469,26 @@ describe('putSnapshot', () => {
     expect(again.created).toBe(false);
     expect(again.manifest.id).toBe(first.manifest.id);
     expect(await rows()).toHaveLength(1);
+  });
+
+  it('a conflicting ready row retired before it is read back is an insert failure', async () => {
+    const { deps, db, sql } = await freshDb();
+    const payload = await payloadOf(V1.vocabVersion);
+    await putSnapshot(deps, payload, meta());
+    const racing: typeof sql = {
+      query: async <T>(q: Prisma.Sql) => {
+        const r = await sql.query<T>(q);
+        if (q.text.includes('ON CONFLICT') && r.length === 0)
+          await db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "status" = 'retired'`);
+        return r;
+      },
+      execute: sql.execute,
+    };
+    const err = await putSnapshot({ ...deps, sql: racing }, payload, meta()).catch(
+      (e: unknown) => e
+    );
+    expect(err).toBeInstanceOf(TagIndexManifestInsertError);
+    expect((err as Error).message).toMatch(/conflicted and is gone/);
   });
 });
 
@@ -254,6 +562,22 @@ describe('loadLatestSnapshot', () => {
     expect(await loadLatestSnapshot(deps, SPEC)).not.toBeNull();
   });
 
+  it('running out of memory while decoding is rethrown as it is', async () => {
+    const { deps } = await freshDb();
+    await putSnapshot(deps, await payloadOf(V1.vocabVersion), meta());
+    const err = await loadLatestSnapshot(
+      {
+        ...deps,
+        decode: async () => {
+          throw allocationFailure();
+        },
+      },
+      SPEC
+    ).catch((e: unknown) => e);
+    expect((err as { code?: string }).code).toBe('ERR_MEMORY_ALLOCATION_FAILED');
+    expect(err).not.toBeInstanceOf(TagIndexSnapshotUnservableError);
+  });
+
   describe('refuses', () => {
     const refusedLoad = async (
       deps: TagIndexStoreDeps,
@@ -267,12 +591,50 @@ describe('loadLatestSnapshot', () => {
       expect((err as Error).message).toMatch(message);
     };
 
+    it('a manifest whose vocabulary is a candidate', async () => {
+      const { deps, db } = await freshDb();
+      await putSnapshot(deps, await payloadOf(V1.vocabVersion), meta());
+      // The vocabulary trigger refuses this; the loader still does not serve it.
+      await asFixtureWriter(db, () =>
+        db.query(
+          `UPDATE "ResourceIntentVocabulary" SET "status" = 'candidate', "frozenAt" = NULL, "frozenBy" = NULL`
+        )
+      );
+      await refusedLoad(deps, TagIndexVocabularyNotFrozenError, /is a candidate/);
+    });
+
     it('stored bytes of the right length but another sha256', async () => {
       const { deps, store } = await freshDb();
       const { manifest } = await putSnapshot(deps, await payloadOf(V1.vocabVersion), meta());
       const b = store.get(manifest.objectKey) as Buffer;
       b[b.length >> 1] ^= 0xff;
       await refusedLoad(deps, TagIndexPayloadHashError, /sha256/);
+    });
+
+    it('a payload whose spec hash is not the manifest row', async () => {
+      const { deps, db, store } = await freshDb();
+      const payload = await payloadOf(V1.vocabVersion);
+      store.set(await insertManifest(db, payload, { specHash: OTHER_SPEC }), payload);
+      await refusedLoad(
+        deps,
+        TagIndexSpecHashMismatchError,
+        new RegExp(`specHash ${SPEC}, expected ${OTHER_SPEC}`),
+        OTHER_SPEC
+      );
+    });
+
+    it('a payload whose vocabulary version is not the manifest row', async () => {
+      const { deps, db, store } = await freshDb([
+        [V1, 'frozen'],
+        [V2, 'frozen'],
+      ]);
+      const payload = await payloadOf(V2.vocabVersion);
+      store.set(await insertManifest(db, payload, { vocabVersion: V1.vocabVersion }), payload);
+      await refusedLoad(
+        deps,
+        TagIndexVocabVersionMismatchError,
+        new RegExp(`vocabVersion ${V2.vocabVersion}, expected ${V1.vocabVersion}`)
+      );
     });
   });
 });

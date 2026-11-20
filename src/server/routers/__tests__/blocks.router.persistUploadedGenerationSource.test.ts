@@ -40,7 +40,9 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  isFlipt: (...a: unknown[]) => h.isFlipt(...a),
+  isFlipt: async (...a: unknown[]) => h.isFlipt(...a),
+  isFliptSync: (...a: unknown[]) => h.isFlipt(...a),
+  ensureFliptInitialized: async () => undefined,
 }));
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...a: unknown[]) => h.sessionUser(...a) },
@@ -166,7 +168,7 @@ beforeEach(() => {
   h.sessionUser.mockImplementation(async (id: number) => ({ id }));
   h.persistUploaded.mockResolvedValue(RESULT);
   h.persistOutput.mockResolvedValue(RESULT);
-  h.isFlipt.mockImplementation(async (flag: string) => flag === 'app-block-source-scanned-rows');
+  h.isFlipt.mockImplementation((flag: string) => flag === 'app-block-source-scanned-rows');
 });
 
 describe('blocks.persistUploadedGenerationSource — the preamble', () => {
@@ -266,7 +268,7 @@ describe('blocks.persistUploadedGenerationSource — the preamble', () => {
 
 describe('blocks.persistUploadedGenerationSource — the scanned-rows flag', () => {
   it('🔴 refuses while app-block-source-scanned-rows is OFF, and persists nothing', async () => {
-    h.isFlipt.mockResolvedValue(false);
+    h.isFlipt.mockReturnValue(false);
     await expect(call()).rejects.toMatchObject({
       code: 'FORBIDDEN',
       message: 'picked generation sources are not enabled',
@@ -281,7 +283,7 @@ describe('blocks.persistUploadedGenerationSource — the scanned-rows flag', () 
 
   it('🔴 per app: ON for the token’s app persists; OFF for another app refuses', async () => {
     h.isFlipt.mockImplementation(
-      async (flag: string, entityId?: string) =>
+      (flag: string, entityId?: string) =>
         flag === 'app-block-source-scanned-rows' && entityId === 'apb_alpha'
     );
     await expect(call()).resolves.toEqual(RESULT);

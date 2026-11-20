@@ -379,14 +379,26 @@ func (s *Sources) metricLookupSettings(ctx context.Context, ids []int) []chread.
 	return metricPointSettings
 }
 
+// metricsClickHouse is the reader one populate sends its queries to: the dedicated entity-metrics
+// ClickHouse when it is configured and `image-metrics-dedicated-clickhouse` reads on, else the
+// shared one (getImageMetricService in the Node app's image.service makes the same choice). Read once
+// per populate, so every batch of one populate goes to the same server.
+func (c *MissCompute) metricsClickHouse() ClickHouse {
+	if c.MetricsClickHouse != nil && c.MetricsClickHouseOn != nil && c.MetricsClickHouseOn() {
+		return c.MetricsClickHouse
+	}
+	return c.ClickHouse
+}
+
 // fetchImageMetrics is fetchFromClickhouse: the counts per image of ids, one query per batch of
 // 1000, the settings decided once for the whole populate (returned, for the timeout marking).
 func (s *Sources) fetchImageMetrics(ctx context.Context, ids []int) (map[int]jspack.Obj, []chread.Setting, error) {
 	settings := s.metricLookupSettings(ctx, ids)
+	ch := s.Compute.metricsClickHouse()
 	out := map[int]jspack.Obj{}
 	for start := 0; start < len(ids); start += metricFetchBatch {
 		batch := ids[start:min(start+metricFetchBatch, len(ids))]
-		rows, err := s.Compute.ClickHouse.Query(ctx, sqlImageMetrics(batch), settings)
+		rows, err := ch.Query(ctx, sqlImageMetrics(batch), settings)
 		if err != nil {
 			return nil, settings, err
 		}

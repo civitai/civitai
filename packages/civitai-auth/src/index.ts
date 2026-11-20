@@ -60,6 +60,7 @@ export {
   revocationReadTimeoutMs,
 } from './revocation-check';
 export type {
+  RevocationCheckCallOptions,
   RevocationCheckConfig,
   RevocationDegradedVerdict,
   RevocationFailureReason,

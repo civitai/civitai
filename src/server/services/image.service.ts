@@ -43,6 +43,7 @@ import {
 } from '~/server/services/orchestrator/trusted-blob-url';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
+import { clickhouseMetrics } from '~/server/clickhouse/metrics-client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
 import {
   feedRequestCapture,
@@ -128,6 +129,7 @@ import {
   resolveMetricsStaleWhileRevalidate,
   type MetricRefresher,
 } from '~/server/services/image-metrics-swr';
+import { readsDedicatedImageMetricsClickhouse } from '~/server/services/image-metrics-clickhouse';
 import { postMetrics } from '~/server/metrics';
 import {
   imageScanSubmittedCounter,
@@ -195,7 +197,10 @@ import type {
 import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { imagesMetricsSearchIndex } from '~/server/search-index';
-import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
+import {
+  queueDocumentsForBlockedImages,
+  queueDocumentsForImageMinorChanges,
+} from '~/server/services/image-models-reindex.service';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -275,6 +280,7 @@ import {
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
+  allBrowsingLevelsFlag,
   browsingLevels as selectableBrowsingLevels,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
@@ -293,7 +299,6 @@ import {
 import type {
   DomainColor,
   ModelType,
-  ReportReason,
   ReviewReactions,
   CollectionItemStatus,
 } from '~/shared/utils/prisma/enums';
@@ -308,6 +313,7 @@ import {
   JobQueueType,
   MediaType,
   NewOrderRankType,
+  ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import {
@@ -332,7 +338,9 @@ import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import {
   deleteImageRows,
+  imagesPendingDeletion as readImagesPendingDeletion,
   moderatorPurge,
+  ownImageDeleteBlocked,
   queueImageStorageDelete as queueStorageDelete,
   queuePostNsfwLevelUpdates,
   type DeleteActor,
@@ -942,6 +950,12 @@ export async function queueReplacedImageDeletion(ids: number[]) {
   }
 }
 
+/** Of `ids`, the images whose delete waits on a review their owner can see. */
+export async function imagesPendingDeletion(ids: number[]) {
+  // Primary: read straight after the delete that queued it.
+  return readImagesPendingDeletion(kyselyOver(dbWrite), ids);
+}
+
 type ImageDeleteOptions = {
   actor: DeleteActor;
   /** Extra condition on the DELETE itself; ids it (or a member actor's ownership limit) excludes
@@ -1016,13 +1030,18 @@ export async function deleteImages(
         : imagesWithOpenReports(ids).catch(() => new Set(ids)),
     ]);
 
+    const callerWhere =
+      !onlyWhere || 'toOperationNode' in onlyWhere ? onlyWhere : fromPrismaSql<boolean>(onlyWhere);
+    // The deleter's own image in a child-safety case waits for the case to close, as a pending
+    // delete. Never under a caller's condition, which the job would not carry out with it.
     const rows = await deleteImageRows(kyselyOver(dbWrite), {
       ids,
       actor,
-      where:
-        !onlyWhere || 'toOperationNode' in onlyWhere
-          ? onlyWhere
-          : fromPrismaSql<boolean>(onlyWhere),
+      where: callerWhere,
+      pending:
+        deletedById === undefined || callerWhere
+          ? undefined
+          : { blocked: ownImageDeleteBlocked(deletedById), data: { ownerId: deletedById } },
       files: keepStoredFiles
         ? undefined
         : {
@@ -1370,7 +1389,8 @@ export async function writeModeratorBlock(
         ingestion = 'Blocked',
         "nsfwLevel" = ${NsfwLevel.Blocked},
         "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
-        "updatedAt" = NOW()
+        "updatedAt" = NOW(),
+        "metadata" = CASE WHEN jsonb_typeof("metadata") = 'object' THEN "metadata" - 'ruleId' - 'ruleReason' ELSE "metadata" END
       WHERE id = ANY(${ids}::int[])
     `;
     // A statement of its own, after the UPDATE took the row locks: one that waited on a dismissal
@@ -1477,27 +1497,36 @@ export async function handleBlockImages({
     await clearAccountDeletionImageMarkers({ ids });
     // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
     if (postIds.length) await bustCachesForPosts(postIds);
-    if (include?.includes('phash-block')) {
-      logCsamBlocklistNoHash(
-        ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
-        'block'
-      );
-      await bulkAddBlockedImages({
-        data: images
-          .map(({ id, blockedFor }) => {
-            const pHash = pHashes.get(id);
-            if (!pHash) return null;
-            return {
-              hash: pHash,
-              // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
-              reason: removedForCsam.has(id)
-                ? BlockImageReason.CSAM
-                : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
-            };
-          })
-          .filter(isDefined),
-        context: { step: 'block', imageIds: images.map(({ id }) => id), actorUserId: moderatorId },
-      });
+    // The requeue runs even when the blocklist write throws: the block has landed.
+    try {
+      if (include?.includes('phash-block')) {
+        logCsamBlocklistNoHash(
+          ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
+          'block'
+        );
+        await bulkAddBlockedImages({
+          data: images
+            .map(({ id, blockedFor }) => {
+              const pHash = pHashes.get(id);
+              if (!pHash) return null;
+              return {
+                hash: pHash,
+                // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+                reason: removedForCsam.has(id)
+                  ? BlockImageReason.CSAM
+                  : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
+              };
+            })
+            .filter(isDefined),
+          context: {
+            step: 'block',
+            imageIds: images.map(({ id }) => id),
+            actorUserId: moderatorId,
+          },
+        });
+      }
+    } finally {
+      await queueDocumentsForBlockedImages(ids);
     }
     if (include?.includes('user-notification')) {
       const notified = images.filter(
@@ -1530,6 +1559,24 @@ export async function handleBlockImages({
         activity: 'review',
       });
     }
+
+    // A moderator's removal settles the images' open TOS reports, as the reports queue does. Held
+    // images and those under the review flag keep theirs for the CSAM queue; an account-wide removal
+    // moves none. Last, so a failure cannot fail a removal that has already notified the owners.
+    if (moderatorId && !!imageIds?.length)
+      await actionPendingTosReports(
+        ids.filter((id) => !held.has(id) && !underReview.has(id)),
+        moderatorId
+      ).catch((e: unknown) =>
+        logToAxiom({
+          type: 'error',
+          // Only the reads before the status UPDATE can throw: the rewards after it are allSettled and
+          // the resolved-marker write catches its own error. So every report is still Pending.
+          name: 'block-images-reports-not-settled',
+          imageIds: ids,
+          error: safeError(e),
+        })
+      );
   });
 
   if (moderatorId && userId) {
@@ -1669,6 +1716,48 @@ export const updateImageReportStatusByReason = ({
     RETURNING id, "userId"
   `;
 };
+
+/** Actions the Pending TOS reports on these images and pays their reporters, filer and co-reporters,
+ *  through `bulkSetReportStatus`: a report another path has moved since is left as it is. A report on
+ *  a banned owner's image closes unpaid, as the moderator app's report queue closes it: the ban
+ *  removed the image, not a ruling on the report. */
+export const actionPendingTosReports = async (ids: number[], actorId: number) => {
+  if (!ids.length) return;
+  // On the primary: a ban from moments ago may not have reached a replica.
+  const reports = await dbWrite.$queryRaw<{ id: number; ownerBanned: boolean }[]>`
+    SELECT r.id, bool_or(u."bannedAt" IS NOT NULL) AS "ownerBanned" FROM "Report" r
+    JOIN "ImageReport" i ON i."reportId" = r.id
+    JOIN "Image" img ON img.id = i."imageId"
+    LEFT JOIN "User" u ON u.id = img."userId"
+    WHERE i."imageId" = ANY(${ids}::int[])
+      AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
+      AND r.status = ${ReportStatus.Pending}::"ReportStatus"
+    GROUP BY r.id
+  `;
+  const unpaid = new Set(reports.filter((r) => r.ownerBanned).map((r) => r.id));
+  const moved = await bulkSetReportStatus({
+    ids: reports.map((r) => r.id),
+    status: ReportStatus.Actioned,
+    userId: actorId,
+    fromStatus: ReportStatus.Pending,
+    rewardRemovedReporters: false,
+    paysNoReporter: (reportId) => unpaid.has(reportId),
+  });
+  // The moderator app's resolved marker, so a lagging replica does not hand them back to its queue.
+  if (moved.length)
+    await redis
+      .hSetMultiWithExpire(
+        REDIS_KEYS.REPORT.RESOLVED_RECENT,
+        moved.flatMap((id) => [String(id), '1']),
+        REPORT_RESOLVED_MARKER_TTL_SECONDS
+      )
+      .catch((e: unknown) =>
+        logToAxiom({ type: 'error', name: 'report-resolved-marker', error: safeError(e) })
+      );
+};
+
+/** The moderator app's `RESOLVED_MARKER_TTL_SECONDS`. */
+const REPORT_RESOLVED_MARKER_TTL_SECONDS = 300;
 
 /** The image's reports for one reason that are not yet actioned. */
 export const getOpenImageReportIds = async (id: number, reason: ReportReason) => {
@@ -3791,12 +3880,30 @@ async function resolveHubForFeed(searchInput: CapturableSearchInput) {
 
 // Lazily-built MetricService over the watcher-fed `metrics:*` cache, reused
 // across calls (this is the hot feed path) rather than reconstructed per call.
+//
+// One instance per ClickHouse client: the shared one, and the dedicated entity-metrics one
+// (`image-metrics-dedicated-clickhouse`). The choice is made on EVERY call, so a flag flip takes
+// effect within the gate's refresh window without a restart, and each instance is built once.
+// The two share only Redis (the `metrics:*` hashes and their populate locks), which is what keeps
+// a flip from re-querying ids the other instance is already populating.
+//
+// A failed read on the dedicated client is NOT retried on the shared one: it degrades the way a
+// failed shared read does (`getImageMetricsObjectDirect` serves the cache). A retry would put the
+// whole read back on the shared ClickHouse exactly when the dedicated one is down, and spend the
+// same latency budget twice; the kill switch is the flag.
 let _imageMetricService: MetricService | null = null;
-const getImageMetricService = () =>
-  (_imageMetricService ??= new MetricService(
+let _imageMetricServiceDedicated: MetricService | null = null;
+const getImageMetricService = () => {
+  if (readsDedicatedImageMetricsClickhouse(clickhouseMetrics !== undefined))
+    return (_imageMetricServiceDedicated ??= new MetricService(
+      clickhouseMetrics as IClickhouseClient,
+      redis as unknown as IRedisClient
+    ));
+  return (_imageMetricService ??= new MetricService(
     clickhouse as IClickhouseClient,
     redis as unknown as IRedisClient
   ));
+};
 
 type ImageMetricsObject = Record<
   number,
@@ -4452,11 +4559,7 @@ export const getImagesForModelVersion = async ({
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
-    imageWhere.push(
-      browsingLevel
-        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
-        : Prisma.sql`i."nsfwLevel" != 0`
-    );
+    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel || allBrowsingLevelsFlag}) != 0`);
     imageWhere.push(imageReviewedSql());
   }
   imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
@@ -5565,7 +5668,7 @@ export const getEntityCoverImage = async ({
   })}`;
 
   // An unrated image is never a cover for anyone but moderators, owner included.
-  const coverRated = Prisma.sql`(i."nsfwLevel" != 0 OR ${isModerator}::boolean)`;
+  const coverRated = Prisma.sql`(i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) OR ${isModerator}::boolean)`;
 
   // A minor or SFW-only model's image above its gallery level is its owner's and moderators'
   // alone. Placed before DISTINCT ON, so a held first image falls back to the next one.
@@ -5865,6 +5968,7 @@ export const getEntityCoverImage = async ({
             AND ${coverRated}
             AND ${withinHeldGallery}
             AND ${baseModelAllowed}
+            AND ${coverNotBlocked}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (
@@ -6086,16 +6190,19 @@ export async function get404Images() {
     SELECT
       u.username,
       i.url,
-      i.meta
+      CASE WHEN i."hideMeta" THEN NULL ELSE i.meta END AS meta
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
+    LEFT JOIN "Post" p ON p.id = i."postId"
     JOIN "User" u ON u.id = i."userId" AND username IS NOT NULL
+      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
     JOIN "Collection" c ON c.id = ci."collectionId"
     WHERE c."userId" = -1
       AND c.name = '404 Contest'
       AND i."ingestion" = 'Scanned'
-      AND i."needsReview" IS NULL
       AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+      AND ${Prisma.join(imageVisibilityConditions({}), ' AND ')}
+      AND i."tosViolation" = FALSE
       AND ci.status = 'ACCEPTED';
   `;
 

@@ -292,3 +292,18 @@ describe('updateUserProfile — a new cover image', () => {
     }
   });
 });
+
+describe('updateUserProfile — links', () => {
+  it('updates an existing link only on the profile being saved', async () => {
+    await updateUserProfile({
+      userId: USER_ID,
+      socialLinks: [{ id: 990300001, url: 'https://example.invalid/a', type: 'Social' }],
+    } as never);
+
+    expect(tx.userLink.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.userLink.updateMany).toHaveBeenCalledWith({
+      where: { id: 990300001, userId: USER_ID },
+      data: expect.objectContaining({ userId: USER_ID, url: 'https://example.invalid/a' }),
+    });
+  });
+});

@@ -64,6 +64,7 @@ import { userUpdateCounter } from '~/server/prom/client';
 import { usersSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
+import { isShowcaseHiddenOn } from '~/shared/constants/profile-showcase.constants';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
@@ -197,6 +198,17 @@ export const getUserWithProfile = async ({
     const stickerBookHidden =
       (user.settings as { hideStickerBook?: boolean } | null)?.hideStickerBook === true;
 
+    // The owner and moderators edit every section, so only other viewers lose the ones hidden on
+    // this site, and with them the rows that place them.
+    const showcaseSections = (profile?.showcaseSections ?? []) as ShowcaseSectionSchema[];
+    const hiddenSectionKeys = new Set<string>(
+      canEdit
+        ? []
+        : showcaseSections
+            .filter((section) => isShowcaseHiddenOn(section.hiddenOn, domain))
+            .map((section) => customShowcaseKey(section.id))
+    );
+
     return {
       ...user,
       profilePicture: canEdit
@@ -230,9 +242,13 @@ export const getUserWithProfile = async ({
       profile: {
         ...profile,
         privacySettings: (profile?.privacySettings ?? {}) as PrivacySettingsSchema,
-        profileSectionsSettings: (profile?.profileSectionsSettings ?? []) as ProfileSectionSchema[],
+        profileSectionsSettings: (
+          (profile?.profileSectionsSettings ?? []) as ProfileSectionSchema[]
+        ).filter(({ key }) => !hiddenSectionKeys.has(key)),
         showcaseItems: (profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
-        showcaseSections: (profile?.showcaseSections ?? []) as ShowcaseSectionSchema[],
+        showcaseSections: showcaseSections.filter(
+          (section) => !hiddenSectionKeys.has(customShowcaseKey(section.id))
+        ),
         bio: (useSfwBio ? profile?.sfwBio : profile?.bio) ?? null,
         message: (useSfwMessage ? profile?.sfwMessage : profile?.message) ?? null,
         messageAddedAt:
@@ -701,7 +717,7 @@ export const updateUserProfile = async ({
             toUpdate.map(
               async (userLink) =>
                 await tx.userLink.updateMany({
-                  where: { id: userLink.id },
+                  where: { id: userLink.id, userId },
                   data: userLink,
                 })
             )

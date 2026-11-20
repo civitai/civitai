@@ -236,6 +236,28 @@ func TestTokenFromCookieHeader(t *testing.T) {
 	}
 }
 
+// The cookie package's parse() (Next's req.cookies): the first part of a name wins even when empty, a
+// value starting with `"` loses its first and last character, and an undecodable value is kept raw.
+func TestTokenFromCookieHeaderAsCookieParse(t *testing.T) {
+	cases := []struct{ header, want string }{
+		{`t=first; t=second`, "first"},
+		{`t=; t=second`, ""},
+		{`t="abc.def"`, "abc.def"},
+		{`t="ab%2Ecd"`, "ab.cd"},
+		{`t=""`, ""},
+		{`t="`, ""},
+		{`t="abc`, "ab"},
+		{`t=abc"`, `abc"`},
+		{`t=%zz`, "%zz"},
+		{`t; t=after`, "after"},
+	}
+	for _, c := range cases {
+		if got := TokenFromCookieHeader(c.header, "t"); got != c.want {
+			t.Errorf("TokenFromCookieHeader(%q) = %q, want %q", c.header, got, c.want)
+		}
+	}
+}
+
 func TestIsModerationAccount(t *testing.T) {
 	const configured = 9131
 	if !IsModerationAccount(configured, "someone", configured) {

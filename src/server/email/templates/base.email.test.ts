@@ -34,3 +34,17 @@ describe('createEmail resolves T from the annotated params', () => {
     );
   });
 });
+
+describe('createEmail send', () => {
+  it('sends a plain-text part derived from the HTML, link included, when there is no text()', async () => {
+    vi.mocked(sendEmail).mockClear();
+    const template = createEmail({
+      header: (data: { to: string }) => ({ subject: 'S', to: data.to }),
+      html: () => '<p>Hi</p><a href="https://civitai.com/apps/run/x">Open your app</a>',
+    });
+    await template.send({ to: 'a@example.com' });
+    expect(vi.mocked(sendEmail)).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hi\n\nOpen your app [https://civitai.com/apps/run/x]' })
+    );
+  });
+});

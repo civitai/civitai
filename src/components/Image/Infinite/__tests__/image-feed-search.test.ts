@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ignoredWhileSearching,
   imageFeedUrlFromLegacySearch,
+  parseModelVersionIds,
   searchPeriodChange,
   toSemanticImageSearchInput,
 } from '~/components/Image/Infinite/image-feed-search';
@@ -11,6 +12,16 @@ import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 const now = new Date('2026-11-11T15:42:00Z');
 
 describe('toSemanticImageSearchInput', () => {
+  it('narrows to the picked model versions, and sends nothing for none', () => {
+    const base = { query: 'castle', filters: {}, browsingLevel: 1 };
+    expect(
+      toSemanticImageSearchInput({ ...base, modelVersionIds: [11, 12] }).modelVersionIds
+    ).toEqual([11, 12]);
+    expect(
+      toSemanticImageSearchInput({ ...base, modelVersionIds: [] }).modelVersionIds
+    ).toBeUndefined();
+  });
+
   it('asks to leave out the viewer\'s own images only for "more like this"', () => {
     const base = { filters: {}, browsingLevel: 1, excludeOwn: true };
     expect(toSemanticImageSearchInput({ ...base, imageId: 6 }).excludeOwn).toBe(true);
@@ -207,5 +218,20 @@ describe('imageFeedUrlFromLegacySearch', () => {
     );
     expect(url.searchParams.get('query')).toBe('red wyvern');
     expect(url.searchParams.getAll('tags')).toEqual(['12']);
+  });
+});
+
+// `?modelVersionIds=` is a link anyone can edit: only positive ids reach the search, each once, and
+// no more than the search input takes.
+describe('parseModelVersionIds', () => {
+  it('reads a comma list or repeated params, keeping distinct positive ids', () => {
+    expect(parseModelVersionIds('3,x,3,-1,4.5,8')).toEqual([3, 8]);
+    expect(parseModelVersionIds(['5', '6'])).toEqual([5, 6]);
+    expect(parseModelVersionIds(undefined)).toEqual([]);
+  });
+
+  it('keeps at most 20', () => {
+    const many = Array.from({ length: 25 }, (_, i) => i + 1).join(',');
+    expect(parseModelVersionIds(many)).toHaveLength(20);
   });
 });

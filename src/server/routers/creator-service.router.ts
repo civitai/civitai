@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  getServiceOfferingByIdSchema,
   getServiceOfferingFeedSchema,
   getShopServiceOfferingsSchema,
   setServiceOfferingStatusSchema,
@@ -10,6 +11,7 @@ import {
 import {
   getMyServiceOfferings,
   getServiceSellEligibility,
+  getServiceOfferingById,
   getServiceOfferingFeed,
   getShopServiceOfferings,
   removeServiceOffering,
@@ -76,6 +78,20 @@ export const creatorServiceRouter = router({
       // Fills a signed-in viewer's own level when none was sent, then holds it to the domain cap.
       resolveRequestBrowsingLevels(input, ctx);
       return getShopServiceOfferings({
+        ...input,
+        servable: domainServableLevels(ctx),
+        viewerId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      });
+    }),
+  getById: publicProcedure
+    .use(isFlagProtected('creatorShop'))
+    .use(isFlagProtected('creatorServices'))
+    .use(isFlagProtected('creatorServicesNext'))
+    .input(getServiceOfferingByIdSchema)
+    .query(({ input, ctx }) => {
+      resolveRequestBrowsingLevels(input, ctx);
+      return getServiceOfferingById({
         ...input,
         servable: domainServableLevels(ctx),
         viewerId: ctx.user?.id,

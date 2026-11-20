@@ -956,8 +956,7 @@ export const KOHYA_FLAG_KEY = 'training-studio-kohya';
  *  Flipt flag exists, then its segments decide. */
 export const TAG_FIND_REPLACE_FLAG_KEY = 'training-studio-tag-find-replace';
 
-/** Gates the Civitai Elements redesign of the flow. Same fail-closed semantics: moderators only until
- *  the Flipt flag exists, then its segments decide. */
+/** Gates the Civitai Elements redesign of the flow (fail-closed, as KOHYA_FLAG_KEY). */
 export const ELEMENTS_UI_FLAG_KEY = 'training-studio-elements-ui';
 
 /** Every gate a host evaluates for the flow. */
@@ -1372,7 +1371,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
   // characters (`NETWORK_SIZE_BY_LORA_TYPE`).
   anima: {
     epochs: 5,
-    unetLr: 1e-4,
+    unetLr: 3e-4,
     textEncoderLr: 0,
     networkDim: 16,
     networkAlpha: 16,
