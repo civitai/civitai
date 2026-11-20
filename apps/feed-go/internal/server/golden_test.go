@@ -47,7 +47,7 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 32
 	goldenMinV1       = 36
-	goldenMinInfinite = 30
+	goldenMinInfinite = 33
 	goldenMinModels   = 31
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -276,6 +276,14 @@ type goldenDB struct {
 		UserID   int    `json:"userId"`
 		Reaction string `json:"reaction"`
 	} `json:"reactions"`
+	// TagVotes are TagsOnImageVote rows (an infinite/ fixture whose signed-in request has the 'tags'
+	// include: the votes the handler merges).
+	TagVotes []struct {
+		ImageID int `json:"imageId"`
+		TagID   int `json:"tagId"`
+		UserID  int `json:"userId"`
+		Vote    int `json:"vote"`
+	} `json:"tagVotes"`
 	Placements []struct {
 		ID         int             `json:"id"`
 		Surface    string          `json:"surface"`
@@ -905,6 +913,15 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 				}
 			}
 			return testkit.NewRows([]string{"imageId", "reaction"}, rows...), nil
+		}},
+		{Match: `FROM "TagsOnImageVote"`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, v := range db.TagVotes {
+				if goldenHas(goldenInts(args[0]), v.ImageID) && v.UserID == goldenInt(args[1]) {
+					rows = append(rows, []any{v.ImageID, v.TagID, v.Vote})
+				}
+			}
+			return testkit.NewRows([]string{"imageId", "tagId", "vote"}, rows...), nil
 		}},
 		{Match: `SELECT "imageId", "modelVersionId" FROM "ImageResourceNew"`, Rows: func(args []any) (*testkit.Rows, error) {
 			var rows [][]any

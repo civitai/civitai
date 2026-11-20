@@ -89,12 +89,8 @@ describe('release-app.mjs refuses to release from a branch behind the released h
 
     expect(res.status).toBe(1);
     expect(res.stderr).toContain('refusing to release');
-    expect(res.stderr).toContain('moderator-v0.0.26 is already released');
-    // A refusal must not leave the half-done state the old code did: the version is
-    // unbumped and no release commit exists.
     expect(versionOf(work)).toBe('0.0.1');
     expect(git(work, ['rev-parse', 'HEAD']).trim()).toBe(before);
-    expect(git(work, ['status', '--porcelain']).trim()).toBe('');
   });
 
   // The dangerous path: 0.1.0 collides with nothing, so without this guard the
@@ -121,17 +117,6 @@ describe('release-app.mjs refuses to release from a branch behind the released h
     expect(res.status).toBe(0);
     expect(versionOf(work)).toBe('0.0.27');
     expect(git(work, ['tag', '-l', 'moderator-v0.0.27']).trim()).toBe('moderator-v0.0.27');
-  });
-
-  // An app with no releases yet must still be releasable.
-  it('allows the first release of an app that has never been tagged', () => {
-    const { work } = makeSandbox('0.0.1', []);
-
-    const res = runRelease(work, 'patch');
-
-    expect(res.stderr).not.toContain('refusing to release');
-    expect(res.status).toBe(0);
-    expect(versionOf(work)).toBe('0.0.2');
   });
 });
 

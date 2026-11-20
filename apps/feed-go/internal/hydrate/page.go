@@ -26,6 +26,10 @@ type PageRequest struct {
 	// frames cache is read (nor the cosmetic records they name), and both maps are empty (Node:
 	// `cosmetics: []` per creator, `cosmetic: null` per image).
 	NoCosmetics bool
+	// Tags: the include list holds 'tags' (image.getInfinite's votable tags): imageTagsCache is read
+	// for the images and, for a signed-in viewer, their votes on those tags. Without it neither is read
+	// and Tags is empty (Node: `tags: undefined` on every image).
+	Tags bool
 }
 
 // Page is a page's hydration, each map as the lookup of the same name answers it.
@@ -39,6 +43,7 @@ type Page struct {
 	TagIDs        map[int]any              // TagIDs
 	Decorations   map[int]superjson.Object // EventDecorations
 	Reactions     map[int][]any            // Reactions
+	Tags          map[int][]any            // ImageTags (only with PageRequest.Tags)
 }
 
 // Page answers what the per-lookup reads (BasicUsers, UserCosmetics, ProfilePictures, ImageFrames,
@@ -47,8 +52,8 @@ type Page struct {
 // one (or two) per lookup:
 //
 //   - stage 1, one Batch: every per-id GET of the users, profile pictures, user cosmetics, frames, tag
-//     ids, thumbnails and event decorations caches, and every metric hash HGETALL. None depends on
-//     another lookup's answer.
+//     ids, thumbnails, event decorations and (with Tags) image tags caches, and every metric hash
+//     HGETALL. None depends on another lookup's answer.
 //   - stage 2, one Batch: the cosmetic records both cosmetic joins need (the user cosmetics' and the
 //     frames' cosmetic ids, merged), read once stage 1 has answered both.
 //
@@ -58,7 +63,8 @@ type Page struct {
 // s.Compute, the misses of the caches Node fills on read (user cosmetics, frames, tag ids, event
 // decorations) are computed the same way: one batched lookup per cache that has misses, after the pipeline,
 // concurrently (misses.go). The reactions query reads no cache and starts with
-// stage 1. A lookup's error (the first, as with errgroup) is the page's error.
+// stage 1, and so does the image tags' vote query (ImageTagVotes, with Tags). A lookup's error (the
+// first, as with errgroup) is the page's error.
 func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 	users, images, videos := Unique(req.UserIDs), Unique(req.ImageIDs), Unique(req.VideoIDs)
 	out := &Page{}
@@ -85,6 +91,10 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 	var events *PackedRead
 	if readEvents {
 		events = s.Packed.Queue(stage1, KeyImageEvents, images, 0)
+	}
+	var imageTags *PackedRead
+	if req.Tags {
+		imageTags = s.Packed.Queue(stage1, KeyImageTags, images, 0)
 	}
 	metrics := s.queueMetrics(stage1, images)
 	stage1.Exec(gctx)
@@ -125,6 +135,14 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 			return err
 		}
 		out.Decorations, err = VisibleEventDecorations(images, got, req.VisibleEvents)
+		return
+	}))
+	g.Go(safe.Go(func() (err error) {
+		if imageTags == nil {
+			out.Tags = map[int][]any{}
+			return nil
+		}
+		out.Tags, err = s.imageTagsOf(gctx, images, imageTags, req.ViewerID)
 		return
 	}))
 	g.Go(safe.Go(func() error {

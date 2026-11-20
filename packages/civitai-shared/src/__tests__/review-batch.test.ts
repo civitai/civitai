@@ -6,6 +6,8 @@ import {
   newReviewBatchId,
   parseBlockedForPatterns,
   parseReviewBatchRecord,
+  SCANNER_HITS_SQL,
+  scannerCsamVerdict,
   scannerHeldIds,
 } from '../review-batch';
 
@@ -16,6 +18,23 @@ describe('imageAuditContentHash', () => {
     expect(imageAuditContentHash(1)).toBe('d958978c84fa167c');
     expect(imageAuditContentHash(123)).toBe('5eaacd96ca0060b2');
     expect(imageAuditContentHash(2147483647)).toBe('984ec8d802c32865');
+  });
+});
+
+describe('scannerCsamVerdict', () => {
+  it('reads the CSAM label alone: a minor-only hit is clear, no rows is none', () => {
+    const rows = [
+      { contentHash: imageAuditContentHash(1), hit: 1, csamHit: 1 },
+      { contentHash: imageAuditContentHash(2), hit: 1, csamHit: 0 },
+    ];
+    expect(scannerCsamVerdict(1, rows)).toBe('hit');
+    expect(scannerCsamVerdict(2, rows)).toBe('clear');
+    expect(scannerCsamVerdict(3, rows)).toBe('none');
+  });
+
+  it('refuses a row read without the CSAM column', () => {
+    expect(scannerCsamVerdict(1, [{ contentHash: imageAuditContentHash(1) }])).toBe('hit');
+    expect(SCANNER_HITS_SQL).toMatch(/AS csamHit/);
   });
 });
 
