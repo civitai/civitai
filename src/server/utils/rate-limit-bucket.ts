@@ -591,7 +591,7 @@ export async function claimRateLimitAttempt({
       // The script errored. The read-then-write path below can admit up to N-1 extra concurrent
       // claimers, which a fail-closed scope must not.
       if (failClosed) {
-        logToAxiom({ name: 'rate-limit-script-error-refused', type: 'warning', scope });
+        logToAxiom({ name: 'rate-limit-script-error-refused', type: 'warning', scope, cacheKey });
         throw storeUnavailable();
       }
       rateLimitClaimPathCounter.inc({ path: 'fallback' });

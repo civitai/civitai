@@ -386,7 +386,26 @@ describe('claimRateLimitAttempt when the claim script fails on a fail-closed sco
         name: 'rate-limit-script-error-refused',
         type: 'warning',
         scope: `${scope}:script-error`,
+        cacheKey: rateLimitBucket(`${scope}:script-error`, undefined, freshReq()).cacheKey,
       });
+    }
+  );
+
+  it.each([
+    ['undefined', undefined],
+    ['an empty array', []],
+  ])(
+    'a malformed claim reply (%s) refuses with SERVICE_UNAVAILABLE and logs a warning',
+    async (_, reply) => {
+      redisMock.redis.eval.mockResolvedValue(reply as never);
+      const outcome = await claimOn('buzz:bad-reply').catch((e: unknown) => e);
+      expect((outcome as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'rate-limit-script-error-refused',
+          scope: 'buzz:bad-reply',
+        })
+      );
     }
   );
 
