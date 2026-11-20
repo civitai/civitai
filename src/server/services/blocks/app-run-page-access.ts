@@ -10,7 +10,8 @@ export type RunPageAccessReaders = {
   getFeatureFlags: (user: SessionUser) => Promise<Partial<FeatureAccess>>;
 };
 
-const defaultReaders: RunPageAccessReaders = {
+/** The production readers; exported so a seam test can run the real flag evaluator. */
+export const defaultRunPageAccessReaders: RunPageAccessReaders = {
   getSessionUser: async (userId) => {
     const { sessionClient } = await import('~/server/auth/session-client');
     return (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
@@ -32,10 +33,14 @@ const defaultReaders: RunPageAccessReaders = {
  * evaluator (`getFeatureFlagsAsync`), so Flipt being down falls back to the same static rule.
  *
  * Fails toward the submissions view: a user that does not resolve, or any error, answers `false`.
+ *
+ * Scope of "the same answer": the submitter clicking while SIGNED IN (signed out, the page 404s
+ * whatever this says), and as of the send. The answer is stored on the notification, so a later
+ * rollout change does not move a link already sent.
  */
 export async function canUserOpenAppRunPages(
   userId: number,
-  readers: RunPageAccessReaders = defaultReaders
+  readers: RunPageAccessReaders = defaultRunPageAccessReaders
 ): Promise<boolean> {
   try {
     const user = await readers.getSessionUser(userId);
