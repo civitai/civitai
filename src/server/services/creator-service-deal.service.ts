@@ -34,6 +34,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import type { ServiceLicense } from '~/shared/constants/creator-service-license.constants';
+import { NO_SERVICE_LICENSE } from '~/shared/constants/creator-service-license.constants';
 import {
   SERVICE_DEAL_ACCEPT_WINDOW_MS,
   SERVICE_DEAL_AUTO_COMPLETE_MS,
@@ -310,12 +311,6 @@ type OfferingRow = {
   maxNsfwLevel: number;
 };
 
-const NO_LICENSE: ServiceLicense = {
-  licensePreset: null,
-  licenseCustomText: null,
-  licenseAllowResale: false,
-};
-
 const termsChanged = () =>
   new TRPCError({
     code: 'CONFLICT',
@@ -332,7 +327,7 @@ export async function requestServiceDeal({
   expectedPrice,
   expectedRevisionsIncluded,
   expectedDeliveryDays,
-  expectedLicense = NO_LICENSE,
+  expectedLicense = NO_SERVICE_LICENSE,
   licenseAgreed = false,
   buyerId,
   requestText,
@@ -439,7 +434,6 @@ export async function requestServiceDeal({
         AND o."licensePreset"::text IS NOT DISTINCT FROM ${expectedLicense.licensePreset}::text
         AND o."licenseCustomText" IS NOT DISTINCT FROM ${expectedLicense.licenseCustomText}::text
         AND o."licenseAllowResale" = ${expectedLicense.licenseAllowResale}::boolean
-        AND (o."licensePreset" IS NULL OR ${licenseAgreed}::boolean)
         AND o."sellerId" <> ${buyerId}::int
         -- serviceRequestAllowed: SFW always; mature only where served, to a buyer who opted in.
         AND ${offeringShowable}

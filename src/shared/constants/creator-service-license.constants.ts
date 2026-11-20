@@ -35,6 +35,12 @@ export type ServiceLicense = {
   licenseAllowResale: boolean;
 };
 
+export const NO_SERVICE_LICENSE: ServiceLicense = {
+  licensePreset: null,
+  licenseCustomText: null,
+  licenseAllowResale: false,
+};
+
 /**
  * What an offering stores for a license: custom text only with Custom, and resale only with the
  * Commercial presets (Personal use rules it out; Custom text says its own). A Custom preset left

@@ -624,6 +624,27 @@ describe('license terms', () => {
     expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 
+  // The INSERT repeats the license as its own precondition, for terms that change after the check.
+  it.each([
+    ['preset', `"licensePreset" = 'CommercialNoCredit'`],
+    ['resale toggle', `"licenseAllowResale" = false`],
+    ['custom text', `"licensePreset" = 'Custom', "licenseCustomText" = 'Mine.'`],
+  ])(
+    'creates no deal when the license %s changes between the check and the insert',
+    async (_, change) => {
+      await license(`"licensePreset" = 'CommercialCredit', "licenseAllowResale" = true`);
+      shop.assertCreatorShopVisible.mockImplementationOnce(async () => {
+        await license(change);
+        return [];
+      });
+      await expect(request({ expectedLicense: COMMERCIAL, licenseAgreed: true })).rejects.toEqual(
+        conflict
+      );
+      expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+      expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    }
+  );
+
   it('refuses a request from a client that was shown no license, once the offering has one', async () => {
     await license(`"licensePreset" = 'CommercialNoCredit'`);
     await expect(request()).rejects.toEqual(conflict);

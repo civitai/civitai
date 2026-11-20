@@ -849,6 +849,21 @@ describe('license terms', () => {
     });
   });
 
+  it('refuses to clear the license of a published service, and writes nothing', async () => {
+    seller();
+    draft({ status: ServiceOfferingStatus.Active, licensePreset: 'Personal' });
+    expect(
+      await rejects(
+        upsertServiceOffering({
+          sellerId: SELLER,
+          input: { ...fields, id: 5, licensePreset: null },
+          licenseEditor: true,
+        })
+      )
+    ).toMatch(/keeps license terms/);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+  });
+
   it('refuses Custom without text', async () => {
     seller();
     draft();

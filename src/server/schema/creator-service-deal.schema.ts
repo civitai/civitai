@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { NO_SERVICE_LICENSE } from '~/shared/constants/creator-service-license.constants';
 import { ServiceLicensePreset } from '~/shared/utils/prisma/enums';
 import {
   SERVICE_DEAL_CANCELLATION_REASON_CODES,
@@ -27,7 +28,7 @@ export const requestServiceDealSchema = z.object({
       licenseCustomText: z.string().nullable(),
       licenseAllowResale: z.boolean(),
     })
-    .default({ licensePreset: null, licenseCustomText: null, licenseAllowResale: false }),
+    .default(NO_SERVICE_LICENSE),
   /** The license checkbox; required when the offering has a license. */
   licenseAgreed: z.boolean().default(false),
   requestText: text(5000),

@@ -583,6 +583,14 @@ export async function upsertServiceOffering({
   const activating = publish && existing.status !== ServiceOfferingStatus.Active;
   if (activating && licenseEditor && !(license ?? existing).licensePreset)
     throw throwBadRequestError(LICENSE_REQUIRED);
+  // Buyers of a live service always see the terms it was listed with, or new ones.
+  if (
+    existing.status === ServiceOfferingStatus.Active &&
+    existing.licensePreset &&
+    license &&
+    !license.licensePreset
+  )
+    throw throwBadRequestError('A published service keeps license terms. Pick one to save.');
   const affirmation = activating
     ? affirmationForPublish({
         sellerId,
