@@ -40,7 +40,8 @@ import type { HookResult } from './result.ts';
  *
  * WHO IS AT FAULT: a WASM-boundary throw during the hook's own run still answers with a refusal
  * (stack_overflow or error) attributed to the author, since the hook's code drove it there. Every
- * other unsafe ending above is a RUNNER fault: the call rejects (the worker answers 500) and no
+ * other unsafe ending above is a RUNNER fault, as is a failure of the trusted setup that runs
+ * before any author code (SandboxSetupError): the call rejects (the worker answers 500) and no
  * answer computed by it is ever returned.
  *
  * NO CAPABILITIES: the context gets QuickJS's standard intrinsics, minus three non-ES globals
@@ -103,6 +104,16 @@ export type SandboxOutput = EvaluateOutput & {
  * instance is replaced, and the worker answers 500, which the caller maps to hook_unavailable.
  */
 export class SandboxDisposeError extends Error {}
+
+/**
+ * The trusted setup that runs before any author code (the engine checker, the prelude) failed.
+ * A RUNNER fault, like SandboxDisposeError: never classified as the author's `error`.
+ */
+export class SandboxSetupError extends Error {
+  constructor() {
+    super('sandbox setup failed');
+  }
+}
 
 /**
  * A worker's shared QuickJS instance. `evaluate` runs one call on a fresh runtime inside it and
@@ -204,9 +215,10 @@ export function evaluateOn<R>(
     return h;
   };
 
-  let result: R | HookResult;
+  let result: R | HookResult | undefined;
   let poisoned = false;
   let disposeFailed = false;
+  let setupError: SandboxSetupError | null = null;
   try {
     result = body({
       rt,
@@ -221,10 +233,14 @@ export function evaluateOn<R>(
     // and the hook carries on. Whatever it then returned, past its deadline, is a timeout.
     if (interrupted) result = fault('timeout', 'interrupted at the deadline');
   } catch (err) {
-    // A throw out of the WASM boundary itself (a host stack overflow, a WASM trap). The instance's
-    // state is unknown from here: the caller replaces it.
-    poisoned = true;
-    result = classifyHostError(err, interrupted);
+    if (err instanceof SandboxSetupError) {
+      setupError = err;
+    } else {
+      // A throw out of the WASM boundary itself (a host stack overflow, a WASM trap). The
+      // instance's state is unknown from here: the caller replaces it.
+      poisoned = true;
+      result = classifyHostError(err, interrupted);
+    }
   } finally {
     // A disposal failure (for example an assertion on leaked objects) also leaves the instance
     // in an unknown state.
@@ -242,8 +258,9 @@ export function evaluateOn<R>(
       disposeFailed = true;
     }
   }
+  if (setupError) throw setupError;
   if (disposeFailed) throw new SandboxDisposeError('disposing the call failed');
-  return { result, elapsedMs: performance.now() - start, poisoned };
+  return { result: result as R | HookResult, elapsedMs: performance.now() - start, poisoned };
 }
 
 /** A module loaded on a fresh context, with the intrinsics captured before its code ran. */
@@ -282,7 +299,7 @@ export function loadModule(
   );
   if (checker.error) {
     keep(checker.error);
-    throw new Error('sandbox setup failed');
+    throw new SandboxSetupError();
   }
   const engine: EngineIntrinsics = { isInternalError: keep(checker.value) };
 
@@ -296,7 +313,10 @@ export function loadModule(
     'prelude.js',
     { type: 'global', strict: false }
   );
-  if (strip.error) return classifyVmError(ctx, keep(strip.error), wasInterrupted(), engine);
+  if (strip.error) {
+    keep(strip.error);
+    throw new SandboxSetupError();
+  }
   const preludeValue = keep(strip.value);
 
   // Taken BEFORE the hook's module runs, so a module that reassigns `JSON.parse` or

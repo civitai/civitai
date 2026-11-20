@@ -83,7 +83,8 @@ particular, these are runner faults, never `timeout`:
 - the worker **backstop** firing (`worker_terminated`, 500): the interrupt handler is what bounds
   a hook's time, so a call that outran it by 100 ms means native work that never polled it or a
   worker starved of CPU, and the author is not blamed for either;
-- a failure creating or disposing the call's QuickJS runtime or context (`worker_crashed`, 500):
+- a failure creating or disposing the call's QuickJS runtime or context, or of the trusted setup
+  that runs before the author's code (the engine checks, the remix prelude) (`worker_crashed`, 500):
   the call's computed answer is discarded, never returned, so it can never leak an allow;
 - a full queue or an app over its share of it (`overloaded`, 503).
 

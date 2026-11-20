@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { QuickJSWASMModule } from 'quickjs-emscripten-core';
-import { QuickJSInstance, SandboxDisposeError, compileQuickJS, instantiate } from '../sandbox.ts';
+import {
+  QuickJSInstance,
+  SandboxDisposeError,
+  SandboxSetupError,
+  compileQuickJS,
+  evaluateOn,
+  instantiate,
+  loadModule,
+} from '../sandbox.ts';
 import { hookInputJson } from '../test-support/fixtures.ts';
 
 /**
@@ -126,6 +134,23 @@ describe('QuickJSInstance', () => {
     await expect(inst.evaluate(ALLOW)).rejects.toThrow('injected: cannot create runtime');
     expect((await inst.evaluate(ALLOW)).result).toEqual({ allow: true });
     expect(inst.created).toBe(2);
+  });
+});
+
+describe('the trusted setup', () => {
+  // The remix prelude runs here; a QuickJS change that broke it would otherwise read as every
+  // app's `error` while /readyz stayed 200.
+  it('a prelude that fails throws "sandbox setup failed", never an author fault', async () => {
+    const qjs = await instantiate(compiled);
+    const load = (prelude: string) =>
+      evaluateOn(qjs, 50, (scope) => {
+        const loaded = loadModule(scope, 'export default 1;', prelude);
+        return 'allow' in loaded ? loaded : { loaded: true };
+      });
+    expect(() => load('throw new TypeError("prelude broke");')).toThrow(SandboxSetupError);
+    expect(() => load('throw new TypeError("prelude broke");')).toThrow('sandbox setup failed');
+    // POSITIVE CONTROL: the same load with a prelude that runs.
+    expect(load('globalThis.ok = 1;').result).toEqual({ loaded: true });
   });
 });
 
