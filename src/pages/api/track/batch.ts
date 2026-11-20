@@ -1,3 +1,4 @@
+import { readSessionToken } from '@civitai/auth';
 import { isDev } from '~/env/other';
 import { Tracker } from '~/server/clickhouse/client';
 import { awardViewPoints, hattedImpressionEntities } from '~/server/events/points/hooks';
@@ -77,16 +78,23 @@ export default PublicEndpoint(
         // insert by Tracker.impressions.
         void tracker.impressions(event.data);
       } else if (event.kind === 'feed') {
-        // The viewer comes from the session, never the payload; resolved once per batch.
-        feedViewer ??= tracker
-          .getSession()
-          .then((session) => ({
-            userId: session?.user?.id ?? 0,
-            memberType: session?.user?.tier ?? 'undefined',
-          }))
-          .catch(() => null);
-        const data = event.data;
-        void feedViewer.then((viewer) => viewer && feedEventsRecorder().record(data, viewer));
+        // The viewer comes from the session, never the payload: resolved once per batch, and only
+        // for a sampled session. A failed lookup drops the event rather than recording it as signed
+        // out; an unreachable hub resolves to no session, so a session cookie without one drops too.
+        const getViewer = () =>
+          (feedViewer ??= tracker
+            .getSession()
+            .then((session) => {
+              if (!tracker.isSessionResolved) return null;
+              if (!session && readSessionToken(req.cookies, { host: req.headers.host }))
+                return null;
+              return {
+                userId: session?.user?.id ?? 0,
+                memberType: session?.user?.tier ?? 'undefined',
+              };
+            })
+            .catch(() => null));
+        void feedEventsRecorder().record(event.data, getViewer);
       } else {
         void tracker.action(event.data);
       }

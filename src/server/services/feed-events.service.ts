@@ -102,7 +102,11 @@ export function buildFeedEventRow(
 }
 
 export type FeedEventsRecorder = {
-  record: (input: TrackFeedInput, viewer: FeedEventViewer) => Promise<void>;
+  /** `getViewer` runs only for a sampled session; a null viewer drops the event. */
+  record: (
+    input: TrackFeedInput,
+    getViewer: () => Promise<FeedEventViewer | null>
+  ) => Promise<void>;
   flush: () => Promise<void>;
 };
 
@@ -116,8 +120,14 @@ export function createFeedEventsRecorder(
   });
   return {
     // Sampled per browser session, so a session's loads, seen rows and clicks are kept together.
-    record: (input, viewer) =>
-      rows.push((at) => buildFeedEventRow(input, viewer, at), { sampleKey: input.sessionKey }),
+    record: async (input, getViewer) => {
+      if (!(await rows.keeps(input.sessionKey))) return;
+      const viewer = await getViewer();
+      if (!viewer) return;
+      await rows.push((at) => buildFeedEventRow(input, viewer, at), {
+        sampleKey: input.sessionKey,
+      });
+    },
     flush: rows.flush,
   };
 }

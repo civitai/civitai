@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { hashToUnit } from '~/server/clickhouse/sampled-row-buffer';
 import {
   allowedFilters,
   buildFeedEventRow,
+  createFeedEventsRecorder,
   parseSampleRate,
 } from '~/server/services/feed-events.service';
 import type { TrackFeedInput } from '~/server/schema/track.schema';
@@ -54,6 +56,27 @@ describe('feed events', () => {
     expect([asLoad.entityId, asLoad.position, asLoad.seenIds]).toEqual([0, 0, []]);
     expect([asClick.entityType, asClick.entityId, asClick.position]).toEqual(['Model', 7, 3]);
     expect(asSeen.seenIds).toEqual([1, 2]);
+  });
+
+  it('samples by session key, and resolves the viewer only for a kept session', async () => {
+    const keys = Array.from({ length: 50 }, (_, i) => `k${i}`);
+    const kept = keys.find((k) => hashToUnit(k) < 0.5)!;
+    const dropped = keys.find((k) => hashToUnit(k) >= 0.5)!;
+    const insert = vi.fn(async (_rows: { sessionKey: string }[]) => undefined);
+    const recorder = createFeedEventsRecorder({
+      getConfig: async () => ({ sampleRate: 0.5, until: Number.POSITIVE_INFINITY }),
+      insert,
+      // A per-row roll would drop every row: only the key decides.
+      random: () => 0.99,
+    });
+    const getViewer = vi.fn(async () => ({ userId: 1, memberType: 'undefined' }));
+
+    for (const sessionKey of [kept, dropped, kept, dropped])
+      await recorder.record({ ...load, sessionKey }, getViewer);
+    await recorder.flush();
+
+    expect(insert.mock.calls[0]?.[0].map((row) => row.sessionKey)).toEqual([kept, kept]);
+    expect(getViewer).toHaveBeenCalledTimes(2);
   });
 
   it('reads the Flipt variant key as the sample rate, off for anything else', () => {

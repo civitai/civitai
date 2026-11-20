@@ -24,7 +24,7 @@ const { mockSearch, mockAction, mockImpressions, mockGetSession, mockInsert, dev
     mockImpressions: vi.fn(),
     mockGetSession: vi.fn(),
     mockInsert: vi.fn(async () => undefined),
-    devStore: { isDev: false },
+    devStore: { isDev: false, sessionResolved: true, sessionCookie: false },
   }));
 
 // PublicEndpoint wraps the handler with CORS/metrics we don't exercise here —
@@ -32,6 +32,12 @@ const { mockSearch, mockAction, mockImpressions, mockGetSession, mockInsert, dev
 // under test.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   PublicEndpoint: (handler: any) => handler,
+}));
+
+vi.mock('@civitai/auth', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  readSessionToken: () =>
+    devStore.sessionCookie ? { value: 'token', name: 'civ-token', slot: 'shared' } : null,
 }));
 
 vi.mock('~/env/other', () => ({
@@ -51,6 +57,9 @@ vi.mock('~/server/clickhouse/client', () => ({
     action = mockAction;
     impressions = mockImpressions;
     getSession = mockGetSession;
+    get isSessionResolved() {
+      return devStore.sessionResolved;
+    }
   },
   clickhouse: { insert: mockInsert },
 }));
@@ -126,6 +135,8 @@ describe('POST /api/track/batch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     devStore.isDev = false;
+    devStore.sessionResolved = true;
+    devStore.sessionCookie = false;
   });
 
   it('dispatches every event via the matching Tracker method, in order, with the exact payload', async () => {
@@ -358,6 +369,75 @@ describe('POST /api/track/batch', () => {
       feed: 'models',
       filters: { hidePaid: 'true' },
     });
+  });
+
+  it('drops a feed event when the session lookup failed, rather than recording it signed out', async () => {
+    mockGetSession.mockResolvedValue(null);
+    devStore.sessionResolved = false;
+    const handler = await importHandler();
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: [
+        {
+          kind: 'feed',
+          data: { event: 'load', sessionKey: 's1', feed: 'models', page: '/models' },
+        },
+      ],
+    });
+
+    await handler(req as any, makeRes());
+    await vi.waitFor(() => expect(mockGetSession).toHaveBeenCalled());
+    const { feedEventsRecorder } = await import('~/server/services/feed-events.service');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await feedEventsRecorder().flush();
+
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('drops a feed event that carries a session cookie but resolved no session (hub unreachable)', async () => {
+    mockGetSession.mockResolvedValue(null);
+    devStore.sessionCookie = true;
+    const handler = await importHandler();
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: [
+        {
+          kind: 'feed',
+          data: { event: 'load', sessionKey: 's1', feed: 'models', page: '/models' },
+        },
+      ],
+    });
+
+    await handler(req as any, makeRes());
+    await vi.waitFor(() => expect(mockGetSession).toHaveBeenCalled());
+    const { feedEventsRecorder } = await import('~/server/services/feed-events.service');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await feedEventsRecorder().flush();
+
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('records a signed-out viewer (no session cookie) as userId 0', async () => {
+    mockGetSession.mockResolvedValue(null);
+    const handler = await importHandler();
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: [
+        {
+          kind: 'feed',
+          data: { event: 'load', sessionKey: 's1', feed: 'models', page: '/models' },
+        },
+      ],
+    });
+
+    await handler(req as any, makeRes());
+    const { feedEventsRecorder } = await import('~/server/services/feed-events.service');
+    await vi.waitFor(async () => {
+      await feedEventsRecorder().flush();
+      expect(mockInsert).toHaveBeenCalledTimes(1);
+    });
+    const [{ values }] = mockInsert.mock.calls[0] as unknown as [{ values: { userId: number }[] }];
+    expect(values[0].userId).toBe(0);
   });
 
   it('short-circuits to 200 in dev without dispatching', async () => {

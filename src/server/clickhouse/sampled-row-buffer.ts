@@ -63,6 +63,8 @@ export type SampledRowBuffer<Row> = {
     build: (at: number, traceId: string) => Row,
     opts?: { unsampled?: boolean; sampleKey?: string }
   ) => Promise<void>;
+  /** Whether a row with this `sampleKey` would pass the switch, `until` and the rate. Never throws. */
+  keeps: (sampleKey: string) => Promise<boolean>;
   flush: () => Promise<void>;
   readonly pending: number;
   readonly dropped: number;
@@ -154,8 +156,20 @@ export function createSampledRowBuffer<Row>(
     }
   }
 
+  async function keeps(sampleKey: string) {
+    try {
+      const config = await deps.getConfig();
+      return (
+        config.sampleRate > 0 && now() <= config.until && hashToUnit(sampleKey) < config.sampleRate
+      );
+    } catch {
+      return false;
+    }
+  }
+
   return {
     push,
+    keeps,
     flush,
     get pending() {
       return buffer.length;

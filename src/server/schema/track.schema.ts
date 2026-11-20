@@ -1152,10 +1152,6 @@ export const trackImpressionSchema = z.object({
 });
 export type TrackImpressionInput = z.infer<typeof trackImpressionSchema>;
 
-// One coalesced telemetry event in a /api/track/batch payload. `kind` selects the
-// destination (search -> Tracker.search, action -> Tracker.action) and `data` is
-// the EXACT existing per-event input for that destination. No field is added,
-// dropped, or reshaped — the transport changes, the recorded row does not.
 // A feed event: a page of a feed loaded, the items of it that passed the impression dwell check, or a
 // click on one of them. Every row carries the viewer's feed context (feed, page, sort, page index,
 // filters), so a question about a filter, a sort or a position is a GROUP BY, not a join.
@@ -1179,6 +1175,10 @@ export const trackFeedSchema = z.object({
 });
 export type TrackFeedInput = z.infer<typeof trackFeedSchema>;
 
+// One coalesced telemetry event in a /api/track/batch payload. `kind` selects the
+// destination. For search, action and impression, `data` is the EXACT existing per-event input
+// of that Tracker method: no field is added, dropped, or reshaped. `feed` has no Tracker method;
+// it goes to the feed events recorder.
 export const trackBatchEventSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('search'), data: trackSearchSchema }),
   z.object({ kind: z.literal('action'), data: trackActionSchema }),
