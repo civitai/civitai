@@ -138,8 +138,13 @@ export function createPolicyEnforcer(opts: {
         fallback('timeout');
         return principal;
       }
-      if (c.result !== 'agree' && c.result !== 'disagree') {
-        fallback(c.result === 'service' ? 'error' : c.why);
+      if (c.result === 'service') {
+        // Not reached: a service principal is kept local above.
+        fallback('error');
+        return principal;
+      }
+      if ('why' in c) {
+        fallback(c.why);
         return principal;
       }
       const audience = serviceAudience(c.answer);
