@@ -3,6 +3,8 @@ import { fakeRemixRunner } from '~/__tests__/mocks/remix-runner.fake';
 import {
   callRemixRunner,
   remixRunnerOutcome,
+  REMIX_ANSWER_PLACEHOLDER,
+  userRemixAuthorPrompt,
   userRemixReplayer,
 } from '~/server/services/remix-app-runner';
 import type { RemixApp } from '~/shared/remix-apps/define';
@@ -215,5 +217,65 @@ describe('a user app replayed on the runner', () => {
       source: SOURCE,
       input: { source: image, base: [made(1)] },
     });
+  });
+});
+
+describe("condition D: the author's part of a prompt", () => {
+  const shouty: Pick<RemixApp, 'run'> = {
+    async run(ctx) {
+      const who = await ctx.ask({ kind: 'text', prompt: 'Who?', maxLength: 40 });
+      const style = await ctx.ask({
+        kind: 'choice',
+        prompt: 'Style?',
+        options: [{ value: 'ink', label: 'Ink' }],
+      });
+      // An app may transform the viewer's words; cutting them out of the prompt would miss this.
+      const out = await ctx.workflow({
+        kind: 'image',
+        prompt: `a portrait of ${String(who).toUpperCase()} in ${style}`,
+        images: [ctx.source],
+        aspectRatio: 'source',
+        quantity: 1,
+      });
+      return out.images;
+    },
+  };
+  const source = `export default defineRemixApp({ ${shouty.run.toString()} });`;
+  const authorPrompt = (app = shouty) =>
+    userRemixAuthorPrompt('u7-probe', 'remix-u7-probe', async () => source, {
+      config,
+      fetchImpl: fakeRemixRunner({
+        secret: SECRET,
+        apps: { [createHash('sha256').update(source).digest('hex')]: app },
+      }).fetchImpl,
+    });
+  const log: RemixLogEntry[] = [
+    { type: 'ask', answer: 'bob' },
+    { type: 'ask', answer: 'ink' },
+  ];
+
+  it("assembles it with a placeholder for the viewer's words, keeping the author's choices", async () => {
+    expect(await authorPrompt()(image, log)).toBe(
+      `a portrait of ${REMIX_ANSWER_PLACEHOLDER} in ink`
+    );
+  });
+
+  it('is null when the app, run on the placeholder, goes another way', async () => {
+    const picky: Pick<RemixApp, 'run'> = {
+      async run(ctx) {
+        const who = await ctx.ask({ kind: 'text', prompt: 'Who?', maxLength: 40 });
+        if (who !== 'bob') return [];
+        return (
+          await ctx.workflow({
+            kind: 'image',
+            prompt: 'p',
+            images: [ctx.source],
+            aspectRatio: 'source',
+            quantity: 1,
+          })
+        ).images;
+      },
+    };
+    expect(await authorPrompt(picky)(image, [{ type: 'ask', answer: 'bob' }])).toBeNull();
   });
 });

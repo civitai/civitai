@@ -149,3 +149,54 @@ export function userRemixFirstRequest(
       : null;
   };
 }
+
+/** Stands in for each text answer when the author's part of a prompt is built. */
+export const REMIX_ANSWER_PLACEHOLDER = '___';
+
+/**
+ * Condition D: the author's part of the workflow `log` stops at, assembled by running the app with
+ * every text answer replaced by a placeholder, never by cutting the viewer's words out of the
+ * prompt (an app may change them: uppercase, quote, repeat). `null` when the app, so run, does
+ * not reach an image workflow at the same step.
+ */
+export function userRemixAuthorPrompt(
+  slug: string,
+  appId: string,
+  loadSource: () => Promise<string>,
+  opts?: Parameters<typeof callRemixRunner>[1]
+) {
+  return async (source: RemixAppSource, log: readonly RemixLogEntry[]): Promise<string | null> => {
+    const code = await loadSource();
+    // Which asks are text asks: their specs, from the log as recorded.
+    const [recorded] = await callRemixRunner(
+      { appId, source: code, image: { ...source }, base: log },
+      opts
+    );
+    if ('cause' in recorded) return null;
+    const isText = (index: number) =>
+      ((recorded.effects[index] as { spec?: { kind?: unknown } } | undefined)?.spec?.kind ?? '') ===
+      'text';
+    const masked = log.map((entry, index) =>
+      entry.type === 'ask' && isText(index) && entry.answer !== ''
+        ? { type: 'ask' as const, answer: REMIX_ANSWER_PLACEHOLDER }
+        : entry
+    );
+    const [result] = await callRemixRunner(
+      { appId, source: code, image: { ...source }, base: masked },
+      opts
+    );
+    let outcome: RemixReplayOutcome;
+    try {
+      ({ outcome } = remixRunnerOutcome(slug, source, masked, result));
+    } catch (error) {
+      if (error instanceof RemixReplayError) return null;
+      throw error;
+    }
+    return outcome.status === 'effect' &&
+      outcome.index === log.length &&
+      outcome.effect.type === 'workflow' &&
+      outcome.effect.request.kind === 'image'
+      ? outcome.effect.request.prompt
+      : null;
+  };
+}
