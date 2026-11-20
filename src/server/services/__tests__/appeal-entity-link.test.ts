@@ -4,6 +4,7 @@ import type * as EmailTemplates from '~/server/email/templates';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as UrlHelpers from '~/server/utils/url-helpers';
 import { NsfwLevel } from '~/server/common/enums';
+import { reportNotifications } from '~/server/notifications/report.notifications';
 import {
   appealEntityLink,
   getAppealDetails,
@@ -220,5 +221,47 @@ describe('resolveEntityAppeal — email links go to the domain that serves the i
     await resolve();
 
     expect(sentUrls()).toEqual(['https://red.test/models/7']);
+  });
+});
+
+describe('resolveEntityAppeal — bell notification links', () => {
+  const appealRow = (entityId: number) => ({
+    id: entityId,
+    entityId,
+    entityType: EntityType.Model,
+    resolvedAt: null,
+    buzzTransactionId: null,
+    status: AppealStatus.Pending,
+    userId: 5,
+    createdAt: new Date('2026-09-01T00:00:00Z'),
+  });
+  const bellUrl = (details: MixedObject) =>
+    reportNotifications['entity-appeal-resolved'].prepareMessage({
+      type: 'entity-appeal-resolved',
+      details,
+    } as Parameters<(typeof reportNotifications)['entity-appeal-resolved']['prepareMessage']>[0])
+      ?.url;
+
+  const bellUrlsFor = async (rows: { id: number; nsfwLevel: number }[]) => {
+    dbMock.dbWrite.appeal.updateManyAndReturn.mockResolvedValue(rows.map((r) => appealRow(r.id)));
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 5, email: 'a@b.test', username: 'a' }]);
+    dbMock.dbRead.model.findMany.mockResolvedValue(rows);
+    await resolveEntityAppeal({
+      ids: rows.map((r) => r.id),
+      entityType: EntityType.Model,
+      status: AppealStatus.Approved,
+      userId: 3,
+    });
+    return mockCreateNotification.mock.calls.map(([n]) => bellUrl(n.details));
+  };
+
+  it('opens a mature item on .red', async () => {
+    expect(await bellUrlsFor([{ id: 1, nsfwLevel: NsfwLevel.X }])).toEqual([
+      'https://red.test/models/1',
+    ]);
+  });
+
+  it('keeps a PG item relative, so it opens on whichever host the bell is on', async () => {
+    expect(await bellUrlsFor([{ id: 2, nsfwLevel: NsfwLevel.PG }])).toEqual(['/models/2']);
   });
 });

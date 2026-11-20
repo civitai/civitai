@@ -2031,31 +2031,6 @@ export async function settleResolvedAppeals(
         });
       }
     }
-
-    // Notify the user that their appeal has been resolved
-    await createNotification({
-      userId: appeal.userId,
-      type: 'entity-appeal-resolved',
-      category: NotificationCategory.Moderation,
-      // Per appeal and per filing: an entity can be appealed again after a re-block (new row), and a
-      // reopened appeal reuses its row; the notification service reuses the row for a repeated key.
-      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${
-        appeal.id
-      }:${appeal.createdAt.getTime()}`,
-      details: {
-        entityType: appeal.entityType,
-        entityId: appeal.entityId,
-        status,
-        resolvedMessage,
-        ...(lockReview && {
-          kind: LOCK_REVIEW_KIND,
-          unlocked: lockReview.unlocked,
-          reason: lockReview.reason ?? null,
-          // No date to promise when the ruling started no cooldown.
-          resolvedAt: lockReview.cooldown ? appeal.resolvedAt : null,
-        }),
-      },
-    });
   }
 
   // Email each affected user once, listing every item they appealed in this
@@ -2070,12 +2045,43 @@ export async function settleResolvedAppeals(
   }
 
   const linkColor = appealsByUser.size ? await appealLinkColors(appeals) : () => undefined;
+  for (const appeal of appeals) {
+    if (reopenedIds.has(appeal.id)) continue;
+    const color = linkColor(appeal);
+    const url = color && appealEntityLink(appeal.entityType, appeal.entityId, color).url;
+    await createNotification({
+      userId: appeal.userId,
+      type: 'entity-appeal-resolved',
+      category: NotificationCategory.Moderation,
+      // Per appeal and per filing: an entity can be appealed again after a re-block (new row), and a
+      // reopened appeal reuses its row; the notification service reuses the row for a repeated key.
+      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${
+        appeal.id
+      }:${appeal.createdAt.getTime()}`,
+      details: {
+        entityType: appeal.entityType,
+        entityId: appeal.entityId,
+        status,
+        resolvedMessage,
+        // Set only for an item civitai.com does not serve; the bell resolves a relative path on its own host.
+        ...(url && { url }),
+        ...(lockReview && {
+          kind: LOCK_REVIEW_KIND,
+          unlocked: lockReview.unlocked,
+          reason: lockReview.reason ?? null,
+          // No date to promise when the ruling started no cooldown.
+          resolvedAt: lockReview.cooldown ? appeal.resolvedAt : null,
+        }),
+      },
+    });
+  }
+
   for (const [recipientId, userAppeals] of appealsByUser) {
     const recipient = recipientMap.get(recipientId);
     if (!recipient?.email) continue;
     try {
       // Intentionally omit `resolvedMessage` from the email — moderator
-      // free-text is shown only in-app (notification above), never emailed,
+      // free-text is shown only in-app (notification), never emailed,
       // to avoid exposing potentially explicit/targeted prose. The TOS link in
       // the email template provides the policy reference for rejected appeals.
       await moderationActionEmail.send({
