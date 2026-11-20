@@ -207,6 +207,7 @@ export function MetadataExtractionFooter() {
     resolvedResources,
     params: serverParams,
     fileUrl,
+    isVideo,
     isResolving,
   } = useMetadataExtractionStore();
 
@@ -238,7 +239,7 @@ export function MetadataExtractionFooter() {
     const params: Record<string, unknown> = { ...serverParams, workflow: workflowKey };
     if (ecosystem) params.ecosystem = ecosystem;
     if (!opts?.withSeed) delete params.seed;
-    if (opts?.forceImage && fileUrl) {
+    if (opts?.forceImage && fileUrl && !isVideo) {
       params.images = [{ url: fileUrl }];
     }
 

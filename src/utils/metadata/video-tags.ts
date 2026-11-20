@@ -1,6 +1,6 @@
 /**
- * Reads the container-level `prompt` / `workflow` tags that ComfyUI (SaveVideo, SaveWEBM) and
- * VideoHelperSuite's Video Combine write into mp4 (QuickTime `mdta` keys, via
+ * Reads container-level generation tags (`prompt`, `workflow`, `parameters`, `extraMetadata`)
+ * from ComfyUI, VideoHelperSuite and other writers in mp4 (QuickTime `mdta` keys, via
  * `movflags=use_metadata_tags`) and Matroska/WebM (global SimpleTags).
  *
  * Runs in the browser on untrusted uploads: every walk is capped in iterations and bytes read,
@@ -9,7 +9,7 @@
 
 type VideoTags = Partial<Record<VideoTagKey, string>>;
 type VideoTagKey = (typeof VIDEO_TAG_KEYS)[number];
-const VIDEO_TAG_KEYS = ['prompt', 'workflow'] as const;
+const VIDEO_TAG_KEYS = ['prompt', 'workflow', 'parameters', 'extraMetadata'] as const;
 
 const MAX_ELEMENTS = 10_000;
 const MAX_META_BYTES = 8 * 1024 * 1024;
@@ -132,12 +132,20 @@ function syncBoxes(bytes: Uint8Array, start: number, end: number) {
   const boxes: Box[] = [];
   let offset = start;
   while (offset + 8 <= end && boxes.length < MAX_ELEMENTS) {
-    const size = readU32(bytes, offset);
-    if (size < 8 || offset + size > end) break;
+    let size = readU32(bytes, offset);
+    let headerSize = 8;
+    if (size === 1) {
+      if (offset + 16 > end) break;
+      size = readU32(bytes, offset + 8) * 2 ** 32 + readU32(bytes, offset + 12);
+      headerSize = 16;
+    } else if (size === 0) {
+      size = end - offset;
+    }
+    if (!Number.isSafeInteger(size) || size < headerSize || offset + size > end) break;
     boxes.push({
       type: fourcc(bytes, offset + 4),
       start: offset,
-      body: offset + 8,
+      body: offset + headerSize,
       end: offset + size,
     });
     offset += size;
@@ -266,8 +274,8 @@ function readVint(bytes: Uint8Array, offset: number, end: number, stripMarker: b
 // #endregion
 
 function tagKey(name: string | undefined): VideoTagKey | undefined {
-  const lower = name?.toLowerCase();
-  return VIDEO_TAG_KEYS.find((key) => key === lower);
+  const lower = name?.replace(/\0+$/, '').trim().toLowerCase();
+  return VIDEO_TAG_KEYS.find((key) => key.toLowerCase() === lower);
 }
 
 function readU32(bytes: Uint8Array, offset: number) {
