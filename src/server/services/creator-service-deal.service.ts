@@ -33,6 +33,8 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import type { ServiceLicense } from '~/shared/constants/creator-service-license.constants';
+import { NO_SERVICE_LICENSE } from '~/shared/constants/creator-service-license.constants';
 import {
   SERVICE_DEAL_ACCEPT_WINDOW_MS,
   SERVICE_DEAL_AUTO_COMPLETE_MS,
@@ -57,6 +59,7 @@ import { Flags } from '~/shared/utils/flags';
 import {
   ServiceOfferingIngestionStatus,
   type ServiceDealEventType,
+  type ServiceLicensePreset,
   type ServiceDealStatus,
 } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
@@ -304,6 +307,9 @@ type OfferingRow = {
   price: number;
   revisionsIncluded: number;
   deliveryDays: number;
+  licensePreset: ServiceLicensePreset | null;
+  licenseCustomText: string | null;
+  licenseAllowResale: boolean;
   blocked: boolean;
   sellerOk: boolean;
   showable: boolean;
@@ -326,6 +332,8 @@ export async function requestServiceDeal({
   expectedPrice,
   expectedRevisionsIncluded,
   expectedDeliveryDays,
+  expectedLicense = NO_SERVICE_LICENSE,
+  licenseAgreed = false,
   buyerId,
   requestText,
   disclosureVersion,
@@ -339,6 +347,10 @@ export async function requestServiceDeal({
   expectedPrice: number;
   expectedRevisionsIncluded: number;
   expectedDeliveryDays: number;
+  /** Left out, it means no license: a request on an offering that has one gets termsChanged. */
+  expectedLicense?: ServiceLicense;
+  /** The buyer ticked the license checkbox. */
+  licenseAgreed?: boolean;
   buyerId: number;
   requestText: string;
   /** The buyer-disclosure version shown before the hold. */
@@ -360,7 +372,8 @@ export async function requestServiceDeal({
 
   const [offering] = await dbWrite.$queryRaw<OfferingRow[]>`
     SELECT o."id", o."sellerId", o."status"::text AS "status", o."maxOpenDeals", o."price",
-      o."revisionsIncluded", o."deliveryDays",
+      o."revisionsIncluded", o."deliveryDays", o."licensePreset"::text AS "licensePreset",
+      o."licenseCustomText", o."licenseAllowResale",
       (SELECT count(*)::int FROM "ServiceDeal" d
         WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})) AS "open",
       NOT ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)} AS "blocked",
@@ -392,9 +405,14 @@ export async function requestServiceDeal({
   if (
     offering.price !== expectedPrice ||
     offering.revisionsIncluded !== expectedRevisionsIncluded ||
-    offering.deliveryDays !== expectedDeliveryDays
+    offering.deliveryDays !== expectedDeliveryDays ||
+    offering.licensePreset !== expectedLicense.licensePreset ||
+    offering.licenseCustomText !== expectedLicense.licenseCustomText ||
+    offering.licenseAllowResale !== expectedLicense.licenseAllowResale
   )
     throw termsChanged();
+  if (offering.licensePreset && !licenseAgreed)
+    throw throwBadRequestError("Agree to the seller's license terms to send this request.");
   const [waiting] = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT "id" FROM "ServiceDeal"
     WHERE "offeringId" = ${offeringId}::int AND "buyerId" = ${buyerId}::int
@@ -409,17 +427,22 @@ export async function requestServiceDeal({
     const [created] = await tx.$queryRaw<{ id: number }[]>`
       INSERT INTO "ServiceDeal" ("offeringId", "buyerId", "sellerId", "price", "buzzType",
         "feeAmount", "revisionsIncluded", "deliveryDays", "previewKind", "status", "requestText",
-        "updatedAt", "maxNsfwLevel", "reviewEnabledAt")
+        "updatedAt", "maxNsfwLevel", "reviewEnabledAt", "licensePreset", "licenseCustomText",
+        "licenseAllowResale", "licenseAgreedAt")
       SELECT o."id", ${buyerId}::int, o."sellerId", o."price", ${buzzType}::"ServiceBuzzType",
         0, o."revisionsIncluded", o."deliveryDays", o."previewKind", 'Requested'::"ServiceDealStatus",
         ${requestText}::text, now(), ${offeringLevel},
-        CASE WHEN ${reviewEnabled}::boolean THEN now() END
+        CASE WHEN ${reviewEnabled}::boolean THEN now() END, o."licensePreset", o."licenseCustomText",
+        o."licenseAllowResale", CASE WHEN o."licensePreset" IS NULL THEN NULL ELSE now() END
       FROM "ServiceOffering" o
       WHERE o."id" = ${offeringId}::int
         AND o."status" = 'Active'::"ServiceOfferingStatus"
         AND o."price" = ${expectedPrice}::int
         AND o."revisionsIncluded" = ${expectedRevisionsIncluded}::int
         AND o."deliveryDays" = ${expectedDeliveryDays}::int
+        AND o."licensePreset"::text IS NOT DISTINCT FROM ${expectedLicense.licensePreset}::text
+        AND o."licenseCustomText" IS NOT DISTINCT FROM ${expectedLicense.licenseCustomText}::text
+        AND o."licenseAllowResale" = ${expectedLicense.licenseAllowResale}::boolean
         AND o."sellerId" <> ${buyerId}::int
         -- serviceRequestAllowed: SFW always; mature only where served, to a buyer who opted in.
         AND ${offeringShowable}
@@ -1186,6 +1209,14 @@ export async function getServiceDealView({
     revisionsUsed: deal.revisionsUsed,
     deliveryDays: deal.deliveryDays,
     previewKind: deal.previewKind,
+    license: deal.licensePreset
+      ? {
+          licensePreset: deal.licensePreset,
+          licenseCustomText: deal.licenseCustomText,
+          licenseAllowResale: deal.licenseAllowResale,
+          agreedAt: deal.licenseAgreedAt,
+        }
+      : null,
     requestText: deal.requestText,
     chatId: deal.chatId,
     requestedAt: deal.requestedAt,

@@ -118,7 +118,16 @@ export function ServiceOfferingCard({
 }: {
   offering: Pick<
     ServiceOffering,
-    'id' | 'title' | 'description' | 'price' | 'deliveryDays' | 'revisionsIncluded' | 'maxNsfwLevel'
+    | 'id'
+    | 'title'
+    | 'description'
+    | 'price'
+    | 'deliveryDays'
+    | 'revisionsIncluded'
+    | 'maxNsfwLevel'
+    | 'licensePreset'
+    | 'licenseCustomText'
+    | 'licenseAllowResale'
   > & { coverImage?: ServiceCoverImage | null };
   /** The /services feed shows whose offering this is; a seller's own shop and profile do not. */
   seller?: ServiceCardSeller;

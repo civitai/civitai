@@ -34,7 +34,7 @@ export type RetractedMedia = {
  */
 export async function getRetractedMedia(
   imageId: number,
-  { csamReview }: { csamReview: boolean },
+  { csamReview, cdnLeg = false }: { csamReview: boolean; cdnLeg?: boolean },
   db = dbWrite
 ): Promise<RetractedMedia | null> {
   const [row] = await db.$transaction(async (tx) => {
@@ -42,24 +42,29 @@ export async function getRetractedMedia(
     return tx.$queryRaw<
       (RetractedMedia & {
         blockedFor: string | null;
+        ingestion: string;
         restricted: boolean;
         siblings: UrlSibling[];
       })[]
     >`
-      SELECT i.url, i.type::text AS type, i."mimeType", i."blockedFor",
+      SELECT i.url, i.type::text AS type, i."mimeType", i."blockedFor", i.ingestion,
         ${Prisma.raw(
           csamReview ? 'false' : `(${csamRestrictedSql('i')} OR ${upgradedRetractionSql('i')})`
         )} AS restricted,
         ${Prisma.raw(csamReview ? "'[]'::json" : urlSiblingsSql('i'))} AS siblings
       FROM "Image" i
-      WHERE i.id = ${imageId} AND ${Prisma.raw(retractedImageWhereSql('i'))}
+      WHERE i.id = ${imageId} AND ${Prisma.raw(retractedImageWhereSql('i', { cdnLeg }))}
     `;
   });
   if (!row) return null;
   if (!csamReview) {
     const patterns = blockedForPatterns();
     if (row.restricted || blockedForSignal(row.blockedFor, patterns)) return null;
-    const verdict = await scannerVerdicts.read(imageId);
+    // A scanned image can be rescanned, so its verdict is read fresh rather than from the cache.
+    const verdict =
+      row.ingestion === 'Scanned'
+        ? await readScannerCsamVerdict(imageId)
+        : await scannerVerdicts.read(imageId);
     if (verdict !== 'clear' && verdict !== 'none') return null;
     const isSignal = (blockedFor: string | null) => blockedForSignal(blockedFor, patterns);
     if (!(await siblingsServable(row.siblings, isSignal, readScannerCsamVerdicts))) return null;

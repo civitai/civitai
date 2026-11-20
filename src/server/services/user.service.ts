@@ -480,10 +480,10 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
 export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
- * Before a moderator changes another user's profile text: when the user is named on a CSAM report,
- * or `alwaysArchive` is set, `archive` stores the current text and links, and this throws if it
- * rejects so the change does not happen. A copy that changed during its upload is taken again, at most
- * three times.
+ * Before a moderator clears, edits or bans away another user's profile text or links: when the user
+ * is named on a CSAM report or under an account hold, or `alwaysArchive` is set, `archive` stores the
+ * current text and links, and this throws if it rejects so the change does not happen. If they change
+ * during an upload they are archived again, up to three uploads, after which this refuses.
  */
 export async function archiveProfileBeforeModeratorChange({
   userId,
@@ -506,7 +506,8 @@ export async function archiveProfileBeforeModeratorChange({
   const mustArchive =
     alwaysArchive ||
     // primary: a report or hold made a moment ago must not let this change skip the archive.
-    !!(
+    // Anything but an explicit false (no row, a NULL) counts as held.
+    (
       await dbWrite.$queryRaw<{ named: boolean }[]>`
         SELECT (
           EXISTS (
@@ -517,7 +518,7 @@ export async function archiveProfileBeforeModeratorChange({
           OR ${heldSql}
         ) AS named
       `
-    )[0]?.named;
+    )[0]?.named !== false;
   if (mustArchive) {
     let archived: Pick<ProfileClearSnapshot, 'profile' | 'links'> | null = null;
     for (let attempt = 0; ; attempt++) {
@@ -558,6 +559,7 @@ export type ProfileClearSnapshot = {
     sfwMessage: string | null;
     location: string | null;
     showcaseSections: Prisma.JsonValue;
+    showcaseItems: Prisma.JsonValue;
   };
 };
 export type ProfileClearField = 'location' | 'bio' | 'message' | 'showcaseSections';
@@ -569,6 +571,7 @@ const PROFILE_CLEAR_SNAPSHOT_SELECT = {
   sfwMessage: true,
   location: true,
   showcaseSections: true,
+  showcaseItems: true,
 } as const;
 
 /**
@@ -630,6 +633,44 @@ export async function clearUserProfileFields({
     }
   }
   return { updated: result.count > 0 };
+}
+
+/**
+ * Mod-driven: removes one of a user's social or sponsorship links. Archived first, and refused if the
+ * archive fails, as `clearUserProfileFields` is.
+ */
+export async function removeUserLinkAsModerator({
+  userId,
+  linkId,
+  actorId,
+  archive,
+}: {
+  userId: number;
+  linkId: number;
+  actorId: number;
+  archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+}) {
+  await archiveProfileBeforeModeratorChange({ userId, actorId, fields: ['links'], archive });
+  // Scoped by owner too: an id alone could take another account's link.
+  const { count } = await dbWrite.userLink.deleteMany({ where: { id: linkId, userId } });
+  if (count > 0) {
+    try {
+      await trackModActivity(actorId, {
+        entityType: 'user',
+        activity: 'removeLink',
+        entityId: userId,
+      });
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'remove-user-link-mod-activity',
+        userId,
+        message: (error as Error).message,
+      });
+    }
+    await bustUserCreator(userId).catch(handleLogError);
+  }
+  return { removed: count > 0 };
 }
 
 /**
@@ -891,7 +932,7 @@ export const getUserEngagedModelsByIds = async ({
 }) => {
   const [engagements, recommendedReviews] = await Promise.all([
     listModelEngagements(kyselyRead, { userId: id, modelIds }),
-    // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+    // Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
     import('~/server/services/resourceReview.service').then(({ getResourceReviewsByUserId }) =>
       getResourceReviewsByUserId({ userId: id, recommended: true, modelIds })
     ),
@@ -1312,7 +1353,7 @@ type DeletedVersionRow = { id: number };
 
 /** Busts the caches of the versions `deleteUser` deleted. Chunked: an account can have thousands. */
 async function dropDeletedVersionCaches(versionIds: number[]) {
-  // Imported here: a static import joins user.service to the model-version import cycle.
+  // Imported here, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
   const { bustMvCache } = await import('~/server/services/model-version.service');
   for (const ids of chunkIds(versionIds, DELETED_MODEL_CACHE_CHUNK)) {
     await preventReplicationLagBatch('modelVersion', ids);
@@ -1877,7 +1918,7 @@ async function removedModels(ids: number[]) {
 async function dropHiddenModelCaches(modelIds: number[], userId: number) {
   const versions = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT id FROM "ModelVersion" WHERE "modelId" = ANY(${modelIds}::int[])`;
-  // Imported here: a static import joins user.service to the model-version import cycle.
+  // Imported here, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
   const { bustMvCache } = await import('~/server/services/model-version.service');
   await bustMvCache(
     versions.map((v) => v.id),

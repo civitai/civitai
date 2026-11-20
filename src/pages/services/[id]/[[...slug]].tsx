@@ -10,7 +10,11 @@ import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadg
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { pluralize } from '~/components/CreatorShop/Services/creator-service.util';
-import { ServiceRequestModal } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
+import {
+  ServiceOfferingLicense,
+  ServiceRequestModal,
+} from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
+import { SERVICE_LICENSE_PRESET_LABELS } from '~/shared/constants/creator-service-license.constants';
 import {
   BlurCaption,
   COVER_ASPECT_RATIO,
@@ -90,6 +94,12 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
     { label: 'Delivery', value: `~${pluralize(offering.deliveryDays, 'day')}` },
     { label: 'Revisions', value: `${offering.revisionsIncluded} included` },
     { label: 'Preview', value: SERVICE_PREVIEW_KIND_LABELS[offering.previewKind] },
+    {
+      label: 'License',
+      value: offering.licensePreset
+        ? SERVICE_LICENSE_PRESET_LABELS[offering.licensePreset]
+        : 'Not set',
+    },
     {
       label: 'Slots',
       value: full ? 'Fully booked' : `${offering.slotsOpen} of ${offering.maxOpenDeals} open`,
@@ -237,6 +247,8 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
                   </Accordion.Panel>
                 </Accordion.Item>
               </Accordion>
+
+              <ServiceOfferingLicense offering={offering} />
 
               <SmartCreatorCard
                 user={seller}

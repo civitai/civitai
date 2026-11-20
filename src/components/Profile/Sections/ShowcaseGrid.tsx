@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
-import React, { useEffect, useRef } from 'react';
+import { Button } from '@mantine/core';
+import React, { useEffect, useRef, useState } from 'react';
 import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyout-layout';
 import classes from './ShowcaseGrid.module.scss';
 import clsx from 'clsx';
@@ -91,4 +92,32 @@ export function ShowcaseGrid({
       {content}
     </div>
   );
+}
+
+/**
+ * A shelf's "View all": while the grid's row clip hides items, a toggle unfolds every item in place.
+ * The count is not re-read while unfolded, so the folded count is ready the moment it folds back.
+ */
+export function useShowcaseViewAll({ rows, itemCount }: { rows: number; itemCount: number }) {
+  const [hidden, setHidden] = useState(0);
+  const [expanded, setExpanded] = useState(false);
+  const gridProps = {
+    // Unfolded, every item gets a row: the grid's empty rows take no height.
+    rows: expanded ? itemCount : rows,
+    onHiddenCountChange: expanded ? undefined : setHidden,
+  };
+  const toggle =
+    hidden > 0 || expanded ? (
+      <div className="flex justify-center">
+        <Button
+          variant="subtle"
+          size="compact-sm"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          {expanded ? 'Show less' : `View all ${itemCount}`}
+        </Button>
+      </div>
+    ) : null;
+  return { gridProps, toggle };
 }

@@ -161,6 +161,7 @@ const LATER_MIGRATIONS = [
   '20261224150000_service_deal_file_removed_at',
   '20270106120000_service_offering_content_scan',
   '20271119070000_service_deal_file_scanned_etag',
+  '20271120030000_service_license_presets',
   '20271120100000_service_deal_reviewed_happy',
   '20271120100100_service_deal_reviews',
 ].map((name) =>
@@ -573,6 +574,115 @@ describe('request', () => {
     });
     expect((await legs(id)).map((l) => l.leg)).toEqual(['Hold']);
     expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('license terms', () => {
+  const COMMERCIAL = {
+    licensePreset: 'CommercialCredit' as const,
+    licenseCustomText: null,
+    licenseAllowResale: true,
+  };
+  const license = async (set: string) => q(`UPDATE "ServiceOffering" SET ${set}`);
+
+  it('freezes the license the buyer agreed to onto the deal', async () => {
+    await license(`"licensePreset" = 'CommercialCredit', "licenseAllowResale" = true`);
+    const { id } = await request({ expectedLicense: COMMERCIAL, licenseAgreed: true });
+    expect(await deal(id)).toMatchObject({
+      licensePreset: 'CommercialCredit',
+      licenseCustomText: null,
+      licenseAllowResale: true,
+      licenseAgreedAt: expect.any(Date),
+    });
+    // The seller changing terms later leaves the deal's alone.
+    await license(`"licensePreset" = 'Personal', "licenseAllowResale" = false`);
+    expect(await deal(id)).toMatchObject({ licensePreset: 'CommercialCredit' });
+  });
+
+  it("copies a Custom license's text as written", async () => {
+    await license(`"licensePreset" = 'Custom', "licenseCustomText" = 'Print runs under 500 only.'`);
+    const { id } = await request({
+      expectedLicense: {
+        licensePreset: 'Custom',
+        licenseCustomText: 'Print runs under 500 only.',
+        licenseAllowResale: false,
+      },
+      licenseAgreed: true,
+    });
+    expect(await deal(id)).toMatchObject({
+      licensePreset: 'Custom',
+      licenseCustomText: 'Print runs under 500 only.',
+    });
+  });
+
+  it('refuses a request after the Custom text changed', async () => {
+    await license(`"licensePreset" = 'Custom', "licenseCustomText" = 'Print runs under 5000.'`);
+    await expect(
+      request({
+        expectedLicense: {
+          licensePreset: 'Custom',
+          licenseCustomText: 'Print runs under 500 only.',
+          licenseAllowResale: false,
+        },
+        licenseAgreed: true,
+      })
+    ).rejects.toEqual(conflict);
+  });
+
+  // Each case changes one field of the license the buyer was shown.
+  it.each([
+    ['a different preset', `"licensePreset" = 'CommercialNoCredit'`],
+    ['resale turned off', `"licenseAllowResale" = false`],
+    ['the license removed', `"licensePreset" = NULL`],
+  ])('refuses a request after %s, before any charge', async (_, set) => {
+    await license(`"licensePreset" = 'CommercialCredit', "licenseAllowResale" = true`);
+    await license(set);
+    await expect(request({ expectedLicense: COMMERCIAL, licenseAgreed: true })).rejects.toEqual(
+      expect.objectContaining({ code: 'CONFLICT', message: expect.stringMatching(/terms/) })
+    );
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // The INSERT repeats the license as its own precondition, for terms that change after the check.
+  it.each([
+    ['preset', `"licensePreset" = 'CommercialNoCredit'`],
+    ['resale toggle', `"licenseAllowResale" = false`],
+    ['custom text', `"licensePreset" = 'Custom', "licenseCustomText" = 'Mine.'`],
+  ])(
+    'creates no deal when the license %s changes between the check and the insert',
+    async (_, change) => {
+      await license(`"licensePreset" = 'CommercialCredit', "licenseAllowResale" = true`);
+      shop.assertCreatorShopVisible.mockImplementationOnce(async () => {
+        await license(change);
+        return [];
+      });
+      await expect(request({ expectedLicense: COMMERCIAL, licenseAgreed: true })).rejects.toEqual(
+        conflict
+      );
+      expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+      expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    }
+  );
+
+  it('refuses a request from a client that was shown no license, once the offering has one', async () => {
+    await license(`"licensePreset" = 'CommercialNoCredit'`);
+    await expect(request()).rejects.toEqual(conflict);
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+  });
+
+  it('refuses a request on a licensed offering without the checkbox', async () => {
+    await license(`"licensePreset" = 'CommercialCredit', "licenseAllowResale" = true`);
+    await expect(request({ expectedLicense: COMMERCIAL, licenseAgreed: false })).rejects.toThrow(
+      /Agree to the seller's license terms/
+    );
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('records no agreement on an offering with no license', async () => {
+    const { id } = await request();
+    expect(await deal(id)).toMatchObject({ licensePreset: null, licenseAgreedAt: null });
   });
 });
 
