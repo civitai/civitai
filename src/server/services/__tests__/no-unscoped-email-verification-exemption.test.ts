@@ -124,6 +124,8 @@ const DERIVED_BASES: Record<string, string> = {
   remixAppProcedure: 'protectedProcedure',
   // `semantic-image-search.router.ts`: read-only image search, open to signed-out visitors.
   semanticSearchProcedure: 'publicProcedure',
+  // The same, over the video index (flag-gated, mods-only to start).
+  semanticVideoSearchProcedure: 'publicProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
   sharedStorageProcedure: 'publicProcedure',

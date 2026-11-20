@@ -1,3 +1,4 @@
+import { liveCsamTextHoldText } from '@civitai/shared/held-url';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
@@ -22,8 +23,8 @@ export const postHoldsHeldTextSql = (postId: Prisma.Sql) => Prisma.sql`EXISTS (
  */
 const postTextHiddenText = (t: string) =>
   `(${t}.refused OR ${t}."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" th
-    WHERE th."entityType" = 'PostText' AND th."entityId" = ${t}.id AND th.label = 'csam'
-      AND th.status IN ('Pending', 'Confirmed')))`;
+    WHERE th."entityType" = 'PostText' AND th."entityId" = ${t}.id
+      AND ${liveCsamTextHoldText('th')}))`;
 
 /** One text's post, rating and hidden decision, in one primary statement (the thread gate). */
 export const postTextGateRowSql = (textId: number) =>

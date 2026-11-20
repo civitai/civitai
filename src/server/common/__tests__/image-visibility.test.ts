@@ -150,6 +150,18 @@ describe('withServableImage', () => {
     expect(withServableImage(row(null), 'cover').cover).toBeNull();
   });
 
+  it('withholds an image rated Blocked from anyone but its uploader', () => {
+    const input = row(image(32, false));
+    for (const viewerId of [6, null, undefined]) {
+      expect(withServableImage(input, 'cover', viewerId).cover).toBeNull();
+    }
+    expect(withServableImage(input, 'cover', UPLOADER).cover).toEqual(image(32, false));
+  });
+
+  it('serves an unflagged image at the highest browsable level', () => {
+    expect(withServableImage(row(image(16, false)), 'cover', 6).cover).toEqual(image(16, false));
+  });
+
   it('judges each key on its own when nested', () => {
     const served = withServableImage(withServableImage(row(image(1)), 'cover', 6), 'hero', 6);
     expect([served.cover, served.hero]).toEqual([image(1), null]);

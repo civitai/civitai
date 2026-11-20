@@ -69,3 +69,33 @@ export const structuredLogSink: AxiomDeps = (globalThis.__civitaiStructuredLogSi
 export function setStructuredLogSink(emitLog: EmitLog): void {
   structuredLogSink.emitLog = emitLog;
 }
+
+/**
+ * The datastream stamped on console-style lines sent through the sink. Kept apart from the app
+ * logger's datastreams so a query or alert keyed on one of those never matches these lines.
+ */
+export const CONSOLE_LOG_DATASTREAM = 'civitai-console';
+
+export type ConsoleLogSource = 'createLogger' | 'prisma' | 'console';
+
+// One record's body; a longer line is cut here (stdout still gets all of it).
+export const MAX_FORWARDED_LOG_BODY = 8192;
+
+/**
+ * Send one already-formatted console line to the registered sink, if any. A no-op without a sink
+ * (the client bundle, tests, scripts), and never throws: the caller is a logging call.
+ */
+export function emitConsoleLog(
+  body: string,
+  record: { source: ConsoleLogSource; name: string; type: string }
+): void {
+  const emit = structuredLogSink.emitLog;
+  if (!emit) return;
+  try {
+    emit(
+      body,
+      { type: record.type, name: record.name, logSource: record.source },
+      CONSOLE_LOG_DATASTREAM
+    );
+  } catch {}
+}

@@ -15,7 +15,7 @@ import {
   type BodyImageGuard,
 } from '~/components/RichTextEditor/GuardedBodyMedia';
 import { extractCloudflareUuid } from '~/utils/article-helpers';
-import { parseImageWidth } from '~/shared/tiptap/image-width';
+import { parseImageAlign, parseImageWidth } from '~/shared/tiptap/image-width';
 import classes from './RichTextEditorComponent.module.scss';
 import { CustomHeading } from '~/shared/tiptap/custom-heading.node';
 import { EdgeMediaNode } from '~/shared/tiptap/edge-media.node';
@@ -117,12 +117,17 @@ export function RenderRichText({
   const guardNsfwLevel = imageGuard?.nsfwLevel;
   const memoized = useMemo(() => {
     // Content images are linked by Cloudflare uuid: a media node's url is one, an img's src holds one.
-    const guard = (urlKey: string, size: unknown, media: React.ReactElement) => (
+    const guard = (
+      urlKey: string,
+      { size, align }: { size?: unknown; align?: unknown },
+      media: React.ReactElement
+    ) => (
       <GuardedBodyMedia
         linked={imagesByUrl.get(urlKey)}
         urlKey={urlKey}
         fallbackNsfwLevel={guardNsfwLevel ?? 0}
         size={parseImageWidth(size)}
+        align={parseImageAlign(align)}
       >
         {media}
       </GuardedBodyMedia>
@@ -138,16 +143,16 @@ export function RenderRichText({
               if (guardNsfwLevel === undefined) return <EdgeMediaComponent {...attrs} />;
               return guard(
                 attrs.url ?? '',
-                attrs.size,
-                <EdgeMediaComponent {...attrs} size={null} />
+                attrs,
+                <EdgeMediaComponent {...attrs} size={null} align={null} />
               );
             },
             ...(guardNsfwLevel !== undefined && {
               image: ({ node }) => {
-                const { src, alt, title, size } = node.attrs as Record<string, string | null>;
+                const { src, alt, title } = node.attrs as Record<string, string | null>;
                 return guard(
                   extractCloudflareUuid(src ?? '') ?? src ?? '',
-                  size,
+                  node.attrs,
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={src ?? undefined} alt={alt ?? undefined} title={title ?? undefined} />
                 );

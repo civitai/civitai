@@ -37,7 +37,7 @@ type Config struct {
 	AuthJWKSURI      string            // AUTH_JWKS_URI
 	AuthRequireIat0  bool              // AUTH_REQUIRE_IAT0
 	AuthCookieMode   string            // AUTH_SESSION_COOKIE_MODE: host | shared (default)
-	AuthLegacyRead   bool              // AUTH_LEGACY_READ (default true): read the shared-slot cookie
+	AuthLegacyRead   bool              // AUTH_LEGACY_READ (see LegacyRead): read the shared-slot cookie
 	AuthSiteModes    map[string]string // AUTH_SESSION_COOKIE_MODE_BY_SITE: registrable domain -> host | shared
 	SysReadTimeout   time.Duration
 	FallbackURL      string // FEED_GO_FALLBACK_URL: the Node app, for everything not served here
@@ -152,6 +152,25 @@ type Config struct {
 	// pod sends at once; a read past it falls back at once (`metrics-miss-failed`).
 	ClickHouseMaxInFlight int
 
+	// The dedicated ClickHouse for entity metrics, which the image metric-hash populate reads instead
+	// of the reader above only while the `image-metrics-dedicated-clickhouse` Flipt flag is on
+	// (hydrate.MissCompute.MetricsClickHouse). The same variables as the Node app's (#9780), so one
+	// secret feeds both runtimes: CLICKHOUSE_METRICS_HOST (the full URL, protocol and port included),
+	// CLICKHOUSE_METRICS_USERNAME, CLICKHOUSE_METRICS_PASSWORD. Read only with ComputeMisses, and only
+	// when the host and the username are both set; the password is this server's alone (unset is
+	// empty, never another login's). Unset: no second reader, and every populate reads the reader above.
+	MetricsClickHouseURL, MetricsClickHouseUsername, MetricsClickHousePassword string
+	// MetricsClickHouseRequestTimeout is CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS (default 10000): the
+	// bound of one request to the dedicated server, so a hung one releases its read slot and the
+	// populate locks within seconds (a write-back populate is otherwise bounded only by its own minute).
+	MetricsClickHouseRequestTimeout time.Duration
+
+	// The Flipt server the `image-metrics-dedicated-clickhouse` flag is read from, under the Node
+	// app's names (packages/civitai-flipt/src/env.ts): FLIPT_URL, FLIPT_FETCHER_SECRET,
+	// FLIPT_ENVIRONMENT (default civitai-app). Read only when the dedicated reader is configured; with
+	// FLIPT_URL unset the flag reads off.
+	FliptURL, FliptClientToken, FliptEnvironment string
+
 	// AllowedOriginHosts is the app's allowedOriginHosts (src/server/utils/origin-helpers.ts): every
 	// SERVER_DOMAIN_* host and alias, each TRPC_ORIGINS entry's host, and NEXTAUTH_URL's host.
 	AllowedOriginHosts map[string]bool
@@ -181,7 +200,7 @@ func Load() (*Config, error) {
 		AuthJWKSURI:      os.Getenv("AUTH_JWKS_URI"),
 		AuthRequireIat0:  boolEnv("AUTH_REQUIRE_IAT0", false),
 		AuthCookieMode:   env("AUTH_SESSION_COOKIE_MODE", "shared"),
-		AuthLegacyRead:   boolEnv("AUTH_LEGACY_READ", true),
+		AuthLegacyRead:   LegacyRead(os.Getenv("AUTH_LEGACY_READ")),
 		AuthSiteModes:    SiteModes(os.Getenv("AUTH_SESSION_COOKIE_MODE_BY_SITE")),
 		FallbackURL:      os.Getenv("FEED_GO_FALLBACK_URL"),
 		CreatorPromotion: os.Getenv("FEED_GO_CREATOR_PROMOTIONS"),
@@ -250,6 +269,15 @@ func Load() (*Config, error) {
 	c.ClickHouseTimeout = min(time.Duration(positiveIntEnv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", 2000))*time.Millisecond, c.RequestBudget/2)
 	c.MetricsLockWait = time.Duration(positiveIntEnv("FEED_GO_METRICS_LOCK_WAIT_MS", 500)) * time.Millisecond
 	c.ClickHouseMaxInFlight = positiveIntEnv("FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", 4)
+	if c.ComputeMisses && os.Getenv("CLICKHOUSE_METRICS_HOST") != "" && os.Getenv("CLICKHOUSE_METRICS_USERNAME") != "" {
+		c.MetricsClickHouseURL = os.Getenv("CLICKHOUSE_METRICS_HOST")
+		c.MetricsClickHouseUsername = os.Getenv("CLICKHOUSE_METRICS_USERNAME")
+		c.MetricsClickHousePassword = os.Getenv("CLICKHOUSE_METRICS_PASSWORD")
+		c.FliptURL = os.Getenv("FLIPT_URL")
+		c.FliptClientToken = os.Getenv("FLIPT_FETCHER_SECRET")
+		c.FliptEnvironment = env("FLIPT_ENVIRONMENT", "civitai-app")
+	}
+	c.MetricsClickHouseRequestTimeout = time.Duration(positiveIntEnv("CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", 10_000)) * time.Millisecond
 	c.AllowedOriginHosts = AllowedOriginHosts(c.Hosts, list(os.Getenv("TRPC_ORIGINS")), os.Getenv("NEXTAUTH_URL"))
 	c.Tracing = tracing.FromEnv(os.Getenv)
 	c.FallbackLogPerMinute = max(intEnv("FEED_GO_FALLBACK_LOG_PER_MIN", 0), 0)
@@ -299,6 +327,16 @@ func (c *Config) CookieNames(reqHost string) []string {
 		names = append(names, shared)
 	}
 	return append(names, host)
+}
+
+// LegacyRead parses AUTH_LEGACY_READ as legacyCookieReadEnabled (packages/civitai-auth) does: false only for
+// `false`, `0`, `off` or `no` (any case, surrounding whitespace ignored); unset or any other value is true.
+func LegacyRead(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "false", "0", "off", "no":
+		return false
+	}
+	return true
 }
 
 // SiteModes parses AUTH_SESSION_COOKIE_MODE_BY_SITE as siteCookieMode (packages/civitai-auth) does: comma-separated

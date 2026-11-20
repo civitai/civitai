@@ -2,32 +2,22 @@ import {
   CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
   heldImageSql,
   heldUserSql,
-  reviewSuspectImageSql,
+  unreadableImageSql,
 } from './held-media';
 import {
   BAN_REASONS_ALWAYS_REMOVING_MEDIA,
+  CSAM_HOLD_POST_UNPUBLISH_REASON,
   evidenceHeldUrlSql,
   heldUrlSql,
-  MINOR_UNPUBLISH_REASONS,
+  liveCsamTextHoldText,
   reportListedUrlSql,
 } from './held-url';
-import { blockedForSignal, type BlockedForPatterns } from './review-batch';
 
-/**
- * A blocked image's signal tier, as the review routing reads it: `suspect` for an image carrying a
- * CSAM or minor signal, a block with no reason or a reason `blockedForSignal` reads as a signal, or
- * an owner named on a report or held; `plain` otherwise. Which moderators may see it on the
- * retracted-media routes is `csamRestrictedSql`'s call, not the tier's.
- * Held media (`heldImageSql`) and an image row under an evidence hold are never served there; the
- * held-media route serves the first. With `cdnLeg`, a scanned image is also eligible while the image
- * CDN has retracted its url, unless the url is held (`heldUrlSql`) or another image row, a moderator
- * delete or a shop takedown shares it.
- */
-export type RetractedTier = 'plain' | 'suspect';
-
-/** Whether this route may serve the "Image" row aliased `image` at all, to anyone: it is blocked
- *  (or, with `cdnLeg`, scanned with its url retracted and not held), not held media, and not under
- *  an evidence hold. */
+/** Whether the retracted-media routes may serve the "Image" row aliased `image` at all, to anyone:
+ *  it is blocked (or, with `cdnLeg`, scanned with its url retracted and not held), not held media
+ *  (`heldImageSql`, which the held-media route serves), and not under an evidence hold. With
+ *  `cdnLeg`, the url must also be the row's alone. Who among moderators may see it is
+ *  `csamRestrictedSql`'s call. */
 export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const eligible = cdnLeg
@@ -37,7 +27,7 @@ export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): 
         SELECT 1 FROM "ImageCdnAccess" ca WHERE ca.url = ${image}."url" AND ca.state = 'Retracted'
       )
       AND NOT ${heldUrlSql(`${image}."url"`)}
-      -- Bytes are per url, the tier per row: another row's signal would not reach this one, so the
+      -- Bytes are per url, the checks per row: another row's signal would not reach this one, so the
       -- url must be this row's alone, with no deleted or taken-down copy behind it either.
       AND NOT EXISTS (SELECT 1 FROM "Image" so WHERE so.url = ${image}."url" AND so.id <> ${image}.id)
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" sd WHERE sd.url = ${image}."url")
@@ -52,19 +42,20 @@ export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): 
   )`;
 }
 
+/** At most this many other rows on a url are read; a url with more is refused (`siblingsServable`). */
+export const URL_SIBLING_CAP = 50;
+
 /**
- * Whether the "Image" row aliased `image` is kept to moderators cleared for CSAM review: marked as
- * CSAM (in the CSAM queue, blocked as CSAM, a CSAM hash, a CSAM scan flag, hold or vote), listed on a
- * CSAM report, its owner reported, held or banned for minor safety, blocked with no reason, or its
- * bytes (by url or pHash copy) reported, held or under an evidence hold. A minor signal alone is not
- * here: any moderator may see it. `blockedFor` text and the scanner's labels are read by the caller.
+ * The CSAM signals read off one "Image" row aliased `image`: marked as CSAM (in the CSAM queue,
+ * blocked as CSAM, a CSAM hash, a CSAM scan flag, hold or vote), blocked with no reason, its owner
+ * reported, held or banned for minor safety, its post removed by a CSAM hold, or a CSAM text hold
+ * that is not dismissed on its post, its post's text, its model, an article it is in, or a service
+ * offering or profile it is the cover of.
  */
-export function csamRestrictedSql(image: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+function csamRowSql(image: string): string {
   const id = `${image}.id`;
-  const url = `${image}."url"`;
   const minorBans = BAN_REASONS_ALWAYS_REMOVING_MEDIA.map((r) => `'${r}'`).join(', ');
-  return `COALESCE((
+  return `(
     COALESCE(${heldImageSql(image)}, false)
     OR (${image}."blockedFor" IS NULL AND ${image}.ingestion = 'Blocked')
     OR EXISTS (SELECT 1 FROM "BlockedImage" cb WHERE cb.hash = ${image}."pHash" AND cb.reason = 'CSAM')
@@ -80,54 +71,139 @@ export function csamRestrictedSql(image: string): string {
         )
       )
     )
-    OR (${id})::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
     OR EXISTS (
       SELECT 1 FROM "User" cu
       WHERE cu.id = ${image}."userId" AND cu.meta -> 'banDetails' ->> 'reasonCode' IN (${minorBans})
     )
+    OR ${heldUserSql(`${image}."userId"`)}
+    OR EXISTS (
+      SELECT 1 FROM "Post" cp
+      WHERE cp.id = ${image}."postId" AND cp.metadata ->> 'unpublishedReason' = '${CSAM_HOLD_POST_UNPUBLISH_REASON}'
+    )
+    OR EXISTS (
+      SELECT 1 FROM "TextScanHold" cph
+      WHERE cph."entityType" = 'Post' AND cph."entityId" = ${image}."postId" AND ${liveCsamTextHoldText(
+    'cph'
+  )}
+    )
+    OR EXISTS (
+      SELECT 1 FROM "PostText" cpt
+      WHERE cpt."postId" = ${image}."postId" AND (cpt."csamHeld" OR EXISTS (
+        SELECT 1 FROM "TextScanHold" cpth
+        WHERE cpth."entityType" = 'PostText' AND cpth."entityId" = cpt.id AND ${liveCsamTextHoldText(
+          'cpth'
+        )}
+      ))
+    )
+    OR EXISTS (
+      SELECT 1 FROM "Post" cmp
+      JOIN "ModelVersion" cmv ON cmv.id = cmp."modelVersionId"
+      JOIN "TextScanHold" cth ON cth."entityType" = 'Model' AND cth."entityId" = cmv."modelId"
+      WHERE cmp.id = ${image}."postId" AND ${liveCsamTextHoldText('cth')}
+    )
+    OR EXISTS (
+      SELECT 1 FROM "TextScanHold" cah
+      WHERE cah."entityType" = 'Article' AND ${liveCsamTextHoldText('cah')} AND cah."entityId" IN (
+        SELECT ca.id FROM "Article" ca WHERE ca."coverId" = ${id} OR ca."bannerId" = ${id}
+        UNION ALL
+        SELECT cic."entityId" FROM "ImageConnection" cic
+        WHERE cic."imageId" = ${id} AND cic."entityType" = 'Article'
+      )
+    )
+    OR EXISTS (
+      SELECT 1 FROM "ServiceOffering" cso
+      JOIN "TextScanHold" csoh ON csoh."entityType" = 'ServiceOffering' AND csoh."entityId" = cso.id
+      WHERE cso."coverImageId" = ${id} AND ${liveCsamTextHoldText('csoh')}
+    )
+    OR EXISTS (
+      SELECT 1 FROM "TextScanHold" cuph
+      JOIN "UserProfile" cup ON cup."userId" = cuph."entityId"
+      WHERE cuph."entityType" = 'UserProfile' AND ${liveCsamTextHoldText('cuph')}
+        AND (cup."coverImageId" = ${id} OR cup."sfwCoverImageId" = ${id})
+    )
+  )`;
+}
+
+/**
+ * Whether the "Image" row aliased `image` is kept to moderators cleared for CSAM review: it, or
+ * one of the first `URL_SIBLING_CAP` other rows on its url, carries a CSAM signal in Postgres (`csamRowSql`); it is listed on a CSAM
+ * report; or its bytes (by url or pHash copy) are reported, held or under an evidence hold. A minor
+ * signal alone is not here: any moderator may see it. `blockedFor` text and the scanner's labels,
+ * of this row and of `urlSiblingsSql`'s rows, are read by the caller (`siblingsServable`).
+ */
+export function csamRestrictedSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || CSAM_RESTRICTED_ALIASES.has(image.toLowerCase()))
+    throw new Error(`Bad table alias: ${image}`);
+  return buildCsamRestrictedSql(image);
+}
+
+function buildCsamRestrictedSql(image: string): string {
+  const id = `${image}.id`;
+  const url = `${image}."url"`;
+  const sibling = csamRowSql('cs');
+  return `COALESCE((
+    ${csamRowSql(image)}
+    OR EXISTS (
+      SELECT 1 FROM (
+        SELECT * FROM "Image" cs WHERE cs.url = ${url} AND cs.id <> ${id} LIMIT ${URL_SIBLING_CAP}
+      ) cs
+      WHERE COALESCE(${sibling}, true)
+    )
+    OR (${id})::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
     OR ${reportListedUrlSql(url)}
     OR ${evidenceHeldUrlSql(url)}
-    OR ${heldUrlSql(url)}
+    OR ${heldUrlSql(url, { exceptImageId: `${image}."id"` })}
   ), true)`;
 }
 
-/** Whether the "Image" row aliased `image` has a signal that puts it in the `suspect` tier, read in
- *  Postgres. `blockedFor` text is read by `retractedTier` against the private patterns. */
-export function retractedSuspectSql(image: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
-  const minorReasons = MINOR_UNPUBLISH_REASONS.map((r) => `'${r}'`).join(', ');
-  const minorBans = BAN_REASONS_ALWAYS_REMOVING_MEDIA.map((r) => `'${r}'`).join(', ');
+/** The aliases `csamRestrictedSql` declares after a quoted table name, which its caller's alias must
+ *  not shadow. */
+const CSAM_RESTRICTED_ALIASES = new Set(
+  [...buildCsamRestrictedSql('i').matchAll(/(?:FROM|JOIN) "\w+" (\w+)/g)].map((m) =>
+    m[1].toLowerCase()
+  )
+);
+
+export type UrlSibling = { id: number; blockedFor: string | null; unreadable: boolean };
+
+/**
+ * The other "Image" rows on the url of the row aliased `image`, as a JSON array of
+ * `UrlSibling`, at most `URL_SIBLING_CAP` of them.
+ */
+export function urlSiblingsSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image.toLowerCase() === 'us')
+    throw new Error(`Bad table alias: ${image}`);
   return `COALESCE((
-    -- A block with no reason. An image that is not blocked has no reason by construction.
-    (${image}."blockedFor" IS NULL AND ${image}.ingestion = 'Blocked')
-    OR ${reviewSuspectImageSql(image)}
-    OR ${heldUserSql(`${image}."userId"`)}
-    -- A scanned image is here only because its url was retracted: a minor reason on its post or
-    -- model, or a minor-safety ban of its owner, is a signal that its own flags may not carry.
-    OR (${image}.ingestion = 'Scanned' AND (
-      EXISTS (
-        SELECT 1 FROM "Post" sp
-        LEFT JOIN "ModelVersion" smv ON smv.id = sp."modelVersionId"
-        LEFT JOIN "Model" smo ON smo.id = smv."modelId"
-        WHERE sp.id = ${image}."postId" AND (
-          sp.metadata ->> 'unpublishedReason' IN (${minorReasons})
-          OR smv.meta ->> 'unpublishedReason' IN (${minorReasons})
-          OR smo.meta ->> 'unpublishedReason' IN (${minorReasons})
-        )
-      )
-      OR EXISTS (
-        SELECT 1 FROM "User" su
-        WHERE su.id = ${image}."userId" AND su.meta -> 'banDetails' ->> 'reasonCode' IN (${minorBans})
-      )
-    ))
-  ), false)`;
+    SELECT json_agg(json_build_object(
+      'id', us.id, 'blockedFor', us."blockedFor", 'unreadable', ${unreadableImageSql('us')}
+    )) FROM (
+      SELECT us.id, us."blockedFor", us.ingestion FROM "Image" us
+      WHERE us.url = ${image}."url" AND us.id <> ${image}.id
+      LIMIT ${URL_SIBLING_CAP}
+    ) us
+  ), '[]'::json)`;
 }
 
-export function retractedTier(
-  row: { suspect: boolean; blockedFor: string | null },
-  patterns: BlockedForPatterns | null
-): RetractedTier {
-  return row.suspect || blockedForSignal(row.blockedFor, patterns) ? 'suspect' : 'plain';
+/**
+ * Whether no row in `siblings` (`urlSiblingsSql`) keeps the shared url from a moderator without the
+ * CSAM grant: the list is under `URL_SIBLING_CAP`, every row has finished its scan, `isSignal`
+ * holds for no row's `blockedFor`, and, when `readVerdicts` is given, the scanner marks none. An
+ * unreadable scanner refuses.
+ */
+export async function siblingsServable(
+  siblings: UrlSibling[],
+  isSignal: (blockedFor: string | null) => boolean,
+  readVerdicts?: (imageIds: number[]) => Promise<Map<number, ScannerVerdict> | null>
+): Promise<boolean> {
+  if (siblings.length >= URL_SIBLING_CAP) return false;
+  if (siblings.some((s) => s.unreadable !== false || isSignal(s.blockedFor))) return false;
+  if (!readVerdicts || !siblings.length) return true;
+  const verdicts = await readVerdicts(siblings.map((s) => s.id));
+  if (!verdicts) return false;
+  return siblings.every((s) => {
+    const v = verdicts.get(s.id);
+    return v === 'clear' || v === 'none';
+  });
 }
 
 export type ScannerVerdict = 'hit' | 'clear' | 'none';

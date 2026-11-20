@@ -59,6 +59,7 @@ const verifyToken: VerifyToken = async (token) =>
   token === 'good-token'
     ? {
         subject: 'user:4711/client:9',
+        userId: 4711,
         clientId: '9',
         scope: 0n,
         actor: null,
@@ -171,7 +172,7 @@ describe('🔴 shadow mode never changes the live decision (HTTP)', () => {
       // Nothing listens on port 1: the connection is refused, as for a service that is down.
       if (mode === 'down') allowConnection('127.0.0.1', 1);
       const url = mode === 'down' ? 'http://127.0.0.1:1' : (await fakeService(mode as Mode)).url;
-      const o = observedShadow(url, mode === 'timeout' ? 300 : 2_000);
+      const o = observedShadow(url, mode === 'timeout' ? 100 : 2_000);
       const shadowed = await subscribeHttp({ policyShadow: o.shadow }, SIGNED_IN);
 
       expect(shadowed.status).toBe(200);
@@ -186,7 +187,7 @@ describe('🔴 shadow mode never changes the live decision (HTTP)', () => {
 
   it('a comparison the service never answers does not hold the subscription: the stream ends first', async () => {
     const { url } = await fakeService('timeout');
-    const o = observedShadow(url, 1_000);
+    const o = observedShadow(url, 400);
     const shadowed = await subscribeHttp({ policyShadow: o.shadow }, SIGNED_IN);
     expect(shadowed.status).toBe(200);
     expect(o.settled).toEqual([false]);
@@ -296,7 +297,7 @@ describe('🔴 shadow mode never changes the live decision (gRPC)', () => {
     ['timeout', 'timeout'],
   ])('service %s: same audience and events as with no shadow', async (mode, want) => {
     const baseline = await subscribeGrpc();
-    const o = observedShadow((await fakeService(mode)).url, 300);
+    const o = observedShadow((await fakeService(mode)).url, 100);
     const shadowed = await subscribeGrpc(o.shadow);
     expect(shadowed.audience).toEqual(baseline.audience);
     expect(shadowed.audience).toEqual(audienceForUser(FULL_USER));
@@ -308,6 +309,7 @@ describe('🔴 shadow mode never changes the live decision (gRPC)', () => {
 describe('the comparison', () => {
   const principal = (subject: string | null, audience: Audience): Principal => ({
     subject,
+    token: null,
     audience,
     expiresAt: null,
     recheck: null,
@@ -488,6 +490,7 @@ describe('the comparison', () => {
 describe('the in-flight cap', () => {
   const p = (): Principal => ({
     subject: null,
+    token: null,
     audience: ANONYMOUS_AUDIENCE,
     expiresAt: null,
     recheck: null,
