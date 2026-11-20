@@ -45,7 +45,14 @@ export type CreatePrismaClientsOptions = Partial<DbConfig> & {
   onSlowQuery?: (e: { query: string; duration: number; target: 'read' | 'write' }) => void;
   /** Receives each printed `prisma:error` / `prisma:warn` line after it is written to stdout. */
   onLog?: (e: PrismaLogLine) => void;
+  /** Writes every line this factory prints. Defaults to `console.log`. */
+  print?: PrintLine;
 };
+
+export type PrintLine = (...args: unknown[]) => void;
+
+// Looked up per call, not captured, so a console replaced after the clients are built still applies.
+const consoleLog: PrintLine = (...args) => console.log(...args);
 
 /**
  * The client `log` definitions for a LOGGING list, and the levels to print. Every level is
@@ -74,12 +81,16 @@ export function prismaLogConfig(logging: string[]): {
  * The handler for one printed level: the line Prisma's own `emit: 'stdout'` writes (without its
  * terminal-only colour), then `onLog` for a forwarded level. A throwing `onLog` is contained.
  */
-export function prismaLogPrinter(level: Prisma.LogLevel, onLog?: (e: PrismaLogLine) => void) {
+export function prismaLogPrinter(
+  level: Prisma.LogLevel,
+  onLog?: (e: PrismaLogLine) => void,
+  print: PrintLine = consoleLog
+) {
   const tag = `prisma:${level}`;
   const forward = isForwardedLevel(level) ? onLog : undefined;
   return function printPrismaLog(e: { message?: string; query?: string }) {
     const text = e.message || e.query;
-    console.log(tag, text);
+    print(tag, text);
     if (!forward) return;
     try {
       forward({ level: level as ForwardedPrismaLogLevel, line: `${tag} ${text}` });
@@ -96,16 +107,18 @@ export function slowQueryLogger({
   target,
   isProd,
   onSlowQuery,
+  print = consoleLog,
 }: {
   target: 'write' | 'read';
   isProd: boolean;
   onSlowQuery: CreatePrismaClientsOptions['onSlowQuery'];
+  print?: PrintLine;
 }) {
   return async function logQuery(e: { query: string; params: string; duration: number }) {
     if (e.duration < 2000) return;
     const query = loggableQuery(e);
 
-    if (!isProd) console.log(query);
+    if (!isProd) print(query);
     else onSlowQuery?.({ query, duration: e.duration, target });
   };
 }
@@ -117,13 +130,13 @@ export function slowQueryLogger({
  * that calls this. See the `~/server/db/client` shim.
  */
 export function createPrismaClients(options: CreatePrismaClientsOptions = {}): PrismaClients {
-  const { onSlowQuery, onLog, ...envOverrides } = options;
+  const { onSlowQuery, onLog, print = consoleLog, ...envOverrides } = options;
   const config = { ...loadDbEnv(), ...envOverrides };
 
   const singleClient = config.replicaUrl === config.databaseUrl;
 
   const logFor = (target: 'write' | 'read') =>
-    slowQueryLogger({ target, isProd: config.isProd, onSlowQuery });
+    slowQueryLogger({ target, isProd: config.isProd, onSlowQuery, print });
 
   const logConfig = prismaLogConfig(config.logging);
 
@@ -140,14 +153,14 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
     const prisma = new PrismaClient(clientOptions);
     for (const level of logConfig.printed) {
       // @ts-ignore - necessary to get the log event
-      prisma.$on(level, prismaLogPrinter(level, onLog));
+      prisma.$on(level, prismaLogPrinter(level, onLog, print));
     }
 
     // use with prisma-slow,prisma-showparams
     if (config.logging.some((x) => x === 'prisma-showparams')) {
       // @ts-ignore
       prisma.$on('query', async (e: { query: string; params: string; duration: number }) => {
-        console.log(loggableQuery(e));
+        print(loggableQuery(e));
       });
     }
     return prisma;

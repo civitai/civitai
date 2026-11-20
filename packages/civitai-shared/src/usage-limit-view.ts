@@ -1,7 +1,7 @@
 /**
  * Display rules for one usage-limit row: the bar, "x of y used" and when it frees up, in the
- * viewer's time zone. Plain TypeScript with no React or Mantine, so the Creator Studio panel can
- * mirror it in SvelteKit by copying this file and writing its own markup.
+ * viewer's time zone. Plain TypeScript with no framework, imported by both the main app's account
+ * page and the Creator Studio dashboard, each with its own markup.
  */
 
 export type UsageLimitWindow = 'rolling' | 'utc-day' | 'utc-month';

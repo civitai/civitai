@@ -1,6 +1,7 @@
 // App shim for @civitai/db Prisma clients. The package owns the env schema + factory;
 // the app injects the slow-query sink (→ Axiom) and the log-line forwarder, owns the process
 // singleton + Next build guard, and re-exports dbRead/dbWrite for existing call sites.
+import { withConsoleForwardingSuppressed } from '@civitai/axiom/console-forwarding';
 import { createPrismaClients, type PrismaClients } from '@civitai/db/client';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
@@ -20,6 +21,9 @@ const make = (): PrismaClients => {
       logToAxiom({ query, duration, target }, 'db-logs'),
     onLog: ({ level, line }) =>
       emitConsoleLog(line, { source: 'prisma', name: 'prisma', type: level }),
+    // Off the console backstop: error/warn lines reach the sink through onLog, and the rest are
+    // per-statement or startup noise kept on stdout only.
+    print: (...args) => withConsoleForwardingSuppressed(() => console.log(...args)),
   });
   return withServableProfilePictures(base, (error) => {
     logToAxiom({
