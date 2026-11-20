@@ -107,6 +107,26 @@ describe('which videos get a point', () => {
     }
   }, 60_000);
 
+  test('a Blocked rating is not written, and removes a point it lands on', async () => {
+    const pg = await pglite(`
+      ${video(1)} ${video(2)} ${video(3)}
+      UPDATE "Image" SET "nsfwLevel" = 32 WHERE id = 2;
+      UPDATE "Image" SET "nsfwLevel" = 16 WHERE id = 3;
+    `);
+    try {
+      const { points, deps } = fakes(pg);
+      await syncIds(getVideoDocs, [1, 2, 3], deps);
+      expect([...points.keys()].sort()).toEqual([1, 3]);
+      expect(points.get(3)?.nsfwLevel).toBe(16);
+
+      await pg.exec(`UPDATE "Image" SET "nsfwLevel" = 32 WHERE id = 1`);
+      await syncIds(getVideoDocs, [1], deps);
+      expect([...points.keys()]).toEqual([3]);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
   test('held media and held owners get no point', async () => {
     const pg = await pglite(`
       ${video(1)} ${video(2)} ${video(3)}

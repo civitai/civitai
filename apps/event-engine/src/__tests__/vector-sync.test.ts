@@ -230,10 +230,13 @@ describe('eligibility', () => {
     ['needs review', { needsReview: 'poi' }],
     ['minor', { minor: true }],
     ['poi', { poi: true }],
+    ['rated Blocked', { nsfwLevel: 32 }],
+    ['rated Blocked among other levels', { nsfwLevel: 36 }],
   ];
 
-  test('a scanned, posted, unflagged image is eligible', () => {
+  test('a scanned, posted, unflagged image is eligible, at any level but Blocked', () => {
     expect(isEligible(imageRow(1))).toBe(true);
+    expect(isEligible(imageRow(1, { nsfwLevel: 16 }))).toBe(true);
   });
 
   test.each(ineligible)('%s is not eligible', (_name, patch) => {
@@ -242,7 +245,7 @@ describe('eligibility', () => {
 
   test('the SQL predicate names every rule the row check applies', () => {
     expect(eligibleSql('i')).toBe(
-      `i."ingestion" = 'Scanned' AND i."tosViolation" = false AND i."blockedFor" IS NULL AND i."postId" IS NOT NULL AND i."needsReview" IS NULL AND i."minor" = false AND i."poi" = false`
+      `i."ingestion" = 'Scanned' AND i."tosViolation" = false AND i."blockedFor" IS NULL AND i."postId" IS NOT NULL AND i."needsReview" IS NULL AND i."minor" = false AND i."poi" = false AND (i."nsfwLevel" & 32) = 0`
     );
   });
 });
