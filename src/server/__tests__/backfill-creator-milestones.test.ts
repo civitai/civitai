@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   backfillScoreTierBatch: vi.fn(async () => ({ users: 0, inserted: 0, lastUserId: null })),
   grantMilestoneCosmeticsBatch: vi.fn(async () => ({ users: 0, inserted: 0, lastUserId: null })),
   previewScoreTierBackfill: vi.fn(async () => ({ users: 1, rows: 2 })),
+  requireFlag: undefined as boolean | undefined,
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
@@ -18,6 +19,17 @@ vi.mock('~/server/services/creator-milestone-grant.service', async (importOrigin
   previewScoreTierBackfill: mocks.previewScoreTierBackfill,
 }));
 
+vi.mock('~/server/services/creator-journey-flag.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof FlagService>();
+  return {
+    ...actual,
+    get CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG() {
+      return mocks.requireFlag ?? actual.CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG;
+    },
+  };
+});
+
+import type * as FlagService from '~/server/services/creator-journey-flag.service';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as GrantService from '~/server/services/creator-milestone-grant.service';
 import handler from '~/pages/api/admin/temp/backfill-creator-milestones';
@@ -47,9 +59,22 @@ function call(query: Record<string, string>) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.isFlipt.mockResolvedValue(false);
+  mocks.requireFlag = undefined;
 });
 
-describe('backfill-creator-milestones while Creator Journey is not public', () => {
+describe('backfill-creator-milestones with the shipped grants setting', () => {
+  it('writes tier grants without waiting for the flag to be public', async () => {
+    const { status } = await call({ dryRun: 'false' });
+    expect(status).toBe(200);
+    expect(mocks.backfillScoreTierBatch).toHaveBeenCalled();
+  });
+});
+
+describe('backfill-creator-milestones while grants require the flag and it is not public', () => {
+  beforeEach(() => {
+    mocks.requireFlag = true;
+  });
+
   it('refuses to write tier grants', async () => {
     const { status } = await call({ dryRun: 'false' });
     expect(status).toBe(409);
