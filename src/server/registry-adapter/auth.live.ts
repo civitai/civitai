@@ -25,6 +25,7 @@ export const verifyOpaqueCivitaiToken: VerifyToken = async (token) => {
   }
   return {
     subject: `user:${session.user.id}/client:${session.subject.id}`,
+    userId: session.user.id,
     clientId: session.subject.id,
     // The key's stored scope: bits the site issued, so there is no unknown name to read.
     scope: session.tokenScope,

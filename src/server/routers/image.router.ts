@@ -170,9 +170,8 @@ export const imageRouter = router({
   get404Images: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     // A moderation flag on an entry reaches this shared, signed-out list only when these expire.
-    // The versioned key drops entries cached before the gallery used the shared image rule.
     .use(edgeCacheIt({ ttl: CacheTTL.day }))
-    .use(cacheIt({ key: 'image:get404Images:v2', ttl: CacheTTL.day }))
+    .use(cacheIt({ key: 'image:get404Images:v3', ttl: CacheTTL.day }))
     .query(() => get404Images()),
   reportCsamImages: moderatorProcedure
     .input(reportCsamImagesSchema)

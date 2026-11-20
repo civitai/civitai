@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { collectionItemLagId, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -7,6 +8,7 @@ import { clearLadder } from '~/server/games/daily-challenge/challenge-pairwise-s
 import { writeJudgeComment } from '~/server/services/commentv3/comment-write.service';
 import { bulkDeleteComments } from '~/server/services/commentv3/moderation.service';
 import { toggleReaction } from '~/server/services/reaction.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 /**
@@ -131,10 +133,22 @@ export async function rejudgeEntries({
 export async function getJudgeCommentForImage({
   imageId,
   judgeUserId,
+  userId,
+  isModerator,
 }: {
   imageId: number;
   judgeUserId: number;
+  userId?: number;
+  isModerator?: boolean;
 }) {
+  const visible = await assertImageVisibleToViewer({ id: imageId, userId, isModerator }).then(
+    () => true,
+    (error: unknown) => {
+      if (error instanceof TRPCError && error.code === 'NOT_FOUND') return false;
+      throw error;
+    }
+  );
+  if (!visible) return null;
   const result = await dbRead.$queryRaw<[{ content: string }?]>`
     SELECT c.content
     FROM "CommentV3" c
