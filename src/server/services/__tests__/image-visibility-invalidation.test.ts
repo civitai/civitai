@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
@@ -22,7 +24,10 @@ envMock.set({ CF_API_TOKEN: 'test-token', CF_ZONE_ID: 'test-zone' });
 const { getImageOgCardUrls, VISIBILITY_REPURGE_DELAY_MS } = await import(
   '~/server/services/image-visibility-invalidation.service'
 );
-const { updateImageAcceptableMinor } = await import('~/server/services/image.service');
+const { updateImageAcceptableMinor, imagesForModelVersionsCache } = await import(
+  '~/server/services/image.service'
+);
+const versionGalleryBust = vi.spyOn(imagesForModelVersionsCache, 'bust');
 
 const IMAGE = 7;
 const card = (q: string) => `${env.NEXT_PUBLIC_BASE_URL}/api/og?${q}&v=2`;
@@ -116,9 +121,10 @@ describe('a moderator changing an image acceptable-minor flag', () => {
     }
   );
 
-  it("drops its post's model gallery caches", async () => {
+  it("drops its post's and model version's gallery caches", async () => {
     await flip(false, true);
     expect(deleted()).toContainEqual(expect.stringMatching(/images-modelVersion:31$/));
+    expect(versionGalleryBust).toHaveBeenCalledWith(31);
   });
 
   it('purges nothing when the flag is already set that way', async () => {
@@ -150,6 +156,26 @@ describe('a moderator changing an image acceptable-minor flag', () => {
         name: 'image-visibility-invalidation',
         payload: { imageId: IMAGE },
       })
+    );
+  });
+});
+
+// A purge by tag reaches only entries cached under that tag. A built procedure's middlewares carry
+// no identity to inspect, so the tagging is read from the router source.
+describe('the cached reads the purge reaches by tag', () => {
+  const router = readFileSync(join(process.cwd(), 'src/server/routers/image.router.ts'), 'utf8');
+  const procedure = (name: string) =>
+    router.slice(router.indexOf(`  ${name}: `)).split('.query(')[0];
+
+  it('tag the 404 gallery in Redis and at the edge', () => {
+    expect(procedure('get404Images').match(/tags: \(\) => \[IMAGE_404_CACHE_TAG\]/g)).toHaveLength(
+      2
+    );
+  });
+
+  it("tag an image's resources at the edge by image", () => {
+    expect(procedure('getResources')).toContain(
+      'tags: (input: { id: number }) => [imageResourcesEdgeTag(input.id)]'
     );
   });
 });
