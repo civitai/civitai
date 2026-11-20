@@ -302,6 +302,7 @@ export type ModelVersionMonetizationType =
 
 export const LicensingFeeType = {
   PerImageBuzz: 'PerImageBuzz',
+  PercentOfCompute: 'PercentOfCompute',
 } as const;
 
 export type LicensingFeeType = (typeof LicensingFeeType)[keyof typeof LicensingFeeType];

@@ -59,6 +59,7 @@ const call = async ({
   licensingSourceVersionId = ANIMA_ROOT_VERSION_ID as number | null,
   omitSource = false,
   storedLicensingSourceVersionId = null as number | null,
+  storedFee = {} as Record<string, unknown>,
   extraInput = {} as Record<string, unknown>,
   isModerator = false,
 }: {
@@ -76,6 +77,8 @@ const call = async ({
   omitSource?: boolean;
   /** What the row being edited already holds — what a payload that omits the field falls back to. */
   storedLicensingSourceVersionId?: number | null;
+  /** Fee columns on the row being edited. */
+  storedFee?: Record<string, unknown>;
   extraInput?: Record<string, unknown>;
   isModerator?: boolean;
 }) => {
@@ -91,6 +94,7 @@ const call = async ({
             usageControl: 'Download',
             modelId: STORED_MODEL_ID,
             licensingSourceVersionId: storedLicensingSourceVersionId,
+            ...storedFee,
           }
         : null
   );
@@ -368,5 +372,40 @@ describe('upsertModelVersionHandler — trainingStatus on create', () => {
     });
 
     expect(mockUpsertModelVersion).toHaveBeenCalled();
+  });
+});
+
+describe('upsertModelVersionHandler — percent-of-compute fee, type-only write', () => {
+  // The fee block in the handler runs only when the payload carries a fee; a payload with only the type
+  // must still reach the percent rule, or a creator turns a per-image fee into a percent of compute.
+  const typeOnly = (isModerator: boolean) =>
+    call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      licensingSourceVersionId: null,
+      isModerator,
+      storedFee: { licensingFee: 5, licensingFeeType: 'PerImageBuzz' },
+      extraInput: { licensingFee: undefined, licensingFeeType: 'PercentOfCompute' },
+    });
+
+  it('refuses a creator', async () => {
+    await expect(typeOnly(false)).rejects.toThrow(/Percentage license fees are restricted/);
+  });
+
+  it('lets a moderator (control)', async () => {
+    expect(await typeOnly(true)).toMatchObject({ licensingFeeType: 'PercentOfCompute' });
+  });
+
+  // The handler defaults an omitted type. Defaulting to PerImageBuzz would turn a staff-set 35% into
+  // 35 Buzz per image, a fee only staff could have created, now in the owner's hands.
+  it('a fee-only save keeps a staff-set percent a percent', async () => {
+    const written = (await call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      licensingSourceVersionId: null,
+      storedFee: { licensingFee: 35, licensingFeeType: 'PercentOfCompute' },
+      extraInput: { licensingFee: 35 },
+    })) as { licensingFeeType?: string };
+    expect(written.licensingFeeType).toBe('PercentOfCompute');
   });
 });

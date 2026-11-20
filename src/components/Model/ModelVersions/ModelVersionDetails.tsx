@@ -166,6 +166,7 @@ import {
   AppealCategory,
   Availability,
   CollectionType,
+  LicensingFeeType,
   ModelEngagementType,
   ModelFileVisibility,
   ModelModifier,
@@ -1586,45 +1587,47 @@ function ModelVersionDetailsContent({
                       )}
                     </PageGroup>
                   </div>
-                  {/* Generation License Fee */}
-                  {!isNonCommercial && Number(version.licensingFee ?? 0) > 0 && (
-                    <div className={classes.detailRow}>
-                      <span className={classes.detailLabel}>Generation License Fee</span>
-                      <Group gap={4} wrap="nowrap">
-                        <CurrencyIcon currency="BUZZ" size={16} />
-                        <Text size="sm">
-                          {formatLicensingFee(Number(version.licensingFee), version.baseModel)}
-                        </Text>
-                        <Popover
-                          width={260}
-                          shadow="md"
-                          withArrow
-                          position="top"
-                          opened={feeInfoOpened}
-                          onChange={feeInfoHandlers.close}
-                        >
-                          <Popover.Target>
-                            <ActionIcon
-                              size="xs"
-                              variant="subtle"
-                              color="gray"
-                              onClick={feeInfoHandlers.toggle}
-                              aria-label="License fee info"
-                            >
-                              <IconInfoSquareRounded size={18} />
-                            </ActionIcon>
-                          </Popover.Target>
-                          <Popover.Dropdown>
-                            <Text size="xs">
-                              The creator has issued a license fee. This amount is added on top of
-                              the standard generation cost for each image generated on Civitai with
-                              this resource.
-                            </Text>
-                          </Popover.Dropdown>
-                        </Popover>
-                      </Group>
-                    </div>
-                  )}
+                  {/* Generation License Fee. A percent fee is not Buzz per image; the generator shows its cost. */}
+                  {!isNonCommercial &&
+                    version.licensingFeeType !== LicensingFeeType.PercentOfCompute &&
+                    Number(version.licensingFee ?? 0) > 0 && (
+                      <div className={classes.detailRow}>
+                        <span className={classes.detailLabel}>Generation License Fee</span>
+                        <Group gap={4} wrap="nowrap">
+                          <CurrencyIcon currency="BUZZ" size={16} />
+                          <Text size="sm">
+                            {formatLicensingFee(Number(version.licensingFee), version.baseModel)}
+                          </Text>
+                          <Popover
+                            width={260}
+                            shadow="md"
+                            withArrow
+                            position="top"
+                            opened={feeInfoOpened}
+                            onChange={feeInfoHandlers.close}
+                          >
+                            <Popover.Target>
+                              <ActionIcon
+                                size="xs"
+                                variant="subtle"
+                                color="gray"
+                                onClick={feeInfoHandlers.toggle}
+                                aria-label="License fee info"
+                              >
+                                <IconInfoSquareRounded size={18} />
+                              </ActionIcon>
+                            </Popover.Target>
+                            <Popover.Dropdown>
+                              <Text size="xs">
+                                The creator has issued a license fee. This amount is added on top of
+                                the standard generation cost for each image generated on Civitai
+                                with this resource.
+                              </Text>
+                            </Popover.Dropdown>
+                          </Popover>
+                        </Group>
+                      </div>
+                    )}
                   {/* Reviews */}
                   <div className={classes.detailRow}>
                     <span className={classes.detailLabel}>Reviews</span>

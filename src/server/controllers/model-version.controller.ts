@@ -5,7 +5,11 @@ import {
   coveragePairForUser,
 } from '~/server/services/generation/coverage-source';
 
-import { licensingFeeBlockedFor, paidAccessBlockedFor } from '@civitai/buzz';
+import {
+  licensingFeeBlockedFor,
+  paidAccessBlockedFor,
+  percentOfComputeFeeRefusal,
+} from '@civitai/buzz';
 import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing-slot.service';
 import {
   assertMonetizationWrite,
@@ -564,6 +568,7 @@ export const upsertModelVersionHandler = async ({
           select: {
             usageControl: true,
             licensingFee: true,
+            licensingFeeType: true,
             licensingFeeSettlementCurrency: true,
             licensingSourceVersionId: true,
             baseModel: true,
@@ -702,6 +707,18 @@ export const upsertModelVersionHandler = async ({
 
     // The service migrates the price onto the surviving tier; nothing to reject here.
 
+    // Outside the fee block below: a write that sends only the type (no fee) would otherwise turn a stored
+    // per-image fee into a percent of compute unchecked.
+    const percentRefusal = percentOfComputeFeeRefusal({
+      isModerator: !!ctx.user.isModerator,
+      // An omitted or null type keeps the stored one (the default below), so the rule judges that.
+      requestedType: input.licensingFeeType ?? undefined,
+      storedType: storedVersion?.licensingFeeType,
+      fee: input.licensingFee !== undefined ? input.licensingFee : storedFee,
+      storedFee,
+    });
+    if (percentRefusal) throw throwBadRequestError(percentRefusal);
+
     if (input.licensingFee != null && input.licensingFee > 0) {
       const hadExistingFee = storedFee > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
@@ -714,7 +731,9 @@ export const upsertModelVersionHandler = async ({
       ) {
         throw throwBadRequestError('Cash settlement is restricted; please contact support.');
       }
-      if (!input.licensingFeeType) input.licensingFeeType = LicensingFeeType.PerImageBuzz;
+      // Keep the stored type: defaulting to PerImageBuzz would turn a staff-set percent into Buzz per image.
+      if (!input.licensingFeeType)
+        input.licensingFeeType = storedVersion?.licensingFeeType ?? LicensingFeeType.PerImageBuzz;
       if (!input.licensingFeeSettlementCurrency)
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
     }

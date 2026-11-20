@@ -35,12 +35,12 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type {
   LicensingFeeSettlementCurrency,
-  LicensingFeeType,
   ModelType,
   ModelHashType,
 } from '~/shared/utils/prisma/enums';
 import {
   Availability,
+  LicensingFeeType,
   ModelFileVisibility,
   type ModelUsageControl,
   type ScanResultCode,
@@ -128,6 +128,7 @@ type VersionRow = {
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  licensingFeeMarkup: number | null;
   isLicensingRoot: boolean;
   licensingSourceVersionId: number | null;
   sourceLicensingFeeRecipientUserId: number | null;
@@ -136,6 +137,7 @@ type VersionRow = {
   sourceLicensingFee: number | null;
   sourceLicensingFeeType: LicensingFeeType | null;
   sourceLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  sourceLicensingFeeMarkup: number | null;
   versionFlags: number;
   userFlags: number;
   ownerDeletedAt: Date | null;
@@ -226,6 +228,7 @@ async function handler(
       mv."licensingFee"::float8 AS "licensingFee",
       mv."licensingFeeType",
       mv."licensingFeeSettlementCurrency",
+      mv."licensingFeeMarkup"::float8 AS "licensingFeeMarkup",
       (lr.id IS NOT NULL) AS "isLicensingRoot",
       mv."licensingSourceVersionId",
       lsm."userId" AS "sourceLicensingFeeRecipientUserId",
@@ -234,6 +237,7 @@ async function handler(
       lsv."licensingFee"::float8 AS "sourceLicensingFee",
       lsv."licensingFeeType" AS "sourceLicensingFeeType",
       lsv."licensingFeeSettlementCurrency" AS "sourceLicensingFeeSettlementCurrency",
+      lsv."licensingFeeMarkup"::float8 AS "sourceLicensingFeeMarkup",
       mv."flags" AS "versionFlags",
       u."flags" AS "userFlags",
       u."deletedAt" AS "ownerDeletedAt",
@@ -688,6 +692,7 @@ async function handler(
     settlementCurrency: string;
     recipientModelVersionId: number;
     recipientUserId: number;
+    markup?: number;
   }> = [];
   if (isLicensingRoot) {
     fees.push({
@@ -697,6 +702,7 @@ async function handler(
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
       recipientUserId: modelVersion.modelUserId,
+      ...feeMarkup(modelVersion.licensingFeeType, modelVersion.licensingFeeMarkup),
     });
   } else if (hasSourceRule) {
     fees.push({
@@ -706,6 +712,7 @@ async function handler(
       settlementCurrency: lowerFirst(modelVersion.sourceLicensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.licensingSourceVersionId!,
       recipientUserId: modelVersion.sourceLicensingFeeRecipientUserId!,
+      ...feeMarkup(modelVersion.sourceLicensingFeeType, modelVersion.sourceLicensingFeeMarkup),
     });
   }
   if (hasOwnFee) {
@@ -716,6 +723,7 @@ async function handler(
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
       recipientUserId: modelVersion.modelUserId,
+      ...feeMarkup(modelVersion.licensingFeeType, modelVersion.licensingFeeMarkup),
     });
   }
 
@@ -829,6 +837,19 @@ async function handler(
   // Read by the orchestrator as the absolute time its cached copy of this response expires.
   if (expiresAt !== undefined) res.setHeader('X-Expires', new Date(expiresAt).toISOString());
   res.status(200).json(data);
+}
+
+/**
+ * A percent-of-compute fee's markup: charged with the fee, logged apart from it, never paid to the
+ * recipient. A per-image fee carries none, whatever the column holds.
+ */
+function feeMarkup(
+  type: LicensingFeeType | null,
+  markup: number | null
+): { markup: number } | Record<string, never> {
+  return type === LicensingFeeType.PercentOfCompute && markup != null && markup > 0
+    ? { markup }
+    : {};
 }
 
 /**

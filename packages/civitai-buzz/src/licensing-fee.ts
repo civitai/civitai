@@ -8,6 +8,45 @@
 /** Ceiling for a per-image licensing fee, in Buzz. Mirrored by the app's model-version schema. */
 export const MAX_LICENSING_FEE = 100;
 
+/** Ceiling for a PercentOfCompute licensing fee, in percent of the compute cost (100 doubles it). */
+export const MAX_PERCENT_OF_COMPUTE_FEE = 100;
+
+/**
+ * Why a write that touches a percent-of-compute fee is refused, or null when it may proceed. Staff only
+ * until creators get a capped percent fee: an owner may keep, lower or clear a percent fee staff set,
+ * never start one, convert one to per-image, or raise one.
+ */
+export function percentOfComputeFeeRefusal({
+  isModerator,
+  requestedType,
+  storedType,
+  fee,
+  storedFee,
+}: {
+  isModerator: boolean;
+  /** The type the write sends; undefined keeps the stored one. */
+  requestedType: string | null | undefined;
+  storedType: string | null | undefined;
+  /** The fee the version will hold after the write (0 or null when cleared). */
+  fee: number | null;
+  storedFee: number | null;
+}): string | null {
+  const percent = 'PercentOfCompute';
+  const resultType = requestedType === undefined ? storedType : requestedType;
+  if (resultType !== percent && storedType !== percent) return null;
+  const cleared = fee == null || fee <= 0;
+  if (cleared) return null;
+  if (!isModerator) {
+    const keepsStaffPercent =
+      storedType === percent && resultType === percent && fee <= (storedFee ?? 0);
+    if (!keepsStaffPercent)
+      return 'Percentage license fees are restricted; please contact support.';
+  }
+  if (resultType === percent && fee > MAX_PERCENT_OF_COMPUTE_FEE)
+    return `A percentage license fee can be at most ${MAX_PERCENT_OF_COMPUTE_FEE}%.`;
+  return null;
+}
+
 // Video costs far more to generate than an image, so the fee ceiling is worth this much more on a video
 // model. Applied to the licensing-fee ceiling and the suggested defaults — but NOT to the monthly
 // pricing allowance, which counts prices rather than sizing them.

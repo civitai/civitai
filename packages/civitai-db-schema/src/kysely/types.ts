@@ -4631,6 +4631,7 @@ export type ModelVersion = {
   licensingFee: string | null;
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
+  licensingFeeMarkup: string | null;
   licensingSourceVersionId: number | null;
 };
 export type ModelVersionEngagement = {

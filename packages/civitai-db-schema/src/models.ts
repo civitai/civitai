@@ -56,7 +56,7 @@ export type ModelVersionSponsorshipSettingsType = "FixedPrice" | "Bidding";
 
 export type ModelVersionMonetizationType = "PaidAccess" | "PaidEarlyAccess" | "PaidGeneration" | "CivitaiClubOnly" | "MySubscribersOnly" | "Sponsored";
 
-export type LicensingFeeType = "PerImageBuzz";
+export type LicensingFeeType = "PerImageBuzz" | "PercentOfCompute";
 
 export type LicensingFeeSettlementCurrency = "Buzz" | "Cash";
 
@@ -1185,6 +1185,7 @@ export interface ModelVersion {
   licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  licensingFeeMarkup: Decimal | null;
   licensingSourceVersionId: number | null;
   licensingSource?: ModelVersion | null;
   monetization?: ModelVersionMonetization | null;
