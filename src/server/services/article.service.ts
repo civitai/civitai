@@ -7,7 +7,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import type { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   hasBlockMarker,
   isMinorMatureImage,
@@ -665,7 +665,9 @@ export const getArticles = async ({
           // The legacy `cover` is the stored cover's key: it goes when that cover is withheld.
           ...(((storedCoverId != null && storedCoverId !== article.coverId) ||
             (article.coverId != null && minorHiddenCoverIds.has(article.coverId)) ||
-            (!!cover && !coverImage && isRestrictedImage(cover))) && {
+            (!!cover &&
+              !coverImage &&
+              (isRestrictedImage(cover) || cover.nsfwLevel === NsfwLevel.Blocked))) && {
             cover: null,
           }),
           tags: tags.map(({ tag }) => ({
@@ -985,7 +987,10 @@ export const getArticleById = async ({
       ...article,
       // The legacy `cover` is the same image's key.
       ...((coverWithheld ||
-        (!!article.coverImage && !coverImage && isRestrictedImage(article.coverImage))) && {
+        (!!article.coverImage &&
+          !coverImage &&
+          (isRestrictedImage(article.coverImage) ||
+            article.coverImage.nsfwLevel === NsfwLevel.Blocked))) && {
         cover: null,
       }),
       nsfwLevel: article.nsfwLevel as NsfwLevel,

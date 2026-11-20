@@ -1,10 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import {
-  crucibleCoverListedWhere,
-  crucibleScannedSql,
-} from '~/server/services/crucible-visibility.sql';
+import { crucibleScannedSql } from '~/server/services/crucible-visibility.sql';
 import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
 
 /**
@@ -77,9 +74,5 @@ describe('crucible cover rule', () => {
         Prisma.sql`SELECT c.id FROM "Crucible" c JOIN "Image" i ON i.id = c."imageId" WHERE ${crucibleScannedSql} ORDER BY c.id`
       )
     ).toEqual([1]);
-  });
-
-  it('has the Prisma twin leave out a Blocked cover too', () => {
-    expect(crucibleCoverListedWhere.nsfwLevel.notIn).toContain(BLOCKED);
   });
 });

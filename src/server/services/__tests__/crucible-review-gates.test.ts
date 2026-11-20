@@ -37,7 +37,7 @@ describe('isCrucibleHiddenByScan', () => {
   const crucible = (
     ingestion: CrucibleIngestionStatus,
     cover: ImageIngestionStatus | null = ImageIngestionStatus.Scanned,
-    review: { needsReview?: string | null; tosViolation?: boolean } = {}
+    review: { needsReview?: string | null; tosViolation?: boolean; nsfwLevel?: number } = {}
   ) => ({
     userId: CREATOR,
     ingestion,
@@ -67,6 +67,10 @@ describe('isCrucibleHiddenByScan', () => {
       crucible(CrucibleIngestionStatus.Scanned, ImageIngestionStatus.Scanned, {
         needsReview: 'minor',
       }),
+    ],
+    [
+      'cover rated Blocked',
+      crucible(CrucibleIngestionStatus.Scanned, ImageIngestionStatus.Scanned, { nsfwLevel: 32 }),
     ],
     [
       'cover marked a ToS violation',
