@@ -2418,6 +2418,23 @@ function readWorkflowCover(steps: UserWorkflow['steps']) {
 }
 
 /**
+ * The cover the creator uploaded for an ACE song, which the handler keeps on the song step's
+ * metadata. It is copied like a generated one; `createImage` scans it like any upload.
+ */
+function readUploadedCover(steps: UserWorkflow['steps']) {
+  const step = steps?.find((s) => s.$type === 'aceStepAudio') as
+    | { metadata?: { coverImage?: { url?: unknown; width?: unknown; height?: unknown } } }
+    | undefined;
+  const cover = step?.metadata?.coverImage;
+  if (typeof cover?.url !== 'string') return undefined;
+  return {
+    url: cover.url,
+    width: typeof cover.width === 'number' ? cover.width : null,
+    height: typeof cover.height === 'number' ? cover.height : null,
+  };
+}
+
+/**
  * Copies the song's generated cover into our image store and links it as the song's cover, the
  * same row and link `setSongCover` makes. The row goes through `createImage`, so it is scanned.
  */
@@ -2430,7 +2447,7 @@ async function linkGeneratedSongCover({
   userId: number;
   workflow: UserWorkflow;
 }) {
-  const blob = readWorkflowCover(workflow.steps);
+  const blob = readWorkflowCover(workflow.steps) ?? readUploadedCover(workflow.steps);
   if (!blob) return;
 
   // Aborting stops the fetch and the store write, so a copy past the budget leaves no stored bytes.

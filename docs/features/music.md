@@ -118,6 +118,15 @@ Below the `sm` breakpoint the player is a mini bar with two sheets over it
 | Up next sheet (`MusicUpNextSheet`)         | Opened from the now-playing sheet: the desktop panel's list (`MusicUpNextList`) in a bottom sheet, with the same sections (Queued by you, Next from <list>, Repeating), reorder by the grip, remove (always shown, as there is no hover), Clear, shuffle and repeat. Dark in both schemes, like the sheet under it. Closes by Escape, a downward drag of its top, Back and the scrim.                                                                                                                                              |
 | Song detail (`SongDetailStage`)            | Below the `md` container width, a song with lyrics shows the cover or the lyrics in the same spot, with a Cover / Lyrics toggle under it; in the lyrics view a play/pause button sits beside the toggle. No lyrics, no toggle. From `md` up the two sit side by side as before.                                                                                                                                                                                                                                                    |
 
+## A generated song's cover
+
+An ACE-Step song's cover is never muxed into the song: the handler sends ACE no `cover`, so the song
+is an MP3 like every other generator's and the song scan can read it. A cover the generator makes
+(the suppressed `imageGen` step) or one the creator uploads (kept on the song step's metadata) is
+linked when the song is posted, copied into a scanned image row (`linkGeneratedSongCover`). The
+queue shows that image over the song. Songs posted before this, as an MP4 over their cover, fail the
+song scan and need posting again.
+
 ## Playlists
 
 A playlist is a collection of type `Music` ("Playlist" in the UI). It holds songs only, as
