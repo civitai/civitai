@@ -188,6 +188,16 @@ describe('user app code: submit and review', () => {
     decision: 'approved' as const,
   });
 
+  it('lists user apps only with remixAppsUserCode on', async () => {
+    h.list.mockResolvedValue([
+      { slug: 'restyle', input: {} },
+      { slug: 'u88-probe', user: {} },
+    ]);
+    expect(await as(moderator).list()).toEqual([{ slug: 'restyle', input: {} }]);
+    // POSITIVE CONTROL: with the flag, the user app is listed too.
+    expect(await as(moderator, flags({ remixAppsUserCode: true })).list()).toHaveLength(2);
+  });
+
   it('submits only with remixAppsUserCode and remixAppBuilder both on, always as the caller', async () => {
     for (const features of [flags({ remixAppsUserCode: true }), flags({ remixAppBuilder: true })])
       await expect(

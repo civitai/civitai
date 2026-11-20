@@ -29,6 +29,37 @@ export type RemixGraphNode =
 
 export const REMIX_VALIDATE_MAX_PATHS = 32;
 
+/**
+ * Replays `base`, then `base` followed by each of `branches`, in one go, as a sandbox call does.
+ * An app's own fault comes back in its place as a `RemixReplayError`.
+ */
+export type RemixBranchReplayer = (
+  source: RemixAppSource,
+  base: readonly RemixLogEntry[],
+  branches: readonly (readonly RemixLogEntry[])[]
+) => Promise<(RemixReplayOutcome | RemixReplayError)[]>;
+
+/** The runner's `MAX_REMIX_BRANCHES`. */
+const BRANCHES_PER_CALL = 12;
+
+type Replayed = RemixReplayOutcome | RemixReplayError;
+
+const inPlace = (replay: RemixReplayer, source: RemixAppSource, log: RemixLogEntry[]) =>
+  replay(source, log).catch((error: unknown) => {
+    if (error instanceof RemixReplayError) return error;
+    throw error;
+  });
+
+/** One replay at a time, for a replayer that answers one log per call. */
+const oneByOne =
+  (replay: RemixReplayer): RemixBranchReplayer =>
+  async (source, base, branches) => {
+    const results: Replayed[] = [];
+    for (const branch of [[], ...branches])
+      results.push(await inPlace(replay, source, [...base, ...branch]));
+    return results;
+  };
+
 /** A stand-in source image: no real image is read or sent anywhere. */
 export const VALIDATION_SOURCE: RemixAppSource = {
   imageId: 0,
@@ -43,9 +74,10 @@ export const VALIDATION_SOURCE: RemixAppSource = {
  * sandbox for a user app; this never runs an app's code itself.
  */
 export async function validateRemixApp(
-  replay: RemixReplayer,
+  replay: RemixReplayer | { branches: RemixBranchReplayer },
   { source = VALIDATION_SOURCE, maxPaths = REMIX_VALIDATE_MAX_PATHS } = {}
 ) {
+  const replayBranches = typeof replay === 'function' ? oneByOne(replay) : replay.branches;
   const issues: RemixValidationIssue[] = [];
   let paths = 0;
   const stop = (issue: RemixValidationIssue): RemixGraphNode => {
@@ -53,30 +85,50 @@ export async function validateRemixApp(
     return { type: 'stop', issue };
   };
 
-  async function outcomeOf(log: RemixLogEntry[], answers: RemixAnswer[]) {
+  const shown = (r: Replayed) => JSON.stringify(r instanceof RemixReplayError ? r.message : r);
+
+  /**
+   * The outcome after `log` and each of `answered`, as few calls as the branches allow. Each is
+   * replayed twice, because an app that is not a pure function of its log replays differently later.
+   */
+  async function outcomesOf(
+    log: RemixLogEntry[],
+    answered: { answer: RemixAnswer | null; answers: RemixAnswer[] }[]
+  ): Promise<(RemixReplayOutcome | RemixGraphNode)[]> {
+    const suffixes = answered.map(({ answer }): RemixLogEntry[] =>
+      answer === null ? [] : [{ type: 'ask', answer }]
+    );
+    const twice = suffixes.flatMap((suffix) => [suffix, suffix]);
+    const replayed: Replayed[] = [];
     try {
-      // Twice, because an app that is not a pure function of its log replays differently later.
-      const [first, second] = [await replay(source, log), await replay(source, log)];
-      if (JSON.stringify(first) !== JSON.stringify(second))
+      for (let i = 0; i < twice.length; i += BRANCHES_PER_CALL)
+        replayed.push(
+          ...(await replayBranches(source, log, twice.slice(i, i + BRANCHES_PER_CALL))).slice(1)
+        );
+    } catch (error) {
+      return answered.map(({ answers }) =>
+        stop({ kind: 'error', message: (error as Error).message, answers })
+      );
+    }
+    return answered.map(({ answers }, i) => {
+      const [first, second] = [replayed[2 * i], replayed[2 * i + 1]];
+      if (!first || !second || shown(first) !== shown(second))
         return stop({
           kind: 'nondeterministic',
           message: 'Two replays of the same answers did different things',
           answers,
         });
+      if (first instanceof RemixReplayError)
+        return stop({ kind: 'refused', message: first.message, answers });
       return first;
-    } catch (error) {
-      return stop({
-        kind: error instanceof RemixReplayError ? 'refused' : 'error',
-        message: (error as Error).message,
-        answers,
-      });
-    }
+    });
   }
 
   async function walk(
     log: RemixLogEntry[],
     answers: RemixAnswer[],
-    workflows: number
+    workflows: number,
+    known?: RemixReplayOutcome | RemixGraphNode
   ): Promise<RemixGraphNode> {
     // The replayer refuses a run past the limit too; this holds whatever replayer is passed in.
     if (log.length > REMIX_RUN_LIMITS.effects) {
@@ -87,7 +139,7 @@ export async function validateRemixApp(
         answers,
       });
     }
-    const outcome: RemixReplayOutcome | RemixGraphNode = await outcomeOf(log, answers);
+    const outcome = known ?? (await outcomesOf(log, [{ answer: null, answers }]))[0];
     if ('type' in outcome) {
       paths++;
       return outcome;
@@ -114,7 +166,12 @@ export async function validateRemixApp(
         ? effect.spec.options.map((option) => option.value)
         : [firstAnswer(effect.spec)];
     const branches: { answer: RemixAnswer; next: RemixGraphNode }[] = [];
-    for (const answer of options) {
+    // Every option's next step at once: one sandbox call holds several branches.
+    const nextOutcomes = await outcomesOf(
+      log,
+      options.map((answer) => ({ answer, answers: [...answers, answer] }))
+    );
+    for (const [i, answer] of options.entries()) {
       if (paths >= maxPaths) {
         if (!issues.some((issue) => issue.kind === 'too-many-paths'))
           issues.push({
@@ -124,7 +181,12 @@ export async function validateRemixApp(
           });
         break;
       }
-      const next = await walk([...log, { type: 'ask', answer }], [...answers, answer], workflows);
+      const next = await walk(
+        [...log, { type: 'ask', answer }],
+        [...answers, answer],
+        workflows,
+        nextOutcomes[i]
+      );
       branches.push({ answer, next });
     }
     return { type: 'ask', spec: effect.spec, branches };

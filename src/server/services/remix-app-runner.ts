@@ -16,6 +16,7 @@ import {
   type RemixReplayOutcome,
   type RemixReplayer,
 } from '~/shared/remix-apps/replay';
+import type { RemixBranchReplayer } from '~/shared/remix-apps/validate';
 
 export const REMIX_APP_UNAVAILABLE = 'This app is unavailable right now';
 
@@ -117,14 +118,48 @@ export function userRemixReplayer(
       { appId, source: code, image: { ...source }, base: log },
       opts
     );
-    const { outcome } = remixRunnerOutcome(slug, source, log, result);
-    // What a viewer is shown must be what the reviewer read.
-    const refusal =
-      outcome.status === 'effect' && outcome.effect.type === 'ask'
-        ? remixAskTextRefusal(code, outcome.effect.spec)
-        : undefined;
-    if (refusal) throw new RemixReplayError(`${slug} asked with ${refusal}`);
-    return outcome;
+    return checkedOutcome(slug, code, source, log, result);
+  };
+}
+
+function checkedOutcome(
+  slug: string,
+  code: string,
+  source: RemixAppSource,
+  log: readonly RemixLogEntry[],
+  result: RunnerResult
+) {
+  const { outcome } = remixRunnerOutcome(slug, source, log, result);
+  // What a viewer is shown must be what the reviewer read.
+  const refusal =
+    outcome.status === 'effect' && outcome.effect.type === 'ask'
+      ? remixAskTextRefusal(code, outcome.effect.spec)
+      : undefined;
+  if (refusal) throw new RemixReplayError(`${slug} asked with ${refusal}`);
+  return outcome;
+}
+
+/** `userRemixReplayer` over several logs in one runner call, for a mod's dry run of every path. */
+export function userRemixBranchReplayer(
+  slug: string,
+  appId: string,
+  loadSource: () => Promise<string>,
+  opts?: Parameters<typeof callRemixRunner>[1]
+): RemixBranchReplayer {
+  return async (source, base, branches) => {
+    const code = await loadSource();
+    const results = await callRemixRunner(
+      { appId, source: code, image: { ...source }, base, branches },
+      opts
+    );
+    return results.map((result, i) => {
+      try {
+        return checkedOutcome(slug, code, source, i ? [...base, ...branches[i - 1]] : base, result);
+      } catch (error) {
+        if (error instanceof RemixReplayError) return error;
+        throw error;
+      }
+    });
   };
 }
 

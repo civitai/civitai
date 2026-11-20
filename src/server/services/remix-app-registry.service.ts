@@ -44,9 +44,11 @@ import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
 import {
   userRemixAuthorPrompt,
+  userRemixBranchReplayer,
   userRemixFirstRequest,
   userRemixReplayer,
 } from '~/server/services/remix-app-runner';
+import { validateRemixApp } from '~/shared/remix-apps/validate';
 import {
   auditRemixAppSource,
   REMIX_SOURCE_UNREADABLE,
@@ -918,6 +920,15 @@ export async function holdUserRemixApp(
       });
     return pull;
   }
+}
+
+/** A mod's dry run of a user app down every path, in the sandbox, on the source stored now. */
+export async function validateUserRemixApp(slug: string) {
+  const { manifest, remix } = await readUserRemixApp(slug);
+  const { graph, paths, issues } = await validateRemixApp({
+    branches: userRemixBranchReplayer(slug, remixBlockId(slug), async () => remix.source),
+  });
+  return { sha256: remixReviewHash({ ...manifest, remix }), graph, paths, issues };
 }
 
 /** A minor-themed mark bars the mature engine on every app its author holds, not only the marked one. */

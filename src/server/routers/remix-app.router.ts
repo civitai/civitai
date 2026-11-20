@@ -33,6 +33,7 @@ import {
   submitUserRemixApp,
   reviewUserRemixApp,
   clearRemixMinorThemed,
+  validateUserRemixApp,
 } from '~/server/services/remix-app-registry.service';
 import {
   remixAppInputSchema,
@@ -108,7 +109,10 @@ export async function getCaller(ctx: Context & { user: SessionUser }): Promise<R
 
 /** Mod-only: the remix app rows, and a test run that spends only on a confirmed quote. */
 const remixAppAdminRouter = router({
-  list: remixAppAdminProcedure.query(() => listRemixAppsForAdmin()),
+  list: remixAppAdminProcedure.query(async ({ ctx }) => {
+    const rows = await listRemixAppsForAdmin();
+    return ctx.features.remixAppsUserCode ? rows : rows.filter((row) => !('user' in row));
+  }),
   save: remixAppAdminProcedure
     .input(remixAppInputSchema)
     .mutation(({ input }) => saveRemixApp(input)),
@@ -138,6 +142,11 @@ const remixAppAdminRouter = router({
       })
     )
     .mutation(({ ctx, input }) => reviewUserRemixApp({ ...input, moderatorId: ctx.user.id })),
+  /** Runs a user app down every path in the sandbox, on a placeholder image: what review reads. */
+  validate: userCodeReviewProcedure
+    .use(runStepRateLimit)
+    .input(z.object({ slug: remixAppSlugSchema }))
+    .mutation(({ input }) => validateUserRemixApp(input.slug)),
   /** Lifts a minor-themed mark; refused to the moderator who set it. */
   clearMinorThemed: userCodeReviewProcedure
     .input(z.object({ slug: remixAppSlugSchema }))

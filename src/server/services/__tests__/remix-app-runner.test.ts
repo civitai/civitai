@@ -5,8 +5,10 @@ import {
   remixRunnerOutcome,
   REMIX_ANSWER_PLACEHOLDER,
   userRemixAuthorPrompt,
+  userRemixBranchReplayer,
   userRemixReplayer,
 } from '~/server/services/remix-app-runner';
+import { validateRemixApp } from '~/shared/remix-apps/validate';
 import type { RemixApp } from '~/shared/remix-apps/define';
 import { RemixReplayError, type RemixLogEntry } from '~/shared/remix-apps/replay';
 import { createHash } from 'crypto';
@@ -217,6 +219,71 @@ describe('a user app replayed on the runner', () => {
       source: SOURCE,
       input: { source: image, base: [made(1)] },
     });
+  });
+});
+
+describe("a mod's dry run on the runner", () => {
+  const dryRun = (runner: ReturnType<typeof fakeRemixRunner>, source = SOURCE) =>
+    validateRemixApp({
+      branches: userRemixBranchReplayer('u7-probe', 'remix-u7-probe', async () => source, {
+        config,
+        fetchImpl: runner.fetchImpl,
+      }),
+    });
+
+  it('walks every option, branches in one call, to the graph a one-by-one replay draws', async () => {
+    const runner = fakeRemixRunner({ secret: SECRET, apps: { [SHA]: app } });
+    const { graph, paths, issues } = await dryRun(runner);
+    expect(issues).toEqual([]);
+    expect(paths).toBe(2);
+    expect(graph).toMatchObject({
+      type: 'workflow',
+      request: { prompt: 'a portrait' },
+      next: {
+        type: 'ask',
+        branches: [
+          { answer: 'ink', next: { type: 'workflow', request: { prompt: 'in ink' } } },
+          { answer: 'oil', next: { type: 'workflow', request: { prompt: 'in oil' } } },
+        ],
+      },
+    });
+    const branched = runner.calls.length;
+    const oneByOne = fakeRemixRunner({ secret: SECRET, apps: { [SHA]: app } });
+    const replayed = await validateRemixApp(replayerOn(oneByOne));
+    expect(replayed.graph).toEqual(graph);
+    expect(branched).toBeLessThan(oneByOne.calls.length);
+  });
+
+  it('reports an app that replays differently, and an ask not fixed in the reviewed code', async () => {
+    const random: Pick<RemixApp, 'run'> = {
+      async run(ctx) {
+        const out = await ctx.workflow({
+          kind: 'image',
+          prompt: `a portrait ${Math.random()}`,
+          images: [ctx.source],
+          aspectRatio: 'source',
+          quantity: 1,
+        });
+        return out.images;
+      },
+    };
+    const randomSource = 'export default defineRemixApp({ run: random });';
+    const runner = fakeRemixRunner({
+      secret: SECRET,
+      apps: { [createHash('sha256').update(randomSource).digest('hex')]: random },
+    });
+    expect((await dryRun(runner, randomSource)).issues).toEqual([
+      expect.objectContaining({ kind: 'nondeterministic' }),
+    ]);
+    // The choice's prompt and labels are not in this source: the ask is refused on every path.
+    const unfixed = 'export default defineRemixApp({ run });';
+    const asks = fakeRemixRunner({
+      secret: SECRET,
+      apps: { [createHash('sha256').update(unfixed).digest('hex')]: app },
+    });
+    expect((await dryRun(asks, unfixed)).issues).toEqual([
+      expect.objectContaining({ kind: 'refused', message: expect.stringContaining('asked with') }),
+    ]);
   });
 });
 
