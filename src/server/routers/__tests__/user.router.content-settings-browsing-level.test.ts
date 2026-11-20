@@ -75,4 +75,21 @@ describe('user.updateContentSettings, signed in where mature content is allowed'
 
     expect(mockUpdateContentSettings.mock.calls[0][0].browsingLevel).toBe(4);
   });
+
+  it('keeps a level made of the five browsing bits unchanged', async () => {
+    await caller().updateContentSettings({ browsingLevel: 13 });
+
+    expect(mockUpdateContentSettings.mock.calls[0][0].browsingLevel).toBe(13);
+  });
+
+  it('drops bits outside the browsing levels before saving', async () => {
+    await caller().updateContentSettings({ browsingLevel: 63 });
+
+    expect(mockUpdateContentSettings.mock.calls[0][0].browsingLevel).toBe(31);
+  });
+
+  it.each([-1, 1.5])('rejects %s without saving', async (browsingLevel) => {
+    await expect(caller().updateContentSettings({ browsingLevel })).rejects.toThrow();
+    expect(mockUpdateContentSettings).not.toHaveBeenCalled();
+  });
 });
