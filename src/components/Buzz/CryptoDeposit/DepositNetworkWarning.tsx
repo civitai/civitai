@@ -65,6 +65,7 @@ export function DepositNetworkWarning({
   network?: string | null;
 }) {
   const resolved = getDepositTokenNetwork({ code, ticker, network });
+  const evenOn = resolved ? resolved.network : 'the same network';
   return (
     <Group gap="xs" wrap="nowrap" align="flex-start" data-testid="deposit-network-warning">
       <IconAlertTriangle
@@ -97,6 +98,11 @@ export function DepositNetworkWarning({
             </>
           )}{' '}
           {getTail(resolved?.network)}
+        </Text>
+        <Text size="xs" c="dimmed" mt={4} data-testid="deposit-token-warning">
+          Only the currencies in the selector that run on this address&apos;s network are credited.
+          Any other token sent to this address, even on {evenOn}, isn&apos;t converted and needs a
+          manual refund.
         </Text>
       </div>
     </Group>

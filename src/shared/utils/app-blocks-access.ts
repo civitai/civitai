@@ -310,6 +310,17 @@ export function canAccessAppsActivity(features: AppsActivityFeatureFlags): boole
   return !!features?.appBlocks || !!features?.appBlocksPages;
 }
 
+/**
+ * Whether `/apps/run/<slug>` can open for this viewer: `appBlocks && appBlocksPages`. The run
+ * page's `getServerSideProps` 404s without both, and the approved-app notification asks the same
+ * question of the submitter at send time (`canUserOpenAppRunPages`) before it links there.
+ *
+ * Fails CLOSED: absent / null features, or an empty object, → `false`.
+ */
+export function canOpenAppRunPages(features: AppsActivityFeatureFlags): boolean {
+  return !!features?.appBlocks && !!features?.appBlocksPages;
+}
+
 export type AppAssistantFeatureFlags =
   | Partial<Pick<FeatureAccess, 'appBlocks' | 'appAssistant'>>
   | null

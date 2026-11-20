@@ -1322,6 +1322,44 @@ describe('apps.storage.set', () => {
     expect(mockPool.connect).not.toHaveBeenCalled();
   });
 
+  it("counts outcome:'error' once, not twice, for a fault inside the write", async () => {
+    const inc = vi.mocked(appStorageOpsCounter.inc);
+    inc.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{ used_bytes: '0', row_count: '0', user_used_bytes: '0', user_row_count: '0' }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce(sizeProbe());
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('INSERT INTO')) throw new Error('deadlock detected');
+      return { rows: [], rowCount: 0 };
+    });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(caller.storage.set({ blockToken: 't', key: 'k', value: 'v' })).rejects.toThrow(
+      'deadlock detected'
+    );
+    const errorIncs = inc.mock.calls.filter(
+      ([labels]) => (labels as { outcome?: string })?.outcome === 'error'
+    );
+    expect(errorIncs).toHaveLength(1);
+  });
+
+  it("does NOT count outcome:'error' for a deliberate quota refusal", async () => {
+    const inc = vi.mocked(appStorageOpsCounter.inc);
+    inc.mockClear();
+    useSubjectFromSub();
+    mockPool.query.mockImplementation(quotaPoolFor({ 42: USER_CAP_BYTES - 10 }));
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(500) })
+    ).rejects.toMatchObject({ message: 'per-user storage quota exceeded' });
+    expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'quota_exceeded' });
+    expect(inc).not.toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
+  });
+
   // ── The stored-size probe must FAIL LOUD, never absorb ─────────────────────
   //
   // Both byte ceilings are computed from this one row. Absorbing a missing or
