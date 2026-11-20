@@ -39,6 +39,8 @@ import {
 } from '~/utils/trpc-batch-window';
 import { GO_TRANSPORT_URL, isGoTransportEnabledFor } from '~/utils/trpc-go-transport';
 import { feedTransportTimingLink } from '~/utils/faro/feedTransport';
+import { createShadowCompareFetch, goTransportCandidate } from '~/utils/faro/shadowCompare';
+import { isShadowCompareEnabledFor } from '~/utils/trpc-shadow-compare';
 
 const url = '/api/trpc';
 
@@ -389,6 +391,47 @@ export function shouldUseGoTransport(op: { type: string; path: string; input: un
 }
 
 /**
+ * Shadow-compare this operation (`clientShadowCompare`, `~/utils/faro/shadowCompare`) only when
+ * ALL hold: it's a `query` for a procedure in `SHADOW_COMPARE_PROCEDURES` with the flag on and the
+ * page load's compare cap not spent, in an authenticated browser (signed-out GETs are edge-cached,
+ * and the candidate path is not), and it would leave as a GET (`shouldSendQueryAsPost` false).
+ * Only evaluated on the node branch of `terminatingLink`, so a request already on the Go transport
+ * is never shadowed against itself.
+ */
+export function shouldShadowCompare(op: { type: string; path: string; input: unknown }) {
+  return (
+    op.type === 'query' &&
+    isShadowCompareEnabledFor(op.path) &&
+    isAuthedBrowser() &&
+    !shouldSendQueryAsPost(op)
+  );
+}
+
+/**
+ * The control leg for a shadowed query: the same unbatched GET `httpLinkWithLargeQuerySupport`
+ * would send for a never-batched procedure, over a `fetch` that also sends the candidate leg and
+ * compares the raw texts. Built per operation so the fetch knows its procedure.
+ */
+function shadowCompareLink({
+  url,
+  headers,
+}: {
+  url: string;
+  headers: ReturnType<typeof getHeaders>;
+}): TRPCLink<AppRouter> {
+  return (runtime) => (opts) =>
+    httpLink({
+      transformer: clientTransformer,
+      url,
+      headers,
+      fetch: createShadowCompareFetch({
+        procedure: opts.op.path,
+        candidate: goTransportCandidate,
+      }),
+    })(runtime)(opts);
+}
+
+/**
  * Shared terminating link. Authenticated-browser queries (flag-gated) go out batched via
  * `httpBatchStreamLink` (results stream as they resolve, so the fastest query in a batch
  * isn't blocked by the slowest); everything else — anonymous traffic, mutations, large
@@ -426,7 +469,11 @@ function terminatingLink({
         isAuthed: isAuthedBrowser,
         skip: shouldSendQueryAsPost,
       }),
-      defaultLink,
+      splitLink({
+        condition: shouldShadowCompare,
+        true: shadowCompareLink({ url, headers }),
+        false: defaultLink,
+      }),
     ],
   });
 }
