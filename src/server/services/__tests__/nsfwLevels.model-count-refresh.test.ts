@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { userModelCountCache } from '~/server/redis/caches';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
@@ -23,6 +24,8 @@ describe('updateModelNsfwLevels', () => {
 
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(refresh).toHaveBeenCalledWith([7, 9]);
+    const [query] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [Prisma.Sql];
+    expect(query.sql).toMatch(/RETURNING m\.id, m\."userId"/);
   });
 
   it('refreshes nothing when no model level changed', async () => {

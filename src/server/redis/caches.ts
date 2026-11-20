@@ -877,7 +877,7 @@ export const userModelCountSfwCache = createUserContentCountCache<UserModelCount
 );
 export const userModelCountPublicCache = createUserContentCountCache<UserModelCount>(
   'modelCount:public',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "modelCount"
