@@ -5,6 +5,7 @@ import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
+import { INQUISITOR_IMAGE_SCHEMA } from './inquisitor-schema';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
@@ -35,6 +36,9 @@ const {
   ruleOnInquisitorItem,
   RULING_LEASE_MS,
 } = await import('../inquisitor.service');
+const { INQUISITOR_FILTERS, parseInquisitorFilter } = await import(
+  '$lib/knights/inquisitor-filters'
+);
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -114,11 +118,7 @@ const item = async (id: number) =>
 
 beforeAll(async () => {
   db = await freshPglite();
-  await db.exec(`CREATE TABLE "Image" (
-    "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
-    "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false,
-    "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT
-  );`);
+  await db.exec(INQUISITOR_IMAGE_SCHEMA);
   await db.exec(migration('20261210120000_knights_v2_tables'));
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -167,6 +167,21 @@ describe('getInquisitorQueue', () => {
     expect(queue[0].votes).toEqual([
       { answer: '8', label: 'X', votes: 2, weight: 2.5, stages: [{ stage: 'Knight', votes: 2 }] },
       { answer: '2', label: 'PG-13', votes: 1, weight: 2, stages: [{ stage: 'Knight', votes: 1 }] },
+    ]);
+  });
+
+  it('carries the level the image had when the item was escalated, or null when none was recorded', async () => {
+    await insertItem(1, 1, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'pushed-down' });
+    await insertItem(2, 3, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'no-consensus' });
+    await db.query(
+      `UPDATE "KnightsQueueItem" SET "meta" = '{"escalatedFromLevel": 16}'::jsonb WHERE "id" = 1`
+    );
+
+    const queue = await getInquisitorQueue();
+
+    expect(queue.map((row) => [row.id, row.currentLevel, row.escalatedFromLevel])).toEqual([
+      [1, 4, 16],
+      [2, 2, null],
     ]);
   });
 
@@ -223,16 +238,24 @@ describe('Inquisitor queue filters', () => {
     ['all', [ID.blocked, ID.pushedDown, ID.noConsensus, ID.writeBack, ID.neither]],
     ['blocked', [ID.blocked]],
     ['pushed-down', [ID.pushedDown]],
-    ['no-consensus', [ID.noConsensus]],
     ['write-back', [ID.writeBack]],
   ] as const)('lists exactly the %s items', async (filter, ids) => {
     expect((await getInquisitorQueue(filter)).map((i) => i.id)).toEqual(ids);
   });
 
-  it('shows an item with neither reason under All only', async () => {
-    for (const filter of ['blocked', 'pushed-down', 'no-consensus', 'write-back'] as const) {
-      expect((await getInquisitorQueue(filter)).map((i) => i.id)).not.toContain(ID.neither);
+  it('shows an item with neither reason, or one still waiting as no-consensus, under All only', async () => {
+    for (const filter of ['blocked', 'pushed-down', 'write-back'] as const) {
+      const ids = (await getInquisitorQueue(filter)).map((i) => i.id);
+      expect(ids).not.toContain(ID.neither);
+      expect(ids).not.toContain(ID.noConsensus);
     }
+  });
+
+  it('has no no-consensus tab: a link to it opens the whole queue', async () => {
+    expect(INQUISITOR_FILTERS).not.toContain('no-consensus');
+    expect(
+      (await getInquisitorQueue(parseInquisitorFilter('no-consensus'))).map((i) => i.id)
+    ).toEqual([ID.blocked, ID.pushedDown, ID.noConsensus, ID.writeBack, ID.neither]);
   });
 
   it('counts each filter from the same rows it lists, with All equal to the sidebar badge', async () => {
@@ -243,7 +266,6 @@ describe('Inquisitor queue filters', () => {
       all: 5,
       blocked: 1,
       'pushed-down': 1,
-      'no-consensus': 1,
       'write-back': 1,
     });
     expect(counts.all).toBe(await countInquisitorQueue());

@@ -639,6 +639,11 @@ export const serverSchema = z
     // The fraction (0-1) of index-answered store searches that also read the database grid page,
     // off the response path, to log how the two result sets compare. 0 = never.
     APP_INDEX_SEARCH_COMPARE_SAMPLE: z.coerce.number().min(0).max(1).default(0.1),
+    // The per-process breaker around the app index call: after this many consecutive index
+    // failures (timeouts included) store searches skip the index for the cooldown below, then
+    // one search probes it.
+    APP_INDEX_BREAKER_FAILURE_THRESHOLD: z.coerce.number().int().min(1).default(5),
+    APP_INDEX_BREAKER_COOLDOWN_MS: z.coerce.number().int().min(1000).default(30_000),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt
@@ -1327,6 +1332,19 @@ export const serverSchema = z
       .string()
       .refine((value) => value.trim() === '' || value.trim().length >= 32, {
         message: 'ASSISTANT_RUNNER_SECRET must be at least 32 characters',
+      })
+      .optional(),
+    // App Storage permission hooks: the storage-hook-runner service (apps/storage-hook-runner)
+    // that evaluates a collection's hook on every write to it. Its base URL (the client posts to
+    // `<url>/v1/check`) and the shared HMAC secret that signs each request and each response, at
+    // least 32 characters, the same value the runner is given. Unset or blank, every write to a
+    // collection with a hook is refused as `hook_unavailable` (fail closed); a collection without
+    // a hook is unaffected. Blank is accepted so a bare ConfigMap key cannot stop the app booting.
+    STORAGE_HOOK_RUNNER_URL: z.union([z.url(), z.literal('')]).optional(),
+    STORAGE_HOOK_RUNNER_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'STORAGE_HOOK_RUNNER_SECRET must be at least 32 characters',
       })
       .optional(),
     // How long a run grant lasts: the runner's wall clock per run (2 h) plus a margin.

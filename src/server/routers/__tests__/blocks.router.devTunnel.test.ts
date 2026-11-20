@@ -173,6 +173,21 @@ describe('startDevTunnel — authz matrix', () => {
     expect(mockStart).not.toHaveBeenCalled();
   });
 
+  it('an impersonation → FORBIDDEN, never mints', async () => {
+    const caller = blocksRouter.createCaller({
+      ...authedCtx(100, true),
+      impersonatedBy: 7,
+    } as never);
+    await expect(caller.startDevTunnel(input)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Apps are paused while impersonating',
+    });
+    expect(mockStart).not.toHaveBeenCalled();
+    // Control: the same caller without the impersonation mints.
+    await blocksRouter.createCaller(authedCtx(100, true) as never).startDevTunnel(input);
+    expect(mockStart).toHaveBeenCalledTimes(1);
+  });
+
   it('author + flag ON + OWNER → mints, bound to the CALLER’s userId', async () => {
     const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
     const res = await caller.startDevTunnel(input);

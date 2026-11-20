@@ -24,16 +24,26 @@ vi.mock('~/server/auth/bearer-token', () => ({
 }));
 
 import { authenticate } from '~/server/registry-adapter/auth';
-import type { VerifiedToken, VerifyToken } from '~/server/registry-adapter/auth';
+import type { TokenUser, VerifiedToken, VerifyToken } from '~/server/registry-adapter/auth';
 import {
   createHubJwtVerifier,
+  hasScope,
   routeVerifyToken,
-  scopeBits,
+  scopeBitsAssumingUnknownIsAll,
+  scopeGrantBits,
 } from '~/server/registry-adapter/auth.jwt';
-import { createCivitaiTokenVerifier } from '~/server/registry-adapter/auth.live';
+import {
+  createCivitaiTokenVerifier,
+  parseServiceClients,
+  verifyOpaqueCivitaiToken,
+} from '~/server/registry-adapter/auth.live';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
-import { ALL_SCOPES, TokenScope } from '~/shared/constants/token-scope.constants';
+import {
+  ALL_SCOPES,
+  TokenScope,
+  TokenScopePresets,
+} from '~/shared/constants/token-scope.constants';
 
 const ISSUER = 'https://auth.test';
 const RESOURCE = 'https://apps.test';
@@ -103,7 +113,7 @@ async function signRaw(header: Record<string, unknown>, payload: Record<string, 
     .sign(key);
 }
 
-const USER: VerifiedToken['user'] = { showNsfw: true, browsingLevel: 31 };
+const USER: TokenUser = { showNsfw: true, browsingLevel: 31 };
 
 let fetchMock: Mock<typeof fetch>;
 let served: () => { keys: unknown[] };
@@ -174,6 +184,9 @@ describe('createHubJwtVerifier', () => {
     const verified = await hubVerifier()(token);
     expect(verified).toEqual({
       subject: `user:${USER_ID}/client:${CLIENT_ID}`,
+      clientId: CLIENT_ID,
+      scope: TokenScope.ModelsRead | TokenScope.MediaRead,
+      actor: null,
       user: USER,
       expiresAt: new Date((nowS() + 600) * 1000),
     });
@@ -189,6 +202,43 @@ describe('createHubJwtVerifier', () => {
   it('gives a relayed token (act) the same subject as a direct one', async () => {
     const verified = await hubVerifier()(await mint({ act: { sub: RELAY_ID } }));
     expect(verified?.subject).toBe(`user:${USER_ID}/client:${CLIENT_ID}`);
+  });
+
+  it('reads client_id as clientId and act.sub as actor; no act is a null actor', async () => {
+    const relayed = await hubVerifier()(await mint({ act: { sub: RELAY_ID } }));
+    expect(relayed).toMatchObject({ clientId: CLIENT_ID, actor: RELAY_ID });
+    const direct = await hubVerifier()(await mint());
+    expect(direct).toMatchObject({ clientId: CLIENT_ID, actor: null });
+    // An act with no usable sub names no actor.
+    const noSub = await signRaw({ typ: 'at+jwt', kid: KID }, { ...claims(), act: { iss: ISSUER } });
+    expect((await hubVerifier()(noSub))?.actor).toBeNull();
+    // No client_id at all: refused, so there is no token to name a client for.
+    const { client_id: _c, ...noClient } = claims();
+    expect(await hubVerifier()(await signRaw({ typ: 'at+jwt', kid: KID }, noClient))).toBeNull();
+  });
+
+  it('🔴 a token whose scope names nothing the site knows, or has no scope, grants no AppDataRead', async () => {
+    const bogus = await hubVerifier()(await mint({ scope: 'Bogus' }));
+    expect(bogus).not.toBeNull();
+    expect(bogus!.scope).toBe(0n);
+    expect(hasScope(bogus!, 'AppDataRead')).toBe(false);
+    // The refusal check still reads the same token as every scope.
+    expect(getBearerTokenUserMock).toHaveBeenLastCalledWith(USER_ID, ALL_SCOPES);
+
+    const { scope: _scope, ...unscoped } = claims();
+    const none = await hubVerifier()(await signRaw({ typ: 'at+jwt', kid: KID }, unscoped));
+    expect(none).not.toBeNull();
+    expect(hasScope(none!, 'AppDataRead')).toBe(false);
+    expect(getBearerTokenUserMock).toHaveBeenLastCalledWith(USER_ID, ALL_SCOPES);
+  });
+
+  it('AppsRead alone grants no AppDataRead; AppDataRead does', async () => {
+    const apps = await hubVerifier()(await mint({ scope: 'AppsRead' }));
+    expect(hasScope(apps!, 'AppsRead')).toBe(true);
+    expect(hasScope(apps!, 'AppDataRead')).toBe(false);
+    const data = await hubVerifier()(await mint({ scope: 'AppsRead AppDataRead' }));
+    expect(hasScope(data!, 'AppDataRead')).toBe(true);
+    expect(data!.scope).toBe(TokenScope.AppsRead | TokenScope.AppDataRead);
   });
 
   it('refuses a token for another audience, by exact string', async () => {
@@ -313,30 +363,65 @@ describe('createHubJwtVerifier', () => {
   });
 });
 
-describe('scopeBits', () => {
+describe('scopeBitsAssumingUnknownIsAll (the refusal check)', () => {
   it('maps scope names to the site bits, and an unknown name to every scope', () => {
-    expect(scopeBits('ModelsRead MediaRead')).toBe(TokenScope.ModelsRead | TokenScope.MediaRead);
-    expect(scopeBits('ModelsRead NotAScope') & TokenScope.ModelsWrite).toBe(TokenScope.ModelsWrite);
+    expect(scopeBitsAssumingUnknownIsAll('ModelsRead MediaRead')).toBe(
+      TokenScope.ModelsRead | TokenScope.MediaRead
+    );
+    expect(scopeBitsAssumingUnknownIsAll('ModelsRead NotAScope') & TokenScope.ModelsWrite).toBe(
+      TokenScope.ModelsWrite
+    );
   });
 
   it('reads the name None as every scope, like an unknown name, not as no scope', () => {
-    expect(scopeBits('None')).toBe(ALL_SCOPES);
-    expect(scopeBits('UserRead None')).toBe(ALL_SCOPES);
+    expect(scopeBitsAssumingUnknownIsAll('None')).toBe(ALL_SCOPES);
+    expect(scopeBitsAssumingUnknownIsAll('UserRead None')).toBe(ALL_SCOPES);
     // Control: UserRead alone is just its bit.
-    expect(scopeBits('UserRead')).toBe(TokenScope.UserRead);
+    expect(scopeBitsAssumingUnknownIsAll('UserRead')).toBe(TokenScope.UserRead);
   });
 
   it('fails safe on a missing or non-string scope claim: every scope, like an unknown name', () => {
     for (const scope of [undefined, null, 7, ['ModelsRead'], { ModelsRead: true }]) {
-      expect(scopeBits(scope)).toBe(ALL_SCOPES);
-      expect(scopeBits(scope) & TokenScope.ModelsWrite).toBe(TokenScope.ModelsWrite);
+      expect(scopeBitsAssumingUnknownIsAll(scope)).toBe(ALL_SCOPES);
+      expect(scopeBitsAssumingUnknownIsAll(scope) & TokenScope.ModelsWrite).toBe(
+        TokenScope.ModelsWrite
+      );
     }
+  });
+});
+
+describe('scopeGrantBits and hasScope (does the token HOLD a scope)', () => {
+  it('🔴 an unknown name grants nothing, alone or beside a known one', () => {
+    expect(scopeGrantBits('Bogus')).toBe(0n);
+    expect(scopeGrantBits('AppsRead Bogus')).toBe(TokenScope.AppsRead);
+    expect(hasScope({ scope: scopeGrantBits('Bogus') }, 'AppDataRead')).toBe(false);
+  });
+
+  it('🔴 a missing or non-string scope claim grants nothing', () => {
+    for (const scope of [undefined, null, 7, ['AppDataRead'], { AppDataRead: true }]) {
+      expect(scopeGrantBits(scope)).toBe(0n);
+      expect(hasScope({ scope: scopeGrantBits(scope) }, 'AppDataRead')).toBe(false);
+    }
+  });
+
+  it('None grants nothing', () => {
+    expect(scopeGrantBits('None')).toBe(0n);
+    expect(scopeGrantBits('UserRead None')).toBe(TokenScope.UserRead);
+  });
+
+  it('AppsRead does not hold AppDataRead; AppDataRead does', () => {
+    expect(hasScope({ scope: scopeGrantBits('AppsRead') }, 'AppDataRead')).toBe(false);
+    expect(hasScope({ scope: scopeGrantBits('AppDataRead') }, 'AppDataRead')).toBe(true);
+    expect(hasScope({ scope: scopeGrantBits('MediaRead AppDataRead') }, 'AppDataRead')).toBe(true);
   });
 });
 
 describe('routeVerifyToken', () => {
   const OPAQUE: VerifiedToken = {
     subject: 'user:9/client:opaque-client',
+    clientId: 'opaque-client',
+    scope: 0n,
+    actor: null,
     user: { showNsfw: false, browsingLevel: 1 },
     expiresAt: null,
   };
@@ -411,17 +496,55 @@ describe('a hub token through authenticate', () => {
   });
 });
 
+describe('verifyOpaqueCivitaiToken', () => {
+  const session = (tokenScope: bigint) => ({
+    user: { id: 6127, showNsfw: true, browsingLevel: 15 },
+    apiKeyType: ApiKeyType.Access,
+    subject: { type: 'oauth', id: 'opaque-app-3c58' },
+    tokenScope,
+    expiresAt: null,
+  });
+
+  it('names the OAuth client, no actor, and the scope the key stores', async () => {
+    getSessionFromBearerTokenMock.mockResolvedValue(
+      session(TokenScope.AppsRead | TokenScope.AppDataRead)
+    );
+    const verified = await verifyOpaqueCivitaiToken('9e8d7c6b5a4f3e2d');
+    expect(verified).toMatchObject({
+      subject: 'user:6127/client:opaque-app-3c58',
+      clientId: 'opaque-app-3c58',
+      actor: null,
+      scope: TokenScope.AppsRead | TokenScope.AppDataRead,
+    });
+    expect(hasScope(verified!, 'AppDataRead')).toBe(true);
+  });
+
+  it('🔴 a Full key does not hold AppDataRead (Full is the legacy bits only)', async () => {
+    getSessionFromBearerTokenMock.mockResolvedValue(session(TokenScopePresets.Full));
+    const verified = await verifyOpaqueCivitaiToken('9e8d7c6b5a4f3e2d');
+    expect(verified?.scope).toBe(TokenScopePresets.Full);
+    expect(hasScope(verified!, 'AppDataRead')).toBe(false);
+    // Control: the same key holds a scope Full does include.
+    expect(hasScope(verified!, 'ModelsRead')).toBe(true);
+  });
+});
+
 describe('createCivitaiTokenVerifier', () => {
   it('sends an opaque token to the site bearer lookup, as before', async () => {
     getSessionFromBearerTokenMock.mockResolvedValue({
       user: { id: 9, showNsfw: false, browsingLevel: 1 },
       apiKeyType: ApiKeyType.Access,
       subject: { type: 'oauth', id: 'opaque-client' },
+      tokenScope: TokenScope.AppsRead | TokenScope.UserRead,
       expiresAt: null,
     });
     const verify = createCivitaiTokenVerifier({ resource: RESOURCE, issuer: ISSUER });
     expect(await verify('3f9a0c1d2e4b5a69')).toEqual({
       subject: 'user:9/client:opaque-client',
+      clientId: 'opaque-client',
+      // The key's stored scope, as issued; no one acts for an opaque token.
+      scope: TokenScope.AppsRead | TokenScope.UserRead,
+      actor: null,
       user: { id: 9, showNsfw: false, browsingLevel: 1 },
       expiresAt: null,
     });
@@ -440,5 +563,132 @@ describe('createCivitaiTokenVerifier', () => {
     await expectInvalidToken(authenticate(`Bearer ${await mint()}`, verify, authOpts));
     expect(getSessionFromBearerTokenMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A service token: the hub's token for a client acting as itself (`sub` = `client_id`, no user),
+ * as an index consumer holds. Read only for a client on the source's service allowlist, as every
+ * rating with no region hold; off the list it is refused, as every token without a user was.
+ */
+describe('🔴 service tokens and the service-client allowlist', () => {
+  // A service client id (a random UUID, never a user id), distinct from CLIENT_ID and RELAY_ID.
+  const SERVICE_ID = '5b1d3e7a-0c4f-4a92-8e61-2d9f7c3b8a10';
+  const serviceToken = (over: Partial<AccessTokenJwtClaims> = {}) =>
+    mint({ sub: SERVICE_ID, client_id: SERVICE_ID, scope: 'AppsRead', ...over });
+  const allowing = (...ids: string[]) =>
+    createHubJwtVerifier(
+      { issuer: ISSUER, jwksUri: JWKS_URI, audience: RESOURCE, serviceClients: new Set(ids) },
+      { loadUser: getBearerTokenUserMock }
+    );
+  const verifyVia = (jwt: VerifyToken) =>
+    routeVerifyToken({ opaque: vi.fn(async () => null), jwt });
+  // Held to SFW by region: a user here reads no mature rating, so a service reading them shows
+  // the hold was not applied to it.
+  const heldToSfw = { regionRestricted: () => true };
+
+  it('an allowlisted service token reads every rating (r, x, xxx), with no region hold', async () => {
+    const exp = nowS() + 600;
+    const verified = await allowing(SERVICE_ID)(
+      await serviceToken({ exp, act: { sub: RELAY_ID } })
+    );
+    expect(verified).toEqual({
+      subject: `service:${SERVICE_ID}`,
+      clientId: SERVICE_ID,
+      scope: TokenScope.AppsRead,
+      actor: RELAY_ID,
+      service: true,
+      expiresAt: new Date(exp * 1000),
+    });
+    // No user is read for a token that has none.
+    expect(getBearerTokenUserMock).not.toHaveBeenCalled();
+
+    const principal = await authenticate(
+      `Bearer ${await serviceToken()}`,
+      verifyVia(allowing(SERVICE_ID)),
+      heldToSfw
+    );
+    expect(principal.service).toBe(true);
+    expect(principal.subject).toBe(`service:${SERVICE_ID}`);
+    expect(principal.audience).toEqual({
+      key: 'mrx+xxx',
+      allowed: { r: true, x: true, xxx: true },
+    });
+    expect(await principal.recheck!()).toBe('active');
+  });
+
+  it('a service token whose client is NOT on the allowlist is invalid_token (fail closed)', async () => {
+    // Another client is allowlisted; this one is not.
+    const verify = verifyVia(allowing('9d2c4b6a-1e3f-4a5b-9c7d-8e0f1a2b3c4d'));
+    await expectInvalidToken(authenticate(`Bearer ${await serviceToken()}`, verify, authOpts));
+    expect(getBearerTokenUserMock).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a USER token from an allowlisted client is still the user’s audience, region hold and all', async () => {
+    // The user may read every mature rating by their own settings.
+    getBearerTokenUserMock.mockResolvedValue({ showNsfw: true, browsingLevel: 31 });
+    const userToken = await mint({ client_id: SERVICE_ID });
+    const verified = await allowing(SERVICE_ID)(userToken);
+    expect(verified?.service).toBeUndefined();
+    expect(verified?.subject).toBe(`user:${USER_ID}/client:${SERVICE_ID}`);
+    // From a region held to SFW, the user reads no mature rating; a service would read all.
+    const held = await authenticate(
+      `Bearer ${userToken}`,
+      verifyVia(allowing(SERVICE_ID)),
+      heldToSfw
+    );
+    expect(held.service).toBeUndefined();
+    expect(held.audience).toEqual({ key: 'm', allowed: { r: false, x: false, xxx: false } });
+    // And from anywhere else, the user's own settings, not the service audience.
+    getBearerTokenUserMock.mockResolvedValue({ showNsfw: true, browsingLevel: 1 | 2 | 4 | 8 });
+    const own = await authenticate(
+      `Bearer ${userToken}`,
+      verifyVia(allowing(SERVICE_ID)),
+      authOpts
+    );
+    expect(own.audience).toEqual({ key: 'mrx', allowed: { r: true, x: true, xxx: false } });
+  });
+
+  it('by default (allowlist unset or empty) no service token is accepted, from any client', async () => {
+    expect(parseServiceClients(undefined).size).toBe(0);
+    expect(parseServiceClients('').size).toBe(0);
+    expect(parseServiceClients(' , ').size).toBe(0);
+    expect([...parseServiceClients(`${SERVICE_ID}, a-1  b-2`)]).toEqual([SERVICE_ID, 'a-1', 'b-2']);
+    for (const verify of [
+      createCivitaiTokenVerifier({ resource: RESOURCE, issuer: ISSUER }),
+      createCivitaiTokenVerifier({
+        resource: RESOURCE,
+        issuer: ISSUER,
+        serviceClients: parseServiceClients(undefined),
+      }),
+      hubVerifier(),
+    ]) {
+      await expectInvalidToken(authenticate(`Bearer ${await serviceToken()}`, verify, authOpts));
+    }
+    // Control: the same token with its client listed is accepted.
+    const listed = createCivitaiTokenVerifier({
+      resource: RESOURCE,
+      issuer: ISSUER,
+      serviceClients: parseServiceClients(SERVICE_ID),
+    });
+    expect((await authenticate(`Bearer ${await serviceToken()}`, listed, authOpts)).service).toBe(
+      true
+    );
+  });
+
+  it('a service token without AppsRead is refused, listed or not', async () => {
+    const verify = allowing(SERVICE_ID);
+    expect(await verify(await serviceToken({ scope: 'ModelsRead' }))).toBeNull();
+    expect(await verify(await serviceToken({ scope: 'Bogus' }))).toBeNull();
+    // Control: the same token with AppsRead (beside another scope) is accepted.
+    expect((await verify(await serviceToken({ scope: 'ModelsRead AppsRead' })))?.service).toBe(
+      true
+    );
+  });
+
+  it('a token whose sub is not its client_id and not a user id is refused, listed or not', async () => {
+    const verify = allowing(SERVICE_ID);
+    expect(await verify(await mint({ sub: 'someone-else', client_id: SERVICE_ID }))).toBeNull();
+    expect(await verify(await mint({ sub: SERVICE_ID, client_id: CLIENT_ID }))).toBeNull();
   });
 });

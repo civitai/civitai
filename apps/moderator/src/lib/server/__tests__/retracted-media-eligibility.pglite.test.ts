@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /**
@@ -30,7 +30,7 @@ vi.mock('$env/dynamic/private', () => envMock);
 const insertModActivity = vi.hoisted(() => vi.fn(async (_row: Record<string, unknown>) => {}));
 vi.mock('../mod-activity', () => ({ insertModActivity }));
 const scanner = vi.hoisted(() => ({ verdict: 'clear' as 'hit' | 'clear' | 'none' | null }));
-vi.mock('../review-batch', () => ({ readScannerVerdict: async () => scanner.verdict }));
+vi.mock('../review-batch', () => ({ readScannerCsamVerdict: async () => scanner.verdict }));
 
 const { getRetractedMedia, recordRetractedView, scannerVerdicts } = await import(
   '../retracted-media'
@@ -157,9 +157,9 @@ describe('retracted media eligibility', () => {
     scanner.verdict = 'clear';
   });
 
-  it('answers an image with no scanner verdict as needing CSAM-queue access', async () => {
+  it('serves an image the scanner has no verdict for to any moderator', async () => {
     scanner.verdict = 'none';
-    expect(await getRetractedMedia(1, { csamReview: false })).toBe('needs-csam-queue');
+    expect(await tierOf(1)).toBe('plain');
     scanner.verdict = 'clear';
   });
 
@@ -173,8 +173,8 @@ describe('retracted media eligibility', () => {
     });
   });
 
-  it('keeps a minor signal or a block with no reason to moderators cleared for CSAM review', async () => {
-    expect(await tierOf(2)).toBe('suspect');
+  it('serves a minor signal to any moderator, and keeps a block with no reason to cleared ones', async () => {
+    expect(await tierOf(2)).toBe('plain');
     expect(await tierOf(3)).toBe('suspect');
   });
 
@@ -235,16 +235,97 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
     expect(await tierOf(19)).toBe('none');
   });
 
-  it('keeps a minor unpublish reason or a minor-safety ban of the owner to cleared moderators', async () => {
+  it('serves a minor unpublish reason to any moderator, and keeps a minor-safety ban of the owner to cleared ones', async () => {
     // On the post, on the version, on the model; then the ban.
-    for (const id of [20, 25, 26, 21])
-      expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'suspect' });
+    for (const id of [20, 25, 26])
+      expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'plain' });
+    expect(await tierOf(21)).toBe('suspect');
   });
 
   it("reads a scanned image's verdict fresh each time, since a rescan can change it", async () => {
     expect(await tierOf(7)).toBe('plain');
     scanner.verdict = 'hit';
     expect(await getRetractedMedia(7, { csamReview: false })).toBeNull();
+  });
+});
+
+describe('copies sharing bytes with a restricted image', () => {
+  // 990000101: a plain blocked image whose url another row shares. 990000103: a plain blocked image
+  // whose pHash another row has. Each test lists or holds the other row, then removes it.
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor", "pHash") VALUES
+        (990000101, 'key-990000101', 990100101, 'Blocked', 'moderated', NULL),
+        (990000102, 'key-990000101', 990100102, 'Scanned', NULL, NULL),
+        (990000103, 'key-990000103', 990100103, 'Blocked', 'moderated', 990990990),
+        (990000104, 'key-990000104', 990100104, 'Scanned', NULL, 990990990);
+    `);
+  });
+  beforeEach(() => {
+    scanner.verdict = 'clear';
+  });
+  afterEach(async () => {
+    await db.exec(`
+      DELETE FROM "CsamReport" WHERE "userId" = 990100199;
+      DELETE FROM "EvidenceHoldImage" WHERE "imageId" IN (990000102, 990000104);
+      DELETE FROM "ImageCdnModeratorDelete" WHERE "imageId" = 990000105;
+      DELETE FROM "EvidenceHeldUser" WHERE "userId" = 990100102;
+      UPDATE "Image" SET "needsReview" = NULL, minor = false WHERE id = 990000102;
+    `);
+  });
+
+  const report = (imageId: number) =>
+    db.query(`INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100199, '{}', $1)`, [
+      JSON.stringify([{ id: imageId }]),
+    ]);
+  const hold = (imageId: number) =>
+    db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [imageId]);
+
+  it('serves both images to any moderator while neither copy is reported or held', async () => {
+    expect(await tierOf(990000101)).toBe('plain');
+    expect(await tierOf(990000103)).toBe('plain');
+  });
+
+  it.each([
+    ['a reported row on the same url', 990000101, () => report(990000102)],
+    ['a reported row with the same pHash', 990000103, () => report(990000104)],
+    ['a held row on the same url', 990000101, () => hold(990000102)],
+    [
+      'a copy on the same url whose owner is held',
+      990000101,
+      () => db.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (990100102)`),
+    ],
+    [
+      'an unreported copy on the same url in review',
+      990000101,
+      () => db.query(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 990000102`),
+    ],
+    [
+      'a reported, deleted copy on the same url',
+      990000101,
+      async () => {
+        await db.query(
+          `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES (990000105, 'key-990000101', 990100105, false)`
+        );
+        await report(990000105);
+      },
+    ],
+  ])('keeps an image with %s to moderators cleared for CSAM review', async (_label, id, mark) => {
+    await mark();
+    expect(await getRetractedMedia(id, { csamReview: false })).toBeNull();
+    expect(await getRetractedMedia(id, { csamReview: true })).toMatchObject({ url: `key-${id}` });
+  });
+});
+
+describe('a copy with only a minor flag', () => {
+  it('leaves the image open to any moderator', async () => {
+    scanner.verdict = 'clear';
+    await db.query(`UPDATE "Image" SET minor = true WHERE id = 990000102`);
+    try {
+      expect(await tierOf(990000101)).toBe('plain');
+    } finally {
+      await db.query(`UPDATE "Image" SET minor = false WHERE id = 990000102`);
+    }
   });
 });
 

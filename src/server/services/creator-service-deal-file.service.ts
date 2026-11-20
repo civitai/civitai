@@ -77,7 +77,7 @@ import {
   headObject,
   uploadImageBufferToStore,
 } from '~/utils/s3-utils';
-import { purgeObjectVersions } from '~/utils/s3-purge-versions';
+import { purgeObjectVersions } from '@civitai/storage/s3-purge-versions';
 import { dealFilesHeld } from '~/server/services/creator-service-deal-file-retention';
 
 /**

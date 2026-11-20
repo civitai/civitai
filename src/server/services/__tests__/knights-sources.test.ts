@@ -16,7 +16,9 @@ const {
   parseKnightsSourcesConfig,
   queueOwnerRatingForKnights,
   queueScanSampleForKnights,
+  readKnightsSourcesConfig,
 } = await import('~/server/services/knights/sources');
+const { knightsSampleDraw } = await import('~/server/services/knights/sampling');
 
 const configured = (value: unknown) =>
   redisMock.sysRedis.get.mockResolvedValue(value === null ? null : JSON.stringify(value));
@@ -65,7 +67,7 @@ describe('queueScanSampleForKnights', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
-  it('queues a safe-looking scan at priority 1 and an NSFW one at priority 2, servable images only', async () => {
+  it('queues a safe-looking scan at priority 1 and an NSFW one at priority 2, only on a live post and only once per image', async () => {
     configured({ enabled: true });
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0.99);
     await queueScanSampleForKnights({ imageId: 2, nsfw: true }, () => 0.29);
@@ -79,7 +81,7 @@ describe('queueScanSampleForKnights', () => {
         items: [{ imageId: 1, priority: 1 }],
       },
       undefined,
-      { requirePost: true }
+      { requirePublished: true, oncePerImage: true }
     );
     expect(enqueue).toHaveBeenNthCalledWith(
       2,
@@ -90,7 +92,7 @@ describe('queueScanSampleForKnights', () => {
         items: [{ imageId: 2, priority: 2 }],
       },
       undefined,
-      { requirePost: true }
+      { requirePublished: true, oncePerImage: true }
     );
   });
 
@@ -103,6 +105,18 @@ describe('queueScanSampleForKnights', () => {
     await queueScanSampleForKnights({ imageId: 3, nsfw: false }, () => 0.4);
     await queueScanSampleForKnights({ imageId: 4, nsfw: true }, () => 0.05);
     expect(enqueue.mock.calls.map(([, input]) => input.items[0].imageId)).toEqual([3, 4]);
+  });
+
+  it('draws each image once from its id, so a repeated scan of the same image decides the same way', async () => {
+    configured({ enabled: true, sfwRate: 0, nsfwRate: 0.5 });
+    const ids = Array.from({ length: 40 }, (_, i) => 2000 + i);
+    for (const imageId of [...ids, ...ids])
+      await queueScanSampleForKnights({ imageId, nsfw: true });
+
+    const picked = ids.filter((id) => knightsSampleDraw(id) < 0.5);
+    expect(picked.length).toBeGreaterThan(5);
+    expect(picked.length).toBeLessThan(35);
+    expect(queuedIds()).toEqual([...picked, ...picked]);
   });
 
   it('never throws into the scan when the enqueue or the config read fails', async () => {
@@ -146,6 +160,17 @@ describe('the switch read', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  it('tells a switch that is off from one that could not be read in time', async () => {
+    vi.useFakeTimers();
+    redisMock.sysRedis.get.mockReturnValueOnce(new Promise(() => undefined));
+    const unread = readKnightsSourcesConfig();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await unread).toBeNull();
+
+    configured({ enabled: false });
+    expect(await readKnightsSourcesConfig()).toMatchObject({ enabled: false });
+  });
+
   it('does not remember a timed-out read as off, so the next scan reads Redis again', async () => {
     vi.useFakeTimers();
     redisMock.sysRedis.get.mockReturnValueOnce(new Promise(() => undefined));
@@ -162,7 +187,7 @@ describe('the switch read', () => {
 });
 
 describe('queueOwnerRatingForKnights', () => {
-  it('queues an owner self-rating at priority 1 only when the switch is on', async () => {
+  it('queues an owner self-rating at priority 1, on a live post only, only when the switch is on', async () => {
     await queueOwnerRatingForKnights(7);
     expect(enqueue).not.toHaveBeenCalled();
 
@@ -177,7 +202,7 @@ describe('queueOwnerRatingForKnights', () => {
         items: [{ imageId: 7, priority: 1 }],
       },
       undefined,
-      { requirePost: true }
+      { requirePublished: true, stillImagesOnly: true }
     );
   });
 

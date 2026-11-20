@@ -6,20 +6,14 @@ import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsing
 import { trpc } from '~/utils/trpc';
 
 /**
- * A moderator's rating picker for ONE listing image on the review page.
+ * A moderator's rating picker for ONE listing image on the review page, through the existing
+ * `image.updateImageNsfwLevel`.
  *
- * 🔴 NO NEW WRITE PATH. It calls the existing `image.updateImageNsfwLevel`, whose MODERATOR
- * branch is what makes the choice the image's real rating everywhere: it sets the level, locks
- * it against the automated rater (`nsfwLevelLocked`), settles pending votes, and re-derives the
- * rating of every store listing that shows the image. The server decides who is a moderator;
- * hiding the picker from everyone else is presentation, not the gate.
+ * 🔴 The server decides who is a moderator; hiding the picker from everyone else is
+ * presentation, not the gate.
  *
- * After a success the two reads that show this image's level are UPDATED in the cache for each of
- * `listingIds`, with the level the server wrote: `appListings.getAssets` (the media badges here,
- * and the approve bar's "approving raises the rating" warning, `OnsiteApproveRatingWarning`) and
- * `appListings.getListingPreviewForReview` (the screenshots row). They are then marked stale
- * without an immediate refetch, which could read the old level back from a lagging replica — see
- * `reviewImageLevels.ts`. A refusal is shown under the picker, as the server worded it.
+ * A success patches the cached reads instead of refetching them, which could read the old level
+ * back from a lagging replica (`reviewImageLevels.ts`).
  */
 export function ReviewImageRatingPicker({
   imageId,

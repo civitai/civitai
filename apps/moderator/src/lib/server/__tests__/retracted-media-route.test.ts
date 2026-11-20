@@ -23,16 +23,9 @@ vi.mock('$lib/server/access', () => ({
 vi.mock('$lib/server/retracted-media', () => ({
   getRetractedMedia,
   recordRetractedView,
-  NEEDS_CSAM_QUEUE: 'needs-csam-queue',
   retractedMediaEnabled: () => enabled.on,
 }));
 vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
-// Off here; the covered view's routes are csam-view-routes.test.ts.
-vi.mock('$lib/server/csam-view', () => ({
-  COVERED_REFUSED: 'covered-refused',
-  coveredViewEnabled: () => false,
-  getCoveredRetractedMedia: vi.fn(),
-}));
 vi.mock('$lib/server/held-media', () => ({
   HELD_MEDIA_PAGE: '/images/csam',
   recordHeldServe: () => undefined,
@@ -101,14 +94,6 @@ describe('/api/retracted-media', () => {
     expect(status).toBe(404);
     expect(res?.headers.get('cache-control')).toBe('private, no-store');
     expect(getRetractedMedia).not.toHaveBeenCalled();
-  });
-
-  it('tells a moderator an image with no scanner verdict needs CSAM-queue access', async () => {
-    getRetractedMedia.mockResolvedValue('needs-csam-queue');
-    const { status, res } = await call();
-    expect(status).toBe(403);
-    expect(await res!.text()).toContain('Needs CSAM-queue access');
-    expect(getGetUrl).not.toHaveBeenCalled();
   });
 
   it('answers a probe with eligibility alone: no storage, no audit row', async () => {

@@ -83,23 +83,27 @@ describe('🔴 the per-viewer gate tells xxx from x', () => {
     const text = (allowed: { r: boolean; x: boolean; xxx: boolean }) =>
       subListingMatureFilter(allowed).sql.replace(/\s+/g, ' ');
     expect(text({ r: true, x: true, xxx: false })).toBe(
-      "(TRUE) AND COALESCE(LOWER(s.content_rating), '') <> 'xxx'"
+      "COALESCE(LOWER(s.content_rating), '') <> 'xxx'"
     );
     expect(text({ r: true, x: true, xxx: true })).toBe('TRUE');
     expect(text({ r: false, x: false, xxx: false })).toBe(
-      "(COALESCE(LOWER(s.content_rating), '') NOT IN ('r', 'x')) AND COALESCE(LOWER(s.content_rating), '') <> 'xxx'"
+      "COALESCE(LOWER(s.content_rating), '') NOT IN ('r', 'x', 'xxx')"
     );
     expect(text({ r: true, x: false, xxx: true })).toBe(
       "COALESCE(LOWER(s.content_rating), '') <> 'x'"
     );
-    // An app (listing) is never rated xxx: its filter is unchanged.
-    expect(listingMatureFilter({ r: true, x: true, xxx: false }).sql).toBe('TRUE');
+    // An app listing is gated the same way: xxx only with XXX.
+    expect(listingMatureFilter({ r: true, x: true, xxx: false }).sql).toBe(
+      "COALESCE(LOWER(al.content_rating), '') <> 'xxx'"
+    );
   });
 
-  it('a registry audience never admits xxx: it cannot say whether its user does', async () => {
+  it('a registry audience carries its user’s XXX allowance', async () => {
     const { audienceForUser } = await import('~/server/registry-adapter/audience');
-    const audience = audienceForUser({ showNsfw: true, browsingLevel: 1 | 2 | 4 | 8 | 16 });
-    expect(audience.allowed.xxx).toBe(false);
+    const withXxx = audienceForUser({ showNsfw: true, browsingLevel: 1 | 2 | 4 | 8 | 16 });
+    expect(withXxx.allowed).toEqual({ r: true, x: true, xxx: true });
+    const withoutXxx = audienceForUser({ showNsfw: true, browsingLevel: 1 | 2 | 4 | 8 });
+    expect(withoutXxx.allowed).toEqual({ r: true, x: true, xxx: false });
   });
 });
 

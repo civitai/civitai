@@ -1194,6 +1194,13 @@ function needsReviewKeyedCtes(
   const matches = matchLabels(use, flag);
   if (matches.minor) {
     ctes.push(minorSrcCte, matchCandidatesCte);
+    if (search && 'modelOrUserId' in search)
+      // minor_src has no index, so the per-candidate EXISTS below reads this id-filtered copy.
+      ctes.push(sql`
+      searched_seeds AS MATERIALIZED (
+        SELECT hash, "userId" FROM minor_src
+        WHERE "minorModelId" = ${search.modelOrUserId} OR "userId" = ${search.modelOrUserId}
+      )`);
     ctes.push(sql`
       matched AS (
         SELECT c."modelId", c."uploadedAt" AS at,
@@ -1217,10 +1224,9 @@ function needsReviewKeyedCtes(
               userId: 'c.userId',
               username: 'u.username',
             },
-            (id) => sql`EXISTS (
-              SELECT 1 FROM minor_src s3
+            () => sql`EXISTS (
+              SELECT 1 FROM searched_seeds s3
               WHERE s3.hash = c.hash AND s3."userId" <> c."userId"
-                AND (s3."minorModelId" = ${id} OR s3."userId" = ${id})
             )`
           )}
       )`);
