@@ -13,8 +13,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const holder = vi.hoisted(() => ({
   db: null as unknown as PGlite,
   refuseExternal: false,
-  scannedRows: false,
-  refuseExternalApp: true,
+  scannedRows: false as boolean | null,
+  refuseExternalApp: true as boolean | null,
   clickhouseDown: false,
 }));
 
@@ -26,8 +26,16 @@ vi.mock('~/server/flipt/client', () => ({
   },
   isFlipt: async (flag: string) =>
     (flag === 'generation-input-refuse-external-hosts' && holder.refuseExternal) ||
-    (flag === 'app-block-source-scanned-rows' && holder.scannedRows) ||
-    (flag === 'app-block-refuse-external-sources' && holder.refuseExternalApp),
+    (flag === 'app-block-source-scanned-rows' && holder.scannedRows === true) ||
+    (flag === 'app-block-refuse-external-sources' && holder.refuseExternalApp === true),
+  // The App Blocks source flags' read: null is a flag that could not be evaluated.
+  isFliptSync: (flag: string) =>
+    flag === 'app-block-source-scanned-rows'
+      ? holder.scannedRows
+      : flag === 'app-block-refuse-external-sources'
+      ? holder.refuseExternalApp
+      : null,
+  ensureFliptInitialized: async () => undefined,
 }));
 
 // No upload request log rows: a key with no record is answered by the issue record alone.
@@ -592,6 +600,53 @@ describe('an App Blocks generation source', () => {
     for (const entry of APP_ENTRIES)
       expect(await check([BLOB], entry)).toBe(`refused: ${APP_SOURCE_NOT_ON_CIVITAI_MESSAGE}`);
     expect(await check([BLOB], 'generateFromGraph')).toBe('accepted');
+  });
+
+  describe('an App Blocks source flag that cannot be evaluated', () => {
+    const registered = vi.mocked(registerCounterWithLabels).mock;
+    const unknownCounter = registered.results[
+      registered.calls.findIndex(([def]) => def.name === 'app_block_source_flag_unknown_total')
+    ]?.value as { inc: ReturnType<typeof vi.fn> };
+    const BLOB_FRAME =
+      'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg?sig=s&exp=x';
+
+    beforeEach(() => {
+      holder.refuseExternal = false;
+      unknownCounter.inc.mockClear();
+    });
+
+    it('refuses an external source from an app, and counts the unread flag', async () => {
+      holder.refuseExternalApp = null;
+      expect(await check(['https://example.com/a.png'], 'appBlocksPassThrough', true)).toMatch(
+        /^refused: /
+      );
+      expect(unknownCounter.inc.mock.calls).toEqual([[{ flag: 'refuse-external-sources' }]]);
+    });
+
+    it('refuses an orchestrator source from an app, and counts the unread flag', async () => {
+      holder.scannedRows = null;
+      expect(await check([BLOB_FRAME], 'appBlocksPassThrough', true)).toBe(
+        `refused: ${APP_SOURCE_NOT_ON_CIVITAI_MESSAGE}`
+      );
+      expect(unknownCounter.inc.mock.calls).toEqual([[{ flag: 'source-scanned-rows' }]]);
+    });
+
+    it('🔴 onsite generation still accepts an external url, and reads no App Blocks flag', async () => {
+      holder.refuseExternalApp = null;
+      holder.scannedRows = null;
+      expect(await check(['https://example.com/a.png'], 'generateFromGraph')).toBe('accepted');
+      expect(unknownCounter.inc).not.toHaveBeenCalled();
+    });
+
+    it('control: readable flags that are off accept both, and count nothing', async () => {
+      holder.refuseExternalApp = false;
+      holder.scannedRows = false;
+      expect(await check(['https://example.com/a.png'], 'appBlocksPassThrough', true)).toBe(
+        'accepted'
+      );
+      expect(await check([BLOB_FRAME], 'appBlocksPassThrough', true)).toBe('accepted');
+      expect(unknownCounter.inc).not.toHaveBeenCalled();
+    });
   });
 
   describe('the orchestrator source count', () => {
