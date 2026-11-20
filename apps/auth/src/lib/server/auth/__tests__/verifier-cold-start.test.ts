@@ -82,29 +82,31 @@ describe('hub verifier at cold start', () => {
     expect(isUnconfirmedSession(claims!)).toBe(false);
   });
 
+  // Timing bounds leave a wide margin (hundreds of ms) on each side, so scheduler jitter on a loaded runner
+  // cannot flip them: each "did not wait" bound sits well below the wait it rules out.
   it('spends one deadline on the wait and the read, then allows the session marked', async () => {
-    process.env.REDIS_SYS_READ_TIMEOUT_MS = '80';
+    process.env.REDIS_SYS_READ_TIMEOUT_MS = '300';
     const { verifier, isUnconfirmedSession } = await load();
     const started = Date.now();
     const claims = await verifier.verifyToken(revoked);
     const took = Date.now() - started;
     expect(claims?.sub).toBe('7');
     expect(isUnconfirmedSession(claims!)).toBe(true);
-    expect(took).toBeGreaterThanOrEqual(70);
-    expect(took).toBeLessThan(150);
+    expect(took).toBeGreaterThanOrEqual(270);
+    expect(took).toBeLessThan(550);
   });
 });
 
 describe('hub verifier starting during a store outage', () => {
   it('waits one read deadline in all, then allows at once until the store is up', async () => {
-    process.env.REDIS_SYS_READ_TIMEOUT_MS = '80';
+    process.env.REDIS_SYS_READ_TIMEOUT_MS = '300';
     const { verifier, isUnconfirmedSession } = await load();
     const first = Date.now();
     await verifier.verifyToken(live);
-    expect(Date.now() - first).toBeGreaterThanOrEqual(70);
+    expect(Date.now() - first).toBeGreaterThanOrEqual(270);
     const second = Date.now();
     const claims = await verifier.verifyToken(live);
-    expect(Date.now() - second).toBeLessThan(30);
+    expect(Date.now() - second).toBeLessThan(150);
     expect(claims?.sub).toBe('8');
     expect(isUnconfirmedSession(claims!)).toBe(true);
   });
@@ -116,10 +118,11 @@ describe('hub verifier after the store has been ready', () => {
     h.client.isReady = true;
     expect(await verifier.verifyToken(live)).not.toBeNull();
     h.client.isReady = false;
-    setTimeout(() => (h.client.isReady = true), 50);
+    // Had it waited, it would read the revocation once the store is back at 600 ms and refuse.
+    setTimeout(() => (h.client.isReady = true), 600);
     const started = Date.now();
     const claims = await verifier.verifyToken(revoked);
-    expect(Date.now() - started).toBeLessThan(40);
+    expect(Date.now() - started).toBeLessThan(300);
     expect(claims?.sub).toBe('7');
     expect(isUnconfirmedSession(claims!)).toBe(true);
   });
