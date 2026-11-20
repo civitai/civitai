@@ -53,10 +53,12 @@ import {
   KEPT_MODEL_STATUS,
   notRemovedWithOwnerSql,
   PLACEHOLDER_OWNER_ID,
+  userUnderLegalHoldSql,
 } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import { isEqual, uniq } from 'lodash-es';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { notifyModAlert } from '~/server/common/mod-alert';
 import dayjs from '~/shared/utils/dayjs';
 import {
   banReasonDetails,
@@ -496,18 +498,23 @@ export async function archiveProfileBeforeModeratorChange({
   archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
   alwaysArchive?: boolean;
 }) {
-  // Any report, held or not, unlike `legalHoldUserIdsSql`: archiving more is the safe side here.
-  // The secondary user is matched as text, as `legalHoldUserIdsSql` does.
+  // Every legal hold (`userUnderLegalHoldSql`, manual evidence holds included), plus any report
+  // naming the user, held or not: archiving more is the safe side here.
+  const heldSql = userUnderLegalHoldSql(Prisma.sql`${userId}::int`);
+  const idText = String(userId);
   const mustArchive =
     alwaysArchive ||
-    // primary: a report filed a moment ago must not let this change skip the archive.
+    // primary: a report or hold made a moment ago must not let this change skip the archive.
     !!(
       await dbWrite.$queryRaw<{ named: boolean }[]>`
-        SELECT EXISTS (
-          SELECT 1 FROM "CsamReport" r
-          WHERE r."userId" = ${userId} OR r.details ->> 'secondaryUserId' = ${String(
-        userId
-      )}        ) AS named
+        SELECT (
+          EXISTS (
+            SELECT 1 FROM "CsamReport" r
+            WHERE r."userId" = ${userId}
+              OR r.details ->> 'secondaryUserId' = ${idText}
+          )
+          OR ${heldSql}
+        ) AS named
       `
     )[0]?.named;
   if (mustArchive) {
@@ -3140,6 +3147,7 @@ async function deleteBannedUserLinks({
       alwaysArchive,
     });
   } catch (error) {
+    // The links stay as evidence; public link reads already skip a banned user's.
     logToAxiom({
       type: 'error',
       name: 'ban-user-archive-profile',
@@ -3147,6 +3155,10 @@ async function deleteBannedUserLinks({
       message: (error as Error).message,
       error,
     });
+    await notifyModAlert(
+      'Ban kept profile links: archive failed',
+      `User ${userId} is banned, but archiving their profile failed, so their links were kept (hidden from public pages). Archive and remove them once the archive works again.`
+    ).catch(handleLogError);
     return;
   }
   await dbWrite.userLink.deleteMany({ where: { userId } }).catch((error) =>

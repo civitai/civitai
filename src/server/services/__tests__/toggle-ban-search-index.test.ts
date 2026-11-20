@@ -473,6 +473,28 @@ describe('toggleBan -> profile links', () => {
     );
   });
 
+  it('alerts the moderators when the archive fails on a ban', async () => {
+    reported();
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    setEnv({ DISCORD_WEBHOOK_MOD_ALERTS: 'https://example.invalid/mod-alerts' });
+    try {
+      await banWithArchive(async () => {
+        throw new Error('bucket down');
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      setEnv({ DISCORD_WEBHOOK_MOD_ALERTS: undefined });
+    }
+
+    expect(userLinkDeleteMany).not.toHaveBeenCalled();
+    const alerts = fetchMock.mock.calls.filter(
+      ([url]) => String(url) === 'https://example.invalid/mod-alerts'
+    );
+    expect(alerts).toHaveLength(1);
+    expect(JSON.stringify((alerts[0] as unknown[])[1])).toContain(String(USER_ID));
+  });
+
   it('keeps the links and still bans when the archive fails', async () => {
     reported();
     const archive = vi.fn(async () => {

@@ -9,8 +9,10 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const SCHEMA = `
 CREATE TABLE "CsamReport" (
-  "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}'
+  "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}',
+  "reportSentAt" TIMESTAMP(3), "archivedAt" TIMESTAMP(3)
 );
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER NOT NULL, "role" TEXT NOT NULL);
 `;
 
 let pg: PGlite;
@@ -34,7 +36,7 @@ beforeEach(async () => {
   dbMock.dbWrite.$queryRaw.mockImplementation(pgliteRaw(pg).queryRaw as never);
   dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({ bio: 'b' } as never);
   dbMock.dbWrite.userLink.findMany.mockResolvedValue([] as never);
-  await pg.exec(`DELETE FROM "CsamReport"`);
+  await pg.exec(`DELETE FROM "CsamReport"; DELETE FROM "EvidenceHeldUser"`);
 });
 
 const archived = async () => {
@@ -62,6 +64,20 @@ describe('archiveProfileBeforeModeratorChange report match', () => {
       OTHER,
       JSON.stringify({ secondaryUserId: String(USER) }),
     ]);
+    expect(await archived()).toBe(true);
+  });
+
+  it('archives a user held only by a manual evidence hold', async () => {
+    await pg.query(`INSERT INTO "EvidenceHeldUser" ("userId", role) VALUES ($1, 'manual')`, [USER]);
+    expect(await archived()).toBe(true);
+  });
+
+  it('archives the subject of a report that no longer holds', async () => {
+    await pg.query(
+      `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt")
+       VALUES ($1, now() - interval '2 years', now() - interval '2 years')`,
+      [USER]
+    );
     expect(await archived()).toBe(true);
   });
 
