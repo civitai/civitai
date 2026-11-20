@@ -196,9 +196,9 @@ function noticeText(testId: string): string {
 const ALERT_TITLE = 'This app is unpublished';
 const DRIFTED_NOTICE_TEXT =
   ALERT_TITLE +
-  `This app is unpublished, so its name, App URL, source repository, issue tracker and content rating ` +
-  `are locked — and your OAuth app's permissions have changed since this listing was last ` +
-  `reviewed. That changed permission set rides along on every save, so while the app stays ` +
+  `This app is unpublished, so its name, App URL, source repository, issue tracker, content rating ` +
+  `and permission justifications (including offline access) are locked — and your OAuth ` +
+  `app's permissions have changed since this listing was last reviewed.That changed permission set rides along on every save, so while the app stays ` +
   `unpublished NOTHING on this screen can be saved — not the tagline, description or ` +
   `category either. To edit anything, ask the app's owner to republish it; the new ` +
   `permissions are then reviewed along with your changes.`;

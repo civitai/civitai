@@ -70,7 +70,7 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       create: vi.fn(async (args: { data: unknown }) => args.data),
-      update: vi.fn(async (args: { data: unknown }) => args.data),
+      update: vi.fn(async (args: { where: { id: string }; data: unknown }) => args.data),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
       deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
     },
@@ -474,9 +474,7 @@ describe('updateListing — the justification map is MATERIAL on a live listing 
       .mockResolvedValueOnce({ id: 'apl_shadow_j' });
   });
   const liveWrites = () =>
-    mockWrite.appListing.update.mock.calls.filter(
-      (c) => (c[0] as { where: { id: string } }).where.id === 'apl_parent'
-    );
+    mockWrite.appListing.update.mock.calls.filter(([args]) => args.where.id === 'apl_parent');
 
   it.each([
     ['TICKING offline_access', {}, { offline_access: 'syncs your images nightly' }],
