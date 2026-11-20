@@ -316,9 +316,7 @@ if (!OTEL_ENABLED) {
     sdk.start();
     console.log(`[instrumentation.node] OTEL SDK started - traces and logs -> ${OTEL_ENDPOINT}`);
 
-    // From here each raw console call is also one OTLP record, when OTEL_LOGS_ENABLED and
-    // OTEL_CONSOLE_BACKSTOP_ENABLED are both 'true' (off by default).
-    // After `new NodeSDK`, which installs the diag logger this has to re-register.
+    // Must run after `new NodeSDK`, which installs the diag logger the backstop re-registers.
     try {
       armConsoleOtlpBackstop();
     } catch (err) {

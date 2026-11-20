@@ -15,6 +15,7 @@ import {
   withConsoleForwardingSuppressed,
 } from '@civitai/axiom/console-forwarding';
 import { otelConsoleRecordsDroppedCounter } from '@civitai/telemetry/otel-logs';
+import { redactCredentialsInString } from '@civitai/axiom/redact-credentials';
 import { emitConsoleLog, type ConsoleLogSource } from '~/server/logging/structured-log-sink';
 
 export const CONSOLE_BACKSTOP_METHODS = ['log', 'info', 'warn', 'error', 'debug'] as const;
@@ -33,8 +34,7 @@ const SEVERITY: Record<ConsoleMethod, 'error' | 'warn' | 'info'> = {
  * counted. The OTLP export queue this feeds also carries the app logger's alert-feeding records,
  * and many processes run this at once, so the total is these figures times the process count.
  *
- * - 50 records/s: under a tenth of one 512-record export batch, and well above the expected
- *   unforwarded console rate (about one line per second).
+ * - 50 records/s: under a tenth of one 512-record export batch.
  * - 64 KiB/s: a library printing large objects reaches the byte budget long before the record
  *   budget (32 full-size bodies), so a burst costs bandwidth in proportion to records, not size.
  * - 2048-character body: room for a full stack trace; a longer line is cut (stdout keeps it all).
@@ -48,10 +48,16 @@ export const CONSOLE_RECORD_BODY_MAX = 2048;
 // a bounded strip. A multiple of the cap leaves room for the codes that the strip removes.
 const PRE_STRIP_SLICE = CONSOLE_RECORD_BODY_MAX * 4;
 
-/** One record's body: formatted as console formats it, colour codes stripped, cut to the cap. */
+/**
+ * One record's body: formatted as console formats it, colour codes stripped, credentials redacted
+ * (as the structured logger and the span processor do), cut to the cap.
+ */
 export function consoleRecordBody(args: unknown[]): string {
   const formatted = format(...args).slice(0, PRE_STRIP_SLICE);
-  return stripVTControlCharacters(formatted).slice(0, CONSOLE_RECORD_BODY_MAX);
+  return redactCredentialsInString(stripVTControlCharacters(formatted)).slice(
+    0,
+    CONSOLE_RECORD_BODY_MAX
+  );
 }
 
 export type ConsoleRecord = {

@@ -104,6 +104,19 @@ describe('installConsoleOtlpBackstop', () => {
     expect(emitted.map((e) => e.body)).toEqual(['z'.repeat(2048), 'r'.repeat(2048), '']);
   });
 
+  it('redacts credentials in the forwarded body and leaves the stdout write untouched', () => {
+    const { target, originals, emitted } = installOnFake();
+    const line =
+      'fetch failed https://example.test/f?token=abc123&page=2 Authorization: Bearer eyJhbGciOiJIUzI1NiJ9abcd';
+
+    target.error(line);
+
+    expect(originals.error).toHaveBeenCalledWith(line);
+    expect(emitted[0].body).toBe(
+      'fetch failed https://example.test/f?token=[redacted]&page=2 Authorization: Bearer [redacted]'
+    );
+  });
+
   it('turns console.error(err) into ONE record carrying the whole stack', () => {
     const { target, emitted } = installOnFake();
     const err = new Error('kaboom');
