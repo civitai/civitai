@@ -166,6 +166,17 @@ describe('both migrations applied', () => {
     expect(await s.redSlots(LIVE)).toEqual({ icon: null, cover: XXX_IMG });
   });
 
+  it('the override migration is idempotent', async () => {
+    await s.setRedSlots(LIVE, { icon: R_IMG, cover: null });
+    await s.applyRedSlotsMigration();
+    expect(await s.redSlots(LIVE)).toEqual({ icon: R_IMG, cover: null });
+    const { rows } = await s.db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_indexes
+       WHERE tablename = 'app_listing_red_media'
+         AND indexname IN ('app_listing_red_media_red_icon_idx', 'app_listing_red_media_red_cover_idx')`
+    );
+    expect(rows[0].n).toBe(2);
+  });
   it('🔴 an override write never touches the split decision, and a split decision never touches the overrides', async () => {
     await applyListingMediaSplitDecision(s.raw, {
       appListingId: LIVE,

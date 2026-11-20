@@ -146,6 +146,13 @@ describe('getCollectionItemCountTasks', () => {
     ]);
   });
 
+  it('reads ClickHouse once per five minutes, and still recounts the queue in between', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    const { run, chCalls, updates } = context(new Date(NOW.getTime() - 60 * 1000), [34]);
+    await run();
+    expect(chCalls).toEqual([]);
+    expect(updates).toEqual({ 34: { articleId: 34, collectedCount: 1 } });
+  });
   it('writes 0 for an affected entity with no rows left, so the old value does not stand', async () => {
     vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
     await pg.exec(`DELETE FROM "CollectionItem" WHERE "articleId" = 31`);

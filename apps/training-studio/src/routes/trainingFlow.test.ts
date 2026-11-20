@@ -714,11 +714,12 @@ describe('withTags', () => {
 });
 
 describe('tagEntryKey', () => {
-  const key = (k: string, shiftKey = false, isComposing = false, keyCode = 0) => ({
+  const key = (k: string, shiftKey = false, isComposing = false, keyCode = 0, repeat = false) => ({
     key: k,
     shiftKey,
     isComposing,
     keyCode,
+    repeat,
   });
   it('Enter adds the typed tags; Shift+Enter and IME composition leave the newline/text alone', () => {
     expect(tagEntryKey(key('Enter'), '1girl, solo', 0)).toBe('commit');
@@ -730,6 +731,9 @@ describe('tagEntryKey', () => {
     expect(tagEntryKey(key('Backspace'), '', 2)).toBe('removeLast');
     expect(tagEntryKey(key('Backspace'), 'so', 2)).toBeNull();
     expect(tagEntryKey(key('Backspace'), '', 0)).toBeNull();
+  });
+  it('a held Backspace that empties the box does not go on to remove tags', () => {
+    expect(tagEntryKey(key('Backspace', false, false, 0, true), '', 2)).toBeNull();
   });
 });
 
