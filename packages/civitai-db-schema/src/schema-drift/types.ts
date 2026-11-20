@@ -171,8 +171,21 @@ export interface DbCatalog {
    * without a date that decay is invisible. `snapshotAge` in `gate.ts` is the guard.
    */
   capturedAt?: string;
-  /** Ordinary + partitioned tables. Views are deliberately absent: see the README. */
+  /** Ordinary + partitioned tables. Views are listed separately, in `views`. */
   tables: string[];
+  /**
+   * Views and materialised views, so a model mapped to one can be told apart from a model
+   * mapped to a table that is not there at all.
+   *
+   * ABSENT IS NOT EMPTY, and the differ must not read it as one. Until this field existed
+   * both cases arrived as the same thing — "no table of that name" — and both were skipped
+   * wholesale with the reason "view, or absent". A model on a view is correctly unmanaged;
+   * a model on a nothing is drift, and the larger the drift the quieter the tool got. A
+   * snapshot captured before this field carries `undefined`, which means unclassifiable, and
+   * the differ degrades to the old lumped reason rather than accusing 23 views of being
+   * missing tables.
+   */
+  views?: string[];
   columns: CatalogColumn[];
   foreignKeys: CatalogForeignKey[];
   uniqueIndexes: CatalogUniqueIndex[];
@@ -186,6 +199,7 @@ export type DriftKind =
   | 'missing-foreign-key'
   | 'referential-action'
   | 'missing-column'
+  | 'missing-table'
   | 'nullability'
   | 'uniqueness';
 
@@ -214,9 +228,18 @@ export interface SkippedRelation {
   reason: string;
 }
 
+/**
+ * Why a model was skipped, as a value rather than as prose.
+ *
+ * `unclassified` is the one that matters: it means the snapshot carries no `views` list, so
+ * `view` and `absent` could not be told apart. Counting it as either would be a guess.
+ */
+export type SkipClassification = 'ignored' | 'view' | 'absent' | 'unclassified';
+
 export interface SkippedModel {
   model: string;
   table: string;
+  classification: SkipClassification;
   reason: string;
 }
 
@@ -236,6 +259,10 @@ export interface DriftCounts {
   columnsChecked: number;
   /** Scalar fields whose column is absent from the table entirely. */
   missingColumns: number;
+  /** Models whose table is neither a table nor a view in the catalog. */
+  missingTables: number;
+  /** Models skipped because the snapshot could not say whether the table is a view. */
+  modelsUnclassified: number;
   nullabilityDrifts: number;
   uniqueDeclarationsChecked: number;
   uniquenessDrifts: number;
