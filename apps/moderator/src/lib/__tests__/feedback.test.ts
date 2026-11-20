@@ -272,6 +272,14 @@ describe('splitContext', () => {
     expect(ctx.other).toEqual({ trpcErrors: bad });
   });
 
+  it('never shows the HQ sync hold, a queue-internal key, under other', () => {
+    const ctx = splitContext({
+      syncHold: { at: '2026-11-20T10:00:00.000Z', by: 4242 },
+      unknownKey: 'kept',
+    });
+    expect(ctx.other).toEqual({ unknownKey: 'kept' });
+  });
+
   it('leaves a `server` object of another shape, and a malformed device, under other', () => {
     const ctx = splitContext({ server: { fingerprint: 'abc' }, device: { viewport: 'big' } });
     expect(ctx.environment).toEqual([]);

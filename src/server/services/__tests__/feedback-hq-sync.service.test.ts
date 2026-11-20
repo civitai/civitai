@@ -309,6 +309,66 @@ describe('runFeedbackHqSync: a status a human set', () => {
   });
 });
 
+describe('runFeedbackHqSync: a row a moderator moved back to new (held)', () => {
+  it('🔴 leaves a held row alone: no write, no task read, counted as held', async () => {
+    const { d, calls, counted, reads } = deps({
+      links: [{ feedbackId: 990000700, taskId: 't_open' }],
+      rows: [{ id: 990000700, status: 'new', handledById: null, hqTaskId: null, held: true }],
+      tasks: { t_open: open },
+    });
+    const summary = await runFeedbackHqSync(d);
+    expect(calls).toEqual([]);
+    expect(reads).toEqual([]);
+    expect(counted).toEqual({ held: 1 });
+    expect(summary.held).toBe(1);
+  });
+
+  it('works an unheld neighbour as before in the same run', async () => {
+    const { d, calls, counted } = deps({
+      links: [
+        { feedbackId: 990000701, taskId: 't_open' },
+        { feedbackId: 990000702, taskId: 't_open' },
+      ],
+      rows: [
+        { id: 990000701, status: 'new', handledById: null, hqTaskId: null, held: true },
+        { id: 990000702, status: 'new', handledById: null, hqTaskId: null, held: false },
+      ],
+      tasks: { t_open: open },
+    });
+    await runFeedbackHqSync(d);
+    expect(calls).toEqual([
+      { id: 990000702, status: 'reviewed', expectedStatus: 'new', hqTaskUrl: url('t_open') },
+    ]);
+    expect(counted).toMatchObject({ held: 1, moved_reviewed: 1 });
+  });
+
+  it('🔴 once a moderator moves it forward (the hold removed), the sync works it again', async () => {
+    const link = { feedbackId: 990000703, taskId: 't_done' };
+    // Held at new: skipped.
+    const before = deps({
+      links: [link],
+      rows: [{ id: 990000703, status: 'new', handledById: null, hqTaskId: null, held: true }],
+      tasks: { t_done: complete },
+    });
+    await runFeedbackHqSync(before.d);
+    expect(before.calls).toEqual([]);
+    // The moderator reviewed it, which removed the hold: the completed task now actions it.
+    const after = deps({
+      links: [link],
+      rows: [
+        { id: 990000703, status: 'reviewed', handledById: HUMAN, hqTaskId: null, held: false },
+      ],
+      tasks: { t_done: complete },
+    });
+    await runFeedbackHqSync(after.d);
+    expect(after.calls).toEqual([
+      { id: 990000703, status: 'actioned', expectedStatus: 'reviewed', hqTaskUrl: url('t_done') },
+    ]);
+    expect(after.counted).toMatchObject({ moved_actioned: 1 });
+    expect(after.counted.held).toBeUndefined();
+  });
+});
+
 describe('runFeedbackHqSync: a moderator acting mid-run', () => {
   it('scopes every write on the handler it read, so a row a moderator took over is refused', async () => {
     const { d, handlers } = deps({

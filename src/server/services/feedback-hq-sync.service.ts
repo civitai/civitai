@@ -39,8 +39,10 @@ import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
  * report's intake task, later attached to a cluster task) keeps its link; its status follows the
  * `feedback_items` task.
  *
- * ⚠️ NOT COVERED: a moderator moving a row back to `new` clears its handler, so the next run moves it
- * to `reviewed` again. Nothing distinguishes that row from one never triaged.
+ * 🔴 A ROW A MODERATOR MOVED BACK TO `new` IS LEFT ALONE. That move clears the handler, so the row
+ * looks never triaged; the queue's triage write marks it HELD instead (`context.syncHold`, see
+ * `FEEDBACK_SYNC_HOLD_KEY`), and this skips a held row entirely, counted as `held`. The next
+ * human move to any other status removes the hold, and the row is worked again from there.
  */
 
 export const MAX_MERGE_HOPS = 1;
@@ -62,6 +64,8 @@ export type FeedbackSyncRow = {
   handledById: number | null;
   /** `context.hq.id`, or null when the row records no HQ task. */
   hqTaskId: string | null;
+  /** `context.syncHold` is set: a moderator moved the row back to `new`, so the sync leaves it. */
+  held?: boolean;
 };
 
 type SyncStatus = Exclude<FeedbackTriageStatus, 'new'>;
@@ -101,6 +105,8 @@ export type SyncSummary = {
   conflicts: number;
   gone: number;
   humanSet: number;
+  /** Rows skipped because a moderator moved them back to `new` (`held`). */
+  held: number;
   unresolved: number;
   hqReadFailures: number;
   writeFailures: number;
@@ -154,6 +160,7 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
     conflicts: 0,
     gone: 0,
     humanSet: 0,
+    held: 0,
     unresolved: 0,
     hqReadFailures: 0,
     writeFailures: 0,
@@ -276,6 +283,11 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
     }
     const entry = linkFor.get(row.id);
     if (!entry || !(row.status in RANK)) continue;
+    if (row.held === true) {
+      summary.held++;
+      deps.count('held');
+      continue;
+    }
     const taskId = entry.taskId;
     // The link must be about this row: a feedback id HQ recorded under another area is a stale or
     // mistyped link, and acting on it would write a verdict onto someone else's report.
