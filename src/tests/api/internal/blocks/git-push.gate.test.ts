@@ -45,6 +45,7 @@ const {
   mockNewUlid,
   mockTriggerBuild,
   mockFetch,
+  announced,
   state,
 } = vi.hoisted(() => {
   const state = {
@@ -63,6 +64,9 @@ const {
   };
   return {
     state,
+    // One entry per new-submission announcement (onNewPendingSubmission), so a test can wait for
+    // its own fire-and-forget alert + automatic preview to finish before the next test starts.
+    announced: [] as Promise<unknown>[],
     mockFlag: {
       get enabled() {
         return state.flagEnabled;
@@ -95,6 +99,10 @@ vi.mock('~/env/server', () => ({
       FORGEJO_WEBHOOK_SECRET: SECRET,
       APPS_DOMAIN: 'civit.ai',
       DISCORD_WEBHOOK_MOD_ALERTS: 'https://discord.test/webhook',
+      // The schema default (server-schema.ts: `.default([]).catch([])`), which the real env always
+      // carries. Without it the automatic preview dies on `undefined.includes` before it ever
+      // reaches the budget counter the autodeploy test means to exercise.
+      APP_REVIEW_AUTO_BUILD_FIXTURE_USER_IDS: [],
     } as Record<string, unknown>,
     {
       get(t, p: string) {
@@ -167,9 +175,26 @@ vi.mock('~/server/auth/session-client', async (importOriginal) => ({
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: mockTriggerBuild,
 }));
+// The real announcement, recorded. A parked push announces itself fire-and-forget AFTER the 202,
+// and the announcement reads `state.autodeployEnabled` and posts through the stubbed `fetch` only
+// once its lazy module import resolves. Left running, a flag-OFF test's announcement could read the
+// NEXT test's flag-ON state and post a second "New app submission" into that test's `mockFetch`
+// (a cold import under CI load resolves both tests' announcements together). afterEach drains them.
+vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOriginal) => {
+  const real = await importOriginal<typeof ReviewAutodeployModule>();
+  return {
+    ...real,
+    onNewPendingSubmission: (sub: Parameters<typeof real.onNewPendingSubmission>[0]) => {
+      const p = real.onNewPendingSubmission(sub);
+      announced.push(p);
+      return p;
+    },
+  };
+});
 
 import { isFlipt } from '~/server/flipt/client';
 import type * as SessionClientModule from '~/server/auth/session-client';
+import type * as ReviewAutodeployModule from '~/server/services/blocks/review-autodeploy.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { appDeveloperTermsRefusalMessage } from '~/shared/constants/app-developer-terms.constants';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
@@ -269,6 +294,13 @@ describe('git-push webhook — no-trust-on-push gate', () => {
   });
 
   afterEach(async () => {
+    // Every new pending request is announced exactly once after its create: wait until each one
+    // has started, then until each has finished, so none outlives this test.
+    await vi.waitFor(() => expect(announced).toHaveLength(mockPubReqCreate.mock.calls.length), {
+      timeout: 15_000,
+    });
+    await Promise.allSettled(announced);
+    announced.length = 0;
     await flush();
     vi.unstubAllGlobals();
   });
@@ -321,8 +353,10 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
     expect(res._status).toBe(202);
-    // The alert is fire-and-forget after the response.
-    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalled(), { timeout: 15_000 });
+    // The alert is fire-and-forget after the response: let this push's announcement finish, so a
+    // late second post cannot land after the count below.
+    await vi.waitFor(() => expect(announced).toHaveLength(1), { timeout: 15_000 });
+    await Promise.allSettled(announced);
     const titles = mockFetch.mock.calls.map(
       (c) =>
         (
@@ -333,6 +367,9 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     );
     expect(titles).toHaveLength(1);
     expect(titles[0]).toMatch(/^New app submission: /);
+    // The automatic preview got as far as the budget take on system Redis (the read this test
+    // leaves unreadable), rather than failing before it.
+    expect(redisMock.sysRedis.multi).toHaveBeenCalled();
   });
 
   it('a re-delivery of the same parked sha does NOT ping the mod-alerts webhook at all', async () => {
