@@ -6,10 +6,17 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 export const SEMANTIC_QUERY_MAX_LENGTH = 500;
 export const SEMANTIC_SEARCH_PAGE_SIZE = 50;
 
+/**
+ * The query as typed: the service's spelling correction is skipped ("Search instead for"). The text
+ * is still audited as any query is.
+ */
+export const semanticSpellcheckField = z.literal(false).optional();
+
 export type SemanticImageSearchInput = z.infer<typeof semanticImageSearchSchema>;
 export const semanticImageSearchSchema = baseQuerySchema
   .extend({
     query: z.string().trim().max(SEMANTIC_QUERY_MAX_LENGTH).optional(),
+    spellcheck: semanticSpellcheckField,
     // "More like this": the image whose vector is the query.
     imageId: z.number().int().positive().optional(),
     // "More like this" without the viewer's own images (results only, never the source image).

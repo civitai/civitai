@@ -241,6 +241,26 @@ describe('semantic bounty search', () => {
     expect(shown(await search([1], { user: MOD }))).toEqual([]);
     expect(sent).toEqual([]);
   });
+
+  it('searched as typed, still refuses a refused query before asking the index', async () => {
+    h.includesInappropriate.mockReturnValue('poi');
+    await bounty(1);
+    expect(shown(await search([1], { user: MOD, spellcheck: false } as never))).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('searched as typed, asks the index for the text with its spelling correction off', async () => {
+    const queries: unknown[] = [];
+    await searchSemanticBounties({
+      input: { query: 'Shikata nee', browsingLevel: PG, limit: 10, spellcheck: false },
+      ctx: { user: undefined, features: {}, req: {} } as never,
+      candidateSource: async ({ query }) => {
+        queries.push(query);
+        return { ids: [] };
+      },
+    });
+    expect(queries[0]).toEqual({ text: 'Shikata nee', spellcheck: false });
+  });
 });
 
 describeSemanticAuditContract({

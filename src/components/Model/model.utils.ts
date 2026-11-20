@@ -1,5 +1,6 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import type { SemanticModelSearchRequest } from '~/server/schema/semantic-model-search.schema';
+import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 import { keepPreviousData } from '@tanstack/react-query';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
@@ -338,10 +339,12 @@ export const useSemanticModelFeed = (
       ? []
       : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ];
+  const { asTyped } = useSearchAsTyped(query);
   const { cursor, ids, modelVersionIds, query: _feedQuery, limit, ...feedFilters } = filters;
   const input: SemanticModelSearchRequest = {
     ...feedFilters,
     query: query ?? '',
+    ...spellcheckFor(asTyped),
     browsingLevel,
     excludedTagIds,
     disablePoi: browsingSettingsAddons.settings.disablePoi ? true : undefined,

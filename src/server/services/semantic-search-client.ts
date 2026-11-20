@@ -53,7 +53,11 @@ const GATE_KIND = {
 
 export type SearchCollection = keyof typeof GATE_KIND;
 
-export type SearchQuery = { text: string } | { similarTo: number } | { imageUrl: string };
+/** `spellcheck: false`: the service searches the text as typed, without its spelling correction. */
+export type SearchQuery =
+  | { text: string; spellcheck?: false }
+  | { similarTo: number }
+  | { imageUrl: string };
 
 export type QdrantCondition = Record<string, unknown>;
 type PayloadValue = string | number | boolean;
@@ -291,6 +295,7 @@ export function searchServiceSource(
       {
         collection,
         query: query.text,
+        ...(query.spellcheck === false ? { spellcheck: false } : {}),
         filter: qdrantFilter,
         offset,
         limit,
@@ -390,13 +395,16 @@ export function auditedTextCandidates({
   filter,
   viewer,
   audit,
+  spellcheck,
 }: {
   source: CandidateSource;
   text: string;
   filter: CandidateFilter;
   viewer: SearchViewer;
   audit: (correction: string) => Promise<unknown>;
+  spellcheck?: false;
 }) {
+  const query: SearchQuery = spellcheck === false ? { text, spellcheck } : { text };
   const state = {
     correctedQuery: undefined as string | undefined,
     refused: false,
@@ -406,7 +414,7 @@ export function auditedTextCandidates({
   };
   let audited = false;
   const candidates = async (offset: number, limit: number) => {
-    const result = await source({ query: { text }, filter, offset, limit, viewer });
+    const result = await source({ query, filter, offset, limit, viewer });
     state.first ??= { ids: result.ids, guard: result.guard, cacheHit: result.cacheHit };
     if (!audited && result.correctedQuery !== undefined) {
       audited = true;
