@@ -562,7 +562,7 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
         modelVersionId: VERSION,
         permissions: 3,
         addedById: userId,
-        allowance: { creatorId, limit, start: START, end: END },
+        creatorLimit: { creatorId, limit, start: START, end: END },
       });
     /** A claim of a new link by `creatorId`, recorded at `claimedAt` as if made then. */
     async function pastClaim(

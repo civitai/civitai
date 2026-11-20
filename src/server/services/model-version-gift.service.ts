@@ -748,7 +748,7 @@ export async function redeemGiftLink(
     modelVersionId,
     permissions,
     addedById,
-    allowance,
+    creatorLimit,
   }: {
     giftLinkId: number;
     userId: number;
@@ -756,7 +756,7 @@ export async function redeemGiftLink(
     permissions: number;
     addedById: number;
     /** The link creator's monthly limit; a new redemption past `limit` in [start, end) is refused. */
-    allowance?: { creatorId: number; limit: number; start: Date; end: Date };
+    creatorLimit?: { creatorId: number; limit: number; start: Date; end: Date };
   }
 ): Promise<GiftRedemptionOutcome> {
   try {
@@ -766,17 +766,17 @@ export async function redeemGiftLink(
         VALUES (${giftLinkId}, ${userId})
         ON CONFLICT DO NOTHING
       `;
-      if (inserted === 1 && allowance) {
+      if (inserted === 1 && creatorLimit) {
         // Serialises new claims of the creator's links, so two claims at limit - 1 cannot both count
         // under it: the second count runs after the first commits and sees its row.
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${GIFT_CREATOR_LIMIT_LOCK_CLASS}::int, ${allowance.creatorId}::int)`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${GIFT_CREATOR_LIMIT_LOCK_CLASS}::int, ${creatorLimit.creatorId}::int)`;
         const used = await countCreatorGiftClaims(
           tx,
-          allowance.creatorId,
-          allowance.start,
-          allowance.end
+          creatorLimit.creatorId,
+          creatorLimit.start,
+          creatorLimit.end
         );
-        if (used > allowance.limit) throw new GiftAllowanceUsed(used - 1);
+        if (used > creatorLimit.limit) throw new GiftLimitReached(used - 1);
       }
       // A repeat claim takes no new slot. It re-grants while the link is live and the claim not
       // removed, because the first grant can be gone (the early-access refund deletes the whole
@@ -824,9 +824,9 @@ export async function redeemGiftLink(
 class GiftUnavailable extends Error {}
 
 /** A new claim past the creator's monthly limit; rolls the claim back. */
-class GiftAllowanceUsed extends Error {
+class GiftLimitReached extends Error {
   constructor(readonly used: number) {
-    super('Gift allowance used');
+    super('Gift limit reached');
   }
 }
 
@@ -882,13 +882,12 @@ export async function claimGift({ user, code }: { user: { id: number }; code: st
       // The claimer, as purchases record the buyer: the personal-data export keys EntityAccess on
       // addedById, so the creator here would put every recipient in the creator's export.
       addedById: userId,
-      allowance: resolved.applies
+      creatorLimit: resolved.applies
         ? { creatorId: link.createdById, limit: resolved.limit, ...window }
         : undefined,
     });
   } catch (error) {
-    if (!(error instanceof GiftAllowanceUsed)) throw error;
-    // Best effort: createNotification logs and swallows a failed send.
+    if (!(error instanceof GiftLimitReached)) throw error;
     await notifyGiftLimitReached(link.createdById, resolved.limit, window.start);
     const message = usageLimitMessage(resolved.def, resolved) ?? 'Monthly gift limit reached.';
     const retryAfterSeconds = Math.max(1, Math.ceil((window.end.getTime() - now) / 1000));

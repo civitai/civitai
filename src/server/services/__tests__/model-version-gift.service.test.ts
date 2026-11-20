@@ -256,7 +256,7 @@ describe('claimGift', () => {
 
   it('refuses when the cap update takes no row (cap reached or revoked mid-claim)', async () => {
     seed();
-    // The redemption insert, the allowance lock, then the cap update.
+    // The redemption insert, the creator-limit lock, then the cap update.
     dbMock.dbWrite.$executeRaw
       .mockResolvedValueOnce(1)
       .mockResolvedValueOnce(1)
@@ -301,7 +301,7 @@ describe('claimGift', () => {
   });
 
   describe("monthly limit on claims of the creator's links", () => {
-    const allowanceLocks = () =>
+    const limitLocks = () =>
       dbMock.dbWrite.$executeRaw.mock.calls.filter((c: unknown[]) =>
         (c[0] as string[]).join('?').includes('pg_advisory_xact_lock')
       );
@@ -345,8 +345,8 @@ describe('claimGift', () => {
       expect(grantValues()).toEqual([]);
       expect(mockBustOrchestrator).not.toHaveBeenCalled();
       // Counted under the creator's lock, over this UTC month, for the creator's links.
-      expect(allowanceLocks()).toHaveLength(1);
-      expect(allowanceLocks()[0].slice(1)).toEqual([expect.any(Number), OWNER]);
+      expect(limitLocks()).toHaveLength(1);
+      expect(limitLocks()[0].slice(1)).toEqual([expect.any(Number), OWNER]);
       const count = dbMock.dbWrite.$queryRaw.mock.calls.find((c: unknown[]) =>
         (c[0] as string[]).join('?').includes('"claimedAt" >=')
       );
@@ -423,10 +423,10 @@ describe('claimGift', () => {
       await expect(claimGift({ user: { id: CLAIMER }, code })).resolves.toMatchObject({
         alreadyHadAccess: false,
       });
-      expect(allowanceLocks()).toEqual([]);
+      expect(limitLocks()).toEqual([]);
     });
 
-    it('takes no allowance for a repeat claim of the same link', async () => {
+    it('counts nothing against the limit for a repeat claim of the same link', async () => {
       seedUsed(100);
       // The redemption insert finds the claim already recorded.
       dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(0);
@@ -434,7 +434,7 @@ describe('claimGift', () => {
       await expect(claimGift({ user: { id: CLAIMER }, code })).resolves.toMatchObject({
         alreadyHadAccess: false,
       });
-      expect(allowanceLocks()).toEqual([]);
+      expect(limitLocks()).toEqual([]);
     });
   });
 });
