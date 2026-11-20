@@ -126,7 +126,7 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // the publish scope, and narrower than the token: the storage route also requires a grant
   // per (viewer, this app, source app) covering the import on every call
   // (`storage-import-grant.service.ts`). In NO dev, tunnel, review or private-run allowlist,
-  // and the route refuses an import on a dev, hub or review token.
+  // and the route refuses an import on a dev or review token.
   'apps:storage:import': SKIP_OAUTH_CHECK,
   // collections:read:self / collections:write:self — the App Blocks Collections
   // surface (discover + read public collections and the viewer's OWN collections;

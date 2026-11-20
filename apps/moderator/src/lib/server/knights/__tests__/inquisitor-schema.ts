@@ -1,3 +1,5 @@
+import { CSAM_LINK_TABLES_SQL } from '../../../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
+
 /** The "Image" table and every table the shared retracted-media predicates read, for the
  *  Inquisitor queue's pglite tests. The Knights tables come from their migration. */
 export const INQUISITOR_IMAGE_SCHEMA = `
@@ -27,4 +29,5 @@ CREATE TABLE "CsamReport" (
 );
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY);
-`;
+CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL);
+${CSAM_LINK_TABLES_SQL}`;

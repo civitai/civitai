@@ -21,6 +21,7 @@ import {
   SERVICE_DESCRIPTION_MAX,
   SERVICE_OPEN_DEALS_MAX,
   SERVICE_OPEN_DEALS_MIN,
+  SERVICE_PREVIEW_KIND_LABELS,
   SERVICE_PRICE_MAX,
   SERVICE_PRICE_MIN,
   SERVICE_REVISIONS_MAX,
@@ -40,12 +41,10 @@ const formSchema = upsertServiceOfferingSchema.omit({
 });
 type FormValues = z.infer<typeof formSchema>;
 
-const previewKindOptions = [
-  { value: ServicePreviewKind.Image, label: 'Image preview' },
-  { value: ServicePreviewKind.Video, label: 'Video preview' },
-  { value: ServicePreviewKind.SampleOutputs, label: 'Sample outputs' },
-  { value: ServicePreviewKind.None, label: 'No preview' },
-];
+const previewKindOptions = Object.values(ServicePreviewKind).map((value) => ({
+  value,
+  label: SERVICE_PREVIEW_KIND_LABELS[value],
+}));
 
 const ratingOptions = SERVICE_OFFERING_RATINGS.map((rating) => ({
   value: rating,

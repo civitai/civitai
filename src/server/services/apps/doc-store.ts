@@ -1024,6 +1024,25 @@ const SQL_FEED_WITNESS_DOC = `SELECT d.seq FROM appdata.doc d
 const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
   WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.coll = $3 AND tb.scope_uid = 0 AND tb.key = $4`;
 
+// PRIVATE FEED (`createDocStorePrivateFeed`): ONE user's private documents (`scope_uid` = that
+// user, never 0, never another user's) of one collection of one app's production namespace, for
+// the registry adapter's authorized private streams. Only rows that carry a `record_id` (the id
+// in a private record's URN) and that moderation has not hidden. Keyset by key.
+// $1 app, $2 ns, $3 coll, $4 user, $5 after key, $6 limit
+const SQL_PRIVATE_FEED_VERSIONS = `SELECT d.key, d.version, d.record_id::text AS record_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
+    AND d.hidden_at IS NULL AND d.record_id IS NOT NULL AND d.key > $5::text
+  ORDER BY d.key
+  LIMIT $6::int`;
+// Its full twin: the same rows with their data.
+const SQL_PRIVATE_FEED_DOCS = `SELECT d.key, d.data, d.version, d.record_id::text AS record_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
+    AND d.hidden_at IS NULL AND d.record_id IS NOT NULL AND d.key > $5::text
+  ORDER BY d.key
+  LIMIT $6::int`;
+
 // The kind is a literal: this statement can only ever write a counter row.
 // $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 by
 const SQL_INCREMENT = `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll, key, kind, name, count)
@@ -1677,6 +1696,24 @@ export function createDocStoreFeed(deps: DocStoreDeps) {
   return buildDocStore(deps).feed;
 }
 export type DocStoreFeed = ReturnType<typeof createDocStoreFeed>;
+
+/**
+ * PRIVATE FEED — ONE user's private documents of one collection of an app's production namespace,
+ * read only, for the registry adapter's authorized private streams (`private-feed.ts`). It never
+ * decides who may read: its caller passes the user only after the one collection-read predicate
+ * (`data-read-grant.ts`) granted that user the collection. A separate object, so neither the
+ * public feed nor the block-token store carries a read keyed on a caller-supplied user id; its
+ * importers are pinned by `__tests__/doc-store-private-feed.ledger.test.ts`.
+ */
+export function createDocStorePrivateFeed(deps: DocStoreDeps) {
+  return buildDocStore(deps).privateFeed;
+}
+export type DocStorePrivateFeed = ReturnType<typeof createDocStorePrivateFeed>;
+
+/** One private document's identity and version, as `privateVersions` reads it. */
+export type PrivateFeedVersion = { key: string; recordId: string; version: number };
+/** One private document, as `privateDocuments` reads it. */
+export type PrivateFeedDocument = PrivateFeedVersion & { data: Record<string, unknown> };
 
 /** Most rows one feed page may ask for. */
 export const FEED_MAX_PAGE = 1000;
@@ -3854,10 +3891,69 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
+  /** The private feed's bound values, checked before any of them reaches SQL. */
+  function privateFeedParams(
+    appId: string,
+    coll: string,
+    userId: number,
+    afterKey: string,
+    limit: number
+  ) {
+    const ctx = feedCtx(appId, coll);
+    assertWipeUserId(userId);
+    if (afterKey !== '' && !B.key.test(afterKey)) throw invalid('feed: malformed key');
+    return {
+      ctx,
+      params: [ctx.appId, ctx.ns, coll, userId, afterKey, feedLimit(limit)],
+    };
+  }
+
+  /** One page of `userId`'s private documents in `coll`, by key: key, record id and version. */
+  async function privateVersions(
+    appId: string,
+    coll: string,
+    userId: number,
+    afterKey: string,
+    limit: number
+  ): Promise<PrivateFeedVersion[]> {
+    const { ctx, params } = privateFeedParams(appId, coll, userId, afterKey, limit);
+    const rows = await withTx(
+      ctx,
+      async (c) => (await c.query(SQL_PRIVATE_FEED_VERSIONS, params)).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      recordId: String(r.record_id),
+      version: Number(r.version),
+    }));
+  }
+
+  /** {@link privateVersions} with each document's data. */
+  async function privateDocuments(
+    appId: string,
+    coll: string,
+    userId: number,
+    afterKey: string,
+    limit: number
+  ): Promise<PrivateFeedDocument[]> {
+    const { ctx, params } = privateFeedParams(appId, coll, userId, afterKey, limit);
+    const rows = await withTx(
+      ctx,
+      async (c) => (await c.query(SQL_PRIVATE_FEED_DOCS, params)).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      recordId: String(r.record_id),
+      version: Number(r.version),
+      data: r.data as Record<string, unknown>,
+    }));
+  }
+
   return {
     store,
     lookup: { findSharedByKey },
     feed: { feedHead, feedChanges, feedDocuments, feedWitness },
+    privateFeed: { privateVersions, privateDocuments },
     moderation: createModeration({ withTx, charge }),
     rater: createRater({ withTx, charge, raterLookupTx }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },

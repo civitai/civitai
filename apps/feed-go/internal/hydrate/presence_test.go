@@ -71,6 +71,7 @@ func TestPresenceReadsTheKeysPageReads(t *testing.T) {
 		{"no visible event", func() PageRequest { r := pageRequest(); r.VisibleEvents = nil; return r }()},
 		{"no video", func() PageRequest { r := pageRequest(); r.VideoIDs = nil; return r }()},
 		{"no profile pictures (image.getInfinite)", func() PageRequest { r := pageRequest(); r.NoProfilePictures = true; return r }()},
+		{"include tags (image.getInfinite)", tagsPageRequest()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, r, _ := basePageFixture(t).load()
@@ -96,6 +97,9 @@ func TestPresenceReadsTheKeysPageReads(t *testing.T) {
 					t.Fatalf("the ledger never saw %s: %v", k, want)
 				}
 			}
+			if tagsKey := pageNS + KeyImageTags + ":11"; strings.Contains(joined, tagsKey) != tc.req.Tags {
+				t.Fatalf("image tags read %v with Tags %v: %v", strings.Contains(joined, tagsKey), tc.req.Tags, want)
+			}
 		})
 	}
 }
@@ -118,9 +122,10 @@ func fixtureIDs(name string) []int {
 
 // Each PageCaches row against Page itself: with that cache emptied, Page falls back with the row's
 // Reason, or (no Reason) answers the page — and Presence reports the cache, with every id missing.
+// The request carries the 'tags' include, so every cache (the image tags included) is read.
 func TestPageCachesReasonsMatchPage(t *testing.T) {
-	if len(PageCaches) != 9 {
-		t.Fatalf("%d caches in PageCaches; this test enumerates 9 (add the new one's ids to fixtureIDs)", len(PageCaches))
+	if len(PageCaches) != 10 {
+		t.Fatalf("%d caches in PageCaches; this test enumerates 10 (add the new one's ids to fixtureIDs)", len(PageCaches))
 	}
 	for _, c := range PageCaches {
 		t.Run(c.Name, func(t *testing.T) {
@@ -133,7 +138,7 @@ func TestPageCachesReasonsMatchPage(t *testing.T) {
 				f.del(c.Key, id)
 			}
 			s, _, _ := f.load()
-			_, err := s.Page(context.Background(), pageRequest())
+			_, err := s.Page(context.Background(), tagsPageRequest())
 			if c.Reason == "" {
 				if err != nil {
 					t.Fatalf("Page: %v, want the page answered (the replica fills %s)", err, c.Name)
@@ -143,7 +148,7 @@ func TestPageCachesReasonsMatchPage(t *testing.T) {
 			}
 
 			s, _, _ = f.load()
-			misses, err := s.Presence(context.Background(), pageRequest())
+			misses, err := s.Presence(context.Background(), tagsPageRequest())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -251,7 +256,7 @@ func TestMissReason(t *testing.T) {
 	// specs'; the image meta (not probed) has no spec, so none.
 	for name, w := range map[string]string{MissModelFrames: "model-frame-miss", MissModelDecorations: "model-decoration-miss",
 		MissVersionImages: "model-images-miss", MissImageMeta: "", "model-data": "model-data-miss", "model-tags": "model-tags-miss",
-		"official-models": "official-models-miss"} {
+		"official-models": "official-models-miss", MissUserFollows: "user-follows-miss"} {
 		if got := plain.MissReason(name); got != w {
 			t.Errorf("no computation: %s = %q, want %q", name, got, w)
 		}
@@ -259,7 +264,7 @@ func TestMissReason(t *testing.T) {
 	want := map[string]string{
 		CacheUserCosmetics: "", CacheImageFrames: "", CacheEventDecorations: "",
 		CacheTagIDs: "", MissModelFrames: "", MissModelDecorations: "", MissVersionImages: "", CacheMetrics: "metrics-miss", CacheBasicUsers: "",
-		"model-data": "", "model-tags": "", "official-models": "",
+		"model-data": "", "model-tags": "", "official-models": "", CacheImageTags: "", MissUserFollows: "",
 	}
 	for name, w := range want {
 		if got := computed.MissReason(name); got != w {

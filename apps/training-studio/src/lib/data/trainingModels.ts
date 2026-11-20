@@ -1371,7 +1371,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
   // characters (`NETWORK_SIZE_BY_LORA_TYPE`).
   anima: {
     epochs: 5,
-    unetLr: 1e-4,
+    unetLr: 3e-4,
     textEncoderLr: 0,
     networkDim: 16,
     networkAlpha: 16,

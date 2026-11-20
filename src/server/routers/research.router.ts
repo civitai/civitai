@@ -5,12 +5,14 @@ import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { cachedCounter } from '~/server/utils/cache-helpers';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
 import { queueNewRaterLevelWebhook } from '~/server/webhooks/research.webhooks';
 import { getRandomInt } from '~/utils/number-helpers';
-import { imageNotRestrictedSql } from '~/server/common/image-visibility';
+import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 
 const raterGetImagesSchema = z.object({
   level: z.number().transform((val) => val & ~32), // Remove the "Blocked" bit (32)
@@ -137,7 +139,11 @@ export const researchRouter = router({
         sanityImages = await dbRead.$queryRaw<RaterImage[]>`
         SELECT i.id, i.url, null as "nsfwLevel"
         FROM "Image" i
-        WHERE i.id IN (${Prisma.join(sanityIds)}) AND ${imageNotRestrictedSql()};
+        LEFT JOIN "Post" p ON p.id = i."postId"
+        WHERE i.id IN (${Prisma.join(sanityIds)})
+          AND (i."nsfwLevel" & ${getRequestBrowsingLevel(ctx) & allBrowsingLevelsFlag}) != 0
+          AND ${Prisma.join(imageVisibilityConditions({}), ' AND ')}
+          AND i."tosViolation" = FALSE;
       `;
       }
 
@@ -203,14 +209,16 @@ export const researchRouter = router({
         where.push(Prisma.sql`i."aiModel" = ${track.filters.ratingModel}`);
       }
 
+      // Another user's image, so the shared rule with no viewer.
       const images = await dbRead.$queryRaw<RaterImage[]>`
       SELECT i.id, i.url, i."nsfwLevel"
       FROM "Image" i
       JOIN "Post" p ON i."postId" = p.id
-      WHERE (i."nsfwLevel" & ${input.level}) != 0
+      WHERE (i."nsfwLevel" & ${input.level & getRequestBrowsingLevel(ctx)}) != 0
         AND i.type = 'image'
         AND p."publishedAt" IS NOT NULL
-        AND ${imageNotRestrictedSql()}
+        AND ${Prisma.join(imageVisibilityConditions({}), ' AND ')}
+        AND i."tosViolation" = FALSE
         AND ${Prisma.join(where, ' AND ')}
       ORDER BY i.id
       LIMIT 30;

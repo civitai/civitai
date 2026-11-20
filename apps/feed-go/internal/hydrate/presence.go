@@ -24,6 +24,7 @@ const (
 	CacheEventDecorations = "event-decorations"
 	CacheMetrics          = "metrics"
 	CacheCosmetics        = "cosmetics"
+	CacheImageTags        = "image-tags"
 )
 
 // metricHashPrefix is metricHashKey without the `:<id>` (a test pins the two together).
@@ -55,6 +56,8 @@ var PageCaches = []PageCache{
 	{Name: CacheThumbnails, Key: KeyThumbnails},
 	{Name: CacheTagIDs, Key: KeyTagIDs, Reason: "tag-ids-miss"},
 	{Name: CacheEventDecorations, Key: KeyImageEvents, Reason: "event-decoration-miss"},
+	// Read only for a request with PageRequest.Tags (image.getInfinite's include 'tags').
+	{Name: CacheImageTags, Key: KeyImageTags, Reason: "image-tags-miss"},
 	{Name: CacheMetrics, Key: metricHashPrefix, Reason: "metrics-miss"},
 	{Name: CacheCosmetics, Key: KeyCosmetics},
 }
@@ -156,6 +159,14 @@ func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Ti
 			ids  []int
 			read *PackedRead
 		}{CacheEventDecorations, images, s.Packed.Queue(stage1, KeyImageEvents, images, 0)})
+	}
+	// As Page: the votable tags only when the include list asks for them.
+	if req.Tags {
+		reads = append(reads, struct {
+			name string
+			ids  []int
+			read *PackedRead
+		}{CacheImageTags, images, s.Packed.Queue(stage1, KeyImageTags, images, 0)})
 	}
 	metrics := s.queueMetricsExists(stage1, images)
 	stage1.Exec(ctx)
