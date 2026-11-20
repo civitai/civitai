@@ -35,7 +35,7 @@ import (
 
 // APIKeyPrincipalKey is REDIS_KEYS.CACHES.API_KEY_PRINCIPAL (packages/civitai-redis/src/client.ts): the
 // principal cache's key prefix, `${prefix}:${hash}`, on the cache cluster.
-const APIKeyPrincipalKey = "packed:caches:api-key-principal"
+const APIKeyPrincipalKey = "packed:caches:api-key-principal" //nolint:gosec // G101: a Redis key prefix, not a credential
 
 // LastUsedDebounce is API_KEY_LAST_USED_DEBOUNCE_SECONDS: claimLastUsedWrite writes `lastUsedAt` when the
 // cached value is null or older than this.

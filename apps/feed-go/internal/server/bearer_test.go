@@ -146,7 +146,7 @@ func TestSyntheticRequestsNeverResolveAPIKeys(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		u, err := resolver.Resolve(context.Background(), r)
+		u, err := resolver.Resolve(r.Context(), r)
 		if fallback.Reason(err) != "bearer-token" || u != nil {
 			t.Errorf("%s: user %+v reason %q, want bearer-token", name, u, fallback.Reason(err))
 		}

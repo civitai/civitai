@@ -80,7 +80,7 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 	if m, ok := ctx.Value(resolvedKey{}).(*resolved); ok {
 		return m.user, m.err
 	}
-	if r.APIKeys == nil || credentialsRedacted(req.Context()) || credentialsRedacted(ctx) {
+	if r.APIKeys == nil || credentialsRedacted(ctx) {
 		if HasAPICredential(req) {
 			return nil, fallback.New("bearer-token")
 		}

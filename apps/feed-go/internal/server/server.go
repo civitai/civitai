@@ -1005,6 +1005,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
 	}
 	span := trace.SpanFromContext(ctx)
+	// The sample's credential is the sampler's placeholder, never a key: the compute's Resolve reads
+	// the marker off this context (auth.WithRedactedCredentials).
+	ctx = auth.WithRedactedCredentials(ctx)
 	r, err := build(ctx, req)
 	if err != nil {
 		setOutcome(span, "bad_request")
