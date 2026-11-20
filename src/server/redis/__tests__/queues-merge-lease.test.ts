@@ -114,6 +114,9 @@ const LEASE = `${REDIS_SYS_KEYS.QUEUES.BUCKETS}:${KEY}:${REDIS_SUB_KEYS.QUEUES.C
 let clock = Date.UTC(2026, 10, 15, 18);
 const tick = (ms = 1) => vi.setSystemTime((clock += ms));
 
+const bucketCount = async () =>
+  ((await redis.hGet(REDIS_SYS_KEYS.QUEUES.BUCKETS, KEY)) ?? '').split(',').filter(Boolean).length;
+
 /** Every id still queued, with repeats: what the next consumer would process. */
 async function queued() {
   tick();
@@ -155,13 +158,16 @@ describe('mergeQueue during a consumer checkout', () => {
     await checkoutQueue(KEY); // never committed
     tick();
     await addToQueue(KEY, [3]);
+    const buckets = await bucketCount();
 
     tick();
     await mergeQueue(KEY);
+    expect(await bucketCount()).toBe(buckets);
     expect(await queued()).toEqual([1, 2, 3]);
 
     tick(2 * 60 * 60 * 1000);
     await mergeQueue(KEY);
+    expect(await bucketCount()).toBeLessThan(buckets);
     expect(await queued()).toEqual([1, 2, 3]);
     expect(redis.zsetSize(LEASE)).toBe(0);
     tick();
