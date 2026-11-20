@@ -32,14 +32,10 @@ const SEVERITY: Record<ConsoleMethod, 'error' | 'warn' | 'info'> = {
 };
 
 /*
- * Budgets, per process and per second. A call over either is still written to stdout and is only
- * counted. The OTLP export queue this feeds also carries the app logger's alert-feeding records,
- * and many processes run this at once, so the total is these figures times the process count.
- *
- * - records/s: bounds the records, and the formatting passes, a console-spamming library can cost.
- * - bytes/s: bounds the bytes, since a library printing large objects fills it before the record cap.
- * - body max: room for a full stack trace; a longer line is cut (stdout keeps it all). Lower than
- *   the createLogger cap because these lines are unstructured and may be anything.
+ * Per process, per second; a call over either budget is still written to stdout and only counted.
+ * The record cap also bounds formatting passes. The OTLP queue is shared with the app logger and
+ * many processes run this, so the fleet total is these figures times the process count. The body
+ * max is below the createLogger cap because these lines are unstructured.
  */
 export const CONSOLE_BACKSTOP_MAX_RECORDS_PER_SECOND = 50;
 export const CONSOLE_BACKSTOP_MAX_BYTES_PER_SECOND = 64 * 1024;
@@ -49,19 +45,23 @@ export const CONSOLE_RECORD_BODY_MAX = 2048;
 // a bounded strip. A multiple of the cap leaves room for the codes that the strip removes.
 const PRE_STRIP_SLICE = CONSOLE_RECORD_BODY_MAX * 4;
 
-// A `key: 'value'` pair as util.inspect prints it, or `"key": "value"` as JSON does. Matching the
-// formatted text, not the arguments, reaches fields inside an Error or a class instance (which
-// inspect expands), and costs no more than the already-cut text.
+// A key/value pair as util.inspect prints it (`key: 'v'`, a backtick value when it holds both
+// quote kinds, a Map entry `'key' => 'v'`) or as JSON does (`"key": "v"`). Matching the formatted
+// text, not the arguments, reaches fields inside an Error or a class instance (which inspect
+// expands), and costs no more than the already-cut text.
+// The lookbehind keeps a match from starting inside a word: without it a long token-like run
+// (a base64 blob) is retried from every position, quadratic in its length.
 const FORMATTED_FIELD_RE =
-  /(['"]?)([A-Za-z_$][\w$-]*)\1(\s*:\s*)(?:'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)")/g;
+  /(?<![\w$-])(['"]?)([A-Za-z_$][\w$-]*)\1(\s*(?::|=>)\s*)(['"`])((?:(?!\4)[^\\\n]|\\.)*)\4/g;
 
 function redactFormattedFields(text: string): string {
   return text.replace(
     FORMATTED_FIELD_RE,
-    (match, quote: string, name: string, sep: string, single?: string) => {
-      if (!isCredentialField(name)) return match;
-      const q = single !== undefined ? "'" : '"';
-      return `${quote}${name}${quote}${sep}${q}${REDACTED_CREDENTIAL}${q}`;
+    (_match, quote: string, name: string, sep: string, valueQuote: string, inner: string) => {
+      const head = `${quote}${name}${quote}${sep}${valueQuote}`;
+      if (isCredentialField(name)) return `${head}${REDACTED_CREDENTIAL}${valueQuote}`;
+      // A non-credential string can itself hold a pair (`msg: 'password: "x"'`): scan its text too.
+      return `${head}${redactFormattedFields(inner)}${valueQuote}`;
     }
   );
 }
