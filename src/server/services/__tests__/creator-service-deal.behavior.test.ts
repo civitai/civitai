@@ -126,6 +126,7 @@ const { creatorServiceNotifications } = await import(
 );
 const { MAX_LEG_ATTEMPTS } = await import('~/server/services/placement-escrow.service');
 const { TransactionType } = await import('~/shared/constants/buzz.constants');
+const { SERVICE_PRICE_MIN } = await import('~/shared/constants/creator-service.constants');
 
 const MIGRATION = join(
   process.cwd(),
@@ -309,7 +310,7 @@ beforeAll(async () => {
     CREATE TABLE "Report" (id serial PRIMARY KEY);
     CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb NOT NULL);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
-    CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
+    CREATE TABLE "Image" (id serial PRIMARY KEY, url text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, "nsfwLevel" int NOT NULL DEFAULT 0,
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
@@ -3643,22 +3644,70 @@ describe('review publishing and counters', () => {
     expect(await counters()).toEqual({ happyCount: 3, reviewCount: 3, happySortKey: 1 });
   });
 
-  it('does not count a deal under the minimum price or a buyer under a week old at accept', async () => {
-    const cheap = await completedBy(10);
-    await q(`UPDATE "ServiceDeal" SET price = 1 WHERE id = $1`, [cheap]);
-    await review(cheap, 'Happy', 10);
-    await q(`UPDATE "User" SET "createdAt" = now() WHERE id = 11`);
-    await review(await completedBy(11), 'Happy', 11);
-    // Both are shown; neither counts.
+  it('counts a deal at the minimum price and not one under it', async () => {
+    const atMin = await completedBy(10);
+    await q(`UPDATE "ServiceDeal" SET price = $2 WHERE id = $1`, [atMin, SERVICE_PRICE_MIN]);
+    await review(atMin, 'Happy', 10);
+    expect((await counters()).reviewCount).toBe(1);
+    const cheap = await completedBy(11);
+    await q(`UPDATE "ServiceDeal" SET price = $2 WHERE id = $1`, [cheap, SERVICE_PRICE_MIN - 1]);
+    await review(cheap, 'Happy', 11);
+    // Shown, not counted.
     expect(await published(cheap)).not.toBeNull();
-    expect(await counters()).toEqual({ happyCount: 0, reviewCount: 0, happySortKey: -1 });
+    expect((await counters()).reviewCount).toBe(1);
+  });
+
+  it("judges the buyer's account age at accept, not now", async () => {
+    const young = await completedBy(10);
+    const old = await completedBy(11);
+    // Accepted a month ago: one account was 5 days old then, the other 8. Both are weeks old now.
+    await q(
+      `UPDATE "ServiceDeal" SET "acceptedAt" = now() - interval '30 days' WHERE id IN ($1, $2)`,
+      [young, old]
+    );
+    await q(`UPDATE "User" SET "createdAt" = now() - interval '35 days' WHERE id = 10`);
+    await q(`UPDATE "User" SET "createdAt" = now() - interval '38 days' WHERE id = 11`);
+    await review(young, 'Happy', 10);
+    await review(old, 'Happy', 11);
+    expect(await counters()).toEqual({ happyCount: 1, reviewCount: 1, happySortKey: -1 });
+  });
+
+  it('does not count a review whose comment the check blocked, and recounts nothing on a repeat sync', async () => {
+    const id = await completedBy();
+    await review(id, 'Happy', BUYER, 'text');
+    const [{ id: reviewId }] = await q<{ id: number }>(
+      `UPDATE "ServiceDealReview" SET "scanStatus" = 'Blocked' WHERE "dealId" = $1 RETURNING id`,
+      [id]
+    );
+    expect(await publish.syncReviewPublication(reviewId)).toBe(false);
+    expect((await counters()).reviewCount).toBe(0);
+    await q(`UPDATE "ServiceDealReview" SET "scanStatus" = 'Scanned' WHERE id = $1`, [reviewId]);
+    expect(await publish.syncReviewPublication(reviewId)).toBe(true);
+    expect(await publish.syncReviewPublication(reviewId)).toBe(false);
+    expect((await counters()).reviewCount).toBe(1);
+  });
+
+  it('never shows a happy review of a deal refunded on dispute', async () => {
+    const id = await completedBy();
+    await review(id, 'Happy');
+    await vi.waitFor(async () => expect((await deal(id)).settledAt).not.toBeNull());
+    await q(
+      `UPDATE "ServiceDeal" SET "disputeOpenedAt" = now(), "disputeResolution" = 'Refund',
+         "disputeResolvedAt" = now(), "disputeResolvedById" = $2 WHERE id = $1`,
+      [id, STRANGER]
+    );
+    await creatorServiceDealsJob.run();
+    expect(await published(id)).toBeNull();
+    expect((await counters()).happyCount).toBe(0);
   });
 
   it('unshows a happy review while a failed final holds the deal, and uncounts it', async () => {
     const id = await completedBy();
     await review(id, 'Happy');
     expect((await counters()).happyCount).toBe(1);
-    // Held before the early release ran.
+    // The early release runs in the background: let it land, then unwind it to the state where the
+    // hold came first, so it cannot land after the edits below.
+    await vi.waitFor(async () => expect((await deal(id)).settledAt).not.toBeNull());
     await q(`DELETE FROM "ServiceDealTransaction" WHERE "dealId" = $1 AND leg = 'Release'`, [id]);
     await q(`UPDATE "ServiceDeal" SET "settledAt" = NULL WHERE id = $1`, [id]);
     expect(await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED)).toBe(true);
@@ -3739,6 +3788,21 @@ describe('review publishing and counters', () => {
         sellerReplyScanStatus: 'Pending',
       });
       await expect(reply(id, 'again')).rejects.toEqual(conflict);
+    });
+
+    it('writes nothing when the text guard refuses a comment, an edit or a reply', async () => {
+      const guard = vi.mocked(throwOnBlockedUserContent);
+      const blocked = new Error('blocked');
+      const id = await completedBy();
+      guard.mockRejectedValueOnce(blocked);
+      await expect(review(id, 'NotQuite', BUYER, 'bad')).rejects.toBe(blocked);
+      expect(await reviewRow(id)).toBeUndefined();
+      await review(id, 'NotQuite', BUYER, 'fine');
+      guard.mockRejectedValueOnce(blocked);
+      await expect(edit(id, 'bad')).rejects.toBe(blocked);
+      guard.mockRejectedValueOnce(blocked);
+      await expect(reply(id, 'bad')).rejects.toBe(blocked);
+      expect(await reviewRow(id)).toMatchObject({ comment: 'fine', sellerReply: null });
     });
 
     it('runs the text guard on every comment and reply', async () => {
@@ -3833,7 +3897,10 @@ describe('review publishing and counters', () => {
       // A happy-review event whose review row is gone, on a deal left unpaid for an hour.
       const unpaid = await completedBy(11);
       await review(unpaid, 'Happy', 11);
-      await q(`DELETE FROM "ServiceDealTransaction" WHERE "dealId" = $1`, [unpaid]);
+      await vi.waitFor(async () => expect((await deal(unpaid)).settledAt).not.toBeNull());
+      await q(`DELETE FROM "ServiceDealTransaction" WHERE "dealId" = $1 AND leg = 'Release'`, [
+        unpaid,
+      ]);
       await q(`UPDATE "ServiceDeal" SET "settledAt" = NULL WHERE id = $1`, [unpaid]);
       await q(
         `UPDATE "ServiceDealEvent" SET "createdAt" = now() - interval '1 hour' WHERE "dealId" = $1`,
@@ -3867,8 +3934,18 @@ describe('review publishing and counters', () => {
         [id]
       );
       const scans = vi.spyOn(reviewScan, 'scanServiceDealReviewText');
-      await reconcile.reconcileServiceDealReviews({ limit: 10 });
-      expect(scans).toHaveBeenCalledWith('ServiceDealReview', reviewId);
+      try {
+        await reconcile.reconcileServiceDealReviews({ limit: 10 });
+        expect(scans).toHaveBeenCalledOnce();
+        expect(scans).toHaveBeenCalledWith('ServiceDealReview', reviewId);
+        // A hidden review's skipped scan is not resent.
+        scans.mockClear();
+        await q(`UPDATE "ServiceDealReview" SET "hiddenAt" = now() WHERE id = $1`, [reviewId]);
+        await reconcile.reconcileServiceDealReviews({ limit: 10 });
+        expect(scans).not.toHaveBeenCalled();
+      } finally {
+        scans.mockRestore();
+      }
     });
   });
 });

@@ -387,17 +387,31 @@ async function markHeld(tx: Db, dealId: number) {
   return marked?.status ?? null;
 }
 
+/**
+ * A settled deal's review is shown whatever its verdict. Outside the receipt's transaction, so a
+ * recount that fails never rolls back the record of a payout; the deals job retries a missed one.
+ */
+const syncReviewAfterSettle = (dealId: number) =>
+  dbWrite
+    .$transaction((tx) => syncDealReviewPublication(tx, dealId))
+    .catch((error) =>
+      logToAxiom({
+        name: 'creator-service-deal-review',
+        type: 'error',
+        message: 'review publication after settlement failed; the deals job will retry',
+        payload: { dealId },
+        error: (error as Error)?.message,
+      })
+    );
+
 async function markSettled(tx: Db, dealId: number, event: 'Refunded' | 'Released') {
   const marked = await tx.$executeRaw`
     UPDATE "ServiceDeal" SET "settledAt" = now(), "updatedAt" = now()
     WHERE "id" = ${dealId}::int AND "settledAt" IS NULL`;
-  if (marked > 0) {
+  if (marked > 0)
     await tx.$executeRaw`
       INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type")
       VALUES (${dealId}::int, -1, ${event}::"ServiceDealEventType")`;
-    // A settled deal's review is shown whatever its verdict.
-    await syncDealReviewPublication(tx, dealId);
-  }
   return marked > 0;
 }
 
@@ -525,6 +539,7 @@ export async function refundDeal(dealId: number) {
     },
     (tx) => markSettled(tx, dealId, 'Refunded')
   );
+  if (paid !== null) await syncReviewAfterSettle(dealId);
   return paid !== null;
 }
 
@@ -749,7 +764,10 @@ export async function releaseDeal(dealId: number) {
       settled = await markSettled(tx, dealId, 'Released');
     }
   );
-  if (settled) await notifyServiceDeal({ dealId, notice: 'paidOut', to: 'seller' });
+  if (settled) {
+    await notifyServiceDeal({ dealId, notice: 'paidOut', to: 'seller' });
+    await syncReviewAfterSettle(dealId);
+  }
   return paid !== null;
 }
 

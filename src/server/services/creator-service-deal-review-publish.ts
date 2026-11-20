@@ -7,12 +7,16 @@ type Db = Pick<Prisma.TransactionClient, '$executeRaw' | '$queryRaw'>;
 /**
  * Whether a review may be shown, with `r` the review and `d` its deal: its comment passed its check,
  * no moderator hid it, and either the deal has settled or the buyer was happy and the deal is not
- * held for the moderators (a final that failed its scan holds a deal after a happy review).
+ * held for the moderators (a final that failed its scan holds a deal after a happy review). A happy
+ * review of a deal refunded on dispute never shows.
  */
 export const reviewPublic = Prisma.sql`(
   r."scanStatus" = 'Scanned'::"ServiceOfferingIngestionStatus" AND r."hiddenAt" IS NULL
   AND (d."settledAt" IS NOT NULL
     OR (r."verdict" = 'Happy'::"ServiceDealReviewVerdict" AND d."status" <> 'Disputed'::"ServiceDealStatus"))
+  -- A happy review of a deal refunded on dispute is never shown or counted: the seller was not paid.
+  AND NOT (r."verdict" = 'Happy'::"ServiceDealReviewVerdict"
+    AND d."disputeResolution" IS NOT DISTINCT FROM 'Refund'::"ServiceDisputeResolution")
 )`;
 
 /** A buyer counts toward an offering's score only from an account a week old when the deal was accepted. */
@@ -56,19 +60,29 @@ async function recountOffering(tx: Db, offeringId: number) {
  * same transaction only when the review's public state changed, so a repeat changes nothing.
  * Returns whether it changed.
  */
-export async function syncDealReviewPublication(tx: Db, dealId: number) {
+/**
+ * Serialises a deal's review writes and its offering's recounts without locking the offering row its
+ * seller edits. Every writer of a review row takes it before the row's own lock, so two writers
+ * never wait on each other in opposite orders. Returns the offering, or null for a deal with no review.
+ */
+export async function lockDealReviewCounters(tx: Db, dealId: number) {
   const [review] = await tx.$queryRaw<{ offeringId: number }[]>`
     SELECT "offeringId" FROM "ServiceDealReview" WHERE "dealId" = ${dealId}::int`;
-  if (!review) return false;
-  // Serialises recounts of one offering without locking the offering row its seller edits.
+  if (!review) return null;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('service-offering-reviews'), ${review.offeringId}::int)`;
+  return review.offeringId;
+}
+
+export async function syncDealReviewPublication(tx: Db, dealId: number) {
+  const offeringId = await lockDealReviewCounters(tx, dealId);
+  if (offeringId === null) return false;
   const changed = await tx.$executeRaw`
     UPDATE "ServiceDealReview" r
     SET "publishedAt" = CASE WHEN ${reviewPublic} THEN now() ELSE NULL END
     FROM "ServiceDeal" d
     WHERE r."dealId" = ${dealId}::int AND d."id" = r."dealId"
       AND (r."publishedAt" IS NULL) = ${reviewPublic}`;
-  if (changed) await recountOffering(tx, review.offeringId);
+  if (changed) await recountOffering(tx, offeringId);
   return changed > 0;
 }
 

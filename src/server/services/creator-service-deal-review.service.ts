@@ -4,7 +4,10 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { transitionDeal } from '~/server/services/creator-service-deal.service';
-import { syncDealReviewPublication } from '~/server/services/creator-service-deal-review-publish';
+import {
+  lockDealReviewCounters,
+  syncDealReviewPublication,
+} from '~/server/services/creator-service-deal-review-publish';
 import { dealFinalsClear, releaseDeal } from '~/server/services/creator-service-escrow.service';
 import { getReviewImages } from '~/server/services/creator-service-deal-review-images';
 import { scanServiceDealReviewText } from '~/server/services/service-deal-review-moderation.adapter';
@@ -147,6 +150,7 @@ export async function editServiceDealReview({
   const text = comment?.trim() || null;
   await assertReviewText(text);
   const reviewId = await dbWrite.$transaction(async (tx) => {
+    await lockDealReviewCounters(tx, dealId);
     const [review] = await tx.$queryRaw<{ id: number }[]>`
       SELECT "id" FROM "ServiceDealReview"
       WHERE "dealId" = ${dealId}::int AND "buyerId" = ${userId}::int
@@ -206,6 +210,10 @@ export async function setServiceDealReviewHidden({
   hidden: boolean;
 }) {
   return dbWrite.$transaction(async (tx) => {
+    const [target] = await tx.$queryRaw<{ dealId: number }[]>`
+      SELECT "dealId" FROM "ServiceDealReview" WHERE "id" = ${reviewId}::int`;
+    if (!target) return false;
+    await lockDealReviewCounters(tx, target.dealId);
     const [review] = await tx.$queryRaw<{ dealId: number }[]>`
       UPDATE "ServiceDealReview"
       SET "hiddenAt" = CASE WHEN ${hidden} THEN now() END,

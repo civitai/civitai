@@ -1639,12 +1639,12 @@ describe('review images', () => {
   });
 
   it('stops at the cap', async () => {
-    const { dealId } = await reviewed();
+    const { dealId, finalId } = await reviewed();
     const [{ id: reviewId }] = await q<{ id: number }>(
       `SELECT id FROM "ServiceDealReview" WHERE "dealId" = $1`,
       [dealId]
     );
-    for (let i = 0; i < 4; i++) {
+    const seedImage = async () => {
       const [{ id }] = await q<{ id: number }>(
         `INSERT INTO "Image" (url) VALUES ('x') RETURNING id`
       );
@@ -1652,7 +1652,10 @@ describe('review images', () => {
         reviewId,
         id,
       ]);
-    }
+    };
+    for (let i = 0; i < 3; i++) await seedImage();
+    expect(await picker(dealId)).toEqual([finalId]);
+    await seedImage();
     expect(await picker(dealId)).toEqual([]);
   });
 
@@ -1671,5 +1674,22 @@ describe('review images', () => {
     await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1 WHERE id = $1`, [imageId]);
     expect(await shown(1 | 2 | 4)).toEqual([]);
     expect(await shown(31)).toEqual([[imageId, 8]]);
+    // Never an image the scan flagged, or rated above the deal, or once the seller opts out.
+    for (const flag of [
+      'minor = true',
+      'poi = true',
+      `"needsReview" = 'poi'`,
+      '"nsfwLevel" = 16',
+    ]) {
+      await q(`UPDATE "Image" SET ${flag} WHERE id = $1`, [imageId]);
+      expect(await shown(31)).toEqual([]);
+      await q(
+        `UPDATE "Image" SET minor = false, poi = false, "needsReview" = NULL, "nsfwLevel" = 1 WHERE id = $1`,
+        [imageId]
+      );
+    }
+    expect(await shown(31)).toEqual([[imageId, 8]]);
+    await q(`UPDATE "ServiceOffering" SET "allowReviewWork" = false`);
+    expect(await shown(31)).toEqual([]);
   });
 });

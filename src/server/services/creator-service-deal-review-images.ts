@@ -57,8 +57,8 @@ export async function listReviewAttachableFinals({
 
 /**
  * Attaches one of the deal's finals to the buyer's review as a fresh image: a downscaled copy,
- * owned by the buyer and scanned like any upload. The image is shown only once scanned, and never
- * above the deal's level (see `reviewImageVisibleSql`). Eligibility is checked before the copy is
+ * owned by the buyer and scanned like any upload. The image is shown only once it passes its scan
+ * at or below the deal's level (see `reviewImageVisibleSql`). Eligibility is checked before the copy is
  * made and again, with the cap, as the row is written; a copy that loses that race is left unlinked.
  */
 export async function attachFinalToReview({
@@ -111,13 +111,16 @@ export async function attachFinalToReview({
 
 /**
  * True in SQL when a review image may be shown at `levels` (the viewer's levels, already limited to
- * what the domain serves), with `i` the image and `d` the review's deal: scanned, not a violation,
- * and rated at the higher of the image's own level and the deal's, so an X deal's image that scanned
- * PG is still X.
+ * what the domain serves), with `i` the image and `d` the review's deal: scanned clean of the flags
+ * a deal preview must pass, rated no higher than the deal, shown at the deal's level (so an X deal's
+ * image that scanned PG is still X), and its seller still allows review work.
  */
 export const reviewImageVisibleSql = (levels: number) => Prisma.sql`(
-  i."ingestion" = 'Scanned'::"ImageIngestionStatus" AND NOT i."tosViolation" AND i."nsfwLevel" > 0
+  i."ingestion" = 'Scanned'::"ImageIngestionStatus" AND NOT i."tosViolation"
+  AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
+  AND i."nsfwLevel" BETWEEN 1 AND d."maxNsfwLevel"
   AND (GREATEST(i."nsfwLevel", d."maxNsfwLevel") & ${levels}::int) <> 0
+  AND EXISTS (SELECT 1 FROM "ServiceOffering" o WHERE o."id" = d."offeringId" AND o."allowReviewWork")
 )`;
 
 /** The shown images of a review, in attach order. */

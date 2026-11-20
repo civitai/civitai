@@ -62,6 +62,12 @@ dbMock.dbWrite.entityModeration.findFirst.mockImplementation((async (args: {
 
 const adapter = await import('~/server/services/service-deal-review-moderation.adapter');
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
+const { loadServiceDealReviewSubjects } = await import(
+  '~/server/services/text-scan/profiles/service-deal-review.profile'
+);
+const loadSubject = async (
+  type: 'ServiceDealReview' | 'ServiceDealReviewReply' = 'ServiceDealReview'
+) => (await loadServiceDealReviewSubjects(type, [REVIEW])).get(REVIEW);
 
 const MIGRATIONS = [
   '20261016150000_text_scan_hold',
@@ -290,6 +296,44 @@ describe('what a settled check does to the review', () => {
   });
 });
 
+describe('a stored verdict for unchanged text', () => {
+  const hashOf = (text: string) =>
+    textScanTextHash({ declared: {}, fields: [{ heading: 'Review', text }] });
+  const storedVerdict = (textHash: string, labels = '{}') =>
+    q(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", result, "nsfwLevel", "triggeredLabels")
+       VALUES ('ServiceDealReview', $1, $2::jsonb, 1, $3::text[])`,
+      [REVIEW, JSON.stringify({ version: 1, textHash }), labels]
+    );
+  // The check skips text it has already judged and hands back the stored verdict.
+  const unchanged = vi.fn(async (args: { onActiveSkip?: (r: 'unchanged') => Promise<void> }) => {
+    await args.onActiveSkip?.('unchanged');
+    return null;
+  });
+
+  it('settles text whose stored verdict is about it', async () => {
+    await seed(R);
+    await storedVerdict(textScanTextHash((await loadSubject())!));
+    await adapter.scanServiceDealReviewText('ServiceDealReview', REVIEW, unchanged as never);
+    expect((await statuses()).comment).toBe('Scanned');
+  });
+
+  it('leaves text unshown when the stored verdict is about other text', async () => {
+    await seed(R);
+    await storedVerdict(hashOf('something else'));
+    await adapter.scanServiceDealReviewText('ServiceDealReview', REVIEW, unchanged as never);
+    expect((await statuses()).comment).toBe('Pending');
+  });
+
+  it('blocks text the csam queue still holds', async () => {
+    await seed(R);
+    const hash = textScanTextHash((await loadSubject())!);
+    await storedVerdict(hash, '{csam}');
+    await adapter.scanServiceDealReviewText('ServiceDealReview', REVIEW, unchanged as never);
+    expect((await statuses()).comment).toBe('Blocked');
+  });
+});
+
 describe('a csam verdict on review text', () => {
   const holds = () =>
     q<{ status: string; userId: number; entityType: string }>(
@@ -314,6 +358,12 @@ describe('a csam verdict on review text', () => {
     await q(`UPDATE "TextScanHold" SET status = 'Dismissed', meta = '{"decision":"dismiss"}'`);
     await adapter.requeueBlockedServiceDealReviewText('ServiceDealReview', REVIEW);
     expect((await statuses()).comment).toBe('Pending');
+  });
+
+  it('holds a reply under the seller, its author, and a comment under the buyer', async () => {
+    await seed(R);
+    expect((await loadSubject('ServiceDealReviewReply'))?.userId).toBe(SELLER);
+    expect((await loadSubject('ServiceDealReview'))?.userId).toBe(BUYER);
   });
 
   it("a moderator's removal blocks the text and leaves the other text alone", async () => {
