@@ -657,6 +657,18 @@ describe('GET /api/v1/blocks/submissions', () => {
       }
     });
 
+    it('a run whose stored ref is not a tag, or whose sha is malformed, is null', async () => {
+      for (const over of [{ ref: 'refs/heads/main' }, { sha: 'not-a-sha' }]) {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockQueryRaw.mockResolvedValueOnce([runRow(over)]);
+        const { req, res } = authGet();
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const out = res._getJSONData() as { submissions: Array<Record<string, unknown>> };
+        expect(out.submissions[0].actionsRunSource).toBeNull();
+      }
+    });
+
     it('a failed run read (columns not applied yet) still answers 200 with null', async () => {
       mockGetSession.mockResolvedValueOnce(MOD_SESSION);
       mockQueryRaw.mockRejectedValueOnce(
