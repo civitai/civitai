@@ -178,7 +178,7 @@ function workflowCap(workflow: BlockOutputWorkflowFacts): BlockWorkflowOutputRat
     : undefined;
 }
 
-const PENDING: BlockWorkflowOutput = { pending: true };
+export const PENDING: BlockWorkflowOutput = { pending: true };
 const BLOCKED: BlockWorkflowOutput = { blocked: true };
 const KNOWN_TYPES: ReadonlySet<string> = new Set(['image', 'video', 'audio', 'model3d']);
 

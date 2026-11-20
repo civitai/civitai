@@ -1,5 +1,8 @@
 import type { BlockWorkflowOutput } from '~/server/schema/blocks/workflow.schema';
-import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
+import {
+  PENDING,
+  type BlockOutputCeiling,
+} from '~/server/services/blocks/block-output-restriction';
 import {
   blockMediaUrl,
   sealBlockMediaRef,
@@ -175,5 +178,4 @@ export function isPrivateGenerationWorkflow(
 }
 
 const UNRATED: BlockWorkflowOutput = { restricted: true, reason: 'unrated' };
-const PENDING: BlockWorkflowOutput = { pending: true };
 const UNRECOGNISED: BlockWorkflowOutput = { restricted: true, reason: 'unrecognised_url' };
