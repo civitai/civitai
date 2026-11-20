@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import modCatchAll from '~/pages/api/mod/[...path]';
 import adminCatchAll from '~/pages/api/admin/[...path]';
+import { routes as modRoutes } from '~/server/utils/api-routes/mod.generated';
+import { routes as adminRoutes } from '~/server/utils/api-routes/admin.generated';
 
 async function statusFor(
   router: (req: NextApiRequest, res: NextApiResponse) => unknown,
@@ -25,5 +27,11 @@ describe('api catch-alls', () => {
 
   it('does not resolve an admin-only key under /api/mod', async () => {
     expect(await statusFor(modCatchAll, 'cache-check')).toBe(404);
+  });
+
+  // Without this, empty maps would also answer 404 and the two tests above would pass for the wrong reason.
+  it('has each probe key in its own tree', () => {
+    expect(Object.keys(modRoutes)).toContain('whoami');
+    expect(Object.keys(adminRoutes)).toContain('cache-check');
   });
 });
