@@ -457,6 +457,7 @@ const stateOf = async (url: string) =>
       | undefined
   )?.state;
 
+// Moderation Lead ruling 2026-11-20, pinned by the stays-Denied tests below: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
 describe('image takedowns', () => {
   it('a moderator block denies and retracts', async () => {
     await image(1);
@@ -484,7 +485,6 @@ describe('image takedowns', () => {
     await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
               VALUES (${MOD}, 'review', 'image', 1)`;
     await syncCdnAccess();
-    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
@@ -614,7 +614,6 @@ describe('post takedowns', () => {
     await coverImages([1, 2]);
     await releaseMarkers();
     await reconcileCdnAccess();
-    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
@@ -640,7 +639,6 @@ describe('post takedowns', () => {
     await coverImages([1, 2]);
     await releaseMarkers();
     await reconcileCdnAccess();
-    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
@@ -732,7 +730,6 @@ describe('evidence holds', () => {
 
     await sql`UPDATE "Image" SET "needsReview" = NULL WHERE id = 1`;
     await reconcileCdnAccess();
-    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
@@ -757,7 +754,6 @@ describe('evidence holds', () => {
     await coverImages([1]);
     await releaseMarkers();
     await reconcileCdnAccess();
-    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
@@ -779,7 +775,6 @@ describe('evidence holds', () => {
 
     await releaseMarkers();
     await reconcileCdnAccess();
-    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
@@ -2211,7 +2206,6 @@ describe('takedown persist', () => {
     await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
               VALUES (${MOD}, 'review', 'image', 1)`;
     await syncCdnAccess();
-    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
     expect(callsFor(u(1))).toEqual(['deny']);
     await recordModeratorDelete(1);
     await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
@@ -2679,7 +2673,6 @@ describe('retractions per run', () => {
     expect(purged).toHaveLength(2);
   });
 
-  // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
   it('keeps a held deny after the held row is deleted by its owner, through the drain', async () => {
     await image(1);
     await image(2, { url: u(1) });
@@ -2698,7 +2691,7 @@ describe('retractions per run', () => {
     expect(await stateOf(u(1))).toBe('Denied');
   });
 
-  // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral. The pacing marker is per url: a held url sharing a post row with a paced one never gets it.
+  // The pacing marker is per url: a held url sharing a post row with a paced one never gets it.
   it('upgrades only the paced url of a deferred post row, not a held url beside it', async () => {
     setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
     await publishedPost(5);
@@ -2732,7 +2725,6 @@ describe('retractions per run', () => {
     expect(callsFor(u(2))).toEqual(['deny', 'retract']);
   });
 
-  // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
   it('drops the pacing marker once a hold lands, so deleting the held row does not retract', async () => {
     setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
     await publishedPost(5);
@@ -2759,7 +2751,6 @@ describe('retractions per run', () => {
     expect(await stateOf(u(2))).toBe('Denied');
   });
 
-  // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
   it('drops the pacing marker from a row outside the batch once a hold lands', async () => {
     setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
     await publishedPost(5);
@@ -2785,6 +2776,59 @@ describe('retractions per run', () => {
     await syncCdnAccess();
     expect(callsFor(u(3))).toEqual(['deny', 'retract']);
     expect(callsFor(u(2))).toEqual(['deny']);
+  });
+
+  it('keeps a pacing marker an overlapping run wrote after this run read the url', async () => {
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+    await image(1);
+    await image(2);
+    await moderatorBlock(1);
+    // Image 2 is queued while it still serves.
+    await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+              VALUES (${MOD}, 'review', 'image', 2)`;
+    let overlapped = false;
+    respond = async (c) => {
+      if (overlapped || !onUrl(u(1))(c)) return 202;
+      overlapped = true;
+      // A second run, inside the first one's call: image 2 is taken down and the cap defers it.
+      await moderatorBlock(2);
+      await syncCdnAccess();
+      return 202;
+    };
+    await syncCdnAccess();
+    expect(overlapped).toBe(true);
+    expect(callsFor(u(2))).toEqual(['deny']);
+
+    respond = null;
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 5 });
+    await syncCdnAccess();
+    expect(callsFor(u(2))).toEqual(['deny', 'retract']);
+  });
+
+  it('drops the pacing marker once a paced url is lifted', async () => {
+    const pacedOn = async (postId: number) =>
+      Object.keys(
+        (
+          (
+            await sql`SELECT data FROM "JobQueue"
+                      WHERE type = 'CdnAccessSync' AND "entityType" = 'Post' AND "entityId" = ${postId}`
+          ).rows[0] as { data: { pacedUrls?: Record<string, string> } } | undefined
+        )?.data.pacedUrls ?? {}
+      );
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+    await publishedPost(5);
+    for (const id of [1, 2, 3]) await image(id, { postId: 5 });
+    await moderatorPostUnpublish(5);
+    await syncCdnAccess();
+    expect(callsFor(u(2))).toEqual(['deny']);
+    expect(await pacedOn(5)).toContain(u(2));
+
+    // The republish lifts the paced url; the post row stays queued behind a failing lift.
+    await republish(5);
+    respond = (c) => (onUrl(u(3))(c) ? 500 : undefined);
+    await syncCdnAccess();
+    expect(callsFor(u(2))).toEqual(['deny', 'allow']);
+    expect(await pacedOn(5)).not.toContain(u(2));
   });
 
   const retracted = async (ids: number[]) => {
@@ -3080,7 +3124,11 @@ describe('new rows before deferred ones', () => {
     await syncCdnAccess();
     expect(await countIn(range(16, 15), 'Retracted')).toBe(15);
     const after = await row(35);
-    expect(after?.data).toEqual(before?.data);
+    // A deferral again restamps the marker's time, and keeps everything else.
+    expect({ ...after?.data, pacedUrls: Object.keys(after?.data.pacedUrls ?? {}) }).toEqual({
+      ...before?.data,
+      pacedUrls: Object.keys(before?.data.pacedUrls ?? {}),
+    });
     expect(after?.createdAt).toEqual(before?.createdAt);
   });
 
