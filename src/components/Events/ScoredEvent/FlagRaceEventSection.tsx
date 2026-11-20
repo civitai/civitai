@@ -43,7 +43,7 @@ export function FlagRaceEventSection({
     },
     { enabled: ids.length > 0 }
   );
-  // In the day's flag order, not the feed's; undefined where the viewer may not see the flag.
+  // In the day's flag order, not the feed's.
   const { slots, flags } = useMemo(() => {
     const byId = new Map(images.map((image) => [image.id, image]));
     const slots = ids.map((id) => ({ id, image: byId.get(id) }));

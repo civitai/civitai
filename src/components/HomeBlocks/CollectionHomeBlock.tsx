@@ -137,7 +137,6 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   if (flagRow) {
     const loading = isLoading || loadingPreferences;
-    // The day's flags the viewer's hidden preferences took out (a blocking creator, a hidden tag).
     const visibleIds = new Set(filtered.map((item) => item.id));
     const hiddenFlags = shuffledData.filter((item) => !visibleIds.has(item.id));
     return (
