@@ -187,12 +187,18 @@ describe('POST /v1/remix/replay: auto-answers the app cannot steer', () => {
   it.each([
     ['a workflow', "ctx.workflow({ kind: 'upscale', image: ctx.source, scale: 2 });"],
     ['an ask', "ctx.ask({ kind: 'text', prompt: 'Who?', maxLength: 40 });"],
+    // It then throws, once: the catch around the read stops the run too, and records the same.
+    [
+      'a workflow, then throws,',
+      "if (!thrown) { thrown = true; ctx.workflow({ kind: 'upscale', image: ctx.source, scale: 2 }); throw new Error('x'); }",
+    ],
   ])(
     'records no step %s taken by an option getter, and leaves the ask unanswered',
     async (_, inner) => {
       const app = (getter: boolean) => `
 export default defineRemixApp({
   async run(ctx) {
+    let thrown = false;
     const option = { label: 'A' };
     Object.defineProperty(option, 'value', { enumerable: true, get() {
       ${getter ? inner : ''}
