@@ -99,14 +99,15 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     req: string,
     code: RefusalCode,
     message: string,
-    appId = ''
+    appId = '',
+    detail: { tripped?: boolean } = {}
   ) => {
     if (code === 'bad_signature' || code === 'stale_timestamp') {
       deps.metrics.sigRejected.inc({ reason: code });
     } else {
       deps.metrics.refused.inc({ reason: code, app: appId });
     }
-    return send(reply, STATUS[code], { ts: nowSec(), req, error: { code, message } });
+    return send(reply, STATUS[code], { ts: nowSec(), req, error: { code, message, ...detail } });
   };
 
   app.setErrorHandler((err: { code?: string; statusCode?: number }, _request, reply) => {
@@ -261,7 +262,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     quarantinedUntil.delete(key);
     return false;
   };
-  const refuseQuarantined = (reply: FastifyReply, req: string, appId: string) =>
+  // `tripped` marks the call the backstop terminated: the caller counts trips, never the cached refusals.
+  const refuseQuarantined = (reply: FastifyReply, req: string, appId: string, tripped: boolean) =>
     refuse(
       reply,
       req,
@@ -269,7 +271,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       `the app outran the interrupt and its worker was terminated; its calls are refused for ${
         REMIX_QUARANTINE_MS / 60_000
       } minutes`,
-      appId
+      appId,
+      { tripped }
     );
 
   if (deps.mode === 'remix')
@@ -281,7 +284,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const logs = [base, ...branches.map((branch) => [...base, ...branch])];
 
       const key = quarantineKey(body.appId, body.sha256);
-      if (isQuarantined(key)) return refuseQuarantined(reply, req, body.appId);
+      if (isQuarantined(key)) return refuseQuarantined(reply, req, body.appId, false);
       let out;
       try {
         out = await deps.pool.runRemix({
@@ -295,7 +298,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       } catch (err) {
         if (err instanceof BackstopError) {
           quarantinedUntil.set(key, nowMs() + REMIX_QUARANTINE_MS);
-          return refuseQuarantined(reply, req, body.appId);
+          return refuseQuarantined(reply, req, body.appId, true);
         }
         return refusePoolError(reply, req, body.appId, err);
       }

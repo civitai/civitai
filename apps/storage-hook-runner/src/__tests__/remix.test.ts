@@ -396,6 +396,7 @@ describe('quarantine after the backstop', () => {
       expect(hit.statusCode).toBe(423);
       expect(hit.json().error.code).toBe('quarantined');
       expect(hit.json().error.message).toContain('outran the interrupt');
+      expect(hit.json().error.tripped).toBe(true);
       expect(hit.headers[SIG_HEADER]).toBe(hmac(SECRET, hit.body));
       expect(p.stats().terminated).toBe(1);
 
@@ -403,6 +404,7 @@ describe('quarantine after the backstop', () => {
       const later = await call(OUTRUNS, 'remix-outruns');
       expect(later.statusCode).toBe(423);
       expect(later.json().error.code).toBe('quarantined');
+      expect(later.json().error.tripped).toBe(false);
       expect(p.stats().terminated).toBe(1);
 
       // A new source of the same app starts clean, and another app is answered.
@@ -414,7 +416,9 @@ describe('quarantine after the backstop', () => {
       expect(p.stats().terminated).toBe(1);
       // Expired: the source runs again, and outruns the interrupt again.
       now += 1;
-      expect((await call(OUTRUNS, 'remix-outruns')).statusCode).toBe(423);
+      const again = await call(OUTRUNS, 'remix-outruns');
+      expect(again.statusCode).toBe(423);
+      expect(again.json().error.tripped).toBe(true);
       expect(p.stats().terminated).toBe(2);
     } finally {
       await a.close();

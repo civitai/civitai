@@ -126,8 +126,9 @@ change anything inside the VM.
 
 Signed, timestamped and answered exactly as `/v1/check` is (same header, same `ts` and `req`, same
 non-2xx codes), except that a call the backstop terminates answers 423 `quarantined`, not 500
-`worker_terminated`, and so does every later call for that `appId` for 10 minutes (see "A remix
-call's backstop" below). Body (strict):
+`worker_terminated`, and so does every later call for that `appId` and `sha256` for 10 minutes (see
+"A remix call's backstop" below). Its `error.tripped` is `true` on the call the backstop terminated
+and `false` on each cached refusal after it; a caller counting faults counts only trips. Body (strict):
 
 | field       | type             | notes                                                                                            |
 | ----------- | ---------------- | ------------------------------------------------------------------------------------------------ |
