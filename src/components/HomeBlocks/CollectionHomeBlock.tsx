@@ -30,6 +30,7 @@ import { FlagRacePanel } from '~/components/HatTurf/FlagRace/FlagRacePanel';
 import flagClasses from '~/components/HatTurf/FlagRace/FlagRacePanel.module.scss';
 import partyClasses from '~/components/HomeBlocks/ScoredEventHomeBlock.module.scss';
 import { FlagEnterButton } from '~/components/HatTurf/FlagRace/FlagEnterButton';
+import { HiddenFlagCard } from '~/components/HatTurf/FlagRace/HiddenFlagCard';
 import { FlagRaceHomeRow } from '~/components/HatTurf/FlagRace/FlagRaceCollapsedBar';
 import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
@@ -124,10 +125,21 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   // A block this viewer may not see answers not-found: render nothing rather than an empty frame.
   if (!isLoading && !homeBlock) return null;
   // A Flag Race row with no flags today (between race days, or before the first) hides, header and all.
-  if (flagEvent && !isLoading && !loadingPreferences && !items.length) return null;
+  // Judged on the day's summary, not on what this viewer may see: a viewer blocked by every flag's
+  // creator still gets the race panel.
+  if (
+    flagEvent &&
+    !isLoading &&
+    !loadingPreferences &&
+    !(flagRow ? flagRow.summary.flags.length : items.length)
+  )
+    return null;
 
   if (flagRow) {
     const loading = isLoading || loadingPreferences;
+    // The day's flags the viewer's hidden preferences took out (a blocking creator, a hidden tag).
+    const visibleIds = new Set(filtered.map((item) => item.id));
+    const hiddenFlags = shuffledData.filter((item) => !visibleIds.has(item.id));
     return (
       <FlagRaceHomeRow event={flagRow.event} summary={flagRow.summary}>
         <div className={flagClasses.flags}>
@@ -148,6 +160,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
                     type === 'image' ? <ImageCard key={item.id} data={item as any} /> : null
                   )}
                 </ImagesProvider>
+                {hiddenFlags.map((item) => (
+                  <HiddenFlagCard key={item.id} imageId={item.id} />
+                ))}
               </RemixFlyoutLayoutProvider>
             </FlagRowProviders>
           )}
