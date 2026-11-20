@@ -22,16 +22,30 @@ const ITEM_ID = 55;
 // it by username is that the code never assumes a particular number.
 const AUTO_FEATURE_USER_ID = 987_654;
 
-// First $queryRaw is the permission row (getUserCollectionPermissionsByIds), second is the
-// item-owner lookup.
+const ENTITY_DELEGATES = {
+  Model: mockDbRead.model,
+  Image: mockDbRead.image,
+  Post: mockDbRead.post,
+  Article: mockDbRead.article,
+  Model3D: mockDbRead.model3D,
+} as const;
+type EntityType = keyof typeof ENTITY_DELEGATES;
+
+// The $queryRaw is the permission row (getUserCollectionPermissionsByIds); the item owner comes
+// from `itemType`'s table and ITEM_ID's row only, so a lookup in any other table, or of any other
+// id, finds nothing.
 function arrangeCollection({
   write,
+  collectionType = 'Image',
+  itemType = collectionType ?? 'Image',
   contributorPermissions = null,
   // Both nullable, and both NULL is the ordinary case — an item added by a since-deleted account
   // carries no addedById and most items carry no note.
   item = { id: ITEM_ROW_ID, addedById: null, note: null },
 }: {
   write: 'Public' | 'Review' | 'Private';
+  collectionType?: EntityType | null;
+  itemType?: EntityType;
   contributorPermissions?: string[] | null;
   item?: { id: number; addedById: number | null; note: string | null };
 }) {
@@ -40,19 +54,24 @@ function arrangeCollection({
   mockDbWrite.$queryRaw.mockReset();
   mockDbWrite.collectionItem.updateMany.mockReset();
   mockDbWrite.collectionItem.deleteMany.mockReset();
-  mockDbRead.$queryRaw
-    .mockResolvedValueOnce([
-      {
-        id: COLLECTION_ID,
-        read: 'Public',
-        write,
-        userId: COLLECTION_OWNER_ID,
-        type: 'Image',
-        mode: 'Contest',
-        contributorPermissions,
-      },
-    ])
-    .mockResolvedValueOnce([{ userId: ITEM_AUTHOR_ID }]);
+  mockDbRead.$queryRaw.mockResolvedValueOnce([
+    {
+      id: COLLECTION_ID,
+      read: 'Public',
+      write,
+      userId: COLLECTION_OWNER_ID,
+      type: collectionType,
+      mode: 'Contest',
+      contributorPermissions,
+    },
+  ]);
+  for (const [entity, delegate] of Object.entries(ENTITY_DELEGATES)) {
+    delegate.findUnique.mockReset();
+    delegate.findUnique.mockImplementation((({ where }: { where: { id: number } }) =>
+      Promise.resolve(
+        entity === itemType && where.id === ITEM_ID ? { userId: ITEM_AUTHOR_ID } : null
+      )) as never);
+  }
 
   // The lookup's own WHERE clause is now the only thing deciding which rows the writes below
   // touch, and a mock that ignores its arguments cannot see it. Losing the entity predicate
@@ -66,7 +85,9 @@ function arrangeCollection({
     // One assertion spanning both, because two independent `toContain`s prove the predicates are
     // present and not that they are conjoined: `AND` -> `OR` keeps both substrings and returns
     // the whole collection plus the image's rows everywhere else.
-    expect(rendered).toContain(`"collectionId" = ${COLLECTION_ID} AND "imageId" = ${ITEM_ID}`);
+    expect(rendered).toContain(
+      `"collectionId" = ${COLLECTION_ID} AND "${itemType.toLowerCase()}Id" = ${ITEM_ID}`
+    );
     return Promise.resolve([item]);
   });
 }
@@ -77,10 +98,19 @@ function render(value: unknown) {
   return Array.isArray(fragment) ? fragment.join('') : String(value);
 }
 
-function remove({ userId, isModerator = false }: { userId: number; isModerator?: boolean }) {
+function remove({
+  userId,
+  isModerator = false,
+  type,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  type?: EntityType;
+}) {
   return removeCollectionItem({
     collectionId: COLLECTION_ID,
     itemId: ITEM_ID,
+    type,
     userId,
     isModerator,
   } as never);
@@ -269,5 +299,56 @@ describe('removeCollectionItem authorization', () => {
     await expect(remove({ userId: COLLECTION_OWNER_ID })).resolves.toBeTruthy();
     expect(mockDbWrite.collectionItem.deleteMany).not.toHaveBeenCalled();
     expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+// A type-NULL collection holds items of every type, so `itemId` alone does not say which table it
+// is in; the caller's `type` does. A typed collection ignores the caller's `type`.
+describe('removeCollectionItem entity type', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('removes an item from a type-NULL collection using the type the caller names', async () => {
+    arrangeCollection({ write: 'Private', collectionType: null, itemType: 'Model' });
+
+    await expect(remove({ userId: COLLECTION_OWNER_ID, type: 'Model' })).resolves.toMatchObject({
+      type: 'Model',
+    });
+    expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [ITEM_ROW_ID] } },
+    });
+  });
+
+  // The caller's `type` now picks the table ownership is read from, so it needs its own controls.
+  it('rejects an outsider on a type-NULL collection', async () => {
+    arrangeCollection({ write: 'Public', collectionType: null, itemType: 'Model' });
+
+    await expect(remove({ userId: OUTSIDER_ID, type: 'Model' })).rejects.toThrow(/permission/i);
+    expect(mockDbWrite.collectionItem.deleteMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('allows the item author to remove their entry from a type-NULL collection', async () => {
+    arrangeCollection({ write: 'Public', collectionType: null, itemType: 'Model' });
+
+    await expect(remove({ userId: ITEM_AUTHOR_ID, type: 'Model' })).resolves.toBeTruthy();
+    expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [ITEM_ROW_ID] } },
+    });
+  });
+
+  it('rejects removal from a type-NULL collection when the caller names no type', async () => {
+    arrangeCollection({ write: 'Private', collectionType: null });
+
+    await expect(remove({ userId: COLLECTION_OWNER_ID })).rejects.toThrow(/type is required/i);
+  });
+
+  it("uses a typed collection's own type over the caller's", async () => {
+    arrangeCollection({ write: 'Private', collectionType: 'Image' });
+
+    await expect(remove({ userId: COLLECTION_OWNER_ID, type: 'Model' })).resolves.toMatchObject({
+      type: 'Image',
+    });
   });
 });

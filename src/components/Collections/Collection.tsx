@@ -196,7 +196,11 @@ const ModelCollection = ({
           items.push({
             key: 'remove-from-collection',
             component: (
-              <RemoveFromCollectionMenuItem collectionId={collection.id} itemId={data.id} />
+              <RemoveFromCollectionMenuItem
+                collectionId={collection.id}
+                itemId={data.id}
+                type={CollectionType.Model}
+              />
             ),
           });
         }
@@ -329,7 +333,11 @@ const ImageCollection = ({
         return (
           <>
             {canRemove && (
-              <RemoveFromCollectionMenuItem collectionId={collection.id} itemId={image.id} />
+              <RemoveFromCollectionMenuItem
+                collectionId={collection.id}
+                itemId={image.id}
+                type={CollectionType.Image}
+              />
             )}
           </>
         );
