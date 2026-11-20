@@ -4480,10 +4480,7 @@ export const getImagesForModelVersion = async ({
   pending,
   browsingLevel,
   db,
-  ownerSeesHeld = false,
 }: {
-  /** The request carries the owner's view (`credentialViews`): `user`'s held images show. */
-  ownerSeesHeld?: boolean;
   modelVersionIds: number | number[];
   excludedTagIds?: number[];
   excludedIds?: number[];
@@ -4543,7 +4540,7 @@ export const getImagesForModelVersion = async ({
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
       imageWhere.push(
-        ...pendingOthersImageConditions(userId, { ownerSeesHeld }),
+        ...pendingOthersImageConditions(userId),
         pendingLevelImageSql(userId, browsingLevel)
       );
     }

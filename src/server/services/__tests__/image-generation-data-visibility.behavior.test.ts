@@ -179,9 +179,9 @@ function ctxFor(viewer: Viewer, { canViewNsfw = true, crawler = false, scopedTok
   } as unknown as MediaViewer & { cache: { edgeTTL: number } };
 }
 
-async function sees(viewer: Viewer) {
+async function sees(viewer: Viewer, { scopedToken = false } = {}) {
   try {
-    const data = await getImageGenerationData({ id: 1, viewer: ctxFor(viewer) });
+    const data = await getImageGenerationData({ id: 1, viewer: ctxFor(viewer, { scopedToken }) });
     // The payload itself, so a stubbed early return can't pass as "visible".
     expect(data.meta?.prompt).toBe('a prompt');
     return true;
@@ -379,6 +379,10 @@ describe('getImageGenerationData visibility', () => {
       expect(await sees(SELF)).toBe(true);
       expect(await sees({ userId: MANAGER })).toBe(false);
       expect(await sees(OTHER)).toBe(false);
+    });
+
+    it("is not found for its owner on a scoped key: the owner's view needs a session or full-access key", async () => {
+      expect(await sees(SELF, { scopedToken: true })).toBe(false);
     });
 
     it('is served to a moderator', async () => {

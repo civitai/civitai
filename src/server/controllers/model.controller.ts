@@ -1141,7 +1141,6 @@ export const getModelsWithVersionsHandler = async ({
       excludedIds: input.excludedImageIds,
       excludedUserIds: input.excludedUserIds,
       user: ctx.user,
-      ownerSeesHeld: isSessionOrFullUserKey(ctx),
       browsingLevel: input.browsingLevel,
       pending: input.pending,
     });

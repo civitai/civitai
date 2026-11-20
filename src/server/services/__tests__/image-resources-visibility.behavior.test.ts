@@ -1,5 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as UserService from '~/server/services/user.service';
@@ -113,9 +114,18 @@ beforeAll(async () => {
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
 });
 
-const call = async (id: number, who: Who) => {
+// `scoped`: a personal key limited to reading media; without it the call is a browser session.
+const call = async (id: number, who: Who, { scoped = false } = {}) => {
   const cache = { canCache: true, skip: false };
-  const ctx = { user: viewers[who], features: { canViewNsfw: true }, cache };
+  const key = scoped
+    ? {
+        apiKeyId: 9,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 9 },
+        tokenScope: TokenScope.MediaRead,
+      }
+    : {};
+  const ctx = { ...key, user: viewers[who], features: { canViewNsfw: true }, cache };
   const resources = await getImageResourcesHandler({ input: { id }, ctx: ctx as never });
   return { versionIds: resources.map((r) => r.modelVersionId), skip: cache.skip };
 };
@@ -141,6 +151,19 @@ describe('image.getResources follows by-id image visibility', () => {
       }
     );
   });
+
+  it.each([
+    ['csam', 107],
+    ['minor', 108],
+  ])(
+    'returns an image held for %s review to its owner on a session, not on a scoped key',
+    async (_l, id) => {
+      expect(await call(id, 'owner')).toEqual({ versionIds: [11], skip: true });
+      await expect(call(id, 'owner', { scoped: true })).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+    }
+  );
 
   it.each(Object.keys(viewers) as Who[])(
     'returns a clean image’s resources to a %s viewer, edge-cacheable',
