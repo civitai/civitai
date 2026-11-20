@@ -3,6 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { challengeCoverWhere } from '~/server/common/image-visibility';
+import { publicCoverImageSelect, toPublicCoverImage } from '~/server/utils/public-cover-image';
 import { dbRead } from '~/server/db/client';
 import { parseComicProjectMeta } from '~/server/schema/comics.schema';
 import {
@@ -30,7 +31,6 @@ import { slugitOr } from '~/utils/string-helpers';
 
 const anonymous: PublicComicsCtx = { user: undefined, features: { isGreen: false } };
 
-const COVER_WIDTH = 450;
 const PAGE_WIDTH = 1600;
 
 /** Every bit of `level` is allowed. A comic at 0 (not yet rated) passes, as in the site's feed. */
@@ -53,38 +53,26 @@ const chapterUrl = (
     'chapter'
   )}`;
 
-function coverImage(
-  image: { id: number; url: string; nsfwLevel: number } | null | undefined,
-  browsingLevel: number,
-  clean: Set<number>
-) {
-  if (!image || !clean.has(image.id) || !imageFits(image.nsfwLevel, browsingLevel)) return null;
-  return {
-    url: getEdgeUrl(image.url, { width: COVER_WIDTH, name: String(image.id) }),
-    nsfwLevel: image.nsfwLevel,
-  };
+/**
+ * The public `coverImage` for each id in `ids`, by the public API's cover rule (`toPublicCoverImage`,
+ * the one /collections uses) plus the shared cover filter. A cover is any image the creator picked, so
+ * unlike a page it has not passed the reader's panel check.
+ */
+async function publicCovers(ids: (number | undefined)[], browsingLevel: number) {
+  const wanted = ids.filter((id): id is number => id != null);
+  if (!wanted.length) return new Map<number, ReturnType<typeof toPublicCoverImage>>();
+  const rows = await dbRead.image.findMany({
+    where: { AND: [{ id: { in: wanted } }, challengeCoverWhere()] },
+    select: publicCoverImageSelect,
+  });
+  return new Map(rows.map((row) => [row.id, toPublicCoverImage(row, browsingLevel)]));
 }
 
-/**
- * The ids among `ids` a cover may show to anyone: scanned, and passing the shared cover rule (not held,
- * not in violation, not minor-restricted). A cover is any image the creator picked, so unlike a page
- * it has not passed the reader's panel check.
- */
-async function cleanImageIds(ids: (number | undefined)[]) {
-  const wanted = ids.filter((id): id is number => id != null);
-  if (!wanted.length) return new Set<number>();
-  const rows = await dbRead.image.findMany({
-    where: {
-      AND: [
-        { id: { in: wanted } },
-        { ingestion: ImageIngestionStatus.Scanned },
-        challengeCoverWhere(),
-      ],
-    },
-    select: { id: true },
-  });
-  return new Set(rows.map((row) => row.id));
-}
+/** The cover the reader would serve (it already withheld a restricted one), if it passes the rule. */
+const coverImage = (
+  image: { id: number } | null | undefined,
+  covers: Map<number, ReturnType<typeof toPublicCoverImage>>
+) => (image ? covers.get(image.id) ?? null : null);
 
 /** The feed's cursor for `sort`, or null when it is malformed: a comic id, or "<rank>:<id>". */
 export function parseComicsCursor(
@@ -172,12 +160,15 @@ export async function listPublicComics({
     ctx: anonymous,
   });
 
-  const [metas, clean] = await Promise.all([
+  const [metas, covers] = await Promise.all([
     dbRead.comicProject.findMany({
       where: { id: { in: items.map((item) => item.id) } },
       select: { id: true, meta: true },
     }),
-    cleanImageIds(items.map((item) => item.coverImage?.id)),
+    publicCovers(
+      items.map((item) => item.coverImage?.id),
+      browsingLevel
+    ),
   ]);
   const allowDownload = new Map(
     metas.map(({ id, meta }) => [id, parseComicProjectMeta(meta)?.allowDownload === true])
@@ -191,7 +182,7 @@ export async function listPublicComics({
       genre: item.genre,
       url: comicUrl(item.id, item.name, item.nsfwLevel),
       nsfwLevel: item.nsfwLevel,
-      coverImage: coverImage(item.coverImage, browsingLevel, clean),
+      coverImage: coverImage(item.coverImage, covers),
       user: { username: item.user.username },
       chapterCount: item.chapterCount,
       followerCount: item.followerCount,
@@ -217,7 +208,7 @@ async function readComic(id: number, browsingLevel: number) {
 export async function getPublicComic(id: number, browsingLevel: number, now = new Date()) {
   const comic = await readComic(id, browsingLevel);
   if (!comic) return null;
-  const clean = await cleanImageIds([comic.coverImage?.id]);
+  const covers = await publicCovers([comic.coverImage?.id], browsingLevel);
   return {
     id: comic.id,
     name: comic.name,
@@ -225,7 +216,7 @@ export async function getPublicComic(id: number, browsingLevel: number, now = ne
     url: comicUrl(comic.id, comic.name, comic.nsfwLevel),
     nsfwLevel: comic.nsfwLevel,
     allowDownload: comic.meta?.allowDownload === true,
-    coverImage: coverImage(comic.coverImage, browsingLevel, clean),
+    coverImage: coverImage(comic.coverImage, covers),
     user: { username: comic.user.username },
     followerCount: comic.followerCount,
     readerCount: comic.readerCount,

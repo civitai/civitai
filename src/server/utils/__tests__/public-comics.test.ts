@@ -158,42 +158,73 @@ describe('chapter level', () => {
 
 describe('covers', () => {
   const COVER = 990000400;
-  const cover = (nsfwLevel: number) => ({
+  const publicRow = (extra: Record<string, unknown> = {}) => ({
     id: COVER,
     url: 'cover-url',
-    nsfwLevel,
-    modelRestricted: false,
-    userId: OWNER,
+    type: 'image',
+    width: 800,
+    height: 600,
+    nsfwLevel: NsfwLevel.PG,
+    ingestion: ImageIngestionStatus.Scanned,
+    scannedAt: new Date('2026-11-01T00:00:00Z'),
+    tosViolation: false,
+    needsReview: null,
+    blockedFor: null,
+    poi: false,
+    minor: false,
+    acceptableMinor: false,
+    postId: null,
+    ...extra,
   });
-  const clean = () => dbMock.dbRead.image.findMany.mockResolvedValue([{ id: COVER }]);
+  const withCover = (row: Record<string, unknown>) => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([row]);
+    serve(
+      comic({
+        coverImage: {
+          id: COVER,
+          url: 'cover-url',
+          nsfwLevel: row.nsfwLevel,
+          modelRestricted: false,
+          userId: OWNER,
+        },
+      })
+    );
+  };
 
-  it('serves a clean cover in the level, resized', async () => {
-    clean();
-    serve(comic({ coverImage: cover(NsfwLevel.PG) }));
+  it('serves a cover that passes the public cover rule, resized', async () => {
+    withCover(publicRow());
     const url = (await getPublicComic(COMIC, publicBrowsingLevelsFlag, NOW))?.coverImage?.url;
     expect(url).toMatch(/cover-url/);
     expect(url).toMatch(/width=450/);
   });
 
   it.each([
-    ['above the level', NsfwLevel.R, true],
-    ['unrated', 0, true],
-    ['not yet clean (held, unscanned or in violation)', NsfwLevel.PG, false],
-  ])('drops a cover %s', async (_, level, isClean) => {
-    if (isClean) clean();
-    serve(comic({ coverImage: cover(level) }));
+    ['above the level', { nsfwLevel: NsfwLevel.R }],
+    ['unrated', { nsfwLevel: 0 }],
+    ['held for review', { needsReview: 'minor' }],
+    ['not yet scanned', { ingestion: ImageIngestionStatus.Pending }],
+    ['flagged as a minor', { minor: true }],
+  ])('drops a cover %s', async (_, extra) => {
+    withCover(publicRow(extra));
     expect((await getPublicComic(COMIC, publicBrowsingLevelsFlag, NOW))?.coverImage).toBeNull();
   });
 
-  it('asks only for scanned images that pass the shared cover rule', async () => {
-    serve(comic({ coverImage: cover(NsfwLevel.PG) }));
+  it('drops a cover the shared cover filter left out', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    serve(
+      comic({
+        coverImage: { id: COVER, url: 'u', nsfwLevel: 1, modelRestricted: false, userId: OWNER },
+      })
+    );
+    expect((await getPublicComic(COMIC, publicBrowsingLevelsFlag, NOW))?.coverImage).toBeNull();
+  });
+
+  it('asks only for images that pass the shared cover filter', async () => {
+    withCover(publicRow());
     await getPublicComic(COMIC, publicBrowsingLevelsFlag, NOW);
     const { where } = dbMock.dbRead.image.findMany.mock.calls[0][0];
-    expect(where.AND.slice(0, 2)).toEqual([
-      { id: { in: [COVER] } },
-      { ingestion: ImageIngestionStatus.Scanned },
-    ]);
-    expect(where.AND[2].AND).toEqual(
+    expect(where.AND[0]).toEqual({ id: { in: [COVER] } });
+    expect(where.AND[1].AND).toEqual(
       expect.arrayContaining([
         { needsReview: null },
         { tosViolation: false },
