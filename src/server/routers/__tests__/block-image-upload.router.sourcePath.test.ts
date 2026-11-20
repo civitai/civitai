@@ -15,7 +15,9 @@ const h = vi.hoisted(() => ({ isFlipt: vi.fn(), authorize: vi.fn() }));
 
 vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: { APP_BLOCK_SOURCE_SCANNED_ROWS: 'app-block-source-scanned-rows' },
-  isFlipt: (...a: unknown[]) => h.isFlipt(...a),
+  isFlipt: async (...a: unknown[]) => h.isFlipt(...a),
+  isFliptSync: (...a: unknown[]) => h.isFlipt(...a),
+  ensureFliptInitialized: async () => undefined,
 }));
 vi.mock('~/server/services/blocks/block-bridge-auth.service', () => ({
   authorizeBlockBridgeToken: (...a: unknown[]) => h.authorize(...a),
@@ -47,7 +49,7 @@ beforeEach(() => {
   h.authorize.mockReset();
   // A per-app rollout: ON for one app only, as an ENTITY_ID segment would answer.
   h.isFlipt.mockImplementation(
-    async (flag: string, entityId?: string) =>
+    (flag: string, entityId?: string) =>
       flag === 'app-block-source-scanned-rows' && entityId === APP_ON
   );
   h.authorize.mockImplementation(async (token: string) => ({

@@ -963,6 +963,7 @@ export const JobQueueType = {
   CdnAccessSync: 'CdnAccessSync',
   ImageCdnPersistRetry: 'ImageCdnPersistRetry',
   CsamArchive: 'CsamArchive',
+  PendingDelete: 'PendingDelete',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
@@ -1450,6 +1451,14 @@ export const ServiceDealLeg = {
 } as const;
 
 export type ServiceDealLeg = (typeof ServiceDealLeg)[keyof typeof ServiceDealLeg];
+
+export const ServiceDealReviewVerdict = {
+  Happy: 'Happy',
+  NotQuite: 'NotQuite',
+} as const;
+
+export type ServiceDealReviewVerdict =
+  (typeof ServiceDealReviewVerdict)[keyof typeof ServiceDealReviewVerdict];
 
 export const UserHubSourceType = {
   User: 'User',

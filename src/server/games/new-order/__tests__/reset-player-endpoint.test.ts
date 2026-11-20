@@ -14,7 +14,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: (req: NextApiRequest, res: NextApiResponse) => unknown) => handler,
 }));
 
-const { default: handler } = await import('~/pages/api/mod/knights/reset-player');
+const { default: handler } = await import('~/server/api-routes/mod/knights/reset-player');
 
 const call = async (method: string, body: Record<string, unknown>) => {
   const res = { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() };

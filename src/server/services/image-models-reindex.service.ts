@@ -35,6 +35,23 @@ export async function queueDocumentsForImageMinorChanges({
 const MINOR_BATCH = 1000;
 
 /**
+ * Queue a rewrite of every search document showing these images, whatever their minor flag: a
+ * blocked image leaves its documents only through here, as no trigger watches the block. Never
+ * throws, with the same retry as above.
+ */
+export async function queueDocumentsForBlockedImages(imageIds: number[]) {
+  if (!imageIds.length) return;
+  const ids = [...new Set(imageIds)];
+  await withRetry(async () => {
+    await Promise.all([
+      queueModels(ids),
+      queueArticlesAndComics(ids),
+      queueCollectionsAndBounties(ids),
+    ]);
+  });
+}
+
+/**
  * Queue an update for the articles using these images as cover or banner and the comics using them
  * as cover, whatever changed about the images. Never throws, with the same retry as above.
  */

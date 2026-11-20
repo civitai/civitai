@@ -497,6 +497,30 @@ describe('buildAgentReviewApplyScript', () => {
       expect(script).toContain(v);
     }
   });
+
+  it('the sed fallback substitutes every template var, the optional ones with a default', () => {
+    const script = buildAgentReviewApplyScript('civitai-apps');
+    // Always set by the Job, so a bare ${VAR} is fine under set -u.
+    for (const v of [
+      'AGENT_NAME',
+      'PUBLISH_REQUEST_ID',
+      'APP_SLUG',
+      'BUNDLE_PRESIGNED_URL',
+      'CALLBACK_URL',
+      'CALLBACK_TOKEN',
+      'PRIOR_REPORT_JSON_B64',
+      'COST_CAP_USD',
+      'HOOKS_TOKEN',
+    ]) {
+      expect(script).toContain(`-e "s|\\\${${v}}|\${${v}}|g"`);
+    }
+    // Set only on the connect lane / a targeted re-run: without the :- default the
+    // fallback aborts the apply (set -u) on every other run, and without the line at
+    // all the connect lane is rendered as on-site.
+    for (const v of ['AGENT_REVIEW_KIND', 'AGENT_REVIEW_SECTIONS']) {
+      expect(script).toContain(`-e "s|\\\${${v}}|\${${v}:-}|g"`);
+    }
+  });
 });
 
 describe('agentReviewName', () => {

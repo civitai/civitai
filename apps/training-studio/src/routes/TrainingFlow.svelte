@@ -9,6 +9,7 @@
   import SelectStepElements from './SelectStepElements.svelte';
   import { setElementsUi } from '$lib/elements-ui';
   import DataStep from './DataStep.svelte';
+  import DataStepElements from './DataStepElements.svelte';
   import EditDataStep from './EditDataStep.svelte';
   import ReviewStep from './ReviewStep.svelte';
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
@@ -54,10 +55,10 @@
     onExit,
   }: { prices: FromPrices; enabledModelFlags?: string[]; onExit: () => void } = $props();
 
-  // The Civitai Elements redesign, behind its own gate until it replaces the old UI.
   const elementsUi = $derived(enabledModelFlags.includes(ELEMENTS_UI_FLAG_KEY));
   setElementsUi(() => elementsUi);
   const Select = $derived(elementsUi ? SelectStepElements : SelectStep);
+  const Data = $derived(elementsUi ? DataStepElements : DataStep);
 
   const STEPS = [
     { n: 1, label: 'Select' },
@@ -460,7 +461,7 @@
       }}
     />
   {:else if step === 2 && selection}
-    <DataStep
+    <Data
       {selection}
       {prices}
       findReplace={enabledModelFlags.includes(TAG_FIND_REPLACE_FLAG_KEY)}

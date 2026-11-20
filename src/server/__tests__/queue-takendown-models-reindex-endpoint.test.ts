@@ -69,7 +69,8 @@ vi.mock('~/server/services/collection-media-index', () => ({
   isCoverLegUsable: coverLegUsable,
 }));
 
-const handler = (await import('~/pages/api/admin/temp/queue-takendown-models-reindex')).default;
+const handler = (await import('~/server/api-routes/admin/temp/queue-takendown-models-reindex'))
+  .default;
 
 beforeAll(async () => {
   const db = new PGlite();

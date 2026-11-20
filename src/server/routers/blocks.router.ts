@@ -6690,9 +6690,10 @@ export const blocksRouter = router({
    * A generation source the viewer PICKED (`OPEN_IMAGE_UPLOAD { purpose: 'generationSource' }`,
    * or a single `OPEN_MEDIA_UPLOAD` image), already uploaded by the host as a consumer blob, kept
    * as a PRIVATE, scanned row and returned as `persistGenerationSource` returns one. The host calls
-   * it only while `app-block-source-scanned-rows` is on (`blockImageUpload.
+   * it while `app-block-source-scanned-rows` is on (`blockImageUpload.
    * generationSourceUsesScannedRows`): the gate then refuses the blob, and accepts this row once it
-   * is scanned. See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
+   * is scanned. It also calls it when that query FAILS, so a FORBIDDEN here can be a host that
+   * could not read the flag, not a misbehaving one (`toGenerationSource`). See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
    *
    * GATES: `persistGenerationSource`'s preamble: `ai:write:budgeted`, subject = session user, the
    * runtime flag. Then `app-block-source-scanned-rows` must be on for the token's app (FORBIDDEN

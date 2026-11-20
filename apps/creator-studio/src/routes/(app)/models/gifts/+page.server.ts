@@ -6,6 +6,7 @@ import { callMainApp } from '$lib/server/main-app';
 import { firstError } from '$lib/server/form-errors';
 import { darkFlagEnabled } from '$lib/server/main-app-flags';
 import { sessionCookies } from '$lib/server/session-cookies';
+import { loadUsageLimits, USAGE_LIMITS_URL } from '$lib/server/usage-limits';
 import type { GiftIndexPage } from './gift-links';
 
 const versionId = z.coerce.number().int().positive();
@@ -31,14 +32,23 @@ export const load: PageServerLoad = async ({ locals, request, url, cookies }) =>
     cookies.delete(FRESH_COOKIE, { path: '/models/gifts' });
   }
   const qs = query.toString();
+  const cookie = sessionCookies(request);
+  // Streamed, so a slow limits read never holds up the list.
+  const giftLimit = loadUsageLimits(cookie).then(
+    (limits) => limits?.find((row) => row.id === 'gifts.monthly') ?? null
+  );
   const result = await callMainApp<GiftIndexPage>(
     `/api/v1/model-versions/gifts${qs ? `?${qs}` : ''}`,
-    sessionCookies(request)
+    cookie
   );
   return {
     page: result.ok ? result.data : { items: [], nextCursor: null },
     listError: result.ok ? null : result.error,
     paged: !!cursor,
+    // How many times this creator's links were claimed this month, of their limit; null when the
+    // read failed or the main app lists no such row, and the card then does not draw.
+    giftLimit,
+    usageLimitsUrl: USAGE_LIMITS_URL,
   };
 };
 

@@ -173,8 +173,14 @@ vi.mock('../mod-activity', () => ({
 /** The moderator making the edit. Attribution is the whole point, so it is never a default. */
 const MOD_ID = 77;
 
-const { removeBlocklistItems, upsertBlocklist, getBlocklistDTO, BlocklistRowMismatchError } =
-  await import('../blocklist.service');
+const {
+  removeBlocklistItems,
+  upsertBlocklist,
+  getBlocklistDTO,
+  BlocklistRowMismatchError,
+  BlocklistNotSeededError,
+} = await import('../blocklist.service');
+const { logToAxiom } = await import('../axiom');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -418,6 +424,67 @@ describe('upsertBlocklist', () => {
       type: 'UsernameExact',
       data: ['scammer', 'phisher', 'spammer'],
     });
+  });
+
+  // A one-entry ProfanityWord row would replace the whole shipped list, and the seed only
+  // inserts when no row exists, so it would never repair it.
+  it('refuses to create the ProfanityWord row, which only the seed may create', async () => {
+    await expect(
+      upsertBlocklist({ userId: MOD_ID, type: 'ProfanityWord', blocklist: ['zorblat'] })
+    ).rejects.toBeInstanceOf(BlocklistNotSeededError);
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it('adds to the ProfanityWord row once it exists, and logs the entries', async () => {
+    rows[12] = { type: 'ProfanityWord', data: ['zorblat'] };
+    const { count } = await upsertBlocklist({
+      userId: MOD_ID,
+      type: 'ProfanityWord',
+      blocklist: ['Quaxle'],
+    });
+    expect(count).toBe(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'profanity-word-list-change',
+        payload: {
+          userId: MOD_ID,
+          rowId: 12,
+          activity: 'add',
+          entries: ['quaxle'],
+          countDelta: 1,
+        },
+      })
+    );
+  });
+
+  it('logs only the ProfanityWord entries a remove actually dropped', async () => {
+    rows[12] = { type: 'ProfanityWord', data: ['zorblat', 'quaxle'] };
+    await removeBlocklistItems({
+      id: 12,
+      userId: MOD_ID,
+      type: 'ProfanityWord',
+      items: ['Quaxle', 'never-there'],
+    });
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          activity: 'remove',
+          entries: ['quaxle'],
+          countDelta: -1,
+        }),
+      })
+    );
+  });
+
+  it('does not log edits to other lists', async () => {
+    await removeBlocklistItems({
+      id: 1,
+      userId: MOD_ID,
+      type: 'EmailDomain',
+      items: ['spam.example'],
+    });
+    expect(logToAxiom).not.toHaveBeenCalled();
   });
 });
 

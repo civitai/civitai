@@ -55,7 +55,7 @@ import {
   TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
-import handler from '~/pages/api/mod/update-index';
+import handler from '~/server/api-routes/mod/update-index';
 
 /**
  * The routing this file pins: every `index` query value and the module export that must handle

@@ -131,7 +131,13 @@ describe('app-review notifications send email', () => {
   it('the approved email says the app was approved and opens its run page', async () => {
     const outcome = await sendNotificationEmails({
       type: 'app-block-approved',
-      details: { slug: 'pixel-pal', name: 'Pixel Pal', version: '1.0.0', hasPage: true },
+      details: {
+        slug: 'pixel-pal',
+        name: 'Pixel Pal',
+        version: '1.0.0',
+        hasPage: true,
+        canOpenRunPage: true,
+      },
       userIds: [1],
     });
     expect(outcome.sent).toBe(1);
@@ -151,6 +157,28 @@ describe('app-review notifications send email', () => {
       'List-Unsubscribe': `<${getEmailUnsubscribeUrl(1, 'app-block-approved')}>`,
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
     });
+  });
+
+  it('🔴 a submitter outside the run-page rollout gets "View on Civitai" to the submissions view', async () => {
+    const outcome = await sendNotificationEmails({
+      type: 'app-block-approved',
+      details: {
+        slug: 'pixel-pal',
+        name: 'Pixel Pal',
+        version: '1.0.0',
+        hasPage: true,
+        canOpenRunPage: false,
+      },
+      userIds: [1],
+    });
+    expect(outcome.sent).toBe(1);
+    const mail = vi.mocked(sendEmail).mock.calls[0]![0];
+    expect(mail.text).toContain('View on Civitai: http://localhost:3000/apps/build?view=apps');
+    expect(mail.html).toMatch(
+      /<a class="em-btn" href="http:\/\/localhost:3000\/apps\/build\?view=apps"[^>]*>View on Civitai<\/a>/
+    );
+    expect(mail.html).not.toContain('/apps/run/');
+    expect(mail.html).not.toContain('Open your app');
   });
 
   it('a user who used the one-click unsubscribe gets no more of that email', async () => {

@@ -647,6 +647,7 @@ describe('the advisory locks have exactly one call site', () => {
     'services/creator-gallery-hidden-users.service.ts',
     'services/creator-mystery-pack.service.ts',
     'services/creator-score-grant.service.ts',
+    'services/creator-service-deal-review-publish.ts',
     'services/free-placement.service.ts',
     'services/game-frame-report.service.ts',
     'services/item-holder-lock.ts',

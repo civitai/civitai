@@ -43,8 +43,9 @@ vi.mock('~/server/meilisearch/client', () => ({
   searchClient: { index },
 }));
 
-const handler = (await import('~/pages/api/admin/temp/apply-models-index-filterable-attributes'))
-  .default;
+const handler = (
+  await import('~/server/api-routes/admin/temp/apply-models-index-filterable-attributes')
+).default;
 
 function call(query: Record<string, string>, token = 'test-token') {
   const req = { method: 'POST', query: { token, ...query }, headers: {} } as never;

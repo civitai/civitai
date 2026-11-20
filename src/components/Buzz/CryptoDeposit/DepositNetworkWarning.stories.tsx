@@ -45,4 +45,5 @@ function AddressBlock({
 
 export const UsdcBase = () => <AddressBlock code="USDCBASE" />;
 export const UsdtTron = () => <AddressBlock code="USDTTRC20" />;
+export const UsdcSolana = () => <AddressBlock code="usdcsol" />;
 export const UnknownCode = () => <AddressBlock code="foocoinx" network="xlayer" />;
