@@ -507,7 +507,7 @@ function CollectionListForm({
               className="shrink-0"
               h={30}
             >
-              New collection
+              {props.type === CollectionType.Music ? 'New playlist' : 'New collection'}
             </Button>
           </Group>
           {isLoading ? (
@@ -595,6 +595,7 @@ function NewCollectionForm({
 }: Props & { onSubmit: VoidFunction; onBack: VoidFunction; defaultName?: string }) {
   const currentUser = useCurrentUser();
   const isMember = !!currentUser?.tier && currentUser.tier !== 'free';
+  const isPlaylist = props.type === CollectionType.Music;
   const form = useForm({
     schema: upsertCollectionInput,
     defaultValues: {
@@ -664,7 +665,7 @@ function NewCollectionForm({
         <Stack gap={4}>
           <Group justify="space-between">
             <Text size="sm" fw="bold">
-              New Collection
+              {isPlaylist ? 'New Playlist' : 'New Collection'}
             </Text>
             <Button
               variant="subtle"
@@ -678,7 +679,7 @@ function NewCollectionForm({
           <InputText
             name="name"
             label="Name"
-            placeholder="e.g.: Video Game Characters"
+            placeholder={isPlaylist ? 'e.g.: Late night drive' : 'e.g.: Video Game Characters'}
             withAsterisk
           />
           <InputTextArea
