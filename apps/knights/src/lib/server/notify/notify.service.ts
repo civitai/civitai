@@ -210,6 +210,7 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
           servableItems(db)
             .select(sql<number>`1`.as('one'))
             .where('i.minRank', 'in', stages)
+            .where(sql<boolean>`img."userId" is distinct from pl."userId"`)
             .where(
               // A re-queue of an image the player judged under any item is not waiting for them (`insertVote`).
               sql<boolean>`not exists (select 1 from "KnightsVote" j where j."playerId" = pl."userId" and j."imageId" = i."imageId" and j."questionKey" = i."questionKey")`

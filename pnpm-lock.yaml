@@ -124,8 +124,8 @@ importers:
         specifier: ^0.17.0
         version: 0.17.0(patch_hash=1cafa5d3be23d421780ce432e5d3f370d48d39c3cb9c2a71df53c03be2037b02)(next@16.4.5(patch_hash=6abf32f82fe626ed53eff00f56087bb3ce0b569686df1a59e53430d9d6ade0e7)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(sass@1.90.0))
       '@civitai/orchestration-client':
-        specifier: 0.2.6
-        version: 0.2.6
+        specifier: 0.2.8
+        version: 0.2.8
       '@civitai/sdk':
         specifier: ^0.24.0
         version: 0.24.0
@@ -144,6 +144,9 @@ importers:
       '@coinbase/cdp-sdk':
         specifier: ^1.13.0
         version: 1.33.0(bufferutil@4.0.9)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)
+      '@contentauth/c2pa-wasm':
+        specifier: 0.15.1
+        version: 0.15.1
       '@discordjs/rest':
         specifier: ^2.6.0
         version: 2.6.0
@@ -968,6 +971,9 @@ importers:
       '@civitai/email':
         specifier: workspace:*
         version: link:../../packages/civitai-email
+      '@civitai/flipt':
+        specifier: workspace:*
+        version: link:../../packages/civitai-flipt
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1232,6 +1238,9 @@ importers:
       '@civitai/db':
         specifier: workspace:*
         version: link:../../packages/civitai-db
+      '@civitai/db-queries':
+        specifier: workspace:*
+        version: link:../../packages/civitai-db-queries
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
@@ -1247,6 +1256,9 @@ importers:
       '@civitai/shared':
         specifier: workspace:*
         version: link:../../packages/civitai-shared
+      '@microsoft/signalr':
+        specifier: ^7.0.14
+        version: 7.0.14(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       kysely:
         specifier: ^0.28.7
         version: 0.28.17
@@ -1302,6 +1314,9 @@ importers:
 
   apps/moderator:
     dependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.490.0
+        version: 3.862.0
       '@civitai/auth':
         specifier: workspace:*
         version: link:../../packages/civitai-auth
@@ -1339,8 +1354,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-notifications
       '@civitai/orchestration-client':
-        specifier: 0.2.6
-        version: 0.2.6
+        specifier: 0.2.8
+        version: 0.2.8
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1356,6 +1371,9 @@ importers:
       '@tabler/icons-svelte':
         specifier: ^3.28.1
         version: 3.44.0(svelte@5.56.3(@typescript-eslint/types@8.60.1))
+      '@tanstack/svelte-virtual':
+        specifier: 3.13.12
+        version: 3.13.12(svelte@5.56.3(@typescript-eslint/types@8.60.1))
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
@@ -1497,8 +1515,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
       '@civitai/orchestration-client':
-        specifier: 0.2.6
-        version: 0.2.6
+        specifier: 0.2.8
+        version: 0.2.8
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1613,6 +1631,9 @@ importers:
       '@civitai/buzz':
         specifier: workspace:*
         version: link:../../packages/civitai-buzz
+      '@civitai/components':
+        specifier: 0.13.0
+        version: 0.13.0(@civitai/sdk@0.24.0)
       '@civitai/db':
         specifier: workspace:*
         version: link:../../packages/civitai-db
@@ -1623,8 +1644,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-flipt
       '@civitai/orchestration-client':
-        specifier: 0.2.6
-        version: 0.2.6
+        specifier: 0.2.8
+        version: 0.2.8
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1646,6 +1667,9 @@ importers:
       kysely:
         specifier: ^0.28.7
         version: 0.28.17
+      lit:
+        specifier: ^3.3.3
+        version: 3.3.3
       msgpackr:
         specifier: ^1.11.5
         version: 1.11.5
@@ -2530,8 +2554,8 @@ packages:
     peerDependencies:
       next: ^12.1.4 || ^13 || ^14
 
-  '@civitai/orchestration-client@0.2.6':
-    resolution: {integrity: sha512-94iQStA5wOW6dm9sL1TaZiYS8DaWGWb45ACSKUsMvURXqg37aCMaNDggPIlto+eEnQj7ouSYXKlfo8pdRKFbxQ==}
+  '@civitai/orchestration-client@0.2.8':
+    resolution: {integrity: sha512-VRF+6UIQIXNBDsEBQle3xnAHKVCgT51QB1Bn+lu4aMKPRQOCHj3oJMxleuVO5DsS4gS73/3mnx3knc33JHws/A==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/sdk@0.24.0':
@@ -2556,6 +2580,9 @@ packages:
   '@colors/colors@1.6.0':
     resolution: {integrity: sha512-Ir+AOibqzrIsL6ajt3Rz3LskB7OiMVHqltZmspbW/TJuTVuyOMirVqAkjfY6JISiLHgyNqicAC8AyHHGzNd/dA==}
     engines: {node: '>=0.1.90'}
+
+  '@contentauth/c2pa-wasm@0.15.1':
+    resolution: {integrity: sha512-Qa6/ILQcPlDx/8f3Af2rQVCZ9Df8cfOoclXUqW1JFNuXozyCDCmV8BfGO9ES246KTgunetyKjs/zhiDWx7T1TQ==}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -5358,6 +5385,11 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
       react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  '@tanstack/svelte-virtual@3.13.12':
+    resolution: {integrity: sha512-SsOinCktvpMFbdSW61X6jeUNaJvD1tmt30AFVSLe1FQxGxjdPkZo0gAsoVPqM9FFZqidvvXQ4gpadDaTz/yGxA==}
+    peerDependencies:
+      svelte: ^3.48.0 || ^4.0.0 || ^5.0.0
 
   '@tanstack/table-core@8.20.5':
     resolution: {integrity: sha512-P9dF7XbibHph2PFRz8gfBKEXEY/HJPOhym8CHmjF8y3q5mWpKx9xtZapXQUWCgkqvsK0R46Azuz+VaxD4Xl+Tg==}
@@ -13585,7 +13617,7 @@ snapshots:
       next: 16.4.5(patch_hash=6abf32f82fe626ed53eff00f56087bb3ce0b569686df1a59e53430d9d6ade0e7)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(sass@1.90.0)
       whatwg-fetch: 3.6.20
 
-  '@civitai/orchestration-client@0.2.6':
+  '@civitai/orchestration-client@0.2.8':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0
@@ -13593,7 +13625,7 @@ snapshots:
 
   '@civitai/sdk@0.24.0':
     dependencies:
-      '@civitai/orchestration-client': 0.2.6
+      '@civitai/orchestration-client': 0.2.8
 
   '@civitai/theme@0.5.2': {}
 
@@ -13626,6 +13658,8 @@ snapshots:
       - utf-8-validate
 
   '@colors/colors@1.6.0': {}
+
+  '@contentauth/c2pa-wasm@0.15.1': {}
 
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
@@ -16626,6 +16660,11 @@ snapshots:
       '@tanstack/virtual-core': 3.13.12
       react: 18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)
       react-dom: 18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
+
+  '@tanstack/svelte-virtual@3.13.12(svelte@5.56.3(@typescript-eslint/types@8.60.1))':
+    dependencies:
+      '@tanstack/virtual-core': 3.13.12
+      svelte: 5.56.3(@typescript-eslint/types@8.60.1)
 
   '@tanstack/table-core@8.20.5': {}
 

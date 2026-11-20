@@ -1,5 +1,5 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Group, Input, LoadingOverlay, Paper, Text } from '@mantine/core';
+import { Group, Input, LoadingOverlay, Paper, Text, UnstyledButton } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { DropzoneProps, FileWithPath } from '@mantine/dropzone';
 import { Dropzone } from '@mantine/dropzone';
@@ -14,6 +14,11 @@ import classes from './SimpleImageUpload.module.scss';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import type { NsfwLevel } from '~/server/common/enums';
+import { useImageStore } from '~/store/image.store';
+import { isViewer } from '~/utils/is-viewer';
 import type { DataFromFile } from '~/hooks/useCFImageUpload';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants, isOrchestratorUrl } from '~/server/common/constants';
@@ -53,6 +58,8 @@ type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
   dropzoneProps?: Omit<DropzoneProps, 'children' | 'onDrop'>;
   previewDisabled?: boolean;
   withNsfwLevel?: boolean;
+  /** Only a saved image (one with an id) can be voted on. */
+  ratingClickable?: boolean;
   disabled?: boolean;
 };
 
@@ -68,6 +75,7 @@ export function SimpleImageUpload({
   previewDisabled,
   dropzoneProps,
   withNsfwLevel = true,
+  ratingClickable,
   disabled,
   ...props
 }: SimpleImageUploadProps) {
@@ -224,12 +232,17 @@ export function SimpleImageUpload({
                 : classes.imageContainer
             }
           >
-            {withNsfwLevel && !!value && typeof value !== 'string' && (
-              <BrowsingLevelBadge
-                browsingLevel={value.nsfwLevel}
-                className="absolute left-2 top-2 z-10"
-              />
-            )}
+            {withNsfwLevel &&
+              !!value &&
+              typeof value !== 'string' &&
+              (ratingClickable && !disabled && value.id ? (
+                <VotableRatingBadge image={{ ...value, id: value.id }} />
+              ) : (
+                <BrowsingLevelBadge
+                  browsingLevel={value.nsfwLevel}
+                  className="absolute left-2 top-2 z-10"
+                />
+              ))}
             <EdgeMedia
               src={image.objectUrl ?? image.url}
               type={MediaType.image}
@@ -276,5 +289,29 @@ export function SimpleImageUpload({
       )}
       {children}
     </Input.Wrapper>
+  );
+}
+
+type SavedImage = { id: number; nsfwLevel?: number; userId?: number; user?: { id: number } };
+
+function VotableRatingBadge({ image }: { image: SavedImage }) {
+  const currentUser = useCurrentUser();
+  // The modal writes the new rating to imageStore; read it back so the badge updates.
+  const { nsfwLevel = 0 } = useImageStore(image);
+
+  return (
+    <UnstyledButton
+      aria-label="Change rating"
+      className="absolute left-2 top-2 z-10"
+      onClick={() =>
+        openSetBrowsingLevelModal({
+          imageId: image.id,
+          nsfwLevel: nsfwLevel as NsfwLevel,
+          isOwner: isViewer(currentUser, image.userId) || isViewer(currentUser, image.user?.id),
+        })
+      }
+    >
+      <BrowsingLevelBadge browsingLevel={nsfwLevel} className="cursor-pointer" />
+    </UnstyledButton>
   );
 }

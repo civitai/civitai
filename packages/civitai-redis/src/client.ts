@@ -1144,14 +1144,25 @@ export function attachSysSentinelListeners(
     errorCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
   }
 ) {
+  // @redis/client emits SENTINE_LIST_CHANGE (sic) on every sentinel scan, carrying only the list
+  // size; log it only when the size moves. The Symbol seed makes the first event always log, even
+  // without a size.
+  let lastSentinelListSize: unknown = Symbol('no sentinel list size seen');
   client.on('topology-change', (event: any) => {
     const { type: eventType, node } = event ?? {};
     const host = node?.host ?? '?';
     const port = node?.port ?? '?';
-    ctx.log(
-      `Redis sentinel topology change [type=${eventType ?? 'unknown'}, host=${host}, port=${port}]`,
-      event
-    );
+    const unchangedSentinelList =
+      eventType === 'SENTINE_LIST_CHANGE' && event.size === lastSentinelListSize;
+    if (eventType === 'SENTINE_LIST_CHANGE') lastSentinelListSize = event.size;
+    if (!unchangedSentinelList) {
+      ctx.log(
+        `Redis sentinel topology change [type=${
+          eventType ?? 'unknown'
+        }, host=${host}, port=${port}]`,
+        event
+      );
+    }
     ctx.topologyCounter
       .labels({
         type: String(eventType ?? 'unknown'),
@@ -3248,6 +3259,11 @@ const REDIS_KEYS_UNPREFIXED = {
     DEVICE_CODES: 'packed:oauth:device-codes',
     DEVICE_USER_CODES: 'packed:oauth:device-user-codes',
     OIDC_CONTEXT: 'packed:oauth:oidc-context',
+    // `packed:oauth:refresh-tombstone:<sha256 of the token>` → the chain a rotated refresh token
+    // belonged to (family id, user, client). TTL at most 7 days, and never past the rotated token's own
+    // expiry. Presenting a tombstoned token is reuse: the auth hub revokes the chain. See apps/auth
+    // src/lib/server/oauth/offline-grant.ts.
+    REFRESH_TOMBSTONES: 'packed:oauth:refresh-tombstone',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',
@@ -3385,8 +3401,6 @@ const REDIS_KEYS_UNPREFIXED = {
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',
     PROFILE_PICTURES: 'packed:caches:profile-pictures:v4',
-    // apps/event-engine's own `profilePictures` cache (imageData.cache.ts): raw hashes, not packed.
-    EVENT_ENGINE_PROFILE_PICTURES: 'user:profilePicture:v3',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',

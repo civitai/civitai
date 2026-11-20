@@ -206,6 +206,23 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     expect(getAllImagesMock).not.toHaveBeenCalled();
   });
 
+  it("serves a creator's Requiring Metadata filter from the database", async () => {
+    const input = { limit: 10, browsingLevel: 1, include: [], userId: 7, requiringMeta: true };
+    const result = await getInfiniteImagesHandler({ input: input as never, ctx });
+
+    expect(getAllImagesMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesIndexMock).not.toHaveBeenCalled();
+    expect(result.source).toBe('db');
+  });
+
+  it('leaves a broad feed on the index when only requiringMeta is set', async () => {
+    const input = { limit: 10, browsingLevel: 1, include: [], requiringMeta: true };
+    await getInfiniteImagesHandler({ input: input as never, ctx });
+
+    expect(getAllImagesIndexMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesMock).not.toHaveBeenCalled();
+  });
+
   it('reports db when the index path fell back and said so', async () => {
     getAllImagesIndexMock.mockResolvedValue({ nextCursor: '10', items: [], source: 'db' });
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { removeBodyMedia } from '~/server/utils/article-body-media';
 
 const KEPT = '11111111-1111-4111-8111-111111111111';
@@ -116,6 +116,19 @@ describe('removeBodyMedia', () => {
     )}">`;
 
     expect(removeBodyMedia(html, { keepEdgeMedia: new Set([KEPT]), withheld: [] })).toBe(html);
+  });
+
+  it('removes media without warning, passing script and style through unchanged', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const out = strip(
+        `<p>a</p><img src="${cdn(`${HELD}/x.jpeg`)}"><script>alert(1)</script><style>p{}</style>`
+      );
+      expect(out).toBe('<p>a</p><script>alert(1)</script><style>p{}</style>');
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('changes nothing when nothing is withheld and nothing is kept', () => {

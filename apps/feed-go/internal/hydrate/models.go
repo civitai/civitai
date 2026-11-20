@@ -368,8 +368,10 @@ func (s *Sources) privacyDefaultsFrom(ctx context.Context, owners []int, got map
 }
 
 // VersionImages is getImagesForModelVersionCache: each version's cached showcase images
-// (imagesForModelVersionsCache), each image's `tags` replaced by the image-tag cache's ids (the
-// appendFn: `tags ?? []`). A version whose entry is a notFound marker has no images (absent from the
+// (imagesForModelVersionsCache) without those the minor content rule restricts, each image's `tags`
+// replaced by the image-tag cache's ids (the appendFn: the filter, then `tags ?? []`). A version
+// whose images are all filtered out keeps its entry, with no images. A version whose entry is a
+// notFound marker has no images (absent from the
 // answer). With s.Compute a version-images miss is computed (fillVersionImages: the lookupFn's
 // showcase query, lag-aware with write-back on) and a stale entry revalidated as Node's fetch
 // revalidates it; without, a miss falls back and a stale entry is served. An image-tags miss is
@@ -401,9 +403,14 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 		for _, v := range asList(e.Value["images"]) {
 			if m, ok := v.(map[string]any); ok {
 				list = append(list, m)
-				if iid, ok := Int(m["id"]); ok {
-					imageIDs = append(imageIDs, iid)
-				}
+			}
+		}
+		// The appendFn drops the images the minor content rule restricts before it reads their tags,
+		// on every read, for every viewer (an entry cached before the lookup left them out holds them).
+		list = WithoutMinorMatureImages(list, func(m map[string]any, k string) any { return m[k] })
+		for _, m := range list {
+			if iid, ok := Int(m["id"]); ok {
+				imageIDs = append(imageIDs, iid)
 			}
 		}
 		out[id] = list

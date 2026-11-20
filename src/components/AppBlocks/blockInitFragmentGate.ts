@@ -276,10 +276,9 @@ export const BLOCK_HOST_LOCAL_PREVIEW_STORAGE: Record<BlockHostSurface, boolean>
 
 /**
  * The BLOCK_INIT `capabilities` entry by which a host says it COLLECTS the frame's non-fatal
- * errors. `@civitai/sdk` from 0.29.0 then forwards uncaught errors, unhandled rejections and
- * `console.error` as `BLOCK_ERROR { fatal: false, source, stack?, at }`, with the caps it already
- * applies in a dev session (≤ 20 a minute, a repeat within 10 s dropped). An older SDK ignores
- * it. A wire contract with the SDK: compared there as this exact string.
+ * errors. A new enough SDK (`REVIEW_CONSOLE_MIN_SDKS`) then forwards uncaught errors, unhandled
+ * rejections and `console.error` as `BLOCK_ERROR { fatal: false, source, stack?, at }`; an older
+ * one ignores it. A wire contract with the SDK: compared there as this exact string.
  */
 export const BLOCK_ERRORS_CAPABILITY = 'blockErrors:v1';
 

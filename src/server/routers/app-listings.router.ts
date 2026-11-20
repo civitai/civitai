@@ -91,8 +91,8 @@ import {
   isListingAudienceFloor,
   type ListingAudienceFloor,
 } from '~/shared/utils/app-listing-visibility';
+import { enforceAppBlocksAuthorFlag } from '~/server/trpc/app-blocks-author.middleware';
 import {
-  isAppBlocksAuthorEnabled,
   isAppBlocksEnabled,
   resolveStoreVisibilityScope,
   resolveViewerAudienceFloor,
@@ -138,31 +138,6 @@ import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 const enforceAppBlocksFlag = middleware(async ({ ctx, next }) => {
   if (await isAppBlocksEnabled({ user: ctx.user })) return next();
   throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
-});
-
-/**
- * AUTHOR flag gate (P3a) — the WIDENED gate for the creator asset-CRUD procs +
- * the off-site submit/withdraw/my-submissions procs. Evaluated WITH the caller's
- * context against `app-blocks-author` (`isAppBlocksAuthorEnabled`: mod floor +
- * the `app-dev-testers` cohort segment), so an app-dev-tester may manage their
- * OWN listing's assets + submit off-site apps — while the SERVICE-layer owner
- * check still bounds every mutation to the caller's own listings. This REPLACES
- * the mod-only `enforceAppBlocksFlag` (`isAppBlocksEnabled`) on those procs;
- * mods still pass via the author floor. Fail-CLOSED: absent flag / Flipt-down →
- * mods only. (The mod-only `backfillAssets` proc keeps `enforceAppBlocksFlag`.)
- */
-const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
-  // Every attachment below is `protectedProcedure.use(...)`, so `isAuthed` has already
-  // run and `ctx.user` is non-null at runtime — but this is a bare `middleware`, whose
-  // ctx type does not carry that narrowing. `isAppBlocksAuthorEnabled` REQUIRES a
-  // subject (a capability has nothing to authorize without one), so the compiler makes
-  // this refusal mandatory rather than optional. Keep it: it is also what makes the
-  // middleware safe if it is ever attached to a `publicProcedure`.
-  if (!ctx.user) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
-  }
-  if (await isAppBlocksAuthorEnabled({ user: ctx.user })) return next();
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
 });
 
 /**
@@ -459,6 +434,16 @@ function mapSubListingError(err: unknown): TRPCError {
  * Replaces the previous blanket `BAD_REQUEST + (err as Error).message`, which both
  * mis-coded typed failures and leaked raw infra messages to moderators.
  */
+/**
+ * After an off-site decision lands, tear down any agent review of that request (connect lane).
+ * Fire-and-forget and never rejects: the decision is the response, the teardown is hygiene.
+ */
+function teardownConnectAgentReviewAfterDecision(publishRequestId: string): Promise<void> {
+  return import('~/server/services/blocks/connect-agent-review.service')
+    .then((m) => m.teardownConnectAgentReview(publishRequestId))
+    .catch(() => undefined);
+}
+
 function mapOffsiteError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
   if (err instanceof Error && err.name === 'PublishRequestHeldError')
@@ -810,6 +795,7 @@ export const appListingsRouter = router({
           cause: err,
         });
       }
+      void teardownConnectAgentReviewAfterDecision(input.publishRequestId);
       // 🔴 `outcome` is NOT decoration. `'removed'` means this withdraw closed the review
       // of a formerly-LIVE listing, which leaves it delisted and only a moderator can put
       // it back; `'deleted'` merely discarded a draft. The UI must be able to say which,
@@ -1448,8 +1434,9 @@ export const appListingsRouter = router({
       const { approveExternalRequest } = await import(
         '~/server/services/blocks/offsite-listing.service'
       );
+      let approved;
       try {
-        return await approveExternalRequest({
+        approved = await approveExternalRequest({
           publishRequestId: input.publishRequestId,
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
@@ -1461,6 +1448,8 @@ export const appListingsRouter = router({
       } catch (err) {
         throw mapOffsiteError(err);
       }
+      void teardownConnectAgentReviewAfterDecision(input.publishRequestId);
+      return approved;
     }),
 
   /**
@@ -1492,6 +1481,7 @@ export const appListingsRouter = router({
       } catch (err) {
         throw mapOffsiteError(err);
       }
+      void teardownConnectAgentReviewAfterDecision(input.publishRequestId);
       return { ok: true };
     }),
 
@@ -2047,21 +2037,20 @@ export const appListingsRouter = router({
       if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
-      const { listStoreGrid } = await import('~/server/services/blocks/app-index-search.service');
+      const { listStoreGrid, storeGridRequest } = await import(
+        '~/server/services/blocks/app-index-search.service'
+      );
       return listStoreGrid(
         input,
-        {
+        // The sub-listing opt-in and the index switch meet the viewer's flags there.
+        ...storeGridRequest(input, {
+          features: ctx.features,
           redCapable: isRedCapableRequest(ctx),
           scope,
           floor,
           viewer: listingViewerFromCtx(ctx),
-          // Opt-in AND flag: a `ListingCard`-only caller (the related rail) must never receive a
-          // `SubListingCard` just because the viewer has the flag.
-          includeSubListings:
-            input.includeSubListings === true && !!ctx.features?.appStoreSubListings,
           viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
-        },
-        { indexSearch: !!ctx.features?.appIndexSearch }
+        })
       );
     }),
 

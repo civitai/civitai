@@ -149,3 +149,16 @@ describe('apiKey.setBuzzLimit on the calling key itself', () => {
     expect(dbMock.dbRead.apiKey.findFirst).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('apiKey.add during an impersonation', () => {
+  it('creates no key while impersonating', async () => {
+    const caller = createCaller(ctx({ impersonatedBy: 5 }));
+    await expect(caller.add({ name: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: "API keys can't be created while impersonating",
+    });
+    expect(addApiKeyHandler).not.toHaveBeenCalled();
+    // Control: the same session without the impersonation creates the key.
+    await expect(createCaller(ctx()).add({ name: 'k' })).resolves.toBe('added');
+  });
+});

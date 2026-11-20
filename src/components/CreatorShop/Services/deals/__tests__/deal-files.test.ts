@@ -1,3 +1,8 @@
+import { constants } from '~/server/common/constants';
+import {
+  SERVICE_FINAL_VIDEO_NOT_MP4_OR_WEBM,
+  SERVICE_FINAL_VIDEO_TOO_LARGE,
+} from '~/shared/constants/creator-services.constants';
 import { describe, expect, it } from 'vitest';
 import {
   acceptDeliveryBlocked,
@@ -72,9 +77,13 @@ describe('upload checks before sending', () => {
     ).toBeNull();
     expect(uploadRefusal('Final', { name: 'clip.mp4', type: 'video/mp4', size: MB })).toBeNull();
     expect(uploadRefusal('Final', { name: 'clip.webm', type: 'video/webm', size: MB })).toBeNull();
-    expect(uploadRefusal('Final', { name: 'clip.mp4', type: 'video/mp4', size: 201 * MB })).toMatch(
-      /video cannot be more than 200 MB/
-    );
+    const videoMax = constants.mediaUpload.maxVideoFileSize;
+    expect(
+      uploadRefusal('Final', { name: 'clip.mp4', type: 'video/mp4', size: videoMax })
+    ).toBeNull();
+    expect(
+      uploadRefusal('Final', { name: 'clip.mp4', type: 'video/mp4', size: videoMax + 1 })
+    ).toBe(SERVICE_FINAL_VIDEO_TOO_LARGE);
     expect(uploadRefusal('Final', { name: 'README', type: '', size: 10 })).toMatch(/\(none\)/);
     expect(
       uploadRefusal('Final', { name: 'big.zip', type: 'application/zip', size: 2 * 1024 * MB })
@@ -291,7 +300,7 @@ describe('video copy', () => {
     ['clip.bin', 'video/mp4'],
   ])('never tells a seller to zip a video (%s)', (name, type) => {
     const refusal = uploadRefusal('Final', { name, type, size: MB2 });
-    expect(refusal).toMatch(/\.mp4 or \.webm, up to 50 seconds/);
+    expect(refusal).toBe(SERVICE_FINAL_VIDEO_NOT_MP4_OR_WEBM);
     expect(refusal).not.toMatch(/zip/i);
   });
 

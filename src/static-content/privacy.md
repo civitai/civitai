@@ -3,7 +3,7 @@ title: Privacy Policy
 description: "Civitai values the privacy of individuals who use our application, websites and related services. This privacy policy explains how we collect, use, and disclose information from users."
 ---
 
-**Last Updated**: October 21, 2026
+**Last Updated**: November 20, 2026
 
 Civit AI, Inc. (**"Civitai**," "**we**," "**our**," and/or "**us**") values the privacy of individuals who use our application, websites and related services (collectively, our "**Services**"). This privacy policy (the "**Privacy Policy**") explains how we collect, use, and disclose information from users of our Services ("**Users**" "**you**," and/or "**your**") to enable creators to share content with other creators and to continue to improve our Services. By using our Services, you agree to the collection, use, disclosure, and procedures this Privacy Policy describes. Beyond the Privacy Policy, your use of our Services is also subject to our [Terms of Service](/content/tos).
 
@@ -77,9 +77,9 @@ User Content. Our Services are a social service in which you can find, enjoy, an
 **If you choose not to provide us with information we request, some features of our Services may not work as intended.**
 
 ## Third Parties
-We use a third-party to provide monetization technologies for our site. You can review their privacy and cookie policy [here](https://www.snigel.com/privacy-policy/).
+We use third parties to provide advertising and monetization technologies on our site: Snigel, and Sparteo, a service of Actirise. They and their advertising partners may use cookies and similar technologies on our site to show ads, measure their performance, and prevent fraud. You can review their privacy policies here: [Snigel](https://www.snigel.com/privacy-policy/) and [Sparteo](https://corporate.sparteo.com/privacy-policy).
 
-Civit AI, Inc. participates in the IAB Europe Transparency & Consent Framework and complies with its Specifications and Policies. Civit AI, Inc. uses the Consent Management Platform with the identification number 9.
+Civit AI, Inc. participates in the IAB Europe Transparency & Consent Framework and complies with its Specifications and Policies. Civit AI, Inc. uses the Consent Management Platform with the identification number 229.
 
 Our Services may contain links to other websites, products, or services that we do not own or operate. We are not responsible for the privacy practices of these third parties. Please be aware that this Privacy Policy does not apply to your activities on these third-party services or any information you disclose to these third parties. We encourage you to read their privacy policies before providing any information to them.
 

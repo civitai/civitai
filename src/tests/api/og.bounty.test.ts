@@ -45,7 +45,7 @@ beforeEach(() => {
     user: { username: 'u' },
   });
   dbMock.dbRead.bountyMetric.findFirst.mockResolvedValue(null);
-  dbMock.dbRead.imageConnection.findFirst.mockResolvedValue(null);
+  (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 });
 
 describe('/api/og?type=bounty', () => {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -243,7 +244,7 @@ func TestWritePackedResults(t *testing.T) {
 	want := []map[string]any{
 		{"msg": "cache write", "cache": "tag-ids", "key": "k:1", "id": 1.0, "result": "written"},
 		{"msg": "cache write", "cache": "tag-ids", "key": "k:2", "id": 2.0, "result": "nx_lost"},
-		{"msg": "cache write", "cache": "tag-ids", "key": "k:3", "id": 3.0, "result": "error"},
+		{"msg": "cache write", "cache": "tag-ids", "key": "k:3", "id": 3.0, "result": "error", "err": "testkit: redis is down"},
 		{"msg": "cache write", "cache": "version-images", "key": "k:4", "id": 4.0, "result": "written"},
 	}
 	if got := lines.lines(t); !reflect.DeepEqual(got, want) {
@@ -265,6 +266,224 @@ func TestWritePackedResults(t *testing.T) {
 	if got := lines2.lines(t); !reflect.DeepEqual(got, []map[string]any{{"msg": "cache write", "cache": "official-models",
 		"key": officialKey, "result": "written"}}) {
 		t.Fatalf("official models lines %v", got)
+	}
+}
+
+// The write-back pipeline runs detached from the request: a request context cancelled before the
+// pipeline executes (a sibling lookup failed and the page falls back, the client left, the budget ran
+// out) still writes the entries already computed, SET NX and overwrite alike, each counted and logged
+// written. Regression: on the request's context every write failed with context.Canceled and was
+// counted error. Fails on: writePacked pipelining on ctx instead of a detached context.
+func TestWritePackedLandsAfterRequestCancelled(t *testing.T) {
+	r := testkit.NewRedis()
+	obs := &observed{}
+	lines := &writeLines{}
+	s := &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{ObserveWrite: obs.observe, WriteLog: lines.log(100, nil)}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.writePacked(ctx, []packedWrite{
+		{cache: MissTagIDs, id: 11, key: "k:11", val: []byte("v11"), ttl: time.Hour},
+		{cache: MissVersionImages, id: 12, key: "k:12", val: []byte("v12"), ttl: time.Hour, overwrite: true},
+	})
+	if o := obs.get(); !reflect.DeepEqual(o, map[string]int{"tag-ids/written": 1, "version-images/written": 1}) {
+		t.Fatalf("observed %v, want both written", o)
+	}
+	for k, want := range map[string]string{"k:11": "v11", "k:12": "v12"} {
+		if b, ok := r.String(k); !ok || string(b) != want {
+			t.Fatalf("%s holds %q (present %v), want %q", k, b, ok, want)
+		}
+	}
+	want := []map[string]any{
+		{"msg": "cache write", "cache": "tag-ids", "key": "k:11", "id": 11.0, "result": "written"},
+		{"msg": "cache write", "cache": "version-images", "key": "k:12", "id": 12.0, "result": "written"},
+	}
+	if got := lines.lines(t); !reflect.DeepEqual(got, want) {
+		t.Fatalf("lines\n got %v\nwant %v", got, want)
+	}
+}
+
+// The detached write is still bounded: a store slower than WriteTimeout fails the write, counted
+// error, its line carrying the error's text; nothing is written, and writePacked returns at the
+// bound rather than at the store's (here, an hour's) delay. Fails on: an unbounded detached context
+// (the test hangs), the bound not applied to the pipeline, or the error text missing from the line.
+func TestWritePackedDetachedTimeout(t *testing.T) {
+	r := testkit.NewRedis()
+	r.Delay = time.Hour
+	obs := &observed{}
+	lines := &writeLines{}
+	s := &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{ObserveWrite: obs.observe, WriteLog: lines.log(100, nil),
+		WriteTimeout: 30 * time.Millisecond}}
+	start := time.Now()
+	s.writePacked(context.Background(), []packedWrite{{cache: MissTagIDs, id: 21, key: "k:21", val: []byte("v21"), ttl: time.Hour}})
+	if el := time.Since(start); el > 10*time.Second {
+		t.Fatalf("writePacked took %v, want about the 30ms bound", el)
+	}
+	if o := obs.get(); !reflect.DeepEqual(o, map[string]int{"tag-ids/error": 1}) {
+		t.Fatalf("observed %v, want 1 error", o)
+	}
+	if _, ok := r.String("k:21"); ok {
+		t.Fatal("k:21 written past the bound")
+	}
+	want := []map[string]any{
+		{"msg": "cache write", "cache": "tag-ids", "key": "k:21", "id": 21.0, "result": "error", "err": "context deadline exceeded"},
+	}
+	if got := lines.lines(t); !reflect.DeepEqual(got, want) {
+		t.Fatalf("lines\n got %v\nwant %v", got, want)
+	}
+}
+
+// The revalidation locks taken are released after the writes even when the request has ended:
+// releaseLocks runs detached, as writePacked does. Fails on: the DEL pipelined on the cancelled
+// request context (the lock then lingers to its expiry, and other revalidations serve stale).
+func TestReleaseLocksAfterRequestCancelled(t *testing.T) {
+	r := testkit.NewRedis()
+	r.SetString("lock:31", []byte("1"))
+	s := &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.releaseLocks(ctx, []string{"lock:31"})
+	if _, ok := r.String("lock:31"); ok {
+		t.Fatal("lock:31 still held after release on a cancelled request")
+	}
+}
+
+// The detached write's default bound is 1 s (cacheWriteTimeout), with or without a computation;
+// WriteTimeout replaces it. Invariant guard on the constant: fails if the default bound is dropped
+// (no deadline) or changed.
+func TestWriteContextBound(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	cases := []struct {
+		name string
+		c    *MissCompute
+		want time.Duration
+	}{
+		{"nil", nil, time.Second},
+		{"zero", &MissCompute{}, time.Second},
+		{"custom", &MissCompute{WriteTimeout: 5 * time.Second}, 5 * time.Second},
+	}
+	for _, tc := range cases {
+		before := time.Now()
+		ctx, done := tc.c.writeContext(parent)
+		dl, ok := ctx.Deadline()
+		err := ctx.Err()
+		done()
+		if !ok {
+			t.Fatalf("%s: no deadline", tc.name)
+		}
+		if err != nil {
+			t.Fatalf("%s: write context already ended (%v): the parent's cancellation leaked in", tc.name, err)
+		}
+		if d := dl.Sub(before); d < tc.want || d > tc.want+time.Second {
+			t.Fatalf("%s: deadline %v after start, want %v", tc.name, d, tc.want)
+		}
+	}
+}
+
+// A request's write-back draws on ONE budget (WithWriteBudget): three sequential writes against a
+// store slower than a 500ms bound wait about one bound in total (asserted under 1100ms, where
+// stacking would take at least 1500ms), not 500ms each; once spent, the later writes fail at once,
+// counted error. A ctx without the budget bounds each round trip on its own (the control: the same
+// three then take at least 1500ms, so the timing can see stacking). Fails on: each round trip taking
+// a fresh bound under the budget.
+func TestWriteBackSharesOneBudgetPerRequest(t *testing.T) {
+	newSources := func() (*Sources, *observed) {
+		r := testkit.NewRedis()
+		r.Delay = time.Hour
+		obs := &observed{}
+		return &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{ObserveWrite: obs.observe, WriteTimeout: 500 * time.Millisecond}}, obs
+	}
+	run := func(ctx context.Context, s *Sources) time.Duration {
+		start := time.Now()
+		s.writePacked(ctx, []packedWrite{{cache: MissTagIDs, id: 41, key: "k:41", val: []byte("v41"), ttl: time.Hour}})
+		s.writePacked(ctx, []packedWrite{{cache: MissUserCosmetics, id: 42, key: "k:42", val: []byte("v42"), ttl: time.Hour}})
+		s.writePacked(ctx, []packedWrite{{cache: MissImageFrames, id: 43, key: "k:43", val: []byte("v43"), ttl: time.Hour}})
+		return time.Since(start)
+	}
+
+	s, obs := newSources()
+	if el := run(WithWriteBudget(context.Background()), s); el >= 1100*time.Millisecond {
+		t.Fatalf("shared budget: three writes took %v, want under 1100ms (one 500ms bound)", el)
+	}
+	if o := obs.get(); !reflect.DeepEqual(o, map[string]int{"tag-ids/error": 1, "user-cosmetics/error": 1, "image-frames/error": 1}) {
+		t.Fatalf("observed %v, want all three writes error", o)
+	}
+
+	// Control: no budget, so each round trip has its own 500ms bound (three of them).
+	s, _ = newSources()
+	if el := run(context.Background(), s); el < 1500*time.Millisecond {
+		t.Fatalf("no budget: took %v, want at least 1500ms (three separate 500ms bounds)", el)
+	}
+}
+
+// The budget is charged by WALL time: eight writes in flight together against a store that answers
+// each in 200ms use about 200ms of a 1s budget, not 1600ms, so a ninth write after them still lands:
+// all nine written. Fails on: charging each round trip its own duration (the eight would spend the
+// budget and the ninth fail at once, counted error). Run under -race it also exercises the budget's
+// mutex across goroutines.
+func TestWriteBudgetChargesParallelWritesByWallTime(t *testing.T) {
+	r := testkit.NewRedis()
+	r.Delay = 200 * time.Millisecond
+	obs := &observed{}
+	s := &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{ObserveWrite: obs.observe, WriteTimeout: time.Second}}
+	ctx := WithWriteBudget(context.Background())
+	var wg sync.WaitGroup
+	for i := 1; i <= 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.writePacked(ctx, []packedWrite{{cache: MissTagIDs, id: 70 + i, key: "p:" + strconv.Itoa(i), val: []byte("v"), ttl: time.Hour}})
+		}()
+	}
+	wg.Wait()
+	s.writePacked(ctx, []packedWrite{{cache: MissUserCosmetics, id: 79, key: "p:9", val: []byte("v9"), ttl: time.Hour}})
+	if o := obs.get(); !reflect.DeepEqual(o, map[string]int{"tag-ids/written": 8, "user-cosmetics/written": 1}) {
+		t.Fatalf("observed %v, want 8 tag-ids and 1 user-cosmetics written", o)
+	}
+}
+
+// A lock release gets lockReleaseFloor even once the request's write budget is spent: a slow write
+// spends the 100ms budget, the store recovers, and the release still deletes the lock. Fails on: the
+// release drawing on the spent budget with no floor (its context ends before it is sent, and the lock
+// is held to its expiry).
+func TestReleaseLocksFloorAfterBudgetSpent(t *testing.T) {
+	r := testkit.NewRedis()
+	r.Delay = time.Hour
+	r.SetString("lock:61", []byte("1"))
+	obs := &observed{}
+	s := &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{ObserveWrite: obs.observe, WriteTimeout: 100 * time.Millisecond}}
+	ctx := WithWriteBudget(context.Background())
+	s.writePacked(ctx, []packedWrite{{cache: MissTagIDs, id: 60, key: "k:60", val: []byte("v60"), ttl: time.Hour}})
+	if o := obs.get(); !reflect.DeepEqual(o, map[string]int{"tag-ids/error": 1}) {
+		t.Fatalf("observed %v, want the slow write error (budget spent)", o)
+	}
+	r.Delay = 0
+	s.releaseLocks(ctx, []string{"lock:61"})
+	if _, ok := r.String("lock:61"); ok {
+		t.Fatal("lock:61 still held: the release got no floor past the spent budget")
+	}
+}
+
+// The budget is time spent WRITING, not a deadline from the first write: a request that computes
+// for longer than the bound between two healthy writes still lands the second one. Fails on: a
+// wall-clock deadline anchored at the first write (the second write would fail on a healthy store).
+// Also pins WithWriteBudget as idempotent: a nested call must not reset the request's budget.
+func TestWriteBudgetIsWriteTimeNotWallClock(t *testing.T) {
+	r := testkit.NewRedis()
+	obs := &observed{}
+	s := &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{ObserveWrite: obs.observe, WriteTimeout: 100 * time.Millisecond}}
+	ctx := WithWriteBudget(context.Background())
+	if WithWriteBudget(ctx) != ctx {
+		t.Fatal("WithWriteBudget replaced an existing budget")
+	}
+	s.writePacked(ctx, []packedWrite{{cache: MissTagIDs, id: 51, key: "k:51", val: []byte("v51"), ttl: time.Hour}})
+	time.Sleep(250 * time.Millisecond) // the request computes on, past the 100ms bound
+	s.writePacked(ctx, []packedWrite{{cache: MissUserCosmetics, id: 52, key: "k:52", val: []byte("v52"), ttl: time.Hour}})
+	if o := obs.get(); !reflect.DeepEqual(o, map[string]int{"tag-ids/written": 1, "user-cosmetics/written": 1}) {
+		t.Fatalf("observed %v, want both written", o)
+	}
+	if b, ok := r.String("k:52"); !ok || string(b) != "v52" {
+		t.Fatalf("k:52 holds %q (present %v), want v52", b, ok)
 	}
 }
 
@@ -337,13 +556,13 @@ func TestWriteLogLimiter(t *testing.T) {
 	l := w.log(2, clock)
 	ctx := context.Background()
 	for i := 1; i <= 5; i++ {
-		l.write(ctx, MissTagIDs, "k", i, WriteWritten)
+		l.write(ctx, MissTagIDs, "k", i, WriteWritten, nil)
 	}
-	l.write(ctx, MissTagIDs, "k", 6, WriteNXLost)
-	l.write(ctx, MissMetrics, "k", 7, WriteWritten)
+	l.write(ctx, MissTagIDs, "k", 6, WriteNXLost, nil)
+	l.write(ctx, MissMetrics, "k", 7, WriteWritten, nil)
 	now = now.Add(30 * time.Second) // one token back at 2/min
-	l.write(ctx, MissTagIDs, "k", 8, WriteWritten)
-	l.write(ctx, MissTagIDs, "k", 9, WriteWritten)
+	l.write(ctx, MissTagIDs, "k", 8, WriteWritten, nil)
+	l.write(ctx, MissTagIDs, "k", 9, WriteWritten, nil)
 	logged := w.lines(t)
 	got := make([]string, 0, len(logged))
 	for _, line := range logged {
@@ -359,9 +578,9 @@ func TestWriteLogLimiter(t *testing.T) {
 	}
 
 	off := &writeLines{}
-	off.log(0, clock).write(ctx, MissTagIDs, "k", 1, WriteWritten)
-	(*WriteLog)(nil).write(ctx, MissTagIDs, "k", 1, WriteWritten)
-	(&WriteLog{PerMinute: 5}).write(ctx, MissTagIDs, "k", 1, WriteWritten)
+	off.log(0, clock).write(ctx, MissTagIDs, "k", 1, WriteWritten, nil)
+	(*WriteLog)(nil).write(ctx, MissTagIDs, "k", 1, WriteWritten, nil)
+	(&WriteLog{PerMinute: 5}).write(ctx, MissTagIDs, "k", 1, WriteWritten, nil)
 	if off.raw() != "" {
 		t.Fatalf("PerMinute 0 logged %q", off.raw())
 	}

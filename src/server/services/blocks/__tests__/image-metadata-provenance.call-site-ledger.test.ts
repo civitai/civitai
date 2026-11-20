@@ -523,7 +523,7 @@ function rawMetadataAssignment(sql: string): string | null {
     if (sql[i] === '$' && sql[i + 1] === '{') i = interpolationEnd(sql, i + 2);
     else if (sql[i] === '(') depth++, i++;
     else if (sql[i] === ')') depth--, i++;
-    else if (depth === 0 && (sql[i] === ',' || /^\s+WHERE\b/i.test(sql.slice(i, i + 20))))
+    else if (depth === 0 && (sql[i] === ',' || /^\s+(WHERE|FROM)\b/i.test(sql.slice(i, i + 20))))
       return sql.slice(start, i).trim();
     else i++;
   }
@@ -621,6 +621,11 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-server-keys',
     sites: 1,
   },
+  // A moderator's block drops a moderation rule's keys: the removal is the moderator's now.
+  'src/server/services/image.service.ts#writeModeratorBlock': {
+    decision: 'raw-server-keys',
+    sites: 1,
+  },
   'src/server/services/image.service.ts#markRemixSourceReviewed': {
     decision: 'raw-server-keys',
     sites: 1,
@@ -638,6 +643,10 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     sites: 1,
   },
   'src/server/services/image-scan-result.service.ts#blockImageFromRating': {
+    decision: 'raw-grace-marker-strip',
+    sites: 1,
+  },
+  'src/server/services/report.service.ts#settleResolvedAppeals': {
     decision: 'raw-grace-marker-strip',
     sites: 1,
   },

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import OverlayIcon from '$lib/OverlayIcon.svelte';
+
   let { src }: { src: string | null } = $props();
 
   let failed = $state(false);
@@ -26,7 +28,11 @@
     />
   </div>
 {:else}
-  <div class="thumb gone" role="img" aria-label="This image is not shown"></div>
+  <!-- Deleted, blocked or unpublished alike: the label never says which. -->
+  <div class="thumb gone" role="img" aria-label="Image unavailable">
+    <OverlayIcon name="image-off" size={20} />
+    <span aria-hidden="true">Image unavailable</span>
+  </div>
 {/if}
 
 <style>
@@ -60,5 +66,16 @@
     width: 100%;
     height: 100%;
     object-fit: contain;
+  }
+  .gone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 4px;
+    color: var(--io-parchment-muted);
+    font: 600 10px/1.2 var(--io-font-ui);
+    text-align: center;
   }
 </style>

@@ -143,7 +143,7 @@ func TestParseInfiniteIgnoresStrippedURLKeys(t *testing.T) {
 	for input, reason := range map[string]string{
 		`{"limit":10,"view":"feed","someNewFilter":true}`: "input-unknown-key",
 		`{"limit":10,"someNewFilter":true}`:               "input-unknown-key",
-		`{"section":"images","collectionId":5}`:           "input-collectionId",
+		`{"section":"images","hubId":5}`:                  "input-hubId",
 	} {
 		if _, err := ParseInfinite(parseObj(t, input)); fallback.Reason(err) != reason {
 			t.Errorf("ParseInfinite %s: reason %q (err %v), want %q", input, fallback.Reason(err), err, reason)

@@ -35,6 +35,8 @@ export const SEARCH_UPLOAD_TTL_MS = 60 * 60 * 1000;
 /** A scan with no answer by now is refused, never left pending. */
 export const SEARCH_UPLOAD_SCAN_TIMEOUT_MS = 10 * 60 * 1000;
 export const SEARCH_UPLOAD_GLOBAL_DAILY_CAP = 5000;
+/** Site-wide upload search pages per day: each is an embed and a vector query. */
+export const SEARCH_UPLOAD_GLOBAL_DAILY_SEARCH_CAP = 10_000;
 /** Per user per day, moderators included: generous for case work, a ceiling on scan and embed spend. */
 export const SEARCH_UPLOAD_USER_DAILY_LIMITS = { prepare: 100, search: 1000 } as const;
 // Every viewer draws from one bucket: the rate-limit engine keys a bucket by user id.
@@ -78,16 +80,28 @@ const secondsLeft = (createdAt: number) =>
  * unreadable store refuses: this cap is what bounds scan and embed spend.
  */
 export async function claimSearchUploadSlot(req: NextApiRequest) {
+  await claimSearchUploadGlobal(req, 'prepare');
+}
+
+/** Takes one of the day's site-wide upload search pages, on the same terms as an upload slot. */
+export async function claimSearchUploadSearchSlot(req: NextApiRequest) {
+  await claimSearchUploadGlobal(req, 'search');
+}
+
+const GLOBAL_BUCKETS = {
+  prepare: { keyName: 'imageSearchUpload:global', limit: SEARCH_UPLOAD_GLOBAL_DAILY_CAP },
+  search: {
+    keyName: 'imageSearchUpload:global-search',
+    limit: SEARCH_UPLOAD_GLOBAL_DAILY_SEARCH_CAP,
+  },
+} as const;
+
+async function claimSearchUploadGlobal(req: NextApiRequest, action: keyof typeof GLOBAL_BUCKETS) {
+  const { keyName, limit } = GLOBAL_BUCKETS[action];
   const record = await claimRateLimitAttempt({
-    rules: [
-      {
-        limit: SEARCH_UPLOAD_GLOBAL_DAILY_CAP,
-        period: 24 * 60 * 60,
-        errorMessage: SEARCH_UPLOAD_CAPACITY_MESSAGE,
-      },
-    ],
-    keyName: 'imageSearchUpload:global',
-    scope: 'imageSearchUpload.prepare',
+    rules: [{ limit, period: 24 * 60 * 60, errorMessage: SEARCH_UPLOAD_CAPACITY_MESSAGE }],
+    keyName,
+    scope: `imageSearchUpload.${action}`,
     user: GLOBAL_BUCKET_USER,
     req,
   });
@@ -145,10 +159,7 @@ const searchingKey = (userId: number) =>
   `${REDIS_KEYS.CACHES.SEARCH_UPLOAD_SEARCHING}:${userId}` as RedisKeyTemplateCache;
 const SEARCHING_HOLD_SECONDS = 60;
 
-/**
- * Runs one of the viewer's upload searches at a time: the daily claim reads then writes its count,
- * so two at once would both pass it. The second is refused while the first runs.
- */
+/** Runs one of the viewer's upload searches at a time: the second is refused while the first runs. */
 export async function withSearchUploadSearch<T>(userId: number, run: () => Promise<T>) {
   // Widened so the reply is read as SET's ('OK' | null), not as the token's template type.
   const token: string = randomUUID();

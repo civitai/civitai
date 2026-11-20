@@ -1,3 +1,4 @@
+import { constants } from '~/server/common/constants';
 import type { ServiceDealStatus } from '~/shared/utils/prisma/enums';
 
 const HOUR = 3_600_000;
@@ -138,19 +139,22 @@ export const SERVICE_PREVIEW_GIVE_UP_MS = 6 * HOUR;
 
 /** A video Final is delivered bare: the scan reads the video file itself, never one inside a .zip. */
 export const SERVICE_FINAL_VIDEO_EXTENSIONS = ['mp4', 'webm'] as const;
-/**
- * The scan samples one frame a second and stops at 50 frames, and nothing shows those 50 are spread
- * over a longer video, so a longer one could carry content the scan never saw.
- */
-export const SERVICE_FINAL_VIDEO_MAX_SECONDS = 50;
-/** The whole video is read into memory for its scan copy. */
-export const SERVICE_FINAL_VIDEO_MAX_BYTES = 200 * 1024 * 1024;
-export const SERVICE_FINAL_VIDEO_HELP = `Videos: .mp4 or .webm, up to ${SERVICE_FINAL_VIDEO_MAX_SECONDS} seconds and ${
-  SERVICE_FINAL_VIDEO_MAX_BYTES / (1024 * 1024)
+/** A video Final has the site's video upload limits, and goes through the same scan. */
+const { maxVideoDurationSeconds, maxVideoFileSize } = constants.mediaUpload;
+const videoLength =
+  maxVideoDurationSeconds % 60 === 0
+    ? `${maxVideoDurationSeconds / 60} minutes`
+    : `${maxVideoDurationSeconds} seconds`;
+export const SERVICE_FINAL_VIDEO_HELP = `Videos: .mp4 or .webm, up to ${videoLength} and ${
+  maxVideoFileSize / (1024 * 1024)
 } MB, uploaded as the video file itself.`;
+export const SERVICE_FINAL_VIDEO_TOO_LARGE = `A video cannot be more than ${
+  maxVideoFileSize / (1024 * 1024)
+} MB.`;
+export const SERVICE_FINAL_VIDEO_NOT_MP4_OR_WEBM = `Upload a video as .mp4 or .webm, up to ${videoLength}.`;
 export const SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR =
   "This video's stated length doesn't match what it contains. Export it again and upload the new file.";
-export const SERVICE_FINAL_VIDEO_TOO_LONG = `Videos over ${SERVICE_FINAL_VIDEO_MAX_SECONDS} seconds can't be delivered yet: they can't be checked in full.`;
+export const SERVICE_FINAL_VIDEO_TOO_LONG = `Videos over ${videoLength} can't be delivered.`;
 export const SERVICE_FINAL_VIDEO_IN_ZIP =
   "Video can't be delivered inside a .zip. Upload the video file directly.";
 /** Why a Final rated above its deal's content level was refused. */

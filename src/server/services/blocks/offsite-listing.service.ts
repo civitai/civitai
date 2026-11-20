@@ -3910,6 +3910,9 @@ export async function approveExternalRequest(opts: {
     });
     return { before: primaryListing.contentRating, after: finalRating };
   });
+  // Superseded siblings are decisions too: tear down any agent review still running for them.
+  // After commit and fire-and-forget, so the transaction is unchanged; teardown is idempotent.
+  void teardownWithdrawnSiblingAgentReviews(appListingId, request.kind, publishRequestId);
   await recordListingRatingChangeAfterCommit({
     appListingId,
     slug: listing.slug,
@@ -4387,6 +4390,30 @@ async function applyApprovedRevision(opts: {
  * listing is instead transitioned to `removed` + a `delist` audit event (a rejected
  * re-review = a MOD takedown the owner cannot self-restore); see `closeTerminalListing`.
  */
+/**
+ * Tear down the agent review of every withdrawn request on this listing other than the approved
+ * one: the siblings an approve just superseded, plus any withdrawn earlier (a no-op for those).
+ * Never rejects.
+ */
+async function teardownWithdrawnSiblingAgentReviews(
+  appListingId: string,
+  kind: string,
+  approvedId: string
+): Promise<void> {
+  try {
+    // primary: the supersede that withdrew them committed a moment ago.
+    const siblings = await dbWrite.appListingPublishRequest.findMany({
+      where: { appListingId, kind, status: 'withdrawn', NOT: { id: approvedId } },
+      select: { id: true },
+    });
+    if (siblings.length === 0) return;
+    const { teardownConnectAgentReview } = await import('./connect-agent-review.service');
+    for (const s of siblings) await teardownConnectAgentReview(s.id);
+  } catch {
+    // Best-effort, like every decision-path teardown.
+  }
+}
+
 export async function rejectExternalRequest(opts: {
   publishRequestId: string;
   reviewerUserId: number;

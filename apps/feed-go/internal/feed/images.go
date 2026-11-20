@@ -56,6 +56,9 @@ type RawImage struct {
 	// CursorNull: the cursor column was NULL (only an index-ordered query's, ImagesQuery.IndexOrder,
 	// can be: `i."index"` is nullable).
 	CursorNull bool `json:"cursorNull,omitempty"`
+	// Collection is the row's collection item columns: set exactly on a collection page's rows
+	// (ImagesQuery.CollectionID), nil on every other query's.
+	Collection *CollectionItem `json:"collection,omitempty"`
 }
 
 // Querier runs the page query.
@@ -115,7 +118,7 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 		}
 		return nil, err
 	}
-	out, err := scanRows(rows)
+	out, err := scanRows(rows, b.Collection)
 	if err != nil {
 		if timedOut() {
 			return []RawImage{}, nil
@@ -138,21 +141,31 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 	return out, nil
 }
 
-func scanRows(rows pgx.Rows) ([]RawImage, error) {
+// scanRows reads the page query's rows. collection: the query selects the three collection item
+// columns after "cursorId" (Built.Collection).
+func scanRows(rows pgx.Rows, collection bool) ([]RawImage, error) {
 	defer rows.Close()
 	var out []RawImage
 	for rows.Next() {
 		var r RawImage
 		var remix, meta []byte
 		var cursorID *int
-		if err := rows.Scan(
+		dest := []any{
 			&r.ID, &r.Name, &r.URL, &r.NsfwLevel, &r.Width, &r.Height, &r.Hash, &r.HideMeta, &r.HasMeta,
 			&r.HasPositivePrompt, &r.OnSite, &remix, &r.CreatedAt, &r.SortAt, &r.MimeType, &r.Type, &meta,
 			&r.Ingestion, &r.BlockedFor, &r.ScannedAt, &r.NeedsReview, &r.UserID, &r.PostID, &r.PostTitle,
 			&r.Index, &r.PublishedAt, &r.UnpublishedAt, &r.ModelVersionID, &r.Model3DID, &r.Availability,
 			&r.Minor, &r.Poi, &r.AcceptableMinor, &r.Restricted, &cursorID,
-		); err != nil {
+		}
+		var item CollectionItem
+		if collection {
+			dest = append(dest, &item.Note, &item.Status, &item.AddedByID)
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
+		}
+		if collection {
+			r.Collection = &item
 		}
 		if cursorID != nil {
 			r.CursorID = *cursorID
@@ -205,15 +218,18 @@ type Hydrator interface {
 
 // Hydrated is everything the per-image transform joins in.
 type Hydrated struct {
-	Basic          map[int]hydrate.BasicUser
-	UserCosmetics  map[int][]any
-	ProfilePics    map[int]superjson.Object
-	Frames         map[int]superjson.Object
-	Thumbs         map[int]hydrate.Thumbnail
-	Metrics        map[int]hydrate.Metrics
-	TagIDs         map[int]any
-	Decorations    map[int]superjson.Object
-	Reactions      map[int][]any
+	Basic         map[int]hydrate.BasicUser
+	UserCosmetics map[int][]any
+	ProfilePics   map[int]superjson.Object
+	Frames        map[int]superjson.Object
+	Thumbs        map[int]hydrate.Thumbnail
+	Metrics       map[int]hydrate.Metrics
+	TagIDs        map[int]any
+	Decorations   map[int]superjson.Object
+	Reactions     map[int][]any
+	// Tags is each image's votable tags (include 'tags', image.getInfinite only); an image absent has
+	// `tags: undefined`.
+	Tags           map[int][]any
 	VisibleModel3D map[int]bool
 }
 
@@ -221,21 +237,28 @@ type Hydrated struct {
 // profilePictures] (what the gallery handler always passes): every lookup of the page in one
 // Hydrator.Page call, then the Model3D visibility of the linked models.
 func Hydrate(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool) (*Hydrated, error) {
-	return hydrateRows(ctx, h, rows, viewer, visibleEvents, true, true)
+	return hydrateRows(ctx, h, rows, viewer, visibleEvents, includes{profilePictures: true, cosmetics: true})
 }
 
-// hydrateRows is Hydrate; profilePictures is whether the include list holds 'profilePictures'
-// (without it every creator's profilePicture is null, and its cache is not read), cosmetics whether
-// it holds 'cosmetics' (without it every creator's cosmetics are [] and every image's frame null, and
-// neither cache is read).
-func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool, profilePictures, cosmetics bool) (*Hydrated, error) {
+// includes is what an `include` list asks getAllImagesUncaptured to hydrate beyond the default: the
+// creators' profile pictures, the cosmetics (user cosmetics and image frames) and the votable tags.
+type includes struct {
+	profilePictures, cosmetics, tags bool
+}
+
+// hydrateRows is Hydrate for the include list inc: without 'profilePictures' every creator's
+// profilePicture is null, and its cache is not read; without 'cosmetics' every creator's cosmetics
+// are [] and every image's frame null, and neither cache is read; with 'tags' the votable tags (and
+// the viewer's votes on them) are read, without them every image's `tags` is undefined.
+func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool, inc includes) (*Hydrated, error) {
 	req := hydrate.PageRequest{
 		UserIDs:           make([]int, 0, len(rows)),
 		ImageIDs:          make([]int, 0, len(rows)),
 		VisibleEvents:     visibleEvents,
 		ViewerID:          viewer.ID,
-		NoProfilePictures: !profilePictures,
-		NoCosmetics:       !cosmetics,
+		NoProfilePictures: !inc.profilePictures,
+		NoCosmetics:       !inc.cosmetics,
+		Tags:              inc.tags,
 	}
 	var model3dIDs []int
 	for _, r := range rows {
@@ -255,6 +278,9 @@ func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer
 	out := &Hydrated{
 		Basic: p.Basic, UserCosmetics: p.UserCosmetics, ProfilePics: p.ProfilePics, Frames: p.Frames,
 		Thumbs: p.Thumbs, Metrics: p.Metrics, TagIDs: p.TagIDs, Decorations: p.Decorations, Reactions: p.Reactions,
+	}
+	if inc.tags {
+		out.Tags = p.Tags
 	}
 	if len(model3dIDs) > 0 {
 		vis, err := h.VisibleModel3DIDs(ctx, model3dIDs, viewer.ID, viewer.IsModerator)
@@ -361,6 +387,7 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 		reactions = rs
 	}
 	tagIDs, hasTagIDs := hy.TagIDs[r.ID]
+	tags, hasTags := hy.Tags[r.ID]
 	var frame any
 	if f, ok := hy.Frames[r.ID]; ok {
 		frame = f
@@ -409,10 +436,11 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 		{Key: "user", Val: user},
 		{Key: "stats", Val: stats},
 		{Key: "reactions", Val: reactions},
-		// `tagsByImageId?.get(i.id)`: only built for include 'tags' (withTags, a fallback shape here),
-		// so always undefined. Node's wire carries it as `null` + ["undefined"]; the comparator
-		// decodes both the same (internal/shadow applyUndefined).
-		{Key: "tags", Val: superjson.Undefined{}},
+		// `tagsByImageId?.get(i.id)`: only built for include 'tags' (image.getInfinite; the gallery
+		// falls back on it), and then undefined for an image with no tag. Node's wire carries an
+		// undefined as `null` + ["undefined"]; the comparator decodes both the same (internal/shadow
+		// applyUndefined).
+		{Key: "tags", Val: orUndefined(any(tags), hasTags)},
 		{Key: "tagIds", Val: orUndefined(tagIDs, hasTagIDs)},
 		{Key: "cosmetic", Val: frame},
 		{Key: "eventDecoration", Val: decoration},

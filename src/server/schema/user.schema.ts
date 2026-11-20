@@ -651,7 +651,14 @@ export type UpdateContentSettingsInput = z.infer<typeof updateContentSettingsSch
 export const updateContentSettingsSchema = z.object({
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
-  browsingLevel: z.number().optional(),
+  // Masked rather than capped: some saved levels carry bits outside the browsing levels, and the
+  // client toggles from the saved value, so rejecting them would refuse every toggle those users make.
+  browsingLevel: z
+    .number()
+    .int()
+    .min(0)
+    .transform((level) => level & allBrowsingLevelsFlag)
+    .optional(),
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),

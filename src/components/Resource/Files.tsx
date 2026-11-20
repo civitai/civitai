@@ -51,7 +51,7 @@ import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
 import { getFileExtension } from '~/utils/string-helpers';
-import { sanitizeOverrideName } from '~/utils/model-file-naming';
+import { editorFileName, sanitizeOverrideName } from '~/utils/model-file-naming';
 import { trpc } from '~/utils/trpc';
 import { getModelFileTypeOptions, UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
@@ -697,7 +697,7 @@ function FileCard({
   };
 
   const handleRenameOpen = () => {
-    setRenameValue(versionFile.overrideName ?? versionFile.name);
+    setRenameValue(editorFileName(versionFile));
     setRenameOpen(true);
   };
 
@@ -707,7 +707,7 @@ function FileCard({
     renameFileMutation.mutate({ id: versionFile.id, overrideName: next });
   };
 
-  const displayName = versionFile.overrideName ?? versionFile.name;
+  const displayName = editorFileName(versionFile);
   const { ref: nameRef, overflown: nameOverflown } = useIsOverflown<HTMLParagraphElement>([
     displayName,
   ]);

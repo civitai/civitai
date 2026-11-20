@@ -166,12 +166,14 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
     mockHub.syncOauthConsentFromGrant.mockResolvedValue({
       clientId: 'appblk-hello-page',
       scope: TokenScope.UserRead | TokenScope.ModelsRead,
+      impersonatedBy: null,
     });
     mockHub.mintAppToken.mockResolvedValue({
       accessToken: 'civ_oauth_access',
       expiresAt: '2099-01-01T00:15:00Z',
       expiresIn: 900,
       scope: TokenScope.UserRead | TokenScope.ModelsRead,
+      impersonatedBy: null,
     });
   });
 
@@ -207,6 +209,7 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
       userId: 42,
       clientId: 'appblk-hello-page',
       scope: TokenScope.UserRead | TokenScope.ModelsRead,
+      impersonatedBy: null,
     });
     expect(mockTokenService.sign).not.toHaveBeenCalled();
     expect(res._body).toMatchObject({
@@ -473,6 +476,7 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
         userId: 42,
         clientId: 'appblk-hello-page',
         scope: TokenScope.UserRead | TokenScope.ModelsRead,
+        impersonatedBy: null,
       });
       expect(mockDbWrite.oauthConsent.upsert.mock.calls[0][0].update.scope).toBe(
         TokenScope.UserRead | TokenScope.ModelsRead
