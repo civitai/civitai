@@ -370,6 +370,27 @@ describe('🔴 leak canaries: who receives a private record', () => {
     expect([...parsePrivateRelays(`${RELAY}, ${UNLISTED_RELAY}`)]).toEqual([RELAY, UNLISTED_RELAY]);
   });
 
+  it("🔴 with only the experimental relay's client listed, a token the main gateway exchanged receives ZERO", async () => {
+    // The two relays' real hub clients: the experimental registry's own, and the main gateway's.
+    const EXP = '3e5fdfd2-c9f7-4df1-9ce8-6622a5612ffb';
+    const MAIN_GATEWAY = '6a5f2797-dbc7-4a0b-bde2-43a0c65a4010';
+    const adapter = () =>
+      composeAdapter(entities, publicFeed(), privateFeed(parsePrivateRelays(EXP)));
+    TOKENS['owner-via-main'] = userToken(OWNER, SOURCE_CLIENT, { actor: MAIN_GATEWAY });
+    TOKENS['owner-via-exp'] = userToken(OWNER, SOURCE_CLIENT, { actor: EXP });
+    try {
+      const viaMain = await snapshotOf('owner-via-main', adapter());
+      expect(viaMain.events.map((e) => e.type)).toEqual(['live']);
+      expect(JSON.stringify(viaMain.events)).not.toContain(OWNER_CANARY);
+      // POSITIVE CONTROL: the same user, app and token shape through the listed relay.
+      const viaExp = await snapshotOf('owner-via-exp', adapter());
+      expect(upserts(viaExp.events)).toEqual([OWNER_URN]);
+    } finally {
+      delete TOKENS['owner-via-main'];
+      delete TOKENS['owner-via-exp'];
+    }
+  });
+
   it('the token gate refuses in order: anonymous, not a user, relay not listed, scope missing', () => {
     const relays = parsePrivateRelays(RELAY);
     const reader = (t: VerifiedToken) => ({ ...t, subject: t.subject });
