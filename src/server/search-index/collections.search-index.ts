@@ -22,7 +22,6 @@ import { COLLECTION_SEARCH_ELIGIBLE } from '~/server/search-index/collection-sea
 import { uniqBy } from 'lodash-es';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
-import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import {
   collectionIndexImageSql,
   type CollectionIndexImage,
@@ -116,7 +115,6 @@ type CollectionForSearchIndex = {
   };
   user: {
     id: number;
-    image: string | null;
     username: string | null;
     deletedAt: Date | null;
     profilePictureId: number | null;
@@ -240,7 +238,6 @@ export const pullData = async (
         'id', u.id,
         'username', u.username,
         'deletedAt', u."deletedAt",
-        'image', ${Prisma.raw(fallbackUserImageColumn)},
         'profilePictureId', u."profilePictureId"
       ) user
     FROM "User" u
