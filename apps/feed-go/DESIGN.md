@@ -85,7 +85,7 @@ Supported today:
 | Area | Supported | Falls back |
 |---|---|---|
 | Input | model / version / Model3D / global feed; sorts Most Reactions, Most Comments, Most Collected, Newest, Oldest; period filters; `types`, `generation`, `withMeta`, `fromPlatform`, `disablePoi`, `disableMinor`, `hideChallenges`, `excludedTagIds`, `excludedUserIds`, `tools` (images holding every listed tool: the `ImageTool` clause on every Postgres read, the positive ids as the feed query's `tools`), `techniques` (images with an `ImageTechnique` row for any listed id, likewise; the positive ids as the feed query's `techniques`, none sent when none is positive), `tags` (the blocked browsing tags stripped first, `blocked-tags-*` when that list cannot be read, only blocked ones an empty gallery; then images carrying any of the rest on every Postgres read, never cached, the positive ids as the feed query's `tags`); cursors: on the feed-service path `feed:<a>:<b>`, `offset\|entry`, a number (an offset there); on the Postgres path a positive integer | `hidden`, user / username / collection / post / reactions / followed / baseModels / pending / scheduled / jumpTo / hub inputs, `include` beyond the default, Random / Recently Added sorts; a `tools` or `techniques` entry that is not an int4 (`input-tools`, `input-techniques`: Node binds it against an integer type, and that cast is not reproduced); cursors Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`, `input-cursor` on the Postgres path) |
-| Viewer | signed out; `civ-token` cookie sessions | API keys / OAuth bearer tokens, two session cookies at once, a session user not in the shared cache, verified crawlers |
+| Viewer | signed out; `civ-token` cookie sessions, either slot or both (read in the main app's order, §4) | API keys / OAuth bearer tokens, a session user not in the shared cache, verified crawlers |
 | Gallery gates | settings from cache, held level, taken-down models; page-1 pinned posts (narrowed to the version, pinned-first ordering); the page-1 sponsored post (see below) | a settings key Node would rebuild; a sponsored post for a viewer whose `creator-promotions` value is unknown here (`sponsored-post`); two or more live runs on one version (`sponsored-rotation`, Node picks one at random); a failed promotion lookup (`sponsored-lookup`); a payload or gallery level this service does not read as Node does (`sponsored-data`) |
 | Pages | the feed-service path (flag on) and the Postgres path (flag off); the lazy post completion on both | a failed or non-200 feed call (`feed-unavailable`, `feed-status`); a hydrate that filters out every id (`feed-hydrate-empty`) |
 | Hydration | every cache hit; Postgres miss paths for basic user data, cosmetics, profile pictures, thumbnails; computed misses (§3.1) on user cosmetics, image frames, tag ids and event decorations, and with a ClickHouse reader on metric hashes | misses on metric hashes without a ClickHouse reader (`metrics-miss`); a failed miss computation (`<reason>-failed`) |
@@ -427,6 +427,32 @@ The procedure is public, but its answer depends on the viewer: their own schedul
 minor images, private-post images, their reactions. The invariant is that a response is computed for
 the authenticated viewer or for nobody.
 
+- The session token is read from the session cookies in the order the main app reads them
+  (`readSessionToken` in `packages/civitai-auth/src/cookies.ts`, called by `getHubSession`). A
+  request may carry two slots, the shared `__Secure-civ-token` and the host-only `__Host-civ-token`
+  (http dev has only the bare `civ-token`). The mode for the request's `Host` is its site's
+  `AUTH_SESSION_COOKIE_MODE_BY_SITE` entry (`<registrable domain>:host|shared`), else
+  `AUTH_SESSION_COOKIE_MODE` (only the exact value `host` is host mode; anything else is shared). The
+  order is the mode's own slot, then the other one; the shared slot is skipped altogether when the
+  legacy read is off, which is a site listed `host`, or, for an unlisted site, `AUTH_LEGACY_READ` set
+  to `false`, `0`, `off` or `no` (any case). A site listed `shared` always reads it.
+
+  | Mode | Legacy read | Order read |
+  |---|---|---|
+  | shared | on (default) | `__Secure-civ-token`, `__Host-civ-token` |
+  | host | on (default) | `__Host-civ-token`, `__Secure-civ-token` |
+  | host or shared | off | `__Host-civ-token` |
+
+  The first slot in that order the request carries with a non-empty value is the token, whatever it
+  holds: presence alone decides, validity is never consulted. When that token does not verify, is
+  revoked or is the moderation account, the request is **signed out**; the other slot is not tried,
+  because `getHubSession` does not try it. Two valid cookies for different users therefore resolve
+  to the user in the first slot read, as in Node. The `Cookie` header is read as Next's `req.cookies`
+  (the `cookie` package's `parse()`) reads it: several header lines are joined with `; `, the first
+  occurrence of a name wins even when its value is empty (so an empty first copy leaves that slot
+  absent), a value starting with `"` loses its first and last character, and a value that does not
+  URL-decode is kept raw. Each resolved session's slot is counted
+  (`feed_go_session_cookie_slot_total{slot}`).
 - The viewer id comes **only** from the `sub` of a session token whose ES256 signature verifies
   against the auth hub's JWKS, with the same checks as `packages/civitai-auth/src/verify.ts`:
   algorithm pinned (never taken from the token), issuer, expiry, no `aud`, not a `swap` token,
@@ -1066,7 +1092,7 @@ will show.
 - a failed miss computation (§3.1, `<reason>-failed`; for tag ids also a browsing gate this service
   cannot read when a row needs it), cache misses on metric hashes without a ClickHouse reader
   (`metrics-miss`), session users (auth hub fetch not ported), gallery settings (rebuild not ported);
-- bearer tokens, two session cookies, verified crawlers, POST (`methodOverride`) requests;
+- bearer tokens, verified crawlers, POST (`methodOverride`) requests;
 - public requests from an origin the app's allow-list does not hold (reason `origin`, see §4).
 
 **Matched behaviour worth knowing:** a page query that runs past the 20s statement timeout answers an
