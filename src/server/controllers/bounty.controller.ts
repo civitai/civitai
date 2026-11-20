@@ -38,7 +38,7 @@ import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { publicBountyDetails } from '~/server/utils/bounty-details';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
