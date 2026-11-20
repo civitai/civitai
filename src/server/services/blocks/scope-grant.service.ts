@@ -605,7 +605,12 @@ function logMissingConfirmWithinLimitColumn(site: string, err: unknown): void {
 /**
  * The highest job price the viewer lets this app run without a per-job confirm, or `null` when
  * they have not opted in. Not a grant check: it can be set on a revoked row, so a caller must
- * also require the live daily limit. Its own select with its own missing-column branch:
+ * also require the live daily limit.
+ *
+ * 🔴 LIFETIME: DELIBERATELY THE SPEND GRANT'S. The opt-in lives on the grant row, so it survives
+ * an app version change and an uninstall exactly as the spend grant beside it does. It ends only
+ * with the viewer's opt-out (`optOutConfirmWithinLimit`), a revoke, a re-consent to spending or
+ * a budget write (`writeClearingConfirmWithinLimit`). A product decision, not an oversight. Its own select with its own missing-column branch:
  * `isMissingColumnError` matches ANY missing column, so this column in a shared grant select
  * would switch off the limit or the revoke before the migration lands.
  */
