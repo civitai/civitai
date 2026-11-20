@@ -29,7 +29,8 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 }));
 
 import { BLOCK_STEP_NAME, projectAppWorkflow, snapshotFromWorkflow } from '../workflow.service';
-import { splitPassThroughStepOutput } from '../steps';
+import { splitPassThroughStep, splitPassThroughStepOutput } from '../steps';
+import client from 'prom-client';
 import { getBlockGatedImagesByIds } from '../block-gated-images.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -797,5 +798,63 @@ describe('3D output labels (Model3dBlob format + variant)', () => {
       false
     );
     expect('model3dOutputs' in projectAppWorkflow(plain as never, TEST_OUTPUT_CEILING)).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A subtree past the walk cap is dropped, and the drop is counted. Both halves are
+// pinned here: the training path's split returns the count, and each extractor
+// records it.
+describe('a pass-through output nested past the walk cap is counted', () => {
+  const PAST_CAP = 33;
+  const deep = (levels: number): unknown =>
+    levels === 0 ? { text: 'leaf' } : { k: deep(levels - 1) };
+  const TRUNCATED = 'civitai_app_block_output_truncated_total';
+  const truncatedCount = async () => {
+    const metric = client.register.getSingleMetric(TRUNCATED);
+    const values = metric ? (await metric.get()).values : [];
+    return values.find((v) => v.labels.step_type === 'passthrough')?.value ?? 0;
+  };
+
+  it.each(['approved', 'pending'])(
+    'a training step output with a %s run returns the dropped subtree count',
+    (moderationStatus) => {
+      const split = splitPassThroughStep('training', { moderationStatus, extra: deep(PAST_CAP) });
+      expect(split.truncated).toBe(1);
+    }
+  );
+
+  it('control: a training step output within the cap drops nothing', () => {
+    const split = splitPassThroughStep('training', {
+      moderationStatus: 'approved',
+      extra: deep(3),
+    });
+    expect(split.truncated).toBe(0);
+  });
+
+  it('snapshotFromWorkflow records the dropped subtree', async () => {
+    const before = await truncatedCount();
+    snapshotFromWorkflow(
+      workflowWithPassThroughStep({ extra: deep(PAST_CAP) }) as never,
+      TEST_OUTPUT_CEILING
+    );
+    expect(await truncatedCount()).toBe(before + 1);
+  });
+
+  it('projectAppWorkflow records the dropped subtree', async () => {
+    const before = await truncatedCount();
+    projectAppWorkflow(
+      workflowWithPassThroughStep({ extra: deep(PAST_CAP) }) as never,
+      TEST_OUTPUT_CEILING
+    );
+    expect(await truncatedCount()).toBe(before + 1);
+  });
+
+  it('control: an output within the cap records nothing', async () => {
+    const before = await truncatedCount();
+    const wf = workflowWithPassThroughStep({ extra: deep(3) }) as never;
+    snapshotFromWorkflow(wf, TEST_OUTPUT_CEILING);
+    projectAppWorkflow(wf, TEST_OUTPUT_CEILING);
+    expect(await truncatedCount()).toBe(before);
   });
 });

@@ -434,6 +434,16 @@ function mapSubListingError(err: unknown): TRPCError {
  * Replaces the previous blanket `BAD_REQUEST + (err as Error).message`, which both
  * mis-coded typed failures and leaked raw infra messages to moderators.
  */
+/**
+ * After an off-site decision lands, tear down any agent review of that request (connect lane).
+ * Fire-and-forget and never rejects: the decision is the response, the teardown is hygiene.
+ */
+function teardownConnectAgentReviewAfterDecision(publishRequestId: string): Promise<void> {
+  return import('~/server/services/blocks/connect-agent-review.service')
+    .then((m) => m.teardownConnectAgentReview(publishRequestId))
+    .catch(() => undefined);
+}
+
 function mapOffsiteError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
   if (err instanceof Error && err.name === 'PublishRequestHeldError')
@@ -785,6 +795,7 @@ export const appListingsRouter = router({
           cause: err,
         });
       }
+      void teardownConnectAgentReviewAfterDecision(input.publishRequestId);
       // 🔴 `outcome` is NOT decoration. `'removed'` means this withdraw closed the review
       // of a formerly-LIVE listing, which leaves it delisted and only a moderator can put
       // it back; `'deleted'` merely discarded a draft. The UI must be able to say which,
@@ -1423,8 +1434,9 @@ export const appListingsRouter = router({
       const { approveExternalRequest } = await import(
         '~/server/services/blocks/offsite-listing.service'
       );
+      let approved;
       try {
-        return await approveExternalRequest({
+        approved = await approveExternalRequest({
           publishRequestId: input.publishRequestId,
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
@@ -1436,6 +1448,8 @@ export const appListingsRouter = router({
       } catch (err) {
         throw mapOffsiteError(err);
       }
+      void teardownConnectAgentReviewAfterDecision(input.publishRequestId);
+      return approved;
     }),
 
   /**
@@ -1467,6 +1481,7 @@ export const appListingsRouter = router({
       } catch (err) {
         throw mapOffsiteError(err);
       }
+      void teardownConnectAgentReviewAfterDecision(input.publishRequestId);
       return { ok: true };
     }),
 
