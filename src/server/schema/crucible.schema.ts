@@ -297,13 +297,6 @@ export const checkCrucibleEntryEligibilitySchema = z.object({
 });
 
 // Schema for submitting a vote
-// Minted by the judge page on entry. Absent (an older client) means no session, so every clip
-// needs the full watch. Charset-limited because it becomes part of a Redis key.
-const judgingSessionIdSchema = z
-  .string()
-  .regex(/^[A-Za-z0-9-]{8,64}$/)
-  .optional();
-
 export type SubmitVoteSchema = z.infer<typeof submitVoteSchema>;
 export const submitVoteSchema = z
   .object({
@@ -319,7 +312,6 @@ export const submitVoteSchema = z
     // test that passed a round number passed.
     winnerWatchedMs: z.number().min(0).finite().optional(),
     loserWatchedMs: z.number().min(0).finite().optional(),
-    judgingSessionId: judgingSessionIdSchema,
   })
   .refine(({ winnerEntryId, loserEntryId }) => winnerEntryId !== loserEntryId, {
     message: 'A vote needs two different entries',
@@ -368,7 +360,6 @@ export const getJudgingPairSchema = z.object({
     .max(25)
     .optional(),
   browsingLevel: z.number().int().min(0).optional(),
-  judgingSessionId: judgingSessionIdSchema,
 });
 
 export const crucibleEventTagSchema = eventTagSchema;

@@ -7,12 +7,10 @@ const log = createLogger('crucible-judging-session', 'magenta');
 
 export const CRUCIBLE_JUDGING_DEFAULTS = {
   repeatViewSeconds: 1,
-  sessionIdleSeconds: 10 * 60,
 } as const;
 
 export type CrucibleJudgingConfig = {
   repeatViewSeconds: number;
-  sessionIdleSeconds: number;
 };
 
 const CONFIG_TTL_MS = 60_000;
@@ -33,21 +31,12 @@ export function parseCrucibleJudgingConfig(
       3600,
       CRUCIBLE_JUDGING_DEFAULTS.repeatViewSeconds
     ),
-    sessionIdleSeconds: Math.round(
-      readNumber(
-        raw?.sessionIdleSeconds,
-        30,
-        24 * 60 * 60,
-        CRUCIBLE_JUDGING_DEFAULTS.sessionIdleSeconds
-      )
-    ),
   };
 }
 
 // An unreadable config must not hand out the default shortening: the operator may have raised it.
 const NO_SHORTENING: CrucibleJudgingConfig = {
   repeatViewSeconds: Number.POSITIVE_INFINITY,
-  sessionIdleSeconds: CRUCIBLE_JUDGING_DEFAULTS.sessionIdleSeconds,
 };
 
 let configMemo: TtlMemo<CrucibleJudgingConfig> | undefined;
@@ -74,80 +63,38 @@ export async function getCrucibleJudgingConfig(): Promise<CrucibleJudgingConfig>
   }
 }
 
-// One key per session, not per judge: each session must idle out on its own clock, so a second tab
-// that keeps judging cannot keep an abandoned session's marks alive.
-const sessionKey = (crucibleId: number, userId: number, sessionId: string) =>
-  `${REDIS_SYS_KEYS.CRUCIBLE.JUDGING_SESSION}:${crucibleId}:${userId}:${sessionId}` as RedisKeyTemplateSys;
-
-/**
- * The entries among `entryIds` this judge voted on earlier in the SAME judging session, and slides
- * the session's idle expiry. A missing session id, another session, or an expired session all yield
- * nothing, so every way of being unsure lands on the full watch.
- */
-export async function getSeenThisSession({
-  crucibleId,
-  userId,
-  sessionId,
-  entryIds,
-  idleSeconds,
-}: {
-  crucibleId: number;
-  userId: number;
-  sessionId: string | undefined;
-  entryIds: number[];
-  idleSeconds: number;
-}): Promise<Set<number>> {
-  if (!sessionId) return new Set();
-  const key = sessionKey(crucibleId, userId, sessionId);
-  try {
-    const [flags] = (await sysRedis
-      .multi()
-      .hmGet(key, entryIds.map(String))
-      .expire(key, idleSeconds)
-      .exec()) as unknown as [(string | null)[] | undefined, unknown];
-    return new Set(entryIds.filter((_, i) => flags?.[i] != null));
-  } catch (e) {
-    log(`session read failed for ${key}: ${(e as Error).message}`);
-    return new Set();
-  }
+/** entryId -> how many times this judge has voted on it in this crucible. */
+export function getJudgeEntryVotesKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
+  return `${REDIS_SYS_KEYS.CRUCIBLE.JUDGE_ENTRY_VOTES}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
 
-export async function recordSessionVote({
-  crucibleId,
-  userId,
-  sessionId,
-  entryIds,
-  idleSeconds,
-}: {
-  crucibleId: number;
-  userId: number;
-  sessionId: string | undefined;
-  entryIds: number[];
-  idleSeconds: number;
-}) {
-  if (!sessionId) return;
-  const key = sessionKey(crucibleId, userId, sessionId);
+/**
+ * The entries among `entryIds` this judge has a vote on in this crucible, from any visit. An
+ * unreadable count yields nothing, so being unsure lands on the full watch.
+ */
+async function getVotedEntries(
+  crucibleId: number,
+  userId: number,
+  entryIds: number[]
+): Promise<Set<number>> {
+  const key = getJudgeEntryVotesKey(crucibleId, userId);
   try {
-    // One MULTI, so the key is never left without its idle expiry.
-    await sysRedis
-      .multi()
-      .hSet(key, Object.fromEntries(entryIds.map((id) => [String(id), '1'])))
-      .expire(key, idleSeconds)
-      .exec();
+    const counts = await sysRedis.hmGet(key, entryIds.map(String));
+    return new Set(entryIds.filter((_, i) => Number(counts?.[i] ?? 0) > 0));
   } catch (e) {
-    // The vote is already counted; losing the mark only costs the judge a full watch later.
-    log(`session write failed for ${key}: ${(e as Error).message}`);
+    log(`judge entry votes read failed for ${key}: ${(e as Error).message}`);
+    return new Set();
   }
 }
 
 /** One rule for the client's timer and the server's gate. Null means nothing to watch. */
 export function requiredWatchSeconds(
   minViewSeconds: number | null | undefined,
-  seenThisSession: boolean,
+  votedBefore: boolean,
   { repeatViewSeconds }: Pick<CrucibleJudgingConfig, 'repeatViewSeconds'>
 ): number | null {
   if (!minViewSeconds) return null;
-  return seenThisSession ? Math.min(repeatViewSeconds, minViewSeconds) : minViewSeconds;
+  return votedBefore ? Math.min(repeatViewSeconds, minViewSeconds) : minViewSeconds;
 }
 
 /**
@@ -157,24 +104,18 @@ export function requiredWatchSeconds(
 export async function resolveWatchSeconds({
   crucibleId,
   userId,
-  sessionId,
   minViewSeconds,
   entryIds,
 }: {
   crucibleId: number;
   userId: number;
-  sessionId: string | undefined;
   minViewSeconds: number | null | undefined;
   entryIds: number[];
 }): Promise<(number | null)[]> {
   if (!minViewSeconds) return entryIds.map(() => null);
-  const config = await getCrucibleJudgingConfig();
-  const seen = await getSeenThisSession({
-    crucibleId,
-    userId,
-    sessionId,
-    entryIds,
-    idleSeconds: config.sessionIdleSeconds,
-  });
-  return entryIds.map((id) => requiredWatchSeconds(minViewSeconds, seen.has(id), config));
+  const [config, voted] = await Promise.all([
+    getCrucibleJudgingConfig(),
+    getVotedEntries(crucibleId, userId, entryIds),
+  ]);
+  return entryIds.map((id) => requiredWatchSeconds(minViewSeconds, voted.has(id), config));
 }
