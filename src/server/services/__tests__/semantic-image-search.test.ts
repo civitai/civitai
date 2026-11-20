@@ -1440,6 +1440,29 @@ describe('the video index', () => {
     expect(calls).toEqual([]);
   });
 
+  it('a Blocked clip is not served to a non-moderator who asks for the Blocked level', async () => {
+    const levels: Record<number, number> = { 201: 1, 202: 32 };
+    h.fakeGetAllImages = async ({
+      ids,
+      browsingLevel,
+    }: {
+      ids: number[];
+      browsingLevel?: number;
+    }) => ({
+      items: ids.filter((id) => ((browsingLevel ?? 0) & levels[id]) !== 0).map((id) => ({ id })),
+      nextCursor: undefined,
+    });
+    const { source, calls } = rankedSource([201, 202]);
+    const { items } = await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'a fox running', browsingLevel: 1 | 32 }),
+      user: VIEWER,
+      collection: 'videos',
+      candidateSource: source,
+    });
+    expect(items.map((x) => x.id)).toEqual([201]);
+    expect(calls[0].filter.gate).toMatchObject({ nsfwLevels: [1] });
+  });
+
   it('an image search never runs the held lookup', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([101]));
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 101 }]);

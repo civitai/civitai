@@ -1,5 +1,9 @@
 import { TRPCError } from '@trpc/server';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { NsfwLevel } from '~/server/common/enums';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { getAllImages } from '~/server/services/image.service';
@@ -112,6 +116,9 @@ export async function searchSemanticImages({
     user,
     await isNonModClampOn(user)
   );
+  // Blocked clips indexed before the writer refused them must never reach a non-moderator.
+  if (collection === 'videos' && !user?.isModerator)
+    browsingLevel = Flags.removeFlag(browsingLevel, NsfwLevel.Blocked) || publicBrowsingLevelsFlag;
 
   const [hidden, addonData, blockedTags, namedUserIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
