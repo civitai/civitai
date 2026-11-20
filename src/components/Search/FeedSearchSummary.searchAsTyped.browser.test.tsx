@@ -1,15 +1,14 @@
-import { useRouter } from 'next/router';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import Router from 'next/router';
+import type { Mock } from 'vitest';
+import { beforeEach, describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
 import { FeedSearchSummary } from '~/components/Search/FeedSearchSummary';
 import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
-const router = useRouter() as unknown as {
-  push: ReturnType<typeof vi.fn>;
-  query: Record<string, unknown>;
-};
+// The component setup's router stub: the singleton useRouter() returns.
+const router = Router as unknown as { push: Mock; query: Record<string, unknown> };
 
 const summary = (correctedQuery?: string) =>
   renderWithProviders(
