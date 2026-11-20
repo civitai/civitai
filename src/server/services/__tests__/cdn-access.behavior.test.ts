@@ -2759,6 +2759,34 @@ describe('retractions per run', () => {
     expect(await stateOf(u(2))).toBe('Denied');
   });
 
+  // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
+  it('drops the pacing marker from a row outside the batch once a hold lands', async () => {
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+    await publishedPost(5);
+    for (const id of [1, 2, 3]) await image(id, { postId: 5 });
+    await moderatorPostUnpublish(5);
+    await syncCdnAccess();
+    expect(callsFor(u(2))).toEqual(['deny']);
+
+    // An older deferred row takes the batch's one deferred slot, so the post row sits this run out.
+    await image(50);
+    await scannerBlock(50);
+    await sql`UPDATE "JobQueue" SET data = data || jsonb_build_object('deferred', data->'seq'),
+                "createdAt" = now() - interval '1 day'
+              WHERE type = 'CdnAccessSync' AND "entityType" = 'Image' AND "entityId" = 50`;
+    await image(9, { url: u(2) });
+    await sql`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 9`;
+    await moderatorBlock(9);
+    await syncCdnAccess({ limit: 2 });
+    expect(callsFor(u(3))).toEqual(['deny']);
+
+    await sql`DELETE FROM "Image" WHERE id = 9`;
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 5 });
+    await syncCdnAccess();
+    expect(callsFor(u(3))).toEqual(['deny', 'retract']);
+    expect(callsFor(u(2))).toEqual(['deny']);
+  });
+
   const retracted = async (ids: number[]) => {
     await blockAll(ids);
     await syncCdnAccess();

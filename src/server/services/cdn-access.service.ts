@@ -1406,11 +1406,12 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     ])
   );
   const planned = urls.filter((url) => plannedCall.get(url));
-  // A paced url whose rows no longer want a retraction (a hold now caps it) loses its marker.
+  // A url whose rows no longer want a retraction (a hold now caps it) loses its marker on every row,
+  // in this batch or not.
   const unpaced = new Set(
     urls.filter((url) => {
       const f = facts.get(url);
-      return pacedUrls.has(url) && (!f || desiredUrlAccess(f) !== 'retract');
+      return !f || desiredUrlAccess(f) !== 'retract';
     })
   );
   // The cap goes to the oldest deferral first, then to new rows in queue order; the rest are denied.
@@ -1433,7 +1434,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
         const result = await withUrlClaim(url, async (claim) => {
           const [fresh, freshState] = await Promise.all([loadFacts([url]), loadState([url])]);
           const f = fresh.get(url);
-          if (pacedUrls.has(url) && (!f || desiredUrlAccess(f) !== 'retract')) unpaced.add(url);
+          if (!f || desiredUrlAccess(f) !== 'retract') unpaced.add(url);
           call = callFor(url, f, freshState.get(url), { deferred: pacedUrls.has(url) });
           if (!call) return;
           if (call === 'retract' && !mayRetract.has(url)) {
