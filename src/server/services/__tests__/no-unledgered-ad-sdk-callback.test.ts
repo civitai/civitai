@@ -161,6 +161,11 @@ const AD_SDK_ENTRY_POINTS: ReadonlyArray<{ file: string; marker: string; safeBec
     safeBecause: 'Same listener as above; the custom event is dispatched off a promise callback.',
   },
   {
+    file: 'src/components/Ads/SparteoTag.tsx',
+    marker: "window.__tcfapi('addEventListener', 2, (tcData: TcData, success: boolean) => {",
+    safeBecause: 'CMP consent callback for the Sparteo gate — calls setAllowed (React state) only.',
+  },
+  {
     file: 'src/pages/testing/ads.tsx',
     marker: "window.__tcfapi('addEventListener', 2, (data: any, success: boolean) => {",
     safeBecause:
