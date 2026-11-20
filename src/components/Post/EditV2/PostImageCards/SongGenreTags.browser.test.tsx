@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   addTag: vi.fn(),
   removeTag: vi.fn(),
   updateImage: vi.fn(),
+  post: { publishedAt: null as Date | null },
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -38,7 +39,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 vi.mock('~/components/Post/EditV2/PostEditProvider', async (orig) => ({
   ...(await orig<typeof PostEditProviderMod>()),
   usePostEditStore: (selector: (state: unknown) => unknown) =>
-    selector({ updateImage: mocks.updateImage }),
+    selector({ updateImage: mocks.updateImage, post: mocks.post }),
 }));
 
 // eslint-disable-next-line import/first
@@ -54,7 +55,10 @@ const song = (metadata: object, songTags: { id: number; name: string }[] = []) =
 
 const genreSelect = () => page.getByRole('textbox', { name: 'Genre' });
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.post.publishedAt = null;
+});
 
 describe('the song card genre select', () => {
   test('lists the genres and saves the one picked', async () => {
@@ -177,5 +181,18 @@ describe('the song card tags', () => {
     await expect.element(page.getByText('t5')).toBeInTheDocument();
     await expect.element(page.getByText('5/5 tags')).toBeVisible();
     await expect.element(page.getByRole('textbox', { name: 'Add a tag' })).not.toBeInTheDocument();
+  });
+
+  test('asks for no genre on a song in a post that is already live, as publishing does not', async () => {
+    mocks.post.publishedAt = new Date(Date.now() - 60_000);
+    renderWithProviders(<SongGenreTags image={song({})} />);
+    await expect.element(genreSelect()).toBeVisible();
+    await expect.element(page.getByText('Pick a genre to publish')).not.toBeInTheDocument();
+  });
+
+  test('still asks on a post scheduled for later', async () => {
+    mocks.post.publishedAt = new Date(Date.now() + 86_400_000);
+    renderWithProviders(<SongGenreTags image={song({})} />);
+    await expect.element(page.getByText('Pick a genre to publish')).toBeVisible();
   });
 });
