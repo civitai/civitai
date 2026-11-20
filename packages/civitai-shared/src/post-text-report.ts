@@ -16,10 +16,11 @@ export const CHILD_SAFETY_VIOLATIONS = [
 ] as const;
 
 /**
- * Whether a report on a storyline text goes to the CSAM text-hold queue rather than an ordinary
- * refusal: a moderator's CSAM report, or a minor-sexualization violation from anyone.
+ * Whether a report on a text (a storyline text, a service review) goes to the CSAM text-hold queue
+ * rather than an ordinary refusal: a moderator's CSAM report, or a minor-sexualization violation
+ * from anyone.
  */
-export function postTextReportOpensCsamHold({
+export function reportOpensCsamHold({
   reason,
   details,
 }: {
