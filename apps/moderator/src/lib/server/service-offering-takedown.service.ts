@@ -5,6 +5,7 @@ import {
   serviceOfferingTakenDownKey,
   type ServiceOfferingTakedownReason,
 } from '@civitai/shared/service-offering-takedown';
+import { serviceOfferingCsamHeldText } from '@civitai/shared/held-url';
 import { sql } from 'kysely';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
@@ -155,20 +156,7 @@ export async function releaseServiceOffering({
   seenUpdatedAt: Date;
   moderatorId: number;
 }): Promise<(ReportedServiceOffering & { changed: boolean; csamHeld: boolean }) | null> {
-  // As the main app's csamHoldBars reads it: a pending or confirmed hold, or a csam verdict no
-  // moderator dismissed for its text (its hold write may have failed and be awaiting a retry).
-  const csamHeld = sql<boolean>`(
-    EXISTS (SELECT 1 FROM "TextScanHold" h
-      WHERE h."entityType" = 'ServiceOffering' AND h."entityId" = ${offeringId}
-        AND h."label" = 'csam' AND h."status" IN ('Pending', 'Confirmed'))
-    OR EXISTS (SELECT 1 FROM "EntityModeration" em
-      WHERE em."entityType" = 'ServiceOffering' AND em."entityId" = ${offeringId}
-        AND em."status" = 'Succeeded' AND 'csam' = ANY(em."triggeredLabels")
-        AND NOT EXISTS (SELECT 1 FROM "TextScanHold" h
-          WHERE h."entityType" = 'ServiceOffering' AND h."entityId" = ${offeringId}
-            AND h."label" = 'csam' AND h."status" = 'Dismissed'
-            AND h."textHash" = em."result"->>'textHash'
-            AND h."meta"->>'decision' IS DISTINCT FROM 'superseded')))`;
+  const csamHeld = sql<boolean>`${sql.raw(serviceOfferingCsamHeldText(String(offeringId)))}`;
   const { numUpdatedRows } = await dbWrite
     .updateTable('ServiceOffering')
     .set({ ingestion: 'Scanned', scannedAt: new Date(), updatedAt: new Date() })

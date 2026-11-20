@@ -1,3 +1,5 @@
+import { serviceOfferingCsamHeldText } from '@civitai/shared/held-url';
+import { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -80,17 +82,7 @@ export async function requeueBlockedServiceOffering(offeringId: number) {
   await dbWrite.$executeRaw`
     UPDATE "ServiceOffering" SET "ingestion" = 'Pending', "scanWorkflowId" = NULL
     WHERE "id" = ${offeringId} AND "ingestion" = 'Blocked'
-      AND NOT EXISTS (SELECT 1 FROM "TextScanHold" h
-        WHERE h."entityType" = ${ENTITY_TYPE} AND h."entityId" = ${offeringId} AND h."label" = 'csam'
-          AND h."status" IN ('Pending', 'Confirmed'))
-      AND NOT EXISTS (SELECT 1 FROM "EntityModeration" em
-        WHERE em."entityType" = ${ENTITY_TYPE} AND em."entityId" = ${offeringId}
-          AND em."status" = 'Succeeded' AND 'csam' = ANY(em."triggeredLabels")
-          AND NOT EXISTS (SELECT 1 FROM "TextScanHold" h
-            WHERE h."entityType" = ${ENTITY_TYPE} AND h."entityId" = ${offeringId}
-              AND h."label" = 'csam' AND h."status" = 'Dismissed'
-              AND h."textHash" = em."result"->>'textHash'
-              AND h."meta"->>'decision' IS DISTINCT FROM 'superseded'))`;
+      AND NOT ${Prisma.raw(serviceOfferingCsamHeldText(String(offeringId)))}`;
 }
 
 export type ServiceOfferingHoldState = 'held' | 'clear' | 'unverified';

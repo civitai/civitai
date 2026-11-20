@@ -21,6 +21,38 @@ export function liveCsamTextHoldText(hold: string): string {
   const h = sqlRef(hold);
   return `(${h}.label = 'csam' AND ${h}.status IN ('Pending', 'Confirmed'))`;
 }
+/** Post text `text` (an alias) is CSAM-held: flagged, or under a live CSAM text hold. */
+export function postTextCsamHeldText(text: string): string {
+  const t = sqlRef(text);
+  if (t === 'pth') throw new Error(`Alias taken inside postTextCsamHeldText: ${t}`);
+  return `(${t}."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" pth
+    WHERE pth."entityType" = 'PostText' AND pth."entityId" = ${t}.id AND ${liveCsamTextHoldText(
+    'pth'
+  )}))`;
+}
+/**
+ * Service offering `offering` (a column reference or an integer literal) is held for the CSAM queue:
+ * a live CSAM text hold, or a csam verdict no moderator dismissed for its text, since the verdict is
+ * recorded before its hold is written. Like `csamHoldBars`, but a Confirmed hold bars here too.
+ */
+export function serviceOfferingCsamHeldText(offering: string): string {
+  const o = /^\d{1,18}$/.test(offering) ? offering : sqlRef(offering);
+  if (/^"?(soh|som|sod)"?\./.test(o))
+    throw new Error(`Alias taken inside serviceOfferingCsamHeldText: ${o}`);
+  return `(
+    EXISTS (SELECT 1 FROM "TextScanHold" soh
+      WHERE soh."entityType" = 'ServiceOffering' AND soh."entityId" = ${o}
+        AND ${liveCsamTextHoldText('soh')})
+    OR EXISTS (SELECT 1 FROM "EntityModeration" som
+      WHERE som."entityType" = 'ServiceOffering' AND som."entityId" = ${o}
+        AND som."status" = 'Succeeded' AND 'csam' = ANY(som."triggeredLabels")
+        AND NOT EXISTS (SELECT 1 FROM "TextScanHold" sod
+          WHERE sod."entityType" = 'ServiceOffering' AND sod."entityId" = ${o}
+            AND sod."label" = 'csam' AND sod."status" = 'Dismissed'
+            AND sod."textHash" = som."result"->>'textHash'
+            AND sod."meta"->>'decision' IS DISTINCT FROM 'superseded'))
+  )`;
+}
 /** Ban reason codes that always remove the owner's media: the minor-safety bans. */
 export const BAN_REASONS_ALWAYS_REMOVING_MEDIA = [
   'SexualMinor',
@@ -90,16 +122,26 @@ export function imageCoveredText(image: string, user: string): string {
  *   review flag at deletion or an owner named on any report.
  * - A shop takedown: no owner recorded, or the owner held or named on any report.
  * An unreadable fact fails the statement rather than reading as not held.
+ * With `matureUnderage: false` a `mature-underage` unpublish alone does not hold: it takes the
+ * media off the site but does not limit which moderators may view it.
  */
 export function heldUrlSql(
   url: string,
-  { exceptImageId }: { exceptImageId?: string } = {}
+  {
+    exceptImageId,
+    matureUnderage = true,
+  }: { exceptImageId?: string; matureUnderage?: boolean } = {}
 ): string {
   const u = sqlRef(url);
   const except = exceptImageId ? ` AND hx.id <> ${sqlRef(exceptImageId)}` : '';
   const taken = /^"?(hx|hp|hmv|hmo|hd|ht|hc|rc|cc)"?\./;
   for (const ref of [u, exceptImageId ? sqlRef(exceptImageId) : ''])
     if (taken.test(ref)) throw new Error(`Alias taken inside heldUrlSql: ${ref}`);
+  const minorRemoval = matureUnderage
+    ? `
+          OR COALESCE(hmv.meta ->> 'unpublishedReason' = '${MATURE_UNDERAGE_REASON}', false)
+          OR COALESCE(hmo.meta ->> 'unpublishedReason' = '${MATURE_UNDERAGE_REASON}', false)`
+    : '';
   return `(
     EXISTS (
       SELECT 1 FROM "Image" hx
@@ -111,9 +153,7 @@ export function heldUrlSql(
         OR ${ownerHeldText('hx."userId"')}
         OR (NOT ${imageCoveredText('hx."id"', 'hx."userId"')} AND (
           ${ownerReportedText('hx."userId"')}
-          OR COALESCE(hp.metadata ->> 'unpublishedReason' = '${CSAM_HOLD_POST_UNPUBLISH_REASON}', false)
-          OR COALESCE(hmv.meta ->> 'unpublishedReason' = '${MATURE_UNDERAGE_REASON}', false)
-          OR COALESCE(hmo.meta ->> 'unpublishedReason' = '${MATURE_UNDERAGE_REASON}', false)
+          OR COALESCE(hp.metadata ->> 'unpublishedReason' = '${CSAM_HOLD_POST_UNPUBLISH_REASON}', false)${minorRemoval}
         ))
       )
     )

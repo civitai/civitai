@@ -115,7 +115,7 @@ beforeAll(async () => {
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb, images jsonb, "reportSentAt" timestamp);
     CREATE TABLE "EvidenceHeldUser" ("userId" int);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
-    CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL);
+    CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL, "textHash" TEXT, meta JSONB);
   `);
   for (const r of rows)
     await pg.query(
@@ -250,8 +250,8 @@ describe('getRetractedMedia', () => {
     await expectTiers('none', [12]);
   });
 
-  it('refuses an image under an evidence hold', async () => {
-    await expectTiers('none', [18]);
+  it('keeps an image under an evidence hold to cleared moderators', async () => {
+    await expectTiers('cleared', [18]);
   });
 
   it('serves a minor review flag to any moderator, PG included', async () => {
@@ -293,7 +293,7 @@ describe('getRetractedMedia', () => {
     await expectTiers('cleared', [23, 24]);
   });
 
-  it('keeps an image of an owner banned for minor safety to cleared moderators', async () => {
+  it('serves an image of an owner banned for minor safety to any moderator', async () => {
     await pg.query(
       `INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES (990000110, 'key-990000110', 'Blocked', 'moderated', 990100110)`
     );
@@ -301,8 +301,6 @@ describe('getRetractedMedia', () => {
       `INSERT INTO "User" (id, meta) VALUES (990100110, '{"banDetails": {"reasonCode": "SexualMinor"}}')`
     );
     try {
-      await expectTiers('cleared', [990000110]);
-      await pg.query(`UPDATE "User" SET meta = '{}' WHERE id = 990100110`);
       await expectTiers('anyMod', [990000110]);
     } finally {
       await pg.exec(
@@ -466,12 +464,14 @@ describe('a model version unpublished for its subject', () => {
         (990000127, 'key-990000127', 'Blocked', 'moderated', 990100127, NULL),
         (990000128, 'key-990000127', 'Scanned', NULL, 990100128, 990400126);
     `);
-    // Removed by a moderator for its subject alone: the image itself is open, and an image whose
-    // url a row on that model shares is kept, by the held-url rule.
+    // Removed by a moderator for its subject alone: the image itself is open, and so is an image
+    // whose url a row on that model shares.
     expect(await getRetractedMedia(990000126, { csamReview: false })).toMatchObject({
       url: 'key-990000126',
     });
-    expect(await getRetractedMedia(990000127, { csamReview: false })).toBeNull();
+    expect(await getRetractedMedia(990000127, { csamReview: false })).toMatchObject({
+      url: 'key-990000127',
+    });
     // A hold that does not mark this model as CSAM leaves it open.
     for (const hold of [
       `('Model', 990500126, 'csam', 'Dismissed')`,
@@ -520,14 +520,13 @@ describe('a model version unpublished for its subject', () => {
     }
   });
 
-  it('keeps an image whose url a row with that reason shares to cleared moderators', async () => {
+  it('leaves an image whose url a row with that reason shares open to any moderator', async () => {
     await pg.exec(`
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
         (990000122, 'key-990000122', 'Blocked', 'moderated', 990100122, NULL),
         (990000123, 'key-990000122', 'Scanned', NULL, 990100123, 990400121)
     `);
-    expect(await getRetractedMedia(990000122, { csamReview: false })).toBeNull();
-    expect(await getRetractedMedia(990000122, { csamReview: true })).toMatchObject({
+    expect(await getRetractedMedia(990000122, { csamReview: false })).toMatchObject({
       url: 'key-990000122',
     });
   });
