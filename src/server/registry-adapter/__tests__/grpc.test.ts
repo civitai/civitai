@@ -288,7 +288,7 @@ describe('🔴 each gRPC subscription logs its region decision once, and no addr
     const { error, logged } = await lines('1');
     expect(error).toBeUndefined();
     expect(logged).toEqual([
-      'subscription region: binding=grpc country=DE region=none source=meta restricted=false',
+      'subscription region: binding=grpc country=DE region=none source=meta restricted=false principal=anonymous client=none act=none audience=m',
     ]);
     for (const address of ['192.0.2.7', '198.51.100.1', '127.0.0.1']) {
       expect(logged[0]).not.toContain(address);
@@ -299,7 +299,7 @@ describe('🔴 each gRPC subscription logs its region decision once, and no addr
     const { error, logged } = await lines(undefined);
     expect(error).toBeUndefined();
     expect(logged).toEqual([
-      'subscription region: binding=grpc country=CA region=none source=header restricted=false',
+      'subscription region: binding=grpc country=CA region=none source=header restricted=false principal=anonymous client=none act=none audience=m',
     ]);
   });
 
@@ -307,7 +307,7 @@ describe('🔴 each gRPC subscription logs its region decision once, and no addr
     const { error, logged } = await lines(undefined, { regionRestricted: () => true });
     expect(error).toBeUndefined();
     expect(logged).toEqual([
-      'subscription region: binding=grpc country=CA region=none source=header restricted=true',
+      'subscription region: binding=grpc country=CA region=none source=header restricted=true principal=anonymous client=none act=none audience=m',
     ]);
   });
 

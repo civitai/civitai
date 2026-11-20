@@ -12,6 +12,7 @@ import {
 import { createMetrics } from '../metrics.ts';
 import type { Metrics } from '../metrics.ts';
 import { HookPool } from '../pool.ts';
+import { loadConfig } from '../config.ts';
 import { SECRET, checkBody, hmac, sha256, waitFor } from '../test-support/fixtures.ts';
 
 /** `POST /v1/check` through the real Fastify app and the real worker pool. */
@@ -221,6 +222,28 @@ describe('POST /v1/check: signature and replay window', () => {
   });
 });
 
+describe('the secret as configured', () => {
+  it('a secret configured with a trailing newline verifies a request signed with the trimmed secret', async () => {
+    const configured = loadConfig({ STORAGE_HOOK_RUNNER_SECRET: `${SECRET}\n` }).secret;
+    const withNewline = buildApp({ secret: configured, pool, metrics });
+    await withNewline.ready();
+    try {
+      const body = JSON.stringify(checkBody(ALLOW));
+      const res = await withNewline.inject({
+        method: 'POST',
+        url: '/v1/check',
+        headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(200);
+      // And it signs its answer with the trimmed secret, which the caller verifies.
+      expect(res.headers[SIG_HEADER]).toBe(hmac(SECRET, res.body));
+    } finally {
+      await withNewline.close();
+    }
+  });
+});
+
 describe('POST /v1/check: request shape', () => {
   it('refuses 400 an unknown top-level field', async () => {
     const res = await post(JSON.stringify({ ...checkBody(ALLOW), extra: 1 }));
@@ -239,6 +262,36 @@ describe('POST /v1/check: request shape', () => {
     const body = { ...checkBody(ALLOW), op: 'delete' };
     const res = await post(JSON.stringify(body));
     expect(res.statusCode).toBe(400);
+  });
+
+  // The tally input is the storage API's update operator (`$inc` / `$mark` / `$unmark`), the op's
+  // own; the pre-operator `{ kind, name, by }` shape is contract drift and must fail closed (400).
+  it.each([
+    ['increment', { $inc: { likes: 2 } }],
+    ['mark', { $mark: 'star' }],
+    ['unmark', { $unmark: 'star' }],
+  ] as const)('answers 200 for %s carrying its own update operator', async (op, tally) => {
+    const res = await post(
+      JSON.stringify(checkBody(ALLOW, { input: { op, after: null, tally } as never }))
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.json().result).toEqual({ allow: true });
+  });
+
+  it.each([
+    ['the pre-operator counter shape', 'increment', { kind: 'counter', name: 'likes', by: 1 }],
+    ['the pre-operator mark shape', 'mark', { kind: 'mark', name: 'star' }],
+    ["another op's operator", 'mark', { $unmark: 'star' }],
+    ['$inc naming two counters', 'increment', { $inc: { likes: 1, plays: 1 } }],
+    ['two operators', 'mark', { $mark: 'star', $unmark: 'star' }],
+    ['no operator on a tally op', 'increment', null],
+    ['an operator on a document write', 'put', { $inc: { likes: 1 } }],
+  ] as const)('refuses 400 bad_request for %s', async (_what, op, tally) => {
+    const res = await post(
+      JSON.stringify(checkBody(ALLOW, { input: { op, after: null, tally } as never }))
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('bad_request');
   });
 
   it('does not echo document values in a 400 message', async () => {

@@ -14,6 +14,7 @@ import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
 import {
   SITE_SEARCH_INDEXES,
   SiteSearchError,
+  collectionImageLevelFor,
   hitsNeedShaping,
   shapeModelHit,
   siteFacetSearch,
@@ -23,7 +24,10 @@ import {
 } from '~/server/services/site-search.service';
 import type { SiteSearchViewer } from '~/server/services/site-search.service';
 import { NsfwLevel } from '~/server/common/enums';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 vi.mock('~/env/server', () => ({ env: { NEXT_PUBLIC_SEARCH_HOST: 'http://search.test' } }));
 
@@ -386,6 +390,104 @@ describe('collection images', () => {
     const [result] = (body as { results: { hits: Record<string, any>[] }[] }).results;
     expect(result.hits[0].images).toEqual([pg, inCapMixed]);
     expect(result.hits[0]).not.toHaveProperty('srcs');
+  });
+
+  describe("a signed-in viewer's own level where the site caps nothing", () => {
+    const atPg = { showSfwFace: false, collectionImageLevel: NsfwLevel.PG };
+
+    it('gets no cover, item image or srcs above that level, highlight included', async () => {
+      const over = { id: 20, nsfwLevel: NsfwLevel.R };
+      respond({
+        hits: [{ id: 1, image: over, images, srcs, _formatted: { image: over, images, srcs } }],
+      });
+      const [hit] = hitsOf(
+        (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, atPg)).body
+      );
+      expect(hit.image).toBeNull();
+      expect(hit.images).toEqual([pg]);
+      expect(hit).not.toHaveProperty('srcs');
+      expect(hit._formatted.image).toBeNull();
+      expect(hit._formatted).not.toHaveProperty('srcs');
+    });
+
+    it('a hits value that is not a list is dropped, not passed through', async () => {
+      respond({ hits: { 0: { id: 1, image: { id: 20, nsfwLevel: NsfwLevel.R } } } });
+      const { body } = await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, atPg);
+      expect((body as { hits: unknown }).hits).toEqual([]);
+    });
+
+    it.each([
+      ['PG only', NsfwLevel.PG, false],
+      ['PG and PG-13', NsfwLevel.PG | NsfwLevel.PG13, true],
+    ])('a viewer on %s keeps srcs: %s', async (_label, level, kept) => {
+      respond({ hits: [{ id: 1, image: null, images: [], srcs, _formatted: { srcs } }] });
+      const [hit] = hitsOf(
+        (
+          await siteIndexSearch(
+            COLLECTIONS_SEARCH_INDEX,
+            { q: 'x' },
+            { showSfwFace: false, collectionImageLevel: level }
+          )
+        ).body
+      );
+      if (kept) {
+        expect(hit.srcs).toEqual(srcs);
+        expect(hit._formatted.srcs).toEqual(srcs);
+      } else {
+        expect(hit).not.toHaveProperty('srcs');
+        expect(hit._formatted).not.toHaveProperty('srcs');
+      }
+    });
+
+    it('keeps a cover within that level', async () => {
+      respond({ hits: [{ id: 1, image: pg, images: [pg] }] });
+      const [hit] = hitsOf(
+        (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, atPg)).body
+      );
+      expect(hit.image).toEqual(pg);
+    });
+
+    it('a multi-search shapes the collection query by it, and leaves other indexes alone', async () => {
+      const over = { id: 20, nsfwLevel: NsfwLevel.R };
+      const bountyImages = [{ id: 30, nsfwLevel: NsfwLevel.X }];
+      respond({
+        results: [
+          { indexUid: COLLECTIONS_SEARCH_INDEX, hits: [{ id: 1, image: over, images, srcs }] },
+          { indexUid: BOUNTIES_SEARCH_INDEX, hits: [{ id: 2, images: bountyImages }] },
+        ],
+      });
+      const { body } = await siteMultiSearch(
+        {
+          queries: [
+            { indexUid: COLLECTIONS_SEARCH_INDEX, q: 'x' },
+            { indexUid: BOUNTIES_SEARCH_INDEX, q: 'x' },
+          ],
+        },
+        atPg
+      );
+      const [collections, bounties] = (body as { results: { hits: Record<string, any>[] }[] })
+        .results;
+      expect(collections.hits[0].image).toBeNull();
+      expect(bounties.hits[0].images).toEqual(bountyImages);
+    });
+
+    it('collectionImageLevelFor: only a signed-in non-moderator below every level, with no cap', () => {
+      const base = {
+        browsingLevelCap: undefined,
+        signedIn: true,
+        isModerator: false,
+        viewerBrowsingLevel: NsfwLevel.PG,
+      };
+      expect(collectionImageLevelFor(base)).toBe(NsfwLevel.PG);
+      expect(collectionImageLevelFor({ ...base, viewerBrowsingLevel: allBrowsingLevelsFlag })).toBe(
+        undefined
+      );
+      expect(collectionImageLevelFor({ ...base, isModerator: true })).toBeUndefined();
+      expect(collectionImageLevelFor({ ...base, signedIn: false })).toBeUndefined();
+      expect(
+        collectionImageLevelFor({ ...base, browsingLevelCap: sfwBrowsingLevelsFlag })
+      ).toBeUndefined();
+    });
   });
 
   it('an uncapped viewer keeps every image, the cover and srcs', async () => {

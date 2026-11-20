@@ -26,6 +26,13 @@ describe('createScannerVerdictCache', () => {
     expect(read).toHaveBeenCalledTimes(2);
   });
 
+  it('never keeps a missing verdict, since rows can land after it', async () => {
+    const { read, cache } = setup(['none', 'hit']);
+    expect(await cache.read(1)).toBe('none');
+    expect(await cache.read(1)).toBe('hit');
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
   it('drops the oldest entry past its size', async () => {
     const { read, cache } = setup(['clear', 'clear', 'clear', 'hit']);
     await cache.read(1);

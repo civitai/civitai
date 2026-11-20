@@ -8,6 +8,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import {
+  COLLECTIONS_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
@@ -431,5 +432,47 @@ describe('passthrough (site-search-passthrough)', () => {
       queries: [{ indexUid: TOOLS_SEARCH_INDEX, q: 'x', hybrid: { embedder: 'e' } }],
     });
     expect(sentQueries()[0]).not.toHaveProperty('hybrid');
+  });
+});
+
+describe('collection covers for a signed-in viewer where the site caps nothing', () => {
+  const cover = { id: 20, nsfwLevel: NsfwLevel.R };
+  const search = async (user: object) => {
+    mockGetServerAuthSession.mockResolvedValue({ user });
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [{ indexUid: COLLECTIONS_SEARCH_INDEX, hits: [{ id: 1, image: cover }] }],
+          })
+        )
+    );
+    const { body } = await post(['multi-search'], {
+      queries: [{ indexUid: COLLECTIONS_SEARCH_INDEX, q: '' }],
+    });
+    return body.results[0].hits[0].image;
+  };
+
+  it("drops a cover above the viewer's own level", async () => {
+    expect(
+      await search({ id: 42, isModerator: false, showNsfw: true, browsingLevel: NsfwLevel.PG })
+    ).toBeNull();
+  });
+
+  it('control: a viewer whose level includes it keeps it', async () => {
+    expect(
+      await search({
+        id: 42,
+        isModerator: false,
+        showNsfw: true,
+        browsingLevel: NsfwLevel.PG | NsfwLevel.R,
+      })
+    ).toEqual(cover);
+  });
+
+  it('a moderator keeps what they see today', async () => {
+    expect(
+      await search({ id: 7, isModerator: true, showNsfw: true, browsingLevel: NsfwLevel.PG })
+    ).toEqual(cover);
   });
 });

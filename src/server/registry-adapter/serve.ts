@@ -40,6 +40,8 @@ import {
 import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-adapter/limits';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import { HTTP_STATUS, ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import type { PolicyShadow } from '~/server/registry-adapter/policy-shadow';
+import { runShadow } from '~/server/registry-adapter/policy-shadow';
 import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
 import {
   clientAddress,
@@ -207,6 +209,11 @@ export type ServeOptions = {
    * (`regionLine`).
    */
   onRegion?: (line: string) => void;
+  /**
+   * Compares each subscription's decision with the content-policy service's, without waiting for
+   * it and without changing it (`policy-shadow.ts`). Without it, nothing is compared.
+   */
+  policyShadow?: PolicyShadow;
 };
 
 export function handleRequest(
@@ -252,7 +259,8 @@ export function handleRequest(
         }
       );
       slot?.claim(principal.subject);
-      opts.onRegion?.(subscriptionRegionLine('http', origin, restricted));
+      opts.onRegion?.(subscriptionRegionLine('http', origin, restricted, principal));
+      runShadow(opts.policyShadow, { origin, principal, held: restricted(origin) });
       const open = openStream(res, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       stream = open;
       // The stream ends with `invalid_token` once its token does (auth extension, Relays 4).

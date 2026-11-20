@@ -6,7 +6,7 @@ name: Node→Go ports
 # Its own workflow because it needs Node and Go together: lint.yml has no Go, and the Go workflows
 # are filtered to their own app. The path filter is that wide because it is everything a port can
 # depend on: the Node deps reach src/ and packages/ (and the event-engine-common pin), the Go deps
-# the two Go apps, and a change to any of them can change which ports a PR touches.
+# the Go apps that hold ports, and a change to any of them can change which ports a PR touches.
 on:
   pull_request:
     branches: [main, release]
@@ -20,6 +20,7 @@ on:
       - 'packages/**'
       - 'apps/feed-go/**'
       - 'apps/beacon-go/**'
+      - 'apps/content-policy-go/**'
       - 'event-engine-common'
       - 'tsconfig.json'
       - '.gitmodules'
@@ -52,13 +53,14 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
-      # One toolchain for both modules: their go.mod files name the same Go version.
+      # One toolchain for every module: their go.mod files name the same Go version.
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
           cache-dependency-path: |
             apps/feed-go/go.sum
             apps/beacon-go/go.sum
+            apps/content-policy-go/go.sum
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -109,6 +111,7 @@ jobs:
           cache-dependency-path: |
             apps/feed-go/go.sum
             apps/beacon-go/go.sum
+            apps/content-policy-go/go.sum
 
       # For `typescript`, which the Node dependency walk parses with.
       - name: Install

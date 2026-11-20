@@ -2,9 +2,9 @@
 // one catch-all page (`src/pages/api/v1/blocks/storage/[[...path]].ts`). It resolves the
 // caller (`doc-store-access.ts`), runs the gates the store leaves to its caller — scopes,
 // consent, a collection's `ownedModelVersions` rule (`doc-store-ownership.ts`), the
-// min-trust gate, rate limits, moderation — calls the store, and presents the
-// result. Every refusal leaves through `sendError`, the one place a `DocStoreError` code
-// becomes an HTTP status.
+// min-trust gate, rate limits, a collection's permission hook (`doc-store-hook.ts`),
+// moderation — calls the store, and presents the result. Every refusal leaves through
+// `sendError`, the one place a `DocStoreError` code becomes an HTTP status.
 //
 // PATHS. Collection names match `^[a-z][a-z0-9_]{0,31}$` and keys `[A-Za-z0-9._:-]{1,128}`,
 // so a segment starting with `_` can never be a collection name. Every non-collection
@@ -71,6 +71,7 @@ import {
 } from '~/server/services/blocks/block-write-trust.service';
 import {
   assertCollection,
+  assertNotHooked,
   assertPublishKeys,
   assertPublishPair,
   assertShareWritable,
@@ -85,6 +86,7 @@ import {
   type StorageAccess,
 } from '~/server/services/apps/doc-store-access';
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
+import { gateHook } from '~/server/services/apps/doc-store-hook';
 import { assertOwnedModelVersions } from '~/server/services/apps/doc-store-ownership';
 import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
 import { resolveSchemaMajor } from '~/server/services/apps/doc-store-schema-major';
@@ -261,6 +263,7 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   not_eligible: 403,
   not_author: 403,
   write_policy: 403,
+  hook_rejected: 403,
   resource_not_owned: 403,
   not_found: 404,
   collection_not_declared: 404,
@@ -273,6 +276,7 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   rate_limited: 429,
   storage_disabled: 503,
   moderation_unavailable: 503,
+  hook_unavailable: 503,
   consent_unavailable: 503,
   service_unavailable: 503,
   internal_error: 500,
@@ -1071,12 +1075,18 @@ async function moderate(
 function isOurFault(err: unknown): boolean {
   if (!(err instanceof DocStoreError)) return true;
   if (err.code === 'rate_limited') return err.details?.reason === 'contention';
+  // A permission hook that FAILED (threw, ran out of time or memory, returned something invalid)
+  // is the app author's fault, not the viewer's: refunded like a fault of ours. A hook that
+  // refused (`cause: 'denied'`) is an ordinary refusal and is charged as one.
+  if (err.code === 'hook_rejected') return err.details?.cause !== 'denied';
   return (
     err.code === 'storage_disabled' ||
     // The store's database could not be reached (`translatePgError`), or a gate's read failed.
     err.code === 'service_unavailable' ||
     err.code === 'moderation_unavailable' ||
-    err.code === 'consent_unavailable'
+    err.code === 'consent_unavailable' ||
+    // The permission hook could not be evaluated (`doc-store-hook.ts`): nothing was decided.
+    err.code === 'hook_unavailable'
   );
 }
 
@@ -1219,12 +1229,31 @@ async function run(
       // the resulting document.
       if (newData) validateDocAgainstCollectionSchema(ctx, coll, newData);
       if (newData) await assertOwnedModelVersions(decl, newData, uid);
+      // The PERMISSION HOOK (`doc-store-hook.ts`): after every check above (the schema first), and
+      // for a shared create or put inside the write reservation but before the moderation scan,
+      // so a refusal spends no scan. Its pass pins the store write to the version it was shown.
+      const writeOp = route.op;
+      const writeKey = route.op === 'put' || route.op === 'delete' ? route.key : undefined;
+      const decide = () =>
+        gateHook({
+          access,
+          coll,
+          store,
+          op: writeOp,
+          key: writeKey,
+          after: newData,
+          ifVersion: putIn?.ifVersion ?? deleteVersion,
+        });
       const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
+        const grant = await decide();
         if (created) {
           const afterCommit = user
             ? await moderate(access, user, 'append', '', { data: created.data })
             : nothingAfterCommit;
-          const doc = await store.create(ctx, await withSchemaMajor(access, coll), created.data);
+          const doc = await store.create(ctx, await withSchemaMajor(access, coll), created.data, {
+            key: grant?.key,
+            hookPass: grant?.pass,
+          });
           landed();
           afterCommit(doc.key);
           return ok(await presentDoc(doc, decl), 201);
@@ -1236,13 +1265,17 @@ async function run(
             : nothingAfterCommit;
           const doc = await store.put(ctx, await withSchemaMajor(access, coll), route.key, data, {
             ifVersion,
+            hookPass: grant?.pass,
           });
           landed();
           afterCommit();
           return ok(await presentDoc(doc, decl));
         }
         if (route.op !== 'delete') throw new Error('doc-store-api: unreachable write op');
-        const result = await store.delete(ctx, coll, route.key, { ifVersion: deleteVersion });
+        const result = await store.delete(ctx, coll, route.key, {
+          ifVersion: deleteVersion,
+          hookPass: grant?.pass,
+        });
         // The author removed a published item: its App Store card follows. Production only: a
         // dev namespace's key is not the published item's.
         if (result.deleted && shared && ctx.ns === PUBLISHED_NS) {
@@ -1289,6 +1322,17 @@ async function run(
       // The bucket first: a refused request costs no subject lookup.
       await charge('tally', access, req);
       const user = shared ? await assertTrusted(uid) : null;
+      // The permission hook, before the key scan below (a refusal spends no scan). It runs the
+      // store's request checks first on a hooked collection; with no hook it returns null at once.
+      const grant = await gateHook({
+        access,
+        coll,
+        store,
+        op: 'increment',
+        key: route.key,
+        tally: { name: route.name, by: by ?? 1 },
+        createsWhenAbsent: decl.write === 'none',
+      });
       // Under `write: 'none'` an increment can CREATE a public document under the app's key. The
       // store does not say whether this one did, so the key is scanned on every such increment.
       const afterCommit =
@@ -1297,7 +1341,9 @@ async function run(
           : nothingAfterCommit;
       // Only under `write: 'none'` can an increment create (and so stamp) a document.
       const incremented = decl.write === 'none' ? await withSchemaMajor(access, coll) : coll;
-      const counted = await store.increment(ctx, incremented, route.key, route.name, by);
+      const counted = await store.increment(ctx, incremented, route.key, route.name, by, {
+        hookPass: grant?.pass,
+      });
       afterCommit();
       return ok(counted);
     }
@@ -1311,10 +1357,21 @@ async function run(
       await charge('tally', access, req);
       if (route.op === 'mark' && route.name === REPORT_MARK) await charge('report', access, req);
       if (shared) await assertTrusted(uid);
+      // The permission hook. A `report` is exempt (`gateHook` returns null for it, and the store
+      // asks no pass for it): a hook must never be able to silence moderation reports.
+      const grant = await gateHook({
+        access,
+        coll,
+        store,
+        op: route.op,
+        key: route.key,
+        tally: { name: route.name },
+      });
+      const opts = { hookPass: grant?.pass };
       const result =
         route.op === 'mark'
-          ? await store.mark(ctx, coll, route.key, route.name)
-          : await store.unmark(ctx, coll, route.key, route.name);
+          ? await store.mark(ctx, coll, route.key, route.name, opts)
+          : await store.unmark(ctx, coll, route.key, route.name, opts);
       // A report count is never exposed.
       return ok(
         route.name === REPORT_MARK
@@ -1358,6 +1415,10 @@ async function run(
 //
 // FLAG: `app-blocks-storage-publish`, evaluated per app (entityId = the app block id, no context).
 // Off — the default, and when Flipt is unreachable — both paths answer as an unknown route.
+//
+// PERMISSION HOOKS: a shared collection with a `hook` refuses both publish into it and unpublish
+// from it (`invalid_request`, `reason: 'hooked_collection'`, before anything is charged): a hook
+// decides one write, and a batch that skipped it would fail open (`assertNotHooked`).
 
 /** Whether a matched route is served for this request: everything but publish, or publish with the flag on. */
 async function isPublishRouteServed(req: NextApiRequest, match: Match): Promise<boolean> {
@@ -1481,6 +1542,8 @@ async function runUnpublish(
     });
   }
   assertShareWritable(to);
+  // A hooked collection's documents are deleted one at a time, each decided by its hook.
+  assertNotHooked(to, 'unpublish');
   // Like a delete: `apps:storage` only, no trust gate, the `write` bucket once per call.
   await charge('write', access, req);
   const result = await store.unpublishCopies(access.ctx, to, keys);

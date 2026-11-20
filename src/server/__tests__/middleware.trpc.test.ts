@@ -100,6 +100,10 @@ import { rateLimit } from '../middleware.trpc';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockHGet = redisMock.redis.packed.hGet;
+const mockEval = redisMock.redis.eval;
+/** The atomic claim script's calls, by op ('claim' | 'refund'). */
+const scriptOps = () =>
+  mockEval.mock.calls.map((call) => (call[1] as { arguments: string[] }).arguments[0]);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -107,6 +111,11 @@ beforeEach(() => {
   // No existing attempts — the limit check should pass on every call.
   mockHGet.mockResolvedValue([]);
   mockHSetWithTTL.mockResolvedValue(undefined);
+  // The claim script admits; a refund finds its attempt.
+  mockEval.mockImplementation(
+    async (_script: string, { arguments: args }: { arguments: string[] }) =>
+      args[0] === 'claim' ? [1] : 1
+  );
 });
 
 const baseCtx = {
@@ -121,7 +130,7 @@ const baseArg = {
 };
 
 describe('rateLimit recordAttempt — onlyCountSuccess', () => {
-  it('writes the attempt AFTER a successful next() when onlyCountSuccess=true', async () => {
+  it('keeps the claimed attempt when onlyCountSuccess=true and next() succeeds', async () => {
     // Construct the middleware — this captures the handler.
     rateLimit({ limit: 10, period: 60 }, undefined, { onlyCountSuccess: true });
     const handler = capturedHandler.handler!;
@@ -132,15 +141,14 @@ describe('rateLimit recordAttempt — onlyCountSuccess', () => {
     const result = (await handler({ ...baseArg, next })) as any;
 
     expect(next).toHaveBeenCalledTimes(1);
-    // hSetWithTTL must run exactly once and only after next() resolved ok.
-    expect(mockHSetWithTTL).toHaveBeenCalledTimes(1);
-    // Fail-open logger must NOT have fired on the happy path.
+    expect(scriptOps()).toEqual(['claim']);
+    expect(mockHSetWithTTL).not.toHaveBeenCalled();
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
     // The original next() result must propagate unchanged.
     expect(result.marker).toBe('next-ran');
   });
 
-  it('SKIPS the attempt write when onlyCountSuccess=true and next() returns ok=false', async () => {
+  it('refunds the claimed attempt once when onlyCountSuccess=true and next() returns ok=false', async () => {
     rateLimit({ limit: 10, period: 60 }, undefined, { onlyCountSuccess: true });
     const handler = capturedHandler.handler!;
 
@@ -149,30 +157,60 @@ describe('rateLimit recordAttempt — onlyCountSuccess', () => {
     const result = (await handler({ ...baseArg, next })) as any;
 
     expect(next).toHaveBeenCalledTimes(1);
-    // The critical assertion — a failed call MUST NOT burn a slot.
-    expect(mockHSetWithTTL).not.toHaveBeenCalled();
+    // A failed call MUST NOT burn a slot: the claim is released, once.
+    expect(scriptOps()).toEqual(['claim', 'refund']);
+    const [claim, refund] = mockEval.mock.calls.map(
+      (call) => (call[1] as { arguments: string[] }).arguments
+    );
+    expect(refund[2]).toBe(claim[2]);
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
     expect(result.ok).toBe(false);
   });
 
-  it('writes the attempt BEFORE next() when onlyCountSuccess is unset (default)', async () => {
+  it('refunds when next() throws under onlyCountSuccess, and the error still propagates', async () => {
+    rateLimit({ limit: 10, period: 60 }, undefined, { onlyCountSuccess: true });
+    const handler = capturedHandler.handler!;
+    const boom = new Error('procedure threw');
+
+    await expect(
+      handler({ ...baseArg, next: vi.fn(async () => Promise.reject(boom)) })
+    ).rejects.toBe(boom);
+    expect(scriptOps()).toEqual(['claim', 'refund']);
+  });
+
+  it('a failing refund does not fail the request', async () => {
+    rateLimit({ limit: 10, period: 60 }, undefined, { onlyCountSuccess: true });
+    const handler = capturedHandler.handler!;
+    mockEval.mockImplementation(
+      async (_s: string, { arguments: args }: { arguments: string[] }) => {
+        if (args[0] === 'refund') throw new Error('refund failed');
+        return [1];
+      }
+    );
+
+    const result = (await handler({ ...baseArg, next: vi.fn(async () => ({ ok: false })) })) as any;
+
+    expect(result.ok).toBe(false);
+    expect(scriptOps()).toEqual(['claim', 'refund']);
+  });
+
+  it('claims before next() when onlyCountSuccess is unset (default), and never refunds', async () => {
     rateLimit({ limit: 10, period: 60 });
     const handler = capturedHandler.handler!;
 
-    // Track call order — recordAttempt's hSetWithTTL must fire before next.
     const calls: string[] = [];
-    mockHSetWithTTL.mockImplementation(async () => {
-      calls.push('record');
+    mockEval.mockImplementation(async () => {
+      calls.push('claim');
+      return [1];
     });
     const next = vi.fn(async () => {
       calls.push('next');
-      return { ok: true };
+      return { ok: false };
     });
 
     await handler({ ...baseArg, next });
 
-    expect(calls).toEqual(['record', 'next']);
-    expect(mockHSetWithTTL).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(['claim', 'next']);
     expect(next).toHaveBeenCalledTimes(1);
   });
 });
@@ -183,6 +221,8 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
     const handler = capturedHandler.handler!;
 
     const synthetic = new Error('CLUSTERDOWN The cluster is down');
+    // The claim script errors, so the call takes the read-then-write path, whose write fails.
+    mockEval.mockRejectedValue(new Error('ERR user_script:3: attempt to compare nil with number'));
     mockHSetWithTTL.mockRejectedValueOnce(synthetic);
 
     const next = vi.fn(async () => ({ ok: true, data: 'still-works' }));
@@ -192,8 +232,11 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
     const result = (await handler({ ...baseArg, next })) as any;
 
     expect(result.data).toBe('still-works');
-    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
-    const [subtype, fn, err, extra] = mockLogSysRedisFailOpen.mock.calls[0];
+    expect(mockLogSysRedisFailOpen.mock.calls.map((c) => c[0])).toEqual([
+      'rate-limit-claim-script-error',
+      'rate-limit-write-degraded',
+    ]);
+    const [subtype, fn, err, extra] = mockLogSysRedisFailOpen.mock.calls[1];
     expect(subtype).toBe('rate-limit-write-degraded');
     expect(fn).toBe('rate-limit-bucket.claimRateLimitAttempt');
     expect(err).toBe(synthetic);
@@ -242,5 +285,21 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
     // A refusal may write only the active-limit marker, never the attempt bucket.
     const writtenKeys = mockHSetWithTTL.mock.calls.map((call) => String(call[1]));
     expect(writtenKeys.filter((key) => !key.includes('trpc:limit:active:'))).toEqual([]);
+  });
+});
+
+describe('rateLimit — a refusal decided by the claim script', () => {
+  it("carries the rule's own message, as a refusal by the read does", async () => {
+    rateLimit({ limit: 2, period: 60, errorMessage: 'Slow down on this one.' });
+    const handler = capturedHandler.handler!;
+    const now = Date.now();
+    // The read saw room; the script, deciding atomically, found the bucket full.
+    mockEval.mockResolvedValue([0, now - 2000, now - 1000]);
+
+    const refused = await handler({ ...baseArg, next: vi.fn() }).catch((e: unknown) => e);
+
+    expect(refused).toBeInstanceOf(TRPCError);
+    expect((refused as TRPCError).code).toBe('TOO_MANY_REQUESTS');
+    expect((refused as TRPCError).message).toBe('Slow down on this one.');
   });
 });

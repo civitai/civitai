@@ -4,7 +4,15 @@
   position: relative;
   width: fit-content;
   max-width: 100%;
-  margin-inline: auto;
+
+  &[data-width] {
+    margin-inline: auto;
+  }
+
+  // Block, so the box the overlay is positioned against has no line-box gap under the image.
+  img {
+    display: block;
+  }
 
   &[data-width='33'] {
     max-width: 33%;
@@ -30,7 +38,6 @@
   position: relative;
   overflow: hidden;
   max-width: 100%;
-  max-height: 80vh;
   border-radius: var(--mantine-radius-md);
   background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-5));
 }

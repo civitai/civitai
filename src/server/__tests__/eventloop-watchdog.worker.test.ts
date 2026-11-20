@@ -17,7 +17,7 @@ type Harness = {
 };
 
 const TOKEN = 'test-watchdog-token';
-const THRESHOLD_MS = 300;
+const THRESHOLD_MS = 200;
 
 const harnesses: Harness[] = [];
 
@@ -113,36 +113,25 @@ describe('event-loop watchdog worker', () => {
     expect(metric(body, 'civitai_app_watchdog_heartbeat_age_ms')).toBeLessThan(THRESHOLD_MS);
   });
 
-  it('reports a wedge while the main thread is still stalled', async () => {
+  it('reports a wedge while the main thread is stalled, then closes it out on recovery dated from the last beat', async () => {
     const h = await startWorker();
 
-    // Withholding beats is an ABSORBING state: nothing can end the wedge except this
-    // test resuming the heartbeat, so there is no window to lose. Asserting the
-    // wedge while it is still in progress is the whole point — the duration
-    // histogram only observes on recovery, so a pod killed mid-wedge would never
-    // report one.
-    await sleep(THRESHOLD_MS * 3);
-
-    const { body } = await h.scrape();
-
-    expect(metric(body, 'civitai_app_watchdog_wedged')).toBe(1);
-    expect(metric(body, 'civitai_app_watchdog_heartbeat_age_ms')).toBeGreaterThanOrEqual(
-      THRESHOLD_MS
-    );
-    expect(metric(body, 'civitai_app_watchdog_current_wedge_seconds')).toBeGreaterThan(0);
-    // Not yet recovered, so nothing has been observed into the histogram.
-    expect(metric(body, 'civitai_app_watchdog_wedge_total')).toBe(0);
-    expect(metric(body, 'civitai_app_watchdog_wedge_duration_seconds_count')).toBe(0);
-  });
-
-  it('closes out the wedge on recovery and dates it from the last beat', async () => {
-    const h = await startWorker();
-
+    // Withholding beats is absorbing: only resuming the heartbeat ends the wedge. The duration
+    // histogram only observes on recovery, so a pod killed mid-wedge must still report one.
     const stalledFor = THRESHOLD_MS * 3;
     await sleep(stalledFor);
+
+    const stalled = (await h.scrape()).body;
+    expect(metric(stalled, 'civitai_app_watchdog_wedged')).toBe(1);
+    expect(metric(stalled, 'civitai_app_watchdog_heartbeat_age_ms')).toBeGreaterThanOrEqual(
+      THRESHOLD_MS
+    );
+    expect(metric(stalled, 'civitai_app_watchdog_current_wedge_seconds')).toBeGreaterThan(0);
+    expect(metric(stalled, 'civitai_app_watchdog_wedge_total')).toBe(0);
+    expect(metric(stalled, 'civitai_app_watchdog_wedge_duration_seconds_count')).toBe(0);
+
     h.beat.set([BigInt(Date.now())]);
-    // One poll interval is enough for the worker to see the fresh beat.
-    await sleep(150);
+    await sleep(THRESHOLD_MS / 2);
 
     const { body } = await h.scrape();
 
@@ -151,8 +140,7 @@ describe('event-loop watchdog worker', () => {
     expect(metric(body, 'civitai_app_watchdog_wedge_total')).toBe(1);
     expect(metric(body, 'civitai_app_watchdog_wedge_duration_seconds_count')).toBe(1);
 
-    // Dated from the last beat, not from detection: the recorded duration must cover
-    // the whole stall including the threshold, not just the part after we noticed.
+    // Dated from the last beat, not from detection, so the duration covers the threshold too.
     const observed = metric(body, 'civitai_app_watchdog_wedge_duration_seconds_sum') ?? 0;
     expect(observed).toBeGreaterThanOrEqual((stalledFor / 1000) * 0.9);
     expect(metric(body, 'civitai_app_watchdog_wedge_longest_seconds')).toBeCloseTo(observed, 5);

@@ -12,7 +12,8 @@ import { bustCachesForPosts } from '~/server/services/post.service';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { OWNER_HIDDEN_REVIEWS } from '~/server/common/owner-hidden-reviews';
+import { IMAGE_REVIEW_PRECEDENCE, RESTORABLE_REVIEWS } from '@civitai/shared/image-review-types';
+import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
@@ -72,7 +73,15 @@ export async function unblockAccountDeletionImages(userId: number) {
   while (passes < MAX_RESTORE_BATCHES) {
     passes++;
     const restored = await dbWrite.$queryRaw<
-      { id: number; postId: number | null; ingestion: string; blockedFor: string | null }[]
+      {
+        id: number;
+        postId: number | null;
+        ingestion: string;
+        blockedFor: string | null;
+        needsReview: string | null;
+        currentReview: string | null;
+        recordedReview: string | null;
+      }[]
     >`
       UPDATE "Image"
       SET ingestion = CASE
@@ -84,34 +93,71 @@ export async function unblockAccountDeletionImages(userId: number) {
             WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
             ELSE "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text
           END,
-          -- A recorded owner-hidden review comes back over any flag but a current 'csam', so a forged
-          -- breadcrumb can write nothing else. Never a recorded 'csam': the block keeps that flag, so
-          -- one recorded with none left was dismissed.
+          -- The one column holds one review: of the current flag and the recorded one, the higher in
+          -- IMAGE_REVIEW_PRECEDENCE stays. A current 'csam' is never overwritten, and a recorded value
+          -- outside RESTORABLE_REVIEWS (a recorded 'csam', or a forged one) writes nothing.
           "needsReview" = CASE
             WHEN "needsReview" = 'csam' THEN "needsReview"
-            ELSE CASE
-              WHEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${OWNER_HIDDEN_REVIEWS}::text[])
-                AND "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text <> 'csam'
-              THEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
-              ELSE "needsReview"
-            END
+            WHEN c."recordedReview" IS NULL
+              OR NOT (c."recordedReview" = ANY(${RESTORABLE_REVIEWS}::text[]))
+            THEN "needsReview"
+            WHEN "needsReview" IS NULL THEN c."recordedReview"
+            WHEN array_position(${IMAGE_REVIEW_PRECEDENCE}::text[], "needsReview")
+              <= array_position(${IMAGE_REVIEW_PRECEDENCE}::text[], c."recordedReview")
+            THEN "needsReview"
+            ELSE c."recordedReview"
           END,
           "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
-      WHERE id IN (
-        SELECT i.id
+      FROM (
+        SELECT i.id, i."needsReview" AS "currentReview",
+          -- A recorded appeal decided during the window has no queue left to clear it.
+          CASE
+            WHEN i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = 'appeal' AND NOT EXISTS (
+              SELECT 1 FROM "Appeal" a
+              WHERE a."entityType" = 'Image'::"EntityType"
+                AND a."entityId" = i.id
+                AND a.status = 'Pending'::"AppealStatus"
+            ) THEN NULL
+            ELSE i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
+          END AS "recordedReview"
         FROM "Image" i
         WHERE i."userId" = ${userId}
           AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
-          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
+          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL
+          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
           AND (SELECT COALESCE(u."deletedAt", u."bannedAt") IS NULL FROM "User" u WHERE u.id = ${userId})
         LIMIT ${RESTORE_BATCH_SIZE}
-      )
-      RETURNING id, "postId", ingestion, "blockedFor"
+      ) c
+      WHERE "Image".id = c.id
+      RETURNING "Image".id, "postId", ingestion, "blockedFor", "needsReview", c."currentReview", c."recordedReview"
     `;
 
     if (!restored.length) {
       drained = true;
       break;
+    }
+
+    const competing = restored.flatMap(({ id, needsReview, currentReview, recordedReview }) => {
+      if (!currentReview || !recordedReview || currentReview === recordedReview) return [];
+      if (!(RESTORABLE_REVIEWS as readonly string[]).includes(recordedReview)) return [];
+      const dropped = needsReview === currentReview ? recordedReview : currentReview;
+      return [{ imageId: id, kept: needsReview, dropped }];
+    });
+    if (competing.length) {
+      // An appeal outranked here leaves the appeals queue while its Appeal stays Pending.
+      const pendingAppeals = await getPendingAppealImageIds(
+        competing.filter((review) => review.dropped === 'appeal').map((review) => review.imageId)
+      );
+      logToAxiom({
+        type: 'warning',
+        name: 'account-deletion-image-restore',
+        message: 'kept the higher of two competing review flags',
+        payload: {
+          reviews: competing.map((review) =>
+            pendingAppeals.has(review.imageId) ? { ...review, pendingAppeal: true } : review
+          ),
+        },
+      });
     }
 
     const visible = restored.filter(

@@ -76,7 +76,13 @@ import {
   servableLevelWhere,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   minorMatureImageVisibleSql,
+  reviewKeptWhenLiftedSql,
 } from '~/server/common/image-visibility';
+import {
+  PRIOR_BLOCKED_FOR_KEY,
+  PRIOR_INGESTION_KEY,
+  PRIOR_NEEDS_REVIEW_KEY,
+} from '~/server/utils/image-removal-mode';
 import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
@@ -189,7 +195,7 @@ import type {
 import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { imagesMetricsSearchIndex } from '~/server/search-index';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -287,7 +293,6 @@ import {
 import type {
   DomainColor,
   ModelType,
-  ReportReason,
   ReviewReactions,
   CollectionItemStatus,
 } from '~/shared/utils/prisma/enums';
@@ -302,6 +307,7 @@ import {
   JobQueueType,
   MediaType,
   NewOrderRankType,
+  ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import {
@@ -1242,9 +1248,9 @@ export async function handleUnblockImages({
       ...Object.entries(grouped).map(
         ([needsReview, groupedIds]) => dbWrite.$queryRaw`
           UPDATE "Image" SET
-            "needsReview" = NULL,
+            "needsReview" = ${reviewKeptWhenLiftedSql},
             "blockedFor" = NULL,
-            "metadata" = "metadata" - 'ruleId' - 'ruleReason', -- Remove ruleId and ruleReason from metadata
+            "metadata" = "metadata" - 'ruleId' - 'ruleReason' - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text, -- an unblocked row is not the account deletion's to put back
             ${needsReview === 'poi' ? Prisma.sql`"poi" = false,` : Prisma.sql``}
             ${
               needsReview === 'minor'
@@ -1279,7 +1285,7 @@ export async function handleUnblockImages({
       dropBlockedImageDeleteQueue(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       // The unblock SQL above can rewrite "minor", which no trigger watches.
-      queueModelsForImageChildTagChanges({ minorImageIds: ids }),
+      queueDocumentsForImageMinorChanges({ minorImageIds: ids }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined), {
         step: 'unblock',
@@ -1364,7 +1370,8 @@ export async function writeModeratorBlock(
         ingestion = 'Blocked',
         "nsfwLevel" = ${NsfwLevel.Blocked},
         "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
-        "updatedAt" = NOW()
+        "updatedAt" = NOW(),
+        "metadata" = CASE WHEN jsonb_typeof("metadata") = 'object' THEN "metadata" - 'ruleId' - 'ruleReason' ELSE "metadata" END
       WHERE id = ANY(${ids}::int[])
     `;
     // A statement of its own, after the UPDATE took the row locks: one that waited on a dismissal
@@ -1524,6 +1531,24 @@ export async function handleBlockImages({
         activity: 'review',
       });
     }
+
+    // A moderator's removal settles the images' open TOS reports, as the reports queue does. Held
+    // images and those under the review flag keep theirs for the CSAM queue; an account-wide removal
+    // moves none. Last, so a failure cannot fail a removal that has already notified the owners.
+    if (moderatorId && !!imageIds?.length)
+      await actionPendingTosReports(
+        ids.filter((id) => !held.has(id) && !underReview.has(id)),
+        moderatorId
+      ).catch((e: unknown) =>
+        logToAxiom({
+          type: 'error',
+          // Only the reads before the status UPDATE can throw: the rewards after it are allSettled and
+          // the resolved-marker write catches its own error. So every report is still Pending.
+          name: 'block-images-reports-not-settled',
+          imageIds: ids,
+          error: safeError(e),
+        })
+      );
   });
 
   if (moderatorId && userId) {
@@ -1559,7 +1584,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
   await Promise.all([refreshThumbnailCache(ids), refreshProfilePicturesForImages(ids)]);
-  await queueModelsForImageChildTagChanges({ levelImageIds: ids });
+  await queueDocumentsForImageMinorChanges({ levelImageIds: ids });
 }
 
 // Single source of truth for restoring an image's rating after it's unblocked.
@@ -1663,6 +1688,48 @@ export const updateImageReportStatusByReason = ({
     RETURNING id, "userId"
   `;
 };
+
+/** Actions the Pending TOS reports on these images and pays their reporters, filer and co-reporters,
+ *  through `bulkSetReportStatus`: a report another path has moved since is left as it is. A report on
+ *  a banned owner's image closes unpaid, as the moderator app's report queue closes it: the ban
+ *  removed the image, not a ruling on the report. */
+export const actionPendingTosReports = async (ids: number[], actorId: number) => {
+  if (!ids.length) return;
+  // On the primary: a ban from moments ago may not have reached a replica.
+  const reports = await dbWrite.$queryRaw<{ id: number; ownerBanned: boolean }[]>`
+    SELECT r.id, bool_or(u."bannedAt" IS NOT NULL) AS "ownerBanned" FROM "Report" r
+    JOIN "ImageReport" i ON i."reportId" = r.id
+    JOIN "Image" img ON img.id = i."imageId"
+    LEFT JOIN "User" u ON u.id = img."userId"
+    WHERE i."imageId" = ANY(${ids}::int[])
+      AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
+      AND r.status = ${ReportStatus.Pending}::"ReportStatus"
+    GROUP BY r.id
+  `;
+  const unpaid = new Set(reports.filter((r) => r.ownerBanned).map((r) => r.id));
+  const moved = await bulkSetReportStatus({
+    ids: reports.map((r) => r.id),
+    status: ReportStatus.Actioned,
+    userId: actorId,
+    fromStatus: ReportStatus.Pending,
+    rewardRemovedReporters: false,
+    paysNoReporter: (reportId) => unpaid.has(reportId),
+  });
+  // The moderator app's resolved marker, so a lagging replica does not hand them back to its queue.
+  if (moved.length)
+    await redis
+      .hSetMultiWithExpire(
+        REDIS_KEYS.REPORT.RESOLVED_RECENT,
+        moved.flatMap((id) => [String(id), '1']),
+        REPORT_RESOLVED_MARKER_TTL_SECONDS
+      )
+      .catch((e: unknown) =>
+        logToAxiom({ type: 'error', name: 'report-resolved-marker', error: safeError(e) })
+      );
+};
+
+/** The moderator app's `RESOLVED_MARKER_TTL_SECONDS`. */
+const REPORT_RESOLVED_MARKER_TTL_SECONDS = 300;
 
 /** The image's reports for one reason that are not yet actioned. */
 export const getOpenImageReportIds = async (id: number, reason: ReportReason) => {
@@ -2330,6 +2397,7 @@ const getAllImagesUncaptured = async (
     hidden,
     followed,
     fromPlatform,
+    requiringMeta,
     user,
     pending,
     publishedOnly,
@@ -2972,10 +3040,15 @@ const getAllImagesUncaptured = async (
         AND.push(Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${ownerId})`);
       } else AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
     }
-    if (browsingLevel)
-      AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
-    AND.push(imageReviewedSql());
+    // A metadata-blocked image reads Blocked for ingestion and level, which these gates drop. Its
+    // rating is gone, so only red, which shows every level, lists it.
+    if (!requiringMeta || domain !== 'red') {
+      if (browsingLevel)
+        AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
+      AND.push(imageReviewedSql());
+    }
   }
+  if (requiringMeta) AND.push(Prisma.sql`i."blockedFor" = ${BlockedReason.AiNotVerified}`);
 
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
@@ -5853,6 +5926,7 @@ export const getEntityCoverImage = async ({
             AND ${coverRated}
             AND ${withinHeldGallery}
             AND ${baseModelAllowed}
+            AND ${coverNotBlocked}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (
@@ -6074,16 +6148,18 @@ export async function get404Images() {
     SELECT
       u.username,
       i.url,
-      i.meta
+      CASE WHEN i."hideMeta" THEN NULL ELSE i.meta END AS meta
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
+    LEFT JOIN "Post" p ON p.id = i."postId"
     JOIN "User" u ON u.id = i."userId" AND username IS NOT NULL
     JOIN "Collection" c ON c.id = ci."collectionId"
     WHERE c."userId" = -1
       AND c.name = '404 Contest'
       AND i."ingestion" = 'Scanned'
-      AND i."needsReview" IS NULL
       AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+      AND ${Prisma.join(imageVisibilityConditions({}), ' AND ')}
+      AND i."tosViolation" = FALSE
       AND ci.status = 'ACCEPTED';
   `;
 
@@ -6229,7 +6305,7 @@ async function afterImageNsfwLevelSet({
     // The version showcase is cached for a day and filtered by level when it is built.
     postId ? bustCachesForPosts(postId) : undefined,
   ]);
-  await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
+  await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
   if (status) {
     await dbWrite.imageRatingRequest.updateMany({
       where: { imageId: id, status: 'Pending' },
@@ -6426,7 +6502,7 @@ export async function raiseOwnImageNsfwLevel({
 
   await Promise.all([refreshThumbnailCache(id), refreshProfilePicturesForImages([id])]);
   if (raised.postId) await updatePostNsfwLevel(raised.postId);
-  await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
+  await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
   return true;
@@ -6624,7 +6700,7 @@ export async function resolveIngestionError({
     ids: [id],
     action: SearchIndexUpdateQueueAction.Update,
   });
-  await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
+  await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
 
   await trackModActivity(userId, {
     entityType: 'image',
@@ -7895,7 +7971,7 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
     data: { [flag]: !image[flag] },
   });
   await imageMetadataCache.refresh(id);
-  if (flag === 'minor') await queueModelsForImageChildTagChanges({ minorImageIds: [id] });
+  if (flag === 'minor') await queueDocumentsForImageMinorChanges({ minorImageIds: [id] });
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7915,7 +7991,7 @@ export const updateImagesFlag = async ({
     data: { [flag]: value },
   });
   await imageMetadataCache.refresh(ids);
-  if (flag === 'minor') await queueModelsForImageChildTagChanges({ minorImageIds: ids });
+  if (flag === 'minor') await queueDocumentsForImageMinorChanges({ minorImageIds: ids });
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate(

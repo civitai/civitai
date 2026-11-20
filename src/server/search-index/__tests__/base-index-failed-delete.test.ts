@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const { queues, requeued } = vi.hoisted(() => ({
@@ -49,7 +49,20 @@ const processor = () =>
 
 const actions = () => requeued.flat().map((i) => i.action);
 
+// updateSync's idle workers poll every 1s; drive the clock instead of waiting.
+const settle = async <T>(promise: Promise<T>): Promise<T> => {
+  let done = false;
+  void promise.finally(() => (done = true)).catch(() => undefined);
+  while (!done) await vi.advanceTimersByTimeAsync(1000);
+  return promise;
+};
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
+  vi.useFakeTimers();
   queues.Update = [];
   queues.Delete = [];
   requeued.length = 0;
@@ -80,18 +93,22 @@ describe('search index :: a delete whose task fails', () => {
   });
 
   it('goes back as a Delete only from updateSync() when the call does not rebuild the id', async () => {
-    await processor().updateSync([
-      { id: ID, action: SearchIndexUpdateQueueAction.Delete },
-      { id: ID + 1, action: SearchIndexUpdateQueueAction.Update },
-    ]);
+    await settle(
+      processor().updateSync([
+        { id: ID, action: SearchIndexUpdateQueueAction.Delete },
+        { id: ID + 1, action: SearchIndexUpdateQueueAction.Update },
+      ])
+    );
     expect(requeued.flat()).toEqual([{ id: ID, action: SearchIndexUpdateQueueAction.Delete }]);
   });
 
   it('goes back as a Delete and an Update from updateSync() when the same call rebuilds it', async () => {
-    await processor().updateSync([
-      { id: ID, action: SearchIndexUpdateQueueAction.Delete },
-      { id: ID, action: SearchIndexUpdateQueueAction.Update },
-    ]);
+    await settle(
+      processor().updateSync([
+        { id: ID, action: SearchIndexUpdateQueueAction.Delete },
+        { id: ID, action: SearchIndexUpdateQueueAction.Update },
+      ])
+    );
     expect(actions()).toEqual([
       SearchIndexUpdateQueueAction.Delete,
       SearchIndexUpdateQueueAction.Update,

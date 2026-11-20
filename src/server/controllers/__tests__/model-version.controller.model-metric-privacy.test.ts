@@ -41,6 +41,7 @@ vi.mock('~/server/services/creator-membership.service', () => ({
   getOwnerMetricPrivacyDefaultsForEditor: vi.fn(async () => null),
 }));
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { getModelVersionHandler } from '~/server/controllers/model-version.controller';
 
 const OWNER_ID = 7;
@@ -181,5 +182,84 @@ describe('modelVersion.getById: coverage and recommended resources', () => {
     expect(select).not.toHaveProperty('generationCoverage');
     expect(select).not.toHaveProperty('recommendedResources');
     expect(result.generationCoverage).toEqual(generationCoverage);
+  });
+});
+
+describe('modelVersion.getById: the download name of a trainer-published file', () => {
+  const trainerFile = {
+    id: 11,
+    name: 'X40F7C8WA9TN0XW80MTTCT2TT0.safetensors',
+    overrideName: null,
+    type: 'Model',
+    visibility: 'Public',
+    metadata: {},
+  };
+  const loadWithFiles = (user: { id: number; isModerator?: boolean } | null) =>
+    getModelVersionHandler({
+      input: { id: versionRow.id, withFiles: true },
+      ctx: { user, features: {}, domain: 'blue' },
+    } as never);
+
+  beforeEach(() => {
+    mockGetVersionById.mockImplementation(async ({ select }) =>
+      project({ ...versionRow, files: [trainerFile], posts: [] }, select)
+    );
+  });
+
+  it.each([
+    ['owner', { id: OWNER_ID }],
+    ['moderator', { id: 1, isModerator: true }],
+  ])('gives the %s the readable name the download uses', async (_, user) => {
+    const { files } = await loadWithFiles(user);
+    expect(files[0].downloadName).toBe('model_v1.safetensors');
+  });
+
+  // Built from the real model name, which a .com face hides from everyone else.
+  it('gives nobody else a download name', async () => {
+    expect((await loadWithFiles(null)).files[0].downloadName).toBeUndefined();
+    expect((await loadWithFiles({ id: 99 })).files[0].downloadName).toBeUndefined();
+  });
+});
+
+describe('modelVersion.getById: a Private version read by a user holding a grant', () => {
+  const trainerFile = {
+    id: 11,
+    name: 'X40F7C8WA9TN0XW80MTTCT2TT0.safetensors',
+    overrideName: null,
+    type: 'Model',
+    visibility: 'Public',
+    metadata: {},
+  };
+  const load = (granted: boolean) => {
+    mockGetVersionById.mockImplementation(async ({ select }) =>
+      project({ ...versionRow, availability: 'Private', files: [trainerFile], posts: [] }, select)
+    );
+    // The availability read behind the grant check, then the viewer's grants.
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      {
+        entityId: versionRow.id,
+        userId: OWNER_ID,
+        availability: 'Private',
+        publishedAt: new Date(0),
+        status: 'Published',
+      },
+    ]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue(
+      granted ? [{ entityId: versionRow.id, hasAccess: true, permissions: 1, meta: {} }] : []
+    );
+    return getModelVersionHandler({
+      input: { id: versionRow.id, withFiles: true },
+      ctx: { user: { id: 99 }, features: {}, domain: 'blue' },
+    } as never);
+  };
+
+  it('serves the public file list without the download name the owner gets', async () => {
+    const { files } = await load(true);
+    expect(files.map((f: { name: string }) => f.name)).toEqual([trainerFile.name]);
+    expect(files[0].downloadName).toBeUndefined();
+  });
+
+  it('control: without the grant the version is not found', async () => {
+    await expect(load(false)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
