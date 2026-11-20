@@ -329,7 +329,7 @@ export async function getUsersWithSearch({
       searchClient!.index(USERS_SEARCH_INDEX).search<UserSearchResult>(query, {
         limit: Math.round(limit * 1.5),
         filter: filters.join(' AND '),
-        attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture', 'image'],
+        attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture'],
       })
     );
   } catch (err) {
@@ -360,15 +360,17 @@ export async function getUsersWithSearch({
     throw err;
   }
 
-  return results.hits
-    .filter((x) => !x.deletedAt)
-    .map(({ deletedAt, profilePicture, image, ...user }) => ({
-      ...user,
-      avatarUrl: profilePicture?.url ?? image,
-      avatarNsfw: profilePicture?.nsfwLevel ?? 0,
-      meta: null,
-    }))
-    .slice(0, limit);
+  return (
+    results.hits
+      .filter((x) => !x.deletedAt)
+      .map(({ deletedAt, profilePicture, image: _legacyImage, ...user }) => ({
+        ...user,
+        avatarUrl: profilePicture?.url,
+        avatarNsfw: profilePicture?.nsfwLevel ?? 0,
+        meta: null,
+      }))
+      .slice(0, limit)
+  );
 }
 
 type GetUsersRow = {
