@@ -59,6 +59,7 @@ import {
   buzzSpendTypes,
   CASH_SETTLED_ALIASES,
   coercePurchasedBuzzType,
+  PLATFORM_REVENUE_SOURCES,
   TransactionType,
 } from '~/shared/constants/buzz.constants';
 import { clampRewardMultiplier } from '~/server/rewards/multiplier';
@@ -1637,10 +1638,12 @@ type Row = {
 // lower-cased variants elsewhere, so both are listed.
 const CASH_ACCOUNT_TYPES_SQL = "'CashSettled', 'cashSettled', 'CashPending', 'cashPending'";
 
-// Compensation is everything that is neither a license fee nor a tip, so one-off sources such as
-// `compensation_recovered_20260507` stay in it. Tips are generator-chosen, so they get their own tab.
+// Compensation is everything that is neither a license fee, a tip nor platform revenue, so one-off sources
+// such as `compensation_recovered_20260507` stay in it. Tips are generator-chosen, so they get their own tab.
 const COMPENSATION_SOURCE_SQL: Record<CompensationSource, string> = {
-  compensation: "NOT IN ('licenseFee', 'tip')",
+  compensation: `NOT IN (${['licenseFee', 'tip', ...PLATFORM_REVENUE_SOURCES]
+    .map((s) => `'${s}'`)
+    .join(', ')})`,
   licenseFee: "= 'licenseFee'",
   tip: "= 'tip'",
 };

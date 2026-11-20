@@ -731,7 +731,6 @@ export const upsertModelVersionHandler = async ({
       ) {
         throw throwBadRequestError('Cash settlement is restricted; please contact support.');
       }
-      // Keep the stored type: defaulting to PerImageBuzz would turn a staff-set percent into Buzz per image.
       if (!input.licensingFeeType)
         input.licensingFeeType = storedVersion?.licensingFeeType ?? LicensingFeeType.PerImageBuzz;
       if (!input.licensingFeeSettlementCurrency)

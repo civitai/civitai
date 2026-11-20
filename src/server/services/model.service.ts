@@ -8323,6 +8323,7 @@ export async function getTopWeeklyEarners(fresh = false) {
         cast(SUM(amount) as int) as earned
         FROM orchestration.resourceCompensations
         WHERE date >= toStartOfDay(${auctionReset}::Date)
+          AND source != 'licenseFeeMarkup'
         GROUP BY modelVersionId
         ORDER BY earned DESC
         LIMIT 100;

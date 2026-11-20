@@ -13,6 +13,7 @@ import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import {
   CASH_SETTLED_ALIASES,
   GENERATION_TIP_TRANSACTION_PREFIX,
+  PLATFORM_REVENUE_SOURCES,
   TransactionType,
 } from '~/shared/constants/buzz.constants';
 import {
@@ -126,6 +127,19 @@ const PAYABLE_SOURCES = new Set<string>([
   'tip',
   'licenseFee',
 ] satisfies PayoutSource[]);
+
+/** Rows this job does not pay, by source, so a real payout source missing from the allowlist is seen. */
+export function unpaidSourceTotals(rows: { source: string; amount: number }[]) {
+  const totals: Record<string, { rows: number; amount: number }> = {};
+  for (const { source, amount } of rows) {
+    if (PAYABLE_SOURCES.has(source)) continue;
+    const total = (totals[source] ??= { rows: 0, amount: 0 });
+    total.rows++;
+    total.amount += Number(amount);
+  }
+  return totals;
+}
+
 export type PayoutTransaction = {
   fromAccountId: number;
   toAccountId: number;
@@ -261,6 +275,24 @@ export async function runPayout(lastUpdate: Date) {
   if (!rows.length) {
     log('No compensations found, skipping payout');
     return;
+  }
+
+  const unpaid = unpaidSourceTotals(rows);
+  for (const [source, { rows: count, amount }] of Object.entries(unpaid))
+    log(`Not paying ${count} rows (${amount}) with source ${source}`);
+  const unknownSources = Object.keys(unpaid).filter((s) => !PLATFORM_REVENUE_SOURCES.has(s));
+  if (unknownSources.length) {
+    logToAxiom({
+      type: 'error',
+      name: 'creator-compensation-unpaid-source',
+      message: `Creator compensation for ${dateStr} skipped unknown sources: ${unknownSources.join(
+        ', '
+      )}`,
+      details: {
+        date: dateStr,
+        sources: Object.fromEntries(unknownSources.map((s) => [s, unpaid[s]])),
+      },
+    });
   }
 
   const creatorsToPay: Record<number, ResourceRow[]> = {};

@@ -524,6 +524,57 @@ describe('the daily job after a failed run', () => {
   });
 });
 
+describe('runPayout: sources it does not pay', () => {
+  beforeEach(() => {
+    mockClickhouseQuery.mockReset();
+    mockCreateBuzzTransactionMany.mockReset();
+    mockCreateBuzzTransactionMany.mockResolvedValue({ transactions: [], conflicts: [] });
+    dbMock.dbRead.$queryRaw.mockReset();
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ userId: CREATOR, modelVersionIds: [11] }]);
+    loggingMock.logToAxiom.mockClear();
+  });
+
+  const unpaidSourceAlerts = () =>
+    loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) => (entry as { name?: string }).name === 'creator-compensation-unpaid-source'
+    );
+
+  // The allowlist would otherwise drop a real payout source without a trace, as a one-off
+  // `compensation_recovered_*` source would be.
+  it('alerts on a skipped source it does not know, with its row count and amount', async () => {
+    mockClickhouseQuery.mockResolvedValue([
+      row('compensation', 'Yellow', 50, 11),
+      row('licenseFeeMarkup', 'Yellow', 7, 11),
+      row('compensation_recovered_20261201', 'Yellow', 30, 11),
+      row('compensation_recovered_20261201', 'Blue', 12, 11),
+    ]);
+
+    await runPayout(START);
+
+    const alerts = unpaidSourceAlerts();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0][0]).toMatchObject({
+      type: 'error',
+      details: {
+        date: '2026-10-13',
+        sources: { compensation_recovered_20261201: { rows: 2, amount: 42 } },
+      },
+    });
+  });
+
+  it('does not alert on the licence-fee markup, which it skips by design', async () => {
+    mockClickhouseQuery.mockResolvedValue([
+      row('compensation', 'Yellow', 50, 11),
+      row('licenseFeeMarkup', 'CashSettled', 5000, 11),
+    ]);
+
+    await runPayout(START);
+
+    expect(unpaidSourceAlerts()).toEqual([]);
+    expect(mockCreateBuzzTransactionMany).toHaveBeenCalled();
+  });
+});
+
 // Creator Studio cannot import from src/, so its earnings read spells the prefix out. If the payout
 // job's prefix changes and this does not, generation tips silently fall back into compensation there.
 describe('Creator Studio earnings classifier', () => {

@@ -609,6 +609,7 @@ async function getVersionBuzzEarnedTasks(ctx: ModelMetricContext) {
       floor(SUM(amount)) as earned
       FROM orchestration.resourceCompensations
       WHERE modelVersionId IN (SELECT modelVersionId FROM affected)
+        AND source != 'licenseFeeMarkup'
       GROUP BY modelVersionId;
   `;
 

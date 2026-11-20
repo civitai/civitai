@@ -156,6 +156,9 @@ const buzzTypeConfig: Record<BuzzAccountType, BuzzTypeConfig> = {
 export const buzzAccountTypes = Object.keys(buzzTypeConfig) as BuzzAccountType[];
 // CH-side accountType aliases that resolve to the cashSettled buzz account.
 export const CASH_SETTLED_ALIASES = new Set<string>(['CashSettled', 'cashSettled', 'cash-settled']);
+// orchestration.resourceCompensations sources that are platform revenue logged on a creator's version: never
+// paid, never shown as earnings. Creator Studio spells this out itself; keep the two in step.
+export const PLATFORM_REVENUE_SOURCES: ReadonlySet<string> = new Set(['licenseFeeMarkup']);
 export const buzzSpendTypes = buzzAccountTypes.filter(
   (type) => buzzTypeConfig[type].type === 'spend' && !buzzTypeConfig[type].disabled
 ) as BuzzSpendType[];
