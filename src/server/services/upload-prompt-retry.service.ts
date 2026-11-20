@@ -96,7 +96,7 @@ export async function takeDueUploadPromptRetries({
       removed = await store.zRem(QUEUE, member);
     } catch (error) {
       // Entries already removed this call are ours alone: hand them back rather than lose them.
-      // This one, and the rest, stay queued for the next run.
+      // If Redis applied this removal before the error (a client timeout), this one retry is lost.
       logToAxiom({
         name: 'upload-prompt-scan',
         type: 'error',
