@@ -129,6 +129,17 @@ describe('image placement menu', () => {
       .toBe(COLUMN * 0.65);
   });
 
+  test('tapping a handle without dragging leaves the size alone', async () => {
+    await mount(`<p><img src="${await imageUrl(300, 200)}"></p>`);
+    await expect.poll(() => document.querySelector('img')?.getBoundingClientRect().width).toBe(300);
+    selectFirst('image');
+
+    await dragHandle('right', 0);
+    // A later drag proves the handle was live, so the tap above had its chance to save.
+    await dragHandle('right', -60);
+    await expect.poll(() => editor!.getHTML()).toContain('data-width="30"');
+  });
+
   test('dragging a centred image grows it on both sides, and to the edge clears the size', async () => {
     const src = await imageUrl(COLUMN, 400);
     await mount(`<p><img src="${src}" data-width="60"></p>`);

@@ -181,6 +181,17 @@ describe.each([
     expect(char.top).toBeLessThan(box(img).bottom);
   });
 
+  it('in the article body, starts a floated image level with the text beside it', async () => {
+    const [img] = await renderArticle(
+      [media(await imageUrl(1600, 900), '40', 'float-left'), paragraph(WORDS)],
+      DESKTOP,
+      COLUMN,
+      articleBodyClasses.articleBody,
+      1
+    );
+    expect(box(img).top - firstCharBox('Text that wraps').top).toBeLessThan(12);
+  });
+
   it('starts a heading below a floated image', async () => {
     const [img] = await renderArticle(
       [media(await imageUrl(1600, 900), '40', 'float-left'), paragraph('Short.'), heading('Next')],

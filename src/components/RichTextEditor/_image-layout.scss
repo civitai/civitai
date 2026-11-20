@@ -38,6 +38,12 @@
     margin: 0.25rem 0 0.75rem 1.25rem;
   }
 
+  // The article body's block margin on images would push a floated image below the text beside it.
+  &[data-align='float-left'] img,
+  &[data-align='float-right'] img {
+    margin-block: 0;
+  }
+
   // 640px: no theme breakpoint matches. Small sizes are too small on a phone, and text squeezed
   // beside a float is unreadable, so floats stack as a full-width block.
   @media (max-width: 640px) {
@@ -61,8 +67,13 @@
 }
 
 // A section starts below the previous section's floated image, and the body grows to contain it.
+// A clearing ::after, not flow-root: flow-root would stop margins collapsing through the body.
 @mixin image-float-container {
-  display: flow-root;
+  &::after {
+    content: '';
+    display: block;
+    clear: both;
+  }
 
   h1,
   h2,

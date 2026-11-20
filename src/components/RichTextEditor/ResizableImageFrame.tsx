@@ -59,7 +59,8 @@ export function ResizableImageFrame({
 
   const startDrag = (side: Side) => (e: React.PointerEvent<HTMLElement>) => {
     const frame = frameRef.current;
-    const column = frame?.closest<HTMLElement>('.ProseMirror');
+    // max-width % resolves against the frame's parent: the column, or a list item or quote in it.
+    const column = frame?.parentElement;
     if (!frame || !column) return;
     e.preventDefault();
     e.stopPropagation();
@@ -68,9 +69,10 @@ export function ResizableImageFrame({
       column.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
     const startX = e.clientX;
     const startWidth = frame.getBoundingClientRect().width;
-    let percent = (startWidth / columnWidth) * 100;
+    let percent: number | null = null;
 
     const move = (ev: PointerEvent) => {
+      if (percent === null && Math.abs(ev.clientX - startX) < 3) return;
       percent = draggedWidthPercent({
         startWidth,
         dx: ev.clientX - startX,
@@ -80,18 +82,24 @@ export function ResizableImageFrame({
       });
       setPreview(percent);
     };
-    const end = () => {
+    const stop = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
-      window.removeEventListener('pointercancel', end);
+      window.removeEventListener('pointercancel', stop);
       setPreview(null);
+    };
+    const end = () => {
+      stop();
+      // A tap measures the shown width, which on a phone is not the stored one: only a drag saves.
+      if (percent === null) return;
+      const next = snapImageWidth(percent);
       // One attribute change on release, so a drag is a single undo step.
-      onResize(snapImageWidth(percent));
+      if (next !== size) onResize(next);
     };
     // On window, so the drag keeps going when the pointer leaves the small handle.
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', end);
-    window.addEventListener('pointercancel', end);
+    window.addEventListener('pointercancel', stop);
   };
 
   return (
