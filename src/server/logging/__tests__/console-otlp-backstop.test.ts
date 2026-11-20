@@ -133,7 +133,7 @@ describe('installConsoleOtlpBackstop', () => {
     const target = fakeConsole();
     const original = target.log;
     let fail = true;
-    const emit = vi.fn(() => {
+    const emit = vi.fn((_body: string, _record: ConsoleRecord) => {
       if (fail) throw new Error('sink down');
     });
     installConsoleOtlpBackstop({ emit, target });
