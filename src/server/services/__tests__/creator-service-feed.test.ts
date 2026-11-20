@@ -487,7 +487,6 @@ describe('one service page', () => {
     await expect(
       open(x, { servable: sfwBrowsingLevelsFlag, browsingLevel: allBrowsingLevelsFlag })
     ).rejects.toMatchObject(notFound);
-    // Not even to its seller or a moderator.
     await expect(
       open(x, { servable: sfwBrowsingLevelsFlag, viewerId: SELLER })
     ).rejects.toMatchObject(notFound);
