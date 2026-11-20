@@ -33,16 +33,6 @@ test.describe('membership page — gold (paid, tier=gold)', () => {
   test.use({ storageState: storageStatePath('gold') });
 
   test('gold stays on /user/membership and sees the current-member view', async ({ page }) => {
-    // Failure evidence for the pod log, which keeps no trace: the page console and what the
-    // subscription queries returned.
-    const evidence: string[] = [];
-    page.on('console', (msg) => evidence.push(`console.${msg.type()}: ${msg.text()}`));
-    page.on('pageerror', (err) => evidence.push(`pageerror: ${err.message}`));
-    page.on('response', async (res) => {
-      if (!/subscriptions\.|getBenignPhrases/.test(res.url())) return;
-      const body = await res.text().catch(() => '<unreadable>');
-      evidence.push(`${res.status()} ${res.url()}\n  ${body.slice(0, 1500)}`);
-    });
     const resp = await page.goto(MEMBERSHIP_PATH, { waitUntil: 'domcontentloaded' });
     expect(resp?.status(), 'HTTP status for /user/membership').toBeLessThan(400);
     assertGatePassed(page.url());
@@ -56,7 +46,9 @@ test.describe('membership page — gold (paid, tier=gold)', () => {
     // <Title>My Membership Plan</Title>), present in BOTH the has-subscription
     // and the no-active-subscription branches. This is the structural marker
     // that the membership view (not a redirect target) rendered.
-    await expect(page.getByRole('heading', { name: /My Membership Plan/i })).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: /My Membership Plan/i })
+    ).toBeVisible();
 
     // NOTE: distinguishing active-member affordance. For an active, non-canceled,
     // non-Civitai-provider subscription, membership.tsx renders a
@@ -71,12 +63,7 @@ test.describe('membership page — gold (paid, tier=gold)', () => {
       .getByRole('button', { name: /Cancel membership/i })
       .or(page.getByRole('link', { name: /^Upgrade$/i }))
       .or(page.getByRole('button', { name: /Update Payment/i }));
-    try {
-      await expect(manageControl.first()).toBeVisible();
-    } catch (error) {
-      console.log(`[membership gold] evidence:\n${evidence.join('\n')}`);
-      throw error;
-    }
+    await expect(manageControl.first()).toBeVisible();
   });
 });
 
