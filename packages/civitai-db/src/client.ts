@@ -84,9 +84,7 @@ export function prismaLogPrinter(level: Prisma.LogLevel, onLog?: (e: PrismaLogLi
     if (!forward) return;
     try {
       forward({ level: level as ForwardedPrismaLogLevel, line: `${tag} ${text}` });
-    } catch {
-      // contained: forwarding must not break logging
-    }
+    } catch {}
   };
 }
 

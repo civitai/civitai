@@ -26,7 +26,6 @@ type ExportedRecord = {
   attributes: Record<string, unknown>;
 };
 const exported: ExportedRecord[] = [];
-// The provider production builds, with an exporter that keeps what it is handed.
 const provider = createOtelLoggerProvider({
   exporter: {
     export: (records, done) => {

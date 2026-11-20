@@ -77,6 +77,20 @@ describe('attachSysSentinelListeners', () => {
     expect(topologyCounter.inc).toHaveBeenCalledTimes(5);
   });
 
+  it('logs the first sentinel-list event even when it carries no size', () => {
+    const client = fakeClient();
+    const log = vi.fn();
+    attachSysSentinelListeners(client, {
+      deployment: 'd',
+      log,
+      topologyCounter: fakeCounter(),
+      errorCounter: fakeCounter(),
+    });
+
+    client.fire('topology-change', { type: 'SENTINE_LIST_CHANGE' });
+    expect(log).toHaveBeenCalledOnce();
+  });
+
   it('logs every repeated node event; only the sentinel-list event is deduplicated', () => {
     const client = fakeClient();
     const log = vi.fn();

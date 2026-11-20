@@ -94,7 +94,5 @@ export function emitConsoleLog(
       { type: record.type, name: record.name, logSource: record.source },
       CONSOLE_LOG_DATASTREAM
     );
-  } catch {
-    // contained: a failing sink must not reach the caller
-  }
+  } catch {}
 }
