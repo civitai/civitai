@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import type * as PrismaSqlKysely from '~/server/db/prisma-sql-kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ProtectedContext } from '~/server/createContext';
@@ -21,6 +22,14 @@ const { mockToggleReaction, mockEncouragement, mockGoodContent, storylineGate, v
     mockGoodContent: vi.fn<(event: unknown) => Promise<void>>(async () => undefined),
   }));
 
+// The image visibility check admits every image here; its rule is pinned in
+// image-thread-visibility.behavior.test.ts.
+vi.mock('~/server/db/prisma-sql-kysely', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrismaSqlKysely>()),
+  queryPrismaSql: vi.fn(async () => [
+    { id: 1, userId: 1, nsfwLevel: 1, postId: 1, visibleSignedOut: null },
+  ]),
+}));
 vi.mock('~/server/services/reaction.service', () => ({ toggleReaction: mockToggleReaction }));
 // The comment a reaction targets, as CommentV3 stores it; none means it is missing or deleted.
 vi.mock('~/server/services/commentv3/write.service', async (importOriginal) => ({

@@ -97,3 +97,36 @@ describe('/api/og?type=article image', () => {
     expect(pickedImage()).toBe('banner-key');
   });
 });
+
+describe('/api/og?type=article image flags', () => {
+  const cover = (over: Record<string, unknown>) => ({
+    ...image('cover-key'),
+    ingestion: 'Scanned',
+    needsReview: null,
+    modelRestricted: false,
+    acceptableMinor: false,
+    minor: false,
+    ...over,
+  });
+  const cleanBanner = {
+    ...banner('Scanned'),
+    modelRestricted: false,
+    acceptableMinor: false,
+    minor: false,
+  };
+
+  it('shows a cover that is not flagged (control)', async () => {
+    mockArticle({ coverImage: cover({}), bannerImage: cleanBanner });
+    await render();
+    expect(pickedImage()).toBe('cover-key');
+  });
+
+  it.each([
+    ['acceptable-minor', { acceptableMinor: true }],
+    ['minor-flagged and rated past the minor content limit', { minor: true, nsfwLevel: 4 }],
+  ])('shows the banner over a cover that is %s', async (_, over) => {
+    mockArticle({ coverImage: cover(over), bannerImage: cleanBanner });
+    await render();
+    expect(pickedImage()).toBe('banner-key');
+  });
+});

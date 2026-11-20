@@ -206,7 +206,7 @@ export const researchRouter = router({
         where.push(Prisma.sql`i."aiModel" = ${track.filters.ratingModel}`);
       }
 
-      // Another user's image, so the shared rule with no viewer, and no ToS removal.
+      // Another user's image, so the shared rule with no viewer.
       const images = await dbRead.$queryRaw<RaterImage[]>`
       SELECT i.id, i.url, i."nsfwLevel"
       FROM "Image" i

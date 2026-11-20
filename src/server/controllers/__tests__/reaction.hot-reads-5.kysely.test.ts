@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as PrismaSqlKysely from '~/server/db/prisma-sql-kysely';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as ReactionService from '~/server/services/reaction.service';
@@ -7,6 +8,14 @@ import type * as CollectionService from '~/server/services/collection.service';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 
 // Any flag read on these paths answers false, without a Flipt client.
+// The image visibility check admits every image here; its rule is pinned in
+// image-thread-visibility.behavior.test.ts.
+vi.mock('~/server/db/prisma-sql-kysely', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrismaSqlKysely>()),
+  queryPrismaSql: vi.fn(async () => [
+    { id: 1, userId: 1, nsfwLevel: 1, postId: 1, visibleSignedOut: null },
+  ]),
+}));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
