@@ -34,11 +34,13 @@
 // merge-patch of `data` is reserved for later. The deprecated routes answer exactly as before,
 // with `Deprecation` and `Link` headers (`LEGACY_TALLY_HEADERS`); no `Sunset` is set yet.
 //
-// IMPORTS. Every collection route takes an optional `?from=<source blockId>`: the call then runs
-// in that SOURCE app, as the same viewer, through an import the caller's manifest declares
-// (`resolveImportAccess` in `doc-store-access.ts`). The call is first charged to the CONSUMER's
-// read bucket for the viewer, before it is resolved. Everything after that — gates, budgets, rate
-// limits, moderation, ceilings — reads the source's access, so it applies as the source.
+// IMPORTS. Every collection route takes an optional `?from=<source blockId>`. A `from` naming the
+// token's OWN app (its blockId) is an own call, exactly as if `from` were omitted: same access,
+// rate bucket and response (`otherAppSource`). Any other `from` runs the call in that SOURCE app,
+// as the same viewer, through an import the caller's manifest declares (`resolveImportAccess` in
+// `doc-store-access.ts`). Such a call is first charged to the CONSUMER's read bucket for the
+// viewer, before it is resolved. Everything after that — gates, budgets, rate limits, moderation,
+// ceilings — reads the source's access, so it applies as the source.
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { sessionClient } from '~/server/auth/session-client';
@@ -1592,6 +1594,19 @@ function importSourceOf(req: NextApiRequest): string | null {
 }
 
 /**
+ * The `from` of a call that reaches ANOTHER app, or null for an own call. `from` is an app's
+ * blockId (`APP_STORAGE_IMPORT_FROM_RE`), and a `from` naming the token's own app (`own.blockId`,
+ * the blockId the token was issued for) is an own call: identical to omitting it, with the same
+ * access, scopes, rate bucket and response, for every token kind. An app never imports from itself
+ * (the manifest validator and the read predicate both refuse it), so no import is lost. A caller
+ * that always names its source (the shared app-data service's REST fallback) then reads the app it
+ * names, whichever app the token is.
+ */
+function otherAppSource(from: string | null, own: Pick<StorageAccess, 'blockId'>): string | null {
+  return from !== null && from === own.blockId ? null : from;
+}
+
+/**
  * What an operation does, for an import: a read; a delete; or an authoring write (create, put,
  * a counter or a mark), the only kind that can need the viewer's publish consent in the source.
  * Every one but a read is refused through a read-only import.
@@ -1654,7 +1669,7 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
         consentUnavailable: (req as BlockScopedNextApiRequest).blockConsentUnavailable === true,
       });
       const route = match.route;
-      const from = route.op === 'info' ? null : importSourceOf(req);
+      const from = route.op === 'info' ? null : otherAppSource(importSourceOf(req), own);
       if (from !== null) await charge('read', own, req);
       const access =
         from === null || route.op === 'info'

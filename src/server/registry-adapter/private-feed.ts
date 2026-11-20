@@ -1,65 +1,31 @@
 /**
- * AUTHORIZED PRIVATE STREAMS: one user's private documents of one collection, streamed on the
- * collection's own schema URN (`urn:schema:apps.civitai.com:<slug>/<coll>@vN`) to an authorized
- * subscription that may read them, and to nobody else. The auth extension's origin rule 4: "An
- * origin holding restricted data streams, to each authorized subscription, what that token may
- * read, by its own grants. A grant that ends removes the entity from that stream as a `Delete`."
+ * AUTHORIZED PRIVATE STREAMS: one user's private documents of one collection, on the collection's
+ * own schema URN, to a subscription that may read them (the auth extension's origin rule 4).
  *
- * SWITCHED OFF BY DEFAULT. Nothing here is built unless `REGISTRY_ADAPTER_PRIVATE_RELAYS` names at
- * least one relay (`main.ts`, {@link parsePrivateRelays}); unset or empty, every document stream is
- * the public feed's (`doc-feed.ts`), exactly as before.
+ * OFF unless `REGISTRY_ADAPTER_PRIVATE_RELAYS` names a relay ({@link parsePrivateRelays}); until
+ * then every document stream is the public feed's.
  *
- * Which collections: those whose approved app declares them `visibility: "private"` (each user has
- * their own key space). A subscription to such a collection's schema is routed here
- * ({@link createPrivateDocFeed} `routes`), whoever sends it; what it is then sent depends on the
- * gates below. A public collection never reaches this feed, and this feed never reads a shared
- * document (`createDocStorePrivateFeed` in `doc-store.ts` reads one user's key space only).
+ * THE GATES, in order; a refusal streams NOTHING (an empty snapshot and `live`), so a refused
+ * subscriber learns nothing, not even whether the user holds any records:
+ *   1. a token; 2. a user's token (`VerifiedToken.userId`, never a service's);
+ *   3. presented by a listed relay (`act.sub`); 4. granting `AppDataRead`;
+ *   5. `decideCollectionRead` grants this user, through this client, this collection.
+ * Gates 1–4 are fixed for the token's life; gate 5 re-runs on every poll, which is what turns a
+ * revocation into `Delete`s within one {@link PrivateFeedOptions.pollMs}.
  *
- * THE GATES, in order. Every one must pass for a single record to be sent; a refusal streams
- * NOTHING (an empty snapshot and `live`, as for a collection not published), so a refused
- * subscriber learns nothing, not even whether the user holds anything:
- *   1. the subscription carries a token (anonymous: nothing);
- *   2. the token is a USER's (`VerifiedToken.userId`): a service's own token, which has no user,
- *      never reads private data;
- *   3. the relay that presents it (`act.sub`) is one of {@link PrivateFeedOptions.relays}: a
- *      token with no actor (sent directly, not exchanged by a relay) or from any other relay reads
- *      nothing;
- *   4. the token grants `AppDataRead`;
- *   5. the one collection-read predicate (`decideCollectionRead`, `data-read-grant.ts`, injected
- *      as {@link PrivateFeedOptions.decide}) grants this user, through this token's client, this
- *      collection: the client is the app itself (`own`), or an app the user granted the import
- *      (`grant`). Every record sent is the user's own (their key space), so the collection's
- *      decision is each record's. Its mature-content ceiling is the subscription's audience.
- * Gates 1–4 depend only on the token, which is fixed for the stream's life. Gate 5 is re-run on
- * EVERY poll.
+ * A refusal is believed only when it was read: an `apps_disabled` while the run gate's flag cannot
+ * be read (a Flipt outage refuses everyone) ends the stream `unavailable` instead of sending
+ * `Delete`s ({@link PrivateFeedOptions.runGateReadable}), and so does any failed read.
  *
- * REVOCATION. Each poll ({@link PrivateFeedOptions.pollMs}, `REGISTRY_ADAPTER_POLL_SECONDS`,
- * default 60 s) re-runs gate 5 and re-reads the user's records. A grant revoked, the import scope
- * withdrawn, the app no longer approved, the user no longer allowed to run apps, the source
- * re-rated above the audience: the stream then holds nothing, and every record it had sent goes as
- * a `Delete`. A record deleted or hidden goes as a `Delete` the same way. One refusal is checked
- * before it is believed: `apps_disabled` while the run gate's flag cannot be read (a Flipt outage)
- * ends the stream `unavailable`, with no `Delete` ({@link PrivateFeedOptions.runGateReadable}). So the lag is at most one
- * poll interval plus that poll's reads (and the read replica's lag on the app rows). A failed read
- * is never taken for a revocation: it ends the stream `unavailable`, and the consumer resumes.
- * A resume is judged the same way: a cursor whose gates 1–4 still pass resumes, and its first poll
- * sends the `Delete`s for whatever the user lost while the consumer was away.
+ * CURSORS. The stored state records the token subject, and a cursor is refused before its state is
+ * used for another subject: the request binding in `subscription.ts` is a public digest, so it
+ * cannot keep one subject's cursor from another. Cursors expire after
+ * {@link PRIVATE_CURSOR_TTL_MS}. Private and public states share one key space in the snapshot
+ * store; they are kept apart only by the `p1` state format (which the public feed refuses) and
+ * that subject check.
  *
- * CURSORS. A cursor names a stored state (`p1.<digest>`) that records the token's SUBJECT (user and
- * client), the audience, the app, the schemas and every (urn, rev) sent. A cursor is refused
- * (`cursor_expired`) before its state is used when the token fails gates 1–4, when it was issued to
- * another subject (the auth extension's relay rule 3, enforced here too, since the request binding
- * in `subscription.ts` is a public digest) or another audience, or when it is older than
- * {@link PRIVATE_CURSOR_TTL_MS} (7 days). Private states share the snapshot store's key space with
- * public ones and differ only in retention ({@link PRIVATE_STATE_RETENTION_SECONDS}); what keeps
- * them apart is the state format (`p1`, refused by the public feed) and the subject check above.
- *
- * A private record's URN is `urn:apps.civitai.com:<slug>/<coll>/<record_id>`, the record core's
- * (`app-record.ts`): its stored random id, since a private key is unique only within one user's
- * key space. A row with no `record_id` yet is not sent.
- *
- * Relays never share or cache an authorized stream (auth extension, relay rule 2); over HTTP every
- * authorized stream is also sent `Cache-Control: private, no-store` (`serve.ts`).
+ * A record's URN carries its stored `record_id`, not its key: a private key is unique only within
+ * one user's key space.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
