@@ -158,16 +158,6 @@ describe('placement router — account state refuses a placement', () => {
     });
   }
 
-  /**
-   * The onboarding half of `guardedProcedure`, pinned because it is the only
-   * behaviour the swap added beyond the mute and every case above completes the
-   * wizard, so nothing else here would notice it.
-   *
-   * Measured before shipping: of the 227 users who have ever placed, zero lack
-   * this bit, and the wizard shields the whole site until it is set — so it
-   * refuses a request that cannot currently be made. If that stops being true,
-   * this is the test that names what changed.
-   */
   const AUTO_TRACK_FLAGS = { stickerVideoTracks: true, stickerAutoTrack: true };
   const AUTO_TRACK_INPUT = {
     imageId: 99,
@@ -197,6 +187,16 @@ describe('placement router — account state refuses a placement', () => {
     });
   }
 
+  /**
+   * The onboarding half of `guardedProcedure`, pinned because it is the only
+   * behaviour the swap added beyond the mute and every case above completes the
+   * wizard, so nothing else here would notice it.
+   *
+   * Measured before shipping: of the 227 users who have ever placed, zero lack
+   * this bit, and the wizard shields the whole site until it is set — so it
+   * refuses a request that cannot currently be made. If that stops being true,
+   * this is the test that names what changed.
+   */
   it('refuses a user who has not finished onboarding', async () => {
     await expect(
       placementCaller({ user: { onboarding: 0 } }).createSticker({

@@ -8,6 +8,7 @@ import {
   autoTrackReadIsMissing,
   autoTrackSubmitGivesBack,
   pollAutoTrack,
+  stickerAutoTrackRunsKey,
   submitCountedAutoTrack,
 } from '~/server/utils/sticker-auto-track';
 
@@ -171,6 +172,17 @@ describe('takeStickerAutoTrackRun', () => {
     expect(
       (await takeStickerAutoTrackRun(store, { userId: PLACER, limit: LIMIT, now: LATE })).ok
     ).toBe(true);
+  });
+
+  it('writes the key the Limits page reads for that UTC day', async () => {
+    const keys: string[] = [];
+    const store = {
+      incrBy: async (key: string) => (keys.push(key), 1),
+      decrBy: async () => 0,
+      expire: async () => true,
+    } as unknown as RunCounter;
+    await takeStickerAutoTrackRun(store, { userId: PLACER, limit: LIMIT, now: LATE });
+    expect(keys).toEqual([stickerAutoTrackRunsKey(PLACER, new Date('2026-11-20T00:00:00Z'))]);
   });
 
   it('refuses everything when the counter is down', async () => {

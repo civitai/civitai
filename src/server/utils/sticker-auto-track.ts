@@ -215,7 +215,7 @@ export async function submitCountedAutoTrack({
   submit,
 }: {
   takeRun: () => Promise<GiveBack | undefined>;
-  submit: () => Promise<{ id?: string; status?: number }>;
+  submit: () => Promise<{ id?: string | null; status?: number }>;
 }) {
   const giveBack = await takeRun();
   const { id, status } = await submit();
@@ -237,7 +237,11 @@ export async function pollAutoTrack(
     download,
     maxScale,
   }: {
-    read: () => Promise<{ data?: unknown; error?: unknown; status?: number }>;
+    read: () => Promise<{
+      data?: Parameters<typeof readStickerAutoTrackWorkflow>[0];
+      error?: unknown;
+      status?: number;
+    }>;
     download: (url: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>;
     maxScale: (imageId: number) => Promise<number>;
   },
