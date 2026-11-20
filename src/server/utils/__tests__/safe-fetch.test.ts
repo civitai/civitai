@@ -308,3 +308,38 @@ describe('safeFetch — redirects (re-validated + re-pinned per hop)', () => {
     expect(await code(safeFetch('https://example.com', HTML))).toBe('too_many_redirects');
   });
 });
+
+describe('safeFetch — deadlineMs (ONE deadline for the whole chain)', () => {
+  it('a redirect that used most of the budget leaves the next hop only the remainder', async () => {
+    // Hop 1 answers a redirect after ~60 ms; hop 2 never answers. Per hop the limit is 5 s, so
+    // without the overall deadline this would wait the full 5 s on hop 2.
+    let hop = 0;
+    requestMock.mockImplementation((options: any, cb: (res: unknown) => void) => {
+      capturedOptions.push(options);
+      const req = new EventEmitter() as EventEmitter & { end: () => void };
+      req.end = () => {
+        if (hop++ === 0) {
+          setTimeout(
+            () => cb(fakeResponse({ status: 302, headers: { location: 'https://example.com/b' } })),
+            60
+          );
+          return;
+        }
+        options.signal?.addEventListener('abort', () => {
+          const e = new Error('aborted');
+          e.name = 'AbortError';
+          req.emit('error', e);
+        });
+      };
+      return req;
+    });
+    const started = Date.now();
+    expect(
+      await code(safeFetch('https://example.com', { ...HTML, timeoutMs: 5000, deadlineMs: 100 }))
+    ).toBe('timeout');
+    const elapsed = Date.now() - started;
+    expect(requestMock).toHaveBeenCalledTimes(2);
+    // ~100 ms; the per-hop limit alone would be 5000+.
+    expect(elapsed).toBeLessThan(1500);
+  });
+});

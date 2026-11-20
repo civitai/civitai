@@ -229,6 +229,30 @@ func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_BEARER_AUTH is off by default; its two secrets are read only when it is on.
+func TestLoadBearerAuth(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("NEXTAUTH_SECRET", "salt-value")
+	t.Setenv("ORCHESTRATOR_SERVICE_TOKEN", "service-value")
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_BEARER_AUTH", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantSecret, wantToken := "", ""
+		if want {
+			wantSecret, wantToken = "salt-value", "service-value"
+		}
+		if c.BearerAuth != want || c.APIKeySecret != wantSecret || c.OrchestratorServiceToken != wantToken {
+			t.Errorf("FEED_GO_BEARER_AUTH=%q -> %v, secret set %v, token set %v; want %v, %v, %v", in, c.BearerAuth,
+				c.APIKeySecret != "", c.OrchestratorServiceToken != "", want, wantSecret != "", wantToken != "")
+		}
+	}
+}
+
 // SESSION_REVOCATION_CACHE is a default-on switch (isEnvSwitchOn): only off/0/false, any case and
 // surrounding whitespace, turn it off; unset, empty and unknown values keep it on. The cases are the
 // package's own env-switch.test.ts.
@@ -631,5 +655,63 @@ func TestCookieNamesPerSite(t *testing.T) {
 		if got := strings.Join(c.CookieNames(host), ","); got != want {
 			t.Errorf("CookieNames(%q) = %s, want %s", host, got, want)
 		}
+	}
+}
+
+// AUTH_LEGACY_READ as legacyCookieReadEnabled reads it: only false/0/off/no (any case, trimmed) turn the
+// shared-slot read off; unset and any other value leave it on.
+func TestLegacyRead(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", true}, {"true", true}, {"1", true}, {"yes", true}, {"garbage", true},
+		{"false", false}, {"0", false}, {"off", false}, {"no", false}, {" OFF ", false}, {"No", false}, {"FALSE", false},
+	}
+	for _, c := range cases {
+		if got := LegacyRead(c.in); got != c.want {
+			t.Errorf("LegacyRead(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// The session cookie names a request to civitai.com reads, in order, for each mode the main app's
+// readSessionToken knows (packages/civitai-auth/src/cookies.ts): the mode's own slot first, the shared
+// slot only while the legacy read is on, a site listed in AUTH_SESSION_COOKIE_MODE_BY_SITE in its own
+// mode whatever the global env says, and the bare name on http.
+func TestCookieNamesPerMode(t *testing.T) {
+	cases := []struct {
+		name, issuer, mode, legacy, bySite, want string
+	}{
+		{"defaults", "https://auth.civitai.com", "", "", "", "__Secure-civ-token,__Host-civ-token"},
+		{"shared", "https://auth.civitai.com", "shared", "", "", "__Secure-civ-token,__Host-civ-token"},
+		{"host", "https://auth.civitai.com", "host", "", "", "__Host-civ-token,__Secure-civ-token"},
+		{"host, legacy read garbage", "https://auth.civitai.com", "host", "garbage", "", "__Host-civ-token,__Secure-civ-token"},
+		{"host, legacy read false", "https://auth.civitai.com", "host", "false", "", "__Host-civ-token"},
+		{"host, legacy read off", "https://auth.civitai.com", "host", "off", "", "__Host-civ-token"},
+		{"shared, legacy read no", "https://auth.civitai.com", "shared", "no", "", "__Host-civ-token"},
+		{"mistyped mode is shared", "https://auth.civitai.com", "Host", "", "", "__Secure-civ-token,__Host-civ-token"},
+		{"site listed shared beats host and legacy off", "https://auth.civitai.com", "host", "false", "civitai.com:shared", "__Secure-civ-token,__Host-civ-token"},
+		{"site listed host beats shared", "https://auth.civitai.com", "shared", "", "civitai.com:host", "__Host-civ-token"},
+		{"another site listed", "https://auth.civitai.com", "host", "", "civitai.red:shared", "__Host-civ-token,__Secure-civ-token"},
+		{"http issuer", "http://localhost:3000", "host", "", "", "civ-token"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI"} {
+				t.Setenv(k, "x://"+k)
+			}
+			t.Setenv("AUTH_JWT_ISSUER", c.issuer)
+			t.Setenv("AUTH_SESSION_COOKIE_MODE", c.mode)
+			t.Setenv("AUTH_LEGACY_READ", c.legacy)
+			t.Setenv("AUTH_SESSION_COOKIE_MODE_BY_SITE", c.bySite)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(cfg.CookieNames("civitai.com"), ","); got != c.want {
+				t.Errorf("CookieNames(civitai.com) = %s, want %s", got, c.want)
+			}
+		})
 	}
 }

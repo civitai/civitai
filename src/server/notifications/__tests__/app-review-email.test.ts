@@ -107,10 +107,7 @@ describe('app-review notifications send email', () => {
   });
 
   it.each([
-    [
-      'app-block-rejected',
-      'Your app block "Pixel Pal" was not approved: Spends Buzz without asking',
-    ],
+    ['app-block-rejected', 'Your app "Pixel Pal" was not approved: Spends Buzz without asking'],
     ['app-listing-rejected', '"Pixel Pal" was not approved: Spends Buzz without asking'],
     [
       'app-listing-reset-to-pending',
@@ -129,6 +126,31 @@ describe('app-review notifications send email', () => {
     expect(mail.text).toContain('View on Civitai: http://localhost:3000/apps/build?view=apps');
     expect(mail.html).toContain('Spends Buzz without asking');
     expect(mail.html).toContain('href="http://localhost:3000/apps/build?view=apps"');
+  });
+
+  it('the approved email says the app was approved and opens its run page', async () => {
+    const outcome = await sendNotificationEmails({
+      type: 'app-block-approved',
+      details: { slug: 'pixel-pal', name: 'Pixel Pal', version: '1.0.0', hasPage: true },
+      userIds: [1],
+    });
+    expect(outcome.sent).toBe(1);
+    const mail = vi.mocked(sendEmail).mock.calls[0]![0];
+    expect(mail.subject).toBe('App approved');
+    const sentence = 'Your app "Pixel Pal" was approved and will be live in a few minutes.';
+    expect(mail.text).toContain(sentence);
+    expect(mail.text).toContain('Open your app: http://localhost:3000/apps/run/pixel-pal');
+    expect(mail.html).toContain(sentence.replace(/"/g, '&quot;'));
+    expect(mail.html).toMatch(
+      /<a class="em-btn" href="http:\/\/localhost:3000\/apps\/run\/pixel-pal"[^>]*>Open your app<\/a>/
+    );
+    expect(mail.html).not.toContain('View on Civitai');
+    expect(mail.html).toContain('<h1 class="em-h1"');
+    // One-click unsubscribe is unchanged.
+    expect(mail.headers).toEqual({
+      'List-Unsubscribe': `<${getEmailUnsubscribeUrl(1, 'app-block-approved')}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    });
   });
 
   it('a user who used the one-click unsubscribe gets no more of that email', async () => {

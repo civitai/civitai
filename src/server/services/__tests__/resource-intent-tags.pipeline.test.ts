@@ -7,8 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { decodeTagIndex } from '~/server/services/resource-intent-tags/payload';
 import type * as Build from '~/server/services/resource-intent-tags/build';
 import {
+  loopYielder,
   readonlyClickHouse,
   runTagIndexBuild,
+  genObservationPages,
+  observationCoverage,
   type TagBuildDeps,
   type TagBuildEnv,
   type TagClickHouse,
@@ -436,6 +439,15 @@ describe('the happy path (the control every refusal below departs from)', () => 
     );
   });
 
+  it('the same inputs build the same bytes', async () => {
+    const a = await runTagIndexBuild({ dryRun: true }, (await world({ eligible: [1, 3] })).deps);
+    const b = await runTagIndexBuild({ dryRun: true }, (await world({ eligible: [1, 3] })).deps);
+    expect(Buffer.compare(a.payload, b.payload)).toBe(0);
+    // And an eligible model changes them: the control that the comparison can fail.
+    const c = await runTagIndexBuild({ dryRun: true }, (await world({ eligible: [1] })).deps);
+    expect(Buffer.compare(a.payload, c.payload)).not.toBe(0);
+  });
+
   it('a dry run needs no bucket or bucket credentials, makes no object store and stores nothing', async () => {
     const w = await world({
       env: {
@@ -471,6 +483,14 @@ describe('the happy path (the control every refusal below departs from)', () => 
     const d = await world({ withoutCapMigration: true });
     await expect(runTagIndexBuild({ dryRun: true }, d.deps)).resolves.toBeDefined();
   });
+
+  it('refuses trial limits on a production build', async () => {
+    const w = await world();
+    await expect(
+      runTagIndexBuild({ dryRun: false, limits: { models: 1 } }, w.deps)
+    ).rejects.toThrow('limits are for dry runs only');
+    expectNoTrainingReads(w);
+  });
 });
 
 describe('gate 1: the environment, before anything is read', () => {
@@ -498,16 +518,16 @@ describe('gate 1: the environment, before anything is read', () => {
 });
 
 describe("gate 2: the ClickHouse account's own profile is readonly=2", () => {
-  it('refuses an account at readonly=1', async () => {
-    const level = 1;
-    const w = await world({ readonly: level });
-    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
-      `the ClickHouse account runs at readonly=${level}; it needs a profile with readonly=2`
-    );
-    expect(w.chQueries).toHaveLength(1);
-    expect(w.deps.query).not.toHaveBeenCalled();
-    expect(w.closed).toHaveBeenCalledTimes(1);
-  });
+  for (const level of [0, 1])
+    it(`refuses an account at readonly=${level}`, async () => {
+      const w = await world({ readonly: level });
+      await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
+        `the ClickHouse account runs at readonly=${level}; it needs a profile with readonly=2`
+      );
+      expect(w.chQueries).toHaveLength(1);
+      expect(w.deps.query).not.toHaveBeenCalled();
+      expect(w.closed).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe("gate 3: the training window's generator coverage", () => {
@@ -516,6 +536,15 @@ describe("gate 3: the training window's generator coverage", () => {
   const FLOOR = '2026-09-13T00:00:00.000Z';
   const SPAN = 864;
 
+  it('refuses when no observation lies at or after the window end, before any training read', async () => {
+    const w = await world({ after: 0 });
+    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
+      'no generator observation at or after the window end 2026-10-19T00:00:00.000Z'
+    );
+    expect(w.deps.query).not.toHaveBeenCalled();
+    expectNoTrainingReads(w);
+  });
+
   it('the same window with 18 missing hours after the floor (over 2%) refuses, before any training read', async () => {
     const w = await world({ hours: SPAN - 18 });
     await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
@@ -523,6 +552,57 @@ describe("gate 3: the training window's generator coverage", () => {
     );
     expect(w.deps.query).not.toHaveBeenCalled();
     expectNoTrainingReads(w);
+  });
+
+  it('builds with 17 missing hours after the floor', async () => {
+    const w = await world({ hours: SPAN - 17 });
+    const { summary } = await runTagIndexBuild({ dryRun: false }, w.deps);
+    expect(summary.observationHours).toEqual({ start: FLOOR, hours: SPAN, missing: 17 });
+  });
+
+  it('a dry run reports missing hours over the limit instead of refusing', async () => {
+    const w = await world({
+      hours: SPAN - 100,
+      env: { ...ENV, RESOURCE_INTENT_TAG_INDEX_BUCKET: undefined },
+    });
+    const { summary } = await runTagIndexBuild({ dryRun: true }, w.deps);
+    expect(summary.observationHours).toEqual({ start: FLOOR, hours: SPAN, missing: 100 });
+  });
+
+  describe('a window starting after the floor ignores it', () => {
+    const window = {
+      start: new Date('2026-12-20T00:00:00Z'),
+      end: new Date('2027-03-20T00:00:00Z'),
+    };
+    const fake = (hours: number) => {
+      const asked: string[] = [];
+      const ch: TagClickHouse = {
+        async *rows<T>(q: string) {
+          asked.push(q);
+          yield { after: '10', hours: String(hours), newest: '0', now: '0' } as T;
+        },
+        close: async () => undefined,
+      };
+      return { ch, asked };
+    };
+
+    it('counts the whole window, from its own start', async () => {
+      const { ch, asked } = fake(2160);
+      const c = await observationCoverage(ch, window, true);
+      expect(c.start.toISOString()).toBe('2026-12-20T00:00:00.000Z');
+      expect({ hours: c.hours, missingHours: c.missingHours }).toEqual({
+        hours: 2160,
+        missingHours: 0,
+      });
+      expect(asked[0]).toContain(`WHERE time >= toDateTime('2026-12-20 00:00:00', 'UTC')`);
+    });
+
+    it('so a gap anywhere in it counts: 44 missing of 2,160 refuses', async () => {
+      const { ch } = fake(2160 - 44);
+      await expect(observationCoverage(ch, window, true)).rejects.toThrow(
+        '44 of the 2160 hours from 2026-12-20T00:00:00.000Z have no generator observation (allowed 43)'
+      );
+    });
   });
 });
 
@@ -535,6 +615,15 @@ describe('a generator read that returns nothing', () => {
     // Every day of the window was asked for, and nothing was stored.
     expect(w.chQueries.filter((q) => q.includes('p2m_restricted.promptText'))).toHaveLength(90);
     expect(w.store.size).toBe(0);
+  });
+
+  it('a dry run reports it instead', async () => {
+    const w = await world({
+      genRows: [],
+      env: { ...ENV, RESOURCE_INTENT_TAG_INDEX_BUCKET: undefined },
+    });
+    const { summary } = await runTagIndexBuild({ dryRun: true }, w.deps);
+    expect(summary.observations).toBe(0);
   });
 });
 
@@ -554,6 +643,40 @@ describe('generator observations are read a day per query, each response read to
     expect(summary.observations).toBe(20_001);
     expect(w.workWhileOpen).toEqual([]);
   });
+
+  it('pages cover the window exactly, one UTC day each, and the limit spans the pages', async () => {
+    const asked: string[] = [];
+    const ch: TagClickHouse = {
+      async *rows<T>(q: string) {
+        asked.push(
+          q
+            .match(
+              /time >= (toDateTime\('[^']+', 'UTC'\)) AND time < (toDateTime\('[^']+', 'UTC'\))/
+            )
+            ?.slice(1)
+            .join(' .. ') ?? ''
+        );
+        for (let i = 0; i < 2; i++)
+          yield { u: '1', p: 'x', v: [1], liked: 0, favorite: 0, disliked: 0 } as T;
+      },
+      close: async () => undefined,
+    };
+    const window = {
+      start: new Date('2026-07-21T00:00:00Z'),
+      end: new Date('2026-07-23T12:00:00Z'),
+    };
+    const pages: number[] = [];
+    for await (const page of genObservationPages(ch, window)) pages.push(page.length);
+    expect(pages).toEqual([2, 2, 2]);
+    expect(asked).toEqual([
+      `toDateTime('2026-07-21 00:00:00', 'UTC') .. toDateTime('2026-07-22 00:00:00', 'UTC')`,
+      `toDateTime('2026-07-22 00:00:00', 'UTC') .. toDateTime('2026-07-23 00:00:00', 'UTC')`,
+      `toDateTime('2026-07-23 00:00:00', 'UTC') .. toDateTime('2026-07-23 12:00:00', 'UTC')`,
+    ]);
+    const limited: number[] = [];
+    for await (const page of genObservationPages(ch, window, 3)) limited.push(page.length);
+    expect(limited).toEqual([2, 2]);
+  });
 });
 
 describe('gate 4: a frozen vocabulary', () => {
@@ -564,6 +687,13 @@ describe('gate 4: a frozen vocabulary', () => {
     );
     expect(w.deps.query).toHaveBeenCalledTimes(1);
     expectNoTrainingReads(w);
+  });
+
+  it('a retired vocabulary is not built from either', async () => {
+    const w = await world({ vocabs: [[NEW_FROZEN, 'retired', '2026-10-10T00:00:00Z']] });
+    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
+      'no frozen vocabulary'
+    );
   });
 });
 
@@ -653,5 +783,27 @@ describe('readonlyClickHouse', () => {
     const sent = (settings[0] as { clickhouse_settings: Record<string, unknown> })
       .clickhouse_settings;
     expect(sent).toEqual({ max_execution_time: 1800 });
+  });
+});
+
+describe('loopYielder', () => {
+  it('yields only once its slice has passed, then restarts the slice', async () => {
+    let t = 0;
+    const tick = loopYielder(50, () => t);
+    const spy = vi.spyOn(global, 'setImmediate');
+    await tick();
+    t = 49;
+    await tick();
+    expect(spy).not.toHaveBeenCalled();
+    t = 50;
+    await tick();
+    expect(spy).toHaveBeenCalledTimes(1);
+    t = 99;
+    await tick();
+    expect(spy).toHaveBeenCalledTimes(1);
+    t = 100;
+    await tick();
+    expect(spy).toHaveBeenCalledTimes(2);
+    spy.mockRestore();
   });
 });
