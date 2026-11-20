@@ -4,14 +4,13 @@ import { Tooltip } from '~/components/MantineOverlays';
 import { IconShoppingBag } from '@tabler/icons-react';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
+import { DomainLinkIcons } from '~/components/DomainIcon/DomainLinkIcons';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { constants } from '~/server/common/constants';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
-import { getDomainLinkLabel, sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { TipBuzzButton } from '../Buzz/TipBuzzButton';
 import { UserStatBadges } from '../UserStatBadges/UserStatBadges';
@@ -111,19 +110,7 @@ export function CreatorCard({
           py={5}
         >
           <Group gap={4}>
-            {sortDomainLinks(creator.links).map((link, index) => (
-              <LegacyActionIcon
-                key={index}
-                component="a"
-                href={link.url}
-                target="_blank"
-                rel="nofollow noreferrer"
-                size={32}
-                aria-label={getDomainLinkLabel(link)}
-              >
-                <DomainIcon domain={link.domain} size={20} />
-              </LegacyActionIcon>
-            ))}
+            <DomainLinkIcons links={creator.links} size={32} iconSize={20} />
           </Group>
         </Card.Section>
       ) : null}
