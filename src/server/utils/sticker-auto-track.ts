@@ -3,6 +3,8 @@ import type { WorkflowStepTemplate } from '@civitai/orchestration-client';
 import type { redis } from '~/server/redis/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { StickerTrackV1 } from '~/shared/utils/sticker-track';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwRateLimited } from '~/server/utils/rate-limit-error';
 
 // The comfyui-sticker-track node pack follows the head under a sticker and returns a v1 track.
 // Pin every AIR. COMFY_IMAGE and NODE_PACK_LAYER must change together: the layer's AIR embeds
@@ -225,6 +227,83 @@ export async function submitCountedAutoTrack({
   if (id) return id;
   if (autoTrackSubmitGivesBack(status)) await giveBack?.().catch(() => undefined);
   throw new Error(`sticker auto-track submit failed (${status ?? 'no response'})`);
+}
+
+const DAY_SECONDS = 24 * 60 * 60;
+
+/**
+ * The start path end to end, with its I/O passed in. Every refusal runs before the run is counted,
+ * and submit only through submitCountedAutoTrack.
+ */
+export async function startAutoTrack(
+  deps: {
+    checkSpace: () => Promise<unknown>;
+    loadVideo: () => Promise<{ url: string; durationSeconds?: number } | null>;
+    resolveLimit: () => Promise<{ limit: number; applies: boolean }>;
+    limitMessage: (limit: number) => string | undefined;
+    store: RunCounter;
+    submit: (job: {
+      metadata: AutoTrackMetadata;
+      step: ReturnType<typeof buildStickerAutoTrackWorkflow>;
+    }) => Promise<{ id?: string | null; status?: number }>;
+    now: () => number;
+  },
+  {
+    user,
+    imageId,
+    pose,
+    startMs,
+  }: {
+    user: { id: number; isModerator?: boolean };
+    imageId: number;
+    pose: StickerAutoTrackPose;
+    startMs: number;
+  }
+) {
+  await deps.checkSpace();
+  const video = await deps.loadVideo();
+  if (!video) throw throwNotFoundError('placement: image not found');
+  const maxMs = stickerAutoTrackWindow(startMs, video.durationSeconds);
+  if (maxMs === null)
+    throw throwBadRequestError('placement: auto-track has to start before the video ends');
+
+  const takeRun = async () => {
+    // Never read `applies` here; see stickerAutoTrackDailyLimit.
+    const limit = stickerAutoTrackDailyLimit(await deps.resolveLimit(), user.isModerator);
+    const now = deps.now();
+    const run = await takeStickerAutoTrackRun(deps.store, { userId: user.id, limit, now });
+    if (run.ok) return run.giveBack;
+    const resetAt = run.resetAt.toISOString();
+    throwRateLimited(
+      {
+        retryAfterSeconds: Math.max(1, Math.ceil((run.resetAt.getTime() - now) / 1000)),
+        retryAt: resetAt,
+        id: 'stickers.auto-track-daily',
+        kind: 'product',
+        limit,
+        used: run.used,
+        remaining: 0,
+        windowSeconds: DAY_SECONDS,
+        resetAt,
+      },
+      deps.limitMessage(limit) ?? 'Daily auto-track limit reached.'
+    );
+  };
+
+  const workflowId = await submitCountedAutoTrack({
+    takeRun,
+    submit: () =>
+      deps.submit({
+        metadata: { stickerAutoTrack: { userId: user.id, imageId, startMs } },
+        step: buildStickerAutoTrackWorkflow({
+          videoAir: stickerAutoTrackVideoAir(video.url),
+          pose,
+          startMs,
+          maxMs,
+        }),
+      }),
+  });
+  return { workflowId, startMs, maxMs };
 }
 
 export type StickerAutoTrackResult =

@@ -165,7 +165,6 @@ describe('placement router — account state refuses a placement', () => {
     startMs: 0,
   };
 
-  // The service never runs on these paths, so no mock is needed: each message names the gate.
   for (const { state, user, message } of REFUSED_STATES) {
     it(`refuses a ${state} user on sticker auto-track`, async () => {
       await expect(

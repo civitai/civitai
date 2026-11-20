@@ -10,6 +10,7 @@ import {
   pollAutoTrack,
   stickerAutoTrackRunsKey,
   submitCountedAutoTrack,
+  startAutoTrack,
 } from '~/server/utils/sticker-auto-track';
 
 const PLACER = 52;
@@ -183,6 +184,7 @@ describe('takeStickerAutoTrackRun', () => {
     } as unknown as RunCounter;
     await takeStickerAutoTrackRun(store, { userId: PLACER, limit: LIMIT, now: LATE });
     expect(keys).toEqual([stickerAutoTrackRunsKey(PLACER, new Date('2026-11-20T00:00:00Z'))]);
+    expect(keys[0]).toMatch(/:52:2026-11-20$/);
   });
 
   it('refuses everything when the counter is down', async () => {
@@ -271,6 +273,86 @@ describe('submitCountedAutoTrack', () => {
     const takeRun = vi.fn(async () => Promise.reject(new Error('limit reached')));
     await expect(submitCountedAutoTrack({ takeRun, submit })).rejects.toThrow('limit reached');
     expect(submit).not.toHaveBeenCalled();
+  });
+});
+
+describe('startAutoTrack', () => {
+  const NOW = Date.parse('2026-11-20T12:00:00Z');
+  const input = (isModerator = false) => ({
+    user: { id: PLACER, isModerator },
+    imageId: IMAGE,
+    pose: { x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+    startMs: START,
+  });
+  const deps = (over: Partial<Parameters<typeof startAutoTrack>[0]> = {}) => {
+    const store = memoryCounter();
+    const incr = vi.spyOn(store, 'incrBy');
+    const submit = vi.fn(async () => ({ id: 'wf-1', status: 200 }));
+    return {
+      incr,
+      submit,
+      deps: {
+        checkSpace: async () => undefined,
+        loadVideo: async () => ({ url: 'https://image.example/v.mp4', durationSeconds: 30 }),
+        resolveLimit: async () => ({ limit: 3, applies: true }),
+        limitMessage: (limit: number) => `used ${limit}`,
+        store,
+        submit,
+        now: () => NOW,
+        ...over,
+      },
+    };
+  };
+
+  it('counts no run and submits nothing when the sticker cannot be placed here', async () => {
+    const refused = new Error('placement: you cannot place a sticker on your own content');
+    const { incr, submit, deps: d } = deps({ checkSpace: async () => Promise.reject(refused) });
+    await expect(startAutoTrack(d, input())).rejects.toBe(refused);
+    expect(incr).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it('counts no run for a start past the end of the video', async () => {
+    const {
+      incr,
+      submit,
+      deps: d,
+    } = deps({
+      loadVideo: async () => ({ url: 'v', durationSeconds: 5 }),
+    });
+    await expect(startAutoTrack(d, input())).rejects.toThrow(/before the video ends/);
+    expect(incr).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("submits the caller's run under the caller's id", async () => {
+    const { submit, deps: d } = deps();
+    await expect(startAutoTrack(d, input())).resolves.toMatchObject({ workflowId: 'wf-1' });
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: { stickerAutoTrack: { userId: PLACER, imageId: IMAGE, startMs: START } },
+      })
+    );
+  });
+
+  it('refuses the 4th run of the day as rate limited, with the cap in the message', async () => {
+    const { submit, deps: d } = deps();
+    for (let i = 0; i < 3; i++) await startAutoTrack(d, input());
+    await expect(startAutoTrack(d, input())).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'used 3',
+    });
+    expect(submit).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives a moderator 25 runs whatever the entry says', async () => {
+    const { submit, deps: d } = deps();
+    for (let i = 0; i < 25; i++) await startAutoTrack(d, input(true));
+    await expect(startAutoTrack(d, input(true))).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'used 25',
+    });
+    expect(submit).toHaveBeenCalledTimes(25);
   });
 });
 
