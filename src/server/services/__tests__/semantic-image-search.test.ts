@@ -456,6 +456,20 @@ describe('tags that cannot be browsed', () => {
   });
 });
 
+describe('search by model version', () => {
+  it('narrows the candidates to images made with any of them', async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([5]));
+    const { source, calls } = rankedSource([5]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ modelVersionIds: [128078, 290640] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.anyOf?.modelVersionIds).toEqual([128078, 290640]);
+  });
+});
+
 describe('Made On-site and Metadata only', () => {
   it('applies both to hydration only, not the anchor check', async () => {
     const hydrated: unknown[] = [];

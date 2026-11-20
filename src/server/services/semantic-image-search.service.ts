@@ -258,7 +258,11 @@ export async function searchSemanticImages({
       nsfwLevels: Flags.instanceToArray(refuseNarrowing ? allBrowsingLevelsFlag : level),
     },
     tagIds,
-    anyOf: { baseModels: input.baseModels, type: input.types },
+    anyOf: {
+      baseModels: input.baseModels,
+      type: input.types,
+      modelVersionIds: input.modelVersionIds,
+    },
     userIds,
     range: {
       key: 'sortAt',
