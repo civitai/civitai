@@ -140,6 +140,40 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
     });
   });
 
+  describe('apps:storage:import on a hub token', () => {
+    const IMPORT = 'apps:storage:import';
+    const importingApp = (granted: string[]) => {
+      sessionMock.mockResolvedValue({
+        user: { id: USER_ID },
+        apiKeyId: 31,
+        subject: { type: 'oauth', id: CLIENT_ID },
+      });
+      dbMock.dbRead.appBlock.findFirst.mockResolvedValue({
+        id: APP_BLOCK_ID,
+        blockId: BLOCK_ID,
+        manifest: { scopes: [SCOPE, 'apps:storage', IMPORT] },
+        approvedScopes: [SCOPE, 'apps:storage', IMPORT],
+      });
+      dbMock.dbRead.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: granted,
+        revokedAt: null,
+      });
+    };
+
+    it('🔴 is carried when the viewer granted it, as every consent-gated scope is', async () => {
+      importingApp([SCOPE, IMPORT]);
+      const { res, claims } = await drive('civ_oauth_import');
+      expect(res.statusCode).toBe(200);
+      expect([...(claims?.scopes ?? [])].sort()).toEqual(['apps:storage', IMPORT, SCOPE]);
+    });
+
+    it('is withheld when the viewer did not grant it: the scope ledger still binds', async () => {
+      importingApp([SCOPE]);
+      const { claims } = await drive('civ_oauth_import');
+      expect([...(claims?.scopes ?? [])].sort()).toEqual(['apps:storage', SCOPE]);
+    });
+  });
+
   it('does not even look at an opaque bearer while the flag is off', async () => {
     setEnv({ APP_BLOCK_OAUTH_TOKENS_ENABLED: false });
 
