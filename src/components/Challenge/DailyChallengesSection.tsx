@@ -134,7 +134,8 @@ export function DailyChallengesSection() {
               📝 Tips for Success
             </Title>
             <Text size="sm">
-              • Use the featured model specified in the challenge
+              • Use the featured model specified in the challenge, on a checkpoint it is compatible
+              with
               <br />
               • Follow the theme or prompt provided
               <br />

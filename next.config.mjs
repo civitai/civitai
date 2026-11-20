@@ -221,6 +221,7 @@ export default defineNextConfig(
       // is the runtime signal if one ever appears.
       '@pyroscope/nodejs',
       '@datadog/pprof',
+      '@contentauth/c2pa-wasm',
     ],
     // Several entry points read markdown from src/static-content at runtime via fs
     // (dynamic string paths that @vercel/nft can't trace). With output:'standalone'
@@ -250,6 +251,11 @@ export default defineNextConfig(
         './node_modules/next/dist/compiled/@vercel/og/**/*',
         './node_modules/.pnpm/next@*/node_modules/next/dist/compiled/@vercel/og/**/*',
         ...swcHelpersRuntimeFiles,
+      ],
+      // content-credentials.service reads the .wasm from disk, which nft cannot trace.
+      '/api/v1/verify': [
+        './node_modules/@contentauth/c2pa-wasm/**/*',
+        './node_modules/.pnpm/@contentauth+c2pa-wasm@*/node_modules/@contentauth/c2pa-wasm/**/*',
       ],
     },
     experimental: {

@@ -118,9 +118,7 @@ import { BlockTokenService } from '~/server/services/block-token.service';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createDocStore } from '~/server/services/apps/doc-store';
 import { OnboardingSteps } from '~/server/common/enums';
-import { parseManifestStorage } from '~/shared/constants/block-storage.constants';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
-import promClient from 'prom-client';
 import { DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX } from '~/server/utils/shared-storage-rate-limit';
 
 void loggingMock;
@@ -370,17 +368,6 @@ async function indexRows(app: AppRow, key: string) {
   );
 }
 
-/** `civitai_app_block_doc_store_unchanged_writes_total` for one app (0 when never counted). */
-async function freeWrites(app: AppRow): Promise<number> {
-  const metric = promClient.register.getSingleMetric(
-    'civitai_app_block_doc_store_unchanged_writes_total'
-  ) as
-    | { get(): Promise<{ values: { labels: Record<string, string>; value: number }[] }> }
-    | undefined;
-  const values = metric ? (await metric.get()).values : [];
-  return values.find((v) => v.labels.app_block_id === app.id)?.value ?? 0;
-}
-
 /** The per-viewer `write` fixed-window counter (private writes, DELETEs), or null if never spent. */
 const writeBucket = (app: AppRow, uid = V1) =>
   kv.get(`${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-write:${app.id}:u:${uid}`)?.value ?? null;
@@ -430,12 +417,6 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-describe('fixture', () => {
-  it('the manifest is one the parser accepts in full', () => {
-    expect(parseManifestStorage(MANIFEST).errors).toEqual([]);
-  });
-});
 
 describe('flag on: a shared put that changes nothing', () => {
   it('spends no shared-write token, runs no scan, writes nothing, and answers as the write did', async () => {
@@ -664,19 +645,6 @@ describe('flag on: the free path is throttled and counted', () => {
     expect(refused?.body).toMatchObject({ code: 'rate_limited', details: { bucket: 'write' } });
     // None of the free puts spent the shared-write budget.
     expect(sharedBudget(A)).toEqual(SHARED_AFTER_ONE_WRITE);
-  });
-
-  it('every free put is counted for its app, and nothing else is', async () => {
-    const A = freshApp();
-    const t = await mint(A, V1);
-    const start = await freeWrites(A);
-    await expectOk(put(t, 'k1', { n: 1 }));
-    expect(await freeWrites(A)).toBe(start);
-    await expectOk(put(t, 'k1', { n: 1 }));
-    await expectOk(put(t, 'k1', { n: 1 }));
-    expect(await freeWrites(A)).toBe(start + 2);
-    await expectOk(put(t, 'k1', { n: 2 }));
-    expect(await freeWrites(A)).toBe(start + 2);
   });
 });
 

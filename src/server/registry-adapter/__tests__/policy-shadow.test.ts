@@ -5,7 +5,11 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { allowConnection } from '~/__tests__/network-guard';
 import type { Audience } from '~/server/registry-adapter/audience';
-import { ANONYMOUS_AUDIENCE, audienceForUser } from '~/server/registry-adapter/audience';
+import {
+  ANONYMOUS_AUDIENCE,
+  SERVICE_AUDIENCE,
+  audienceForUser,
+} from '~/server/registry-adapter/audience';
 import type { Principal, VerifyToken } from '~/server/registry-adapter/auth';
 import { REGISTRY_SERVICE, createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
 import type { PolicyShadow, ShadowResult } from '~/server/registry-adapter/policy-shadow';
@@ -167,7 +171,7 @@ describe('🔴 shadow mode never changes the live decision (HTTP)', () => {
       // Nothing listens on port 1: the connection is refused, as for a service that is down.
       if (mode === 'down') allowConnection('127.0.0.1', 1);
       const url = mode === 'down' ? 'http://127.0.0.1:1' : (await fakeService(mode as Mode)).url;
-      const o = observedShadow(url, mode === 'timeout' ? 300 : 2_000);
+      const o = observedShadow(url, mode === 'timeout' ? 100 : 2_000);
       const shadowed = await subscribeHttp({ policyShadow: o.shadow }, SIGNED_IN);
 
       expect(shadowed.status).toBe(200);
@@ -182,7 +186,7 @@ describe('🔴 shadow mode never changes the live decision (HTTP)', () => {
 
   it('a comparison the service never answers does not hold the subscription: the stream ends first', async () => {
     const { url } = await fakeService('timeout');
-    const o = observedShadow(url, 1_000);
+    const o = observedShadow(url, 400);
     const shadowed = await subscribeHttp({ policyShadow: o.shadow }, SIGNED_IN);
     expect(shadowed.status).toBe(200);
     expect(o.settled).toEqual([false]);
@@ -292,7 +296,7 @@ describe('🔴 shadow mode never changes the live decision (gRPC)', () => {
     ['timeout', 'timeout'],
   ])('service %s: same audience and events as with no shadow', async (mode, want) => {
     const baseline = await subscribeGrpc();
-    const o = observedShadow((await fakeService(mode)).url, 300);
+    const o = observedShadow((await fakeService(mode)).url, 100);
     const shadowed = await subscribeGrpc(o.shadow);
     expect(shadowed.audience).toEqual(baseline.audience);
     expect(shadowed.audience).toEqual(audienceForUser(FULL_USER));
@@ -332,6 +336,32 @@ describe('the comparison', () => {
         held: false,
       })
     ).toBe('error');
+  });
+
+  it('🔴 a service principal is not compared: counted service, nothing sent, never error', async () => {
+    const { registry, counter } = createShadowMetrics();
+    const calls: unknown[] = [];
+    const shadow = createPolicyShadow({
+      url: 'http://127.0.0.1:1',
+      counter,
+      fetch: (async (...args: unknown[]) => {
+        calls.push(args);
+        throw new Error('must not be called');
+      }) as typeof fetch,
+    });
+    const result = await shadow({
+      origin: { headers: { 'cf-ipcountry': 'GB' } },
+      principal: {
+        ...principal('service:7e3a1c55-2b4d-4f60-9a8e-1c2d3e4f5a6b', SERVICE_AUDIENCE),
+        service: true,
+      },
+      held: true,
+    });
+    expect(result).toBe('service');
+    expect(calls).toEqual([]);
+    const text = await registry.metrics();
+    expect(text).toContain('registry_adapter_policy_shadow_total{result="service"} 1');
+    expect(text).toContain('registry_adapter_policy_shadow_total{result="error"} 0');
   });
 
   it('sends a repeated header as JavaScript reads it, and meta only when trusted', () => {
@@ -614,6 +644,7 @@ describe('configuration and metrics', () => {
     expect(text).toContain('registry_adapter_policy_shadow_total{result="disagree"} 1');
     expect(text).toContain('registry_adapter_policy_shadow_total{result="error"} 0');
     expect(text).toContain('registry_adapter_policy_shadow_total{result="timeout"} 0');
+    expect(text).toContain('registry_adapter_policy_shadow_total{result="service"} 0');
     expect((await fetch(`http://127.0.0.1:${port}/subscribe`)).status).toBe(404);
   });
 });

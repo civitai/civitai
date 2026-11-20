@@ -12,7 +12,10 @@
  *     `agree`, `disagree`, `error` (the service answered an error, its SFW fallback, or a body that
  *     is not a decision) or `timeout`;
  *   - on a disagreement it logs one line naming the first field that differs and both values, and
- *     nothing that identifies the viewer (no user id, address or token).
+ *     nothing that identifies the viewer (no user id, address or token);
+ *   - a service principal (an allowlisted service token, `auth.ts`) is not compared: it has no
+ *     viewer, and its audience is the adapter's own allowlist decision, not the policy's, so it is
+ *     counted `service` and nothing is sent, never `error`.
  *
  * 🔴 It never changes the live decision: the call is not awaited by the subscription, it is handed
  * copies of values already decided, and every failure inside it is caught here. The subscription
@@ -32,7 +35,14 @@ export const POLICY_RATINGS = ['g', 'pg', 'pg13', 'r', 'x', 'xxx'] as const;
 /** The service's caller context for a subscription. */
 export const POLICY_CONTEXT = 'registry-subscription';
 
-export const SHADOW_RESULTS = ['agree', 'disagree', 'error', 'timeout', 'dropped'] as const;
+export const SHADOW_RESULTS = [
+  'agree',
+  'disagree',
+  'error',
+  'timeout',
+  'dropped',
+  'service',
+] as const;
 export type ShadowResult = (typeof SHADOW_RESULTS)[number];
 
 export const DEFAULT_POLICY_TIMEOUT_MS = 250;
@@ -158,7 +168,7 @@ export type PolicyShadow = (s: {
 export function createShadowMetrics(registry = new Registry()) {
   const counter = new Counter({
     name: 'registry_adapter_policy_shadow_total',
-    help: 'Subscriptions compared with the content-policy service, by result: agree, disagree, error (an error answer, its SFW fallback, or no decision in the body), timeout, dropped (not sent: the in-flight cap was full).',
+    help: 'Subscriptions compared with the content-policy service, by result: agree, disagree, error (an error answer, its SFW fallback, or no decision in the body), timeout, dropped (not sent: the in-flight cap was full), service (not sent: an allowlisted service principal, which has no viewer).',
     labelNames: ['result'],
     registers: [registry],
   });
@@ -188,6 +198,8 @@ export function createPolicyShadow(opts: {
   const maxInFlight = opts.maxInFlight ?? DEFAULT_MAX_IN_FLIGHT;
   let inFlight = 0;
   return async ({ origin, principal, held }) => {
+    // No viewer to ask about: the service audience is this source's allowlist, not the policy's.
+    if (principal.service === true) return count('service');
     if (inFlight >= maxInFlight) return count('dropped');
     inFlight++;
     try {

@@ -796,7 +796,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ORDER BY x.first_at
       LIMIT 10
       ) am
-      WHERE GREATEST(a."publishedAt", a."updatedAt", a."contentScannedAt") > '2026-01-01T00:00:00.000Z'
+      WHERE GREATEST(a."publishedAt", a."updatedAt", a."contentScannedAt") > '2026-01-01T00:00:00.000Z'::timestamp - interval '5 minutes'
       AND a.status = 'Published'
       AND a.ingestion = 'Scanned'
       AND a."publishedAt" > now() - interval '30 days'

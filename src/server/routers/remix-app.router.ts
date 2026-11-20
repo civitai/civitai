@@ -30,16 +30,41 @@ import {
   saveRemixApp,
   setRemixAppEnabled,
   deleteRemixApp,
+  submitUserRemixApp,
+  reviewUserRemixApp,
+  clearRemixMinorThemed,
 } from '~/server/services/remix-app-registry.service';
-import { remixAppInputSchema, remixAppSlugSchema } from '~/shared/remix-apps/row.schema';
+import {
+  remixAppInputSchema,
+  remixAppSlugSchema,
+  remixAppSubmitSchema,
+  REMIX_REJECT_REASONS,
+  REMIX_REVIEW_STATES,
+  USER_REMIX_SLUG,
+} from '~/shared/remix-apps/row.schema';
+import { TRPCError } from '@trpc/server';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 
 const remixAppProcedure = protectedProcedure.use(isFlagProtected('remixApps'));
 const remixAppAdminProcedure = moderatorProcedure.use(isFlagProtected('remixApps'));
+const userCodeReviewProcedure = remixAppAdminProcedure.use(isFlagProtected('remixAppsUserCode'));
+// Guarded: a submit publishes code and listing text, so muted or unverified accounts may not.
+const remixAppBuilderProcedure = guardedProcedure
+  .use(isFlagProtected('remixApps'))
+  .use(isFlagProtected('remixAppsUserCode'))
+  .use(isFlagProtected('remixAppBuilder'));
+
+/** A user app's row is only acted on with its flag, like its review. */
+function assertUserCodeAccess(slug: string, features: { remixAppsUserCode?: boolean }) {
+  if (USER_REMIX_SLUG.test(slug) && !features.remixAppsUserCode)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'User remix apps are not enabled for you' });
+}
 
 const imageId = z.number().int().positive();
 
+/** Each submit rewrites the shared registry cache. */
+const submitRateLimit = rateLimit({ limit: 20, period: CacheTTL.hour });
 /** Each uncached quote is an orchestrator what-if. */
 const quoteRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
 /** Called on every image view; it only reaches a what-if for an image the viewer can team-remix. */
@@ -89,10 +114,36 @@ const remixAppAdminRouter = router({
     .mutation(({ input }) => saveRemixApp(input)),
   setEnabled: remixAppAdminProcedure
     .input(z.object({ slug: remixAppSlugSchema, enabled: z.boolean() }))
-    .mutation(({ input }) => setRemixAppEnabled(input)),
+    .mutation(({ ctx, input }) => {
+      assertUserCodeAccess(input.slug, ctx.features);
+      return setRemixAppEnabled({ ...input, moderatorId: ctx.user.id });
+    }),
   delete: remixAppAdminProcedure
     .input(z.object({ slug: remixAppSlugSchema }))
-    .mutation(({ input }) => deleteRemixApp(input)),
+    .mutation(({ ctx, input }) => {
+      assertUserCodeAccess(input.slug, ctx.features);
+      return deleteRemixApp(input);
+    }),
+  /** Approves or rejects the source whose hash the mod read. */
+  review: userCodeReviewProcedure
+    .input(
+      z.object({
+        slug: remixAppSlugSchema,
+        sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        seenReview: z.enum(REMIX_REVIEW_STATES),
+        decision: z.enum(['approved', 'rejected']),
+        mature: z.boolean().optional(),
+        reason: z.enum(REMIX_REJECT_REASONS).optional(),
+        note: z.string().trim().max(200).optional(),
+      })
+    )
+    .mutation(({ ctx, input }) => reviewUserRemixApp({ ...input, moderatorId: ctx.user.id })),
+  /** Lifts a minor-themed mark; refused to the moderator who set it. */
+  clearMinorThemed: userCodeReviewProcedure
+    .input(z.object({ slug: remixAppSlugSchema }))
+    .mutation(({ ctx, input }) =>
+      clearRemixMinorThemed({ slug: input.slug, moderatorId: ctx.user.id })
+    ),
   order: remixAppAdminProcedure
     .input(z.object({ slugs: remixAppSlugSchema.array().max(100) }))
     .mutation(({ input }) => orderRemixApps(input.slugs)),
@@ -123,6 +174,11 @@ const remixAppAdminRouter = router({
 
 export const remixAppRouter = router({
   admin: remixAppAdminRouter,
+  /** Creates or replaces the caller's own app, which waits for a mod's review out of menus. */
+  submit: remixAppBuilderProcedure
+    .use(submitRateLimit)
+    .input(remixAppSubmitSchema)
+    .mutation(({ ctx, input }) => submitUserRemixApp({ ...input, authorId: ctx.user.id })),
   list: remixAppProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(({ ctx }) => listRemixApps(ctx)),

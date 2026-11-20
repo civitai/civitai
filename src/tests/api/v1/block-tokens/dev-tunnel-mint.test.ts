@@ -509,6 +509,7 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
       userId: MOD.user.id,
       clientId: 'appdev-4242-my-app',
       scopes: ['ai:write:budgeted', 'user:read:self'],
+      impersonatedBy: null,
     });
   });
 
