@@ -7,6 +7,7 @@ import {
   expireServiceDeals,
   remindServiceDeals,
 } from '~/server/services/creator-service-deal.service';
+import { reconcileServiceDealReviews } from '~/server/services/creator-service-deal-review-reconcile';
 import {
   reconcileUnconfirmedHolds,
   sweepServiceDealRefunds,
@@ -56,7 +57,17 @@ export const creatorServiceDealsJob = createJob(
     const releases = await sweepServiceDealReleases({ limit: BATCH });
     // Last: its gauge counts every exhausted leg, the releases' included.
     const refunds = await sweepServiceDealRefunds({ limit: BATCH });
-    return { holds, expired, completed, cancelled, overdue, reminded, releases, refunds };
+    // After the payouts, so its read-back sees this run's releases.
+    const reviews = await reconcileServiceDealReviews({ limit: BATCH }).catch((error) => {
+      logToAxiom({
+        name: 'creator-service-deal',
+        type: 'error',
+        message: 'review reconcile failed',
+        error: (error as Error)?.message,
+      });
+      return null;
+    });
+    return { holds, expired, completed, cancelled, overdue, reminded, releases, refunds, reviews };
   },
   { lockExpiration: 30 * 60 }
 );

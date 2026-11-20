@@ -9,7 +9,7 @@ type Db = Pick<Prisma.TransactionClient, '$executeRaw' | '$queryRaw'>;
  * no moderator hid it, and either the deal has settled or the buyer was happy and the deal is not
  * held for the moderators (a final that failed its scan holds a deal after a happy review).
  */
-const reviewPublic = Prisma.sql`(
+export const reviewPublic = Prisma.sql`(
   r."scanStatus" = 'Scanned'::"ServiceOfferingIngestionStatus" AND r."hiddenAt" IS NULL
   AND (d."settledAt" IS NOT NULL
     OR (r."verdict" = 'Happy'::"ServiceDealReviewVerdict" AND d."status" <> 'Disputed'::"ServiceDealStatus"))
@@ -19,30 +19,36 @@ const reviewPublic = Prisma.sql`(
 const BUYER_MIN_AGE = Prisma.sql`interval '7 days'`;
 
 /**
- * Recounts an offering's reviews from its published rows. Each buyer counts once, by their latest
- * published review, and only for a deal at the minimum price or more. The score is the happy share
- * once three buyers count, else -1. Raw SQL so the offering's `updatedAt`, which its own content
- * check keys on, is left alone.
+ * An offering's happy and total counts from its published reviews, with `offeringId` naming the
+ * offering in the surrounding statement. Each buyer counts once, by their latest published review,
+ * and only for a deal at the minimum price or more from an account a week old when it was accepted.
  */
+export const offeringReviewTotals = (offeringId: Prisma.Sql) => Prisma.sql`(
+  SELECT count(*) FILTER (WHERE c."verdict" = 'Happy')::int AS happy, count(*)::int AS total
+  FROM (
+    SELECT DISTINCT ON (r."buyerId") r."verdict"
+    FROM "ServiceDealReview" r
+    JOIN "ServiceDeal" d ON d."id" = r."dealId"
+    JOIN "User" u ON u."id" = r."buyerId"
+    WHERE r."offeringId" = ${offeringId} AND r."publishedAt" IS NOT NULL
+      AND d."price" >= ${SERVICE_PRICE_MIN}::int
+      AND d."acceptedAt" - u."createdAt" >= ${BUYER_MIN_AGE}
+    ORDER BY r."buyerId", r."publishedAt" DESC, r."id" DESC
+  ) c
+)`;
+
+/** The score: the happy share once three buyers count, else -1. */
+export const happySortKey = (happy: Prisma.Sql, total: Prisma.Sql) =>
+  Prisma.sql`CASE WHEN ${total} >= 3 THEN ${happy}::float8 / ${total} ELSE -1 END`;
+
+/** Raw SQL so the offering's `updatedAt`, which its own content check keys on, is left alone. */
 async function recountOffering(tx: Db, offeringId: number) {
   await tx.$executeRaw`
-    WITH counted AS (
-      SELECT DISTINCT ON (r."buyerId") r."verdict"
-      FROM "ServiceDealReview" r
-      JOIN "ServiceDeal" d ON d."id" = r."dealId"
-      JOIN "User" u ON u."id" = r."buyerId"
-      WHERE r."offeringId" = ${offeringId}::int AND r."publishedAt" IS NOT NULL
-        AND d."price" >= ${SERVICE_PRICE_MIN}::int
-        AND d."acceptedAt" - u."createdAt" >= ${BUYER_MIN_AGE}
-      ORDER BY r."buyerId", r."publishedAt" DESC, r."id" DESC
-    ), totals AS (
-      SELECT count(*) FILTER (WHERE "verdict" = 'Happy')::int AS happy, count(*)::int AS total
-      FROM counted
-    )
     UPDATE "ServiceOffering" o
     SET "happyCount" = t.happy, "reviewCount" = t.total,
-      "happySortKey" = CASE WHEN t.total >= 3 THEN t.happy::float8 / t.total ELSE -1 END
-    FROM totals t WHERE o."id" = ${offeringId}::int`;
+      "happySortKey" = ${happySortKey(Prisma.sql`t.happy`, Prisma.sql`t.total`)}
+    FROM ${offeringReviewTotals(Prisma.sql`${offeringId}::int`)} t
+    WHERE o."id" = ${offeringId}::int`;
 }
 
 /**

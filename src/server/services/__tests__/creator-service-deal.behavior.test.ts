@@ -119,6 +119,8 @@ const reviews = await import('~/server/services/creator-service-dispute-review.s
 const escrow = await import('~/server/services/creator-service-escrow.service');
 const dealReviews = await import('~/server/services/creator-service-deal-review.service');
 const publish = await import('~/server/services/creator-service-deal-review-publish');
+const reconcile = await import('~/server/services/creator-service-deal-review-reconcile');
+const reviewScan = await import('~/server/services/service-deal-review-moderation.adapter');
 const { creatorServiceNotifications } = await import(
   '~/server/notifications/creator-service.notifications'
 );
@@ -3650,6 +3652,71 @@ describe('review publishing and counters', () => {
     expect(await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED)).toBe(true);
     expect(await published(id)).toBeNull();
     expect((await counters()).happyCount).toBe(0);
+  });
+
+  describe('the deals job', () => {
+    const readBack = () => reconcile.readBackServiceDealReviews();
+    const zero = { eventsWithoutReview: 0, unpaidHappy: 0, earlyRelease: 0, counterDrift: 0 };
+
+    it('reads back zero on a happy release, and flags each kind of mismatch', async () => {
+      const id = await completedBy();
+      await review(id, 'Happy');
+      await escrow.sweepServiceDealReleases();
+      expect(await readBack()).toEqual(zero);
+
+      await q(`UPDATE "ServiceOffering" SET "happyCount" = 5 WHERE id = 1`);
+      expect((await readBack()).counterDrift).toBe(1);
+      await q(`UPDATE "ServiceOffering" SET "happyCount" = 1 WHERE id = 1`);
+
+      // A deal paid early with no happy review behind it.
+      const early = await completedBy(10);
+      await q(`UPDATE "ServiceDeal" SET "releaseAt" = "completedAt" WHERE id = $1`, [early]);
+      expect((await readBack()).earlyRelease).toBe(1);
+      await q(
+        `UPDATE "ServiceDeal" SET "releaseAt" = "completedAt" + interval '48 hours' WHERE id = $1`,
+        [early]
+      );
+
+      // A happy-review event whose review row is gone, on a deal left unpaid for an hour.
+      const unpaid = await completedBy(11);
+      await review(unpaid, 'Happy', 11);
+      await q(`DELETE FROM "ServiceDealTransaction" WHERE "dealId" = $1`, [unpaid]);
+      await q(`UPDATE "ServiceDeal" SET "settledAt" = NULL WHERE id = $1`, [unpaid]);
+      await q(
+        `UPDATE "ServiceDealEvent" SET "createdAt" = now() - interval '1 hour' WHERE "dealId" = $1`,
+        [unpaid]
+      );
+      await q(`DELETE FROM "ServiceDealReview" WHERE "dealId" = $1`, [unpaid]);
+      expect(await readBack()).toMatchObject({ eventsWithoutReview: 1, unpaidHappy: 1 });
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'release-on-review read-back mismatch' })
+      );
+    });
+
+    it('shows a review its deal now allows, and recounts', async () => {
+      const id = await completedBy();
+      await review(id, 'Happy');
+      // Paid first (the review starts the payout), so nothing else in the job moves this review.
+      await vi.waitFor(async () => expect((await deal(id)).settledAt).not.toBeNull());
+      await q(`UPDATE "ServiceDealReview" SET "publishedAt" = NULL WHERE "dealId" = $1`, [id]);
+      await q(`UPDATE "ServiceOffering" SET "happyCount" = 0, "reviewCount" = 0 WHERE id = 1`);
+      await creatorServiceDealsJob.run();
+      expect(await published(id)).not.toBeNull();
+      expect((await counters()).happyCount).toBe(1);
+    });
+
+    it('sends a comment whose check was never recorded back to its check', async () => {
+      const id = await completedBy();
+      await review(id, 'NotQuite', BUYER, 'Not what I asked for');
+      const [{ id: reviewId }] = await q<{ id: number }>(
+        `UPDATE "ServiceDealReview" SET "scanWorkflowId" = NULL, "updatedAt" = now() - interval '1 hour'
+         WHERE "dealId" = $1 RETURNING id`,
+        [id]
+      );
+      const scans = vi.spyOn(reviewScan, 'scanServiceDealReviewText');
+      await reconcile.reconcileServiceDealReviews({ limit: 10 });
+      expect(scans).toHaveBeenCalledWith('ServiceDealReview', reviewId);
+    });
   });
 });
 
