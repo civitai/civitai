@@ -130,8 +130,7 @@ export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async 
     const ids = rows.map((row) => row.id);
     if (!ids.length) continue;
 
-    // Still blocked, or a post whose text is held (which `deletePost` refuses): waits, with no
-    // delete called, until its next turn, even if what blocked it ends during this run.
+    // Read once, up front: a row blocked now waits its turn even if the block ends during this run.
     const before = await standing(kind, ids);
     const textHeld = new Set(
       kind === 'Post'
