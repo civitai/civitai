@@ -47,7 +47,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   getFliptClientSync: () => ({}),
 }));
 
-import { getImageMetricsObjectDirect } from '../image.service';
+import { getImageMetricsObject, getImageMetricsObjectDirect } from '../image.service';
+import { resetImageMetricsSwrGateForTests } from '../image-metrics-swr';
 import { resetImageMetricsClickhouseGateForTests } from '../image-metrics-clickhouse';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -141,5 +142,32 @@ describe('image MetricService ClickHouse selection', () => {
     expect(await readLike(109)).toBe(7);
     expect(dedicated.query).toHaveBeenCalledTimes(1);
     expect(shared.query).not.toHaveBeenCalled();
+  });
+
+  // The image-metrics-swr refresher is built once per process; it must look the service up per
+  // batch, or a flip after its first batch would never reach the background repopulates.
+  it('the SWR background refresher follows a runtime flip', async () => {
+    state.flags['image-metrics-swr'] = true;
+    state.flags[FLAG] = false;
+    resetImageMetricsSwrGateForTests();
+    const staleIds = new Set([201, 202]);
+    // Past the refresh age, inside the max-staleness bound: served, then handed to the refresher.
+    const stale = () => ({
+      Like: '3',
+      _populatedAt: String(Math.floor(Date.now() / 1000) - 7_200),
+    });
+    redisMock.redis.hGetAll.mockImplementation(async (key: string) =>
+      staleIds.has(Number(key.split(':').pop())) ? stale() : {}
+    );
+
+    expect((await getImageMetricsObject([{ id: 201 }]))[201]?.reactionLike).toBe(3);
+    await vi.waitFor(() => expect(shared.query).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    expect(dedicated.query).not.toHaveBeenCalled();
+
+    state.flags[FLAG] = true;
+    vi.setSystemTime(now + GATE_WINDOW_MS + 1);
+    expect((await getImageMetricsObject([{ id: 202 }]))[202]?.reactionLike).toBe(3);
+    await vi.waitFor(() => expect(dedicated.query).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    expect(shared.query).toHaveBeenCalledTimes(1);
   });
 });

@@ -2,7 +2,8 @@
 // the `image-metrics-dedicated-clickhouse` flag is on (`getImageMetricService` in image.service).
 //
 // Built by the same factory as the shared client in ./client, so it carries the same transport
-// settings (request timeout, compression, keep-alive, pool); only the connection differs. Every
+// settings (compression, keep-alive, pool); only the connection and the request timeout differ
+// (CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS, default 10s, instead of the shared client's 300s). Every
 // connection field is passed, the password included when unset, so none of the shared client's
 // credentials can reach this server through the factory's env defaults.
 //
@@ -28,4 +29,5 @@ export const clickhouseMetrics: CustomClickHouseClient | undefined = !shouldConn
       host: env.CLICKHOUSE_METRICS_HOST,
       username: env.CLICKHOUSE_METRICS_USERNAME,
       password: env.CLICKHOUSE_METRICS_PASSWORD,
+      requestTimeoutMs: env.CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS,
     }));

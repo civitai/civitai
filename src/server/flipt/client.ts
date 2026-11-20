@@ -691,6 +691,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // metrics cache); it is not retried on the shared client. Off (and unknown, a client that has
   // not initialised, or the env unset): it queries the shared ClickHouse, as before. Kill: disable.
   //
+  // The dedicated server must serve the `entityMetricDailyAgg_v2` view under that name in the
+  // user's default database, and the user must be allowed to change the settings the client sends
+  // (async_insert, wait_for_async_insert, output_format_json_quote_64bit_integers, max_threads,
+  // max_execution_time, timeout_overflow_mode): readonly=2, not readonly=1.
+  //
+  // 🔴 Turn it on only while the dedicated data lags the shared data by well under 15 minutes (the
+  // recent-event marker window). A populate from a lagging source writes LOWER counts into the
+  // shared Redis `metrics:*` hashes, and turning the flag off does not undo entries already written;
+  // they stay low until their next refresh.
+  //
   // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
   // (`createCachedFlagGate`, `~/server/services/image-metrics-clickhouse`). The key must exist in
   // flag state (enabled: false) before this code serves traffic.

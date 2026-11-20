@@ -174,6 +174,27 @@ describe('process-global server singletons (production)', () => {
     expect(options.password).toBeUndefined();
   });
 
+  // The factory's default is 300s; a hung dedicated server would hold the image-metrics-swr
+  // refresher's slots and the per-id populate locks that long.
+  it('dedicated metrics ClickHouse client: a short request timeout, 10s by default and overridable', async () => {
+    setEnv({
+      CLICKHOUSE_METRICS_HOST: 'http://clickhouse-metrics.test',
+      CLICKHOUSE_METRICS_USERNAME: 'metrics-user',
+    });
+    await evaluateTwice(() => import('~/server/clickhouse/metrics-client'));
+    expect(factories.createClickhouseClient).toHaveBeenLastCalledWith(
+      expect.objectContaining({ requestTimeoutMs: 10_000 })
+    );
+
+    clearGlobals();
+    factories.createClickhouseClient.mockClear();
+    setEnv({ CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS: 7_500 });
+    await evaluateTwice(() => import('~/server/clickhouse/metrics-client'));
+    expect(factories.createClickhouseClient).toHaveBeenLastCalledWith(
+      expect.objectContaining({ requestTimeoutMs: 7_500 })
+    );
+  });
+
   it('dedicated metrics ClickHouse client: not built when its env is unset', async () => {
     const { clickhouseMetrics } = await evaluateTwice(
       () => import('~/server/clickhouse/metrics-client')
