@@ -3,8 +3,8 @@ import { IconBox } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { parseModelVersionIds } from '~/components/Image/Infinite/image-feed-search';
-
-const MAX_RESOURCES = 20;
+import { MAX_SEARCH_MODEL_VERSIONS } from '~/server/schema/semantic-image-search.schema';
+import { removeEmpty } from '~/utils/object-helpers';
 
 /**
  * The image search's "Made with" filter: the model versions in `?modelVersionIds=`, picked from the
@@ -14,22 +14,20 @@ export function SearchResourceFilter() {
   const router = useRouter();
   const selected = parseModelVersionIds(router.query.modelVersionIds);
 
-  const write = (ids: number[]) => {
-    const { modelVersionIds: _drop, ...query } = router.query;
+  const write = (ids: number[]) =>
     router.replace(
       {
         pathname: router.pathname,
-        query: ids.length ? { ...query, modelVersionIds: ids.join(',') } : query,
+        query: removeEmpty({ ...router.query, modelVersionIds: ids.join(',') || undefined }),
       },
       undefined,
       { shallow: true, scroll: false }
     );
-  };
 
   const pick = () =>
     openResourceSelectModal({
       title: 'Images made with',
-      limit: MAX_RESOURCES - selected.length,
+      limit: MAX_SEARCH_MODEL_VERSIONS - selected.length,
       onSelect: (resource) => write([...selected, resource.id]),
       onSelectMultiple: (resources) => write([...selected, ...resources.map((r) => r.id)]),
     });
@@ -41,7 +39,7 @@ export function SearchResourceFilter() {
         variant={selected.length ? 'light' : 'default'}
         leftSection={<IconBox size={14} />}
         onClick={pick}
-        disabled={selected.length >= MAX_RESOURCES}
+        disabled={selected.length >= MAX_SEARCH_MODEL_VERSIONS}
       >
         {selected.length ? `Made with ${selected.length}` : 'Made with'}
       </Button>
