@@ -302,13 +302,18 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 			continue
 		}
 		list, _ := getVal(e.Value, "images").([]any)
-		imgs := make([]superjson.Object, 0, len(list))
-		lvl, isHeld := held[modelOf[vid].row.ID]
+		cached := make([]superjson.Object, 0, len(list))
 		for _, x := range list {
-			o, ok := x.(superjson.Object)
-			if !ok {
-				continue
+			if o, ok := x.(superjson.Object); ok {
+				cached = append(cached, o)
 			}
+		}
+		// getImagesForModelVersionCache's appendFn: the images the minor content rule restricts are
+		// dropped for every viewer, before the hold below.
+		cached = hydrate.WithoutMinorMatureImages(cached, getVal)
+		imgs := make([]superjson.Object, 0, len(cached))
+		lvl, isHeld := held[modelOf[vid].row.ID]
+		for _, o := range cached {
 			if isHeld {
 				nl, _ := intOf(getVal(o, "nsfwLevel"))
 				if nl&lvl == 0 {

@@ -40,8 +40,9 @@ import {
 import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-adapter/limits';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import { HTTP_STATUS, ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import type { PolicyEnforcer } from '~/server/registry-adapter/policy-enforce';
+import { decidePrincipal } from '~/server/registry-adapter/policy-enforce';
 import type { PolicyShadow } from '~/server/registry-adapter/policy-shadow';
-import { runShadow } from '~/server/registry-adapter/policy-shadow';
 import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
 import {
   clientAddress,
@@ -220,6 +221,12 @@ export type ServeOptions = {
    * it and without changing it (`policy-shadow.ts`). Without it, nothing is compared.
    */
   policyShadow?: PolicyShadow;
+  /**
+   * Decides each signed-in subscription's audience from the content-policy service, falling back
+   * to this source's own on any failure (`policy-enforce.ts`). Set, it replaces `policyShadow`
+   * (it runs the same comparison). Without it, nothing is enforced.
+   */
+  policyEnforce?: PolicyEnforcer;
 };
 
 export function handleRequest(
@@ -257,16 +264,20 @@ export function handleRequest(
       // The total and per-address caps before the token is verified; per token once it is.
       slot = opts.limiter?.acquire(clientAddress(origin));
       const restricted = opts.regionRestricted ?? regionRestricted;
-      const principal = await authenticate(
+      const authenticated = await authenticate(
         lastHeader(req.headers.authorization),
         opts.verifyToken,
         {
           regionRestricted: () => restricted(origin),
         }
       );
-      slot?.claim(principal.subject);
+      slot?.claim(authenticated.subject);
+      const principal = await decidePrincipal(opts, {
+        origin,
+        principal: authenticated,
+        held: restricted(origin),
+      });
       opts.onRegion?.(subscriptionRegionLine('http', origin, restricted, principal));
-      runShadow(opts.policyShadow, { origin, principal, held: restricted(origin) });
       const open = openStream(
         res,
         opts.slowConsumerMs ?? SLOW_CONSUMER_MS,

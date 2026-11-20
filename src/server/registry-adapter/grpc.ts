@@ -56,8 +56,9 @@ import type {
   StreamEvent,
 } from '~/server/registry-adapter/protocol';
 import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import type { PolicyEnforcer } from '~/server/registry-adapter/policy-enforce';
+import { decidePrincipal } from '~/server/registry-adapter/policy-enforce';
 import type { PolicyShadow } from '~/server/registry-adapter/policy-shadow';
-import { runShadow } from '~/server/registry-adapter/policy-shadow';
 import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
 import {
   clientAddress,
@@ -443,6 +444,8 @@ export function createGrpcServer(
     onRegion?: (line: string) => void;
     /** As for HTTP: the content-policy shadow comparison (`policy-shadow.ts`). */
     policyShadow?: PolicyShadow;
+    /** As for HTTP: content-policy enforcement (`policy-enforce.ts`). */
+    policyEnforce?: PolicyEnforcer;
   } = {}
 ): grpc.Server {
   const subscribe = createSubscriber(adapter);
@@ -470,12 +473,16 @@ export function createGrpcServer(
           // The total and per-address caps before the token is verified; per token once it is.
           slot = opts.limiter?.acquire(clientAddress(origin));
           const restricted = opts.regionRestricted ?? regionRestricted;
-          const principal = await authenticate(authorizationOf(call), opts.verifyToken, {
+          const authenticated = await authenticate(authorizationOf(call), opts.verifyToken, {
             regionRestricted: () => restricted(origin),
           });
-          slot?.claim(principal.subject);
+          slot?.claim(authenticated.subject);
+          const principal = await decidePrincipal(opts, {
+            origin,
+            principal: authenticated,
+            held: restricted(origin),
+          });
           opts.onRegion?.(subscriptionRegionLine('grpc', origin, restricted, principal));
-          runShadow(opts.policyShadow, { origin, principal, held: restricted(origin) });
           unwatch = watchPrincipal(
             principal,
             (err) => sink.fail(errorStatus(err.code, err.message, metadataUrl)),

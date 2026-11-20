@@ -188,8 +188,8 @@ async function measure(user?: SessionUser, entrypoint: StoreScopeEntrypoint = 'r
 }
 
 /**
- * `~/server/flipt/client` passes no `onEvalError`, so @civitai/flipt's default logs
- * every "flag not found" throw to `console.error`. Absent flags are the NORMAL,
+ * The real-client mock (`buildRealFliptClientMock`) passes no `onEvalError`, so
+ * @civitai/flipt's default logs every "flag not found" throw to `console.error`. Absent flags are the NORMAL,
  * as-merged state this file measures, so that is ~40 lines of expected stderr per
  * run. Filtered — not silenced: anything that is not that exact line still reaches
  * the console, so a real error here is not swallowed by the noise reduction.

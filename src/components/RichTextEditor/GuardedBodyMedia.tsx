@@ -1,6 +1,6 @@
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import type { ImageWidth } from '~/shared/tiptap/image-width';
+import type { ImageAlign, ImageWidth } from '~/shared/tiptap/image-width';
 import classes from './GuardedBodyMedia.module.scss';
 
 /** A content image as `getArticleById` returns it: the Image row the body's url was linked to. */
@@ -34,12 +34,14 @@ export function GuardedBodyMedia({
   urlKey,
   fallbackNsfwLevel,
   size,
+  align,
   children,
 }: {
   linked: BodyImage | undefined;
   urlKey: string;
   fallbackNsfwLevel: number;
   size?: ImageWidth | null;
+  align?: ImageAlign | null;
   children: React.ReactElement;
 }) {
   const image = linked ?? { id: unlinkedImageId(urlKey), nsfwLevel: fallbackNsfwLevel };
@@ -47,7 +49,7 @@ export function GuardedBodyMedia({
   const height = linked?.height ?? null;
 
   return (
-    <div className={classes.root} data-width={size ?? undefined}>
+    <div className={classes.root} data-width={size ?? undefined} data-align={align ?? undefined}>
       <ImageGuard2 image={image}>
         {(show) => (
           <>

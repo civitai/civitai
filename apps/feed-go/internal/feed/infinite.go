@@ -16,6 +16,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -51,15 +52,21 @@ type InfiniteInput struct {
 	// Followed is `followed: true`: for a signed-in viewer, only the creators they follow
 	// (getUserFollows). Signed out it changes nothing (both Node paths read it only with a user).
 	Followed bool
+	// CollectionID is `collectionId` (a positive int4; 0 = none): always the Postgres path
+	// (requiresImageDbPath), only the collection's items, and only when the viewer may read it.
+	CollectionID int
+	// CollectionTagID is `collectionTagId` (an int4; 0 = none, as Node's truthiness check reads it),
+	// only beside a CollectionID.
+	CollectionTagID int
 }
 
 // infiniteUnsupported are the input keys this port falls back on when present: the gallery's list
 // without the inputs image.getInfinite answers here (userId, username, postId, tags,
-// prioritizedUserIds, pending, baseModels, followed).
+// prioritizedUserIds, pending, baseModels, followed, collectionId, collectionTagId).
 var infiniteUnsupported = func() []string {
 	ported := map[string]bool{
 		"userId": true, "username": true, "postId": true, "tags": true, "prioritizedUserIds": true, "pending": true,
-		"baseModels": true, "followed": true,
+		"baseModels": true, "followed": true, "collectionId": true, "collectionTagId": true,
 	}
 	out := make([]string, 0, len(unsupportedKeys))
 	for _, k := range unsupportedKeys {
@@ -118,11 +125,21 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 			return nil, fallback.New("infinite-hat-turf")
 		}
 	}
-	base, err := parseInput(withoutUnreadIncludes(m), infiniteUnsupported, infiniteAbsentKeys, true)
+	// Recently Added orders on the collection's items: answered beside a collectionId only (without
+	// one, Node's BAD_REQUEST: the input-sort fallback parseInput raises for it).
+	recentlyAdded := m["sort"] == SortRecentlyAdded && !isEmpty(m["collectionId"])
+	parsed := withoutUnreadIncludes(m)
+	if recentlyAdded {
+		parsed = without(parsed, "sort")
+	}
+	base, err := parseInput(parsed, infiniteUnsupported, infiniteAbsentKeys, true)
 	if err != nil {
 		return nil, err
 	}
 	in := &InfiniteInput{Input: *base}
+	if recentlyAdded {
+		in.Sort = SortRecentlyAdded
+	}
 	if v, ok := m["userId"]; ok && v != nil {
 		n, err := intIn(v, 0, math.MaxInt32)
 		if err != nil {
@@ -170,7 +187,57 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 		}
 		in.Followed = b
 	}
+	if err := in.parseCollection(m); err != nil {
+		return nil, err
+	}
 	return in, nil
+}
+
+// parseCollection reads `collectionId` and `collectionTagId` (both z.number().optional()). Not a
+// number is the schema's BAD_REQUEST (input-invalid). A collectionId that is not a positive int4
+// integer falls back (`collection-id`: 0 is no collection in Node, which then routes the request
+// elsewhere; any other such value is bound and matches no collection there). A non-zero
+// collectionTagId that is not an int4 integer falls back (`collection-tag-id`: Node inlines it into
+// the SQL text), and one without a collection is Node's BAD_REQUEST (`input-collectionTagId`).
+func (in *InfiniteInput) parseCollection(m map[string]any) error {
+	if v, ok := m["collectionId"]; ok && v != nil {
+		f, err := number(v)
+		if err != nil {
+			return fallback.NewfSafe("input-invalid", "collectionId", "collectionId: %v", v)
+		}
+		if f != math.Trunc(f) || f < 1 || f > math.MaxInt32 {
+			return fallback.Newf("collection-id", "%v", v)
+		}
+		in.CollectionID = int(f)
+	}
+	if v, ok := m["collectionTagId"]; ok && v != nil {
+		f, err := number(v)
+		if err != nil {
+			return fallback.NewfSafe("input-invalid", "collectionTagId", "collectionTagId: %v", v)
+		}
+		if f == 0 {
+			return nil // falsy: no tag filter, and no BAD_REQUEST without a collection
+		}
+		if f != math.Trunc(f) || f < math.MinInt32 || f > math.MaxInt32 {
+			return fallback.Newf("collection-tag-id", "%v", v)
+		}
+		if in.CollectionID == 0 {
+			return fallback.Newf("input-collectionTagId", "%v", v)
+		}
+		in.CollectionTagID = int(f)
+	}
+	return nil
+}
+
+// without is a copy of m without key.
+func without(m map[string]any, key string) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		if k != key {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // baseModelNames reads `baseModels` (z.string().array()): a list of strings, kept as sent (order,
@@ -253,11 +320,11 @@ func ownScope(viewerID int, viewerUsername string, userID int, username string) 
 	return username != "" && viewerUsername != "" && strings.EqualFold(username, viewerUsername)
 }
 
-// dbPath is requiresImageDbPath for the supported inputs: a post's media, a model without a
-// version (the feed has no model dimension), or prioritizedUserIds with a model or version scope.
-// Every other shape it lists falls back in parsing.
+// dbPath is requiresImageDbPath for the supported inputs: a post's media, a collection, a model
+// without a version (the feed has no model dimension), or prioritizedUserIds with a model or version
+// scope. Every other shape it lists falls back in parsing.
 func (in *InfiniteInput) dbPath() bool {
-	return in.PostID != 0 || (in.ModelID != 0 && in.ModelVersionID == 0) ||
+	return in.PostID != 0 || in.CollectionID != 0 || (in.ModelID != 0 && in.ModelVersionID == 0) ||
 		(in.prioritized() && (in.ModelID != 0 || in.ModelVersionID != 0))
 }
 
@@ -269,6 +336,10 @@ type InfiniteSources interface {
 	UserIDByUsername(ctx context.Context, username string) (int, bool, error)
 	// UserFollows is getUserFollows: the ids the user follows (empty for none).
 	UserFollows(ctx context.Context, userID int) ([]int, error)
+	// CollectionPermission is the collection's row getUserCollectionPermissionsById decides `read`
+	// on, with the viewer's contributor permissions (viewerID 0: signed out); nil when the collection
+	// does not exist.
+	CollectionPermission(ctx context.Context, collectionID, viewerID int) (*hydrate.CollectionPermission, error)
 }
 
 // maxFollowedBinds bounds the follow list the Postgres path binds (`i."userId" IN (…)`, one Prisma
@@ -648,6 +719,9 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		Techniques:     in.Techniques,
 		Tools:          in.Tools,
 		BaseModels:     in.BaseModels,
+		CollectionID:   in.CollectionID,
+		// The tag filter only beside a collection (ParseInfinite refuses it alone).
+		CollectionTagID: in.CollectionTagID,
 	}
 	if in.prioritized() {
 		q.PrioritizedUserIDs = in.PrioritizedUserIDs
@@ -798,6 +872,24 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 			return nil, fallback.New("prioritized-system-user")
 		}
 	}
+	if in.CollectionID != 0 {
+		// `if (!prefetchedCollectionPermissions?.read)`: getAllImagesUncaptured's own empty page,
+		// stamped by the handler. Read after this service's own fallbacks above, so a request it
+		// hands back never reads the collection.
+		perm, err := d.Sources.CollectionPermission(ctx, in.CollectionID, viewer.ID)
+		if err != nil {
+			return nil, err
+		}
+		readable, err := collectionReadable(perm, viewer)
+		if err != nil {
+			return nil, err
+		}
+		if !readable {
+			return &InfiniteAnswer{Value: superjson.Object{
+				{Key: "nextCursor", Val: superjson.Undefined{}}, {Key: "items", Val: []any{}}, {Key: "source", Val: "db"},
+			}, Trivial: true}, nil
+		}
+	}
 	images, next, err := fetchInfiniteRows(ctx, d, q, viewer, now, in.hydration())
 	if err != nil {
 		return nil, err
@@ -830,6 +922,12 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 			next = int64(look.CursorID)
 		}
 	}
+	for _, r := range rows {
+		if r.Collection != nil && !judgeScoreNull(r.Collection.Note) {
+			// parseJudgeScore would answer a judge's score for this item: not rebuilt here.
+			return nil, nil, fallback.New("collection-judge-score")
+		}
+	}
 	hy, err := hydrateRows(ctx, d.Hydrator, rows, viewer, d.Config.VisibleDecorationEvents, inc)
 	if err != nil {
 		return nil, nil, err
@@ -840,8 +938,10 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 // BuildInfiniteImages is getAllImagesUncaptured's per-image transform under stripImageForInfiniteWire
 // only (image.getInfinite does not apply the gallery's stripImageForAsPostsWire): the gallery wire
 // plus `availability`, `meta` (null: 'metaSelect' is not ported), `baseModel` (undefined:
-// includeBaseModel is not ported) and `judgeScore` (null outside a collection). The publish filter is
-// BuildImages'.
+// includeBaseModel is not ported) and `judgeScore` (null: outside a collection, and in one for every
+// item served, as fetchInfiniteRows falls back on any other score). A collection page's row also
+// carries `collectionItemStatus` and `collectionItemAddedById` (the SELECT's columns, after
+// `restricted`). The publish filter is BuildImages'.
 func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.Time) []Image {
 	images := BuildImages(rows, hy, viewer, now)
 	byID := make(map[int]*RawImage, len(rows))
@@ -851,11 +951,20 @@ func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.
 	for i := range images {
 		img := &images[i]
 		availability := ""
+		var item *CollectionItem
 		if r := byID[img.ID]; r != nil {
-			availability = r.Availability
+			availability, item = r.Availability, r.Collection
 		}
-		wire := make(superjson.Object, 0, len(img.Wire)+4)
-		wire = append(wire, img.Wire...)
+		wire := make(superjson.Object, 0, len(img.Wire)+6)
+		for _, f := range img.Wire {
+			wire = append(wire, f)
+			if item != nil && f.Key == "restricted" {
+				wire = append(wire,
+					superjson.Field{Key: "collectionItemStatus", Val: item.Status},
+					superjson.Field{Key: "collectionItemAddedById", Val: intOrNil(item.AddedByID)},
+				)
+			}
+		}
 		wire = append(wire,
 			superjson.Field{Key: "availability", Val: availability},
 			superjson.Field{Key: "meta", Val: nil},

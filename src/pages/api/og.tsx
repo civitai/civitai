@@ -45,6 +45,7 @@ import {
 import { parseMilestoneShareId } from '~/shared/constants/creator-journey.constants';
 import { decorationFrameBox } from '~/components/UserAvatar/decoration-frame.util';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { imageNotFlaggedWhere, isImageNotFlagged } from '~/server/common/image-visibility';
 
 // --- Schema & Types ---
 
@@ -108,6 +109,15 @@ const ogImageSelect = {
   height: true,
 } as const;
 
+const ogArticleImageSelect = {
+  ...ogImageSelect,
+  ingestion: true,
+  needsReview: true,
+  modelRestricted: true,
+  acceptableMinor: true,
+  minor: true,
+} as const;
+
 // --- Static app assets (inlined) ---
 //
 // The card embeds a couple of small app PNGs (the logo placeholder / stats-bar
@@ -149,6 +159,13 @@ function formatStat(n: number): string {
 function getAspectRatio(img: { width?: number | null; height?: number | null }): number {
   if (img.width && img.height && img.height > 0) return img.width / img.height;
   return 1;
+}
+
+// Link previews have no viewer, so they pick images as getEntityCoverImage does for a signed-out one.
+const ogImageNotFlagged = imageNotFlaggedWhere();
+
+function notFlagged<T extends Parameters<typeof isImageNotFlagged>[0]>(image: T | null): T | null {
+  return image && isImageNotFlagged(image) ? image : null;
 }
 
 function getSafeImage(image: OgImage | null | undefined): OgImage | null {
@@ -235,6 +252,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
     tosViolation: false,
     needsReview: null,
     ingestion: 'Scanned' as const,
+    ...ogImageNotFlagged,
   };
   const heldLevel = (
     await getShowcaseHeldLevels([{ modelId: id, minor: model.minor, sfwOnly: model.sfwOnly }])
@@ -265,9 +283,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
               availability: Availability.Public,
               ...(model.userId !== -1 ? { userId: model.userId } : {}),
             },
-            tosViolation: false,
-            needsReview: null,
-            ingestion: 'Scanned',
+            ...previewableImage,
             ...withinHeldLevel,
           },
           select: ogImageSelect,
@@ -333,10 +349,10 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
         content: true,
         user: { select: { username: true } },
         coverImage: {
-          select: { ...ogImageSelect, ingestion: true, needsReview: true, modelRestricted: true },
+          select: ogArticleImageSelect,
         },
         bannerImage: {
-          select: { ...ogImageSelect, ingestion: true, needsReview: true, modelRestricted: true },
+          select: ogArticleImageSelect,
         },
       },
     }),
@@ -372,7 +388,8 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
     creator: article.user.username ?? 'Unknown',
     ...buildEntityImage(
       getSafeImage(
-        servableArticleImage(article.coverImage) ?? servableArticleImage(article.bannerImage)
+        notFlagged(servableArticleImage(article.coverImage)) ??
+          notFlagged(servableArticleImage(article.bannerImage))
       )
     ),
     stats,
@@ -417,6 +434,7 @@ async function fetchPostData(id: number): Promise<EntityData | null> {
         tosViolation: false,
         needsReview: null,
         ingestion: 'Scanned',
+        ...ogImageNotFlagged,
       },
       select: ogImageSelect,
       orderBy: [{ index: 'asc' }, { id: 'asc' }],

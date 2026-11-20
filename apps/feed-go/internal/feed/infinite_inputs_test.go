@@ -136,7 +136,7 @@ func TestParseInfiniteIgnoresStrippedLegacyKeys(t *testing.T) {
 	for input, reason := range map[string]string{
 		`{"useIndex":true,"someNewFilter":1}`: "input-unknown-key",
 		`{"search":"x","zzz":1}`:              "input-unknown-key",
-		`{"useIndex":true,"collectionId":5}`:  "input-collectionId",
+		`{"useIndex":true,"hubId":5}`:         "input-hubId",
 	} {
 		if _, err := ParseInfinite(parseObj(t, input)); fallback.Reason(err) != reason {
 			t.Errorf("ParseInfinite %s: reason %q (err %v), want %q", input, fallback.Reason(err), err, reason)
