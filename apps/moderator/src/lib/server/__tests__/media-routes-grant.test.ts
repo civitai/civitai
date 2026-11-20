@@ -100,7 +100,10 @@ describe('held media without the CSAM page', () => {
     h.grants.add(HELD_MEDIA_PAGE);
     expect(await call(held, '/api/held-media/7')).toBe(200);
     expect(h.getHeldMedia).toHaveBeenCalledWith(7);
-    expect(h.insertModActivity).toHaveBeenCalled();
+    expect(h.insertModActivity).toHaveBeenCalledTimes(1);
+    expect(h.insertModActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 42, entityType: 'image', entityId: 7 })
+    );
   });
 });
 

@@ -6,6 +6,7 @@ import {
   newReviewBatchId,
   parseBlockedForPatterns,
   parseReviewBatchRecord,
+  SCANNER_HITS_SQL,
   scannerCsamVerdict,
   scannerHeldIds,
 } from '../review-batch';
@@ -29,6 +30,11 @@ describe('scannerCsamVerdict', () => {
     expect(scannerCsamVerdict(1, rows)).toBe('hit');
     expect(scannerCsamVerdict(2, rows)).toBe('clear');
     expect(scannerCsamVerdict(3, rows)).toBe('none');
+  });
+
+  it('refuses a row read without the CSAM column', () => {
+    expect(scannerCsamVerdict(1, [{ contentHash: imageAuditContentHash(1) }])).toBe('hit');
+    expect(SCANNER_HITS_SQL).toMatch(/AS csamHit/);
   });
 });
 

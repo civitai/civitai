@@ -269,6 +269,7 @@ describe('copies sharing bytes with a restricted image', () => {
       DELETE FROM "CsamReport" WHERE "userId" = 990100199;
       DELETE FROM "EvidenceHoldImage" WHERE "imageId" IN (990000102, 990000104);
       DELETE FROM "ImageCdnModeratorDelete" WHERE "imageId" = 990000105;
+      DELETE FROM "EvidenceHeldUser" WHERE "userId" = 990100102;
       UPDATE "Image" SET "needsReview" = NULL, minor = false WHERE id = 990000102;
     `);
   });
@@ -289,6 +290,11 @@ describe('copies sharing bytes with a restricted image', () => {
     ['a reported row on the same url', 990000101, () => report(990000102)],
     ['a reported row with the same pHash', 990000103, () => report(990000104)],
     ['a held row on the same url', 990000101, () => hold(990000102)],
+    [
+      'a copy on the same url whose owner is held',
+      990000101,
+      () => db.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (990100102)`),
+    ],
     [
       'an unreported copy on the same url in review',
       990000101,

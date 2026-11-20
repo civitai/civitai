@@ -88,7 +88,7 @@ export function csamRestrictedSql(image: string): string {
     OR ${reportListedUrlSql(url)}
     OR ${evidenceHeldUrlSql(url)}
     OR ${heldUrlSql(url)}
-  ), false)`;
+  ), true)`;
 }
 
 /** Whether the "Image" row aliased `image` has a signal that puts it in the `suspect` tier, read in
@@ -135,8 +135,8 @@ export type ScannerVerdict = 'hit' | 'clear' | 'none';
 /**
  * A process-local cache of scanner verdicts, so a page of tiles, or a video's range requests, does
  * not query ClickHouse once per request. A blocked image's labels are written by its scan, which has
- * finished, so a verdict held for `ttlMs` is not expected to go stale. An unreadable answer (null) is
- * never cached: the next request asks again.
+ * finished, so a `hit` or `clear` held for `ttlMs` is not expected to go stale. An unreadable answer
+ * (null) and `none` are never cached: rows can land after the verdict, so the next request asks again.
  */
 export function createScannerVerdictCache(
   read: (imageId: number) => Promise<ScannerVerdict | null>,
@@ -149,7 +149,7 @@ export function createScannerVerdictCache(
       if (hit && now() - hit.at < ttlMs) return hit.verdict;
       entries.delete(imageId);
       const verdict = await read(imageId);
-      if (verdict === null) return null;
+      if (verdict === null || verdict === 'none') return verdict;
       if (entries.size >= max) entries.delete(entries.keys().next().value as number);
       entries.set(imageId, { verdict, at: now() });
       return verdict;

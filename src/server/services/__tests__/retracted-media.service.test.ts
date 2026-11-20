@@ -312,6 +312,7 @@ describe('copies sharing bytes with a restricted image', () => {
       DELETE FROM "CsamReport" WHERE "userId" = 990100199;
       DELETE FROM "EvidenceHoldImage" WHERE "imageId" IN (990000102, 990000105);
       DELETE FROM "ImageCdnModeratorDelete" WHERE "imageId" = 990000105;
+      DELETE FROM "EvidenceHeldUser" WHERE "userId" = 990100102;
       UPDATE "Image" SET "needsReview" = NULL, minor = false WHERE id = 990000102;
     `);
   });
@@ -344,6 +345,19 @@ describe('copies sharing bytes with a restricted image', () => {
       'an unreported copy on the same url in review',
       990000101,
       () => pg.query(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 990000102`),
+    ],
+    [
+      'a copy on the same url whose owner is held',
+      990000101,
+      () => pg.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (990100102)`),
+    ],
+    [
+      'a sent report listing it',
+      990000101,
+      () =>
+        pg.query(
+          `INSERT INTO "CsamReport" ("userId", details, images, "reportSentAt") VALUES (990100199, '{}', '[990000101]', now())`
+        ),
     ],
     [
       'a held row on the same url',
