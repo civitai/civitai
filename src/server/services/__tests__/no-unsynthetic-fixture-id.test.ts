@@ -21,11 +21,11 @@ const INT4_MAX = 2_147_483_647;
 const DESK_MIN = 990_000_000_000;
 const DESK_MAX = 990_999_999_999;
 const DESK_KEY = /(?:conversation|group|ticket)_?id['"`]?\s*[:=]\s*$/i;
+const KEY_BEFORE = /([\w$]+)['"`]?\s*[:=]\s*['"`]?\s*$/;
 /**
  * A count or size setting: the key's first word is max/min or its last is limit/cap (`maxOpen`,
  * `BIND_LIMIT`, `uploadCap`), and no word is id/ids (`maxUserId` is still checked).
  */
-const KEY_BEFORE = /([\w$]+)['"`]?\s*[:=]\s*['"`]?\s*$/;
 function isCapKey(before: string): boolean {
   const key = KEY_BEFORE.exec(before)?.[1];
   if (!key) return false;
@@ -37,7 +37,6 @@ function isCapKey(before: string): boolean {
   if (words.some((w) => w === 'id' || w === 'ids')) return false;
   return ['max', 'min'].includes(words[0]) || ['limit', 'cap'].includes(words[words.length - 1]);
 }
-/\b(?:max|min)(?![\w$]*id\b)[\w$]*['"`]?\s*[:=]\s*['"`]?\s*$|(?:limit|cap)['"`]?\s*[:=]\s*['"`]?\s*$/i;
 
 const EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.mts', '.mjs', '.svelte', '.sql', '.json']);
 const SKIP_DIRS = new Set(['node_modules', '.svelte-kit', '.next', 'build', 'dist', '.turbo']);
