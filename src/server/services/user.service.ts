@@ -477,6 +477,56 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
 
 export { isUsernamePermitted } from '~/server/services/username-permitted';
 
+/**
+ * Before a moderator changes another user's profile text: when the user is named on a CSAM report,
+ * or `alwaysArchive` is set, `archive` stores the current text, and this throws if it rejects so the
+ * change does not happen. The text is read again after each upload and archived again if it changed
+ * meanwhile (at most three times, then this refuses), so what changes matches the last copy archived
+ * to within one read.
+ */
+export async function archiveProfileBeforeModeratorChange({
+  userId,
+  actorId,
+  fields,
+  archive,
+  alwaysArchive = false,
+}: {
+  userId: number;
+  actorId: number;
+  fields: ProfileClearField[];
+  archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+  alwaysArchive?: boolean;
+}) {
+  const mustArchive =
+    alwaysArchive ||
+    // primary: a report filed a moment ago must not let this clear skip the archive.
+    !!(await dbWrite.csamReport.findFirst({
+      where: {
+        OR: [
+          { userId },
+          // The report's secondary user counts as reported too; the id may be stored either way.
+          { details: { path: ['secondaryUserId'], equals: userId } },
+          { details: { path: ['secondaryUserId'], equals: String(userId) } },
+        ],
+      },
+      select: { id: true },
+    }));
+  if (mustArchive) {
+    let archived: ProfileClearSnapshot['profile'] | null = null;
+    for (let attempt = 0; ; attempt++) {
+      // primary: the archived text must be the text this call clears.
+      const profile = await dbWrite.userProfile.findUnique({
+        where: { userId },
+        select: PROFILE_CLEAR_SNAPSHOT_SELECT,
+      });
+      if (!profile || (archived && isEqual(profile, archived))) break;
+      if (attempt === 3) throw new Error(`profile ${userId} kept changing while it was archived`);
+      await archive({ userId, actorId, clearedFields: fields, profile });
+      archived = profile;
+    }
+  }
+}
+
 /** The profile text a clear removes, as stored just before the clear. */
 export type ProfileClearSnapshot = {
   userId: number;
@@ -492,7 +542,7 @@ export type ProfileClearSnapshot = {
     showcaseSections: Prisma.JsonValue;
   };
 };
-type ProfileClearField = 'location' | 'bio' | 'message' | 'showcaseSections';
+export type ProfileClearField = 'location' | 'bio' | 'message' | 'showcaseSections';
 const PROFILE_CLEAR_SNAPSHOT_SELECT = {
   bio: true,
   message: true,
@@ -529,36 +579,7 @@ export async function clearUserProfileFields({
 }) {
   if (fields.length === 0) return { updated: false };
 
-  const mustArchive =
-    alwaysArchive ||
-    // primary: a report filed a moment ago must not let this clear skip the archive.
-    !!(await dbWrite.csamReport.findFirst({
-      where: {
-        OR: [
-          { userId },
-          // The report's secondary user counts as reported too; the id may be stored either way.
-          { details: { path: ['secondaryUserId'], equals: userId } },
-          { details: { path: ['secondaryUserId'], equals: String(userId) } },
-        ],
-      },
-      select: { id: true },
-    }));
-  if (mustArchive) {
-    // The upload takes a while: archive again if the text changed meanwhile, so what is cleared
-    // matches the last copy archived to within one read.
-    let archived: ProfileClearSnapshot['profile'] | null = null;
-    for (let attempt = 0; ; attempt++) {
-      // primary: the archived text must be the text this call clears.
-      const profile = await dbWrite.userProfile.findUnique({
-        where: { userId },
-        select: PROFILE_CLEAR_SNAPSHOT_SELECT,
-      });
-      if (!profile || (archived && isEqual(profile, archived))) break;
-      if (attempt === 3) throw new Error(`profile ${userId} kept changing while it was archived`);
-      await archive({ userId, actorId, clearedFields: fields, profile });
-      archived = profile;
-    }
-  }
+  await archiveProfileBeforeModeratorChange({ userId, actorId, fields, archive, alwaysArchive });
 
   const data: Prisma.UserProfileUpdateInput = {};
   if (fields.includes('location')) data.location = null;

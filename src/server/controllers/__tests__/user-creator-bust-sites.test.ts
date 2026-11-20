@@ -139,6 +139,30 @@ describe('creator-card bust in the profile and user write handlers', () => {
     });
   });
 
+  describe("a moderator editing another user's profile", () => {
+    const edit = (ctxUser: { id: number; isModerator: boolean }) =>
+      updateUserProfileHandler({
+        input: { userId: OWNER, bio: '' },
+        ctx: { user: { ...ctxUser, muted: false } },
+      } as never);
+
+    it('records the edit, and archives nothing for a user no report names', async () => {
+      dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(null as never);
+      await edit({ id: MODERATOR, isModerator: true });
+      expect(dbMock.dbWrite.csamReport.findFirst).toHaveBeenCalledTimes(1);
+      expect(dbMock.dbWrite.userProfile.findUnique).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.modActivity.create).toHaveBeenCalledWith({
+        data: { userId: MODERATOR, activity: 'editProfile', entityType: 'User', entityId: OWNER },
+      });
+    });
+
+    it('leaves an owner editing their own profile alone', async () => {
+      await edit({ id: OWNER, isModerator: false });
+      expect(dbMock.dbWrite.csamReport.findFirst).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.modActivity.create).not.toHaveBeenCalled();
+    });
+  });
+
   it('addEntityToShowcaseHandler busts the caller', async () => {
     const cards = await cardsAfter(() =>
       addEntityToShowcaseHandler({

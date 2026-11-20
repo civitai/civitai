@@ -22,7 +22,13 @@ import { eventViewerOf } from '~/server/events/event-viewer';
 import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  archiveProfileBeforeModeratorChange,
+  type ProfileClearField,
+} from '~/server/services/user.service';
+import { archiveUserProfile } from '~/server/services/csam.service-new';
+import { dbWrite } from '~/server/db/client';
 import { getShowcaseHatForUser } from '~/server/events/showcase-hat';
 
 export const getUserContentOverviewHandler = async ({
@@ -128,6 +134,19 @@ export const updateUserProfileHandler = async ({
       throw throwAuthorizationError();
 
     const userId = sessionUser.isModerator ? input.userId || sessionUser.id : sessionUser.id;
+    const byModerator = userId !== sessionUser.id;
+    if (byModerator) {
+      const fields = (
+        ['bio', 'message', 'location', 'showcaseSections'] as ProfileClearField[]
+      ).filter((field) => field in input);
+      if (fields.length)
+        await archiveProfileBeforeModeratorChange({
+          userId,
+          actorId: sessionUser.id,
+          fields,
+          archive: archiveUserProfile,
+        });
+    }
     const user = await updateUserProfile({
       ...input,
       userId,
@@ -136,6 +155,15 @@ export const updateUserProfileHandler = async ({
       domain: ctx.domain,
     });
 
+    if (byModerator)
+      await dbWrite.modActivity.create({
+        data: {
+          userId: sessionUser.id,
+          activity: 'editProfile',
+          entityType: 'User',
+          entityId: userId,
+        },
+      });
     await bustUserCreator(userId);
 
     return user;
