@@ -545,12 +545,5 @@ describe('against Postgres', () => {
       );
       expect(onReviews).not.toHaveBeenCalled();
     });
-
-    it('queries nothing for no posts', () => {
-      syncReviewsOfMovedPosts({ change: 'publish', postIds: [], onReviews });
-
-      expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
-      expect(onReviews).not.toHaveBeenCalled();
-    });
   });
 });

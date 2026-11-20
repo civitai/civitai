@@ -48,15 +48,18 @@ type InfiniteInput struct {
 	// BaseModels is `baseModels`, as sent (order, repeats and empty names kept); matched as text,
 	// never against a list.
 	BaseModels []string
+	// Followed is `followed: true`: for a signed-in viewer, only the creators they follow
+	// (getUserFollows). Signed out it changes nothing (both Node paths read it only with a user).
+	Followed bool
 }
 
 // infiniteUnsupported are the input keys this port falls back on when present: the gallery's list
 // without the inputs image.getInfinite answers here (userId, username, postId, tags,
-// prioritizedUserIds, pending, baseModels).
+// prioritizedUserIds, pending, baseModels, followed).
 var infiniteUnsupported = func() []string {
 	ported := map[string]bool{
 		"userId": true, "username": true, "postId": true, "tags": true, "prioritizedUserIds": true, "pending": true,
-		"baseModels": true,
+		"baseModels": true, "followed": true,
 	}
 	out := make([]string, 0, len(unsupportedKeys))
 	for _, k := range unsupportedKeys {
@@ -115,7 +118,7 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 			return nil, fallback.New("infinite-hat-turf")
 		}
 	}
-	base, err := parseInput(withoutUnreadIncludes(m), infiniteUnsupported, infiniteAbsentKeys)
+	base, err := parseInput(withoutUnreadIncludes(m), infiniteUnsupported, infiniteAbsentKeys, true)
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +162,13 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 		if in.BaseModels, err = baseModelNames(v); err != nil {
 			return nil, err
 		}
+	}
+	if v, ok := m["followed"]; ok && v != nil {
+		b, isBool := v.(bool) // z.boolean(), not coerced: anything else is Node's BAD_REQUEST
+		if !isBool {
+			return nil, fallback.NewfSafe("input-invalid", "followed", "followed: %v", v)
+		}
+		in.Followed = b
 	}
 	return in, nil
 }
@@ -213,6 +223,11 @@ func withoutUnreadIncludes(m map[string]any) map[string]any {
 	return out
 }
 
+// hydration is what the include list hydrates: 'profilePictures', 'cosmetics' and 'tags'.
+func (in *InfiniteInput) hydration() includes {
+	return includes{profilePictures: in.IncludeProfilePictures, cosmetics: in.IncludeCosmetics, tags: in.IncludeTags}
+}
+
 // prioritized is getAllImages' prioritizeUser: a non-empty prioritizedUserIds.
 func (in *InfiniteInput) prioritized() bool {
 	return len(in.PrioritizedUserIDs) > 0
@@ -252,7 +267,15 @@ type InfiniteSources interface {
 	PostVersions(ctx context.Context, postIDs []int) (map[int]int, error)
 	VersionModels(ctx context.Context, versionIDs []int) (map[int]int, error)
 	UserIDByUsername(ctx context.Context, username string) (int, bool, error)
+	// UserFollows is getUserFollows: the ids the user follows (empty for none).
+	UserFollows(ctx context.Context, userID int) ([]int, error)
 }
+
+// maxFollowedBinds bounds the follow list the Postgres path binds (`i."userId" IN (…)`, one Prisma
+// parameter per id in Node, against Postgres' 65535 per statement): a longer list falls back
+// (followed-db-many). It is the feed's own MAX_FOLLOWED, so a list the feed path answers is never
+// refused here.
+const maxFollowedBinds = feedsvc.MaxFollowed
 
 // BlockedTagsKey is REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS, on the cache cluster.
 const BlockedTagsKey = "system:blocked-browsing-tags"
@@ -581,6 +604,21 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		}
 		userID = id
 	}
+	// `followed`, signed in only: the viewer's follow list, read once and used by both the feed query
+	// (serveImagesFromFeedService's followedUserIds) and the page query (getAllImagesUncaptured's
+	// prefetchedUserFollows), each of which reads it again in Node (followedOn below).
+	followedOn := in.Followed && viewer.ID != 0
+	var follows []int
+	if followedOn {
+		if follows, err = d.Sources.UserFollows(ctx, viewer.ID); err != nil {
+			return nil, err
+		}
+		if !useIndex && len(follows) > maxFollowedBinds {
+			// Node binds the list one parameter per id (Prisma.join); a list this long is not answered
+			// here, whatever Node then does with it.
+			return nil, fallback.Safef("followed-db-many", "%d", len(follows))
+		}
+	}
 
 	q := ImagesQuery{
 		Limit:          in.Limit,
@@ -614,16 +652,23 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 	if in.prioritized() {
 		q.PrioritizedUserIDs = in.PrioritizedUserIDs
 	}
+	// An empty follow list adds no clause (`prefetchedUserFollows?.length`): the Postgres path then
+	// answers the unfiltered page, while the feed path answers it with an empty page.
+	if len(follows) > 0 {
+		q.FollowedUserIDs = follows
+	}
 	if useIndex {
-		return infiniteFromFeed(ctx, d, in, q, viewer, now)
+		return infiniteFromFeed(ctx, d, in, q, viewer, now, followedOn, follows)
 	}
 	return infiniteFromDB(ctx, d, in, q, viewer, now)
 }
 
 // infiniteFromFeed is getAllImagesIndex with the feed service available: the feed picks and orders
 // the page, Postgres supplies the rows (feedHydrateQuery), and the answer is
-// `{ items, nextCursor, source: 'feed' }`.
-func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q ImagesQuery, viewer Viewer, now time.Time) (*InfiniteAnswer, error) {
+// `{ items, nextCursor, source: 'feed' }`. followedOn is `followed` with a signed-in viewer, follows
+// their follow list.
+func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q ImagesQuery, viewer Viewer, now time.Time,
+	followedOn bool, follows []int) (*InfiniteAnswer, error) {
 	fq := feedsvc.Query{
 		BrowsingLevel:         q.BrowsingLevel,
 		ExcludedTagIDs:        q.ExcludedTagIDs,
@@ -650,6 +695,8 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		Techniques:            in.Techniques,
 		Tools:                 in.Tools,
 		BaseModels:            in.BaseModels,
+		Followed:              followedOn,
+		FollowedUserIDs:       follows,
 	}
 	if in.CursorText != "" {
 		fq.CursorText = in.CursorText
@@ -664,6 +711,11 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		return &InfiniteAnswer{Value: superjson.Object{
 			{Key: "items", Val: items}, {Key: "nextCursor", Val: cursor}, {Key: "source", Val: "feed"},
 		}, Trivial: trivial}
+	}
+	if followedOn && len(follows) == 0 {
+		// serveFromFeed, before it maps the input: a follow list with no creators is an empty feed,
+		// whatever else the request says (its cursor included).
+		return page([]any{}, "", true), nil
 	}
 	query, refusal := feedsvc.Map(fq)
 	if refusal != nil {
@@ -695,7 +747,7 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 	hq.IDs, hq.Limit = ans.IDs, len(ans.IDs)
 	hq.Cursor, hq.ModelID, hq.ModelVersionID, hq.Period = 0, 0, 0, "AllTime"
 	hq.ThrowOnStatementTimeout = true
-	images, _, err := fetchInfiniteRows(ctx, d, hq, viewer, now, in.IncludeProfilePictures, in.IncludeCosmetics)
+	images, _, err := fetchInfiniteRows(ctx, d, hq, viewer, now, in.hydration())
 	if err != nil {
 		if fallback.Reason(err) != "" {
 			return nil, err
@@ -746,7 +798,7 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 			return nil, fallback.New("prioritized-system-user")
 		}
 	}
-	images, next, err := fetchInfiniteRows(ctx, d, q, viewer, now, in.IncludeProfilePictures, in.IncludeCosmetics)
+	images, next, err := fetchInfiniteRows(ctx, d, q, viewer, now, in.hydration())
 	if err != nil {
 		return nil, err
 	}
@@ -762,9 +814,8 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 // fetchInfiniteRows is one getAllImages call: the query (through the page cache), the hydration
 // and the per-image transform with image.getInfinite's wire trim. next is the response's
 // `nextCursor`: the look-ahead row's cursor column (the image id, or a post's nullable index), or
-// undefined at the end. profilePictures and cosmetics are the include list's 'profilePictures' and
-// 'cosmetics'.
-func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, viewer Viewer, now time.Time, profilePictures, cosmetics bool) ([]Image, any, error) {
+// undefined at the end. inc is what the include list hydrates (includes).
+func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, viewer Viewer, now time.Time, inc includes) ([]Image, any, error) {
 	rows, err := FetchRows(ctx, d.DB, d.Cache, q.Build())
 	if err != nil {
 		return nil, nil, err
@@ -779,7 +830,7 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 			next = int64(look.CursorID)
 		}
 	}
-	hy, err := hydrateRows(ctx, d.Hydrator, rows, viewer, d.Config.VisibleDecorationEvents, profilePictures, cosmetics)
+	hy, err := hydrateRows(ctx, d.Hydrator, rows, viewer, d.Config.VisibleDecorationEvents, inc)
 	if err != nil {
 		return nil, nil, err
 	}

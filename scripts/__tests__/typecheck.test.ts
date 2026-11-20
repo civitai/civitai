@@ -75,7 +75,8 @@ describe('typecheck wrapper outcome classification', () => {
         [
           "console.error('<--- Last few GCs --->');",
           "console.error('FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory');",
-          'process.abort();',
+          // Exit 134 is how a shell reports V8's abort; a real abort() dumps core and costs seconds.
+          'process.exit(134);',
         ].join('\n')
       )
     );
