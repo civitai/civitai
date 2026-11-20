@@ -68,6 +68,19 @@ describe.skipIf(!url)('the site-wide upload search cap on a real Redis', () => {
     });
   });
 
+  it('the claim script itself refuses at the cap, when a stale read lets the pre-check pass', async () => {
+    const now = Date.now();
+    const full = Array.from(
+      { length: SEARCH_UPLOAD_GLOBAL_DAILY_SEARCH_CAP },
+      (_, i) => now - 3_600_000 + i
+    );
+    await real.hSet(prefix + BUCKET.cacheKey, BUCKET.hashKey, pack(full));
+    redisMock.redis.packed.hGet.mockResolvedValueOnce([]);
+    await expect(claimSearchUploadSearchSlot(req)).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+  });
+
   it('refuses when the claim script errors', async () => {
     await real.del(prefix + BUCKET.cacheKey);
     redisMock.redis.eval.mockRejectedValueOnce(

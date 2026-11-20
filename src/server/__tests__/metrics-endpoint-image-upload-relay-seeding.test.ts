@@ -141,3 +141,16 @@ describe('/api/metrics seeds the image-upload relay counter', () => {
     expect(body).toContain(IMAGE_UPLOAD_RELAY_METRIC);
   });
 });
+
+describe('/api/metrics seeds the search-by-upload counter', () => {
+  // Written out, not imported: importing the metrics module here loads it before the mocks above.
+  const SEARCH_UPLOADS = 'search_upload_embed_total';
+  const SEARCH_UPLOAD_RESULTS = ['prepared', 'refused', 'embedded'];
+  it('exposes every result at 0 on a pod where no upload has been searched', async () => {
+    const body = await scrape();
+    for (const result of SEARCH_UPLOAD_RESULTS)
+      expect(body, `${result} must be exposed at 0`).toMatch(
+        new RegExp(`^${SEARCH_UPLOADS}\\{result="${result}"\\} 0$`, 'm')
+      );
+  });
+});
