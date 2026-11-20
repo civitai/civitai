@@ -6078,7 +6078,7 @@ export type ServiceOffering = {
   allowReviewWork: Generated<boolean>;
   /**
    * Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
-   * only in the transaction that publishes or hides a review; a nightly check compares them to rows.
+   * only in the transaction that publishes or hides a review; the deals job compares them to rows.
    */
   happyCount: Generated<number>;
   reviewCount: Generated<number>;
