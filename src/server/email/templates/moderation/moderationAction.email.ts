@@ -158,7 +158,7 @@ export const moderationActionEmail = createEmail({
   },
 
   /** Plain-text fallback for clients that don't render HTML. */
-  text({ username, kind, reason, items, intro: introOverride }: ModerationActionEmailData) {
+  text({ username, kind, reason, ctaUrl, items, intro: introOverride }: ModerationActionEmailData) {
     const { heading, positive } = moderationActionConfig[kind];
     const intro = introOverride ?? moderationActionConfig[kind].intro;
 
@@ -173,7 +173,8 @@ export const moderationActionEmail = createEmail({
         '',
         `For more information, review our Terms of Service: ${getBaseUrl()}/content/tos`
       );
-    if (!positive) lines.push('', SUPPORT_LINE);
+    // The HTML's Contact Support button, so a plain-text reader gets its link too.
+    if (!positive) lines.push('', SUPPORT_LINE, `Contact Support: ${ctaUrl ?? SUPPORT_URL}`);
     lines.push('', `— ${SIGNATURE}`);
 
     return lines.join('\n') + '\n';

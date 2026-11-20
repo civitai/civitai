@@ -40,12 +40,21 @@ const indexNames = Object.entries(indexModule)
   .map(([name]) => name)
   .sort();
 
+/**
+ * Not a branded email: Legal's intake reads its key=value lines by machine, so it is a bare
+ * <pre> on purpose and never gets the shared document.
+ */
+const UNBRANDED = ['personalDataExportRefusedEmail'];
+
 const rendered = await Promise.all(
-  [...fromFiles.entries()].sort().map(async ([name, template]) => {
-    const data = await template.getTestData?.({});
-    if (!data) throw new Error(`${name} has no testData`);
-    return { name, html: template.getHtml(data), text: template.getText(data) };
-  })
+  [...fromFiles.entries()]
+    .filter(([name]) => !UNBRANDED.includes(name))
+    .sort()
+    .map(async ([name, template]) => {
+      const data = await template.getTestData?.({});
+      if (!data) throw new Error(`${name} has no testData`);
+      return { name, html: template.getHtml(data), text: template.getText(data) };
+    })
 );
 
 /** The app-review emails, rendered through the notification email as they are sent. */
@@ -61,6 +70,9 @@ describe('every email template renders the shared document', () => {
     expect(indexNames).toHaveLength(21);
     for (const name of indexNames) expect(fromFiles.has(name), name).toBe(true);
     expect(rendered.map((r) => r.name)).toContain('notificationEmail');
+    // Each exemption names a real template, and only it is skipped.
+    for (const name of UNBRANDED) expect(fromFiles.has(name), name).toBe(true);
+    expect(rendered).toHaveLength(fromFiles.size - UNBRANDED.length);
   });
 
   it.each(rendered.map((r) => [r.name, r] as const))('%s', (_name, { html, text }) => {
