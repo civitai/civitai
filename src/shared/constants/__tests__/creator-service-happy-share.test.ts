@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { serviceHappyShare } from '~/shared/constants/creator-service.constants';
 
+// The three-buyer bar is the Creator Services counting rule T&S confirmed (civitai/civitai#9836).
 describe('serviceHappyShare', () => {
   it('shows no share until three buyers count, then a whole percent', () => {
     expect(serviceHappyShare([{ happyCount: 2, reviewCount: 2 }])).toBeNull();

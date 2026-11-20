@@ -176,7 +176,6 @@ describe("creator service router: an offering's reviews", () => {
 });
 
 describe("creator service router: what an offering's reviews are read with", () => {
-  // The DB is the boundary: the viewer's blocks come back from it, and the review query goes to it.
   const reviewQueries = () =>
     dbMock.dbRead.$queryRaw.mock.calls
       .map(([strings, ...values]) =>
