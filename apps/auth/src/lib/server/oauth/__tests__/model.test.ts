@@ -76,6 +76,7 @@ vi.mock('@civitai/auth/secret-hash', () => ({
 
 import { oauthModel, resolveClientLite } from '../model';
 import { invalidateDomainCache } from '../first-party';
+import { register } from '$lib/server/metrics';
 
 const baseClient = {
   id: 'pub-1',
@@ -557,5 +558,60 @@ describe('the remix apps client (civitai-remix-apps)', () => {
     expect(await oauthModel.getClient('civitai-remix-apps', 'guess', request)).toMatchObject({
       id: 'civitai-remix-apps',
     });
+  });
+});
+
+describe('each call site counts under its own use label', () => {
+  const MOD_ORIGIN = 'https://moderator.civitai.com';
+  const MOD_ID = 'firstparty-moderator_civitai_com';
+  const count = async (use: string) => {
+    const metric = (await register.getMetricsAsJSON()).find(
+      (m) => m.name === 'hub_first_party_origin_total'
+    );
+    const v = metric?.values.find(
+      (s) => s.labels?.entry === 'moderator.civitai.com' && s.labels?.use === use
+    );
+    return v?.value ?? 0;
+  };
+  const trustModerator = () => {
+    invalidateDomainCache();
+    h.selectResults.length = 0;
+    h.selectResults.push(undefined); // no OauthClient row
+    h.selectResults.push({ domain: 'moderator.civitai.com', includeSubdomains: false });
+  };
+
+  it("getClient counts under 'authorize_client'", async () => {
+    trustModerator();
+    const before = await count('authorize_client');
+    const request: any = {
+      headers: {},
+      query: { response_type: 'code', redirect_uri: `${MOD_ORIGIN}/api/auth/callback` },
+    };
+    expect(await oauthModel.getClient(MOD_ID, null, request)).toBeTruthy();
+    expect(await count('authorize_client')).toBe(before + 1);
+  });
+
+  it("getAuthorizationCode counts under 'code_exchange'", async () => {
+    trustModerator();
+    const before = await count('code_exchange');
+    const prev = h.state.redis;
+    h.state.redis = {
+      packed: {
+        hGet: () =>
+          Promise.resolve({
+            clientId: MOD_ID,
+            userId: 7,
+            scope: '1',
+            redirectUri: `${MOD_ORIGIN}/api/auth/callback`,
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          }),
+      },
+    };
+    try {
+      expect(await oauthModel.getAuthorizationCode('c')).toBeTruthy();
+    } finally {
+      h.state.redis = prev;
+    }
+    expect(await count('code_exchange')).toBe(before + 1);
   });
 });

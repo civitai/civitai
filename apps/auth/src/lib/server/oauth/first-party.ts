@@ -93,9 +93,8 @@ export function originOf(url: string | undefined): string | undefined {
 /**
  * Where a first-party origin was checked; the `use` label on hub_first_party_origin_total.
  *   authorize        — the /authorize endpoint resolving the client
- *   authorize_client — the OAuth library's getClient during that same /authorize (so one sign-in counts
- *                      once under each of these two)
- *   code_exchange    — redeeming the authorization code (token and session exchange)
+ *   authorize_client — the OAuth library's getClient first-party fallback
+ *   code_exchange    — getAuthorizationCode redeeming the code (the token grant and /api/auth/oauth/session)
  *   post_login       — a cross-scope login deciding whose cookie domain to write
  */
 export type FirstPartyOriginUse = 'authorize' | 'authorize_client' | 'code_exchange' | 'post_login';

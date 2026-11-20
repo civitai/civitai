@@ -73,14 +73,13 @@ export const captchaVerificationsTotal = new Counter({
 });
 
 /**
- * First-party sign-in origins admitted, by the registry entry that admitted them (`'always'` for a dev
- * always-trust host), the call site, and scheme. `entry` is the row's domain, never the request host, so a
- * preview subdomain counts under its parent row and the label set stays bounded by the registry. Not
- * pre-declared: the entries are registry rows, not a fixed enum.
+ * First-party sign-in origins that matched a registry entry (`'always'` for a dev always-trust host), by
+ * call site and scheme. Counted on the origin match, before the caller checks client_id. `entry` is the
+ * row's domain, never the request host, so label cardinality stays bounded by the registry.
  */
 export const firstPartyOriginTotal = new Counter({
   name: 'hub_first_party_origin_total',
-  help: 'First-party sign-in origins admitted, labeled by matched registry entry, call site and scheme.',
+  help: 'First-party sign-in origins that matched a registry entry, labeled by entry, call site and scheme.',
   labelNames: ['entry', 'use', 'scheme'] as const,
   registers: [register],
 });
