@@ -7,7 +7,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * Placing a sticker or submitting a remix publishes content onto someone else's
  * image, so it is a posting channel aimed at a specific person — the thing a
  * mute exists to close. `protectedProcedure` refuses a ban and says nothing about a mute, so the
- * create procedures are built from `guardedProcedure`.
+ * create procedures are built from `guardedProcedure`. So is the start of a sticker auto-track run:
+ * it places nothing, but it spends system-account Buzz, and the email-verified check is what keeps
+ * throwaway accounts from multiplying the free daily runs.
  *
  * Asserted at the ROUTER rather than on the services, because the refusal is a
  * property of the procedure the mutation is built from: nothing inside the services would change if
@@ -83,6 +85,9 @@ const CREATE_CALLS = [
   },
 ] as const;
 
+/** Guarded too, though it writes no placement: it spends system-account Buzz. */
+const GUARDED_NAMES = [...CREATE_CALLS.map((call) => call.name), 'startStickerAutoTrack'];
+
 type ProcedureDef = { _def: { type: string; middlewares: unknown[] } };
 
 const procedures = (placementRouter as unknown as { _def: { procedures: Record<string, unknown> } })
@@ -119,13 +124,13 @@ describe('placement router — account state refuses a placement', () => {
    * fails on what matters: a new create mutation added without the guard, or one of these quietly
    * reverted.
    */
-  it('guards exactly the placement-writing mutations', () => {
+  it('guards exactly the placement-writing and Buzz-spending mutations', () => {
     expect(guardedMiddlewares.length).toBeGreaterThan(0);
-    expect(mutationNames.length).toBeGreaterThan(CREATE_CALLS.length);
+    expect(mutationNames.length).toBeGreaterThan(GUARDED_NAMES.length);
 
     const guarded = mutationNames.filter((name) => isGuarded(procedures[name]));
 
-    expect(guarded.sort()).toEqual(CREATE_CALLS.map((call) => call.name).sort());
+    expect(guarded.sort()).toEqual([...GUARDED_NAMES].sort());
   });
 
   for (const { label, name, writer, input } of CREATE_CALLS) {
@@ -150,6 +155,34 @@ describe('placement router — account state refuses a placement', () => {
       await expect(placementCaller()[name](input)).resolves.toBeDefined();
       expect(writer).toHaveBeenCalledTimes(1);
       expect(writer).toHaveBeenCalledWith(expect.objectContaining({ placerId: PLACER }));
+    });
+  }
+
+  const AUTO_TRACK_FLAGS = { stickerVideoTracks: true, stickerAutoTrack: true };
+  const AUTO_TRACK_INPUT = {
+    imageId: 99,
+    pose: { x: STICKER_DATA.x, y: STICKER_DATA.y, scale: STICKER_DATA.scale, rotation: 0 },
+    startMs: 0,
+  };
+
+  for (const { state, user, message } of REFUSED_STATES) {
+    it(`refuses a ${state} user on sticker auto-track`, async () => {
+      await expect(
+        placementCaller({ user, features: AUTO_TRACK_FLAGS }).startStickerAutoTrack(
+          AUTO_TRACK_INPUT
+        )
+      ).rejects.toMatchObject({ code: 'FORBIDDEN', message: expect.stringMatching(message) });
+    });
+  }
+
+  for (const flag of Object.keys(AUTO_TRACK_FLAGS)) {
+    it(`refuses sticker auto-track start and poll without ${flag}`, async () => {
+      const caller = placementCaller({ features: { ...AUTO_TRACK_FLAGS, [flag]: false } });
+      const refused = { message: expect.stringMatching(/auto-track is not available/) };
+      await expect(caller.startStickerAutoTrack(AUTO_TRACK_INPUT)).rejects.toMatchObject(refused);
+      await expect(caller.getStickerAutoTrack({ workflowId: 'wf-1' })).rejects.toMatchObject(
+        refused
+      );
     });
   }
 
