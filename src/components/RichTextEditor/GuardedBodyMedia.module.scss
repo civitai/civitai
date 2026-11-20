@@ -4,7 +4,11 @@
   position: relative;
   width: fit-content;
   max-width: 100%;
-  margin-inline: auto;
+
+  // Only a size the author picked centres the image; unsized stays at the start of the line.
+  &[data-width] {
+    margin-inline: auto;
+  }
 
   &[data-width='33'] {
     max-width: 33%;
