@@ -22,21 +22,21 @@ export function resizeAndKeepSelected(
   if (typeof pos === 'number') editor.commands.setNodeSelection(pos);
 }
 
-/** The width a drag gives, as % of the column. A centred image grows on both sides at once. */
+/** The width a drag gives, as % of the column. A centered image grows on both sides at once. */
 export function draggedWidthPercent({
   startWidth,
   dx,
   side,
-  centred,
+  centered,
   columnWidth,
 }: {
   startWidth: number;
   dx: number;
   side: Side;
-  centred: boolean;
+  centered: boolean;
   columnWidth: number;
 }) {
-  const grow = (side === 'right' ? dx : -dx) * (centred ? 2 : 1);
+  const grow = (side === 'right' ? dx : -dx) * (centered ? 2 : 1);
   return Math.min(100, Math.max(10, ((startWidth + grow) / columnWidth) * 100));
 }
 
@@ -55,7 +55,7 @@ export function ResizableImageFrame({
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [preview, setPreview] = useState<number | null>(null);
-  const centred = align === 'center' || (!align && !!size);
+  const centered = align === 'center' || (!align && !!size);
 
   const startDrag = (side: Side) => (e: React.PointerEvent<HTMLElement>) => {
     const frame = frameRef.current;
@@ -77,7 +77,7 @@ export function ResizableImageFrame({
         startWidth,
         dx: ev.clientX - startX,
         side,
-        centred,
+        centered,
         columnWidth,
       });
       setPreview(percent);

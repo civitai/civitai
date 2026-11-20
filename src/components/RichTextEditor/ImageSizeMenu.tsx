@@ -19,7 +19,7 @@ import classes from './RichTextEditorComponent.module.scss';
 
 const ALIGN_OPTIONS: { label: string; value: ImageAlign; Icon: typeof IconAlignLeft }[] = [
   { label: 'Align left', value: 'left', Icon: IconAlignLeft },
-  { label: 'Centre', value: 'center', Icon: IconAlignCenter },
+  { label: 'Center', value: 'center', Icon: IconAlignCenter },
   { label: 'Align right', value: 'right', Icon: IconAlignRight },
   { label: 'Float left, text wraps', value: 'float-left', Icon: IconFloatLeft },
   { label: 'Float right, text wraps', value: 'float-right', Icon: IconFloatRight },
@@ -41,7 +41,7 @@ export function ImageSizeMenu({ editor }: { editor: Editor }) {
     selector: ({ editor }) => {
       const node = editor ? getSelectedImage(editor.state) : null;
       if (!node) return null;
-      // What the image shows with no align set: a sized image centres, an unsized one starts the line.
+      // What the image shows with no align set: a sized image centers, an unsized one starts the line.
       return (
         parseImageAlign(node.attrs.align) ?? (parseImageWidth(node.attrs.size) ? 'center' : 'left')
       );

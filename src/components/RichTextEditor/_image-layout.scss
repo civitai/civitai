@@ -1,7 +1,7 @@
 // Article image size (data-width, % of the column) and placement (data-align). Shared by the
 // rendered article (GuardedBodyMedia, plain html) and the editor, so both lay an image out alike.
 @mixin image-layout {
-  // A size the author picked centres the image unless they aligned it.
+  // A size the author picked centers the image unless they aligned it.
   &[data-width] {
     margin-inline: auto;
   }

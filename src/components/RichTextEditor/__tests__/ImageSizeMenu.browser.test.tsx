@@ -99,8 +99,8 @@ describe('image placement menu', () => {
     selectFirst(type);
 
     await expect.element(alignControl()).toBeVisible();
-    // A sized image with no alignment shows as centred.
-    await expect.element(page.getByRole('radio', { name: 'Centre' })).toBeChecked();
+    // A sized image with no alignment shows as centered.
+    await expect.element(page.getByRole('radio', { name: 'Center' })).toBeChecked();
 
     await userEvent.click(page.getByLabelText('Float left, text wraps'));
     await expect.poll(() => editor!.getHTML()).toContain('data-align="float-left"');
@@ -164,12 +164,12 @@ describe('image placement menu', () => {
     expect(getComputedStyle(handle).display).toBe('none');
   });
 
-  test('dragging a centred image grows it on both sides, and to the edge clears the size', async () => {
+  test('dragging a centered image grows it on both sides, and to the edge clears the size', async () => {
     const src = await imageUrl(COLUMN, 400);
     await mount(`<p><img src="${src}" data-width="60"></p>`);
     selectFirst('image');
 
-    // Centred, so 60px of drag is 120px of width: 480 → 600px is 75%.
+    // Centered, so 60px of drag is 120px of width: 480 → 600px is 75%.
     await dragHandle('right', 60);
     await expect.poll(() => editor!.getHTML()).toContain('data-width="75"');
 
