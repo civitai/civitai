@@ -48,6 +48,7 @@ vi.mock('~/components/MusicPlayer/MusicPlayerAudio', async (importOriginal) => (
 }));
 
 import { SongDetailStage } from '~/components/Music/SongDetail/SongDetailStage';
+import { SongMoreFromCard } from '~/components/Music/SongDetail/SongMoreFromCard';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 
 const song = (id: number, title: string, duration = 178) => ({
@@ -351,4 +352,38 @@ test('from md up the cover and lyrics show side by side, with no toggle', async 
   await expect.element(lyricsBox()).toBeVisible();
   // Hidden from the accessibility tree along with the screen.
   expect(toggle('Lyrics').query()).toBeNull();
+});
+
+describe('the More from card', () => {
+  test('keeps every song a third of the row, a short row centred rather than stretched', async () => {
+    moreFrom.songs = [2, 3, 4, 5, 6].map((id) => song(id, `Song ${id}`));
+    await renderWithProviders(
+      <div style={{ width: 340 }}>
+        <SongMoreFromCard song={midnight} />
+      </div>
+    );
+    await expect.element(page.getByText('Song 6')).toBeVisible();
+    const items = [...document.querySelectorAll('li')].map((li) => li.getBoundingClientRect());
+    // Five split 3 + 2.
+    expect(new Set(items.map((b) => Math.round(b.width))).size).toBe(1);
+    const list = document
+      .querySelector('li')!
+      .closest('ul')!
+      .parentElement!.getBoundingClientRect();
+    const [, , , fourth, fifth] = items;
+    expect(Math.round(fourth.left - list.left)).toBe(Math.round(list.right - fifth.right));
+  });
+
+  test("leaves room above a song's art", async () => {
+    moreFrom.songs = [palm];
+    await renderWithProviders(
+      <div style={{ width: 340 }}>
+        <SongMoreFromCard song={midnight} />
+      </div>
+    );
+    await expect.element(page.getByText('Palm Static')).toBeVisible();
+    const link = document.querySelector('li a')!;
+    const art = link.firstElementChild!.getBoundingClientRect();
+    expect(art.top - link.getBoundingClientRect().top).toBeGreaterThanOrEqual(8);
+  });
 });

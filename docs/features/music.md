@@ -117,3 +117,46 @@ Below the `sm` breakpoint the player is a mini bar with two sheets over it
 | Now-playing sheet (`MusicNowPlayingSheet`) | Full height: "Playing from <list>", the cover, title, creator and like, the lyric line before the playhead, the current one (larger, full white, accent marker) and the next one (synced lyrics only), the waveform with the song's timed comments (the only place a phone shows them), the transport, and the comment count, Up next and Remix (when the song allows it). The same store, transport and timeline as the desktop bar. Closes by its chevron, a downward drag of its top, Escape and Back; its ✕ closes the player. |
 | Up next sheet (`MusicUpNextSheet`)         | Opened from the now-playing sheet: the desktop panel's list (`MusicUpNextList`) in a bottom sheet, with the same sections (Queued by you, Next from <list>, Repeating), reorder by the grip, remove (always shown, as there is no hover), Clear, shuffle and repeat. Dark in both schemes, like the sheet under it. Closes by Escape, a downward drag of its top, Back and the scrim.                                                                                                                                              |
 | Song detail (`SongDetailStage`)            | Below the `md` container width, a song with lyrics shows the cover or the lyrics in the same spot, with a Cover / Lyrics toggle under it; in the lyrics view a play/pause button sits beside the toggle. No lyrics, no toggle. From `md` up the two sit side by side as before.                                                                                                                                                                                                                                                    |
+
+## A generated song's cover
+
+An ACE-Step song's cover is never muxed into the song: the handler sends ACE no `cover`, so the song
+is an MP3 like every other generator's and the song scan can read it. A cover the generator makes
+(the suppressed `imageGen` step) or one the creator uploads (kept on the song step's metadata) is
+linked when the song is posted, copied into a scanned image row (`linkGeneratedSongCover`). The
+queue shows that image over the song. Songs posted before this, as an MP4 over their cover, fail the
+song scan and need posting again.
+
+## Playlists
+
+A playlist is a collection of type `Music` ("Playlist" in the UI). It holds songs only, as
+`imageId` items: `saveItemInCollections` and `upsertCollection` refuse a picture in a playlist and a
+song in an image collection ("Collection type mismatch"), and `bulkSaveItems` adds only the songs.
+Untyped collections still take either. Saving a song (its ⋯ menu, the player bar, the detail view's
+share) opens "Add to Playlist". A playlist's page is the image collection page, where songs show as
+Song Cards and play as a list. Playlists cannot be contests and have no review queue, judging or
+collected-content reward. Songs saved to image collections before playlists existed stay there.
+
+The `Music` type is offered in the create form and the type filter only with the `music` flag. Launch
+order: deploy, apply the enum migration (`20271120150000_collection_type_music`) by hand, then turn
+the flag on, so no playlist row exists before every reader can decode the value.
+
+## The song menu
+
+A song's ⋯ menu (`SongContextMenu`, Pencil `rUDmm`) is its own, not the image menu. It is used on the
+feed card, the song row, the post page and the song detail view, and offers:
+
+- Play now, Add to up next and Play next, for the list the song is shown in.
+- Save to playlist (a published song), Share (the system share sheet, or the link copied) and Open song.
+- For listeners: Report song, Hide this song, and hide or block the creator.
+- For the owner and moderators: Delete song (not on a collection page, which removes from the collection).
+- For moderators: Lookup song and post, Remove as ToS violation, Rescan song and Report CSAM.
+
+The image menu's Add to Showcase, art frame and event decorations, More like this, storylines, the
+minor and POI flags, View Post and Edit Post are not offered on a song. The moderator design's "ToS
+cover image" and "Remove from feed" have no action yet.
+
+## After launch
+
+- **A music section on the profile overview.** The profile's Music tab lists a creator's songs; a
+  section creators can place on their overview waits until after launch (decided 2026-11-20).

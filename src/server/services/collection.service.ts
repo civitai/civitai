@@ -122,7 +122,8 @@ import {
   DETAIL_BACKED_REASONS,
   resolveRejectionCopy,
 } from '~/shared/constants/collection-rejection.constants';
-import type { CollectionItemRejectionReason, MediaType } from '~/shared/utils/prisma/enums';
+import type { CollectionItemRejectionReason } from '~/shared/utils/prisma/enums';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import {
   ArticleStatus,
   ChallengeSource,
@@ -940,6 +941,12 @@ const inputToCollectionType = {
   model3dId: CollectionType.Model3D,
 } as const;
 
+/** The collection type an image item belongs in: a song only in a playlist, a picture or video not. */
+async function imageCollectionType(imageId: number) {
+  const image = await dbRead.image.findUnique({ where: { id: imageId }, select: { type: true } });
+  return image?.type === MediaType.audio ? CollectionType.Music : CollectionType.Image;
+}
+
 /**
  * Apply a collection's configured `metadata.autoTagId` to the images just added to it.
  *
@@ -1107,7 +1114,10 @@ export const saveItemInCollections = async ({
   });
 
   if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
-    const type = inputToCollectionType[itemKey];
+    const type =
+      itemKey === 'imageId'
+        ? await imageCollectionType(input.imageId as number)
+        : inputToCollectionType[itemKey];
     // check if all collections match the Model type
     const filteredCollections = collections.filter((c) => c.type === type || c.type == null);
 
@@ -1119,6 +1129,12 @@ export const saveItemInCollections = async ({
   // validateContestCollectionEntry has no model3dIds leg, so an entry would skip every contest gate.
   if (itemKey === 'model3dId' && collections.some((c) => c.mode === CollectionMode.Contest)) {
     throw throwBadRequestError('3D models cannot be entered into contest collections');
+  }
+  // Playlists are plain lists of songs: no contest gates cover them.
+  if (
+    collections.some((c) => c.type === CollectionType.Music && c.mode === CollectionMode.Contest)
+  ) {
+    throw throwBadRequestError('Playlists cannot be contests');
   }
 
   // Every collection this request touches, in one lookup — the adds need it to spot no-op re-submissions
@@ -1959,6 +1975,14 @@ export const upsertCollection = async ({
   if (type === CollectionType.Model3D && mode === CollectionMode.Contest) {
     throw throwBadRequestError('3D model collections cannot be contests');
   }
+  if (type === CollectionType.Music && mode === CollectionMode.Contest) {
+    throw throwBadRequestError('Playlists cannot be contests');
+  }
+  // A playlist starts with a song, and an image collection with no song.
+  if (imageId && type && (type === CollectionType.Music || type === CollectionType.Image)) {
+    if ((await imageCollectionType(imageId)) !== type)
+      throw throwBadRequestError('Collection type mismatch');
+  }
 
   for (const [itemKey, itemId] of [
     ['imageId', imageId],
@@ -2271,7 +2295,7 @@ export const getCollectionItemsByCollectionId = async ({
       ? Prisma.sql`AND ci."tagId" = ${collectionTagId}`
       : Prisma.sql``;
     const imageIngestionCondition =
-      collection.type === CollectionType.Image
+      collection.type === CollectionType.Image || collection.type === CollectionType.Music
         ? Prisma.sql`AND (i."ingestion" = 'Scanned' OR i.id IS NULL)`
         : Prisma.sql``;
 
@@ -2342,7 +2366,8 @@ export const getCollectionItemsByCollectionId = async ({
       ? Prisma.sql`AND ci."tagId" = ${collectionTagId}`
       : Prisma.sql``;
     const imageIngestionCondition =
-      collection.type === CollectionType.Image && !forReview
+      (collection.type === CollectionType.Image || collection.type === CollectionType.Music) &&
+      !forReview
         ? Prisma.sql`AND i."ingestion" = 'Scanned'`
         : Prisma.sql``;
     // Hydration would drop these rows anyway; filtering here keeps a page of dead rows from
@@ -2409,7 +2434,7 @@ export const getCollectionItemsByCollectionId = async ({
         ci."createdAt"
       FROM "CollectionItem" ci
       ${
-        collection.type === CollectionType.Image
+        collection.type === CollectionType.Image || collection.type === CollectionType.Music
           ? Prisma.sql`LEFT JOIN "Image" i ON ci."imageId" = i.id`
           : Prisma.sql``
       }
@@ -3933,7 +3958,9 @@ export const bulkSaveItems = async ({
   }
   if (
     imageIds.length > 0 &&
-    (collection.type === CollectionType.Image || collection.type === null)
+    (collection.type === CollectionType.Image ||
+      collection.type === CollectionType.Music ||
+      collection.type === null)
   ) {
     const existingImageIds = (
       await dbRead.collectionItem.findMany({
@@ -3941,9 +3968,22 @@ export const bulkSaveItems = async ({
         where: { imageId: { in: imageIds }, collectionId },
       })
     ).map((item) => item.imageId);
+    // A playlist takes only the songs among them.
+    const songIds =
+      collection.type === CollectionType.Music
+        ? new Set(
+            (
+              await dbRead.image.findMany({
+                where: { id: { in: imageIds }, type: MediaType.audio },
+                select: { id: true },
+              })
+            ).map((image) => image.id)
+          )
+        : null;
 
     data = imageIds
       .filter((id) => !existingImageIds.includes(id))
+      .filter((id) => !songIds || songIds.has(id))
       .map((imageId) => ({
         imageId,
         ...baseData,
@@ -4237,7 +4277,8 @@ export const removeCollectionItem = async ({
       ? 'Model'
       : permissions.collectionType === CollectionType.Article
       ? 'Article'
-      : permissions.collectionType === CollectionType.Image
+      : permissions.collectionType === CollectionType.Image ||
+        permissions.collectionType === CollectionType.Music
       ? 'Image'
       : permissions.collectionType === CollectionType.Post
       ? 'Post'
@@ -4339,7 +4380,7 @@ export async function checkUserOwnsCollectionAndItem({
       ? 'Model'
       : collection.type === CollectionType.Article
       ? 'Article'
-      : collection.type === CollectionType.Image
+      : collection.type === CollectionType.Image || collection.type === CollectionType.Music
       ? 'Image'
       : collection.type === CollectionType.Post
       ? 'Post'

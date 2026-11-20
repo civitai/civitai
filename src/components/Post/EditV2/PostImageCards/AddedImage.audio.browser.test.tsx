@@ -130,7 +130,7 @@ async function renderCard(image: PostEditImageDetail) {
       <AddedImage image={image} />
     </div>
   );
-  await expect.element(page.getByText('Techniques')).toBeVisible();
+  await expect.element(page.getByText('Prompt', { exact: true })).toBeVisible();
   return screen.container.querySelector('[data-testid="card"]')!;
 }
 
@@ -151,7 +151,7 @@ describe('a song in the post editor', () => {
     await expect.element(page.getByText('Made on Civitai')).toBeVisible();
     await expect.element(page.getByText('ACE-Step 1.5 · 3:12 · seed 2481930117')).toBeVisible();
     await expect.element(page.getByRole('slider', { name: 'Song progress' })).toBeVisible();
-    expect(sectionTitles(card)).toEqual(['Prompt', 'Resources', 'Tools', 'Techniques']);
+    expect(sectionTitles(card)).toEqual(['Prompt', 'Resources']);
     await expect.element(page.getByText('synthwave, neon arcade')).toBeVisible();
     expect(card.querySelector('img, [data-testid="edge-media"]')).toBeNull();
   });
@@ -329,6 +329,22 @@ describe('a song in the post editor', () => {
     expect(mocks.updateImage).toHaveBeenCalledTimes(1);
   });
 
+  test('has no Tools or Techniques section', async () => {
+    const card = await renderCard(song());
+    expect(sectionTitles(card)).not.toContain('Tools');
+    expect(sectionTitles(card)).not.toContain('Techniques');
+  });
+
+  test('puts the remix switch under the cover, in the cover column', async () => {
+    await renderCard(song());
+    const cover = page.getByRole('button', { name: 'Song options' }).element();
+    const column = cover.closest('[class*="@sm:w-4/12"]')!;
+    const allow = page.getByText('Allow remixes', { exact: true }).element();
+    expect(column.contains(allow)).toBe(true);
+    const media = column.firstElementChild!.getBoundingClientRect();
+    expect(allow.getBoundingClientRect().top).toBeGreaterThanOrEqual(media.bottom);
+  });
+
   test('remixes are allowed by default, and turning them off saves allowRemix', async () => {
     await renderCard(song());
     const allow = page.getByRole('switch', { name: 'Allow remixes' });
@@ -421,6 +437,10 @@ describe('image and video cards next to songs', () => {
     const alpha = Number(backdrop.match(/rgba?\((?:[\d.]+,\s*){3}([\d.]+)\)/)?.[1] ?? 1);
     expect(backdrop).not.toBe('rgba(0, 0, 0, 0)');
     expect(alpha).toBeGreaterThanOrEqual(0.3);
+    // The music feed card's size: a 26px round, a 16px ⋯.
+    const round = songMenu.element().getBoundingClientRect();
+    const dots = songMenu.element().querySelector('svg')!.getBoundingClientRect();
+    expect([round.width, dots.width]).toEqual([26, 16]);
   });
 
   test('removing an image keeps the image copy', async () => {

@@ -109,3 +109,64 @@ describe('the generator audio output', () => {
     await expect.element(slider()).toHaveAttribute('aria-valuemax', '75');
   });
 });
+
+describe('a song with a cover', () => {
+  const withCover = (workflow: Record<string, unknown>) =>
+    ({
+      type: 'audio',
+      url: 'https://example.test/song.mp3',
+      duration: 30,
+      workflow: { metadata: { params: { title: 'Night drive' } }, ...workflow },
+    } as unknown as AudioBlob);
+  const cover = () => document.querySelector('img')?.getAttribute('src');
+
+  test('shows the cover its generation made, and plays the MP3 under it', async () => {
+    await renderOutput(
+      withCover({
+        steps: [
+          {
+            $type: 'imageGen',
+            output: [{ type: 'image', url: 'https://example.test/cover.png', available: true }],
+          },
+          { $type: 'aceStepAudio', output: [] },
+        ],
+      })
+    );
+    await vi.waitFor(() => expect(cover()).toBe('https://example.test/cover.png'));
+    expect(audio().getAttribute('src')).toBe('https://example.test/song.mp3');
+  });
+
+  test('shows the cover uploaded with it', async () => {
+    await renderOutput(
+      withCover({
+        steps: [{ $type: 'aceStepAudio', output: [] }],
+        metadata: {
+          params: { title: 'Night drive', images: [{ url: 'https://example.test/mine.png' }] },
+        },
+      })
+    );
+    await vi.waitFor(() => expect(cover()).toBe('https://example.test/mine.png'));
+  });
+
+  test('shows no cover a scan blocked', async () => {
+    await renderOutput(
+      withCover({
+        steps: [
+          {
+            $type: 'imageGen',
+            output: [
+              {
+                type: 'image',
+                url: 'https://example.test/cover.png',
+                available: true,
+                blockedReason: 'nsfw',
+              },
+            ],
+          },
+        ],
+      })
+    );
+    await expect.element(page.getByRole('slider', { name: 'Audio progress' })).toBeVisible();
+    expect(cover()).toBeUndefined();
+  });
+});

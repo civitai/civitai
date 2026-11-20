@@ -30,8 +30,8 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOrigina
 vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
   useImagesContext: () => ({ getImages: () => feed.images }),
 }));
-vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
-  ImageContextMenu: () => null,
+vi.mock('~/components/Music/SongContextMenu', () => ({
+  SongContextMenu: () => null,
 }));
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ...(await importOriginal<typeof RoutedDialogLinkModule>()),

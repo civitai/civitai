@@ -136,7 +136,7 @@ export type CollectionWriteConfiguration = "Private" | "Public" | "Review";
 
 export type CollectionReadConfiguration = "Private" | "Public" | "Unlisted";
 
-export type CollectionType = "Model" | "Article" | "Post" | "Image" | "Model3D";
+export type CollectionType = "Model" | "Article" | "Post" | "Image" | "Model3D" | "Music";
 
 export type CollectionMode = "Contest" | "Bookmark";
 

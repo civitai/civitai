@@ -69,7 +69,8 @@ export default function AddToCollectionModal(props: Props) {
 
   // Create dynamic title based on collection type
   const getModalTitle = () => {
-    if (creating) return 'New Collection';
+    const isPlaylist = props.type === CollectionType.Music;
+    if (creating) return isPlaylist ? 'New Playlist' : 'New Collection';
     if (!props.type) return 'Add to Collection';
     const typeData = collectionTypeData[props.type];
     return (
@@ -78,7 +79,7 @@ export default function AddToCollectionModal(props: Props) {
           {createElement(typeData.icon, { size: 16 })}
         </ThemeIcon>
         <Text size="lg" fw={600}>
-          Add to {typeData.label} Collection
+          {isPlaylist ? 'Add to Playlist' : `Add to ${typeData.label} Collection`}
         </Text>
       </Group>
     );
@@ -506,7 +507,7 @@ function CollectionListForm({
               className="shrink-0"
               h={30}
             >
-              New collection
+              {props.type === CollectionType.Music ? 'New playlist' : 'New collection'}
             </Button>
           </Group>
           {isLoading ? (
@@ -517,9 +518,11 @@ function CollectionListForm({
             <Stack align="center" gap="sm" py="xl" px="md">
               <Text c="dimmed" ta="center">
                 {!debouncedSearch
-                  ? `You don't have any ${
-                      props.type ? collectionTypeData[props.type].label.toLowerCase() : ''
-                    } collections yet.`
+                  ? props.type === CollectionType.Music
+                    ? "You don't have any playlists yet."
+                    : `You don't have any ${
+                        props.type ? collectionTypeData[props.type].label.toLowerCase() : ''
+                      } collections yet.`
                   : searching
                   ? 'Searching…'
                   : `No collections match “${debouncedSearch}”.`}
@@ -592,6 +595,7 @@ function NewCollectionForm({
 }: Props & { onSubmit: VoidFunction; onBack: VoidFunction; defaultName?: string }) {
   const currentUser = useCurrentUser();
   const isMember = !!currentUser?.tier && currentUser.tier !== 'free';
+  const isPlaylist = props.type === CollectionType.Music;
   const form = useForm({
     schema: upsertCollectionInput,
     defaultValues: {
@@ -661,7 +665,7 @@ function NewCollectionForm({
         <Stack gap={4}>
           <Group justify="space-between">
             <Text size="sm" fw="bold">
-              New Collection
+              {isPlaylist ? 'New Playlist' : 'New Collection'}
             </Text>
             <Button
               variant="subtle"
@@ -675,7 +679,7 @@ function NewCollectionForm({
           <InputText
             name="name"
             label="Name"
-            placeholder="e.g.: Video Game Characters"
+            placeholder={isPlaylist ? 'e.g.: Late night drive' : 'e.g.: Video Game Characters'}
             withAsterisk
           />
           <InputTextArea

@@ -7,7 +7,7 @@ import {
 } from '@tabler/icons-react';
 
 import { useMediaPlayback } from '~/components/Audio/useMediaPlayback';
-import type { AudioBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
+import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
 import { formatPlaybackTime } from '~/utils/audio-player';
 
 export function GeneratedAudioOutput({
@@ -32,7 +32,10 @@ export function GeneratedAudioOutput({
     mediaEvents,
   } = useMediaPlayback(('duration' in image ? image.duration : 0) ?? 0);
 
+  // A song made since the cover stopped being muxed is an MP3, its cover the imageGen step's image
+  // (generated) or the form's image (uploaded); an older one is a video over its cover.
   const hasCover = image.type === 'video';
+  const coverUrl = hasCover ? undefined : songCoverUrl(image);
   const titleParam = image.workflow.metadata?.params?.title;
   const title = typeof titleParam === 'string' && titleParam ? titleParam : undefined;
 
@@ -43,7 +46,7 @@ export function GeneratedAudioOutput({
       }`}
       onClick={!isLightbox ? onClick : undefined}
       style={
-        hasCover
+        hasCover || coverUrl
           ? { background: '#1a1b1e' }
           : { background: 'linear-gradient(135deg, #7950f2 0%, #f06595 40%, #ff922b 100%)' }
       }
@@ -59,6 +62,14 @@ export function GeneratedAudioOutput({
         />
       ) : (
         <>
+          {coverUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={coverUrl}
+              alt=""
+              className="pointer-events-none absolute inset-0 size-full object-cover"
+            />
+          )}
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <audio
             ref={mediaRef as React.Ref<HTMLAudioElement>}
@@ -67,10 +78,12 @@ export function GeneratedAudioOutput({
             className="hidden"
             {...mediaEvents}
           />
-          <IconMusic
-            size={180}
-            className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-white/[0.08]"
-          />
+          {!coverUrl && (
+            <IconMusic
+              size={180}
+              className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-white/[0.08]"
+            />
+          )}
         </>
       )}
 
@@ -127,4 +140,17 @@ export function GeneratedAudioOutput({
       </div>
     </div>
   );
+}
+
+/** The song's cover: the generated one from the imageGen step, else the one uploaded with it. */
+function songCoverUrl(song: AudioBlob | VideoBlob) {
+  const generated = song.workflow.steps
+    ?.find((step) => step.$type === 'imageGen')
+    ?.output.find((b): b is ImageBlob => b?.type === 'image' && b.available && !b.blockedReason);
+  if (generated) return generated.url;
+  const images = song.workflow.metadata?.params?.images;
+  const uploaded = Array.isArray(images)
+    ? (images[0] as { url?: unknown } | undefined)?.url
+    : undefined;
+  return typeof uploaded === 'string' ? uploaded : undefined;
 }
