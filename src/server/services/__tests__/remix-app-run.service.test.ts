@@ -1716,8 +1716,7 @@ describe('a user app', () => {
       const { runId } = await startOn(SOURCE_ID);
       const workflow = h.workflows[h.workflows.length - 1];
       finish(workflow.id, [blob('huge')]);
-      const [image] = (workflow.steps as { output: { images: Record<string, unknown>[] } }[])[0]
-        .output.images;
+      const [image] = workflow.steps![0].output!.images;
       Object.assign(image, { width: 2.5, height: 200_000 });
       await expect(advanceRemixRun({ runId, caller: flagOn() })).resolves.toMatchObject({
         status: 'done',
