@@ -1752,7 +1752,7 @@ export const getImageDetail = async ({
   isModerator,
 }: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
   // The resource and tag caches are keyed by image id alone, so the viewer check runs first.
-  await assertImageVisibleToViewer({ id, userId, isModerator });
+  await assertImageVisibleToViewer({ id, userId, isModerator, ownerSeesHeld: true });
   const [resourcesData, tagsData] = await Promise.all([
     imageResourcesCache.fetch([id]),
     imageTagsCache.fetch([id]),
@@ -4274,8 +4274,17 @@ export const getImage = async ({
   id,
   userId,
   isModerator,
-}: GetImageInput & { userId?: number; isModerator?: boolean }) => {
-  const AND = [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })];
+  ownerSeesHeld = false,
+}: GetImageInput & {
+  userId?: number;
+  isModerator?: boolean;
+  /** `imageVisibilityConditions`' `ownerSeesHeld`: the image page's read, not a remix or other use. */
+  ownerSeesHeld?: boolean;
+}) => {
+  const AND = [
+    Prisma.sql`i.id = ${id}`,
+    ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld }),
+  ];
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
@@ -4396,6 +4405,7 @@ export const getImageResources = async ({
     userId: viewer?.id,
     isModerator: viewer?.isModerator,
     withSignedOutVerdict: true,
+    ownerSeesHeld: true,
   });
   const resources = await dbRead.$queryRaw<
     (ImageResourceHelperModel & { sfwName: string | null })[]
@@ -5065,8 +5075,7 @@ export const getImagesByEntity = async ({
   }
 
   const AND = entityImageVisibilityConditions({ userId, isModerator });
-  // Owner-hidden review holds are left out here even for the owner; bounty images keep their own rule.
-  if (!isModerator) AND.push(notHeldForReviewSql());
+  if (!isModerator) AND.push(notHeldForReviewSql(userId));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -6917,6 +6926,7 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
     id,
     userId: viewer.user?.id,
     isModerator: viewer.user?.isModerator,
+    ownerSeesHeld: true,
   });
   const showMedia = await viewerCanSeeImageMedia(viewer, visible);
 
@@ -7831,9 +7841,8 @@ export const getMyImages = async ({
           : publishedOnly
           ? publishedImageWhere()
           : {}),
-        // The unpublished path has no review gate of its own; these holds stay out of it too,
-        // for moderators as well: they review held media in the mod tools.
-        AND: [notHeldForReviewWhere(), servableLevelWhere(servableLevels)],
+        // The owner's own list: their held items are in it.
+        AND: [notHeldForReviewWhere(userId), servableLevelWhere(servableLevels)],
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,

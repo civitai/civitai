@@ -375,9 +375,10 @@ describe('getImageGenerationData visibility', () => {
       );
     });
 
-    it('is not found for its owner or a manager of the collection', async () => {
-      expect(await sees(SELF)).toBe(false);
+    it('is found for its owner, and not for a manager of the collection or a stranger', async () => {
+      expect(await sees(SELF)).toBe(true);
       expect(await sees({ userId: MANAGER })).toBe(false);
+      expect(await sees(OTHER)).toBe(false);
     });
 
     it('is served to a moderator', async () => {

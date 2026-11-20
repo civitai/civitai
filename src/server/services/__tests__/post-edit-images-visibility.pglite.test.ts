@@ -43,6 +43,7 @@ const MATURE = 5;
 const UNRATED = 6;
 const OTHER_UNRATED = 7;
 const HELD_UNRATED = 8;
+const OTHERS_HELD = 9;
 
 const owner = { id: OWNER } as SessionUser;
 const moderator = { id: 99, isModerator: true } as SessionUser;
@@ -64,7 +65,8 @@ beforeAll(async () => {
       (${MATURE}, ${OWNER}, ${POST}, 16, NULL),
       (${UNRATED}, ${OWNER}, ${POST}, 0, NULL),
       (${OTHER_UNRATED}, 11, ${POST}, 0, NULL),
-      (${HELD_UNRATED}, ${OWNER}, ${POST}, 0, 'csam');
+      (${HELD_UNRATED}, ${OWNER}, ${POST}, 0, 'csam'),
+      (${OTHERS_HELD}, 11, ${POST}, 1, 'minor');
   `);
   dbMock.dbRead.image.findMany.mockImplementation((async (args: { where: object }) =>
     (await harness.prisma.image.findMany({ where: args.where, select: { id: true } })).map(
@@ -77,8 +79,29 @@ const editorIds = async (user: SessionUser, servableLevels = allBrowsingLevelsFl
   (await getPostEditImages({ id: POST, user, servableLevels })).map((i) => i.id);
 
 describe('getPostEditImages: images held for review', () => {
-  it('leaves held images out of the owner’s editor and keeps every other image', async () => {
-    expect(await editorIds(owner)).toEqual([CLEAN, OTHER_REVIEW, MATURE, UNRATED, OTHER_UNRATED]);
+  it('shows the owner their own held images, and leaves out a held image of another user', async () => {
+    expect(await editorIds(owner)).toEqual([
+      CLEAN,
+      HELD_CSAM,
+      HELD_MINOR,
+      OTHER_REVIEW,
+      MATURE,
+      UNRATED,
+      OTHER_UNRATED,
+      HELD_UNRATED,
+    ]);
+  });
+
+  it("shows a signed-in editor their own held image, and none of another uploader's", async () => {
+    const other = { id: 11 } as SessionUser;
+    expect(await editorIds(other)).toEqual([
+      CLEAN,
+      OTHER_REVIEW,
+      MATURE,
+      UNRATED,
+      OTHER_UNRATED,
+      OTHERS_HELD,
+    ]);
   });
 
   it('keeps them for a moderator', async () => {
@@ -91,13 +114,21 @@ describe('getPostEditImages: images held for review', () => {
       UNRATED,
       OTHER_UNRATED,
       HELD_UNRATED,
+      OTHERS_HELD,
     ]);
   });
 });
 
 describe('getPostEditImages: the request level cap', () => {
   it('a capped request gets no image above the cap, and no unrated one but the owner’s own', async () => {
-    expect(await editorIds(owner, sfwBrowsingLevelsFlag)).toEqual([CLEAN, OTHER_REVIEW, UNRATED]);
+    expect(await editorIds(owner, sfwBrowsingLevelsFlag)).toEqual([
+      CLEAN,
+      HELD_CSAM,
+      HELD_MINOR,
+      OTHER_REVIEW,
+      UNRATED,
+      HELD_UNRATED,
+    ]);
   });
 
   it('holds a moderator to the cap as well, unrated images of others included', async () => {
@@ -106,6 +137,7 @@ describe('getPostEditImages: the request level cap', () => {
       HELD_CSAM,
       HELD_MINOR,
       OTHER_REVIEW,
+      OTHERS_HELD,
     ]);
   });
 });

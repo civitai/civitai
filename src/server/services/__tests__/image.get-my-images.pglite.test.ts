@@ -8,7 +8,7 @@ import {
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 // getMyImages' own `where`, run by Prisma against real Postgres (PGlite): a scanned image in a
-// published post that is held for review leaves its owner's list.
+// published post that is held for review stays in its owner's list.
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -64,8 +64,8 @@ const listedIds = async (publishedOnly?: boolean) => {
 };
 
 describe('getMyImages: images held for review', () => {
-  it('leaves held images out of the owner list and keeps every other image', async () => {
-    expect(await listedIds()).toEqual([CLEAN, OTHER_REVIEW]);
+  it('keeps held images in the owner list', async () => {
+    expect(await listedIds()).toEqual([CLEAN, HELD_CSAM, HELD_MINOR, OTHER_REVIEW]);
   });
 
   it('leaves them out of the published-only list the image pickers ask for', async () => {

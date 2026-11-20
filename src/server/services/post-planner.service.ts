@@ -133,7 +133,8 @@ export async function getScheduledPosts({
     LEFT JOIN "Model" m ON m.id = mv."modelId"
     LEFT JOIN LATERAL (
       SELECT i.url, i.type, COUNT(*) OVER () AS count FROM "Image" i
-      WHERE i."postId" = p.id AND ${servableLevelSql(servableLevels)} AND ${notHeldForReviewSql()}
+      WHERE i."postId" = p.id AND ${servableLevelSql(servableLevels)}
+        AND ${notHeldForReviewSql(user.id)}
       ORDER BY i.index ASC NULLS LAST, i.id ASC
       LIMIT 1
     ) cover ON TRUE

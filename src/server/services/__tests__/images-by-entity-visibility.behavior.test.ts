@@ -124,13 +124,12 @@ describe('getImagesByEntity', () => {
   it.each([
     ['held for csam review', 6],
     ['held for minor review', 7],
-  ])(
-    'withholds from the owner their own image %s, and serves it to a moderator',
-    async (_l, entry) => {
-      expect(await imageOf(entry, viewers.owner)).toEqual([]);
-      expect(await imageOf(entry, viewers.moderator)).toHaveLength(1);
-    }
-  );
+  ])('serves the owner their own image %s, and a moderator; nobody else', async (_l, entry) => {
+    expect(await imageOf(entry, viewers.owner)).toHaveLength(1);
+    expect(await imageOf(entry, viewers.moderator)).toHaveLength(1);
+    expect(await imageOf(entry, viewers.stranger)).toEqual([]);
+    expect(await imageOf(entry, viewers.anonymous)).toEqual([]);
+  });
 
   it.each(['anonymous', 'stranger'] as const)(
     'withholds an image marked acceptable-minor from the %s',

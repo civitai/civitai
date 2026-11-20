@@ -987,7 +987,7 @@ export const getPostEditImages = async ({ id, user, servableLevels }: PostEditIn
     where: {
       postId: id,
       AND: [
-        user.isModerator ? {} : notHeldForReviewWhere(),
+        user.isModerator ? {} : notHeldForReviewWhere(user.id),
         servableLevelOrOwnUnratedWhere(servableLevels, user.id),
       ],
     },
@@ -2168,7 +2168,7 @@ const countsTowardVersionLevel = (nsfwLevel: number) => nsfwLevel !== NsfwLevel.
 
 /**
  * The post's images this editor may not move (`ids`, `indexes`): those it did not list, and those
- * `getPostEditImages` does not serve it (held for review unless a moderator, or outside the
+ * `getPostEditImages` does not serve it (held for review unless a moderator or its uploader, or outside the
  * request's levels and not the editor's own unrated upload) even if it lists them. They keep their
  * index. `movable` holds the others the editor listed, with their current index and whether the
  * version level counts them.
@@ -2186,7 +2186,7 @@ async function editorHiddenImages(
   const listed = new Set(listedIds);
   const isHidden = (image: (typeof images)[number]) =>
     !listed.has(image.id) ||
-    (!user.isModerator && isHeldForReview(image.needsReview)) ||
+    (!user.isModerator && image.userId !== user.id && isHeldForReview(image.needsReview)) ||
     !isServableLevelOrOwnUnrated(image, servableLevels, user.id);
   const hidden = images.filter(isHidden);
   const movable = new Map(
