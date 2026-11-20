@@ -175,7 +175,7 @@ describe('sharedSlotNavigationSyncUrl', () => {
 
   // A token main web still accepts but the hub has revoked comes back from the sync unchanged; the marker stops the
   // next navigation from sending it again.
-  it('syncs a shared cookie once per value, by a marker holding its hash', async () => {
+  it('syncs a shared cookie once per value while its marker lives, the marker holding its hash', async () => {
     process.env.AUTH_SESSION_COOKIE_MODE = 'host';
     const { sharedSlotNavigationSyncUrl } = await import('../shared-slot-sync');
     const first = sharedSlotNavigationSyncUrl(nav({ [SHARED]: 'tok-a' }));

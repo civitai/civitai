@@ -26,8 +26,8 @@ const syncMarkerValue = (token: string) =>
  * when the hub has no session to send back.
  *
  * Any other site syncs only a shared cookie that resolved a session (`signedIn`; a dead one browses signed out, as the
- * hub could not verify it either), and once per cookie value: the redirect sets a short-lived marker holding the
- * cookie's hash, so a token the hub refuses is not sent through the sync on every navigation.
+ * hub could not verify it either), and at most once per cookie value every SYNC_MARKER_TTL_S: the redirect sets a
+ * marker holding the cookie's hash, so a token the hub refuses is not sent through the sync on every navigation.
  */
 export function sharedSlotNavigationSyncUrl(req: {
   method?: string;
