@@ -5,10 +5,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createClickhouseMetricsClient } from '~/server/clickhouse/metrics-client';
 import { isReadQuery } from '~/server/clickhouse/retry-on-connection-reset';
 
-// The dedicated metrics client's one-shot retry on a connection-level error, run through the REAL
-// clickhouse-js client (the factory production uses) against a local HTTP server that misbehaves
-// on cue. The server is the only fake: the error shapes asserted here are the ones Node and
-// clickhouse-js actually produce for each failure.
+// The dedicated metrics client's one-shot retry on a connection-level error, run through the real
+// clickhouse-js client against a local HTTP server that misbehaves on cue.
 
 type Behaviour =
   | 'ok'
@@ -281,9 +279,9 @@ describe('isReadQuery', () => {
     expect(isReadQuery('INSERT INTO t SELECT 1')).toBe(false);
   });
 
-  // The backtracking `(\s+|...)*` pattern took ~3.3 s on 30 spaces (node 24), so it fails this
-  // instead of hanging the synchronous test; the linear one takes ~0.1 ms. 500 ms leaves room for
-  // a GC pause or a busy CI runner.
+  // The old backtracking `(\s+|...)*` pattern was exponential on a long whitespace prefix; this
+  // fails the bound instead of hanging the synchronous test, and the bound leaves room for GC
+  // pauses and busy CI runners.
   it('classifies leading whitespace without backtracking', () => {
     const start = performance.now();
     expect(isReadQuery(' '.repeat(30) + 'INSERT INTO t VALUES (1)')).toBe(false);
