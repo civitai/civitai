@@ -58,7 +58,7 @@ import { ensureRegisterImageUploadRelayMetrics } from '~/server/prom/image-uploa
 import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.metrics';
 // Same reason: search_upload_embed_total stays at 0 until search-by-upload is used, and its
 // cap alert needs the series to exist.
-import { ensureRegisterSearchUploadMetrics } from '~/server/metrics/semantic-search.metrics';
+import { ensureRegisterSearchUploadMetrics } from '~/server/metrics/search-upload.metrics';
 // Same reason as the three neighbours above, for the App Blocks KV storage counters: two of
 // the four were absent in production purely because nothing had ever incremented them, and one
 // of those exists to be alerted on. Called from the handler rather than here because it must

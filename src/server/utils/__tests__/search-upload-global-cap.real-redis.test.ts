@@ -76,9 +76,12 @@ describe.skipIf(!url)('the site-wide upload search cap on a real Redis', () => {
     );
     await real.hSet(prefix + BUCKET.cacheKey, BUCKET.hashKey, pack(full));
     redisMock.redis.packed.hGet.mockResolvedValueOnce([]);
+    redisMock.redis.eval.mockClear();
     await expect(claimSearchUploadSearchSlot(req)).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
+    // The script decided: the pre-check saw an empty bucket.
+    expect(redisMock.redis.eval).toHaveBeenCalledTimes(1);
   });
 
   it('refuses when the claim script errors', async () => {
