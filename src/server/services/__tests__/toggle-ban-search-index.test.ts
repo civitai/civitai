@@ -475,7 +475,9 @@ describe('toggleBan -> profile links', () => {
 
   it('alerts the moderators when the archive fails on a ban', async () => {
     reported();
-    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    const fetchMock = vi.fn(
+      async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 204 })
+    );
     vi.stubGlobal('fetch', fetchMock);
     setEnv({ DISCORD_WEBHOOK_MOD_ALERTS: 'https://example.invalid/mod-alerts' });
     try {
