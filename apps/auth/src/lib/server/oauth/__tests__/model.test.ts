@@ -451,7 +451,7 @@ describe('resolveClientLite — first-party is client IDENTITY, not redirect ori
       grants: ['authorization_code'],
       redirectUris: [TRUSTED_REDIRECT],
     });
-    const client = await resolveClientLite('pub-1', TRUSTED_REDIRECT);
+    const client = await resolveClientLite('pub-1', TRUSTED_REDIRECT, 'authorize');
     expect(client?.isFirstParty).toBe(false);
   });
 
@@ -459,7 +459,7 @@ describe('resolveClientLite — first-party is client IDENTITY, not redirect ori
     invalidateDomainCache(); // force a fresh registry read for this test
     h.selectResults.push(undefined); // no OauthClient row → falls through to origin synthesis
     h.selectResults.push({ domain: 'civitai.red', includeSubdomains: false }); // TrustedSpokeDomain registry
-    const client = await resolveClientLite('firstparty-civitai_red', TRUSTED_REDIRECT);
+    const client = await resolveClientLite('firstparty-civitai_red', TRUSTED_REDIRECT, 'authorize');
     expect(client?.isFirstParty).toBe(true);
     expect(client?.skipConsent).toBe(true);
   });
@@ -473,7 +473,7 @@ describe('resolveClientLite — first-party is client IDENTITY, not redirect ori
       [{ skipConsent: true, isConfidential: true, userId: 7 }, false], // flag left on an app no longer system
     ] as const) {
       h.selectResults.push({ ...row, ...flags });
-      const client = await resolveClientLite('sys-1', TRUSTED_REDIRECT);
+      const client = await resolveClientLite('sys-1', TRUSTED_REDIRECT, 'authorize');
       expect(client?.skipConsent).toBe(skips);
     }
   });
@@ -491,7 +491,8 @@ describe('first-party resolution requires an https redirect_uri', () => {
     trustModerator();
     const client = await resolveClientLite(
       MOD_ID,
-      'https://moderator.civitai.com/api/auth/callback'
+      'https://moderator.civitai.com/api/auth/callback',
+      'authorize'
     );
     expect(client?.isFirstParty).toBe(true);
   });
@@ -499,7 +500,7 @@ describe('first-party resolution requires an https redirect_uri', () => {
   it('refuses http:// on the same trusted host', async () => {
     trustModerator();
     expect(
-      await resolveClientLite(MOD_ID, 'http://moderator.civitai.com/api/auth/callback')
+      await resolveClientLite(MOD_ID, 'http://moderator.civitai.com/api/auth/callback', 'authorize')
     ).toBeUndefined();
   });
 

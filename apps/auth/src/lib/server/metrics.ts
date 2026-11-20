@@ -72,6 +72,19 @@ export const captchaVerificationsTotal = new Counter({
   registers: [register],
 });
 
+/**
+ * First-party sign-in origins admitted, by the registry entry that admitted them (`'always'` for a dev
+ * always-trust host), the call site, and scheme. `entry` is the row's domain, never the request host, so a
+ * preview subdomain counts under its parent row and the label set stays bounded by the registry. Not
+ * pre-declared: the entries are registry rows, not a fixed enum.
+ */
+export const firstPartyOriginTotal = new Counter({
+  name: 'hub_first_party_origin_total',
+  help: 'First-party sign-in origins admitted, labeled by matched registry entry, call site and scheme.',
+  labelNames: ['entry', 'use', 'scheme'] as const,
+  registers: [register],
+});
+
 /** Unhandled errors surfaced to the SvelteKit handleError hook. */
 export const unhandledErrorsTotal = new Counter({
   name: 'hub_unhandled_errors_total',

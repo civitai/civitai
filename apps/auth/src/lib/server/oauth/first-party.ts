@@ -8,6 +8,8 @@ import {
   createTrustedDomainRegistry,
 } from '@civitai/auth';
 import { db } from '$lib/server/db/db';
+import { logToAxiom } from '$lib/server/axiom';
+import { firstPartyOriginTotal } from '$lib/server/metrics';
 
 // Re-exported so existing hub imports keep working; the definitions live in @civitai/auth (one source,
 // shared with the spoke).
@@ -89,19 +91,41 @@ export function originOf(url: string | undefined): string | undefined {
 }
 
 /**
+ * Where a first-party origin was checked; the `use` label on hub_first_party_origin_total.
+ *   authorize        — the /authorize endpoint resolving the client
+ *   authorize_client — the OAuth library's getClient during that same /authorize (so one sign-in counts
+ *                      once under each of these two)
+ *   code_exchange    — redeeming the authorization code (token and session exchange)
+ *   post_login       — a cross-scope login deciding whose cookie domain to write
+ */
+export type FirstPartyOriginUse = 'authorize' | 'authorize_client' | 'code_exchange' | 'post_login';
+
+/**
  * Resolve the first-party client for a spoke ORIGIN, if it is https and its host is authorized (exact /
  * subdomain-wildcard), or it is a dev-loopback host. Returns a per-origin client with an exact callback, or
- * undefined.
+ * undefined. Counts each admitted origin under the registry entry that admitted it.
  */
 export async function firstPartyClientForOrigin(
-  origin: string
+  origin: string,
+  use: FirstPartyOriginUse
 ): Promise<FirstPartyClient | undefined> {
-  return (await spokeDomains.matchesOrigin(origin)) ? clientForOrigin(origin) : undefined;
+  const entry = await spokeDomains.matchedEntry(origin);
+  if (entry === null) return undefined;
+  const url = new URL(origin);
+  firstPartyOriginTotal.inc({ entry, use, scheme: url.protocol.replace(/:$/, '') });
+  if (entry === 'localhost') {
+    // `use` and `port` go under `payload`: the dataset is at its field limit (no-new-axiom-field).
+    void logToAxiom({ event: 'first_party_localhost_origin', payload: { use, port: url.port } });
+  }
+  return clientForOrigin(origin);
 }
 
 /** Is this origin an authorized first-party login host? (Gates consent-skip + the session exchange.) */
-export async function isFirstPartyOrigin(origin: string | undefined): Promise<boolean> {
-  return !!origin && (await firstPartyClientForOrigin(origin)) !== undefined;
+export async function isFirstPartyOrigin(
+  origin: string | undefined,
+  use: FirstPartyOriginUse
+): Promise<boolean> {
+  return !!origin && (await firstPartyClientForOrigin(origin, use)) !== undefined;
 }
 
 /**
