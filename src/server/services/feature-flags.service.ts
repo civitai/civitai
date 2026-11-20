@@ -576,6 +576,8 @@ const featureFlags = createFeatureFlags({
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
+  // The next Creator Services experience (service page and what follows it), beside today's.
+  creatorServicesNext: { availability: [], fliptKey: 'creator-services-next' },
   // The header bar filters the /services feed in place (`?query=`).
   servicesFeedSearch: { availability: ['public'], fliptKey: 'creator-services-feed-search' },
   // Search v3 on pages that filter their own list (PAGE_SEARCH in search-target.ts): the header bar

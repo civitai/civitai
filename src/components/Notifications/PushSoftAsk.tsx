@@ -1,6 +1,7 @@
 import { Button, Group, Paper, Stack, Text } from '@mantine/core';
 import { IconBellRinging, IconShare2 } from '@tabler/icons-react';
 import { useEffect } from 'react';
+import type { PushPromptSurface } from '~/components/Notifications/pushPrompt';
 import { isPushAskSnoozed, usePushPromptActions } from '~/components/Notifications/pushPrompt';
 import { usePushSubscription } from '~/components/Notifications/usePushSubscription';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -10,11 +11,16 @@ import { trpc } from '~/utils/trpc';
  * The pre-permission ask. Our own prompt first — the native browser prompt fires only after a yes,
  * so a "no" here costs nothing, while a "no" on the native prompt is a permanent denial.
  */
-export function PushSoftAsk() {
+export function PushSoftAsk({
+  surface = 'settings-card',
+}: {
+  surface?: Exclude<PushPromptSurface, 'visit-prompt'>;
+}) {
   const { support, permission, active } = usePushSubscription();
   const { data: settings, isLoading } = trpc.user.getSettings.useQuery();
 
-  if (support === 'needs-standalone') {
+  // Installing to the Home Screen is a settings-page errand, not something to raise mid-deal.
+  if (support === 'needs-standalone' && surface === 'settings-card') {
     return (
       <Paper withBorder p="md" radius="md">
         <Group wrap="nowrap">
@@ -37,14 +43,22 @@ export function PushSoftAsk() {
 
   if (isPushAskSnoozed(settings)) return null;
 
-  return <PushSoftAskCard variant={permission === 'granted' ? 'finish' : 'new'} />;
+  return (
+    <PushSoftAskCard surface={surface} variant={permission === 'granted' ? 'finish' : 'new'} />
+  );
 }
 
-function PushSoftAskCard({ variant }: { variant: 'new' | 'finish' }) {
+function PushSoftAskCard({
+  surface,
+  variant,
+}: {
+  surface: Exclude<PushPromptSurface, 'visit-prompt'>;
+  variant: 'new' | 'finish';
+}) {
   const isMobile = useIsMobile({ type: 'media' });
   const { busy } = usePushSubscription();
   const { track, notNow, enable } = usePushPromptActions(
-    'settings-card',
+    surface,
     variant,
     isMobile ? 'mobile' : 'desktop'
   );

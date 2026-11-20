@@ -12,7 +12,7 @@ const REASK_AFTER_DAYS = 90;
 
 export type PushPromptAction = (typeof PUSH_PROMPT_ACTIONS)[number];
 export type PushPromptVariant = (typeof PUSH_PROMPT_VARIANTS)[number];
-export type PushPromptSurface = 'visit-prompt' | 'settings-card';
+export type PushPromptSurface = 'visit-prompt' | 'settings-card' | 'deal-flow';
 
 export function isPushAskSnoozed(
   settings: { pushPromptDismissedCount?: number; pushPromptDismissedAt?: Date | null } | undefined,

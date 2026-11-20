@@ -928,7 +928,7 @@ const pushPromptSchema = z.object({
   type: z.literal('Push_Prompt'),
   details: z.object({
     action: z.enum(PUSH_PROMPT_ACTIONS),
-    surface: z.enum(['visit-prompt', 'settings-card']),
+    surface: z.enum(['visit-prompt', 'settings-card', 'deal-flow']),
     variant: z.enum(PUSH_PROMPT_VARIANTS),
     platform: z.enum(['desktop', 'mobile']),
   }),
