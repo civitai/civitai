@@ -1587,7 +1587,7 @@ function ModelVersionDetailsContent({
                       )}
                     </PageGroup>
                   </div>
-                  {/* Generation License Fee. A percent fee is not Buzz per image; the generator shows its cost. */}
+                  {/* A percent fee is not Buzz per image, so this row would misstate it. */}
                   {!isNonCommercial &&
                     version.licensingFeeType !== LicensingFeeType.PercentOfCompute &&
                     Number(version.licensingFee ?? 0) > 0 && (
