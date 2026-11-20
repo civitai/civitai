@@ -22,11 +22,8 @@ export function retractedMediaUrl(
 }
 
 /**
- * A tile's route `src` (`retractedMediaUrl`), and, with `cdnLeg`, what lets a scanned image move
- * there once the CDN refuses it: `onCdnError` for the media's `onError`, and `mediaRef` for an
- * image that failed before hydration attached it, since that event is never replayed. Both are
- * undefined without `cdnLeg` or where the route could not serve the image, so everyone else's CDN
- * errors are untouched.
+ * `mediaRef` catches an image that failed before hydration attached `onCdnError`, since that
+ * error event is never replayed.
  * The failure is kept per id, so a tile reused for another image starts on the CDN again.
  */
 export function useRetractedMedia(image: RetractableImage, user: Viewer, { cdnLeg = false } = {}) {
