@@ -11,6 +11,7 @@ import { calculateLevelProgression } from '~/server/utils/research-utils';
 import { queueNewRaterLevelWebhook } from '~/server/webhooks/research.webhooks';
 import { getRandomInt } from '~/utils/number-helpers';
 import { imageNotRestrictedSql } from '~/server/common/image-visibility';
+import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 
 const raterGetImagesSchema = z.object({
   level: z.number().transform((val) => val & ~32), // Remove the "Blocked" bit (32)
@@ -203,6 +204,7 @@ export const researchRouter = router({
         where.push(Prisma.sql`i."aiModel" = ${track.filters.ratingModel}`);
       }
 
+      // Another user's image, so the shared rule with no viewer, and no ToS removal.
       const images = await dbRead.$queryRaw<RaterImage[]>`
       SELECT i.id, i.url, i."nsfwLevel"
       FROM "Image" i
@@ -210,7 +212,8 @@ export const researchRouter = router({
       WHERE (i."nsfwLevel" & ${input.level}) != 0
         AND i.type = 'image'
         AND p."publishedAt" IS NOT NULL
-        AND ${imageNotRestrictedSql()}
+        AND ${Prisma.join(imageVisibilityConditions({}), ' AND ')}
+        AND i."tosViolation" = FALSE
         AND ${Prisma.join(where, ' AND ')}
       ORDER BY i.id
       LIMIT 30;
