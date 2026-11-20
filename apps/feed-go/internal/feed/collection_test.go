@@ -286,7 +286,7 @@ func TestServeInfiniteCollectionOwnerAndModerator(t *testing.T) {
 		if got := itemIDs(j); !reflect.DeepEqual(got, []float64{21}) || len(f.sql) != 1 {
 			t.Fatalf("%s: items %v, page queries %d", c.name, got, len(f.sql))
 		}
-		if !strings.Contains(f.sql[0], `ci."status" <> 'REJECTED' AND ci."addedById" = $3`) || f.sqlArgs[0][2] != c.viewer.ID {
+		if !strings.Contains(f.sql[0], `ci."status" <> 'REJECTED' AND ci."addedById" = $2`) || f.sqlArgs[0][1] != c.viewer.ID {
 			t.Fatalf("%s: the viewer's own items are not kept:\n%s\nargs %v", c.name, f.sql[0], f.sqlArgs[0])
 		}
 		if !reflect.DeepEqual(src.collectionsAsked, [][2]int{{9102, c.viewer.ID}}) {
