@@ -610,9 +610,11 @@ function logMissingConfirmWithinLimitColumn(site: string, err: unknown): void {
  * would switch off the limit or the revoke before the migration lands.
  *
  * 🔴 LIFETIME: DELIBERATELY THE GRANT ROW'S, LIKE THE SPEND GRANT BESIDE IT (a product decision,
- * not an oversight). Nothing ties it to an app version or to an install, so a version change and
- * the uninstall itself leave it. What does clear it is pinned by the
- * `confirm_within_limit_max_job is cleared` tests in `scope-grant.service.test.ts`.
+ * not an oversight). An uninstall does not touch the grant row, so it leaves the opt-in. A
+ * consent that includes spending clears it, and installing or subscribing again is one: after a
+ * reinstall the daily limit is back and the opt-in is not. The viewer's opt-out clears it too.
+ * The other clearing writes are pinned by the `confirm_within_limit_max_job is cleared` tests in
+ * `scope-grant.service.test.ts`.
  */
 export async function readConfirmWithinLimit(
   userId: number,
