@@ -261,7 +261,7 @@ func serverBrowsingLevel(canViewNsfw, signedIn bool, u User) int32 {
 type mature struct{ r, x, xxx bool }
 
 // matureRatingsAllowed is matureRatingsAllowed: none off a mature-capable surface; on one, each by
-// its level bit. (onlySelectableLevels clears only the Blocked bit, which none of the three reads.)
+// its level bit. (onlySelectableLevels keeps only the browsing-level bits, which include all three.)
 func matureRatingsAllowed(surface bool, level int32) mature {
 	if !surface {
 		return mature{}
