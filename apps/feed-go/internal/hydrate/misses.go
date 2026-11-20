@@ -251,14 +251,14 @@ func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
 	return kept, nil
 }
 
-// memoized is whether lookupShared keeps cache's answers in recent: for a cache not written back,
-// except the image meta (imageMetaCache has no per-pod L1 in Node, deliberately: a hideMeta flip
-// must not leave the old prompt served from a process's copy) and the user follows (the viewer's own
-// follow set, which they change and then read back; userFollowsCache has no L1 either). The tag ids, the model frames, the
-// model decorations and the version showcases are kept: none depends on the viewer (the showcase
-// lookup reads no user, and the per-viewer image filter runs on every read), Node keeps tag ids in a
-// per-pod L1 far longer than recentTTL, and a model frame or decoration is the same lookup the image
-// ones keep.
+// memoized is whether lookupShared keeps cache's answers in recent: true for a cache not written
+// back, except the image meta and the user follows. Node keeps neither in a per-pod L1 (imageMetaCache
+// deliberately, userFollowsCache has none), so a hideMeta flip must not leave the old prompt served
+// from a process's copy, and a viewer who changes their follow set must read the new one back at once.
+// The tag ids, model frames, model decorations and version showcases are kept: none depends on the
+// viewer (the showcase lookup reads no user, and the per-viewer image filter runs on every read), Node
+// keeps tag ids in a per-pod L1 far longer than recentTTL, and a model frame or decoration is the same
+// lookup the image ones keep.
 func (c *MissCompute) memoized(cache string) bool {
 	return !c.writes(cache) && cache != MissImageMeta && cache != MissUserFollows
 }
