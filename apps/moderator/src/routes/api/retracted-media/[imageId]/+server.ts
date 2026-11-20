@@ -46,7 +46,6 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
     );
   const csamReview = canAccess(locals.user, HELD_MEDIA_PAGE);
 
-  // A read that fails or runs past its timeout refuses, with nothing served.
   const media = await getRetractedMedia(imageId, { csamReview }).catch(() => {
     error(503, 'Could not check this image; retry.');
   });

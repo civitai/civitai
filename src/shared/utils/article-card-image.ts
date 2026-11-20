@@ -1,5 +1,6 @@
 import type { DB } from '@civitai/db-schema/kysely';
 import type { Selectable } from 'kysely';
+import { NsfwLevel } from '~/server/common/enums';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 /**
@@ -16,6 +17,7 @@ export function servableArticleImage<
   return image &&
     image.ingestion === 'Scanned' &&
     image.nsfwLevel !== 0 &&
+    image.nsfwLevel !== NsfwLevel.Blocked &&
     !image.needsReview &&
     !isRestrictedImage(image)
     ? image

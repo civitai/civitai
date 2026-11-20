@@ -7,6 +7,7 @@ import { credentialLogFields, getRequestCredential } from '~/server/auth/request
 import { dbWrite } from '~/server/db/client';
 import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
+import { offlineCapOrchestratorToken } from '~/server/orchestrator/offline-spend-cap';
 import {
   decodeOwnedToken,
   encodeOwnedToken,
@@ -75,6 +76,14 @@ export async function getOrchestratorToken(
     throw new TRPCError({ code: 'FORBIDDEN', message: 'This account has been banned' });
   if (!standing || !standing.exists || (standing.muted && !options.allowRestricted))
     throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
+
+  // The offline Buzz cap (flag `oauth-offline-grant`, offline-spend-cap.ts): a refresh-minted OAuth
+  // token with a cap is sent as itself and never cached under the user. Null otherwise, and nothing
+  // below changes.
+  if (ctx?.req && env.ORCHESTRATOR_MODE !== 'dev') {
+    const capped = await offlineCapOrchestratorToken(userId, ctx.req);
+    if (capped) return capped;
+  }
 
   const redisKey = userId.toString();
   // Fail open on sysRedis: fall through to the getTemporaryUserApiKey

@@ -104,6 +104,13 @@ export async function readScannerCsamVerdict(imageId: number) {
   return rows ? scannerCsamVerdict(imageId, rows) : null;
 }
 
+/** Each image's CSAM-label verdict in one read; null when the scanner cannot be read. */
+export async function readScannerCsamVerdicts(imageIds: number[]) {
+  if (!imageIds.length) return new Map<number, 'hit' | 'clear' | 'none'>();
+  const rows = await readScannerRows(imageIds);
+  return rows ? new Map(imageIds.map((id) => [id, scannerCsamVerdict(id, rows)] as const)) : null;
+}
+
 /** Whether the batch is declared suspect: by its minter, or by having no source card. */
 export function isDeclared(input: { suspect: boolean; source: string }) {
   return input.suspect || !input.source.trim();

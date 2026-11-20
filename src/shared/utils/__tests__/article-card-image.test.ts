@@ -22,8 +22,13 @@ describe('servableArticleImage', () => {
     expect(servableArticleImage(image({}))?.id).toBe(1);
   });
 
+  it('serves an image at the highest browsable level', () => {
+    expect(servableArticleImage(image({ nsfwLevel: 16 }))?.id).toBe(1);
+  });
+
   it.each([
     ['unrated', { nsfwLevel: 0 }],
+    ['rated Blocked', { nsfwLevel: 32 }],
     ['unscanned', { ingestion: 'Pending' }],
     ['awaiting review', { needsReview: 'minor' }],
     ['mature and restricted by its base model', { nsfwLevel: 4, modelRestricted: true }],

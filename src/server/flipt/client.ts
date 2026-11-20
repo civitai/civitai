@@ -54,7 +54,7 @@ export enum FLIPT_FEATURE_FLAGS {
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false is fine) BEFORE THIS CODE SERVES TRAFFIC,
   // and must not be deleted while it does. A MISSING key makes `evaluateBoolean` throw; the throw
-  // bypasses the eval cache and the default `onEvalError` console.errors — on every call of a
+  // bypasses the eval cache and `onEvalError` logs an error record — on every call of a
   // read issued on every signed-in image feed page. It still answers false (Prisma), but the log
   // flood and the uncached wasm eval also inflate the "off" baseline this flag exists to measure.
   //
@@ -70,7 +70,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // The reads in packages/civitai-db-queries/src/hot-reads-7.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call — and
   // several of these reads run on most feed pages.
   //
   // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead`. Its acquire wait is
@@ -81,7 +81,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // The reads in packages/civitai-db-queries/src/hot-reads-8.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call, and
   // the storyline read runs on most feed pages.
   //
   // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead`. Its acquire wait is
@@ -94,7 +94,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // one per relation. Evaluated with no entity id, once per call.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call, and
   // this read runs on every profile page view.
   //
   // 🔴 ON MOVES THIS READ OFF PRISMA'S PRIMARY POOL ONTO `pgDbWrite` (kyselyWrite), keeping it on
@@ -109,7 +109,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // per call.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call, and
   // this read runs on every collection page view.
   //
   // 🔴 ON MOVES THIS READ OFF PRISMA'S POOLS ONTO `pgDbRead` (kyselyRead), or `pgDbWrite`
@@ -257,6 +257,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // uninitialised client) keeps the plain behaviour, a bounded refetch that falls back to the last
   // list on failure.
   OAUTH_PROVIDERS_SERVE_STALE = 'oauth-providers-serve-stale',
+  // Offline access as a separate OAuth grant. Also read by the auth hub (apps/auth
+  // OFFLINE_GRANT_FLAG, same key). Here: a refresh-minted OAuth token's orchestrator work is held to
+  // its consent's Buzz cap (orchestrator/offline-spend-cap.ts). Global boolean, DEFAULT-OFF: a missing
+  // key or an unreachable Flipt reads false, today's behaviour.
+  OAUTH_OFFLINE_GRANT = 'oauth-offline-grant',
   // Writes superjson tRPC responses with `fastSuperjsonSerialize` (same output, cheaper walk)
   // instead of `superjson.serialize`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
@@ -860,6 +865,15 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
       'temp-search'
     );
   },
+  // One record per error, the stack in a field, so its stdout copy stays one line.
+  onEvalError: (error, flag) =>
+    logToAxiom({
+      name: 'flipt-eval-error',
+      type: 'error',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      payload: { flag },
+    }),
 }));
 
 // 🔴 THE ENTITY-ID TRAP. All four evaluators below take `(flag, entityId?,

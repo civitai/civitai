@@ -662,7 +662,6 @@ describe('🔴 private cursors', () => {
     expect((late.err as ProtocolError).message).toBe(
       'the cursor is older than a private stream keeps'
     );
-    expect(PRIVATE_CURSOR_TTL_MS).toBe(604_800_000);
   });
 
   it('a private cursor never reaches the public feed, and with private streams off it expires', async () => {

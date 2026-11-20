@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.532",
+  "version": "5.1.534",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -79,6 +79,10 @@
     "release:beacon-go:patch": "node scripts/release-app.mjs apps/beacon-go beacon-go-v patch",
     "release:beacon-go:minor": "node scripts/release-app.mjs apps/beacon-go beacon-go-v minor",
     "release:beacon-go:major": "node scripts/release-app.mjs apps/beacon-go beacon-go-v major",
+    "release:app-data-go": "pnpm run release:app-data-go:patch",
+    "release:app-data-go:patch": "node scripts/release-app.mjs apps/app-data-go app-data-go-v patch",
+    "release:app-data-go:minor": "node scripts/release-app.mjs apps/app-data-go app-data-go-v minor",
+    "release:app-data-go:major": "node scripts/release-app.mjs apps/app-data-go app-data-go-v major",
     "release:app-index-go": "pnpm run release:app-index-go:patch",
     "release:app-index-go:patch": "node scripts/release-app.mjs apps/app-index-go app-index-go-v patch",
     "release:app-index-go:minor": "node scripts/release-app.mjs apps/app-index-go app-index-go-v minor",
