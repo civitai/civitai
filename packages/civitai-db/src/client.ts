@@ -1,5 +1,6 @@
 // Prisma read/write client factory. The generated client + types come from the
 // @civitai/db-schema contract package, never @prisma/client directly.
+import { styleText } from 'node:util';
 import type { Prisma } from '@civitai/db-schema';
 import { PrismaClient } from '@civitai/db-schema';
 import { loadDbEnv, type DbConfig } from './env';
@@ -31,9 +32,63 @@ export function loggableQuery(e: { query: string; params: string }): string {
   return query;
 }
 
+export type PrismaLogLine = { level: Prisma.LogLevel; line: string };
+
 export type CreatePrismaClientsOptions = Partial<DbConfig> & {
   /** Structured slow-query telemetry (the old logToAxiom call). Injected by the app. */
   onSlowQuery?: (e: { query: string; duration: number; target: 'read' | 'write' }) => void;
+  /** Receives every `prisma:<level>` line after it is written to stdout, without colour. */
+  onLog?: (e: PrismaLogLine) => void;
+};
+
+/**
+ * The client `log` definitions for a LOGGING list, and the levels to print. Every level is
+ * `emit: 'event'` so the app can forward the line as well as print it.
+ */
+export function prismaLogConfig(logging: string[]): {
+  log: Prisma.LogDefinition[];
+  printed: Prisma.LogLevel[];
+} {
+  const printed = new Set(
+    logging
+      .filter((x) => x.startsWith('prisma:'))
+      .map((x) => x.replace('prisma:', '') as Prisma.LogLevel)
+  );
+  const slow = logging.some((x) => x.includes('prisma-slow'));
+  // Slow-query logging takes the query event over, and query lines are then not printed.
+  if (slow) printed.delete('query');
+  const levels = new Set(printed);
+  if (slow) levels.add('query');
+  return {
+    log: [...levels].map((level) => ({ emit: 'event' as const, level })),
+    printed: [...printed],
+  };
+}
+
+/**
+ * The handler for one printed level: the line Prisma's own `emit: 'stdout'` writes, then
+ * `onLog`. A throwing `onLog` is contained.
+ */
+export function prismaLogPrinter(level: Prisma.LogLevel, onLog?: (e: PrismaLogLine) => void) {
+  const tag = `prisma:${level}`;
+  const color = PRISMA_TAG_COLORS[level];
+  return function printPrismaLog(e: { message?: string; query?: string }) {
+    const text = e.message || e.query;
+    console.log(styleText(color, tag), text);
+    if (!onLog) return;
+    try {
+      onLog({ level, line: `${tag} ${text}` });
+    } catch {
+      // contained: forwarding must not break logging
+    }
+  };
+}
+
+const PRISMA_TAG_COLORS: Record<Prisma.LogLevel, Parameters<typeof styleText>[0]> = {
+  error: 'red',
+  warn: 'yellow',
+  info: 'cyan',
+  query: 'blue',
 };
 
 /** The handler for a client's query events: logs a statement slower than 2 s, as `loggableQuery`. */
@@ -62,7 +117,7 @@ export function slowQueryLogger({
  * that calls this. See the `~/server/db/client` shim.
  */
 export function createPrismaClients(options: CreatePrismaClientsOptions = {}): PrismaClients {
-  const { onSlowQuery, ...envOverrides } = options;
+  const { onSlowQuery, onLog, ...envOverrides } = options;
   const config = { ...loadDbEnv(), ...envOverrides };
 
   const singleClient = config.replicaUrl === config.databaseUrl;
@@ -70,18 +125,12 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
   const logFor = (target: 'write' | 'read') =>
     slowQueryLogger({ target, isProd: config.isProd, onSlowQuery });
 
+  const logConfig = prismaLogConfig(config.logging);
+
   const createPrismaClient = ({ readonly }: { readonly: boolean }): PrismaClient => {
-    const logDef: Prisma.LogDefinition[] = config.logging
-      .filter((x) => x.startsWith('prisma:'))
-      .map((x) => ({ emit: 'stdout', level: x.replace('prisma:', '') as Prisma.LogLevel }));
-    if (config.logging.some((x) => x.includes('prisma-slow'))) {
-      const existingItemIndex = logDef.findIndex((x) => x.level === 'query');
-      if (existingItemIndex >= 0) logDef.splice(existingItemIndex, 1);
-      logDef.push({ emit: 'event', level: 'query' });
-    }
     const dbUrl = readonly ? config.replicaUrl : config.databaseUrl;
     const clientOptions = {
-      log: logDef,
+      log: logConfig.log,
       datasources: { db: { url: dbUrl } },
       // A legacy billing pointer no client may see. Runtime only: the types still list the field,
       // because typing the clients with this omit runs `tsc` out of memory. Read it with an explicit
@@ -89,6 +138,10 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
       omit: { user: { subscriptionId: true } },
     } as Prisma.PrismaClientOptions;
     const prisma = new PrismaClient(clientOptions);
+    for (const level of logConfig.printed) {
+      // @ts-ignore - necessary to get the log event
+      prisma.$on(level, prismaLogPrinter(level, onLog));
+    }
 
     // use with prisma-slow,prisma-showparams
     if (config.logging.some((x) => x === 'prisma-showparams')) {

@@ -139,6 +139,7 @@ export const OTEL_LOG_ATTRIBUTE_KEYS = [
   'civitai.pod',
   'civitai.user_id',
   'civitai.request_id',
+  'civitai.source',
 ] as const;
 
 export type OtelLogAttributes = Record<string, string | number | boolean>;
@@ -165,6 +166,8 @@ export function buildOtelLogAttributes(data: MixedObject, datastream?: string): 
   put('civitai.pod', data?.pod);
   put('civitai.user_id', data?.userId ?? data?.user);
   put('civitai.request_id', data?.requestId ?? data?.request_id);
+  // `logSource`, not `source`: many app-logger payloads carry their own unbounded `source` field.
+  put('civitai.source', data?.logSource);
 
   return attrs;
 }
