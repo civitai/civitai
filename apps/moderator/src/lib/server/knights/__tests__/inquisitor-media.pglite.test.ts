@@ -51,6 +51,7 @@ const TABLES = [
   'Image',
   'Post',
   'ModelVersion',
+  'TextScanHold',
   'User',
   'CsamReport',
   'EvidenceHeldUser',
@@ -162,6 +163,21 @@ describe('getInquisitorQueue media', () => {
           `INSERT INTO "User" (id, meta) VALUES ($1, '{"banDetails": {"reasonCode": "SexualMinor"}}')`,
           [OWNER]
         ),
+    ],
+    [
+      'a model a confirmed CSAM hold removed',
+      async () => {
+        await db.query(
+          `INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES (990300002, '{}', 990500002)`
+        );
+        await db.query(
+          `INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400002, '{}', 990300002)`
+        );
+        await db.query(`UPDATE "Image" SET "postId" = 990400002`);
+        await db.query(
+          `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500002, 'csam', 'Confirmed')`
+        );
+      },
     ],
     ['another review flag', async () => db.query(`UPDATE "Image" SET "needsReview" = 'csam'`)],
     [

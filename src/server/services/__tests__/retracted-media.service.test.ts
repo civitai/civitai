@@ -98,6 +98,7 @@ beforeAll(async () => {
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb, images jsonb, "reportSentAt" timestamp);
     CREATE TABLE "EvidenceHeldUser" ("userId" int);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
+    CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL);
   `);
   for (const r of rows)
     await pg.query(
@@ -401,6 +402,35 @@ describe('a model version unpublished for its subject', () => {
     expect(await getRetractedMedia(990000121, { csamReview: false })).toMatchObject({
       url: 'key-990000121',
     });
+  });
+
+  it('keeps an image on a model a confirmed CSAM hold removed to cleared moderators', async () => {
+    await pg.exec(`
+      INSERT INTO "Model" (id, meta) VALUES (990500126, '{"unpublishedReason": "mature-underage"}');
+      INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES (990300126, '{}', 990500126);
+      INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400126, '{}', 990300126);
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
+        (990000126, 'key-990000126', 'Blocked', 'moderated', 990100126, 990400126),
+        (990000127, 'key-990000127', 'Blocked', 'moderated', 990100127, NULL),
+        (990000128, 'key-990000127', 'Scanned', NULL, 990100128, 990400126);
+    `);
+    // Removed by a moderator for its subject alone: the image itself is open.
+    expect(await getRetractedMedia(990000126, { csamReview: false })).toMatchObject({
+      url: 'key-990000126',
+    });
+    await pg.exec(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500126, 'csam', 'Confirmed')`
+    );
+    try {
+      expect(await getRetractedMedia(990000126, { csamReview: false })).toBeNull();
+      // An image whose url a row on that model shares stays kept, as it was before the hold.
+      expect(await getRetractedMedia(990000127, { csamReview: false })).toBeNull();
+      expect(await getRetractedMedia(990000126, { csamReview: true })).toMatchObject({
+        url: 'key-990000126',
+      });
+    } finally {
+      await pg.exec(`DELETE FROM "TextScanHold" WHERE "entityId" = 990500126`);
+    }
   });
 
   it('keeps an image whose url a row with that reason shares to cleared moderators', async () => {

@@ -21,7 +21,7 @@ export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): 
         SELECT 1 FROM "ImageCdnAccess" ca WHERE ca.url = ${image}."url" AND ca.state = 'Retracted'
       )
       AND NOT ${heldUrlSql(`${image}."url"`)}
-      -- Bytes are per url, the tier per row: another row's signal would not reach this one, so the
+      -- Bytes are per url, the checks per row: another row's signal would not reach this one, so the
       -- url must be this row's alone, with no deleted or taken-down copy behind it either.
       AND NOT EXISTS (SELECT 1 FROM "Image" so WHERE so.url = ${image}."url" AND so.id <> ${image}.id)
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" sd WHERE sd.url = ${image}."url")
@@ -71,13 +71,20 @@ export function csamRestrictedSql(image: string): string {
     )
     OR ${reportListedUrlSql(url)}
     OR ${evidenceHeldUrlSql(url)}
-    -- The url's other rows by the held-url rule; this row's own owner and post by the CSAM legs
-    -- alone, so a minor reason on its own model or version does not restrict it.
+    -- The url's other rows by the held-url rule. This row's own owner and post by the CSAM legs, and
+    -- its own model only when a confirmed CSAM hold removed it: that removal writes the same
+    -- unpublish reason as a minor one, which alone does not restrict.
     OR ${heldUrlSql(url, { exceptImageId: `${image}."id"` })}
     OR ${heldUserSql(`${image}."userId"`)}
     OR EXISTS (
       SELECT 1 FROM "Post" cp
       WHERE cp.id = ${image}."postId" AND cp.metadata ->> 'unpublishedReason' = '${CSAM_HOLD_POST_UNPUBLISH_REASON}'
+    )
+    OR EXISTS (
+      SELECT 1 FROM "Post" cmp
+      JOIN "ModelVersion" cmv ON cmv.id = cmp."modelVersionId"
+      JOIN "TextScanHold" cth ON cth."entityType" = 'Model' AND cth."entityId" = cmv."modelId"
+      WHERE cmp.id = ${image}."postId" AND cth.label = 'csam' AND cth.status = 'Confirmed'
     )
   ), true)`;
 }

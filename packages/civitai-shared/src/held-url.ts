@@ -92,7 +92,7 @@ export function heldUrlSql(
 ): string {
   const u = sqlRef(url);
   const except = exceptImageId ? ` AND hx.id <> ${sqlRef(exceptImageId)}` : '';
-  const taken = /^(hx|hp|hmv|hmo|hd|ht|hc|rc|cc)\./;
+  const taken = /^"?(hx|hp|hmv|hmo|hd|ht|hc|rc|cc)"?\./;
   for (const ref of [u, exceptImageId ? sqlRef(exceptImageId) : ''])
     if (taken.test(ref)) throw new Error(`Alias taken inside heldUrlSql: ${ref}`);
   return `(
