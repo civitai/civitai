@@ -224,6 +224,27 @@ async function finishRemoval(modelId: number) {
   // Imported here: model-version.service imports this module.
   const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
   await bustPublicModelResponseCache(modelId);
+  await rescanTextAfterFaceLoss(modelId);
+}
+
+/**
+ * Scans the model's text again past the unchanged-text skip: the text scan may have left an R+
+ * listing unrated on the strength of a .com face that is now gone. Never throws.
+ */
+export async function rescanTextAfterFaceLoss(modelId: number) {
+  try {
+    // Imported here: the scan reaches services that import this module.
+    const { scanEntityInBackground } = await import('~/server/services/text-scan/submit');
+    scanEntityInBackground({ entityType: 'Model', entityId: modelId, force: true });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'com-face-recheck',
+      message: 'text rescan after face loss failed',
+      modelId,
+      error: (error as Error).message,
+    });
+  }
 }
 
 /** A model whose face the re-check removed waits here, after a listing edit, for one restore check. */

@@ -28,11 +28,11 @@ import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constan
 import { hasCompleteSfwFace, isComSafeLevel } from '~/shared/utils/model-sfw-face';
 import { checkSfwFace, getOwnVersionFields } from '~/server/services/model-sfw-face.service';
 import {
+  hasSfwFaceParts,
   passedSfwFaceCheck,
   sfwFaceStamp,
   sfwFaceStampMatches,
 } from '~/server/services/model-sfw-face-stamp';
-import { removeTags } from '~/utils/string-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
 const SYSTEM_USER_ID = constants.system.user.id;
@@ -160,10 +160,6 @@ export async function applySystemModelNsfwFlag({
 const locksRating = (source: string) => !SCAN_RATING_SOURCES.includes(source);
 
 /**
- * Drops the text scan's own origin marker after it reads the text as not mature: the owner's way
- * out of `assertScanRatingKept`. Never under a lock, nor another check's marker.
- */
-/**
  * A complete .com face whose text passed the face check: a .com title and description, a .com cover
  * rated PG-13 or below, and a stamp for exactly these values. A stale or missing stamp re-runs the
  * check; no verdict is no face (fails closed), and a pass is stamped onto the face it read.
@@ -180,8 +176,7 @@ async function hasCleanComFace(
   { check, readVersions }: { check: typeof checkSfwFace; readVersions: typeof getOwnVersionFields }
 ) {
   const { sfwName, sfwDescription, sfwCoverImageId } = model;
-  if (!sfwName?.trim() || !removeTags(sfwDescription ?? '').trim() || sfwCoverImageId == null)
-    return false;
+  if (!hasSfwFaceParts(model) || sfwName == null || sfwCoverImageId == null) return false;
   // primary: the cover's rating gates a rating write; a fresh re-rate must count.
   const cover = await dbWrite.image.findUnique({
     where: { id: sfwCoverImageId },
@@ -231,6 +226,10 @@ async function hasCleanComFace(
   }
 }
 
+/**
+ * Drops the text scan's own origin marker after it reads the text as not mature: the owner's way
+ * out of `assertScanRatingKept`. Never under a lock, nor another check's marker.
+ */
 async function dropScanRatingMarker(db: RawDb, modelId: number) {
   // A scan marker an intent lock parked goes too, so lifting that lock does not bring it back.
   await db.$executeRaw`

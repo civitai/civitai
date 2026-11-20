@@ -117,14 +117,17 @@ vi.mock('~/server/services/model-cover.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelCoverService>()),
   assertCoverImagesValid: mockAssertCoverImagesValid,
 }));
-const { mockQueueComFaceRecheck, mockQueueComFaceRestore } = vi.hoisted(() => ({
-  mockQueueComFaceRecheck: vi.fn(),
-  mockQueueComFaceRestore: vi.fn(),
-}));
+const { mockQueueComFaceRecheck, mockQueueComFaceRestore, mockRescanTextAfterFaceLoss } =
+  vi.hoisted(() => ({
+    mockQueueComFaceRecheck: vi.fn(),
+    mockQueueComFaceRestore: vi.fn(),
+    mockRescanTextAfterFaceLoss: vi.fn(),
+  }));
 vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ComFaceRecheck>()),
   queueComFaceRecheck: mockQueueComFaceRecheck,
   queueComFaceRestore: mockQueueComFaceRestore,
+  rescanTextAfterFaceLoss: mockRescanTextAfterFaceLoss,
 }));
 const { mockPreviewComFaceIntent, mockPreviewTextScanNsfw } = vi.hoisted(() => ({
   mockPreviewComFaceIntent: vi.fn(),
@@ -211,6 +214,7 @@ const storedModel = {
   allowDifferentLicense: false,
   coverImageId: null as number | null,
   sfwName: null as string | null,
+  sfwDescription: null as string | null,
   sfwCoverImageId: null as number | null,
 };
 
@@ -1861,5 +1865,49 @@ describe('the .com face stamp at save', () => {
       } as ModelUpsertInput['meta'],
     });
     expect(savedStamp()).toBeUndefined();
+  });
+});
+
+describe('a .com face going away', () => {
+  const complete = {
+    name: baseInput.name,
+    description: baseInput.description,
+    sfwName: 'Retro Style',
+    sfwDescription: '<p>A retro poster style.</p>',
+    sfwCoverImageId: 5,
+  };
+  beforeEach(() => {
+    mockDbWrite.$executeRaw.mockResolvedValue(1 as never);
+    mockDbRead.modelVersion.findMany.mockResolvedValue([] as never);
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: false, reason: 'stub' },
+    });
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'ok', level: 1, reason: 'stub' });
+  });
+
+  it.each([
+    ['turns the face off', { sfwName: '' }],
+    ['clears the .com description', { sfwDescription: '<p></p>' }],
+    ['clears the .com cover', { sfwCoverImageId: null }],
+  ])('rescans the text when an owner %s', async (_, change) => {
+    mockStored(complete);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, ...change });
+    expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('rescans when a moderator turns it off too', async () => {
+    mockStored(complete);
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, sfwName: '' });
+    expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it.each([
+    ['the face stays complete', complete, { sfwName: 'Retro Style Two' }],
+    ['there was no complete face', { ...complete, sfwDescription: null }, { sfwName: '' }],
+  ])('does not rescan when %s', async (_, stored, change) => {
+    mockStored(stored);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, ...change });
+    expect(mockRescanTextAfterFaceLoss).not.toHaveBeenCalled();
   });
 });

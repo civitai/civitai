@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { SfwFaceCheckField, SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
 import type { TextScanField } from '~/server/services/text-scan/types';
+import { removeTags } from '~/utils/string-helpers';
 
 export type SfwFaceStampFace = {
   sfwName: string | null;
@@ -32,6 +33,19 @@ export function sfwFaceStamp(
   promptId: number | null
 ): NonNullable<ModelMeta['sfwFaceCheckedAt']> {
   return { at: new Date().toISOString(), promptId, hash: sfwFaceStampHash(face) };
+}
+
+/** A .com title, a .com description with text in it, and a .com cover picked. */
+export function hasSfwFaceParts(face: {
+  sfwName?: string | null;
+  sfwDescription?: string | null;
+  sfwCoverImageId?: number | null;
+}) {
+  return (
+    !!face.sfwName?.trim() &&
+    !!removeTags(face.sfwDescription ?? '').trim() &&
+    face.sfwCoverImageId != null
+  );
 }
 
 /** Whether the face text check passed for exactly this face. */

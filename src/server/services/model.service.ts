@@ -356,10 +356,11 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
-import { sfwFaceStamp } from '~/server/services/model-sfw-face-stamp';
+import { hasSfwFaceParts, sfwFaceStamp } from '~/server/services/model-sfw-face-stamp';
 import {
   queueComFaceRecheck,
   queueComFaceRestore,
+  rescanTextAfterFaceLoss,
 } from '~/server/services/model-com-face-recheck.service';
 import {
   isGenerationDisabled,
@@ -4265,7 +4266,6 @@ export const upsertModel = async (
       modelId: id,
       userId,
     });
-    // The text scan trusts this pass for as long as everything it read is unchanged.
     if (stamp)
       meta = {
         ...(meta ?? {}),
@@ -4850,6 +4850,17 @@ export const upsertModel = async (
     if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
       await queueComFaceRecheck(id);
     if (!isModerator && listingChanged) await queueComFaceRestore(id);
+    if (
+      hasSfwFaceParts(beforeUpdate) &&
+      !hasSfwFaceParts({
+        sfwName: data.sfwName !== undefined ? data.sfwName : beforeUpdate.sfwName,
+        sfwDescription:
+          data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate.sfwDescription,
+        sfwCoverImageId:
+          data.sfwCoverImageId !== undefined ? data.sfwCoverImageId : beforeUpdate.sfwCoverImageId,
+      })
+    )
+      await rescanTextAfterFaceLoss(id);
     if (heldVerdictApplied) {
       const { finishHeldVerdictApply } = await import(
         '~/server/services/text-scan/actions/model-nsfw'

@@ -197,7 +197,7 @@ describe('applyModelNsfwTextScan', () => {
   });
 });
 
-// W1: a Model is rated on R+ text whatever it declared, unless it has a complete .com face whose text
+// A Model is rated on R+ text whatever it declared, unless it has a complete .com face whose text
 // passed the face check. That face lists it on .com as safe; anything less and the scan rates it.
 describe('applyModelNsfwTextScan and the .com face', () => {
   const face = {
@@ -330,9 +330,12 @@ describe('applyModelNsfwTextScan and the .com face', () => {
     );
     expect(stampCall).toBeDefined();
     // Only onto the face it checked: an edit landing since leaves its row unstamped.
-    expect(stampSql()).toMatch(/"sfwName" IS NOT DISTINCT FROM \?/);
-    expect(stampSql()).toMatch(/"sfwDescription" IS NOT DISTINCT FROM \?/);
-    expect(stampSql()).toMatch(/"sfwCoverImageId" IS NOT DISTINCT FROM \?/);
+    const [strings, ...values] = stampCall as [readonly string[], ...unknown[]];
+    const guarded = (column: string) =>
+      values[strings.findIndex((part) => part.includes(`m."${column}" IS NOT DISTINCT FROM`))];
+    expect(guarded('sfwName')).toBe(row.sfwName);
+    expect(guarded('sfwDescription')).toBe(row.sfwDescription);
+    expect(guarded('sfwCoverImageId')).toBe(row.sfwCoverImageId);
     const stamp = JSON.parse(
       (stampCall as unknown[]).find((v) => typeof v === 'string' && v.includes('"hash"')) as string
     );
@@ -442,6 +445,22 @@ describe('applyModelNsfwTextScan and the .com face', () => {
     await scan(rated(NsfwLevel.X, NsfwLevel.XXX));
     expect(markerSql()).toBeUndefined();
     expect(flipSql()).toBeUndefined();
+  });
+
+  it('rates the text once the face that let it stand is turned off', async () => {
+    const row = stamped();
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(row);
+    await scan(args(true));
+    expect(flipSql()).toBeUndefined();
+
+    // The save that turns the face off keeps the stamp; the rescan it forces finds no face.
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      ...row,
+      sfwName: null,
+      sfwDescription: null,
+    });
+    await scan(args(true));
+    expect(flipSql()).toBeDefined();
   });
 
   it('never rates on PG-13 text, face or not', async () => {
