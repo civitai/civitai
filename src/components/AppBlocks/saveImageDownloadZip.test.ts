@@ -270,6 +270,23 @@ describe('zip size caps on the path the handler calls (processSaveBytes)', () =>
     expect(text.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
   });
 
+  it('the window: a 130 MB zip fits an empty window (over the 100 MB non-zip budget)…', () => {
+    const big = 130 * MB + 11;
+    const r = processSaveBytes({ bytes: storedZipOfSize(big) }, [], T0);
+    expect(r.result).toMatchObject({ ok: true, type: 'application/zip' });
+    // …a following small text save is still held to the 100 MB budget, so it is busy…
+    const after = processSaveBytes(
+      { bytes: enc.encode('hi').buffer as ArrayBuffer },
+      r.recent,
+      T0 + 1
+    );
+    expect(after.result).toEqual({ ok: false, error: 'busy' });
+    // …and a second zip that would take the window over 256 MB is busy too.
+    const second = processSaveBytes({ bytes: storedZipOfSize(126 * MB + 5) }, r.recent, T0 + 2);
+    expect(second.result).toEqual({ ok: false, error: 'busy' });
+    const fits = processSaveBytes({ bytes: storedZipOfSize(125 * MB + 5) }, r.recent, T0 + 3);
+    expect(fits.result).toMatchObject({ ok: true, type: 'application/zip' });
+  });
   it('a full window refuses a zip `busy` WITHOUT validating it (a malformed zip still says busy)', async () => {
     const full = Array.from({ length: SAVE_BYTES_MAX_PER_WINDOW }, (_, i) => ({
       at: T0 + i,
