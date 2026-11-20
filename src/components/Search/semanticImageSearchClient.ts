@@ -208,6 +208,12 @@ export function createSemanticImageSearch({
   asTyped?: () => string | undefined;
 } = {}) {
   const fetchPage = createOffsetPager();
+  // A search for any other query ends the choice, so retyping the query later is corrected again.
+  const searchedAsTyped = (query: string) => {
+    const chosen = asTyped();
+    if (chosen !== undefined && chosen !== query) setImageSearchAsTyped(undefined);
+    return chosen === query;
+  };
 
   return async function searchImages(indexName: string, params: RequestParams) {
     const query = params.query?.trim();
@@ -235,7 +241,7 @@ export function createSemanticImageSearch({
       types: refined.get('type') as MediaType[] | undefined,
       ...readPostedRange(params.numericFilters),
       // Only for the query it was chosen for: a new search is corrected again.
-      ...(query && asTyped() === query ? { spellcheck: false as const } : {}),
+      ...(query && searchedAsTyped(query) ? { spellcheck: false as const } : {}),
     };
     const page = await fetchPage({
       query: query ?? '',

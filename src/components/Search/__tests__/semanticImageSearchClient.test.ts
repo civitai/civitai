@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createOwnerImageSearch,
   createSemanticImageSearch,
+  setImageSearchAsTyped,
   withSemanticImageSearch,
 } from '~/components/Search/semanticImageSearchClient';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
@@ -49,6 +50,20 @@ describe('the image search page searched as typed', () => {
       query: 'Shikata nee',
       spellcheck: false,
     });
+  });
+
+  it('ends the choice once another query is searched, so retyping it is corrected again', async () => {
+    const search = fakeSearch([{ ids: [1] }, { ids: [1] }, { ids: [1] }]);
+    const client = withSemanticImageSearch(meili() as never, createSemanticImageSearch({ search }));
+    setImageSearchAsTyped('Shikata nee');
+    await client.search([imageRequest({ query: 'Shikata nee' })] as never);
+    await client.search([imageRequest({ query: 'anime girl' })] as never);
+    await client.search([imageRequest({ query: 'Shikata nee', page: 1 })] as never);
+    expect(search.mock.calls.map(([input]) => input.spellcheck)).toEqual([
+      false,
+      undefined,
+      undefined,
+    ]);
   });
 
   it('leaves the correction on for a new search (control)', async () => {
