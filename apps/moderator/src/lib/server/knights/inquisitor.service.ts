@@ -11,12 +11,8 @@ import {
   type KnightsEscalationReason,
   type KnightsWritebackReason,
 } from '@civitai/shared/new-order';
-import { evidenceHeldUrlSql, reportListedUrlSql } from '@civitai/shared/held-url';
-import {
-  retractedImageWhereSql,
-  retractedSuspectSql,
-  retractedTier,
-} from '@civitai/shared/retracted-media-tier';
+import { csamRestrictedSql, retractedImageWhereSql } from '@civitai/shared/retracted-media-tier';
+import { blockedForSignal } from '@civitai/shared/review-batch';
 import { INQUISITOR_FILTERS, type InquisitorFilter } from '$lib/knights/inquisitor-filters';
 import { BLOCKED_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
 import { isRatingLevel } from '$lib/nsfw-levels';
@@ -244,10 +240,8 @@ export async function getInquisitorQueue(
 }
 
 /**
- * The blocked images `/api/retracted-media` would serve to a moderator without the CSAM page's grant,
- * by the same shared predicates, before its scanner check (the route still makes that one, and logs
- * the view). Anything else is restricted media: it keeps its existing access path, and this page
- * fetches it from nowhere, whatever the route's settings.
+ * The blocked images `/api/retracted-media` may serve to a moderator without the CSAM page's grant.
+ * Must mirror that route's Postgres checks (`getRetractedMedia`); the rest are drawn as restricted.
  */
 async function blockedImagesAnyModeratorMaySee(imageIds: number[]): Promise<Set<number>> {
   if (imageIds.length === 0) return new Set();
@@ -268,15 +262,13 @@ async function readViewable(imageIds: number[]): Promise<Set<number>> {
   const rows = await dbWrite
     .selectFrom('Image as i')
     .select(['i.id', 'i.blockedFor'])
-    .select(sql<boolean>`${sql.raw(retractedSuspectSql('i'))}`.as('suspect'))
     .where('i.id', 'in', imageIds)
     .where(sql<boolean>`${sql.raw(retractedImageWhereSql('i'))}`)
-    .where(sql<boolean>`NOT ${sql.raw(reportListedUrlSql('i."url"'))}`)
-    .where(sql<boolean>`NOT ${sql.raw(evidenceHeldUrlSql('i."url"'))}`)
+    .where(sql<boolean>`NOT ${sql.raw(csamRestrictedSql('i'))}`)
     .execute();
   const patterns = blockedForPatterns();
   return new Set(
-    rows.filter((row) => retractedTier(row, patterns) === 'plain').map((row) => row.id)
+    rows.filter((row) => !blockedForSignal(row.blockedFor, patterns)).map((row) => row.id)
   );
 }
 

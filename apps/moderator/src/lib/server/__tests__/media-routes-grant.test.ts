@@ -44,6 +44,10 @@ vi.mock('$lib/server/mod-activity', () => ({
   recordModActivity: vi.fn(),
 }));
 vi.mock('$lib/server/axiom', () => ({ logToAxiom: vi.fn(async () => {}) }));
+const retryAfter = vi.hoisted(() => ({ seconds: null as number | null }));
+vi.mock('$lib/server/retracted-media-rate', () => ({
+  retractedMediaRetryAfter: async () => retryAfter.seconds,
+}));
 vi.mock('$lib/server/storage', () => ({
   getStorage: () => ({
     getGetUrl: async (input: { key?: string }) => ({

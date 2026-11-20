@@ -86,8 +86,12 @@ export function imageCoveredText(image: string, user: string): string {
  * - A shop takedown: no owner recorded, or the owner held or named on any report.
  * An unreadable fact fails the statement rather than reading as not held.
  */
-export function heldUrlSql(url: string): string {
+export function heldUrlSql(
+  url: string,
+  { exceptImageId }: { exceptImageId?: string } = {}
+): string {
   const u = sqlRef(url);
+  const except = exceptImageId ? ` AND hx.id <> ${sqlRef(exceptImageId)}` : '';
   if (/^(hx|hp|hmv|hmo|hd|ht|hc|rc|cc)\./.test(u))
     throw new Error(`Alias taken inside heldUrlSql: ${u}`);
   return `(
@@ -96,7 +100,7 @@ export function heldUrlSql(url: string): string {
       LEFT JOIN "Post" hp ON hp.id = hx."postId"
       LEFT JOIN "ModelVersion" hmv ON hmv.id = hp."modelVersionId"
       LEFT JOIN "Model" hmo ON hmo.id = hmv."modelId"
-      WHERE hx.url = ${u} AND (
+      WHERE hx.url = ${u}${except} AND (
         hx."needsReview" IS NOT DISTINCT FROM 'csam'
         OR ${ownerHeldText('hx."userId"')}
         OR (NOT ${imageCoveredText('hx."id"', 'hx."userId"')} AND (

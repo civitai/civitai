@@ -10,6 +10,9 @@ export const RETRACTED_SERVED_ACTIVITY = 'retractedMedia:view';
 /** Per moderator, per minute. */
 export const RETRACTED_MEDIA_RATE_LIMIT = 600;
 
+/** The eligibility read's statement timeout: a read that cannot finish refuses. */
+export const RETRACTED_MEDIA_READ_TIMEOUT_MS = 2_000;
+
 /** The largest object served; a larger one is refused whole, ranges included. */
 export const RETRACTED_MEDIA_MAX_BYTES = 250 * 1024 * 1024;
 

@@ -181,7 +181,6 @@ describe('getRetractedMedia', () => {
       url: 'key-1',
       type: 'image',
       mimeType: null,
-      tier: 'plain',
     });
   });
 
@@ -295,6 +294,15 @@ describe('getRetractedMedia', () => {
   });
 });
 
+describe('the eligibility read', () => {
+  it('runs under a statement timeout, so a slow read refuses instead of hanging', async () => {
+    await getRetractedMedia(1, { csamReview: false });
+    expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledWith(
+      expect.stringMatching(/^SET LOCAL statement_timeout = \d+$/)
+    );
+  });
+});
+
 describe('copies sharing bytes with a restricted image', () => {
   // 990000101: a plain blocked image whose url another row shares. 990000103: a plain blocked image
   // whose pHash another row has. Each test lists or holds the other row, then removes it.
@@ -367,5 +375,50 @@ describe('copies sharing bytes with a restricted image', () => {
   ])('keeps an image with %s to cleared moderators', async (_label, id, mark) => {
     await mark();
     await expectTiers('suspect', [id]);
+  });
+});
+
+describe('a model version unpublished for its subject', () => {
+  // 990000121: plain blocked image on post 990400121, whose version carries the reason.
+  // 990000122: plain blocked image whose url a row on that post shares.
+  beforeAll(async () => {
+    await pg.exec(`
+      INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES (990300121, '{"unpublishedReason": "mature-underage"}', NULL);
+      INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400121, '{}', 990300121);
+    `);
+  });
+
+  it('leaves the image itself open to any moderator', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
+        (990000121, 'key-990000121', 'Blocked', 'moderated', 990100121, 990400121)
+    `);
+    expect(await getRetractedMedia(990000121, { csamReview: false })).toMatchObject({
+      url: 'key-990000121',
+    });
+  });
+
+  it('keeps an image whose url a row with that reason shares to cleared moderators', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
+        (990000122, 'key-990000122', 'Blocked', 'moderated', 990100122, NULL),
+        (990000123, 'key-990000122', 'Scanned', NULL, 990100123, 990400121)
+    `);
+    expect(await getRetractedMedia(990000122, { csamReview: false })).toBeNull();
+    expect(await getRetractedMedia(990000122, { csamReview: true })).toMatchObject({
+      url: 'key-990000122',
+    });
+  });
+
+  it('keeps an image whose own post is on a CSAM hold to cleared moderators', async () => {
+    await pg.exec(`
+      INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400124, '{"unpublishedReason": "csam-text-hold"}', NULL);
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
+        (990000124, 'key-990000124', 'Blocked', 'moderated', 990100124, 990400124)
+    `);
+    expect(await getRetractedMedia(990000124, { csamReview: false })).toBeNull();
+    expect(await getRetractedMedia(990000124, { csamReview: true })).toMatchObject({
+      url: 'key-990000124',
+    });
   });
 });

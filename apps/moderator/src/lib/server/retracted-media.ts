@@ -1,14 +1,14 @@
 import { sql } from '@civitai/db/kysely';
 import { env } from '$env/dynamic/private';
-import { RETRACTED_SERVED_ACTIVITY } from '@civitai/shared/retracted-media';
+import {
+  RETRACTED_MEDIA_READ_TIMEOUT_MS,
+  RETRACTED_SERVED_ACTIVITY,
+} from '@civitai/shared/retracted-media';
 import { blockedForSignal } from '@civitai/shared/review-batch';
 import {
   createScannerVerdictCache,
   csamRestrictedSql,
   retractedImageWhereSql,
-  retractedSuspectSql,
-  retractedTier,
-  type RetractedTier,
 } from '@civitai/shared/retracted-media-tier';
 import { blockedForPatterns } from './blocked-for-patterns';
 import { dbWrite } from './db';
@@ -21,7 +21,6 @@ export type RetractedMedia = {
   url: string;
   type: string;
   mimeType: string | null;
-  tier: RetractedTier;
 };
 
 /**
@@ -29,28 +28,31 @@ export type RetractedMedia = {
  * `null` otherwise, so an image they may not see is answered exactly as a missing one. CSAM-restricted
  * media (`csamRestrictedSql`, a `blockedFor` signal, or the scanner's CSAM label) needs `csamReview`;
  * a minor signal alone does not. The same rules as the main app's `/api/mod/retracted-media`, read on the
- * primary for the same reason: a flag or hold the replica has not seen would serve as `plain`.
+ * primary for the same reason: a flag or hold the replica has not seen would otherwise be missed. A read past its timeout throws, and the route refuses.
  */
 export async function getRetractedMedia(
   imageId: number,
   { csamReview }: { csamReview: boolean }
 ): Promise<RetractedMedia | null> {
-  const row = await dbWrite
-    .selectFrom('Image as i')
-    .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor', 'i.ingestion'])
-    .select(sql<boolean>`${sql.raw(retractedSuspectSql('i'))}`.as('suspect'))
-    // Read only for a moderator who could be refused on it.
-    .select(
-      sql<boolean>`${sql.raw(csamReview ? 'false' : csamRestrictedSql('i'))}`.as('restricted')
-    )
-    .where('i.id', '=', imageId)
-    .where(
-      sql<boolean>`${sql.raw(retractedImageWhereSql('i', { cdnLeg: retractedMediaCdnLeg() }))}`
-    )
-    .executeTakeFirst();
+  const row = await dbWrite.transaction().execute(async (trx) => {
+    await sql.raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`).execute(trx);
+    return (
+      trx
+        .selectFrom('Image as i')
+        .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor', 'i.ingestion'])
+        // Read only for a moderator who could be refused on it.
+        .select(
+          sql<boolean>`${sql.raw(csamReview ? 'false' : csamRestrictedSql('i'))}`.as('restricted')
+        )
+        .where('i.id', '=', imageId)
+        .where(
+          sql<boolean>`${sql.raw(retractedImageWhereSql('i', { cdnLeg: retractedMediaCdnLeg() }))}`
+        )
+        .executeTakeFirst()
+    );
+  });
   if (!row) return null;
   const patterns = blockedForPatterns();
-  const tier = retractedTier(row, patterns);
   if (!csamReview) {
     if (row.restricted || blockedForSignal(row.blockedFor, patterns)) return null;
     // Refused when the scanner's CSAM label marks it, or the scanner cannot be read. A scanned image
@@ -61,7 +63,7 @@ export async function getRetractedMedia(
         : await scannerVerdicts.read(imageId);
     if (verdict !== 'clear' && verdict !== 'none') return null;
   }
-  return { url: row.url, type: row.type, mimeType: row.mimeType, tier };
+  return { url: row.url, type: row.type, mimeType: row.mimeType };
 }
 
 /** Every response carrying bytes, ranges included. Throws when the row is not written, so the bytes

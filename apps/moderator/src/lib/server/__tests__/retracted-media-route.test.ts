@@ -25,6 +25,10 @@ vi.mock('$lib/server/retracted-media', () => ({
   recordRetractedView,
   retractedMediaEnabled: () => enabled.on,
 }));
+const retryAfter = vi.hoisted(() => ({ seconds: null as number | null }));
+vi.mock('$lib/server/retracted-media-rate', () => ({
+  retractedMediaRetryAfter: async () => retryAfter.seconds,
+}));
 vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
 vi.mock('$lib/server/held-media', () => ({
   HELD_MEDIA_PAGE: '/images/csam',
@@ -166,6 +170,21 @@ describe('/api/retracted-media', () => {
     );
     expect((await call()).status).toBe(413);
     expect(recordRetractedView).not.toHaveBeenCalled();
+  });
+});
+
+describe('/api/retracted-media rate limit', () => {
+  it('answers 429 with retry-after and no-store over the limit, before reading the image', async () => {
+    retryAfter.seconds = 42;
+    try {
+      const { status, res } = await call();
+      expect(status).toBe(429);
+      expect(res?.headers.get('retry-after')).toBe('42');
+      expect(res?.headers.get('cache-control')).toBe('private, no-store');
+      expect(getRetractedMedia).not.toHaveBeenCalled();
+    } finally {
+      retryAfter.seconds = null;
+    }
   });
 });
 

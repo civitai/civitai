@@ -6,6 +6,7 @@ import {
 } from './held-media';
 import {
   BAN_REASONS_ALWAYS_REMOVING_MEDIA,
+  CSAM_HOLD_POST_UNPUBLISH_REASON,
   evidenceHeldUrlSql,
   heldUrlSql,
   MINOR_UNPUBLISH_REASONS,
@@ -87,7 +88,14 @@ export function csamRestrictedSql(image: string): string {
     )
     OR ${reportListedUrlSql(url)}
     OR ${evidenceHeldUrlSql(url)}
-    OR ${heldUrlSql(url)}
+    -- The url's other rows by the held-url rule; this row's own owner and post by the CSAM legs
+    -- alone, so a minor reason on its own model or version does not restrict it.
+    OR ${heldUrlSql(url, { exceptImageId: `${image}."id"` })}
+    OR ${heldUserSql(`${image}."userId"`)}
+    OR EXISTS (
+      SELECT 1 FROM "Post" cp
+      WHERE cp.id = ${image}."postId" AND cp.metadata ->> 'unpublishedReason' = '${CSAM_HOLD_POST_UNPUBLISH_REASON}'
+    )
   ), true)`;
 }
 
