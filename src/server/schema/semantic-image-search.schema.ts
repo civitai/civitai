@@ -20,6 +20,8 @@ export const semanticImageSearchSchema = baseQuerySchema
     tagNames: z.string().trim().min(1).array().max(20).optional(),
     excludedTagIds: z.number().int().array().max(50).optional(),
     baseModels: z.string().array().max(baseModels.length).optional(),
+    // Images made with any of these model versions (behind `imageSearchResources`).
+    modelVersionIds: z.number().int().positive().array().max(20).optional(),
     types: z.enum(MediaType).array().optional(),
     usernames: z.string().trim().min(1).array().max(20).optional(),
     // The images feed's `?userId=`, as it filters by id.

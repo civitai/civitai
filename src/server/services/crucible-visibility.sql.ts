@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
 import { hasBlockMarkerSql } from '~/server/common/image-visibility';
 import {
   CrucibleIngestionStatus,
@@ -13,12 +14,12 @@ import {
  */
 export const crucibleScannedSql = Prisma.sql`c.ingestion = ${CrucibleIngestionStatus.Scanned}::"CrucibleIngestionStatus"
   AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
-  AND i."nsfwLevel" != 0 AND i."needsReview" IS NULL AND NOT i."tosViolation"`;
+  AND i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) AND i."needsReview" IS NULL AND NOT i."tosViolation"`;
 
 /** The cover half of crucibleScannedSql, as a Prisma filter on the crucible's `image`. */
 export const crucibleCoverListedWhere = {
   ingestion: ImageIngestionStatus.Scanned,
-  nsfwLevel: { notIn: [0] },
+  nsfwLevel: { notIn: [0, NsfwLevel.Blocked] },
   needsReview: null,
   tosViolation: false,
 } satisfies Prisma.ImageWhereInput;

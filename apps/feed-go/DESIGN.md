@@ -85,7 +85,7 @@ Supported today:
 | Area | Supported | Falls back |
 |---|---|---|
 | Input | model / version / Model3D / global feed; sorts Most Reactions, Most Comments, Most Collected, Newest, Oldest; period filters; `types`, `generation`, `withMeta`, `fromPlatform`, `disablePoi`, `disableMinor`, `hideChallenges`, `excludedTagIds`, `excludedUserIds`, `tools` (images holding every listed tool: the `ImageTool` clause on every Postgres read, the positive ids as the feed query's `tools`), `techniques` (images with an `ImageTechnique` row for any listed id, likewise; the positive ids as the feed query's `techniques`, none sent when none is positive), `tags` (the blocked browsing tags stripped first, `blocked-tags-*` when that list cannot be read, only blocked ones an empty gallery; then images carrying any of the rest on every Postgres read, never cached, the positive ids as the feed query's `tags`); cursors: on the feed-service path `feed:<a>:<b>`, `offset\|entry`, a number (an offset there); on the Postgres path a positive integer | `hidden`, user / username / collection / post / reactions / followed / baseModels / pending / scheduled / jumpTo / hub inputs, `include` beyond the default, Random / Recently Added sorts; a `tools` or `techniques` entry that is not an int4 (`input-tools`, `input-techniques`: Node binds it against an integer type, and that cast is not reproduced); cursors Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`, `input-cursor` on the Postgres path) |
-| Viewer | signed out; `civ-token` cookie sessions | API keys / OAuth bearer tokens, two session cookies at once, a session user not in the shared cache, verified crawlers |
+| Viewer | signed out; `civ-token` cookie sessions, either slot or both (read in the main app's order, §4) | API keys / OAuth bearer tokens, a session user not in the shared cache, verified crawlers |
 | Gallery gates | settings from cache, held level, taken-down models; page-1 pinned posts (narrowed to the version, pinned-first ordering); the page-1 sponsored post (see below) | a settings key Node would rebuild; a sponsored post for a viewer whose `creator-promotions` value is unknown here (`sponsored-post`); two or more live runs on one version (`sponsored-rotation`, Node picks one at random); a failed promotion lookup (`sponsored-lookup`); a payload or gallery level this service does not read as Node does (`sponsored-data`) |
 | Pages | the feed-service path (flag on) and the Postgres path (flag off); the lazy post completion on both | a failed or non-200 feed call (`feed-unavailable`, `feed-status`); a hydrate that filters out every id (`feed-hydrate-empty`) |
 | Hydration | every cache hit; Postgres miss paths for basic user data, cosmetics, profile pictures, thumbnails; computed misses (§3.1) on user cosmetics, image frames, tag ids and event decorations, and with a ClickHouse reader on metric hashes | misses on metric hashes without a ClickHouse reader (`metrics-miss`); a failed miss computation (`<reason>-failed`) |
@@ -301,6 +301,26 @@ environment, and they must never switch the reader on. Without a reader the miss
   `FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT` reads at once (default 4); a read past it is refused at once.
   A failed, refused or late read falls back `metrics-miss-failed` (Node then answers those images
   from the cache, i.e. `statsUnknown: true`; Go leaves that answer to Node).
+- A dedicated ClickHouse for entity metrics (the Node twin: `getImageMetricService` in
+  `src/server/services/image.service.ts`). Configured from the Node app's own variables, so one secret
+  feeds both runtimes: `CLICKHOUSE_METRICS_HOST` (full URL, protocol and port included),
+  `CLICKHOUSE_METRICS_USERNAME`, `CLICKHOUSE_METRICS_PASSWORD` (never filled from another login), and
+  only alongside the reader above (it never turns the computation on). Each request to it is bounded
+  by `CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS` (default 10000); it shares the read cap's value but has
+  its own slots. A populate reads it instead of the reader above only while the Flipt flag
+  `image-metrics-dedicated-clickhouse` is on: the Node app's key, so one switch moves both runtimes.
+  feed-go evaluates no other Flipt flag (§8): this one is read by `internal/flipt` (stdlib, the
+  server's `POST /evaluate/v1/boolean` with `FLIPT_URL`, `FLIPT_FETCHER_SECRET`, `FLIPT_ENVIRONMENT`,
+  entity `global`, no context: the arguments Node's global gate passes; the flag's plain on/off only, the server's evaluator is not the engine Node runs) every 5 s in the background, so a
+  flip takes effect within 5 s with no restart and no request waits on Flipt. Never read yet, an
+  unknown key (404) or no `FLIPT_URL` read off; any other failed read keeps the last good value (as
+  Node's client keeps its last snapshot) until no read has succeeded for 10 minutes, then reads off
+  (logged once per outage). The choice is made once per populate (all its
+  batches go to one server). The query text and settings are unchanged, and inside the dedicated
+  user's constraints (`max_threads` 1, `max_execution_time` 6, nothing else capped). A failed read
+  there falls back `metrics-miss-failed` exactly as above and is never retried on the shared reader:
+  a retry would put the load back on the shared server exactly when the dedicated one is down; the
+  kill switch is the flag.
 - The kept answer (`lookupShared`, write-back off) holds a computed count for 10 s; a reaction in that
   window is not in it (Node's own hash takes the watcher's increments; a §9 divergence).
 - Not ported (cache HITS, unchanged here): the TTL slide on 10% of hits and the background refresh
@@ -407,6 +427,32 @@ The procedure is public, but its answer depends on the viewer: their own schedul
 minor images, private-post images, their reactions. The invariant is that a response is computed for
 the authenticated viewer or for nobody.
 
+- The session token is read from the session cookies in the order the main app reads them
+  (`readSessionToken` in `packages/civitai-auth/src/cookies.ts`, called by `getHubSession`). A
+  request may carry two slots, the shared `__Secure-civ-token` and the host-only `__Host-civ-token`
+  (http dev has only the bare `civ-token`). The mode for the request's `Host` is its site's
+  `AUTH_SESSION_COOKIE_MODE_BY_SITE` entry (`<registrable domain>:host|shared`), else
+  `AUTH_SESSION_COOKIE_MODE` (only the exact value `host` is host mode; anything else is shared). The
+  order is the mode's own slot, then the other one; the shared slot is skipped altogether when the
+  legacy read is off, which is a site listed `host`, or, for an unlisted site, `AUTH_LEGACY_READ` set
+  to `false`, `0`, `off` or `no` (any case). A site listed `shared` always reads it.
+
+  | Mode | Legacy read | Order read |
+  |---|---|---|
+  | shared | on (default) | `__Secure-civ-token`, `__Host-civ-token` |
+  | host | on (default) | `__Host-civ-token`, `__Secure-civ-token` |
+  | host or shared | off | `__Host-civ-token` |
+
+  The first slot in that order the request carries with a non-empty value is the token, whatever it
+  holds: presence alone decides, validity is never consulted. When that token does not verify, is
+  revoked or is the moderation account, the request is **signed out**; the other slot is not tried,
+  because `getHubSession` does not try it. Two valid cookies for different users therefore resolve
+  to the user in the first slot read, as in Node. The `Cookie` header is read as Next's `req.cookies`
+  (the `cookie` package's `parse()`) reads it: several header lines are joined with `; `, the first
+  occurrence of a name wins even when its value is empty (so an empty first copy leaves that slot
+  absent), a value starting with `"` loses its first and last character, and a value that does not
+  URL-decode is kept raw. Each resolved session's slot is counted
+  (`feed_go_session_cookie_slot_total{slot}`).
 - The viewer id comes **only** from the `sub` of a session token whose ES256 signature verifies
   against the auth hub's JWKS, with the same checks as `packages/civitai-auth/src/verify.ts`:
   algorithm pinned (never taken from the token), issuer, expiry, no `aud`, not a `swap` token,
@@ -1011,8 +1057,9 @@ definitions, so read both figures over a window that begins after it.
 
 ## 8. Flags the Node path reads, and what this service does with them
 
-This service does not evaluate Flipt (a Go Flipt client is a follow-up). Each flag below is either
-irrelevant to the DB path, mirrored by an env var, or makes the affected requests fall back while on.
+This service evaluates one Flipt flag, `image-metrics-dedicated-clickhouse`, itself (`internal/flipt`,
+§3.1; a general Go Flipt client is a follow-up). Every other flag below is either irrelevant to the
+DB path, mirrored by an env var, or makes the affected requests fall back while on.
 The mirrors default to the fail-safe value (fall back) and must be set to the flag's real value.
 
 | Flag | Node effect | Here |
@@ -1027,6 +1074,7 @@ The mirrors default to the fail-safe value (fall back) and must be set to the fl
 | event decoration flags (flag `birthday-2026` for event `birthday2026`, …) | which event hats are visible to which viewer: `getVisibleDecorationEvents` asks the event engine and the event's Flipt flag per viewer (signed out: the flag's base; signed in: the flag for that user; a moderator session: always on) | `FEED_GO_DECORATION_EVENTS`: comma-separated event names (the event's `name`, e.g. `birthday2026`, not its flag key) whose hats Node shows to **every** viewer now, i.e. the event has started and its flag's base is on. It must name each such event: left empty while one is live, every image wearing that hat is `null` here and an object in Node (`items.*.images.*.eventDecoration` `type` diffs). After the event ends the hats stay visible (`canWearEventDecorations` includes `ended`), so the value does not change at the end date. Base off (the kill switch) → remove the event; then moderators and testers still see hats in Node and not here (a parity gap, §9) |
 | `use-model-version-cache-for-images` | `image.getInfinite` only: a `prioritizedUserIds` request on the Postgres path takes its ids from `imagesForModelVersionsCache` and is re-sorted into that cache's order; off in production (enabled: false, no rollout) | `FEED_GO_PRIORITIZED_VERSION_CACHE` (default off): on, those requests fall back (`prioritized-version-cache`); off, the SQL branch is ported (§14.2) |
 | `frame-cache-negative` | whether the image frame cache's notFound markers are live (read as "no frame", written for an hour on a miss) | `FEED_GO_FRAME_CACHE_NEGATIVE` (default off, as Node reads a flag it cannot evaluate): off, a marker is a miss (looked up, §3.1) and none is written, as in Node |
+| `image-metrics-dedicated-clickhouse` | the image MetricService reads a dedicated ClickHouse for entity metrics instead of the shared one | read from Flipt (not mirrored): every 5 s in the background; on with `CLICKHOUSE_METRICS_*` set, the metric-hash populate reads the dedicated reader (§3.1) |
 | `kysely-image-reactions`, `image-metrics-swr`, cache L1 switches | same results by another route | nothing to do |
 
 ## 9. Not at parity (yet)
@@ -1044,7 +1092,7 @@ will show.
 - a failed miss computation (§3.1, `<reason>-failed`; for tag ids also a browsing gate this service
   cannot read when a row needs it), cache misses on metric hashes without a ClickHouse reader
   (`metrics-miss`), session users (auth hub fetch not ported), gallery settings (rebuild not ported);
-- bearer tokens, two session cookies, verified crawlers, POST (`methodOverride`) requests;
+- bearer tokens, verified crawlers, POST (`methodOverride`) requests;
 - public requests from an origin the app's allow-list does not hold (reason `origin`, see §4).
 
 **Matched behaviour worth knowing:** a page query that runs past the 20s statement timeout answers an

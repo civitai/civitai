@@ -1,0 +1,278 @@
+// Package api is the service's HTTP surface.
+//
+//	GET /v1/apps/{slug}/collections/{collection}/records[?major=N]
+//	    Authorization: Bearer <the app's hub access token for the signed-in user>
+//
+// Every private record of one collection of the app `slug` names that the token's user may read
+// through the token's app: the app's own collection when slug is the app itself, or another app's
+// collection the user granted this app. Which of the two is never the client's to say: both paths
+// name the source by slug and leave the basis to the server (the adapter on the registry path, the
+// site on REST). The answer is
+//
+//	{"source":"registry"|"rest","items":[{"urn"|"key":…,"rev":…,"data":{…}}]}
+//
+// `source: registry` items come from the user's stream (named by URN: the record core's
+// `urn:apps.civitai.com:<slug>/<collection>/<record_id>`); `source: rest` items from the
+// document store's list (named by key). See DESIGN.md, "Depends on site changes", on the two names.
+//
+// Also /healthz, /readyz and /metrics.
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/civitai/civitai/apps/app-data-go/internal/metrics"
+	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
+	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
+	"github.com/civitai/civitai/apps/app-data-go/internal/session"
+	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
+)
+
+// Streams answers a read from a per-user stream (session.Manager).
+type Streams interface {
+	Read(ctx context.Context, token, schema string) ([]registry.Entity, error)
+}
+
+// Lister is the REST fallback (rest.Client).
+type Lister interface {
+	List(ctx context.Context, token, collection, from string) ([]rest.Doc, error)
+}
+
+// HubTokenPrefix starts every OAuth access token the hub issues (apps/auth OAUTH_TOKEN_PREFIX). Only
+// such a token can reach a private stream: this service exchanges it at the hub, which looks the
+// subject token up among its own access tokens (apps/auth/src/lib/server/oauth/user-exchange.ts,
+// step 5), so a block token, or a token the hub already exchanged, never can. Any other token reads
+// REST only, and is never sent to the hub.
+const HubTokenPrefix = "civitai_"
+
+// Server serves the API.
+type Server struct {
+	// Streams is nil when the registry path is off: every read is the REST read.
+	Streams  Streams
+	REST     Lister
+	Metrics  *metrics.Metrics
+	Gatherer prometheus.Gatherer
+	Log      *slog.Logger
+	// Deadline bounds one read; LiveWait bounds how long of it a new stream may take to reach Live.
+	Deadline, LiveWait time.Duration
+	// RESTSlots bounds concurrent REST reads: a read takes one without waiting, or answers 503.
+	RESTSlots chan struct{}
+	// Ready reports whether the service takes reads (false while it shuts down); nil is always.
+	Ready func() bool
+}
+
+// Handler routes the API.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records", s.records)
+	mux.HandleFunc("OPTIONS /v1/apps/{slug}/collections/{collection}/records", preflight)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if s.Ready != nil && !s.Ready() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.Handle("GET /metrics", promhttp.HandlerFor(s.Gatherer, promhttp.HandlerOpts{}))
+	return mux
+}
+
+// An app calls this from its sandboxed frame, an opaque origin, with a bearer token and no cookies,
+// as it calls the document store itself: any origin may, and the token is the only credential.
+func cors(h http.Header) {
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Headers", "Authorization")
+	h.Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	h.Set("Access-Control-Max-Age", "600")
+}
+
+func preflight(w http.ResponseWriter, _ *http.Request) {
+	cors(w.Header())
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type item struct {
+	URN  string          `json:"urn,omitempty"`
+	Key  string          `json:"key,omitempty"`
+	Rev  string          `json:"rev"`
+	Data json.RawMessage `json:"data"`
+}
+
+type answer struct {
+	Source string `json:"source"`
+	Items  []item `json:"items"`
+}
+
+func (s *Server) records(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	h := w.Header()
+	cors(h)
+	// One user's data: never stored by a cache, never served for another token.
+	h.Set("Cache-Control", "private, no-store")
+	h.Set("Vary", "Authorization")
+
+	slug, collection := r.PathValue("slug"), r.PathValue("collection")
+	q := r.URL.Query()
+	major := 1
+	if raw := q.Get("major"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			s.refuse(w, start, http.StatusBadRequest, "bad_request", "major must be an integer", "bad_request")
+			return
+		}
+		major = n
+	}
+	schema, err := urn.CollectionSchema(slug, collection, major)
+	if err != nil {
+		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid app, collection or major", "bad_request")
+		return
+	}
+	token, ok := bearer(r)
+	if !ok {
+		h.Set("WWW-Authenticate", `Bearer realm="app-data"`)
+		s.refuse(w, start, http.StatusUnauthorized, "unauthenticated", "a bearer token is required", "unauthenticated")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.Deadline)
+	defer cancel()
+
+	reason := "registry_off"
+	switch {
+	case s.Streams == nil:
+	case !strings.HasPrefix(token, HubTokenPrefix):
+		reason = "token_not_exchangeable"
+	default:
+		lctx, lcancel := context.WithTimeout(ctx, s.LiveWait)
+		ents, err := s.Streams.Read(lctx, token, schema)
+		lcancel()
+		// An empty answer is not trusted: the origin answers a token it refuses with an empty
+		// snapshot, exactly as a user who holds nothing, so only REST can tell the two apart.
+		if err == nil && len(ents) > 0 {
+			out := answer{Source: "registry", Items: make([]item, 0, len(ents))}
+			for _, e := range ents {
+				out.Items = append(out.Items, item{URN: e.URN, Rev: e.Rev, Data: e.Body})
+			}
+			s.write(w, start, http.StatusOK, out, "registry", "ok")
+			return
+		}
+		reason = fallbackReason(err)
+	}
+	s.Metrics.Fallbacks.WithLabelValues(reason).Inc()
+
+	select {
+	case s.RESTSlots <- struct{}{}:
+		defer func() { <-s.RESTSlots }()
+	default:
+		h.Set("Retry-After", "1")
+		s.refuse(w, start, http.StatusServiceUnavailable, "busy", "too many reads in flight; retry", "busy")
+		return
+	}
+	// Always `from=<slug>`: the site then reads the app the request names, whoever the token's app
+	// is, so a REST answer can never be another app's data under this slug's name.
+	docs, err := s.REST.List(ctx, token, collection, slug)
+	if err != nil {
+		s.restError(w, start, err)
+		return
+	}
+	out := answer{Source: "rest", Items: make([]item, 0, len(docs))}
+	for _, d := range docs {
+		out.Items = append(out.Items, item{Key: d.Key, Rev: strconv.FormatInt(d.Version, 10), Data: d.Data})
+	}
+	s.write(w, start, http.StatusOK, out, "rest", "ok")
+}
+
+func fallbackReason(err error) string {
+	switch {
+	case err == nil:
+		return "empty"
+	case errors.Is(err, session.ErrCapacity):
+		return "capacity"
+	case errors.Is(err, session.ErrTokenCapacity):
+		return "token_capacity"
+	case errors.Is(err, session.ErrNotLive):
+		return "not_live"
+	case errors.Is(err, session.ErrStalled):
+		return "stalled"
+	case errors.Is(err, session.ErrCoolingDown):
+		return "cooling_down"
+	case errors.Is(err, session.ErrInvalidToken):
+		return "invalid_token"
+	case errors.Is(err, session.ErrRefused):
+		return "exchange_refused"
+	case errors.Is(err, session.ErrNotPrivate):
+		return "not_private"
+	case errors.Is(err, session.ErrTooLarge):
+		return "too_large"
+	case errors.Is(err, session.ErrEnded):
+		return "ended"
+	case errors.Is(err, session.ErrClosed):
+		return "closed"
+	default:
+		return "failed"
+	}
+}
+
+func (s *Server) restError(w http.ResponseWriter, start time.Time, err error) {
+	var re *rest.Error
+	switch {
+	case errors.As(err, &re) && re.Status >= 400 && re.Status < 500:
+		// The site's own refusal (401, 403, 404, 429…), passed on as it sent it.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(re.Status)
+		body := re.Body
+		if body == nil {
+			body = []byte(`{"error":"refused"}`)
+		}
+		_, _ = w.Write(body)
+		s.count(start, "rest", "refused")
+	case errors.Is(err, context.DeadlineExceeded):
+		s.write(w, start, http.StatusGatewayTimeout, errBody("deadline", "the read did not finish in time"), "rest", "error")
+	case errors.Is(err, rest.ErrTooMany):
+		s.write(w, start, http.StatusBadGateway, errBody("too_large", "the collection holds more records than this service returns"), "rest", "error")
+	default:
+		s.write(w, start, http.StatusBadGateway, errBody("unavailable", "the document store could not be read"), "rest", "error")
+	}
+}
+
+func errBody(code, msg string) map[string]string {
+	return map[string]string{"error": code, "message": msg}
+}
+
+func bearer(r *http.Request) (string, bool) {
+	scheme, tok, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return "", false
+	}
+	tok = strings.TrimSpace(tok)
+	return tok, tok != ""
+}
+
+func (s *Server) refuse(w http.ResponseWriter, start time.Time, status int, code, msg, outcome string) {
+	s.write(w, start, status, errBody(code, msg), "none", outcome)
+}
+
+func (s *Server) write(w http.ResponseWriter, start time.Time, status int, body any, source, outcome string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(body); err != nil && s.Log != nil {
+		s.Log.Debug("write failed", "err", err)
+	}
+	s.count(start, source, outcome)
+}
+
+func (s *Server) count(start time.Time, source, outcome string) {
+	s.Metrics.Reads.WithLabelValues(source, outcome).Inc()
+	s.Metrics.ReadTime.WithLabelValues(source).Observe(time.Since(start).Seconds())
+}

@@ -395,3 +395,24 @@ describe('filterImagesForViewer', () => {
     ]);
   });
 });
+
+describe('filterImagesForViewer — levels outside the browsing levels', () => {
+  const images = [
+    { id: 1, nsfwLevel: 32, userId: 7 },
+    { id: 2, nsfwLevel: 16, userId: 7 },
+  ];
+  const shown = (browsingLevel: number, modelNsfw = false) =>
+    filterImagesForViewer(images, { browsingLevel, modelNsfw, viewer: { id: 9 } }).map((i) => i.id);
+
+  it('keeps an XXX image at a full level (control)', () => {
+    expect(shown(31)).toEqual([2]);
+  });
+
+  it('ignores the Blocked bit in the requested level', () => {
+    expect(shown(63)).toEqual([2]);
+  });
+
+  it('ignores bits above the browsing levels on an nsfw model', () => {
+    expect(shown(64 | 16, true)).toEqual([2]);
+  });
+});

@@ -3,6 +3,7 @@ import {
   clampRequestBrowsingLevels,
   requestDomainBrowsingLevelCap,
   type RequestBrowsingLevels,
+  stripBlockedForNonModerator,
 } from '~/server/utils/browsing-level';
 import { EMAIL_VERIFICATION_REQUIRED_MESSAGE } from '~/server/common/content-restriction';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
@@ -200,6 +201,7 @@ const applyDomainFeature = t.middleware(async (options) => {
   // v11: `rawInput` became the async `getRawInput()`.
   const input = ((await options.getRawInput()) ?? {}) as RequestBrowsingLevels;
 
+  stripBlockedForNonModerator(input, ctx.user?.isModerator);
   const maxAllowed = requestDomainBrowsingLevelCap(ctx);
 
   if (maxAllowed !== undefined) clampRequestBrowsingLevels(input, maxAllowed);
