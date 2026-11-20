@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
-import { SERVICE_PRICE_MIN } from '~/shared/constants/creator-service.constants';
+import {
+  SERVICE_HAPPY_MIN_REVIEWS,
+  SERVICE_PRICE_MIN,
+} from '~/shared/constants/creator-service.constants';
 
 /** The advisory-lock class for an offering's review writes and recounts. */
 const REVIEW_LOCK_CLASS = 'service-offering-reviews';
@@ -24,6 +27,14 @@ export const reviewPublic = Prisma.sql`(
 const BUYER_MIN_AGE = Prisma.sql`interval '7 days'`;
 
 /**
+ * A published review by a buyer still in good standing, `r` the review and `u` its buyer: what the
+ * offering page lists. The counters below add the counting bar (minimum price, account age, one
+ * per buyer) on top, so a review can be listed without being counted.
+ */
+export const shownReviewSql = Prisma.sql`r."publishedAt" IS NOT NULL
+  AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL`;
+
+/**
  * An offering's happy and total counts from its published reviews, with `offeringId` naming the
  * offering in the surrounding statement. Each buyer counts once, by their latest published review.
  * A ban or deletion counts from the next recount.
@@ -35,17 +46,16 @@ export const offeringReviewTotals = (offeringId: Prisma.Sql) => Prisma.sql`(
     FROM "ServiceDealReview" r
     JOIN "ServiceDeal" d ON d."id" = r."dealId"
     JOIN "User" u ON u."id" = r."buyerId"
-    WHERE r."offeringId" = ${offeringId} AND r."publishedAt" IS NOT NULL
+    WHERE r."offeringId" = ${offeringId} AND ${shownReviewSql}
       AND d."price" >= ${SERVICE_PRICE_MIN}::int
       AND d."requestedAt" - u."createdAt" >= ${BUYER_MIN_AGE}
-      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
     ORDER BY r."buyerId", r."publishedAt" DESC, r."id" DESC
   ) c
 )`;
 
 /** The happy share once enough buyers count, else -1 (never null, so the sort pages cleanly). */
 export const happySortKey = (happy: Prisma.Sql, total: Prisma.Sql) =>
-  Prisma.sql`CASE WHEN ${total} >= 3 THEN ${happy}::float8 / ${total} ELSE -1 END`;
+  Prisma.sql`CASE WHEN ${total} >= ${SERVICE_HAPPY_MIN_REVIEWS}::int THEN ${happy}::float8 / ${total} ELSE -1 END`;
 
 /** Raw SQL so the offering's `updatedAt`, which its own content check keys on, is left alone. */
 async function recountOffering(tx: Db, offeringId: number) {

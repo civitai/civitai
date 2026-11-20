@@ -79,7 +79,8 @@ export const setServiceOfferingStatusSchema = z.object({
   affirmedTermsVersion: z.string().optional(),
 });
 
-export const serviceOfferingFeedSorts = ['newest', 'price_asc', 'price_desc'] as const;
+// `happy` is offered only behind creatorServicesNext; the router reads it as `newest` otherwise.
+export const serviceOfferingFeedSorts = ['newest', 'price_asc', 'price_desc', 'happy'] as const;
 export type ServiceOfferingFeedSort = (typeof serviceOfferingFeedSorts)[number];
 export type GetServiceOfferingFeedInput = z.infer<typeof getServiceOfferingFeedSchema>;
 export const getServiceOfferingFeedSchema = z.object({
@@ -99,6 +100,11 @@ export type GetServiceOfferingByIdInput = z.infer<typeof getServiceOfferingByIdS
 export const getServiceOfferingByIdSchema = z.object({
   id: z.number().int().positive(),
   browsingLevel: z.number().int().optional(),
+});
+
+export type GetServiceOfferingReviewsInput = z.infer<typeof getServiceOfferingReviewsSchema>;
+export const getServiceOfferingReviewsSchema = getServiceOfferingByIdSchema.extend({
+  cursor: z.number().int().positive().optional(),
 });
 
 export type GetShopServiceOfferingsInput = z.infer<typeof getShopServiceOfferingsSchema>;
