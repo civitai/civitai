@@ -138,7 +138,9 @@ describe('the csam hold decision record, against the real label store', () => {
     expect(dbMock.dbWrite.serviceOffering.update).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.serviceOffering.delete).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.serviceOffering.deleteMany).not.toHaveBeenCalled();
-    expect(mocks.toggleBan).toHaveBeenCalledWith(expect.objectContaining({ id: 900 }));
+    expect(mocks.toggleBan).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 900, alwaysArchiveProfile: true })
+    );
     expect(await labels()).toEqual([
       {
         value: 'csam',

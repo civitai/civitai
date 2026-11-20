@@ -486,16 +486,7 @@
       },
       "excludeFromLeaderboards": true,
       "excludeFromEventPoints": true,
-      "links": [
-        {
-          "url": "https://example.com/a",
-          "type": "Sponsorship"
-        },
-        {
-          "url": "https://example.com/b",
-          "type": "Social"
-        }
-      ],
+      "links": [],
       "stats": {
         "downloadCountAllTime": 41,
         "thumbsUpCountAllTime": 47,
@@ -581,16 +572,7 @@
       },
       "excludeFromLeaderboards": true,
       "excludeFromEventPoints": true,
-      "links": [
-        {
-          "url": "https://example.com/a",
-          "type": "Sponsorship"
-        },
-        {
-          "url": "https://example.com/b",
-          "type": "Social"
-        }
-      ],
+      "links": [],
       "stats": {
         "downloadCountAllTime": 41,
         "thumbsUpCountAllTime": 47,
@@ -676,16 +658,7 @@
       },
       "excludeFromLeaderboards": true,
       "excludeFromEventPoints": true,
-      "links": [
-        {
-          "url": "https://example.com/a",
-          "type": "Sponsorship"
-        },
-        {
-          "url": "https://example.com/b",
-          "type": "Social"
-        }
-      ],
+      "links": [],
       "stats": {
         "downloadCountAllTime": 41,
         "thumbsUpCountAllTime": 47,
