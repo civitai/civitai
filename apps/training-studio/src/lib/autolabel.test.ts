@@ -41,7 +41,7 @@ vi.mock('$lib/host', () => ({
   }),
 }));
 
-const { runAutoLabel, MAX_SUBMITS_PER_MEDIA, CAP_REFUSAL, BUSY_RETRY_DELAYS_MS, BUSY_GAVE_UP } =
+const { runAutoLabel, MAX_SUBMITS_PER_MEDIA, CAP_REFUSAL, RESEND_DELAYS_MS, RESEND_GAVE_UP } =
   await import('./autolabel');
 const { AutoLabelRefusedError } = await import('./autolabel-errors');
 
@@ -178,10 +178,11 @@ describe('auto-label cap accounting for failed submits', () => {
 describe('auto-label under load', () => {
   const items = (n: number, tag: string) =>
     Array.from({ length: n }, (_, i) => ({ key: `${i}`, mediaUrl: `https://x/${tag}-${i}.png` }));
+  // What the poll returns for a step turned away at scheduling.
   const busy = (i: AutoLabelItem): AutoLabelResult => ({
     key: i.key,
     status: 'failed',
-    error: 'Auto-labeling is busy right now.',
+    error: "Auto-labeling didn't finish for this image.",
     retryable: true,
   });
   const ok = (i: AutoLabelItem): AutoLabelResult => ({
@@ -231,8 +232,8 @@ describe('auto-label under load', () => {
     const { results, done } = await run([{ key: 'k', mediaUrl: url }]);
     await vi.runAllTimersAsync();
     await done;
-    expect(sendsByUrl.get(url)).toBe(BUSY_RETRY_DELAYS_MS.length + 1);
-    expect(results).toEqual([{ key: 'k', status: 'failed', error: BUSY_GAVE_UP }]);
+    expect(sendsByUrl.get(url)).toBe(RESEND_DELAYS_MS.length + 1);
+    expect(results).toEqual([{ key: 'k', status: 'failed', error: RESEND_GAVE_UP }]);
     // The resends shared the first send's slot; the run that gave up still spent it.
     vi.useRealTimers();
     plan.poll = (list) => list.map(ok);
@@ -242,7 +243,7 @@ describe('auto-label under load', () => {
     expect(sent).toEqual([...Array(MAX_SUBMITS_PER_MEDIA - 1).fill(1), 0]);
   });
 
-  it('resends only items marked retryable, and keeps the slot of one that ran', async () => {
+  it('does not resend a failure the poll marks final', async () => {
     vi.useFakeTimers();
     plan.poll = (list) => list.map((i) => ({ key: i.key, status: 'failed', error: 'x' }));
     const url = 'https://x/ran-and-failed.png';
@@ -256,7 +257,7 @@ describe('auto-label under load', () => {
     expect(sendsByUrl.get(url)).toBe(MAX_SUBMITS_PER_MEDIA);
   });
 
-  it('stops waiting to resend when the run is aborted, and gives the slot back', async () => {
+  it('stops waiting to resend when the run is aborted, and keeps the slot', async () => {
     vi.useFakeTimers();
     plan.poll = (list) => list.map(busy);
     const controller = new AbortController();
@@ -275,6 +276,6 @@ describe('auto-label under load', () => {
     const sent: number[] = [];
     for (let i = 0; i < MAX_SUBMITS_PER_MEDIA; i++)
       sent.push(await (await run([{ key: 'k', mediaUrl: url }])).done);
-    expect(sent).toEqual(Array(MAX_SUBMITS_PER_MEDIA).fill(1));
+    expect(sent).toEqual([...Array(MAX_SUBMITS_PER_MEDIA - 1).fill(1), 0]);
   });
 });

@@ -22,8 +22,7 @@ vi.mock('~/env/client', () => ({ env: clientEnv }));
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import {
-  AUTO_LABEL_BUSY,
-  AUTO_LABEL_STEP_FAILED,
+  AUTO_LABEL_UNFINISHED,
   pollStudioAutoLabel,
   STUDIO_AUTO_LABEL_DAILY_ITEMS,
   submitStudioAutoLabel,
@@ -252,31 +251,26 @@ describe('Training Studio auto-label', () => {
     });
   });
 
-  it('says why a step failed, and marks one turned away before it ran as retryable', async () => {
+  it('marks every failed or expired step retryable, with a reason, but not a canceled one', async () => {
+    // The real shape of a step turned away at scheduling: startedAt set, no error on the step.
+    const startedAt = '2026-11-20T14:00:27Z';
     orch.getWorkflow.mockResolvedValue({
       data: {
         id: 'wf-1',
         status: 'failed',
         metadata: { kind: 'studio-auto-label', userId: 7 },
         steps: [
-          { name: '0', status: 'failed', metadata: { key: 'never-ran' } },
-          { name: '1', status: 'expired', metadata: { key: 'queued-out' } },
-          {
-            name: '2',
-            status: 'failed',
-            startedAt: '2026-11-20T00:00:00Z',
-            metadata: { key: 'ran' },
-          },
-          { name: '3', status: 'canceled', metadata: { key: 'canceled' } },
+          { name: '0', status: 'failed', startedAt, metadata: { key: 'refused' } },
+          { name: '1', status: 'expired', startedAt, metadata: { key: 'expired' } },
+          { name: '2', status: 'canceled', startedAt, metadata: { key: 'canceled' } },
         ],
       },
     });
     const { results } = await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-1' });
     expect(results).toEqual([
-      { key: 'never-ran', status: 'failed', error: AUTO_LABEL_BUSY, retryable: true },
-      { key: 'queued-out', status: 'failed', error: AUTO_LABEL_BUSY, retryable: true },
-      { key: 'ran', status: 'failed', error: AUTO_LABEL_STEP_FAILED },
-      { key: 'canceled', status: 'failed', error: AUTO_LABEL_STEP_FAILED },
+      { key: 'refused', status: 'failed', error: AUTO_LABEL_UNFINISHED, retryable: true },
+      { key: 'expired', status: 'failed', error: AUTO_LABEL_UNFINISHED, retryable: true },
+      { key: 'canceled', status: 'failed', error: AUTO_LABEL_UNFINISHED },
     ]);
   });
 
@@ -324,8 +318,8 @@ describe('Training Studio auto-label', () => {
         return counters.get(k)!;
       }) as never);
     });
-    // Steps ran unless told otherwise: one that never started is a busy refusal, counted apart.
-    const workflow = (steps: { name: string; status: string; startedAt?: string | null }[]) => ({
+    // Every failed step carries startedAt, refused at scheduling or not.
+    const workflow = (steps: { name: string; status: string }[]) => ({
       data: {
         id: 'wf-q',
         status: 'failed',
@@ -376,11 +370,11 @@ describe('Training Studio auto-label', () => {
       expect(counters.get(quotaKey())).toBe(1);
     });
 
-    it('gives back at most the daily limit per day: past it, failed items stay counted', async () => {
+    it('gives back at most four times the daily limit per day: past it, failed items stay counted', async () => {
       counters.set(quotaKey(), STUDIO_AUTO_LABEL_DAILY_ITEMS);
       counters.set(
         `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED_DAILY}:7:${today()}`,
-        STUDIO_AUTO_LABEL_DAILY_ITEMS - 1
+        STUDIO_AUTO_LABEL_DAILY_ITEMS * 4 - 1
       );
       record('wf-q', { userId: 7, day: today(), count: 2 });
       orch.getWorkflow.mockResolvedValue(failed(2));
@@ -388,33 +382,28 @@ describe('Training Studio auto-label', () => {
       expect(counters.get(quotaKey())).toBe(STUDIO_AUTO_LABEL_DAILY_ITEMS - 1);
     });
 
-    it('gives a busy refusal back, so the resend that follows is not counted twice', async () => {
-      counters.set(quotaKey(), 1);
-      record('wf-q', { userId: 7, day: today(), count: 1 });
-      orch.getWorkflow.mockResolvedValue(
-        workflow([{ name: '0', status: 'failed', startedAt: null }])
-      );
-      await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
-      await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
-      expect(counters.get(quotaKey())).toBe(0);
-    });
-
-    it('counts busy give-backs apart, so they cannot use up the allowance for failures', async () => {
-      counters.set(quotaKey(), STUDIO_AUTO_LABEL_DAILY_ITEMS);
-      // Ordinary failures have used their whole allowance today; busy refusals have used none.
-      counters.set(
-        `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED_DAILY}:7:${today()}`,
-        STUDIO_AUTO_LABEL_DAILY_ITEMS
-      );
-      record('wf-q', { userId: 7, day: today(), count: 2 });
-      orch.getWorkflow.mockResolvedValue(
-        workflow([
-          { name: '0', status: 'failed', startedAt: null },
-          { name: '1', status: 'failed' },
-        ])
-      );
-      await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
-      expect(counters.get(quotaKey())).toBe(STUDIO_AUTO_LABEL_DAILY_ITEMS - 1);
+    it('an item that fails on every send leaves the quota where it started', async () => {
+      counters.set(quotaKey(), 5);
+      const one = [items[0]!];
+      for (let send = 0; send < 4; send++) {
+        orch.submitWorkflow.mockResolvedValueOnce({ data: { id: `wf-s${send}` } });
+        const { workflowId } = await submitStudioAutoLabel({
+          userId: 7,
+          mode: 'tag',
+          media: 'image',
+          items: one,
+        });
+        expect(counters.get(quotaKey())).toBe(6);
+        orch.getWorkflow.mockResolvedValueOnce({
+          data: {
+            ...failed(1).data,
+            id: workflowId,
+          },
+        });
+        const { results } = await pollStudioAutoLabel({ userId: 7, workflowId });
+        expect(results[0]).toMatchObject({ status: 'failed', retryable: true });
+        expect(counters.get(quotaKey())).toBe(5);
+      }
     });
 
     it("gives nothing back to today's quota for a workflow counted on another day or user", async () => {

@@ -15,10 +15,10 @@ const BATCH_SIZE = 16;
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_BATCHES_IN_FLIGHT = 2;
-/** Waits before each resend of items turned away for capacity; its length bounds the resends. */
-export const BUSY_RETRY_DELAYS_MS = [15_000, 45_000, 120_000];
-export const BUSY_GAVE_UP =
-  "Auto-labeling couldn't run on this image just now. Try again in a few minutes.";
+/** Waits before each resend of a failed item; its length bounds the resends. */
+export const RESEND_DELAYS_MS = [15_000, 45_000, 120_000];
+export const RESEND_GAVE_UP =
+  "Auto-labeling didn't finish for this image. Try again in a few minutes.";
 
 // Every submitted item is a charged orchestrator job. However a caller asks — the drain, a format
 // switch, the editor's Re-run — one media URL is sent at most this many times per page session, so a
@@ -90,7 +90,7 @@ function pollOnce(
   return backend().autoLabelPoll(workflowId, signal);
 }
 
-/** Runs one workflow; resolves with the items it turned away for capacity, which got no result. */
+/** Runs one workflow; resolves with the items whose step failed retryably, which got no result. */
 async function runBatch(
   mode: AutoLabelMode,
   media: Media,
@@ -99,7 +99,7 @@ async function runBatch(
   signal: AbortSignal
 ): Promise<AutoLabelItem[]> {
   const byKey = new Map(batch.map((item) => [item.key, item]));
-  const busy: AutoLabelItem[] = [];
+  const failed: AutoLabelItem[] = [];
   const applied = new Set<string>();
   let submitError: string | undefined;
   try {
@@ -116,7 +116,7 @@ async function runBatch(
           if (r.status !== 'pending' && !applied.has(r.key)) {
             applied.add(r.key);
             const item = byKey.get(r.key);
-            if (r.status === 'failed' && r.retryable && item) busy.push(item);
+            if (r.status === 'failed' && r.retryable && item) failed.push(item);
             else onResult(r);
           }
         }
@@ -138,7 +138,7 @@ async function runBatch(
       }
     }
   }
-  return busy;
+  return failed;
 }
 
 /** Auto-label every item, batched. `onResult` fires at most once per key as each image resolves;
@@ -163,28 +163,27 @@ export async function runAutoLabel(
     );
     for (const item of refused) onResult({ key: item.key, status: 'failed', error: CAP_REFUSAL });
   }
-  // A resend keeps the item's one cap slot: the turned-away step did no work. The server gives the
-  // turned-away item back to the daily quota in the same poll that reports it, before the resend.
+  // Failures are mostly capacity refusals in bursts, which the poll can't tell from a real failure,
+  // so failed items are resent within the run. Resends share the item's one cap slot, kept even when
+  // it gives up, so the tile's Retry can't resend it without end. The server gives each failed item
+  // back to the daily quota in the poll that reports it, before the resend counts it again.
   let pending = allowed;
   for (let attempt = 0; pending.length > 0; attempt++) {
     if (attempt > 0) {
-      // Jittered so every client turned away in the same wave doesn't come back in step.
-      const wait = BUSY_RETRY_DELAYS_MS[attempt - 1]! * (0.75 + Math.random() * 0.5);
-      await abortableDelay(wait, signal).catch((err: unknown) => {
-        releaseSubmits(submitsByMedia, pending);
-        throw err;
-      });
+      // Jittered so clients turned away in the same wave don't come back in step.
+      const wait = RESEND_DELAYS_MS[attempt - 1]! * (0.75 + Math.random() * 0.5);
+      await abortableDelay(wait, signal);
     }
-    const busy: AutoLabelItem[] = [];
+    const failed: AutoLabelItem[] = [];
     await pool(chunk(pending, BATCH_SIZE), MAX_BATCHES_IN_FLIGHT, async (batch) => {
-      busy.push(...(await runBatch(mode, media, batch, onResult, signal)));
+      failed.push(...(await runBatch(mode, media, batch, onResult, signal)));
     });
-    if (attempt >= BUSY_RETRY_DELAYS_MS.length) {
-      // Keeps its slot: giving it back would let the tile's Retry resend it without end.
-      for (const item of busy) onResult({ key: item.key, status: 'failed', error: BUSY_GAVE_UP });
+    if (attempt >= RESEND_DELAYS_MS.length) {
+      for (const item of failed)
+        onResult({ key: item.key, status: 'failed', error: RESEND_GAVE_UP });
       break;
     }
-    pending = busy;
+    pending = failed;
   }
   return allowed.length;
 }
