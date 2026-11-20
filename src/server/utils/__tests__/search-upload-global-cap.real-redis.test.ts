@@ -80,8 +80,11 @@ describe.skipIf(!url)('the site-wide upload search cap on a real Redis', () => {
     await expect(claimSearchUploadSearchSlot(req)).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
-    // The script decided: the pre-check saw an empty bucket.
-    expect(redisMock.redis.eval).toHaveBeenCalledTimes(1);
+    // The script decided: the pre-check saw an empty bucket. (A refusal also writes the limit banner.)
+    const ops = redisMock.redis.eval.mock.calls.map(
+      (c) => (c[1] as { arguments: string[] }).arguments[0]
+    );
+    expect(ops.filter((op) => op === 'claim')).toHaveLength(1);
   });
 
   it('refuses when the claim script errors', async () => {
