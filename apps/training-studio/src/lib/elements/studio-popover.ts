@@ -89,16 +89,18 @@ export class StudioPopover extends CivitaiElement {
     }
   };
 
-  // A press on the trigger also light-dismisses an open panel before the click lands, so the click
-  // decides from the state at press time; otherwise it would reopen what it just closed.
+  // A pointer press on the trigger light-dismisses an open panel before the click lands, so a pointer
+  // click decides from the state at press time; otherwise it would reopen what it just closed. A
+  // keyboard click (`detail` 0) has no press and decides from the current state.
   #openAtPress = false;
 
   #onTriggerPointerDown = () => {
     this.#openAtPress = this.open;
   };
 
-  #onTriggerClick = () => {
-    this.open = !this.#openAtPress;
+  #onTriggerClick = (event: MouseEvent) => {
+    const wasOpen = event.detail === 0 ? this.open : this.#openAtPress;
+    this.open = !wasOpen;
     this.#openAtPress = false;
     this.dispatchEvent(new Event('toggle'));
   };
@@ -123,10 +125,7 @@ export class StudioPopover extends CivitaiElement {
 
   render() {
     return html`
-      <span
-        part="trigger"
-        @pointerdown=${this.#onTriggerPointerDown}
-        @click=${this.#onTriggerClick}
+      <span part="trigger" @pointerdown=${this.#onTriggerPointerDown} @click=${this.#onTriggerClick}
         ><slot name="trigger"></slot
       ></span>
       <div popover="auto" part="panel" role="dialog" @toggle=${this.#onToggle}><slot></slot></div>

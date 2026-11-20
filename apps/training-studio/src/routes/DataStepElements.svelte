@@ -1,9 +1,8 @@
 <script lang="ts">
+  import '$lib/civitai-elements';
   import { onMount } from 'svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import JSZip from 'jszip';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import * as Alert from '@civitai/ui/components/ui/alert/index.js';
   import {
     IconSparkles,
     IconArchive,
@@ -23,32 +22,26 @@
     IconArrowLeft,
     IconArrowRight,
     IconBoltFilled,
-    IconLayoutGrid,
-    IconLayoutList,
-    IconLayoutRows,
     IconTrash,
     IconFilter,
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
-  import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
-  import * as Popover from '@civitai/ui/components/ui/popover/index.js';
-  import { autoLabelAvailable, browser, hostConfig, hostLink, portalProps } from '$lib/host';
+  import type { CivitaiCheckbox } from '@civitai/components/civitai-checkbox';
+  import type { CivitaiSegmentedControl } from '@civitai/components/civitai-segmented-control';
+  import type { CivitaiTextInput } from '@civitai/components/civitai-text-input';
+  import type { CivitaiTextarea } from '@civitai/components/civitai-textarea';
+  import type { StudioPopover } from '$lib/elements/studio-popover';
+  import type { StudioChipGroup } from '$lib/elements/studio-chip-group';
+  import { autoLabelAvailable, browser, hostConfig, hostLink } from '$lib/host';
   import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
   import StickySummary from '$lib/components/StickySummary.svelte';
   import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
   import { extOfAir, extsOfMedia, mediaOfExt, mimeOfExt } from '$lib/media';
-  import {
-    ToggleGroup,
-    ToggleGroupItem,
-  } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { loraTypeById, mediaCount, type LabelType, type Media } from '$lib/data/trainingModels';
   import { pool } from '$lib/pool';
   import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
   import { buildTagExcluder, loadTagCategories, type TagCategories } from '$lib/autolabel-exclude';
-  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { isAbort } from '$lib/upload';
   import { trainingBlobKey } from '$lib/train-core';
   import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
@@ -189,8 +182,7 @@
   // silently destroyed captions a tester's dataset arrived with. Now: labels that CAME with the
   // dataset (`sourceLabel`) always survive a switch (re-applied verbatim in the new format), and a
   // switch that would discard anything else asks first — convert the text, or re-label from scratch.
-  // `pendingLabelMode` is the dialog's payload and outlives the close animation (nulling it on
-  // close blanks the outgoing frame's copy); `switchDialogOpen` alone drives visibility.
+  // `pendingLabelMode` is the dialog's payload; `switchDialogOpen` alone drives visibility.
   let pendingLabelMode = $state<LabelType | null>(null);
   let switchDialogOpen = $state(false);
   const switchDiscardCount = $derived(images.filter((i) => isLabeled(i) && !i.sourceLabel).length);
@@ -998,21 +990,19 @@
   {#if rating}
     {@const badgeClass = 'absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 font-mono text-xs font-semibold'}
     {#if isMature(img)}
-      <Tooltip.Provider>
-        <Tooltip.Root>
-          <Tooltip.Trigger class="{badgeClass} bg-buzz text-black" aria-label="Rated {rating}">
-            {rating}
-          </Tooltip.Trigger>
-          <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-            {#if !buzzMode.blueFirst}
-              Rated {rating}. Mature content can't be paid with Green Buzz, so it is charged in Yellow.
-            {:else}
-              Rated {rating}. Mature content can't be paid with Green Buzz, so anything beyond your
-              Blue Buzz is charged in Yellow.
-            {/if}
-          </Tooltip.Content>
-        </Tooltip.Root>
-      </Tooltip.Provider>
+      <studio-popover class="absolute bottom-1.5 left-1.5">
+        <button
+          slot="trigger"
+          type="button"
+          aria-label="Rated {rating}"
+          class="rounded bg-buzz px-1.5 py-0.5 font-mono text-xs font-semibold text-black">{rating}</button
+        >
+        <p class="max-w-[240px] text-xs">
+          {buzzMode.blueFirst
+            ? `Rated ${rating}. Mature content can't be paid with Green Buzz, so anything beyond your Blue Buzz is charged in Yellow.`
+            : `Rated ${rating}. Mature content can't be paid with Green Buzz, so it is charged in Yellow.`}
+        </p>
+      </studio-popover>
     {:else}
       <span class="{badgeClass} bg-black/60 text-on-accent" title="Rated {rating}">{rating}</span>
     {/if}
@@ -1198,30 +1188,23 @@
       </div>
       {#if canChooseLabel}
         <div class="ml-auto shrink-0">
-          <ToggleGroup
-            type="single"
-            bind:value={
-              () => labelMode,
-              (v) => {
-                // Ignores the '' a same-item deselect click emits; the function binding snaps
-                // the group back instead of latching it unpressed.
-                if (v === 'tag' || v === 'caption') switchLabelMode(v);
-              }
-            }
-            variant="outline"
+          <civitai-segmented-control
             size="sm"
-          >
-            <ToggleGroupItem value="tag" aria-label="Label with tags" disabled={labelingActive}>
-              Tags
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="caption"
-              aria-label="Label with captions"
-              disabled={labelingActive}
-            >
-              Captions
-            </ToggleGroupItem>
-          </ToggleGroup>
+            aria-label="Label with"
+            disabled={labelingActive}
+            data={[
+              { value: 'tag', label: 'Tags' },
+              { value: 'caption', label: 'Captions' },
+            ]}
+            value={labelMode}
+            onchange={(e: Event) => {
+              const control = e.currentTarget as CivitaiSegmentedControl;
+              const v = control.value;
+              if (v === 'tag' || v === 'caption') switchLabelMode(v);
+              // A switch can wait on the confirm dialog, so show the mode actually in effect.
+              control.value = labelMode;
+            }}
+          ></civitai-segmented-control>
         </div>
       {/if}
     </div>
@@ -1234,47 +1217,43 @@
       {:else}
       <div class="flex items-center gap-2">
         <span class="font-mono text-xs text-dark-2">Auto-label</span>
-        <ToggleGroup
-          type="single"
-          bind:value={
-            () => autoLabel,
-            (v) => {
-              if (v !== 'auto' && v !== 'manual') return;
-              autoLabel = v;
-              // Pick up any backlog the manual mode left behind.
-              if (v === 'auto') void ensureLabeling();
-            }
-          }
-          variant="outline"
+        <civitai-segmented-control
           size="sm"
-        >
-          <ToggleGroupItem value="auto" aria-label="Label new uploads automatically">
-            Automatic
-          </ToggleGroupItem>
-          <ToggleGroupItem value="manual" aria-label="Only label when I ask">
-            Manual
-          </ToggleGroupItem>
-        </ToggleGroup>
+          aria-label="Auto-label"
+          data={[
+            { value: 'auto', label: 'Automatic' },
+            { value: 'manual', label: 'Manual' },
+          ]}
+          value={autoLabel}
+          onchange={(e: Event) => {
+            const v = (e.currentTarget as CivitaiSegmentedControl).value;
+            if (v !== 'auto' && v !== 'manual') return;
+            autoLabel = v;
+            // Pick up any backlog the manual mode left behind.
+            if (v === 'auto') void ensureLabeling();
+          }}
+        ></civitai-segmented-control>
       </div>
       {/if}
       {#if labelMode === 'tag'}
         <!-- These only filter auto-label results, so they're not offered where there is none. -->
         {#if canAutoLabel}
         <div class="flex min-w-0 flex-wrap items-center gap-1.5">
-          <label for="exclude-tags" class="font-mono text-xs text-dark-2">Never apply</label>
-          <Input
-            id="exclude-tags"
-            bind:value={excludeDraft}
+          <civitai-text-input
+            size="sm"
+            label="Never apply"
+            class="w-40"
+            value={excludeDraft}
             placeholder="tag, press Enter"
-            class="h-8 w-40 font-mono text-xs"
-            onkeydown={(e) => {
+            oninput={(e: Event) => (excludeDraft = (e.currentTarget as CivitaiTextInput).value)}
+            onkeydown={(e: KeyboardEvent) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
                 addExcludeTags();
               }
             }}
-            onblur={addExcludeTags}
-          />
+            onfocusout={addExcludeTags}
+          ></civitai-text-input>
           {#each excludeTags as t (t)}
             <span
               class="inline-flex items-center gap-1 rounded border border-dark-4 bg-dark-7 px-1.5 py-0.5 font-mono text-xs text-dark-2"
@@ -1294,25 +1273,25 @@
             size="sm"
             label="Exclude character tags"
             checked={excludeCharacter}
-            onchange={(e: Event) => (excludeCharacter = (e.currentTarget as HTMLInputElement).checked)}
+            onchange={(e: Event) => (excludeCharacter = (e.currentTarget as CivitaiCheckbox).checked)}
           ></civitai-checkbox>
           <civitai-checkbox
             size="sm"
             label="Exclude source material tags"
             checked={excludeSource}
-            onchange={(e: Event) => (excludeSource = (e.currentTarget as HTMLInputElement).checked)}
+            onchange={(e: Event) => (excludeSource = (e.currentTarget as CivitaiCheckbox).checked)}
           ></civitai-checkbox>
         </div>
         {/if}
         {#if tagGroups.length}
-          <Button
+          <civitai-button
             variant="outline"
-            size="xs"
+            size="sm"
             class="ml-auto"
             onclick={() => (manageOpen = true)}
           >
-            <IconTag size={13} stroke={2} class="mr-1 inline" />Manage tags
-          </Button>
+            <span slot="left"><IconTag size={13} stroke={2} /></span>Manage tags
+          </civitai-button>
         {/if}
       {/if}
     </div>
@@ -1324,62 +1303,50 @@
       <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-dark-4 pt-3">
         <div class="flex items-center gap-2">
           <span class="font-mono text-xs text-dark-2">Label all with</span>
-          <ToggleGroup
-            type="single"
-            bind:value={
-              () => labelAllEngine,
-              (v) => {
-                if (v === 'tag' || v === 'caption') labelAllChoice = v;
-              }
-            }
-            variant="outline"
+          <civitai-segmented-control
             size="sm"
-          >
-            <ToggleGroupItem value="tag" aria-label="Run the tagger" disabled={media === 'audio'}>
-              Tags
-            </ToggleGroupItem>
-            <ToggleGroupItem value="caption" aria-label="Run the captioner">Captions</ToggleGroupItem>
-          </ToggleGroup>
+            aria-label="Label all with"
+            data={[
+              { value: 'tag', label: 'Tags', disabled: media === 'audio' },
+              { value: 'caption', label: 'Captions' },
+            ]}
+            value={labelAllEngine}
+            onchange={(e: Event) => {
+              const v = (e.currentTarget as CivitaiSegmentedControl).value;
+              if (v === 'tag' || v === 'caption') labelAllChoice = v;
+            }}
+          ></civitai-segmented-control>
         </div>
         <div class="flex items-center gap-2">
           <span class="font-mono text-xs text-dark-2">Existing labels</span>
-          <ToggleGroup
-            type="single"
-            bind:value={
-              () => labelAllPolicy,
-              (v) => {
-                if (v === 'after' || v === 'before' || v === 'replace' || v === 'skip')
-                  labelAllPolicy = v;
-              }
-            }
-            variant="outline"
+          <civitai-segmented-control
             size="sm"
-          >
-            <ToggleGroupItem value="after" aria-label="Add the new labels after existing ones">
-              Add after
-            </ToggleGroupItem>
-            <ToggleGroupItem value="before" aria-label="Add the new labels before existing ones">
-              Add before
-            </ToggleGroupItem>
-            <ToggleGroupItem value="replace" aria-label="Replace existing labels">
-              Replace
-            </ToggleGroupItem>
-            <ToggleGroupItem value="skip" aria-label="Only label images without a label">
-              Skip labeled
-            </ToggleGroupItem>
-          </ToggleGroup>
+            aria-label="Existing labels"
+            data={[
+              { value: 'after', label: 'Add after' },
+              { value: 'before', label: 'Add before' },
+              { value: 'replace', label: 'Replace' },
+              { value: 'skip', label: 'Skip labeled' },
+            ]}
+            value={labelAllPolicy}
+            onchange={(e: Event) => {
+              const v = (e.currentTarget as CivitaiSegmentedControl).value;
+              if (v === 'after' || v === 'before' || v === 'replace' || v === 'skip')
+                labelAllPolicy = v;
+            }}
+          ></civitai-segmented-control>
         </div>
-        <Button
-          size="xs"
+        <civitai-button
+          size="sm"
           class="ml-auto"
           onclick={labelAll}
           disabled={labelRun != null || labelingActive || labelAllTargets.length === 0}
         >
-          <IconSparkles size={13} stroke={2} class="mr-1 inline" />Label {plural(
+          <span slot="left"><IconSparkles size={13} stroke={2} /></span>Label {plural(
             labelAllTargets.length,
             'image'
           )}
-        </Button>
+        </civitai-button>
         {#if labelAllNotice}
           <p class="w-full font-mono text-xs text-buzz" role="status">{labelAllNotice}</p>
         {/if}
@@ -1471,94 +1438,73 @@
           </b>
           <div class="flex items-center gap-2">
             {#if canAutoLabel && (unlabeled.length > 0 || labelRun)}
-              <Button size="xs" onclick={ensureLabeling} disabled={labelRun != null || unlabeled.length === 0}>
-                <IconSparkles size={13} stroke={2} class="mr-1 inline" />{#if labelRun}Labeling… {labelRun.done}/{labelRun.total}{:else}Auto-label {unlabeled.length}{/if}
-              </Button>
+              <civitai-button size="sm" onclick={ensureLabeling} disabled={labelRun != null || unlabeled.length === 0}>
+                <span slot="left"><IconSparkles size={13} stroke={2} /></span>{#if labelRun}Labeling… {labelRun.done}/{labelRun.total}{:else}Auto-label {unlabeled.length}{/if}
+              </civitai-button>
             {/if}
-            <Button
+            <civitai-button
               variant="outline"
-              size="xs"
+              size="sm"
               onclick={() => fileInput.click()}
               title="Accepts {acceptedExtsText}"
             >
-              <IconPlus size={13} stroke={2} class="mr-1 inline" />Add more
-            </Button>
+              <span slot="left"><IconPlus size={13} stroke={2} /></span>Add more
+            </civitai-button>
             {#if removeTargets.length > 0}
-              <Button
-                variant="ghost"
-                size="xs"
-                class="text-red-400 hover:text-red-300"
+              <civitai-button
+                variant="subtle"
+                size="sm"
                 onclick={() => (removeDialogOpen = true)}
+                color="error"
               >
-                <IconTrash size={13} stroke={2} class="mr-1 inline" />{filtered
+                <span slot="left"><IconTrash size={13} stroke={2} /></span>{filtered
                   ? `Remove ${removeTargets.length} shown`
                   : 'Remove all'}
-              </Button>
+              </civitai-button>
             {/if}
           </div>
         </div>
 
         <div class="mb-3">
           <div class="flex flex-wrap items-start justify-between gap-2">
-            <ToggleGroup
-              type="single"
+            <studio-chip-group
+              class="self-start"
+              aria-label="Show"
+              data={[
+                { value: 'all', label: `All ${images.length}` },
+                { value: 'labeled', label: `Labeled ${labeledTotal}` },
+                { value: 'unlabeled', label: `Unlabeled ${unlabeledTotal}` },
+                ...(matureTotal > 0 || filter === 'mature'
+                  ? [{ value: 'mature', label: `Mature ${matureTotal}` }]
+                  : []),
+                ...(failedTotal > 0 || filter === 'failed'
+                  ? [{ value: 'failed', label: `Failed ${failedTotal}` }]
+                  : []),
+              ]}
               value={filter}
-              onValueChange={(v) => {
+              onchange={(e: Event) => {
+                const v = (e.currentTarget as StudioChipGroup).value;
                 if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature' || v === 'failed')
                   showFilter(v);
               }}
-              variant="outline"
+            ></studio-chip-group>
+            <civitai-segmented-control
               size="sm"
-              class="self-start"
-            >
-              <ToggleGroupItem value="all" aria-label="Show all images">All {images.length}</ToggleGroupItem>
-              <ToggleGroupItem value="labeled" aria-label="Show labeled images">
-                Labeled {labeledTotal}
-              </ToggleGroupItem>
-              <ToggleGroupItem value="unlabeled" aria-label="Show unlabeled images">
-                Unlabeled <span class={unlabeledTotal > 0 ? 'ml-1 font-semibold text-dark-0' : 'ml-1'}
-                  >{unlabeledTotal}</span
-                >
-              </ToggleGroupItem>
-              {#if matureTotal > 0 || filter === 'mature'}
-                <ToggleGroupItem value="mature" aria-label="Show images rated mature">
-                  Mature <span class={matureTotal > 0 ? 'ml-1 font-semibold text-buzz' : 'ml-1'}>{matureTotal}</span>
-                </ToggleGroupItem>
-              {/if}
-              {#if failedTotal > 0 || filter === 'failed'}
-                <ToggleGroupItem value="failed" aria-label="Show files that failed to upload">
-                  Failed <span class={failedTotal > 0 ? 'ml-1 font-semibold text-red-400' : 'ml-1'}>{failedTotal}</span>
-                </ToggleGroupItem>
-              {/if}
-            </ToggleGroup>
-            <ToggleGroup
-              type="single"
+              aria-label="Layout"
+              data={[
+                { value: 'grid', label: 'Grid' },
+                { value: 'inline', label: 'Edit inline' },
+                { value: 'large', label: 'Large' },
+              ]}
               value={labelView}
-              onValueChange={(v) => {
+              onchange={(e: Event) => {
+                const v = (e.currentTarget as CivitaiSegmentedControl).value;
                 if (v === 'grid' || v === 'inline' || v === 'large') setLabelView(v);
               }}
-              variant="outline"
-              size="sm"
-            >
-              <ToggleGroupItem value="grid" aria-label="Compact grid" title="Compact grid — edit labels in a dialog">
-                <IconLayoutGrid size={14} stroke={2} />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="inline" aria-label="Edit labels on the cards" title="Edit labels right on each card">
-                <IconLayoutList size={14} stroke={2} class="mr-1 inline" />Edit inline
-              </ToggleGroupItem>
-              <ToggleGroupItem value="large" aria-label="One large image per row" title="One large, uncropped image per row, with its label beside it">
-                <IconLayoutRows size={14} stroke={2} class="mr-1 inline" />Large
-              </ToggleGroupItem>
-            </ToggleGroup>
+            ></civitai-segmented-control>
           </div>
           {#if tagGroups.length > 0 || tagFilter}
-            <form
-              class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2"
-              onsubmit={(e) => {
-                e.preventDefault();
-                addFilterTags('include');
-              }}
-            >
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2">
               <IconFilter size={14} stroke={2} aria-hidden="true" />
               <Input
                 bind:value={tagFilterDraft}
@@ -1566,29 +1512,35 @@
                 placeholder="Filter by tag…"
                 aria-label="Tag to filter the images by"
                 class="h-7 w-44 font-mono text-xs"
+                onkeydown={(e: KeyboardEvent) => {
+                  if (e.key !== 'Enter') return;
+                  e.preventDefault();
+                  if (tagFilterDraft.trim()) addFilterTags('include');
+                }}
               />
               <datalist id={tagVocabId}>
                 {#each tagVocab as t (t)}<option value={t}></option>{/each}
               </datalist>
-              <Button
-                type="submit"
-                variant="outline"
-                size="xs"
-                disabled={!tagFilterDraft.trim()}
-                title="Show only images that have this tag"
-              >
-                With
-              </Button>
-              <Button
+              <civitai-button
                 type="button"
                 variant="outline"
-                size="xs"
+                size="sm"
+                disabled={!tagFilterDraft.trim()}
+                title="Show only images that have this tag"
+                onclick={() => addFilterTags('include')}
+              >
+                With
+              </civitai-button>
+              <civitai-button
+                type="button"
+                variant="outline"
+                size="sm"
                 disabled={!tagFilterDraft.trim()}
                 title="Show only images that don't have this tag"
                 onclick={() => addFilterTags('exclude')}
               >
                 Without
-              </Button>
+              </civitai-button>
               {#if tagFilter}
                 {#each tagFilter.include as t (t)}
                   {@render filterChip(t, false)}
@@ -1598,28 +1550,33 @@
                 {/each}
                 <span>Showing {mediaCount(shownImages.length, media)}</span>
                 {#if takesRepeats && shownImages.length > 0}
-                  <Popover.Root bind:open={bulkRepeatsOpen}>
-                    <Popover.Trigger
+                  <studio-popover
+                    open={bulkRepeatsOpen}
+                    ontoggle={(e: Event) => (bulkRepeatsOpen = (e.currentTarget as StudioPopover).open)}
+                  >
+                    <button
+                      slot="trigger"
+                      type="button"
                       class="rounded px-2 py-1 font-mono text-xs text-dark-2 hover:bg-dark-5 hover:text-white"
                     >
                       Set repeats…
-                    </Popover.Trigger>
-                    <Popover.Content class="w-64 text-xs" portalProps={portalProps()}>
+                    </button>
+                    <div class="w-64 text-xs">
                       <p class="mb-2 text-dark-2">
                         Repeats for the {mediaCount(shownImages.length, media)} shown. 1 trains each once.
                       </p>
                       <div class="flex items-center justify-between gap-2">
                         <RepeatsStepper label="Repeats for the shown images" bind:value={bulkRepeats} />
-                        <Button size="xs" type="button" onclick={applyBulkRepeats}>Apply</Button>
+                        <civitai-button size="sm" type="button" onclick={applyBulkRepeats}>Apply</civitai-button>
                       </div>
-                    </Popover.Content>
-                  </Popover.Root>
+                    </div>
+                  </studio-popover>
                 {/if}
-                <Button variant="ghost" size="xs" onclick={() => (tagFilter = null)}>
-                  <IconX size={12} stroke={2} class="mr-1 inline" />Clear
-                </Button>
+                <civitai-button variant="subtle" size="sm" onclick={() => (tagFilter = null)}>
+                  <span slot="left"><IconX size={12} stroke={2} /></span>Clear
+                </civitai-button>
               {/if}
-            </form>
+            </div>
           {/if}
         </div>
 
@@ -1727,9 +1684,9 @@
                 {:else if img.status === 'error'}
                   <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/70 p-2 text-center">
                     <span class="font-mono text-xs leading-tight text-buzz">{img.message}</span>
-                    <Button variant="outline" size="xs" onclick={() => retry(img.id)}>
-                      <IconRefresh size={12} stroke={2} class="mr-1 inline" />Retry
-                    </Button>
+                    <civitai-button variant="outline" size="sm" onclick={() => retry(img.id)}>
+                      <span slot="left"><IconRefresh size={12} stroke={2} /></span>Retry
+                    </civitai-button>
                   </div>
                 {/if}
 
@@ -1817,7 +1774,7 @@
                       value={img.caption}
                       rows={labelView === 'large' ? 8 : 4}
                       placeholder="Describe the image…"
-                      oninput={(e: Event) => (img.caption = (e.currentTarget as HTMLTextAreaElement).value)}
+                      oninput={(e: Event) => (img.caption = (e.currentTarget as CivitaiTextarea).value)}
                     ></civitai-textarea>
                     {#if triggerText && !captionTriggerHit(trigger, img.caption)}
                       <p class="mt-1 text-xs text-dark-2">
@@ -1854,7 +1811,7 @@
           description="An optional word prepended to every label. The model learns to associate it with your subject, so you type it in prompts to summon the LoRA. Less essential on modern caption models; handy for characters. Some large/video models can't train it (no-op)."
           placeholder="optional, e.g. my_character"
           value={trigger}
-          oninput={(e: Event) => (trigger = (e.currentTarget as HTMLInputElement).value)}
+          oninput={(e: Event) => (trigger = (e.currentTarget as CivitaiTextInput).value)}
         ></civitai-text-input>
         <p class="mt-2 text-[12px] leading-snug text-dark-2">
           Prepended to each label when missing, and <span class="text-buzz">highlighted</span> where
@@ -1885,18 +1842,15 @@
             : 'them'}
         </button>
       {/if}
-      <Button
+      <civitai-button
         disabled={!canContinue}
         onclick={onContinue}
         title={!canContinue && uploadedCount > 0 && !allLabeled
           ? 'Label every image to continue'
           : undefined}
-        aria-describedby={!canContinue && uploadedCount > 0 && !allLabeled
-          ? 'continue-blocked-reason'
-          : undefined}
       >
         Continue to review<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
-      </Button>
+      </civitai-button>
     </div>
   </div>
 </div>
@@ -1925,72 +1879,60 @@
   onShowTag={showTag}
 />
 
-<Dialog.Root bind:open={switchDialogOpen}>
-  <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>
-    <Dialog.Header>
-      <Dialog.Title>Switch to {pendingLabelMode === 'tag' ? 'tags' : 'captions'}?</Dialog.Title>
-      <Dialog.Description>
-        {mediaCount(switchDiscardCount, media)} in this dataset already {switchDiscardCount ===
-        1
-          ? 'has'
-          : 'have'}
-        {noun}. <strong>Convert</strong> keeps that text and reformats it — nothing is re-labeled.
-        {#if canAutoLabel}
-          <strong>Re-label</strong> discards it and auto-labels everything from scratch (labels that came
-          with your files{handOnly > 0 ? ", and reused images, which can't be auto-labeled," : ''} are kept
-          either way).
-        {/if}
-      </Dialog.Description>
-    </Dialog.Header>
-    <Dialog.Footer>
-      <Dialog.Close>
-        {#snippet child({ props })}
-          <Button {...props} variant="ghost" size="sm">Cancel</Button>
-        {/snippet}
-      </Dialog.Close>
-      {#if canAutoLabel}
-        <Button
-          variant="outline"
-          size="sm"
-          onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'relabel')}
-        >
-          Re-label everything
-        </Button>
-      {/if}
-      <Button size="sm" onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'convert')}>
-        Convert existing labels
-      </Button>
-    </Dialog.Footer>
-  </Dialog.Content>
-</Dialog.Root>
+<civitai-modal
+  open={switchDialogOpen}
+  heading={`Switch to ${pendingLabelMode === 'tag' ? 'tags' : 'captions'}?`}
+  with-close-button
+  close-label="Cancel"
+  onclose={() => (switchDialogOpen = false)}
+>
+  <p class="m-0 text-sm text-dark-1">
+    {mediaCount(switchDiscardCount, media)} in this dataset already {switchDiscardCount === 1
+      ? 'has'
+      : 'have'}
+    {noun}. <strong>Convert</strong> keeps that text and reformats it — nothing is re-labeled.
+    {#if canAutoLabel}
+      <strong>Re-label</strong> discards it and auto-labels everything from scratch (labels that came
+      with your files{handOnly > 0 ? ", and reused images, which can't be auto-labeled," : ''} are kept
+      either way).
+    {/if}
+  </p>
+  <div class="mt-4 flex flex-wrap justify-end gap-2">
+    <civitai-button variant="subtle" size="sm" onclick={() => (switchDialogOpen = false)}>
+      Cancel
+    </civitai-button>
+    {#if canAutoLabel}
+      <civitai-button
+        variant="outline"
+        size="sm"
+        onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'relabel')}
+      >
+        Re-label everything
+      </civitai-button>
+    {/if}
+    <civitai-button size="sm" onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'convert')}>
+      Convert existing labels
+    </civitai-button>
+  </div>
+</civitai-modal>
 
-<Dialog.Root bind:open={removeDialogOpen}>
-  <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>
-    <Dialog.Header>
-      <Dialog.Title>
-        {filtered
-          ? `Remove ${plural(removeTargets.length, 'shown file')}?`
-          : `Remove all ${plural(removeTargets.length, 'file')}?`}
-      </Dialog.Title>
-      <Dialog.Description>
-        {#if filtered}
-          Only the files this filter shows are removed; the rest of the dataset stays.
-        {:else}
-          The dataset is emptied.
-        {/if}
-        Their labels go with them and any upload still running is cancelled. <strong>Download .zip</strong>
-        first to keep a copy with the labels.
-      </Dialog.Description>
-    </Dialog.Header>
-    <Dialog.Footer>
-      <Dialog.Close>
-        {#snippet child({ props })}
-          <Button {...props} variant="ghost" size="sm">Cancel</Button>
-        {/snippet}
-      </Dialog.Close>
-      <Button variant="destructive" size="sm" onclick={() => removeMany(removeTargets.map((i) => i.id))}>
-        {filtered ? 'Remove shown' : 'Remove all'}
-      </Button>
-    </Dialog.Footer>
-  </Dialog.Content>
-</Dialog.Root>
+<civitai-confirm-dialog
+  open={removeDialogOpen}
+  heading={filtered
+    ? `Remove ${plural(removeTargets.length, 'shown file')}?`
+    : `Remove all ${plural(removeTargets.length, 'file')}?`}
+  confirm-label={filtered ? 'Remove shown' : 'Remove all'}
+  destructive
+  onconfirm={() => removeMany(removeTargets.map((i) => i.id))}
+  onclose={() => (removeDialogOpen = false)}
+>
+  <p class="m-0 text-sm text-dark-1">
+    {#if filtered}
+      Only the files this filter shows are removed; the rest of the dataset stays.
+    {:else}
+      The dataset is emptied.
+    {/if}
+    Their labels go with them and any upload still running is cancelled. <strong>Download .zip</strong>
+    first to keep a copy with the labels.
+  </p>
+</civitai-confirm-dialog>
