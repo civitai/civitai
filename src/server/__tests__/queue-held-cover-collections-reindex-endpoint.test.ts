@@ -6,33 +6,21 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
- * Runs the endpoint's real collection query against an in-process Postgres, through its real query
- * schema: a page of collections scanned by id, of which those whose cover may come from a minor or
- * SFW-only model are queued.
+ * Runs the endpoint's real collection query against an in-process Postgres: a page of collections
+ * scanned by id, of which those whose cover may come from a minor or SFW-only model are selected.
+ * The route runs as a dry run, so nothing is queued.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { queueCollectionsReindex } = vi.hoisted(() => ({
-  queueCollectionsReindex: vi.fn(async (ids: number[], options: { dryRun: boolean }) => ({
-    dryRun: options.dryRun,
-    collectionCount: ids.length,
-    queued: ids,
-  })),
-}));
-
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
-// The queueing and its read-back are queue-models-reindex's to pin.
-vi.mock('~/server/search-index/queue-models-reindex', async () => ({
-  ...(await vi.importActual<Record<string, unknown>>(
-    '~/server/search-index/queue-models-reindex.schema'
-  )),
-  queueCollectionsReindex,
-}));
 
 const handler = (await import('~/pages/api/admin/temp/queue-held-cover-collections-reindex'))
   .default;
+const { getCollectionPageCoveredByHeldModels } = await import(
+  '~/server/services/collection-index-sync'
+);
 
 beforeAll(async () => {
   const db = new PGlite();
@@ -75,8 +63,8 @@ beforeAll(async () => {
 });
 
 type Page = {
-  queued: number[];
   dryRun: boolean;
+  collectionCount: number;
   scanned: number;
   matched: number;
   nextCursor: number | null;
@@ -107,13 +95,23 @@ async function call(query: Record<string, string>) {
   return { statusCode, body };
 }
 
+describe('getCollectionPageCoveredByHeldModels', () => {
+  it('selects the collections reaching a held model by each path, and not one reaching only an unheld model', async () => {
+    expect(await getCollectionPageCoveredByHeldModels({ cursor: 0, limit: 100 })).toEqual({
+      collectionIds: [1, 2, 3, 4, 5, 6, 12],
+      scanned: 13,
+      lastScannedId: 13,
+    });
+  });
+});
+
 describe('queue-held-cover-collections-reindex', () => {
-  it('queues the collections reaching a held model by each path, and not one reaching only an unheld model', async () => {
-    const { statusCode, body } = await call({ collections: '100', dryRun: 'true' });
+  it('reports the page it scanned as a dry run', async () => {
+    const { statusCode, body } = await call({ collections: '100' });
     expect(statusCode).toBe(200);
     expect(body).toMatchObject({
       dryRun: true,
-      queued: [1, 2, 3, 4, 5, 6, 12],
+      collectionCount: 7,
       scanned: 13,
       matched: 7,
       nextCursor: null,
@@ -123,25 +121,19 @@ describe('queue-held-cover-collections-reindex', () => {
 
   it('advances past a page with no match', async () => {
     const { body } = await call({ cursor: '8', collections: '3' });
-    expect(body).toMatchObject({ queued: [], scanned: 3, matched: 0, nextCursor: 11, done: false });
+    expect(body).toMatchObject({ matched: 0, scanned: 3, nextCursor: 11, done: false });
   });
 
-  it('queues a match on the last scanned id and resumes after it', async () => {
+  it('counts a match on the last scanned id and resumes after it', async () => {
     const first = await call({ cursor: '8', collections: '4' });
-    expect(first.body).toMatchObject({ queued: [12], scanned: 4, nextCursor: 12, done: false });
+    expect(first.body).toMatchObject({ matched: 1, scanned: 4, nextCursor: 12, done: false });
 
     const next = await call({ cursor: '12', collections: '4' });
-    expect(next.body).toMatchObject({ queued: [], scanned: 1, nextCursor: null, done: true });
+    expect(next.body).toMatchObject({ matched: 0, scanned: 1, nextCursor: null, done: true });
   });
 
   it('ends at a cursor past the last collection', async () => {
     const { body } = await call({ cursor: '1000' });
-    expect(body).toMatchObject({
-      queued: [],
-      scanned: 0,
-      matched: 0,
-      nextCursor: null,
-      done: true,
-    });
+    expect(body).toMatchObject({ matched: 0, scanned: 0, nextCursor: null, done: true });
   });
 });
