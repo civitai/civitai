@@ -24,12 +24,12 @@ vi.mock('~/server/utils/moderator-endpoint', () => ({
 type Handler<I, O> = {
   handler: (input: I, ctx: { actor: { id: number }; tracker?: unknown }) => Promise<O>;
 };
-const files = (await import('../../../pages/api/mod/creator-services/deal-files'))
+const files = (await import('../../../server/api-routes/mod/creator-services/deal-files'))
   .default as unknown as Handler<
   { dealId?: number; dealIds?: string },
   { items: any[]; attachments: any[] }
 >;
-const url = (await import('../../../pages/api/mod/creator-services/deal-file-url'))
+const url = (await import('../../../server/api-routes/mod/creator-services/deal-file-url'))
   .default as unknown as Handler<{ fileId: number }, { url: string; expiresAt: string }>;
 
 const actor = { actor: { id: 99 } };

@@ -58,9 +58,9 @@ const { mockArchiveUserComments } = vi.hoisted(() => ({
 vi.mock('~/server/services/csam.service-new', () => ({
   archiveUserComments: mockArchiveUserComments,
 }));
-import archiveHeldUserComments from '~/pages/api/admin/temp/archive-held-user-comments';
-import resetTrainingModel from '~/pages/api/admin/temp/reset-training-model';
-import migrateArticleImages from '~/pages/api/admin/temp/migrate-article-images';
+import archiveHeldUserComments from '~/server/api-routes/admin/temp/archive-held-user-comments';
+import resetTrainingModel from '~/server/api-routes/admin/temp/reset-training-model';
+import migrateArticleImages from '~/server/api-routes/admin/temp/migrate-article-images';
 import '~/__tests__/mocks/logging.mock';
 
 const OWNER = 1;

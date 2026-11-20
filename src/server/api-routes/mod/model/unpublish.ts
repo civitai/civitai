@@ -25,8 +25,6 @@ export default defineModeratorEndpoint('model.unpublish', {
     customMessage: z.string().trim().max(1000).optional().describe('Extra text for the owner.'),
   }),
   async handler(input, ctx) {
-    // In the handler rather than a `.refine()`: that returns a ZodEffects, and `specToDoc` needs a
-    // ZodObject to project the params for the docs page (see `schema/moderator/comment.ts`).
     if (input.reason === 'other' && !input.customMessage)
       throw throwBadRequestError('A message is required when the reason is "other".');
 

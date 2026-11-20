@@ -276,7 +276,7 @@ full-corpus pass before running one.** What is verified in code:
   `insight.role`, `insight.styleFamily`), so a drained model is a real
   re-projection, not a no-op.
 - The index holds **~700k ungated documents** — the figure is
-  `src/pages/api/admin/temp/queue-paid-models-reindex.ts`'s own, in a comment
+  `src/server/api-routes/admin/temp/queue-paid-models-reindex.ts`'s own, in a comment
   that declines to rewrite them because "rewriting them would be waste".
 
 Two corrections to the obvious reasoning, both of which bit an earlier draft of

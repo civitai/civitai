@@ -22,7 +22,7 @@ vi.mock('~/server/services/text-scan/actions/bounty-poi', () => ({
   resolveBountyPoiAppeal: mockResolve,
 }));
 
-import handler from '~/pages/api/mod/bounty-poi/resolve-appeal';
+import handler from '~/server/api-routes/mod/bounty-poi/resolve-appeal';
 
 function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];

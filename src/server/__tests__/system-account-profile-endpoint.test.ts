@@ -31,7 +31,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 
 const logToAxiom = loggingMock.logToAxiom;
-const handler = (await import('~/pages/api/admin/system-account-profile')).default;
+const handler = (await import('~/server/api-routes/admin/system-account-profile')).default;
 
 type UserRow = {
   id: number;

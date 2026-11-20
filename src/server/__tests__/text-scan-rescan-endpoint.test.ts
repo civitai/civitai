@@ -30,7 +30,7 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   getTextScanMode: vi.fn(),
 }));
 
-const handler = (await import('~/pages/api/admin/temp/text-scan-rescan')).default;
+const handler = (await import('~/server/api-routes/admin/temp/text-scan-rescan')).default;
 const { scanEntity } = await import('~/server/services/text-scan/submit');
 const { getTextScanMode } = await import('~/server/services/text-scan/mode');
 

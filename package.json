@@ -162,7 +162,7 @@
     "depcheck": "depcheck",
     "generate-types": "typed-scss-modules src",
     "ts-script": "NODE_ENV=development tsx",
-    "generate:moderator-endpoints": "node scripts/generate-moderator-endpoint-catalog.mjs"
+    "generate:api-routes": "node scripts/generate-api-routes.mjs"
   },
   "prisma": {
     "schema": "packages/civitai-db-schema/prisma/schema.prisma",

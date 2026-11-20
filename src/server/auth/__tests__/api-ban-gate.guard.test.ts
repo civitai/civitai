@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * An API route reads the session through `getApiAuthSession`, which applies the ban. A direct
- * `getServerAuthSession` call or import under src/pages/api returns a banned user as if signed in, so it is
+ * `getServerAuthSession` call or import under src/pages/api or src/server/api-routes returns a banned user as if signed in, so it is
  * allowed only in the files below.
  *
  * Adding a file here lets a banned account's session through that route: that is a moderation
@@ -20,7 +20,7 @@ const RAW_SESSION_ALLOWED: Record<string, string> = {
   'user/settings.ts': "returns the caller's own settings bootstrap, like auth/session",
 };
 
-const API_DIR = join(process.cwd(), 'src/pages/api');
+const API_DIRS = ['src/pages/api', 'src/server/api-routes'].map((dir) => join(process.cwd(), dir));
 // The import as well as the call, so an aliased import or a call by reference is caught too.
 // `resolveSettingsBootstrap` reads the raw session itself, so calling it counts as a direct call.
 const DIRECT_CALL =
@@ -34,14 +34,17 @@ function routeFiles(dir: string): string[] {
   });
 }
 
-const directCallers = routeFiles(API_DIR)
-  .filter((path) => DIRECT_CALL.test(readFileSync(path, 'utf8')))
-  .map((path) => relative(API_DIR, path).split('\\').join('/'));
+const directCallers = API_DIRS.flatMap((dir) =>
+  routeFiles(dir)
+    .filter((path) => DIRECT_CALL.test(readFileSync(path, 'utf8')))
+    .map((path) => relative(dir, path).split('\\').join('/'))
+);
 
 describe('API routes resolve the session through the ban gate', () => {
   it('finds the direct callers it is meant to find', () => {
     // Without this the scan could match nothing and every assertion below would pass vacuously.
     expect(directCallers).toContain('auth/session.ts');
+    expect(routeFiles(API_DIRS[1]).length).toBeGreaterThan(100);
   });
 
   it('no route outside the allowlist calls getServerAuthSession directly', () => {

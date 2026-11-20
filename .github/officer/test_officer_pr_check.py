@@ -679,9 +679,12 @@ class RealList(unittest.TestCase):
                       "src/server/utils/endpoint-helpers.ts", "*api-key*", "*apikey*", "*access-token*",
                       "*accesstoken*", "*revocation*", "*revoke-user-token*", "*coinbase*", "*tipalti*",
                       "*creator-program*", "*creatorprogram*", "*redeemable*", "*refund*",
-                      "src/pages/api/v1/blocks/tip*", "src/server/**/*bount*", "src/server/**/*vault*",
-                      "src/pages/api/**/*bount*", "src/pages/api/**/*bount*/**", "src/pages/api/**/*vault*",
-                      "src/pages/api/**/*vault*/**", "packages/**/*bount*", "*csam*", "*mod-gate*", "*ban-user*"}
+                      "src/pages/api/v1/blocks/tip*", "src/server/**/*bount*", "src/server/**/*bount*/**",
+                      "src/server/**/*vault*", "src/pages/api/**/*bount*", "src/pages/api/**/*bount*/**",
+                      "src/pages/api/**/*vault*", "src/pages/api/**/*vault*/**", "packages/**/*bount*",
+                      "src/pages/api/mod/*...path*", "src/pages/api/admin/*...path*",
+                      "src/server/utils/api-router.ts", "src/server/utils/api-routes/**",
+                      "*csam*", "*mod-gate*", "*ban-user*"}
 
     def test_the_money_list_is_the_charter_set(self):
         with open(REAL_MONEY) as f:
@@ -716,12 +719,16 @@ class RealList(unittest.TestCase):
                   "src/server/services/vault.service.ts", "src/server/routers/vault.router.ts",
                   "src/pages/api/download/vault/[vaultItemId].ts", "src/pages/api/v1/vault/get.tsx",
                   "src/server/services/bounty.service.ts", "src/server/routers/bounty.router.ts",
-                  "src/server/services/bountyEntry.service.ts", "src/pages/api/mod/bounty-unpaid-award/resolve.ts",
+                  "src/server/services/bountyEntry.service.ts",
+                  "src/server/api-routes/mod/bounty-unpaid-award/resolve.ts",
                   "packages/civitai-shared/src/bounty-award.ts",
+                  "src/pages/api/mod/[...path].ts", "src/pages/api/admin/[...path].ts",
+                  "src/server/utils/api-router.ts",
+                  "src/server/utils/api-routes/mod.generated.ts",
                   # CSAM, moderator gates and bans
                   "src/server/services/csam.service.ts", "src/server/routers/csam.router.ts",
                   "src/pages/api/mod/csam-upload.ts", "src/pages/api/internal/mod-gate.ts",
-                  "src/pages/api/mod/ban-user.ts"]:
+                  "src/server/api-routes/mod/ban-user.ts"]:
             with self.subTest(path=p):
                 self.assertTrue(opc.money_hit(money, p), f"{p} is not matched by {REAL_MONEY}")
         for p in ["src/pages/index.tsx", "src/components/Image/x.tsx", "src/server/services/model.service.ts",

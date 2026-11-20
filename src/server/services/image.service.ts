@@ -5245,7 +5245,7 @@ export async function createImage({
    *   2. `createEntityImages`, below in this file (`dbClient.image.createMany`)
    *   3. `updateEntityImages`, below in this file (`dbClient.image.createMany`)
    *   4. `blocks/app-listing-assets.service.ts` (`dbWrite.image.create`)
-   *   5. `pages/api/admin/temp/migrate-article-images.ts` (a one-off admin backfill)
+   *   5. `server/api-routes/admin/temp/migrate-article-images.ts` (a one-off admin backfill)
    *   6. `jobs/daily-challenge-processing.ts` `duplicateImage` — a raw
    *      `INSERT INTO "Image" (…) SELECT … FROM "Image" i WHERE i.id = …` that re-owns an
    *      existing row's columns (`url` first among them) to another user, for the
