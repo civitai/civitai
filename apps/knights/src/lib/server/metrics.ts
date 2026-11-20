@@ -24,6 +24,9 @@ const ESCALATION_REASONS = [
   'expired',
   'unservable',
   'publishes-after-expiry',
+  'unpublished-draft',
+  'image-unservable',
+  'no-consensus-rerate',
   ...new Set([...KNIGHTS_ESCALATION_REASONS, ...KNIGHTS_WRITEBACK_REASONS]),
 ] as const;
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
@@ -35,6 +38,7 @@ const REFUSAL_REASONS = [
   'bad-answer',
   'bad-block-reason',
   'already-voted',
+  'own-image',
   'no-weight',
   'reset-pending',
   'limited',
@@ -113,7 +117,7 @@ const buzzGrants = counter(
 );
 const escalations = counter(
   'knights_escalations_total',
-  'Queue items handed to the next stage (next-stage) or to the Inquisitors, by reason; expired counts unvoted items closed instead.',
+  'Queue items handed to the next stage (next-stage) or to the Inquisitors, by reason; expired counts unvoted items closed instead, no-consensus-rerate items re-rated to their most-voted level instead.',
   { reason: ESCALATION_REASONS }
 );
 const itemsResolved = counter(

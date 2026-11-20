@@ -45,9 +45,10 @@ const (
 
 // Response headers.
 const (
-	// SearchCacheControl is the Cache-Control of a 200 from /search: an index answer is at most
-	// this stale, in exchange for repeated searches never reaching the store.
-	SearchCacheControl = "public, max-age=30"
+	// SearchCacheControl is the Cache-Control of a 200 from /search: a shared cache may hold an
+	// answer for 30 s (s-maxage), so repeated searches never reach the store, while browsers
+	// revalidate every time (max-age=0).
+	SearchCacheControl = "public, max-age=0, s-maxage=30"
 	// NoStore is the Cache-Control of every other response.
 	NoStore = "no-store"
 	// PreflightMaxAge is how long, in seconds, a browser may reuse a /search preflight answer.

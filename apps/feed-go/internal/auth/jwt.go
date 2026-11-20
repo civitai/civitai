@@ -439,8 +439,10 @@ func p256PublicKey(x, y []byte) (*ecdsa.PublicKey, error) {
 	return ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
 }
 
-// TokenFromCookieHeader extracts a cookie's value from a raw Cookie header, URL-decoding it as
-// readCookie() in verify.ts does.
+// TokenFromCookieHeader extracts a cookie's value from a raw Cookie header as the `cookie` package's
+// parse() (Next's req.cookies, which getHubSession reads) does: the first part with that name wins,
+// even when its value is empty; a value starting with `"` loses its first and last character; the value
+// is then URL-decoded, and kept raw when it does not decode.
 func TokenFromCookieHeader(header, name string) string {
 	for _, part := range strings.Split(header, ";") {
 		idx := strings.IndexByte(part, '=')
@@ -449,6 +451,13 @@ func TokenFromCookieHeader(header, name string) string {
 		}
 		if strings.TrimSpace(part[:idx]) == name {
 			val := strings.TrimSpace(part[idx+1:])
+			if strings.HasPrefix(val, `"`) {
+				// parse()'s value.slice(1, -1): a lone `"` becomes "".
+				if len(val) < 2 {
+					return ""
+				}
+				val = val[1 : len(val)-1]
+			}
 			if dec, err := urlDecode(val); err == nil {
 				return dec
 			}

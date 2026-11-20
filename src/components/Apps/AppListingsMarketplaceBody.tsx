@@ -16,6 +16,7 @@ import { pageSearchFor } from '~/components/Search/search-target';
 import type { StoreGridItem } from '~/server/schema/blocks/app-listing-read.schema';
 import { isSubListingCard } from '~/shared/constants/app-sub-listing.constants';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
+import { storeGridCardMatches } from '~/shared/utils/store-grid-search';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -271,11 +272,7 @@ export function AppListingsMarketplaceBody() {
   const filteredItems = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
     if (!q || indexAnswered) return gridItems;
-    return gridItems.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        (c.tagline ? c.tagline.toLowerCase().includes(q) : false)
-    );
+    return gridItems.filter((c) => storeGridCardMatches(c, q));
   }, [gridItems, debouncedSearch, indexAnswered]);
 
   // The BROAD predicate — includes search, because a viewer looking at an empty

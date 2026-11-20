@@ -401,6 +401,19 @@ export const serverSchema = z
     CLICKHOUSE_USERNAME: isProd ? z.string() : z.string().optional(),
     CLICKHOUSE_PASSWORD: isProd ? z.string() : z.string().optional(),
     CLICKHOUSE_TRACKER_URL: z.url().optional(),
+    // A dedicated ClickHouse for entity metrics, read ONLY by the image MetricService
+    // (`getImageMetricService` in image.service) and only while the
+    // `image-metrics-dedicated-clickhouse` flag is on. Same shape as CLICKHOUSE_HOST/USERNAME/
+    // PASSWORD: the host is the full URL (protocol and port included). Optional everywhere, prod
+    // included: unset HOST or USERNAME means no such client is built and the flag has no effect.
+    CLICKHOUSE_METRICS_HOST: z.string().optional(),
+    CLICKHOUSE_METRICS_USERNAME: z.string().optional(),
+    CLICKHOUSE_METRICS_PASSWORD: z.string().optional(),
+    // The dedicated client's socket idle timeout (`request_timeout`). Far below the shared client's
+    // 300s, so a hung dedicated server releases the image-metrics-swr refresher's slots and the
+    // per-id populate locks within seconds. Keep it above CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS and
+    // the server-side lookup cap. .int().positive() for the same reason as that timeout.
+    CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
     // OAuth LOGIN provider secrets now live ONLY in the hub (apps/auth) — the spoke fetches the enabled-provider
     // list from GET {hub}/api/auth/providers and never holds login secrets. Discord's creds REMAIN here because
     // the Discord ROLE-CONNECTION integration (src/server/integrations/discord.ts) uses them — that's a separate
@@ -639,6 +652,11 @@ export const serverSchema = z
     // The fraction (0-1) of index-answered store searches that also read the database grid page,
     // off the response path, to log how the two result sets compare. 0 = never.
     APP_INDEX_SEARCH_COMPARE_SAMPLE: z.coerce.number().min(0).max(1).default(0.1),
+    // The per-process breaker around the app index call: after this many consecutive index
+    // failures (timeouts included) store searches skip the index for the cooldown below, then
+    // one search probes it.
+    APP_INDEX_BREAKER_FAILURE_THRESHOLD: z.coerce.number().int().min(1).default(5),
+    APP_INDEX_BREAKER_COOLDOWN_MS: z.coerce.number().int().min(1000).default(30_000),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt
@@ -1327,6 +1345,19 @@ export const serverSchema = z
       .string()
       .refine((value) => value.trim() === '' || value.trim().length >= 32, {
         message: 'ASSISTANT_RUNNER_SECRET must be at least 32 characters',
+      })
+      .optional(),
+    // App Storage permission hooks: the storage-hook-runner service (apps/storage-hook-runner)
+    // that evaluates a collection's hook on every write to it. Its base URL (the client posts to
+    // `<url>/v1/check`) and the shared HMAC secret that signs each request and each response, at
+    // least 32 characters, the same value the runner is given. Unset or blank, every write to a
+    // collection with a hook is refused as `hook_unavailable` (fail closed); a collection without
+    // a hook is unaffected. Blank is accepted so a bare ConfigMap key cannot stop the app booting.
+    STORAGE_HOOK_RUNNER_URL: z.union([z.url(), z.literal('')]).optional(),
+    STORAGE_HOOK_RUNNER_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'STORAGE_HOOK_RUNNER_SECRET must be at least 32 characters',
       })
       .optional(),
     // How long a run grant lasts: the runner's wall clock per run (2 h) plus a margin.

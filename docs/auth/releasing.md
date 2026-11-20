@@ -26,10 +26,13 @@ pnpm run release:auth:major    # major
 Each script runs `scripts/release-app.mjs apps/auth auth-app-v <bump>`, which:
 
 1. verifies you are on `main` with a clean tree, then `git pull --rebase`,
-2. bumps **only** `apps/auth/package.json` (`npm version --no-git-tag-version`; the root
+2. typechecks `apps/auth` only (`pnpm --dir apps/auth run typecheck`); a failure stops the release
+   before anything is bumped,
+3. bumps **only** `apps/auth/package.json` (`npm version --no-git-tag-version`; the root
    `package.json` is untouched),
-3. commits **only** `apps/auth/package.json` and creates an annotated tag **`auth-app-vX.Y.Z`**,
-4. `git push --follow-tags` — pushes the commit + the new tag.
+4. commits **only** `apps/auth/package.json` and creates an annotated tag **`auth-app-vX.Y.Z`**,
+5. `git push --follow-tags` — pushes the commit + the new tag, skipping the pre-push hook (it
+   typechecks the root app, which this commit doesn't touch).
 
 > The script does the commit/tag explicitly rather than via `npm version`'s built-in git step:
 > in this monorepo `.git` is at the **root**, and `npm --prefix apps/auth version` would

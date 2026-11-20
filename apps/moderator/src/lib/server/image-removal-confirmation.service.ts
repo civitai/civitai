@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { ReportStatus } from '$lib/reports';
 import { dbRead, dbWrite } from './db';
-import { blockImage, isModerationBlocked } from './image-moderation.service';
+import { blockImage, isBannedOwnerBlocked, isModerationBlocked } from './image-moderation.service';
 import { recordModActivity } from './mod-activity';
 import { setReportStatus } from './reports.service';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
@@ -138,8 +138,10 @@ export async function confirmRemoval({
   if (voidNote === 'A later appeal was approved') return { ok: true, status, note: voidNote };
 
   let skipped = false;
+  let unpaid = false;
   if (!voidNote)
     try {
+      unpaid = await isBannedOwnerBlocked(row.imageId);
       const result = await blockImage({
         imageId: row.imageId,
         userId: row.requestedById,
@@ -161,7 +163,12 @@ export async function confirmRemoval({
   // held.
   if (!skipped)
     for (const reportId of claimed.reportIds)
-      await setReportStatus({ id: reportId, status: ReportStatus.Actioned, userId });
+      await setReportStatus({
+        id: reportId,
+        status: ReportStatus.Actioned,
+        userId,
+        noReward: unpaid,
+      });
   await recordModActivity({
     userId,
     entityType: 'image',

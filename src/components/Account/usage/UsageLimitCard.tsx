@@ -6,7 +6,7 @@ import {
   windowCaption,
   type UsageLimitRow,
   type UsageLimitTone,
-} from '~/components/Account/usage/usage-limit-view';
+} from '@civitai/shared/usage-limit-view';
 
 const BAR_COLOR: Record<UsageLimitTone, string> = {
   ok: 'blue',

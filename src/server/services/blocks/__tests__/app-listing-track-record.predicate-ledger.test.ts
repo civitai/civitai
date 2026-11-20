@@ -136,7 +136,7 @@ describe('getDeveloperTrackRecord — reuses storeEligibilityWhere', () => {
       viewerBrowsingLevel: 7,
     });
     const [call] = callsFor('appListingDeveloperTrackRecord:');
-    expect(call.key).toBe('appListingDeveloperTrackRecord:full:public:red:mr-');
+    expect(call.key).toBe('appListingDeveloperTrackRecord:full:public:red:mr--');
     expect(call.options).toEqual({ ttl: 180, tag: [APP_LISTING_CATALOG_TAG] });
   });
 

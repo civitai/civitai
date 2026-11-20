@@ -6,8 +6,9 @@ name: Full CI on label
 # reopened, ready_for_review): with it on, the six `Unit tests` shards run and the draft
 # ESLint-only gate is lifted. What they cannot do without help is react to the label being
 # ADDED, which is a `labeled` event. This file does that, by dispatching them on the PR branch,
-# along with moderator-boot.yml, feed-go.yml, beacon-go.yml, app-index-go.yml and
-# registry-adapter-image.yml, which have the same draft gate.
+# along with moderator-boot.yml, feed-go.yml, beacon-go.yml, app-index-go.yml, app-data-go.yml,
+# content-policy-go.yml, registry-adapter-image.yml and storage-hook-runner-image.yml, which have
+# the same draft gate.
 #
 # ── THE LABEL STAYS ON UNTIL THE FULL UNIT SUITE HAS PASSED ONCE ON THE PR ───────────────────
 #
@@ -180,10 +181,21 @@ jobs:
           # app-index-go.yml has the same draft gate; a branch cut before it has no such workflow (422).
           gh workflow run app-index-go.yml -R "$REPO" --ref "$HEAD_REF" \
             || echo "app-index-go.yml not on this branch; rebase to get it"
+          # app-data-go.yml has the same draft gate; a branch cut before it has no such workflow (422).
+          gh workflow run app-data-go.yml -R "$REPO" --ref "$HEAD_REF" \
+            || echo "app-data-go.yml not on this branch; rebase to get it"
+          # content-policy-go.yml has the same draft gate; a branch cut before it has no such workflow
+          # (422).
+          gh workflow run content-policy-go.yml -R "$REPO" --ref "$HEAD_REF" \
+            || echo "content-policy-go.yml not on this branch; rebase to get it"
           # registry-adapter-image.yml has the same draft gate; a branch cut before it has no such
           # workflow (422).
           gh workflow run registry-adapter-image.yml -R "$REPO" --ref "$HEAD_REF" \
             || echo "registry-adapter-image.yml not on this branch; rebase to get it"
+          # storage-hook-runner-image.yml has the same draft gate; a branch cut before it has no
+          # such workflow (422).
+          gh workflow run storage-hook-runner-image.yml -R "$REPO" --ref "$HEAD_REF" \
+            || echo "storage-hook-runner-image.yml not on this branch; rebase to get it"
           # Link the runs from this job's summary: it is the only place on the PR that reaches
           # them (see the header). A dispatch's run appears a few seconds after the call returns.
           sleep 10
@@ -192,7 +204,7 @@ jobs:
           if [ -n "$nopr" ]; then
             echo "This branch's lint.yml has no \`pr\` input, so the Lint dispatch carries none: the label stays on until a PR run's unit shards pass." >> "$GITHUB_STEP_SUMMARY"
           fi
-          for wf in lint.yml apps.yml moderator-boot.yml feed-go.yml beacon-go.yml app-index-go.yml registry-adapter-image.yml; do
+          for wf in lint.yml apps.yml moderator-boot.yml feed-go.yml beacon-go.yml app-index-go.yml app-data-go.yml content-policy-go.yml registry-adapter-image.yml storage-hook-runner-image.yml; do
             url=$(gh run list -R "$REPO" --workflow "$wf" --branch "$HEAD_REF" --event workflow_dispatch \
               --limit 1 --json url -q '.[0].url' || true)
             echo "$wf: ${url:-not found yet, see the Actions tab}"

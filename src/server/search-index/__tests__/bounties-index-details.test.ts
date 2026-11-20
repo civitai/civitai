@@ -41,7 +41,7 @@ describe('bounties search index images', () => {
     ({ ...(bounty({}) as object), images } as never);
   const tag = (imageId: number, tagId: number) => ({ imageId, tagId, tag: { name: 't' } });
 
-  it('leaves out an image above PG13 carrying a child tag, keeping the rest', async () => {
+  it('keeps an image above PG13 carrying a child tag', async () => {
     const [record] = await transformData({
       bounties: [
         withImages([
@@ -54,7 +54,7 @@ describe('bounties search index images', () => {
       profilePictures: [],
     });
 
-    expect(record.images.map((i: { id: number }) => i.id)).toEqual([11, 12]);
+    expect(record.images.map((i: { id: number }) => i.id)).toEqual([10, 11, 12]);
   });
 
   it('🔴 leaves out a restricted minor image, without the flag on the rest', async () => {
@@ -75,13 +75,13 @@ describe('bounties search index images', () => {
   });
 
   it('counts every image of a bounty marked nsfw as mature, as the feed does', async () => {
-    const images = [{ id: 12, nsfwLevel: NsfwLevel.PG13 }];
+    const images = [{ id: 12, nsfwLevel: NsfwLevel.PG13, minor: true }];
     const [marked, unmarked] = await transformData({
       bounties: [
         { ...(withImages(images) as object), nsfw: true } as never,
         { ...(withImages(images) as object), id: 2, nsfw: false } as never,
       ],
-      imageTags: [tag(12, CHILD_TAG)],
+      imageTags: [],
       profilePictures: [],
     });
 

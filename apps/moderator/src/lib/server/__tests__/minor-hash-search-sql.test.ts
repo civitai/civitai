@@ -30,8 +30,19 @@ describe('minor queue search', () => {
     const statement = await compile(() =>
       getMinorHashMatchesForReview({ limit: 50, search: { modelOrUserId: 900 } })
     );
-    expect(statement).toMatch(/EXISTS \(\s*SELECT 1 FROM minor_src s3/);
+    expect(statement).toMatch(/EXISTS \(\s*SELECT 1 FROM searched_seeds s3/);
     expect(statement).not.toMatch(/"s"\."minorModelId" = \$/);
+  });
+
+  it('filters the seed set by the searched id once, not once per candidate', async () => {
+    const statement = await compile(() =>
+      getMinorHashMatchesForReview({ limit: 50, search: { modelOrUserId: 900 } })
+    );
+    // minor_src is a large unindexed CTE: an EXISTS over it per candidate cost seconds.
+    // Pinned here because pglite results cannot see the plan.
+    expect(statement).toMatch(
+      /searched_seeds AS MATERIALIZED \([^)]*FROM minor_src\s+WHERE "minorModelId" = \$\d+ OR "userId" = \$\d+/
+    );
   });
 
   it('compares a username case-insensitively', async () => {

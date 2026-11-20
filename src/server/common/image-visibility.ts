@@ -12,6 +12,7 @@ import { Flags } from '~/shared/utils/flags';
 import { Availability, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
+import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
 import {
   minorContentNotRestrictedWhere,
@@ -189,6 +190,16 @@ export const imageNotRestrictedWhere = ({
   ],
 });
 
+/**
+ * Neither acceptable-minor nor held back by the minor content rule, as a Prisma filter: what a
+ * signed-out viewer may be shown on those two counts. `isImageNotFlagged` is its TS twin.
+ */
+export const imageNotFlaggedWhere = () =>
+  ({
+    acceptableMinor: false,
+    AND: [minorContentNotRestrictedWhere()],
+  } satisfies Prisma.ImageWhereInput);
+
 // Ratings a challenge cover may never carry.
 const COVER_EXCLUDED_LEVELS = [0, NsfwLevel.Blocked];
 
@@ -245,13 +256,18 @@ export type RestrictableImage = Pick<Selectable<DB['Image']>, keyof typeof image
 export const isImageNotRestricted = (image: RestrictableImage, viewerId?: number | null) =>
   !isRestrictedImage(image) || (isUploaderId(viewerId) && image.userId === viewerId);
 
+/** Whether `viewerId` may see `image`: not restricted, and not rated Blocked, unless they uploaded it. */
+export const isImageServable = (image: RestrictableImage, viewerId?: number | null) =>
+  isImageNotRestricted(image, viewerId) &&
+  (image.nsfwLevel !== NsfwLevel.Blocked || (isUploaderId(viewerId) && image.userId === viewerId));
+
 /** `row` with its image at `key` set to null when `viewerId` may not see it. */
 export function withServableImage<
   K extends PropertyKey,
   T extends { [P in K]: RestrictableImage | null | undefined }
 >(row: T, key: K, viewerId?: number | null): T & { [P in K]: T[P] | null } {
   const image = row[key];
-  return { ...row, [key]: image && isImageNotRestricted(image, viewerId) ? image : null };
+  return { ...row, [key]: image && isImageServable(image, viewerId) ? image : null };
 }
 
 /** The exact complement of `imageNotRestrictedSql`: a NULL flag on a mature image counts as restricted. */
@@ -328,6 +344,15 @@ END)`;
 export const graceBlockedSql = Prisma.sql`("ingestion" = 'Blocked'::"ImageIngestionStatus"
   AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL)`;
 
+/**
+ * `needsReview` for a row a moderator lifts (an unblock or an approved appeal): the review an
+ * account-deletion grace block recorded, when lifting does not settle it, else none.
+ */
+export const reviewKeptWhenLiftedSql = Prisma.sql`(CASE
+  WHEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${REVIEWS_KEPT_WHEN_LIFTED}::text[])
+  THEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
+END)`;
+
 /** `metadata` without the grace-block breadcrumbs. A non-object value is left as it is. */
 export const withoutGraceMarkersSql = (metadata: Prisma.Sql = Prisma.sql`"metadata"`) =>
   Prisma.sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
@@ -374,3 +399,10 @@ export const minorMatureImageVisibleSql = (
   });
   return Prisma.sql`(NOT ${restricted}${ownImage})`;
 };
+
+/** `imageNotFlaggedWhere` over an image already read. */
+export const isImageNotFlagged = (image: {
+  acceptableMinor: boolean;
+  minor: boolean | null;
+  nsfwLevel: number;
+}) => !image.acceptableMinor && !isMinorMatureImage(image);

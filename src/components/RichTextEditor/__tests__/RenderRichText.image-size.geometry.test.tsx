@@ -26,14 +26,34 @@ async function imageUrl(width: number, height: number) {
   return URL.createObjectURL(blob);
 }
 
-const media = (url: string, size?: string) => ({
+const media = (url: string, size?: string, align?: string) => ({
   type: 'media',
-  attrs: { url, type: 'image', filename: 'x.png', size: size ?? null },
+  attrs: { url, type: 'image', filename: 'x.png', size: size ?? null, align: align ?? null },
 });
-const inlineImage = (src: string, size?: string) => ({
+const inlineImage = (src: string, size?: string, align?: string) => ({
   type: 'paragraph',
-  content: [{ type: 'image', attrs: { src, size: size ?? null } }],
+  content: [{ type: 'image', attrs: { src, size: size ?? null, align: align ?? null } }],
 });
+const paragraph = (text: string) => ({ type: 'paragraph', content: [{ type: 'text', text }] });
+const heading = (text: string) => ({
+  type: 'heading',
+  attrs: { level: 2 },
+  content: [{ type: 'text', text }],
+});
+const WORDS = 'Text that wraps beside a floated image. '.repeat(12);
+
+/** The box of the first character of the element containing `text`. */
+function firstCharBox(text: string) {
+  const el = [...document.querySelectorAll('p, h2')].find((e) => e.textContent?.startsWith(text));
+  const node = el?.firstChild;
+  if (!node) throw new Error(`no element starts with ${text}`);
+  const range = document.createRange();
+  range.setStart(node, 0);
+  range.setEnd(node, 1);
+  return range.getBoundingClientRect();
+}
+type Box = ReturnType<typeof box>;
+const columnBox = () => box(document.querySelector('[data-column]') as HTMLElement);
 
 // An article page guards every body image; a PG image is shown, inside the guard's box.
 let imageGuard: BodyImageGuard | undefined;
@@ -42,10 +62,11 @@ async function renderArticle(
   nodes: object[],
   viewport: { width: number; height: number } = DESKTOP,
   column = COLUMN,
-  className?: string
+  className?: string,
+  imageCount = nodes.length
 ) {
   await renderAtViewport(
-    <div style={{ width: column }}>
+    <div data-column style={{ width: column }}>
       <RenderRichText
         content={{ type: 'doc', content: nodes }}
         className={className}
@@ -56,7 +77,7 @@ async function renderArticle(
   );
   const imgs = await expect
     .poll(() => [...document.querySelectorAll('img')])
-    .toHaveLength(nodes.length)
+    .toHaveLength(imageCount)
     .then(() => [...document.querySelectorAll('img')]);
   await Promise.all(imgs.map((img) => img.decode()));
   return imgs;
@@ -109,12 +130,98 @@ describe.each([
     expect(box(unsized).width).toBe(200);
   });
 
-  it('fits an unsized tall portrait to 80% of the screen height', async () => {
+  // Product decision: an unsized image keeps the pre-sizing layout (natural size up to the column,
+  // start of the line, no screen-height cap). The 80vh cap and centring shrank existing stories;
+  // do not bring them back for unsized images.
+  it('shows an unsized tall portrait at its natural size, from the start of the column', async () => {
     const [portrait] = await renderArticle([media(await imageUrl(832, 1216))]);
-    const { width, height } = box(portrait);
+    const host = portrait.closest('div[style]') as HTMLElement;
+    const { width, height, left } = box(portrait);
 
-    expect(height).toBeCloseTo(DESKTOP.height * 0.8, 0);
-    expect(width / height).toBeCloseTo(832 / 1216, 2);
+    expect({ width, height }).toEqual({ width: 832, height: 1216 });
+    expect(left).toBe(box(host).left);
+  });
+
+  it('leaves an unsized small image at the start of the line', async () => {
+    const [unsized] = await renderArticle([inlineImage(await imageUrl(200, 150))]);
+    const host = unsized.closest('div[style]') as HTMLElement;
+    expect(box(unsized).left).toBe(box(host).left);
+  });
+
+  it('renders a dragged width at that share of the column', async () => {
+    const wide = await imageUrl(1600, 900);
+    const [forty, eightyFive] = await renderArticle([media(wide, '40'), inlineImage(wide, '85')]);
+
+    expect(box(forty).width).toBeCloseTo(COLUMN * 0.4, 0);
+    expect(box(eightyFive).width).toBeCloseTo(COLUMN * 0.85, 0);
+  });
+
+  it.each([
+    ['left', (img: Box, col: Box) => img.left - col.left],
+    ['right', (img: Box, col: Box) => col.right - img.right],
+  ])('aligns a sized image %s, flush with that edge of the column', async (align, gap) => {
+    const [img] = await renderArticle([media(await imageUrl(1600, 900), '40', align)]);
+    expect(gap(box(img), columnBox())).toBeCloseTo(0, 0);
+  });
+
+  it.each([
+    ['float-left', (img: Box, char: Box) => char.left >= img.right],
+    ['float-right', (img: Box, char: Box) => char.right <= img.left],
+  ])('%s wraps the following text beside the image', async (align, beside) => {
+    const [img] = await renderArticle(
+      [media(await imageUrl(1600, 900), '40', align), paragraph(WORDS)],
+      DESKTOP,
+      COLUMN,
+      undefined,
+      1
+    );
+    const char = firstCharBox('Text that wraps');
+
+    expect(box(img).width).toBeCloseTo(COLUMN * 0.4, 0);
+    expect(beside(box(img), char)).toBe(true);
+    expect(char.top).toBeLessThan(box(img).bottom);
+  });
+
+  it('in the article body, starts a floated image level with the text beside it', async () => {
+    const [img] = await renderArticle(
+      [media(await imageUrl(1600, 900), '40', 'float-left'), paragraph(WORDS)],
+      DESKTOP,
+      COLUMN,
+      articleBodyClasses.articleBody,
+      1
+    );
+    expect(box(img).top - firstCharBox('Text that wraps').top).toBeLessThan(12);
+  });
+
+  it('starts a heading below a floated image', async () => {
+    const [img] = await renderArticle(
+      [media(await imageUrl(1600, 900), '40', 'float-left'), paragraph('Short.'), heading('Next')],
+      DESKTOP,
+      COLUMN,
+      undefined,
+      1
+    );
+    expect(firstCharBox('Next').top).toBeGreaterThanOrEqual(box(img).bottom);
+  });
+
+  it('on a phone, stacks a float as a block above the text, up to the full column', async () => {
+    const column = PHONE.width - 32;
+    // Small enough that a float would leave room for text beside it.
+    const [narrow, wide] = await renderArticle(
+      [
+        media(await imageUrl(200, 150), '40', 'float-left'),
+        paragraph(WORDS),
+        media(await imageUrl(1600, 900), '40', 'float-right'),
+      ],
+      PHONE,
+      column,
+      undefined,
+      2
+    );
+
+    expect(box(narrow).width).toBe(200);
+    expect(box(wide).width).toBeCloseTo(column, 0);
+    expect(firstCharBox('Text that wraps').top).toBeGreaterThanOrEqual(box(narrow).bottom);
   });
 
   it('on a phone, shows S and M at 60% of the column and keeps L as set', async () => {

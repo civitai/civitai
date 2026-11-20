@@ -191,6 +191,18 @@ describe('useModelSaleBadge — provider-less cards, signed in', () => {
     expect(results.get(9)).toBeUndefined();
   });
 
+  it('drops a sale whose window has already closed (ISO string from the wire)', async () => {
+    recorded.onSale.set(7, '2000-01-01T00:00:00.000Z');
+
+    const { results } = await renderCards([7], { signedIn: true });
+
+    expect(results.get(7)).toBeUndefined();
+  });
+  it('asks nothing when a provider owns the lookup', async () => {
+    await renderCards([7, 8], { skip: true, signedIn: true });
+
+    expect(recorded.requests).toEqual([]);
+  });
   it('settles every waiting card into an error, with no badge, when the request fails', async () => {
     recorded.onSale.set(7, RUNNING);
     recorded.failOnce();
@@ -202,6 +214,57 @@ describe('useModelSaleBadge — provider-less cards, signed in', () => {
     // Settled, not merely un-answered: a waiter the batcher forgot to reject would sit `pending`
     // forever, and render no badge exactly as a handled failure does.
     expect(statuses(client)).toEqual(['error', 'error']);
+  });
+  it('settles every card, across chunks, when the fetch throws synchronously', async () => {
+    // Three chunks: a throw that escaped the loop would strand the first chunk AND the later ones.
+    const ids = Array.from({ length: MODEL_SALE_IDS_PER_REQUEST * 2 + 13 }, (_, i) => 50000 + i);
+    vi.spyOn(CardContext.modelSaleBatcher, 'fetch').mockImplementation(() => {
+      throw new Error('sync boom');
+    });
+
+    const { client } = await mountCards(ids, { signedIn: true });
+    let escaped: unknown;
+    try {
+      await advance(SETTLE_MS);
+    } catch (error) {
+      escaped = error;
+    }
+
+    const all = statuses(client);
+    expect(all).toHaveLength(ids.length);
+    expect(all.filter((s) => s !== 'error')).toEqual([]);
+    expect(escaped).toBeUndefined();
+  });
+  it('fails only the chunk whose request failed; every other chunk still gets its sales', async () => {
+    const ids = Array.from(
+      { length: MODEL_SALE_IDS_PER_REQUEST * 2 + 37 },
+      (_, i) => 70000 + i * 3
+    );
+    for (const id of ids) recorded.onSale.set(id, RUNNING);
+    // The failing chunk rejects first: a reject that reached already-settled cards would be invisible.
+    const calls: number[][] = [];
+    vi.spyOn(CardContext.modelSaleBatcher, 'fetch').mockImplementation((chunk: number[]) => {
+      calls.push(chunk);
+      if (calls.length === 1) return Promise.reject(new Error('chunk boom'));
+      return new Promise((resolve) => {
+        setTimeout(() => resolve(recorded.query({ ids: chunk }) as never), 10);
+      });
+    });
+
+    const { results, client } = await renderCards(ids, { signedIn: true });
+
+    expect(calls).toHaveLength(3);
+    const failed = new Set(calls[0]);
+    expect(failed.size).toBe(MODEL_SALE_IDS_PER_REQUEST);
+    const rest = ids.filter((id) => !failed.has(id));
+    expect(rest).toHaveLength(ids.length - MODEL_SALE_IDS_PER_REQUEST);
+
+    const stateOf = (id: number) =>
+      client.getQueryState(['model.getActiveSales.byModel', id])?.status;
+    expect([...failed].filter((id) => stateOf(id) !== 'error')).toEqual([]);
+    expect(rest.filter((id) => stateOf(id) !== 'success')).toEqual([]);
+    expect(rest.filter((id) => !results.get(id))).toEqual([]);
+    for (const id of failed) expect(results.get(id)).toBeUndefined();
   });
 });
 

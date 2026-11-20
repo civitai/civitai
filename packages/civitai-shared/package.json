@@ -21,6 +21,7 @@
     "./moderator-paths": "./src/moderator-paths.ts",
     "./missing-media": "./src/missing-media.ts",
     "./owner-hidden-reviews": "./src/owner-hidden-reviews.ts",
+    "./image-review-types": "./src/image-review-types.ts",
     "./image-ingestion": "./src/image-ingestion.ts",
     "./training-audio": "./src/training-audio.ts",
     "./training-review": "./src/training-review.ts",
@@ -60,7 +61,8 @@
     "./new-order-levels": "./src/new-order-levels.ts",
     "./new-order": "./src/new-order.ts",
     "./knights-shop": "./src/knights-shop.ts",
-    "./sensitive-block-scopes": "./src/sensitive-block-scopes.ts"
+    "./sensitive-block-scopes": "./src/sensitive-block-scopes.ts",
+    "./usage-limit-view": "./src/usage-limit-view.ts"
   },
   "scripts": {
     "test": "vitest run",

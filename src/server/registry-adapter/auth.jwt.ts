@@ -15,33 +15,65 @@
  * A verified token stands for the same subject the opaque path gives the same user and client
  * (`user:{id}/client:{clientId}`), so cursors and per-token caps treat both alike, and its user is
  * read and refused the same way (`getBearerTokenUser`).
+ *
+ * A service token is the hub's token for a client acting as itself, with no user: its `sub` is
+ * the client's own id, equal to `client_id` (the format of the hub's service tokens), with
+ * `act.sub` naming the relay that presented it, if one did. It must grant `AppsRead`. It is
+ * accepted only when `client_id` is on {@link HubJwtConfig.serviceClients}, and
+ * stands for `service:{clientId}`; off the list it is refused, as every token without a user was
+ * before the list existed. A user's token (numeric `sub`) is a user's token whatever its client,
+ * so the list never changes what a user's app may read.
  */
 import { createAccessTokenJwtVerifier, isAccessTokenJwt } from '@civitai/auth';
 import { ALL_SCOPES, TokenScope } from '~/shared/constants/token-scope.constants';
-import type { VerifiedToken, VerifyToken } from '~/server/registry-adapter/auth';
+import type { TokenUser, VerifiedToken, VerifyToken } from '~/server/registry-adapter/auth';
 
 /** The hub's issuer identifier, when none is configured. */
 export const DEFAULT_HUB_ISSUER = 'https://auth.civitai.com';
 
+const scopeNames = (scope: string) => scope.split(' ').filter(Boolean);
+
+/** The site's bit for a scope name, or null for a name it does not know. */
+function knownScopeBit(name: string): bigint | null {
+  // `None` is 0 in the bitmask: looked up, a token claiming only `None` would read as no scope
+  // at all, so it is treated like an unknown name instead.
+  if (name === 'None' || !Object.hasOwn(TokenScope, name)) return null;
+  return TokenScope[name as keyof typeof TokenScope];
+}
+
 /**
- * The token's scope names as the site's bitmask. A name the site does not know counts as every
- * scope, and so does a missing or non-string `scope` claim, so a check that refuses write scopes
- * (a system account's) refuses it rather than missing it.
+ * FOR A REFUSAL CHECK ONLY: the token's scope names as the site's bitmask, where a name the site
+ * does not know counts as EVERY scope, and so does a missing or non-string `scope` claim, so a
+ * check that refuses write scopes (a system account's) refuses it rather than missing it.
+ *
+ * Never ask this whether a token HOLDS a scope: it says yes to a token claiming `Bogus`. That is
+ * {@link scopeGrantBits}.
  */
-export function scopeBits(scope: unknown): bigint {
+export function scopeBitsAssumingUnknownIsAll(scope: unknown): bigint {
   if (typeof scope !== 'string') return ALL_SCOPES;
   let bits = 0n;
-  for (const name of scope.split(' ').filter(Boolean)) {
-    // `None` is 0 in the bitmask: looked up, a token claiming only `None` would read as no scope
-    // at all, so it is treated like an unknown name instead.
-    if (name !== 'None' && Object.hasOwn(TokenScope, name)) {
-      bits |= TokenScope[name as keyof typeof TokenScope];
-    } else {
-      bits |= ALL_SCOPES;
-    }
-  }
+  for (const name of scopeNames(scope)) bits |= knownScopeBit(name) ?? ALL_SCOPES;
   return bits;
 }
+
+/**
+ * The scopes the token GRANTS, as the site's bitmask: only the names the site knows. A name it
+ * does not know (and `None`) grants nothing, and so does a missing or non-string `scope` claim.
+ */
+export function scopeGrantBits(scope: unknown): bigint {
+  if (typeof scope !== 'string') return 0n;
+  let bits = 0n;
+  for (const name of scopeNames(scope)) bits |= knownScopeBit(name) ?? 0n;
+  return bits;
+}
+
+/** Whether a verified token grants the scope `name` (its bits from {@link scopeGrantBits}). */
+export function hasScope(token: Pick<VerifiedToken, 'scope'>, name: TokenScopeName): boolean {
+  const bit = TokenScope[name];
+  return bit !== 0n && (token.scope & bit) === bit;
+}
+
+type TokenScopeName = Exclude<keyof typeof TokenScope, 'None'>;
 
 export type HubJwtConfig = {
   /** The hub's issuer identifier; `iss` must equal it exactly. */
@@ -53,14 +85,26 @@ export type HubJwtConfig = {
    * resource identifier, no token can have been issued for it, and every JWT is refused.
    */
   audience: string | undefined;
+  /**
+   * The OAuth clients whose service tokens (no user) this source accepts, each reading every
+   * rating with no region hold (`SERVICE_AUDIENCE`). Empty or unset: none.
+   */
+  serviceClients?: ReadonlySet<string>;
 };
 
 export type HubJwtDeps = {
   /** The user a bearer for `userId` with `tokenScope` acts as, or null (`getBearerTokenUser`). */
-  loadUser: (userId: number, tokenScope: bigint) => Promise<VerifiedToken['user'] | null>;
+  loadUser: (userId: number, tokenScope: bigint) => Promise<TokenUser | null>;
 };
 
 const USER_ID_RE = /^[1-9][0-9]{0,15}$/;
+
+/** The acting party of a delegated token (RFC 8693 `act.sub`), or null. */
+function actorOf(act: unknown): string | null {
+  if (typeof act !== 'object' || act === null) return null;
+  const sub = (act as { sub?: unknown }).sub;
+  return typeof sub === 'string' && sub !== '' ? sub : null;
+}
 
 /**
  * Verifies a hub access token for this source: signature against the hub's JWKS (cached, refetched
@@ -75,6 +119,7 @@ const USER_ID_RE = /^[1-9][0-9]{0,15}$/;
  */
 export function createHubJwtVerifier(config: HubJwtConfig, deps: HubJwtDeps): VerifyToken {
   const { audience } = config;
+  const serviceClients = config.serviceClients ?? new Set<string>();
   if (!audience) return async () => null;
   const verifyJwt = createAccessTokenJwtVerifier({
     jwksUri: config.jwksUri,
@@ -83,15 +128,40 @@ export function createHubJwtVerifier(config: HubJwtConfig, deps: HubJwtDeps): Ve
   return async (token) => {
     const payload = await verifyJwt(token, config.issuer);
     if (!payload) return null;
-    const { sub, client_id: clientId, exp } = payload as typeof payload & { client_id?: unknown };
-    if (typeof sub !== 'string' || !USER_ID_RE.test(sub)) return null;
+    const {
+      sub,
+      client_id: clientId,
+      exp,
+      act,
+    } = payload as typeof payload & { client_id?: unknown; act?: unknown };
+    if (typeof sub !== 'string') return null;
     if (typeof clientId !== 'string' || clientId === '') return null;
     if (typeof exp !== 'number') return null;
+    // No user: the client as itself. Read only for a client the allowlist names, holding AppsRead.
+    if (sub === clientId && !USER_ID_RE.test(sub)) {
+      if (!serviceClients.has(clientId)) return null;
+      const scope = scopeGrantBits(payload.scope);
+      if (!hasScope({ scope }, 'AppsRead')) return null;
+      return {
+        subject: `service:${clientId}`,
+        userId: null,
+        clientId,
+        scope,
+        actor: actorOf(act),
+        service: true,
+        expiresAt: new Date(exp * 1000),
+      };
+    }
+    if (!USER_ID_RE.test(sub)) return null;
     const userId = Number(sub);
-    const user = await deps.loadUser(userId, scopeBits(payload.scope));
+    const user = await deps.loadUser(userId, scopeBitsAssumingUnknownIsAll(payload.scope));
     if (!user) return null;
     return {
       subject: `user:${userId}/client:${clientId}`,
+      userId,
+      clientId,
+      scope: scopeGrantBits(payload.scope),
+      actor: actorOf(act),
       user,
       expiresAt: new Date(exp * 1000),
     };

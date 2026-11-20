@@ -22,6 +22,7 @@ describe('codex copy', () => {
     for (const topic of [
       'pending',
       'inconclusive',
+      'set aside',
       'forfeited',
       'vigil',
       'shield',

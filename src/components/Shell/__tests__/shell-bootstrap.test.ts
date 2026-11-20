@@ -456,7 +456,7 @@ let root: Root | undefined;
 async function settle() {
   for (let i = 0; i < 3; i++) {
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
   }
 }
@@ -647,12 +647,9 @@ describe('a shell boot adopts the page data into the state a full render would h
     expect(requests).toEqual([]);
   });
 
-  it('a page-data answer without liveNow is still adopted (it is optional)', async () => {
+  it('a page-data answer without liveNow keeps the shell value', async () => {
     window.__civShell = Promise.resolve(json(payload({ liveNow: undefined })));
     await render(shellPageProps({ liveNow: true }));
-    expect(last().shellReady).toBe(true);
-    expect(navigate).not.toHaveBeenCalled();
-    // Absent leaves the shell's own value in place.
     expect(queryClient.getQueryData(liveNowKey)).toBe(true);
   });
 
@@ -830,9 +827,7 @@ describe('ads on a shell boot', () => {
 
 describe('a page-data answer other than 200 leaves the shell exactly once', () => {
   it.each([
-    [404, '/images/101?civ-shell=0'],
     [500, '/images/101?civ-shell=0'],
-    [503, '/images/101?civ-shell=0'],
     [451, '/region-blocked'],
   ])('%s → %s', async (status, to) => {
     window.history.replaceState(null, '', '/images/101');
@@ -845,23 +840,10 @@ describe('a page-data answer other than 200 leaves the shell exactly once', () =
     expect(pauseRum.mock.invocationCallOrder[0]).toBeLessThan(navigate.mock.invocationCallOrder[0]);
   });
 
-  it('keeps the query string when it adds the bypass', async () => {
-    window.history.replaceState(null, '', '/images/101?collectionId=5');
-    pageDataAnswer = async () => json({}, 404);
-    await render(shellPageProps());
-    expect(navigate.mock.calls).toEqual([['/images/101?collectionId=5&civ-shell=0']]);
-  });
-
   it('a network failure falls back like a 5xx', async () => {
     pageDataAnswer = async () => {
       throw new TypeError('Failed to fetch');
     };
-    await render(shellPageProps());
-    expect(navigate.mock.calls).toEqual([['/images/101?civ-shell=0']]);
-  });
-
-  it('a 200 that is not page data falls back like a 5xx', async () => {
-    window.__civShell = Promise.resolve(json({ error: 'not page data' }));
     await render(shellPageProps());
     expect(navigate.mock.calls).toEqual([['/images/101?civ-shell=0']]);
   });

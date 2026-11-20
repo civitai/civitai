@@ -8,6 +8,7 @@ import { assertBountyVisible } from '~/server/services/bounty-visibility';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { assertCrucibleVisible } from '~/server/services/crucible.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { getModelVisibleToViewer } from '~/server/services/model-visibility.service';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import { assertPostTextVisible } from '~/server/services/post-viewer-visibility.service';
@@ -278,6 +279,12 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
   article: { assertVisible: assertArticleCommentsVisible, assertWritable: accessGated('Article') },
   post: { assertVisible: assertPostCommentsVisible, assertWritable: accessGated('Post') },
   image: {
+    assertVisible: async (imageId, ctx) =>
+      void (await assertImageVisibleToViewer({
+        id: imageId,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })),
     onCreated: (comment, ctx) => {
       if (comment.parentId) return;
       void updateEntityMetric({

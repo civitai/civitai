@@ -11,16 +11,10 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
  * database recorded.
  */
 
-const { dbHandle, getHeldMedia, grants, covered } = vi.hoisted(() => ({
+const { dbHandle, getHeldMedia, grants } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   getHeldMedia: vi.fn(),
   grants: { paths: new Set<string>(['/images/csam']) },
-  covered: { on: false, read: vi.fn() },
-}));
-vi.mock('$lib/server/csam-view', () => ({
-  COVERED_REFUSED: 'covered-refused',
-  coveredViewEnabled: () => covered.on,
-  getCoveredHeldMedia: covered.read,
 }));
 
 vi.mock('$lib/server/db', () => ({
@@ -108,8 +102,6 @@ beforeAll(async () => {
 beforeEach(async () => {
   await db.exec(`DELETE FROM "ModActivity"`);
   grants.paths = new Set(['/images/csam']);
-  covered.on = false;
-  covered.read.mockReset().mockResolvedValue({ url: 'key', type: 'image', mimeType: null });
   getHeldMedia.mockReset().mockResolvedValue({ url: 'key', type: 'image', mimeType: null });
 });
 
@@ -137,66 +129,6 @@ describe('POST /api/held-media/[imageId]/opened', () => {
     grants.paths = new Set();
     expect(await post('7')).toBe(403);
     expect(await rows()).toEqual([]);
-  });
-
-  describe('on the covered view (no CSAM page, switch on)', () => {
-    beforeEach(() => {
-      grants.paths = new Set();
-      covered.on = true;
-    });
-
-    it('records the open of an image it served this moderator', async () => {
-      await served(7);
-      expect(await post('7')).toBe(204);
-      expect(covered.read).toHaveBeenCalledWith(7, 42);
-      expect(getHeldMedia).not.toHaveBeenCalled();
-      expect(await rows()).toHaveLength(1);
-    });
-
-    it('answers an image it did not serve this moderator with the refusal 404', async () => {
-      const url = new URL('http://mod.test/api/held-media/7/opened');
-      const refusal = await Promise.resolve(
-        POST({
-          params: { imageId: '7' },
-          url,
-          request: new Request(url, { method: 'POST', headers: { origin: 'http://mod.test' } }),
-          locals: { user: { id: 42 }, grants: {} },
-        } as never)
-      ).then(
-        () => null,
-        (e: unknown) => e as { status: number; body: { message: string } }
-      );
-      expect(refusal).toMatchObject({ status: 404, body: { message: 'Not available here.' } });
-      expect(await rows()).toEqual([]);
-    });
-
-    it('never covers the sheet credential', async () => {
-      await served(7);
-      const url = new URL('http://mod.test/api/held-media/7/opened');
-      const status = await Promise.resolve(
-        POST({
-          params: { imageId: '7' },
-          url,
-          request: new Request(url, { method: 'POST', headers: { origin: 'http://mod.test' } }),
-          locals: { user: { id: 42 }, grants: {}, heldCredential: 'sheet' },
-        } as never)
-      ).then(
-        (r: Response) => r.status,
-        (e: unknown) => (e as { status?: number }).status
-      );
-      expect(status).toBe(403);
-      expect(covered.read).not.toHaveBeenCalled();
-    });
-
-    it.each([
-      ['reported', 'covered-refused'],
-      ['not covered', null],
-    ])('refuses an image that is %s, and writes nothing', async (_, read) => {
-      covered.read.mockResolvedValue(read);
-      await served(7);
-      expect(await post('7')).toBe(404);
-      expect(await rows()).toEqual([]);
-    });
   });
 
   it('refuses an image the full view cannot show, and writes nothing', async () => {

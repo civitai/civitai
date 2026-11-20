@@ -136,7 +136,7 @@ func TestParseInfiniteIgnoresStrippedLegacyKeys(t *testing.T) {
 	for input, reason := range map[string]string{
 		`{"useIndex":true,"someNewFilter":1}`: "input-unknown-key",
 		`{"search":"x","zzz":1}`:              "input-unknown-key",
-		`{"useIndex":true,"collectionId":5}`:  "input-collectionId",
+		`{"useIndex":true,"hubId":5}`:         "input-hubId",
 	} {
 		if _, err := ParseInfinite(parseObj(t, input)); fallback.Reason(err) != reason {
 			t.Errorf("ParseInfinite %s: reason %q (err %v), want %q", input, fallback.Reason(err), err, reason)
@@ -200,11 +200,11 @@ func TestParseInfiniteIncludeCountAndReport(t *testing.T) {
 		}
 	}
 	for input, reason := range map[string]string{
-		`{"include":["cosmetics","count","tags"]}`: "input-include",
-		`{"include":["cosmetics","metaSelect"]}`:   "input-include",
-		`{"include":["cosmetics","notAnInclude"]}`: "input-include",
-		`{"include":["cosmetics",7]}`:              "input-include",
-		`{"include":"count"}`:                      "input-invalid",
+		`{"include":["cosmetics","count","tags","metaSelect"]}`: "input-include",
+		`{"include":["cosmetics","metaSelect"]}`:                "input-include",
+		`{"include":["cosmetics","notAnInclude"]}`:              "input-include",
+		`{"include":["cosmetics",7]}`:                           "input-include",
+		`{"include":"count"}`:                                   "input-invalid",
 	} {
 		if _, err := ParseInfinite(parseObj(t, input)); fallback.Reason(err) != reason {
 			t.Errorf("ParseInfinite %s: reason %q (err %v), want %q", input, fallback.Reason(err), err, reason)
@@ -212,5 +212,48 @@ func TestParseInfiniteIncludeCountAndReport(t *testing.T) {
 	}
 	if _, err := Parse(parseObj(t, `{"include":["cosmetics","count"]}`)); fallback.Reason(err) != "input-include" {
 		t.Errorf("Parse with include count: reason %q (err %v), want input-include", fallback.Reason(err), err)
+	}
+}
+
+// `include: ['tags']` is answered on image.getInfinite (the votable tags are hydrated: IncludeTags),
+// alone or beside the other includes, while the posts gallery still falls back on it with the value
+// as the detail. Regression: before the port every one of these fell back with input-include.
+func TestParseInfiniteIncludeTags(t *testing.T) {
+	for _, c := range []struct {
+		input                 string
+		cosmetics, profilePic bool
+	}{
+		{`{"include":["cosmetics","tags"],"limit":3}`, true, false},
+		{`{"include":["tags"]}`, false, false},
+		{`{"include":["tags","profilePictures","cosmetics","count"]}`, true, true},
+	} {
+		in, err := ParseInfinite(parseObj(t, c.input))
+		if err != nil {
+			t.Errorf("ParseInfinite %s: reason %q (err %v), want it parsed", c.input, fallback.Reason(err), err)
+			continue
+		}
+		if !in.IncludeTags || in.IncludeCosmetics != c.cosmetics || in.IncludeProfilePictures != c.profilePic {
+			t.Errorf("ParseInfinite %s: tags %v, cosmetics %v, profile pictures %v; want true, %v, %v",
+				c.input, in.IncludeTags, in.IncludeCosmetics, in.IncludeProfilePictures, c.cosmetics, c.profilePic)
+		}
+	}
+	// Without it the include is not read as asking for tags (the default and an explicit list).
+	for _, input := range []string{`{}`, `{"include":["cosmetics","tagIds"]}`} {
+		in, err := ParseInfinite(parseObj(t, input))
+		if err != nil || in.IncludeTags {
+			t.Errorf("ParseInfinite %s: err %v, IncludeTags %v; want parsed without tags", input, err, in != nil && in.IncludeTags)
+		}
+	}
+	// Another include still falls back, naming itself, with tags beside it.
+	_, err := ParseInfinite(parseObj(t, `{"include":["tags","metaSelect"]}`))
+	if fallback.Reason(err) != "input-include" || fallback.SafeDetail(err) != "metaSelect" {
+		t.Errorf("ParseInfinite tags+metaSelect: reason %q detail %q, want input-include / metaSelect", fallback.Reason(err), fallback.SafeDetail(err))
+	}
+	// The gallery is not widened.
+	for _, input := range []string{`{"include":["cosmetics","tags"]}`, `{"include":["tags","cosmetics","metaSelect"]}`} {
+		_, err := Parse(parseObj(t, input))
+		if fallback.Reason(err) != "input-include" || fallback.SafeDetail(err) != "tags" {
+			t.Errorf("Parse %s: reason %q detail %q, want input-include / tags", input, fallback.Reason(err), fallback.SafeDetail(err))
+		}
 	}
 }

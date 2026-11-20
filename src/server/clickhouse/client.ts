@@ -14,7 +14,8 @@ declare global {
   var globalClickhouseLongQueries: CustomClickHouseClient | undefined;
 }
 
-const make = () => createClickhouseClient({ log: createLogger('clickhouse', 'blue') });
+const make = () =>
+  createClickhouseClient({ log: createLogger('clickhouse', 'blue', { forward: false }) });
 
 const shouldConnect = !env.IS_BUILD && env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME;
 // Process-global in EVERY environment, not just for dev HMR: the production server evaluates this
@@ -32,7 +33,7 @@ export const LONG_QUERY_REQUEST_TIMEOUT_MS = 60 * 60 * 1000;
 export const clickhouseLongQueries: CustomClickHouseClient | undefined = !shouldConnect
   ? undefined
   : (globalThis.globalClickhouseLongQueries ??= createClickhouseClient({
-      log: createLogger('clickhouse', 'blue'),
+      log: createLogger('clickhouse', 'blue', { forward: false }),
       requestTimeoutMs: LONG_QUERY_REQUEST_TIMEOUT_MS,
     }));
 

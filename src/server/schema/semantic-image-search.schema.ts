@@ -5,6 +5,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 
 export const SEMANTIC_QUERY_MAX_LENGTH = 500;
 export const SEMANTIC_SEARCH_PAGE_SIZE = 50;
+export const MAX_SEARCH_MODEL_VERSIONS = 20;
 
 export type SemanticImageSearchInput = z.infer<typeof semanticImageSearchSchema>;
 export const semanticImageSearchSchema = baseQuerySchema
@@ -20,6 +21,8 @@ export const semanticImageSearchSchema = baseQuerySchema
     tagNames: z.string().trim().min(1).array().max(20).optional(),
     excludedTagIds: z.number().int().array().max(50).optional(),
     baseModels: z.string().array().max(baseModels.length).optional(),
+    // Images made with any of these model versions (behind `imageSearchResources`).
+    modelVersionIds: z.number().int().positive().array().max(MAX_SEARCH_MODEL_VERSIONS).optional(),
     types: z.enum(MediaType).array().optional(),
     usernames: z.string().trim().min(1).array().max(20).optional(),
     // The images feed's `?userId=`, as it filters by id.

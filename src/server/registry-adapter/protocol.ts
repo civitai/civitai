@@ -8,6 +8,7 @@
  * serve anything for: a schema it does not serve, or `urns` none of which is of its namespace.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
+import type { PrincipalToken } from '~/server/registry-adapter/auth';
 
 export type JsonSchema = Record<string, unknown> | boolean;
 
@@ -88,6 +89,11 @@ export interface AdapterContext {
    * `service` stream is the same for every audience.
    */
   audience?: Audience;
+  /**
+   * The subscription's accepted token, with its subject: what an authorized PRIVATE stream's gates
+   * read (`private-feed.ts`). Absent or null is anonymous. No other stream reads it.
+   */
+  reader?: (PrincipalToken & { subject: string }) | null;
 }
 
 export interface Adapter {
