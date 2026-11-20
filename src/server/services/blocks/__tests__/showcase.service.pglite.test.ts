@@ -218,16 +218,32 @@ describe('getModelShowcaseImages: the version and its model', () => {
 });
 
 describe('getModelShowcaseImages: generation data', () => {
-  it('sends no prompt or seed for an image whose owner hid them, and keeps them on the rest', async () => {
+  it('sends none of the generation data of an image whose owner hid it, and keeps it on the rest', async () => {
     const HIDDEN = 2;
+    // Every field the showcase sends, so each null below can only come from hideMeta.
+    const meta = {
+      prompt: 'a red fox',
+      negativePrompt: 'blurry',
+      cfgScale: 7,
+      steps: 30,
+      seed: 42,
+      sampler: 'Euler a',
+      clipSkip: 2,
+    };
     await image(CLEAN, PUBLISHED, null);
     await image(HIDDEN, PUBLISHED, null);
-    await harness.pg.exec(`
-      UPDATE "Image" SET meta = '{"prompt": "a red fox", "seed": 42}';
-      UPDATE "Image" SET "hideMeta" = true WHERE id = ${HIDDEN};
-    `);
+    await harness.pg.query(`UPDATE "Image" SET meta = $1`, [JSON.stringify(meta)]);
+    await harness.pg.exec(`UPDATE "Image" SET "hideMeta" = true WHERE id = ${HIDDEN}`);
     const byId = new Map((await getModelShowcaseImages(VERSION)).map((i) => [i.id, i]));
-    expect(byId.get(HIDDEN)).toMatchObject({ prompt: null, seed: null });
-    expect(byId.get(CLEAN)).toMatchObject({ prompt: 'a red fox', seed: 42 });
+    expect(byId.get(HIDDEN)).toMatchObject({
+      prompt: null,
+      negativePrompt: null,
+      cfgScale: null,
+      steps: null,
+      seed: null,
+      sampler: null,
+      clipSkip: null,
+    });
+    expect(byId.get(CLEAN)).toMatchObject(meta);
   });
 });
