@@ -28,6 +28,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Metrics/Analytics | [docs/features/entity-metrics.md](entity-metrics.md) |
 | Creator engagement API (`GET /api/v1/creator/engagement`) | [docs/features/creator-engagement-api.md](creator-engagement-api.md) |
 | Feed Impressions | [docs/features/feed-impressions.md](feed-impressions.md) |
+| Feed Events | [docs/features/feed-events.md](feed-events.md) |
 | Semantic image search page (`/search/semantic`) | [docs/features/semantic-image-search-page.md](semantic-image-search-page.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](bitwise-flags.md) |
 | Civitai LLM Client | [docs/features/civitai-llm-client.md](civitai-llm-client.md) |
