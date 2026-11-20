@@ -145,7 +145,8 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
     if (!read) return signIn(returnUrl, navigation, 'no-session');
     let resolved = await sessions.resolveSessionUser(read.value);
     // A dead shared cookie outlives the host one sign-in sets (a host-only expiry can't remove a Domain cookie), so
-    // without this fallback every sign-in would come back to the same invalid shared token and start over.
+    // without this fallback every sign-in would come back to the same invalid shared token and start over. The host
+    // token may name a different user than the dead shared one; it is this host's own, verified and revocation-checked.
     if (!resolved.user && resolved.reason === 'invalid' && read.slot === 'shared') {
       const own = readSessionToken(jar, { host: null, mode: 'host' });
       if (own?.slot === 'host') {
