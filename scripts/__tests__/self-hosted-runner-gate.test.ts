@@ -5,11 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
-// This repo is public. A job on a self-hosted runner executes whatever the triggering commit
-// contains, so a pull_request from a fork, or a bot's dependency-update branch (its packages'
-// install scripts run with sudo), must never land on one. Every job that names the
-// self-hosted label must use exactly this gate; anything else (a bare label, a hand-written
-// variant) fails here.
+// This repo is public: a job on a self-hosted runner executes whatever the triggering commit
+// contains, so fork PRs and bot branches must never land on one. Every job naming the
+// self-hosted label must use exactly this gate.
 const SELF_HOSTED = 'civitai-dc';
 const gate = (fallback: string) =>
   "${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && " +
@@ -23,7 +21,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
 
 type Job = { 'runs-on'?: unknown; permissions?: unknown };
-type Workflow = { on?: Record<string, unknown>; jobs?: Record<string, Job> };
+type Workflow = {
+  on?: string | string[] | Record<string, unknown>;
+  permissions?: unknown;
+  jobs?: Record<string, Job>;
+};
+
+const triggersOf = (on: Workflow['on']) =>
+  typeof on === 'string' ? [on] : Array.isArray(on) ? on : Object.keys(on ?? {});
 
 const workflows = readdirSync(WORKFLOW_DIR)
   .filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'))
@@ -35,7 +40,14 @@ const workflows = readdirSync(WORKFLOW_DIR)
 const selfHostedJobs = workflows.flatMap(({ file, doc }) =>
   Object.entries(doc.jobs ?? {})
     .filter(([, job]) => JSON.stringify(job['runs-on'] ?? '').includes(SELF_HOSTED))
-    .map(([name, job]) => ({ file, name, job, runsOn: job['runs-on'], on: doc.on ?? {} }))
+    .map(([name, job]) => ({
+      file,
+      name,
+      job,
+      runsOn: job['runs-on'],
+      triggers: triggersOf(doc.on),
+      workflowPermissions: doc.permissions,
+    }))
 );
 
 // Evaluates the gate the way the Actions expression engine does for this subset: property
@@ -91,17 +103,24 @@ describe('self-hosted runner gate', () => {
     expect(runsOn).toBe(gate(fallback));
   });
 
-  it.each(selfHostedJobs)('$file → $name is in a workflow with no privileged trigger', ({ on }) => {
-    const triggers = Object.keys(on);
-    expect(triggers).not.toContain('pull_request_target');
-    expect(triggers).not.toContain('workflow_run');
-  });
+  it.each(selfHostedJobs)(
+    '$file → $name is in a workflow with no privileged trigger',
+    ({ triggers }) => {
+      expect(triggers).not.toContain('pull_request_target');
+      expect(triggers).not.toContain('workflow_run');
+    }
+  );
 
   // A runner whose lifetime is not ours to guarantee must not hold a write token or a secret.
-  it.each(selfHostedJobs)('$file → $name holds no write permission and no secret', ({ job }) => {
-    expect(JSON.stringify(job.permissions ?? {})).not.toMatch(/write/);
-    expect(JSON.stringify(job)).not.toMatch(/secrets\.|github\.token/);
-  });
+  it.each(selfHostedJobs)(
+    '$file → $name holds no write permission and no secret',
+    ({ job, workflowPermissions }) => {
+      expect(workflowPermissions).toBeDefined();
+      expect(JSON.stringify(workflowPermissions)).not.toMatch(/write/);
+      expect(JSON.stringify(job.permissions ?? {})).not.toMatch(/write/);
+      expect(JSON.stringify(job)).not.toMatch(/secrets\.|github\.token/);
+    }
+  );
 
   const cases: Array<[string, unknown, Record<string, string>, string]> = [
     ['fork pull_request', pr('someone/civitai'), {}, 'ubuntu-latest'],
