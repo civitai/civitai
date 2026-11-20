@@ -214,6 +214,7 @@ const sharpExecutingTestFiles = [
   'src/server/utils/__tests__/service-deal-preview.test.ts',
   'src/server/utils/__tests__/og-image-helpers.test.ts',
   'src/server/utils/__tests__/image-blurhash.test.ts',
+  'src/tests/api/og.milestone.test.ts',
 ];
 
 // 🔴 THE WHOLE MANTINE FAMILY, OR NONE OF IT. Each sibling imports `@mantine/core` itself, so a

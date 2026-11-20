@@ -35,6 +35,7 @@
   import CurrencyDisplay from '$lib/components/CurrencyDisplay.svelte';
   import StatCard from '$lib/components/StatCard.svelte';
   import { formatBytes } from '$lib/analytics/storage';
+  import UsageLimitsPanel from './UsageLimitsPanel.svelte';
   import type { PageData } from './$types';
 
   type Stat = {
@@ -311,9 +312,10 @@
   </div>
   {#if data.membership.isCreatorProgramMember && !data.membership.isMember}
     <p class="mt-3 text-sm text-dark-2">
-      Your membership isn't active, so you can't bank more Buzz. Buzz you've already banked still pays
-      out at the end of the month. To withdraw cash, you need ${centsToUsd(MIN_WITHDRAWAL_AMOUNT)} ready to withdraw and your payment
-      details set up; no membership is needed.
+      Your membership isn't active, so you can't bank more Buzz. Buzz you've already banked still
+      pays out at the end of the month. To withdraw cash, you need ${centsToUsd(
+        MIN_WITHDRAWAL_AMOUNT
+      )} ready to withdraw and your payment details set up; no membership is needed.
     </p>
   {/if}
 </section>
@@ -340,6 +342,10 @@
     </StatCard>
   </div>
 </section>
+
+{#if data.usageLimits}
+  <UsageLimitsPanel limits={data.usageLimits} href={data.usageLimitsUrl} />
+{/if}
 
 <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
   {#each sections as section (section.href)}

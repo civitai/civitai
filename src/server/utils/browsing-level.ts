@@ -171,9 +171,20 @@ export type RequestBrowsingLevels = { browsingLevel?: number; preCapBrowsingLeve
 export function stripBlockedForNonModerator(input: RequestBrowsingLevels, isModerator?: boolean) {
   if (isModerator) return;
   if (input.browsingLevel !== undefined)
-    input.browsingLevel = onlySelectableLevels(input.browsingLevel);
+    input.browsingLevel = selectableOrInvalid(input.browsingLevel);
   if (input.preCapBrowsingLevel !== undefined)
-    input.preCapBrowsingLevel = onlySelectableLevels(input.preCapBrowsingLevel);
+    input.preCapBrowsingLevel = selectableOrInvalid(input.preCapBrowsingLevel);
+}
+
+/**
+ * A number or numeric string as a level held to the browsing levels; a negative or fractional one
+ * becomes NaN, so the procedure's schema refuses it rather than masking it into a valid level.
+ * Anything else is left for the schema to refuse.
+ */
+function selectableOrInvalid(level: unknown) {
+  if (typeof level !== 'number' && typeof level !== 'string') return level as number;
+  const value = Number(level);
+  return Number.isInteger(value) && value >= 0 ? onlySelectableLevels(value) : NaN;
 }
 
 /**

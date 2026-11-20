@@ -2687,10 +2687,20 @@ export interface AppReviewAgentReport {
   priorReportId: string | null;
   priorReport?: AppReviewAgentReport | null;
   nextReports?: AppReviewAgentReport[];
+  civitaiCheck?: AppReviewAgentReportCheck | null;
   tokenUsage: JsonValue | null;
   costUsd: Decimal | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AppReviewAgentReportCheck {
+  reportId: string;
+  report?: AppReviewAgentReport;
+  publishRequestId: string;
+  checks: JsonValue;
+  fingerprint: string;
+  createdAt: Date;
 }
 
 export interface BlockUserSettings {

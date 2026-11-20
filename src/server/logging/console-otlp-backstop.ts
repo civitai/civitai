@@ -1,0 +1,224 @@
+// Forwards raw `console.*` output to the structured-log sink, so a line that exists only on stdout
+// (a stack trace from `console.error(err)`, a library warning) is also in the OTLP log stream.
+// Lines printed before it is installed (most of boot) stay stdout-only. Server-only: installed from
+// `src/instrumentation.node.ts`, never imported by a module the client or edge bundles reach.
+//
+// Writers whose line already reaches the sink wrap their call in withConsoleForwardingSuppressed
+// (@civitai/axiom/console-forwarding).
+import { format, stripVTControlCharacters } from 'node:util';
+import { diag, DiagConsoleLogger, type DiagLogger } from '@opentelemetry/api';
+import { diagLogLevelFromString, getStringFromEnv } from '@opentelemetry/core';
+import {
+  isConsoleForwardingSuppressed,
+  withConsoleForwardingSuppressed,
+} from '@civitai/axiom/console-forwarding';
+import { otelConsoleRecordsDroppedCounter } from '@civitai/telemetry/otel-logs';
+import {
+  isCredentialField,
+  REDACTED_CREDENTIAL,
+  redactCredentialsInString,
+} from '@civitai/axiom/redact-credentials';
+import { emitConsoleLog, type ConsoleLogSource } from '~/server/logging/structured-log-sink';
+
+export const CONSOLE_BACKSTOP_METHODS = ['log', 'info', 'warn', 'error', 'debug'] as const;
+type ConsoleMethod = (typeof CONSOLE_BACKSTOP_METHODS)[number];
+
+const SEVERITY: Record<ConsoleMethod, 'error' | 'warn' | 'info'> = {
+  error: 'error',
+  warn: 'warn',
+  log: 'info',
+  info: 'info',
+  debug: 'info',
+};
+
+/*
+ * Per process, per second; a call over either budget is still written to stdout and only counted.
+ * The record cap also bounds formatting passes. The OTLP queue is shared with the app logger and
+ * many processes run this, so the fleet total is these figures times the process count. The body
+ * max is below the createLogger cap because these lines are unstructured.
+ */
+export const CONSOLE_BACKSTOP_MAX_RECORDS_PER_SECOND = 50;
+export const CONSOLE_BACKSTOP_MAX_BYTES_PER_SECOND = 64 * 1024;
+export const CONSOLE_RECORD_BODY_MAX = 2048;
+
+// The formatted string is cut to this before colour codes are stripped, so a huge argument costs
+// a bounded strip. A multiple of the cap leaves room for the codes that the strip removes.
+const PRE_STRIP_SLICE = CONSOLE_RECORD_BODY_MAX * 4;
+
+// A key/value pair as util.inspect prints it (`key: 'v'`, a backtick value when it holds both
+// quote kinds, a Map entry `'key' => 'v'`) or as JSON does (`"key": "v"`). Matching the formatted
+// text, not the arguments, reaches fields inside an Error or a class instance (which inspect
+// expands), and costs no more than the already-cut text.
+// The lookbehind keeps a match from starting inside a word: without it a long token-like run
+// (a base64 blob) is retried from every position, quadratic in its length.
+const FORMATTED_FIELD_RE =
+  /(?<![\w$-])(['"]?)([A-Za-z_$][\w$-]*)\1(\s*(?::|=>)\s*)(['"`])((?:(?!\4)[^\\\n]|\\.)*)\4/g;
+
+function redactFormattedFields(text: string): string {
+  return text.replace(
+    FORMATTED_FIELD_RE,
+    (_match, quote: string, name: string, sep: string, valueQuote: string, inner: string) => {
+      const head = `${quote}${name}${quote}${sep}${valueQuote}`;
+      if (isCredentialField(name)) return `${head}${REDACTED_CREDENTIAL}${valueQuote}`;
+      // A non-credential string can itself hold a pair (`msg: 'password: "x"'`): scan its text too.
+      return `${head}${redactFormattedFields(inner)}${valueQuote}`;
+    }
+  );
+}
+
+/**
+ * One record's body: formatted as console formats it (depth-limited), cut, colour codes stripped,
+ * credentials redacted by field name and by value shape (as the structured logger and the span
+ * processor do), cut to the cap. Every pass runs on text already cut to PRE_STRIP_SLICE.
+ */
+export function consoleRecordBody(args: unknown[]): string {
+  const formatted = stripVTControlCharacters(format(...args).slice(0, PRE_STRIP_SLICE));
+  return redactCredentialsInString(redactFormattedFields(formatted)).slice(
+    0,
+    CONSOLE_RECORD_BODY_MAX
+  );
+}
+
+export type ConsoleRecord = {
+  source: Extract<ConsoleLogSource, 'console'>;
+  name: string;
+  type: string;
+};
+
+export type ConsoleBackstopOptions = {
+  /** Receives one already-formatted body per forwarded call (`emitConsoleLog` in production). */
+  emit: (body: string, record: ConsoleRecord) => void;
+  /** Called once per call dropped by either budget. */
+  onDrop?: () => void;
+  maxRecordsPerSecond?: number;
+  maxBytesPerSecond?: number;
+  now?: () => number;
+  /** The console to wrap; the global one unless a test passes its own. */
+  target?: Console;
+};
+
+export type ConsoleBackstop = {
+  /** Put the original methods back, unless something has replaced the wrappers since. Tests only. */
+  uninstall: () => void;
+};
+
+// On the console object itself, so every bundled copy of this module, and a second run of
+// instrumentation (HMR), sees an existing install.
+const INSTALLED = Symbol.for('@civitai/console-otlp-backstop.installed');
+
+type MarkedConsole = Console & { [INSTALLED]?: true };
+
+/**
+ * Wrap the console methods so each call ALSO sends one record to `emit`. The original method runs
+ * first, with the same `this` and arguments, and its return value or throw is the caller's; nothing
+ * after it can throw. Returns undefined when the console is already wrapped.
+ */
+export function installConsoleOtlpBackstop(
+  opts: ConsoleBackstopOptions
+): ConsoleBackstop | undefined {
+  const target = (opts.target ?? console) as MarkedConsole;
+  if (target[INSTALLED]) return undefined;
+
+  const maxRecords = opts.maxRecordsPerSecond ?? CONSOLE_BACKSTOP_MAX_RECORDS_PER_SECOND;
+  const maxBytes = opts.maxBytesPerSecond ?? CONSOLE_BACKSTOP_MAX_BYTES_PER_SECOND;
+  const now = opts.now ?? Date.now;
+  let windowSecond = Number.NaN;
+  let recordsInWindow = 0;
+  let bytesInWindow = 0;
+
+  const forward = (method: ConsoleMethod, args: unknown[]) => {
+    try {
+      const second = Math.floor(now() / 1000);
+      if (second !== windowSecond) {
+        windowSecond = second;
+        recordsInWindow = 0;
+        bytesInWindow = 0;
+      }
+      // Every attempt counts against the record budget before formatting, including one the byte
+      // budget then drops, so formatting runs at most maxRecords times per second.
+      if (recordsInWindow >= maxRecords) return opts.onDrop?.();
+      recordsInWindow++;
+      withConsoleForwardingSuppressed(() => {
+        const body = consoleRecordBody(args);
+        const bytes = Buffer.byteLength(body);
+        if (bytesInWindow + bytes > maxBytes) return opts.onDrop?.();
+        bytesInWindow += bytes;
+        opts.emit(body, { source: 'console', name: 'console', type: SEVERITY[method] });
+      });
+    } catch {}
+  };
+
+  const originals = new Map<ConsoleMethod, Console[ConsoleMethod]>();
+  const wrappers = new Map<ConsoleMethod, Console[ConsoleMethod]>();
+  for (const method of CONSOLE_BACKSTOP_METHODS) {
+    const original = target[method];
+    const wrapper = function (this: unknown, ...args: unknown[]) {
+      const result = original.apply(this, args);
+      if (!isConsoleForwardingSuppressed()) forward(method, args);
+      return result;
+    };
+    originals.set(method, original);
+    wrappers.set(method, wrapper);
+    target[method] = wrapper;
+  }
+  Object.defineProperty(target, INSTALLED, { value: true, configurable: true });
+
+  return {
+    uninstall: () => {
+      for (const method of CONSOLE_BACKSTOP_METHODS) {
+        if (target[method] === wrappers.get(method)) target[method] = originals.get(method)!;
+      }
+      delete target[INSTALLED];
+    },
+  };
+}
+
+/**
+ * Re-register OTel's console diag logger (which `NodeSDK` installs when `OTEL_LOG_LEVEL` is set)
+ * with every line written under `withConsoleForwardingSuppressed`. Same level, same console calls,
+ * so stdout is unchanged.
+ *
+ * 🔴 Required once the backstop is on: a failed export reports through `diag.error` from an async
+ * continuation, where the wrapper's synchronous mark is down. Forwarded, that line would be queued
+ * into the next export, which fails and reports again: one record per export, for as long as the
+ * collector is unreachable. Call it after `new NodeSDK(...)`, which would otherwise replace it.
+ */
+export function keepOtelDiagOffConsoleBackstop(): boolean {
+  const level = getStringFromEnv('OTEL_LOG_LEVEL');
+  if (level == null) return false;
+  const inner = new DiagConsoleLogger();
+  const suppressed =
+    (method: keyof DiagLogger) =>
+    (...args: Parameters<DiagLogger[keyof DiagLogger]>) =>
+      withConsoleForwardingSuppressed(() => inner[method](...args));
+  const logger: DiagLogger = {
+    error: suppressed('error'),
+    warn: suppressed('warn'),
+    info: suppressed('info'),
+    debug: suppressed('debug'),
+    verbose: suppressed('verbose'),
+  };
+  diag.setLogger(logger, {
+    logLevel: diagLogLevelFromString(level),
+    suppressOverrideMessage: true,
+  });
+  return true;
+}
+
+/**
+ * The production install, after the logger provider and `NodeSDK` are set up. Off unless both
+ * `OTEL_LOGS_ENABLED` and its own `OTEL_CONSOLE_BACKSTOP_ENABLED` are `'true'`, so it can be turned
+ * off without turning off the OTLP copy of app-logger records. A no-op on a second call.
+ */
+export function armConsoleOtlpBackstop(
+  env: Record<string, string | undefined> = process.env
+): ConsoleBackstop | undefined {
+  if (env.OTEL_LOGS_ENABLED !== 'true' || env.OTEL_CONSOLE_BACKSTOP_ENABLED !== 'true') {
+    return undefined;
+  }
+  keepOtelDiagOffConsoleBackstop();
+  return installConsoleOtlpBackstop({
+    emit: emitConsoleLog,
+    onDrop: () => otelConsoleRecordsDroppedCounter.inc(),
+  });
+}

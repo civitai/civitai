@@ -37,7 +37,7 @@ type Config struct {
 	AuthJWKSURI      string            // AUTH_JWKS_URI
 	AuthRequireIat0  bool              // AUTH_REQUIRE_IAT0
 	AuthCookieMode   string            // AUTH_SESSION_COOKIE_MODE: host | shared (default)
-	AuthLegacyRead   bool              // AUTH_LEGACY_READ (default true): read the shared-slot cookie
+	AuthLegacyRead   bool              // AUTH_LEGACY_READ (see LegacyRead): read the shared-slot cookie
 	AuthSiteModes    map[string]string // AUTH_SESSION_COOKIE_MODE_BY_SITE: registrable domain -> host | shared
 	SysReadTimeout   time.Duration
 	FallbackURL      string // FEED_GO_FALLBACK_URL: the Node app, for everything not served here
@@ -74,6 +74,17 @@ type Config struct {
 	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
 	// proxied to the Node app unchanged.
 	ServeInfinite bool
+
+	// BearerAuth is FEED_GO_BEARER_AUTH (default off): resolve API keys (an `Authorization` header) as
+	// the app does, from its principal cache (DESIGN.md §4.2). Off, every API credential is the
+	// `bearer-token` fallback.
+	BearerAuth bool
+	// APIKeySecret is NEXTAUTH_SECRET (same var as the Node app): the salt of the API-key hash. Read
+	// only with BearerAuth; unset, every key falls back (`bearer-unconfigured`).
+	APIKeySecret string
+	// OrchestratorServiceToken is ORCHESTRATOR_SERVICE_TOKEN (same var as the Node app), which the app
+	// answers as an unknown key without a lookup. Read only with BearerAuth.
+	OrchestratorServiceToken string
 
 	// RevocationMarkerCache is SESSION_REVOCATION_CACHE (default on; off|0|false turns it off, as
 	// isEnvSwitchOn): a failed revocation read still denies a revocation this process has already read.
@@ -200,7 +211,7 @@ func Load() (*Config, error) {
 		AuthJWKSURI:      os.Getenv("AUTH_JWKS_URI"),
 		AuthRequireIat0:  boolEnv("AUTH_REQUIRE_IAT0", false),
 		AuthCookieMode:   env("AUTH_SESSION_COOKIE_MODE", "shared"),
-		AuthLegacyRead:   boolEnv("AUTH_LEGACY_READ", true),
+		AuthLegacyRead:   LegacyRead(os.Getenv("AUTH_LEGACY_READ")),
 		AuthSiteModes:    SiteModes(os.Getenv("AUTH_SESSION_COOKIE_MODE_BY_SITE")),
 		FallbackURL:      os.Getenv("FEED_GO_FALLBACK_URL"),
 		CreatorPromotion: os.Getenv("FEED_GO_CREATOR_PROMOTIONS"),
@@ -231,6 +242,10 @@ func Load() (*Config, error) {
 	ms := intEnv("REDIS_SYS_READ_TIMEOUT_MS", 1000)
 	c.SysReadTimeout = time.Duration(ms) * time.Millisecond
 	c.RevocationMarkerCache = envSwitchOn(os.Getenv("SESSION_REVOCATION_CACHE"))
+	if c.BearerAuth = boolEnv("FEED_GO_BEARER_AUTH", false); c.BearerAuth {
+		c.APIKeySecret = os.Getenv("NEXTAUTH_SECRET")
+		c.OrchestratorServiceToken = os.Getenv("ORCHESTRATOR_SERVICE_TOKEN")
+	}
 	c.Hosts = browsing.HostColors{}
 	for _, color := range []string{"green", "blue", "red"} {
 		up := strings.ToUpper(color)
@@ -327,6 +342,16 @@ func (c *Config) CookieNames(reqHost string) []string {
 		names = append(names, shared)
 	}
 	return append(names, host)
+}
+
+// LegacyRead parses AUTH_LEGACY_READ as legacyCookieReadEnabled (packages/civitai-auth) does: false only for
+// `false`, `0`, `off` or `no` (any case, surrounding whitespace ignored); unset or any other value is true.
+func LegacyRead(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "false", "0", "off", "no":
+		return false
+	}
+	return true
 }
 
 // SiteModes parses AUTH_SESSION_COOKIE_MODE_BY_SITE as siteCookieMode (packages/civitai-auth) does: comma-separated

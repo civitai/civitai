@@ -22,22 +22,40 @@ import type { AppBlockModerationNotificationDetails } from '~/server/notificatio
 
 export type AppBlockSubmitterNotificationType = 'app-block-approved' | 'app-block-rejected';
 
-export async function notifyAppBlockSubmitter(opts: {
-  type: AppBlockSubmitterNotificationType;
-  userId: number;
-  /** Idempotency key — dedups repeat emissions of the same event to the same user. */
-  key: string;
-  details: AppBlockModerationNotificationDetails;
-}): Promise<void> {
+/**
+ * An APPROVED notification also records whether the submitter can open run pages
+ * (`canOpenRunPage`, read from their feature flags now), so its link never 404s for a submitter
+ * outside the run-page rollout. `canOpenRunPages` is the reader; the default asks
+ * `canUserOpenAppRunPages`. Any failure reads as `false`.
+ */
+export async function notifyAppBlockSubmitter(
+  opts: {
+    type: AppBlockSubmitterNotificationType;
+    userId: number;
+    /** Idempotency key — dedups repeat emissions of the same event to the same user. */
+    key: string;
+    details: AppBlockModerationNotificationDetails;
+  },
+  canOpenRunPages: (userId: number) => Promise<boolean> = async (userId) =>
+    (await import('~/server/services/blocks/app-run-page-access')).canUserOpenAppRunPages(userId)
+): Promise<void> {
   const [{ createNotification }, { NotificationCategory }] = await Promise.all([
     import('~/server/services/notification.service'),
     import('~/server/common/enums'),
   ]);
+  const details: AppBlockModerationNotificationDetails =
+    opts.type === 'app-block-approved'
+      ? {
+          ...opts.details,
+          // A failed read must not cost the notification: it then links the submissions view.
+          canOpenRunPage: await canOpenRunPages(opts.userId).catch(() => false),
+        }
+      : opts.details;
   await createNotification({
     userId: opts.userId,
     category: NotificationCategory.System,
     type: opts.type,
     key: opts.key,
-    details: opts.details,
+    details,
   });
 }

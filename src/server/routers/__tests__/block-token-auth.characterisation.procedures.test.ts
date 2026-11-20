@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClientModule from '~/server/flipt/client';
 import type * as BuzzPackage from '@civitai/buzz';
 // Setup-order import: shared db/redis/env/prom mocks and the REAL test RSA keypair, so the
 // tokens below are really signed and the procedures really verify them.
@@ -134,6 +135,21 @@ vi.mock('~/server/services/blocks/block-token-access.service', async (importOrig
         throw err;
       }
     },
+  };
+});
+// The scanned-rows flag reads as off, as an unconfigured Flipt answered before that flag failed
+// closed: these cells characterise the token gate, not the flag.
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptClientModule>();
+  return {
+    ...actual,
+    isFliptSync: ((flag: string, ...rest: unknown[]) =>
+      flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS
+        ? false
+        : (actual.isFliptSync as (...a: unknown[]) => boolean | null)(
+            flag,
+            ...rest
+          )) as typeof actual.isFliptSync,
   };
 });
 vi.mock('~/server/db/appsDb', () => ({

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { NsfwLevel } from '~/server/common/enums';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { dbRead } from '~/server/db/client';
@@ -30,6 +31,7 @@ import type {
 import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { Flags } from '~/shared/utils/flags';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 import {
@@ -46,14 +48,15 @@ import {
   viewerExcludedUserIds,
 } from '~/server/services/semantic-search-client';
 
-// The search service's collection name for the image vectors.
-const IMAGE_COLLECTION = 'images';
+/** The search service's collections of Image rows: stills and clips are embedded apart. */
+type MediaCollection = 'images' | 'videos';
 
 type HydratedImage = Awaited<ReturnType<typeof getAllImages>>['items'][number];
 
-const searchServiceCandidates = searchServiceSource(IMAGE_COLLECTION, {
-  notFoundMessage: 'Image not found',
-});
+const searchServiceCandidates: Record<MediaCollection, CandidateSource> = {
+  images: searchServiceSource('images', { notFoundMessage: 'Image not found' }),
+  videos: searchServiceSource('videos', { notFoundMessage: 'Video not found' }),
+};
 
 /** `items` without the images the shared held-media rule holds, for every viewer, moderators included. */
 async function withoutHeldImages<T extends { id: number }>(items: T[]) {
@@ -76,7 +79,8 @@ export async function searchSemanticImages({
   asOwner = false,
   domain,
   track,
-  candidateSource = searchServiceCandidates,
+  collection = 'images',
+  candidateSource = searchServiceCandidates[collection],
   refuseNarrowing = false,
   tagMatchesFirst = false,
   uploadAnchor,
@@ -89,6 +93,8 @@ export async function searchSemanticImages({
   asOwner?: boolean;
   domain?: DomainColor;
   track?: QueryTracker;
+  /** `videos`: the clip index; hydration then returns videos only. */
+  collection?: MediaCollection;
   candidateSource?: CandidateSource;
   /** A verdict that would narrow the level refuses instead (the showcase picker's own images). */
   refuseNarrowing?: boolean;
@@ -110,6 +116,10 @@ export async function searchSemanticImages({
     user,
     await isNonModClampOn(user)
   );
+  if (collection === 'videos' && !user?.isModerator) {
+    browsingLevel = Flags.removeFlag(browsingLevel, NsfwLevel.Blocked);
+    if (!browsingLevel) return emptyPage();
+  }
 
   const [hidden, addonData, blockedTags, namedUserIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -139,13 +149,13 @@ export async function searchSemanticImages({
     resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
   let addons = addonsFor(browsingLevel);
   const audit = beginSemanticAudit({
-    index: IMAGE_COLLECTION,
+    index: collection,
     viewer: user,
     query: input.query,
     firstPage: !input.cursor,
   });
   const refusalOf = makeRefusalOf({
-    index: 'images_semantic',
+    index: `${collection}_semantic`,
     track,
     context: () => ({
       // With refuseNarrowing the verdict is taken at one level, whatever level is asked for.
@@ -195,6 +205,7 @@ export async function searchSemanticImages({
         sort: ImageSort.Newest,
         browsingLevel: level,
         ...feedFilters,
+        ...(collection === 'videos' && { types: [MediaType.video] }),
         excludedUserIds: [...excludedUserIds, ...alsoExcludedUserIds],
         disablePoi: addons.disablePoi,
         disableMinor: addons.disableMinor,
@@ -219,6 +230,9 @@ export async function searchSemanticImages({
     if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
       level = anchorBrowsingLevel(browsingLevel, anchor.nsfwLevel);
   }
+  // An upload is embedded as a still, which is not comparable with clip vectors.
+  if (uploadAnchor && collection === 'videos')
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Search by upload covers images only' });
   if (uploadAnchor) {
     // An upload is never served, so no visibility check refuses it: refuse a level the viewer
     // (already capped to the domain) may not see here.
@@ -228,7 +242,7 @@ export async function searchSemanticImages({
       level = anchorBrowsingLevel(browsingLevel, uploadAnchor.nsfwLevel);
   }
   const timed = <T>(stage: 'candidates' | 'hydrate', work: Promise<T>) => {
-    const end = semanticSearchStage().startTimer({ index: IMAGE_COLLECTION, stage });
+    const end = semanticSearchStage().startTimer({ index: collection, stage });
     return work.finally(() => end());
   };
   // Made On-site and Metadata only are judged from the image's meta, so only hydration applies them.
@@ -247,7 +261,7 @@ export async function searchSemanticImages({
   // The candidate cache holds nothing per user, and an upload is one user's.
   const cachedSource = uploadAnchor
     ? candidateSource
-    : withCandidateCache(IMAGE_COLLECTION, candidateSource, user?.isModerator ? 'mod' : 'user');
+    : withCandidateCache(collection, candidateSource, user?.isModerator ? 'mod' : 'user');
 
   // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
   // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
@@ -258,7 +272,12 @@ export async function searchSemanticImages({
       nsfwLevels: Flags.instanceToArray(refuseNarrowing ? allBrowsingLevelsFlag : level),
     },
     tagIds,
-    anyOf: { baseModels: input.baseModels, type: input.types },
+    // Every point of the video index is a video.
+    anyOf: {
+      baseModels: input.baseModels,
+      type: collection === 'videos' ? undefined : input.types,
+      modelVersionIds: input.modelVersionIds,
+    },
     userIds,
     range: {
       key: 'sortAt',
