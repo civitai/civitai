@@ -379,6 +379,15 @@ describe('claimRateLimitAttempt when the claim script fails on a fail-closed sco
     expect(hSetWithTTL).toHaveBeenCalledTimes(1);
   });
 
+  it('a script error refuses with SERVICE_UNAVAILABLE on a scope listed to refuse it', async () => {
+    redisMock.redis.eval.mockRejectedValue(
+      new Error('ERR user_script:12: attempt to index a nil value')
+    );
+    const outcome = await claimOn('imageSearchUpload:script-error').catch((e: unknown) => e);
+    expect((outcome as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    expect(hSetWithTTL).not.toHaveBeenCalled();
+  });
+
   it('on a fallback scope a store that refuses the call counts locally, so the next call is refused', async () => {
     redisMock.redis.eval.mockRejectedValue(
       new Error(

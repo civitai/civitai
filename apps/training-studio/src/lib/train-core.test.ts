@@ -1526,7 +1526,7 @@ describe('Kohya training', () => {
     expect(config.items[0]!.caption).toBe('1girl');
   });
 
-  it.each(['sd1', 'sdxl', 'pony', 'illustrious', 'noobai', 'flux1', 'chroma'])(
+  it.each(['sd1', 'sdxl', 'pony', 'illustrious', 'noobai', 'flux1', 'chroma', 'anima'])(
     'accepts an arbitrary compatible %s checkpoint',
     async (family) => {
       const ecosystem = ['pony', 'illustrious', 'noobai'].includes(family) ? 'sdxl' : family;
@@ -1540,16 +1540,13 @@ describe('Kohya training', () => {
       });
       const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
       expect(input.model).toBe(customModel);
-      if (family === 'flux1' || family === 'chroma') {
-        expect(input).toMatchObject({
-          noiseOffset: 0,
-          minSnrGamma: 0,
-          clipSkip: 1,
-          fp8Base: true,
-          blocksToSwap: 18,
-        });
+      if (family === 'flux1' || family === 'chroma' || family === 'anima') {
+        expect(input).toMatchObject({ noiseOffset: 0, minSnrGamma: 0, clipSkip: 1 });
         expect(input).not.toHaveProperty('vParameterization');
       }
+      if (family === 'flux1' || family === 'chroma')
+        expect(input).toMatchObject({ fp8Base: true, blocksToSwap: 18 });
+      if (family === 'anima') expect(input).not.toHaveProperty('fp8Base');
       if (family === 'chroma')
         expect(input).toMatchObject({ textEncoderLR: 0, trainTextEncoder: false });
     }

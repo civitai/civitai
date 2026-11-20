@@ -179,10 +179,11 @@ export function reportListedUrlSql(url: string): string {
     )
     OR EXISTS (
       SELECT 1 FROM "Image" rl_p
-      WHERE rl_p.url = ${u} AND rl_p."pHash" IN (
+      -- ARRAY(...) is uncorrelated, so it is computed once per statement, not per outer row.
+      WHERE rl_p.url = ${u} AND rl_p."pHash" = ANY(ARRAY(
         SELECT rl_x."pHash" FROM "Image" rl_x
         WHERE rl_x.id IN (${LISTED_IMAGE_IDS_SQL}) AND rl_x."pHash" IS NOT NULL
-      )
+      ))
     )
   )`;
 }

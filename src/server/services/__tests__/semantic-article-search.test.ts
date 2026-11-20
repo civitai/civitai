@@ -4,6 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import type { CandidateFilter, CandidateSource } from '~/server/services/semantic-search-client';
 import type { SessionUser } from '~/types/session';
+import { stripBlockedForNonModerator } from '~/server/utils/browsing-level';
 import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => ({
@@ -160,6 +161,28 @@ describe('semantic article search', () => {
     const { items } = await search([20, 13, 21, 10, 22, 23, 24]);
     expect(items.map((a) => a.id)).toEqual([20, 21, 10, 22]);
     expect(items.filter((a) => a.user.id === 7)).toHaveLength(MAX_HITS_PER_USER);
+  });
+
+  describe('a level after stripBlockedForNonModerator, which the procedure middleware runs', () => {
+    const VIEWER = { id: 500, isModerator: false } as SessionUser;
+    const askedLevels = async (browsingLevel: number, user: SessionUser) => {
+      const input = { browsingLevel };
+      stripBlockedForNonModerator(input, user.isModerator);
+      await search([10], input.browsingLevel, user);
+      return (sent[0]?.gate as { nsfwLevels?: number[] } | undefined)?.nsfwLevels;
+    };
+
+    it('asks for an XXX article for a non-moderator (control)', async () => {
+      expect(await askedLevels(16, VIEWER)).toEqual([16]);
+    });
+
+    it('never asks for a Blocked article for a non-moderator', async () => {
+      expect(await askedLevels(16 | 32, VIEWER)).toEqual([16]);
+    });
+
+    it('asks for it for a moderator', async () => {
+      expect(await askedLevels(16 | 32, MOD)).toEqual([16, 32]);
+    });
   });
 
   it("asks the service for the viewer's browsing level, without hidden users or tags", async () => {
