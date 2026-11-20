@@ -3,7 +3,7 @@ import { useState } from 'react';
 import type * as z from 'zod';
 import { SellerAffirmationCheckbox } from '~/components/CreatorShop/Services/SellerAffirmation';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { useMutateMyServices } from '~/components/CreatorShop/Services/creator-service.util';
 import {
@@ -69,7 +69,7 @@ export function ServiceOfferingFormModal({
   copyOf?: ServiceOffering;
 }) {
   const dialog = useDialogContext();
-  const features = useFeatureFlags();
+  const reviewsNext = !!useOptionalFeatureFlags()?.creatorServicesNext;
   const { upsert } = useMutateMyServices();
   const source = offering ?? copyOf;
 
@@ -182,7 +182,7 @@ export function ServiceOfferingFormModal({
             data={ratingOptions}
             withAsterisk
           />
-          {features.creatorServicesNext && (
+          {reviewsNext && (
             <InputCheckbox
               name="allowReviewWork"
               label="Let buyers show the work you deliver in their review"
