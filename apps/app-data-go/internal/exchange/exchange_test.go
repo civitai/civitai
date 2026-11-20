@@ -18,7 +18,7 @@ func hub(t *testing.T, h http.HandlerFunc) *Exchanger {
 	t.Cleanup(srv.Close)
 	now := time.Unix(1_700_000_000, 0)
 	return &Exchanger{
-		Config: Config{URL: srv.URL, ClientID: "relay client", ClientSecret: "s3cr&t", Resource: "https://apps.invalid", Scope: "AppDataRead"},
+		Config: Config{URL: srv.URL, ClientID: "relay client", ClientSecret: "s3cr&t", Resource: "https://apps.invalid"},
 		Now:    func() time.Time { return now },
 	}
 }
@@ -84,6 +84,10 @@ func TestExchangeErrorsNeverCarryATokenOrTheSecret(t *testing.T) {
 }
 
 func TestExchangeTransportFailures(t *testing.T) {
+	bad := &Exchanger{Config: Config{URL: "http://hub.invalid/\x7f"}}
+	if _, err := bad.Exchange(context.Background(), "t"); err == nil || errors.Is(err, ErrRefused) {
+		t.Fatalf("unbuildable request: %v", err)
+	}
 	e := &Exchanger{Config: Config{URL: "http://127.0.0.1:1"}}
 	if _, err := e.Exchange(context.Background(), "t"); err == nil || errors.Is(err, ErrRefused) {
 		t.Fatalf("unreachable: %v", err)

@@ -63,10 +63,9 @@ type Relay struct {
 	// ClientID and ClientSecret are this service's confidential client (APP_DATA_CLIENT_ID; the
 	// secret from APP_DATA_CLIENT_SECRET_FILE, or APP_DATA_CLIENT_SECRET, never both).
 	ClientID, ClientSecret string
-	// Resource is the adapter's resource identifier (APP_DATA_EXCHANGE_RESOURCE).
+	// Resource is the adapter's resource identifier (APP_DATA_EXCHANGE_RESOURCE). The scope asked
+	// for is fixed (exchange.Scope), not configuration.
 	Resource string
-	// Scope, optional, narrows the exchanged token (APP_DATA_EXCHANGE_SCOPE).
-	Scope string
 }
 
 // Load reads the environment.
@@ -145,11 +144,15 @@ func relayFromEnv(getenv func(string) string, readFile func(string) ([]byte, err
 		TokenURL: getenv("APP_DATA_HUB_TOKEN_URL"),
 		ClientID: getenv("APP_DATA_CLIENT_ID"),
 		Resource: getenv("APP_DATA_EXCHANGE_RESOURCE"),
-		Scope:    getenv("APP_DATA_EXCHANGE_SCOPE"),
+	}
+	// The scope used to be a setting; it is fixed now, and a setting that does nothing must not read
+	// as if it did.
+	if getenv("APP_DATA_EXCHANGE_SCOPE") != "" {
+		return nil, errors.New("APP_DATA_EXCHANGE_SCOPE is not a setting: every exchange asks for exactly AppDataRead")
 	}
 	secret, secretFile := getenv("APP_DATA_CLIENT_SECRET"), getenv("APP_DATA_CLIENT_SECRET_FILE")
 	if r.ClientID == "" {
-		if r.TokenURL != "" || r.Resource != "" || r.Scope != "" || secret != "" || secretFile != "" {
+		if r.TokenURL != "" || r.Resource != "" || secret != "" || secretFile != "" {
 			return nil, errors.New("APP_DATA_CLIENT_ID is required with any other relay setting")
 		}
 		return nil, nil

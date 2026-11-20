@@ -35,9 +35,16 @@ type Config struct {
 	ClientID, ClientSecret string
 	// Resource is the adapter's resource identifier: exactly one, as the hub requires.
 	Resource string
-	// Scope, when set, narrows the exchanged token (`AppDataRead` is all a private stream reads).
-	Scope string
 }
+
+// Scope is the one scope every exchange asks for: `AppDataRead`, all a private stream reads (the
+// adapter's gate 4). Least privilege: without it the hub would issue the whole ceiling. The hub
+// parses `scope` as space-separated TokenScope names (apps/auth scope.ts parseScopeRequest) and
+// refuses a request outside the ceiling (`invalid_scope`) rather than narrowing it: the ceiling is
+// the user's token's scope (the consent the user gave the app), within the resource's and the app's
+// (token-exchange.ts exchangeScopeCeiling). So a user who never granted the app AppDataRead gets a
+// refused exchange, and the read goes to REST.
+const Scope = "AppDataRead"
 
 // Token is an exchanged token and when it stops being valid.
 type Token struct {
@@ -65,9 +72,7 @@ func (e *Exchanger) Exchange(ctx context.Context, subject string) (Token, error)
 		"subject_token":      {subject},
 		"subject_token_type": {AccessTokenType},
 		"resource":           {e.Resource},
-	}
-	if e.Scope != "" {
-		form.Set("scope", e.Scope)
+		"scope":              {Scope},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.URL, strings.NewReader(form.Encode()))
 	if err != nil {

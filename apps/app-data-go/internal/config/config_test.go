@@ -52,8 +52,8 @@ func TestEverySettingIsRead(t *testing.T) {
 		"APP_DATA_ADDR": ":9", "APP_DATA_REST_URL": "http://site.ns.svc.cluster.local:3000",
 		"APP_DATA_REGISTRY_URL": "https://registry.invalid", "APP_DATA_MAX_STREAMS": "7",
 		"APP_DATA_HUB_TOKEN_URL": "http://hub.ns.svc:8080/token", "APP_DATA_CLIENT_ID": "relay-client",
-		"APP_DATA_CLIENT_SECRET_FILE": "/run/secrets/app-data-client",
-		"APP_DATA_EXCHANGE_RESOURCE":  "https://apps.invalid", "APP_DATA_EXCHANGE_SCOPE": "AppDataRead",
+		"APP_DATA_CLIENT_SECRET_FILE":    "/run/secrets/app-data-client",
+		"APP_DATA_EXCHANGE_RESOURCE":     "https://apps.invalid",
 		"APP_DATA_MAX_STREAMS_PER_TOKEN": "3", "APP_DATA_STREAM_IDLE_TTL_MS": "2000",
 		"APP_DATA_STREAM_MAX_AGE_MS": "9000", "APP_DATA_LIVE_WAIT_MS": "11",
 		"APP_DATA_REQUEST_DEADLINE_MS": "130", "APP_DATA_MAX_RECORDS_PER_STREAM": "17",
@@ -67,7 +67,7 @@ func TestEverySettingIsRead(t *testing.T) {
 		LiveWait: 11 * time.Millisecond, RequestDeadline: 130 * time.Millisecond, MaxRecords: 17, MaxBytes: 70000,
 		RESTMaxInFlight: 5}
 	wantRelay := Relay{TokenURL: "http://hub.ns.svc:8080/token", ClientID: "relay-client", //nolint:gosec // G101: a synthetic test fixture, not a credential
-		ClientSecret: "FILE-SECRET-91c2", Resource: "https://apps.invalid", Scope: "AppDataRead"}
+		ClientSecret: "FILE-SECRET-91c2", Resource: "https://apps.invalid"}
 	if c.Relay == nil || *c.Relay != wantRelay {
 		t.Fatalf("relay %+v\nwant %+v", c.Relay, wantRelay)
 	}
@@ -97,6 +97,7 @@ func TestInvalidSettingsFailTheStart(t *testing.T) {
 		"unreadable secret file":   {map[string]string{"APP_DATA_CLIENT_SECRET": "", "APP_DATA_CLIENT_SECRET_FILE": "/nope"}, "could not be read"},
 		"plain http hub":           {map[string]string{"APP_DATA_HUB_TOKEN_URL": "http://hub.invalid/token"}, "APP_DATA_HUB_TOKEN_URL must be"}, //nolint:gosec // G101: a synthetic test fixture, not a credential
 		"no resource":              {map[string]string{"APP_DATA_EXCHANGE_RESOURCE": ""}, "APP_DATA_EXCHANGE_RESOURCE must be"},
+		"a scope setting":          {map[string]string{"APP_DATA_EXCHANGE_SCOPE": "AppDataRead AppsRead"}, "not a setting"},
 		"max age over token life":  {map[string]string{"APP_DATA_STREAM_MAX_AGE_MS": "900001"}, "APP_DATA_STREAM_MAX_AGE_MS must be an integer"},
 		"not a number":             {map[string]string{"APP_DATA_MAX_STREAMS": "many"}, "APP_DATA_MAX_STREAMS must be an integer"},
 		"zero streams":             {map[string]string{"APP_DATA_MAX_STREAMS": "0"}, "APP_DATA_MAX_STREAMS must be an integer"},
@@ -132,7 +133,7 @@ func TestTheFullRelayConfigLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Relay == nil || c.Relay.ClientSecret != "ENV-SECRET-4d7e" || c.Relay.Scope != "" {
+	if c.Relay == nil || c.Relay.ClientSecret != "ENV-SECRET-4d7e" {
 		t.Fatalf("%+v", c.Relay)
 	}
 }

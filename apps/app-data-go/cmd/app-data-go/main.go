@@ -82,7 +82,7 @@ func run(log *slog.Logger) error {
 	if cfg.RegistryURL != "" {
 		ex := &exchange.Exchanger{
 			Config: exchange.Config{URL: cfg.Relay.TokenURL, ClientID: cfg.Relay.ClientID,
-				ClientSecret: cfg.Relay.ClientSecret, Resource: cfg.Relay.Resource, Scope: cfg.Relay.Scope},
+				ClientSecret: cfg.Relay.ClientSecret, Resource: cfg.Relay.Resource},
 			HTTP: &http.Client{Timeout: exchangeTimeout},
 		}
 		mgr = session.New(session.ClientSubscriber{Client: &registry.Client{

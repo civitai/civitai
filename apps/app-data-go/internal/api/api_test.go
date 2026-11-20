@@ -40,6 +40,7 @@ type fakeRegistry struct {
 	revokes    map[string][]chan string
 	subs       atomic.Int32
 	raw        atomic.Int32 // subscriptions that presented a token the hub did not issue
+	wide       atomic.Int32 // subscriptions whose token holds more than AppDataRead
 	notPrivate map[string]bool
 	schemas    sync.Map // token → schema last asked
 }
@@ -52,10 +53,20 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		if n := f.raw.Load(); n != 0 {
 			t.Errorf("🔴 the adapter was shown %d tokens the hub did not issue", n)
 		}
+		if n := f.wide.Load(); n != 0 {
+			t.Errorf("🔴 the adapter was shown %d tokens holding more than AppDataRead", n)
+		}
 	})
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.subs.Add(1)
 		tok, ok := strings.CutPrefix(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), "x.")
+		var scope string
+		if ok {
+			scope, tok, ok = strings.Cut(tok, ".")
+		}
+		if ok && scope != "AppDataRead" {
+			f.wide.Add(1)
+		}
 		if !ok {
 			f.raw.Add(1)
 			w.WriteHeader(http.StatusUnauthorized)
@@ -104,8 +115,10 @@ func (f *fakeRegistry) revoke(tok, urn string) {
 	}
 }
 
-// fakeHub is the hub's token endpoint: it exchanges a user's hub token for "x.<token>", for the
-// relay client and the adapter's resource only.
+// fakeHub is the hub's token endpoint: it exchanges a user's hub token for "x.<scope>.<token>", for
+// the relay client and the adapter's resource only. As the hub does, it issues exactly the scope
+// requested when that is within the ceiling, refuses one outside it (invalid_scope), and issues the
+// whole ceiling when none is requested.
 type fakeHub struct {
 	srv      *httptest.Server
 	mu       sync.Mutex
@@ -137,12 +150,26 @@ func newFakeHub(t *testing.T) *fakeHub {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
 		default:
-			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "x." + subject, "token_type": "Bearer", "expires_in": 900})
+			scope := r.PostForm.Get("scope")
+			switch scope {
+			case "":
+				scope = hubCeiling
+			case "AppDataRead", "AppsRead", hubCeiling:
+			default:
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error":"invalid_scope"}`)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "x." + strings.ReplaceAll(scope, " ", "+") + "." + subject,
+				"token_type": "Bearer", "expires_in": 900, "scope": scope})
 		}
 	}))
 	t.Cleanup(h.srv.Close)
 	return h
 }
+
+// hubCeiling is what the fake hub would issue for a request naming no scope: wider than a stream needs.
+const hubCeiling = "AppDataRead AppsRead"
 
 type restAnswer struct {
 	status int
@@ -647,5 +674,22 @@ func TestASharedCollectionIsReadFromREST(t *testing.T) {
 	}
 	if fallbacks(s, "not_private") != 1 || fallbacks(s, "cooling_down") != 1 || s.reg.subs.Load() != 1 {
 		t.Fatalf("not_private %v, cooling_down %v, subs %d", fallbacks(s, "not_private"), fallbacks(s, "cooling_down"), s.reg.subs.Load())
+	}
+}
+
+// Least privilege: the exchange asks for exactly AppDataRead, so the token the adapter sees holds
+// nothing wider than a private stream reads. (The fake hub would issue its whole ceiling for a request
+// naming no scope; the fakes' cleanup fails any test whose adapter is shown such a token.)
+func TestTheExchangedTokenHoldsOnlyAppDataRead(t *testing.T) {
+	s := newStack(t, true, session.Options{})
+	s.reg.records["civitai_alice"] = []registry.Entity{ent("urn:apps.civitai.com:todo-app/notes/r-a", "A")}
+	if g := s.get(t, notesPath, "civitai_alice"); g.ans.Source != "registry" {
+		t.Fatal(g.body)
+	}
+	if n := s.reg.wide.Load(); n != 0 {
+		t.Fatalf("the adapter was shown %d tokens wider than AppDataRead", n)
+	}
+	if n := s.reg.subs.Load(); n != 1 {
+		t.Fatalf("%d subscriptions, want 1 (the positive control: a stream was opened)", n)
 	}
 }

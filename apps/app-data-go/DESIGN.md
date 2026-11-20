@@ -97,6 +97,16 @@ reads the adapter directly, not through `registry-exp`. Read against the hub's e
   admit) opens no stream: the read goes to REST (`exchange_refused`), whose answer is the site's.
   The key then cools down for 30 s.
 
+**Least privilege: every exchange asks for exactly `AppDataRead`** (`exchange.Scope`, not
+configurable), all a private stream reads (the adapter's gate 4). Unasked, the hub would issue the
+whole ceiling. The hub parses `scope` as space-separated scope names (`scope.ts`
+`parseScopeRequest`). The ceiling is the user's token's scope (the consent the user gave the app)
+within the resource's and the app's allowed scopes (`token-exchange.ts` `exchangeScopeCeiling`). A
+request outside that ceiling is refused (`invalid_scope`), never silently narrowed, so a user who
+never granted the app `AppDataRead` gets a refused exchange, and the read goes to REST. The tests'
+fake hub issues the whole ceiling to a request naming no scope, and the fake adapter fails any test
+shown a token wider than `AppDataRead` (`TestTheExchangedTokenHoldsOnlyAppDataRead`).
+
 The client secret is read from a file (`APP_DATA_CLIENT_SECRET_FILE`, preferred) or the environment,
 never both, and no error, log or metric carries it or any token.
 
@@ -237,9 +247,7 @@ the adapter's poll plus the time to the next read. REST reads see a revocation a
 - Deploy manifests and the image build.
 - A true per-user cap: only per token, which is per (user, app).
 
-## Open questions
+## Defaults
 
-1. **Scope of the exchanged token.** `APP_DATA_EXCHANGE_SCOPE` is optional; unset, the hub issues the
-   resource's ceiling. Should it be narrowed to `AppDataRead`, and in which form does the hub parse it?
-2. **Defaults for the first canary:** 100 streams per replica, 5-minute idle TTL, 14-minute max age,
-   1.5 s live wait. Are these right?
+The canary keeps the defaults above (operator, 2026-11-20): 100 streams per replica, 5-minute idle
+TTL, 14-minute max age, 1.5 s live wait.

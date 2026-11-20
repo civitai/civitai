@@ -8,7 +8,7 @@
 total 87
 internal/api 99
 internal/config 98
-internal/exchange 97
+internal/exchange 100
 internal/registry 98
 internal/rest 90
 internal/session 94
