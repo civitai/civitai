@@ -1,4 +1,5 @@
 import { GetObjectCommand, type GetObjectCommandOutput } from '@aws-sdk/client-s3';
+import { constants } from '~/server/common/constants';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -39,9 +40,7 @@ import {
   SERVICE_FINAL_OVER_LEVEL_REASON,
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
   SERVICE_FINAL_VIDEO_EXTENSIONS,
-  SERVICE_FINAL_VIDEO_MAX_BYTES,
   SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
-  SERVICE_FINAL_VIDEO_MAX_SECONDS,
   SERVICE_FINAL_VIDEO_TOO_LONG,
   SERVICE_FINAL_SCAN_MAX_ATTEMPTS,
   SERVICE_FINAL_SCAN_RETRY_MS,
@@ -436,7 +435,7 @@ const VIDEO_LENGTH_TOLERANCE_SECONDS = 1;
  * refused before its copy is scanned.
  */
 async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDimensions) {
-  if (file.size > SERVICE_FINAL_VIDEO_MAX_BYTES)
+  if (file.size > constants.mediaUpload.maxVideoFileSize)
     throw new ZipRejectedError('That video is too large to deliver.');
   await dbWrite.$executeRaw`
     INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size")
@@ -482,7 +481,7 @@ async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDime
   }
   const all = [probed.duration, ...lengths];
   const refusal =
-    Math.max(...all) > SERVICE_FINAL_VIDEO_MAX_SECONDS
+    Math.max(...all) > constants.mediaUpload.maxVideoDurationSeconds
       ? SERVICE_FINAL_VIDEO_TOO_LONG
       : Math.max(...all) - Math.min(...all) > VIDEO_LENGTH_TOLERANCE_SECONDS
       ? SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR

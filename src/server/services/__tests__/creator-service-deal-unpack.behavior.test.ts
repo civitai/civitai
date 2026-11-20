@@ -1,3 +1,4 @@
+import { constants } from '~/server/common/constants';
 import { crc32 } from 'zlib';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -166,7 +167,6 @@ const { PreviewRejectedError } = await import('~/server/utils/service-deal-previ
 const {
   SERVICE_FINAL_OVER_LEVEL_REASON,
   SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
-  SERVICE_FINAL_VIDEO_MAX_BYTES,
   SERVICE_FINAL_VIDEO_TOO_LONG,
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
   SERVICE_FINAL_SCAN_MAX_ATTEMPTS,
@@ -2776,9 +2776,10 @@ describe('a video Final', () => {
     expect((await entries(fileId))[0].failReason).toMatch(/rejected/);
   });
 
-  it('refuses a video longer than the scan covers, and drops its copy unscanned', async () => {
-    probe.video.mockResolvedValue({ width: 640, height: 360, duration: 50.5 });
-    const { fileId } = await videoFinal(4, mp4Clip({ seconds: 50.5 }));
+  it('refuses a video longer than site uploads allow, and drops its copy unscanned', async () => {
+    const seconds = constants.mediaUpload.maxVideoDurationSeconds + 0.5;
+    probe.video.mockResolvedValue({ width: 640, height: 360, duration: seconds });
+    const { fileId } = await videoFinal(4, mp4Clip({ seconds }));
     expect(await fileRow(fileId)).toMatchObject({
       scanStatus: 'Failed',
       failReason: SERVICE_FINAL_VIDEO_TOO_LONG,
@@ -2800,7 +2801,7 @@ describe('a video Final', () => {
     const { fileId } = await videoFinal(4, clip(), name);
     expect(await fileRow(fileId)).toMatchObject({
       scanStatus: 'Failed',
-      failReason: SERVICE_FINAL_VIDEO_TOO_LONG,
+      failReason: SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
     });
     expect(images.createImage).not.toHaveBeenCalled();
     expect(s3.deleteObject).toHaveBeenCalledWith('image-store', 'scan-key-1', expect.anything());
@@ -2819,7 +2820,7 @@ describe('a video Final', () => {
     const dealId = await accepted();
     const fileId = await final(dealId, 'clip.mp4', CLIP);
     await q(`UPDATE "ServiceDealFile" SET size = $1 WHERE id = $2`, [
-      SERVICE_FINAL_VIDEO_MAX_BYTES + 1,
+      constants.mediaUpload.maxVideoFileSize + 1,
       fileId,
     ]);
     serveClip();
@@ -2853,9 +2854,10 @@ describe('a video Final', () => {
     expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Pending', failReason: null });
   });
 
-  it('takes a video of exactly 50 seconds, and a .webm as video/webm', async () => {
-    probe.video.mockResolvedValue({ width: 640, height: 360, duration: 50 });
-    const clip = webmClip({ declared: 50, blocks: [0, 25, 49.96] });
+  it('takes a video of exactly the site upload length, and a .webm as video/webm', async () => {
+    const max = constants.mediaUpload.maxVideoDurationSeconds;
+    probe.video.mockResolvedValue({ width: 640, height: 360, duration: max });
+    const clip = webmClip({ declared: max, blocks: [0, max / 2, max - 0.04] });
     const dealId = await accepted();
     const fileId = await final(dealId, 'clip.webm', clip);
     serveClip('"v1"', clip);
