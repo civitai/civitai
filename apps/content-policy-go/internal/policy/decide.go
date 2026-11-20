@@ -236,6 +236,9 @@ func hostAllowsNsfw(rule NsfwHostRule, host string) bool {
 	return host == "" || host == "blue" || host == "red"
 }
 
+// blockedLevel is NsfwLevel.Blocked: only a moderator's saved level keeps it.
+const blockedLevel int32 = 32
+
 // serverBrowsingLevel is getServerBrowsingLevel (src/server/utils/browsing-level.ts).
 func serverBrowsingLevel(canViewNsfw, signedIn bool, u User) int32 {
 	if !canViewNsfw {
@@ -244,8 +247,12 @@ func serverBrowsingLevel(canViewNsfw, signedIn bool, u User) int32 {
 		}
 		return data.Levels.Public
 	}
-	if signedIn && u.ShowNsfw && u.BrowsingLevel != 0 {
-		return u.BrowsingLevel
+	saved := u.BrowsingLevel
+	if !u.IsModerator {
+		saved &^= blockedLevel
+	}
+	if signedIn && u.ShowNsfw && saved != 0 {
+		return saved
 	}
 	return data.Levels.Public
 }
