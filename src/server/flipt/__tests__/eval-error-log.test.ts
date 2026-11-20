@@ -53,7 +53,7 @@ describe('~/server/flipt/client evaluation errors', () => {
     expect(records[0]).toMatchObject({
       name: 'flipt-eval-error',
       type: 'error',
-      flag: 'fixture-no-such-flag',
+      payload: { flag: 'fixture-no-such-flag' },
     });
     expect(records[0].message).toMatch(/fixture-no-such-flag/);
     expect(records[0].stack).toContain('\n');

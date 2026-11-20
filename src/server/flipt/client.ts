@@ -843,9 +843,9 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
     logToAxiom({
       name: 'flipt-eval-error',
       type: 'error',
-      flag,
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
+      payload: { flag },
     }),
 }));
 
