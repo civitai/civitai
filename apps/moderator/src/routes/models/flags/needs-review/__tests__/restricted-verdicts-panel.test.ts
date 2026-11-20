@@ -171,7 +171,8 @@ describe('the restricted-verdict panel above the Needs review queue', () => {
     const cap = /\bmax-h-\[(\d+)vh\]/.exec(list.className);
     expect(Number(cap?.[1])).toBeLessThanOrEqual(50);
     // Below lg the queue column is 320px, so the list needs its own smaller cap there.
-    expect(list.className).toMatch(/(^|\s)max-h-\d+(\s|$)/);
+    const narrowCap = /(^|\s)max-h-(\d+)(\s|$)/.exec(list.className);
+    expect(Number(narrowCap?.[2])).toBeLessThanOrEqual(32);
     expect(list.className).toMatch(/\boverflow-y-auto\b/);
     expect(panel.querySelector('button[aria-expanded]')!.getAttribute('aria-expanded')).toBe(
       'true'
@@ -249,6 +250,40 @@ describe('the restricted-verdict panel above the Needs review queue', () => {
     });
     flushSync();
     expect(alert()?.textContent).toContain('A ruling failed');
+    unmount(app);
+  });
+
+  it('keeps a failed ruling on its row after the row is closed', async () => {
+    const { mount, unmount, flushSync } = await import(/* @vite-ignore */ clientEntry('svelte'));
+    document.body.innerHTML = '';
+    const submits = ((globalThis as Record<string, unknown>).__panelSubmits = []) as Array<
+      () => (o: { result: unknown; update: () => Promise<void> }) => Promise<void>
+    >;
+    const app = mount(ClientPanel, {
+      target: document.body,
+      props: {
+        rows: LEADS,
+        total: LEADS.length,
+        civitaiUrl: 'https://civitai.com',
+        queueEmpty: true,
+      },
+    });
+    const button = (text: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+        (b) => b.textContent?.trim() === text
+      )!;
+    button('Rule').click();
+    flushSync();
+    await submits[0]()({
+      result: { type: 'failure', data: { error: 'Refused.' } },
+      update: async () => {},
+    });
+    flushSync();
+    button('Close').click();
+    flushSync();
+
+    const first = document.querySelector('section[aria-label="Scan rated NSFW"] ul > li')!;
+    expect(first.querySelector('[role="alert"]')?.textContent).toContain('Refused.');
     unmount(app);
   });
 });
