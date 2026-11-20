@@ -71,7 +71,6 @@ async function publicCovers(ids: (number | undefined)[], browsingLevel: number) 
   return new Map(rows.map((row) => [row.id, toPublicCoverImage(row, coverLevel(row))]));
 }
 
-/** The cover the reader would serve (it already withheld a restricted one), if it passes the rule. */
 const coverImage = (
   image: { id: number } | null | undefined,
   covers: Map<number, ReturnType<typeof toPublicCoverImage>>

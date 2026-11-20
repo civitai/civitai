@@ -11,6 +11,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { minorContentNotRestrictedWhere } from '~/server/utils/minor-content-gate.sql';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
+  admitComicsRequest,
   comicsBrowsingLevel,
   getPublicComic,
   getPublicComicChapter,
@@ -212,7 +213,6 @@ describe('covers', () => {
 
   describe('on a post of a held model', () => {
     const POST = 990000500;
-    // Post POST is on version 10, of model 1, whose gallery is held at PG when minor.
     const holdModel = (minor: boolean) => {
       installFakeCacheRedis();
       dbMock.dbRead.post.findMany.mockResolvedValue([{ id: POST, modelVersionId: 10 }] as never);
@@ -479,5 +479,20 @@ describe('comicsBrowsingLevel', () => {
     const cache = { 'Cache-Control': 'private, no-store' };
     expect(level('US', true)).toEqual({ browsingLevel: allBrowsingLevelsFlag, headers: cache });
     expect(level('GB', true)).toEqual({ browsingLevel: sfwBrowsingLevelsFlag, headers: cache });
+  });
+});
+
+describe('admitComicsRequest', () => {
+  it('answers a not-found nobody caches while comics are off for signed-out visitors', async () => {
+    const sent: { status?: number; headers: Record<string, string> } = { headers: {} };
+    const res = {
+      setHeader: (name: string, value: string) => (sent.headers[name] = value),
+      status: (code: number) => ((sent.status = code), res),
+      json: () => res,
+    } as unknown as NextApiResponse;
+    const req = { headers: {}, query: {} } as unknown as NextApiRequest;
+
+    expect(await admitComicsRequest(req, res, undefined)).toBe(false);
+    expect(sent).toEqual({ status: 404, headers: { 'Cache-Control': 'no-store' } });
   });
 });
