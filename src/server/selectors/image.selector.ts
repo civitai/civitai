@@ -94,7 +94,7 @@ const publishedPostWhere = (): Prisma.PostWhereInput => ({ publishedAt: { lte: n
 
 /** An ImageConnection whose Image row still exists. The table has no foreign key in production, so a
  *  deleted image leaves its connections behind, and a read that includes `image` then fails on the
- *  required relation. Every connection read that includes or selects `image` spreads this. */
+ *  required relation. `no-unguarded-image-connection-image-read` requires it on such reads. */
 export const connectionImageExists = {
   image: { id: { gt: 0 } },
 } satisfies Prisma.ImageConnectionWhereInput;

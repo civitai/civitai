@@ -30,7 +30,7 @@ const read = (where: object) =>
 
 describe('an ImageConnection whose image was deleted', () => {
   it('fails a read that includes the image (control)', async () => {
-    await expect(read({})).rejects.toThrow(/image/);
+    await expect(read({})).rejects.toThrow(/Field image is required to return data/);
     await harness.recover();
   });
 
