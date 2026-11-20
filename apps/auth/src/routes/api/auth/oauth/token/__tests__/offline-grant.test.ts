@@ -99,6 +99,7 @@ const CLIENT = 'offline-app';
 const OTHER_CLIENT = 'other-app';
 const DEVICE_CLIENT = 'cli-app';
 const SYSTEM_CLIENT = 'system-app';
+const DUAL_CLIENT = 'dual-app';
 const REDIRECT = 'https://app.example/callback';
 const NOW = new Date('2026-11-20T12:00:00.000Z');
 const DAY = 86_400_000;
@@ -132,6 +133,13 @@ function seed() {
     client(OTHER_CLIENT),
     client(DEVICE_CLIENT, {
       grants: ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
+    }),
+    client(DUAL_CLIENT, {
+      grants: [
+        'authorization_code',
+        'urn:ietf:params:oauth:grant-type:device_code',
+        'refresh_token',
+      ],
     }),
     // A confidential app owned by the system account (-1) that skips the consent screen.
     client(SYSTEM_CLIENT, { isConfidential: true, secret: 'x', userId: -1, skipConsent: true }),
@@ -534,12 +542,28 @@ describe('flag on: refresh expiry', () => {
     expect(row(res.body.refresh_token)?.expiresAt).toEqual(new Date(NOW.getTime() + 30 * DAY));
   });
 
-  it('a chain recorded as device_code under a client without the device grant does not slide', async () => {
-    const original = new Date(NOW.getTime() + 3 * DAY + 4321);
-    const old = legacyRefresh(original);
-    row(old)!.mintOrigin = 'device_code';
-    const res = await refresh(old);
-    expect(row(res.body.refresh_token)?.expiresAt).toEqual(original);
+  describe('a client holding both the authorization-code and device-code grants', () => {
+    it('does not slide its auth_code chain without the offline grant', async () => {
+      const original = new Date(NOW.getTime() + 3 * DAY + 2468);
+      const old = legacyRefresh(original, USER, DUAL_CLIENT);
+      row(old)!.mintOrigin = 'auth_code';
+      const res = await refresh(old, DUAL_CLIENT);
+      expect(res.status).toBe(200);
+      expect(row(res.body.refresh_token)?.expiresAt).toEqual(original);
+    });
+
+    it('slides its device_code chain', async () => {
+      const old = legacyRefresh(new Date(NOW.getTime() + 3 * DAY + 2468), USER, DUAL_CLIENT);
+      row(old)!.mintOrigin = 'device_code';
+      const res = await refresh(old, DUAL_CLIENT);
+      expect(row(res.body.refresh_token)?.expiresAt).toEqual(new Date(NOW.getTime() + 30 * DAY));
+    });
+
+    it('slides its pre-flag (null-origin) chain', async () => {
+      const old = legacyRefresh(new Date(NOW.getTime() + 3 * DAY + 2468), USER, DUAL_CLIENT);
+      const res = await refresh(old, DUAL_CLIENT);
+      expect(row(res.body.refresh_token)?.expiresAt).toEqual(new Date(NOW.getTime() + 30 * DAY));
+    });
   });
 });
 

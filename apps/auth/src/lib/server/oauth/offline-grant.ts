@@ -38,9 +38,10 @@ import { scopeToColumn } from './scope';
 //   2. Refreshing a chain whose consent has no offline grant still rotates, but the new refresh
 //      token keeps the presented one's expiry (non-sliding), so a chain issued before the flag lapses
 //      at its current expiry, within 30 days. A chain under an offline grant gets a fresh 30 days.
-//      A chain of a client that holds the device-code grant always slides: the device flow is the
-//      user's own tool signing in on purpose, so it is offline by nature. That is read off the
-//      client's grants, not the chain's recorded origin, which is null on every pre-flag chain.
+//      A device chain always slides: the device flow is the user's own tool signing in on purpose,
+//      so it is offline by nature. A chain recorded as `device_code` is one; a pre-flag chain (no
+//      recorded origin) is treated as one when its client holds the device-code grant. A chain
+//      recorded as `auth_code` needs the offline grant even under a client that also does devices.
 //   3. Every rotation leaves a tombstone for the rotated token, keyed by its hash, pointing at the
 //      chain's family id (`ApiKey.refreshFamilyId`). Presenting a tombstoned token is reuse: someone
 //      holds a token that was already exchanged. The hub deletes every refresh token of that family
@@ -335,10 +336,10 @@ export function planDeviceGrant(now = new Date()): MintPlan {
 
 /**
  * The tokens a refresh grant mints, flag on. The new refresh token joins the presented one's family.
- * Its expiry slides to a fresh REFRESH_TOKEN_TTL under an offline grant, or when the client holds the
- * device-code grant (`clientGrants`, the client's own grants, so a pre-flag device chain with no
- * recorded origin slides too); otherwise it keeps the presented token's expiry, so the chain lapses
- * then.
+ * Its expiry slides to a fresh REFRESH_TOKEN_TTL under an offline grant, or for a device chain: one
+ * recorded as `device_code`, or a pre-flag chain (no recorded origin) whose client holds the
+ * device-code grant (`clientGrants`). Otherwise it keeps the presented token's expiry, so the chain
+ * lapses then.
  */
 export async function planRefreshGrant(opts: {
   userId: number;
@@ -349,9 +350,14 @@ export async function planRefreshGrant(opts: {
 }): Promise<MintPlan> {
   const now = opts.now ?? new Date();
   const fresh = new Date(now.getTime() + REFRESH_TOKEN_TTL * 1000);
-  const slides =
-    opts.clientGrants.includes(DEVICE_CODE_GRANT) ||
-    (await hasOfflineGrant(opts.userId, opts.clientId));
+  // A device chain slides: recorded as one, or, for a pre-flag chain with no recorded origin, when
+  // its client holds the device-code grant (we cannot tell, so we err toward not forcing a
+  // re-sign-in). A chain recorded as auth_code never slides without the offline grant, whatever
+  // grants its client holds.
+  const origin = opts.chain.rootOrigin;
+  const deviceChain =
+    origin === 'device_code' || (origin === null && opts.clientGrants.includes(DEVICE_CODE_GRANT));
+  const slides = deviceChain || (await hasOfflineGrant(opts.userId, opts.clientId));
   // A row with no expiry (none is written so, but the column allows it) is held to a fresh TTL, so
   // even it lapses; an expiry is never extended past what a fresh token would get.
   const kept = opts.chain.expiresAt && opts.chain.expiresAt < fresh ? opts.chain.expiresAt : fresh;
