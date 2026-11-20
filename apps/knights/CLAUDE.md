@@ -20,7 +20,7 @@ Flipt flag `knights-of-new-order-app` (`KNIGHTS_APP_FLAG` in `src/lib/server/acc
 through `@civitai/flipt`; the `testers` segment is configured in Flipt, not here. `src/hooks.server.ts` runs the
 `@civitai/auth` spoke guard, then `accessFor` -> `decideAccess` (`src/lib/access.ts`, pure and unit-tested):
 
-- anonymous: `/` is the welcome page (`routes/+page.svelte`, `lib/welcome.ts`) and a page load anywhere else is redirected to `/?next=<path>` (a URL no route answers gets the 404 instead, `showsNotFound`); its "Sign in with Civitai" is the guard's own login URL with the sanitised `next` as return-to. A signed-in visitor to `/` runs the checks below and the page's load redirects them to `/home`, or to `?next=` when that is an internal path (`safeNext`). API and non-page requests keep the hub redirect
+- anonymous: `/` is the welcome page (`routes/+page.svelte`, `lib/welcome.ts`) and a page load anywhere else is redirected to `/?next=<path>` (a URL no route answers gets the 404 instead, `showsNotFound`); its "Sign in with Civitai" is the guard's own login URL with the sanitised `next` as return-to. A signed-in visitor to `/` runs the checks below and the page's load redirects them to `/home`, or to `?next=` when that is an internal path (`safeNext`). API and non-page requests get the guard's 401 reauth answer
 - moderator: always allowed
 - anyone else: allowed iff the flag is on for them; flag missing or Flipt down fails closed
 - denied: a plain "not yet open" page (403)
