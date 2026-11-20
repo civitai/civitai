@@ -1,6 +1,6 @@
 {
-  "name": "fallback-include-tags",
-  "description": "`include: [cosmetics, tags]`: the votable tags (imageTagsCache and the viewer’s votes) are not ported.",
+  "name": "followed-with-creator",
+  "description": "`followed: true` with a `userId` signed in: the mapper refuses a follow list beside a creator (flag:followed:userId), an empty page; no feed call.",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "imageIndexFeed": true,
@@ -10,14 +10,39 @@
     "frameCacheNegative": false
   },
   "request": {
-    "input": "{\"json\":{\"include\":[\"cosmetics\",\"tags\"],\"browsingLevel\":1,\"limit\":2}}",
+    "input": "{\"json\":{\"followed\":true,\"userId\":1001,\"sort\":\"Newest\",\"browsingLevel\":31,\"limit\":5}}",
     "headers": {
-      "host": "green.example.test"
+      "host": "blue.example.test"
     },
-    "session": null
+    "session": {
+      "userId": 1003
+    }
   },
   "feed": [],
-  "redis": {},
+  "redis": {
+    "packed:caches:user-follows:1003": {
+      "value": {
+        "userId": 1003,
+        "follows": [
+          1002
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADpnVzZXJJZM0D66dmb2xsb3dzkc0D6qhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "session:data2:1003": {
+      "value": {
+        "id": 1003,
+        "username": "viewer_three",
+        "isModerator": false,
+        "bannedAt": null,
+        "tier": null
+      },
+      "packed": "3gAFomlkzQPrqHVzZXJuYW1lrHZpZXdlcl90aHJlZatpc01vZGVyYXRvcsKoYmFubmVkQXTApHRpZXLA"
+    }
+  },
   "sysRedis": {
     "system:browsing-setting-addons": {
       "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
@@ -341,6 +366,22 @@
     "usernames": []
   },
   "expect": {
-    "fallback": "input-include"
+    "envelope": {
+      "json": {
+        "items": [],
+        "nextCursor": null,
+        "source": "feed"
+      },
+      "meta": {
+        "values": {
+          "nextCursor": [
+            "undefined"
+          ]
+        },
+        "v": 1
+      }
+    },
+    "cacheable": false,
+    "writes": {}
   }
 }

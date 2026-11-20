@@ -46,6 +46,10 @@ type ImagesQuery struct {
 	// TargetUserID is the creator filter (`userId`, or the id a `username` resolved to):
 	// `i."userId" = <targetUserId>`. getAllImages marks that query personalized, so it is never cached.
 	TargetUserID int
+	// FollowedUserIDs is image.getInfinite's `followed` for a signed-in viewer with a non-empty
+	// follow list (getUserFollows): `i."userId" = ANY(<follows>)` (Node's `IN (…)`). getAllImages marks that query
+	// personalized, so it is never cached. Empty (signed out, no follows): no clause at all.
+	FollowedUserIDs []int
 	// TagIDs is the input's own `tags` inclusion filter, after the blocked tags are stripped: images
 	// carrying any of them. getAllImages marks that query personalized, so it is never cached.
 	TagIDs []int
@@ -192,6 +196,10 @@ func (q *ImagesQuery) Build() Built {
 	if q.TargetUserID != 0 {
 		and = append(and, `i."userId" = `+a.add(q.TargetUserID))
 	}
+	if len(q.FollowedUserIDs) > 0 {
+		// `userId && followed && prefetchedUserFollows?.length`, after the creator clause as there.
+		and = append(and, `i."userId" = ANY(`+a.add(q.FollowedUserIDs)+`::int[])`)
+	}
 	if len(q.TagIDs) > 0 {
 		and = append(and, `i.id IN (
       SELECT "imageId"
@@ -215,9 +223,9 @@ func (q *ImagesQuery) Build() Built {
 	// The pending view of a moderator or a signed-in viewer (`effectivePending && (isModerator ||
 	// ownerId)`).
 	pendingView := q.Pending && (q.IsModerator || q.ViewerID != 0)
-	if q.TargetUserID != 0 || len(q.TagIDs) > 0 || prioritized || pendingView {
-		// isPersonalized (the user-gallery path, a tag combination, prioritizedUserIds, the pending
-		// view): never cached.
+	if q.TargetUserID != 0 || len(q.FollowedUserIDs) > 0 || len(q.TagIDs) > 0 || prioritized || pendingView {
+		// isPersonalized (the user-gallery path, a follow set, a tag combination, prioritizedUserIds,
+		// the pending view): never cached.
 		cacheTTL, tags = 0, nil
 	}
 

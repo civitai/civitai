@@ -263,6 +263,11 @@ type fakeV1Sources struct {
 	meta      map[int]any
 	// metaAsked is each V1Page call's MetaIDs.
 	metaAsked [][]int
+	// follows answers UserFollows (absent: no follows); followsErr fails it; followsAsked is each
+	// call's user id.
+	follows      map[int][]int
+	followsErr   error
+	followsAsked []int
 }
 
 func pickIDs[V any](m map[int]V, ids []int) map[int]V {
@@ -295,6 +300,16 @@ func (f *fakeV1Sources) VersionModels(_ context.Context, ids []int) (map[int]int
 func (f *fakeV1Sources) UserIDByUsername(_ context.Context, u string) (int, bool, error) {
 	id, ok := f.usernames[u]
 	return id, ok, nil
+}
+func (f *fakeV1Sources) UserFollows(_ context.Context, userID int) ([]int, error) {
+	f.followsAsked = append(f.followsAsked, userID)
+	if f.followsErr != nil {
+		return nil, f.followsErr
+	}
+	if v, ok := f.follows[userID]; ok {
+		return v, nil
+	}
+	return []int{}, nil
 }
 
 type fakeV1Gallery struct {

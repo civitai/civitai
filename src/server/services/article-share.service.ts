@@ -8,7 +8,7 @@ import { isDefined } from '~/utils/type-guards';
 import { sysRedis } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { connectionImageExists, imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   AccessTokenLimitError,
@@ -249,7 +249,11 @@ export async function getArticleByShareToken({
   }
 
   const connections = await dbWrite.imageConnection.findMany({
-    where: { entityId: article.id, entityType: ImageConnectionType.Article },
+    where: {
+      entityId: article.id,
+      entityType: ImageConnectionType.Article,
+      ...connectionImageExists,
+    },
     select: { image: { select: { ...articleContentImageSelect, minor: true } } },
   });
   const withheldByModel = await getModelWithheldImageIds(

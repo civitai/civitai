@@ -66,6 +66,7 @@ const verifyToken: VerifyToken = async (token) => {
   if (token === 'user-token')
     return {
       subject: 'user:4711/client:9',
+      userId: 4711,
       clientId: '9',
       scope: 0n,
       actor: null,
@@ -75,6 +76,7 @@ const verifyToken: VerifyToken = async (token) => {
   if (token === 'r-user-token')
     return {
       subject: 'user:4712/client:9',
+      userId: 4712,
       clientId: '9',
       scope: 0n,
       actor: null,
@@ -84,6 +86,7 @@ const verifyToken: VerifyToken = async (token) => {
   if (token === 'service-token')
     return {
       subject: 'service:7e3a1c55/client:7e3a1c55',
+      userId: null,
       clientId: '7e3a1c55',
       scope: 0n,
       actor: null,
@@ -517,7 +520,10 @@ describe('the service answer as an audience', () => {
       audienceForUser({ showNsfw: true, browsingLevel: 1 | 2 | 4 | 8 }),
       audienceForUser({ showNsfw: true, browsingLevel: 1 | 2 | 4 | 8 | 16 }),
     ]) {
-      const d = ourDecision({ subject: null, audience, expiresAt: null, recheck: null }, false);
+      const d = ourDecision(
+        { subject: null, token: null, audience, expiresAt: null, recheck: null },
+        false
+      );
       const back = serviceAudience({ ...d, regionHold: 'none' });
       expect(back).toEqual(audience);
     }
