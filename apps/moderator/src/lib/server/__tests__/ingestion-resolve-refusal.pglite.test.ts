@@ -26,7 +26,7 @@ vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
 vi.mock('../profile-picture-cache', () => ({ bustProfilePictures: vi.fn(async () => undefined) }));
 vi.mock('../image-models-reindex', () => ({
-  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
 }));
 vi.mock('../thumbnail-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof ThumbnailCache>()),
@@ -34,7 +34,7 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
 }));
 
 const { resolveIngestionError } = await import('../ingestion.service');
-const { queueModelsForImageChildTagChanges } = await import('../image-models-reindex');
+const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
 
 const SCHEMA = `
 CREATE TABLE "User" (
@@ -209,19 +209,19 @@ describe('spoke resolveIngestionError: models index', () => {
       CREATE FUNCTION update_post_nsfw_levels(ids int[]) RETURNS void LANGUAGE sql AS $$ SELECT $$;
       UPDATE "Image" SET "postId" = 5 WHERE "id" = ${IMAGE_ID};
     `);
-    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+    vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
 
     await resolve();
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 
   it('skips an image on no post', async () => {
     await seed({});
-    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+    vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
 
     await resolve();
 
-    expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalled();
+    expect(queueDocumentsForImageMinorChanges).not.toHaveBeenCalled();
   });
 });

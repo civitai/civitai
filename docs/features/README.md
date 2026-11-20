@@ -45,5 +45,6 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Model civitai.com face (separate .com title, description and cover) | [docs/features/model-com-face.md](model-com-face.md) |
 | Semantic image search (image vectors in Qdrant, kept in sync by CDC) | [docs/features/semantic-image-search.md](semantic-image-search.md) |
 | Semantic model search (model vectors in Qdrant for the search service) | [docs/features/semantic-model-search.md](semantic-model-search.md) |
+| Semantic video search (video vectors in Qdrant, the `video` content domain) | [docs/features/semantic-video-search.md](semantic-video-search.md) |
 | Service Requests page: link sellers to Incoming requests | [docs/features/service-requests-seller-link.md](service-requests-seller-link.md) |
 | Creator Services: deal file retention (30/90 days, holds, purge record) | [docs/features/service-deal-file-retention.md](service-deal-file-retention.md) |

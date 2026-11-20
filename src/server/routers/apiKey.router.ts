@@ -13,6 +13,7 @@ import {
   getUserApiKeysInputSchema,
   setBuzzLimitInputSchema,
 } from '~/server/schema/api-key.schema';
+import { assertNotImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { protectedProcedure, router, verifiedProcedure } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -31,7 +32,10 @@ export const apiKeyRouter = router({
   add: verifiedProcedure
     .meta({ requiredScope: TokenScope.Full, requireFullUserCredential: true })
     .input(addApiKeyInputSchema)
-    .mutation(addApiKeyHandler),
+    .mutation((opts) => {
+      assertNotImpersonating(opts.ctx, "API keys can't be created while impersonating");
+      return addApiKeyHandler(opts);
+    }),
   setBuzzLimit: protectedProcedure
     .meta({ requiredScope: TokenScope.Full, requireFullUserCredential: true })
     .input(setBuzzLimitInputSchema)

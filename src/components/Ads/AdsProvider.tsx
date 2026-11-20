@@ -3,6 +3,7 @@ import Script from 'next/script';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
+import { SparteoTag } from '~/components/Ads/SparteoTag';
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { detectPrivacyUi } from '~/components/Consent/privacy-ui';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -296,13 +297,7 @@ export function AdsProvider({
         />
       )}
       {/* Sparteo, which replaces Snigel, serves nothing from this tag until it activates the site. */}
-      {adsEnabled && !useDirectAds && (
-        <Script
-          id="sparteo-tag"
-          data-cfasync="false"
-          src="https://www.flashb.id/universal/f812656a-2eb5-5363-b9fb-90c27d71eb79.js"
-        />
-      )}
+      {adsEnabled && !useDirectAds && <SparteoTag />}
       {/* Client-gated: the engine is resolved from sessionStorage, which SSR can't see. */}
       <IsClient>
         {adEngine === 'staging' && (

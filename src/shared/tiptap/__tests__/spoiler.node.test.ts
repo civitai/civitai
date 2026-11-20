@@ -1,5 +1,5 @@
 import { generateHTML } from '@tiptap/html';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
@@ -47,6 +47,19 @@ describe('article spoilers', () => {
     expect(removeTags(removeSpoilers('<p>a <span data-type=" SPOILER ">x</span> b</p>'))).toBe(
       'a b'
     );
+  });
+
+  it('strip without warning, passing script and style through to the caller’s own pass', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const out = removeSpoilers(
+        '<p>a <span data-type="spoiler">x</span> b</p><script>alert(1)</script><style>p{color:red}</style>'
+      );
+      expect(out).toBe('<p>a  b</p><script>alert(1)</script><style>p{color:red}</style>');
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   // A spoiler must not be a way past image scanning: media inside one is still collected.

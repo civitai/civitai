@@ -13,6 +13,7 @@ import {
   parseReviewBatchRecord,
   reviewBatchHash,
   SCANNER_HITS_SQL,
+  scannerCsamVerdict,
   scannerVerdict,
   type ImageSignalRow,
   type ReviewBatchRecord,
@@ -93,6 +94,38 @@ export async function readScannerVerdict(imageId: number) {
       clickhouse_settings: { max_execution_time: 3 },
     });
     return scannerVerdict(imageId, await result.json());
+  } catch {
+    return null;
+  }
+}
+
+/** One image's CSAM-label verdict (`scannerCsamVerdict`); null when the scanner cannot be read. */
+export async function readScannerCsamVerdict(imageId: number) {
+  try {
+    const result = await getClickhouse().query({
+      query: SCANNER_HITS_SQL,
+      query_params: { hashes: [imageAuditContentHash(imageId)] },
+      format: 'JSONEachRow',
+      clickhouse_settings: { max_execution_time: 3 },
+    });
+    return scannerCsamVerdict(imageId, await result.json());
+  } catch {
+    return null;
+  }
+}
+
+/** Each image's CSAM-label verdict in one read; null when the scanner cannot be read. */
+export async function readScannerCsamVerdicts(imageIds: number[]) {
+  if (!imageIds.length) return new Map<number, 'hit' | 'clear' | 'none'>();
+  try {
+    const result = await getClickhouse().query({
+      query: SCANNER_HITS_SQL,
+      query_params: { hashes: imageIds.map(imageAuditContentHash) },
+      format: 'JSONEachRow',
+      clickhouse_settings: { max_execution_time: 3 },
+    });
+    const rows = await result.json<{ contentHash: string; csamHit?: number | boolean | string }>();
+    return new Map(imageIds.map((id) => [id, scannerCsamVerdict(id, rows)] as const));
   } catch {
     return null;
   }

@@ -76,6 +76,10 @@ export function removeBodyMedia(
   return sanitize(html, {
     allowedTags: false,
     allowedAttributes: false,
+    // Only silences the per-call warning that script and style pass through; output is unchanged
+    // (the body as stored, minus media). The result is NOT sanitised: render it through RenderHtml
+    // or strip its tags, never insert it as HTML directly.
+    allowVulnerableTags: true,
     // Only media is removed; every other href and src is left as stored.
     allowedSchemesAppliedToAttributes: [],
     exclusiveFilter: (frame) => {

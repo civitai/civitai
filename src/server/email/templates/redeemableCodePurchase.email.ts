@@ -1,5 +1,5 @@
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { emailTheme, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 type RedeemableCodePurchaseData = {
@@ -24,7 +24,7 @@ export const redeemableCodePurchaseEmail = createEmail({
       body: `
         Your crypto purchase is complete. Here is your redeemable code for <strong>${description}</strong>:
         <br/><br/>
-        <div style="text-align:center; padding:16px; background:#f0f0f0; border-radius:8px; font-size:24px; font-family:monospace; letter-spacing:2px;">
+        <div style="text-align:center; padding:16px; background:#f0f0f0; color:${emailTheme.text}; border-radius:8px; font-size:24px; font-family:monospace; letter-spacing:2px;">
           <strong>${code}</strong>
         </div>
         <br/>

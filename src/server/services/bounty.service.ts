@@ -1251,6 +1251,15 @@ async function getVisibleBountyImageIds({
   return rows.map(({ imageId }) => imageId);
 }
 
+/** Generation data its uploader hid goes only to the uploader and moderators. */
+const withVisibleMeta = <T extends { meta: unknown; hideMeta: boolean; userId: number }>(
+  image: T,
+  viewer: { userId?: number; isModerator?: boolean }
+) =>
+  image.hideMeta && !viewer.isModerator && image.userId !== viewer.userId
+    ? { ...image, meta: null }
+    : image;
+
 export const getBountyImages = async ({
   id,
   userId,
@@ -1259,12 +1268,13 @@ export const getBountyImages = async ({
   const imageIds = await getVisibleBountyImageIds({ bountyIds: [id], userId, isModerator });
 
   const connections = await dbRead.imageConnection.findMany({
+    // image-connection-orphan-safe: imageIds were read from Image just above.
     where: { entityId: id, entityType: 'Bounty', imageId: { in: imageIds } },
     select: { image: { select: { ...imageSelect, poi: true, minor: true } } },
   });
 
   return connections.map(({ image }) => ({
-    ...image,
+    ...withVisibleMeta(image, { userId, isModerator }),
     nsfwLevel: image.nsfwLevel as NsfwLevel,
     tags: image.tags.map((t) => t.tag),
   }));
@@ -1404,6 +1414,7 @@ export const getImagesForBounties = async ({
   const imageIds = await getVisibleBountyImageIds({ bountyIds, userId, isModerator });
 
   const connections = await dbRead.imageConnection.findMany({
+    // image-connection-orphan-safe: imageIds were read from Image just above.
     where: { entityType: 'Bounty', entityId: { in: bountyIds }, imageId: { in: imageIds } },
     select: {
       entityId: true,
@@ -1413,7 +1424,7 @@ export const getImagesForBounties = async ({
 
   const groupedImages = groupBy(
     connections.map(({ entityId, image }) => ({
-      ...image,
+      ...withVisibleMeta(image, { userId, isModerator }),
       nsfwLefel: image.nsfwLevel as NsfwLevel,
       tags: image.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
       entityId,

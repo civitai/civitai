@@ -1,6 +1,6 @@
 import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { emailTheme, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 export type NotificationEmailData = {
@@ -8,8 +8,12 @@ export type NotificationEmailData = {
   typeName: string;
   message: string;
   url?: string;
+  /** The button's label; a prepared notification message can set its own (`emailButtonLabel`). */
+  btnLabel?: string;
   unsubscribeUrl: string;
 };
+
+export const DEFAULT_NOTIFICATION_BUTTON_LABEL = 'View on Civitai';
 
 export const notificationSettingsUrl = () => `${getBaseUrl()}/user/account#notification-settings`;
 
@@ -27,25 +31,29 @@ export const notificationEmail = createEmail({
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
     },
   }),
-  html: ({ typeName, message, url, unsubscribeUrl }: NotificationEmailData) => {
+  html: ({ typeName, message, url, btnLabel, unsubscribeUrl }: NotificationEmailData) => {
     const link = absoluteUrl(url);
-    const footer = `<p style="font-size: 13px; color: #888;">You're getting this because email is on for
-      "${escapeHtml(
-        typeName
-      )}". <a href="${notificationSettingsUrl()}">Manage notification emails</a>
-      or <a href="${escapeHtml(unsubscribeUrl)}">unsubscribe from this one</a>.</p>`;
+    const footer = `You're getting this because email is on for
+      "${escapeHtml(typeName)}". <a href="${notificationSettingsUrl()}" style="color: ${
+      emailTheme.link
+    };">Manage notification emails</a>
+      or <a href="${escapeHtml(unsubscribeUrl)}" style="color: ${
+      emailTheme.link
+    };">unsubscribe from this one</a>.`;
     return simpleEmailWithTemplate({
       header: escapeHtml(subjectFor(typeName)),
-      body: `<p>${escapeHtml(message)}</p>${footer}`,
+      preheader: escapeHtml(message),
+      body: `<p style="margin: 0;">${escapeHtml(message)}</p>`,
       btnUrl: link ? escapeHtml(link) : undefined,
-      btnLabel: link ? 'View on Civitai' : undefined,
+      btnLabel: link ? escapeHtml(btnLabel ?? DEFAULT_NOTIFICATION_BUTTON_LABEL) : undefined,
+      footer,
     });
   },
-  text: ({ typeName, message, url, unsubscribeUrl }: NotificationEmailData) => {
+  text: ({ typeName, message, url, btnLabel, unsubscribeUrl }: NotificationEmailData) => {
     const link = absoluteUrl(url);
     return [
       message,
-      link ? `View on Civitai: ${link}` : '',
+      link ? `${btnLabel ?? DEFAULT_NOTIFICATION_BUTTON_LABEL}: ${link}` : '',
       `You're getting this because email is on for "${typeName}".`,
       `Manage notification emails: ${notificationSettingsUrl()}`,
       `Unsubscribe from this one: ${unsubscribeUrl}`,

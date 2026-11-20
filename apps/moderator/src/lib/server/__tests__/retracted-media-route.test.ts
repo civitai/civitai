@@ -23,16 +23,12 @@ vi.mock('$lib/server/access', () => ({
 vi.mock('$lib/server/retracted-media', () => ({
   getRetractedMedia,
   recordRetractedView,
-  NEEDS_CSAM_QUEUE: 'needs-csam-queue',
   retractedMediaEnabled: () => enabled.on,
 }));
+const retryAfter = vi.hoisted(() => ({ seconds: null as number | null }));
+const retractedMediaRetryAfter = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/retracted-media-rate', () => ({ retractedMediaRetryAfter }));
 vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
-// Off here; the covered view's routes are csam-view-routes.test.ts.
-vi.mock('$lib/server/csam-view', () => ({
-  COVERED_REFUSED: 'covered-refused',
-  coveredViewEnabled: () => false,
-  getCoveredRetractedMedia: vi.fn(),
-}));
 vi.mock('$lib/server/held-media', () => ({
   HELD_MEDIA_PAGE: '/images/csam',
   recordHeldServe: () => undefined,
@@ -67,7 +63,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   grants.paths = new Set();
   enabled.on = true;
-  getRetractedMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null, tier: 'plain' });
+  getRetractedMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null });
   recordRetractedView.mockResolvedValue(undefined);
   fetchMock.mockImplementation(
     async () =>
@@ -78,6 +74,7 @@ beforeEach(() => {
   );
   vi.stubGlobal('fetch', fetchMock);
 });
+beforeEach(() => retractedMediaRetryAfter.mockImplementation(async () => retryAfter.seconds));
 afterEach(() => vi.unstubAllGlobals());
 
 describe('/api/retracted-media', () => {
@@ -101,14 +98,6 @@ describe('/api/retracted-media', () => {
     expect(status).toBe(404);
     expect(res?.headers.get('cache-control')).toBe('private, no-store');
     expect(getRetractedMedia).not.toHaveBeenCalled();
-  });
-
-  it('tells a moderator an image with no scanner verdict needs CSAM-queue access', async () => {
-    getRetractedMedia.mockResolvedValue('needs-csam-queue');
-    const { status, res } = await call();
-    expect(status).toBe(403);
-    expect(await res!.text()).toContain('Needs CSAM-queue access');
-    expect(getGetUrl).not.toHaveBeenCalled();
   });
 
   it('answers a probe with eligibility alone: no storage, no audit row', async () => {
@@ -181,6 +170,32 @@ describe('/api/retracted-media', () => {
     );
     expect((await call()).status).toBe(413);
     expect(recordRetractedView).not.toHaveBeenCalled();
+  });
+});
+
+describe('/api/retracted-media eligibility read failure', () => {
+  it('answers 503, no-store, and touches no storage', async () => {
+    getRetractedMedia.mockRejectedValue(new Error('canceling statement due to statement timeout'));
+    const { status, res } = await call();
+    expect(status).toBe(503);
+    expect(res?.headers.get('cache-control')).toBe('private, no-store');
+    expect(getGetUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe('/api/retracted-media rate limit', () => {
+  it('answers 429 with retry-after and no-store over the limit, before reading the image', async () => {
+    retryAfter.seconds = 42;
+    try {
+      const { status, res } = await call();
+      expect(status).toBe(429);
+      expect(res?.headers.get('retry-after')).toBe('42');
+      expect(res?.headers.get('cache-control')).toBe('private, no-store');
+      expect(getRetractedMedia).not.toHaveBeenCalled();
+      expect(retractedMediaRetryAfter).toHaveBeenCalledWith(42);
+    } finally {
+      retryAfter.seconds = null;
+    }
   });
 });
 

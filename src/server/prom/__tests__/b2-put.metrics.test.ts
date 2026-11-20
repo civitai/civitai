@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import client from 'prom-client';
-import { b2PutMetricsMiddleware, __resetB2PutMetricsForTest } from '~/server/prom/b2-put.metrics';
+import {
+  b2PutMetricsMiddleware,
+  classifyErrorResult,
+  __resetB2PutMetricsForTest,
+} from '~/server/prom/b2-put.metrics';
 
 // Pure unit test: this module imports only prom-client (no env / Prisma / DB), so
 // nothing here boots the app graph. We drive the AWS-SDK-shaped middleware directly
@@ -22,11 +26,86 @@ async function countFor(name: string, labels: Record<string, string>): Promise<n
   return match?.value ?? 0;
 }
 
+function sdkError(opts: { httpStatusCode?: number; name?: string; attempts?: number }) {
+  const err = new Error(opts.name ?? 'SdkError') as Error & {
+    name: string;
+    $metadata?: { httpStatusCode?: number; attempts?: number };
+  };
+  if (opts.name) err.name = opts.name;
+  err.$metadata = { httpStatusCode: opts.httpStatusCode, attempts: opts.attempts };
+  return err;
+}
+
 beforeEach(() => {
   __resetB2PutMetricsForTest();
 });
 
+describe('classifyErrorResult', () => {
+  it('classifies 503 SlowDown / TooManyRequests as throttled', () => {
+    expect(classifyErrorResult(sdkError({ httpStatusCode: 503, name: 'SlowDown' }))).toBe(
+      'throttled'
+    );
+    expect(classifyErrorResult(sdkError({ httpStatusCode: 503, name: 'TooManyRequests' }))).toBe(
+      'throttled'
+    );
+  });
+});
+
 describe('b2PutMetricsMiddleware — send() outcome counting', () => {
+  it('success → increments b2_put_requests_total with bucket/op/result', async () => {
+    const next = vi.fn(async () => ({ output: { $metadata: { attempts: 1 } } }));
+    const handler = b2PutMetricsMiddleware(next, { commandName: 'PutObjectCommand' });
+
+    await handler({ input: { Bucket: 'civitai-media-uploads' } });
+
+    expect(
+      await countFor('b2_put_requests_total', {
+        service: 'civitai-web',
+        bucket: 'civitai-media-uploads',
+        op: 'upload',
+        result: 'success',
+      })
+    ).toBe(1);
+  });
+
+  it('a 429 throw → increments result="throttled" and re-throws', async () => {
+    const err = sdkError({ httpStatusCode: 429 });
+    const next = vi.fn(async () => {
+      throw err;
+    });
+    const handler = b2PutMetricsMiddleware(next, { commandName: 'CreateMultipartUploadCommand' });
+
+    await expect(handler({ input: { Bucket: 'civitai-modelfiles' } })).rejects.toBe(err);
+
+    expect(
+      await countFor('b2_put_requests_total', {
+        service: 'civitai-web',
+        bucket: 'civitai-modelfiles',
+        op: 'multipart',
+        result: 'throttled',
+      })
+    ).toBe(1);
+  });
+
+  it('a generic error throw → increments result="error" and re-throws', async () => {
+    const err = sdkError({ httpStatusCode: 500, name: 'InternalError' });
+    const next = vi.fn(async () => {
+      throw err;
+    });
+    const handler = b2PutMetricsMiddleware(next, { commandName: 'PutObjectCommand' });
+
+    await expect(handler({ input: { Bucket: 'civitai-media-uploads' } })).rejects.toBe(err);
+
+    expect(
+      await countFor('b2_put_requests_total', {
+        service: 'civitai-web',
+        bucket: 'civitai-media-uploads',
+        op: 'upload',
+        result: 'error',
+      })
+    ).toBe(1);
+  });
+
   it('counts SDK retry attempts from $metadata.attempts (attempts=3 → retries+2)', async () => {
     const next = vi.fn(async () => ({ output: { $metadata: { attempts: 3 } } }));
     const handler = b2PutMetricsMiddleware(next, { commandName: 'UploadPartCommand' });

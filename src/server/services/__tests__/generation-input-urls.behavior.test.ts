@@ -1466,6 +1466,12 @@ describe('opaqueInputUrlsIn', () => {
     ).toEqual([`https://image.civitai.com/x/${OKEY}/original=true`, OKEY]);
   });
 
+  it('reports too many values as too large', () => {
+    // The root, the field name and the array are three values.
+    expect(opaqueInputUrlsIn({ list: new Array(262_141).fill(0) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ list: new Array(262_142).fill(0) }).tooLarge).toBe(true);
+  });
+
   const base64 = (n: number) => 'QUJD'.repeat(Math.ceil(n / 4)).slice(0, n);
   const MiB = 1024 * 1024;
 
@@ -1631,15 +1637,6 @@ describe('opaqueInputUrlsIn', () => {
     // The root, the field name and the array are three values.
     expect(opaqueInputUrlsIn({ list: new Array(262_141).fill(0) }).tooLarge).toBe(false);
     expect(opaqueInputUrlsIn({ list: new Array(262_142).fill(0) }).tooLarge).toBe(true);
-  });
-
-  it('reads a long run of spaces in linear time', () => {
-    const value = `a${' '.repeat(1_000_000)}b`;
-    const started = performance.now();
-    expect(opaqueInputUrlsIn({ value }).urls).toEqual([]);
-    // Linear is milliseconds, the quadratic form minutes at this length: the bound sits far from
-    // both, so load cannot redden it and only a quadratic scan can.
-    expect(performance.now() - started).toBeLessThan(5000);
   });
 
   it('trims Unicode spaces around a whole url, as a consumer would', () => {

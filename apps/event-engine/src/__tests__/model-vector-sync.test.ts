@@ -192,6 +192,16 @@ describe('syncModelIds', () => {
     });
   });
 
+  // The search matches tags against the lowercased query, so the payload holds them lowercased.
+  test('stores the tags lowercased in the payload, as typed in the embedded text', async () => {
+    const { db, store, deps } = setup();
+    db.rows.set(1, model(1, { tags: ['Anime', 'anime', 'Style'] }));
+    await syncModelIds([1], deps);
+    const { payload } = store.points.get(1)!;
+    expect(payload.tags).toEqual(['anime', 'style']);
+    expect(payload.search_text).toContain('Tags: Anime, anime, Style');
+  });
+
   test('an unchanged document only rewrites the payload; an edited one is re-embedded', async () => {
     const { db, store, embedder, deps } = setup();
     db.rows.set(1, model(1));
