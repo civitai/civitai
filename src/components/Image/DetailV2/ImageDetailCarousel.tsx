@@ -31,6 +31,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { isSongDetail, SongDetailStage } from '~/components/Music/SongDetail/SongDetailStage';
 import type { DetailText } from '~/components/Image/Detail/detail-items';
 import { TextSlide } from '~/components/Image/DetailV2/TextSlide';
 import { allowNativeDragStart, watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
@@ -49,6 +50,7 @@ type ImageProps = {
   name: string | null;
   metadata?: MixedObject | ImageMetadata | VideoMetadata | null;
   eventDecoration?: WornDecoration;
+  user?: { id: number; username?: string | null };
   ingestion?: string | null;
 };
 type CarouselItem =
@@ -258,8 +260,8 @@ export function ImageDetailCarousel({
     <div ref={ref} className="relative flex min-h-0 flex-1 items-stretch justify-stretch">
       <Embla
         withControls={canNavigate}
-        // min-w-0 here and on each slide: a text slide's words are not allowed to widen the
-        // carousel or the slide past the stage, which clips the slide on the right.
+        // min-w-0 here and on each slide: a slide's content (a text slide's words, a song stage)
+        // must not widen the carousel or the slide past the stage.
         className="min-w-0 flex-1"
         onSlideChange={handleSlideChange}
         setEmbla={handleSetEmbla}
@@ -367,6 +369,14 @@ function ImageContent({
       type: isVideo ? 'video' : 'image',
     });
   };
+
+  const song = isSongDetail(image, features) && image.user ? { ...image, user: image.user } : null;
+  if (song)
+    return (
+      <ImageGuardContent image={image} {...connect}>
+        {(safe) => <SongDetailStage image={song} revealed={safe} />}
+      </ImageGuardContent>
+    );
 
   return (
     <ImageGuardContent image={image} {...connect}>

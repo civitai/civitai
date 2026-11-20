@@ -42,6 +42,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Avatar Gen (portrait to stylised avatar workflow)            | [docs/features/avatar-gen.md](avatar-gen.md)                                 |
 | Account settings deep links (`?setting=`)                    | [docs/features/account-settings-links.md](account-settings-links.md)         |
 | Storylines (branching stories told in posts) | [docs/features/storylines.md](storylines.md) |
+| Music (songs, global player, song detail view) | [docs/features/music.md](music.md) |
 | Model civitai.com face (separate .com title, description and cover) | [docs/features/model-com-face.md](model-com-face.md) |
 | Semantic image search (image vectors in Qdrant, kept in sync by CDC) | [docs/features/semantic-image-search.md](semantic-image-search.md) |
 | Semantic model search (model vectors in Qdrant for the search service) | [docs/features/semantic-model-search.md](semantic-model-search.md) |

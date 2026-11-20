@@ -6,9 +6,11 @@ import {
   blockRenderSchema,
   blockRenderTrackerPayload,
   mediaOverlapSchema,
+  songPlaySchema,
 } from '~/server/schema/track.schema';
 import { logToAxiom } from '~/server/logging/client';
 import { isPrivateRunImpression } from '~/server/services/blocks/private-run-impression.service';
+import { countSongPlay, recordSongPlayStart } from '~/server/services/song-play.service';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -85,6 +87,15 @@ export const trackRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(trackSearchSchema)
     .mutation(({ input, ctx }) => ctx.track.search(input)),
+  // Song plays: the server decides what counts (`song-play.service`); the client only reports.
+  songPlayStart: publicProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(songPlaySchema)
+    .mutation(({ input, ctx }) => recordSongPlayStart({ ctx, imageId: input.imageId })),
+  songPlay: publicProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(songPlaySchema)
+    .mutation(({ input, ctx }) => countSongPlay({ ctx, imageId: input.imageId })),
   // Diagnostic for audio heard twice in the image detail; goes when `media-overlap-detector` does.
   mediaOverlap: moderatorProcedure
     .input(mediaOverlapSchema)

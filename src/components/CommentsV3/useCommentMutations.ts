@@ -29,12 +29,17 @@ export function useCommentMutations() {
 
   return {
     saving: createComment.isPending || updateComment.isPending,
-    async create(content: string, parent: { id: number; depth: number } | null) {
+    async create(
+      content: string,
+      parent: { id: number; depth: number } | null,
+      timestampSec?: number
+    ) {
       const saved = await createComment.mutateAsync({
         entityType,
         entityId,
         parentId: parent?.id,
         content,
+        timestampSec,
       });
       addCreated(parent?.id ?? null, saved);
       await utils.cosmetic.getStickerBalances.invalidate();

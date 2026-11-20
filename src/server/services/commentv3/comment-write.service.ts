@@ -28,12 +28,15 @@ export async function writeNewComment({
   section,
   parent,
   content,
+  metadata,
   track,
 }: {
   userId: number;
   section: Section;
   parent?: StoredCommentV3;
   content: string;
+  /** Server-built; never a client's object. */
+  metadata?: Record<string, unknown>;
   track?: Track;
 }) {
   const saved = await dbWrite.$transaction(async (tx) => {
@@ -46,6 +49,7 @@ export async function writeNewComment({
       entityId: section.entityId,
       parentId: parent?.id,
       content,
+      metadata,
     });
     return { row, charged };
   });

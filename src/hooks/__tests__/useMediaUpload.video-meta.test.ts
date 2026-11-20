@@ -41,6 +41,7 @@ import { useMediaUpload } from '~/hooks/useMediaUpload';
 import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { preprocessFile } from '~/utils/media-preprocessors';
 import { auditPostImageMeta } from '~/utils/metadata/audit';
+import { showErrorNotification } from '~/utils/notifications';
 
 const videoMeta = { prompt: 'a prompt the audit rejects', engine: 'ComfyUI' };
 const processedVideo = {
@@ -163,5 +164,23 @@ describe('useMediaUpload with an on-site generated video', () => {
     const onComplete = await dropVideo();
     expect(onComplete.mock.calls[0][0].meta).toEqual(workerTags);
     expect(auditPostImageMeta).toHaveBeenCalledWith(workerTags, false);
+  });
+
+  it('refuses audio with a notification and neither completes nor uploads it', async () => {
+    vi.mocked(preprocessFile).mockResolvedValue({
+      type: 'audio',
+      name: 'song.mp3',
+      mimeType: 'audio/mpeg',
+      objectUrl: 'blob:song',
+      metadata: { duration: 1, size: 1 },
+    } as never);
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const onComplete = await dropVideo();
+    expect(revoke).toHaveBeenCalledWith('blob:song');
+    expect(showErrorNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Error: clip.mp4' })
+    );
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(uploadToS3).not.toHaveBeenCalled();
   });
 });

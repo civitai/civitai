@@ -3,7 +3,7 @@ import { IconArrowBackUp, IconPhotoUp } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { toPostableMedia } from '~/components/ImageGeneration/utils/toPostableMedia';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
@@ -40,10 +40,9 @@ export function GeneratedOutputRemixMenu({ output }: { output: BlobData }) {
   // subscription per accumulated output for a menu that is null for almost all
   // of them.
   //
-  // Audio has no post system and no gallery to go to; the Post button filters it
-  // out for the same reason.
+  // A song can be posted only with the music flag; the Post button filters it the same way.
   if (!features.remixGalleryGenerator || !features.remixGallery) return null;
-  if (!output.remixOfId || output.mediaType === 'audio') return null;
+  if (!output.remixOfId || (output.mediaType === 'audio' && !features.music)) return null;
 
   return <GeneratedOutputRemixMenuContent output={output} remixOfId={output.remixOfId} />;
 }
@@ -72,13 +71,7 @@ function GeneratedOutputRemixMenuContent({
   const postThisRemix = async () => {
     try {
       await postGeneratedMedia({
-        media: [
-          {
-            url: output.url,
-            meta: getStepMeta(output.step),
-            generationWorkflowId: output.workflowId,
-          },
-        ],
+        media: [toPostableMedia(output)],
         router,
         createPost: () => createPost.mutateAsync({}),
       });

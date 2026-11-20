@@ -36,9 +36,11 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL DEFAULT 5, "postId" int, url text NOT NULL,
-      type text NOT NULL DEFAULT 'image', "nsfwLevel" int NOT NULL DEFAULT 1,
+      type "MediaType" NOT NULL DEFAULT 'image', "nsfwLevel" int NOT NULL DEFAULT 1,
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "blockedFor" text,
       minor boolean NOT NULL DEFAULT false, "modelRestricted" boolean NOT NULL DEFAULT false,

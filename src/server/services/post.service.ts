@@ -15,6 +15,11 @@ import {
 } from '~/server/events/points/hooks';
 import { chunk, uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
+import type { Context } from '~/server/createContext';
+import {
+  canViewImageMedia,
+  type MediaCredentialViewer,
+} from '~/server/utils/image-media-visibility';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import {
@@ -56,7 +61,11 @@ import {
   refreshHasReceivedReviews,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
+import type {
+  ImageSchema,
+  IngestImageInput,
+  SetSongCoverInput,
+} from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
@@ -103,9 +112,12 @@ import {
   deleteImages,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
+import { stageGenerationOutputImage } from '~/server/services/blocks/block-image-upload.service';
+import { mediaFromBlobs, type OrchestratorBlobLike } from '~/server/services/blocks/steps/output';
 import { Flags } from '~/shared/utils/flags';
 import { hasCompleteSfwFace, imagesForFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { getImageIdsVisibleToViewer } from '~/server/services/image-visibility.service';
 import { getModelIdsVisibleToViewer } from '~/server/services/model-visibility.service';
 import { invalidateHiddenImageMetadata } from '~/server/services/hidden-meta-invalidation.service';
@@ -120,6 +132,8 @@ import type {
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
+import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -133,6 +147,7 @@ import {
   CollectionMode,
   CollectionType,
   EntityType,
+  ImageIngestionStatus,
   JobQueueType,
   MediaType,
   Model3DStatus,
@@ -144,11 +159,25 @@ import { enqueueJobs } from '~/server/services/job-queue.service';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { readImageUploadObjectHead } from '~/utils/s3-utils';
+import type { UserWorkflow } from '~/server/services/orchestrator/remix-provenance';
 import {
+  readUserWorkflow,
   resolveVerifiedSourceImageIds,
   sanitizeProvenance,
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { audioMetadataSchema, lyricLineSchema, type LyricLine } from '~/server/schema/media.schema';
+import {
+  saveGeneratedTrackLyrics,
+  submitTrackLyricsScan,
+} from '~/server/services/audio-scan/track-lyrics';
+import {
+  SONGS_UNAVAILABLE_MESSAGE,
+  buildSongDetails,
+  readSongConcept,
+  readWorkflowLyrics,
+} from '~/shared/form-graph/generation/audio/song-metadata';
 import { getMetadata } from '~/utils/metadata';
 import { canAddManualResources, getManualResourceLimitError } from '~/utils/manual-image-resources';
 import { isDefined } from '~/utils/type-guards';
@@ -166,7 +195,30 @@ import type {
   ReorderPostImagesInput,
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
+  SetSongGenreInput,
+  AddSongTagInput,
+  RemoveSongTagInput,
+  SearchSongTagsInput,
 } from './../schema/post.schema';
+import {
+  attachSongTag,
+  detachSongTag,
+  findAttachableTag,
+  hasSongTagRow,
+  readSongTags,
+  searchSongTags,
+} from '~/server/services/tagsOnSong.service';
+import {
+  readSongGenre,
+  SONG_GENRE_REQUIRED_MESSAGE,
+  SONG_TAG_LIMIT,
+  SONG_TAG_LIMIT_MESSAGE,
+  SONG_TAG_NOT_REMOVABLE_MESSAGE,
+  SONG_TAG_UNAVAILABLE_MESSAGE,
+  songGenreTagName,
+  withoutGenreTag,
+} from '~/shared/constants/song-genres';
+import type { SongGenre } from '~/shared/constants/song-genres';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
@@ -949,11 +1001,154 @@ async function getPostUnpublishContext({
   };
 }
 
-async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
+/** Each song's stored lyric lines, in one read for all of them. */
+async function getSongLyricLines(
+  images: { id: number; type: MediaType }[],
+  db: typeof dbRead | typeof dbWrite
+) {
+  const songIds = images.filter((x) => x.type === MediaType.audio).map((x) => x.id);
+  if (!songIds.length) return new Map<number, LyricLine[]>();
+  const rows = await db.trackLyrics.findMany({
+    where: { imageId: { in: songIds } },
+    select: { imageId: true, lines: true },
+  });
+  return new Map(
+    rows.flatMap(({ imageId, lines }) => {
+      const parsed = lyricLineSchema.array().safeParse(lines);
+      return parsed.success ? [[imageId, parsed.data] as const] : [];
+    })
+  );
+}
+
+const songCoverSelect = {
+  id: true,
+  url: true,
+  ingestion: true,
+  nsfwLevel: true,
+  blockedFor: true,
+} satisfies Prisma.ImageSelect;
+export type SongCover = Prisma.ImageGetPayload<{ select: typeof songCoverSelect }>;
+
+/**
+ * Each song's cover, in one read for all of them: the fields `coverSelect` names (by default its
+ * scan state, for the editor).
+ */
+async function getSongCovers<S extends Prisma.ImageSelect = typeof songCoverSelect>(
+  images: { id: number; type: MediaType; metadata: unknown }[],
+  db: typeof dbRead | typeof dbWrite,
+  coverSelect: S = songCoverSelect as unknown as S
+) {
+  type Cover = Prisma.ImageGetPayload<{ select: S }>;
+  const links = images.flatMap((image) => {
+    const coverId = (image.metadata as { coverImageId?: unknown } | null)?.coverImageId;
+    return image.type === MediaType.audio && typeof coverId === 'number'
+      ? [{ songId: image.id, coverId }]
+      : [];
+  });
+  if (!links.length) return new Map<number, Cover>();
+  // The songs come back too, for their owner: a cover must be theirs. Typed as the plain select so
+  // the generic `S` does not reach `findMany`'s inference (two Prisma client types, TS2719).
+  const select: Prisma.ImageSelect = {
+    ...coverSelect,
+    id: true,
+    userId: true,
+    postId: true,
+    metadata: true,
+  };
+  const rows = (await (db as typeof dbRead).image.findMany({
+    where: { id: { in: links.flatMap(({ songId, coverId }) => [songId, coverId]) } },
+    select,
+  })) as unknown as ({
+    id: number;
+    userId: number;
+    postId: number | null;
+    metadata: unknown;
+  } & Record<string, unknown>)[];
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return new Map(
+    links.flatMap(({ songId, coverId }) => {
+      const song = byId.get(songId);
+      const cover = byId.get(coverId);
+      if (!song || !cover || !isCoverOfSong(cover, song)) return [];
+      const shown = Object.fromEntries(Object.keys(coverSelect).map((key) => [key, cover[key]]));
+      return [[songId, shown as Cover] as const];
+    })
+  );
+}
+
+const playerCoverSelect = {
+  id: true,
+  url: true,
+  hash: true,
+  nsfwLevel: true,
+  ingestion: true,
+  blockedFor: true,
+  needsReview: true,
+  acceptableMinor: true,
+  userId: true,
+} satisfies Prisma.ImageSelect;
+
+export type PlayerSongCover = {
+  songId: number;
+  id: number;
+  url: string;
+  hash: string | null;
+  nsfwLevel: number;
+};
+
+/**
+ * The covers the global player may show for `ids`: only for songs the requester can already open
+ * by id, and only a cover that is the song's own, scanned, not blocked, not held for review, not
+ * flagged as showing a minor, and inside the request's domain browsing level. The owner gets the
+ * same rule except the domain level; the editor is where pending or blocked covers show.
+ */
+export async function getSongCoversForPlayer({
+  ids,
+  ctx,
+}: {
+  ids: number[];
+  ctx: MediaCredentialViewer;
+}): Promise<PlayerSongCover[]> {
+  const { user } = ctx;
+  if (!getFeatureFlagsLazy({ user }).music)
+    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
+  const visible = await getImageIdsVisibleToViewer({
+    ids: [...new Set(ids)],
+    userId: user?.id,
+    isModerator: user?.isModerator,
+  });
+  if (!visible.size) return [];
+  const songs = await dbRead.image.findMany({
+    where: { id: { in: [...visible] } },
+    select: { id: true, type: true, metadata: true },
+  });
+  const covers = await getSongCovers(songs, dbRead, playerCoverSelect);
+  return [...covers].flatMap(([songId, cover]) =>
+    cover.ingestion === ImageIngestionStatus.Scanned &&
+    !hasBlockMarker(cover) &&
+    cover.needsReview == null &&
+    cover.acceptableMinor === false &&
+    canViewImageMedia(ctx, { nsfwLevel: cover.nsfwLevel, user: { id: cover.userId } })
+      ? [{ songId, id: cover.id, url: cover.url, hash: cover.hash, nsfwLevel: cover.nsfwLevel }]
+      : []
+  );
+}
+
+async function combinePostEditImageData(
+  images: PostImageEditSelect[],
+  user: SessionUser,
+  db: typeof dbRead | typeof dbWrite = dbRead
+) {
   const imageIds = images.map((x) => x.id);
   const _images = images as PostImageEditProps[];
   const tags = await getVotableImageTags({ ids: imageIds, user });
   const thumbnails = await thumbnailCache.fetch(imageIds);
+  const lyrics = await getSongLyricLines(images, db);
+  const covers = await getSongCovers(images, db);
+  const songTags = await readSongTags(
+    images.filter((x) => x.type === MediaType.audio).map((x) => x.id),
+    db
+  );
 
   return _images
     .map((image) => ({
@@ -963,6 +1158,10 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
       tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
       techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
       thumbnailUrl: thumbnails[image.id]?.url as string | null, // Need to explicit type cast cause ts is trying to be smarter than it should be
+      lyrics: lyrics.get(image.id) ?? null,
+      cover: covers.get(image.id) ?? null,
+      /** A song's own tags, its genre's tag left out. */
+      songTags: withoutGenreTag(songTags.get(image.id) ?? [], readSongGenre(image.metadata)),
     }))
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
 }
@@ -993,7 +1192,7 @@ export const getPostEditImages = async ({ id, user, servableLevels }: PostEditIn
     },
     select: editPostImageSelect,
   });
-  return combinePostEditImageData(images, user);
+  return combinePostEditImageData(images, user, db);
 };
 
 export const getPostImageIds = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
@@ -1160,6 +1359,30 @@ const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
 export const TAKEN_DOWN_PUBLISH_ERROR =
   "This post can't be published: its model or model version has been taken down.";
 
+export const SONG_ON_SCHEDULED_POST_MESSAGE =
+  'This post is scheduled. Unschedule it to add a song, then pick its genre and schedule it again.';
+
+/**
+ * Refuses publishing or scheduling a post while any of its songs has no genre. A post already
+ * public is left alone: its publish write is a no-op, and songs posted before genres existed must
+ * not lock its other edits.
+ */
+async function assertSongsHaveGenres(postId: number) {
+  // primary: guards the publish write
+  const songs = await dbWrite.image.findMany({
+    where: { postId, type: MediaType.audio },
+    select: { metadata: true },
+  });
+  if (!songs?.some((song) => !readSongGenre(song.metadata))) return;
+  // primary: guards the publish write
+  const post = await dbWrite.post.findUnique({
+    where: { id: postId },
+    select: { publishedAt: true },
+  });
+  if (post?.publishedAt && post.publishedAt <= new Date()) return;
+  throw throwBadRequestError(SONG_GENRE_REQUIRED_MESSAGE);
+}
+
 export const updatePost = async ({
   id,
   user,
@@ -1182,6 +1405,7 @@ export const updatePost = async ({
   // Mirrors the pattern in updateModelVersion (model-version.service.ts).
   const publishedAt = data.publishedAt instanceof Date ? data.publishedAt : undefined;
   const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
+  if (publishedAt !== undefined) await assertSongsHaveGenres(id);
 
   // A post drafted from a storyline becomes its chapter as it is published. Checked before the
   // write, so a continuation price the contributor was not shown refuses the publish whole. With
@@ -1604,6 +1828,33 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
 
 const UPLOAD_METADATA_READ_BYTES = 8 * 1024 * 1024;
 
+/** The one rule for who may store a song: the `music` flag. */
+export function assertCanStoreSongs(user: SessionUser) {
+  if (!getFeatureFlagsLazy({ user }).music)
+    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
+}
+
+// A song's lyrics are a nicety on a post request, so a slow orchestrator must not hold it.
+const SONG_WORKFLOW_READ_TIMEOUT_MS = 5_000;
+
+/**
+ * The song's metadata as stored, only its audio fields, and its lyrics. The lyrics come only from
+ * the caller's own workflow, never the client; a workflow that could not be read leaves the song
+ * without lyrics. A simple-mode song's bpm and key exist only in its drafting chat step; what the
+ * client sent wins for those, and for the title.
+ */
+function resolveAudioMetadata(metadata: unknown, workflow: UserWorkflow | null) {
+  const parsed = audioMetadataSchema.safeParse(metadata);
+  if (!parsed.success) throw throwBadRequestError('Invalid audio metadata');
+  const { lyrics: _clientLyrics, ...audio } = parsed.data;
+  if (!workflow) return { metadata: audio, lyrics: undefined };
+  const { lyrics: _draftedLyrics, ...concept } = buildSongDetails(
+    {},
+    readSongConcept(workflow.steps)
+  );
+  return { metadata: { ...concept, ...audio }, lyrics: readWorkflowLyrics(workflow.steps) };
+}
+
 /** Whether an upload may stay at the index its client sent (`addPostImage`). */
 export async function keepSentIndex(postId: number, index: number) {
   if (!Number.isInteger(index) || index < 0) return false;
@@ -1642,6 +1893,13 @@ export const addPostImage = async ({
   /** `url` is a key the server minted and stored itself, not one from the client. */
   serverMintedUrl?: boolean;
 }) => {
+  // Songs are mod-only for now. Checked first: nothing below may run for a user who can't post one.
+  let allowAudio = false;
+  if (props.type === MediaType.audio) {
+    assertCanStoreSongs(user);
+    allowAudio = true;
+  }
+
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
     meta = { ...meta, external: externalData };
@@ -1651,7 +1909,7 @@ export const addPostImage = async ({
   // image EXIF, read from storage. We only do this when meta is absent to avoid
   // overwriting caller-supplied values. Only the head of the file is read: JPEG
   // EXIF sits at the start, and the PNG text chunks generators write come before IDAT.
-  if (!meta && props.url && props.type !== MediaType.video) {
+  if (!meta && props.url && props.type === MediaType.image) {
     try {
       const extracted = await getMetadata(
         await readImageUploadObjectHead(props.url, { maxBytes: UPLOAD_METADATA_READ_BYTES })
@@ -1687,13 +1945,18 @@ export const addPostImage = async ({
     }
   }
 
-  const post = await dbRead.post.findFirst({
+  // A song's read is on the primary: it guards the scheduled-post refusal below, and a post
+  // scheduled a moment ago may still read as a draft on the replica.
+  const post = await (props.type === MediaType.audio ? dbWrite : dbRead).post.findFirst({
     where: { id: props.postId },
-    select: { userId: true },
+    select: { userId: true, publishedAt: true },
   });
 
   if (!post) throw throwNotFoundError(`No post with id ${props.postId}`);
   if (post.userId !== user.id) throw throwAuthorizationError();
+  // A scheduled post goes live by time alone, past the publish-time genre check.
+  if (props.type === MediaType.audio && post.publishedAt && post.publishedAt > new Date())
+    throw throwBadRequestError(SONG_ON_SCHEDULED_POST_MESSAGE);
 
   // Idempotency guard: if the same (postId, url) pair was just saved — e.g. by
   // a retried mutation or a duplicated client submission — return the existing
@@ -1711,13 +1974,28 @@ export const addPostImage = async ({
         select: editPostImageSelect,
       });
       if (existingResult) {
-        const [existingImage] = await combinePostEditImageData([existingResult], user);
+        const [existingImage] = await combinePostEditImageData([existingResult], user, dbWrite);
         return existingImage;
       }
     }
   }
 
   const { generationWorkflowId, ...imageProps } = props;
+  // One read serves the song details and the provenance check.
+  const songWorkflow =
+    allowAudio && generationWorkflowId
+      ? await readUserWorkflow({
+          userId: user.id,
+          workflowId: generationWorkflowId,
+          timeoutMs: SONG_WORKFLOW_READ_TIMEOUT_MS,
+        })
+      : undefined;
+  const song = allowAudio ? resolveAudioMetadata(props.metadata, songWorkflow ?? null) : undefined;
+  if (song?.metadata.title)
+    await throwOnBlockedUserContent(song.metadata.title, {
+      isModerator: user.isModerator,
+      surface: 'post',
+    });
   // On a post with storyline text items, a new image goes after the last item whatever index the
   // client sent. Without text, a sent index may repeat an image's the editor is not served and so
   // does not count: `keepSentIndex` decides, and otherwise the image goes last.
@@ -1738,10 +2016,13 @@ export const addPostImage = async ({
     userId: user.id,
     provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
     workflowId: generationWorkflowId,
+    workflow: songWorkflow,
   });
 
   const partialResult = await createImage({
     ...imageProps,
+    metadata: song?.metadata ?? imageProps.metadata,
+    allowAudio,
     meta,
     verifiedSourceImageIds,
     assertPostOwnedBy,
@@ -1751,6 +2032,20 @@ export const addPostImage = async ({
     clientUrl: serverMintedUrl ? undefined : true,
   });
 
+  // A song whose lyrics failed to save is kept without them and waits on its audio verdict alone.
+  if (song?.lyrics) {
+    const saved = await saveGeneratedTrackLyrics({
+      imageId: partialResult.id,
+      text: song.lyrics,
+    }).catch(handleLogError);
+    if (saved) submitTrackLyricsScan({ imageId: partialResult.id }).catch(handleLogError);
+  }
+  if (song && songWorkflow && typeof song.metadata.coverImageId !== 'number')
+    await linkGeneratedSongCover({
+      songId: partialResult.id,
+      userId: user.id,
+      workflow: songWorkflow,
+    }).catch(handleLogError);
   await createImageResources({ imageId: partialResult.id }).catch(handleLogError);
 
   const result = await dbWrite.image.findUnique({
@@ -1758,7 +2053,7 @@ export const addPostImage = async ({
     select: editPostImageSelect,
   });
   if (!result) throw throwDbError(`Image not found`);
-  const [image] = await combinePostEditImageData([result], user);
+  const [image] = await combinePostEditImageData([result], user, dbWrite);
 
   const modelVersionIds = image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined);
   // Cache Busting — parallelize independent operations
@@ -1893,19 +2188,54 @@ async function refreshModelShowcases(versionIds: number[], modelIds: number[]) {
     );
 }
 
-export const updatePostImage = async (image: UpdatePostImageInput) => {
+function writeSongTitle(imageId: number, title: string) {
+  return dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object('title', ${title}::text)
+    WHERE id = ${imageId}
+  `;
+}
+
+function clearSongTitle(imageId: number) {
+  return dbWrite.$executeRaw`
+    UPDATE "Image" SET "metadata" = COALESCE("metadata", '{}'::jsonb) - 'title' WHERE id = ${imageId}
+  `;
+}
+
+function writeSongAllowRemix(imageId: number, allowRemix: boolean) {
+  return allowRemix
+    ? dbWrite.$executeRaw`
+        UPDATE "Image" SET "metadata" = COALESCE("metadata", '{}'::jsonb) || '{"allowRemix": true}'::jsonb
+        WHERE id = ${imageId}
+      `
+    : dbWrite.$executeRaw`
+        UPDATE "Image" SET "metadata" = COALESCE("metadata", '{}'::jsonb) || '{"allowRemix": false}'::jsonb
+        WHERE id = ${imageId}
+      `;
+}
+
+export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePostImageInput) => {
   const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
     select: {
+      type: true,
       hideMeta: true,
       ingestion: true,
       blockedFor: true,
-      metadata: true,
       nsfwLevel: true,
       meta: true,
     },
   });
 
+  const songFieldsSent = title !== undefined || allowRemix !== undefined;
+  if (songFieldsSent && currentImage.type !== MediaType.audio)
+    throw throwBadRequestError('Only a song has a title and a remix setting.');
+  if (title)
+    await throwOnBlockedUserContent(title, {
+      surface: 'post',
+      entityType: 'Image',
+      entityId: image.id,
+    });
   // `meta` is optional on this input, and the difference matters: absent means "leave the
   // stored metadata alone" (the hide/show-prompt toggle sends only `hideMeta`), while an
   // explicit `null` means "clear it". Collapsing the two writes SQL NULL over metadata the
@@ -1931,27 +2261,32 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
 
   const shouldIngest = blockedForVerification && updatedIsVerifiable;
 
-  const result = await dbWrite.image.update({
-    where: { id: image.id },
-    data: {
-      ...image,
-      id: undefined, // prevent updating the id!
-      updatedAt: new Date(),
-      // undefined = omit the column from the UPDATE; Prisma.JsonNull = write SQL NULL.
-      meta: metaProvided
-        ? meta != null
-          ? (meta as Prisma.JsonObject)
-          : Prisma.JsonNull
-        : undefined,
-      // If this image was blocked due to missing metadata, we need to set it back to pending
-      ingestion: shouldIngest ? 'Pending' : undefined,
-      blockedFor: shouldIngest ? null : undefined,
-      metadata: {
-        ...((currentImage.metadata as MixedObject) ?? {}),
-      } as Prisma.JsonObject,
-    },
-    select: { id: true, url: true, userId: true, name: true, type: true },
-  });
+  const [result] = await dbWrite.$transaction([
+    dbWrite.image.update({
+      where: { id: image.id },
+      data: {
+        ...image,
+        id: undefined, // prevent updating the id!
+        updatedAt: new Date(),
+        // undefined = omit the column from the UPDATE; Prisma.JsonNull = write SQL NULL.
+        meta: metaProvided
+          ? meta != null
+            ? (meta as Prisma.JsonObject)
+            : Prisma.JsonNull
+          : undefined,
+        // If this image was blocked due to missing metadata, we need to set it back to pending
+        ingestion: shouldIngest ? 'Pending' : undefined,
+        blockedFor: shouldIngest ? null : undefined,
+        // Omitted from the UPDATE: the input never writes metadata, and the stored keys stay.
+        metadata: undefined,
+      },
+      select: { id: true, url: true, userId: true, name: true, type: true },
+    }),
+    // The song keys are merged by their own UPDATEs after the one above, so a key another save
+    // wrote meanwhile (the cover link) stays.
+    ...(title ? [writeSongTitle(image.id, title)] : title === '' ? [clearSongTitle(image.id)] : []),
+    ...(allowRemix !== undefined ? [writeSongAllowRemix(image.id, allowRemix)] : []),
+  ]);
   // Parallelize independent cache refreshes — none read what others write.
   // ingestImage stays sequential after: it does not read these caches but
   // does have ordering relative to the dbWrite.image.update above.
@@ -1981,6 +2316,283 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     });
   }
 };
+
+/**
+ * A song's cover is its owner's own image, outside any post, naming the song as its parent. Only
+ * such a row is shown or replaced through the song's `coverImageId`.
+ */
+function isCoverOfSong(
+  row: { userId: number; postId: number | null; metadata: unknown } | null | undefined,
+  song: { id: number; userId: number }
+) {
+  return (
+    !!row &&
+    row.userId === song.userId &&
+    row.postId == null &&
+    (row.metadata as { parentId?: unknown } | null)?.parentId === song.id
+  );
+}
+
+export async function setSongCover({
+  id,
+  cover,
+  user,
+}: SetSongCoverInput & { user: SessionUser }): Promise<SongCover> {
+  assertCanStoreSongs(user);
+  if (cover.type !== MediaType.image || (cover.mimeType && !cover.mimeType.startsWith('image/')))
+    throw throwBadRequestError('A cover must be an image.');
+
+  // primary: guards the cover link write
+  const song = await dbWrite.image.findUnique({
+    where: { id },
+    select: { id: true, userId: true, postId: true, type: true },
+  });
+  if (!song || (song.userId !== user.id && !user.isModerator)) throw throwAuthorizationError();
+  if (song.type !== MediaType.audio) throw throwBadRequestError('Only a song has a cover.');
+
+  // Deleting one row deletes its file, so a key behind any other image is refused. The song's own
+  // cover row on this key is a retry whose first attempt stopped before the link.
+  // primary: guards deleting a file key another image may use
+  const existing = await dbWrite.image.findFirst({
+    where: { url: cover.url },
+    select: { id: true, userId: true, postId: true, metadata: true },
+  });
+  if (existing && !isCoverOfSong(existing, song))
+    throw throwBadRequestError(COVER_IMAGE_UNAVAILABLE_MESSAGE);
+  const coverId =
+    existing?.id ??
+    (
+      await createImage({
+        ...pickClientImageColumns(cover),
+        type: MediaType.image,
+        metadata: { parentId: song.id },
+        userId: song.userId,
+        clientUrl: { alsoIssuedTo: user.id },
+      })
+    ).id;
+
+  // One statement, with the row locked, so concurrent saves each get back the cover they replaced
+  // and no other metadata field written meanwhile is lost.
+  const [linked] = await dbWrite.$queryRaw<{ previous: unknown }[]>`
+    UPDATE "Image" i
+    SET metadata = COALESCE(i.metadata, '{}'::jsonb) || jsonb_build_object('coverImageId', ${coverId}::int),
+      "updatedAt" = now()
+    FROM (SELECT id, metadata -> 'coverImageId' AS previous FROM "Image" WHERE id = ${song.id} FOR UPDATE) old
+    WHERE i.id = old.id
+    RETURNING old.previous
+  `;
+  const previousId = typeof linked?.previous === 'number' ? linked.previous : undefined;
+  if (previousId !== undefined && previousId !== coverId) {
+    // primary: the link was just rewritten
+    const previous = await dbWrite.image.findUnique({
+      where: { id: previousId },
+      select: { userId: true, postId: true, metadata: true },
+    });
+    if (isCoverOfSong(previous, song)) await deleteImages([previousId], { actor: { id: user.id } });
+  }
+
+  await Promise.all([
+    imageMetadataCache.refresh(song.id),
+    song.postId ? preventReplicationLag('postImages', song.postId) : undefined,
+  ]);
+
+  // primary: read-your-write after linking the cover
+  const saved = await dbWrite.image.findUnique({ where: { id: coverId }, select: songCoverSelect });
+  if (!saved) throw throwDbError('Cover not found');
+  return saved;
+}
+
+// A generated cover is a nicety on a post request too: past this, the song posts without it.
+const GENERATED_COVER_COPY_TIMEOUT_MS = 10_000;
+
+/**
+ * The cover a song's generation made (ACE's suppressed `imageGen` step), when the orchestrator made
+ * it available, did not block it, and rated it.
+ */
+function readWorkflowCover(steps: UserWorkflow['steps']) {
+  const step = steps?.find((s) => s.$type === 'imageGen') as
+    | { output?: { images?: OrchestratorBlobLike[] } | null }
+    | undefined;
+  const [cover] = mediaFromBlobs(step?.output?.images);
+  return cover?.nsfwLevel && cover.nsfwLevel !== 'na' ? cover : undefined;
+}
+
+/**
+ * Copies the song's generated cover into our image store and links it as the song's cover, the
+ * same row and link `setSongCover` makes. The row goes through `createImage`, so it is scanned.
+ */
+async function linkGeneratedSongCover({
+  songId,
+  userId,
+  workflow,
+}: {
+  songId: number;
+  userId: number;
+  workflow: UserWorkflow;
+}) {
+  const blob = readWorkflowCover(workflow.steps);
+  if (!blob) return;
+
+  // Aborting stops the fetch and the store write, so a copy past the budget leaves no stored bytes.
+  const budget = new AbortController();
+  const timer = setTimeout(() => budget.abort(), GENERATED_COVER_COPY_TIMEOUT_MS);
+  const staged = await stageGenerationOutputImage({
+    imageUrl: blob.url,
+    width: blob.width,
+    height: blob.height,
+    source: 'song-generated-cover',
+    signal: budget.signal,
+  }).finally(() => clearTimeout(timer));
+
+  const cover = await createImage({
+    url: staged.url,
+    type: MediaType.image,
+    mimeType: staged.mimeType,
+    hash: staged.hash,
+    width: staged.width,
+    height: staged.height,
+    metadata: { ...staged.metadata, parentId: songId },
+    userId,
+  });
+  // Only a song still without a cover takes it; a row left unlinked is removed.
+  const linked = await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('coverImageId', ${cover.id}::int),
+      "updatedAt" = now()
+    WHERE id = ${songId} AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'coverImageId')
+  `.catch((error) => {
+    handleLogError(error);
+    return 0;
+  });
+  if (!linked) await deleteImages([cover.id], { actor: { id: userId } });
+}
+
+/**
+ * The genre, and whether its tag row is one `setSongGenre` attached: only that row is taken off when
+ * the genre changes, so a tag the owner added themselves outlives a genre of the same name.
+ */
+function writeSongGenre(imageId: number, genre: SongGenre, tagAdded: boolean) {
+  return dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object('genre', ${genre}::text, 'genreTagAdded', ${tagAdded}::boolean)
+    WHERE id = ${imageId}
+  `;
+}
+
+/** The song, when the caller owns it or moderates; refuses anything else. */
+async function readEditableSong(id: number, user: SessionUser) {
+  assertCanStoreSongs(user);
+  // primary: guards the edit write
+  const song = await dbWrite.image.findUnique({
+    where: { id },
+    select: { id: true, userId: true, postId: true, type: true, metadata: true },
+  });
+  if (!song || (song.userId !== user.id && !user.isModerator)) throw throwAuthorizationError();
+  if (song.type !== MediaType.audio)
+    throw throwBadRequestError('Only a song has a genre and tags.');
+  return song;
+}
+
+/** The song's own tags, its genre's tag left out (the genre select shows that one). */
+async function readOwnSongTags(songId: number, genre: SongGenre | undefined) {
+  return withoutGenreTag((await readSongTags([songId])).get(songId) ?? [], genre);
+}
+
+/** Suggestions for a song's tag field: only tags an owner may attach. */
+export async function suggestSongTags({
+  query,
+  user,
+}: SearchSongTagsInput & { user: SessionUser }) {
+  assertCanStoreSongs(user);
+  return searchSongTags(query);
+}
+
+async function afterSongTagsChanged(song: { id: number; postId: number | null }) {
+  await Promise.all([
+    imageMetadataCache.refresh(song.id),
+    song.postId ? preventReplicationLag('postImages', song.postId) : undefined,
+  ]);
+}
+
+/**
+ * Stores the genre on the song and mirrors it as the song's image tag, so it reaches the search
+ * documents like any tag. The image tag writers run outside any transaction (their own pool), so
+ * the steps are ordered to never leave the stored genre and its tag apart: the new tag first, then
+ * both metadata keys in one statement (the new tag taken back off if that fails), and the previous
+ * genre's tag last, only when this function attached it.
+ */
+export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { user: SessionUser }) {
+  const song = await readEditableSong(id, user);
+  const previous = readSongGenre(song.metadata);
+  if (previous === genre) return { genre, tags: await readOwnSongTags(song.id, genre) };
+  const previousTagAdded =
+    (song.metadata as { genreTagAdded?: unknown } | null)?.genreTagAdded === true;
+
+  // The list is fixed, so a missing genre tag is created as a plain user tag (after the blocklist
+  // check); a same-named tag that is not a plain label is left off the song.
+  await findOrCreateTagsByName([songGenreTagName(genre)]);
+  const tag = await findAttachableTag(songGenreTagName(genre));
+  const attach = !!tag && !(await hasSongTagRow(song.id, tag.id));
+  if (tag && attach) await attachSongTag(song.id, tag.id);
+
+  try {
+    await writeSongGenre(song.id, genre, attach);
+  } catch (error) {
+    if (tag && attach) await detachSongTag(song.id, tag.id);
+    throw error;
+  }
+
+  if (previous && previousTagAdded) {
+    const previousTag = (await readSongTags([song.id]))
+      .get(song.id)
+      ?.find((t) => t.name === songGenreTagName(previous));
+    if (previousTag) await detachSongTag(song.id, previousTag.id);
+  }
+  await afterSongTagsChanged(song);
+
+  return { genre, tags: await readOwnSongTags(song.id, genre) };
+}
+
+/**
+ * Attaches a plain label to the song, creating a new name as a user tag. Insert only: a row the
+ * song already has for that tag (one a moderator disabled included) is never changed.
+ */
+export async function addSongTag({ id, name, user }: AddSongTagInput & { user: SessionUser }) {
+  const song = await readEditableSong(id, user);
+  const genre = readSongGenre(song.metadata);
+  if (genre && name === songGenreTagName(genre))
+    throw throwBadRequestError(SONG_TAG_UNAVAILABLE_MESSAGE);
+
+  const tags = await readOwnSongTags(song.id, genre);
+  if (tags.some((t) => t.name === name)) return { tags };
+  if (tags.length >= SONG_TAG_LIMIT) throw throwBadRequestError(SONG_TAG_LIMIT_MESSAGE);
+
+  await findOrCreateTagsByName([name]);
+  const tag = await findAttachableTag(name);
+  if (!tag || (await hasSongTagRow(song.id, tag.id)))
+    throw throwBadRequestError(SONG_TAG_UNAVAILABLE_MESSAGE);
+  await attachSongTag(song.id, tag.id);
+  await afterSongTagsChanged(song);
+
+  return { tags: await readOwnSongTags(song.id, genre) };
+}
+
+/** Removes a tag a person attached to the song; never a scanner's row or the genre's tag. */
+export async function removeSongTag({
+  id,
+  tagId,
+  user,
+}: RemoveSongTagInput & { user: SessionUser }) {
+  const song = await readEditableSong(id, user);
+  const genre = readSongGenre(song.metadata);
+  const tags = await readOwnSongTags(song.id, genre);
+  if (!tags.some((t) => t.id === tagId)) throw throwBadRequestError(SONG_TAG_NOT_REMOVABLE_MESSAGE);
+
+  await detachSongTag(song.id, tagId);
+  await afterSongTagsChanged(song);
+
+  return { tags: tags.filter((t) => t.id !== tagId) };
+}
 
 /** Looks up a version an uploader may credit to their images, or throws not found. */
 export async function findCreditableModelVersion(modelVersionId: number, user: SessionUser) {

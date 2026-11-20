@@ -53,8 +53,10 @@ beforeAll(async () => {
     CREATE TYPE "ArticleStatus" AS ENUM ('Draft', 'Published');
     CREATE TYPE "JobQueueType" AS ENUM ('ImageScan');
     CREATE TYPE "EntityType" AS ENUM ('Image');
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, url text, type text DEFAULT 'image', width int, height int, meta jsonb,
+      id int PRIMARY KEY, url text, type "MediaType" NOT NULL DEFAULT 'image', width int, height int, meta jsonb,
       "scanRequestedAt" timestamp(3), "createdAt" timestamp(3) NOT NULL,
       ingestion "ImageIngestionStatus" NOT NULL, "scanJobs" jsonb, "userId" int,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT TRUE, metadata jsonb

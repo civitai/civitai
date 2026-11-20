@@ -44,10 +44,15 @@ beforeAll(async () => {
       "publishedAt" timestamp NOT NULL DEFAULT now() - interval '1 day',
       availability text NOT NULL DEFAULT 'Public'
     );
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TABLE "Image" (
+      type "MediaType" NOT NULL DEFAULT 'image',
       id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "userId" int NOT NULL, "postId" int, index int NOT NULL DEFAULT 0,
-      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
-      "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false, "tosViolation" boolean NOT NULL DEFAULT false
+      ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
+      "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false, "tosViolation" boolean NOT NULL DEFAULT false,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "bannerId" int, cover text, status text,

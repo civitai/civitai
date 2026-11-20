@@ -73,4 +73,16 @@ describe('userImageVideoCountQuery', () => {
     expect(await imageCount(SFW)).toBe(1);
     expect(await imageCount()).toBe(2);
   });
+
+  it('counts a published song as audio, apart from images and videos', async () => {
+    await pg.db.query(`INSERT INTO "Image" ("userId", "postId", type) VALUES ($1, 1, 'audio')`, [
+      USER,
+    ]);
+    const rows = (await pgliteRaw(pg.db).queryRaw(userImageVideoCountQuery([USER]))) as {
+      imageCount: number;
+      videoCount: number;
+      audioCount: number;
+    }[];
+    expect(rows[0]).toMatchObject({ imageCount: 1, videoCount: 0, audioCount: 1 });
+  });
 });

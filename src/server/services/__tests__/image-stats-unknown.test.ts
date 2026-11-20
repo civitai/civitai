@@ -19,6 +19,7 @@ describe('toImageV2Stats', () => {
     comment: null,
     collection: null,
     buzz: null,
+    play: null,
   };
 
   it('marks an image the read never answered for as unknown', () => {
@@ -55,6 +56,7 @@ describe('toImageV2Stats', () => {
       comment: 2,
       collection: 17,
       buzz: 500,
+      play: 19,
     });
 
     expect(stats).toEqual({

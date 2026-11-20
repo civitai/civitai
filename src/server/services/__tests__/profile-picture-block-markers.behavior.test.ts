@@ -89,8 +89,11 @@ describe('the SQL and TS twins agree on block markers', () => {
     open.push({ pg });
     await pg.exec(`
       CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+      CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+      CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
       CREATE TABLE "Image" (
-        id int PRIMARY KEY, url text, "userId" int, ingestion "ImageIngestionStatus" NOT NULL,
+        id int PRIMARY KEY, url text, "userId" int, type "MediaType" NOT NULL DEFAULT 'image',
+        ingestion "ImageIngestionStatus" NOT NULL,
         "nsfwLevel" int NOT NULL, "needsReview" text, "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
         metadata jsonb, "scanJobs" jsonb, "modelRestricted" boolean NOT NULL DEFAULT false,
         "blockedFor" text

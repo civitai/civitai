@@ -307,6 +307,7 @@ const NOT_A_USE: Record<string, string> = {
   imageResourceNew: 'resources detected in it',
   imageTagsForReview: 'tags queued for review on it',
   caption: 'its storyline caption',
+  trackLyrics: 'its lyrics, when it is a song',
 };
 
 describe('IMAGE_USES', () => {

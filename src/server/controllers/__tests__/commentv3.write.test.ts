@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { createCommentV3Schema } from '~/server/schema/commentv3.schema';
 import type * as Surfaces from '~/server/services/commentv3/surfaces';
+import type * as TimedComments from '~/server/services/commentv3/timed-comments.service';
 import type * as WriteService from '~/server/services/commentv3/write.service';
 import type { StoredCommentV3 } from '~/server/services/commentv3/write.service';
+import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
 
 // Who may write what through the commentv3 router, and what each write checks and triggers. The SQL
 // these call is covered against real Postgres in services/commentv3/__tests__/write.sql.behavior.test.ts,
@@ -31,6 +34,9 @@ const m = vi.hoisted(() => ({
   metric: vi.fn(async (_: unknown) => undefined),
   authors: vi.fn(async (..._a: unknown[]) => (_id: number): object => ({})),
   authorRow: vi.fn(async (): Promise<object | undefined> => undefined),
+  song: vi.fn<(db: unknown, imageId: number) => Promise<{ durationSec: number | null } | null>>(
+    async () => null
+  ),
 }));
 
 vi.mock('~/server/services/commentv3/write.service', async (importOriginal) => {
@@ -83,6 +89,10 @@ vi.mock('~/server/events/points/hooks', () => ({
   onCommentCreated: m.onCommentCreated,
   onTopicCommentsRemoved: m.onTopicCommentsRemoved,
 }));
+vi.mock('~/server/services/commentv3/timed-comments.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TimedComments>()),
+  getCommentSong: m.song,
+}));
 vi.mock('~/server/services/user.service', () => ({
   getCosmeticsAndProfilePicturesForUsers: m.authors,
 }));
@@ -132,9 +142,10 @@ const row = (id: number, over: Partial<StoredCommentV3> = {}): StoredCommentV3 =
   ...over,
 });
 
-const ctx = (id: number, isModerator = false) =>
+const ctx = (id: number, isModerator = false, features: { music?: boolean } = {}) =>
   ({
     user: { id, isModerator },
+    features,
     track: {
       comment: vi.fn(async () => undefined),
       commentEvent: vi.fn(async () => undefined),
@@ -453,6 +464,122 @@ describe('commentv3 create', () => {
   });
 });
 
+// A song's timed comment: S6 "validate `timestampSec` (0 ≤ t ≤ song duration, songs only); never
+// trust a client value for other keys in `metadata`."
+describe('commentv3 create with a time on a song', () => {
+  const SONG = 20;
+  const MUSIC = { music: true };
+  beforeEach(() => {
+    m.song.mockImplementation(async (_db, imageId) =>
+      imageId === SONG ? { durationSec: 180 } : null
+    );
+  });
+  const onSong = (input: Record<string, unknown>, features = MUSIC) =>
+    createCommentV3Handler({
+      ctx: ctx(STRANGER, false, features),
+      input: createCommentV3Schema.parse({
+        entityType: 'image',
+        entityId: SONG,
+        content: '<p>x</p>',
+        ...input,
+      }),
+    });
+  const insertedMetadata = () =>
+    (m.insertComment.mock.calls[0][1] as { metadata?: unknown }).metadata;
+
+  it('stores the time as the only key of metadata, and answers it on the new item', async () => {
+    const saved = await onSong({ timestampSec: 42 });
+    expect(insertedMetadata()).toEqual({ timestampSec: 42 });
+    expect(saved.timestampSec).toBe(42);
+  });
+
+  it('keeps whole seconds, and takes the very start and the very end', async () => {
+    await onSong({ timestampSec: 42.9 });
+    expect(insertedMetadata()).toEqual({ timestampSec: 42 });
+    for (const t of [0, 180]) {
+      m.insertComment.mockClear();
+      await onSong({ timestampSec: t });
+      expect(insertedMetadata()).toEqual({ timestampSec: t });
+    }
+  });
+
+  it('writes a comment without a time as before: no metadata, and no song read', async () => {
+    const saved = await onSong({});
+    expect(insertedMetadata()).toBeUndefined();
+    expect(saved.timestampSec).toBeNull();
+    expect(m.song).not.toHaveBeenCalled();
+  });
+
+  it('drops any other metadata a client sends', async () => {
+    await onSong({ timestampSec: 5, metadata: { pinned: true }, timestamp: 9 });
+    expect(insertedMetadata()).toEqual({ timestampSec: 5 });
+    m.insertComment.mockClear();
+    await onSong({ metadata: { timestampSec: 7 } });
+    expect(insertedMetadata()).toBeUndefined();
+  });
+
+  // Each refusal names its own reason: the composer shows it to the writer.
+  it.each([
+    [
+      'past the end of the song',
+      { timestampSec: 181 },
+      'BAD_REQUEST',
+      'That time is past the end of the song.',
+    ],
+    [
+      'on an image that is not a song',
+      { entityId: 21, timestampSec: 3 },
+      'BAD_REQUEST',
+      'Only a comment on a song can be pinned to a time.',
+    ],
+    [
+      'on another surface',
+      { entityType: 'article', entityId: 10, timestampSec: 3 },
+      'BAD_REQUEST',
+      'Only a comment on a song can be pinned to a time.',
+    ],
+    [
+      'on a reply',
+      { parentId: 200, timestampSec: 3 },
+      'BAD_REQUEST',
+      'A reply cannot be pinned to a time in the song.',
+    ],
+  ])('refuses a time %s and writes nothing', async (_, input, code, message) => {
+    m.stored.set(200, row(200, { entityType: 'image', entityId: SONG }));
+    await expect(onSong(input)).rejects.toMatchObject({ code, message });
+    expect(m.insertComment).not.toHaveBeenCalled();
+  });
+
+  it('refuses a time on a song with no stored length, which it cannot check', async () => {
+    m.song.mockResolvedValueOnce({ durationSec: null });
+    await expect(onSong({ timestampSec: 3 })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'This song cannot take comments at a time.',
+    });
+    expect(m.insertComment).not.toHaveBeenCalled();
+  });
+
+  it('refuses a time while songs are off for the writer', async () => {
+    await expect(onSong({ timestampSec: 3 }, { music: false })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: SONGS_UNAVAILABLE_MESSAGE,
+    });
+    expect(m.insertComment).not.toHaveBeenCalled();
+  });
+
+  it('refuses a negative or non-finite time at the input', () => {
+    for (const timestampSec of [-1, Infinity, Number.NaN])
+      expect(
+        createCommentV3Schema.safeParse({
+          entityType: 'image',
+          entityId: SONG,
+          content: '<p>x</p>',
+          timestampSec,
+        }).success
+      ).toBe(false);
+  });
+});
+
 describe('commentv3 update', () => {
   it('lets only the author or a moderator edit', async () => {
     await expect(update(STRANGER, 101)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
@@ -495,6 +622,14 @@ describe('commentv3 update', () => {
     expect(m.spend.mock.calls[0][0]).toMatchObject({ previousContent: 'edited meanwhile' });
     const locked = m.getStored.mock.calls.find(([, , lock]) => lock === 'FOR UPDATE');
     expect(await runsOn(locked?.[0], tx)).toBe(true);
+  });
+
+  it('edits only the content, so a timed comment keeps its time', async () => {
+    await update(AUTHOR, 101);
+    expect(m.updateCommentContent).toHaveBeenCalledWith(expect.anything(), {
+      id: 101,
+      content: '<p>y</p>',
+    });
   });
 
   it('does not edit a deleted comment', async () => {

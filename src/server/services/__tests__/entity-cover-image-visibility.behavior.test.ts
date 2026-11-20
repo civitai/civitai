@@ -40,6 +40,8 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
@@ -47,7 +49,7 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
-      "mimeType" text, type text DEFAULT 'image', metadata jsonb, "scannedAt" timestamp,
+      "mimeType" text, type "MediaType" DEFAULT 'image', metadata jsonb, "scannedAt" timestamp,
       "needsReview" text, "blockedFor" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0, "postId" int,
       poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
@@ -262,6 +264,13 @@ beforeAll(async () => {
     INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
       (1621, 1611, now() - interval '1 day'), (1622, 1612, now() - interval '1 day');
     INSERT INTO "Image" (id, "postId") VALUES (1631, 1621), (1632, 1622);
+
+    -- Songs: post 3901's lyrics are held for csam, post 3902's hold was dismissed.
+    INSERT INTO "Post" (id, "publishedAt") VALUES
+      (3901, now() - interval '1 day'), (3902, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", type) VALUES (3911, 3901, 'audio'), (3912, 3902, 'audio');
+    INSERT INTO "TextScanHold" VALUES
+      ('TrackLyrics', 3911, 'csam', 'Pending'), ('TrackLyrics', 3912, 'csam', 'Dismissed');
     -- Held models, each leading its owner post with an image above its gallery level:
     -- 2001 minor (PG stored), 2101 SFW-only with PG stored, so its PG-13 lead is above it too.
     INSERT INTO "Model" (id, status, minor, "sfwOnly", "gallerySettings") VALUES
@@ -499,6 +508,14 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
       expect(await coverOf('ModelVersion', 1612, viewers[who])).toBe(1632);
       expect(await coverOf('Image', 1632, viewers[who])).toBe(1632);
       expect(await coverOf('Post', 1622, viewers[who])).toBe(1632);
+    }
+  );
+
+  it.each(Object.keys(viewers) as (keyof typeof viewers)[])(
+    'gives a post no cover from a song whose lyrics are held, for a %s viewer',
+    async (who) => {
+      expect(await coverOf('Post', 3901, viewers[who])).toBeNull();
+      expect(await coverOf('Post', 3902, viewers[who])).toBe(3912);
     }
   );
 

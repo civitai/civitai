@@ -80,6 +80,10 @@ vi.mock('~/env/other', () => ({ isProd: true }));
 vi.mock('~/env/server', () => ({ env }));
 
 import { createSendPacer, ingestImages } from '~/server/jobs/image-ingestion';
+import {
+  classifyImageScanFailure,
+  getImageScanRetryLimit,
+} from '~/server/services/image-scan-failure';
 
 type RunResult = {
   sent: number;
@@ -264,5 +268,52 @@ describe('createSendPacer', () => {
   it('sends up to 16 at once and paces from 17', () => {
     expect(createSendPacer(16).intervalMs).toBe(0);
     expect(createSendPacer(17).intervalMs).toBe(PACE_WINDOW_MS / 17);
+  });
+});
+
+describe('ingest-images retry cap for a song waiting on its lyrics', () => {
+  // How a song lands in Error when its lyrics scan ends without a verdict (apply-song-scan's failSong).
+  const lyricsFailureClass = classifyImageScanFailure({
+    failureType: 'lyrics-scan-failed',
+    reason: 'lyrics scan ended without a verdict',
+  });
+  const songInError = (retryCount: number) => ({
+    id: 1,
+    url: 'song-1',
+    type: 'audio',
+    width: null,
+    height: null,
+    prompt: null,
+    scanRequestedAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    ingestion: 'Error',
+    retryCount,
+    failureClass: lyricsFailureClass,
+    failureReason: null,
+    rateLimitedSince: null,
+    resubmitted: false,
+    isBackfill: false,
+  });
+
+  it('re-sends a song in Error under the cap', async () => {
+    queue.rows = rows(1, 'Error');
+    mockDbWrite.$queryRaw.mockImplementationOnce(
+      async () => [songInError(getImageScanRetryLimit(lyricsFailureClass) - 1)] as never
+    );
+
+    await runJob();
+
+    expect(mockIngestImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('never re-sends a song whose lyrics failures spent the cap, so it stays hidden in Error', async () => {
+    queue.rows = rows(1, 'Error');
+    mockDbWrite.$queryRaw.mockImplementationOnce(
+      async () => [songInError(getImageScanRetryLimit(lyricsFailureClass))] as never
+    );
+
+    await runJob();
+
+    expect(mockIngestImage).not.toHaveBeenCalled();
   });
 });

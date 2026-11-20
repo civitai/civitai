@@ -21,6 +21,9 @@ const read = vi.hoisted(() => ({
   getCommentLock: vi.fn(async () => ({ locked: false })),
   resolveModelPageCommentId: vi.fn(async (_db: unknown, _modelId: number, id: number) => id),
   countSectionComments: vi.fn(async () => ({ visible: 20, hidden: 3 })),
+  getTimedComments: vi.fn<(...args: unknown[]) => Promise<ReadService.TimedComment[]>>(
+    async () => []
+  ),
 }));
 vi.mock('~/server/services/commentv3/read.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReadService>()),
@@ -63,9 +66,13 @@ vi.mock('~/server/services/comment-owner.service', async (importOriginal) => ({
 const authors = vi.hoisted(() =>
   vi.fn(async (..._a: unknown[]) => (_id: number) => ({}))
 );
+const pictures = vi.hoisted(() =>
+  vi.fn<(ids: number[]) => Promise<Record<number, unknown>>>(async () => ({}))
+);
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
   getCosmeticsAndProfilePicturesForUsers: authors,
+  getProfilePicturesForUsers: pictures,
 }));
 
 const section = vi.hoisted(() => ({
@@ -98,6 +105,7 @@ const {
   getCommentSectionHandler,
   getCommentRepliesHandler,
   getCommentThreadHandler,
+  getTimedCommentsHandler,
   getSectionLockHandler,
   getSectionMutedHandler,
   toggleSectionMuteHandler,
@@ -147,6 +155,52 @@ describe('getSection tells the read service who is asking', () => {
       expect.objectContaining({ entityType: 'article', entityId: 10 }),
       expect.anything()
     );
+  });
+});
+
+describe('getTimed: a song’s timed comments for the player', () => {
+  const songCtx = (music: boolean) => ({ user: { id: 2 }, features: { music } } as never);
+  const timed = (input = { imageId: 20 }, music = true) =>
+    getTimedCommentsHandler({ ctx: songCtx(music), input });
+
+  it('reads the image’s section with the section’s gate and exclusions', async () => {
+    await timed();
+    expect(gate).toHaveBeenCalledWith({ entityType: 'image', entityId: 20 }, expect.anything());
+    const [, entity, viewer] = read.getTimedComments.mock.calls[0] as unknown[];
+    expect(entity).toEqual({ entityType: 'image', entityId: 20 });
+    expect([...(viewer as { excludedUserIds: number[] }).excludedUserIds].sort()).toEqual([
+      11, 12, 13,
+    ]);
+  });
+
+  it('answers each comment as plain text cut to a label, with its author’s picture', async () => {
+    read.getTimedComments.mockResolvedValueOnce([
+      {
+        id: 1,
+        timestampSec: 4,
+        content: '<p>so <b>good</b> &amp; &quot;loud&quot;</p>',
+        user: { id: 7, username: 'a', image: null },
+      },
+      {
+        id: 2,
+        timestampSec: 9,
+        content: `<p>${'x'.repeat(300)}</p>`,
+        user: { id: 8, username: 'b', image: null },
+      },
+    ]);
+    pictures.mockResolvedValueOnce({ 7: { id: 70 } });
+    const [first, second] = await timed();
+    // Stored comments are HTML: the label shows their entities as the characters they stand for.
+    expect(first).toMatchObject({ id: 1, timestampSec: 4, text: 'so good & "loud"' });
+    expect(first.user).toMatchObject({ id: 7, profilePicture: { id: 70 } });
+    expect(second.text).toHaveLength(140);
+    expect(second.text.endsWith('…')).toBe(true);
+    expect(second.user.profilePicture).toBeNull();
+  });
+
+  it('answers none, and reads nothing, while songs are off for the viewer', async () => {
+    expect(await timed(undefined, false)).toEqual([]);
+    expect(read.getTimedComments).not.toHaveBeenCalled();
   });
 });
 

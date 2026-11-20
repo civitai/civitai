@@ -14,6 +14,14 @@ type DialogState = {
   closeOnEscape?: boolean;
 };
 
+/** Dialogs stack from here, one level per open dialog. */
+export const DIALOG_Z_INDEX = 300;
+/**
+ * Over every open dialog (far more than ever stack) and under Mantine's notifications (400), for a
+ * surface a dialog must never dim: the music player.
+ */
+export const ABOVE_DIALOGS_Z_INDEX = DIALOG_Z_INDEX + 50;
+
 const DialogContext = createContext<DialogState>({
   opened: false,
   onClose: () => undefined,
@@ -53,7 +61,7 @@ const DialogProviderInner = memo(function DialogProviderInner({
       value={{
         opened,
         onClose,
-        zIndex: 300 + index,
+        zIndex: DIALOG_Z_INDEX + index,
         target: dialog.target,
         closeOnEscape: isTopLevel,
       }}

@@ -25,6 +25,7 @@ export function CollapsibleCard({
   storageKey,
   defaultOpen = true,
   rounded = true,
+  expandFor,
   children,
 }: {
   title: string;
@@ -36,12 +37,24 @@ export function CollapsibleCard({
   storageKey: string;
   defaultOpen?: boolean;
   rounded?: boolean;
+  /** Opens a folded section for this value (a link into it); each new value opens it again. */
+  expandFor?: number;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useLocalStorage({
+  const [stored, setOpen] = useLocalStorage({
     key: `image-detail-section:${storageKey}`,
     defaultValue: defaultOpen,
   });
+  // Open from the first render, before the stored choice is rewritten: what is inside reacts on mount
+  // (the comment section scrolls to a highlighted comment).
+  const [expandedFor, setExpandedFor] = useState<number>();
+  const expanding = expandFor !== undefined && expandFor !== expandedFor;
+  const open = stored || expanding;
+  useEffect(() => {
+    if (!expanding) return;
+    setOpen(true);
+    setExpandedFor(expandFor);
+  }, [expanding, expandFor, setOpen]);
 
   // Sticky once true: a section that has been opened stays mounted for the rest
   // of the page's life, so collapsing it costs the reader nothing they typed.

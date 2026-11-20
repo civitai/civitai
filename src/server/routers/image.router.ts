@@ -19,6 +19,7 @@ import {
   getImageGenerationData,
   getImagesByUserIdForModeration,
   getMyImages,
+  getSongPlayCounts,
   ingestImageById,
   removeImageResource,
   removeImageTechniques,
@@ -29,8 +30,13 @@ import {
   updateImageTools,
   refreshImageResources,
 } from '~/server/services/image.service';
+import { getSongCoversForPlayer, setSongCover } from '~/server/services/post.service';
+import { getSongGenreTagIds } from '~/server/services/song-genre.service';
+import { getRisingSongIds } from '~/server/services/song-rising.service';
+import { getSongLyrics } from '~/server/services/track-lyrics.service';
 import {
   middleware,
+  guardedProcedure,
   heavyProcedure,
   moderatorProcedure,
   protectedProcedure,
@@ -53,7 +59,7 @@ import {
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
 import { withSharedFeedUsers } from '~/server/utils/feed-shared-users';
-import { cacheIt, edgeCacheIt } from './../middleware.trpc';
+import { cacheIt, edgeCacheIt, rateLimit } from './../middleware.trpc';
 import {
   addOrRemoveImageTechniquesSchema,
   addOrRemoveImageToolsSchema,
@@ -64,6 +70,8 @@ import {
   imageModerationSchema,
   removeImageResourceSchema,
   reportCsamImagesSchema,
+  getSongCoversSchema,
+  setSongCoverSchema,
   setTosViolationSchema,
   setVideoThumbnailSchema,
   toggleImageFlagSchema,
@@ -247,6 +255,42 @@ export const imageRouter = router({
     .input(setVideoThumbnailSchema)
     .mutation(setVideoThumbnailController),
   // #endregion
+
+  setSongCover: guardedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(setSongCoverSchema)
+    .use(isOwnerOrModerator)
+    .mutation(({ input, ctx }) => setSongCover({ ...input, user: ctx.user })),
+  // Per viewer (visibility, domain level and the music flag), so no `edgeCacheIt`.
+  getSongCovers: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getSongCoversSchema)
+    // Chunks of 100 ids: one read per chunk plus one per player song.
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ input, ctx }) => getSongCoversForPlayer({ ...input, ctx })),
+  // Per viewer (visibility and the music flag), so no edgeCacheIt.
+  getSongPlays: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getSongCoversSchema)
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ input, ctx }) =>
+      getSongPlayCounts({ ids: input.ids, features: ctx.features, user: ctx.user })
+    ),
+  // Per viewer (visibility and the music flag), so no edgeCacheIt.
+  getRisingSongs: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ ctx }) => getRisingSongIds({ features: ctx.features, user: ctx.user })),
+  // Per viewer (the music flag), so no `edgeCacheIt`.
+  getSongGenreTags: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .query(({ ctx }) => getSongGenreTagIds(ctx)),
+  // Per viewer (visibility and the music flag), so no `edgeCacheIt`.
+  getSongLyrics: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getByIdSchema)
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ input, ctx }) => getSongLyrics({ id: input.id, ctx })),
 
   updateAccetableMinor: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })

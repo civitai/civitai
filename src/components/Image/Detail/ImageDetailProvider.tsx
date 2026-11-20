@@ -30,6 +30,7 @@ import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import type { CollectionByIdModel, ImageGetInfinite } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { getModelUrl } from '~/utils/string-helpers';
+import { parseNumericString } from '~/utils/query-string-helpers';
 import { trpc } from '~/utils/trpc';
 
 type ImageDetailState = {
@@ -55,6 +56,8 @@ type ImageDetailState = {
   updateImage: (id: number, data: Partial<ImagesInfiniteModel>) => void;
   collection?: CollectionByIdModel;
   hideReactions?: boolean;
+  /** The comment a link names (`?highlight=`). */
+  highlight?: number;
 };
 
 const ImageDetailContext = createContext<ImageDetailState | null>(null);
@@ -328,6 +331,7 @@ export function ImageDetailProvider({
         updateImage,
         collection,
         hideReactions,
+        highlight: parseNumericString(browserRouter.query.highlight),
       }}
     >
       <Fragment key={externalMoves}>{children}</Fragment>

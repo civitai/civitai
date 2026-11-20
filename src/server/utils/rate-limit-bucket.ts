@@ -114,6 +114,7 @@ export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'feedback',
   'hatTurf',
   'hiddenPreferences',
+  'image',
   'model',
   'placement',
   'platformFeedback',

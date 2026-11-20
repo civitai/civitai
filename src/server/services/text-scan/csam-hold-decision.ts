@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import type { Tracker } from '~/server/clickhouse/client';
-import { BanReasonCode } from '~/server/common/enums';
+import { BanReasonCode, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
@@ -10,6 +10,7 @@ import { dataForModelsCache } from '~/server/redis/caches';
 import type { ArticleMetadata } from '~/server/schema/article.schema';
 import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
 import { unpublishArticleById } from '~/server/services/article.service';
+import { TRACK_LYRICS_ENTITY_TYPE } from '~/server/services/audio-scan/track-lyrics';
 import { violationMetadata } from '~/server/services/text-scan/public-content';
 import { deleteChatMessage } from '~/server/services/chat.service';
 import { requeueBlockedServiceOffering } from '~/server/services/service-offering-moderation.adapter';
@@ -73,6 +74,7 @@ const REMOVABLE_ENTITY_TYPES = [
   'Post',
   'Model',
   'Article',
+  TRACK_LYRICS_ENTITY_TYPE,
   'ServiceOffering',
   'PostText',
 ] as const;
@@ -161,6 +163,21 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
         reason: POST_UNPUBLISH_REASON,
       });
       return;
+    case TRACK_LYRICS_ENTITY_TYPE: {
+      // A song is an image in a post: unpublished with its post, as a Post hold is.
+      // primary: guards the unpublish write below
+      const song = await dbWrite.image.findUnique({
+        where: { id: entityId },
+        select: { postId: true },
+      });
+      if (!song?.postId) return;
+      await unpublishPostAsModerator({
+        id: song.postId,
+        userId: actor.id,
+        reason: POST_UNPUBLISH_REASON,
+      });
+      return;
+    }
     case 'Model': {
       const model = await dbWrite.model.findUnique({
         where: { id: entityId },
@@ -259,8 +276,10 @@ async function strikeAuthor(hold: HeldRow, { actor, holdId }: DecideArgs) {
     points: STRIKE_POINTS,
     description: STRIKE_DESCRIPTION,
     internalNotes: `csam text hold #${holdId}`,
-    // Every csam hold type is an `EntityType`.
-    entityType: hold.entityType as EntityType,
+    // Every other csam hold type is an `EntityType`; a song's lyrics belong to its image.
+    entityType: (hold.entityType === TRACK_LYRICS_ENTITY_TYPE
+      ? 'Image'
+      : hold.entityType) as EntityType,
     entityId: hold.entityId,
     expiresInDays: 365,
     issuedBy: actor.id,
@@ -389,6 +408,22 @@ export async function decideCsamHold(args: DecideArgs) {
     throw error;
   }
 
+  // The song left search when it was held. The decision is stored, so a failure here must not throw.
+  if (status === 'Dismissed' && hold.entityType === TRACK_LYRICS_ENTITY_TYPE) {
+    const { queueImageSearchIndexUpdate } = await import('~/server/services/image.service');
+    await queueImageSearchIndexUpdate({
+      ids: [hold.entityId],
+      action: SearchIndexUpdateQueueAction.Update,
+    }).catch((error) =>
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'csam hold: re-index after dismissal failed',
+        holdId,
+        error: (error as Error).message,
+      })
+    );
+  }
   // A block for this queue files no report, so its dismiss is the way out. The requeue still refuses
   // while another hold or an undismissed verdict applies; the reconcile job settles what it lets out.
   if (decision === 'dismiss' && hold.entityType === 'ServiceOffering')

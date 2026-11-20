@@ -25,12 +25,12 @@ const FEED_STATE_RESET = {
 const imageDetailDialog = routedDialogDictionary.addItem('imageDetail', {
   component: ImageDetailModal,
   target: '#main',
-  resolve: (query, { imageId, storylineChapterId, storylineVia, ...state }) => {
+  resolve: (query, { imageId, storylineChapterId, storylineVia, highlight, ...state }) => {
     // An image opened from inside the reader (a remix, say) is not in the storyline: drop the
     // reader's params rather than carry them into a URL that no longer names them.
     // `active` is the opener's expanded info sheet; collapsing it is a history `back()`, so
     // inheriting it would make that pop the new image instead. `highlight` is the opener's linked
-    // comment, and it opens the new image's info sheet as well.
+    // comment, and it opens the new image's info sheet as well; a link names its own instead.
     const {
       [STORYLINE_CHAPTER_PARAM]: _chapter,
       [STORYLINE_VIA_PARAM]: _via,
@@ -48,9 +48,12 @@ const imageDetailDialog = routedDialogDictionary.addItem('imageDetail', {
         imageId,
         ...(storylineChapterId ? { [STORYLINE_CHAPTER_PARAM]: storylineChapterId } : {}),
         ...(storylineChapterId && via.length ? { [STORYLINE_VIA_PARAM]: via.join(',') } : {}),
+        ...(highlight ? { highlight } : {}),
       },
       asPath: storylineChapterId
         ? storylineReadHref({ imageId, chapterId: storylineChapterId, via })
+        : highlight
+        ? `/images/${imageId}?highlight=${highlight}`
         : `/images/${imageId}`,
       state: { ...FEED_STATE_RESET, ...state },
     };

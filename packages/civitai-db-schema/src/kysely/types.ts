@@ -105,6 +105,7 @@ import type {
   TechniqueType,
   AppealStatus,
   AppealCategory,
+  TrackLyricsSource,
   AuctionType,
   ModerationRuleAction,
   ChangelogType,
@@ -2739,6 +2740,10 @@ export type CommentV3 = {
   pinnedAt: Timestamp | null;
   reactionCount: Generated<number>;
   legacyV1Id: number | null;
+  /**
+   * Server-built only. A song's timed comment holds `{ timestampSec }`.
+   */
+  metadata: unknown | null;
 };
 export type CommentV3Reaction = {
   id: Generated<number>;
@@ -6537,6 +6542,18 @@ export type Tool = {
   metadata: Generated<unknown>;
   alias: string | null;
 };
+export type TrackLyrics = {
+  imageId: number;
+  text: string;
+  /**
+   * `[{ t, text }]`: `t` is the line's offset in milliseconds, or null until a timed source exists.
+   */
+  lines: unknown;
+  source: TrackLyricsSource;
+  language: string | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type TrustedSpokeDomain = {
   id: Generated<number>;
   domain: string;
@@ -7398,6 +7415,7 @@ export type DB = {
   TextScanPrompt: TextScanPrompt;
   TipConnection: TipConnection;
   Tool: Tool;
+  TrackLyrics: TrackLyrics;
   TrustedSpokeDomain: TrustedSpokeDomain;
   User: User;
   UserAnnouncementMute: UserAnnouncementMute;

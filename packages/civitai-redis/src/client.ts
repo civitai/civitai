@@ -3373,6 +3373,8 @@ const REDIS_KEYS_UNPREFIXED = {
     PROVIDER_DOWNLOAD_TOKENS: 'packed:caches:provider-download-tokens',
     // `<prefix>:<userId>` — the account's standing ({ muted, banned, exists }). See account-standing.service.ts.
     ACCOUNT_STANDING: 'packed:caches:account-standing',
+    // The song ids with the most plays in the last 7 days, for /music's "Rising this week". See song-rising.service.ts.
+    RISING_SONGS: 'packed:caches:rising-songs',
     // `<prefix>:<blobId>` — an App Block media blob's scan verdict. See blobRatings.ts `readBlobState`.
     BLOCK_MEDIA_BLOB_STATE: 'packed:caches:block-media-blob-state',
     // `<prefix>:<blobId>` — set after a failed, timed-out or pending verdict read (see `BLOB_STATE_BACKOFF_SECONDS`).

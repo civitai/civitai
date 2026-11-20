@@ -33,7 +33,10 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM
       ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TABLE "Image" (
+      type "MediaType" NOT NULL DEFAULT 'image',
       id int PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL,
       "nsfwLevelLocked" boolean NOT NULL, metadata jsonb, "scanJobs" jsonb
     );
@@ -58,7 +61,7 @@ const storedReviewed = async () => {
     sql.values
   );
   const { reviewed, feedGo, ...row } = rows[0];
-  const ts = isImageReviewed({ ...row, nsfwLevelReason: null });
+  const ts = isImageReviewed({ ...row, type: 'image', lyricsHeld: false, nsfwLevelReason: null });
   expect(ts, 'isImageReviewed agrees with imageReviewedSql').toBe(reviewed);
   expect(feedGo, "feed-go's ImageReviewedSQL agrees with imageReviewedSql").toBe(reviewed);
   return reviewed;

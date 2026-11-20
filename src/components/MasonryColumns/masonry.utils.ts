@@ -55,7 +55,9 @@ export function useMasonryColumns<TData>(
   adjustDimensions?: MasonryAdjustHeightFn<TData>,
   maxItemHeight?: number,
   withAds?: boolean,
-  span?: MasonrySpanOptions
+  span?: MasonrySpanOptions,
+  /** A change lays the items out again, for sizing that reads something besides these inputs. */
+  relayoutKey?: string | number
 ) {
   const { adsEnabled } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
@@ -228,6 +230,7 @@ export function useMasonryColumns<TData>(
     spanMinRatio,
     spanMaxHeight,
     holdTail,
+    relayoutKey,
   ]);
 }
 

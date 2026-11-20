@@ -120,11 +120,15 @@ const VIEWER_UNRATED = 225; // the viewer's own scanned image that has no rating
 const MINOR_R = 226; // the viewer's minor-flagged image rated R, on a published public post
 const MINOR_PG13 = 227; // the viewer's minor-flagged image rated PG-13, on the same post
 const UNFLAGGED_R = 228; // the viewer's image rated R with no minor flag set (NULL)
+const HELD_SONG = 229; // stranger's song on a published post, its lyrics held for csam
+const CLEAR_SONG = 230; // stranger's song on a published post, no lyrics hold
 
 beforeAll(async () => {
   const schema = `
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
-    CREATE TABLE "Image" (
+    CREATE TABLE "Image" ( type "MediaType" NOT NULL DEFAULT 'image',
       minor boolean DEFAULT false,
       "id"              integer PRIMARY KEY,
       "userId"          integer NOT NULL,
@@ -209,6 +213,8 @@ beforeAll(async () => {
       (${VIEWER_RESTRICTED_R}, ${VIEWER},   5, 4, true),
       (${RESTRICTED_X},        ${STRANGER}, 1, 8, true),
       (${RESTRICTED_XXX},      ${STRANGER}, 1, 16, true);
+    INSERT INTO "Image" ("id", "userId", "postId", "type") VALUES (${HELD_SONG}, ${STRANGER}, 1, 'audio'), (${CLEAR_SONG}, ${STRANGER}, 1, 'audio');
+    INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('TrackLyrics', ${HELD_SONG}, 'csam', 'Pending');
     INSERT INTO "CollectionContributor" ("collectionId", "userId", "permissions") VALUES
       (${COLLECTION}, ${MANAGER}, ARRAY['VIEW', 'MANAGE']::"CollectionContributorPermission"[]),
       (${COLLECTION}, ${VIEW_ONLY}, ARRAY['VIEW', 'ADD']::"CollectionContributorPermission"[]),
@@ -236,6 +242,7 @@ describe('which covers a stranger is shown', () => {
     ['an image on a model that is not taken down', LIVE_MODEL],
     ['a PG image on a restricted base model', RESTRICTED_PG],
     ['an R image on an unrestricted base model', UNRESTRICTED_R],
+    ['a song whose lyrics are not held', CLEAR_SONG],
   ])('shows %s', async (_, imageId) => {
     expect(await servable(imageId)).toBe(true);
   });
@@ -257,6 +264,7 @@ describe('which covers a stranger is shown', () => {
     ['an R image on a restricted base model', RESTRICTED_R],
     ['an X image on a restricted base model', RESTRICTED_X],
     ['an XXX image on a restricted base model', RESTRICTED_XXX],
+    ['a song whose lyrics are held for csam', HELD_SONG],
   ])('hides %s', async (_, imageId) => {
     expect(await servable(imageId)).toBe(false);
   });

@@ -2,6 +2,8 @@ import { faro } from '@grafana/faro-web-sdk';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { isOrchestratorUrl } from '~/server/common/constants';
+import type { SongDetails } from '~/shared/form-graph/generation/audio/song-metadata';
+import { MEDIA_TYPE, getMimeTypeFromExt } from '~/shared/constants/mime-types';
 import { fetchBlob, fetchBlobAsFile, MEDIA_IDLE_TIMEOUT_MS } from '~/utils/file-utils';
 import { isDefined } from '~/utils/type-guards';
 
@@ -10,6 +12,9 @@ type DataProps = {
   meta?: Record<string, unknown>;
   /** The generation this output came from — lets the server verify its provenance. */
   generationWorkflowId?: string;
+  /** A song is posted as audio even when its blob is a video (an ACE song with a cover). */
+  mediaType?: 'audio';
+  audioMetadata?: SongDetails;
 };
 
 export const useOrchestratorUrlStore = create<{
@@ -75,22 +80,35 @@ export const orchestratorMediaTransmitter = {
   getFiles: async (key: string) => {
     const data = useOrchestratorUrlStore.getState().getData(key) ?? [];
     const results = await Promise.allSettled(
-      data.map(async ({ url, meta, generationWorkflowId }) => {
+      data.map(async ({ url, meta, generationWorkflowId, mediaType, audioMetadata }) => {
         // requireOk: an expired or refused URL's error body is not an image.
         const blob = await fetchBlob(url, undefined, {
           requireOk: true,
           idleTimeoutMs: MEDIA_IDLE_TIMEOUT_MS,
         });
         if (!blob) throw Object.assign(new Error('no blob'), { name: 'NoBlob' });
+        const name = fileNameOf(url);
+        // A song the preprocessor cannot type by its served mime (e.g. audio/x-wav) is typed by extension.
+        const type =
+          mediaType === 'audio' && !MEDIA_TYPE[blob.type]
+            ? getMimeTypeFromExt(name.split('.').pop() ?? '') ?? blob.type
+            : blob.type;
         return {
-          file: new File([blob], fileNameOf(url), { type: blob.type }),
+          file: new File([blob], name, { type }),
           meta,
           generationWorkflowId,
+          mediaType,
+          audioMetadata,
         };
       })
     );
-    const files: { file: File; meta?: Record<string, unknown>; generationWorkflowId?: string }[] =
-      [];
+    const files: {
+      file: File;
+      meta?: Record<string, unknown>;
+      generationWorkflowId?: string;
+      mediaType?: 'audio';
+      audioMetadata?: SongDetails;
+    }[] = [];
     for (const [i, result] of results.entries()) {
       if (result.status === 'fulfilled') files.push(result.value);
       else reportFetchFailure(data[i].url, result.reason);

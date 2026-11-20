@@ -1,3 +1,7 @@
+import {
+  SONGS_UNAVAILABLE_MESSAGE,
+  songAllowsRemix,
+} from '~/shared/form-graph/generation/audio/song-metadata';
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
@@ -74,6 +78,7 @@ import {
   notHeldForReviewWhere,
   pendingLevelImageSql,
   pendingOthersImageConditions,
+  songReviewedSql,
   servableLevelWhere,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   minorMatureImageVisibleSql,
@@ -87,6 +92,7 @@ import {
 import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
+  getImageIdsVisibleToViewer,
   imageBlockedForConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
@@ -1969,6 +1975,17 @@ export const ingestImage = async ({
     type,
     callbackUrl,
     priority: lowPriority ? 'low' : undefined,
+  }).catch((error: unknown) => {
+    // A song's submit also reads and writes the database. A throw must still stamp the attempt, or the
+    // cron sees a song that was never sent and re-sends it every run without limit.
+    if (type !== MediaType.audio) throw error;
+    return {
+      data: undefined,
+      error,
+      status: undefined,
+      retryAfter: undefined,
+      useImageScanning: false,
+    };
   });
   const lane = useImageScanning ? 'imageScanning' : 'new';
   if (!workflowResponse) {
@@ -3891,6 +3908,8 @@ type ImageMetricsObject = Record<
     comment: number | null;
     collection: number | null;
     buzz: number | null;
+    /** Undefined when the source predates plays (a hash cached before `Play` was read). */
+    play: number | null | undefined;
   }
 >;
 
@@ -3931,6 +3950,8 @@ const shapeCachedMetricHash = (
     commentCount: count(hash.commentCount),
     Collection: count(hash.Collection),
     tippedAmount: count(hash.tippedAmount),
+    // Absent (not 0) when the hash was cached before `Play` was read; a `notFound` hash is a known 0.
+    Play: hash.Play === undefined && hash.notFound === undefined ? undefined : count(hash.Play),
   });
 };
 
@@ -4091,6 +4112,7 @@ const shapeImageMetrics = (
   comment: m?.commentCount || null,
   collection: m?.Collection || null,
   buzz: m?.tippedAmount || null,
+  play: m && m.Play === undefined ? undefined : m?.Play || null,
 });
 
 /**
@@ -4216,6 +4238,31 @@ export const getImageMetricsObjectDirect = async (
     return await getCachedImageMetricsObject(data.map((d) => d.id));
   }
 };
+
+/** Play counts by song id, for the songs the viewer can open; an id the reader could not answer is left out. */
+export async function getSongPlayCounts({
+  ids,
+  features,
+  user,
+}: {
+  ids: number[];
+  features: { music?: boolean };
+  user?: { id: number; isModerator?: boolean | null };
+}): Promise<Record<number, number>> {
+  if (!features.music || !ids.length) return {};
+  const visible = await getImageIdsVisibleToViewer({
+    ids: [...new Set(ids)],
+    userId: user?.id,
+    isModerator: user?.isModerator ?? undefined,
+  });
+  if (!visible.size) return {};
+  const metrics = await getImageMetricsObject([...visible].map((id) => ({ id })));
+  return Object.fromEntries(
+    Object.values(metrics).flatMap((entry) =>
+      entry.play === undefined ? [] : [[entry.imageId, entry.play ?? 0]]
+    )
+  );
+}
 
 export async function getTagNamesForImages(imageIds: number[]) {
   const tagIds = await tagIdsForImagesCache.fetch(imageIds);
@@ -5168,10 +5215,16 @@ export async function createImage({
   feedbackCapture,
   assertPostOwnedBy = createPostOwnerCheck(),
   clientUrl,
+  allowAudio,
   ...image
 }: ImageSchema & {
   userId: number;
   skipIngestion?: boolean;
+  /**
+   * The caller has checked the owner may store a song (the `music` flag). Without it audio is
+   * refused here, because `imageSchema` accepts `type: 'audio'` on every route that creates an image.
+   */
+  allowAudio?: boolean;
   /**
    * Derivation the caller proved (see remix-provenance.ts). Nothing else can put
    * `meta.extra.sourceImageIds` on a row — every other caller's claim is stripped
@@ -5202,6 +5255,8 @@ export async function createImage({
   if (blockProvenance && !blockProvenance.appId) {
     throw new Error('createImage: blockProvenance requires an appId');
   }
+  if (image.type === MediaType.audio && !allowAudio)
+    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
   if (image.postId != null) await assertPostOwnedBy({ postId: image.postId, userId: image.userId });
 
   /**
@@ -5493,6 +5548,12 @@ export async function checkEntityImageKeys({
   return urls;
 }
 
+/** Entity writes insert rows without `createImage`, so they refuse songs themselves. */
+function assertNoAudio(images: ImageReferenceInput[]) {
+  if (images.some((i) => i.type === MediaType.audio))
+    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
+}
+
 export const createEntityImages = async ({
   tx,
   entityId,
@@ -5515,6 +5576,8 @@ export const createEntityImages = async ({
     return [];
   }
 
+  // Every entry is inserted (an `id` is dropped by pickClientImageColumns), so none may be a song.
+  assertNoAudio(images);
   await assertClientImageUrlsUsable({ urls: images.map((i) => i.url), userId, db: dbClient });
   await assertClientKeysIssuedToCaller({
     urls: uncheckedUrls(images, keysCheckedFor),
@@ -5966,7 +6029,7 @@ export const getEntityCoverImage = async ({
         ) t
     ) t
     JOIN "Image" i ON i.id = t."imageId"
-    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL
+    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND ${songReviewedSql()}
     -- An Article draws a row from its own branch (the cover) and one from CONNECTIONS (a
     -- content image). A UNION has no order of its own, so without this the lower image id
     -- came first and a content image could replace the cover. The connection is a fallback.
@@ -6050,6 +6113,8 @@ export const updateEntityImages = async ({
   maxLinked?: number;
 }) => {
   const dbClient = tx ?? dbWrite;
+  // An entry with an `id` is linked, not inserted.
+  assertNoAudio(images.filter((i) => !i.id));
   const connections = await dbClient.imageConnection.findMany({
     select: { imageId: true },
     where: {
@@ -6606,6 +6671,7 @@ export async function resolveIngestionError({
     where: { id },
     select: {
       ingestion: true,
+      type: true,
       postId: true,
       userId: true,
       metadata: true,
@@ -6616,6 +6682,11 @@ export async function resolveIngestionError({
     },
   });
   if (!image) throw new Error('Image not found');
+  // A song is published only by its own scan; the ingest cron retries it, so no rating here can.
+  if (image.type === MediaType.audio)
+    throw throwBadRequestError(
+      'A song is published only by its own scan, which is retried automatically; it cannot be rated here.'
+    );
   const refusal = ingestionResolveRefusal({
     blockedFor: image.blockedFor,
     needsReview: image.needsReview,
@@ -7000,6 +7071,10 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
       getGenerationDisplayKeys(meta as Record<string, unknown>, graphResources) ?? undefined;
   }
 
+  const songRefusesRemix =
+    image.type === 'audio' &&
+    !songAllowsRemix((await imageMetadataCache.fetch([id]))[id]?.metadata);
+
   return {
     type: image.type,
     onSite,
@@ -7016,7 +7091,7 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
     tools,
     techniques,
     external,
-    canRemix: !image.hideMeta && !!meta?.prompt,
+    canRemix: !image.hideMeta && !!meta?.prompt && !songRefusesRemix,
     remixOfId: meta?.extra?.remixOfId,
     remixOfIds: getRemixSourceIds(id, meta),
   };

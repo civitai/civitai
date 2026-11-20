@@ -67,6 +67,7 @@ const hashes = (): Record<string, Record<string, string>> => ({
     commentCount: '7',
     Collection: '11',
     tippedAmount: '500',
+    Play: '13',
     _populatedAt: String(nowSeconds() - 60),
   },
   // Past the refresh age (1h), inside the max-staleness bound.
@@ -119,6 +120,7 @@ describe('getImageMetricsObject with image-metrics-swr', () => {
       comment: 7,
       collection: 11,
       buzz: 500,
+      play: 13,
     });
     // Stale, still served from the cache rather than waiting on a refresh.
     expect(result[2]?.reactionLike).toBe(8);

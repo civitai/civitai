@@ -1,5 +1,6 @@
 import { recordGallerySourceRating } from '~/components/form-graph/generation/useFlux3MatureSource';
 import type { RemixKind } from '~/shared/constants/remix.constants';
+import { songAllowsRemix } from '~/shared/form-graph/generation/audio/song-metadata';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import {
   getEngineRefusal,
@@ -70,8 +71,12 @@ export function getSoleRemixOption(image: RemixSourceImage): RemixOptionKey | un
   return options.length === 1 ? options[0] : undefined;
 }
 
-/** Whether the original prompt-and-resource path has anything to offer. */
-export function canReusePrompt(image: RemixSourceImage): boolean {
+/**
+ * Whether the original prompt-and-resource path has anything to offer. A song's owner can turn it
+ * off, which only a payload carrying the song's `metadata` can show.
+ */
+export function canReusePrompt(image: RemixSourceImage & { metadata?: unknown }): boolean {
+  if (image.type === 'audio' && !songAllowsRemix(image.metadata)) return false;
   return !!(image.hasPositivePrompt ?? image.hasMeta);
 }
 

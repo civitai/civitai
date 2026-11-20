@@ -22,6 +22,8 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan', 'PendingManualAssignment');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TYPE "CollectionItemStatus" AS ENUM ('ACCEPTED', 'REVIEW', 'REJECTED');
@@ -34,7 +36,7 @@ beforeAll(async () => {
       "addedById" int
     );
     CREATE TABLE "Post" (id int PRIMARY KEY, "collectionId" int);
-    CREATE TABLE "Image" (
+    CREATE TABLE "Image" ( type "MediaType" NOT NULL DEFAULT 'image',
       id int PRIMARY KEY, "postId" int, "userId" int, "nsfwLevel" int, "needsReview" text,
       ingestion "ImageIngestionStatus" DEFAULT 'Scanned', "nsfwLevelLocked" boolean DEFAULT false,
       metadata jsonb DEFAULT '{}', "scanJobs" jsonb DEFAULT '{}', "acceptableMinor" boolean NOT NULL DEFAULT false

@@ -15,6 +15,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostContestCollectionInfoAlert';
 import { PostStickerOverlay } from '~/components/Post/Detail/PostStickerOverlay';
+import { postSongList, PostSongTile, SongMenuItems } from '~/components/MusicPlayer/PostSong';
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -46,6 +47,7 @@ const fitToScreenWidth = (width: number, height: number) =>
   `calc((100dvh - var(--header-height) - 16px) * ${width} / ${height})`;
 export function PostImages({
   postId,
+  postTitle,
   images,
   isLoading,
   collectionItems,
@@ -56,6 +58,8 @@ export function PostImages({
   linkedTextId,
 }: {
   postId: number;
+  /** Names the post's songs in Up next. */
+  postTitle?: string | null;
   images: ImagesInfiniteModel[];
   /** The post's storyline text items (`post.get`), read inline between the images. */
   texts?: DetailText[];
@@ -79,6 +83,13 @@ export function PostImages({
   // "Load more" refetches the first twenty alongside the rest. A post is well
   // inside the provider's 100-id chunk, so this is one query either way.
   const imageIds = useMemo(() => images.map((image) => image.id), [images]);
+  // With the music flag a song plays in the global player, the post's songs as the list.
+  const songs = useMemo(
+    () => (features.music ? images.filter((image) => image.type === MediaType.audio) : []),
+    [features.music, images]
+  );
+  const songIds = useMemo(() => songs.map((song) => song.id), [songs]);
+  const songList = postSongList(postTitle, songs);
   const items = useMemo(() => mergeDetailItems(images, texts), [images, texts]);
 
   if (isLoading)
@@ -121,6 +132,7 @@ export function PostImages({
               isModerator ||
               imageCollectionItem.status === CollectionItemStatus.ACCEPTED);
           const vimeoVideoId = (image.metadata as VideoMetadata)?.vimeoVideoId;
+          const isSong = features.music && image.type === MediaType.audio;
           const showsControlStrip =
             image.type === MediaType.video &&
             (features.nativeVideoControls || shouldDisplayHtmlControls(image));
@@ -170,7 +182,13 @@ export function PostImages({
                             <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
                             <Group
                               gap={4}
-                              className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+                              className={clsx(
+                                'absolute z-10',
+                                // A song's rating sits on its cover, which the tile insets by 16px.
+                                isSong
+                                  ? 'left-6 top-6'
+                                  : 'left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2'
+                              )}
                               style={imageMediaHatClearLeft(
                                 showEventCosmetics ? image.eventDecoration : null,
                                 true
@@ -191,7 +209,14 @@ export function PostImages({
                                 'right-10 top-2.5': !!vimeoVideoId,
                               })}
                             >
-                              <ImageContextMenu image={image} />
+                              <ImageContextMenu
+                                image={image}
+                                leadingMenuItems={
+                                  isSong ? (
+                                    <SongMenuItems song={image} list={songList} />
+                                  ) : undefined
+                                }
+                              />
                               {features.imageGeneration && isRemixMenuVisible(image) && (
                                 <RemixMenu image={image} source="remix:post-image-card">
                                   <HoverActionButton
@@ -210,54 +235,64 @@ export function PostImages({
                                 </RemixMenu>
                               )}
                             </div>
-                            <RoutedDialogLink
-                              name="imageDetail"
-                              state={{
-                                imageId: image.id,
-                                images,
-                                texts,
-                                collectionId: imageCollectionItem?.collection?.id,
-                              }}
-                              // A link drags by default, so a press-and-move on the video controls
-                              // becomes a link drag that eats the click. Media opts into its own drag.
-                              draggable={!showsControlStrip}
-                              onClick={() => {
-                                if (videoRef.current) videoRef.current.stop();
-                              }}
-                            >
-                              {!safe ? (
-                                <div
-                                  style={{
-                                    position: 'absolute',
-                                    top: 0,
-                                    bottom: 0,
-                                    aspectRatio: (image.width ?? 1) / (image.height ?? 1),
-                                  }}
-                                >
+                            {isSong ? (
+                              safe ? (
+                                <PostSongTile song={image} list={songList} coverIds={songIds} />
+                              ) : (
+                                <div className="h-32">
                                   <MediaHash {...image} />
                                 </div>
-                              ) : (
-                                <EdgeMedia
-                                  src={image.url}
-                                  name={image.name}
-                                  alt={image.name ?? undefined}
-                                  type={image.type}
-                                  imageId={image.id}
-                                  width={width < maxWidth ? width : maxWidth}
-                                  hiDpi={features.hiDpiPreviews}
-                                  sourceWidth={image.width}
-                                  original={image.type === 'video'}
-                                  anim={safe}
-                                  html5Controls={showsControlStrip}
-                                  // Fullscreen belongs to the image detail view, which this media
-                                  // links to. Chromium-only; other browsers still show the button,
-                                  // which EdgeVideo's fullscreen guards keep usable.
-                                  videoProps={{ controlsList: 'nofullscreen' }}
-                                  videoRef={videoRef}
-                                  vimeoVideoId={vimeoVideoId}
-                                />
-                              )}
-                            </RoutedDialogLink>
+                              )
+                            ) : (
+                              <RoutedDialogLink
+                                name="imageDetail"
+                                state={{
+                                  imageId: image.id,
+                                  images,
+                                  texts,
+                                  collectionId: imageCollectionItem?.collection?.id,
+                                }}
+                                // A link drags by default, so a press-and-move on the video controls
+                                // becomes a link drag that eats the click. Media opts into its own drag.
+                                draggable={!showsControlStrip}
+                                onClick={() => {
+                                  if (videoRef.current) videoRef.current.stop();
+                                }}
+                              >
+                                {!safe ? (
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      top: 0,
+                                      bottom: 0,
+                                      aspectRatio: (image.width ?? 1) / (image.height ?? 1),
+                                    }}
+                                  >
+                                    <MediaHash {...image} />
+                                  </div>
+                                ) : (
+                                  <EdgeMedia
+                                    src={image.url}
+                                    name={image.name}
+                                    alt={image.name ?? undefined}
+                                    type={image.type}
+                                    imageId={image.id}
+                                    width={width < maxWidth ? width : maxWidth}
+                                    hiDpi={features.hiDpiPreviews}
+                                    sourceWidth={image.width}
+                                    original={image.type === 'video'}
+                                    anim={safe}
+                                    html5Controls={showsControlStrip}
+                                    // Fullscreen belongs to the image detail view, which this media
+                                    // links to. Chromium-only; other browsers still show the button,
+                                    // which EdgeVideo's fullscreen guards keep usable.
+                                    videoProps={{ controlsList: 'nofullscreen' }}
+                                    videoRef={videoRef}
+                                    vimeoVideoId={vimeoVideoId}
+                                  />
+                                )}
+                              </RoutedDialogLink>
+                            )}
                             {safe && features.stickerPlacement && (
                               <PostStickerOverlay imageId={image.id} />
                             )}

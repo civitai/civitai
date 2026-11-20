@@ -35,6 +35,8 @@ export type CommentSectionProps = {
   emptyState?: React.ReactNode | null;
   /** An id on the section, for `#` links to it. */
   anchorId?: string;
+  /** The comment to mark, where the page's own link parameters do not name it. */
+  highlight?: number;
 };
 
 /** The comment section any surface mounts. See `docs/plans/comments-v3-article-flip.md`. */
@@ -48,6 +50,7 @@ export function CommentSection({
   deepLinks = true,
   forceLocked,
   borderless,
+  highlight,
   ...view
 }: CommentSectionProps) {
   const allBadges: CommentV3Badge[] =
@@ -63,6 +66,7 @@ export function CommentSection({
       deepLinks={deepLinks}
       forceLocked={forceLocked}
       borderless={borderless}
+      highlight={highlight}
     >
       <CommentSectionView {...view} />
     </CommentSectionProvider>

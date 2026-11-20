@@ -63,6 +63,7 @@ export const navRegistry: NavRegistryEntry[] = [
   { key: 'models', url: '/models', defaultGroup: 'bar' },
   { key: 'images', url: '/images', defaultGroup: 'bar' },
   { key: 'videos', url: '/videos', defaultGroup: 'bar' },
+  { key: 'music', url: '/music', defaultGroup: 'bar', visible: (ctx) => ctx.features.music },
   {
     key: '3d-models',
     url: '/3d-models',

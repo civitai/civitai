@@ -33,7 +33,7 @@ import {
   IconPhoto,
   IconShare3,
 } from '@tabler/icons-react';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   StorylineChapterDescription,
   StorylineStageOverlay,
@@ -127,6 +127,11 @@ import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMen
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
+import { isSongDetail } from '~/components/Music/SongDetail/SongDetailStage';
+import { SongMoreFromCard } from '~/components/Music/SongDetail/SongMoreFromCard';
+import { SongStageBackdrop } from '~/components/Music/SongDetail/SongStageBackdrop';
+import { SongUpNextButton } from '~/components/Music/SongDetail/SongUpNextButton';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 
 const PREFETCH_THRESHOLD = 5;
@@ -170,6 +175,7 @@ export function ImageDetail2({ deferredSsr }: { deferredSsr?: boolean } = {}) {
 function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const {
     images,
     items,
@@ -184,12 +190,24 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
     index,
     collection,
     hideReactions,
+    highlight,
   } = useImageDetailContext();
 
-  const [sidebarOpen, setSidebarOpen] = useLocalStorage({
+  const [storedSidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,
   });
+  // A link to a comment (`?highlight=`, as the music player's timed comments open it) shows the
+  // sidebar the comment is in, even when the reader folded it away; from the first render, since
+  // the comment section scrolls to it on mount.
+  const [sidebarShownFor, setSidebarShownFor] = useState<number>();
+  const showingHighlight = highlight !== undefined && highlight !== sidebarShownFor;
+  const sidebarOpen = storedSidebarOpen || showingHighlight;
+  useEffect(() => {
+    if (!showingHighlight) return;
+    setSidebarOpen(true);
+    setSidebarShownFor(highlight);
+  }, [showingHighlight, highlight, setSidebarOpen]);
 
   // Here rather than in the overlay: the overlay is behind the `safe` gate in
   // the carousel, so on a blurred image it never mounts and the link would
@@ -293,6 +311,7 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
 
   const isOwner = currentUser?.id === image.user.id;
   const canRemix = isRemixMenuVisible(image);
+  const isSong = isSongDetail(image, features);
 
   const IconChevron = !active ? IconChevronUp : IconChevronDown;
   const IconLayoutSidebarRight = !sidebarOpen
@@ -429,7 +448,7 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
   );
 
   const isVideo = image?.type === 'video';
-  const title = `${isVideo ? 'Video' : 'Image'} posted ${
+  const title = `${isVideo ? 'Video' : isSong ? 'Song' : 'Image'} posted ${
     image.user.username ? `by ${image.user.username}` : 'to civitai'
   }`;
 
@@ -478,10 +497,16 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
         <BrowsingSettingsAddonsProvider>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
             <div className="relative flex flex-1 overflow-hidden">
-              <div className="relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[calc(60px+var(--safe-area-inset-bottom-unpaid))]">
+              <div
+                className={clsx(
+                  'relative flex min-w-0 flex-1 flex-col @max-md:pb-[calc(60px+var(--safe-area-inset-bottom-unpaid))]',
+                  isSong && 'isolate'
+                )}
+              >
                 <ImageGuard2 image={image} explain={false}>
-                  {() => (
+                  {(show) => (
                     <>
+                      {isSong && show && <SongStageBackdrop songId={image.id} />}
                       {/* HEADER */}
                       <div className="flex justify-between gap-3 p-3 @md:gap-8">
                         <div className="flex shrink-0 items-center gap-1">
@@ -517,6 +542,7 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                           </div>
 
                           <div className="flex shrink-0 items-center gap-1">
+                            {isSong && <SongUpNextButton buttonProps={sharedButtonProps} />}
                             {/* Disable view count  */}
                             {/* <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
@@ -635,10 +661,18 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                             )}
                           </div>
                         </div>
-                        <div className={`@max-md:hidden ${sidebarOpen ? '-mr-3 ml-3' : ''}`}>
+                        {/* A song's stage contrasts with the sidebar, so the toggle keeps the header's padding. */}
+                        <div
+                          className={clsx(
+                            '@max-md:hidden',
+                            sidebarOpen && (isSong ? 'ml-3' : '-mr-3 ml-3')
+                          )}
+                        >
                           <LegacyActionIcon
                             {...sharedActionIconProps}
                             onClick={handleSidebarToggle}
+                            aria-label={sidebarOpen ? 'Hide details' : 'Show details'}
+                            aria-expanded={sidebarOpen}
                           >
                             <IconLayoutSidebarRight {...sharedIconProps} />
                           </LegacyActionIcon>
@@ -916,15 +950,22 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                           <ImageDetailPostCard post={post} />
                           <ImageProcess imageId={image.id} />
                           <ImageRemixOfDetails imageId={image.id} />
-                          <RemixGalleryCard imageId={image.id} />
+                          {/* Its copy and its entries are for images and videos. */}
+                          {!isSong && <RemixGalleryCard imageId={image.id} />}
                           <ImageGenerationData imageId={image.id} collapsible />
                           <CollapsibleCard
                             title="Discussion"
                             icon={<IconBrandWechat />}
                             storageKey="discussion"
+                            expandFor={highlight}
                           >
-                            <ImageDetailComments imageId={image.id} userId={image.user.id} />
+                            <ImageDetailComments
+                              imageId={image.id}
+                              userId={image.user.id}
+                              song={isSong ? image : undefined}
+                            />
                           </CollapsibleCard>
+                          {isSong && <SongMoreFromCard song={image} />}
                           <ImageContestCollectionDetails
                             key={currentUser?.id}
                             image={image}

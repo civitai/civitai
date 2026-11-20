@@ -1,14 +1,18 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { imageNotRestrictedSql, minorMatureImageVisibleSql } from '~/server/common/image-visibility';
+import {
+  imageNotRestrictedSql,
+  minorMatureImageVisibleSql,
+  songReviewedSql,
+} from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
- * Scanned, rated, not awaiting review, not removed or a ToS violation, allowed by its base model:
- * as SQL over `"Image" i`.
+ * Scanned, rated, not awaiting review, not removed or a ToS violation, allowed by its base model,
+ * not a held song: as SQL over `"Image" i`.
  */
 const servableImageSql = Prisma.sql`(
   i."ingestion" = 'Scanned'
@@ -17,6 +21,7 @@ const servableImageSql = Prisma.sql`(
   AND i."blockedFor" IS NULL
   AND i."tosViolation" IS NOT TRUE
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+  AND ${songReviewedSql()}
   AND ${imageNotRestrictedSql()}
   AND ${minorMatureImageVisibleSql()}
 )`;
