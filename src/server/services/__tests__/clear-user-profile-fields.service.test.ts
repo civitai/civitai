@@ -79,7 +79,7 @@ describe('clearUserProfileFields', () => {
       return { ...stored, bio: `v${reads}` };
     }) as never);
     await expect(clear()).rejects.toThrow('kept changing');
-    expect(archive.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(archive).toHaveBeenCalledTimes(3);
     expect(db.userProfile.updateMany).not.toHaveBeenCalled();
   });
 

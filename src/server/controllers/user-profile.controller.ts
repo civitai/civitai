@@ -136,9 +136,15 @@ export const updateUserProfileHandler = async ({
     const userId = sessionUser.isModerator ? input.userId || sessionUser.id : sessionUser.id;
     const byModerator = userId !== sessionUser.id;
     if (byModerator) {
-      const fields = (
-        ['bio', 'message', 'location', 'showcaseSections'] as ProfileClearField[]
-      ).filter((field) => field in input);
+      // The civitai.com copies count as the field they override.
+      const touched = {
+        bio: ['bio', 'sfwBio'],
+        message: ['message', 'sfwMessage'],
+        location: ['location'],
+      };
+      const fields = (Object.keys(touched) as (keyof typeof touched)[]).filter((field) =>
+        touched[field].some((key) => key in input)
+      ) as ProfileClearField[];
       if (fields.length)
         await archiveProfileBeforeModeratorChange({
           userId,
@@ -155,6 +161,7 @@ export const updateUserProfileHandler = async ({
       domain: ctx.domain,
     });
 
+    await bustUserCreator(userId);
     if (byModerator)
       await dbWrite.modActivity.create({
         data: {
@@ -164,7 +171,6 @@ export const updateUserProfileHandler = async ({
           entityId: userId,
         },
       });
-    await bustUserCreator(userId);
 
     return user;
   } catch (error) {

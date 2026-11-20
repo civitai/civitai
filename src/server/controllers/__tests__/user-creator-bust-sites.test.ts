@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as Cloudflare from '~/server/cloudflare/client';
 import type * as SearchIndex from '~/server/search-index';
 import type * as UserProfileService from '~/server/services/user-profile.service';
@@ -15,6 +16,24 @@ import type * as UtilService from '~/server/services/util.service';
  * back. `refreshSession` is the global no-op stub here (src/__tests__/setup.ts), so the handler's own
  * `bustUserCreator` is the only thing that can drop the entry.
  */
+
+// The CSAM bucket upload a moderator's edit of a reported user waits on.
+const upload = vi.hoisted(() => ({ fail: undefined as Error | undefined, done: [] as string[] }));
+vi.mock('@aws-sdk/lib-storage', () => {
+  const Upload = class {
+    private readonly params: { Body: NodeJS.ReadableStream; Key: string };
+    constructor({ params }: { params: { Body: NodeJS.ReadableStream; Key: string } }) {
+      this.params = params;
+    }
+    async done() {
+      for await (const chunk of this.params.Body) void chunk;
+      if (upload.fail) throw upload.fail;
+      upload.done.push(this.params.Key);
+      return { ETag: '"etag"' };
+    }
+  };
+  return { Upload, default: { Upload } };
+});
 
 const { purgeCache, readCreator, mocks } = vi.hoisted(() => ({
   purgeCache: vi.fn(),
@@ -151,8 +170,67 @@ describe('creator-card bust in the profile and user write handlers', () => {
       await edit({ id: MODERATOR, isModerator: true });
       expect(dbMock.dbWrite.csamReport.findFirst).toHaveBeenCalledTimes(1);
       expect(dbMock.dbWrite.userProfile.findUnique).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.modActivity.create).toHaveBeenCalledTimes(1);
       expect(dbMock.dbWrite.modActivity.create).toHaveBeenCalledWith({
         data: { userId: MODERATOR, activity: 'editProfile', entityType: 'User', entityId: OWNER },
+      });
+    });
+
+    describe('of a user a report names', () => {
+      const stored = {
+        bio: 'b',
+        message: null,
+        messageAddedAt: null,
+        sfwBio: null,
+        sfwMessage: null,
+        location: null,
+        showcaseSections: [],
+      };
+      beforeEach(() => {
+        setEnv({
+          CSAM_UPLOAD_KEY: 'test-key',
+          CSAM_UPLOAD_SECRET: 'test-secret',
+          CSAM_UPLOAD_REGION: 'test-region',
+          CSAM_UPLOAD_ENDPOINT: 'https://example.invalid',
+          CSAM_BUCKET_NAME: 'test-bucket',
+        });
+        upload.fail = undefined;
+        upload.done = [];
+        dbMock.dbWrite.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+        dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(stored as never);
+      });
+
+      it('archives the profile before the edit lands', async () => {
+        mocks.updateUserProfile.mockImplementationOnce(async () => {
+          expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+          return {} as never;
+        });
+        await edit({ id: MODERATOR, isModerator: true });
+        expect(mocks.updateUserProfile).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses the edit when the archive fails', async () => {
+        upload.fail = new Error('s3 down');
+        await expect(edit({ id: MODERATOR, isModerator: true })).rejects.toThrow();
+        expect(mocks.updateUserProfile).not.toHaveBeenCalled();
+        expect(dbMock.dbWrite.modActivity.create).not.toHaveBeenCalled();
+      });
+
+      it('archives before an edit of only the civitai.com copies', async () => {
+        await updateUserProfileHandler({
+          input: { userId: OWNER, sfwBio: '' },
+          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+        } as never);
+        expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+      });
+
+      it('archives nothing for an edit that touches no profile text', async () => {
+        await updateUserProfileHandler({
+          input: { userId: OWNER, coverImageId: null },
+          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+        } as never);
+        expect(dbMock.dbWrite.csamReport.findFirst).not.toHaveBeenCalled();
+        expect(upload.done).toEqual([]);
       });
     });
 
