@@ -89,9 +89,9 @@ const WORKER_URL = new URL(
  * app gets PoolOverloadedError('app') while other apps are still admitted.
  *
  * The backstop: a call still unanswered at its budget (a hook's `timeoutMs`, a remix call's
- * `budgetMs`) + `backstopMs` (measured from dispatch to
- * the worker, so queue time is not charged to the hook) gets its worker TERMINATED and replaced,
- * and rejects with BackstopError. See BACKSTOP_MS.
+ * `budgetMs`) plus `backstopMs`, measured from dispatch to the worker so queue time is not
+ * charged to the hook, gets its worker TERMINATED and replaced, and rejects with BackstopError.
+ * See BACKSTOP_MS.
  *
  * Replacement: a worker that dies after it was serving is replaced at once. A replacement that
  * fails to start is retried with exponential backoff (respawnBaseMs doubling to RESPAWN_MAX_MS),

@@ -297,6 +297,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         });
       } catch (err) {
         if (err instanceof BackstopError) {
+          // Expired entries go here too, or apps that tripped once and never called again pile up.
+          for (const [k, until] of quarantinedUntil)
+            if (nowMs() >= until) quarantinedUntil.delete(k);
           quarantinedUntil.set(key, nowMs() + REMIX_QUARANTINE_MS);
           return refuseQuarantined(reply, req, body.appId, true);
         }
