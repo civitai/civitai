@@ -146,7 +146,7 @@ const NON_DEFAULT_LIMITS: Array<[string, string, number, number]> = [
   ['HappyHorse', 'img2vid:ref2vid', 1, 9],
   ['HappyHorse', 'vid2vid:edit', 1, 9],
   ['HiDream-O1', 'img2img:edit', 1, 4],
-  ['Ideogram', 'img2img:edit', 1, 4],
+  ['Ideogram', 'img2img:edit', 1, 5],
   ['Kling', 'img2vid:ref2vid', 1, 7],
   ['Kling', 'vid2vid:edit', 1, 10],
   ['Krea2', 'img2img:edit', 1, 4],

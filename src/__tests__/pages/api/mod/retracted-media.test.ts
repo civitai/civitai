@@ -145,6 +145,14 @@ describe('/api/mod/retracted-media refusals', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('answers 503 when the eligibility read fails, touching no storage', async () => {
+    getRetractedMedia.mockRejectedValue(new Error('canceling statement due to statement timeout'));
+    const res = await call();
+    expect(res.statusCode).toBe(503);
+    expect(getGetUrlByKey).not.toHaveBeenCalled();
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
   it('answers a probe with eligibility alone: no storage, no audit row', async () => {
     const res = await call({ query: { imageId: '7', probe: '1' } });
     expect(res.statusCode).toBe(204);
