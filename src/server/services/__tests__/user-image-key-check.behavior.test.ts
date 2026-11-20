@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { PGlite } from '@electric-sql/pglite';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { holdsUploadKeyText } from '@civitai/db-queries/profile-picture-clear';
 
 const MIGRATIONS = path.resolve(
@@ -22,11 +22,15 @@ const KEY = '3f6e2a10-9b4c-4d7e-8a21-6c0b5d9e1f42';
 const sqlOf = (file: string) => file.replace(/^\\.*$/gm, '');
 
 let pg: PGlite;
-beforeEach(async () => {
+beforeAll(() => {
   pg = new PGlite();
-  await pg.exec('CREATE TABLE "User" (id int PRIMARY KEY, image text, username text)');
 });
-afterEach(() => pg.close());
+beforeEach(async () => {
+  await pg.exec(
+    'DROP TABLE IF EXISTS "User"; CREATE TABLE "User" (id int PRIMARY KEY, image text, username text)'
+  );
+});
+afterAll(() => pg.close());
 
 const setImage = (id: number, image: string | null) =>
   pg.query('INSERT INTO "User" (id, image) VALUES ($1, $2)', [id, image]);
