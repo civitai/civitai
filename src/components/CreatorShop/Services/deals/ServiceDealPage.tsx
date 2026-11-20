@@ -32,6 +32,7 @@ import {
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDeal } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { PushSoftAsk } from '~/components/Notifications/PushSoftAsk';
 import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { pluralize } from '~/shared/utils/pluralize';
@@ -224,6 +225,9 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
                 </Paper>
               )}
               <DealActionsPanel deal={deal} />
+              {features.creatorServicesNext &&
+                deal.status === 'Requested' &&
+                deal.viewerRole !== 'moderator' && <PushSoftAsk surface="deal-flow" />}
               <DealFilesPanel deal={deal} />
               <DealAttachmentsPanel deal={deal} />
               <Paper withBorder radius="md" p="md">
