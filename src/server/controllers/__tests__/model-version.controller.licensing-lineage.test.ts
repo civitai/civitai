@@ -398,6 +398,17 @@ describe('upsertModelVersionHandler — percent-of-compute fee, type-only write'
 
   // The handler defaults an omitted type. Defaulting to PerImageBuzz would turn a staff-set 35% into
   // 35 Buzz per image, a fee only staff could have created, now in the owner's hands.
+  it('a null type with no fee keeps a staff-set percent (never writes the null)', async () => {
+    const written = (await call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      licensingSourceVersionId: null,
+      storedFee: { licensingFee: 35, licensingFeeType: 'PercentOfCompute' },
+      extraInput: { licensingFee: undefined, licensingFeeType: null },
+    })) as { licensingFeeType?: string | null };
+    expect(written.licensingFeeType).toBeUndefined();
+  });
+
   it('a fee-only save keeps a staff-set percent a percent', async () => {
     const written = (await call({
       ...creating('Checkpoint'),

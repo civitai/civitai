@@ -707,12 +707,13 @@ export const upsertModelVersionHandler = async ({
 
     // The service migrates the price onto the surviving tier; nothing to reject here.
 
-    // Outside the fee block below: a write that sends only the type (no fee) would otherwise turn a stored
-    // per-image fee into a percent of compute unchecked.
+    // Outside the fee block below, which a type-only write skips.
+    // A null type means "keep the stored one", as an omitted one does: written through, it would turn a
+    // staff-set percent into Buzz per image (the mini endpoint reads a null type as per-image).
+    if (input.licensingFeeType === null) input.licensingFeeType = undefined;
     const percentRefusal = percentOfComputeFeeRefusal({
       isModerator: !!ctx.user.isModerator,
-      // An omitted or null type keeps the stored one (the default below), so the rule judges that.
-      requestedType: input.licensingFeeType ?? undefined,
+      requestedType: input.licensingFeeType,
       storedType: storedVersion?.licensingFeeType,
       fee: input.licensingFee !== undefined ? input.licensingFee : storedFee,
       storedFee,
