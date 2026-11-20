@@ -68,7 +68,8 @@ let nextId = 0;
 const queue: Job[] = [];
 // One read at a time, so a timeout is charged to the read that caused it and stopping the worker
 // fails only that read.
-let inFlight: { id: number; job: Job; timer?: ReturnType<typeof setTimeout> } | undefined;
+type InFlight = { id: number; job: Job; timer?: ReturnType<typeof setTimeout> };
+let inFlight: InFlight | undefined;
 
 function settle(id: number, outcome: WorkerReply | Error) {
   if (inFlight?.id !== id) return;
@@ -120,7 +121,7 @@ function pump() {
   const job = queue.shift();
   if (!job) return;
   const id = nextId++;
-  const current: NonNullable<typeof inFlight> = { id, job };
+  const current: InFlight = { id, job };
   inFlight = current;
   getWorker().then(
     (w) => {
