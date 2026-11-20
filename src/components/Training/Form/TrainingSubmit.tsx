@@ -1,3 +1,4 @@
+import { pickAiToolkitOptions } from '@civitai/shared/training-options';
 import {
   Accordion,
   Alert,
@@ -34,6 +35,7 @@ import { capitalize, isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { useGenerationLicenseFor } from '~/components/form-graph/generation/useGenerationLicense';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -99,6 +101,7 @@ import {
   isValidRapid,
   rapidEta,
   type TrainingBaseModelType,
+  trainingLicenseEcosystem,
   trainingModelInfo,
 } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
@@ -133,6 +136,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const { addRun, removeRun, updateRun } = trainingStore;
   const { runs, imageList, initialImageList } = useTrainingImageStore(
     (state) => state[model.id] ?? { ...getDefaultTrainingStateFor(thisMediaType) }
+  );
+  const license = useGenerationLicenseFor(
+    runs.map((run) => trainingLicenseEcosystem(run.base)).find(isDefined)
   );
 
   const [selectedRunIndex, setSelectedRunIndex] = useState<number>(0);
@@ -363,6 +369,20 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         lr: selectedRun.params.unetLR,
         textEncoderLr: selectedRun.params.textEncoderLR || null,
         trainTextEncoder: !!selectedRun.params.textEncoderLR,
+        ...pickAiToolkitOptions(
+          {
+            engine: 'ai-toolkit',
+            ecosystem,
+            lrScheduler,
+            steps: features.trainingStepsPricing ? selectedRun.params.targetSteps : undefined,
+          },
+          {
+            lrWarmupSteps: selectedRun.params.lrWarmupSteps,
+            captionDropoutRate: selectedRun.params.captionDropoutRate,
+            rankDropout: selectedRun.params.rankDropout,
+            trainConv: selectedRun.params.trainConv,
+          }
+        ),
         lrScheduler: lrScheduler as any,
         optimizerType: optimizerType as any,
         networkDim: selectedRun.params.networkDim,
@@ -416,6 +436,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     selectedRun.params.numRepeats,
     selectedRun.params.unetLR,
     selectedRun.params.textEncoderLR,
+    selectedRun.params.lrWarmupSteps,
+    selectedRun.params.captionDropoutRate,
+    selectedRun.params.rankDropout,
+    selectedRun.params.trainConv,
     selectedRun.params.lrScheduler,
     selectedRun.params.optimizerType,
     selectedRun.params.networkDim,
@@ -822,6 +846,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         sampleCfgScale: _sampleCfgScale,
         sampleStrength: _sampleStrength,
         saveEvery: _saveEvery,
+        lrWarmupSteps: _warmup,
+        captionDropoutRate: _captionDropout,
+        rankDropout: _rankDropout,
+        trainConv: _trainConv,
         ...legacyEngineParams
       } = paramData;
       let finalParams: any = legacyEngineParams;
@@ -864,6 +892,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           lr: paramData.unetLR,
           textEncoderLr: paramData.textEncoderLR || null,
           trainTextEncoder: !!paramData.textEncoderLR,
+          ...pickAiToolkitOptions(
+            {
+              engine: 'ai-toolkit',
+              ecosystem,
+              lrScheduler,
+              steps: features.trainingStepsPricing ? paramData.targetSteps : undefined,
+            },
+            paramData
+          ),
           lrScheduler: lrScheduler as any,
           optimizerType: optimizerType as any,
           networkDim: paramData.networkDim,
@@ -1404,6 +1441,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             className="self-end bg-gray-0 dark:bg-dark-6"
           >
             <Group gap="sm">
+              {dryRunResult.data?.warnings?.map((warning) => (
+                <Alert key={warning} color="yellow" title="Setting not applied">
+                  {warning}
+                </Alert>
+              ))}
               {(dryRunResult.isLoading || isDefined(dryRunResult.data?.precedingJobs)) && (
                 <>
                   <Badge>
@@ -1599,6 +1641,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Notification>
       ) : null}
 
+      {license.blocked && license.terms && (
+        <Text size="sm" c="dimmed" ta="right" mt="lg">
+          Accept the {license.terms.title} under the base model to submit.
+        </Text>
+      )}
       <Group mt="lg" justify="flex-end">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
@@ -1617,7 +1664,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               dryRunResult.isLoading ||
               clientInsufficientBuzz ||
               hasIssue ||
-              yellowOnGreen
+              yellowOnGreen ||
+              license.blocked
             }
             color={buzzColor}
             onClick={handleSubmit}

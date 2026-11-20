@@ -3,6 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { rejectCrossSlot } from '~/__tests__/cluster-slots';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -167,6 +168,7 @@ import mintHandler from '~/pages/api/v1/download-links/index';
 import revokeHandler from '~/pages/api/v1/download-links/[linkId]';
 import linkHandler from '~/pages/api/download/l/[id]';
 import {
+  DOWNLOAD_LINK_SYS_FALLBACK_UNTIL,
   revokeLinksOfRevokedCredentials,
   takeMintBudget,
 } from '~/server/services/download-link/download-link.store';
@@ -176,62 +178,83 @@ import type { DownloadLinkCredential } from '~/server/services/download-link/dow
 import { miniResponseExpiresAt } from '~/server/utils/mini-expires';
 
 // ---------------------------------------------------------------------------------------------
-// In-memory sysRedis (and the cache cluster, for the mint-rate windows).
+// An in-memory cache cluster (links and mint windows) and system Redis (links minted before the
+// move, read only as the fallback). The cluster fake refuses a MULTI or a script whose keys span
+// hash slots with CROSSSLOT, as the cluster does; an array DEL is split per key, as the cluster
+// client does.
 
 type Entry =
   | { type: 'hash'; value: Map<string, string>; expiresAt: number | null }
   | { type: 'string'; value: string; expiresAt: number | null }
   | { type: 'set'; value: Set<string>; expiresAt: number | null };
 
+/** The cluster's keys. */
 let store = new Map<string, Entry>();
-const live = (key: string) => {
-  const entry = store.get(key);
-  if (entry && entry.expiresAt != null && entry.expiresAt <= Date.now()) {
-    store.delete(key);
-    return undefined;
-  }
-  return entry;
-};
-const ops = {
-  hSet(key: string, fields: Record<string, string>) {
-    const entry = live(key);
-    const hash = entry?.type === 'hash' ? entry.value : new Map<string, string>();
-    for (const [k, v] of Object.entries(fields)) hash.set(k, String(v));
-    store.set(key, { type: 'hash', value: hash, expiresAt: entry?.expiresAt ?? null });
-  },
-  pExpireAt(key: string, at: number) {
-    const entry = live(key);
-    if (entry) entry.expiresAt = at;
-  },
-  expire(key: string, seconds: number) {
-    const entry = live(key);
-    if (entry) entry.expiresAt = Date.now() + seconds * 1000;
-  },
-  set(key: string, value: string, options?: { PXAT?: number; NX?: boolean; EX?: number }) {
-    if (options?.NX && live(key)) return null;
-    const expiresAt = options?.PXAT ?? (options?.EX ? Date.now() + options.EX * 1000 : null);
-    store.set(key, { type: 'string', value, expiresAt });
-    return 'OK';
-  },
-  sAdd(key: string, member: string) {
-    const entry = live(key);
-    const set = entry?.type === 'set' ? entry.value : new Set<string>();
-    set.add(member);
-    store.set(key, { type: 'set', value: set, expiresAt: entry?.expiresAt ?? null });
-  },
-  incrBy(key: string, by: number) {
-    const entry = live(key);
-    const next = (entry?.type === 'string' ? Number(entry.value) : 0) + by;
-    store.set(key, { type: 'string', value: String(next), expiresAt: entry?.expiresAt ?? null });
-    return next;
-  },
-};
+/** System Redis's keys. */
+let sysStore = new Map<string, Entry>();
+
+function makeOps(map: () => Map<string, Entry>) {
+  const live = (key: string) => {
+    const entry = map().get(key);
+    if (entry && entry.expiresAt != null && entry.expiresAt <= Date.now()) {
+      map().delete(key);
+      return undefined;
+    }
+    return entry;
+  };
+  const ops = {
+    hSet(key: string, fields: Record<string, string>) {
+      const entry = live(key);
+      const hash = entry?.type === 'hash' ? entry.value : new Map<string, string>();
+      for (const [k, v] of Object.entries(fields)) hash.set(k, String(v));
+      map().set(key, { type: 'hash', value: hash, expiresAt: entry?.expiresAt ?? null });
+    },
+    pExpireAt(key: string, at: number) {
+      const entry = live(key);
+      if (entry) entry.expiresAt = at;
+    },
+    expire(key: string, seconds: number) {
+      const entry = live(key);
+      if (entry) entry.expiresAt = Date.now() + seconds * 1000;
+    },
+    set(key: string, value: string, options?: { PXAT?: number; NX?: boolean; EX?: number }) {
+      if (options?.NX && live(key)) return null;
+      const expiresAt = options?.PXAT ?? (options?.EX ? Date.now() + options.EX * 1000 : null);
+      map().set(key, { type: 'string', value, expiresAt });
+      return 'OK';
+    },
+    sAdd(key: string, member: string) {
+      const entry = live(key);
+      const set = entry?.type === 'set' ? entry.value : new Set<string>();
+      set.add(member);
+      map().set(key, { type: 'set', value: set, expiresAt: entry?.expiresAt ?? null });
+    },
+    incrBy(key: string, by: number) {
+      const entry = live(key);
+      const next = (entry?.type === 'string' ? Number(entry.value) : 0) + by;
+      map().set(key, {
+        type: 'string',
+        value: String(next),
+        expiresAt: entry?.expiresAt ?? null,
+      });
+      return next;
+    },
+  };
+  return { live, ops };
+}
 // An await between every command, as over a socket, so concurrent callers really interleave.
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-function installFakeSysRedis() {
-  store = new Map();
-  const r = redisMock.sysRedis;
+/** The keys of every MULTI and script each client ran, in order. */
+let sysMultiKeys: string[] = [];
+let clusterMultiKeys: string[] = [];
+
+function installFakeClient(name: 'redis' | 'sysRedis') {
+  const cluster = name === 'redis';
+  const map = () => (cluster ? store : sysStore);
+  const seen = () => (cluster ? clusterMultiKeys : sysMultiKeys);
+  const { live, ops } = makeOps(map);
+  const r = redisMock[name];
   r.hGetAll.mockImplementation(async (key: string) => {
     await tick();
     const entry = live(key);
@@ -242,9 +265,13 @@ function installFakeSysRedis() {
     const entry = live(key);
     return entry?.type === 'string' ? entry.value : null;
   });
+  r.set.mockImplementation(async (key: string, value: string, options?: object) => {
+    await tick();
+    return ops.set(key, value, options);
+  });
   r.del.mockImplementation(async (keys: string | string[]) => {
     await tick();
-    for (const key of [keys].flat()) store.delete(key);
+    for (const key of [keys].flat()) map().delete(key);
     return 1;
   });
   r.sRem.mockImplementation(async (key: string, member: string) => {
@@ -261,6 +288,8 @@ function installFakeSysRedis() {
   r.eval.mockImplementation(
     async (script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) => {
       await tick();
+      if (cluster) rejectCrossSlot(keys);
+      seen().push(...keys);
       if (script.includes('HINCRBY')) {
         const entry = live(keys[0]);
         if (entry?.type !== 'hash') return -1;
@@ -270,40 +299,41 @@ function installFakeSysRedis() {
       }
       if (script.includes("'GET'")) {
         const entry = live(keys[0]);
-        if (entry?.type === 'string' && entry.value === args[0]) store.delete(keys[0]);
+        if (entry?.type === 'string' && entry.value === args[0]) map().delete(keys[0]);
         return 0;
       }
       throw new Error('unknown script');
     }
   );
-  sysMultiKeys = [];
-  clusterMultiKeys = [];
-  r.multi.mockImplementation(fakeMulti(sysMultiKeys));
-  // The mint-rate windows are on the cache cluster; one store backs both clients here, and each
-  // records the keys its MULTIs touched.
-  redisMock.redis.multi.mockImplementation(fakeMulti(clusterMultiKeys));
-}
-
-let sysMultiKeys: string[] = [];
-let clusterMultiKeys: string[] = [];
-function fakeMulti(seen: string[]) {
-  return () => {
+  r.multi.mockImplementation(() => {
     const queued: (() => unknown)[] = [];
+    const keys: string[] = [];
     const chain: Record<string, unknown> = {
       exec: async () => {
         await tick();
+        if (cluster) rejectCrossSlot(keys);
+        seen().push(...keys);
         return queued.map((run) => run());
       },
     };
-    for (const name of Object.keys(ops) as (keyof typeof ops)[]) {
-      chain[name] = (...args: unknown[]) => {
-        seen.push(String(args[0]));
-        queued.push(() => (ops[name] as (...a: unknown[]) => unknown)(...args));
+    for (const op of Object.keys(ops) as (keyof typeof ops)[]) {
+      chain[op] = (...args: unknown[]) => {
+        keys.push(String(args[0]));
+        queued.push(() => (ops[op] as (...a: unknown[]) => unknown)(...args));
         return chain;
       };
     }
     return chain;
-  };
+  });
+}
+
+function installFakeRedis() {
+  store = new Map();
+  sysStore = new Map();
+  sysMultiKeys = [];
+  clusterMultiKeys = [];
+  installFakeClient('redis');
+  installFakeClient('sysRedis');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -569,7 +599,7 @@ beforeEach(() => {
   world.reads = { version: 0, files: 0 };
   vi.clearAllMocks();
   wireDb();
-  installFakeSysRedis();
+  installFakeRedis();
   mockIsFlipt.mockResolvedValue(true);
   mockModelVersionEvent.mockResolvedValue(true);
   let n = 0;
@@ -1111,11 +1141,13 @@ describe('reuse', () => {
 });
 
 describe('mint limits', () => {
-  it('counts the mint windows on the cache cluster, and only them', async () => {
-    await mintOne(userItem(PUBLIC_VERSION));
-    expect(clusterMultiKeys.length).toBeGreaterThan(0);
-    expect(clusterMultiKeys.every((key) => key.startsWith('dl:mint-rate:'))).toBe(true);
-    expect(sysMultiKeys.filter((key) => key.startsWith('dl:mint-rate:'))).toEqual([]);
+  it('🔴 writes the link and the mint windows to the cache cluster, nothing to system Redis', async () => {
+    const result = await mintOne(userItem(PUBLIC_VERSION));
+    expect(clusterMultiKeys.some((key) => key.startsWith('dl:mint-rate:'))).toBe(true);
+    expect(clusterMultiKeys.some((key) => key.startsWith('dl:link:'))).toBe(true);
+    expect(store.has(`dl:linkid:${result.linkId}`)).toBe(true);
+    expect(sysMultiKeys).toEqual([]);
+    expect(sysStore.size).toBe(0);
   });
 
   it('answers an item 429 past the per-user limit', async () => {
@@ -1186,6 +1218,113 @@ describe('mint limits', () => {
       new Promise((resolve) => setTimeout(() => resolve(STILL_HUNG), 3_000)),
     ]);
     expect(outcome).toMatchObject({ name: 'ClusterCacheUnavailableError', reason: 'timeout' });
+  });
+});
+
+describe('on the cache cluster', () => {
+  it('🔴 a mint, its use, a revoke and a cascade each keep every MULTI and script in one slot', async () => {
+    // The cluster fake refuses a cross-slot MULTI or script, so any such request fails the route.
+    const a = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    const again = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    expect(again.linkId).toBe(a.linkId);
+    expect((await fetchLink(a.url)).status).toBe(302);
+    const b = await mintOne(userItem(GENERATION_ONLY), 'tok-apikey');
+    expect((await revoke(b.linkId, 'tok-apikey')).status).toBe(204);
+    expect((await fetchLink(b.url)).status).toBe(404);
+    await revokeLinksOfRevokedCredentials([{ kind: 'apikey', id: '555' }]);
+    expect((await fetchLink(a.url)).status).toBe(404);
+    expect(clusterMultiKeys.length).toBeGreaterThan(0);
+  });
+
+  it('🔴 revokes a link by linkId after the cluster evicted its linkid key', async () => {
+    const result = await mintOne(userItem(PUBLIC_VERSION));
+    expect(store.delete(`dl:linkid:${result.linkId}`)).toBe(true);
+    expect((await fetchLink(result.url)).status).toBe(302);
+    expect((await revoke(result.linkId)).status).toBe(204);
+    expect((await fetchLink(result.url)).status).toBe(404);
+  });
+
+  it('still refuses a revoke from another credential when the linkid key is gone', async () => {
+    const result = await mintOne(userItem(PUBLIC_VERSION));
+    store.delete(`dl:linkid:${result.linkId}`);
+    expect((await revoke(result.linkId, 'tok-apikey')).status).toBe(404);
+    expect((await fetchLink(result.url)).status).toBe(302);
+  });
+
+  it('writes the link hash before any key that names it', async () => {
+    const order: string[] = [];
+    const multi = redisMock.redis.multi.getMockImplementation()!;
+    redisMock.redis.multi.mockImplementation(() => {
+      const chain = multi() as Record<string, (...a: unknown[]) => unknown>;
+      const hSet = chain.hSet;
+      chain.hSet = (...a: unknown[]) => {
+        order.push(String(a[0]));
+        return hSet(...a);
+      };
+      return chain;
+    });
+    const set = redisMock.redis.set.getMockImplementation()!;
+    redisMock.redis.set.mockImplementation((key: string, ...rest: unknown[]) => {
+      order.push(key);
+      return set(key, ...rest);
+    });
+    await mintOne(userItem(PUBLIC_VERSION));
+    const first = order.findIndex((k) => k.startsWith('dl:link:'));
+    expect(first).toBe(0);
+    expect(order.slice(1).map((k) => k.split(':').slice(0, 2).join(':'))).toEqual([
+      'dl:linkid',
+      'dl:reuse',
+    ]);
+  });
+});
+
+/** Moves a minted link's keys from the cluster to system Redis, as if minted before the move. */
+function moveLinkToSys(linkId: string) {
+  const hashKey = store.get(`dl:linkid:${linkId}`);
+  if (hashKey?.type !== 'string') throw new Error(`no link ${linkId}`);
+  for (const key of [...store.keys()]) {
+    if (key.startsWith('dl:mint-rate:') || key.startsWith('dl:reuse:')) continue;
+    if (key.startsWith('dl:links:cred:')) {
+      const entry = store.get(key)!;
+      if (entry.type === 'set' && entry.value.has(hashKey.value)) {
+        sysStore.set(key, entry);
+        store.delete(key);
+      }
+      continue;
+    }
+    if (key === `dl:linkid:${linkId}` || key === `dl:link:${hashKey.value}`) {
+      sysStore.set(key, store.get(key)!);
+      store.delete(key);
+    }
+  }
+}
+
+describe('links minted before the move to the cache cluster', () => {
+  it('pins the end of the system Redis fallback past the longest link life', () => {
+    expect(DOWNLOAD_LINK_SYS_FALLBACK_UNTIL.toISOString()).toBe('2027-01-15T00:00:00.000Z');
+  });
+
+  it('🔴 still serve, counting each fetch in system Redis', async () => {
+    const result = await mintOne(userItem(PUBLIC_VERSION));
+    moveLinkToSys(result.linkId);
+    expect((await fetchLink(result.url)).status).toBe(302);
+    expect((await fetchLink(result.url)).status).toBe(302);
+    const hash = [...sysStore.entries()].find(([k]) => k.startsWith('dl:link:'))![1];
+    expect(hash.type === 'hash' && hash.value.get('fetches')).toBe('2');
+    expect([...store.keys()].filter((k) => k.startsWith('dl:link:'))).toEqual([]);
+  });
+
+  it('🔴 revoke by linkId, and by their credential', async () => {
+    const one = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    const two = await mintOne(userItem(GENERATION_ONLY), 'tok-apikey');
+    moveLinkToSys(one.linkId);
+    moveLinkToSys(two.linkId);
+    expect((await revoke(one.linkId, 'tok-apikey')).status).toBe(204);
+    expect((await fetchLink(one.url)).status).toBe(404);
+    expect((await fetchLink(two.url)).status).toBe(302);
+    await revokeLinksOfRevokedCredentials([{ kind: 'apikey', id: '555' }]);
+    expect((await fetchLink(two.url)).status).toBe(404);
+    expect([...sysStore.keys()].filter((k) => k.startsWith('dl:'))).toEqual([]);
   });
 });
 

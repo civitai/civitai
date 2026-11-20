@@ -263,6 +263,18 @@ type fakeV1Sources struct {
 	meta      map[int]any
 	// metaAsked is each V1Page call's MetaIDs.
 	metaAsked [][]int
+	// follows answers UserFollows (absent: no follows); followsErr fails it; followsAsked is each
+	// call's user id.
+	follows      map[int][]int
+	followsErr   error
+	followsAsked []int
+	// collections answers CollectionPermission per collection id (absent: no such collection), with
+	// the contributor permissions of contributors[collection][viewer]; collectionsErr fails it;
+	// collectionsAsked is each call's [collection, viewer].
+	collections      map[int]hydrate.CollectionPermission
+	contributors     map[int]map[int][]string
+	collectionsErr   error
+	collectionsAsked [][2]int
 }
 
 func pickIDs[V any](m map[int]V, ids []int) map[int]V {
@@ -295,6 +307,32 @@ func (f *fakeV1Sources) VersionModels(_ context.Context, ids []int) (map[int]int
 func (f *fakeV1Sources) UserIDByUsername(_ context.Context, u string) (int, bool, error) {
 	id, ok := f.usernames[u]
 	return id, ok, nil
+}
+func (f *fakeV1Sources) UserFollows(_ context.Context, userID int) ([]int, error) {
+	f.followsAsked = append(f.followsAsked, userID)
+	if f.followsErr != nil {
+		return nil, f.followsErr
+	}
+	if v, ok := f.follows[userID]; ok {
+		return v, nil
+	}
+	return []int{}, nil
+}
+func (f *fakeV1Sources) CollectionPermission(_ context.Context, collectionID, viewerID int) (*hydrate.CollectionPermission, error) {
+	f.collectionsAsked = append(f.collectionsAsked, [2]int{collectionID, viewerID})
+	if f.collectionsErr != nil {
+		return nil, f.collectionsErr
+	}
+	c, ok := f.collections[collectionID]
+	if !ok {
+		return nil, nil
+	}
+	c.CollectionID = collectionID
+	c.Contributor = []string{}
+	if viewerID != 0 && f.contributors[collectionID][viewerID] != nil {
+		c.Contributor = f.contributors[collectionID][viewerID]
+	}
+	return &c, nil
 }
 
 type fakeV1Gallery struct {

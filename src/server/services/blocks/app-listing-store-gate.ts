@@ -69,30 +69,42 @@ export function storeVisibleListingRowGate(args: {
 
 /**
  * Which mature ratings a request may be shown: none off a red-capable host; on one, `r` when the
- * viewer's browsing level includes R and `x` when it includes X. G / PG / PG-13 are not part of
- * this — they are never hidden by the level (their images are filtered per viewer instead).
+ * viewer's browsing level includes R, `x` when it includes X, and `xxx` when it includes XXX. G /
+ * PG / PG-13 are not part of this — they are never hidden by the level (their images are filtered
+ * per viewer instead). `xxx` is a rating only App Store ITEM cards carry (content levels: an item
+ * rated XXX); no app listing has it.
  *
- * These two booleans are ALL the store catalog cache keys on for the level, so viewers whose
- * levels differ only in PG / PG-13 / XXX / Blocked share one entry.
+ * These three booleans are ALL the store catalog cache keys on for the level, so viewers whose
+ * levels differ only in PG / PG-13 / Blocked share one entry.
  */
-export type MatureRatingsAllowed = { r: boolean; x: boolean };
+export type MatureRatingsAllowed = { r: boolean; x: boolean; xxx: boolean };
 
 export function matureRatingsAllowed(
   redCapable: boolean,
   browsingLevel: number | null | undefined
 ): MatureRatingsAllowed {
-  if (!redCapable) return { r: false, x: false };
+  if (!redCapable) return { r: false, x: false, xxx: false };
   const level = onlySelectableLevels(browsingLevel ?? 0);
-  return { r: (level & NsfwLevel.R) !== 0, x: (level & NsfwLevel.X) !== 0 };
+  return {
+    r: (level & NsfwLevel.R) !== 0,
+    x: (level & NsfwLevel.X) !== 0,
+    xxx: (level & NsfwLevel.XXX) !== 0,
+  };
 }
 
-/** True unless `rating` is r/x and that rating is not allowed. The SQL twin is `listingMatureFilter`. */
+/**
+ * True unless `rating` is r/x/xxx and that rating is not allowed. The SQL twin is
+ * `listingMatureFilter` / `subListingMatureFilter`.
+ */
 export function matureRatingAllowed(
   rating: string | null | undefined,
   allowed: MatureRatingsAllowed
 ): boolean {
   if (!isMatureContentRating(rating)) return true;
-  return (rating as string).toLowerCase() === 'r' ? allowed.r : allowed.x;
+  const lower = (rating as string).toLowerCase();
+  if (lower === 'r') return allowed.r;
+  if (lower === 'xxx') return allowed.xxx;
+  return allowed.x;
 }
 
 /** A mature rating the viewer's browsing level can hide. */
@@ -110,5 +122,6 @@ export function ratingHiddenByBrowsingLevel(
   browsingLevel: number | null | undefined
 ): HiddenMatureRating | null {
   if (matureRatingAllowed(rating, matureRatingsAllowed(true, browsingLevel))) return null;
+  // `xxx` is an item-card rating no app carries; were one to, it reads as the X notice.
   return (rating as string).toLowerCase() === 'r' ? 'r' : 'x';
 }

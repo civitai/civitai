@@ -33,6 +33,32 @@ describe('defineGoldenSet', () => {
     ).toThrow(/targets models/);
   });
 
+  it.each([
+    ['no term groups', []],
+    ['an empty term group', [['fox'], []]],
+  ])('refuses a subject with %s', (_, expectTerms) => {
+    expect(() =>
+      defineGoldenSet([
+        { id: 's', kind: 'subject', text: 'foxy paladin', expectTerms, k: 10, targets: ['images'] },
+      ])
+    ).toThrow(/empty term group/);
+  });
+
+  it('refuses a subject on models', () => {
+    expect(() =>
+      defineGoldenSet([
+        {
+          id: 's',
+          kind: 'subject',
+          text: 'gremmy',
+          expectTerms: [['gremmy']],
+          k: 10,
+          targets: ['models'],
+        },
+      ])
+    ).toThrow(/targets images only/);
+  });
+
   it('refuses a duplicated id', () => {
     expect(() =>
       defineGoldenSet([
@@ -40,27 +66,5 @@ describe('defineGoldenSet', () => {
         { id: 'x', kind: 'canonical', text: 'Flux', targets: ['models'] },
       ])
     ).toThrow(/duplicated/);
-  });
-  it('refuses a subject with no term groups, which would match every prompt', () => {
-    expect(() =>
-      defineGoldenSet([
-        { id: 's', kind: 'subject', text: '2 girls', expectTerms: [], k: 10, targets: ['images'] },
-      ])
-    ).toThrow(/no term groups/);
-  });
-
-  it('refuses a subject with an empty term group, which could match no prompt', () => {
-    expect(() =>
-      defineGoldenSet([
-        {
-          id: 's',
-          kind: 'subject',
-          text: '2 girls',
-          expectTerms: [['2girls'], []],
-          k: 10,
-          targets: ['images'],
-        },
-      ])
-    ).toThrow(/empty term group/);
   });
 });

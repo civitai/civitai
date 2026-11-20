@@ -441,7 +441,7 @@ describe('checkMinorHashOnScan', () => {
     expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 
-  it('swallows and logs a lookup failure instead of throwing', async () => {
+  it('swallows a lookup failure instead of throwing', async () => {
     mockDbRead.$queryRaw.mockRejectedValue(new Error('db exploded'));
 
     const result = await checkMinorHashOnScan({
@@ -452,7 +452,6 @@ describe('checkMinorHashOnScan', () => {
     });
 
     expect(result).toBe('skipped');
-    expect(mockLogToAxiom).toHaveBeenCalled();
   });
 
   it('swallows a setModelMinor failure instead of throwing', async () => {
@@ -467,10 +466,9 @@ describe('checkMinorHashOnScan', () => {
     });
 
     expect(result).toBe('skipped');
-    expect(mockLogToAxiom).toHaveBeenCalled();
   });
 
-  it('swallows a non-Error throw (a rejected string) and logs a readable message', async () => {
+  it('swallows a non-Error throw (a rejected string)', async () => {
     mockDbRead.$queryRaw.mockRejectedValue('db exploded');
 
     const result = await checkMinorHashOnScan({
@@ -481,10 +479,6 @@ describe('checkMinorHashOnScan', () => {
     });
 
     expect(result).toBe('skipped');
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'db exploded', modelId: 100, userId: 5, sha256: 'ABC' }),
-      'webhooks'
-    );
   });
 
   it('does not throw when the rejection value is null (property access on a non-Error cast)', async () => {
@@ -493,10 +487,6 @@ describe('checkMinorHashOnScan', () => {
     await expect(
       checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' })
     ).resolves.toBe('skipped');
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'null', modelId: 100, userId: 5, sha256: 'ABC' }),
-      'webhooks'
-    );
   });
 });
 
@@ -590,7 +580,6 @@ describe('sweepMinorHashMatches', () => {
     const report = await sweepMinorHashMatches({ dryRun: false, limit: 100 });
 
     expect(report).toMatchObject({ flagged: 1, failed: 1 });
-    expect(mockLogToAxiom).toHaveBeenCalled();
   });
 
   it('does not abort the batch when setModelMinor rejects with a non-Error value', async () => {
@@ -600,7 +589,6 @@ describe('sweepMinorHashMatches', () => {
     const report = await sweepMinorHashMatches({ dryRun: false, limit: 100 });
 
     expect(report).toMatchObject({ flagged: 1, failed: 1 });
-    expect(mockLogToAxiom).toHaveBeenCalled();
   });
 
   it('logs the report on a real run so a timeout cannot lose it', async () => {
@@ -1468,14 +1456,6 @@ describe('rollbackMinorHashAutoFlags', () => {
     const report = await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
 
     expect(report).toMatchObject({ candidates: 2, rolledBack: 1, skipped: 0, failed: 1 });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'minor-hash-rollback',
-        message: 'boom',
-        modelId: 200,
-      }),
-      'webhooks'
-    );
   });
 
   it('does not abort the batch when setModelMinor rejects with a non-Error value', async () => {

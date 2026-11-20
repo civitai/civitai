@@ -9,7 +9,7 @@
 // `appdata.app_id` / `appdata.ns` (set at the top of every transaction in
 // `withTx`) is the second, independent layer.
 //
-// There are THREE exceptions. The first is review maintenance (`purgeReview`, `listReviewAppIds`):
+// There are FOUR exceptions. The first is review maintenance (`purgeReview`, `listReviewAppIds`):
 // statements keyed on `app_id = $1 AND ns LIKE 'rev:%'` (the listing: `ns LIKE 'rev:%'`
 // on `usage_app` and `doc`), run only inside `maintenanceTx`, whose transaction-local
 // `appdata.review_maintenance` setting is what the migration's review policies
@@ -29,6 +29,12 @@
 // policy admits for that ONE app's rows of those two tables, read only. It returns namespaces;
 // the purge of each runs in ordinary `withTx` transactions, like the account wipe.
 //
+// The fourth is the RATER LOOKUP (`findByRatingId`, content levels): one SELECT keyed on
+// `rating_id = $1::int` over `doc`, returning one shared document's address only, run only inside
+// `raterLookupTx`, whose transaction-local `appdata.rater_lookup_id` setting the rating-id
+// migration's policy admits for that ONE row, read only. The rater then reads and rates the
+// document in an ordinary `withTx`, keyed and scoped like any other call.
+//
 // Row-level security does not bind a superuser or BYPASSRLS role, so the store
 // requires its own least-privilege connection (`APPDATA_DATABASE_URL`, see
 // `doc-store.instance.ts`) and treats that as a CHECKED precondition: on first
@@ -44,6 +50,9 @@
 //   - rate limits;
 //   - content moderation of shared writes;
 //   - a collection's `ownedModelVersions` rule on create and put (`doc-store-ownership.ts`);
+//   - call a collection's permission hook (`doc-store-hook.ts`). The store's part is to REFUSE a
+//     viewer write to a hooked collection that does not carry a HookPass for exactly that write,
+//     and to write only at the document version the pass carries (`requireHookPass`);
 //   - map `DocStoreError` codes to HTTP statuses and envelopes;
 //   - resolve `author.uid` to a username (and never forward the uid).
 //
@@ -102,10 +111,16 @@ import { logToAxiom } from '~/server/logging/client';
 import { newUlid } from '~/server/utils/app-block-ids';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
+import {
+  spendHookPass,
+  type HookOp,
+  type HookPass,
+} from '~/server/services/apps/doc-store-hook-pass';
 import type { StorageHoldings } from '~/shared/utils/app-storage-usage';
 import type {
   AccountWipeNamespaceResult,
   AccountWipeResult,
+  DocAuthor,
   DocCollection,
   DocIndexType,
   DocListQuery,
@@ -325,6 +340,79 @@ function requireShared(coll: DocCollection, what: string): void {
   }
 }
 
+/**
+ * The request checks of an increment: a shared collection, a declared counter, `by` from 1 to
+ * {@link B.incrementMax}. Exported so the permission-hook gate (`gateHook`) runs them before it
+ * calls a hook (an invalid request never reaches a hook); the store runs them on every increment
+ * itself.
+ */
+export function assertIncrementRequest(coll: DocCollection, counter: string, by: number): void {
+  requireShared(coll, 'counters');
+  if (!TALLY_NAME_SHAPE.test(counter) || !(coll.config.counters ?? []).includes(counter)) {
+    throw invalid(`counter ${counter} is not declared`, { counter });
+  }
+  if (!Number.isSafeInteger(by) || by < 1 || by > B.incrementMax) {
+    throw invalid(`by must be an integer from 1 to ${B.incrementMax}`);
+  }
+}
+
+/**
+ * The request checks of a mark or unmark: a shared collection, a declared mark or `report`. The
+ * hook gate runs them before a hook, as for an increment; the store runs them itself.
+ */
+export function assertMarkRequest(coll: DocCollection, name: string): void {
+  requireShared(coll, 'marks');
+  if (name === REPORT_MARK) return;
+  if (!TALLY_NAME_SHAPE.test(name) || !(coll.config.marks ?? []).includes(name)) {
+    throw invalid(`mark ${name} is not declared`, { mark: name });
+  }
+}
+
+/**
+ * PERMISSION HOOKS. A viewer write to a collection whose declaration has a `hook` runs only with
+ * a HookPass for exactly this write (`doc-store-hook-pass.ts`), which only the hook gate mints
+ * once the hook allowed it. Returns the document version the write is pinned to (the version the
+ * hook was shown), or `undefined` for a collection with no hook. The `report` mark is exempt: a
+ * hook must never be able to silence moderation reports. The maintenance, moderation and
+ * migration writers do not come through here: they are platform operations, not viewer writes
+ * (`doc-store-hook.ledger.test.ts` lists every write entry point).
+ */
+function requireHookPass(
+  ctx: DocStoreContext,
+  coll: DocCollection,
+  op: HookOp,
+  key: string,
+  pass: HookPass | undefined,
+  markName?: string
+): number | undefined {
+  if (!coll.config.hook) return undefined;
+  if (op === 'mark' && markName === REPORT_MARK) return undefined;
+  return spendHookPass(pass, { appId: ctx.appId, ns: ctx.ns, collection: coll.name, key, op });
+}
+
+/**
+ * The version a write is checked against: the hook's pinned one when there is a hook, else the
+ * caller's own `ifVersion`. Both given and different is a conflict (the gate refuses that before
+ * calling the hook, so this is a backstop).
+ */
+function effectiveIfVersion(
+  callerIfVersion: number | undefined,
+  pinned: number | undefined
+): number | undefined {
+  if (pinned === undefined) return callerIfVersion;
+  if (callerIfVersion !== undefined && callerIfVersion !== pinned) {
+    throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: null });
+  }
+  return pinned;
+}
+
+/** A tally op pinned to a version: the locked document's version must still be it. */
+function assertTallyVersion(ifVersion: number | undefined, current: number): void {
+  if (ifVersion !== undefined && ifVersion !== current) {
+    throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: current });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Server-side publish: the rules both the route and the store apply
 // ---------------------------------------------------------------------------
@@ -366,6 +454,22 @@ export function assertPublishPair(from: DocCollection, to: DocCollection): void 
     });
   }
   assertShareWritable(to);
+  assertNotHooked(to, 'publish');
+}
+
+/**
+ * Publish and unpublish write a whole batch of shared documents in one transaction, and a
+ * permission hook decides ONE write (`doc-store-hook.ts`), so a collection with a `hook` refuses
+ * both (`invalid_request`, `reason: 'hooked_collection'`): its documents are written one at a time
+ * through create / put / delete, each decided by the hook. Refusing is the fail-closed answer; a
+ * batch that skipped the hook would fail open. Exported for the route; the store runs it itself.
+ */
+export function assertNotHooked(coll: DocCollection, what: 'publish' | 'unpublish'): void {
+  if (!coll.config.hook) return;
+  throw invalid(
+    `${what} is not available for a collection with a permission hook; write each document`,
+    { reason: 'hooked_collection', collection: coll.name }
+  );
 }
 
 /**
@@ -836,8 +940,9 @@ const SQL_TOMBSTONE = `INSERT INTO appdata.doc_tomb AS tb (app_id, ns, coll, sco
 
 // Counters and marks: shared documents only. KEY SHARE blocks a concurrent
 // delete of the document until this transaction ends, without blocking other
-// counter/mark writers. $1 app, $2 ns, $3 coll, $4 key
-const SQL_SHARE_LOCK_DOC = `SELECT 1 AS ok FROM appdata.doc d
+// counter/mark writers. Returns the document's version, which a tally pinned by a
+// permission hook (`ifVersion`) is checked against. $1 app, $2 ns, $3 coll, $4 key
+const SQL_SHARE_LOCK_DOC = `SELECT d.version FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
     AND ${VISIBLE}
   FOR KEY SHARE`;
@@ -918,6 +1023,25 @@ const SQL_FEED_WITNESS_DOC = `SELECT d.seq FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
 const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
   WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.coll = $3 AND tb.scope_uid = 0 AND tb.key = $4`;
+
+// PRIVATE FEED (`createDocStorePrivateFeed`): ONE user's private documents (`scope_uid` = that
+// user, never 0, never another user's) of one collection of one app's production namespace, for
+// the registry adapter's authorized private streams. Only rows that carry a `record_id` (the id
+// in a private record's URN) and that moderation has not hidden. Keyset by key.
+// $1 app, $2 ns, $3 coll, $4 user, $5 after key, $6 limit
+const SQL_PRIVATE_FEED_VERSIONS = `SELECT d.key, d.version, d.record_id::text AS record_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
+    AND d.hidden_at IS NULL AND d.record_id IS NOT NULL AND d.key > $5::text
+  ORDER BY d.key
+  LIMIT $6::int`;
+// Its full twin: the same rows with their data.
+const SQL_PRIVATE_FEED_DOCS = `SELECT d.key, d.data, d.version, d.record_id::text AS record_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
+    AND d.hidden_at IS NULL AND d.record_id IS NOT NULL AND d.key > $5::text
+  ORDER BY d.key
+  LIMIT $6::int`;
 
 // The kind is a literal: this statement can only ever write a counter row.
 // $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 by
@@ -1175,6 +1299,21 @@ const SQL_MIGRATE_DOC = `UPDATE appdata.doc d
 const SQL_VIEWER_PROD_USAGE = `SELECT vu.app_id, vu.bytes, vu.docs FROM appdata.usage_user vu
   WHERE vu.user_id = $1::int AND vu.ns = 'prod' AND vu.docs > 0 AND vu.app_id > $2::text
   ORDER BY vu.app_id LIMIT $3::int`;
+// One page of the documents ONE user owns in one app's production namespace, for their export
+// (`viewerRecords`): their private documents (`scope_uid` = the user) and the visible shared
+// documents they created (`author_kind = 'user'`), the two cells of the record core's owner rule
+// that name a user (`recordOwner` in `app-record.ts`). Never another user's private key space,
+// never a counter or app document, never a document moderation hid. In (coll, scope_uid, key)
+// order after a keyset cursor, whatever the app's status.
+const SQL_VIEWER_RECORDS = `SELECT d.coll, d.scope_uid, d.key, d.data, d.version, d.author_kind,
+    d.author_uid, d.last_writer_uid, d.record_id::text AS record_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2
+    AND (d.scope_uid = $3::int
+      OR (d.scope_uid = 0 AND d.author_kind = 'user' AND d.author_uid = $3::int AND ${VISIBLE}))
+    AND (d.coll, d.scope_uid, d.key) > ($4::text COLLATE "C", $5::int, $6::text COLLATE "C")
+  ORDER BY d.coll, d.scope_uid, d.key
+  LIMIT $7::int`;
 
 // Emptying one viewer's data in one (app, ns), in an ordinary scoped transaction. $1 app, $2 ns,
 // $3 the viewer.
@@ -1308,6 +1447,17 @@ const SQL_CHARGE_APP_SEQS = `INSERT INTO appdata.usage_app AS u (app_id, ns, byt
 // Row mapping
 // ---------------------------------------------------------------------------
 
+/**
+ * A document row's author as a reader sees it: a counter document is nobody's; an app document,
+ * or one whose author uid is gone, the app's; otherwise the user, marked when it is the viewer.
+ */
+function rowAuthor(row: Record<string, unknown>, viewerUid: number | null): DocAuthor {
+  const authorUid = row.author_uid === null ? null : Number(row.author_uid);
+  if (row.author_kind === 'counter') return { kind: 'counter' };
+  if (row.author_kind === 'app' || authorUid === null) return { kind: 'app' };
+  return { kind: 'user', uid: authorUid, isViewer: authorUid === viewerUid };
+}
+
 function toDocRecord(
   row: Record<string, unknown>,
   ctx: DocStoreContext,
@@ -1328,19 +1478,13 @@ function toDocRecord(
       else if (kind === 'mark' && name !== REPORT_MARK) marks[name] = Number(v);
     }
   }
-  const authorUid = row.author_uid === null ? null : Number(row.author_uid);
   return {
     key: row.key as string,
     data: row.data as Record<string, unknown>,
     version: Number(row.version),
     createdAt: new Date(row.created_at as string | Date),
     updatedAt: new Date(row.updated_at as string | Date),
-    author:
-      row.author_kind === 'counter'
-        ? { kind: 'counter' }
-        : row.author_kind === 'app' || authorUid === null
-        ? { kind: 'app' }
-        : { kind: 'user', uid: authorUid, isViewer: authorUid === ctx.viewerUid },
+    author: rowAuthor(row, ctx.viewerUid),
     counters,
     marks,
     viewer:
@@ -1511,6 +1655,16 @@ export function createDocStoreModeration(deps: DocStoreDeps) {
 }
 
 /**
+ * THE RATER (content levels): list the shared documents that need a rating and record one, as a
+ * SEPARATE object from the viewer store, so holding the block-token routes' store gives no path to
+ * writing a rating. Only `doc-store-rater.instance.ts` builds one in production.
+ */
+export function createDocStoreRater(deps: DocStoreDeps) {
+  return buildDocStore(deps).rater;
+}
+export type DocStoreRater = ReturnType<typeof createDocStoreRater>;
+
+/**
  * MAINTENANCE — review-namespace deletion (`purgeReview`, `listReviewAppIds`), account deletion
  * (`wipeAccount`) and app deletion (`purgeApp`) — as a separate object from the viewer store: the
  * first runs with the setting that reaches every `rev:` row of a request, the second with the one
@@ -1542,6 +1696,24 @@ export function createDocStoreFeed(deps: DocStoreDeps) {
   return buildDocStore(deps).feed;
 }
 export type DocStoreFeed = ReturnType<typeof createDocStoreFeed>;
+
+/**
+ * PRIVATE FEED — ONE user's private documents of one collection of an app's production namespace,
+ * read only, for the registry adapter's authorized private streams (`private-feed.ts`). It never
+ * decides who may read: its caller passes the user only after the one collection-read predicate
+ * (`data-read-grant.ts`) granted that user the collection. A separate object, so neither the
+ * public feed nor the block-token store carries a read keyed on a caller-supplied user id; its
+ * importers are pinned by `__tests__/doc-store-private-feed.ledger.test.ts`.
+ */
+export function createDocStorePrivateFeed(deps: DocStoreDeps) {
+  return buildDocStore(deps).privateFeed;
+}
+export type DocStorePrivateFeed = ReturnType<typeof createDocStorePrivateFeed>;
+
+/** One private document's identity and version, as `privateVersions` reads it. */
+export type PrivateFeedVersion = { key: string; recordId: string; version: number };
+/** One private document, as `privateDocuments` reads it. */
+export type PrivateFeedDocument = PrivateFeedVersion & { data: Record<string, unknown> };
 
 /** Most rows one feed page may ask for. */
 export const FEED_MAX_PAGE = 1000;
@@ -1591,6 +1763,24 @@ export type ViewerDataEmptyResult = {
   /** Zero unless the shared documents were asked for. */
   sharedDocs: number;
   sharedBytes: number;
+};
+
+/** Where a page of `viewerRecords` ends: the last (collection, key space, key) it read. */
+export type ViewerRecordCursor = { coll: string; scopeUid: number; key: string };
+
+/**
+ * One document a user owns, as `viewerRecords` reads it: the record core's source row
+ * (`RecordSourceRow` in `app-record.ts`) with its collection.
+ */
+export type ViewerRecordRow = {
+  coll: string;
+  scopeUid: number;
+  key: string;
+  data: Record<string, unknown>;
+  version: number;
+  author: DocAuthor;
+  lastWriterUid: number | null;
+  recordId: string | null;
 };
 
 /** Where a schema migration's page of documents ends: the last (key space, key) it read. */
@@ -1807,6 +1997,25 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
+   * A RATER LOOKUP transaction: no app or namespace bound, and `appdata.rater_lookup_id` set to one
+   * validated rating id — which the rating-id migration's policy admits for the ONE shared `doc`
+   * row carrying it, read only. Transaction-local like every other setting. 🔴 Called by the
+   * rater's `findByRatingId` and `ready` ONLY (pinned by `doc-store.sql-isolation.test.ts`).
+   */
+  async function raterLookupTx<T>(
+    ratingId: number,
+    fn: (c: DocStoreClient) => Promise<T>
+  ): Promise<T> {
+    if (!Number.isSafeInteger(ratingId) || ratingId < 0 || ratingId > 2_147_483_647) {
+      throw new Error('doc-store: malformed rating id');
+    }
+    return runTx(
+      `BEGIN; SELECT set_config('appdata.app_id', '', true), set_config('appdata.ns', '', true), set_config('appdata.rater_lookup_id', '${ratingId}', true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
+      fn
+    );
+  }
+
+  /**
    * Whether this store can serve calls: it has a connection and its role passed the
    * least-privilege check — the SAME two refusals every call makes (`runTx`), so this cannot
    * disagree with them. Reads the role at most until it is settled (one round trip on a cold
@@ -1972,7 +2181,7 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: DocCollection,
     key: string,
     data: unknown,
-    opts: { ifVersion?: number }
+    opts: { ifVersion?: number; op: 'create' | 'put'; hookPass?: HookPass }
   ): Promise<DocRecord> {
     const policy = assertCollection(coll);
     assertKey(key);
@@ -1988,6 +2197,11 @@ function buildDocStore(deps: DocStoreDeps) {
     // Here, not only in the REST layer, so that every write of a document body is checked
     // whoever calls the store. `data` is the whole body the row will hold.
     validateDocAgainstCollectionSchema(ctx, coll, data);
+    // After every check of the body, so a malformed write never spends a pass.
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, opts.op, key, opts.hookPass)
+    );
     const indexRows = indexRowsFor(coll, data as Record<string, unknown>);
     const scope = scopeUid(ctx, coll);
     const base = [ctx.appId, ctx.ns, coll.name, scope, key];
@@ -2003,7 +2217,7 @@ function buildDocStore(deps: DocStoreDeps) {
           // See VISIBLE: refusing a write to a hidden key reveals that it exists.
           if (existing.hidden) throw new DocStoreError('not_found', 'document not found');
           const current = Number(existing.version);
-          if (opts.ifVersion !== undefined && opts.ifVersion !== current) {
+          if (ifVersion !== undefined && ifVersion !== current) {
             throw new DocStoreError('version_conflict', 'version conflict', {
               currentVersion: current,
             });
@@ -2018,7 +2232,7 @@ function buildDocStore(deps: DocStoreDeps) {
           });
         }
 
-        if (opts.ifVersion !== undefined && opts.ifVersion !== 0) {
+        if (ifVersion !== undefined && ifVersion !== 0) {
           throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: 0 });
         }
         const ins = await c.query(SQL_INSERT_DOC, [...base, json, viewer]);
@@ -2120,17 +2334,27 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: DocCollection,
     key: string,
     data: Record<string, unknown>,
-    opts: { ifVersion?: number } = {}
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<DocRecord> {
-    return writeDoc(ctx, coll, key, data, opts);
+    return writeDoc(ctx, coll, key, data, { ...opts, op: 'put' });
   }
 
+  /**
+   * Create a document under a new key: `opts.key` when the caller generated it (the permission
+   * hook is shown the key before the write), else a fresh ULID. Never overwrites: the write is
+   * pinned to "no document" (`ifVersion: 0`) either way.
+   */
   async function create(
     ctx: DocStoreContext,
     coll: DocCollection,
-    data: Record<string, unknown>
+    data: Record<string, unknown>,
+    opts: { key?: string; hookPass?: HookPass } = {}
   ): Promise<DocRecord> {
-    return writeDoc(ctx, coll, newUlid(), data, { ifVersion: 0 });
+    return writeDoc(ctx, coll, opts.key ?? newUlid(), data, {
+      ifVersion: 0,
+      op: 'create',
+      hookPass: opts.hookPass,
+    });
   }
 
   /**
@@ -2146,7 +2370,7 @@ function buildDocStore(deps: DocStoreDeps) {
    * Otherwise `null`, having written nothing; the caller then makes the ordinary write, which
    * refuses (or writes) exactly as it always did. So a stale `ifVersion`, someone else's or a hidden
    * document, an absent key, a private collection and a body the store would refuse are all
-   * `null`, never a refusal of their own.
+   * `null`, never a refusal of their own. A collection with a permission hook is always `null`.
    *
    * ONE unlocked read (SQL_UNCHANGED_PROBE), no lock: nothing is written on its answer, so a
    * concurrent write is simply before or after it, and a body that differs from what the read saw
@@ -2165,6 +2389,10 @@ function buildDocStore(deps: DocStoreDeps) {
     const viewer = requireViewer(ctx);
     assertShareWritable(coll, policy);
     if (coll.config.visibility !== 'shared') return null;
+    // A collection with a permission hook: every put is the hook's to decide, unchanged or not, so
+    // it always takes the ordinary (hooked) write. Answering here would return 200 for a put the
+    // hook refuses.
+    if (coll.config.hook) return null;
     let json: string;
     let indexRows: IndexRow[];
     try {
@@ -2207,24 +2435,28 @@ function buildDocStore(deps: DocStoreDeps) {
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
-    opts: { ifVersion?: number } = {}
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<{ deleted: boolean }> {
     const policy = assertCollection(coll);
     assertKey(key);
     const viewer = requireViewer(ctx);
     assertShareWritable(coll, policy);
     const scope = scopeUid(ctx, coll);
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, 'delete', key, opts.hookPass)
+    );
     return withTx(ctx, async (c) => {
       const row = (await c.query(SQL_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, scope, key])).rows[0];
       // Missing and hidden are indistinguishable to the caller here.
       if (!row || row.hidden) {
-        if (opts.ifVersion !== undefined && opts.ifVersion !== 0) {
+        if (ifVersion !== undefined && ifVersion !== 0) {
           throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: 0 });
         }
         return { deleted: false };
       }
       const current = Number(row.version);
-      if (opts.ifVersion !== undefined && opts.ifVersion !== current) {
+      if (ifVersion !== undefined && ifVersion !== current) {
         throw new DocStoreError('version_conflict', 'version conflict', {
           currentVersion: current,
         });
@@ -2252,24 +2484,27 @@ function buildDocStore(deps: DocStoreDeps) {
    * `write: 'none'` collection the first increment of an absent key CREATES the
    * document (empty, unowned, charged to the incrementer); under any other
    * policy an absent key is `not_found`, so nobody can squat keys by counting.
+   *
+   * `opts.ifVersion` (a permission hook's pin, or a caller's own) refuses the increment with
+   * `version_conflict` unless the document is still at that version (0: still absent). A tally
+   * never changes the version, so concurrent increments never conflict with each other.
    */
   async function increment(
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
     counter: string,
-    by = 1
+    by = 1,
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<{ value: number }> {
     const policy = assertCollection(coll);
     assertKey(key);
-    requireShared(coll, 'counters');
-    if (!TALLY_NAME_SHAPE.test(counter) || !(coll.config.counters ?? []).includes(counter)) {
-      throw invalid(`counter ${counter} is not declared`, { counter });
-    }
-    if (!Number.isSafeInteger(by) || by < 1 || by > B.incrementMax) {
-      throw invalid(`by must be an integer from 1 to ${B.incrementMax}`);
-    }
+    assertIncrementRequest(coll, counter, by);
     const viewer = requireViewer(ctx);
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, 'increment', key, opts.hookPass)
+    );
     await resolveCeilings(ctx, [viewer]);
     return withTx(ctx, async (c) => {
       const bump = async () =>
@@ -2283,8 +2518,12 @@ function buildDocStore(deps: DocStoreDeps) {
       for (let attempt = 0; attempt < 2; attempt++) {
         // Existing visible doc: KEY SHARE only, so increments never serialise on it.
         const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
-        if (doc.rows.length > 0) return { value: await bump() };
+        if (doc.rows.length > 0) {
+          assertTallyVersion(ifVersion, Number(doc.rows[0].version));
+          return { value: await bump() };
+        }
         if (policy !== 'none') throw new DocStoreError('not_found', 'document not found');
+        assertTallyVersion(ifVersion, 0);
 
         const existing = (await c.query(SQL_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, 0, key]))
           .rows[0];
@@ -2319,28 +2558,28 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
-  function assertMarkName(coll: DocCollection, name: string) {
-    requireShared(coll, 'marks');
-    if (name === REPORT_MARK) return;
-    if (!TALLY_NAME_SHAPE.test(name) || !(coll.config.marks ?? []).includes(name)) {
-      throw invalid(`mark ${name} is not declared`, { mark: name });
-    }
-  }
+  const assertMarkName = assertMarkRequest;
 
   /** `count` is null for `report`, whose count is never exposed. */
   async function mark(
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
-    name: string
+    name: string,
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<{ marked: true; count: number | null }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
     const viewer = requireViewer(ctx);
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, 'mark', key, opts.hookPass, name)
+    );
     return withTx(ctx, async (c) => {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
       if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
+      assertTallyVersion(ifVersion, Number(doc.rows[0].version));
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
       const ins = await c.query(SQL_INSERT_MARK, [...args, viewer]);
       const res =
@@ -2356,16 +2595,22 @@ function buildDocStore(deps: DocStoreDeps) {
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
-    name: string
+    name: string,
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<{ marked: false; count: number | null }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
     refuseReportWithdrawal(name);
     const viewer = requireViewer(ctx);
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, 'unmark', key, opts.hookPass, name)
+    );
     return withTx(ctx, async (c) => {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
       if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
+      assertTallyVersion(ifVersion, Number(doc.rows[0].version));
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
       const del = await c.query(SQL_DELETE_MARK, [...args, viewer]);
       const res =
@@ -3014,6 +3259,45 @@ function buildDocStore(deps: DocStoreDeps) {
     };
   }
 
+  /** One page of the documents `userId` owns in one app, for their export (`SQL_VIEWER_RECORDS`). */
+  async function viewerRecords(
+    userId: number,
+    appId: string,
+    opts: { after?: ViewerRecordCursor | null; limit: number }
+  ): Promise<ViewerRecordRow[]> {
+    assertWipeUserId(userId);
+    if (!Number.isSafeInteger(opts.limit) || opts.limit < 1 || opts.limit > 1000) {
+      throw new Error('doc-store: limit must be 1–1000');
+    }
+    const after = opts.after ?? { coll: '', scopeUid: -1, key: '' };
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: userId };
+    const rows = await withTx(
+      ctx,
+      async (c) =>
+        (
+          await c.query(SQL_VIEWER_RECORDS, [
+            appId,
+            PUBLISHED_NS,
+            userId,
+            after.coll,
+            after.scopeUid,
+            after.key,
+            opts.limit,
+          ])
+        ).rows
+    );
+    return rows.map((r) => ({
+      coll: r.coll as string,
+      scopeUid: Number(r.scope_uid),
+      key: r.key as string,
+      data: r.data as Record<string, unknown>,
+      version: Number(r.version),
+      author: rowAuthor(r, userId),
+      lastWriterUid: r.last_writer_uid === null ? null : Number(r.last_writer_uid),
+      recordId: r.record_id === null || r.record_id === undefined ? null : String(r.record_id),
+    }));
+  }
+
   /**
    * Empty what one viewer holds in one app's PRODUCTION namespace, in ONE scoped transaction:
    *   - always: their private documents (index rows with them), each refunded to their own usage
@@ -3403,6 +3687,7 @@ function buildDocStore(deps: DocStoreDeps) {
     assertCollection(to);
     requireShared(to, 'unpublish targets');
     assertShareWritable(to);
+    assertNotHooked(to, 'unpublish');
     const viewer = requireViewer(ctx);
     const sorted = assertPublishKeys(keys).sort();
     return retryOnDeadlock(() =>
@@ -3606,13 +3891,73 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
+  /** The private feed's bound values, checked before any of them reaches SQL. */
+  function privateFeedParams(
+    appId: string,
+    coll: string,
+    userId: number,
+    afterKey: string,
+    limit: number
+  ) {
+    const ctx = feedCtx(appId, coll);
+    assertWipeUserId(userId);
+    if (afterKey !== '' && !B.key.test(afterKey)) throw invalid('feed: malformed key');
+    return {
+      ctx,
+      params: [ctx.appId, ctx.ns, coll, userId, afterKey, feedLimit(limit)],
+    };
+  }
+
+  /** One page of `userId`'s private documents in `coll`, by key: key, record id and version. */
+  async function privateVersions(
+    appId: string,
+    coll: string,
+    userId: number,
+    afterKey: string,
+    limit: number
+  ): Promise<PrivateFeedVersion[]> {
+    const { ctx, params } = privateFeedParams(appId, coll, userId, afterKey, limit);
+    const rows = await withTx(
+      ctx,
+      async (c) => (await c.query(SQL_PRIVATE_FEED_VERSIONS, params)).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      recordId: String(r.record_id),
+      version: Number(r.version),
+    }));
+  }
+
+  /** {@link privateVersions} with each document's data. */
+  async function privateDocuments(
+    appId: string,
+    coll: string,
+    userId: number,
+    afterKey: string,
+    limit: number
+  ): Promise<PrivateFeedDocument[]> {
+    const { ctx, params } = privateFeedParams(appId, coll, userId, afterKey, limit);
+    const rows = await withTx(
+      ctx,
+      async (c) => (await c.query(SQL_PRIVATE_FEED_DOCS, params)).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      recordId: String(r.record_id),
+      version: Number(r.version),
+      data: r.data as Record<string, unknown>,
+    }));
+  }
+
   return {
     store,
     lookup: { findSharedByKey },
     feed: { feedHead, feedChanges, feedDocuments, feedWitness },
+    privateFeed: { privateVersions, privateDocuments },
     moderation: createModeration({ withTx, charge }),
+    rater: createRater({ withTx, charge, raterLookupTx }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },
-    viewerData: { listViewerUsage, viewerHoldings, emptyViewerData, limits },
+    viewerData: { listViewerUsage, viewerHoldings, viewerRecords, emptyViewerData, limits },
   };
 }
 
@@ -3893,6 +4238,61 @@ const SQL_MOD_LOCK = `SELECT d.version, d.seq, d.author_uid, d.size_bytes, d.hid
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
   FOR UPDATE`;
 
+// THE RATER (content levels, build 3; `doc-rater.service.ts`). The shared documents of one
+// collection that are not rated for their current version — never rated (NULL), `pending`, or
+// rated or overridden for an older version (`RATED_NOW` is false) — oldest change first, after a
+// seq cursor. Counter documents hold no `data` to rate, and a hidden one waits for a moderator.
+// Read server-side to be rated; never returned to a viewer. Uses `doc_feed_shared_seq_idx`.
+// $1 app, $2 ns, $3 coll, $4 seq cursor (exclusive), $5 limit
+const SQL_RATER_UNRATED = `SELECT d.key, d.data, d.version, d.seq, d.rating_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.author_kind <> 'counter' AND d.hidden_at IS NULL
+    AND NOT ${RATED_NOW}
+  ORDER BY d.seq
+  LIMIT $5::int`;
+
+// The rater's lock read: the revision its rating is bound to. $1 app, $2 ns, $3 coll, $4 key
+const SQL_RATER_LOCK = `SELECT d.seq, d.author_kind, d.hidden_at IS NOT NULL AS hidden
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
+  FOR UPDATE`;
+
+// Record a rating for the document's CURRENT version and give it the next seq, so a feed reader
+// sees the change. A moderator's override is kept, and wins while it is for this version
+// (`CURRENT_LEVEL`). Returns the level readers now get. $1 app, $2 ns, $3 coll, $4 key,
+// $5 level, $6 seq
+const SQL_RATER_APPLY = `UPDATE appdata.doc d
+  SET level = $5::int, rated_version = d.version, rated_at = now(), seq = $6::bigint,
+    rating_status = CASE WHEN d.override_level IS NOT NULL AND d.override_version = d.version
+      THEN 'overridden' ELSE 'rated' END
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
+  RETURNING ${CURRENT_LEVEL} AS current_level`;
+
+// Whether the rating-id migration (`20261118120000_appdata_doc_rating_id.sql`) is applied: its
+// lookup policy is on `doc`. Until it is, the rater does nothing (`ready`). A catalog read.
+const SQL_RATER_POLICY = `SELECT count(*)::int AS n FROM pg_catalog.pg_policies pp
+  WHERE pp.policyname = 'appdata_rater_lookup' AND pp.tablename = 'doc'`;
+
+// The one shared document a rating id names, by address only. Run only inside `raterLookupTx`,
+// whose policy admits that one row. $1 rating id
+const SQL_RATER_LOOKUP = `SELECT rl.app_id, rl.ns, rl.coll, rl.key FROM appdata.doc rl
+  WHERE rl.rating_id = $1::int AND rl.scope_uid = 0`;
+
+// Give a shared document its rating id the first time it is rated; an existing id is kept.
+// $1 app, $2 ns, $3 coll, $4 key
+const SQL_RATER_ASSIGN_ID = `UPDATE appdata.doc d
+  SET rating_id = COALESCE(d.rating_id, nextval('appdata.doc_rating_id_seq')::int)
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
+  RETURNING d.rating_id`;
+
+// One shared document as the rater reads it to rate it. Read server-side; never returned to a
+// viewer. $1 app, $2 ns, $3 coll, $4 key
+const SQL_RATER_GET = `SELECT d.data, d.version, d.seq, d.author_uid, d.author_kind,
+    d.hidden_at IS NOT NULL AS hidden, d.rating_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
 function assertModTarget(collection: string, key: string): void {
   if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
   assertKey(key);
@@ -4154,4 +4554,188 @@ function createModeration({ withTx, charge }: ModerationDeps) {
   }
 
   return { listReported, get, setHidden, dismissReports, delete: remove };
+}
+
+/** A shared document waiting for a rating, as the rater reads it. */
+export type UnratedDoc = {
+  key: string;
+  data: unknown;
+  version: number;
+  /** The revision a rating of this read is bound to (`applyRating`'s `seq`). */
+  seq: number;
+  /** Its rating id, once the rater has given it one. */
+  ratingId: number | null;
+};
+
+export type ApplyRatingResult =
+  | { applied: true; seq: number; currentLevel: number }
+  | { applied: false; reason: 'gone' | 'changed' | 'hidden' | 'counter' };
+
+/** The levels a rating may carry: one NsfwLevel bit (the CHECK `doc_level_bit`). */
+const RATING_LEVEL_BITS = new Set([1, 2, 4, 8, 16, 32]);
+
+/** A shared document's address: what a rating id names. */
+export type RatedDocAddress = { appId: string; ns: string; collection: string; key: string };
+
+/** One shared document as the rater reads it. */
+export type DocForRating = {
+  data: unknown;
+  version: number;
+  /** The revision a rating of this read is bound to (`applyRating`'s `seq`). */
+  seq: number;
+  authorUid: number | null;
+  authorKind: string;
+  hidden: boolean;
+  ratingId: number | null;
+};
+
+const MAX_RATING_ID = 2_147_483_647;
+
+function createRater({
+  withTx,
+  charge,
+  raterLookupTx,
+}: ModerationDeps & {
+  raterLookupTx: <T>(ratingId: number, fn: (c: DocStoreClient) => Promise<T>) => Promise<T>;
+}) {
+  let migrated = false;
+
+  /**
+   * Whether the rating-id migration is applied (its lookup policy exists). Found once and kept;
+   * while absent, asked again on every call, which is once per rater pass.
+   */
+  async function ready(): Promise<boolean> {
+    if (migrated) return true;
+    const n = await raterLookupTx(0, async (c) =>
+      Number((await c.query(SQL_RATER_POLICY)).rows[0]?.n ?? 0)
+    );
+    migrated = n > 0;
+    return migrated;
+  }
+
+  /** The shared document `ratingId` names, or null when no document carries it any more. */
+  async function findByRatingId(ratingId: number): Promise<RatedDocAddress | null> {
+    if (!Number.isSafeInteger(ratingId) || ratingId < 1 || ratingId > MAX_RATING_ID) return null;
+    const row = await raterLookupTx(
+      ratingId,
+      async (c) => (await c.query(SQL_RATER_LOOKUP, [ratingId])).rows[0]
+    );
+    if (!row) return null;
+    return {
+      appId: row.app_id as string,
+      ns: row.ns as string,
+      collection: row.coll as string,
+      key: row.key as string,
+    };
+  }
+
+  /** The shared document's rating id, given on first use; null when the document is gone. */
+  async function assignRatingId(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string
+  ): Promise<number | null> {
+    assertModTarget(collection, key);
+    const row = await withTx(
+      { appId, ns, viewerUid: null },
+      async (c) => (await c.query(SQL_RATER_ASSIGN_ID, [appId, ns, collection, key])).rows[0]
+    );
+    return row ? Number(row.rating_id) : null;
+  }
+
+  /** One shared document as the rater rates it, or null when it is gone. */
+  async function getForRating(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string
+  ): Promise<DocForRating | null> {
+    assertModTarget(collection, key);
+    const row = await withTx(
+      { appId, ns, viewerUid: null },
+      async (c) => (await c.query(SQL_RATER_GET, [appId, ns, collection, key])).rows[0]
+    );
+    if (!row) return null;
+    return {
+      data: row.data,
+      version: Number(row.version),
+      seq: Number(row.seq),
+      authorUid: row.author_uid === null ? null : Number(row.author_uid),
+      authorKind: row.author_kind as string,
+      hidden: row.hidden === true,
+      ratingId: row.rating_id === null ? null : Number(row.rating_id),
+    };
+  }
+  /**
+   * Up to `limit` shared documents of one collection that need a rating, oldest change first,
+   * after the seq cursor `afterSeq` (exclusive; 0 from the start).
+   */
+  async function listUnrated(
+    appId: string,
+    ns: string,
+    collection: string,
+    opts: { afterSeq: number; limit: number }
+  ): Promise<UnratedDoc[]> {
+    if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
+    if (!Number.isSafeInteger(opts.afterSeq) || opts.afterSeq < 0) {
+      throw invalid('afterSeq must be a non-negative integer');
+    }
+    if (!Number.isSafeInteger(opts.limit) || opts.limit < 1 || opts.limit > B.listLimitMax) {
+      throw invalid(`limit must be 1–${B.listLimitMax}`);
+    }
+    const rows = await withTx(
+      { appId, ns, viewerUid: null },
+      async (c) =>
+        (
+          await c.query(SQL_RATER_UNRATED, [appId, ns, collection, opts.afterSeq, opts.limit])
+        ).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      data: r.data,
+      version: Number(r.version),
+      seq: Number(r.seq),
+      ratingId: r.rating_id === null || r.rating_id === undefined ? null : Number(r.rating_id),
+    }));
+  }
+
+  /**
+   * Record `level` as the rating of the shared document `key` — only if it is still at the
+   * revision `seq` the rater read and scanned. Any write since (an edit, a delete and re-create, a
+   * schema migration) moved its seq, so the rating is dropped (`changed`) and the document stays
+   * pending for the next pass; `version` alone cannot tell, as it restarts at 1 on a re-create. The
+   * rating is recorded for the document's current version, takes the next seq (a feed reader sees
+   * it), and a moderator's override for this version still wins.
+   */
+  async function applyRating(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string,
+    opts: { seq: number; level: number }
+  ): Promise<ApplyRatingResult> {
+    assertModTarget(collection, key);
+    if (!RATING_LEVEL_BITS.has(opts.level)) throw invalid('level must be one NsfwLevel bit');
+    if (!Number.isSafeInteger(opts.seq) || opts.seq < 1) throw invalid('malformed seq');
+    const ctx: DocStoreContext = { appId, ns, viewerUid: null };
+    return withTx(ctx, async (c) => {
+      const row = (await c.query(SQL_RATER_LOCK, [appId, ns, collection, key])).rows[0];
+      if (!row) return { applied: false, reason: 'gone' } as const;
+      if (Number(row.seq) !== opts.seq) return { applied: false, reason: 'changed' } as const;
+      if (row.hidden) return { applied: false, reason: 'hidden' } as const;
+      if (row.author_kind === 'counter') return { applied: false, reason: 'counter' } as const;
+      // No bytes move; the charge only takes the next seq under the usage_app lock (LOCK ORDER (2)).
+      const seq = await charge(c, ctx, NO_APP_CHARGE, {
+        uid: 0,
+        bytes: 0,
+        docs: 0,
+        ceiling: 'app',
+      });
+      const out = await c.query(SQL_RATER_APPLY, [appId, ns, collection, key, opts.level, seq]);
+      return { applied: true, seq, currentLevel: Number(out.rows[0].current_level) } as const;
+    });
+  }
+
+  return { ready, findByRatingId, assignRatingId, getForRating, listUnrated, applyRating };
 }

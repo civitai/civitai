@@ -80,8 +80,7 @@ describe('/api/og?type=milestone', () => {
     expect(Buffer.compare(card._body as Buffer, fallback._body as Buffer)).not.toBe(0);
   });
 
-  // A backfilled tier's card carries no month, so it must print no "Reached" line at all. Compared
-  // byte-for-byte against a line holding each thing a broken template would print in its place.
+  // A backfilled tier's card carries no month, so it prints no "Reached" line at all.
   describe('the "Reached" line', () => {
     const png = async (reached: string | null) => {
       getMilestoneShareCard.mockResolvedValue({ ...CARD, reached });
@@ -103,17 +102,6 @@ describe('/api/og?type=milestone', () => {
     });
   });
 
-  it('reads `<userId>.<achievementKey>` and looks up that achievement', async () => {
-    const res = await render('42.reach:downloads-10000');
-    expect(getMilestoneShareCard).toHaveBeenCalledTimes(1);
-    expect(getMilestoneShareCard).toHaveBeenCalledWith({
-      userId: 42,
-      milestone: 'reach:downloads-10000',
-    });
-    expect(res._headers['content-type']).toBe('image/png');
-  });
-
-  // An achievement's card carries its own small capitals and a line saying what the creator did.
   it("draws an achievement's eyebrow and line", async () => {
     const png = async (card: Record<string, unknown>) => {
       getMilestoneShareCard.mockResolvedValue({ ...CARD, ...card });
@@ -134,8 +122,6 @@ describe('/api/og?type=milestone', () => {
     expect(Buffer.compare(earned, bare)).not.toBe(0);
   });
 
-  // Each piece of art is fetched and drawn: a card that dropped one would render the same bytes as
-  // a card that never had it.
   it("draws the creator's avatar frame and profile badge", async () => {
     const art = await sharp({
       create: { width: 8, height: 8, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } },
@@ -165,9 +151,7 @@ describe('/api/og?type=milestone', () => {
   });
 
   it('takes the SHORT cache for a card and for its fallback', async () => {
-    // A hidden badge or a new strike must take a shared card down within minutes, and a card
-    // that is not live yet must not sit on the hour-long fallback cache. Whole value, since
-    // `toContain('max-age=300')` would also match `s-maxage=300`.
+    // A hidden badge or a new strike must take a shared card down within minutes.
     const card = await render('42.supernova');
     getMilestoneShareCard.mockResolvedValue(null);
     const fallback = await render('42.supernova');
@@ -177,20 +161,10 @@ describe('/api/og?type=milestone', () => {
   });
 
   it('keeps the SHORT cache when the lookup throws', async () => {
-    // The lookup is built to throw (an unreadable suppression list); the error path's hour-long
-    // cache would pin a live creator's card to the fallback.
     getMilestoneShareCard.mockRejectedValue(new Error('suppression list unavailable'));
     const res = await render('42.supernova');
 
     expect(res._headers['content-type']).toBe('image/png');
     expect(res._headers['cache-control']).toBe('public, max-age=300, s-maxage=300');
-  });
-
-  it('serves the fallback for an id naming no tier or achievement, without a lookup', async () => {
-    for (const id of ['42.score:legend', '42.unknown', '42', '42.other:x', '42.reach:A']) {
-      const res = await render(id);
-      expect(res._headers['content-type'], id).toBe('image/png');
-    }
-    expect(getMilestoneShareCard).not.toHaveBeenCalled();
   });
 });

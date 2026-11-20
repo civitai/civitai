@@ -70,6 +70,14 @@ sh('git pull --rebase');
   }
 }
 
+// Typecheck this app only, before the bump, so a failure leaves the tree untouched. An app with no
+// `typecheck` script (the Go apps) has nothing to check.
+if (JSON.parse(readFileSync(`${appDir}/package.json`, 'utf8')).scripts?.typecheck) {
+  sh(`pnpm --dir ${appDir} run typecheck`);
+} else {
+  console.log(`${appDir} has no typecheck script; skipping the typecheck.`);
+}
+
 // Bump the sub-package version ONLY (no git side effects from npm).
 sh(`npm --prefix ${appDir} version ${bump} --no-git-tag-version`);
 const version = JSON.parse(readFileSync(`${appDir}/package.json`, 'utf8')).version;
@@ -80,7 +88,9 @@ const app = appDir.split('/').pop();
 sh(`git add ${appDir}/package.json`);
 sh(`git commit -m "chore(${app}): release ${tag}"`);
 sh(`git tag -a ${tag} -m ${tag}`);
-sh('git push --follow-tags');
+// HUSKY=0: the pre-push hook typechecks the root app, which this commit does not touch, and this
+// app was checked above.
+execSync('git push --follow-tags', { stdio: 'inherit', env: { ...process.env, HUSKY: '0' } });
 
 console.log(
   `\nReleased ${tag} (pushed to ${branch}). The tag-webhook will build + Flux will deploy.`

@@ -3,7 +3,6 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as JevModule from '~/server/services/ai/jev';
 import type * as CoverageSource from '~/server/services/generation/coverage-source';
@@ -193,8 +192,6 @@ beforeEach(() => {
   mockHolderResolve.mockResolvedValue(served());
   mockStudyGet.mockReset();
   mockStudyGet.mockResolvedValue({ contentHash: STUDY, scores: SCORES });
-  loggingMock.logToAxiom.mockReset();
-  loggingMock.logToAxiom.mockResolvedValue(undefined);
   redisMock.redis.packed.get.mockReset();
   redisMock.redis.packed.get.mockResolvedValue(null);
   redisMock.redis.packed.set.mockReset();
@@ -333,7 +330,7 @@ describe('POOL_MERGE with a served snapshot', () => {
   });
 });
 
-describe('🔴 POOL_MERGE with no servable snapshot: BASE, flagged, 60 s, reason logged', () => {
+describe('🔴 POOL_MERGE with no servable snapshot: BASE, flagged, 60 s, reason recorded', () => {
   it('serves the merge with NO co-occurrence candidates (BASE top cap), coocFallback true', async () => {
     mockHolderResolve.mockResolvedValue(fallback('load_failed'));
     mockStage1();
@@ -343,10 +340,6 @@ describe('🔴 POOL_MERGE with no servable snapshot: BASE, flagged, 60 s, reason
     expect(result.suggestions.map((s) => s.versionId)).toEqual([21, 22]);
     expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 60 });
     expect(redisMock.redis.packed.set.mock.calls[0][1]).toMatchObject({ coocFallback: true });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      { type: 'resource-intent-cooc-fallback', reason: 'load_failed' },
-      'temp-search'
-    );
     await flush();
     expect(shadowRow()).toMatchObject({
       arm: 'pool_merge',
@@ -358,7 +351,7 @@ describe('🔴 POOL_MERGE with no servable snapshot: BASE, flagged, 60 s, reason
 });
 
 describe('POOL_MERGE cache hit', () => {
-  it('serves the cached list with no vendor call, no merge, no fallback log; the row keeps its arm', async () => {
+  it('serves the cached list with no vendor call, no merge; the row keeps its arm', async () => {
     mockHolderResolve.mockResolvedValue(fallback('no_snapshot'));
     const cached = {
       degraded: false,
@@ -377,10 +370,6 @@ describe('POOL_MERGE cache hit', () => {
     expect(mockAskJev).not.toHaveBeenCalled();
     expect(mockPoolMerge).not.toHaveBeenCalled();
     expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'resource-intent-cooc-fallback' }),
-      'temp-search'
-    );
     await flush();
     expect(shadowRow()).toMatchObject({
       arm: 'pool_merge',
@@ -451,13 +440,6 @@ describe('🔴 study mode', () => {
     expect(mockHolderResolve).not.toHaveBeenCalled();
     expect(redisMock.redis.packed.get).not.toHaveBeenCalled();
     expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'resource-intent-degraded',
-        degradedReason: 'cooc_study_snapshot',
-      }),
-      'temp-search'
-    );
     await flush();
     expect(shadowRow()).toMatchObject({
       degraded: 1,

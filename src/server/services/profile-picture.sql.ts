@@ -1,10 +1,10 @@
 import { Prisma } from '@prisma/client';
 import {
+  hasBlockMarkerSql,
   imageNotRestrictedSql,
   imageReviewedSql,
   notHeldForReviewSql,
 } from '~/server/common/image-visibility';
-import { OWNER_HIDDEN_REVIEWS } from '~/server/common/owner-hidden-reviews';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 
 /** When a profile picture may be served to anyone but its owner; any other picture is served as none. */
@@ -14,24 +14,15 @@ export const servableProfilePictureSql = Prisma.sql`
   AND ${notHeldForReviewSql()}
   AND ${imageReviewedSql('i')}
   AND ${imageNotRestrictedSql()}
+  AND NOT ${hasBlockMarkerSql('i')}
 `;
 
-const heldReviewList = OWNER_HIDDEN_REVIEWS.map((review) => `'${review}'`).join(', ');
-
-/** Whether `User.image` (aliased `u`) names the user's profile picture while it is under an owner-hidden hold. */
-export const userImageNamesHeldPicture = `EXISTS (
-    SELECT 1 FROM "Image" held
-    WHERE held.id = u."profilePictureId"
-      AND held."needsReview" IN (${heldReviewList})
-      AND strpos(replace(lower(u.image), '%2d', '-'), lower(held.url)) > 0
-  )`;
-
-/**
- * `User.image` over `User` aliased `u`, for reads that fall back to it when there is no profile
- * picture: null when it names the user's profile picture and that picture is under an owner-hidden
- * review hold, so the fallback follows the same holds. A raw column for `SELECT` lists built as text.
- */
-export const fallbackUserImageColumn = `CASE WHEN ${userImageNamesHeldPicture} THEN NULL ELSE u.image END`;
+export {
+  fallbackUserImageColumn,
+  fallbackUserImageColumnOf,
+  userImageNamesHeldPicture,
+  userImageNamesHeldPictureOf,
+} from '~/server/services/profile-picture-fallback.sql';
 
 export type RawQueryClient = {
   $queryRaw<T = unknown>(

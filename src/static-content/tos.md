@@ -1,7 +1,7 @@
 ---
 title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
-lastmod: 2026-11-17
+lastmod: 2026-11-20
 ---
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [civitai.red](https://civitai.red), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
@@ -192,9 +192,11 @@ In addition to the categories of explicitly prohibited content above, certain ty
 
 - 11.9 Using bots, scripts, or any form of automation to manipulate the system or statistics
 
-- 11.10 sell or otherwise transfer the access granted under these Terms or any Materials (as defined in Section 7 (Ownership; Proprietary Rights)) or any right or ability to view, access, or use any Materials; or
+- 11.10 sell or otherwise transfer the access granted under these Terms or any Materials (as defined in Section 7 (Ownership; Proprietary Rights)) or any right or ability to view, access, or use any Materials;
 
-- 11.11 attempt to do any of the acts described in this Section 11 (Prohibited Conduct) or assist or permit any person in engaging in any of the acts described in this Section 11 (Prohibited Conduct).
+- 11.11 remove, alter, obscure, or interfere with any watermark, content credential, or other provenance marking that Civitai applies to content, or create or apply a marking that falsely indicates that content was generated on Civitai; or
+
+- 11.12 attempt to do any of the acts described in this Section 11 (Prohibited Conduct) or assist or permit any person in engaging in any of the acts described in this Section 11 (Prohibited Conduct).
 
 12. **Intellectual Property Rights Protection**
 

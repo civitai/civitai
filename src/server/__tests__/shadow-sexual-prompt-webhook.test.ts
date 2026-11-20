@@ -270,21 +270,11 @@ describe('text-moderation-result: shadow sexual-prompt verdicts', () => {
     expect(insert).toHaveBeenCalledTimes(1);
   });
 
-  it('logs a prediction the label store refuses, and keeps the ClickHouse row', async () => {
+  it('keeps the ClickHouse row when the label store refuses the prediction', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([{ status: 'rejected', error: 'subject erased' }]);
     expect(await deliver({ shadow: shadowMarker })).toBe(200);
 
     expect(insert).toHaveBeenCalledTimes(1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'shadow-sexual-prompt',
-        message: 'prediction rejected: subject erased',
-        imageId: 9001,
-      })
-    );
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'info', status: 'rejected', workflowId: 'wf-shadow' })
-    );
   });
 
   it('keys on the marker, not on a missing entity: a marked workflow with an entity stays shadow', async () => {

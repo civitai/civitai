@@ -168,12 +168,12 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 }));
 
 vi.mock('~/server/services/image-models-reindex.service', () => ({
-  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
   queueArticlesAndComicsForImages: vi.fn(async () => undefined),
 }));
 
 const { handleUnblockImages } = await import('../image.service');
-const { queueModelsForImageChildTagChanges } = await import(
+const { queueDocumentsForImageMinorChanges } = await import(
   '~/server/services/image-models-reindex.service'
 );
 const { resolveEntityAppeal } = await import('../report.service');
@@ -269,7 +269,7 @@ describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868
   // An accept out of the minor queue rewrites "minor", which no trigger watches.
   it('queues the models and articles of the unblocked images', async () => {
     await handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any);
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ minorImageIds: [128489949] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ minorImageIds: [128489949] });
   });
 
   it("checks for an earlier review before writing this unblock's own review row", async () => {
@@ -317,8 +317,8 @@ describe('handleUnblockImages and a CSAM block', () => {
       (strings as TemplateStringsArray).join('?').includes('"blockedFor" = NULL')
     );
     // The ids the UPDATE claimed, then the per-row CSAM re-check it carries.
-    const bound = unblock.map(
-      ([strings, ...values]) => Prisma.sql(strings as never, ...(values as never[])).values
+    const bound = unblock.map(([strings, ...values]) =>
+      Prisma.sql(strings as never, ...(values as never[])).values.slice(-2)
     );
     expect(bound).toEqual([[2, 'CSAM']]);
     expect(result.map((image) => image.id)).toEqual([2]);

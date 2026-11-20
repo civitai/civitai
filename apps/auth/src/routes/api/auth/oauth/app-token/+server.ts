@@ -8,7 +8,8 @@ import { parseBody } from '$lib/server/oauth/http';
 import { hasScope, isScopeGrantable, scopeFromColumn } from '$lib/server/oauth/scope';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
-import { createAppAccessToken } from '$lib/server/oauth/token-helpers';
+import { AppBlockSuspendedError, createAppAccessToken } from '$lib/server/oauth/token-helpers';
+import { isOfflineGrantOn } from '$lib/server/oauth/offline-grant';
 import {
   APP_TOKEN_DEFAULT_TTL,
   APP_TOKEN_MAX_TTL,
@@ -25,6 +26,8 @@ export const POST: RequestHandler = async ({ request }) => {
   if (!isInternalRequest(request)) return bad('unauthorized', undefined, 401);
 
   const body = (await parseBody(request)) as Record<string, unknown>;
+  if (body.impersonatedBy != null)
+    return bad('impersonation_refused', 'Apps are paused while impersonating', 403);
   const userId = Number(body.userId);
   const clientId = typeof body.clientId === 'string' ? body.clientId : '';
   // A JSON number (or a decimal string), bounded against ALL_SCOPES (incl. the opt-in bits).
@@ -77,12 +80,20 @@ export const POST: RequestHandler = async ({ request }) => {
     return bad('access_denied', 'Account unavailable', 403);
   }
 
-  const { accessToken, expiresAt } = await createAppAccessToken(
-    userId,
-    clientId,
-    scope,
-    ttlSeconds
-  );
+  let minted: Awaited<ReturnType<typeof createAppAccessToken>>;
+  try {
+    minted = await createAppAccessToken(userId, clientId, scope, ttlSeconds, {
+      refuseSuspendedAppBlock: true,
+      // Offline-grant flag on: the token records that it was minted for a user on the site.
+      ...((await isOfflineGrantOn()) && { mintOrigin: 'app_token' as const }),
+    });
+  } catch (err) {
+    if (err instanceof AppBlockSuspendedError) {
+      return bad('access_denied', 'This application is not currently available.', 403);
+    }
+    throw err;
+  }
+  const { accessToken, expiresAt } = minted;
 
   logOAuthEvent({
     type: 'token.issued',

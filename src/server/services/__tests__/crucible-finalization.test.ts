@@ -413,7 +413,7 @@ describe('finalizeCrucible — completion', () => {
     );
   });
 
-  it('leaves it Active for the next run when awarding fails, and says so', async () => {
+  it('leaves it Active for the next run when awarding fails', async () => {
     setupCrucible({ entryFee: 100 });
     createPrizes.mockRejectedValue(new Error('db down'));
 
@@ -422,13 +422,6 @@ describe('finalizeCrucible — completion', () => {
     expect(claim).not.toHaveBeenCalled();
     expect(setTTL).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        name: 'crucible-prize-award-failed',
-        crucibleId: 1,
-      })
-    );
   });
 
   it('awards the same ledger keys on a retry, so a prize is only ever recorded and paid once', async () => {
@@ -493,7 +486,7 @@ describe('finalizeCrucible — completion', () => {
     expect(redisMock.redis.del).not.toHaveBeenCalled();
   });
 
-  it('voids what it awarded, notifies nobody and logs when it lost the claim', async () => {
+  it('voids what it awarded and notifies nobody when it lost the claim', async () => {
     setupCrucible({ entryFee: 100 });
     claim.mockResolvedValue({ count: 0 });
 
@@ -502,9 +495,6 @@ describe('finalizeCrucible — completion', () => {
     expect(voidPrizes).toHaveBeenCalledWith('Crucible', 1);
     expect(createNotification).not.toHaveBeenCalled();
     expect(setTTL).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'crucible-finalize-claim-lost', prizesAwarded: true })
-    );
   });
 
   it('voids nothing when it wins the claim', async () => {
@@ -1293,9 +1283,6 @@ describe('finalizeCrucible — entry posts', () => {
     });
 
     await expect(finalizeCrucible(1)).resolves.toMatchObject({ crucibleId: 1 });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'crucible-entry-posts-reveal-failed', crucibleId: 1 })
-    );
   });
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "@civitai/knights-app",
-  "version": "0.0.11",
+  "version": "0.0.20",
   "private": true,
   "type": "module",
   "scripts": {
@@ -22,11 +22,13 @@
     "@civitai/brand": "workspace:*",
     "@civitai/buzz": "workspace:*",
     "@civitai/db": "workspace:*",
+    "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/flipt": "workspace:*",
     "@civitai/notifications": "workspace:*",
     "@civitai/redis": "workspace:*",
     "@civitai/shared": "workspace:*",
+    "@microsoft/signalr": "^7.0.14",
     "kysely": "^0.28.7",
     "pg-connection-string": "2.9.1",
     "prom-client": "^14.2.0"

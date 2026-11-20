@@ -119,6 +119,24 @@ func (s *Sources) TagIDs(ctx context.Context, imageIDs []int) (map[int]any, erro
 	return tagIDsFrom(imageIDs, got)
 }
 
+// ImageTags is getImageTagsForImages plus the handler's vote merge, for a request with the 'tags'
+// include (none read without it).
+func (s *Sources) ImageTags(ctx context.Context, imageIDs []int, viewerID int, include bool) (map[int][]any, error) {
+	if !include {
+		return map[int][]any{}, nil
+	}
+	imageIDs = Unique(imageIDs)
+	got, writable := s.read(ctx, KeyImageTags, imageIDs, 0)
+	if err := s.fillImageTags(ctx, imageIDs, got, writable); err != nil {
+		return nil, err
+	}
+	votes, err := s.ImageTagVotes(ctx, imageIDs, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	return imageTagsFrom(imageIDs, got, votes)
+}
+
 // ImageResources is imageResourcesCache.fetch for the public images endpoint.
 func (s *Sources) ImageResources(ctx context.Context, imageIDs []int) (map[int][]ImageResource, error) {
 	imageIDs = Unique(imageIDs)

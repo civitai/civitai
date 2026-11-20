@@ -236,6 +236,28 @@ func TestTokenFromCookieHeader(t *testing.T) {
 	}
 }
 
+// The cookie package's parse() (Next's req.cookies): the first part of a name wins even when empty, a
+// value starting with `"` loses its first and last character, and an undecodable value is kept raw.
+func TestTokenFromCookieHeaderAsCookieParse(t *testing.T) {
+	cases := []struct{ header, want string }{
+		{`t=first; t=second`, "first"},
+		{`t=; t=second`, ""},
+		{`t="abc.def"`, "abc.def"},
+		{`t="ab%2Ecd"`, "ab.cd"},
+		{`t=""`, ""},
+		{`t="`, ""},
+		{`t="abc`, "ab"},
+		{`t=abc"`, `abc"`},
+		{`t=%zz`, "%zz"},
+		{`t; t=after`, "after"},
+	}
+	for _, c := range cases {
+		if got := TokenFromCookieHeader(c.header, "t"); got != c.want {
+			t.Errorf("TokenFromCookieHeader(%q) = %q, want %q", c.header, got, c.want)
+		}
+	}
+}
+
 func TestIsModerationAccount(t *testing.T) {
 	const configured = 9131
 	if !IsModerationAccount(configured, "someone", configured) {
@@ -259,7 +281,7 @@ func TestResolveRefusesTheModerationAccountBySub(t *testing.T) {
 	tok := sign(t, k, "ES256", claims)
 	r := &Resolver{
 		Verifier:            &Verifier{Issuer: issuer, JWKSURL: srv.URL, Now: func() time.Time { return now }},
-		CookieNames:         []string{"civ-token"},
+		CookieNames:         FixedCookieNames("civ-token"),
 		ModerationAccountID: 9131,
 		// Sessions is nil: reaching the session-cache read would panic, so a pass proves the refusal
 		// happens on the token's sub, before any lookup.
@@ -269,5 +291,19 @@ func TestResolveRefusesTheModerationAccountBySub(t *testing.T) {
 	u, err := r.Resolve(context.Background(), req)
 	if u != nil || err != nil {
 		t.Fatalf("moderation account session: got %+v, %v; want signed out", u, err)
+	}
+}
+
+// The cookie names come from the request's own host, so each site reads in its own mode.
+func TestResolverReadsNamesForRequestHost(t *testing.T) {
+	var asked string
+	r := &Resolver{CookieNames: func(host string) []string { asked = host; return nil }}
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/trpc/x", nil)
+	req.Host = "civitai.red"
+	if _, err := r.Resolve(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if asked != "civitai.red" {
+		t.Fatalf("CookieNames asked for %q, want civitai.red", asked)
 	}
 }

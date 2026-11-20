@@ -1,3 +1,4 @@
+import { DELETED_ROW_COLUMNS_SQL } from '../services/__tests__/deleted-row-columns.fixture';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,7 +18,23 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
 vi.mock('~/server/services/article.service', () => ({ recomputeArticleIngestion: vi.fn() }));
-vi.mock('~/server/services/image.service', () => ({ invalidateManyImageExistence: vi.fn() }));
+// The delete itself is the real shared statement, with the caller's condition; what follows it
+// (caches, search) has its own suites.
+vi.mock('~/server/services/image.service', async () => {
+  const { deleteImageRows } = await import('@civitai/db-queries/content-deletion');
+  const { kyselyOver } = await import('~/server/db/prisma-kysely');
+  const { fromPrismaSql } = await import('~/server/db/prisma-sql-kysely');
+  const { dbWrite } = await import('~/server/db/client');
+  return {
+    invalidateManyImageExistence: vi.fn(),
+    deleteImages: (ids: number[], { actor, onlyWhere }: { actor: never; onlyWhere?: Prisma.Sql }) =>
+      deleteImageRows(kyselyOver(dbWrite), {
+        ids,
+        actor,
+        where: onlyWhere ? fromPrismaSql<boolean>(onlyWhere) : undefined,
+      }),
+  };
+});
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
 // The held-verdict apply has its own suite; here only that the reset takes the model out of Private
 // through it.
@@ -88,9 +105,17 @@ beforeAll(async () => {
     CREATE TABLE "UserProfile" ("coverImageId" int);
     CREATE TABLE "Article" (id int PRIMARY KEY, "coverId" int);
     CREATE TABLE "Challenge" ("coverImageId" int);
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync');
+    CREATE TABLE "JobQueue" (
+      "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+      data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
+      UNIQUE ("entityType", "entityId", type)
+    );
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
   `);
+  await db.exec(DELETED_ROW_COLUMNS_SQL);
 });
 afterAll(() => db.close());
 

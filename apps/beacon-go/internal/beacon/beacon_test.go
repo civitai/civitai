@@ -297,24 +297,24 @@ func TestRollDue(t *testing.T) {
 		u      *auth.SessionUser
 		expect bool
 	}{
-		{"shared slot, shared mode", Engine{HubOrigin: "x", UpdateAgeMs: 1000, CookieMode: "shared"}, user("__Secure-civ-token", old), true},
-		{"shared slot, host mode", Engine{HubOrigin: "x", UpdateAgeMs: 1000, CookieMode: "host"}, user("__Secure-civ-token", old), false},
-		{"host slot, host mode", Engine{HubOrigin: "x", UpdateAgeMs: 1000, CookieMode: "host"}, user("__Host-civ-token", old), true},
-		{"no hub origin", Engine{UpdateAgeMs: 1000, CookieMode: "shared"}, user("__Secure-civ-token", old), false},
-		{"fresh token", Engine{HubOrigin: "x", UpdateAgeMs: 1000, CookieMode: "shared"}, user("__Secure-civ-token", "1999999999.5"), false},
-		{"exactly the age", Engine{HubOrigin: "x", UpdateAgeMs: 1000, CookieMode: "shared"}, user("__Secure-civ-token", "1999999999"), true},
-		{"iat zero", Engine{HubOrigin: "x", UpdateAgeMs: 1000, CookieMode: "shared"}, user("__Secure-civ-token", "0"), false},
-		{"iat a string", Engine{HubOrigin: "x", UpdateAgeMs: 1000, CookieMode: "shared"}, user("__Secure-civ-token", `"1"`), false},
-		{"iat absent", Engine{HubOrigin: "x", UpdateAgeMs: 1000, CookieMode: "shared"}, user("__Secure-civ-token", ""), false},
-		{"dev cookie, shared mode", Engine{HubOrigin: "x", UpdateAgeMs: 1000, CookieMode: "shared", LegacyRead: true}, user("civ-token", old), true},
-		{"dev cookie, host mode, legacy on", Engine{HubOrigin: "x", UpdateAgeMs: 1000, CookieMode: "host", LegacyRead: true}, user("civ-token", old), true},
+		{"shared slot, shared mode", Engine{HubOrigin: "x", UpdateAgeMs: 1000, ModeFor: fixedMode("shared", false)}, user("__Secure-civ-token", old), true},
+		{"shared slot, host mode", Engine{HubOrigin: "x", UpdateAgeMs: 1000, ModeFor: fixedMode("host", false)}, user("__Secure-civ-token", old), false},
+		{"host slot, host mode", Engine{HubOrigin: "x", UpdateAgeMs: 1000, ModeFor: fixedMode("host", false)}, user("__Host-civ-token", old), true},
+		{"no hub origin", Engine{UpdateAgeMs: 1000, ModeFor: fixedMode("shared", false)}, user("__Secure-civ-token", old), false},
+		{"fresh token", Engine{HubOrigin: "x", UpdateAgeMs: 1000, ModeFor: fixedMode("shared", false)}, user("__Secure-civ-token", "1999999999.5"), false},
+		{"exactly the age", Engine{HubOrigin: "x", UpdateAgeMs: 1000, ModeFor: fixedMode("shared", false)}, user("__Secure-civ-token", "1999999999"), true},
+		{"iat zero", Engine{HubOrigin: "x", UpdateAgeMs: 1000, ModeFor: fixedMode("shared", false)}, user("__Secure-civ-token", "0"), false},
+		{"iat a string", Engine{HubOrigin: "x", UpdateAgeMs: 1000, ModeFor: fixedMode("shared", false)}, user("__Secure-civ-token", `"1"`), false},
+		{"iat absent", Engine{HubOrigin: "x", UpdateAgeMs: 1000, ModeFor: fixedMode("shared", false)}, user("__Secure-civ-token", ""), false},
+		{"dev cookie, shared mode", Engine{HubOrigin: "x", UpdateAgeMs: 1000, ModeFor: fixedMode("shared", true)}, user("civ-token", old), true},
+		{"dev cookie, host mode, legacy on", Engine{HubOrigin: "x", UpdateAgeMs: 1000, ModeFor: fixedMode("host", true)}, user("civ-token", old), true},
 	}
 	for _, c := range cases {
 		c.e.Now = func() time.Time { return now }
 		if c.u.Claims != nil && len(c.u.Claims.Iat) == 0 {
 			c.u.Claims.Iat = nil
 		}
-		if got := c.e.rollDue(c.u); got != c.expect {
+		if got := c.e.rollDue(c.u, ""); got != c.expect {
 			t.Errorf("%s: rollDue = %v, want %v", c.name, got, c.expect)
 		}
 	}
@@ -405,4 +405,27 @@ type fixedUser struct {
 
 func (f fixedUser) Resolve(context.Context, *http.Request) (*auth.SessionUser, error) {
 	return f.u, f.err
+}
+
+// fixedMode is an Engine.ModeFor that gives the same mode for every host.
+func fixedMode(mode string, legacyRead bool) func(string) (string, bool) {
+	return func(string) (string, bool) { return mode, legacyRead }
+}
+
+// The roll follows the request host's mode: on a site listed host, a shared-slot read never rolls.
+func TestRollDuePerSite(t *testing.T) {
+	e := Engine{HubOrigin: "x", UpdateAgeMs: 1000, Now: func() time.Time { return time.Unix(2_000_000_000, 0) }}
+	e.ModeFor = func(host string) (string, bool) {
+		if host == "civitai.red" {
+			return "host", false
+		}
+		return "shared", true
+	}
+	shared := &auth.SessionUser{ID: 1, CookieName: "__Secure-civ-token", Claims: &auth.Claims{Iat: json.RawMessage("1900000000")}}
+	if e.rollDue(shared, "civitai.red") {
+		t.Error("civitai.red rolled a shared-slot token")
+	}
+	if !e.rollDue(shared, "civitai.com") {
+		t.Error("civitai.com did not roll its shared-slot token")
+	}
 }

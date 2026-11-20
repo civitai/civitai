@@ -1,3 +1,8 @@
+import {
+  parseAiToolkitOptions,
+  trainingIgnoredWarnings,
+  type AiToolkitOptions,
+} from '@civitai/shared/training-options';
 import type { YuE2SampleOverride, YuE2AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 import { yue2SampleOverrideSchema } from '~/server/schema/model-version.schema';
@@ -41,6 +46,7 @@ import type {
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
 import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator/training/training-trigger-word-check';
+import { assertTrainingLicenseAccepted } from '~/server/services/generation-license.service';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -238,6 +244,15 @@ export const buildAiToolkitTrainingStep = (
     lr: aiToolkitParams.lr,
     textEncoderLr: aiToolkitParams.textEncoderLr ?? undefined,
     trainTextEncoder: aiToolkitParams.trainTextEncoder,
+    ...(parseAiToolkitOptions(
+      {
+        engine: 'ai-toolkit',
+        ecosystem: aiToolkitParams.ecosystem,
+        lrScheduler: aiToolkitParams.lrScheduler,
+        steps: aiToolkitParams.steps,
+      },
+      aiToolkitParams
+    ) satisfies Pick<AiToolkitTrainingInput, keyof AiToolkitOptions>),
     lrScheduler: aiToolkitParams.lrScheduler,
     optimizerType: aiToolkitParams.optimizerType,
     networkDim: aiToolkitParams.networkDim ?? undefined,
@@ -497,6 +512,10 @@ export const createTrainingWorkflow = async ({
     features
   );
   if (rolloutRefusal) throw throwBadRequestError(rolloutRefusal);
+  // The licence binds the weights, whichever engine trains them.
+  const paramsEcosystem = 'ecosystem' in trainingParams ? trainingParams.ecosystem : undefined;
+  for (const ecosystem of new Set([paramsEcosystem, catalogEntry?.aiToolkit?.ecosystem]))
+    await assertTrainingLicenseAccepted({ ecosystem, userId });
 
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
     ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })
@@ -539,8 +558,17 @@ export const createTrainingWorkflow = async ({
     // continueFrom / sample params / saveEvery are AI Toolkit-only. The kohya-shaped params
     // schema tolerates them (it doubles as the UI run state), but they must never reach the
     // kohya/rapid/musubi dispatch, which spreads params straight into the payload.
-    const { continueFrom, sampleCfgScale, sampleStrength, saveEvery, ...engineParams } =
-      trainingParams;
+    const {
+      continueFrom,
+      sampleCfgScale,
+      sampleStrength,
+      saveEvery,
+      lrWarmupSteps,
+      captionDropoutRate,
+      rankDropout,
+      trainConv,
+      ...engineParams
+    } = trainingParams;
     params = engineParams;
   }
 
@@ -773,5 +801,11 @@ export const createTrainingWhatIfWorkflow = async ({
   const precedingJobs = _step?.queuePosition?.precedingJobs;
   const eta = _step?.output?.eta;
 
-  return { cost, licenseFee, precedingJobs, eta };
+  return {
+    cost,
+    licenseFee,
+    precedingJobs,
+    eta,
+    warnings: trainingIgnoredWarnings(workflow.steps),
+  };
 };

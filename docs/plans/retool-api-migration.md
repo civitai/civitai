@@ -253,10 +253,7 @@ Group 2 (UserLink cleanup) is **not a new endpoint** — fold into the existing 
 | `bulkDelete` | no | **yes** | `{ commentIds: number[] }` — CommentV3 ids, at least one |
 | `removeAsTos` | no | **yes** | `{ commentIds: number[] }` — soft-hide, retains row for evidence |
 
-Both took a second list, `commentIds` (v1 `Comment` ids), until the model flip (2026-11-07, not
-deployed), and then only `commentV2Ids` (CommentV3 ids) until CommentV3 Phase 5 (built 2026-11-09,
-not deployed) renamed it `commentIds`; every comment is addressed by its CommentV3 id. Today they
-are `/api/mod/comment/bulk-delete` and `remove-as-tos`, returning `{ deleted }` / `{ comments }`.
+Both took a second list, `commentIds` (v1 `Comment` ids), until the model flip (#8282, merged 2026-11-09), and then only `commentV2Ids` (CommentV3 ids) until CommentV3 Phase 5 (built 2026-11-09, deployed by 2026-11-10) renamed it `commentIds`; every comment is addressed by its CommentV3 id. Today they are `/api/mod/comment/bulk-delete` and `remove-as-tos`, returning `{ deleted }` / `{ comments }`.
 
 @dev: — Group 4 description says SQL body wasn't in source list. Need to find the exact "Remove as TOS Violation" behavior. Best guess: sets a flag (e.g. `tosViolation: true`) + hides from public views. Will dig into existing report-action code first.
 @justin: Yeah. Send a sub agent to dig.
@@ -271,11 +268,11 @@ are `/api/mod/comment/bulk-delete` and `remove-as-tos`, returning `{ deleted }` 
 
 5. ModActivity tracked implicitly via reward system
 
-Comment stays in DB; hidden from public views via `where: { tosViolation: false }` filter.
+The comment stayed in the DB, hidden from public views by a `where: { tosViolation: false }` filter (the `Comment` table was dropped 2026-11-17).
 
-(`comment.controller.ts` and `comment.service.ts` were deleted in the model flip, 2026-11-06 and 2026-11-07, not deployed; a model comment is flagged by its CommentV3 id through `bulkSetCommentV3TosViolation`.)
+(`comment.controller.ts` and `comment.service.ts` were deleted in the model flip (#8282, merged 2026-11-09); a model comment is flagged by its CommentV3 id through `bulkSetCommentV3TosViolation`.)
 
-**CommentV2 — column exists, no endpoint.** `tosViolation` column on CommentV2. The `commentv2` router that later held `setTosViolation` was deleted 2026-11-05 (release 2 of the CommentV3 write flip, not deployed); the endpoint is now `commentv3.setTosViolation`. Reports reference it for display only.
+**CommentV2 — table dropped 2026-11-17.** The `commentv2` router that later held `setTosViolation` was deleted in release 2 of the CommentV3 write flip (#8035, merged 2026-11-06); the endpoint is now `commentv3.setTosViolation`.
 
 **`removeAsTos` action implementation:**
 - Bulk over `{ commentIds: number[] }` (CommentV3 ids; was `commentV2Ids` until CommentV3 Phase 5)

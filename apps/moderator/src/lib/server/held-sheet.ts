@@ -7,16 +7,11 @@ import {
   type SessionClaims,
   type SessionUser,
 } from '@civitai/auth';
-import {
-  REDIS_KEYS,
-  REDIS_SYS_KEYS,
-  type RedisKeyTemplateCache,
-  type RedisKeyTemplateSys,
-} from '@civitai/redis';
+import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import type { ReviewTier } from '@civitai/shared/review-batch';
 import { env } from '$env/dynamic/private';
 import { admitsModerator, isRevoked } from './auth';
-import { getRedis, getSysRedis } from './redis';
+import { getRedis } from './redis';
 
 /**
  * The held-media phone sheet signs in with a PKCE code: `auth/start` (behind the moderator's web
@@ -98,14 +93,16 @@ const codeKey = (code: string) =>
   `${REDIS_KEYS.APP.HELD_SHEET_CODE}:${sha256(code)}` as RedisKeyTemplateCache;
 const sessionKey = (token: string) =>
   `${REDIS_KEYS.APP.HELD_SHEET_SESSION}:${sha256(token)}` as RedisKeyTemplateCache;
+// Both keys of a review session carry its `{sha256(token)}` tag, so they share a cluster slot and
+// one DEL ends both.
 const reviewKey = (token: string) =>
-  `${REDIS_SYS_KEYS.APP.REVIEW_SHEET_SESSION}:${sha256(token)}` as RedisKeyTemplateSys;
+  `${REDIS_KEYS.APP.REVIEW_SHEET_SESSION}:{${sha256(token)}}` as RedisKeyTemplateCache;
 const reviewBatchesKey = (token: string) =>
-  `${REDIS_SYS_KEYS.APP.REVIEW_SHEET_SESSION}:${sha256(token)}:batches` as RedisKeyTemplateSys;
+  `${REDIS_KEYS.APP.REVIEW_SHEET_SESSION}:{${sha256(token)}}:batches` as RedisKeyTemplateCache;
 
 /** Slides both keys' TTL; false when the session is gone (expired or signed out). */
 async function slideReviewSession(token: string, createdAt: number, now: number) {
-  const redis = getSysRedis();
+  const redis = getRedis();
   const ttl = reviewTtlSeconds(createdAt, now);
   const [record] = await Promise.all([
     redis.expire(reviewKey(token), ttl),
@@ -116,7 +113,7 @@ async function slideReviewSession(token: string, createdAt: number, now: number)
 
 /** Adds a batch hash to a live review session, refusing the one past REVIEW_SHEET_MAX_BATCHES. */
 async function addReviewBatch(token: string, hash: string, createdAt: number, now: number) {
-  const redis = getSysRedis();
+  const redis = getRedis();
   const set = reviewBatchesKey(token);
   const added = await redis.sAdd(set, hash);
   await redis.expire(set, reviewTtlSeconds(createdAt, now));
@@ -167,7 +164,7 @@ let verifier: ReturnType<typeof createAuthVerifier> | undefined;
 
 /** The claims of the web session this request carries, for binding a sheet session to it. */
 export async function webSessionClaims(cookieHeader: string): Promise<SessionClaims | null> {
-  const read = readSessionToken(parseCookieHeader(cookieHeader));
+  const read = readSessionToken(parseCookieHeader(cookieHeader), { host: null });
   if (!read) return null;
   return (verifier ??= createAuthVerifier({ isRevoked })).verifyToken(read.value);
 }
@@ -239,7 +236,7 @@ export async function exchangeReviewCode(
 ): Promise<string | null> {
   const record = await redeemCode(code, codeVerifier);
   if (!record || record.batch?.tier !== 'general') return null;
-  const redis = getSysRedis();
+  const redis = getRedis();
   const now = Date.now();
   const hash = record.batch.hash;
 
@@ -267,7 +264,7 @@ export async function exchangeReviewCode(
 /** Ends a review session on the server (the sheet's Sign out). A token that names none is a no-op. */
 export async function revokeReviewSession(token: string | undefined): Promise<void> {
   if (!token || !TOKEN.test(token)) return;
-  await getSysRedis().del([reviewKey(token), reviewBatchesKey(token)]);
+  await getRedis().del([reviewKey(token), reviewBatchesKey(token)]);
 }
 
 let sessions: ReturnType<typeof createSessionClient> | undefined;
@@ -320,7 +317,7 @@ export async function resolveReviewSession(token: string | undefined): Promise<{
   join: (hash: string) => Promise<boolean>;
 } | null> {
   if (!token || !TOKEN.test(token)) return null;
-  const redis = getSysRedis();
+  const redis = getRedis();
   const raw = await redis.get(reviewKey(token));
   if (!raw) return null;
   const session = JSON.parse(raw) as ReviewSessionRecord;

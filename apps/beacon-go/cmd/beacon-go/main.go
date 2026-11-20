@@ -104,7 +104,8 @@ func run(log *slog.Logger) error {
 		Verifier:            verifier,
 		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, OnReadError: readErrors.Report},
 		Sessions:            &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix},
-		CookieNames:         cfg.CookieNames(),
+		CookieNames:         cfg.CookieNames,
+		OnSlot:              func(slot string) { metrics.SessionCookieSlot.WithLabelValues(slot).Inc() },
 		ModerationAccountID: cfg.ModerationAccountID,
 	}
 	engine := &beacon.Engine{
@@ -114,8 +115,7 @@ func run(log *slog.Logger) error {
 		TrackerEnabled: cfg.OutwardTraffic && (cfg.Mode == server.ModeShadow || cfg.TrackerURL != ""),
 		HubOrigin:      cfg.AuthIssuer,
 		UpdateAgeMs:    cfg.UpdateAgeMs,
-		CookieMode:     cfg.AuthCookieMode,
-		LegacyRead:     cfg.AuthLegacyRead,
+		ModeFor:        cfg.ModeFor,
 	}
 	srv := &server.Server{
 		Engine:        engine,

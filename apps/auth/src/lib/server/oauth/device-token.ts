@@ -6,10 +6,12 @@ import { getRedis } from '$lib/server/redis';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
-import { createOAuthTokenPair } from '$lib/server/oauth/token-helpers';
+import { createOAuthTokenPair, createPlannedOAuthTokens } from '$lib/server/oauth/token-helpers';
+import { isOfflineGrantOn, planDeviceGrant } from '$lib/server/oauth/offline-grant';
 import { ACCESS_TOKEN_TTL, DEVICE_CODE_GRANT } from '$lib/server/oauth/constants';
 import { isScopeGrantable, scopeFromColumn } from '$lib/server/oauth/scope';
 import { setWildcardCors } from '$lib/server/oauth/http';
+import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 
 // The device-flow token poll (RFC 8628 §3.4). RFC 8628 has the device poll the token endpoint, so
 // /token hands this grant here; /device-token, where our own clients poll, serves it too.
@@ -85,6 +87,12 @@ export async function deviceTokenGrant(
     return json({ error: 'invalid_scope' }, { status: 400, headers });
   }
 
+  if (isAppBlockOauthClientId(client_id)) {
+    return json(
+      { error: 'invalid_grant', error_description: 'Unknown client' },
+      { status: 400, headers }
+    );
+  }
   const client = await db
     .selectFrom('OauthClient')
     .select(['allowedScopes'])
@@ -118,7 +126,10 @@ export async function deviceTokenGrant(
     );
   }
 
-  const pair = await createOAuthTokenPair(data.userId, client_id, scope);
+  // Offline-grant flag on: the same pair, with its mint origin and a refresh family recorded.
+  const pair = (await isOfflineGrantOn())
+    ? await createPlannedOAuthTokens(data.userId, client_id, scope, planDeviceGrant())
+    : await createOAuthTokenPair(data.userId, client_id, scope);
 
   logOAuthEvent({
     type: 'token.issued',

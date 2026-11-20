@@ -69,6 +69,9 @@ const { isViewerUsername } = await repo('src/utils/is-viewer.ts');
 const dayjs = (await repo('src/shared/utils/dayjs.ts')).default;
 const { isModelWithheld } = await repo('src/shared/utils/model-withhold.ts');
 const { postgresSlugify } = await repo('src/utils/string-helpers.ts');
+const { isMinorContentRestricted } = await repo(
+  'packages/civitai-shared/src/minor-content-gate.ts'
+);
 
 // ---------------------------------------------------------------------------------------------
 // The synthetic world
@@ -318,6 +321,13 @@ const MODELS = {
   // No version at all: dataForModelsCache's lookup has no record for it (cacheNotFound off: nothing is
   // written, and the model is left out).
   5011: model(5011, 1002, { rank: rank(2, 2), versions: [], hashes: ['HASH5011'] }),
+  // The minor content rule's model (minor-mature-cover-*): its cover 8150 is a minor-flagged R image.
+  5012: model(5012, 1001, {
+    coverImageId: 8150,
+    rank: rank(1, 1),
+    lastVersionAt: day(2),
+    versions: [version(6015, 'Pony')],
+  }),
 };
 // The lookup orders the versions by (modelId, index): the world lists 5010's out of that order, so a
 // cold read must sort them.
@@ -363,6 +373,13 @@ const VERSION_IMAGES = {
   ),
   6013: [showcase(8130, 1001, 1)],
   6014: [showcase(8140, 1001, 1)],
+  // Cached as the lookup wrote it before the rule: 8150 (minor-flagged, R, the model's cover) is held
+  // here, and the read leaves it out for every viewer; 8151 (R) and 8152 (minor-flagged, PG-13) stay.
+  6015: [
+    showcase(8150, 1001, 4, { minor: true }),
+    showcase(8151, 1001, 4),
+    showcase(8152, 1001, 2, { minor: true }),
+  ],
 };
 for (const [vid, list] of Object.entries(VERSION_IMAGES))
   for (const i of list) i.modelVersionId = Number(vid);
@@ -371,6 +388,7 @@ VERSION_IMAGES[6099] = [showcase(8090, 1001, 1, { modelVersionId: 6099 })];
 const COVER_ROWS = {
   8031: { id: 8031, userId: 1002, modelVersionId: 6004, modelId: 5002 },
   8090: { id: 8090, userId: 1001, modelVersionId: 6099, modelId: 5008 },
+  8150: { id: 8150, userId: 1001, modelVersionId: 6015, modelId: 5012 },
 };
 const imageTags = (id) => (id === 8011 ? [9911] : id % 2 ? [501] : []);
 // model:gallery-settings:<id> (raw JSON), for the held models.
@@ -494,7 +512,8 @@ function coldLookup(prefix, id) {
   const m = MODELS[id];
   switch (prefix) {
     case K.data: {
-      for (const v of byIndex(m?.versions ?? [])) T.db.modelVersionRows.push(mark({ modelId: id, ...v }));
+      for (const v of byIndex(m?.versions ?? []))
+        T.db.modelVersionRows.push(mark({ modelId: id, ...v }));
       for (const hash of m?.hashes ?? []) T.db.modelHashes.push({ modelId: id, hash });
       if (!m?.versions.length) return undefined;
       const result = {
@@ -934,10 +953,16 @@ function getEventDecorationsForModels(ids) {
   return visible;
 }
 
-/** getImagesForModelVersionCache: the version cache with its appendFn (image tag ids). */
+/** isMinorMatureImage (src/server/common/image-visibility.ts), over the real isMinorContentRestricted. */
+const isMinorMatureImage = (image) =>
+  isMinorContentRestricted({ minor: image.minor === true, nsfwLevel: image.nsfwLevel });
+
+/** getImagesForModelVersionCache: the version cache with its appendFn (the images the minor content
+ *  rule restricts dropped, then the image tag ids). */
 function getImagesForModelVersionCache(versionIds) {
   return cacheFetch(K.versionImages, versionIds, {
     appendFn: (records) => {
+      for (const r of Object.values(records)) r.images = r.images.filter((i) => !isMinorMatureImage(i));
       const tagIds = cacheFetch(
         K.tagIds,
         Object.values(records).flatMap((r) => r.images.map((i) => i.id))
@@ -1349,11 +1374,11 @@ const SPECS = [
   {
     name: 'creator-page-other-viewer',
     description:
-      'The same creator for another viewer: the SFW-only model is held to its gallery level, the hidden downloads of a member are null, the taken-down model shows only its cover.',
+      'The same creator for another viewer: the SFW-only model is held to its gallery level, the hidden downloads of a member are null, and the taken-down model is not listed (the page query leaves it out for anyone but its owner and moderators).',
     host: HOST.blue,
     viewer: 1003,
     input: { sort: 'Newest', limit: 4, browsingLevel: 31, username: 'artist_one' },
-    pages: [{ cursor: null, ids: [5001, 5004, 5006, 5008] }],
+    pages: [{ cursor: null, ids: [5001, 5004, 5006] }],
   },
   {
     name: 'sfw-face-green-signed-in',
@@ -1598,6 +1623,23 @@ const SPECS = [
     dropKeys: [`${K.versionImages}:6012`],
     fallback: 'model-images-miss',
   },
+  // The minor content rule on the shared version-showcase cache (imagesForModelVersionsCache's
+  // appendFn): viewer-independent, so 8150 is left out for every viewer, its owner and moderators
+  // included; the cover is then looked up on the replica, found on the same version, and left out
+  // there too, so the card has no cover and shows 8151 and 8152.
+  ...[
+    [1001, 'owner', 'its owner'],
+    [1004, 'moderator', 'a moderator'],
+    [1003, 'stranger', 'another signed-in viewer (whose addons also hide every minor-flagged image)'],
+  ].map(([viewer, who, what]) => ({
+    name: `minor-mature-cover-${who}`,
+    alsoCached: [`${K.tagIds}:8150`],
+    description: `A model whose cover is a minor-flagged R image, for ${what}: the image is left out of the card and is not its cover.`,
+    host: HOST.blue,
+    viewer,
+    input: { sort: 'Highest Rated', limit: 1, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5012] }],
+  })),
 ];
 
 /** What Node writes on this fixture's cold misses, as the Go harness compares it. */
@@ -1659,6 +1701,12 @@ rmSync(dir, { recursive: true, force: true });
 mkdirSync(dir, { recursive: true });
 for (const spec of SPECS) {
   T = new Trace(spec.name, spec);
+  // `spec.alsoCached`: cache keys the fixture holds although Node's answer reads none of them (an
+  // image the answer leaves out), so a feed-go that kept the image fails on its answer, not on a miss.
+  for (const key of spec.alsoCached ?? []) {
+    const at = key.lastIndexOf(':');
+    T.packed.set(key, worldPacked(key.slice(0, at), Number(key.slice(at + 1))));
+  }
   const config = { ...CONFIG, ...(spec.config ?? {}), decorationEvents: spec.events ?? [] };
   const inputEnvelope = JSON.stringify(superjson.serialize(spec.input));
   let expect;

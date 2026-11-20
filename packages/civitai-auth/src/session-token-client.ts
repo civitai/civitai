@@ -4,8 +4,11 @@ import { deviceCookieName, sessionCookieName } from './cookies';
 // SESSION-TOKEN CLIENT — hub operations on a single session token (rolling refresh + revoke). The session goes
 // to the hub beside this server's own credential when `AUTH_INTERNAL_TOKEN` is set (see `sessionCall`).
 
-/** `declined`: the hub answered and refused. `unreachable`: no usable answer (network, timeout, bad body). */
-export type RefreshFailure = 'declined' | 'unreachable';
+/**
+ * `declined`: the hub answered and refused. `unavailable`: the hub answered 503, it cannot mint right now and
+ * asks the caller to retry later. `unreachable`: no usable answer (network, timeout, bad body).
+ */
+export type RefreshFailure = 'declined' | 'unavailable' | 'unreachable';
 
 export interface SessionTokenClient {
   /**
@@ -51,7 +54,7 @@ export function createSessionTokenClient(): SessionTokenClient {
           signal: controller.signal,
         });
         if (!res.ok) {
-          opts?.onFailure?.('declined');
+          opts?.onFailure?.(res.status === 503 ? 'unavailable' : 'declined');
           return null;
         }
         const { token: fresh } = (await res.json()) as { token?: string };

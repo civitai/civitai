@@ -538,10 +538,13 @@ export function filterPreferences<
             hidden.noImages++;
           }
 
+          // `srcs` carry no rating, so they go too once any image is dropped.
+          const dropped = filteredImages.length < mergedImages.length;
           return filteredImages.length || showImageless
             ? {
                 ...x,
                 images: filteredImages,
+                ...(dropped && 'srcs' in x ? { srcs: [] } : {}),
               }
             : null;
         })
@@ -769,6 +772,18 @@ export function filterPreferences<
           hidden.browsingLevel++;
           return false;
         }
+        const isOwner = ownedByViewer(comic.userId);
+        for (const tag of comic.coverImageTagIds ?? []) {
+          if (hiddenTags.get(tag)) {
+            hidden.tags++;
+            return false;
+          }
+
+          if (systemHiddenTags.get(tag) && !isOwner) {
+            hidden.tags++;
+            return false;
+          }
+        }
         return true;
       });
       return { items: comics, hidden };
@@ -974,6 +989,8 @@ type BaseComic = {
   id: number;
   nsfwLevel: number;
   name?: string;
+  userId?: number;
+  coverImageTagIds?: number[] | null;
 };
 
 type BaseChallenge = {

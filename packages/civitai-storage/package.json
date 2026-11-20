@@ -7,7 +7,9 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./upload": "./src/upload.ts"
+    "./upload": "./src/upload.ts",
+    "./s3-purge-versions": "./src/s3-purge-versions.ts",
+    "./testing/fake-versioned-bucket": "./src/testing/fake-versioned-bucket.ts"
   },
   "scripts": {
     "test": "vitest run",
@@ -17,6 +19,15 @@
     "zod": "^4.0.17"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.490.0",
     "vitest": "^4.1.11"
+  },
+  "peerDependencies": {
+    "@aws-sdk/client-s3": "^3.490.0"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-s3": {
+      "optional": true
+    }
   }
 }

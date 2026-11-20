@@ -15,10 +15,11 @@ import { SemanticSearchFeedback } from '~/components/SemanticSearch/SemanticSear
 import type { PickedTag } from '~/components/SemanticSearch/TagMultiPicker';
 import { TagMultiPicker } from '~/components/SemanticSearch/TagMultiPicker';
 import { SEMANTIC_QUERY_MAX_LENGTH } from '~/server/schema/semantic-image-search.schema';
-import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
+import { imageBaseModelSelectData } from '~/shared/constants/basemodel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 export function SemanticImageSearch() {
@@ -34,6 +35,9 @@ export function SemanticImageSearch() {
   const [baseModels, setBaseModels] = useState<string[]>([]);
   const [types, setTypes] = useState<MediaType[]>([]);
   const browsingLevel = useBrowsingLevelDebounced();
+  const { semanticVideoSearch } = useFeatureFlags();
+  // Clips are a separate index, so Video is searched on its own rather than mixed with images.
+  const videos = !!semanticVideoSearch && types.length === 1 && types[0] === MediaType.video;
 
   const input = {
     query: imageId ? undefined : query,
@@ -45,12 +49,21 @@ export function SemanticImageSearch() {
     types,
   };
   const enabled = !!input.query || !!input.imageId;
-  const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetching } =
-    trpc.semanticImageSearch.search.useInfiniteQuery(input, {
-      enabled,
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-      retry: false,
-    });
+  const options = {
+    getNextPageParam: (lastPage: { nextCursor?: number }) => lastPage.nextCursor,
+    retry: false,
+  };
+  const imageResults = trpc.semanticImageSearch.search.useInfiniteQuery(input, {
+    ...options,
+    enabled: enabled && !videos,
+  });
+  const videoResults = trpc.semanticImageSearch.searchVideos.useInfiniteQuery(input, {
+    ...options,
+    enabled: enabled && videos,
+  });
+  const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetching } = videos
+    ? videoResults
+    : imageResults;
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
   const latencyMs = data?.pages[0]?.latencyMs;
   const correctedQuery = data?.pages[0]?.correctedQuery;
@@ -74,6 +87,7 @@ export function SemanticImageSearch() {
         baseModels,
         types,
         browsingLevel,
+        index: videos ? 'videos' : 'images',
       }),
       resultCount: items.length,
       latencyMs,
@@ -88,7 +102,7 @@ export function SemanticImageSearch() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <Title order={1}>Semantic image search</Title>
+        <Title order={1}>Semantic {videos ? 'video' : 'image'} search</Title>
         <Text size="sm" c="dimmed">
           Describe what you want to see. Testing only: results and ranking will change.
         </Text>
@@ -123,7 +137,7 @@ export function SemanticImageSearch() {
         <MultiSelect
           label="Base model"
           placeholder="All base models"
-          data={baseModelSelectData}
+          data={imageBaseModelSelectData}
           value={baseModels}
           onChange={setBaseModels}
           searchable
@@ -132,17 +146,17 @@ export function SemanticImageSearch() {
         <MultiSelect
           label="Media type"
           placeholder="All types"
-          // No video until the index embeds videos (VECTOR_EMBED_VIDEO).
-          data={[MediaType.image]}
+          data={semanticVideoSearch ? [MediaType.image, MediaType.video] : [MediaType.image]}
           value={types}
-          onChange={(v) => setTypes(v as MediaType[])}
+          // One type at a time: the last one picked.
+          onChange={(v) => setTypes((v as MediaType[]).slice(-1))}
           clearable
         />
       </div>
 
       {imageId && !isError && (
         <Alert color="blue">
-          Showing images similar to{' '}
+          Showing {videos ? 'videos' : 'images'} similar to{' '}
           <Link href={`/images/${imageId}`} className="underline">
             image {imageId}
           </Link>
@@ -166,7 +180,9 @@ export function SemanticImageSearch() {
       )}
 
       {!enabled ? (
-        <NoContent message="Enter a query to search images by meaning." />
+        <NoContent
+          message={`Enter a query to search ${videos ? 'videos' : 'images'} by meaning.`}
+        />
       ) : isLoading ? (
         <Center p="xl">
           <Loader />
@@ -178,7 +194,9 @@ export function SemanticImageSearch() {
             : 'Search is unavailable right now, try again.'}
         </Alert>
       ) : !items.length ? (
-        <NoContent message="No images matched. Try other words or fewer filters." />
+        <NoContent
+          message={`No ${videos ? 'videos' : 'images'} matched. Try other words or fewer filters.`}
+        />
       ) : (
         <div className="relative">
           <ImagesProvider images={items}>

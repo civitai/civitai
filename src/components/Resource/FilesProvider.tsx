@@ -66,6 +66,7 @@ export type FileFromContextProps = {
   id?: number;
   name: string;
   overrideName?: string | null;
+  downloadName?: string | null;
   modelType?: ModelType | null;
   type?: ModelFileType | null;
   sizeKB?: number;
@@ -129,6 +130,7 @@ function toFileFromContext(
     id: file.id,
     name: file.name,
     overrideName: file.overrideName ?? null,
+    downloadName: file.downloadName ?? null,
     type: file.type as ModelFileType,
     sizeKB: file.sizeKB,
     size: file.metadata?.size,

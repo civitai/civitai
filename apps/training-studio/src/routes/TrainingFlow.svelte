@@ -6,6 +6,8 @@
   import { submitNotice } from '$lib/submit-notice.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
+  import SelectStepElements from './SelectStepElements.svelte';
+  import { setElementsUi } from '$lib/elements-ui';
   import DataStep from './DataStep.svelte';
   import EditDataStep from './EditDataStep.svelte';
   import ReviewStep from './ReviewStep.svelte';
@@ -34,6 +36,7 @@
     type Selection,
   } from './trainingFlow';
   import {
+    ELEMENTS_UI_FLAG_KEY,
     TAG_FIND_REPLACE_FLAG_KEY,
     type FromPrices,
     type LabelType,
@@ -50,6 +53,11 @@
     enabledModelFlags = [],
     onExit,
   }: { prices: FromPrices; enabledModelFlags?: string[]; onExit: () => void } = $props();
+
+  // The Civitai Elements redesign, behind its own gate until it replaces the old UI.
+  const elementsUi = $derived(enabledModelFlags.includes(ELEMENTS_UI_FLAG_KEY));
+  setElementsUi(() => elementsUi);
+  const Select = $derived(elementsUi ? SelectStepElements : SelectStep);
 
   const STEPS = [
     { n: 1, label: 'Select' },
@@ -321,7 +329,7 @@
           existing &&
           JSON.stringify(existing) ===
             JSON.stringify(defaultRunParams(run, paramsSeedTrigger, paramsSeedLoraType));
-        return [key, existing && !untouched ? existing : defaultRunParams(run, t, loraType)];
+        return [key, existing && !untouched ? { ...defaultRunParams(run, t, loraType), ...existing } : defaultRunParams(run, t, loraType)];
       })
     );
     paramsSeedTrigger = t;
@@ -422,7 +430,7 @@
   <ServiceStatusBanner />
 
   {#if step === 1}
-    <SelectStep
+    <Select
       {prices}
       {enabledModelFlags}
       initial={selection}

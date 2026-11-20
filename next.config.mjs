@@ -3,6 +3,7 @@ import { withAxiom } from '@civitai/next-axiom';
 import bundlAnalyzer from '@next/bundle-analyzer';
 import { createRequire } from 'module';
 import { STATIC_ASSET_CACHE_RULES } from './src/shared/constants/static-asset-cache-rules.mjs';
+import { feedGoRewrites } from './src/shared/constants/feed-go-rewrites.mjs';
 const require = createRequire(import.meta.url);
 const packageJson = require('./package.json');
 
@@ -178,6 +179,7 @@ export default defineNextConfig(
       '@civitai/db',
       '@civitai/db-queries',
       '@civitai/shared',
+      '@civitai/storage',
       '@civitai/post-planner',
       '@civitai/buzz',
       '@civitai/redis',
@@ -219,6 +221,7 @@ export default defineNextConfig(
       // is the runtime signal if one ever appears.
       '@pyroscope/nodejs',
       '@datadog/pprof',
+      '@contentauth/c2pa-wasm',
     ],
     // Several entry points read markdown from src/static-content at runtime via fs
     // (dynamic string paths that @vercel/nft can't trace). With output:'standalone'
@@ -248,6 +251,11 @@ export default defineNextConfig(
         './node_modules/next/dist/compiled/@vercel/og/**/*',
         './node_modules/.pnpm/next@*/node_modules/next/dist/compiled/@vercel/og/**/*',
         ...swcHelpersRuntimeFiles,
+      ],
+      // content-credentials.service reads the .wasm from disk, which nft cannot trace.
+      '/api/v1/verify': [
+        './node_modules/@contentauth/c2pa-wasm/**/*',
+        './node_modules/.pnpm/@contentauth+c2pa-wasm@*/node_modules/@contentauth/c2pa-wasm/**/*',
       ],
     },
     experimental: {
@@ -376,19 +384,20 @@ export default defineNextConfig(
       return headers;
     },
     poweredByHeader: false,
-    // The `feedGoTransport` / `feedGoTransportModelGetAll` client path (`GO_TRANSPORT_URL` in
+    // The `feedGoTransport*` client path (`GO_TRANSPORT_URL` in
     // src/utils/trpc-go-transport.ts). An exact-path route in front of this app may send it to a
     // separate Go feed service; whatever reaches this app is served by the ordinary tRPC route, so
     // the flag can never strand a request (edge rules keyed on `/api/trpc/` still do not match this
     // path; see `feedGoTransport`).
     // One exact source per procedure in `GO_TRANSPORT_PROCEDURES`, never a wildcard: a wildcard would
     // make `/api/trpc-go/*` an alias of the whole tRPC API. src/utils/__tests__/trpc-go-transport.test.ts
-    // pins that this list and that set agree.
+    // pins that this list and that set agree. In local dev `pnpm dev` (scripts/dev-feed-go) sets
+    // FEED_GO_LOCAL_URL and these go to a local feed-go instead (see feed-go-rewrites.mjs).
     rewrites: async () =>
-      ['image.getImagesAsPostsInfinite', 'model.getAll'].map((procedure) => ({
-        source: `/api/trpc-go/${procedure}`,
-        destination: `/api/trpc/${procedure}`,
-      })),
+      feedGoRewrites({
+        localUrl: process.env.FEED_GO_LOCAL_URL,
+        nodeEnv: process.env.NODE_ENV,
+      }),
     redirects: async () => {
       // Note: the .red-host support-portal bounce is implemented as a
       // Cloudflare Redirect Rule on the civitai.red zone. Config lives at

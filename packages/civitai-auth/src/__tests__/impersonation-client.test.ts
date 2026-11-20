@@ -29,7 +29,7 @@ describe('createImpersonationClient', () => {
       status: 200,
       json: async () => ({ token: 'imp.jwt' }),
     }));
-    expect(await createImpersonationClient().impersonate('civ-token=mod', 42)).toEqual({
+    expect(await createImpersonationClient().impersonate('civ-token=mod', 42, null)).toEqual({
       ok: true,
       token: 'imp.jwt',
     });
@@ -46,7 +46,7 @@ describe('createImpersonationClient', () => {
       status: 403,
       json: async () => ({ message: 'not permitted to impersonate' }),
     }));
-    expect(await createImpersonationClient().impersonate('c', 42)).toEqual({
+    expect(await createImpersonationClient().impersonate('c', 42, null)).toEqual({
       ok: false,
       status: 403,
       error: 'not permitted to impersonate',
@@ -59,7 +59,7 @@ describe('createImpersonationClient', () => {
       status: 200,
       json: async () => ({ token: 'mod.jwt' }),
     }));
-    expect(await createImpersonationClient().exit('civ-token=imp')).toEqual({
+    expect(await createImpersonationClient().exit('civ-token=imp', null)).toEqual({
       ok: true,
       token: 'mod.jwt',
     });
@@ -74,7 +74,7 @@ describe('createImpersonationClient', () => {
       status: 400,
       json: async () => ({ message: 'not an impersonation session' }),
     }));
-    expect(await createImpersonationClient().exit('civ-token=plain')).toEqual({
+    expect(await createImpersonationClient().exit('civ-token=plain', null)).toEqual({
       ok: false,
       status: 400,
       error: 'not an impersonation session',
@@ -84,12 +84,12 @@ describe('createImpersonationClient', () => {
   it('no-ops (no fetch) when AUTH_JWT_ISSUER is unset — returns unreachable', async () => {
     h.loadAuthEnv.mockReturnValue({});
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => ({}) }));
-    expect(await createImpersonationClient().impersonate('c', 1)).toEqual({
+    expect(await createImpersonationClient().impersonate('c', 1, null)).toEqual({
       ok: false,
       status: 0,
       error: 'hub unreachable',
     });
-    expect(await createImpersonationClient().exit('c')).toEqual({
+    expect(await createImpersonationClient().exit('c', null)).toEqual({
       ok: false,
       status: 0,
       error: 'hub unreachable',

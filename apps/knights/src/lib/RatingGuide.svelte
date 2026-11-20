@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { levelName } from './rating-guide';
+  import { page } from '$app/state';
+  import { levelName, prohibitedContentUrl } from './rating-guide';
 
   type Example = { id: number; src: string; width: number | null; height: number | null };
 
@@ -17,6 +18,11 @@
       <div class="meaning">
         {#if name}<p class="name">{name}</p>{/if}
         <p class="description">{entry.description}</p>
+        {#if blocked && page.data.civitaiUrl}
+          <a class="rules" href={prohibitedContentUrl(page.data.civitaiUrl)} target="_blank" rel="noopener noreferrer"
+            >See the full list of prohibited content</a
+          >
+        {/if}
       </div>
       {#if entry.examples?.length}
         <ul class="examples" aria-label={`${entry.label} examples`}>
@@ -103,6 +109,12 @@
   }
   .meaning p {
     margin: 0;
+  }
+  .rules {
+    display: inline-block;
+    margin-top: 4px;
+    color: var(--io-crimson-text);
+    font: 600 14px/1.4 var(--io-font-ui);
   }
   .name {
     color: var(--io-gold);

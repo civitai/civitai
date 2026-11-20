@@ -1,3 +1,4 @@
+import { siteCookieHeader } from '@civitai/auth';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { pickSessionCookies } from '~/server/utils/session-cookies';
 import { trainingStudioUrl } from '~/utils/training-studio-url';
@@ -5,7 +6,8 @@ import { trainingStudioUrl } from '~/utils/training-studio-url';
 /**
  * The Training Studio server routes the embedded Studio reaches through this app, and the methods
  * each takes: every call that spends (a training run, an edit, a suggestion, an epoch archive),
- * pricing a continuation, and Review's mature count (the Studio's server makes the count).
+ * pricing a continuation, Review's mature count (the Studio's server makes the count), and the
+ * base model licences the user must accept before training.
  */
 export const STUDIO_FORWARD_ROUTES: Readonly<Record<string, readonly string[]>> = {
   train: ['POST'],
@@ -14,6 +16,7 @@ export const STUDIO_FORWARD_ROUTES: Readonly<Record<string, readonly string[]>> 
   'edit-image': ['POST'],
   'suggest-instruction': ['POST'],
   'epoch-archive': ['POST'],
+  license: ['GET', 'POST'],
 };
 
 // A submit can outlast this and still have started the run, so a timeout is reported as unconfirmed.
@@ -31,9 +34,14 @@ export function studioOrigin(value = trainingStudioUrl()): string {
   return url.origin;
 }
 
-/** Only the session cookies from a `Cookie` header, as the browser sent them; empty when none. */
-export const sessionCookiesOf = (cookieHeader: string | undefined): string =>
-  pickSessionCookies(cookieHeader) ?? '';
+/**
+ * Only the session cookies from a `Cookie` header, as the browser sent them, that the request's site reads;
+ * empty when none.
+ */
+export const sessionCookiesOf = (
+  cookieHeader: string | undefined,
+  host: string | undefined
+): string => pickSessionCookies(siteCookieHeader(cookieHeader ?? '', host)) ?? '';
 
 export type StudioForwardResult = { status: number; body: unknown };
 

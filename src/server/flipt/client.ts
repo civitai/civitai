@@ -54,7 +54,7 @@ export enum FLIPT_FEATURE_FLAGS {
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false is fine) BEFORE THIS CODE SERVES TRAFFIC,
   // and must not be deleted while it does. A MISSING key makes `evaluateBoolean` throw; the throw
-  // bypasses the eval cache and the default `onEvalError` console.errors — on every call of a
+  // bypasses the eval cache and `onEvalError` logs an error record — on every call of a
   // read issued on every signed-in image feed page. It still answers false (Prisma), but the log
   // flood and the uncached wasm eval also inflate the "off" baseline this flag exists to measure.
   //
@@ -70,7 +70,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // The reads in packages/civitai-db-queries/src/hot-reads-7.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call — and
   // several of these reads run on most feed pages.
   //
   // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead`. Its acquire wait is
@@ -81,7 +81,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // The reads in packages/civitai-db-queries/src/hot-reads-8.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call, and
   // the storyline read runs on most feed pages.
   //
   // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead`. Its acquire wait is
@@ -94,7 +94,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // one per relation. Evaluated with no entity id, once per call.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call, and
   // this read runs on every profile page view.
   //
   // 🔴 ON MOVES THIS READ OFF PRISMA'S PRIMARY POOL ONTO `pgDbWrite` (kyselyWrite), keeping it on
@@ -109,7 +109,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // per call.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call, and
   // this read runs on every collection page view.
   //
   // 🔴 ON MOVES THIS READ OFF PRISMA'S POOLS ONTO `pgDbRead` (kyselyRead), or `pgDbWrite`
@@ -257,6 +257,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // uninitialised client) keeps the plain behaviour, a bounded refetch that falls back to the last
   // list on failure.
   OAUTH_PROVIDERS_SERVE_STALE = 'oauth-providers-serve-stale',
+  // Offline access as a separate OAuth grant. Also read by the auth hub (apps/auth
+  // OFFLINE_GRANT_FLAG, same key). Here: a refresh-minted OAuth token's orchestrator work is held to
+  // its consent's Buzz cap (orchestrator/offline-spend-cap.ts). Global boolean, DEFAULT-OFF: a missing
+  // key or an unreachable Flipt reads false, today's behaviour.
+  OAUTH_OFFLINE_GRANT = 'oauth-offline-grant',
   // Writes superjson tRPC responses with `fastSuperjsonSerialize` (same output, cheaper walk)
   // instead of `superjson.serialize`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
@@ -366,6 +371,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // flag or queue a model whose weights match a real-person model. DEFAULT-OFF, and separate so
   // either can be thrown without the other.
   POI_HASH_AUTO_FLAG = 'poi-hash-auto-flag',
+  // Lets the hourly CSAM blocklist self-heal write. DEFAULT-OFF: while off (or Flipt is
+  // unreachable) each run logs its counts and writes nothing.
+  CSAM_BLOCKLIST_SELF_HEAL = 'csam-blocklist-self-heal',
   // Kill switch for unpublishing (at scan) and refusing to publish a model whose primary file is a
   // byte-identical copy of another creator's published one. DEFAULT-OFF: while off, matches are only
   // logged to Axiom (name 'duplicate-model-hash', message 'would-block') so the volume can be sized.
@@ -401,7 +409,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // document `pending`, and every read of that app's shared documents by anyone but their author
   // leaves out the unrated ones and those above the viewer's level (`doc-levels.ts`). Needs the
   // manual migration `20261116120000_appdata_doc_levels.sql` first. Same evaluation as the two
-  // above (entityId = the app block id, NO context). DEFAULT-OFF.
+  // above (entityId = the app block id, NO context). Off when the key reads `false`, but 🔴 NOT
+  // default-off: read with `readFliptBoolean`, an UNREADABLE flag (Flipt unreachable with no
+  // snapshot, or a missing key) counts as ON, so levels fail closed (`isSharedDocLevelsOn`). The key
+  // must exist in flag state (enabled: false) before the code that reads it serves traffic.
   APP_BLOCKS_SHARED_DOC_LEVELS = 'app-blocks-shared-doc-levels',
   // OPERATOR HOLD on App Storage schema-migration runs: while on for an app, its reserved runs stay
   // `pending` (the start at approve and the resume job both skip them) and keep counting as open for
@@ -436,6 +447,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // declaration. 🔴 It gates declaring a hook and nothing else: no flag may skip a hook an approved
   // version declares (that would fail open). See `storage-hooks.ts`.
   APP_BLOCKS_STORAGE_HOOKS = 'app-blocks-storage-hooks',
+  // OPERATOR LEVER: while on for an app, every write to one of its collections with a permission
+  // hook is refused `hook_unavailable` without calling the storage-hook-runner, exactly as a
+  // runner outage would refuse it. EVALUATED PER APP like the migration hold above (entityId = the
+  // app block id, NO context): switch specific apps with an ENTITY_ID segment. DEFAULT-OFF —
+  // absent or Flipt unreachable takes the normal path (which still fails closed on its own).
+  // 🔴 It can only REFUSE writes: never add the inverse (a flag that skips a hook), which would
+  // fail open. See `doc-store-hook.ts`.
+  APP_BLOCKS_STORAGE_HOOK_RUNNER_OFFLINE = 'app-blocks-storage-hook-runner-offline',
   // An App submit may carry a GitHub Actions OIDC token (the `civitai/app-submit-action` Action
   // sends one on a tag push). On: the submit verifies it and records the run's repository, tag
   // and commit on the publish request; a token that fails verification refuses the submit.
@@ -455,6 +474,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // is the safe failure. Off, the hourly path does nothing at all and the nightly
   // one runs its diff as a dry run for visibility.
   METRIC_REACTION_REPAIR = 'metric-reaction-repair',
+  // Arms the nightly Hot rank snapshot into ClickHouse. A missing key reads as off; add the key ON
+  // only after the snapshot tables exist.
+  MODEL_HOT_RANK_SNAPSHOT = 'model-hot-rank-snapshot',
+  // On: the message-as-civitai, headless-post and Stripe AIR idempotency keys are claimed in the
+  // Postgres `IdempotencyKey` table (still written to sysRedis too), so a sysRedis eviction cannot
+  // repeat a DM, a post or an AIR notice. Off, missing, or Flipt unreachable: sysRedis only, as
+  // before. Create the key DISABLED before the deploy (a missing key logs on every eval), and turn it
+  // on only after the hand-applied `20271119120000_idempotency_key` migration: with it on and the
+  // table missing, those three paths refuse (`idempotency-key.service.ts`).
+  IDEMPOTENCY_KEYS_PG = 'idempotency-keys-pg',
   // Lets the auto-feature job top up the Featured Images collection from the featured
   // collections pool. Default-off, and the job's config carries its own `dryRun` on top,
   // so the homepage cannot change until both are deliberately turned on.
@@ -465,6 +494,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
+  /** Turns on the deal-file retention sweep; off, or missing, it marks nothing for deletion. */
+  SERVICE_DEAL_FILE_RETENTION = 'service-deal-file-retention',
   // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts, which also
   // still handles an `enforce-anon` variant should the flag define one.
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
@@ -658,6 +689,28 @@ export enum FLIPT_FEATURE_FLAGS {
   // serves traffic.
   IMAGE_METRICS_SWR = 'image-metrics-swr',
 
+  // On, with CLICKHOUSE_METRICS_HOST and CLICKHOUSE_METRICS_USERNAME set: the image MetricService
+  // (`getImageMetricService` in image.service, so the inline metric read and the image-metrics-swr
+  // background refresher alike) queries the dedicated entity-metrics ClickHouse instead of the
+  // shared one. A failed read there degrades exactly as a failed shared read does (served from the
+  // metrics cache); it is not retried on the shared client. Off (and unknown, a client that has
+  // not initialised, or the env unset): it queries the shared ClickHouse, as before. Kill: disable.
+  //
+  // The dedicated server must serve the `entityMetricDailyAgg_v2` view under that name in the
+  // user's default database, and the user must be allowed to change the settings the client sends
+  // (async_insert, wait_for_async_insert, output_format_json_quote_64bit_integers, max_threads,
+  // max_execution_time, timeout_overflow_mode): readonly=2, not readonly=1.
+  //
+  // 🔴 Turn it on only while the dedicated data lags the shared data by well under 15 minutes (the
+  // recent-event marker window). A populate from a lagging source writes LOWER counts into the
+  // shared Redis `metrics:*` hashes, and turning the flag off does not undo entries already written;
+  // they stay low until their next refresh.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`, `~/server/services/image-metrics-clickhouse`). The key must exist in
+  // flag state (enabled: false) before this code serves traffic.
+  IMAGE_METRICS_DEDICATED_CLICKHOUSE = 'image-metrics-dedicated-clickhouse',
+
   // On: a full page load of `/images/[imageId]` or `/posts/[postId]` server-renders a fixed
   // placeholder in place of the sections listed at their `ClientOnlySection` call sites, and those
   // sections mount right after hydration (`~/components/ClientOnlySection`). Off (and unknown, or a
@@ -758,6 +811,9 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // five-minute tick, so the cache saves nothing measurable and the staleness is
   // all cost at the moment someone is trying to turn it off.
   FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
+  // The off switch for the deal-file retention sweep, which deletes user files: a flip must reach
+  // the next run.
+  FLIPT_FEATURE_FLAGS.SERVICE_DEAL_FILE_RETENTION,
   // The App Block media brake: a flip must reach the next media fetch.
   FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE,
   // Evaluated once per user in a pass over every user, each entity once a week: cached entries
@@ -809,6 +865,15 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
       'temp-search'
     );
   },
+  // One record per error, the stack in a field, so its stdout copy stays one line.
+  onEvalError: (error, flag) =>
+    logToAxiom({
+      name: 'flipt-eval-error',
+      type: 'error',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      payload: { flag },
+    }),
 }));
 
 // 🔴 THE ENTITY-ID TRAP. All four evaluators below take `(flag, entityId?,
@@ -834,6 +899,9 @@ export const getFliptVariant = flipt.getVariant;
 export const getFliptVariantDetailSync = flipt.getVariantDetailSync;
 export const getFliptBoolean = flipt.getBoolean;
 export const isFliptSync = flipt.isEnabledSync;
+// `null` when the flag could not be read (Flipt unreachable with no snapshot, or an unknown key),
+// for a gate that must fail CLOSED; `isFlipt` answers `false` for both. Honors local overrides.
+export const readFliptBoolean = flipt.readBoolean;
 export const ensureFliptInitialized = flipt.ensureInitialized;
 // Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
 // caches (no `this`), so unbinding here is safe — same as the accessors above.

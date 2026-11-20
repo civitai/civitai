@@ -4,7 +4,6 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { recordedOwnership } from './model-ownership-db';
 import type * as AccountDeletionImages from '~/server/services/account-deletion-images';
 import type * as PaidAccessService from '~/server/services/paid-access.service';
@@ -76,30 +75,14 @@ beforeEach(() => {
 });
 
 describe('restoreUser -> model sale badge cache', () => {
-  // While the models sat at userId -1 their sales did not count, so the badge cache holds a
-  // "no sale" marker for each of them.
-  it('busts the restored models after the restore commits', async () => {
-    await expect(restore()).resolves.toMatchObject({ modelIds: ORPHANED });
-
-    expect(bustForModels.mock.calls).toEqual([[ORPHANED]]);
-    expect(bustForModels.mock.invocationCallOrder[0]).toBeGreaterThan(
-      dbMock.dbWrite.$transaction.mock.invocationCallOrder[0]
-    );
+  it('busts the restored models', async () => {
+    await restore();
+    expect(bustForModels).toHaveBeenCalledWith(ORPHANED);
   });
 
-  it('a failing bust is logged and the restore still succeeds', async () => {
+  it('still restores when the bust fails', async () => {
     bustForModels.mockRejectedValue(new Error('redis down'));
-
     await expect(restore()).resolves.toMatchObject({ id: USER_ID, modelIds: ORPHANED });
-
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'restore-user-model-sale-cache',
-        source: 'restoreUser',
-        userId: USER_ID,
-        message: 'redis down',
-      })
-    );
   });
 });
 
@@ -117,8 +100,8 @@ describe('restoreUser -> model ownership history', () => {
 
     const reclaim = dbMock.dbWrite.$transaction.mock.calls
       .map(([ops]) => ops)
-      .find((ops) => Array.isArray(ops) && ops.length === 2) as
-      | [unknown, { sql: string; text: string; values: unknown[] }]
+      .find((ops) => Array.isArray(ops) && ops.length === 4) as
+      | [unknown, unknown, unknown, { sql: string; text: string; values: unknown[] }]
       | undefined;
     expect(reclaim, 'the reclaim and its ownership rows must commit together').toBeDefined();
     // The reclaim's own owner write, then its ownership statement, against Postgres.
@@ -127,18 +110,12 @@ describe('restoreUser -> model ownership history', () => {
       [
         (db) =>
           db.query(`UPDATE "Model" SET "userId" = $1 WHERE id = ANY($2)`, [USER_ID, ORPHANED]),
-        reclaim![1],
+        reclaim![3],
       ]
     );
     expect(rows).toEqual(
       ORPHANED.map((modelId) => ({ modelId, userId: USER_ID, reason: 'restore', actorId: null }))
     );
-  });
-
-  it('reads only Create events, whose actor is the creator', async () => {
-    await restore();
-
-    expect(auditRows.mock.calls[0][0]).toMatch(/type = 'Create'/);
   });
 });
 

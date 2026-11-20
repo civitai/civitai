@@ -295,3 +295,25 @@
     color: var(--io-gold);
   }
 }
+
+/* A toast's auto-hide countdown (`lib/auto-hide.ts` sets its length and pauses it). Not play-loop motion: it runs for the
+   whole delay, and nothing waits on it. Reduced motion dims the bar instead of shrinking it. */
+@keyframes mo-countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes mo-countdown {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0.3;
+    }
+  }
+}

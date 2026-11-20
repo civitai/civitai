@@ -12,7 +12,9 @@ import {
   MODEL_FLAGS_PATH,
 } from '$lib/minor-flags/paths';
 import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
+import { MERGE_ANALYSIS_PATH } from '$lib/model-merge-analysis';
 import { TICKET_COUNT_KEYS } from '$lib/tickets/counts';
+import { PRESERVED_VIEW_PAGE } from '$lib/preserved-view';
 import { feedbackAreaLabel } from '$lib/feedback';
 import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
 import { reportCountKey, reportEntityLabels, reportPath, reportQueueEntities } from '$lib/reports';
@@ -65,6 +67,8 @@ export type NavLink = {
   // sections. Reached and granted by the page's own entry, and kept out of this section's badge and the
   // dashboard so its count is not summed twice.
   shortcut?: true;
+  // Reached by link only.
+  hidden?: true;
   children?: NavLink[];
 };
 
@@ -162,6 +166,7 @@ export const NAVIGATION: NavLink[] = [
         ],
       },
       { path: MODEL_RULE_MATCHES_PATH, label: 'Model rule matches' },
+      { path: MERGE_ANALYSIS_PATH, label: 'Model merge analysis' },
     ],
   },
   {
@@ -205,6 +210,7 @@ export const NAVIGATION: NavLink[] = [
     ],
   },
   { path: '/creator-services/disputes', label: 'Service Disputes' },
+  { path: '/creator-program/payout-reviews', label: 'Payout Reviews' },
   { path: '/messages', label: 'Civitai Messages', countKey: 'civitaiMessages' },
   {
     label: 'Audit',
@@ -235,6 +241,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/text-scan/shadow-sexual-prompt', label: 'Shadow sexual prompt' },
     ],
   },
+  { path: PRESERVED_VIEW_PAGE, label: 'Preserved-file review', hidden: true },
   {
     label: 'Retool',
     path: '/retool',
@@ -459,6 +466,7 @@ function withViewerCountKey(link: NavLink, user: RoleUser): NavLink {
 function pruneNav(links: NavLink[], user: RoleUser): NavLink[] {
   const out: NavLink[] = [];
   for (const link of links) {
+    if (link.hidden) continue;
     if (link.shortcut ? !canAccess(user, link.path!) : link.path && !allows(link.path, user))
       continue;
     if (link.sharedAccess) {

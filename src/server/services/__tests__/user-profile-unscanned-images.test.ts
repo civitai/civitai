@@ -16,14 +16,21 @@ vi.mock('~/server/services/image.service', () => ({
   enqueueImageIngestion: vi.fn(async () => undefined),
 }));
 
-const kysely = vi.hoisted(() => ({ on: false, user: undefined as unknown }));
+const kysely = vi.hoisted(() => ({
+  on: false,
+  user: undefined as unknown,
+  pictureBlockedFor: null as string | null,
+}));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   isFlipt: vi.fn(async () => kysely.on),
 }));
 vi.mock('~/server/services/hot-reads-9.reads', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  readUserWithProfileViaKysely: vi.fn(async () => kysely.user),
+  readUserWithProfileAndPictureGateViaKysely: vi.fn(async () => ({
+    user: kysely.user,
+    pictureBlockedFor: kysely.pictureBlockedFor,
+  })),
 }));
 
 import { getUserWithProfile } from '~/server/services/user-profile.service';
@@ -95,6 +102,7 @@ function setUser(
 beforeEach(() => {
   vi.clearAllMocks();
   kysely.on = false;
+  kysely.pictureBlockedFor = null;
   dbMock.dbRead.userStat.findFirst.mockResolvedValue(null);
 });
 
@@ -252,5 +260,32 @@ describe('getUserWithProfile — model-restricted cover', () => {
 
     expect(await coverFor(visitor)).toBe('cover-Scanned');
     expect(await coverFor(moderator)).toBe('cover-Scanned');
+  });
+});
+
+// The Kysely profile read returns the picture's block reason beside the payload; a picture carrying
+// one is no one's avatar but its owner's and moderators'.
+describe('getUserWithProfile — avatar with a block reason, on the Kysely read', () => {
+  it('withholds it from a visitor, not the owner or a moderator, with no extra read', async () => {
+    kysely.on = true;
+    kysely.pictureBlockedFor = 'tos';
+    setUser('Scanned');
+
+    const avatarFor = async (sessionUserId: number, isModerator = false) =>
+      (await getUserWithProfile({ id: OWNER, sessionUserId, isModerator })).profilePicture?.url ??
+      null;
+    expect(await avatarFor(VISITOR)).toBeNull();
+    expect(await avatarFor(OWNER)).toBe('avatar-Scanned');
+    expect(await avatarFor(VISITOR, true)).toBe('avatar-Scanned');
+    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('serves one without a block reason', async () => {
+    kysely.on = true;
+    setUser('Scanned');
+
+    expect(
+      (await getUserWithProfile({ id: OWNER, sessionUserId: VISITOR })).profilePicture?.url
+    ).toBe('avatar-Scanned');
   });
 });

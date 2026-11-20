@@ -7,7 +7,8 @@ import {
   ReviewPreviewSection,
   type OnsiteReviewSelection,
 } from '~/components/Apps/OnsiteReviewModal';
-import { ReviewListingMedia } from '~/components/Apps/ReviewListingMedia';
+import { ReviewConsoleSummary } from '~/components/Apps/ReviewConsole';
+import { ReviewListingMediaLive } from '~/components/Apps/ReviewListingMediaLive';
 import { groupBlockScopes } from '~/components/Apps/listingPermissions';
 import { manifestScopes } from '~/components/Apps/reviewQueueSignals';
 import { appDisplayName } from '~/shared/utils/app-display-name';
@@ -31,8 +32,11 @@ export function ReviewOverviewPanel({
   onOpenTab,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
-  /** Switch the page to another tab (the AI findings card's "Full report", "All permissions"). */
-  onOpenTab?: (tab: 'agent' | 'permissions') => void;
+  /**
+   * Switch the page to another tab (the AI findings card's "Full report", "All permissions",
+   * the console line's "Open console").
+   */
+  onOpenTab?: (tab: 'agent' | 'permissions' | 'console') => void;
 }) {
   const { request } = selection;
   const manifest = (request.manifest ?? {}) as Record<string, unknown>;
@@ -57,7 +61,10 @@ export function ReviewOverviewPanel({
             manifest={manifest}
             onOpenAll={onOpenTab && (() => onOpenTab('permissions'))}
           />
-          <ReviewListingMedia
+          <ReviewListingMediaLive
+            // The re-rate pickers and live levels (moderators): see `ReviewListingMediaLive`.
+            listingId={request.appListingId ?? null}
+            approveListingId={request.approveRating?.listingId ?? null}
             slug={request.slug}
             name={appDisplayName(request.manifest, request.slug)}
             iconUrl={request.iconUrl ?? null}
@@ -68,7 +75,15 @@ export function ReviewOverviewPanel({
         </Stack>
       </Grid.Col>
       <Grid.Col span={{ base: 12, md: 7 }}>
-        <ReviewPreviewSection selection={selection} frameHeight={REVIEW_PREVIEW_OVERVIEW_HEIGHT} />
+        <Stack gap="md">
+          {/* The running app's error count, and a crash's reason, without opening the Console.
+              Renders nothing until the preview reports one. */}
+          <ReviewConsoleSummary onOpen={onOpenTab && (() => onOpenTab('console'))} />
+          <ReviewPreviewSection
+            selection={selection}
+            frameHeight={REVIEW_PREVIEW_OVERVIEW_HEIGHT}
+          />
+        </Stack>
       </Grid.Col>
     </Grid>
   );

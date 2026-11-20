@@ -3,8 +3,12 @@ package tracing
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -16,6 +20,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/chread"
 )
 
 func traceID(t *testing.T, hex string) trace.TraceID {
@@ -290,6 +296,106 @@ func TestRedisHook(t *testing.T) {
 	_ = plain(context.Background(), redis.NewStringCmd(context.Background(), "get", "a"))
 	if calls != 1 || len(rec.Started()) != 0 {
 		t.Fatalf("no request span: calls=%d spans=%d, want 1 and 0", calls, len(rec.Started()))
+	}
+}
+
+// A ClickHouse read through chread is one client span under the request's, `clickhouse query`, with
+// the system, operation and row count only: never the SQL (the metrics read inlines its ids), the
+// request URL (it carries the query) or the login. A failure is the error status (its class) and
+// error.type, never the exception text (it quotes the query); a timeout is `deadline`. Under an
+// unsampled request, or none, no span is started. Only the no-span case fails with the recording
+// check dropped (the read's span would be a sampled root); the unsampled case is an invariant guard,
+// since under the parent-based sampler a span started under an unsampled parent does not record.
+func TestClickHouseTracer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Query().Get("query"), "fail"):
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("Code: 241. DB::Exception: memory limit exceeded in query " + sentinel))
+		case strings.Contains(r.URL.Query().Get("query"), "hang"):
+			<-r.Context().Done()
+		default:
+			_, _ = w.Write([]byte("{\"entityId\":8001,\"value\":5}\n{\"entityId\":8002,\"value\":7}\n"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	p, rec := recorder(t)
+	c, err := chread.New(chread.Config{URL: srv.URL + "/metricsdb", Username: "reader", Password: sentinel + "-pw",
+		HTTP: srv.Client(), Tracer: ClickHouseTracer{Tracer: p.Tracer}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, parent := p.Tracer.Start(context.Background(), "serve as-images")
+	if rows, err := c.Query(ctx, "\n  SELECT entityId FROM m WHERE entityId IN (8001, "+sentinel+")", nil); err != nil || len(rows) != 2 {
+		t.Fatalf("ok read: %d rows, %v", len(rows), err)
+	}
+	if _, err := c.Query(ctx, "SELECT fail /* "+sentinel+" */", nil); err == nil {
+		t.Fatal("failing read: no error")
+	}
+	tctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	_, err = c.Query(tctx, "SELECT hang", nil)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("hanging read: %v, want the deadline", err)
+	}
+	parent.End()
+
+	ended := rec.Ended()
+	if len(ended) != 4 {
+		t.Fatalf("%d spans, want 3 reads + the parent", len(ended))
+	}
+	for _, s := range ended[:3] {
+		if s.Name() != "clickhouse query" || s.SpanKind() != trace.SpanKindClient || s.Parent().SpanID() != parent.SpanContext().SpanID() {
+			t.Fatalf("read span %q kind %v parent %v; want `clickhouse query`, client, under the request", s.Name(), s.SpanKind(), s.Parent().SpanID())
+		}
+	}
+	want := map[attribute.Key]string{"db.system.name": "clickhouse", "db.operation.name": "SELECT", "db.response.returned_rows": "2"}
+	if got := attrs(ended[0]); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ok read attributes %v, want %v", got, want)
+	}
+	if s := ended[0]; s.Status().Code != codes.Unset {
+		t.Fatalf("ok read status %+v, want unset", s.Status())
+	}
+	if s := ended[1]; s.Status().Code != codes.Error || s.Status().Description != "http_5xx" ||
+		!reflect.DeepEqual(attrs(s), map[attribute.Key]string{"db.system.name": "clickhouse", "db.operation.name": "SELECT", "error.type": "*chread.ServerError"}) {
+		t.Fatalf("failed read status %+v attrs %v; want error http_5xx, error.type *chread.ServerError", s.Status(), attrs(s))
+	}
+	if s := ended[2]; s.Status().Code != codes.Error || s.Status().Description != "deadline" || attrs(s)["error.type"] == "" {
+		t.Fatalf("timed-out read status %+v attrs %v; want error deadline with an error.type", s.Status(), attrs(s))
+	}
+	host := strings.TrimPrefix(srv.URL, "http://")
+	for _, s := range ended {
+		texts := []string{s.Status().Description}
+		for _, kv := range s.Attributes() {
+			texts = append(texts, kv.Value.String())
+		}
+		for _, e := range s.Events() {
+			texts = append(texts, e.Name)
+			for _, kv := range e.Attributes {
+				texts = append(texts, kv.Value.String())
+			}
+		}
+		for _, txt := range texts {
+			for _, banned := range []string{sentinel, host, "metricsdb", "FROM", "entityId", "fail", "hang"} {
+				if strings.Contains(txt, banned) {
+					t.Fatalf("span %q carries %q (in %q): the SQL, URL or login", s.Name(), banned, txt)
+				}
+			}
+		}
+	}
+
+	// No recording request span (unsampled, or none at all): the read runs, nothing is started. The
+	// root (context.Background) case is the one that catches a dropped recording check.
+	rec.Reset()
+	uctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: traceID(t, "4bf92f3577b34da6a3ce929d0e0e4736"), SpanID: trace.SpanID{1}}))
+	for _, ctx := range []context.Context{uctx, context.Background()} {
+		if rows, err := c.Query(ctx, "SELECT 1", nil); err != nil || len(rows) != 2 {
+			t.Fatalf("untraced read: %d rows, %v", len(rows), err)
+		}
+	}
+	if n := len(rec.Started()); n != 0 {
+		t.Fatalf("%d spans started without a recording request span, want 0", n)
 	}
 }
 

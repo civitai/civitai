@@ -91,8 +91,13 @@ export function PostImageCards() {
       </Tabs>
       <div className="flex flex-col gap-3">
         {slotAt(textIndexAfter(undefined, items[0]?.key))}
-        {items.map((item) => {
+        {items.map((item, i) => {
+          // A text added after an item takes its index and sorts after every text already there,
+          // so a run of items sharing an index has one Add text, after its last item.
+          const next = items[i + 1];
           const slotIndex = textIndexAfter(item.key, undefined);
+          const slot = () =>
+            next && (next.key.index ?? 0) === (item.key.index ?? 0) ? null : slotAt(slotIndex);
           if (item.type === 'text')
             return (
               <React.Fragment key={`text-${item.text.id}`}>
@@ -102,7 +107,7 @@ export function PostImageCards() {
                     label={`Text ${++textNumber} / ${STORYLINE_TEXT_MAX_PER_POST}`}
                   />
                 </div>
-                {slotAt(slotIndex)}
+                {slot()}
               </React.Fragment>
             );
           const { image } = item;
@@ -118,7 +123,7 @@ export function PostImageCards() {
                 </Text>
                 <PostImageCard image={image} />
               </div>
-              {image.type === 'added' && slotAt(slotIndex)}
+              {image.type === 'added' && slot()}
             </React.Fragment>
           );
         })}

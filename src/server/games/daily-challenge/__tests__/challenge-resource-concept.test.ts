@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Openrouter from '~/server/services/ai/openrouter';
 import type { JudgingConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   buildComparisonPrompt,
   buildGroupComparisonPrompt,
@@ -98,7 +97,6 @@ function reviewSystemText(messages: Awaited<ReturnType<typeof buildFallbackMessa
 
 beforeEach(() => {
   vi.clearAllMocks();
-  loggingMock.logToAxiom.mockClear();
 });
 
 // The article step receives neither the description nor the trained words — only the title, links,
@@ -261,7 +259,6 @@ describe('generateResourceConcept', () => {
     await expect(
       generateResourceConcept({ resource, images: [{ url: 'u' }], config })
     ).resolves.toBeUndefined();
-    expect(loggingMock.logToAxiom).toHaveBeenCalled();
   });
 
   it('returns undefined when the model returns an empty concept', async () => {

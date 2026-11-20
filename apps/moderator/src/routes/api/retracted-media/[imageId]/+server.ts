@@ -4,9 +4,9 @@ import type { RequestHandler } from './$types';
 import { canAccess } from '$lib/server/access';
 import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
 import { streamStoredMedia } from '$lib/server/held-media-stream';
+import { retractedMediaRetryAfter } from '$lib/server/retracted-media-rate';
 import {
   getRetractedMedia,
-  NEEDS_CSAM_QUEUE,
   recordRetractedView,
   retractedMediaEnabled,
 } from '$lib/server/retracted-media';
@@ -17,7 +17,7 @@ const MAX_INT = 2_147_483_647;
  * A blocked image or video for any moderator, from storage rather than the public CDN, for the
  * moderator pages that show images. The browser names an image id and nothing else: the key comes
  * from this app's own read of the row, and only for an image `getRetractedMedia` allows this
- * moderator. One with a CSAM or minor signal needs the CSAM page's grant; held media is
+ * moderator. CSAM-restricted media needs the CSAM page's grant; held media is
  * `/api/held-media`'s.
  */
 const NO_STORE = { 'cache-control': 'private, no-store' };
@@ -38,11 +38,17 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
   const imageId = Number(params.imageId);
   if (!Number.isInteger(imageId) || imageId <= 0 || imageId > MAX_INT) error(400, 'Bad image id.');
   const moderatorId = locals.user.id;
+  const retryAfter = await retractedMediaRetryAfter(moderatorId);
+  if (retryAfter !== null)
+    return json(
+      { message: 'Too many requests.' },
+      { status: 429, headers: { ...NO_STORE, 'retry-after': String(retryAfter) } }
+    );
+  const csamReview = canAccess(locals.user, HELD_MEDIA_PAGE);
 
-  const media = await getRetractedMedia(imageId, {
-    csamReview: canAccess(locals.user, HELD_MEDIA_PAGE),
+  const media = await getRetractedMedia(imageId, { csamReview }).catch(() => {
+    error(503, 'Could not check this image; retry.');
   });
-  if (media === NEEDS_CSAM_QUEUE) error(403, 'Needs CSAM-queue access.');
   if (!media) error(404, 'Not available here.');
   // Eligibility alone, so a tile whose load failed can say why; nothing is served or audited.
   if (url.searchParams.get('probe') === '1')

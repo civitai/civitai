@@ -34,10 +34,10 @@ WORKDIR /app
 # only satisfies the required() guard. It lives ONLY in this stage and is NOT carried into `runtime`
 # (separate FROM), so the real value comes from the k8s secret at run time.
 #
-# Unlike the moderator/creator-studio spokes this app builds a SINGLE Kysely client (singleClient:true,
-# no replica), so there is deliberately no DATABASE_REPLICA_URL placeholder here. Redis (getSysRedis),
-# Flipt, buzz, Axiom and every other env read (WEBHOOK_TOKEN, FEED_TOKEN_SECRET, JOBS_TOKEN, ...) happen
-# inside functions, so they need no build-time placeholder either.
+# DATABASE_REPLICA_URL is read at module load too, but it is optional (unset, the read client is the
+# primary), so it has no placeholder. Redis (getSysRedis), Flipt, buzz, Axiom and every other env read
+# (WEBHOOK_TOKEN, FEED_TOKEN_SECRET, JOBS_TOKEN, ...) happen inside functions, so they need no
+# build-time placeholder either.
 ENV DATABASE_URL=postgres://build:build@localhost:5432/build
 COPY packages ./packages
 COPY apps/knights ./apps/knights

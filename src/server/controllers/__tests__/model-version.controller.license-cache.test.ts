@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ModelVersionService from '~/server/services/model-version.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * `getStaticContent` caches parsed static content in-memory for 5 minutes and returns the cached
@@ -47,13 +48,22 @@ const version = {
 };
 
 const callHandler = () =>
-  getVersionLicenseHandler({ input: { id: version.id } } as never) as Promise<{
+  getVersionLicenseHandler({ input: { id: version.id }, ctx: {} } as never) as Promise<{
     license: { content: string };
   }>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetVersionById.mockResolvedValue(version);
+  // The visibility check's read: a published version of a published model.
+  dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+    {
+      id: version.id,
+      status: 'Published',
+      publishedAt: null,
+      model: { userId: 1, status: 'Published', poi: false },
+    },
+  ]);
 });
 
 describe('getVersionLicenseHandler — Attachment B against the static-content cache', () => {

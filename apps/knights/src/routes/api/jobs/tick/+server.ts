@@ -12,8 +12,15 @@ import { settleHiddenChecks } from '$lib/server/hidden/settle';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { isJobRequest } from '$lib/server/jobs-auth';
 import { metrics, type TickFailureStep } from '$lib/server/metrics';
-import { applyPendingResolutions, escalateExpired } from '$lib/server/queue/queue.service';
+import {
+  applyPendingResolutions,
+  closeModeratorRuledItems,
+  closeUnservableItems,
+  escalateExpired,
+  type MovedItem,
+} from '$lib/server/queue/queue.service';
 import { settleFinalItems } from '$lib/server/progression/progression';
+import { announceMoves } from '$lib/server/live/announce';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { resetDeps } from '$lib/server/smites/runtime';
 import { expireSmites, resetPendingPlayers } from '$lib/server/smites/smites.service';
@@ -33,14 +40,26 @@ async function settle<T>(step: string, run: () => Promise<T>) {
 export const POST: RequestHandler = async ({ request }) => {
   if (!isJobRequest(request)) return new Response(null, { status: 401 });
 
-  // `escalated`, `toInquisitor`, `extended` and `expired` (unvoted items closed) go straight into the response.
-  const escalation = await settle('escalation', () => escalateExpired(db, { now: new Date() }));
+  // `escalated`, `toInquisitor`, `extended`, `expired` (items closed undecided) and `rerated` go straight into the response.
+  const moved: MovedItem[] = [];
+  const collect = (items: MovedItem[]) => moved.push(...items);
+  const escalation = await settle('escalation', () =>
+    escalateExpired(db, { now: new Date(), moved: collect })
+  );
   const writeBacks = await settle('rating write-back', () =>
     applyPendingResolutions(db, queueDeps)
+  );
+  const moderatorRuled = await settle('moderator-ruled sweep', () =>
+    closeModeratorRuledItems(db, { now: new Date(), mirror: queueDeps.mirrorXp, moved: collect })
+  );
+  // Before the settle step, which pays out (nothing) the votes these closes leave inconclusive.
+  const unservable = await settle('unservable sweep', () =>
+    closeUnservableItems(db, { now: new Date(), moved: collect })
   );
   const progression = await settle('progression', () =>
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
   );
+  await announceMoves(db, moved);
   const hidden = await settle('hidden checks', async () =>
     settleHiddenChecks(db, {
       now: new Date(),
@@ -97,6 +116,8 @@ export const POST: RequestHandler = async ({ request }) => {
   if (
     !escalation.ok ||
     !writeBacks.ok ||
+    !moderatorRuled.ok ||
+    !unservable.ok ||
     !progression.ok ||
     !hidden.ok ||
     !yesNo.ok ||
@@ -110,6 +131,7 @@ export const POST: RequestHandler = async ({ request }) => {
   }
   const itemFailures: Record<TickFailureStep, number> = {
     writeback: writeBacks.value.failed ?? 0,
+    moderator_ruled: moderatorRuled.value.failed,
     payout: progression.value.failed,
     yesno: yesNo.value.failed,
     reset: resets.value.failed,
@@ -128,6 +150,11 @@ export const POST: RequestHandler = async ({ request }) => {
   return json({
     ...escalation.value,
     ...writeBacks.value,
+    moderatorRuled: moderatorRuled.value.closed,
+    unservable: unservable.value.unservable,
+    publishesAfterExpiry: unservable.value.publishesAfterExpiry,
+    unpublishedDrafts: unservable.value.unpublishedDrafts,
+    imageUnservable: unservable.value.imageUnservable,
     settledVotes: progression.value.votes,
     hiddenChecksGraded: hidden.value.graded,
     yesNoClosed: yesNo.value.unplayable + yesNo.value.stale,

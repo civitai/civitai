@@ -11,7 +11,7 @@ import {
 } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
-import { closeYesNoItemRow, gradeKnightsVotes } from './knights';
+import { closeYesNoItemRow, gradeKnightsVotes, servableImage } from './knights';
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -55,6 +55,37 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await pg.close();
+});
+
+// Players are never served a minor-flagged image, whatever moderators may see.
+describe('servableImage', () => {
+  beforeAll(async () => {
+    await pg.exec(`
+      CREATE TABLE "Image" (
+        id INTEGER PRIMARY KEY, type TEXT NOT NULL DEFAULT 'image', "nsfwLevel" INTEGER NOT NULL DEFAULT 4,
+        ingestion TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT, "needsReview" TEXT,
+        "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, poi BOOLEAN NOT NULL DEFAULT false,
+        minor BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER NOT NULL
+      );
+      CREATE TABLE "Post" (id INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP);
+      INSERT INTO "Post" (id, "publishedAt") VALUES (1, now() - interval '1 day');
+      INSERT INTO "Image" (id, "postId", minor, "acceptableMinor", "needsReview") VALUES
+        (990000201, 1, false, false, NULL),
+        (990000202, 1, true, false, NULL),
+        (990000203, 1, false, true, NULL),
+        (990000204, 1, false, false, 'minor');
+    `);
+  });
+
+  it('serves a clean image and refuses each minor flag', async () => {
+    const rows = await db
+      .selectFrom('Image as img')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .select('img.id')
+      .where(servableImage)
+      .execute();
+    expect(rows.map((r) => r.id)).toEqual([990000201]);
+  });
 });
 
 describe('gradeKnightsVotes', () => {

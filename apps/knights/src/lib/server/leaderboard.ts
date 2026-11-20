@@ -1,4 +1,11 @@
 import { sql, type Kysely, type SqlBool } from 'kysely';
+import {
+  blockMarkerText,
+  ownImageNamedByUserImage,
+  servablePictureSql,
+  userImageNamesPicture,
+} from '@civitai/db-queries/profile-picture-clear';
+import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_STAGE_RANKS } from '@civitai/shared/new-order';
@@ -36,18 +43,27 @@ export async function queryBoard(db: Kysely<DB>, now: Date): Promise<Board> {
     .selectFrom('KnightsVote as v')
     .innerJoin('NewOrderPlayer as p', 'p.userId', 'v.playerId')
     .innerJoin('User as u', 'u.id', 'p.userId')
-    .leftJoin('Image as pic', 'pic.id', 'u.profilePictureId')
+    .leftJoin('Image as i', 'i.id', 'u.profilePictureId')
     .select([
       'p.userId',
       sql<string>`coalesce(u."username", 'Knight')`.as('username'),
-      // Players rate every level in the game, so any rated picture shows, PG through XXX (1–16). Unrated (0),
-      // Blocked (32) and one under the main app's owner-hidden review holds fall back to the legacy `User.image`,
-      // which follows the same holds when it names the picture.
-      sql<
-        string | null
-      >`coalesce(case when pic."nsfwLevel" between 1 and 16 and (pic."needsReview" is null or pic."needsReview" not in ('csam', 'minor')) then pic.url end, case when pic."needsReview" in ('csam', 'minor') and strpos(replace(lower(u.image), '%2d', '-'), lower(pic.url)) > 0 then null else u.image end)`.as(
-        'image'
-      ),
+      // The main app's profile-picture rule: any rated level the site serves as a picture, never one that is
+      // held for review or carries a block marker. Otherwise the legacy `User.image`, unless it names that
+      // picture or another of the user's own images that is held or blocked.
+      sql<string | null>`coalesce(
+        case when ${servablePictureSql()} then i.url end,
+        case
+          when i.id is not null and ${sql.raw(userImageNamesPicture('i'))} then null
+          when u.image is not null and exists (
+            select 1 from "Image" o
+            where ${sql.raw(ownImageNamedByUserImage('o'))}
+              and (o."needsReview" in (${sql.join(OWNER_HIDDEN_REVIEWS)}) or ${sql.raw(
+        blockMarkerText('o')
+      )})
+          ) then null
+          else u.image
+        end
+      )`.as('image'),
       'p.rankType',
       'p.exp',
       sql<string>`count(*)`.as('graded'),
@@ -60,16 +76,7 @@ export async function queryBoard(db: Kysely<DB>, now: Date): Promise<Board> {
     .where('p.rankType', 'in', [...KNIGHTS_STAGE_RANKS])
     .where('u.bannedAt', 'is', null)
     .where('u.deletedAt', 'is', null)
-    .groupBy([
-      'p.userId',
-      'u.username',
-      'u.image',
-      'pic.url',
-      'pic.nsfwLevel',
-      'pic.needsReview',
-      'p.rankType',
-      'p.exp',
-    ])
+    .groupBy(['p.userId', 'u.id', 'u.username', 'u.image', 'i.id', 'p.rankType', 'p.exp'])
     .execute();
 
   const rows = grouped

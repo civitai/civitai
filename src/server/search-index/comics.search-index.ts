@@ -12,12 +12,12 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { comicsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { comicsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
-import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import {
   getServableProfilePictures,
   type RawQueryClient,
 } from '~/server/services/profile-picture.sql';
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
 import { heldUserSql } from '@civitai/shared/held-media';
 import {
@@ -93,6 +93,7 @@ type ComicForSearchIndex = {
   userId: number;
   coverImageUrl: string | null;
   coverImageNsfwLevel: number | null;
+  /** The cover's enabled tag ids, for the client's hidden-tag filter. */
   coverImageTagIds: number[] | null;
   user: {
     id: number;
@@ -188,16 +189,10 @@ const transformData = async ({
   profilePictures: ProfileImage[];
 }) => {
   const records = comics
-    .map(({ user, nsfwLevel, coverImageTagIds, ...comic }) => {
+    .map(({ user, nsfwLevel, ...comic }) => {
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
-      const coverDropped = isTaggedMatureImage({
-        nsfwLevel: comic.coverImageNsfwLevel ?? 0,
-        tags: coverImageTagIds ?? [],
-      });
-
       return {
         ...comic,
-        ...(coverDropped && { coverImageUrl: null, coverImageNsfwLevel: null }),
         nsfwLevel: parseBitwiseBrowsingLevel(nsfwLevel),
         user: {
           ...user,
@@ -234,7 +229,7 @@ async function pullComics(db: RawQueryClient, filters: Prisma.Sql[]) {
           'id', u.id,
           'username', u.username,
           'deletedAt', u."deletedAt",
-          'image', u.image,
+          'image', ${Prisma.raw(fallbackUserImageColumn)},
           'profilePictureId', u."profilePictureId"
         ) "user"
       FROM "User" u

@@ -435,13 +435,17 @@ describe('ownership: refused before anything is fetched or written', () => {
       expect(createImage).not.toHaveBeenCalled();
     });
 
+    // The controls schedule the scan (persistAfterScan): a bare persist() of an accepted output
+    // waits out the whole scan deadline in real time (~30 s each) to say nothing more.
     it('CONTROL: the rated output beside it persists', async () => {
-      await persist({ imageIndex: 1, ceiling: SERVING }, withNa());
+      const wf = withNa();
+      await persistAfterScan({ imageIndex: 1, ceiling: SERVING, getWorkflow: async () => wf });
       expect(createImage).toHaveBeenCalledTimes(1);
     });
 
     it('CONTROL: with serving off the `na` output persists', async () => {
-      await persist({ imageIndex: 0 }, withNa());
+      const wf = withNa();
+      await persistAfterScan({ imageIndex: 0, getWorkflow: async () => wf });
       expect(createImage).toHaveBeenCalledTimes(1);
     });
   });
@@ -806,10 +810,13 @@ describe('🔴 the deadline bounds the whole request, the fetch included', () =>
   });
 
   it('the budget is the request’s: a call whose budget is already spent writes nothing', async () => {
+    // The budget's own timer never fires here, so a spent budget must be refused without it.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const error = await persist({ budgetMs: 0 }).then(
       () => null,
       (e: unknown) => e
     );
+    vi.useRealTimers();
     expect(error).toMatchObject({ code: 'TIMEOUT' });
     expect(createImage).not.toHaveBeenCalled();
   });

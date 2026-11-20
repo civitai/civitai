@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'http';
+import { siteCookieHeader, siteCookieJar } from '@civitai/auth';
 import { getUserContentSettings } from '~/server/services/user.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getTosMeta } from '~/server/services/content.service';
@@ -15,6 +16,8 @@ import { env } from '~/env/server';
 import { env as clientEnv } from '~/env/client';
 import { logToAxiom } from '~/server/logging/client';
 import { eventViewerOf } from '~/server/events/event-viewer';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
+import { getRequestCredential } from '~/server/auth/request-credential';
 
 /**
  * The per-user settings bootstrap: the session plus every ambient seed a page needs on its
@@ -97,6 +100,16 @@ export async function resolveSettingsBootstrapSeeds(
   // The nav banners and the event seeds both read the viewer's event cosmetic: one read each
   // per request, not one per member (event-cosmetic-reads.ts).
   const eventCosmeticReads: EventCosmeticReads = new Map();
+  // The session as this credential may use it: a moderator on a reduced key is not one here.
+  const viewerSession = session?.user
+    ? {
+        ...session,
+        user: withModeratorRightsFor(
+          session.user,
+          getRequestCredential({ context: credential ?? undefined })
+        )!,
+      }
+    : session;
   const eventUser = session?.user && {
     ...session.user,
     isModerator: !!credential && eventViewerOf({ ...credential, user: session.user }).isModerator,
@@ -192,7 +205,7 @@ export async function resolveSettingsBootstrapSeeds(
     navBanners,
     siteAlerts,
     eventSeeds,
-    session: bootstrapSession(session),
+    session: bootstrapSession(viewerSession),
   };
 }
 
@@ -260,7 +273,8 @@ function viewerHost(req: AuthArgs['req']): string | undefined {
  *   - URL: always `SETTINGS_BOOTSTRAP_PATH`, never the caller's. `getServerAuthSession` treats a
  *     `?token=` query parameter as an API credential, and a page URL may carry an unrelated one —
  *     it must never replace the cookie viewer.
- *   - Headers and cookies: the caller's, so the session is the caller's.
+ *   - Headers and cookies: the caller's, so the session is the caller's, as the caller's own site reads
+ *     them (the session lookup sees the bootstrap host, not the viewer's).
  *   - Host: the internal bootstrap host by default (`bootstrapHost`), which is what the seeds were
  *     built against. `host` overrides it for a session lookup whose cookie writes reach the browser:
  *     the rolled cookie's Domain is derived from it, so it must be the viewer's own host.
@@ -273,9 +287,15 @@ export function settingsBootstrapRequest(
   { host, context }: { host?: string; context?: Record<string, unknown> } = {}
 ): AuthArgs['req'] {
   // The bootstrap reads only `authorization` and `host` from the headers (plus the parsed cookies).
+  const viewer = request.headers?.host;
+  const cookie = request.headers?.cookie;
   return {
-    headers: { ...request.headers, host: host ?? bootstrapHost() },
-    cookies: request.cookies,
+    headers: {
+      ...request.headers,
+      ...(cookie !== undefined && { cookie: siteCookieHeader(cookie, viewer) }),
+      host: host ?? bootstrapHost(),
+    },
+    cookies: siteCookieJar(request.cookies, viewer),
     url: SETTINGS_BOOTSTRAP_PATH,
     [VIEWER_HOST]: request.headers?.host,
     ...(context ? { context } : {}),

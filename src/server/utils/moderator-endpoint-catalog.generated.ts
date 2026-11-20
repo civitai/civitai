@@ -2,8 +2,6 @@
 // Re-run 'pnpm run generate:moderator-endpoints' after adding or removing a moderator endpoint.
 
 export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> = {
-  '/api/admin/temp/article-category-backfill': () =>
-    import('~/pages/api/admin/temp/article-category-backfill'),
   '/api/admin/temp/text-scan-clavata-cutover': () =>
     import('~/pages/api/admin/temp/text-scan-clavata-cutover'),
   '/api/admin/temp/text-scan-rescan': () => import('~/pages/api/admin/temp/text-scan-rescan'),
@@ -41,6 +39,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/creator-services/resolve-dispute': () =>
     import('~/pages/api/mod/creator-services/resolve-dispute'),
   '/api/mod/csam/training-data-report': () => import('~/pages/api/mod/csam/training-data-report'),
+  '/api/mod/feedback/ticket-bug': () => import('~/pages/api/mod/feedback/ticket-bug'),
   '/api/mod/feedback/triage': () => import('~/pages/api/mod/feedback/triage'),
   '/api/mod/homeblock/create': () => import('~/pages/api/mod/homeblock/create'),
   '/api/mod/homeblock/delete': () => import('~/pages/api/mod/homeblock/delete'),
@@ -95,8 +94,13 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/strike/get-user-strikes': () => import('~/pages/api/mod/strike/get-user-strikes'),
   '/api/mod/strike/void': () => import('~/pages/api/mod/strike/void'),
   '/api/mod/text-scan': () => import('~/pages/api/mod/text-scan'),
+  '/api/mod/text-scan/csam-hold/mark-reported': () =>
+    import('~/pages/api/mod/text-scan/csam-hold/mark-reported'),
+  '/api/mod/text-scan/csam-hold/refer': () => import('~/pages/api/mod/text-scan/csam-hold/refer'),
   '/api/mod/text-scan/csam-hold/resolve': () =>
     import('~/pages/api/mod/text-scan/csam-hold/resolve'),
+  '/api/mod/text-scan/csam-hold/set-report-choice': () =>
+    import('~/pages/api/mod/text-scan/csam-hold/set-report-choice'),
   '/api/mod/text-scan/model-rules-hold/resolve': () =>
     import('~/pages/api/mod/text-scan/model-rules-hold/resolve'),
   '/api/mod/tipalti-resync-payee': () => import('~/pages/api/mod/tipalti-resync-payee'),

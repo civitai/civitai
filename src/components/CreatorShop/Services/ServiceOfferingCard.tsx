@@ -30,7 +30,7 @@ type ServiceCoverImage = Pick<
 
 type ServiceCardSeller = ComponentProps<typeof UserAvatar>['user'];
 
-const COVER_ASPECT_RATIO = 4 / 3;
+export const COVER_ASPECT_RATIO = 4 / 3;
 
 const ServiceBuyerPreviewModal = dynamic(
   () => import('~/components/CreatorShop/Services/ServiceBuyerPreviewModal')
@@ -55,7 +55,7 @@ export function coverShowsLevelChip({
 }
 
 /** Cover tile for an offering with no cover image. Filled in by the same overlays as a cover. */
-function NoCover() {
+export function NoCover() {
   return (
     <div className="flex size-full flex-col items-center justify-center gap-1 bg-gray-2 text-gray-6 dark:bg-dark-6 dark:text-dark-2">
       <IconPhoto size={32} stroke={1.5} />
@@ -70,7 +70,7 @@ function NoCover() {
  * The blur caption, sized to the cover: a narrow cover has no room for the sentence, so it
  * keeps only "Rated <level>" and the Show button.
  */
-function BlurCaption({ level }: { level: number }) {
+export function BlurCaption({ level }: { level: number }) {
   return (
     <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center @container">
       <ImageGuard2.BlurToggle>

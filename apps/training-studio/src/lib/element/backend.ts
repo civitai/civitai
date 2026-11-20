@@ -213,6 +213,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     submitTraining: server.submitTraining,
 
     datasetRating: host.studioServer ? server.datasetRating : undefined,
+    pendingLicenses: host.studioServer ? server.pendingLicenses : undefined,
+    acceptLicense: host.studioServer ? server.acceptLicense : undefined,
 
     listEditGenerations: () => call((client) => edit.listEditGenerations(client)),
 
@@ -242,7 +244,7 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     quoteRun: (input) =>
       input.engine === 'kohya' && !kohyaAllowed()
         ? Promise.reject(new Error(train.KOHYA_UNAVAILABLE))
-        : call((client) => orch.trainingWhatIf(client, input)),
+        : call((client) => orch.trainingPreview(client, input)),
 
     getBuzz: async () => (host.getBuzzBalances ? host.getBuzzBalances() : null),
 

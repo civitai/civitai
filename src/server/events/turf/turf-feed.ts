@@ -14,7 +14,8 @@ import {
   ownDrawnStickers,
   type TurfEvent,
 } from '~/server/events/turf/turf.service';
-import { sysRedis } from '~/server/redis/client';
+import { redis, sysRedis } from '~/server/redis/client';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import type { HatSort } from '~/shared/constants/hat-turf-feed.constants';
 
 // The image feed's Hat Turf sorts and Show filters, read from the indexes WRITE_TURF_SCRIPT keeps.
@@ -171,7 +172,9 @@ export async function readMyTurfPage({
   if (!rows.length) return page([], false, rows);
   const ids = rows.map((r) => String(r.imageId));
   const scores = await Promise.all(
-    rankKeys(event, pickedTeams(event, teams)).map((key) => sysRedis.zmScore(key, ids))
+    rankKeys(event, pickedTeams(event, teams)).map((key) =>
+      boundedClusterCall('turfOwnHats', () => redis.zmScore(key, ids))
+    )
   );
   // Summed as the several-team rank is (ZUNIONSTORE), so the order matches readTurfRankPage's.
   const ranked = ids.flatMap((id, i) => {
@@ -215,10 +218,13 @@ export async function readTurfRankPage({
   const min = String(!most && at ? at.score : TURF_RANK_MIN);
   const max = most && at ? String(at.score) : '+inf';
   const count = limit + RANK_TIE_SLACK;
-  const reply = (await sysRedis.eval(READ_RANK_SCRIPT, {
-    keys: ranks.length > 1 ? [...ranks, keys.rankUnion(picked)] : ranks,
-    arguments: [min, max, most ? '1' : '', String(count), String(RANK_UNION_TTL_MS)],
-  })) as unknown[];
+  // Every key carries the event's hash tag, so the script runs in one cluster slot.
+  const reply = (await boundedClusterCall('readTurfRankPage', () =>
+    redis.eval(READ_RANK_SCRIPT, {
+      keys: ranks.length > 1 ? [...ranks, keys.rankUnion(picked)] : ranks,
+      arguments: [min, max, most ? '1' : '', String(count), String(RANK_UNION_TTL_MS)],
+    })
+  )) as unknown[];
   // The HA client may hand back Buffers.
   const flat = reply.map(String);
   const rows: { member: string; score: number }[] = [];
@@ -253,7 +259,11 @@ export async function turfHiddenIds(
   let hatted: unknown[] | null, worn: unknown[] | null;
   try {
     [hatted, worn] = await Promise.all([
-      hide.turf ? sysRedis.smIsMember(turfKeys(event.name).hatted, ids.map(String)) : null,
+      hide.turf
+        ? boundedClusterCall('turfHiddenIds', () =>
+            redis.smIsMember(turfKeys(event.name).hatted, ids.map(String))
+          )
+        : null,
       hide.worn
         ? sysRedis.hmGet(
             eventPointKeys(event.name).hats,

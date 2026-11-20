@@ -74,7 +74,7 @@ const MIGRATION = readFileSync(
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected', 'Void');
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT, "bannedAt" TIMESTAMP(3));
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "type" TEXT,
@@ -425,7 +425,42 @@ describe('deciding a held removal', () => {
     expect(recordModActivity).toHaveBeenCalledWith(
       expect.objectContaining({ userId: CONFIRMER, activity: 'confirmRemoval' })
     );
-    expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7, 8]);
+    expect(
+      setReportStatus.mock.calls.map(([a]) => [a.id, (a as { noReward?: boolean }).noReward])
+    ).toEqual([
+      [7, false],
+      [8, false],
+    ]);
+  });
+
+  it("closes the reports unpaid for a banned owner's grace-blocked image", async () => {
+    await approve();
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated',
+         metadata = '{"accountDeletionPriorIngestion": "Scanned"}' WHERE id = $1`,
+      [IMAGE]
+    );
+    await db.query(
+      `INSERT INTO "User" ("id", "bannedAt") SELECT "userId", now() FROM "Image" WHERE id = $1
+       ON CONFLICT ("id") DO UPDATE SET "bannedAt" = now()`,
+      [IMAGE]
+    );
+    const { held } = await blockImage({
+      imageId: IMAGE,
+      userId: REQUESTER,
+      violationType: 'animatedMinorNsfw',
+      reportIds: [7, 8],
+    });
+
+    await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER });
+
+    expect(await image()).toEqual({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    expect(
+      setReportStatus.mock.calls.map(([a]) => [a.id, (a as { noReward?: boolean }).noReward])
+    ).toEqual([
+      [7, true],
+      [8, true],
+    ]);
   });
 
   it('runs the removal once when two moderators confirm', async () => {
