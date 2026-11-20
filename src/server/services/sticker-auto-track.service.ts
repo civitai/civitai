@@ -134,7 +134,11 @@ export async function getStickerAutoTrack({
   userId: number;
   workflowId: string;
 }): Promise<StickerAutoTrackResult> {
-  const { data, error, response: readResponse } = await getWorkflow({
+  const {
+    data,
+    error,
+    response: readResponse,
+  } = await getWorkflow({
     client: internalOrchestratorClient,
     path: { workflowId },
   });
