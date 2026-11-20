@@ -31,6 +31,14 @@ const BUYER_MIN_AGE = Prisma.sql`interval '7 days'`;
  * offering in the surrounding statement. Each buyer counts once, by their latest published review.
  * A ban or deletion counts from the next recount.
  */
+/**
+ * A published review by a buyer still in good standing, `r` the review and `u` its buyer: what the
+ * offering page lists. The counters below add the counting bar (minimum price, account age, one
+ * per buyer) on top, so a review can be listed without being counted.
+ */
+export const shownReviewSql = Prisma.sql`r."publishedAt" IS NOT NULL
+  AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL`;
+
 export const offeringReviewTotals = (offeringId: Prisma.Sql) => Prisma.sql`(
   SELECT count(*) FILTER (WHERE c."verdict" = 'Happy')::int AS happy, count(*)::int AS total
   FROM (
@@ -38,10 +46,9 @@ export const offeringReviewTotals = (offeringId: Prisma.Sql) => Prisma.sql`(
     FROM "ServiceDealReview" r
     JOIN "ServiceDeal" d ON d."id" = r."dealId"
     JOIN "User" u ON u."id" = r."buyerId"
-    WHERE r."offeringId" = ${offeringId} AND r."publishedAt" IS NOT NULL
+    WHERE r."offeringId" = ${offeringId} AND ${shownReviewSql}
       AND d."price" >= ${SERVICE_PRICE_MIN}::int
       AND d."requestedAt" - u."createdAt" >= ${BUYER_MIN_AGE}
-      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
     ORDER BY r."buyerId", r."publishedAt" DESC, r."id" DESC
   ) c
 )`;

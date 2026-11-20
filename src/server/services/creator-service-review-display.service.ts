@@ -1,22 +1,18 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import { reviewImageVisibleSql } from '~/server/services/creator-service-deal-review-images';
+import { shownReviewSql } from '~/server/services/creator-service-deal-review-publish';
 import type { ServiceDealReviewVerdict } from '~/shared/utils/prisma/enums';
 
 export const SERVICE_REVIEWS_PAGE_SIZE = 12;
 
-/**
- * A review shown on its offering's page: published (which already carries the scan, hidden,
- * settled and refund rules), by a buyer still in good standing, on a deal whose rating the viewer's
- * levels allow, minus buyers this viewer hid or has a block with. `r` the review, `d` its deal, `u` its buyer.
- */
-const shownReviewSql = (
+/** `shownReviewSql` on this offering, at levels the deal's rating fits, minus excluded buyers. */
+const offeringReviewSql = (
   offeringId: number,
   levels: number,
   excludedUserIds: number[]
 ) => Prisma.sql`
-  r."offeringId" = ${offeringId}::int AND r."publishedAt" IS NOT NULL
-  AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+  r."offeringId" = ${offeringId}::int AND ${shownReviewSql}
   AND (d."maxNsfwLevel" & ${levels}::int) <> 0
   ${
     excludedUserIds.length
@@ -75,7 +71,7 @@ export async function getServiceOfferingReviews({
     FROM "ServiceDealReview" r
     JOIN "ServiceDeal" d ON d."id" = r."dealId"
     JOIN "User" u ON u."id" = r."buyerId"
-    WHERE ${shownReviewSql(offeringId, levels, excludedUserIds)}
+    WHERE ${offeringReviewSql(offeringId, levels, excludedUserIds)}
       ${
         cursor
           ? Prisma.sql`AND (r."publishedAt", r."id") <
@@ -127,7 +123,7 @@ export async function getServiceOfferingReviewWork({
     JOIN "ServiceDealReview" r ON r."id" = ri."reviewId"
     JOIN "ServiceDeal" d ON d."id" = r."dealId"
     JOIN "User" u ON u."id" = r."buyerId"
-    WHERE ${shownReviewSql(offeringId, levels, excludedUserIds)} AND ${reviewImageVisibleSql(
+    WHERE ${offeringReviewSql(offeringId, levels, excludedUserIds)} AND ${reviewImageVisibleSql(
     levels
   )}
       ${

@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CreatorServiceService from '~/server/services/creator-service.service';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
@@ -10,13 +11,15 @@ import {
 // The services filter by what the domain may be sent; only the router knows the domain. A router
 // that passed the wrong level would leak mature services to the SFW site with every service test green.
 
-const { mockGetMine, mockGetForShop, mockGetFeed, mockGetById, flags } = vi.hoisted(() => ({
-  mockGetMine: vi.fn(),
-  mockGetForShop: vi.fn(),
-  mockGetFeed: vi.fn(),
-  mockGetById: vi.fn(),
-  flags: { creatorShop: true, creatorServices: true, creatorServicesNext: true },
-}));
+const { mockGetMine, mockGetForShop, mockGetFeed, mockGetById, mockAssertViewable, flags } =
+  vi.hoisted(() => ({
+    mockAssertViewable: vi.fn(),
+    mockGetMine: vi.fn(),
+    mockGetForShop: vi.fn(),
+    mockGetFeed: vi.fn(),
+    mockGetById: vi.fn(),
+    flags: { creatorShop: true, creatorServices: true, creatorServicesNext: true },
+  }));
 
 vi.mock('~/server/services/creator-service.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorServiceService>()),
@@ -24,6 +27,7 @@ vi.mock('~/server/services/creator-service.service', async (importOriginal) => (
   getShopServiceOfferings: mockGetForShop,
   getServiceOfferingFeed: mockGetFeed,
   getServiceOfferingById: mockGetById,
+  assertServiceOfferingViewable: mockAssertViewable,
 }));
 
 // The flag gate reads `getFeatureFlags(ctx)` (Flipt), not `ctx.features`; turned on here so the
@@ -136,5 +140,46 @@ describe('creator service router: one service page', () => {
     flags.creatorServicesNext = false;
     await expect(callerOn(false).getById({ id: 3 })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(mockGetById).not.toHaveBeenCalled();
+  });
+});
+
+describe("creator service router: an offering's reviews", () => {
+  it.each(['getReviews', 'getReviewWork'] as const)(
+    '%s answers not found for an offering this viewer may not open, and checks it on this domain',
+    async (procedure) => {
+      mockAssertViewable.mockRejectedValueOnce(
+        new TRPCError({ code: 'NOT_FOUND', message: 'Service not found' })
+      );
+      await expect(callerOn(true)[procedure]({ id: 3 })).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+      expect(mockAssertViewable.mock.calls[0][0]).toMatchObject({
+        id: 3,
+        viewerId: 7,
+        servable: sfwBrowsingLevelsFlag,
+      });
+    }
+  );
+
+  it.each(['getReviews', 'getReviewWork'] as const)(
+    '%s is refused without the creatorServicesNext flag',
+    async (procedure) => {
+      flags.creatorServicesNext = false;
+      await expect(callerOn(false)[procedure]({ id: 3 })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+      expect(mockAssertViewable).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe('creator service router: the happy sort', () => {
+  it('reads "happy" as newest outside the creatorServicesNext rollout, and keeps it inside', async () => {
+    flags.creatorServicesNext = false;
+    await callerOn(false).getFeed({ sort: 'happy' });
+    expect(mockGetFeed.mock.calls[0][0]).toMatchObject({ sort: 'newest' });
+    flags.creatorServicesNext = true;
+    await callerOn(false).getFeed({ sort: 'happy' });
+    expect(mockGetFeed.mock.calls[1][0]).toMatchObject({ sort: 'happy' });
   });
 });

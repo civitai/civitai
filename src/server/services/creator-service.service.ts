@@ -424,7 +424,7 @@ const feedOrderBy = {
   newest: [{ createdAt: 'desc' }, { id: 'desc' }],
   price_asc: [{ price: 'asc' }, { id: 'asc' }],
   price_desc: [{ price: 'desc' }, { id: 'desc' }],
-  // -1 until three buyers count, so offerings without a share sort after those with one.
+  // -1 below SERVICE_HAPPY_MIN_REVIEWS, so offerings without a share sort after those with one.
   happy: [{ happySortKey: 'desc' }, { id: 'desc' }],
 } satisfies Record<ServiceOfferingFeedSort, Prisma.ServiceOfferingOrderByWithRelationInput[]>;
 

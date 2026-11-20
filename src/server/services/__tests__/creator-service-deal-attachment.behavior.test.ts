@@ -1795,13 +1795,12 @@ describe('reviews on the offering page', () => {
   });
 
   it('drops a review once its buyer is banned or deleted', async () => {
-    const banned = await shownReview({ buyerId: 20 });
-    const deleted = await shownReview({ buyerId: 21 });
+    await shownReview({ buyerId: 20 });
+    await shownReview({ buyerId: 21 });
     const kept = await shownReview({ buyerId: 22 });
     await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = 20`);
     await q(`UPDATE "User" SET "deletedAt" = now() WHERE id = 21`);
     expect((await list(RED)).items.map((r) => r.id)).toEqual([kept.reviewId]);
-    expect([banned.reviewId, deleted.reviewId]).not.toContain(kept.reviewId);
   });
 
   it("shows an R deal's review on .red and not on .com, with its images", async () => {
