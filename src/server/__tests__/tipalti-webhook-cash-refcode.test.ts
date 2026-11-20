@@ -21,6 +21,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('~/server/http/tipalti/tipalti.caller', () => ({
   default: async () => ({ getPaymentByRefCode }),
   TipaltiCaller: { validateWebhookEvent },
+  TIPALTI_SIGNATURE_LIFETIME_SECONDS: 360,
 }));
 vi.mock('~/server/services/creator-program.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorProgramService>()),

@@ -3628,6 +3628,10 @@ const REDIS_KEYS_UNPREFIXED = {
   CREATOR_SERVICES: {
     ACCESS_RECORDED_SINCE: 'packed:caches:creator-services:access-recorded-since',
   },
+  WEBHOOKS: {
+    // Tipalti event ids being or already handled — `webhooks:tipalti:event:${eventId}`.
+    TIPALTI_EVENT: 'webhooks:tipalti:event',
+  },
   CREATOR_PROGRAM: {
     CAPS: 'packed:caches:creator-program:caps',
     CASH: 'packed:caches:creator-program:cash',
