@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 /**
  * Tests for the rate-limit `recordAttempt` closure inside
@@ -97,6 +99,7 @@ vi.mock('~/env/client', () => ({
 }));
 
 import { rateLimit } from '../middleware.trpc';
+import { updateImageAcceptableMinorRateLimits } from '~/server/schema/image.schema';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockHGet = redisMock.redis.packed.hGet;
@@ -301,5 +304,35 @@ describe('rateLimit — a refusal decided by the claim script', () => {
     expect(refused).toBeInstanceOf(TRPCError);
     expect((refused as TRPCError).code).toBe('TOO_MANY_REQUESTS');
     expect((refused as TRPCError).message).toBe('Slow down on this one.');
+  });
+});
+
+describe("rateLimit — an image's acceptable-minor flag changes", () => {
+  const [rule] = updateImageAcceptableMinorRateLimits;
+  const attempts = (n: number) => Array.from({ length: n }, (_, i) => Date.now() - 1000 * (i + 1));
+  const change = (isModerator: boolean, prior: number) => {
+    rateLimit(updateImageAcceptableMinorRateLimits);
+    mockHGet.mockResolvedValue(attempts(prior));
+    const next = vi.fn(async () => ({ ok: true }));
+    const ctx = { ...baseCtx, user: { id: 42, isModerator } };
+    return capturedHandler.handler!({ ...baseArg, ctx, path: 'image.updateAccetableMinor', next });
+  };
+
+  it('admits a contest manager up to the limit in the window and refuses the next', async () => {
+    await expect(change(false, rule.limit - 1)).resolves.toEqual({ ok: true });
+    const refused = await change(false, rule.limit).catch((e: unknown) => e);
+    expect((refused as TRPCError).code).toBe('TOO_MANY_REQUESTS');
+  });
+
+  it('does not limit a moderator', async () => {
+    await expect(change(true, rule.limit)).resolves.toEqual({ ok: true });
+  });
+
+  // A built procedure's middlewares carry no identity to find this one by, so the wiring is read
+  // from the router source.
+  it('is applied to image.updateAccetableMinor', () => {
+    const router = readFileSync(join(process.cwd(), 'src/server/routers/image.router.ts'), 'utf8');
+    const procedure = router.slice(router.indexOf('updateAccetableMinor:')).split('.mutation(')[0];
+    expect(procedure).toContain('.use(rateLimit(updateImageAcceptableMinorRateLimits))');
   });
 });

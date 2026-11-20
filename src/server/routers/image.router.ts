@@ -53,7 +53,7 @@ import {
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
 import { withSharedFeedUsers } from '~/server/utils/feed-shared-users';
-import { cacheIt, edgeCacheIt } from './../middleware.trpc';
+import { cacheIt, edgeCacheIt, rateLimit } from './../middleware.trpc';
 import {
   IMAGE_404_CACHE_TAG,
   imageResourcesEdgeTag,
@@ -71,6 +71,7 @@ import {
   setTosViolationSchema,
   setVideoThumbnailSchema,
   toggleImageFlagSchema,
+  updateImageAcceptableMinorRateLimits,
   updateImageAcceptableMinorSchema,
   updateImageNsfwLevelSchema,
   updateImageTechniqueSchema,
@@ -263,6 +264,7 @@ export const imageRouter = router({
   updateAccetableMinor: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(updateImageAcceptableMinorSchema)
+    .use(rateLimit(updateImageAcceptableMinorRateLimits))
     .mutation(updateImageAcceptableMinorHandler),
   getMyImages: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

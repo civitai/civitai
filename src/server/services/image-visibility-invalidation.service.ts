@@ -69,7 +69,7 @@ export async function getImageOgCardUrls(imageId: number) {
 export const VISIBILITY_REPURGE_DELAY_MS = Math.max(env.REPLICATION_LAG_DELAY, 10) * 1000;
 
 /**
- * Drops the shared copies that can still show an image after a moderator changes who may see it:
+ * Drops the shared copies that can still show an image after a change to who may see it:
  * link-preview cards, the 404 gallery, its resources and the model galleries it is in. A viewer's
  * own copies expire on their short TTLs. Purges now and again after VISIBILITY_REPURGE_DELAY_MS.
  * Never throws: a failed step is logged and the others still run.
