@@ -63,7 +63,11 @@ CREATE TABLE "Post" (id INTEGER PRIMARY KEY, metadata JSONB, "modelVersionId" IN
 CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, meta JSONB, "modelId" INTEGER);
 CREATE TABLE "Model" (id INTEGER PRIMARY KEY, meta JSONB);
 CREATE TABLE "User" (id INTEGER PRIMARY KEY, meta JSONB);
-CREATE TABLE "ImageCdnAccess" (url TEXT PRIMARY KEY, state TEXT NOT NULL);
+-- An outright retraction by default; an upgraded deny sets "deniedAt" earlier.
+CREATE TABLE "ImageCdnAccess" (
+  url TEXT PRIMARY KEY, state TEXT NOT NULL,
+  "deniedAt" TIMESTAMPTZ NOT NULL DEFAULT now(), "retractedAt" TIMESTAMPTZ DEFAULT now()
+);
 CREATE TABLE "ImageCdnModeratorDelete" (
   "imageId" INTEGER PRIMARY KEY, url TEXT NOT NULL, "userId" INTEGER, "csamReview" BOOLEAN NOT NULL DEFAULT true
 );
@@ -100,6 +104,8 @@ beforeAll(async () => {
     -- The CDN-refusal leg. Each differs from 7 (scanned, url retracted, the url's only row) in one fact.
     INSERT INTO "Image" (id, url, "userId", ingestion, "postId", minor) VALUES
       (7, 'key-7', 307, 'Scanned', NULL, false),
+      (28, 'key-28', 328, 'Scanned', NULL, false),
+      (29, 'key-29', 329, 'Scanned', NULL, false),
       (8, 'key-8', 308, 'Scanned', NULL, false),
       (9, 'key-9', 309, 'Scanned', NULL, false),
       (10, 'key-10', 310, 'Pending', NULL, false),
@@ -127,6 +133,8 @@ beforeAll(async () => {
       ('key-18', 'Retracted'), ('key-19', 'Retracted'), ('key-20', 'Retracted'),
       ('key-21', 'Retracted'), ('key-23', 'Retracted'), ('key-24', 'Retracted'),
       ('key-25', 'Retracted'), ('key-26', 'Retracted'), ('key-27', 'Retracted');
+    INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES
+      ('key-28', 'Retracted', now() - interval '1 day', now()), ('key-29', 'Retracted', now(), NULL);
     INSERT INTO "Model" (id, meta) VALUES
       (15, '{"unpublishedReason": "mature-underage"}'), (99, '{}'),
       (26, '{"unpublishedReason": "photo-real-underage"}');
@@ -211,6 +219,13 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
 
   it('serves a scanned image whose url the CDN retracted, the url being its alone', async () => {
     expect(await tierOf(7)).toBe('anyMod');
+  });
+
+  // Moderation Lead ruling 2026-11-20: a deny upgraded to a retraction may have capped a hold on a
+  // row since deleted, so its url stays with the CSAM grant. Do not open it to every moderator.
+  it('keeps a url retracted by an upgraded deny, or with no retraction time, to cleared moderators', async () => {
+    expect(await tierOf(28)).toBe('cleared');
+    expect(await tierOf(29)).toBe('cleared');
   });
 
   it('is off unless the switch is exactly true', async () => {
