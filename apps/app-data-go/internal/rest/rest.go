@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -84,7 +85,7 @@ func (c *Client) page(ctx context.Context, token, collection, from, cursor strin
 		return nil, "", &Error{}
 	}
 	u.Path += "/api/v1/blocks/storage/" + url.PathEscape(collection)
-	q := url.Values{"limit": {fmt.Sprint(PageSize)}}
+	q := url.Values{"limit": {strconv.Itoa(PageSize)}}
 	if from != "" {
 		q.Set("from", from)
 	}

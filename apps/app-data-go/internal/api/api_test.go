@@ -183,7 +183,7 @@ type got struct {
 
 func (s *stack) get(t *testing.T, path, token string) got {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, http.NoBody)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -472,7 +472,7 @@ func TestBadRequests(t *testing.T) {
 	if g.status != 401 || g.header.Get("WWW-Authenticate") == "" {
 		t.Fatalf("no token: %d", g.status)
 	}
-	req := httptest.NewRequest(http.MethodGet, notesPath, http.NoBody)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, notesPath, http.NoBody)
 	req.Header.Set("Authorization", "Basic abc")
 	rec := httptest.NewRecorder()
 	s.h.ServeHTTP(rec, req)
@@ -501,7 +501,7 @@ func TestProbesAndPreflight(t *testing.T) {
 	if g := s.get(t, "/readyz", ""); g.status != 503 {
 		t.Fatalf("draining readyz: %d", g.status)
 	}
-	req := httptest.NewRequest(http.MethodOptions, notesPath, http.NoBody)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, notesPath, http.NoBody)
 	rec := httptest.NewRecorder()
 	s.h.ServeHTTP(rec, req)
 	if rec.Code != 204 || !strings.Contains(rec.Header().Get("Access-Control-Allow-Headers"), "Authorization") {

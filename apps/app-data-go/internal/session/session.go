@@ -183,7 +183,7 @@ func (m *Manager) Read(ctx context.Context, token, schema string) ([]registry.En
 			m.mu.Unlock()
 			return nil, ErrTokenCapacity
 		}
-		s = m.open(k, token, now)
+		s = m.open(k, token, now) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
 	}
 	m.mu.Unlock()
 	return s.read(ctx, m.opts.Now)

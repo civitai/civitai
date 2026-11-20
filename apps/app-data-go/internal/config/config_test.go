@@ -54,7 +54,7 @@ func TestInvalidSettingsFailTheStart(t *testing.T) {
 		"no REST url":              {map[string]string{"APP_DATA_REST_URL": ""}, "APP_DATA_REST_URL is required"},
 		"plain http REST":          {map[string]string{"APP_DATA_REST_URL": "http://site.invalid"}, "APP_DATA_REST_URL must be"},
 		"REST url with a query":    {map[string]string{"APP_DATA_REST_URL": "https://site.invalid?x=1"}, "APP_DATA_REST_URL must be"},
-		"REST url with userinfo":   {map[string]string{"APP_DATA_REST_URL": "https://u:p@site.invalid"}, "APP_DATA_REST_URL must be"},
+		"REST url with userinfo":   {map[string]string{"APP_DATA_REST_URL": "https://user@site.invalid"}, "APP_DATA_REST_URL must be"},
 		"plain http registry":      {map[string]string{"APP_DATA_REGISTRY_URL": "http://registry.invalid"}, "APP_DATA_REGISTRY_URL must be"},
 		"registry not a url":       {map[string]string{"APP_DATA_REGISTRY_URL": "registry"}, "APP_DATA_REGISTRY_URL must be"},
 		"not a number":             {map[string]string{"APP_DATA_MAX_STREAMS": "many"}, "APP_DATA_MAX_STREAMS must be an integer"},
