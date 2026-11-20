@@ -68,7 +68,7 @@ async function takeDailyRun(user: SessionUser) {
       windowSeconds: DAY_SECONDS,
       resetAt,
     },
-    usageLimitMessage(resolved.def, resolved) ?? 'Daily auto-track limit reached.'
+    usageLimitMessage(resolved.def, { ...resolved, limit }) ?? 'Daily auto-track limit reached.'
   );
 }
 

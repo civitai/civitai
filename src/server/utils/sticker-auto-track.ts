@@ -175,7 +175,10 @@ type RunCounter = Pick<typeof redis, 'incrBy' | 'decrBy' | 'expire'>;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** A store error throws, so nothing is submitted. */
+/**
+ * Not claimRateLimitAttempt: that is a rolling window, and the Limits page reads this UTC-day count
+ * by key. A store error throws, so nothing is submitted.
+ */
 export async function takeStickerAutoTrackRun(
   store: RunCounter,
   { userId, limit, now }: { userId: number; limit: number; now: number }

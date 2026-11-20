@@ -276,7 +276,7 @@ describe('submitCountedAutoTrack', () => {
 
 describe('pollAutoTrack', () => {
   const track = { ok: true, json: async () => TRACK };
-  const poll = (read: () => Promise<{ data?: unknown; error?: unknown; status?: number }>) =>
+  const poll = (read: Parameters<typeof pollAutoTrack>[0]['read']) =>
     pollAutoTrack({ read, download: async () => track, maxScale: async () => 1 }, PLACER);
 
   it('keeps polling through a failed read that is not a 404', async () => {
@@ -284,6 +284,19 @@ describe('pollAutoTrack', () => {
       expect(await poll(async () => ({ error: new Error('read'), status }))).toEqual({
         status: 'running',
       });
+  });
+
+  it('fails a finished run whose file cannot be fetched or read', async () => {
+    const done = async () => ({
+      data: finished([{ id: 'customcomfy-x-sticker_track_00002.json', url: BLOB_URL }]),
+      status: 200,
+    });
+    const withFile = (file: { ok: boolean; json: () => Promise<unknown> }) =>
+      pollAutoTrack({ read: done, download: async () => file, maxScale: async () => 1 }, PLACER);
+    expect(await withFile({ ok: false, json: async () => TRACK })).toEqual({ status: 'failed' });
+    expect(await withFile({ ok: true, json: async () => ({ v: 2 }) })).toEqual({
+      status: 'failed',
+    });
   });
 
   it('reports a 404 as no such run', async () => {
