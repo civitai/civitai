@@ -80,6 +80,15 @@ describe('SparteoTag TCF gate', () => {
     expect(sparteoScripts()).toBe(0);
   });
 
+  it('does not load on a provisional signal while the consent UI is up, then refuses', async () => {
+    installCmp(euTcData({ [SPARTEO]: true }, 'cmpuishown'));
+    await mount();
+    expect(sparteoScripts()).toBe(0);
+    await emit(euTcData({}, 'useractioncomplete'));
+    await act(async () => undefined);
+    expect(sparteoScripts()).toBe(0);
+  });
+
   it('waits while the consent UI is up, then loads on accept', async () => {
     installCmp(euTcData({}, 'cmpuishown'));
     await mount();
