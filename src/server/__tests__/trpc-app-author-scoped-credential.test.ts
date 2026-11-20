@@ -36,9 +36,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 const { createContext } = await import('~/server/createContext');
-const { appDeveloperProcedure, createCallerFactory, protectedProcedure, router } = await import(
-  '~/server/trpc'
-);
+const { appDeveloperProcedure, createCallerFactory, protectedProcedure, publicProcedure, router } =
+  await import('~/server/trpc');
 const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
 
 const appRouter = router({
@@ -162,10 +161,14 @@ describe('enforceAppBlocksAuthorFlag', () => {
     );
     const gated = router({
       authorFlag: protectedProcedure.use(enforceAppBlocksAuthorFlag).query(() => 'ok'),
+      // `isAuthed` refuses a banned session first, so only a public procedure reaches the
+      // middleware's own no-account refusal.
+      publicAuthorFlag: publicProcedure.use(enforceAppBlocksAuthorFlag).query(() => 'ok'),
     });
     const ctx = await createContext(request({ user }, credential));
     const caller = createCallerFactory(gated as never)(ctx as never) as unknown as {
       authorFlag: () => Promise<string>;
+      publicAuthorFlag: () => Promise<string>;
     };
     return { ctx, caller };
   }
@@ -187,6 +190,16 @@ describe('enforceAppBlocksAuthorFlag', () => {
   it('lets a moderator on a session through', async () => {
     const { caller } = await authorFlagAs(MOD);
     await expect(caller.authorFlag()).resolves.toBe('ok');
+  });
+
+  // A session, so the unannotated public procedure passes the scope check and reaches the gate.
+  it('refuses a banned moderator, who has no account to read', async () => {
+    const { ctx, caller } = await authorFlagAs({ ...MOD, bannedAt: new Date('2026-10-01') });
+    expect(ctx.user).toBeUndefined();
+    await expect(caller.publicAuthorFlag()).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: 'Apps authoring is not enabled',
+    });
   });
 });
 

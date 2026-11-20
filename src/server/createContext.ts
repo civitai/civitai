@@ -92,8 +92,7 @@ export const createContext = async ({
   const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
   // A banned viewer stays here (trpcViewer moves it to `bannedUser`), so the appeal flags still reach it.
   const viewer = withModeratorRightsFor(session?.user, credential);
-  // The App Blocks author capability is the account's, not the credential's: read it only through
-  // `appBlocksAuthorAccount`. Optional in the type, so contexts built elsewhere need not set it.
+  // The author capability is the account's, not the credential's: read it only via `appBlocksAuthorAccount`.
   const authorSubject: { appBlocksAuthorSubject?: typeof viewer } = {
     appBlocksAuthorSubject: session?.user,
   };
