@@ -15,6 +15,9 @@ const ALL = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X | NsfwLeve
 
 beforeAll(async () => {
   redisMock.redis.hGetAll.mockResolvedValue({ currentTrack: 't1', 'track:t1': '0' });
+  // Every fixture image is a sanity image, and the rater has no strikes.
+  redisMock.sysRedis.sMembers.mockResolvedValue(['1', '2', '3', '4', '5']);
+  redisMock.redis.hGet.mockResolvedValue('0');
   redisMock.sysRedis.hGetAll.mockResolvedValue({
     t1: JSON.stringify({ startingPoint: 0, startTime: '2020-01-01T00:00:00Z' }),
   });
@@ -46,6 +49,7 @@ beforeAll(async () => {
     CREATE TABLE "Bounty" (id int PRIMARY KEY, "userId" int, availability "Availability");
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int);
     CREATE TABLE research_ratings ("userId" int, "imageId" int, "createdAt" timestamp);
+    CREATE TABLE research_ratings_resets ("userId" int, "createdAt" timestamp);
     INSERT INTO "Post" (id, "publishedAt") VALUES (1, now() - interval '1 day');
     INSERT INTO "Image" (id, "postId", url, "nsfwLevel") VALUES
       (1, 1, 'pg', ${NsfwLevel.PG}),
@@ -85,6 +89,9 @@ const caller = ({
     req: { headers: {} },
     res: undefined,
   } as never);
+
+const sanityImageIds = async (who: Parameters<typeof caller>[0]) =>
+  (await caller(who).raterGetStatus()).sanityImages.map((i) => i.id).sort();
 
 const levelsServed = async (who: Parameters<typeof caller>[0], level: number) =>
   (await caller(who).raterGetImages({ level })).images.map((i) => i.nsfwLevel);
@@ -126,5 +133,21 @@ describe('research.raterGetImages level', () => {
     expect(
       await levelsServed({ showNsfw: true, browsingLevel: ALL, canViewNsfw: false }, ALL)
     ).toEqual([NsfwLevel.PG, NsfwLevel.PG13]);
+  });
+
+  describe('sanity images', () => {
+    it('serves a mature-browsing user every sanity image (control)', async () => {
+      expect(await sanityImageIds({ showNsfw: true, browsingLevel: ALL })).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('serves a user with mature content off only PG sanity images', async () => {
+      expect(await sanityImageIds({ showNsfw: false, browsingLevel: ALL })).toEqual([1]);
+    });
+
+    it('caps a caller on the SFW domain at PG-13', async () => {
+      expect(
+        await sanityImageIds({ showNsfw: true, browsingLevel: ALL, canViewNsfw: false })
+      ).toEqual([1, 2]);
+    });
   });
 });

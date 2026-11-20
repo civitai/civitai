@@ -138,7 +138,9 @@ export const researchRouter = router({
         sanityImages = await dbRead.$queryRaw<RaterImage[]>`
         SELECT i.id, i.url, null as "nsfwLevel"
         FROM "Image" i
-        WHERE i.id IN (${Prisma.join(sanityIds)}) AND ${imageNotRestrictedSql()};
+        WHERE i.id IN (${Prisma.join(sanityIds)})
+          AND (i."nsfwLevel" & ${getRequestBrowsingLevel(ctx)}) != 0
+          AND ${imageNotRestrictedSql()};
       `;
       }
 
