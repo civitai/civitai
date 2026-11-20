@@ -682,7 +682,12 @@ export async function triageFeedback(input: {
         ? update.where('handledById', 'is', null)
         : update.where('handledById', '=', input.expectedHandledById);
   if (input.expectedUnheld === true)
-    update = update.where(sql<boolean>`NOT (${sql.ref('context')} ? ${FEEDBACK_SYNC_HOLD_KEY})`);
+    // A hold counts only at `new`, as the sync reads it: one left on a moved row is stale.
+    update = update.where(
+      sql<boolean>`NOT (${sql.ref('status')} = 'new' AND ${sql.ref(
+        'context'
+      )} ? ${FEEDBACK_SYNC_HOLD_KEY})`
+    );
   /**
    * 🔴 Area, `server` and the resolution being edited are checked in the same statement, never taken
    * from the form: a resolution on another area is a stray key nothing reads, `jsonb_set` under a

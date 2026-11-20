@@ -26,7 +26,8 @@ async function readRows(ids: number[]): Promise<FeedbackSyncRow[]> {
     SELECT f."id", f."area", f."status", f."handledById",
            CASE WHEN jsonb_typeof(f."context"->'hq') = 'object'
              THEN f."context"->'hq'->>'id' END AS "hqTaskId",
-           (f."context" ? ${FEEDBACK_SYNC_HOLD_KEY}) AS "held"
+           -- A hold counts only at status new: one left on a moved row (an older writer) never freezes it.
+           (f."status" = 'new' AND f."context" ? ${FEEDBACK_SYNC_HOLD_KEY}) AS "held"
     FROM "Feedback" f
     WHERE f."id" = ANY(${ids}::int[])
     ORDER BY f."id"

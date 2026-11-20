@@ -242,6 +242,25 @@ describe('feedback-triage: the HQ sync hold guard', () => {
     expect(await readContext(id)).toEqual(held);
   });
 
+  it('a stale hold on a row no longer at new does not block the sync (an older writer left it)', async () => {
+    const id = await seedFeedback(db, {
+      userId: reporterId,
+      status: 'reviewed',
+      handledById: moderatorId,
+      context: { syncHold: { at: NOW, by: otherModeratorId } },
+    });
+    expect(
+      await run({
+        id,
+        status: 'actioned',
+        expectedStatus: 'reviewed',
+        expectedHandledById: moderatorId,
+        expectedUnheld: true,
+      })
+    ).toEqual({ ok: true, changed: true });
+    expect(await readContext(id)).toEqual({});
+  });
+
   it('writes an unheld row when expecting one (the control for the case above)', async () => {
     const id = await seedFeedback(db, { userId: reporterId });
     expect(
