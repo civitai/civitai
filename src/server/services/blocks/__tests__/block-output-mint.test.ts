@@ -275,6 +275,11 @@ describe('🔴 the poll and the route agree on what serving hides', () => {
     expect(JSON.stringify(snap)).not.toContain('orch.example');
   });
 
+  it('with serving off a RATED video from a never-rated engine is restricted too', () => {
+    const snap = snapshotFromWorkflow(wf([videoStep(video('k2', 'pg'), 'kling')]), OFF);
+    expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+  });
+
   it('CONTROL: with serving off a rated video from a rated engine keeps its url', () => {
     const snap = snapshotFromWorkflow(wf([videoStep(video('w1', 'pg'), 'wan')]), OFF);
     expect(snap.imageUrls).toStrictEqual([blobUrl('w1')]);
@@ -304,12 +309,19 @@ describe('🔴 the poll and the route agree on what serving hides', () => {
     expect(JSON.stringify(snap)).not.toContain('orch.example');
   });
 
+  it('with serving off an output of an unknown blob type is restricted, as with serving on', () => {
+    const shown = { url: blobUrl('u1') } as const;
+    const slot = { url: blobUrl('u1'), type: 'movie', nsfwLevel: null };
+    expect(applyServingOffRules(shown, slot, { neverRatedVideoStep: false })).toStrictEqual({
+      restricted: true,
+      reason: 'unrecognised_url',
+    });
+  });
+
   it("CONTROL: with serving off the owner's `na` audio keeps its url", () => {
     const AUDIO = { url: blobUrl('a1'), type: 'audio', nsfwLevel: 'na' };
     const shown = { url: blobUrl('a1') } as const;
-    expect(
-      applyServingOffRules(shown, AUDIO, { neverRatedVideoStep: false }, { neverRated: false })
-    ).toStrictEqual(shown);
+    expect(applyServingOffRules(shown, AUDIO, { neverRatedVideoStep: false })).toStrictEqual(shown);
   });
 
   it('the floor: a PG-only viewer is shown PG-13 on the poll, and the ticket serves it', async () => {

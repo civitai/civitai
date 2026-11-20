@@ -221,7 +221,13 @@ describe('trainedEpochs', () => {
       TEST_OUTPUT_CEILING
     );
     expect(snap).not.toHaveProperty('trainedEpochs');
-    expect(snap.imageUrls).toEqual([CKPT_1, SAMPLE_1A, SAMPLE_1B, CKPT_2, SAMPLE_2A]);
+    // Every position is kept; a `model` blob is not a media type, so it carries no url.
+    expect(snap.outputs).toHaveLength(5);
+    expect(snap.outputs?.filter((o) => 'restricted' in o)).toStrictEqual([
+      { restricted: true, reason: 'unrecognised_url' },
+      { restricted: true, reason: 'unrecognised_url' },
+    ]);
+    expect(snap.imageUrls).toEqual([SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]);
   });
 
   it('is OMITTED for a training step this bridge did not submit', () => {

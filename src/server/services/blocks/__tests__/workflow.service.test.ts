@@ -729,6 +729,25 @@ describe('projectAppWorkflow', () => {
     }
   });
 
+  it('an `na` output is restricted in position and never listed as an image', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            images: [{ id: 'b', url: 'https://cdn/x.png', available: true, nsfwLevel: 'na' }],
+          },
+        },
+      ],
+    });
+    const projected = projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING);
+    expect(projected.images).toStrictEqual([]);
+    expect(projected.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+  });
+
   it('nulls width/height/nsfwLevel when the orchestrator omits them', () => {
     const wf = fakeWorkflow({
       steps: [

@@ -443,12 +443,19 @@ describe('ownership: refused before anything is fetched or written', () => {
       expect(createImage).toHaveBeenCalledTimes(1);
     });
 
-    it('with serving off the `na` output is refused too', async () => {
+    it('with serving off the `na` output is refused too, and nothing is fetched or written', async () => {
       await expect(persist({ imageIndex: 0 }, withNa())).rejects.toMatchObject({
         code: 'BAD_REQUEST',
         message: 'output 0 is restricted',
       });
+      expect(fetch).not.toHaveBeenCalled();
       expect(createImage).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: with serving off the rated output beside it persists', async () => {
+      const wf = withNa();
+      await persistAfterScan({ imageIndex: 1, getWorkflow: async () => wf });
+      expect(createImage).toHaveBeenCalledTimes(1);
     });
   });
 });
