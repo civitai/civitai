@@ -467,6 +467,40 @@ the authenticated viewer or for nobody.
 - The shadow endpoint receives the original `Cookie` header and verifies it the same way — it never
   trusts an identity asserted by the caller.
 
+### 4.1 The minor content visibility rule
+
+The Node image reads apply one rule (`minorMatureImageVisibleSql` and `isMinorMatureImage` in
+`src/server/common/image-visibility.ts`, the rating test `minorContentRestrictedSql` /
+`isMinorContentRestricted`): an image whose `minor` flag is set (`COALESCE(minor, false)`) and whose
+`nsfwLevel` is NULL, 0 or at least R is shown only to its owner (`i."userId"` = the viewer) and to
+moderators, whatever the viewer's browsing settings (`disableMinor` is a separate, older clause and
+does not replace it). With no viewer it is shown to nobody. This service applies it on every read that
+serves a Node read applying it, through one set of helpers in `internal/hydrate/minormature.go`:
+
+| Go read | Node read | How |
+|---|---|---|
+| `feed.ImagesQuery.Build`: every image page of the gallery, `image.getInfinite` and `GET /api/v1/images` (Postgres pages, post completions, pinned and sponsored posts, the hydrate of the feed service's ids, the legacy `ids` batch) | `getAllImagesUncaptured` (`minorMatureImageVisibleSql({ userId: ownerId, isModerator })`) | `MinorMatureImageVisibleSQL` in the WHERE clause, after the `disableMinor` clause as in Node: the viewer's own images exempt, signed out exempting no one, `TRUE` for a moderator |
+| the showcase cache's miss lookup (`sqlVersionImages`) | `imagesForModelVersionsCache`'s lookupFn (`getImagesForModelVersion` with no user) | `MinorMatureImageHiddenSQL`: the rule with no viewer |
+| `hydrate.Sources.VersionImages` (`model.getAll`'s showcase images and covers) and `GET /api/v1/models`' showcase read | `imagesForModelVersionsCache`'s appendFn (`!isMinorMatureImage(i)`), on every read | `WithoutMinorMatureImages`, before the image tags are read and before any hold or per-viewer filter: for every viewer, owners and moderators included, since the cache is shared between viewers (an entry cached before the lookup left an image out still holds it) |
+
+The feed service's index is not what applies it: Node's query mapper sends the feed only
+`excludeMinor` (for `disableMinor`), so the feed can name such an image, and Node drops it in the
+hydrate, which reads through `getAllImagesUncaptured`. The hydrate here is `Build` with the feed's ids,
+so it drops it the same way. `model.getAll`'s cover is picked from the filtered showcase images, and a
+cover located on another version is read from the same filtered cache, so a restricted cover is no
+cover. Node keeps the `minor` member on these wires (it removes it only on article, bounty and webhook
+payloads, which this service does not serve), and so does this service.
+
+Reads that do not apply it, each for its own reason: the post image count (`getPostImageCounts`, an
+upper bound before any visibility filter), the cover locate step (it reads a cover's post and version,
+not the image), the image meta and video thumbnail lookups (of images a filtered read already chose)
+and profile pictures (Node's profile-picture reads do not apply it). `TestMinorMatureCallSites`
+(`internal/hydrate`) holds the ledger of every source file that reads Image rows or the showcase cache
+or calls the rule, so a new read fails it until it applies the rule or says why it need not. On these
+paths a signed-out viewer is already held to PG (the tRPC domain cap) or has every minor image removed
+(`GET /api/v1/images` always sets `disableMinor`), so signed out the rule changes no answer today; it is
+applied all the same.
+
 ## 5. Wire format
 
 The client decodes with a format-sniffing union (`src/shared/utils/trpc-union-transformer.ts`): an
