@@ -98,7 +98,7 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     maker: 'Ideogram',
     modelId: 2872974,
     goodAt:
-      'Accurate text for posters, logos and typography-led design, plus editing with up to four reference images.',
+      'Accurate text for posters, logos and typography-led design, plus editing with up to five reference images.',
     capabilities: ['legible_text', 'design_layout', 'image_editing', 'reference_images'],
   },
   {
