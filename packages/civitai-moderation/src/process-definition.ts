@@ -34,6 +34,8 @@ export const NOTICE_SLOTS = [
   'continueLink',
   'receivedAt',
   'submission',
+  /** The definition's own public title, so one shared text can name the request it answers. */
+  'requestType',
 ] as const;
 
 const id = z
