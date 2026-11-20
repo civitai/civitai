@@ -34,11 +34,15 @@ export type ScannedRowsPath = {
 
 /**
  * The source to hand the app for an uploaded blob:
- * - no `path` (no block token to call with), the flag OFF, or the flag unreadable (the query
- *   failed): the blob, unchanged. The gate stays the only authority: a blob handed back while
- *   the flag is ON is refused at submit, as it was before scanned rows existed, never admitted;
+ * - no `path` (no block token to call with), or the flag OFF: the blob, unchanged;
  * - the flag ON: the server's scanned copy, with the caller's other fields kept. A failed copy
- *   THROWS: the blob is exactly what the gate refuses while the flag is on.
+ *   THROWS: the blob is exactly what the gate refuses while the flag is on;
+ * - the flag UNREADABLE (the query failed): the copy is asked for anyway, and its answer decides.
+ *   The copy refuses while the flag is off for this app, so a copy that succeeds shows the flag
+ *   is on, and the app gets the scanned row. A copy that fails leaves the flag unknown, so the app
+ *   gets the blob: the gate stays the authority, and refuses it at submit if the flag is on.
+ *   🔴 Why the query can fail while the flag is on: during a rollout a pod without the query
+ *   answers it with an error, and reading that as OFF handed back a blob the new gate refused.
  *
  * `isCurrent`: whether the caller still wants this pick. Read after the path query, so a pick the
  * viewer abandoned meanwhile (re-picked, closed) resolves `null` without asking for a copy, and
@@ -50,15 +54,24 @@ export async function toGenerationSource<T extends UploadedSourceBlob>(
   isCurrent: () => boolean = () => true
 ): Promise<T | (T & ScannedGenerationSource) | null> {
   if (!path) return blob;
-  let scannedRows: boolean;
+  let scannedRows: boolean | 'unknown';
   try {
     scannedRows = (await path.usesScannedRows()) === true;
   } catch {
-    scannedRows = false;
+    scannedRows = 'unknown';
   }
-  if (!scannedRows) return blob;
+  if (scannedRows === false) return blob;
   if (!isCurrent()) return null;
-  const persisted = await path.persist(blob.url);
+  let persisted: ScannedGenerationSource;
+  if (scannedRows === 'unknown') {
+    try {
+      persisted = await path.persist(blob.url);
+    } catch {
+      return blob;
+    }
+  } else {
+    persisted = await path.persist(blob.url);
+  }
   return {
     ...blob,
     url: persisted.url,
