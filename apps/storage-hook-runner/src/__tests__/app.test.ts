@@ -35,7 +35,7 @@ beforeAll(async () => {
     onBackstop: (appId) => metrics.workerTerminated.inc({ app: appId }),
   });
   metrics.attachPool(pool);
-  app = buildApp({ secret: SECRET, pool, metrics });
+  app = buildApp({ secret: SECRET, mode: 'check', pool, metrics });
   await app.ready();
 });
 afterAll(async () => {
@@ -224,8 +224,11 @@ describe('POST /v1/check: signature and replay window', () => {
 
 describe('the secret as configured', () => {
   it('a secret configured with a trailing newline verifies a request signed with the trimmed secret', async () => {
-    const configured = loadConfig({ STORAGE_HOOK_RUNNER_SECRET: `${SECRET}\n` }).secret;
-    const withNewline = buildApp({ secret: configured, pool, metrics });
+    const configured = loadConfig({
+      STORAGE_HOOK_RUNNER_SECRET: `${SECRET}\n`,
+      RUNNER_MODE: 'check',
+    }).secret;
+    const withNewline = buildApp({ secret: configured, mode: 'check', pool, metrics });
     await withNewline.ready();
     try {
       const body = JSON.stringify(checkBody(ALLOW));
@@ -311,6 +314,21 @@ describe('POST /v1/check: request shape', () => {
   });
 });
 
+describe('route mode', () => {
+  it('a check-mode process does not serve /v1/remix/replay, even to a signed request', async () => {
+    const body = JSON.stringify({ ts: Math.floor(Date.now() / 1000) });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/remix/replay',
+      headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(404);
+    // POSITIVE CONTROL: the same process serves its own route.
+    expect((await post(JSON.stringify(checkBody(ALLOW)))).statusCode).toBe(200);
+  });
+});
+
 describe('health', () => {
   it('/healthz is 200', async () => {
     const res = await app.inject({ method: 'GET', url: '/healthz' });
@@ -327,7 +345,7 @@ describe('health', () => {
   it('/readyz stays 200 while the pool is saturated', async () => {
     const m = createMetrics();
     const p = await HookPool.start({ size: 1, maxQueue: 1, maxPerApp: 8 });
-    const a = buildApp({ secret: SECRET, pool: p, metrics: m });
+    const a = buildApp({ secret: SECRET, mode: 'check', pool: p, metrics: m });
     try {
       const slow = JSON.stringify(checkBody(LOOP, { timeoutMs: 300 }));
       const inflight = [post2(a, slow), post2(a, slow)]; // one running, one queued: queue full
@@ -361,7 +379,7 @@ describe('health', () => {
       deadAfterMs: 50,
       createWorker: (url) => new Worker(made++ === 0 ? url : crash),
     });
-    const a = buildApp({ secret: SECRET, pool: p, metrics: m });
+    const a = buildApp({ secret: SECRET, mode: 'check', pool: p, metrics: m });
     try {
       expect((await a.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(200);
       const res = await post2(a, JSON.stringify(checkBody(STALL, { timeoutMs: 10 })));
@@ -377,7 +395,7 @@ describe('health', () => {
   it('/readyz is 503 once the pool is closed', async () => {
     const m = createMetrics();
     const p = await HookPool.start({ size: 1 });
-    const a = buildApp({ secret: SECRET, pool: p, metrics: m });
+    const a = buildApp({ secret: SECRET, mode: 'check', pool: p, metrics: m });
     await p.close();
     const res = await a.inject({ method: 'GET', url: '/readyz' });
     expect(res.statusCode).toBe(503);
@@ -394,7 +412,7 @@ describe('runner faults are not blamed on the author', () => {
       backstopMs: 20,
       onBackstop: (appId) => m.workerTerminated.inc({ app: appId }),
     });
-    const a = buildApp({ secret: SECRET, pool: p, metrics: m });
+    const a = buildApp({ secret: SECRET, mode: 'check', pool: p, metrics: m });
     try {
       const res = await post2(a, JSON.stringify(checkBody(STALL, { timeoutMs: 10 })));
       expect(res.statusCode).toBe(500);
@@ -431,7 +449,7 @@ describe('per-app fairness over HTTP', () => {
   it('app A at its cap gets 503 overloaded while app B is answered', async () => {
     const m = createMetrics();
     const p = await HookPool.start({ size: 1, maxQueue: 8, maxPerApp: 2 });
-    const a = buildApp({ secret: SECRET, pool: p, metrics: m });
+    const a = buildApp({ secret: SECRET, mode: 'check', pool: p, metrics: m });
     try {
       const slowA = JSON.stringify(checkBody(LOOP, { timeoutMs: 100 }));
       const inflight = [post2(a, slowA), post2(a, slowA)];
@@ -460,7 +478,7 @@ describe('overload', () => {
   it('answers 503 overloaded once the queue is full', async () => {
     const m = createMetrics();
     const p = await HookPool.start({ size: 1, maxQueue: 1, maxPerApp: 8 });
-    const a = buildApp({ secret: SECRET, pool: p, metrics: m });
+    const a = buildApp({ secret: SECRET, mode: 'check', pool: p, metrics: m });
     try {
       const slow = JSON.stringify(checkBody(LOOP, { timeoutMs: 200 }));
       const inflight = [post2(a, slow), post2(a, slow)]; // one running, one queued

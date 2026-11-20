@@ -185,7 +185,7 @@ All bounds live in `src/limits.ts`.
 | stack    | 256 KiB                                            | `runtime.setMaxStackSize` (see below)                                                                           |
 | time     | `timeoutMs`, [1, 500], default 50, evaluation only (a remix replay: 50, its awaits included) | interrupt handler (uncatchable; `catch`/`finally` cannot resume; a swallowed interrupt still ends as `timeout`) |
 | backstop | `timeoutMs` + 100 ms (a remix call: (50 + 30) ms per replay + 50 ms + 100 ms) | the pool terminates and replaces the worker; answered 500                         |
-| per app  | ⌈`MAX_QUEUE` / 4⌉ calls queued plus in flight      | the pool; past it that app gets 503 while others proceed                                                        |
+| per app  | ⌈`MAX_QUEUE` / 4⌉ calls queued plus in flight (remix mode: 4) | the pool; past it that app gets 503 while others proceed                                                        |
 | source   | 64 KiB (a remix app 32 KiB)                        | request validation                                                                                              |
 | body     | 256 KiB                                            | Fastify `bodyLimit`                                                                                             |
 
@@ -231,18 +231,25 @@ All bounds live in `src/limits.ts`.
   (cgroup v2 `/sys/fs/cgroup/cpu.max`, rounded up, capped at the cores Node sees), else
   `availableParallelism()`: that alone reports the node's cores, which would start one worker
   per node core in a 1-CPU pod. One app may hold at most `MAX_PER_APP` (default ⌈`MAX_QUEUE` /
-  4⌉) calls queued plus in flight.
+  4⌉ in check mode, 4 in remix mode) calls queued plus in flight.
 - Worker replacement: a worker that dies while serving, or is terminated by the backstop, is
   replaced at once. A replacement that fails to start is retried with exponential backoff (100 ms
   doubling to 30 s). A worker that fails during the initial start fails startup instead.
 
 ## Operations
 
+A process serves ONE signed route, set by the required `RUNNER_MODE`: `check` serves only
+`POST /v1/check`, `remix` only `POST /v1/remix/replay`; the other answers 404. Without it, or with
+any other value, the runner refuses to start (`RUNNER_MODE must be check or remix`). Remix code is
+unreviewed, so it runs in its own deployment, with its own URL and secret, never on the pool that
+answers permission checks.
+
 | route            | port                  | meaning                                                                                                                                                                                                                                                                                                        |
 | ---------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/check` | `PORT` (8080)         | evaluate                                                                                                                                                                                                                                                                                                       |
+| `POST /v1/check` | `PORT` (8080)         | evaluate (mode `check`)                                                                                                                                                                                                                                                                                        |
+| `POST /v1/remix/replay` | `PORT`         | replay (mode `remix`)                                                                                                                                                                                                                                                                                          |
 | `GET /healthz`   | `PORT`                | liveness: 503 once the pool has had no ready worker for 30 s (replacements keep failing), so the pod is restarted                                                                                                                                                                                              |
-| `GET /readyz`    | `PORT`                | at least one worker is ready, and the built-in self-test hooks (allow, deny, an infinite loop stopped by the interrupt handler) answer correctly. The self-test runs on its own QuickJS instance on the request thread, not through the pool, so a saturated pool is still ready; its result is reused for 5 s |
+| `GET /readyz`    | `PORT`                | at least one worker is ready, and the served route's built-in self-test answers correctly: in check mode the hooks allow, deny and an infinite loop stopped by the interrupt handler; in remix mode an app that finishes over its log and one whose loop the interrupt stops, through the same replay code. The self-test runs on its own QuickJS instance on the request thread, not through the pool, so a saturated pool is still ready; its result is reused for 5 s |
 | `GET /metrics`   | `METRICS_PORT` (9091) | Prometheus                                                                                                                                                                                                                                                                                                     |
 
 Metrics:
@@ -257,8 +264,9 @@ Metrics:
 - `storage_hook_runner_worker_terminated_total{app}`: backstop terminations.
 - `storage_hook_runner_pool_workers{state}`, `storage_hook_runner_queue_depth`.
 
-Environment: see `.env.example`. `STORAGE_HOOK_RUNNER_SECRET` (at least 32 characters) is
-required; it signs requests (caller side) and responses (here).
+Environment: see `.env.example`. `STORAGE_HOOK_RUNNER_SECRET` (at least 32 characters) and
+`RUNNER_MODE` (`check` or `remix`) are required; the secret signs requests (caller side) and
+responses (here).
 
 The service needs no egress at all. Deployment manifests are kept outside this repository.
 
@@ -277,8 +285,9 @@ The first tag, `storage-hook-runner-v0.0.1`, matches the version already in `pac
 is cut directly (not through the script, which would bump it to 0.0.2 first).
 
 CI: `.github/workflows/storage-hook-runner-image.yml` builds the image on PRs and `main` without
-pushing it, then runs it with a read-only root filesystem as uid 1001 and requires `/readyz` and
-`/healthz` to answer 200.
+pushing it, then runs it with a read-only root filesystem as uid 1001, once per `RUNNER_MODE`, and requires
+`/readyz` and `/healthz` to answer 200 and the other mode's route to answer 404. It also requires
+a start without the secret, and one without `RUNNER_MODE`, to fail.
 
 ## Tests
 

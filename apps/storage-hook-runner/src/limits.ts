@@ -107,6 +107,12 @@ export function defaultMaxPerApp(maxQueue: number): number {
   return Math.max(1, Math.ceil(maxQueue / 4));
 }
 
+/**
+ * The per-app cap in remix mode: a remix call can hold a worker for up to
+ * `remixBudgetMs(13) + BACKSTOP_MS`, so one app gets far fewer than a hook's quarter of the queue.
+ */
+export const REMIX_DEFAULT_MAX_PER_APP = 4;
+
 /** Replacement-worker start retries: first delay, doubling up to the max. */
 export const RESPAWN_BASE_MS = 100;
 export const RESPAWN_MAX_MS = 30_000;

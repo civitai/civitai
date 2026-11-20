@@ -96,13 +96,15 @@ describe.skipIf(process.env.RUNNER_BENCH !== '1')('benchmark (opt-in: RUNNER_BEN
   describe('end to end over HTTP (app.inject, pool of 1)', () => {
     let pool: HookPool;
     let app: FastifyInstance;
+    let remixApp: FastifyInstance;
     beforeAll(async () => {
       pool = await HookPool.start({ size: 1 });
-      app = buildApp({ secret: SECRET, pool, metrics: createMetrics() });
-      await app.ready();
+      app = buildApp({ secret: SECRET, mode: 'check', pool, metrics: createMetrics() });
+      remixApp = buildApp({ secret: SECRET, mode: 'remix', pool, metrics: createMetrics() });
+      await Promise.all([app.ready(), remixApp.ready()]);
     });
     afterAll(async () => {
-      await app.close();
+      await Promise.all([app.close(), remixApp.close()]);
       await pool.close();
     });
 
@@ -148,7 +150,7 @@ describe.skipIf(process.env.RUNNER_BENCH !== '1')('benchmark (opt-in: RUNNER_BEN
           },
         });
         const t = performance.now();
-        const res = await app.inject({
+        const res = await remixApp.inject({
           method: 'POST',
           url: '/v1/remix/replay',
           headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },

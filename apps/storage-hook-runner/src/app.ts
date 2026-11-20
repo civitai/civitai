@@ -15,14 +15,18 @@ import { BackstopError, PoolClosedError, PoolOverloadedError } from './pool.ts';
 import type { HookPool } from './pool.ts';
 import { outcomeOf } from './result.ts';
 import type { HookResult } from './result.ts';
+import type { RunnerMode } from './config.ts';
+import { evaluateRemix } from './remix.ts';
 import type { RemixReplayResult } from './remix.ts';
 import { QuickJSInstance, compileQuickJS } from './sandbox.ts';
-import { runSelfTest } from './selftest.ts';
+import { runRemixSelfTest, runSelfTest } from './selftest.ts';
 import type { SelfTestReport } from './selftest.ts';
 import { checkTimestamp, sha256Hex, sign, verifySignature } from './signing.ts';
 
 export type AppDeps = {
   secret: string;
+  /** The one signed route this process serves; the other is not mounted (404). */
+  mode: RunnerMode;
   pool: HookPool;
   metrics: Metrics;
   /** Test seam for the clock; seconds. */
@@ -58,10 +62,10 @@ const SELF_TEST_TTL_MS = 5_000;
 
 /**
  * Routes:
- *   POST /v1/check  signed hook evaluation (see README "Contract")
- *   POST /v1/remix/replay  signed remix app replay (see README "Remix replay")
+ *   POST /v1/check  signed hook evaluation (see README "Contract"), in mode `check` only
+ *   POST /v1/remix/replay  signed remix app replay (see README "Remix replay"), in mode `remix` only
  *   GET  /healthz   process is up
- *   GET  /readyz    a worker is ready AND the built-in self-test hooks evaluate correctly
+ *   GET  /readyz    a worker is ready AND the served route's built-in self-test passes
  *
  * The request body is read as raw bytes: the HMAC covers the exact bytes the caller sent, and
  * the signature is checked BEFORE the JSON is parsed. Request bodies, which carry user
@@ -119,12 +123,17 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // runs on a QuickJS instance of its own on this thread, NOT through the pool, so it never
   // queues behind hook work: an overloaded pool is still a ready pod (overload is answered 503
   // per request). Its result is reused for SELF_TEST_TTL_MS.
-  const selfTestInstance = QuickJSInstance.fromCompiled(compileQuickJS());
+  const compiled = compileQuickJS();
+  const selfTestInstance = QuickJSInstance.fromCompiled(compiled);
+  const runServedSelfTest = () =>
+    deps.mode === 'remix'
+      ? runRemixSelfTest((args) => evaluateRemix(compiled, args))
+      : runSelfTest((args) => selfTestInstance.evaluate(args));
   let selfTest: { at: number; report: Promise<SelfTestReport> } | null = null;
   app.get('/readyz', async (_request, reply) => {
     const now = performance.now();
     if (!selfTest || now - selfTest.at > SELF_TEST_TTL_MS) {
-      selfTest = { at: now, report: runSelfTest((args) => selfTestInstance.evaluate(args)) };
+      selfTest = { at: now, report: runServedSelfTest() };
     }
     const report = await selfTest.report;
     const workers = deps.pool.stats().ready > 0;
@@ -207,56 +216,68 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return refuse(reply, req, 'worker_crashed', 'hook worker failed', appId);
   };
 
-  app.post('/v1/check', async (request, reply) => {
-    const signed = readSigned(request, reply, CheckRequest, MAX_SOURCE_BYTES);
-    if ('sent' in signed) return signed.sent;
-    const { req, body } = signed;
+  if (deps.mode === 'check')
+    app.post('/v1/check', async (request, reply) => {
+      const signed = readSigned(request, reply, CheckRequest, MAX_SOURCE_BYTES);
+      if ('sent' in signed) return signed.sent;
+      const { req, body } = signed;
 
-    let out;
-    try {
-      out = await deps.pool.run({
-        appId: body.appId,
-        source: body.source,
-        inputJson: JSON.stringify(body.input),
-        timeoutMs: clampTimeout(body.timeoutMs),
+      let out;
+      try {
+        out = await deps.pool.run({
+          appId: body.appId,
+          source: body.source,
+          inputJson: JSON.stringify(body.input),
+          timeoutMs: clampTimeout(body.timeoutMs),
+        });
+      } catch (err) {
+        return refusePoolError(reply, req, body.appId, err);
+      }
+
+      const outcome = outcomeOf(out.result);
+      deps.metrics.calls.inc({
+        app: body.appId,
+        collection: body.collection,
+        op: body.op,
+        outcome,
       });
-    } catch (err) {
-      return refusePoolError(reply, req, body.appId, err);
-    }
+      deps.metrics.duration.observe({ outcome }, out.elapsedMs / 1000);
+      return send(reply, 200, { ts: nowSec(), req, result: out.result, elapsedMs: out.elapsedMs });
+    });
 
-    const outcome = outcomeOf(out.result);
-    deps.metrics.calls.inc({ app: body.appId, collection: body.collection, op: body.op, outcome });
-    deps.metrics.duration.observe({ outcome }, out.elapsedMs / 1000);
-    return send(reply, 200, { ts: nowSec(), req, result: out.result, elapsedMs: out.elapsedMs });
-  });
+  if (deps.mode === 'remix')
+    app.post('/v1/remix/replay', async (request, reply) => {
+      const signed = readSigned(request, reply, RemixReplayRequest, MAX_REMIX_SOURCE_BYTES);
+      if ('sent' in signed) return signed.sent;
+      const { req, body } = signed;
+      const { source, base, branches = [], autoAnswer } = body.input;
+      const logs = [base, ...branches.map((branch) => [...base, ...branch])];
 
-  app.post('/v1/remix/replay', async (request, reply) => {
-    const signed = readSigned(request, reply, RemixReplayRequest, MAX_REMIX_SOURCE_BYTES);
-    if ('sent' in signed) return signed.sent;
-    const { req, body } = signed;
-    const { source, base, branches = [], autoAnswer } = body.input;
-    const logs = [base, ...branches.map((branch) => [...base, ...branch])];
+      let out;
+      try {
+        out = await deps.pool.runRemix({
+          appId: body.appId,
+          source: body.source,
+          image: source,
+          logs,
+          autoAnswer,
+          budgetMs: remixBudgetMs(logs.length),
+        });
+      } catch (err) {
+        return refusePoolError(reply, req, body.appId, err);
+      }
 
-    let out;
-    try {
-      out = await deps.pool.runRemix({
-        appId: body.appId,
-        source: body.source,
-        image: source,
-        logs,
-        autoAnswer,
-        budgetMs: remixBudgetMs(logs.length),
+      for (const result of out.results) {
+        const outcome = 'cause' in result ? result.cause : result.done ? 'done' : 'effect';
+        deps.metrics.calls.inc({ app: body.appId, collection: 'remix', op: 'replay', outcome });
+      }
+      return send(reply, 200, {
+        ts: nowSec(),
+        req,
+        results: out.results,
+        elapsedMs: out.elapsedMs,
       });
-    } catch (err) {
-      return refusePoolError(reply, req, body.appId, err);
-    }
-
-    for (const result of out.results) {
-      const outcome = 'cause' in result ? result.cause : result.done ? 'done' : 'effect';
-      deps.metrics.calls.inc({ app: body.appId, collection: 'remix', op: 'replay', outcome });
-    }
-    return send(reply, 200, { ts: nowSec(), req, results: out.results, elapsedMs: out.elapsedMs });
-  });
+    });
 
   return app;
 }

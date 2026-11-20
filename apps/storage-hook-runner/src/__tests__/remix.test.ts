@@ -9,7 +9,7 @@ import {
 } from '../limits.ts';
 import { createMetrics } from '../metrics.ts';
 import { HookPool } from '../pool.ts';
-import { PICK_OF_FOUR, SECRET, hmac, sha256 } from '../test-support/fixtures.ts';
+import { PICK_OF_FOUR, SECRET, checkBody, hmac, sha256 } from '../test-support/fixtures.ts';
 
 /** `POST /v1/remix/replay` through the real Fastify app and the real worker pool. */
 
@@ -21,7 +21,7 @@ let pool: HookPool;
 let app: FastifyInstance;
 beforeAll(async () => {
   pool = await HookPool.start({ size: 2 });
-  app = buildApp({ secret: SECRET, pool, metrics: createMetrics() });
+  app = buildApp({ secret: SECRET, mode: 'remix', pool, metrics: createMetrics() });
   await app.ready();
 });
 afterAll(async () => {
@@ -310,6 +310,29 @@ it(`gives each of ${
   });
   expect(all).toHaveLength(1 + MAX_REMIX_BRANCHES);
   expect(all.every((r) => r.cause === 'timeout')).toBe(true);
+});
+
+describe('remix mode', () => {
+  it('does not serve /v1/check, even to a signed request', async () => {
+    const body = JSON.stringify(
+      checkBody('export default function check() { return { allow: true }; }')
+    );
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/check',
+      headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(404);
+    // POSITIVE CONTROL: the same process serves its own route.
+    expect((await replay(PICK_OF_FOUR)).statusCode).toBe(200);
+  });
+
+  it('/readyz self-tests a remix app that finishes and one the interrupt stops', async () => {
+    const res = await app.inject({ method: 'GET', url: '/readyz' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, checks: { finish: true, interrupt: true } });
+  });
 });
 
 describe('POST /v1/remix/replay: refusals', () => {
