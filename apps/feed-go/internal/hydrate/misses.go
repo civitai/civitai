@@ -33,13 +33,15 @@ const (
 	MissModelTags        = "model-tags"        // modelTagCache (model.getAll)
 	MissOfficialModels   = "official-models"   // getOfficialModelIds' fetchThroughCache entry (model.getAll)
 	MissImageTags        = "image-tags"        // imageTagsCache (image.getInfinite with include 'tags'; never written)
+	MissUserFollows      = "user-follows"      // userFollowsCache (image.getInfinite with followed; never written nor kept)
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter. A label that is also a page cache
 // (PageCaches) or a model.getAll cache is the same string as that cache's probe label: the probe reads
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
-	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics, MissImageTags}
+	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics, MissImageTags,
+	MissUserFollows}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -251,13 +253,14 @@ func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
 
 // memoized is whether lookupShared keeps cache's answers in recent: for a cache not written back,
 // except the image meta (imageMetaCache has no per-pod L1 in Node, deliberately: a hideMeta flip
-// must not leave the old prompt served from a process's copy). The tag ids, the model frames, the
+// must not leave the old prompt served from a process's copy) and the user follows (the viewer's own
+// follow set, which they change and then read back; userFollowsCache has no L1 either). The tag ids, the model frames, the
 // model decorations and the version showcases are kept: none depends on the viewer (the showcase
 // lookup reads no user, and the per-viewer image filter runs on every read), Node keeps tag ids in a
 // per-pod L1 far longer than recentTTL, and a model frame or decoration is the same lookup the image
 // ones keep.
 func (c *MissCompute) memoized(cache string) bool {
-	return !c.writes(cache) && cache != MissImageMeta
+	return !c.writes(cache) && cache != MissImageMeta && cache != MissUserFollows
 }
 
 // fromRecent adds the kept, unexpired answers of ids to out and returns the ids it could not answer.
@@ -400,7 +403,7 @@ var (
 // missSpecs are the computed caches' write shapes, one per cache fill runs for; their reasons are
 // the fallbacks those misses raise without a computation (Sources.MissReason).
 var missSpecs = []lookupSpec{userCosmeticsSpec, frameSpec, modelFrameSpec, eventSpec, modelEventSpec, tagIDsSpec, versionImagesSpec,
-	modelDataSpec, modelTagsSpec, officialModelsSpec, imageTagsSpec}
+	modelDataSpec, modelTagsSpec, officialModelsSpec, imageTagsSpec, userFollowsSpec}
 
 // specReason is the fallback reason of the named cache's lookup spec ("" for none).
 func specReason(cache string) string {

@@ -236,14 +236,16 @@ func TestTagIDsMissRepeatsShareOneLookup(t *testing.T) {
 }
 
 // Which caches keep their answers in process: with write-back off every computed cache but the image
-// meta (tag ids, model frames, model decorations, version showcases, model data, model tags, the
-// official models, image metrics and image tags included), with it on none but the image tags, which
-// are never written (not a WriteCaches name), so nothing else answers their repeats.
+// meta and the user follows (tag ids, model frames, model decorations, version showcases, model data,
+// model tags, the official models, image metrics and image tags included), with it on none but the
+// image tags, which are never written (not a WriteCaches name), so nothing else answers their
+// repeats. The user follows are never kept: the viewer's own follow set, read back after they change it.
 func TestMemoizedCaches(t *testing.T) {
 	off, on := &MissCompute{}, &MissCompute{WriteBack: AllWrites()}
 	want := map[string]bool{MissUserCosmetics: true, MissImageFrames: true, MissEventDecorations: true, MissImageMeta: false,
 		MissTagIDs: true, MissModelFrames: true, MissModelDecorations: true, MissVersionImages: true, MissMetrics: true,
-		"model-data": true, "model-tags": true, "official-models": true, "image-tags": true}
+		"model-data": true, "model-tags": true, "official-models": true, "image-tags": true,
+		"user-follows": false}
 	if len(want) != len(MissCaches) {
 		t.Fatalf("MissCaches %v; this test enumerates %d", MissCaches, len(want))
 	}

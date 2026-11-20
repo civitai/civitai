@@ -67,6 +67,9 @@ const (
 	CacheSessionUser     = "session-user"
 	CacheGallerySettings = "gallery-settings"
 	CacheBlockedTags     = "blocked-tags" // image.getInfinite only
+	// CacheUserFollows is the viewer's follow list (image.getInfinite with `followed`): read before
+	// the page, and a miss on it falls back without the miss computation (hydrate.MissUserFollows).
+	CacheUserFollows = hydrate.MissUserFollows
 )
 
 // model.getAll's caches (internal/hydrate/models.go, official.go). Its probe runs the serving path
@@ -90,6 +93,7 @@ var preHydrateMissReasons = map[string]string{
 	"gallery-settings-stale": CacheGallerySettings, // a key from before the SFW hold is rebuilt
 	"blocked-tags-miss":      CacheBlockedTags,     // the blocked-tag list is rebuilt from the database
 	"blocked-tags-stale":     CacheBlockedTags,     // a value Node would replace
+	"user-follows-miss":      CacheUserFollows,     // the follow list is looked up (without the miss computation)
 	// model.getAll's hydration falls back on each of these cache misses (on a model data, model tags,
 	// frame, decoration, showcase or official-models miss only without the miss computation).
 	"official-models-miss":  CacheOfficialModels,
@@ -121,8 +125,8 @@ func fallbackMissCache(reason string) string {
 
 // probeCaches is every `cache` label value, in report order.
 func probeCaches() []string {
-	out := make([]string, 0, 10+len(hydrate.PageCaches))
-	out = append(out, CacheSessionUser, CacheGallerySettings, CacheBlockedTags)
+	out := make([]string, 0, 11+len(hydrate.PageCaches))
+	out = append(out, CacheSessionUser, CacheGallerySettings, CacheBlockedTags, CacheUserFollows)
 	for _, c := range hydrate.PageCaches {
 		out = append(out, c.Name)
 	}
