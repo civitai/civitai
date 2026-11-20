@@ -79,6 +79,18 @@ describe('feed events', () => {
     expect(getViewer).toHaveBeenCalledTimes(2);
   });
 
+  it('resolves no viewer while capture is off or expired', async () => {
+    const getViewer = vi.fn(async () => ({ userId: 1, memberType: 'undefined' }));
+    for (const config of [
+      { sampleRate: 0, until: Number.POSITIVE_INFINITY },
+      { sampleRate: 1, until: 0 },
+    ]) {
+      const recorder = createFeedEventsRecorder({ getConfig: async () => config, insert: vi.fn() });
+      await recorder.record(load, getViewer);
+    }
+    expect(getViewer).not.toHaveBeenCalled();
+  });
+
   it('reads the Flipt variant key as the sample rate, off for anything else', () => {
     expect([
       parseSampleRate('0.1'),

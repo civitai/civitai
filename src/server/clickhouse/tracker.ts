@@ -476,7 +476,7 @@ export class Tracker {
     }
   }
 
-  /** False after getSession() only when the lookup failed; a signed-out request is resolved. */
+  /** True once the session lookup succeeded, signed out included; false after a failed lookup or with no req/res. */
   public get isSessionResolved() {
     return this.sessionResolved;
   }
