@@ -44,6 +44,9 @@ vi.mock('~/server/flipt/client', () => ({
   // A per-app rollout, as an ENTITY_ID segment answers: ON (while `scannedRows`) for app A only.
   isFlipt: async (flag: string, entityId?: string) =>
     flag === 'app-block-source-scanned-rows' && holder.scannedRows && entityId === 'apb_alpha',
+  isFliptSync: (flag: string, entityId?: string) =>
+    flag === 'app-block-source-scanned-rows' && holder.scannedRows && entityId === 'apb_alpha',
+  ensureFliptInitialized: async () => undefined,
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: async () => [] } }));
 vi.mock('~/env/client', async (importOriginal) => {
