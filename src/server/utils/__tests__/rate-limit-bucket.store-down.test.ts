@@ -32,8 +32,16 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const hGet = redisMock.redis.packed.hGet;
 const HUNG = Symbol('hung');
-const within = <T>(p: Promise<T>, ms: number) =>
-  Promise.race([p, new Promise<typeof HUNG>((r) => setTimeout(() => r(HUNG), ms))]);
+/** Under fake timers: what `p` settled to within `ms` of clock time, or HUNG. */
+const within = async <T>(p: Promise<T>, ms: number): Promise<T | unknown> => {
+  let outcome: T | unknown = HUNG;
+  p.then(
+    (v) => (outcome = v),
+    (e: unknown) => (outcome = e)
+  );
+  await vi.advanceTimersByTimeAsync(ms);
+  return outcome;
+};
 
 let ipCounter = 0;
 /** A distinct client address per test, so one test's local attempts never reach another's bucket. */
@@ -70,20 +78,15 @@ describe('claimRateLimitAttempt with the store unavailable', () => {
   });
 
   it('a store that never answers decides each attempt within 750ms and still refuses past the limit', async () => {
+    vi.useFakeTimers();
     hGet.mockImplementation(() => new Promise(() => undefined));
     const req = freshReq();
 
     for (let i = 0; i < 3; i++) {
-      const started = Date.now();
-      const outcome = await within(attempt(req), 2000);
-      expect(outcome).not.toBe(HUNG);
-      expect(Date.now() - started).toBeLessThan(750);
+      expect(await within(attempt(req), 750)).toBeUndefined();
     }
 
-    const refused = await within(
-      attempt(req).catch((e: unknown) => e),
-      2000
-    );
+    const refused = await within(attempt(req), 750);
     expect(refused).toBeInstanceOf(TRPCError);
     expect((refused as TRPCError).code).toBe('TOO_MANY_REQUESTS');
   });
@@ -301,6 +304,7 @@ describe('the local fallback count holds bounded memory', () => {
 
 describe('claimRateLimitAttempt when the claim script does not answer', () => {
   it('decides on the local count within 750ms, and a refund releases the slot without hanging', async () => {
+    vi.useFakeTimers();
     hGet.mockResolvedValue([]);
     redisMock.redis.eval.mockImplementation(() => new Promise(() => undefined));
     onTestFinished(() => {
@@ -315,13 +319,11 @@ describe('claimRateLimitAttempt when the claim script does not answer', () => {
         req,
       });
 
-    const started = Date.now();
-    const first = await within(claimOnce(), 2000);
+    const first = await within(claimOnce(), 750);
     expect(first).not.toBe(HUNG);
-    expect(Date.now() - started).toBeLessThan(750);
 
     // The hung claim counts locally: the next call is refused.
-    const refused = await claimOnce().catch((e: unknown) => e);
+    const refused = await within(claimOnce(), 750);
     expect((refused as TRPCError).code).toBe('TOO_MANY_REQUESTS');
 
     expect(await within((first as Awaited<ReturnType<typeof claimOnce>>).refund(), 2000)).not.toBe(
@@ -350,11 +352,9 @@ describe('claimRateLimitAttempt when the claim script fails on a fail-closed sco
   });
 
   it('a script that never answers refuses with SERVICE_UNAVAILABLE and releases nothing', async () => {
+    vi.useFakeTimers();
     redisMock.redis.eval.mockImplementation(() => new Promise(() => undefined));
-    const outcome = await within(
-      claimOn('buzz:script-hung').catch((e: unknown) => e),
-      4000
-    );
+    const outcome = await within(claimOn('buzz:script-hung'), 4000);
     expect((outcome as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
     expect(scriptOps()).toEqual(['claim']);
   });
@@ -412,18 +412,12 @@ describe('readRateLimitAttempts (the usage report) with the store unavailable', 
   });
 
   it('a read that never answers rejects within 750ms', async () => {
+    vi.useFakeTimers();
     hGet.mockImplementation(() => new Promise(() => undefined));
-    const started = Date.now();
     const outcome = await within(
-      readRateLimitAttempts(bucket()).then(
-        () => 'resolved',
-        (e: unknown) => e
-      ),
-      2000
+      readRateLimitAttempts(bucket()).then(() => 'resolved'),
+      750
     );
-    expect(outcome).not.toBe(HUNG);
     expect(outcome).toBeInstanceOf(Error);
-    expect(outcome).not.toBe('resolved');
-    expect(Date.now() - started).toBeLessThan(750);
   });
 });
