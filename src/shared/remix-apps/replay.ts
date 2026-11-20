@@ -42,6 +42,10 @@ export const REMIX_RUN_LIMITS = {
   imageDimension: 100_000,
 } as const;
 
+/** An image size as a log the runner replays may carry it; any other is left out. */
+export const remixLogSize = (n?: number | null) =>
+  Number.isInteger(n) && n! > 0 && n! <= REMIX_RUN_LIMITS.imageDimension ? n! : undefined;
+
 // Not strict: an app may pass `ctx.source` itself, which also carries its imageId.
 const image = z.object({
   url: z.string().min(1),

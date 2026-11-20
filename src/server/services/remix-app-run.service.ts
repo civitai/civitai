@@ -65,6 +65,7 @@ import { remixOptionEffects } from '~/shared/remix-apps/mock-host';
 import { isDefined } from '~/utils/type-guards';
 import {
   remixAnswerRefusal,
+  remixLogSize,
   RemixReplayError,
   type RemixLogEntry,
   type RemixReplayer,
@@ -471,7 +472,15 @@ async function advance({
     for (const { url, nsfwLevel } of images) levels.set(url, nsfwLevel);
     log.push({
       type: 'workflow',
-      result: { workflowId, images: images.map(({ nsfwLevel: _, ...image }) => image) },
+      // A size can follow one the app declared, so it is bounded as the runner's log requires.
+      result: {
+        workflowId,
+        images: images.map(({ url, width, height }) => ({
+          url,
+          width: remixLogSize(width),
+          height: remixLogSize(height),
+        })),
+      },
     });
   }
   const last = segments[segments.length - 1];

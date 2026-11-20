@@ -1710,6 +1710,20 @@ describe('a user app', () => {
       expect(submits()).toHaveLength(1);
     });
 
+    it('replays a finished step whose size the runner would refuse, with that size left out', async () => {
+      serve(userRow());
+      addImage(SOURCE_ID);
+      const { runId } = await startOn(SOURCE_ID);
+      const workflow = h.workflows[h.workflows.length - 1];
+      finish(workflow.id, [blob('huge')]);
+      const [image] = (workflow.steps as { output: { images: Record<string, unknown>[] } }[])[0]
+        .output.images;
+      Object.assign(image, { width: 2.5, height: 200_000 });
+      await expect(advanceRemixRun({ runId, caller: flagOn() })).resolves.toMatchObject({
+        status: 'done',
+      });
+    });
+
     describe('the run-time audit', () => {
       const ask = "await ctx.ask({ kind: 'text', prompt: 'Who is it?', maxLength: 40 })";
       const ASKING_SOURCE = `export default defineRemixApp({ async run(ctx) { const who = ${ask}; const out = await ctx.workflow({ kind: 'image', prompt: 'a portrait of ' + who, images: [ctx.source], aspectRatio: 'source', quantity: 1 }); return out.images; } });`;
