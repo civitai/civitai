@@ -10,29 +10,62 @@ permissions:
   contents: read
 
 jobs:
-  probe:
+  # Fixed host ports, as lint.yml's unit services use today: do 4 at once clash?
+  fixed-ports:
     if: github.repository == 'civitai/civitai'
     runs-on: civitai-dc
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        n: [1, 2, 3]
+        n: [1, 2, 3, 4]
+    services:
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
+      postgres:
+        image: postgres:18
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
     steps:
-      - name: Before checkout
+      - name: Reach services on localhost
         run: |
-          echo "runner=$RUNNER_NAME os=$RUNNER_OS arch=$RUNNER_ARCH"
-          echo "workspace=$GITHUB_WORKSPACE"; ls -la "$GITHUB_WORKSPACE" 2>&1 | head -20
-          echo "marker:"; cat "$HOME/.civitai-dc-probe" 2>&1 || true
-          echo "probe-$GITHUB_RUN_ID-${{ matrix.n }}" >> "$HOME/.civitai-dc-probe"
-          ls "$RUNNER_TOOL_CACHE" 2>&1 | head
-      - uses: actions/checkout@v4
-      - name: Host
+          echo "runner=$RUNNER_NAME host=$(hostname)"
+          timeout 5 bash -c 'echo PING > /dev/tcp/127.0.0.1/6379' && echo redis-localhost-ok || echo redis-localhost-FAIL
+          timeout 5 bash -c '</dev/tcp/127.0.0.1/5432' && echo pg-localhost-ok || echo pg-localhost-FAIL
+          docker info --format 'name={{.Name}} running={{.ContainersRunning}} cpus={{.NCPU}} mem={{.MemTotal}}'
+          docker ps --format '{{.Names}} {{.Ports}}' | head -20
+          cat /sys/fs/cgroup/memory.max 2>&1; cat /sys/fs/cgroup/cpu.max 2>&1
+          ls -la /var/run/docker.sock; env | grep -i docker_host || true
+
+  # Ephemeral host ports: the clash-free alternative.
+  dynamic-ports:
+    if: github.repository == 'civitai/civitai'
+    runs-on: civitai-dc
+    timeout-minutes: 10
+    services:
+      redis:
+        image: redis:7
+        ports: ['6379']
+        options: --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
+    steps:
+      - name: Reach service on its mapped port
+        env:
+          PORT: ${{ job.services.redis.ports['6379'] }}
         run: |
-          cat /etc/os-release | head -3; uname -a; whoami; id
-          nproc; free -g; df -h "$GITHUB_WORKSPACE" | tail -1
-          docker --version 2>&1; docker info --format '{{.ServerVersion}}' 2>&1 | tail -1
-          for b in node npm pnpm corepack git curl jq python3 psql redis-server google-chrome chromium; do printf '%s: ' $b; (command -v $b && $b --version 2>&1 | head -1) || echo missing; done
-          sudo -n true 2>&1 && echo sudo-ok || echo no-sudo
-          ls ~/.cache/ms-playwright 2>&1 | head
-          env | grep -iE '^(ImageOS|ImageVersion|AGENT_TOOLSDIRECTORY|RUNNER_)' | sort
+          echo "mapped=$PORT"
+          timeout 5 bash -c "echo PING > /dev/tcp/127.0.0.1/$PORT" && echo redis-dyn-ok || echo redis-dyn-FAIL
+
+  playwright:
+    if: github.repository == 'civitai/civitai'
+    runs-on: civitai-dc
+    timeout-minutes: 15
+    steps:
+      - name: Chromium with system deps
+        run: |
+          cd "$RUNNER_TEMP" && npm init -y >/dev/null && npm i -s playwright@1.57.0
+          time npx playwright install --with-deps chromium 2>&1 | tail -5
+          npx playwright --version
+          node -e "const {chromium}=require('playwright');chromium.launch().then(async b=>{const p=await b.newPage();await p.setContent('<b>ok</b>');console.log('chromium', b.version(), await p.textContent('b'));await b.close()})"
