@@ -50,8 +50,8 @@ var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecoratio
 // Each computed entry is built as the Node lookup builds it, packed exactly as Node's cache writer
 // packs `{...result, cachedAt}` (or the `{[idKey]: id, notFound: true, cachedAt}` marker), and read
 // back through the same decoder as a cache hit, so a computed miss and a later hit of what Node
-// wrote for it hydrate identically. The image meta (meta.go) is the exception: its misses are
-// neither written back nor kept in process (see memoized).
+// wrote for it hydrate identically. The image meta (meta.go) and the user follows (userfollows.go)
+// are the exceptions: their misses are neither written back nor kept in process (see memoized).
 type MissCompute struct {
 	// WriteBack (FEED_GO_CACHE_WRITEBACK, default none) is the caches whose computed entries are
 	// written where, and as, the Node lookup writes them: same key, same msgpackr bytes, same expiry.
@@ -156,9 +156,10 @@ type recentEntry struct {
 //     a traced joiner gets a `miss lookup join` span for its wait, joinSpan);
 //   - for a cache not written back, each answer (a record or "no row") is kept for recentTTL and
 //     answers the next miss of that id without a query. For one written back nothing is kept: the
-//     written cache entry answers repeats, and a kept answer could outlive the bust that should replace it. The
-//     image meta is never kept either (memoized): Node keeps no per-pod copy of it, so a meta its
-//     owner just hid is never served again, and its multi-KB values would crowd the cap.
+//     written cache entry answers repeats, and a kept answer could outlive the bust that should
+//     replace it. The image meta and the user follows are never kept either (memoized): Node keeps no
+//     per-pod copy of either, so a meta its owner just hid is never served again (and its multi-KB
+//     values would crowd the cap), and a viewer's changed follow set is read back at once.
 //
 // The records are shared between callers and must be treated as read-only.
 func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,

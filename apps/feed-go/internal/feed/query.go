@@ -47,7 +47,7 @@ type ImagesQuery struct {
 	// `i."userId" = <targetUserId>`. getAllImages marks that query personalized, so it is never cached.
 	TargetUserID int
 	// FollowedUserIDs is image.getInfinite's `followed` for a signed-in viewer with a non-empty
-	// follow list (getUserFollows): `i."userId" IN (<follows>)`. getAllImages marks that query
+	// follow list (getUserFollows): `i."userId" = ANY(<follows>)` (Node's `IN (…)`). getAllImages marks that query
 	// personalized, so it is never cached. Empty (signed out, no follows): no clause at all.
 	FollowedUserIDs []int
 	// TagIDs is the input's own `tags` inclusion filter, after the blocked tags are stripped: images
