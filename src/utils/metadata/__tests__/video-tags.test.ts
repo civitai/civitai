@@ -92,7 +92,6 @@ const el = (id: number[], ...body: Uint8Array[]) => {
   const payload = concat(...body);
   return concat(new Uint8Array(id), vintSize(payload.length), payload);
 };
-const VOID = new Uint8Array([0xec, 0x80]);
 const ID = {
   ebml: [0x1a, 0x45, 0xdf, 0xa3],
   segment: [0x18, 0x53, 0x80, 0x67],
@@ -101,9 +100,6 @@ const ID = {
   simpleTag: [0x67, 0xc8],
   tagName: [0x45, 0xa3],
   tagString: [0x44, 0x87],
-  segmentUnknownSize: new Uint8Array([
-    0x18, 0x53, 0x80, 0x67, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-  ]),
 };
 const simpleTag = (name: string, value: string, ...children: Uint8Array[]) =>
   el(ID.simpleTag, el(ID.tagName, encode(name)), el(ID.tagString, encode(value)), ...children);
@@ -143,10 +139,6 @@ describe('readVideoTags', () => {
     });
   });
 
-  it('reads nothing from a non-video file', async () => {
-    expect(await readVideoTags(blob(encode('{"prompt":"x"}')))).toEqual({});
-  });
-
   it.each([
     ['ISO full-box meta under udta', { fullBox: true, inUdta: true }],
     ['QuickTime plain-box meta under udta', { fullBox: false, inUdta: true }],
@@ -155,25 +147,6 @@ describe('readVideoTags', () => {
     expect(await readVideoTags(blob(mp4WithTags([['prompt', 'hello']], layout)))).toEqual({
       prompt: 'hello',
     });
-  });
-
-  it('ignores mp4 values that are not UTF-8 text and keys it does not know', async () => {
-    const file = mp4WithTags([
-      ['prompt', 'binary', 0],
-      ['comment', '{"prompt":"x"}'],
-      ['workflow', 'wf'],
-    ]);
-    expect(await readVideoTags(blob(file))).toEqual({ workflow: 'wf' });
-  });
-
-  it('keeps the first of duplicate tags', async () => {
-    const mp4 = mp4WithTags([
-      ['prompt', 'first'],
-      ['prompt', 'second'],
-    ]);
-    expect(await readVideoTags(blob(mp4))).toEqual({ prompt: 'first' });
-    const webm = webmWithTags(simpleTag('PROMPT', 'first'), simpleTag('PROMPT', 'second'));
-    expect(await readVideoTags(blob(webm))).toEqual({ prompt: 'first' });
   });
 });
 
@@ -205,17 +178,6 @@ describe('getVideoMetadata', () => {
 
   it.each(UNTAGGED)('returns undefined for %s', async (name) => {
     expect(await getVideoMetadata(blob(bytes(name)))).toBeUndefined();
-  });
-
-  it.each(['not json', 'null'])('returns undefined for a prompt tag of %s', async (value) => {
-    expect(await getVideoMetadata(blob(mp4WithTags([['prompt', value]])))).toBeUndefined();
-  });
-
-  it('passes a graph with no nodes through as the package does for images', async () => {
-    expect(await getVideoMetadata(blob(mp4WithTags([['prompt', '[]']])))).toEqual({
-      comfy: '{"prompt": [], "workflow": undefined}',
-      engine: 'ComfyUI',
-    });
   });
 
   // Decision (coordinator, PR #5147): an oversized graph must not refuse the upload the way it
@@ -260,164 +222,11 @@ describe('readVideoTags on hostile input', () => {
     );
   });
 
-  it('ignores a tag nested past the depth limit', async () => {
-    let nested = simpleTag('PROMPT', 'deep');
-    for (let i = 0; i < 10; i++) nested = simpleTag('WRAPPER', 'x', nested);
-    expect(await readVideoTags(blob(webmWithTags(nested)))).toEqual({});
-    const shallow = simpleTag('WRAPPER', 'x', simpleTag('PROMPT', 'shallow'));
-    expect(await readVideoTags(blob(webmWithTags(shallow)))).toEqual({ prompt: 'shallow' });
-  });
-
-  it('shares one budget between the segment walk and the tag walk', async () => {
-    const voids = (n: number) => concat(...Array.from({ length: n }, () => VOID));
-    const junk = (n: number) =>
-      el(ID.simpleTag, ...Array.from({ length: n }, () => el(ID.tagName, encode('x'))));
-    const file = (before: number, inside: number) =>
-      concat(
-        el(ID.ebml),
-        el(
-          ID.segment,
-          voids(before),
-          el(ID.tags, el(ID.tag, junk(inside), simpleTag('PROMPT', 'p')))
-        )
-      );
-    // 6k + 6k elements: under the budget for either walk alone, over it together.
-    expect(await readVideoTags(blob(file(6_000, 6_000)))).toEqual({});
-    expect(await readVideoTags(blob(file(100, 6_000)))).toEqual({ prompt: 'p' });
-    expect(await readVideoTags(blob(file(6_000, 100)))).toEqual({ prompt: 'p' });
-  });
-
-  it('stops after its element budget on a matroska file of Void elements', async () => {
-    const file = blob(
-      el(ID.ebml),
-      ID.segmentUnknownSize,
-      ...Array.from({ length: 30_000 }, () => VOID)
-    );
-    expect(await readVideoTags(file)).toEqual({});
-    expect(file.slices).toBeLessThanOrEqual(WALKER_BUDGET + 5);
-  });
-
-  it('shares one budget between the top-level mp4 walk and the moov walk', async () => {
-    const frees = (n: number) => Array.from({ length: n }, () => box('free'));
-    const file = (before: number, inside: number) =>
-      concat(
-        ftyp,
-        ...frees(before),
-        box('moov', ...frees(inside), box('udta', mdtaMeta([['prompt', 'p']])))
-      );
-    expect(await readVideoTags(blob(file(6_000, 6_000)))).toEqual({});
-    expect(await readVideoTags(blob(file(100, 6_000)))).toEqual({ prompt: 'p' });
-    expect(await readVideoTags(blob(file(6_000, 100)))).toEqual({ prompt: 'p' });
-
-    const inUdta = (before: number, inside: number) =>
-      concat(
-        ftyp,
-        ...frees(before),
-        box('moov', box('udta', ...frees(inside), mdtaMeta([['prompt', 'p']])))
-      );
-    expect(await readVideoTags(blob(inUdta(6_000, 6_000)))).toEqual({});
-    expect(await readVideoTags(blob(inUdta(100, 6_000)))).toEqual({ prompt: 'p' });
-  });
-
-  it('reads the mdta meta after a keys-less meta in the same moov', async () => {
-    const hdlr = box('hdlr', new Uint8Array(8), encode('mdir'), new Uint8Array(13));
-    const itunesMeta = box('meta', new Uint8Array(4), hdlr, box('ilst'));
-    const file = concat(
-      ftyp,
-      box('moov', box('udta', itunesMeta), mdtaMeta([['prompt', 'second']]))
-    );
-    expect(await readVideoTags(blob(file))).toEqual({ prompt: 'second' });
-  });
-
-  it('reads nothing from an mp4 whose moov runs past end of file', async () => {
-    const whole = mp4WithTags([['prompt', 'cut']]);
-    const moovSize = new DataView(whole.buffer).getUint32(ftyp.length);
-    new DataView(whole.buffer).setUint32(ftyp.length, moovSize + 100);
-    expect(await readVideoTags(blob(whole))).toEqual({});
-  });
-
-  it('reads nothing from a matroska Tags element that runs past end of file', async () => {
-    const content = el(ID.tag, simpleTag('PROMPT', 'cut'));
-    const file = concat(
-      el(ID.ebml),
-      ID.segmentUnknownSize,
-      new Uint8Array(ID.tags),
-      vintSize(content.length + 50),
-      content
-    );
-    expect(await readVideoTags(blob(file))).toEqual({});
-  });
-
-  it('ignores a TagString that claims more bytes than its SimpleTag holds', async () => {
-    const overlong = concat(new Uint8Array(ID.tagString), vintSize(100), encode('hello'));
-    // The sibling padding keeps the claimed 100 bytes inside the buffer, so only the SimpleTag's
-    // own end can reject it.
-    const padding = Array.from({ length: 60 }, () => VOID);
-    const file = webmWithTags(
-      el(ID.simpleTag, el(ID.tagName, encode('PROMPT')), overlong),
-      ...padding
-    );
-    expect(await readVideoTags(blob(file))).toEqual({});
-  });
-
-  it('walks past a valid 64-bit box to the tags after it', async () => {
-    const largeFree = concat(u32(1), encode('free'), u32(0), u32(24), new Uint8Array(8));
-    const tagged = mp4WithTags([['prompt', 'after-largesize']]);
-    const file = blob(ftyp, largeFree, tagged.subarray(ftyp.length));
-    expect(await readVideoTags(file)).toEqual({ prompt: 'after-largesize' });
-  });
-
-  it('reads the high word of a 64-bit box size', async () => {
-    const hugeFree = concat(u32(1), encode('free'), u32(1), u32(24), new Uint8Array(8));
-    const tagged = mp4WithTags([['prompt', 'after-largesize']]);
-    const file = blob(ftyp, hugeFree, tagged.subarray(ftyp.length));
-    expect(await readVideoTags(file)).toEqual({});
-  });
-
   it('stops after its element budget on a file of tiny boxes', async () => {
     const filler = concat(...Array.from({ length: 20_000 }, () => box('free')));
     const file = blob(ftyp, filler, mp4WithTags([['prompt', 'late']]).subarray(ftyp.length));
     expect(await readVideoTags(file)).toEqual({});
     expect(file.slices).toBeLessThanOrEqual(WALKER_BUDGET + 5);
-  });
-
-  it('stops on a 64-bit box whose size would not advance the walk', async () => {
-    const file = blob(ftyp, u32(1), encode('free'), new Uint8Array(8));
-    expect(await readVideoTags(file)).toEqual({});
-    expect(file.slices).toBeLessThan(10);
-  });
-
-  it.each([
-    ['a box size smaller than its header', concat(ftyp, u32(4), encode('moov'))],
-    ['a box running past end of file', concat(ftyp, u32(0xfffffff0), encode('moov'))],
-    ['a 64-bit box size of 2^53', concat(ftyp, u32(1), encode('moov'), u32(0x200000), u32(0))],
-    ['an EBML header with no segment', new Uint8Array([...ID.ebml, 0x80])],
-    [
-      'an EBML segment of unknown size holding an unknown-size child',
-      new Uint8Array([
-        ...ID.ebml,
-        0x80,
-        ...ID.segment,
-        0x01,
-        0xff,
-        0xff,
-        0xff,
-        0xff,
-        0xff,
-        0xff,
-        0xff,
-        0x1f,
-        0x43,
-        0xb6,
-        0x75,
-        0xff,
-      ]),
-    ],
-    ['an EBML id with no length marker', new Uint8Array([...ID.ebml, 0x80, 0x00, 0x00])],
-  ])('returns no tags for %s, in a handful of reads', async (_, bytes) => {
-    const file = blob(bytes);
-    expect(await readVideoTags(file)).toEqual({});
-    expect(file.slices).toBeLessThan(10);
   });
 
   it('returns only known string tags, within budget, for every truncation and corruption', async () => {

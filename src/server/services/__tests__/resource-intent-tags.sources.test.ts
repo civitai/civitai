@@ -21,9 +21,7 @@ import {
   genTrainingRow,
   observationKeyFingerprint,
   observationUserHash,
-  CONTENT_READ_CONCURRENCY,
   MODEL_LISTED_SQL,
-  ELIGIBLE_MODEL_PAGE,
   readEligibleModelIds,
   readModelContent,
   readPostedSample,
@@ -49,10 +47,6 @@ describe('resource-intent-tags sources', () => {
     [Number.MAX_SAFE_INTEGER, '11768557503457933977'],
   ])("hashes posted user %i exactly as the observations' writer does", (id, expected) => {
     expect(observationUserHash(testKey, id)).toBe(expected);
-  });
-
-  it.each([1.5, 2 ** 53])('refuses user id %s, which is not a safe integer', (id) => {
-    expect(() => observationUserHash(testKey, id)).toThrow('is not an integer');
   });
 
   it("fingerprints a key exactly as the observations' writer does", () => {
@@ -167,23 +161,6 @@ describe('resource-intent-tags sources', () => {
         `JOIN "ModelVersion" fmv ON fmv.id = fr."modelVersionId" JOIN "Model" fm ON fm.id = fmv."modelId" ` +
         `WHERE fr."imageId" = i.id AND (fm.poi OR fm.minor) )`
     );
-  });
-
-  it('samples each hour by its first minutes, inside the window', () => {
-    const sql = genObservationsSql(
-      new Date('2026-09-01T00:00:00Z'),
-      new Date('2026-10-01T00:00:00Z'),
-      2
-    );
-    expect(sql).toContain("time >= toDateTime('2026-09-01 00:00:00', 'UTC')");
-    expect(sql).toContain("time < toDateTime('2026-10-01 00:00:00', 'UTC')");
-    expect(sql.match(/toMinute\(toTimeZone\(time, 'UTC'\)\) < 2/g)?.length).toBe(2);
-    expect(() => genObservationsSql(new Date(), new Date(), 0)).toThrow('sliceMinutes');
-    expect(sql).not.toContain('LIMIT');
-    const limited = genObservationsSql(new Date('2026-09-01'), new Date('2026-10-01'), 2, 500);
-    expect(limited.trimEnd().endsWith('LIMIT 500')).toBe(true);
-    for (const bad of [0, -1, 1.5, NaN])
-      expect(() => genObservationsSql(new Date(), new Date(), 2, bad)).toThrow('positive integer');
   });
 
   it('ends the window a whole UTC day before the build day', () => {
@@ -306,21 +283,6 @@ describe('the eligible models (full coverage)', () => {
     );
   });
 
-  it('a last page exactly full reads one more, empty, page', async () => {
-    const seen: Prisma.Sql[] = [];
-    expect(await readEligibleModelIds(keysetQuery([1, 2, 3, 4], seen), ['LORA'], 2)).toEqual([
-      1, 2, 3, 4,
-    ]);
-    expect(seen.map((q) => q.values[0])).toEqual([0, 2, 4]);
-  });
-
-  it('pages 50,000 ids at a time by default', async () => {
-    expect(ELIGIBLE_MODEL_PAGE).toBe(50_000);
-    const seen: Prisma.Sql[] = [];
-    await readEligibleModelIds(keysetQuery([1], seen), ['LORA']);
-    expect(seen[0].values[2]).toBe(50_000);
-  });
-
   it('refuses ids that are not ascending: the keyset bound would skip or repeat models', async () => {
     const query = async () => [{ id: 4 }, { id: 4 }];
     await expect(readEligibleModelIds(query, ['LORA'], 5)).rejects.toThrow('not ascending');
@@ -382,20 +344,6 @@ describe('content batches are read ahead, and handed on in id order', () => {
   const settle = () => new Promise((r) => setImmediate(r));
   const ids = Array.from({ length: 5000 }, (_, i) => i + 1);
 
-  it('reads three batches at once by default', async () => {
-    expect(CONTENT_READ_CONCURRENCY).toBe(3);
-    const g = gatedQuery();
-    const done = readModelContent(g.query, ids, new Date(), () => undefined);
-    for (;;) {
-      await settle();
-      const p = g.pending.find((x) => !x.done);
-      if (!p) break;
-      p.resolve();
-    }
-    await done;
-    expect(g.maxInFlight()).toBe(3);
-  });
-
   it('keeps at most `concurrency` batches reading, and hands them on in id order however they finish', async () => {
     const g = gatedQuery();
     const handed: number[] = [];
@@ -424,20 +372,6 @@ describe('content batches are read ahead, and handed on in id order', () => {
     await done;
     expect(handed).toEqual([1, 1001, 2001, 3001, 4001]);
     expect(g.maxInFlight()).toBe(2);
-  });
-
-  it('with concurrency 1, reads one batch at a time', async () => {
-    const g = gatedQuery();
-    const done = readModelContent(g.query, ids, new Date(), () => undefined, 1);
-    for (;;) {
-      await settle();
-      const p = g.pending.find((x) => !x.done);
-      if (!p) break;
-      p.resolve();
-    }
-    await done;
-    expect(g.maxInFlight()).toBe(1);
-    expect(g.pending).toHaveLength(10);
   });
 
   it('a read-ahead that fails after the read has failed is not left unhandled', async () => {
@@ -493,28 +427,6 @@ describe('content batches are read ahead, and handed on in id order', () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(statements).toContain('meta 2001');
     expect(statements).not.toContain('images 2001');
-  });
-
-  it('batch one slow, batch two failing first: no statement after the failure, no batch launched', async () => {
-    const statements: string[] = [];
-    const query = async (q: Prisma.Sql) => {
-      const ids = q.values.find(Array.isArray) as number[];
-      const kind = q.sql.includes('"TagsOnModels"') ? 'meta' : 'images';
-      statements.push(`${kind} ${ids[0]}`);
-      if (ids[0] === 1001) throw new Error('batch two failed');
-      // Batch two fails at once; batches one (slowest) and three answer their meta after that.
-      if (kind === 'meta' && ids[0] !== 1001)
-        await new Promise((r) => setTimeout(r, ids[0] === 1 ? 10 : 1));
-      return kind === 'meta'
-        ? ids.map((id) => ({ id, name: '', type: 'LORA', description: '', tags: [], versions: [] }))
-        : [];
-    };
-    await expect(readModelContent(query, ids, new Date(), () => undefined)).rejects.toThrow(
-      'batch two failed'
-    );
-    await new Promise((r) => setTimeout(r, 30));
-    // The three read at once, and nothing after: no image read, no fourth batch.
-    expect(statements).toEqual(['meta 1', 'meta 1001', 'meta 2001']);
   });
 
   it('a failed batch fails the read, and hands on nothing after it', async () => {

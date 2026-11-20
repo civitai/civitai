@@ -1063,6 +1063,12 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
     return url;
   }
 
+  let shortTimeouts: { mockRestore(): void } | undefined;
+  afterEach(() => {
+    shortTimeouts?.mockRestore();
+    shortTimeouts = undefined;
+  });
+
   const MODES: [string, () => Promise<void>][] = [
     [
       'refused (nothing listening)',
@@ -1072,7 +1078,17 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
           STORAGE_HOOK_RUNNER_SECRET: RUNNER_SECRET,
         }),
     ],
-    ['black-holed (never answers)', async () => void (stub.mode = 'blackhole')],
+    [
+      'black-holed (never answers)',
+      async () => {
+        stub.mode = 'blackhole';
+        // The client still times out; it just does so in 100 ms instead of its real budget.
+        const timeout = AbortSignal.timeout.bind(AbortSignal);
+        shortTimeouts = vi
+          .spyOn(AbortSignal, 'timeout')
+          .mockImplementation((ms) => timeout(Math.min(ms, 100)));
+      },
+    ],
     ['a runner 500 (a backstop kill)', async () => void (stub.mode = '500')],
     ['a response with a bad signature', async () => void (stub.mode = 'badsig')],
     // Signed correctly, but bound to ANOTHER request: its `req` is not this body's sha256.
@@ -1129,6 +1145,7 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
         expect(r.headers['retry-after']).toBe('5');
       }
       expect((await hookCalls('unavailable')) - unavailable0).toBe(OVER);
+      shortTimeouts?.mockRestore();
       stub.mode = 'ok';
       setEnv({ STORAGE_HOOK_RUNNER_URL: runner.url });
       expect((await call({ token, method: 'GET', path: '/cards' })).body.items).toEqual([]);

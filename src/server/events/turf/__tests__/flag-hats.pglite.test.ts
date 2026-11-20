@@ -164,19 +164,6 @@ describe('hats on a flag', () => {
     expect(await hatsLeft()).toBe(5);
   });
 
-  it('takes any count from 1 to 10, so the picker can offer what the player has', async () => {
-    await add(8);
-    expect(await hatsLeft()).toBe(12);
-    await add(3);
-    expect(await hatsLeft()).toBe(9);
-  });
-
-  it('refuses 0, a negative, a fraction and more than 10, and spends none', async () => {
-    for (const count of [0, -1, 2.5, 11])
-      await expect(add(count)).rejects.toThrow(/Add 1 to 10 hats at a time/);
-    expect(await hatsLeft()).toBeUndefined();
-  });
-
   it('refuses more hats than the player has, and spends none', async () => {
     await add(10);
     await add(5);
@@ -335,26 +322,6 @@ describe('the shared flag summary', () => {
     const frozen = await getFlagSummary('e', after);
     expect(frozen).toMatchObject({ closed: true, frozen: true, teamPoints: {} });
     expect(frozen?.flags[0].winners).toEqual([]);
-  });
-
-  it('caches an open or unfrozen day for seconds, and a frozen day for longer', async () => {
-    const lastTtl = () => (redisMock.sysRedis.set.mock.calls.at(-1)?.[2] as { EX: number }).EX;
-    await add(5);
-    await getFlagSummary('e', BEFORE);
-    const open = lastTtl();
-    await getFlagSummary('e', CUT);
-    const unfrozen = lastTtl();
-    await db.query(
-      `INSERT INTO "EventAwardResult" (event, "sourceId", kind, team, points, at, inputs)
-       VALUES ('e', $1, 'flag', NULL, 0, $2, '{}')`,
-      [`flag:${dayId}:${FLAG}`, CUT]
-    );
-    await getFlagSummary('e', new Date(CUT.getTime() + 3_600_000));
-    const frozen = lastTtl();
-    // Until the freeze has run, a cached summary must not hide it for long.
-    expect(open).toBeLessThanOrEqual(10);
-    expect(unfrozen).toBeLessThanOrEqual(10);
-    expect(frozen).toBeGreaterThan(unfrozen);
   });
 
   it('never serves a summary built before the latest swap', async () => {

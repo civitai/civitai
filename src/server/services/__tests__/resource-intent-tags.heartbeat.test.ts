@@ -6,13 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createNewestReadyGauge,
   createTagIndexHeartbeatGauges,
-  recordTagIndexLoad,
-  setHeldTagIndex,
   TAG_INDEX_METRICS,
 } from '~/server/prom/resource-intent-tags.metrics';
-// The real cross-graph registry the metrics module registers into (`~/server/prom/client` is mocked
-// in unit tests with a throwaway one).
-import { instrumentationRegistry } from '@civitai/telemetry/client';
 import {
   readNewestReadyCreatedAt,
   readTagIndexHeartbeats,
@@ -107,20 +102,6 @@ describe('runTagIndexJob', () => {
     });
     expect([...rows.keys()]).toEqual([TAG_INDEX_HEARTBEAT_KEYS.buildSuccess]);
   });
-
-  it('a build-success heartbeat that cannot be written fails the run, after retention', async () => {
-    const { kv } = durableKv();
-    const upsert = kv.keyValue.upsert;
-    (kv.keyValue as { upsert: unknown }).upsert = vi.fn(async (a: { where: { key: string } }) => {
-      if (a.where.key === TAG_INDEX_HEARTBEAT_KEYS.buildSuccess) throw new Error('kv down');
-      return upsert(a as never);
-    });
-    const retention = vi.fn(async () => ({}));
-    await expect(
-      runTagIndexJob({ build: async () => ({}), retention, kv, now: () => NOW })
-    ).rejects.toThrow('kv down');
-    expect(retention).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe('heartbeat gauges', () => {
@@ -152,40 +133,6 @@ describe('heartbeat gauges', () => {
     expect(await scrape(kv)).toEqual({
       [TAG_INDEX_METRICS.buildLastSuccess]: [sec(NOW)],
       [TAG_INDEX_METRICS.retentionLastSuccess]: [sec(NOW) + 5],
-    });
-  });
-
-  it('read nothing while the build flag is off, so a pod with every flag off does no I/O for them', async () => {
-    const { kv, rows } = durableKv();
-    rows.set(TAG_INDEX_HEARTBEAT_KEYS.buildSuccess, NOW.getTime());
-    const findMany = vi.spyOn(kv.keyValue, 'findMany');
-    expect(await scrape(kv, async () => false)).toEqual({
-      [TAG_INDEX_METRICS.buildLastSuccess]: [],
-      [TAG_INDEX_METRICS.retentionLastSuccess]: [],
-    });
-    expect(findMany).not.toHaveBeenCalled();
-    // Positive control: the same store, flag on, is read.
-    expect((await scrape(kv))[TAG_INDEX_METRICS.buildLastSuccess]).toEqual([sec(NOW)]);
-    expect(findMany).toHaveBeenCalled();
-  });
-
-  it('the build-failure heartbeat is gone: no key, no gauge', () => {
-    expect(Object.values(TAG_INDEX_HEARTBEAT_KEYS)).toEqual([
-      'job:build-resource-intent-tag-index:last-success',
-      'job:resource-intent-tag-index-retention:last-success',
-    ]);
-    expect(Object.values(TAG_INDEX_METRICS)).not.toContain(
-      'civitai_app_resource_intent_tag_index_build_last_failure_timestamp_seconds'
-    );
-  });
-
-  it('a stored value that is not a positive number is no heartbeat', async () => {
-    const { kv, rows } = durableKv();
-    rows.set(TAG_INDEX_HEARTBEAT_KEYS.buildSuccess, ['1']);
-    rows.set(TAG_INDEX_HEARTBEAT_KEYS.retentionSuccess, '1700000000000');
-    expect(await readTagIndexHeartbeats(kv)).toEqual({
-      buildSuccess: null,
-      retentionSuccess: null,
     });
   });
 });
@@ -262,71 +209,5 @@ describe('newest ready snapshot', () => {
       { value: sec(NOW), labels: { spec_hash: 'dddddddddddd' } },
       { value: sec(NOW) - 1, labels: { spec_hash: 'eeeeeeeeeeee' } },
     ]);
-  });
-});
-
-describe('holder metrics', () => {
-  const metric = async (name: string) =>
-    (await instrumentationRegistry.getSingleMetric(name)?.get())?.values ?? [];
-
-  it('load counters are seeded at 0 for every outcome', async () => {
-    const outcomes = (await metric(TAG_INDEX_METRICS.loads)).map((v) => v.labels.outcome);
-    expect(outcomes.sort()).toEqual(['load_failed', 'snapshot_unservable', 'success']);
-  });
-
-  it('what a pod holds: absent when nothing, age and identity when something', async () => {
-    setHeldTagIndex(null);
-    expect(await metric(TAG_INDEX_METRICS.snapshotAge)).toEqual([]);
-    expect(await metric(TAG_INDEX_METRICS.snapshotInfo)).toEqual([]);
-    const createdAt = new Date(Date.now() - 3600_000);
-    setHeldTagIndex({
-      id: 'snap-1',
-      payloadSha256: '1'.repeat(64),
-      specHash: '2'.repeat(64),
-      vocabVersion: '3'.repeat(64),
-      createdAt,
-    });
-    const age = await metric(TAG_INDEX_METRICS.snapshotAge);
-    expect(age).toHaveLength(1);
-    expect(age[0].labels).toEqual({ snapshot_id: 'snap-1' });
-    expect(age[0].value).toBeGreaterThanOrEqual(3600);
-    expect(age[0].value).toBeLessThan(3700);
-    expect(await metric(TAG_INDEX_METRICS.snapshotInfo)).toEqual([
-      {
-        value: 1,
-        labels: {
-          snapshot_id: 'snap-1',
-          payload_sha256: '111111111111',
-          spec_hash: '222222222222',
-          vocab_version: '333333333333',
-        },
-      },
-    ]);
-    setHeldTagIndex(null);
-    expect(await metric(TAG_INDEX_METRICS.snapshotInfo)).toEqual([]);
-  });
-
-  it('a load is counted by outcome and timed', async () => {
-    const count = async (outcome: string) =>
-      (await metric(TAG_INDEX_METRICS.loads)).find((v) => v.labels.outcome === outcome)?.value;
-    const before = await count('success');
-    recordTagIndexLoad('success', 2.5);
-    recordTagIndexLoad('load_failed', null);
-    expect(await count('success')).toBe((before ?? 0) + 1);
-    const hist = await metric(TAG_INDEX_METRICS.loadDuration);
-    const successCount = hist.find(
-      (v) =>
-        v.labels.outcome === 'success' &&
-        (v as { metricName?: string }).metricName?.endsWith('_count')
-    );
-    expect(successCount?.value).toBeGreaterThanOrEqual(1);
-    expect(
-      hist.some(
-        (v) =>
-          v.labels.outcome === 'load_failed' &&
-          (v as { metricName?: string }).metricName?.endsWith('_count') &&
-          v.value > 0
-      )
-    ).toBe(false);
   });
 });

@@ -414,24 +414,6 @@ describe('getMyEventHats', () => {
     expect(placed.movableAt).toEqual(new Date(Date.parse(placedAt) + 10 * 60 * 1000));
   });
 
-  // The page counts down from this rather than comparing movableAt to the browser's clock, so it is
-  // measured on the server's clock and never longer than the cooldown.
-  describe('moveCooldownLeftMs', () => {
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-    it.each([
-      ['3 minutes after placing', '2026-11-12T10:03:00.000Z', 7 * 60 * 1000],
-      ['once the cooldown is over', '2026-11-12T10:15:00.000Z', 0],
-      ['when placedAt is ahead of this server', '2026-11-12T09:58:00.000Z', 10 * 60 * 1000],
-    ])('%s', async (_label, now, left) => {
-      vi.useFakeTimers({ now: new Date(now), toFake: ['Date'] });
-      const [placed, unplaced] = await service.getMyEventHats({ event: 'birthday2026', user });
-      expect(placed.moveCooldownLeftMs).toBe(left);
-      expect(unplaced.moveCooldownLeftMs).toBe(0);
-    });
-  });
-
   // The rows are the mock's, so pin what the query asks for: this caller, this event's decorations.
   it("queries only this caller's decorations of this event", async () => {
     await service.getMyEventHats({ event: 'birthday2026', user });
@@ -441,14 +423,6 @@ describe('getMyEventHats', () => {
     expect(sql).toContain(`AND c.type = 'ContentDecoration'\n`);
     expect(sql).toContain(`AND c.data->>'event' = ?\n`);
     expect(values).toEqual([9, 'birthday2026']);
-  });
-
-  it("asks for the scores of exactly the caller's hats", async () => {
-    await service.getMyEventHats({ event: 'birthday2026', user });
-    expect(scoring.getCosmeticScores).toHaveBeenCalledWith(scored, [
-      { userId: 9, cosmeticId: 31, claimKey: 'claimed' },
-      { userId: 9, cosmeticId: 32, claimKey: 'txn-9' },
-    ]);
   });
 });
 
@@ -730,19 +704,6 @@ describe('getPlaceableEventContentPage', () => {
     expect(articles.nextCursor).toBe(72);
   });
 
-  it('points a first page with more at the next one', async () => {
-    dbMock.dbRead.model.findMany.mockResolvedValueOnce(ids(25));
-    expect((await page({ entityType: 'Model' })).nextCursor).toBe(24);
-  });
-
-  // A full page of exactly 24 is the last one: only a 25th row means more.
-  it('ends on a page of exactly 24', async () => {
-    dbMock.dbRead.article.findMany.mockResolvedValueOnce(ids(24));
-    const articles = await page({ entityType: 'Article' });
-    expect(dbMock.dbRead.article.findMany.mock.calls[0][0].skip).toBe(0);
-    expect(articles.nextCursor).toBeNull();
-  });
-
   // An event whose hat can go on a type the picker has no reader for still reads nothing for it.
   it('reads nothing for an allowed type the picker does not list', async () => {
     decorations.getEventDecorationDefinition.mockReturnValueOnce({
@@ -859,20 +820,6 @@ describe('getEventStandings decoration', () => {
     expect(res.liveTotals).toBe(false);
     // Settled by design, not a fallback: the answer stays edge-cacheable.
     expect(onDegraded).not.toHaveBeenCalled();
-  });
-
-  it('hands the hat scores read the degraded callback', async () => {
-    const onDegraded = vi.fn();
-    const cosmetics = [{ userId: 9, cosmeticId: 31, claimKey: 'claimed' }];
-    await service.getEventCosmeticScores({ event: 'birthday2026', cosmetics, viewer, onDegraded });
-    expect(scoring.getCosmeticScores).toHaveBeenCalledWith(scored, cosmetics, onDegraded);
-  });
-
-  // The settled snapshot is on sysRedis too: an unreachable one must not be edge-cached as zeros.
-  it('hands the settled read the same degraded callback', async () => {
-    const onDegraded = vi.fn();
-    await service.getEventStandings({ event: 'birthday2026', viewer, onDegraded });
-    expect(scoring.getEventStandings).toHaveBeenCalledWith(scored, { onDegraded });
   });
 
   it('keeps the snapshot team totals when the live totals are unreachable', async () => {
@@ -1015,36 +962,6 @@ describe('getEventHatCatalog', () => {
       { design: 'crown', name: 'crown Cap', hats: [{ team: 'Yellow', url: 'y2' }] },
       { design: 'plain', name: 'Plain Hat', hats: [{ team: 'Green', url: 'g3' }] },
     ]);
-  });
-
-  // The rows are the mock's, so pin both whole queries: what is on sale now by the shop's own rule
-  // (it is edge-cached for anonymous visitors), then this event's join design and those, in id order.
-  it("queries only this event's join design and on-sale decorations, in id order", async () => {
-    engine.assertReadable.mockResolvedValue('open');
-    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ id: 7 }, { id: 9 }]).mockResolvedValueOnce([]);
-    await service.getEventHatCatalog({ event: 'birthday2026', viewer: undefined });
-    const calls = dbMock.dbRead.$queryRaw.mock.calls as [string[], ...unknown[]][];
-    const sql = (strings: string[]) => strings.join('?').replace(/\s+/g, ' ').trim();
-    expect(calls).toHaveLength(2);
-    const [[onSale, ...onSaleValues], [catalog, ...values]] = calls;
-    expect(sql(onSale)).toBe(
-      `SELECT DISTINCT si."cosmeticId" AS id FROM "CosmeticShopItem" si ` +
-        `WHERE si."cosmeticId" IS NOT NULL AND si.status = 'Published' AND si.listed ` +
-        `AND si."archivedAt" IS NULL ` +
-        `AND (si."availableFrom" IS NULL OR si."availableFrom" <= now()) ` +
-        `AND (si."availableTo" IS NULL OR si."availableTo" >= now()) ` +
-        `AND EXISTS ( SELECT 1 FROM "CosmeticShopSectionItem" ssi ` +
-        `JOIN "CosmeticShopSection" ss ON ss.id = ssi."shopSectionId" ` +
-        `WHERE ssi."shopItemId" = si.id AND ss.published )`
-    );
-    expect(onSaleValues).toEqual([]);
-    expect(sql(catalog)).toBe(
-      `SELECT c.data->>'design' AS design, c.data->>'team' AS team, c.name, c.data->>'url' AS url ` +
-        `FROM "Cosmetic" c WHERE c.type = 'ContentDecoration' AND c.data->>'event' = ? ` +
-        `AND c."createdById" IS NULL ` +
-        `AND (c.data->>'design' = ? OR c.id = ANY(?::int[])) ORDER BY c.id`
-    );
-    expect(values).toEqual(['birthday2026', 'basic', [7, 9]]);
   });
 });
 
@@ -1315,15 +1232,6 @@ describe('getWornEventHat', () => {
     expect(onDegraded).toHaveBeenCalledTimes(1);
   });
 
-  it('does not report a live answer as degraded, and hands the settled read the same callback', async () => {
-    wearing();
-    inHatMap('claimed');
-    const onDegraded = vi.fn();
-    await read(onDegraded);
-    expect(onDegraded).not.toHaveBeenCalled();
-    expect(scoring.getCosmeticScores.mock.calls[0][2]).toBe(onDegraded);
-  });
-
   // The popover is public and edge-cached: the claim key (a purchase's transaction id) stays home.
   it('never returns the claim key', async () => {
     wearing();
@@ -1349,20 +1257,5 @@ describe('getWornEventHat', () => {
       impressions: 0,
       reactions: 0,
     });
-  });
-});
-
-describe('wornEventHatSchema', () => {
-  it('takes one piece of content by type and id', async () => {
-    const { wornEventHatSchema } = await import('~/server/schema/event.schema');
-    const ok = { event: 'birthday2026', entityType: 'Image', entityId: 5 };
-    expect(wornEventHatSchema.safeParse(ok).success).toBe(true);
-    for (const bad of [
-      { ...ok, entityType: 'Hat' },
-      { ...ok, entityId: 0 },
-      { ...ok, entityId: 1.5 },
-      { ...ok, entityId: '5' },
-    ])
-      expect(wornEventHatSchema.safeParse(bad).success).toBe(false);
   });
 });

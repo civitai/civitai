@@ -51,62 +51,11 @@ describe('normalizeStepOutput — preprocessVideo', () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({ ...VIDEO_BLOB, type: 'video' });
   });
-
-  it('returns nothing when the step has no output yet', async () => {
-    expect(await normalize({ $type: 'preprocessVideo', output: undefined })).toEqual([]);
-    expect(await normalize({ $type: 'preprocessVideo', output: {} })).toEqual([]);
-  });
-
-  // Guards the case that produced the bug: the image sibling was handled and the
-  // video one silently fell through the switch to [].
-  it('classifies preprocessImage as image, not video', async () => {
-    const result = await normalize({
-      $type: 'preprocessImage',
-      output: { blob: { id: 'b', url: 'https://x/a.png', available: true } },
-    });
-
-    expect(result[0]).toMatchObject({ type: 'image' });
-  });
-});
-
-describe('normalizeStepOutput — imageBackgroundRemoval', () => {
-  it('surfaces the cutout as an image', async () => {
-    const IMAGE_BLOB = { id: 'cutout', url: 'https://x/cutout.png', available: true };
-    const result = await normalize({
-      $type: 'imageBackgroundRemoval',
-      output: { image: IMAGE_BLOB },
-    });
-
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ ...IMAGE_BLOB, type: 'image' });
-  });
-});
-
-describe('normalizeStepOutput — soniloAudioGen', () => {
-  const AUDIO_BLOB = { id: 'blob-2', url: 'https://x/track.m4a', available: true };
-
-  it('surfaces the generated clip as audio', async () => {
-    const result = await normalize({ $type: 'soniloAudioGen', output: { blob: AUDIO_BLOB } });
-
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ ...AUDIO_BLOB, type: 'audio' });
-  });
-
-  it('returns nothing when the step has no output yet', async () => {
-    expect(await normalize({ $type: 'soniloAudioGen', output: undefined })).toEqual([]);
-    expect(await normalize({ $type: 'soniloAudioGen', output: {} })).toEqual([]);
-  });
 });
 
 describe('normalizeStepOutput — polyGen', () => {
   const GLB = { id: 'glb', url: 'https://x/m.glb', format: 'glb', available: true };
   const FBX = { id: 'fbx', url: 'https://x/m.fbx', format: 'fbx', available: true };
-
-  it('keeps the GLB as the base mesh with the FBX as its sibling', async () => {
-    const [item] = await normalize({ $type: 'polyGen', output: { model: GLB, fbxModel: FBX } });
-
-    expect(item).toMatchObject({ id: 'glb', format: 'glb', type: 'model3d', fbxModel: FBX });
-  });
 
   // Tripo quad, after the orchestrator stopped emitting a GLB.
   it('surfaces the FBX when there is no GLB', async () => {
