@@ -301,6 +301,24 @@ environment, and they must never switch the reader on. Without a reader the miss
   `FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT` reads at once (default 4); a read past it is refused at once.
   A failed, refused or late read falls back `metrics-miss-failed` (Node then answers those images
   from the cache, i.e. `statsUnknown: true`; Go leaves that answer to Node).
+- A dedicated ClickHouse for entity metrics (the Node twin: `getImageMetricService` in
+  `src/server/services/image.service.ts`). Configured from the Node app's own variables, so one secret
+  feeds both runtimes: `CLICKHOUSE_METRICS_HOST` (full URL, protocol and port included),
+  `CLICKHOUSE_METRICS_USERNAME`, `CLICKHOUSE_METRICS_PASSWORD` (never filled from another login), and
+  only alongside the reader above (it never turns the computation on). Each request to it is bounded
+  by `CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS` (default 10000); it shares the read cap's value but has
+  its own slots. A populate reads it instead of the reader above only while the Flipt flag
+  `image-metrics-dedicated-clickhouse` is on: the Node app's key, so one switch moves both runtimes.
+  feed-go evaluates no other Flipt flag (§8): this one is read by `internal/flipt` (stdlib, the
+  server's `POST /evaluate/v1/boolean` with `FLIPT_URL`, `FLIPT_FETCHER_SECRET`, `FLIPT_ENVIRONMENT`,
+  entity `global`, no context: the arguments Node's global gate passes; the flag's plain on/off only, the server's evaluator is not the engine Node runs) every 5 s in the background, so a
+  flip takes effect within 5 s with no restart and no request waits on Flipt. Unread yet, a failed
+  read, an unknown key or no `FLIPT_URL` read off. The choice is made once per populate (all its
+  batches go to one server). The query text and settings are unchanged, and inside the dedicated
+  user's constraints (`max_threads` 1, `max_execution_time` 6, nothing else capped). A failed read
+  there falls back `metrics-miss-failed` exactly as above and is never retried on the shared reader:
+  a retry would put the load back on the shared server exactly when the dedicated one is down; the
+  kill switch is the flag.
 - The kept answer (`lookupShared`, write-back off) holds a computed count for 10 s; a reaction in that
   window is not in it (Node's own hash takes the watcher's increments; a §9 divergence).
 - Not ported (cache HITS, unchanged here): the TTL slide on 10% of hits and the background refresh

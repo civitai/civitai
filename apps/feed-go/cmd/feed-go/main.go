@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -27,6 +28,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/flipt"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
@@ -128,7 +130,62 @@ func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute, tp *tracing
 		c.MetricsTimeout = cfg.ClickHouseTimeout
 		c.MetricsLockWait = cfg.MetricsLockWait
 	}
+	if err != nil {
+		return err
+	}
+	dedicated, err := dedicatedMetricsReader(cfg, chTracer)
+	if c != nil && c.ClickHouse != nil && dedicated != nil {
+		c.MetricsClickHouse = dedicated
+	}
 	return err
+}
+
+// dedicatedMetricsReader is the dedicated ClickHouse for entity metrics (CLICKHOUSE_METRICS_*): nil
+// when it is not configured. Built from its own variables only (URL, login and password alike, so
+// none of the shared reader's credentials can reach it), with the shared reader's read cap and every
+// request bounded by CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS. The error never names the URL or
+// credentials.
+func dedicatedMetricsReader(cfg *config.Config, tracer chread.Tracer) (hydrate.ClickHouse, error) {
+	if cfg.MetricsClickHouseURL == "" {
+		return nil, nil
+	}
+	c, err := chread.New(chread.Config{URL: cfg.MetricsClickHouseURL, Username: cfg.MetricsClickHouseUsername,
+		Password: cfg.MetricsClickHousePassword, MaxInFlight: cfg.ClickHouseMaxInFlight, Tracer: tracer,
+		HTTP: &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone(), Timeout: cfg.MetricsClickHouseRequestTimeout}})
+	if err != nil {
+		return nil, fmt.Errorf("dedicated metrics %w", err)
+	}
+	return c, nil
+}
+
+// metricsClickHouseFlag is the Flipt flag that moves the image metric-hash populate onto the dedicated
+// ClickHouse: the Node app's FLIPT_FEATURE_FLAGS.IMAGE_METRICS_DEDICATED_CLICKHOUSE, so one switch
+// moves both runtimes.
+const metricsClickHouseFlag = "image-metrics-dedicated-clickhouse"
+
+// attachMetricsSwitch reads metricsClickHouseFlag in the background (every flipt.RefreshInterval,
+// until ctx ends) and hands its answer to c, when c has a dedicated reader (attachMetricsReader).
+// Without one, or without FLIPT_URL, nothing is read and the populate keeps the shared reader. A
+// failed read reads as off; failures are logged at most once a minute.
+func attachMetricsSwitch(ctx context.Context, cfg *config.Config, c *hydrate.MissCompute, log *slog.Logger) (*flipt.Switch, error) {
+	if c == nil || c.MetricsClickHouse == nil || cfg.FliptURL == "" {
+		return nil, nil
+	}
+	fc, err := flipt.New(flipt.Config{URL: cfg.FliptURL, ClientToken: cfg.FliptClientToken, Environment: cfg.FliptEnvironment})
+	if err != nil {
+		return nil, err
+	}
+	sw := flipt.NewSwitch(func(ctx context.Context) (bool, error) { return fc.Boolean(ctx, metricsClickHouseFlag) })
+	var lastLog time.Time
+	sw.OnError = func(err error) {
+		if now := time.Now(); now.Sub(lastLog) >= time.Minute {
+			lastLog = now
+			log.Warn("flag read failed; reads as off", "flag", metricsClickHouseFlag, "err", err)
+		}
+	}
+	c.MetricsClickHouseOn = sw.On
+	sw.Start(ctx)
+	return sw, nil
 }
 
 // opensPrimary is whether run() opens the primary pool (DATABASE_URL): only with the miss computation
@@ -226,6 +283,12 @@ func run(log *slog.Logger) error {
 	if err := attachMetricsReader(cfg, sources.Compute, tp); err != nil {
 		log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
 	}
+	metricsSwitch, err := attachMetricsSwitch(ctx, cfg, sources.Compute, log)
+	if err != nil {
+		log.Error("flag not read; metric-hash populates keep the shared clickhouse", "flag", metricsClickHouseFlag, "err", err)
+	}
+	log.Info("dedicated metrics clickhouse", "configured", sources.Compute != nil && sources.Compute.MetricsClickHouse != nil,
+		"flag_read", metricsSwitch != nil, "CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", cfg.MetricsClickHouseRequestTimeout.Milliseconds())
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
 	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
 	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack.Names(),
