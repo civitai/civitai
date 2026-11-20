@@ -308,19 +308,30 @@ async function cachedOptionPrices(
 
 export const REMIX_APP_HELD = 'This app is back in review. Try another one.';
 export const REMIX_APP_UNCHECKED = 'This app cannot be checked right now. Try again in a moment.';
+export const REMIX_APP_UNJUDGED = 'This app cannot be checked with these answers. Try other ones.';
 
 type AuthorPart = Awaited<ReturnType<NonNullable<RegisteredRemixApp['authorPrompt']>>>;
 
 /**
  * Condition B: the author's part of a user app's prompt, judged alone and recorded against nobody.
  * A block sends the app back to review and refuses the run before the viewer's audit, which would
- * count the author's words against the viewer. So does no part to judge (the masked run went
- * elsewhere): the viewer's audit would judge the author's words just the same.
+ * count the author's words against the viewer.
  */
 async function assertAuthorPartPasses(slug: string, part: AuthorPart) {
+  // The masked run went elsewhere, so the viewer's audit would judge words of the author's unseen.
+  // Refused, never held: the viewer's own answers can steer the app there.
+  if (!part) {
+    logToAxiom({
+      name: 'remix-app-run',
+      type: 'warning',
+      message: "Refused a user remix app's run: its author's part could not be built",
+      payload: { slug },
+    });
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_UNJUDGED });
+  }
   // Off green on every domain: a hold takes the app out everywhere, and green's own list strikes nobody.
-  const verdict = part && (await classifyPromptServer({ prompt: part.prompt, isGreen: false }));
-  if (verdict?.outcome === 'pass') {
+  const verdict = await classifyPromptServer({ prompt: part.prompt, isGreen: false });
+  if (verdict.outcome === 'pass') {
     // Unjudged, it could still block in the viewer's audit a moment later.
     if (verdict.externalError)
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNCHECKED });
@@ -374,11 +385,17 @@ async function recordCombinationBlock(
       (verdict) => verdict,
       () => null
     );
-  const alone = answers.length ? await judge(answers.join('\n')) : null;
-  if (alone && alone.outcome !== 'pass') return;
+  // The viewer's words alone, joined as an app may join them.
+  const joins = [...new Set(['\n', '', ' '].map((glue) => answers.join(glue)))];
+  const alone = answers.length ? await Promise.all(joins.map(judge)) : [];
+  if (alone.some((verdict) => verdict && verdict.outcome !== 'pass')) return;
   const whole = await judge(prompt);
+  // Judged again it passes: nothing here says the app had a part in the refusal.
+  if (whole?.outcome === 'pass' && !whole.externalError) return;
   const strike =
-    !whole || (answers.length && (!alone || alone.externalError)) ? 'error' : firstStrikeOf(whole);
+    !whole || alone.some((verdict) => !verdict || verdict.externalError)
+      ? 'error'
+      : firstStrikeOf(whole);
   await holdUserRemixApp(slug, {
     action: strike === 'error' ? 'held-classifier-error' : 'held-combination-blocks',
     viewerId,

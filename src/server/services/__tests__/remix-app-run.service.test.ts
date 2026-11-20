@@ -387,6 +387,7 @@ import {
   postRemixResult,
   REMIX_APP_HELD,
   REMIX_APP_UNCHECKED,
+  REMIX_APP_UNJUDGED,
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
 import { REMIX_SYSTEM_ACTOR } from '~/shared/remix-apps/row.schema';
@@ -1707,6 +1708,11 @@ describe('a user app', () => {
     describe('the run-time audit', () => {
       const ask = "await ctx.ask({ kind: 'text', prompt: 'Who is it?', maxLength: 40 })";
       const ASKING_SOURCE = `export default defineRemixApp({ async run(ctx) { const who = ${ask}; const out = await ctx.workflow({ kind: 'image', prompt: 'a portrait of ' + who, images: [ctx.source], aspectRatio: 'source', quantity: 1 }); return out.images; } });`;
+      // Two text answers, joined with nothing between them.
+      const TWO_SOURCE = ASKING_SOURCE.replace(
+        "prompt: 'a portrait of ' + who",
+        "prompt: 'a portrait of ' + who + (await ctx.ask({ kind: 'text', prompt: 'And?', maxLength: 40 }))"
+      );
       // Goes another way when its text answer is masked: no author part to judge.
       const DIVERGING_SOURCE = ASKING_SOURCE.replace(
         'const out',
@@ -1792,7 +1798,24 @@ describe('a user app', () => {
         const sha = (text: string) => createHash('sha256').update(text).digest('hex');
         const runner = fakeRemixRunner({
           secret: SECRET,
-          apps: { [sha(ASKING_SOURCE)]: appOf(false), [sha(DIVERGING_SOURCE)]: appOf(true) },
+          apps: {
+            [sha(ASKING_SOURCE)]: appOf(false),
+            [sha(DIVERGING_SOURCE)]: appOf(true),
+            [sha(TWO_SOURCE)]: {
+              async run(ctx) {
+                const who = await ctx.ask({ kind: 'text', prompt: 'Who is it?', maxLength: 40 });
+                const and = await ctx.ask({ kind: 'text', prompt: 'And?', maxLength: 40 });
+                const out = await ctx.workflow({
+                  kind: 'image',
+                  prompt: 'a portrait of ' + who + and,
+                  images: [ctx.source],
+                  aspectRatio: 'source',
+                  quantity: 1,
+                });
+                return out.images;
+              },
+            },
+          },
         });
         vi.stubGlobal('fetch', runner.fetchImpl);
         stored = rowOf();
@@ -1846,9 +1869,21 @@ describe('a user app', () => {
         );
       });
 
+      it("B: an author's part that cannot be built refuses the run before the viewer's audit, and holds nothing", async () => {
+        // The viewer's answer can steer an app there, so one viewer must not pull it.
+        stored = rowOf(DIVERGING_SOURCE);
+        await bumpRemixAppRegistry();
+        await expect(runAs(USER_ID)).rejects.toMatchObject({
+          code: 'PRECONDITION_FAILED',
+          message: REMIX_APP_UNJUDGED,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(submits()).toHaveLength(0);
+        expect(written()).toHaveLength(0);
+      });
+
       it.each([
         ['blocks', () => classify(pass, { author: blocked('nsfw_blocklist') }), ASKING_SOURCE],
-        ['cannot be judged: the masked run goes another way', () => undefined, DIVERGING_SOURCE],
       ])(
         "B: an author's part that %s sends the app back to review and refuses the run before the viewer's audit",
         async (_, setUp, source) => {
@@ -1923,6 +1958,38 @@ describe('a user app', () => {
         await expect(runAs(101, { green })).rejects.toMatchObject({
           message: 'Your prompt was flagged: x',
         });
+        expect(written()).toHaveLength(0);
+      });
+
+      it('C: a refusal the prompt, judged again, does not repeat never counts', async () => {
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        classify(pass);
+        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        expect(written()).toHaveLength(0);
+      });
+
+      it("C: two answers that block once the app joins them are the viewer's own", async () => {
+        stored = rowOf(TWO_SOURCE);
+        await bumpRemixAppRegistry();
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        vi.mocked(classifyPromptServer).mockImplementation((async ({
+          prompt,
+        }: {
+          prompt: string;
+        }) =>
+          prompt === 'AdaLovelace' || prompt.startsWith('a portrait of Ada')
+            ? blocked('minor_age')
+            : pass) as never);
+        await expect(
+          startRemixRun({
+            slug: 'u5-mine',
+            imageId: SOURCE_ID,
+            nonce: `nonce-two-${nonce++}`,
+            answers: ['Ada', 'Lovelace'],
+            quote: 30,
+            caller: flagOn({ id: 101 }),
+          })
+        ).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
         expect(written()).toHaveLength(0);
       });
 

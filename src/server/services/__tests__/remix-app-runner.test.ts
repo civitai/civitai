@@ -328,6 +328,27 @@ describe("condition D: the author's part of a prompt", () => {
     });
   });
 
+  it("masks within a short text ask's own limit", async () => {
+    const short: Pick<RemixApp, 'run'> = {
+      async run(ctx) {
+        const who = await ctx.ask({ kind: 'text', prompt: 'Who?', maxLength: 2 });
+        return (
+          await ctx.workflow({
+            kind: 'image',
+            prompt: `a portrait of ${who}`,
+            images: [ctx.source],
+            aspectRatio: 'source',
+            quantity: 1,
+          })
+        ).images;
+      },
+    };
+    expect(await authorPrompt(short)(image, [{ type: 'ask', answer: 'bo' }])).toEqual({
+      prompt: 'a portrait of __',
+      answers: ['bo'],
+    });
+  });
+
   it('is null when the app, run on the placeholder, goes another way', async () => {
     const picky: Pick<RemixApp, 'run'> = {
       async run(ctx) {

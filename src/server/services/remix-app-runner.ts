@@ -211,14 +211,19 @@ export function userRemixAuthorPrompt(
       opts
     );
     if ('cause' in recorded) return null;
-    const isText = (index: number) =>
-      ((recorded.effects[index] as { spec?: { kind?: unknown } } | undefined)?.spec?.kind ?? '') ===
-      'text';
+    const textSpec = (index: number) => {
+      const spec = (recorded.effects[index] as { spec?: { kind?: unknown; maxLength?: unknown } })
+        ?.spec;
+      return spec?.kind === 'text' ? spec : undefined;
+    };
     const answers: string[] = [];
     const masked = log.map((entry, index) => {
-      if (entry.type !== 'ask' || !isText(index) || entry.answer === '') return entry;
+      const spec = textSpec(index);
+      if (entry.type !== 'ask' || !spec || entry.answer === '') return entry;
       answers.push(String(entry.answer));
-      return { type: 'ask' as const, answer: REMIX_ANSWER_PLACEHOLDER };
+      // Within the ask's own limit, or the masked run is refused on it.
+      const max = typeof spec.maxLength === 'number' ? spec.maxLength : undefined;
+      return { type: 'ask' as const, answer: REMIX_ANSWER_PLACEHOLDER.slice(0, max) };
     });
     const [result] = await callRemixRunner(
       { appId, source: code, image: { ...source }, base: masked },
