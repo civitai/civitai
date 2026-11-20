@@ -220,17 +220,17 @@ export async function getInquisitorQueue(
   );
 
   return items.map(({ options, ingestion, reason, escalationReason, ...item }) => {
+    const media: InquisitorMedia =
+      ingestion !== 'Blocked' ? 'cdn' : viewable.has(item.imageId) ? 'retracted' : 'restricted';
     const labels = new Map(parseOptions(options).map((option) => [option.value, option.label]));
     return {
       ...item,
       reason: narrow(KNIGHTS_WRITEBACK_REASONS, reason),
       escalationReason: narrow(KNIGHTS_ESCALATION_REASONS, escalationReason),
       hasBlockMarker: hasBlockMarker({ ingestion, blockedFor: item.blockedFor }),
-      media: (ingestion !== 'Blocked'
-        ? 'cdn'
-        : viewable.has(item.imageId)
-        ? 'retracted'
-        : 'restricted') satisfies InquisitorMedia,
+      media,
+      // The page draws a restricted image from nowhere, so it gets no storage key either.
+      imageKey: media === 'restricted' ? '' : item.imageKey,
       blockReason: consensusBlockReason(blockedVotes.filter((vote) => vote.itemId === item.id)),
       votes: tallyByAnswer(
         tallies.filter((tally) => tally.itemId === item.id),

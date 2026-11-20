@@ -414,7 +414,7 @@ describe('a model version unpublished for its subject', () => {
         });
       } finally {
         await db.exec(
-          `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129)`
+          `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129, 990400999)`
         );
       }
     }
@@ -426,7 +426,7 @@ describe('a model version unpublished for its subject', () => {
       expect(await getRetractedMedia(990000126, { csamReview: false })).toBeNull();
     } finally {
       await db.exec(
-        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129)`
+        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129, 990400999)`
       );
     }
     await db.exec(
@@ -482,13 +482,30 @@ describe('a model version unpublished for its subject', () => {
       // A republish clears the post's reason; the hold still restricts.
       await db.exec(`UPDATE "Post" SET metadata = '{}' WHERE id = 990400129`);
       expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
-      await db.exec(`UPDATE "TextScanHold" SET status = 'Dismissed' WHERE "entityId" = 990400129`);
-      expect(await getRetractedMedia(990000129, { csamReview: false })).toMatchObject({
-        url: 'key-990000129',
-      });
+      await db.exec(`UPDATE "TextScanHold" SET status = 'Pending' WHERE "entityId" = 990400129`);
+      expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
+      // A hold that does not mark this post as CSAM leaves it open.
+      for (const hold of [
+        `'Post', 990400129, 'csam', 'Dismissed'`,
+        `'Post', 990400129, 'other', 'Confirmed'`,
+        `'Model', 990400129, 'csam', 'Confirmed'`,
+        `'Post', 990400999, 'csam', 'Confirmed'`,
+      ]) {
+        await db.exec(`DELETE FROM "TextScanHold" WHERE "entityId" IN (990400129, 990400999)`);
+        await db.exec(
+          `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES (${hold})`
+        );
+        expect({
+          hold,
+          served: !!(await getRetractedMedia(990000129, { csamReview: false })),
+        }).toEqual({
+          hold,
+          served: true,
+        });
+      }
     } finally {
       await db.exec(
-        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129)`
+        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129, 990400999)`
       );
     }
   });

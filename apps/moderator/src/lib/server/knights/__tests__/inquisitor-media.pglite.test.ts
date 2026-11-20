@@ -108,6 +108,7 @@ const media = async () => {
   const queue = await getInquisitorQueue();
   expect(queue).toHaveLength(1);
   const item = queue[0];
+  expect(item.imageKey === '').toBe(item.media === 'restricted');
   if (item.media !== 'cdn') {
     scannerVerdicts.clear();
     const served = await getRetractedMedia(item.imageId, { csamReview: false });

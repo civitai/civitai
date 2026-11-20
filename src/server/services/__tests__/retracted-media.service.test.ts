@@ -297,14 +297,24 @@ describe('getRetractedMedia', () => {
 
 describe('the eligibility read', () => {
   it('runs under a statement timeout, so a slow read refuses instead of hanging', async () => {
+    // A transaction client of its own, so a SET on the pool instead of the transaction shows.
+    const tx = {
+      $executeRawUnsafe: vi.fn(async () => 0),
+      $queryRaw: (...args: unknown[]) =>
+        (dbMock.dbWrite.$queryRaw as unknown as (...a: unknown[]) => unknown)(...args),
+    };
+    dbMock.dbWrite.$transaction.mockImplementationOnce((async (fn: (t: typeof tx) => unknown) =>
+      fn(tx)) as never);
+    const queryRaw = vi.spyOn(tx, '$queryRaw');
+    dbMock.dbWrite.$executeRawUnsafe.mockClear();
     await getRetractedMedia(1, { csamReview: false });
-    expect(dbMock.dbWrite.$transaction).toHaveBeenCalled();
-    expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledWith(
+    expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
       expect.stringMatching(/^SET LOCAL statement_timeout = \d+$/)
     );
+    expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
     // Before the read, so the read is the statement it bounds.
-    expect(dbMock.dbWrite.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
-      dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]
+    expect(tx.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+      queryRaw.mock.invocationCallOrder[0]
     );
   });
 });
@@ -440,7 +450,7 @@ describe('a model version unpublished for its subject', () => {
         });
       } finally {
         await pg.exec(
-          `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129)`
+          `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129, 990400999)`
         );
       }
     }
@@ -452,7 +462,7 @@ describe('a model version unpublished for its subject', () => {
       expect(await getRetractedMedia(990000126, { csamReview: false })).toBeNull();
     } finally {
       await pg.exec(
-        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129)`
+        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129, 990400999)`
       );
     }
     await pg.exec(
@@ -492,13 +502,30 @@ describe('a model version unpublished for its subject', () => {
       // A republish clears the post's reason; the hold still restricts.
       await pg.exec(`UPDATE "Post" SET metadata = '{}' WHERE id = 990400129`);
       expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
-      await pg.exec(`UPDATE "TextScanHold" SET status = 'Dismissed' WHERE "entityId" = 990400129`);
-      expect(await getRetractedMedia(990000129, { csamReview: false })).toMatchObject({
-        url: 'key-990000129',
-      });
+      await pg.exec(`UPDATE "TextScanHold" SET status = 'Pending' WHERE "entityId" = 990400129`);
+      expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
+      // A hold that does not mark this post as CSAM leaves it open.
+      for (const hold of [
+        `'Post', 990400129, 'csam', 'Dismissed'`,
+        `'Post', 990400129, 'other', 'Confirmed'`,
+        `'Model', 990400129, 'csam', 'Confirmed'`,
+        `'Post', 990400999, 'csam', 'Confirmed'`,
+      ]) {
+        await pg.exec(`DELETE FROM "TextScanHold" WHERE "entityId" IN (990400129, 990400999)`);
+        await pg.exec(
+          `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES (${hold})`
+        );
+        expect({
+          hold,
+          served: !!(await getRetractedMedia(990000129, { csamReview: false })),
+        }).toEqual({
+          hold,
+          served: true,
+        });
+      }
     } finally {
       await pg.exec(
-        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129)`
+        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129, 990400999)`
       );
     }
   });
