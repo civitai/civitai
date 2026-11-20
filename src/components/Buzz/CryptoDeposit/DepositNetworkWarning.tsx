@@ -98,6 +98,19 @@ export function DepositNetworkWarning({
           )}{' '}
           {getTail(resolved?.network)}
         </Text>
+        <Text size="xs" c="dimmed" mt={4} data-testid="deposit-token-warning">
+          {resolved ? (
+            <>
+              Only <b>{resolved.token}</b> is credited. Any other token sent to this address, even
+              on {resolved.network}, isn&apos;t converted and needs a manual refund.
+            </>
+          ) : (
+            <>
+              Only <b>{code.toUpperCase()}</b> is credited. Any other token sent to this address,
+              even on the same network, isn&apos;t converted and needs a manual refund.
+            </>
+          )}
+        </Text>
       </div>
     </Group>
   );
