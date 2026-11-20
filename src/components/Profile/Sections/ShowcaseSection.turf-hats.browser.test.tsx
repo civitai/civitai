@@ -190,7 +190,14 @@ describe('View all on a profile Showcase', () => {
       </div>
     );
 
+    const shown = () =>
+      [...document.body.querySelectorAll<HTMLElement>('a[href*="/images/3"]')].filter(
+        (a) => getComputedStyle(a).visibility !== 'hidden'
+      ).length;
+    await vi.waitFor(() => expect(shown()).toBeLessThan(13));
+
     await screen.getByRole('button', { name: 'View all 13' }).click();
-    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Show less' })).toBeTruthy());
+    await vi.waitFor(() => expect(shown()).toBe(13));
+    expect(screen.getByRole('button', { name: 'Show less' })).toBeTruthy();
   });
 });
