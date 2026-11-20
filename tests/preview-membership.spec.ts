@@ -65,22 +65,25 @@ test.describe('membership page — gold (paid, tier=gold)', () => {
     // The page looks up the subscription for the domain's Buzz type (features.isGreen:
     // green on a .com-labelled preview, yellow otherwise). The seeded gold sub is
     // yellow, so on a green preview the page finds no green sub and shows the
-    // "Yellow Membership Detected" alert with a View Membership button instead.
-    const isGreen = await page.evaluate(
+    // "Yellow Membership Detected" alert instead of the manage controls.
+    // FeatureAccess is sparse: a flag that is off is absent, not false.
+    const flags = await page.evaluate(
       () =>
-        (
-          window as unknown as {
-            __NEXT_DATA__?: { props?: { pageProps?: { flags?: { isGreen?: unknown } } } };
-          }
-        ).__NEXT_DATA__?.props?.pageProps?.flags?.isGreen
+        (window as unknown as { __NEXT_DATA__?: { props?: { pageProps?: { flags?: unknown } } } })
+          .__NEXT_DATA__?.props?.pageProps?.flags
     );
-    expect(typeof isGreen, 'flags.isGreen in __NEXT_DATA__ (which domain the preview serves)').toBe(
-      'boolean'
-    );
-    const memberSignal = isGreen
-      ? manageControl.or(page.getByRole('button', { name: /View Membership/i }))
-      : manageControl;
+    expect(
+      flags,
+      'feature flags in __NEXT_DATA__ (which domain the preview serves)'
+    ).toBeInstanceOf(Object);
+    const isGreen = (flags as { isGreen?: boolean }).isGreen === true;
+    // Exact name: the has-subscription view's "View Yellow Membership" must not match.
+    const viewOtherMembership = page.getByRole('button', { name: /^View Membership$/ });
+    const memberSignal = isGreen ? manageControl.or(viewOtherMembership) : manageControl;
     await expect(memberSignal.first()).toBeVisible();
+    if (isGreen && !(await manageControl.first().isVisible())) {
+      await expect(page.getByText('Yellow Membership Detected')).toBeVisible();
+    }
   });
 });
 
