@@ -8,14 +8,6 @@ import type * as CollectionService from '~/server/services/collection.service';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 
 // Any flag read on these paths answers false, without a Flipt client.
-// The image visibility check admits every image here; its rule is pinned in
-// image-thread-visibility.behavior.test.ts.
-vi.mock('~/server/db/prisma-sql-kysely', async (importOriginal) => ({
-  ...(await importOriginal<typeof PrismaSqlKysely>()),
-  queryPrismaSql: vi.fn(async () => [
-    { id: 1, userId: 1, nsfwLevel: 1, postId: 1, visibleSignedOut: null },
-  ]),
-}));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -49,6 +41,14 @@ vi.mock('~/server/services/collection.service', async (importOriginal) => ({
 vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof MetricHelpers>()),
   updateEntityMetric,
+}));
+// The image visibility check admits every image here; its rule is pinned in
+// image-thread-visibility.behavior.test.ts.
+vi.mock('~/server/db/prisma-sql-kysely', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrismaSqlKysely>()),
+  queryPrismaSql: vi.fn(async () => [
+    { id: 1, userId: 1, nsfwLevel: 1, postId: 1, visibleSignedOut: null },
+  ]),
 }));
 
 import * as queries from '@civitai/db-queries/hot-reads-5';

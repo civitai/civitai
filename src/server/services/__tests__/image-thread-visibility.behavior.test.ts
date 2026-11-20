@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * An image's comment thread, its challenge judge's comment and its reactions are open to a viewer
@@ -21,9 +22,8 @@ vi.mock('~/server/db/kyselyDb.lazy', async () => {
 });
 
 const { commentSurface } = await import('~/server/services/commentv3/surfaces');
-const { getJudgeCommentForImage } = await import(
-  '~/server/services/challenge-judge-review.service'
-);
+const { createCallerFactory } = await import('~/server/trpc');
+const { challengeRouter } = await import('~/server/routers/challenge.router');
 const { toggleReactionHandler } = await import('~/server/controllers/reaction.controller');
 
 const OWNER = 5;
@@ -31,6 +31,8 @@ const STRANGER = 30;
 const JUDGE = 40;
 const CLEAN = 1;
 const ACCEPTABLE_MINOR = 2;
+const MINOR_MATURE = 3;
+const MODERATOR = 50;
 
 beforeAll(async () => {
   const db = new PGlite();
@@ -68,6 +70,8 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, "postId", url, "acceptableMinor") VALUES
       (${CLEAN}, 1, 'img-clean', false),
       (${ACCEPTABLE_MINOR}, 1, 'img-acceptable-minor', true);
+    INSERT INTO "Image" (id, "postId", url, minor, "nsfwLevel") VALUES
+      (${MINOR_MATURE}, 1, 'img-minor-mature', true, 4);
     INSERT INTO "CommentV3" ("entityType", "entityId", "userId", content) VALUES
       ('image', ${CLEAN}, ${JUDGE}, 'judge on clean'),
       ('image', ${ACCEPTABLE_MINOR}, ${JUDGE}, 'judge on flagged');
@@ -77,7 +81,7 @@ beforeAll(async () => {
 });
 
 const signedOut = {} as never;
-const as = (id: number) => ({ user: { id, isModerator: false } } as never);
+const as = (id: number, isModerator = false) => ({ user: { id, isModerator } } as never);
 const notFound = expect.objectContaining({ code: 'NOT_FOUND' });
 const threadCheck = (imageId: number, ctx: never) =>
   Promise.resolve(commentSurface('image').assertVisible?.(imageId, ctx));
@@ -88,41 +92,80 @@ describe("an image's comment thread", () => {
     await expect(threadCheck(CLEAN, as(STRANGER))).resolves.toBeUndefined();
   });
 
-  it('is not found on an acceptable-minor image, except by its owner', async () => {
-    await expect(threadCheck(ACCEPTABLE_MINOR, signedOut)).rejects.toEqual(notFound);
-    await expect(threadCheck(ACCEPTABLE_MINOR, as(STRANGER))).rejects.toEqual(notFound);
-    await expect(threadCheck(ACCEPTABLE_MINOR, as(OWNER))).resolves.toBeUndefined();
+  it.each([
+    ['acceptable-minor', ACCEPTABLE_MINOR],
+    ['minor-flagged and rated past the minor content limit', MINOR_MATURE],
+  ])('is not found on an image that is %s, except by its owner and moderators', async (_, id) => {
+    await expect(threadCheck(id, signedOut)).rejects.toEqual(notFound);
+    await expect(threadCheck(id, as(STRANGER))).rejects.toEqual(notFound);
+    await expect(threadCheck(id, as(OWNER))).resolves.toBeUndefined();
+    await expect(threadCheck(id, as(MODERATOR, true))).resolves.toBeUndefined();
   });
 });
 
 describe("an image's judge comment", () => {
+  const judgeComment = (imageId: number, user?: { id: number; isModerator: boolean }) =>
+    createCallerFactory(challengeRouter)({
+      user: user && { ...user, onboarding: 15, emailVerified: new Date(0), meta: {} },
+      acceptableOrigin: true,
+      tokenScope: TokenScope.Full,
+      features: { trpcFlagGuardPerRequest: true, challengePlatform: true },
+      track: {},
+      ip: '127.0.0.1',
+      cache: {},
+      req: { headers: {} },
+      res: undefined,
+    } as never).getJudgeComment({ imageId, judgeUserId: JUDGE });
+
   it('is served on a reviewed image (control)', async () => {
-    await expect(getJudgeCommentForImage({ imageId: CLEAN, judgeUserId: JUDGE })).resolves.toBe(
-      'judge on clean'
-    );
+    expect(await judgeComment(CLEAN)).toBe('judge on clean');
   });
 
-  it('is not found on an acceptable-minor image', async () => {
-    await expect(
-      getJudgeCommentForImage({ imageId: ACCEPTABLE_MINOR, judgeUserId: JUDGE })
-    ).rejects.toEqual(notFound);
+  it('reads as none on an acceptable-minor image, except to its owner and moderators', async () => {
+    expect(await judgeComment(ACCEPTABLE_MINOR)).toBeNull();
+    expect(await judgeComment(ACCEPTABLE_MINOR, { id: STRANGER, isModerator: false })).toBeNull();
+    expect(await judgeComment(ACCEPTABLE_MINOR, { id: OWNER, isModerator: false })).toBe(
+      'judge on flagged'
+    );
+    expect(await judgeComment(ACCEPTABLE_MINOR, { id: MODERATOR, isModerator: true })).toBe(
+      'judge on flagged'
+    );
   });
 });
 
 describe('a reaction to an image', () => {
-  const react = (entityId: number) =>
+  const react = (entityId: number, ctx = as(STRANGER)) =>
     toggleReactionHandler({
-      ctx: as(STRANGER),
+      ctx,
       input: { entityType: 'image', entityId, reaction: 'Like' },
     }).catch((error: unknown) => error);
 
-  it('is refused as not found on an acceptable-minor image, before anything is written', async () => {
-    expect(await react(ACCEPTABLE_MINOR)).toEqual(notFound);
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  // The step after the image check is the contest lookup, which reads a table this fixture lacks:
+  // failing on that table is how a case shows it got past the check.
+  const pastTheCheck = expect.objectContaining({
+    message: expect.stringContaining('"CollectionItem" does not exist'),
+  });
+  it('gets past the image check on a reviewed image (control)', async () => {
+    dbMock.dbWrite.imageReaction.count.mockResolvedValue(0);
+    expect(await react(CLEAN)).toEqual(pastTheCheck);
   });
 
-  it('gets past the image check on a reviewed image (control)', async () => {
-    // Later steps read tables this fixture lacks, so only the check's own answer is pinned.
-    expect(await react(CLEAN)).not.toEqual(notFound);
+  it.each([
+    ['acceptable-minor', ACCEPTABLE_MINOR],
+    ['minor-flagged and rated past the minor content limit', MINOR_MATURE],
+  ])('is refused as not found on an image that is %s', async (_, id) => {
+    dbMock.dbWrite.imageReaction.count.mockResolvedValue(0);
+    expect(await react(id)).toEqual(notFound);
+  });
+
+  it('gets past the image check for its owner and for moderators', async () => {
+    dbMock.dbWrite.imageReaction.count.mockResolvedValue(0);
+    expect(await react(ACCEPTABLE_MINOR, as(OWNER))).toEqual(pastTheCheck);
+    expect(await react(ACCEPTABLE_MINOR, as(MODERATOR, true))).toEqual(pastTheCheck);
+  });
+
+  it('can still be removed by a user who holds it', async () => {
+    dbMock.dbWrite.imageReaction.count.mockResolvedValue(1);
+    expect(await react(ACCEPTABLE_MINOR)).toEqual(pastTheCheck);
   });
 });

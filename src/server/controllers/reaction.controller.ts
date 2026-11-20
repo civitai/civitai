@@ -235,10 +235,13 @@ export const toggleReactionHandler = async ({
     if (input.entityType === 'comment') await assertCommentActionable(input.entityId, ctx);
 
     if (input.entityType === 'image') {
+      // A reaction the user already holds stays removable on an image hidden from them since.
       await assertImageVisibleToViewer({
         id: input.entityId,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
+      }).catch(async (error: unknown) => {
+        if (!(await holdsReaction({ ...input, userId: ctx.user.id }))) throw error;
       });
       // We are only doing this for image contests for now. Because the user
       // gets an instant feedback, this shouldn't have too bad an impact if any at all.

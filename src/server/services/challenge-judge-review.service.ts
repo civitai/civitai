@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { collectionItemLagId, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -140,7 +141,15 @@ export async function getJudgeCommentForImage({
   userId?: number;
   isModerator?: boolean;
 }) {
-  await assertImageVisibleToViewer({ id: imageId, userId, isModerator });
+  // An image the viewer may not open reads as one with no judge comment.
+  const visible = await assertImageVisibleToViewer({ id: imageId, userId, isModerator }).then(
+    () => true,
+    (error: unknown) => {
+      if (error instanceof TRPCError && error.code === 'NOT_FOUND') return false;
+      throw error;
+    }
+  );
+  if (!visible) return null;
   const result = await dbRead.$queryRaw<[{ content: string }?]>`
     SELECT c.content
     FROM "CommentV3" c

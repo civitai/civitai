@@ -34,14 +34,6 @@ const {
 
 // The handler's two image reads, through Kysely: the access check's post and the tracker event's
 // owner and level.
-// The image visibility check admits every image here; its rule is pinned in
-// image-thread-visibility.behavior.test.ts.
-vi.mock('~/server/db/prisma-sql-kysely', async (importOriginal) => ({
-  ...(await importOriginal<typeof PrismaSqlKysely>()),
-  queryPrismaSql: vi.fn(async () => [
-    { id: 1, userId: 1, nsfwLevel: 1, postId: 1, visibleSignedOut: null },
-  ]),
-}));
 vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
   ...(await importOriginal<typeof HotReads5>()),
   getImagePostId: vi.fn(async () => ({ postId: 42 })),
@@ -68,6 +60,14 @@ vi.mock('~/server/services/notification.service', () => ({
 }));
 vi.mock('~/server/services/metric-excluded-users.service', () => ({
   getMetricExcludedUserIds: mockExcludedUserIds,
+}));
+// The image visibility check admits every image here; its rule is pinned in
+// image-thread-visibility.behavior.test.ts.
+vi.mock('~/server/db/prisma-sql-kysely', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrismaSqlKysely>()),
+  queryPrismaSql: vi.fn(async () => [
+    { id: 1, userId: 1, nsfwLevel: 1, postId: 1, visibleSignedOut: null },
+  ]),
 }));
 
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';

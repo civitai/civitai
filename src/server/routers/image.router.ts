@@ -171,7 +171,7 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     // A moderation flag on an entry reaches this shared, signed-out list only when these expire.
     .use(edgeCacheIt({ ttl: CacheTTL.day }))
-    .use(cacheIt({ key: 'image:get404Images:v2', ttl: CacheTTL.day }))
+    .use(cacheIt({ key: 'image:get404Images:v3', ttl: CacheTTL.day }))
     .query(() => get404Images()),
   reportCsamImages: moderatorProcedure
     .input(reportCsamImagesSchema)

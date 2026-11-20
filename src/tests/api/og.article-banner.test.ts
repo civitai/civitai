@@ -129,4 +129,10 @@ describe('/api/og?type=article image flags', () => {
     await render();
     expect(pickedImage()).toBe('banner-key');
   });
+
+  it('shows no image when the only banner is acceptable-minor', async () => {
+    mockArticle({ coverImage: null, bannerImage: { ...cleanBanner, acceptableMinor: true } });
+    await render();
+    expect(pickedImage()).toBeNull();
+  });
 });
