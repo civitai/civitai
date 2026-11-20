@@ -119,6 +119,18 @@ describe('getImagesForModelVersion with no browsing level', () => {
     expect(await versionImageIds()).toEqual([2]);
   });
 
+  it('leaves out an image rated Blocked even at a level past 32 bits', async () => {
+    await imageAt(1, 0, BLOCKED);
+    await imageAt(2, 1, XXX);
+
+    const images = await getImagesForModelVersion({
+      modelVersionIds: [VERSION],
+      imagesPerVersion: 20,
+      browsingLevel: 2 ** 32 + 63,
+    });
+    expect(images.map((i) => i.id)).toEqual([2]);
+  });
+
   it('leaves out an image rated Blocked and keeps the one beside it', async () => {
     await imageAt(1, 0, BLOCKED);
     await imageAt(2, 1, XXX);

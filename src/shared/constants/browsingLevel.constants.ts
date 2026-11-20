@@ -377,9 +377,9 @@ export function effectiveBrowsingCeiling(
 }
 
 // helpers
+/** `level` without the Blocked bit. Bitwise, so a value past int32 is folded to int32 first. */
 export function onlySelectableLevels(level: number) {
-  if (Flags.hasFlag(level, NsfwLevel.Blocked)) level = Flags.removeFlag(level, NsfwLevel.Blocked);
-  return level;
+  return level & ~NsfwLevel.Blocked;
 }
 
 export function getIsPublicBrowsingLevel(level: number) {

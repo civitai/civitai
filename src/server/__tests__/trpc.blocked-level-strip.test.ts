@@ -90,6 +90,11 @@ describe('procedure input browsing levels, signed in where mature content is all
     );
   });
 
+  it('drops the Blocked bit from a level past 32 bits', async () => {
+    const { browsingLevel } = await caller(false).levels({ browsingLevel: 2 ** 32 + 63 });
+    expect(browsingLevel).toBe(31);
+  });
+
   it('drops the Blocked bit a signed-out caller sent', async () => {
     const { browsingLevel } = await caller(false, false).levels({ browsingLevel: 63 });
     expect(browsingLevel & NsfwLevel.Blocked).toBe(0);
