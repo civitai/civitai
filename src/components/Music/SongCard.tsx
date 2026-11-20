@@ -43,8 +43,12 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
   const cover = useFeedSongCover(data.id);
   const plays = useFeedSongPlays(data.id);
   return (
-    <div className="flex flex-col gap-2" style={{ height }}>
-      <div className="relative min-h-0 w-full flex-1 overflow-hidden rounded-[14px]">
+    // Pencil `AECSM`: the text sits on the card surface other cards use, under the cover.
+    <div
+      className="flex flex-col overflow-hidden rounded-[14px] bg-gray-0 dark:bg-dark-6"
+      style={{ height }}
+    >
+      <div className="relative min-h-0 w-full flex-1 overflow-hidden">
         <RoutedDialogLink
           name="imageDetail"
           state={{ imageId: data.id }}
@@ -78,50 +82,52 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
           />
         </div>
       </div>
-      <RoutedDialogLink
-        name="imageDetail"
-        state={{ imageId: data.id }}
-        className={clsx('shrink-0 truncate text-[17px] font-bold leading-5', songTextBright)}
-      >
-        {title}
-      </RoutedDialogLink>
-      <span className="min-h-4 shrink-0 truncate text-[13px] leading-4">
-        {data.user.username && (
-          <NextLink
-            href={songCreatorHref(data.user.username)}
-            className={clsx('hover:underline', songTextDimmed)}
-          >
-            {data.user.username}
-          </NextLink>
-        )}
-      </span>
-      <span
-        className={clsx(
-          'min-h-[15px] shrink-0 truncate text-xs italic leading-[15px]',
-          songTextDimmed
-        )}
-      >
-        {genre ?? ''}
-      </span>
-      <div
-        className={clsx(
-          'flex shrink-0 items-center gap-2.5 text-xs leading-[15px]',
-          songTextDimmed
-        )}
-      >
-        {plays !== undefined && (
-          <SongStat icon={<IconHeadphones size={12} />} count={plays} label="plays" />
-        )}
-        <SongStat
-          icon={<IconThumbUp size={12} />}
-          count={data.stats?.likeCountAllTime ?? 0}
-          label="likes"
-        />
-        <SongStat
-          icon={<IconMessage size={12} />}
-          count={data.stats?.commentCountAllTime ?? 0}
-          label="comments"
-        />
+      <div className="flex shrink-0 flex-col gap-1.5 p-3">
+        <RoutedDialogLink
+          name="imageDetail"
+          state={{ imageId: data.id }}
+          className={clsx('shrink-0 truncate text-[17px] font-bold leading-5', songTextBright)}
+        >
+          {title}
+        </RoutedDialogLink>
+        <span className="min-h-4 shrink-0 truncate text-[13px] leading-4">
+          {data.user.username && (
+            <NextLink
+              href={songCreatorHref(data.user.username)}
+              className={clsx('hover:underline', songTextDimmed)}
+            >
+              {data.user.username}
+            </NextLink>
+          )}
+        </span>
+        <span
+          className={clsx(
+            'min-h-[15px] shrink-0 truncate text-xs italic leading-[15px]',
+            songTextDimmed
+          )}
+        >
+          {genre ?? ''}
+        </span>
+        <div
+          className={clsx(
+            'flex shrink-0 items-center gap-2.5 text-xs leading-[15px]',
+            songTextDimmed
+          )}
+        >
+          {plays !== undefined && (
+            <SongStat icon={<IconHeadphones size={12} />} count={plays} label="plays" />
+          )}
+          <SongStat
+            icon={<IconThumbUp size={12} />}
+            count={data.stats?.likeCountAllTime ?? 0}
+            label="likes"
+          />
+          <SongStat
+            icon={<IconMessage size={12} />}
+            count={data.stats?.commentCountAllTime ?? 0}
+            label="comments"
+          />
+        </div>
       </div>
     </div>
   );
