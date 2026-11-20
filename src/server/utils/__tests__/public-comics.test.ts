@@ -6,6 +6,7 @@ vi.hoisted(() => {
 });
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { NsfwLevel } from '~/server/common/enums';
 import { minorContentNotRestrictedWhere } from '~/server/utils/minor-content-gate.sql';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -207,6 +208,35 @@ describe('covers', () => {
   ])('drops a cover %s', async (_, extra) => {
     withCover(publicRow(extra));
     expect((await getPublicComic(COMIC, publicBrowsingLevelsFlag, NOW))?.coverImage).toBeNull();
+  });
+
+  describe('on a post of a held model', () => {
+    const POST = 990000500;
+    // Post POST is on version 10, of model 1, whose gallery is held at PG when minor.
+    const holdModel = (minor: boolean) => {
+      installFakeCacheRedis();
+      dbMock.dbRead.post.findMany.mockResolvedValue([{ id: POST, modelVersionId: 10 }] as never);
+      dbMock.dbRead.modelVersion.findMany.mockResolvedValue([{ id: 10, modelId: 1 }] as never);
+      for (const db of [dbMock.dbRead, dbMock.dbWrite])
+        db.model.findFirst.mockResolvedValue({
+          id: 1,
+          userId: 9,
+          minor,
+          sfwOnly: false,
+          gallerySettings: { level: NsfwLevel.PG },
+        } as never);
+      withCover(publicRow({ postId: POST, nsfwLevel: NsfwLevel.R }));
+    };
+
+    it('drops a cover above the held level, even at every browsing level', async () => {
+      holdModel(true);
+      expect((await getPublicComic(COMIC, allBrowsingLevelsFlag, NOW))?.coverImage).toBeNull();
+    });
+
+    it('serves the same cover when the model is not held', async () => {
+      holdModel(false);
+      expect((await getPublicComic(COMIC, allBrowsingLevelsFlag, NOW))?.coverImage?.id).toBe(COVER);
+    });
   });
 
   it('drops a cover the shared cover filter left out', async () => {
