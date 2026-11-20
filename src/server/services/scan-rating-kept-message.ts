@@ -1,3 +1,4 @@
+import { toStringList } from '~/utils/array-helpers';
 import { removeTags } from '~/utils/string-helpers';
 
 /** The model and public-version text the text scan reads (`loadModelScanSubjects`), as stored. */
@@ -12,11 +13,6 @@ const MAX_VERSION_NAME_CHARS = 60;
 
 const hasText = (value: string | null | undefined) => !!value?.trim();
 const htmlHasText = (value: string | null) => !!value && hasText(removeTags(value));
-
-function joinList(items: string[]) {
-  if (items.length <= 2) return items.join(' and ');
-  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
-}
 
 function quoteVersionName(name: string) {
   const trimmed = name.trim();
@@ -49,14 +45,14 @@ export function scanRatingKeptMessage({ name, description, versions }: ScanRated
       .map(quoteVersionName);
     const shown = named.slice(0, MAX_NAMED_VERSIONS);
     const more = named.length - shown.length;
-    const list = more > 0 ? `${shown.join(', ')}, and ${more} more` : joinList(shown);
+    const list = toStringList(more > 0 ? [...shown, `${more} more`] : shown);
     parts.push(
-      `the ${joinList(versionKinds)} of its published versions${list ? ` (${list})` : ''}`
+      `the ${toStringList(versionKinds)} of its published versions${list ? ` (${list})` : ''}`
     );
   }
 
   const source = parts.length
-    ? `its text on civitai.red, which includes ${joinList(parts)}`
+    ? `its text on civitai.red, which includes ${toStringList(parts)}`
     : 'its text on civitai.red';
   return `This model is marked mature because of ${source}. It stays marked mature until that text changes: edit it and save, and once the new text is checked and passes, you can change the rating.`;
 }
