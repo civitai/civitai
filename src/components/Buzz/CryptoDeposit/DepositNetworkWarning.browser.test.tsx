@@ -24,7 +24,6 @@ describe('DepositNetworkWarning', () => {
     await expect.element(page.getByText('USDC · Base')).toBeInTheDocument();
   });
 
-  // Other tokens on the right network are not converted by the payment processor.
   it('says only selector currencies on its network are credited, naming the resolved network', async () => {
     renderWithProviders(<DepositNetworkWarning code="USDCBASE" />);
     await expect
