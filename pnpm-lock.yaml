@@ -1311,6 +1311,9 @@ importers:
 
   apps/moderator:
     dependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.490.0
+        version: 3.862.0
       '@civitai/auth':
         specifier: workspace:*
         version: link:../../packages/civitai-auth

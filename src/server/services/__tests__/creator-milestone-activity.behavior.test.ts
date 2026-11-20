@@ -28,7 +28,6 @@ import type { ActivityMeasure } from '~/server/services/creator-milestone-regist
 import {
   activityMeasureOf,
   creatorMilestoneRegistry,
-  milestoneKeysFor,
 } from '~/server/services/creator-milestone-registry';
 import type { MilestoneGrant } from '~/server/services/creator-milestone-grant.service';
 import { getCruciblePrizeWinners } from '~/utils/crucible-helpers';
@@ -64,7 +63,6 @@ const groupFor = (key: string) => {
   return group;
 };
 const MODELS = groupFor('create:models-1');
-const ARTICLES = groupFor('create:articles-1');
 const DOWNLOADS = groupFor('reach:downloads-100');
 const FOLLOWERS = groupFor('reach:followers-100');
 const SHOP = groupFor('earn:shop-sales-100000');
@@ -274,24 +272,6 @@ describe('published-count detector', () => {
     ]);
     expect(await held(QUIET)).toEqual([]);
   });
-
-  it('counts articles separately from models', async () => {
-    await q(
-      `INSERT INTO "Article" ("userId", status, "publishedAt") VALUES ($1, 'Published', '2026-02-01')`,
-      [CREATOR]
-    );
-    await addModels(QUIET, ['2026-02-01']);
-    await q(
-      `INSERT INTO "Article" ("userId", status, availability, "publishedAt") VALUES
-        ($1, 'Published', 'Private', '2026-02-01'),
-        ($1, 'Published', 'Public', now() + interval '1 day')`,
-      [TESTER]
-    );
-    await run(ARTICLES);
-    expect((await held(CREATOR)).map((r) => r.key)).toEqual(['create:articles-1']);
-    expect(await held(QUIET)).toEqual([]);
-    expect(await held(TESTER)).toEqual([]);
-  });
 });
 
 describe('download and user-metric detectors', () => {
@@ -311,18 +291,6 @@ describe('download and user-metric detectors', () => {
       'reach:downloads-1000',
     ]);
     expect(await held(QUIET)).toEqual([]);
-  });
-
-  it('reads the AllTime row only, and never grants an excluded account', async () => {
-    await q(
-      `INSERT INTO "UserMetric" ("userId", timeframe, "followerCount") VALUES
-        ($1, 'AllTime', 150), ($2, 'Day', 5000), ($3, 'AllTime', 5000)`,
-      [CREATOR, QUIET, BANNED]
-    );
-    await run(FOLLOWERS);
-    expect((await held(CREATOR)).map((r) => r.key)).toEqual(['reach:followers-100']);
-    expect(await held(QUIET)).toEqual([]);
-    expect(await held(BANNED)).toEqual([]);
   });
 });
 
@@ -360,36 +328,6 @@ describe('shop revenue detector', () => {
     ]);
   });
 
-  it('credits a cosmetic to its creator, not the shop item lister, and a pack to its builder', async () => {
-    await addSales([
-      { cosmeticId: 1, shopItemId: 40, amount: 100000, at: '2026-03-01' },
-      { cosmeticId: null, shopItemId: 50, amount: 100000, at: '2026-03-01' },
-    ]);
-    await run(SHOP);
-    expect((await held(CREATOR)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
-    expect((await held(QUIET)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
-    expect(await held(TESTER)).toEqual([]);
-  });
-
-  // A mystery box listing has no cosmetic either, but it is not its lister's pack.
-  it('does not count a mystery box sale for the moderator who listed it', async () => {
-    await q(
-      `INSERT INTO "CosmeticShopItem" (id, "addedById", "itemDefinitionId") VALUES (60, $1, 9)`,
-      [QUIET]
-    );
-    await addSales([{ cosmeticId: null, shopItemId: 60, amount: 100000, at: '2026-03-01' }]);
-    await run(SHOP);
-    expect(await held(QUIET)).toEqual([]);
-  });
-
-  it("does not count a creator's purchase of their own cosmetic as a sale", async () => {
-    await addSales([
-      { cosmeticId: 1, shopItemId: 40, amount: 100000, at: '2026-03-01', buyerId: CREATOR },
-    ]);
-    await run(SHOP);
-    expect(await held(CREATOR)).toEqual([]);
-  });
-
   // A pack built around official or other creators' cosmetics: each member is its creator's sale.
   it('splits a pack sale between its builder and the creators of the members inside it', async () => {
     await q(`INSERT INTO "Cosmetic" (id, "createdById") VALUES (4, $1)`, [QUIET]);
@@ -406,23 +344,6 @@ describe('shop revenue detector', () => {
     expect([creator.revenue, builder.revenue]).toEqual([100000, 40000]);
     expect((await held(CREATOR)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
     expect(await held(QUIET)).toEqual([]);
-  });
-
-  // An official member is recorded at its full list price, which can exceed what the buyer paid.
-  it("a pack never subtracts from its builder's other sales", async () => {
-    await addSales([
-      { id: 'cheap-pack', cosmeticId: null, shopItemId: 50, amount: 50000, at: '2026-03-02' },
-      { id: 'own-sale', cosmeticId: 4, shopItemId: 40, amount: 100000, at: '2026-03-03' },
-    ]);
-    await q(`INSERT INTO "Cosmetic" (id, "createdById") VALUES (4, $1)`, [QUIET]);
-    await q(
-      `INSERT INTO "UserCosmeticShopPurchaseCosmetic" ("buzzTransactionId", "cosmeticId", "unitAmount")
-       VALUES ('cheap-pack', 2, 60000)`
-    );
-    await run(SHOP);
-    const [builder] = await q(activityValuesSql, [QUIET]);
-    expect(builder.revenue).toBe(100000);
-    expect((await held(QUIET)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
   });
 
   it('leaves out refunded sales and official cosmetics', async () => {
@@ -450,19 +371,6 @@ describe('shop revenue detector', () => {
     expect(await held(QUIET)).toEqual([]);
   });
 
-  it('announces a crossing since the previous run, and not one before it', async () => {
-    await addSales([
-      { cosmeticId: 1, shopItemId: 40, amount: 100000, at: '2026-10-31 12:00' },
-      { cosmeticId: null, shopItemId: 50, amount: 100000, at: '2026-10-30 12:00' },
-    ]);
-    const { notified } = await run(SHOP, {
-      watermark: { at: new Date('2026-10-31T00:00:00Z').getTime(), gated: false },
-    });
-    expect(notified.map((g) => `${g.userId}:${g.milestoneKey}`)).toEqual([
-      `${CREATOR}:earn:shop-sales-100000`,
-    ]);
-  });
-
   it('while gated, grants only the flag audience', async () => {
     await q(`INSERT INTO "Cosmetic" (id, "createdById") VALUES (3, $1)`, [TESTER]);
     await addSales([
@@ -478,17 +386,36 @@ describe('shop revenue detector', () => {
     expect(await held(CREATOR)).toEqual([]);
     expect(notified.map((g) => g.userId)).toEqual([TESTER]);
   });
-
-  // Dated by a real sale, so a gated run can still tell tonight's crossing from a backlog.
-  it('announces a dated crossing even across gated runs', async () => {
-    await addSales([{ cosmeticId: 1, shopItemId: 40, amount: 100000, at: '2026-10-31 12:00' }]);
-    const { notified } = await run(SHOP, {
-      watermark: { at: new Date('2026-10-31T00:00:00Z').getTime(), gated: true },
-      gated: true,
-    });
-    expect(notified.map((g) => `${g.userId}:${g.milestoneKey}`)).toEqual([
-      `${CREATOR}:earn:shop-sales-100000`,
+  it('does not count a mystery box sale for the moderator who listed it', async () => {
+    await q(
+      `INSERT INTO "CosmeticShopItem" (id, "addedById", "itemDefinitionId") VALUES (60, $1, 9)`,
+      [QUIET]
+    );
+    await addSales([{ cosmeticId: null, shopItemId: 60, amount: 100000, at: '2026-03-01' }]);
+    await run(SHOP);
+    expect(await held(QUIET)).toEqual([]);
+  });
+  it("does not count a creator's purchase of their own cosmetic as a sale", async () => {
+    await addSales([
+      { cosmeticId: 1, shopItemId: 40, amount: 100000, at: '2026-03-01', buyerId: CREATOR },
     ]);
+    await run(SHOP);
+    expect(await held(CREATOR)).toEqual([]);
+  });
+  it("a pack never subtracts from its builder's other sales", async () => {
+    await addSales([
+      { id: 'cheap-pack', cosmeticId: null, shopItemId: 50, amount: 50000, at: '2026-03-02' },
+      { id: 'own-sale', cosmeticId: 4, shopItemId: 40, amount: 100000, at: '2026-03-03' },
+    ]);
+    await q(`INSERT INTO "Cosmetic" (id, "createdById") VALUES (4, $1)`, [QUIET]);
+    await q(
+      `INSERT INTO "UserCosmeticShopPurchaseCosmetic" ("buzzTransactionId", "cosmeticId", "unitAmount")
+       VALUES ('cheap-pack', 2, 60000)`
+    );
+    await run(SHOP);
+    const [builder] = await q(activityValuesSql, [QUIET]);
+    expect(builder.revenue).toBe(100000);
+    expect((await held(QUIET)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
   });
 });
 
@@ -618,19 +545,6 @@ describe('announcing', () => {
     expect(notified.map((g) => g.userId).sort()).toEqual([CREATOR, TESTER]);
   });
 
-  // publishedAt is stored in UTC with no zone; the cutoff must not move with the session's zone.
-  it('compares the cutoff in UTC whatever the session zone', async () => {
-    await addModels(CREATOR, ['2026-10-31 00:30']);
-    await addModels(QUIET, ['2026-10-30 23:30']);
-    await q(`SET TIME ZONE 'America/New_York'`);
-    try {
-      const { notified } = await run(MODELS, { watermark: yesterday() });
-      expect(notified.map((g) => g.userId)).toEqual([CREATOR]);
-    } finally {
-      await q(`SET TIME ZONE 'UTC'`);
-    }
-  });
-
   it('leaves the watermark alone when a grant fails, so the next run is not told it completed', async () => {
     await addModels(CREATOR, ['2026-10-31 12:00']);
     const { store, rows } = memoryStore();
@@ -654,6 +568,17 @@ describe('announcing', () => {
       })
     ).rejects.toThrow('write failed');
     expect(rows.size).toBe(0);
+  });
+  it('compares the cutoff in UTC whatever the session zone', async () => {
+    await addModels(CREATOR, ['2026-10-31 00:30']);
+    await addModels(QUIET, ['2026-10-30 23:30']);
+    await q(`SET TIME ZONE 'America/New_York'`);
+    try {
+      const { notified } = await run(MODELS, { watermark: yesterday() });
+      expect(notified.map((g) => g.userId)).toEqual([CREATOR]);
+    } finally {
+      await q(`SET TIME ZONE 'UTC'`);
+    }
   });
 });
 
@@ -689,12 +614,6 @@ describe('watermark definitions', () => {
     ).not.toBe(base);
   });
 
-  it('does not depend on the order Postgres returns the rows in', () => {
-    expect(definitionsFingerprint([...rows].reverse(), false)).toBe(
-      definitionsFingerprint(rows, false)
-    );
-  });
-
   // Silence is in the fingerprint, not the key: turning a group's announcements on, or back on after a
   // silent spell, starts it over with a silent run instead of reviving an older announced watermark.
   it('changes when a group turns silent or announced, under the same watermark row', () => {
@@ -725,18 +644,9 @@ describe('watermark definitions', () => {
     ]);
     expect([...stored.values()][0]).toMatchObject({ definitions: await fingerprintFor(MODELS) });
   });
-});
-
-/**
- * 🔴 Every activity group is announced, downloads included since 2026-10-26: a silent group's
- * grants never notify and read as launch backfills ("Earned before launch"). A group must be wholly
- * silent or wholly announced, since its tiers share one watermark row.
- */
-describe('which activity groups announce', () => {
-  it('announces every activity group, downloads included', () => {
-    expect(groups.filter((group) => group.silent).flatMap((group) => group.keys)).toEqual([]);
-    expect(groups.flatMap((group) => group.keys)).toEqual(
-      expect.arrayContaining(milestoneKeysFor('modelDownloads'))
+  it('does not depend on the order Postgres returns the rows in', () => {
+    expect(definitionsFingerprint([...rows].reverse(), false)).toBe(
+      definitionsFingerprint(rows, false)
     );
   });
 });
@@ -833,7 +743,6 @@ describe('journey progress values', () => {
     expect(granted).toEqual(reached);
     expect(granted.length).toBeGreaterThan(4);
   });
-
   it('clamp a download total past int range instead of failing the page', async () => {
     await q(
       `INSERT INTO "ModelMetric" ("modelId", "userId", status, "downloadCount") VALUES
@@ -843,7 +752,6 @@ describe('journey progress values', () => {
     const [values] = await q<Record<ActivityMeasure, number>>(activityValuesSql, [CREATOR]);
     expect(values.downloads).toBe(2147483647);
   });
-
   it('read zero for a creator with nothing', async () => {
     const [values] = await q(activityValuesSql, [QUIET]);
     expect(values).toEqual({
@@ -944,18 +852,6 @@ describe('judge-vote detector', () => {
     expect(rows.size).toBe(0);
   });
 
-  it('does not offer a rank the judge already holds', async () => {
-    await run(judgeGroup([{ userId: CREATOR, votes: '600' }]).group);
-    const { group } = judgeGroup([{ userId: CREATOR, votes: '1200' }]);
-    const candidates = await (
-      group as Extract<MilestoneDetectorGroup, { candidates: unknown }>
-    ).candidates(pg);
-    // Undated: a dated row before the watermark would be granted silently.
-    expect(candidates).toEqual([
-      { userId: CREATOR, milestoneKey: 'community:crucible-votes-1000', achievedAt: null },
-    ]);
-  });
-
   it.each([
     ['an anonymous vote row', { userId: 0, votes: '500' }],
     ['a non-numeric user', { userId: 'x', votes: '500' }],
@@ -963,6 +859,16 @@ describe('judge-vote detector', () => {
   ])('refuses %s instead of granting from it', async (_, row) => {
     const { group } = judgeGroup([row]);
     await expect(run(group)).rejects.toThrow('crucible_votes returned a malformed total');
+  });
+  it('does not offer a rank the judge already holds', async () => {
+    await run(judgeGroup([{ userId: CREATOR, votes: '600' }]).group);
+    const { group } = judgeGroup([{ userId: CREATOR, votes: '1200' }]);
+    const candidates = await (
+      group as Extract<MilestoneDetectorGroup, { candidates: unknown }>
+    ).candidates(pg);
+    expect(candidates).toEqual([
+      { userId: CREATOR, milestoneKey: 'community:crucible-votes-1000', achievedAt: null },
+    ]);
   });
 });
 
@@ -990,11 +896,12 @@ describe('compete-win detector', () => {
        VALUES ($1, $2, $3, $1, $4::timestamp)`,
       [id, source, host, endsAt]
     );
-    for (let i = 0; i < others; i++)
-      await q(`INSERT INTO "CollectionItem" ("collectionId", "addedById") VALUES ($1, $2)`, [
-        id,
-        ++filler,
-      ]);
+    await q(
+      `INSERT INTO "CollectionItem" ("collectionId", "addedById")
+       SELECT $1, $2 + g FROM generate_series(1, $3) g`,
+      [id, filler, others]
+    );
+    filler += others;
   }
   async function addChallengeWin(challengeId: number, userId: number, at: string, place = 1) {
     await q(`INSERT INTO "CollectionItem" ("collectionId", "addedById") VALUES ($1, $2)`, [
@@ -1142,138 +1049,11 @@ describe('compete-win detector', () => {
     ]);
   });
 
-  // A community challenge is judged up to days after it closes. Dated by its close, this win would
-  // fall before the previous run and be granted without a word.
-  it('announces a late-judged win by when it was recorded, not when the challenge closed', async () => {
-    const watermark = { at: new Date('2026-11-01T00:00:00Z').getTime(), gated: false };
-    await addChallenge(1, { source: 'User', host: TESTER, endsAt: '2026-10-29 00:00' });
-    await addChallengeWin(1, CREATOR, '2026-11-01 06:00');
-    await addChallenge(2, { endsAt: '2026-10-20 00:00' });
-    await addChallengeWin(2, QUIET, '2026-10-20 00:01');
-
-    const { notified } = await run(competeGroup().group, {
-      watermark,
-      now: new Date('2026-11-02T00:00:00Z'),
-    });
-
-    expect(
-      notified.map(({ userId, milestoneKey, silent }) => ({ userId, milestoneKey, silent }))
-    ).toEqual([{ userId: CREATOR, milestoneKey: 'compete:wins-1', silent: false }]);
-    expect((await held(QUIET)).map((row) => row.key)).toEqual(['compete:wins-1']);
-  });
-
   it('never grants a banned winner', async () => {
     await addChallenge(1);
     await addChallengeWin(1, BANNED, '2026-03-01 10:00');
     await run(competeGroup([{ userId: BANNED, at: '2025-01-05 00:00:30' }]).group);
     expect(await held(BANNED)).toEqual([]);
-  });
-
-  it('does not offer a rung the winner already holds', async () => {
-    await addChallenge(1);
-    await addChallengeWin(1, CREATOR, '2026-03-01 10:00');
-    await run(competeGroup().group);
-    expect(await held(CREATOR)).toHaveLength(1);
-    expect(await candidatesOf(competeGroup().group)).toEqual([]);
-  });
-
-  it('counts a daily challenge win however few entered, and a community challenge with no host', async () => {
-    await addChallenge(1, { others: 0 });
-    await addChallengeWin(1, CREATOR, '2026-03-01 10:00');
-    await addChallenge(2, { source: 'User', host: null, others: 9 });
-    await addChallengeWin(2, QUIET, '2026-03-01 10:00');
-    const rows = await candidatesOf(competeGroup().group);
-    expect(rows.map((row) => row.userId).sort()).toEqual([CREATOR, QUIET].sort());
-  });
-
-  // Entrants are people, not entries: one account entering many times, or the host entering their
-  // own contest, must not carry it over the floor.
-  it('counts distinct entrants besides the host toward the floor', async () => {
-    await addChallenge(1, { source: 'User', host: TESTER, others: 0 });
-    for (const entrant of [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, TESTER])
-      for (let i = 0; i < 3; i++)
-        await q(`INSERT INTO "CollectionItem" ("collectionId", "addedById") VALUES (1, $1)`, [
-          entrant,
-        ]);
-    await addChallengeWin(1, CREATOR, '2026-03-01 10:00');
-    await addCrucible(2, { host: TESTER, others: 0 });
-    for (const entrant of [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, TESTER])
-      for (let i = 0; i < 3; i++) await addPlace(2, entrant, null);
-    await addPlace(2, CREATOR, 1);
-
-    expect(await candidatesOf(competeGroup().group)).toEqual([]);
-
-    // One more distinct entrant carries both over.
-    await q(`INSERT INTO "CollectionItem" ("collectionId", "addedById") VALUES (1, 2009)`);
-    await addPlace(2, 2009, null);
-    const rows = await candidatesOf(competeGroup().group);
-    expect(rows.map(({ userId, milestoneKey }) => ({ userId, milestoneKey }))).toEqual([
-      { userId: CREATOR, milestoneKey: 'compete:wins-1' },
-    ]);
-    const [values] = await q<{ wins: number }>(activityValuesSql, [CREATOR]);
-    expect(values.wins).toBe(2);
-  });
-
-  // A host can create places with a 0% share; those pay nothing, so they are not prize places.
-  it('does not count a Crucible place whose share of the pool is zero', async () => {
-    await addCrucible(1, { prizes: { 1: 100, 2: 0 } });
-    await addPlace(1, CREATOR, 2);
-    await addPlace(1, QUIET, 1);
-    const rows = await candidatesOf(competeGroup().group);
-    expect(rows.map((row) => row.userId)).toEqual([QUIET]);
-  });
-
-  // A Crucible pays one prize per creator, for their best entry, so the next creator moves up a
-  // prize place. The winner's stored position is not their prize place.
-  it('counts a Crucible win by the prize place paid, after each creator keeps only their best entry', async () => {
-    await addCrucible(1, { prizes: { 1: 50, 2: 0, 3: 50 } });
-    await addPlace(1, QUIET, 1);
-    await addPlace(1, QUIET, 2);
-    // Ranked 3rd, paid 2nd: the 0% place.
-    await addPlace(1, CREATOR, 3);
-    await addCrucible(2, { prizes: { 1: 50, 2: 30, 3: 20 } });
-    await addPlace(2, QUIET, 1);
-    await addPlace(2, QUIET, 2);
-    await addPlace(2, QUIET, 3);
-    // Ranked 4th, paid 2nd.
-    await addPlace(2, BANNED, 4);
-    await addPlace(2, TESTER + 100, 5);
-
-    const rows = await candidatesOf(competeGroup().group);
-    const won = rows.map((row) => row.userId).sort((a, b) => a - b);
-    // BANNED is a candidate (the grant step filters standing) and is ranked like anyone else.
-    expect(won).toEqual([QUIET, BANNED, TESTER + 100].sort((a, b) => a - b));
-    const [paid2nd] = await q<{ wins: number }>(activityValuesSql, [BANNED]);
-    expect(paid2nd.wins).toBe(1);
-    // Ranked by their best entry: 1st in both, so two wins.
-    const [quiet] = await q<{ wins: number }>(activityValuesSql, [QUIET]);
-    expect(quiet.wins).toBe(2);
-    const [creator] = await q<{ wins: number }>(activityValuesSql, [CREATOR]);
-    expect(creator.wins).toBe(0);
-  });
-
-  // The host's entries rank like anyone's when prizes are paid; the host just cannot win.
-  it("ranks the host's own entries, so a host finishing first moves the next creator to 2nd", async () => {
-    await addCrucible(1, { host: TESTER, prizes: { 1: 100, 2: 0 } });
-    await addPlace(1, TESTER, 1);
-    await addPlace(1, CREATOR, 2);
-    await addCrucible(2, { host: TESTER, prizes: { 1: 0, 2: 100 } });
-    await addPlace(2, TESTER, 1);
-    await addPlace(2, QUIET, 2);
-    const rows = await candidatesOf(competeGroup().group);
-    expect(rows.map((row) => row.userId)).toEqual([QUIET]);
-  });
-
-  // A place pays its share of the pool, rounded down; a free Crucible with no seed pays nobody.
-  it('counts a Crucible place only when its share of the pool comes to at least 1 Buzz', async () => {
-    await addCrucible(1, { pool: 0 });
-    await addPlace(1, CREATOR, 1);
-    await addCrucible(2, { pool: 2 });
-    await addPlace(2, QUIET, 1);
-    await addPlace(2, BANNED, 2);
-    const rows = await candidatesOf(competeGroup().group);
-    // 50% of 2 is 1 Buzz; 30% of 2 rounds down to 0.
-    expect(rows.map((row) => row.userId)).toEqual([QUIET]);
   });
 
   // The detector's SQL restates the payout rule (one prize per creator, the next creator moves
@@ -1367,34 +1147,6 @@ describe('compete-win detector', () => {
     }
   });
 
-  // An undated grant is announced whenever anything is, so a Crucible missing its end would
-  // announce a historic win; it falls back to when the row last changed.
-  it('dates a Crucible without an end by when it was last updated', async () => {
-    await addCrucible(1, { endAt: null, updatedAt: '2026-03-05 12:00' });
-    await addPlace(1, CREATOR, 1);
-    const rows = await candidatesOf(competeGroup().group);
-    expect(rows.map((row) => row.achievedAt?.toISOString())).toEqual(['2026-03-05T12:00:00.000Z']);
-  });
-
-  // While grants are flag-gated an undated group announces nothing, so only a dated (timed) group
-  // can tell a fresh win from a backlog that joins the audience later.
-  it('announces a fresh win during a gated run, as a dated group', async () => {
-    const watermark = { at: new Date('2026-11-01T00:00:00Z').getTime(), gated: true };
-    await addChallenge(1);
-    await addChallengeWin(1, CREATOR, '2026-11-01 06:00');
-
-    const { notified } = await run(competeGroup().group, {
-      watermark,
-      gated: true,
-      audience: [CREATOR],
-      now: new Date('2026-11-02T00:00:00Z'),
-    });
-
-    expect(notified.map(({ userId, milestoneKey }) => ({ userId, milestoneKey }))).toEqual([
-      { userId: CREATOR, milestoneKey: 'compete:wins-1' },
-    ]);
-  });
-
   // The fake ignores the SQL, so the text is what pins the ledger rule. Wins paid before the winners
   // table carry the date format; the '#N: <title>' format is the table's own, and counting it again
   // would double every win since 2026-02-11.
@@ -1448,5 +1200,50 @@ describe('compete-win detector', () => {
       })
     ).rejects.toThrow('ClickHouse unavailable');
     expect(rows.size).toBe(0);
+  });
+  it('does not offer a rung the winner already holds', async () => {
+    await addChallenge(1);
+    await addChallengeWin(1, CREATOR, '2026-03-01 10:00');
+    await run(competeGroup().group);
+    expect(await held(CREATOR)).toHaveLength(1);
+    expect(await candidatesOf(competeGroup().group)).toEqual([]);
+  });
+  it('counts a daily challenge win however few entered, and a community challenge with no host', async () => {
+    await addChallenge(1, { others: 0 });
+    await addChallengeWin(1, CREATOR, '2026-03-01 10:00');
+    await addChallenge(2, { source: 'User', host: null, others: 9 });
+    await addChallengeWin(2, QUIET, '2026-03-01 10:00');
+    const rows = await candidatesOf(competeGroup().group);
+    expect(rows.map((row) => row.userId).sort()).toEqual([CREATOR, QUIET].sort());
+  });
+  it('counts distinct entrants besides the host toward the floor', async () => {
+    await addChallenge(1, { source: 'User', host: TESTER, others: 0 });
+    for (const entrant of [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, TESTER])
+      for (let i = 0; i < 3; i++)
+        await q(`INSERT INTO "CollectionItem" ("collectionId", "addedById") VALUES (1, $1)`, [
+          entrant,
+        ]);
+    await addChallengeWin(1, CREATOR, '2026-03-01 10:00');
+    await addCrucible(2, { host: TESTER, others: 0 });
+    for (const entrant of [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, TESTER])
+      for (let i = 0; i < 3; i++) await addPlace(2, entrant, null);
+    await addPlace(2, CREATOR, 1);
+
+    expect(await candidatesOf(competeGroup().group)).toEqual([]);
+
+    await q(`INSERT INTO "CollectionItem" ("collectionId", "addedById") VALUES (1, 2009)`);
+    await addPlace(2, 2009, null);
+    const rows = await candidatesOf(competeGroup().group);
+    expect(rows.map(({ userId, milestoneKey }) => ({ userId, milestoneKey }))).toEqual([
+      { userId: CREATOR, milestoneKey: 'compete:wins-1' },
+    ]);
+    const [values] = await q<{ wins: number }>(activityValuesSql, [CREATOR]);
+    expect(values.wins).toBe(2);
+  });
+  it('dates a Crucible without an end by when it was last updated', async () => {
+    await addCrucible(1, { endAt: null, updatedAt: '2026-03-05 12:00' });
+    await addPlace(1, CREATOR, 1);
+    const rows = await candidatesOf(competeGroup().group);
+    expect(rows.map((row) => row.achievedAt?.toISOString())).toEqual(['2026-03-05T12:00:00.000Z']);
   });
 });

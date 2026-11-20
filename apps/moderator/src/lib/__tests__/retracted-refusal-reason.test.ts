@@ -3,9 +3,7 @@ import { probeRetractedRefusal, RETRACTED_REFUSED, retractedRefusalReason } from
 
 describe('retractedRefusalReason', () => {
   it("shows the route's message on a 403 or a 503, which a moderator can act on", () => {
-    expect(retractedRefusalReason(403, { message: 'Needs CSAM-queue access.' })).toBe(
-      'Needs CSAM-queue access.'
-    );
+    expect(retractedRefusalReason(403, { message: 'Not signed in.' })).toBe('Not signed in.');
     expect(retractedRefusalReason(503, { message: 'Could not check this image; retry.' })).toBe(
       'Could not check this image; retry.'
     );
