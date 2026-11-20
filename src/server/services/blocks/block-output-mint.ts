@@ -80,6 +80,25 @@ export function applyServingRules(
   return UNRATED;
 }
 
+/**
+ * While serving is off the app gets the orchestrator url itself, and no route judges the
+ * blob later. So what serving hides is hidden here too, and an unrated video is held until
+ * its rating lands (one that will never be rated is hidden instead).
+ * Owner-only media keeps its url, as it does on the owner's poll with serving on.
+ */
+export function applyServingOffRules(
+  output: BlockWorkflowOutput,
+  slot: BlockOutputMintSlot,
+  step: Pick<BlockOutputMintStep, 'neverRatedVideoStep'>,
+  { neverRated }: { neverRated: boolean }
+): BlockWorkflowOutput {
+  const served = applyServingRules(output, slot, step, { forOwner: true });
+  if (!('url' in served)) return served;
+  const mediaType = mediaTypeOf(slot.type);
+  if (mediaType !== 'video' || slot.nsfwLevel?.trim()) return served;
+  return neverRated ? UNRATED : PENDING;
+}
+
 /** Media the route serves to its owner alone, with no rating. */
 export function isOwnerOnlyMediaType(mediaType: BlockMediaType): boolean {
   return mediaType === 'audio' || mediaType === 'archive' || mediaType === 'model3d';
@@ -154,4 +173,5 @@ export function isPrivateGenerationWorkflow(
 }
 
 const UNRATED: BlockWorkflowOutput = { restricted: true, reason: 'unrated' };
+const PENDING: BlockWorkflowOutput = { pending: true };
 const UNRECOGNISED: BlockWorkflowOutput = { restricted: true, reason: 'unrecognised_url' };

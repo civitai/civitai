@@ -620,16 +620,16 @@ describe('🔴 serving on: the unlock decides on the released output, not on its
     expect(f.liftRestriction).not.toHaveBeenCalled();
   });
 
-  it('CONTROL: with serving off the same output is released and charged as before', async () => {
+  it('with serving off the same output is not offered for pay either, and nothing is charged', async () => {
     expect(planBlockOutputUnlock(neverRatedR(), RED_MATURE, 0, NO_VIEW)).toMatchObject({
-      kind: 'pay',
+      kind: 'unavailable',
+      message: 'This output cannot be shown here.',
     });
-    const released = () => ({ ...neverRatedR(), allowMatureContent: true } as Wf);
-    const f = fakes([neverRatedR, neverRatedR, released]);
-    const result = await unlockBlockOutput({ ...request(RED_MATURE, 0), expectedTotal: TOTAL }, f);
-    expect(result.outcome).toBe('unlocked');
-    expect(result.charged).toStrictEqual({ unlockBuzz: UNLOCK_PRICE });
-    expect(f.liftRestriction).toHaveBeenCalledTimes(1);
+    const f = fakes([neverRatedR]);
+    await expect(
+      unlockBlockOutput({ ...request(RED_MATURE, 0), expectedTotal: TOTAL }, f)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(f.liftRestriction).not.toHaveBeenCalled();
   });
 
   it('a lift the orchestrator did not release reports the charge, never 0', async () => {

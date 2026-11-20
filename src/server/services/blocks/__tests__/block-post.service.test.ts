@@ -821,9 +821,17 @@ describe('🔴 a RESTRICTED output keeps its position, and naming it is REFUSED'
       expect(out).toStrictEqual([{ kind: 'workflow', url: OK_URL, width: 2, height: 3 }]);
     });
 
-    it('CONTROL: with serving off the `na` output posts', async () => {
-      const out = await post(ACTOR, { ...workflowWith('na'), allowMatureContent: true }, [0]);
-      expect(out).toStrictEqual([{ kind: 'workflow', url: RESTRICTED_URL, width: 7, height: 9 }]);
+    it('with serving off the `na` output is refused too', async () => {
+      await expectRejection(
+        post(ACTOR, { ...workflowWith('na'), allowMatureContent: true }, [0]),
+        'BAD_REQUEST',
+        'output 0 is restricted'
+      );
+    });
+
+    it('CONTROL: with serving off the rated output beside it posts', async () => {
+      const out = await post(ACTOR, { ...workflowWith('na'), allowMatureContent: true }, [1]);
+      expect(out).toStrictEqual([{ kind: 'workflow', url: OK_URL, width: 2, height: 3 }]);
     });
   });
 

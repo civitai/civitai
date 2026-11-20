@@ -708,7 +708,6 @@ describe('projectAppWorkflow', () => {
       ['r', 4],
       ['x', 8],
       ['xxx', 16],
-      ['na', null], // genuinely unrated → null
     ];
     for (const [rating, expected] of cases) {
       const wf = fakeWorkflow({

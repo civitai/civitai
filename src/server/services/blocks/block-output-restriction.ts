@@ -57,7 +57,8 @@ import type {
  *   1c. A NEVER-RATED VIDEO ENGINE's unrated output (`opts.unratedDelivered`):
  *      `{ url }` whatever the ceiling — the site's rule (`NEVER_RATED_VIDEO_ECOSYSTEMS`
  *      in `workflow-data.ts`): the provider moderates its own output. A rating that
- *      does arrive on one goes through rules 2-6 as usual.
+ *      does arrive on one goes through rules 2-6 as usual. Every app-facing read then
+ *      restricts the video anyway (`applyServingRules` / `applyServingOffRules`).
  *   2. A rating this module does not know: restricted, `'ceiling'` (fail closed).
  *   3. Above the output ceiling ({@link blockOutputCeilingFromClaims}: the viewer's
  *      level, floored at PG-13 for a signed-in viewer, cut to the domain ceiling):

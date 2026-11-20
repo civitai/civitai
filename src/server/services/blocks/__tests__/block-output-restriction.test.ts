@@ -614,7 +614,7 @@ describe('🔴 round 2 — a mesh is rated only when EVERY rating source has rat
   });
 });
 
-describe('🔴 round 3 — a never-rated video engine is DELIVERED, as on the site', () => {
+describe('🔴 round 3 — a never-rated video engine is never delivered unscanned', () => {
   /** A pass-through `{ kind:'step', $type:'videoGen', input }` as the orchestrator echoes it. */
   const videoGen = (engine: string, nsfwLevel?: string) =>
     wf([], {
@@ -638,14 +638,13 @@ describe('🔴 round 3 — a never-rated video engine is DELIVERED, as on the si
     });
 
   it.each(['kling', 'kling-v3', 'veo3', 'vidu-q4', 'grok', 'gemini-omni'])(
-    '%s: an UNRATED video gets its url on an SFW token — not held, not locked',
+    '%s: an UNRATED video is restricted as unrated on an SFW token, with no url',
     (engine) => {
       const snap = snapshotFromWorkflow(videoGen(engine), SFW);
-      expect(snap.outputs).toStrictEqual([{ url: 'https://cdn/v.mp4' }]);
-      expect(snap.imageUrls).toStrictEqual(['https://cdn/v.mp4']);
-      expect(snap).not.toHaveProperty('ratingPending');
+      expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+      expect(JSON.stringify(snap)).not.toContain('v.mp4');
       expect(projectAppWorkflow(videoGen(engine), SFW).outputs).toStrictEqual([
-        { url: 'https://cdn/v.mp4' },
+        { restricted: true, reason: 'unrated' },
       ]);
     }
   );
@@ -708,7 +707,7 @@ describe('🔴 round 4 — never-rated delivery is gated on exactly what it clai
     expect(snap.outputs).toStrictEqual([{ pending: true }]);
   });
 
-  it('the site ecosystem rule alone delivers: a rated engine (wan) under ecosystem Kling', () => {
+  it('the site ecosystem rule alone restricts: a rated engine (wan) under ecosystem Kling', () => {
     const snap = snapshotFromWorkflow(
       step(
         'videoGen',
@@ -718,7 +717,7 @@ describe('🔴 round 4 — never-rated delivery is gated on exactly what it clai
       ),
       SFW
     );
-    expect(snap.outputs).toStrictEqual([{ url: 'https://cdn/tv.mp4' }]);
+    expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
     // CONTROL: the same step without the ecosystem is held.
     expect(
       snapshotFromWorkflow(step('videoGen', { engine: 'wan' }, { video }), SFW).outputs
