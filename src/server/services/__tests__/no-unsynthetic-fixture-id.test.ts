@@ -21,9 +21,23 @@ const INT4_MAX = 2_147_483_647;
 const DESK_MIN = 990_000_000_000;
 const DESK_MAX = 990_999_999_999;
 const DESK_KEY = /(?:conversation|group|ticket)_?id['"`]?\s*[:=]\s*$/i;
-/** A count or size setting (`maxOpen`, `minScore`, `rateLimit`), never an id-named key such as `maxUserId`. */
-const CAP_KEY =
-  /\b(?:max|min)(?![\w$]*id\b)[\w$]*['"`]?\s*[:=]\s*['"`]?\s*$|(?:limit|cap)['"`]?\s*[:=]\s*['"`]?\s*$/i;
+/**
+ * A count or size setting: the key's first word is max/min or its last is limit/cap (`maxOpen`,
+ * `BIND_LIMIT`, `uploadCap`), and no word is id/ids (`maxUserId` is still checked).
+ */
+const KEY_BEFORE = /([\w$]+)['"`]?\s*[:=]\s*['"`]?\s*$/;
+function isCapKey(before: string): boolean {
+  const key = KEY_BEFORE.exec(before)?.[1];
+  if (!key) return false;
+  const words = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .split(/[_$]+/)
+    .filter(Boolean);
+  if (words.some((w) => w === 'id' || w === 'ids')) return false;
+  return ['max', 'min'].includes(words[0]) || ['limit', 'cap'].includes(words[words.length - 1]);
+}
+/\b(?:max|min)(?![\w$]*id\b)[\w$]*['"`]?\s*[:=]\s*['"`]?\s*$|(?:limit|cap)['"`]?\s*[:=]\s*['"`]?\s*$/i;
 
 const EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.mts', '.mjs', '.svelte', '.sql', '.json']);
 const SKIP_DIRS = new Set(['node_modules', '.svelte-kit', '.next', 'build', 'dist', '.turbo']);
@@ -128,7 +142,7 @@ function unsyntheticIds(source: string): string[] {
       if (n < DESK_MIN || n > DESK_MAX) found.push(digits);
       continue;
     }
-    if (CAP_KEY.test(source.slice(Math.max(0, match.index - 40), match.index))) continue;
+    if (isCapKey(source.slice(Math.max(0, match.index - 40), match.index))) continue;
     // Under 10 000, round, or past int4 (no row id is that large).
     if (n < 10_000 || n % 1000 === 0 || n >= INT4_MAX) continue;
     if (n >= SYNTHETIC_MIN && n <= SYNTHETIC_MAX) continue;
@@ -178,6 +192,8 @@ describe('🔴 moderation test fixtures use synthetic ids', () => {
     ['a support-desk group id', `{ group_id: 210000000017 }`],
     ['a support-desk ticket id', `answer_ticket_id: '210000000017',`],
     ['an id under a max-prefixed key', `const page = { maxUserId: 123456 };`],
+    ['an id under a plural id key', `const page = { maxReportIds: 123456 };`],
+    ['a key that only starts with min', `const row = { minute: 123456 };`],
   ])('flags %s', (_, source) => {
     expect(unsyntheticIds(source).length).toBeGreaterThan(0);
   });
