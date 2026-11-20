@@ -272,9 +272,6 @@ describe('handleBlockImages', () => {
   });
 });
 
-// Only that flag's own queue or a filed report may clear it; the purge holds the image until then.
-// The CDN access sync reads a block as a takedown only once its ModActivity row exists, so the two
-// must commit together: a sync run between them would deny without ever retracting.
 describe('a moderator block and its audit row', () => {
   /** The raw writes made through the next transaction's client. */
   const captureTx = () => {
@@ -323,6 +320,7 @@ describe('a moderator block and its audit row', () => {
   });
 });
 
+// Only that flag's own queue or a filed report may clear it; the purge holds the image until then.
 describe('blocking keeps the moderator-only review flag', () => {
   it('handleBlockImages', async () => {
     await handleBlockImages({ ids: [REVIEW_FLAGGED, FLAGGED] });

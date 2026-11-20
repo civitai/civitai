@@ -457,7 +457,6 @@ const stateOf = async (url: string) =>
       | undefined
   )?.state;
 
-// Moderation Lead ruling 2026-11-20, pinned by the stays-Denied tests below: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
 describe('image takedowns', () => {
   it('a moderator block denies and retracts', async () => {
     await image(1);

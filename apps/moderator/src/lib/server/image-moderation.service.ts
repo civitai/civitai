@@ -545,8 +545,7 @@ export async function blockImage({
       .$if(skipModeratorRemoved, (qb) => qb.where(sql<boolean>`NOT ${KEPT_BY_REMOVE}`))
       .returning('id')
       .executeTakeFirst();
-    // In the block's transaction: the CDN access sync reads the block as a takedown only once this
-    // row exists, and a run between the two would deny without ever retracting.
+    // The takedown's activity row commits with the block, as in the main app's writeModeratorBlock.
     if (updated)
       await insertModActivity(
         { userId, entityType: 'image', entityId: imageId, activity: 'review' },

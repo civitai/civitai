@@ -1414,9 +1414,6 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   // lifts still go.
   const gate = newRetractionGate();
   const deferredUrls = new Set(queue.flatMap((q, i) => (q.deferred ? urlsByRow[i] : [])));
-  // Urls whose retraction this path itself deferred past the cap, re-queued since or not: their deny
-  // is this path's own pacing, so they may still upgrade. Kept per url, not per row: a post row can
-  // also cover a url denied by a hold, and that deny must never upgrade on its own.
   // A row deferred before per-url markers existed carries none. Each of its urls that still wants a
   // retraction is taken as this path's own pacing, once, and written as a marker, so a later read
   // that sees a hold drops it as it would any other. Remove once a deploy-time count finds no such row.
@@ -1440,6 +1437,10 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     `;
     if (converted) q.data = converted.data;
   }
+
+  // Urls whose retraction this path itself deferred past the cap, re-queued since or not: their deny
+  // is this path's own pacing, so they may still upgrade. Kept per url, not per row: a post row can
+  // also cover a url denied by a hold, and that deny must never upgrade on its own.
   const pacedUrls = new Set(queue.flatMap((q) => Object.keys(q.data?.pacedUrls ?? {})));
   const plannedCall = new Map(
     urls.map((url) => [

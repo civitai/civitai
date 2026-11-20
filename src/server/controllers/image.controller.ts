@@ -272,11 +272,8 @@ export const setTosViolationHandler = async ({
 
     // Block image
     // This used to be a delete, but the mod team prefers to have the clean up happen later
-    // 🔴 `moderatorId` writes the audit record that a MODERATOR took this one image down, in the
-    // block's own transaction. `remove-blocked-images` retracts public copies only for images with one
-    // of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or after the block, and the CDN access sync reads
-    // the block as a takedown only once the row exists: written later, a sync run between the two
-    // would deny without ever retracting.
+    // 🔴 `moderatorId` records that a moderator took this image down, in the block's own transaction
+    // (see writeModeratorBlock). Without it the takedown reads as an automated block.
     const written = await writeModeratorBlock(
       [id],
       { blockedBy: user.id, violationType, reportReason: ReportReason.TOSViolation },
