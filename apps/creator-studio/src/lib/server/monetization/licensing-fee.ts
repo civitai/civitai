@@ -231,6 +231,8 @@ export async function setLicensingFee(
       error: "A model depicting a real person can't be monetized.",
     };
 
+  // Stricter than the main app's percentOfComputeFeeRefusal on purpose: this editor has no fee type and
+  // writes Buzz per generation, so a "lowered" number here would silently become a percent. Clearing works.
   if (normalized != null && owned[0].percentFee)
     return { ok: false, status: 403, error: PERCENT_FEE_LOCKED_ERROR };
 

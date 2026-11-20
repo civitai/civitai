@@ -541,7 +541,7 @@ describe('runPayout: sources beyond compensation, tip and licence fee', () => {
       ([entry]) => (entry as { name?: string }).name === 'creator-compensation-unknown-source'
     );
 
-  // Deliberate (money ruling on #9760): a denylist, not an allowlist. A one-off source such as a
+  // Deliberate: a denylist, not an allowlist. A one-off source such as a
   // `compensation_recovered_*` recovery was paid as compensation before this PR and the earnings view
   // shows it as earned, so withholding it would show a creator money they never get. Only platform
   // revenue is skipped; an unknown source is paid and named in a notice.

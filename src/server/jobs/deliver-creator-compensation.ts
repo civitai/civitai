@@ -180,7 +180,7 @@ export function buildPayoutTransactions(
       const licenseTotals: Partial<Record<BuzzAccountType, number>> = {};
 
       for (const row of userRows) {
-        // Every other source, one-off recoveries included, is compensation.
+        // Platform revenue is never paid; any other source, one-off recoveries included, pays below.
         if (PLATFORM_REVENUE_SOURCES.has(row.source)) continue;
         const isCash = CASH_SETTLED_ALIASES.has(row.accountType);
         const amount =
