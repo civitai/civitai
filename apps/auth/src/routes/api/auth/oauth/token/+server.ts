@@ -7,6 +7,8 @@ import { oauthModel } from '$lib/server/oauth/model';
 import {
   checkClientTokenRateLimit,
   checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
   tokenOverflowExhausted,
   tokenSecretChecksExhausted,
 } from '$lib/server/oauth/rate-limit';
@@ -20,7 +22,10 @@ import {
   TOKEN_EXCHANGE_GRANT,
   WORKER_TOKEN_TTL,
 } from '$lib/server/oauth/constants';
-import type { WorkerGrantRequestContext } from '$lib/server/oauth/worker-grant';
+import {
+  WorkerDeviceRateLimitedError,
+  type WorkerGrantRequestContext,
+} from '$lib/server/oauth/worker-grant';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { hasScope, parseScopeRequest, stringToScope } from '$lib/server/oauth/scope';
 import { deviceTokenGrant } from '$lib/server/oauth/device-token';
@@ -148,10 +153,8 @@ export const POST: RequestHandler = async ({ request }) => {
   ) {
     const headers = new Headers();
     setWildcardCors(headers);
-    return json(
-      { error: 'rate_limited', error_description: 'Too many token requests' },
-      { status: 429, headers }
-    );
+    // token and worker-token share this window.
+    return rateLimitedResponse(oauthRetryAfter('token'), headers, 'Too many token requests');
   }
 
   // The library authenticates the Basic header's client and ignores a body client_id, so a different one
@@ -332,6 +335,9 @@ export const POST: RequestHandler = async ({ request }) => {
     }
     void logAxiomError(err, { event: '[oauth/token] handler error' });
     setWildcardCors(respHeaders);
+    if (err instanceof WorkerDeviceRateLimitedError) {
+      return rateLimitedResponse(oauthRetryAfter('worker-device'), respHeaders, err.message);
+    }
     const e = err as { code?: number; statusCode?: number; name?: string; message?: string };
     const status =
       typeof e.statusCode === 'number' ? e.statusCode : typeof e.code === 'number' ? e.code : 500;

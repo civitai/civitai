@@ -84,9 +84,13 @@ export const creatorServiceRouter = router({
   getMine: protectedProcedure.query(({ ctx }) =>
     getMyServiceOfferings({ sellerId: ctx.user.id, servable: domainServableLevels(ctx) })
   ),
-  upsert: servicesGuardedProcedure
-    .input(upsertServiceOfferingSchema)
-    .mutation(({ input, ctx }) => upsertServiceOffering({ sellerId: ctx.user.id, input })),
+  upsert: servicesGuardedProcedure.input(upsertServiceOfferingSchema).mutation(({ input, ctx }) =>
+    upsertServiceOffering({
+      sellerId: ctx.user.id,
+      input,
+      licenseEditor: guardFlagEnabled(ctx, 'creatorServicesNext'),
+    })
+  ),
   setStatus: protectedProcedure.input(setServiceOfferingStatusSchema).mutation(({ input, ctx }) => {
     // Publishing is an entry; pausing is the exit.
     if (
@@ -94,7 +98,11 @@ export const creatorServiceRouter = router({
       !(guardFlagEnabled(ctx, 'creatorShop') && guardFlagEnabled(ctx, 'creatorServices'))
     )
       throw new TRPCError({ code: 'FORBIDDEN' });
-    return setServiceOfferingStatus({ sellerId: ctx.user.id, input });
+    return setServiceOfferingStatus({
+      sellerId: ctx.user.id,
+      input,
+      licenseRequired: guardFlagEnabled(ctx, 'creatorServicesNext'),
+    });
   }),
   remove: protectedProcedure
     .input(getByIdSchema)

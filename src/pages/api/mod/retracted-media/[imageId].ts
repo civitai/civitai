@@ -47,9 +47,10 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   }
 
   // A read that fails or runs past its timeout refuses, with nothing served.
-  const media = await getRetractedMedia(imageId, { csamReview: !!flags.csamReports }).catch(
-    () => 'failed' as const
-  );
+  const media = await getRetractedMedia(imageId, {
+    csamReview: !!flags.csamReports,
+    cdnLeg: !!flags.modRetractedMediaCdnLeg,
+  }).catch(() => 'failed' as const);
   if (media === 'failed')
     return void res.status(503).json({ error: 'Could not check this image; retry' });
   if (!media) return void res.status(404).json({ error: 'Not available here' });

@@ -27,7 +27,7 @@ export async function invalidateHiddenImageMetadata(image: HiddenMetaImage) {
 
 async function purgeCachedCopies(image: HiddenMetaImage) {
   try {
-    // Lazy: post.service imports this module, and a static edge would join the image.service cycle.
+    // Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
     const { purgeResizeCache } = await import('~/server/services/image.service');
     // 🔴 Scoped: the image stays live, and only the variants derived before the flip are stale.
     // A full purge would also drop the variants the page is serving right now.

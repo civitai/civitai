@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { unpack } from 'msgpackr';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import type * as CivitaiAuth from '@civitai/auth';
 
 /**
@@ -67,7 +68,10 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   maybeCreateSessionSigner: () => undefined,
 }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: vi.fn(async () => true) }));
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
+  checkOAuthRateLimit: vi.fn(async () => true),
+}));
 vi.mock('$lib/server/oauth/audit-log', () => ({
   logOAuthEvent: vi.fn((e: { type: string; userId?: number; clientId?: string }) =>
     h.events.push({ type: e.type, userId: e.userId, clientId: e.clientId })

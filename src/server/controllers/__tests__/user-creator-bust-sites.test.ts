@@ -256,6 +256,14 @@ describe('creator-card bust in the profile and user write handlers', () => {
         expect(modActivityRows()).toEqual([]);
       });
 
+      it('archives before an edit of only the showcase', async () => {
+        await updateUserProfileHandler({
+          input: { userId: OWNER, showcaseItems: [] },
+          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+        } as never);
+        expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+      });
+
       it('archives before an edit of only the civitai.com copies', async () => {
         await updateUserProfileHandler({
           input: { userId: OWNER, sfwBio: '' },

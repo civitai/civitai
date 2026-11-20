@@ -81,6 +81,7 @@ type UserModActivity = {
     // A moderator cleared, or edited, another user's profile text or links.
     | 'clearProfile'
     | 'editProfile'
+    | 'removeLink'
     | 'overturnPendingReviewMute'
     | 'mute'
     | 'unmute'

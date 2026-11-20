@@ -184,6 +184,7 @@ export const routes: ApiRoutes = {
   'user/personal-data-export-release': () =>
     import('~/server/api-routes/mod/user/personal-data-export-release'),
   'user/reactions': () => import('~/server/api-routes/mod/user/reactions'),
+  'user/remove-link': () => import('~/server/api-routes/mod/user/remove-link'),
   'user/remove-reactions': () => import('~/server/api-routes/mod/user/remove-reactions'),
   'user/toggle-moderator': () => import('~/server/api-routes/mod/user/toggle-moderator'),
   'user/unmute': () => import('~/server/api-routes/mod/user/unmute'),

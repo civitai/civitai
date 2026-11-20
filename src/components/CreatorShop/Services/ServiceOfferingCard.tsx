@@ -119,7 +119,16 @@ export function ServiceOfferingCard({
 }: {
   offering: Pick<
     ServiceOffering,
-    'id' | 'title' | 'description' | 'price' | 'deliveryDays' | 'revisionsIncluded' | 'maxNsfwLevel'
+    | 'id'
+    | 'title'
+    | 'description'
+    | 'price'
+    | 'deliveryDays'
+    | 'revisionsIncluded'
+    | 'maxNsfwLevel'
+    | 'licensePreset'
+    | 'licenseCustomText'
+    | 'licenseAllowResale'
   > &
     Partial<Pick<ServiceOffering, 'happyCount' | 'reviewCount'>> & {
       coverImage?: ServiceCoverImage | null;

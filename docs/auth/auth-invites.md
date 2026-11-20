@@ -29,7 +29,7 @@ re-checked when a link is used, so disabling the app also stops invites already 
 | `400` | Bad body, email, `returnUrl` or text length. |
 | `401` | Bad client credentials. |
 | `403` | The app is not an enabled confidential system app, or the address may not start a new account (the same rules as the email sign-in form; they don't apply to an existing account). |
-| `429` | Per-app or per-recipient limit reached. |
+| `429 { error: "rate_limited", retry_after }` | Per-app or per-recipient limit reached; `Retry-After` says when to try again. |
 | `503` | Email is not configured on this hub. |
 
 The email is one generic template; the app's name comes from its registration, not the request.
