@@ -684,6 +684,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // serves traffic.
   IMAGE_METRICS_SWR = 'image-metrics-swr',
 
+  // On, with CLICKHOUSE_METRICS_HOST and CLICKHOUSE_METRICS_USERNAME set: the image MetricService
+  // (`getImageMetricService` in image.service, so the inline metric read and the image-metrics-swr
+  // background refresher alike) queries the dedicated entity-metrics ClickHouse instead of the
+  // shared one. A failed read there degrades exactly as a failed shared read does (served from the
+  // metrics cache); it is not retried on the shared client. Off (and unknown, a client that has
+  // not initialised, or the env unset): it queries the shared ClickHouse, as before. Kill: disable.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`, `~/server/services/image-metrics-clickhouse`). The key must exist in
+  // flag state (enabled: false) before this code serves traffic.
+  IMAGE_METRICS_DEDICATED_CLICKHOUSE = 'image-metrics-dedicated-clickhouse',
+
   // On: a full page load of `/images/[imageId]` or `/posts/[postId]` server-renders a fixed
   // placeholder in place of the sections listed at their `ClientOnlySection` call sites, and those
   // sections mount right after hydration (`~/components/ClientOnlySection`). Off (and unknown, or a

@@ -1,0 +1,31 @@
+// A dedicated ClickHouse for entity metrics. Read ONLY by the image MetricService, and only while
+// the `image-metrics-dedicated-clickhouse` flag is on (`getImageMetricService` in image.service).
+//
+// Built by the same factory as the shared client in ./client, so it carries the same transport
+// settings (request timeout, compression, keep-alive, pool); only the connection differs. Every
+// connection field is passed, the password included when unset, so none of the shared client's
+// credentials can reach this server through the factory's env defaults.
+//
+// Its own module rather than another export of ./client: a test that mocks ./client with a fixed
+// export list would otherwise throw on the first read of this one.
+import { createClickhouseClient, type CustomClickHouseClient } from '@civitai/clickhouse/client';
+import { env } from '~/env/server';
+import { createLogger } from '~/utils/logging';
+
+declare global {
+  // eslint-disable-next-line no-var, vars-on-top
+  var globalClickhouseMetrics: CustomClickHouseClient | undefined;
+}
+
+const shouldConnect =
+  !env.IS_BUILD && env.CLICKHOUSE_METRICS_HOST && env.CLICKHOUSE_METRICS_USERNAME;
+
+// Process-global, as in ./client: one client per process however many module graphs load this.
+export const clickhouseMetrics: CustomClickHouseClient | undefined = !shouldConnect
+  ? undefined
+  : (globalThis.globalClickhouseMetrics ??= createClickhouseClient({
+      log: createLogger('clickhouse', 'blue'),
+      host: env.CLICKHOUSE_METRICS_HOST,
+      username: env.CLICKHOUSE_METRICS_USERNAME,
+      password: env.CLICKHOUSE_METRICS_PASSWORD,
+    }));
