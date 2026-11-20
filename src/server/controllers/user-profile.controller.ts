@@ -142,6 +142,7 @@ export const updateUserProfileHandler = async ({
         message: ['message', 'sfwMessage'],
         location: ['location'],
         links: ['socialLinks', 'sponsorshipLinks'],
+        showcaseSections: ['showcaseItems', 'profileSectionsSettings'],
       };
       const fields = (Object.keys(touched) as (keyof typeof touched)[]).filter((field) =>
         touched[field].some((key) => key in input)
