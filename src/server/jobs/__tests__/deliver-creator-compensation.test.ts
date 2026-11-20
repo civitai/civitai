@@ -147,6 +147,19 @@ describe('buildPayoutTransactions: generation tips', () => {
     ]);
   });
 
+  // Deliberate: an allowlist, not a skip of one name. The orchestrator writes the licence-fee markup
+  // to the same table on the licensor's version; it is platform revenue and must never be paid out.
+  it('pays nothing for a compensation source it does not know, such as the licence-fee markup', () => {
+    const withMarkup = [
+      ...ROWS,
+      row('licenseFeeMarkup', 'CashSettled', 5000),
+      row('licenseFeeMarkup', 'Yellow', 70),
+    ];
+    expect(view(buildPayoutTransactions(DAY_AFTER_START, { [CREATOR]: withMarkup }))).toEqual(
+      view(buildPayoutTransactions(DAY_AFTER_START, { [CREATOR]: ROWS }))
+    );
+  });
+
   it('converts cash license fees from tenths of a penny', () => {
     const [tx] = buildPayoutTransactions(START, {
       [CREATOR]: [row('licenseFee', 'CashSettled', 105)],

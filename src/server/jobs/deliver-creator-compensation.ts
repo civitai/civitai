@@ -121,6 +121,11 @@ const BATCH_SIZE = 100;
 const COMP_START_DATE = new Date('2024-08-01');
 
 type PayoutSource = 'compensation' | 'tip' | 'licenseFee';
+const PAYABLE_SOURCES = new Set<string>([
+  'compensation',
+  'tip',
+  'licenseFee',
+] satisfies PayoutSource[]);
 export type PayoutTransaction = {
   fromAccountId: number;
   toAccountId: number;
@@ -160,6 +165,9 @@ export function buildPayoutTransactions(
       const licenseTotals: Partial<Record<BuzzAccountType, number>> = {};
 
       for (const row of userRows) {
+        // Only the sources this job knows how to pay. Anything else the orchestrator logs here (the
+        // licence-fee markup is platform revenue) would otherwise be minted as compensation.
+        if (!PAYABLE_SOURCES.has(row.source)) continue;
         const isCash = CASH_SETTLED_ALIASES.has(row.accountType);
         const amount =
           row.source === 'licenseFee' && isCash ? Math.floor(row.amount / 10) : row.amount;
