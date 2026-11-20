@@ -53,7 +53,7 @@ function urlFor(
     user,
     subject,
     features: { canViewNsfw: true },
-    req: { headers: {} },
+    req: { headers: { host: 'example.test' } },
     cache: null,
   } as unknown as HandlerCtx;
   return getImageHandler({ input: { id: 1 }, ctx }).then((result) => result.url);

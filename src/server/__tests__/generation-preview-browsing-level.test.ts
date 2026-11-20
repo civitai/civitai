@@ -122,13 +122,13 @@ describe.each(routes)(
 );
 
 describe('/api/generation/data media viewer', () => {
-  it('passes the caller and flags, and never a crawler header the client sent', async () => {
+  it('passes the caller, flags and host, and never a crawler header the client sent', async () => {
     const flags = { canViewNsfw: true };
     mockSession.mockResolvedValue({ user: nsfwUser });
     mockFeatureFlagsLazy.mockReturnValue(flags);
     const req = {
       ...makeReq({ type: 'image', id: '1' }),
-      headers: { 'x-civitai-verified-bot': 'googlebot' },
+      headers: { host: 'civitai.red', 'x-civitai-verified-bot': 'googlebot' },
     } as unknown as NextApiRequest;
 
     await (generationDataHandler as unknown as Handler)(req, makeRes());
@@ -136,7 +136,7 @@ describe('/api/generation/data media viewer', () => {
     const { mediaViewer } = mockGetGenerationData.mock.calls[0][0];
     expect(mediaViewer.user).toBe(nsfwUser);
     expect(mediaViewer.features).toBe(flags);
-    expect(mediaViewer.req.headers).toEqual({});
+    expect(mediaViewer.req.headers).toStrictEqual({ host: 'civitai.red' });
   });
 
   it("forwards the request's credential, so a token is judged as a token", async () => {

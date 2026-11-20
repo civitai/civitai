@@ -37,7 +37,7 @@ function callerFor(canViewNsfw: boolean) {
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
-    req: { headers: {} },
+    req: { headers: { host: 'example.test' } },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
     features: { canViewNsfw },

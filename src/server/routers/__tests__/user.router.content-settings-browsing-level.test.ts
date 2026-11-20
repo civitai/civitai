@@ -47,7 +47,7 @@ const caller = () =>
     user,
     apiKeyId: null,
     tokenScope: TokenScope.Full,
-    req: { headers: {} },
+    req: { headers: { host: 'example.test' } },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
     features: { canViewNsfw: true },

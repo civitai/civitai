@@ -26,7 +26,7 @@ function callerFor(user: { id: number } | undefined, canViewNsfw: boolean, bot?:
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
-    req: { headers: bot ? { [VERIFIED_BOT_HEADER]: bot } : {} },
+    req: { headers: { host: 'example.test', ...(bot ? { [VERIFIED_BOT_HEADER]: bot } : {}) } },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
     features: { canViewNsfw },

@@ -51,7 +51,7 @@ function callerFor(canViewNsfw: boolean) {
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
-    req: { headers: {} },
+    req: { headers: { host: 'example.test' } },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
     features: { canViewNsfw, postPlanner: true, trpcFlagGuardPerRequest: true },
@@ -75,7 +75,11 @@ beforeEach(() => {
 const reorderAs = (canViewNsfw: boolean) =>
   reorderPostImagesHandler({
     input: { id: 1, imageIds: [2, 3] },
-    ctx: { user: { id: OWNER }, features: { canViewNsfw } } as never,
+    ctx: {
+      user: { id: OWNER },
+      features: { canViewNsfw },
+      req: { headers: { host: 'example.test' } },
+    } as never,
   });
 
 describe.each([

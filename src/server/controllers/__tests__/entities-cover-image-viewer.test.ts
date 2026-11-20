@@ -95,25 +95,58 @@ describe('getEntitiesCoverImageHandler on a capped site', () => {
   };
 
   it('sends a capped viewer only covers whose every rating bit is inside the cap', async () => {
-    expect(await run({ user: { id: 6 }, features: { canViewNsfw: false } })).toEqual([1, 5]);
-    expect(await run({ features: { canViewNsfw: true } })).toEqual([1]);
+    expect(
+      await run({
+        user: { id: 6 },
+        features: { canViewNsfw: false },
+        req: { headers: { host: 'example.test' } },
+      })
+    ).toEqual([1, 5]);
+    expect(
+      await run({ features: { canViewNsfw: true }, req: { headers: { host: 'example.test' } } })
+    ).toEqual([1]);
   });
 
   it("keeps a verified crawler's answer out of the edge cache, since humans get a capped one", async () => {
     const cache = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 };
-    const req = { headers: { 'x-civitai-verified-bot': 'googlebot' } };
+    const req = { headers: { host: 'example.test', 'x-civitai-verified-bot': 'googlebot' } };
     await run({ features: { canViewNsfw: true }, req, cache });
     expect(cache).toEqual({ edgeTTL: 0, browserTTL: 0, staleWhileRevalidate: 0 });
 
     const human = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 };
-    await run({ features: { canViewNsfw: true }, req: { headers: {} }, cache: human });
+    await run({
+      features: { canViewNsfw: true },
+      req: { headers: { host: 'example.test' } },
+      cache: human,
+    });
     expect(human.edgeTTL).toBe(60);
   });
 
   it.each([
-    ['the owner', { user: { id: OWNER }, features: { canViewNsfw: false } }],
-    ['a moderator', { user: { id: 7, isModerator: true }, features: { canViewNsfw: false } }],
-    ['an uncapped viewer', { user: { id: 6 }, features: { canViewNsfw: true } }],
+    [
+      'the owner',
+      {
+        user: { id: OWNER },
+        features: { canViewNsfw: false },
+        req: { headers: { host: 'example.test' } },
+      },
+    ],
+    [
+      'a moderator',
+      {
+        user: { id: 7, isModerator: true },
+        features: { canViewNsfw: false },
+        req: { headers: { host: 'example.test' } },
+      },
+    ],
+    [
+      'an uncapped viewer',
+      {
+        user: { id: 6 },
+        features: { canViewNsfw: true },
+        req: { headers: { host: 'example.test' } },
+      },
+    ],
   ])('keeps every cover for %s', async (_label, ctx) => {
     expect(await run(ctx)).toEqual([1, 2, 3, 4, 5]);
   });

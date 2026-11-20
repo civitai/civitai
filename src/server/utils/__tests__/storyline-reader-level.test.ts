@@ -17,7 +17,12 @@ const ctx = ({
   user?: { id: number; showNsfw?: boolean; browsingLevel?: number };
   canViewNsfw: boolean;
   isGreen: boolean;
-}) => ({ user, features: { canViewNsfw, isGreen }, req: { headers: {} } } as unknown as Ctx);
+}) =>
+  ({
+    user,
+    features: { canViewNsfw, isGreen },
+    req: { headers: { host: 'example.test' } },
+  } as unknown as Ctx);
 
 describe('storylineReaderLevel', () => {
   it('holds a signed-out reader to the public level whatever they ask for', () => {

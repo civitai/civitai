@@ -61,20 +61,43 @@ describe('auction bid images', () => {
     shown(capAuctionBidImages(auction(...LEVELS) as never, bidImagesFor(ctx as never)));
 
   it('a capped viewer gets only bid images whose every rating bit is inside the cap', () => {
-    expect(forViewer({ user: { id: 6 }, features: { canViewNsfw: false } })).toEqual([
-      1,
-      null,
-      null,
-      null,
-      5,
-    ]);
-    expect(forViewer({ features: { canViewNsfw: true } })).toEqual([1, null, null, null, null]);
+    expect(
+      forViewer({
+        user: { id: 6 },
+        features: { canViewNsfw: false },
+        req: { headers: { host: 'example.test' } },
+      })
+    ).toEqual([1, null, null, null, 5]);
+    expect(
+      forViewer({ features: { canViewNsfw: true }, req: { headers: { host: 'example.test' } } })
+    ).toEqual([1, null, null, null, null]);
   });
 
   it.each([
-    ['the owner', { user: { id: OWNER }, features: { canViewNsfw: false } }],
-    ['a moderator', { user: { id: 7, isModerator: true }, features: { canViewNsfw: false } }],
-    ['an uncapped viewer', { user: { id: 6 }, features: { canViewNsfw: true } }],
+    [
+      'the owner',
+      {
+        user: { id: OWNER },
+        features: { canViewNsfw: false },
+        req: { headers: { host: 'example.test' } },
+      },
+    ],
+    [
+      'a moderator',
+      {
+        user: { id: 7, isModerator: true },
+        features: { canViewNsfw: false },
+        req: { headers: { host: 'example.test' } },
+      },
+    ],
+    [
+      'an uncapped viewer',
+      {
+        user: { id: 6 },
+        features: { canViewNsfw: true },
+        req: { headers: { host: 'example.test' } },
+      },
+    ],
   ])('%s keeps every bid image', (_label, ctx) => {
     expect(forViewer(ctx)).toEqual([1, 2, 3, 4, 5]);
   });
@@ -118,7 +141,11 @@ describe('auction bid creator avatars', () => {
   });
   type Capped = { bids: { entityData?: { model?: { user?: Record<string, unknown> } } }[] };
   const creator = (a: unknown) => (a as Capped).bids[0].entityData?.model?.user;
-  const capped = { user: { id: 6 }, features: { canViewNsfw: false } };
+  const capped = {
+    user: { id: 6 },
+    features: { canViewNsfw: false },
+    req: { headers: { host: 'example.test' } },
+  };
 
   it('drops an avatar above the cap', () => {
     const out = capAuctionBidImages(
@@ -143,7 +170,11 @@ describe('auction bid creator avatars', () => {
   });
 
   it('the creator keeps their own avatar', () => {
-    const own = { user: { id: CREATOR }, features: { canViewNsfw: false } };
+    const own = {
+      user: { id: CREATOR },
+      features: { canViewNsfw: false },
+      req: { headers: { host: 'example.test' } },
+    };
     const out = capAuctionBidImages(withAvatar(NsfwLevel.X) as never, bidImagesFor(own as never));
     expect(creator(out)?.profilePicture).toMatchObject({ url: 'avatar.png' });
   });
@@ -156,7 +187,11 @@ describe('auction bid creator avatars', () => {
   });
 
   it('an uncapped viewer still gets no unrated avatar', () => {
-    const uncapped = { user: { id: 6 }, features: { canViewNsfw: true } };
+    const uncapped = {
+      user: { id: 6 },
+      features: { canViewNsfw: true },
+      req: { headers: { host: 'example.test' } },
+    };
     const out = capAuctionBidImages(withAvatar(0) as never, bidImagesFor(uncapped as never));
     expect(creator(out)?.profilePicture).toBeNull();
   });
