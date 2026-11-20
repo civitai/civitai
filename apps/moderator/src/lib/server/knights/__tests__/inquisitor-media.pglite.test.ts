@@ -5,6 +5,7 @@ import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
+import { CSAM_RESTRICTION_CASES } from '../../../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import { INQUISITOR_IMAGE_SCHEMA } from './inquisitor-schema';
 
 /**
@@ -33,7 +34,10 @@ const { patterns } = vi.hoisted(() => ({
 vi.mock('../../blocked-for-patterns', () => ({ blockedForPatterns: () => patterns.current }));
 vi.mock('../../axiom', () => ({ logToAxiom: vi.fn() }));
 
-vi.mock('../../review-batch', () => ({ readScannerCsamVerdict: async () => 'clear' }));
+vi.mock('../../review-batch', () => ({
+  readScannerCsamVerdict: async () => 'clear',
+  readScannerCsamVerdicts: async (ids: number[]) => new Map(ids.map((id) => [id, 'clear'])),
+}));
 vi.mock('../../mod-activity', () => ({ insertModActivity: vi.fn() }));
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 
@@ -57,6 +61,16 @@ const TABLES = [
   'EvidenceHeldUser',
   'EvidenceHoldImage',
   'ImageCdnModeratorDelete',
+  'Model',
+  'BlockedImage',
+  'ScanLabelItem',
+  'ScanLabelFlag',
+  'ScanLabelVote',
+  'PostText',
+  'Article',
+  'ImageConnection',
+  'ServiceOffering',
+  'UserProfile',
 ];
 
 let db: PGlite;
@@ -272,4 +286,26 @@ describe('getInquisitorQueue media', () => {
       await db.exec(`ALTER TABLE "CsamReportAway" RENAME TO "CsamReport"`);
     }
   });
+});
+
+describe('getInquisitorQueue media, by rows sharing its url, its post text and its articles', () => {
+  const target = { id: IMAGE, url: 'key-990000001' };
+
+  it.each(CSAM_RESTRICTION_CASES.filter((c) => c.restricts))(
+    'restricts a blocked image with $label',
+    async ({ mark }) => {
+      await queued({});
+      await db.exec(mark(target));
+      expect(await media()).toBe('restricted');
+    }
+  );
+
+  it.each(CSAM_RESTRICTION_CASES.filter((c) => !c.restricts))(
+    'sends a blocked image with $label to the retracted-media route',
+    async ({ mark }) => {
+      await queued({});
+      await db.exec(mark(target));
+      expect(await media()).toBe('retracted');
+    }
+  );
 });
