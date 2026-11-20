@@ -653,9 +653,18 @@ async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
 /** The call that moves `current` to `desired`, or null when nothing needs to change. */
 export function plannedCall(
   desired: CdnAccess,
-  current: StateRow['state'] | undefined
+  current: StateRow['state'] | undefined,
+  { takedown = false }: { takedown?: boolean } = {}
 ): CdnCall | null {
-  if (desired === 'retract') return current === 'Retracted' ? null : 'retract';
+  if (desired === 'retract') {
+    if (current === 'Retracted') return null;
+    // 🔴 A deny is never upgraded on its own: the hold that capped it may sit on a row since deleted,
+    // which nothing here can see any more. Only a moderator delete or shop takedown on the url, or
+    // this path's own deferral of a retraction past its per-run cap, retracts a denied url. Do not
+    // restore the automatic upgrade.
+    if (current === 'Denied' && !takedown) return null;
+    return 'retract';
+  }
   if (desired === 'deny') return current ? null : 'deny';
   return current ? 'allow' : null;
 }
@@ -665,10 +674,17 @@ export function plannedCall(
  * through the normal path, which invalidates on its own; whatever was asserted earlier stays until
  * the reconciler drops it.
  */
-function callFor(url: string, facts: UrlAccessFacts | undefined, current: StateRow | undefined) {
+function callFor(
+  url: string,
+  facts: UrlAccessFacts | undefined,
+  current: StateRow | undefined,
+  { deferred = false }: { deferred?: boolean } = {}
+) {
   if (!cdnImageKey(url)) return null;
   if (!facts || (!facts.images.length && !facts.deletes.length)) return null;
-  return plannedCall(desiredUrlAccess(facts), current?.state);
+  return plannedCall(desiredUrlAccess(facts), current?.state, {
+    takedown: facts.deletes.length > 0 || deferred,
+  });
 }
 
 async function applyCall(url: string, call: CdnCall, gate: RetractionGate, claim: UrlClaim) {
@@ -1272,6 +1288,8 @@ type QueueRow = {
     urls?: string[];
     seq?: string;
     deferred?: string | null;
+    /** The urls of this row whose retraction the per-run cap deferred; see `pacedUrls`. */
+    pacedUrls?: string[];
     retractFailures?: RetractFailures;
   } | null;
 };
@@ -1376,12 +1394,19 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   // After a 429 or a timeout the rest of the run's retractions wait for the next run; denies and
   // lifts still go.
   const gate = newRetractionGate();
+  const deferredUrls = new Set(queue.flatMap((q, i) => (q.deferred ? urlsByRow[i] : [])));
+  // Urls whose retraction this path itself deferred past the cap, re-queued since or not: their deny
+  // is this path's own pacing, so they may still upgrade. Kept per url, not per row: a post row can
+  // also cover a url denied by a hold, and that deny must never upgrade on its own.
+  const pacedUrls = new Set(queue.flatMap((q) => q.data?.pacedUrls ?? []));
   const plannedCall = new Map(
-    urls.map((url) => [url, callFor(url, facts.get(url), state.get(url))])
+    urls.map((url) => [
+      url,
+      callFor(url, facts.get(url), state.get(url), { deferred: pacedUrls.has(url) }),
+    ])
   );
   const planned = urls.filter((url) => plannedCall.get(url));
   // The cap goes to the oldest deferral first, then to new rows in queue order; the rest are denied.
-  const deferredUrls = new Set(queue.flatMap((q, i) => (q.deferred ? urlsByRow[i] : [])));
   const wantsRetract = planned.filter((url) => plannedCall.get(url) === 'retract');
   const mayRetract = new Set(
     [
@@ -1399,7 +1424,9 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       try {
         const result = await withUrlClaim(url, async (claim) => {
           const [fresh, freshState] = await Promise.all([loadFacts([url]), loadState([url])]);
-          call = callFor(url, fresh.get(url), freshState.get(url));
+          call = callFor(url, fresh.get(url), freshState.get(url), {
+            deferred: pacedUrls.has(url),
+          });
           if (!call) return;
           if (call === 'retract' && !mayRetract.has(url)) {
             deferred.add(url);
@@ -1483,12 +1510,20 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   });
 
   for (const q of rotate) {
+    const paced = [
+      ...new Set([
+        ...(q.data?.pacedUrls ?? []),
+        ...urlsByRow[queue.indexOf(q)].filter((url) => deferred.has(url)),
+      ]),
+    ];
     await dbWrite.$executeRaw`
       UPDATE "JobQueue"
       SET "createdAt" = CASE WHEN data ? 'deferred' THEN "createdAt" ELSE now() END,
           data = (COALESCE(data, '{}'::jsonb) - ${
             failuresNext.get(q) === null ? 'retractFailures' : ''
-          }::text) || jsonb_build_object('deferred', data->'seq')
+          }::text) || jsonb_build_object('deferred', data->'seq', 'pacedUrls', ${JSON.stringify(
+      paced
+    )}::jsonb)
       WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
         AND "entityType" = ${q.entityType}::"EntityType"
         AND "entityId" = ${q.entityId}
@@ -1637,8 +1672,8 @@ async function syncQueued(url: string) {
 }
 
 /**
- * Daily pass over every url this path has denied: re-asserts a deny before it can expire, upgrades a
- * deny to a retraction once a hold is released or a late activity row lands, lifts a deny the queue
+ * Daily pass over every url this path has denied: re-asserts a deny before it can expire, retracts a
+ * denied url only on a moderator delete or shop takedown (`plannedCall`), lifts a deny the queue
  * missed, and forgets urls with no image rows and no moderator delete left (their deletion
  * invalidated on its own).
  */

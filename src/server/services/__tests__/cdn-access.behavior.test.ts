@@ -329,6 +329,11 @@ const acceptImage = async (id: number) => {
             VALUES (${MOD}, 'review', 'image', ${id})`;
 };
 
+/** The row a moderator delete records (`ImageCdnModeratorDelete`): the one thing that retracts a deny. */
+const recordModeratorDelete = (id: number) =>
+  sql`INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
+      VALUES (${id}, ${u(id)}, ${OWNER}, false)`;
+
 /** The post UPDATE in `unpublishModelById` / `unpublishModelVersionById`, as `actorId`. */
 const modelCascade = async (
   postId: number,
@@ -470,7 +475,7 @@ describe('image takedowns', () => {
     expect(await stateOf(u(1))).toBe('Denied');
   });
 
-  it('a report-driven CSAM block is deny only until a moderator acts, then retracts', async () => {
+  it('a report-driven CSAM block stays denied after a moderator review', async () => {
     await image(1);
     await reportCsamBlock(1);
     await syncCdnAccess();
@@ -479,7 +484,8 @@ describe('image takedowns', () => {
     await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
               VALUES (${MOD}, 'review', 'image', 1)`;
     await syncCdnAccess();
-    expect(callsFor(u(1))).toEqual(['deny', 'retract']);
+    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
+    expect(callsFor(u(1))).toEqual(['deny']);
   });
 
   it('an activity older than the block does not make it a takedown', async () => {
@@ -595,7 +601,7 @@ describe('post takedowns', () => {
     expect(calls).toEqual([]);
   });
 
-  it('a csam-hold removal is deny only until a report exists, then follows the evidence rule', async () => {
+  it('a csam-hold removal stays denied, report verified or not', async () => {
     await moderatorPostUnpublish(5, CSAM_HOLD_POST_UNPUBLISH_REASON);
     await syncCdnAccess();
     await reconcileCdnAccess();
@@ -608,7 +614,8 @@ describe('post takedowns', () => {
     await coverImages([1, 2]);
     await releaseMarkers();
     await reconcileCdnAccess();
-    expect(callsFor(u(1))).toEqual(['deny', 'retract']);
+    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
+    expect(callsFor(u(1))).toEqual(['deny']);
   });
 
   it('a csam-hold removal is not released by an earlier report about other images', async () => {
@@ -620,7 +627,7 @@ describe('post takedowns', () => {
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
-  it('a mature-underage violation unpublish is deny only until a verified report releases it', async () => {
+  it('a mature-underage violation unpublish stays denied, report verified or not', async () => {
     await modelCascade(5, MOD, 'UnpublishedViolation', 'mature-underage');
     await syncCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
@@ -633,7 +640,8 @@ describe('post takedowns', () => {
     await coverImages([1, 2]);
     await releaseMarkers();
     await reconcileCdnAccess();
-    expect(callsFor(u(1))).toEqual(['deny', 'retract']);
+    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
+    expect(callsFor(u(1))).toEqual(['deny']);
   });
 
   it('a mature-underage violation unpublish is not released by an earlier report about other images', async () => {
@@ -715,7 +723,7 @@ describe('shared url', () => {
 });
 
 describe('evidence holds', () => {
-  it('a CSAM review flag caps a human takedown at deny, and the release upgrades it', async () => {
+  it('a CSAM review flag caps a human takedown at deny, and the release does not upgrade it', async () => {
     await image(1);
     await sql`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`;
     await moderatorBlock(1);
@@ -724,7 +732,8 @@ describe('evidence holds', () => {
 
     await sql`UPDATE "Image" SET "needsReview" = NULL WHERE id = 1`;
     await reconcileCdnAccess();
-    expect(callsFor(u(1))).toEqual(['deny', 'retract']);
+    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
+    expect(callsFor(u(1))).toEqual(['deny']);
   });
 
   it('an unsent CSAM report on the owner caps it at deny', async () => {
@@ -744,11 +753,12 @@ describe('evidence holds', () => {
     await reconcileCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
 
-    // Verification of a report covering the image is what releases it; the next reconcile upgrades.
+    // Verification of a report covering the image releases the hold, but not the deny.
     await coverImages([1]);
     await releaseMarkers();
     await reconcileCdnAccess();
-    expect(callsFor(u(1))).toEqual(['deny', 'retract']);
+    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
+    expect(callsFor(u(1))).toEqual(['deny']);
   });
 
   it('a verification marker that is not a timestamp still holds', async () => {
@@ -760,7 +770,7 @@ describe('evidence holds', () => {
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
-  it('a sent report covering the image holds through its marker until the marker is released', async () => {
+  it('a sent report covering the image holds, and its released marker does not upgrade the deny', async () => {
     await image(1);
     await verifiedReport([1]);
     await moderatorBlock(1);
@@ -769,7 +779,8 @@ describe('evidence holds', () => {
 
     await releaseMarkers();
     await reconcileCdnAccess();
-    expect(callsFor(u(1))).toEqual(['deny', 'retract']);
+    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
+    expect(callsFor(u(1))).toEqual(['deny']);
   });
 
   it('an unsent report naming the owner as its secondary user holds', async () => {
@@ -1735,6 +1746,7 @@ describe('image server busy (429)', () => {
     await syncCdnAccess();
     for (const id of ids) expect(callsFor(u(id))).toEqual(['deny']);
     await sql`UPDATE "Image" SET "needsReview" = NULL`;
+    for (const id of ids) await recordModeratorDelete(id);
     calls.length = 0;
 
     respond = (c) => (kind(c) === 'retract' ? 429 : undefined);
@@ -2184,7 +2196,7 @@ describe('takedown persist', () => {
     expect(purged[0]).toHaveLength(68);
   });
 
-  it('a released CSAM hold persists once the takedown upgrades to a retraction', async () => {
+  it('a released CSAM hold persists once a moderator delete upgrades it to a retraction', async () => {
     await image(1);
     await image(2);
     await sql`UPDATE "Image" SET "needsReview" = 'csam' WHERE id IN (1, 2)`;
@@ -2194,17 +2206,24 @@ describe('takedown persist', () => {
     expect(callsFor(u(1))).toEqual(['deny']);
     expect(persistsFor(u(1))).toEqual([]);
 
-    // Released on the drain path: the next write queues a re-check.
+    // Released on the drain path: the next write queues a re-check, which leaves the deny alone.
     await sql`UPDATE "Image" SET "needsReview" = NULL WHERE id = 1`;
+    await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+              VALUES (${MOD}, 'review', 'image', 1)`;
+    await syncCdnAccess();
+    // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
+    expect(callsFor(u(1))).toEqual(['deny']);
+    await recordModeratorDelete(1);
     await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
               VALUES (${MOD}, 'review', 'image', 1)`;
     await syncCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny', 'retract']);
     expect(persistsFor(u(1))).toHaveLength(1);
 
-    // Released with no write: the reconciler upgrades it.
+    // Released with no write: the reconciler upgrades it once a moderator delete is recorded.
     await sql`UPDATE "Image" SET "needsReview" = NULL WHERE id = 2`;
     await sql`DELETE FROM "JobQueue" WHERE type = 'CdnAccessSync'`;
+    await recordModeratorDelete(2);
     await reconcileCdnAccess();
     expect(callsFor(u(2))).toEqual(['deny', 'retract']);
     expect(persistsFor(u(2))).toHaveLength(1);
@@ -2644,6 +2663,11 @@ describe('retractions per run', () => {
     expect(await stateOf(u(2))).toBe('Denied');
     calls.length = 0;
 
+    // The reconciler never upgrades a deny the drain paced; that is the drain's to finish.
+    expect(await reconcileCdnAccess()).toMatchObject({ upgraded: 0, leftToSync: 0 });
+    expect(calls).toEqual([]);
+    // A moderator delete makes it the reconciler's to upgrade, but the drain still has it queued.
+    await recordModeratorDelete(2);
     expect(await reconcileCdnAccess()).toMatchObject({ upgraded: 0, leftToSync: 1 });
     expect(calls).toEqual([]);
     expect(purged).toHaveLength(1);
@@ -2653,6 +2677,44 @@ describe('retractions per run', () => {
     expect(await reconcileCdnAccess()).toMatchObject({ upgraded: 1 });
     expect(callsFor(u(2))).toEqual(['retract']);
     expect(purged).toHaveLength(2);
+  });
+
+  // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
+  it('keeps a held deny after the held row is deleted by its owner, through the drain', async () => {
+    await image(1);
+    await image(2, { url: u(1) });
+    await sql`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`;
+    await moderatorBlock(1);
+    await moderatorBlock(2);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+
+    // The owner's hard delete leaves no moderator delete; a later write on the survivor queues a sync.
+    await sql`DELETE FROM "Image" WHERE id = 1`;
+    await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+              VALUES (${MOD}, 'review', 'image', 2)`;
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(await stateOf(u(1))).toBe('Denied');
+  });
+
+  // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral. The pacing marker is per url: a held url sharing a post row with a paced one never gets it.
+  it('upgrades only the paced url of a deferred post row, not a held url beside it', async () => {
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+    await publishedPost(5);
+    for (const id of [1, 2, 3]) await image(id, { postId: 5 });
+    await sql`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 3`;
+    await moderatorPostUnpublish(5);
+    await syncCdnAccess();
+    expect([1, 2, 3].map((id) => callsFor(u(id)))).toEqual([['retract'], ['deny'], ['deny']]);
+
+    await sql`UPDATE "Image" SET "needsReview" = NULL WHERE id = 3`;
+    // Room for both, so only the marker decides.
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 5 });
+    await syncCdnAccess();
+    expect(callsFor(u(2))).toEqual(['deny', 'retract']);
+    expect(callsFor(u(3))).toEqual(['deny']);
+    expect(await stateOf(u(3))).toBe('Denied');
   });
 
   const retracted = async (ids: number[]) => {
@@ -2731,6 +2793,8 @@ describe('retractions per run', () => {
     await syncCdnAccess();
     await sql`DELETE FROM "JobQueue" WHERE type = 'CdnAccessSync' AND "entityType" = 'Image'`;
     expect((await queued()).n).toBe(1);
+    // Only a url the reconciler would retract is checked against the queue.
+    await recordModeratorDelete(2);
     calls.length = 0;
 
     expect(await reconcileCdnAccess()).toMatchObject({ upgraded: 0, leftToSync: 1 });
