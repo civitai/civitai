@@ -1484,8 +1484,7 @@ export async function handleBlockImages({
     await clearAccountDeletionImageMarkers({ ids });
     // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
     if (postIds.length) await bustCachesForPosts(postIds);
-    // The requeue comes after the blocklist write, so a slow requeue cannot hold it up, and runs
-    // when that write throws, since the block has already landed.
+    // The requeue runs even when the blocklist write throws: the block has landed.
     try {
       if (include?.includes('phash-block')) {
         logCsamBlocklistNoHash(

@@ -1270,7 +1270,7 @@ export async function applyIngestionSideEffects({
     // moderation gates in `comics.search-index.ts:WHERE`.
     await queueComicsForPanelImage(image.id);
     await refreshProfilePicturesForImages([image.id]);
-    // The models, bounties and collections showing the image: no trigger watches the block.
+    // No trigger watches a block, so the documents showing the image are queued here.
     await queueDocumentsForBlockedImages([image.id]);
     return;
   }
