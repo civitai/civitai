@@ -184,6 +184,7 @@ describe('createHubJwtVerifier', () => {
     const verified = await hubVerifier()(token);
     expect(verified).toEqual({
       subject: `user:${USER_ID}/client:${CLIENT_ID}`,
+      userId: USER_ID,
       clientId: CLIENT_ID,
       scope: TokenScope.ModelsRead | TokenScope.MediaRead,
       actor: null,
@@ -419,6 +420,7 @@ describe('scopeGrantBits and hasScope (does the token HOLD a scope)', () => {
 describe('routeVerifyToken', () => {
   const OPAQUE: VerifiedToken = {
     subject: 'user:9/client:opaque-client',
+    userId: 9,
     clientId: 'opaque-client',
     scope: 0n,
     actor: null,
@@ -512,6 +514,7 @@ describe('verifyOpaqueCivitaiToken', () => {
     const verified = await verifyOpaqueCivitaiToken('9e8d7c6b5a4f3e2d');
     expect(verified).toMatchObject({
       subject: 'user:6127/client:opaque-app-3c58',
+      userId: 6127,
       clientId: 'opaque-app-3c58',
       actor: null,
       scope: TokenScope.AppsRead | TokenScope.AppDataRead,
@@ -541,6 +544,7 @@ describe('createCivitaiTokenVerifier', () => {
     const verify = createCivitaiTokenVerifier({ resource: RESOURCE, issuer: ISSUER });
     expect(await verify('3f9a0c1d2e4b5a69')).toEqual({
       subject: 'user:9/client:opaque-client',
+      userId: 9,
       clientId: 'opaque-client',
       // The key's stored scope, as issued; no one acts for an opaque token.
       scope: TokenScope.AppsRead | TokenScope.UserRead,
@@ -594,6 +598,7 @@ describe('🔴 service tokens and the service-client allowlist', () => {
     );
     expect(verified).toEqual({
       subject: `service:${SERVICE_ID}`,
+      userId: null,
       clientId: SERVICE_ID,
       scope: TokenScope.AppsRead,
       actor: RELAY_ID,

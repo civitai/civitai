@@ -24,15 +24,19 @@ surfaces.
 - **Who mints:** the creator only. Moderators can list and revoke a version's gifts but not mint them.
 - **Claim:** done on the site (`/gift/<code>`, or a code pasted on `/gift`; an explicit click) or over the API with the recipient's
   token.
-- **Monthly allowance:** each claimer can make a set number of new claims per UTC calendar month, by
-  membership tier: free 3, Founder 15, Bronze 15, Silver 30, Gold 60. It is the usage-limit registry
-  entry `gifts.monthly` (`src/shared/constants/usage-limits.ts`), so the `usage-limits` KeyValue row can
-  override or disable it. Every claim recorded that month counts, including one later removed. A claim
+- **Monthly limit:** a creator's gift links can be claimed a set number of times per UTC calendar
+  month, across all their links, by the creator's membership tier: free 3, Founder 15, Bronze 15,
+  Silver 30, Gold 60. It is there to push creators who sell access off-platform toward a larger
+  membership. Claimers are never limited. It is the usage-limit registry entry `gifts.monthly`
+  (`src/shared/constants/usage-limits.ts`), so the `usage-limits` KeyValue row can override or disable
+  it. Every claim of the creator's links recorded that month counts unless it was removed. A claim
   that records nothing (the claimer already had the access, or claimed the same link before) costs
-  nothing. Past the allowance the claim gets a 429 that tells the claimer to reach out to the person
-  who gave them the link, with product rate-limit metadata (`id`, `limit`, `used`, `remaining`, and
-  `resetAt` at the start of the next UTC month). `/api/v1/me/limits` lists the same count as a
-  `gifts.monthly` row, only to users the gift feature is released to.
+  nothing. New claims are counted under a per-creator advisory lock, so racing claims cannot pass the
+  limit. Past the limit the claim gets a 429 saying the creator's links have reached this month's
+  limit, with product rate-limit metadata (`id` and `resetAt` at the start of the next UTC month; no
+  counts, since they are the creator's and would reveal their tier), and the creator gets one `gift-links-monthly-limit` notification per
+  month pointing at membership. `/api/v1/me/limits` lists the creator's count as a `gifts.monthly` row,
+  only to users the gift feature is released to.
 - **Revoke:** done by the creator or a moderator, for a link or a whole batch. Revoking stops new claims
   immediately, including a claim already in flight. **People who already claimed keep their access.**
   Who claimed which link is `ModelVersionGiftRedemption`; a grant's `meta.giftLinkId` holds only the most

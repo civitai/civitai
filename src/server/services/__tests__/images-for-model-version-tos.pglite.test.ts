@@ -88,3 +88,53 @@ describe('getImagesForModelVersion: tosViolation', () => {
     expect(images.map((i) => i.id)).toEqual([2]);
   });
 });
+
+const XXX = 16;
+const BLOCKED = 32;
+
+async function imageAt(id: number, index: number, nsfwLevel: number) {
+  await db.query(
+    `INSERT INTO "Image" (id, "userId", "postId", index, "nsfwLevel")
+     VALUES ($1, $2, $3, $4, $5)`,
+    [id, OWNER, POST, index, nsfwLevel]
+  );
+}
+
+const versionImageIds = async () =>
+  (await getImagesForModelVersion({ modelVersionIds: [VERSION], imagesPerVersion: 20 })).map(
+    (i) => i.id
+  );
+
+describe('getImagesForModelVersion with no browsing level', () => {
+  it('serves an image at the highest browsable level (control)', async () => {
+    await imageAt(1, 0, XXX);
+
+    expect(await versionImageIds()).toEqual([1]);
+  });
+
+  it('leaves out an unrated image', async () => {
+    await imageAt(1, 0, 0);
+    await imageAt(2, 1, XXX);
+
+    expect(await versionImageIds()).toEqual([2]);
+  });
+
+  it('leaves out an image rated Blocked even at a level past 32 bits', async () => {
+    await imageAt(1, 0, BLOCKED);
+    await imageAt(2, 1, XXX);
+
+    const images = await getImagesForModelVersion({
+      modelVersionIds: [VERSION],
+      imagesPerVersion: 20,
+      browsingLevel: 2 ** 32 + 63,
+    });
+    expect(images.map((i) => i.id)).toEqual([2]);
+  });
+
+  it('leaves out an image rated Blocked and keeps the one beside it', async () => {
+    await imageAt(1, 0, BLOCKED);
+    await imageAt(2, 1, XXX);
+
+    expect(await versionImageIds()).toEqual([2]);
+  });
+});

@@ -93,18 +93,24 @@ export function stringToScope(scope: string | string[] | undefined): bigint {
 }
 
 // OIDC's standard scopes (OIDC Core §5.4). `openid` is a request for an id_token, not a permission;
-// `profile` and `email` are what UserRead already grants; refresh tokens are always issued, so
-// `offline_access` adds nothing.
+// `profile` and `email` are what UserRead already grants. `offline_access` is a request for a refresh
+// token, not a permission, so it adds no bit: `parseScopeRequest` reports it as `offlineAccess`. With
+// the `oauth-offline-grant` flag off, refresh tokens are issued regardless and it changes nothing
+// (offline-grant.ts).
 const OIDC_SCOPE_BITS: Record<string, bigint> = {
   profile: TokenScope.UserRead,
   email: TokenScope.UserRead,
   offline_access: TokenScope.None,
 };
 
-/** A `scope` request parameter, decoded: the permission bitmask, and whether it asked for `openid`. */
+/**
+ * A `scope` request parameter, decoded: the permission bitmask, whether it asked for `openid`, and
+ * whether it asked for `offline_access`.
+ */
 export interface ScopeRequest {
   scope: bigint;
   openid: boolean;
+  offlineAccess: boolean;
 }
 
 /**
@@ -118,6 +124,7 @@ export function parseScopeRequest(raw: unknown): ScopeRequest | null {
   if (raw != null && typeof raw !== 'string') return null;
   let scope = 0n;
   let openid = false;
+  let offlineAccess = false;
   for (const token of (raw ?? '').split(/\s+/).filter(Boolean)) {
     if (/^\d+$/.test(token)) {
       const value = parseTokenScope(token);
@@ -125,6 +132,8 @@ export function parseScopeRequest(raw: unknown): ScopeRequest | null {
       scope |= value;
     } else if (token === 'openid') {
       openid = true;
+    } else if (token === 'offline_access') {
+      offlineAccess = true;
     } else if (Object.hasOwn(OIDC_SCOPE_BITS, token)) {
       scope |= OIDC_SCOPE_BITS[token];
     } else if (Object.hasOwn(TokenScope, token) && token !== 'None') {
@@ -133,7 +142,7 @@ export function parseScopeRequest(raw: unknown): ScopeRequest | null {
       return null;
     }
   }
-  return { scope, openid };
+  return { scope, openid, offlineAccess };
 }
 
 /**

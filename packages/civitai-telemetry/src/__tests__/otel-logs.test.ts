@@ -200,6 +200,8 @@ describe('buildOtelLogAttributes', () => {
         pod: 'pod-1',
         userId: 12345,
         requestId: 'req-9',
+        logSource: 'createLogger',
+        source: 'payload-field',
         weirdField: 'y',
         another: 1,
         config: { headers: { authorization: 'secret' } },
@@ -214,6 +216,7 @@ describe('buildOtelLogAttributes', () => {
     expect(attrs['civitai.name']).toBe('model.getById');
     expect(attrs['civitai.user_id']).toBe(12345);
     expect(attrs['civitai.datastream']).toBe('a-datastream');
+    expect(attrs['civitai.source']).toBe('createLogger');
     expect(attrs).not.toHaveProperty('weirdField');
     expect(attrs).not.toHaveProperty('config');
   });
@@ -221,6 +224,12 @@ describe('buildOtelLogAttributes', () => {
   it('omits keys the payload does not carry rather than emitting undefined', () => {
     const attrs = buildOtelLogAttributes({ type: 'info' });
     expect(Object.keys(attrs)).toEqual(['civitai.type']);
+  });
+
+  it("never takes civitai.source from a payload's own `source` field", () => {
+    expect(buildOtelLogAttributes({ type: 'info', source: 'challenge-42' })).toEqual({
+      'civitai.type': 'info',
+    });
   });
 
   it('keeps the RAW type verbatim even when it is unmapped — no information is lost', () => {

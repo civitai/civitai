@@ -184,3 +184,27 @@ describe('sanitizeHtml links', () => {
     expect(sanitizeHtml('<a href="not a url">x</a>')).toBe('<span>x</span>');
   });
 });
+
+describe('article image layout attributes', () => {
+  // Positive control: an allowlisted value survives, so the drops below are the allowlist's doing.
+  it.each([
+    ['img', 'data-width', '40'],
+    ['img', 'data-width', '33'],
+    ['img', 'data-align', 'float-left'],
+    ['edge-media', 'data-width', '85'],
+    ['edge-media', 'data-align', 'right'],
+  ])('keeps %s %s="%s"', (tag, attr, value) => {
+    expect(sanitizeHtml(`<${tag} ${attr}="${value}"></${tag}>`)).toContain(`${attr}="${value}"`);
+  });
+
+  it.each([
+    ['data-width', '37'],
+    ['data-width', '100%;position:fixed'],
+    ['data-align', 'float'],
+    ['data-align', 'left;float:right'],
+  ])('blanks %s="%s"', (attr, value) => {
+    expect(sanitizeHtml(`<img src="https://x/y.png" ${attr}="${value}">`)).not.toContain(
+      `${attr}="`
+    );
+  });
+});

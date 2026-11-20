@@ -33,7 +33,7 @@ key assumes "one run per model":
 | `assertTrainingSourcePublishable` (publish model, publish version ×2, private-model paths) | It reads the model's meta. A version from a run on a non-studio model is **never checked**, so the training-data approval gate would be skipped. |
 | `stampWorkflowPublished`                                                                   | It is only called from model publish. Publishing a version (the normal path for V2) never marks the run `published`.                             |
 | `studio-dataset-archive.service.ts`                                                        | It finds the workflow from model meta. Without it, the placeholder is never replaced by the dataset zip and ends as `unavailable`.               |
-| `src/pages/api/mod/training-data/resolve.ts`                                               | The "not archived yet" guard is keyed on model meta.                                                                                             |
+| `src/server/api-routes/mod/training-data/resolve.ts`                                               | The "not archived yet" guard is keyed on model meta.                                                                                             |
 | `apps/moderator/.../training-moderation.service.ts` `getTrainingVersionDetail`             | `studioWorkflowId` is null unless it matches model meta, so the review page loses the studio link.                                               |
 | Draft lookup in `createDraftModelFromWorkflow`                                             | Re-entry is matched by model meta, so the same run can't be resolved to a version.                                                               |
 

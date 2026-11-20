@@ -286,7 +286,7 @@ an index on `lower(hash)` over a `citext` column with **849 lifetime scans**.
 
 This section previously documented a `GET /api/admin/temp/backfill-sha256-12` endpoint, and the
 `20260819000000` migration told the operator to run it. **That file has never existed on any
-branch** (`git log --diff-filter=A -- src/pages/api/admin/temp/backfill-sha256-12.ts` returns
+branch** (`git log --diff-filter=A --all -- src/pages/api/admin/temp/backfill-sha256-12.ts src/server/api-routes/admin/temp/backfill-sha256-12.ts` returns
 nothing), so following either instruction gets a 404.
 
 The design it described is still the right one — derive entirely from stored `SHA256` rows, no file

@@ -178,6 +178,25 @@ describe('modResolveAppFeedbackWithRefund', () => {
     ]);
   });
 
+  it('resolve=true removes the HQ sync hold and keeps the rest of the context; resolve=false keeps it', async () => {
+    const hold = { at: '2026-11-20T10:00:00.000Z', by: MODERATOR };
+    const ctx = JSON.stringify({ hq: { id: '868abc123', url: 'u' }, syncHold: hold });
+    await feedback(315);
+    await feedback(316);
+    await db.query(`UPDATE "Feedback" SET "context" = $1::jsonb WHERE "id" IN (315, 316)`, [ctx]);
+    const contextOf = async (id: number) =>
+      (
+        await db.query<{ context: unknown }>('SELECT "context" FROM "Feedback" WHERE "id" = $1', [
+          id,
+        ])
+      ).rows[0].context;
+
+    expect(await resolve(315)).toBe(true);
+    expect(await contextOf(315)).toEqual({ hq: { id: '868abc123', url: 'u' } });
+    expect(await resolve(316, { resolve: false })).toBe(true);
+    expect(await contextOf(316)).toEqual({ hq: { id: '868abc123', url: 'u' }, syncHold: hold });
+  });
+
   it('resolve=false leaves status and handler untouched but appends the note', async () => {
     await feedback(312);
     expect(await resolve(312, { resolve: false })).toBe(true);

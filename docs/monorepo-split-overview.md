@@ -125,7 +125,7 @@ The remaining ~50 admin API routes (system/cron/migration endpoints) stay in the
 
 2. **`_app.tsx` duplication**: The moderator app needs its own `_app.tsx` with the same provider stack. This is a thin wrapper that imports providers from `../../src/providers/`.
 
-3. **One edge case**: `src/utils/memberships.util.ts` imports a handler from `src/pages/api/admin/refresh-sessions`. This import needs to be refactored (extract the handler to `src/server/` and have both the API route and the util import from there).
+3. **One edge case**: `src/utils/memberships.util.ts` imports a handler from `src/server/api-routes/admin/refresh-sessions`. This import needs to be refactored (extract the handler to `src/server/` and have both the API route and the util import from there).
 
 ### Build-Time Savings
 

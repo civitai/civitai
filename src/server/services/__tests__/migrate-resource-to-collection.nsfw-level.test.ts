@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { faceLossRescan } from '~/server/services/model-com-face-recheck.service';
 import { migrateResourceToCollection } from '~/server/services/model.service';
 
 /**
@@ -18,7 +19,10 @@ const VERSIONS = [10, 11, 12];
 
 let db: PGlite;
 
-async function seed({ sfwCoverOnVersion }: { sfwCoverOnVersion?: number } = {}) {
+async function seed({
+  sfwCoverOnVersion,
+  meta = {},
+}: { sfwCoverOnVersion?: number; meta?: Record<string, unknown> } = {}) {
   db = new PGlite();
   await db.exec(`
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int, nsfw boolean, "nsfwLevel" int,
@@ -53,7 +57,7 @@ async function seed({ sfwCoverOnVersion }: { sfwCoverOnVersion?: number } = {}) 
     tosViolation: false,
     nsfw: true,
     nsfwLevel: 61,
-    meta: {},
+    meta,
     gallerySettings: null,
     ...face,
     modelVersions: VERSIONS.map((id) => ({
@@ -189,5 +193,54 @@ describe('migrateResourceToCollection nsfw levels', () => {
       .mock.calls.map(([args]) => (args as { data: object }).data)
       .find((data) => 'name' in data);
     expect(sourceUpdate).not.toHaveProperty('sfwName');
+  });
+});
+
+describe('migrateResourceToCollection and a .com face the text scan relied on', () => {
+  const realLoad = faceLossRescan.loadSubmit;
+  const rescans = vi.fn();
+  const held = { comFaceHeldVerdict: { at: '2026-11-20T00:00:00Z', level: 16 } };
+  beforeEach(() => {
+    faceLossRescan.loadSubmit = (async () => ({ scanEntityInBackground: rescans })) as never;
+  });
+  afterEach(() => {
+    faceLossRescan.loadSubmit = realLoad;
+  });
+  /** The models the held verdict was applied to, in the split's own transaction. */
+  const heldApplied = () =>
+    vi
+      .mocked(dbMock.dbWrite.$executeRaw)
+      .mock.calls.filter(
+        ([strings]) =>
+          Array.isArray(strings) &&
+          (strings as readonly string[]).join('?').includes('SET nsfw = TRUE')
+      )
+      .map((call) => call.find((v, i) => i > 0 && typeof v === 'number' && v > 0));
+  const forced = () =>
+    rescans.mock.calls
+      .filter(([args]) => args.force === true)
+      .map(([args]) => args.entityId)
+      .sort();
+
+  it('rates and force-rescans every model left without the face when it moves off the source', async () => {
+    await seed({ sfwCoverOnVersion: 11, meta: held });
+    await migrateResourceToCollection({ id: SOURCE, collectionName: 'c' } as never);
+    // 101 holds the cover's version; 102 and the source lose the face.
+    expect(heldApplied().sort()).toEqual([SOURCE, 102]);
+    expect(forced()).toEqual([SOURCE, 102]);
+  });
+
+  it('rates and force-rescans the new models when the face stays on the source', async () => {
+    await seed({ sfwCoverOnVersion: 10, meta: held });
+    await migrateResourceToCollection({ id: SOURCE, collectionName: 'c' } as never);
+    expect(heldApplied().sort()).toEqual([101, 102]);
+    expect(forced()).toEqual([101, 102]);
+  });
+
+  it('forces nothing for a source with no face (control)', async () => {
+    await seed();
+    await migrateResourceToCollection({ id: SOURCE, collectionName: 'c' } as never);
+    expect(heldApplied()).toEqual([]);
+    expect(forced()).toEqual([]);
   });
 });

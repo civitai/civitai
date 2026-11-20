@@ -5,6 +5,9 @@
   import * as Alert from '@civitai/ui/components/ui/alert/index.js';
   import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { usageAreaName, windowCaption } from '@civitai/shared/usage-limit-view';
+  import UsageLimitMeter from '$lib/components/UsageLimitMeter.svelte';
+  import { nowTick } from '$lib/now-tick.svelte';
   import { batchStatus, linkStatus } from './gift-links';
   import type { PageData } from './$types';
 
@@ -12,6 +15,7 @@
 
   let pending = $state(false);
   let failure = $state<string | null>(null);
+  const now = nowTick();
   // Paging keeps this component, so a failed revoke's message would sit above unrelated rows.
   afterNavigate(() => (failure = null));
 
@@ -39,6 +43,24 @@
       new claims; people who already claimed keep access.
     </p>
   </div>
+
+  {#await data.giftLimit then row}
+    {#if row}
+      {@const caption = windowCaption([row])}
+      <section class="cs-panel">
+        <div class="flex items-center justify-between gap-2 border-b border-dark-4 px-4 py-2.5">
+          <h2 class="text-sm font-semibold text-white">{usageAreaName(row.area)}</h2>
+          <span class="flex items-center gap-3 text-xs text-dark-2">
+            {#if caption}<span>{caption}</span>{/if}
+            <a href={data.usageLimitsUrl} class="text-dark-2 hover:text-white">See all usage →</a>
+          </span>
+        </div>
+        <UsageLimitMeter {row} now={now.current} />
+      </section>
+    {/if}
+  {:catch}
+    <!-- loadUsageLimits resolves null on failure; nothing to show either way. -->
+  {/await}
 
   {#if failure}
     <p class="text-sm text-red-4">{failure}</p>

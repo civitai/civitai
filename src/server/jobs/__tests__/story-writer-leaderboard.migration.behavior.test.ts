@@ -198,6 +198,216 @@ describe('story-writer leaderboard after its migrations', () => {
   });
 });
 
+describe('story-writer leaderboard migration', () => {
+  const db = { pg: null as unknown as PGlite };
+
+  beforeAll(async () => {
+    db.pg = new PGlite();
+    await db.pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
+    await db.pg.exec(MIGRATION);
+  });
+
+  afterAll(async () => {
+    await db.pg.close();
+  });
+
+  it('adds a board that shows wherever the writer board shows, in the slot after it', async () => {
+    const { rows } = await db.pg.query(
+      `SELECT s.index - w.index AS slot, s.active = w.active AND s.public = w.public AND s.domain = w.domain AS same_display,
+              s.active, s.public, s.title
+       FROM "Leaderboard" s, "Leaderboard" w WHERE s.id = 'story-writer' AND w.id = 'writer'`
+    );
+    expect(rows).toEqual([
+      { slot: 1, same_display: true, active: true, public: true, title: 'Story Writers' },
+    ]);
+  });
+
+  it('awards four Storyteller badges at 1, 3, 10 and 25 each with its own Storyteller art', async () => {
+    const { rows } = await db.pg.query(
+      `SELECT name, "leaderboardPosition" AS position, type, source, "permanentUnlock", data
+       FROM "Cosmetic" WHERE "leaderboardId" = 'story-writer' ORDER BY "leaderboardPosition"`
+    );
+    expect(rows).toEqual([
+      {
+        name: 'Diamond Storyteller',
+        position: 1,
+        type: 'Badge',
+        source: 'Trophy',
+        permanentUnlock: false,
+        data: { url: '500eaff2-efff-4fcd-9fcb-a96c4eb3c7dc' },
+      },
+      {
+        name: 'Gold Storyteller',
+        position: 3,
+        type: 'Badge',
+        source: 'Trophy',
+        permanentUnlock: false,
+        data: { url: 'ed20a778-69a3-4e00-88be-712774848170' },
+      },
+      {
+        name: 'Silver Storyteller',
+        position: 10,
+        type: 'Badge',
+        source: 'Trophy',
+        permanentUnlock: false,
+        data: { url: 'ffa5ca46-b306-4602-9640-4c6f2d84913c' },
+      },
+      {
+        name: 'Bronze Storyteller',
+        position: 25,
+        type: 'Badge',
+        source: 'Trophy',
+        permanentUnlock: false,
+        data: { url: 'bf566745-77e3-4423-b043-75209ce6fc60' },
+      },
+    ]);
+  });
+
+  it('is idempotent: a re-run adds no second board or badge set', async () => {
+    await db.pg.exec(MIGRATION);
+    const { rows } = await db.pg.query<{ boards: number; badges: number }>(
+      `SELECT (SELECT count(*)::int FROM "Leaderboard" WHERE id = 'story-writer') AS boards,
+              (SELECT count(*)::int FROM "Cosmetic" WHERE "leaderboardId" = 'story-writer') AS badges`
+    );
+    expect(rows).toEqual([{ boards: 1, badges: 4 }]);
+  });
+});
+
+describe('story-writer leaderboard migration preconditions', () => {
+  it('refuses to add a board when there is no story article category', async () => {
+    const pg = new PGlite();
+    try {
+      await pg.exec(SCHEMA + WRITER_BOARD + `INSERT INTO "Tag" VALUES (1, 'article category');`);
+      await expect(pg.exec(MIGRATION)).rejects.toThrow(/no 'story' tag/);
+      await pg.exec('ROLLBACK');
+      const { rows } = await pg.query(`SELECT id FROM "Leaderboard" WHERE id = 'story-writer'`);
+      expect(rows).toEqual([]);
+    } finally {
+      await pg.close();
+    }
+  });
+});
+
+describe('story-writer system-category switch', () => {
+  const db = { pg: null as unknown as PGlite };
+
+  beforeAll(async () => {
+    db.pg = new PGlite();
+    await db.pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
+    await db.pg.exec(MIGRATION + SWITCH);
+  });
+
+  afterAll(async () => {
+    await db.pg.close();
+  });
+
+  it('is idempotent: a re-run leaves the switched query as it is', async () => {
+    const read = async () =>
+      (
+        await db.pg.query<{ query: string }>(
+          `SELECT query FROM "Leaderboard" WHERE id = 'story-writer'`
+        )
+      ).rows[0].query;
+    const before = await read();
+    await db.pg.exec(SWITCH);
+    expect(await read()).toBe(before);
+    expect(before).not.toContain('TagsOnArticle');
+  });
+});
+
+describe('story-writer system-category switch preconditions', () => {
+  async function refuses(setup: string, error: RegExp) {
+    const pg = new PGlite();
+    const boards = async () =>
+      (await pg.query(`SELECT * FROM "Leaderboard" WHERE id = 'story-writer'`)).rows;
+    try {
+      await pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
+      await pg.exec(MIGRATION);
+      await pg.exec(setup);
+      const before = await boards();
+      await expect(pg.exec(SWITCH)).rejects.toThrow(error);
+      await pg.exec('ROLLBACK');
+      expect(await boards()).toEqual(before);
+    } finally {
+      await pg.close();
+    }
+  }
+
+  it('refuses when there is no story article category', () =>
+    refuses(`DELETE FROM "TagsOnTags" WHERE "toTagId" = ${STORY};`, /no 'story' tag/));
+
+  it('refuses when the story category is adminOnly, which the category call is never offered', () =>
+    refuses(`UPDATE "Tag" SET "adminOnly" = true WHERE id = ${STORY};`, /adminOnly/));
+
+  it('refuses when the board row is missing', () =>
+    refuses(`DELETE FROM "Leaderboard" WHERE id = 'story-writer';`, /row not found/));
+
+  it('refuses, changing nothing, when the query was edited since it was added', () =>
+    refuses(
+      `UPDATE "Leaderboard" SET query = 'SELECT 2' WHERE id = 'story-writer';`,
+      /was edited/
+    ));
+
+  it('refuses an edit outside the predicate it replaces, such as a changed weight', () =>
+    refuses(
+      `UPDATE "Leaderboard" SET query = replace(query, '* 4', '* 5') WHERE id = 'story-writer';`,
+      /was edited/
+    ));
+});
+
+describe('story-writer counts R+ stories preconditions', () => {
+  async function refuses(setup: string, error: RegExp) {
+    const pg = new PGlite();
+    const boards = async () =>
+      (await pg.query(`SELECT * FROM "Leaderboard" WHERE id = 'story-writer'`)).rows;
+    try {
+      await pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES + MIGRATION + SWITCH);
+      await pg.exec(setup);
+      const before = await boards();
+      await expect(pg.exec(COUNT_MATURE)).rejects.toThrow(error);
+      await pg.exec('ROLLBACK');
+      expect(await boards()).toEqual(before);
+    } finally {
+      await pg.close();
+    }
+  }
+
+  it('refuses when the board row is missing', () =>
+    refuses(`DELETE FROM "Leaderboard" WHERE id = 'story-writer';`, /row not found/));
+
+  it('refuses a query edited since the system-category switch', () =>
+    refuses(
+      `UPDATE "Leaderboard" SET query = replace(query, 'a."systemCategoryId" = (', 'a."systemCategoryId" IN (') WHERE id = 'story-writer';`,
+      /not the reviewed text/
+    ));
+
+  it('refuses an edit outside the clause it replaces, such as a changed weight', () =>
+    refuses(
+      `UPDATE "Leaderboard" SET query = replace(query, '* 4', '* 5') WHERE id = 'story-writer';`,
+      /not the reviewed text/
+    ));
+});
+
+describe('story-writer counts R+ stories', () => {
+  it('is idempotent: a re-run leaves the query as it is', async () => {
+    const pg = new PGlite();
+    const read = async () =>
+      (
+        await pg.query<{ query: string }>(
+          `SELECT query FROM "Leaderboard" WHERE id = 'story-writer'`
+        )
+      ).rows[0].query;
+    try {
+      await pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES + MIGRATION + SWITCH + COUNT_MATURE);
+      const before = await read();
+      await pg.exec(COUNT_MATURE);
+      expect(await read()).toBe(before);
+    } finally {
+      await pg.close();
+    }
+  });
+});
+
 describe('article category backfill selection', () => {
   const db = { pg: null as unknown as PGlite };
   const select = async (

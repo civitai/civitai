@@ -11,6 +11,13 @@ import {
   recordChallengeEntryFeesBuzz,
   recordChallengePrizePaidBuzz,
   recordChallengeRefundBuzz,
+  recordChallengeWinnerPlaceDivergence,
+  recordChallengeEntrySubmitted,
+  recordChallengeReviewRequested,
+  recordChallengeCompleted,
+  recordChallengeDeleted,
+  recordChallengeOperationSpentBuzz,
+  recordChallengeRefundFailure,
   __resetChallengeMetricsForTest,
   __setChallengeGaugeCacheForTest,
 } from '~/server/prom/challenge.metrics';
@@ -61,7 +68,124 @@ describe('label normalizers — enum-bound, never raw/free-text', () => {
   });
 });
 
+describe('funnel counters emit the expected series with normalized labels', () => {
+  it('challenge_created_total labels source/buzzType (bad values → unknown)', async () => {
+    recordChallengeCreated({ source: 'User', buzzType: 'yellow' });
+    recordChallengeCreated({ source: 'User', buzzType: 'yellow' });
+    recordChallengeCreated({ source: 'nope', buzzType: 'purple' });
+
+    expect(
+      await valueFor('civitai_app_challenge_created_total', { source: 'User', buzzType: 'yellow' })
+    ).toBe(2);
+    expect(
+      await valueFor('civitai_app_challenge_created_total', {
+        source: 'unknown',
+        buzzType: 'unknown',
+      })
+    ).toBe(1);
+  });
+
+  it('challenge_scan_result_total buckets by result', async () => {
+    recordChallengeScanResult({ source: 'User', result: 'scanned' });
+    recordChallengeScanResult({ source: 'User', result: 'blocked' });
+    recordChallengeScanResult({ source: 'System', result: 'error' });
+
+    expect(
+      await valueFor('civitai_app_challenge_scan_result_total', {
+        source: 'User',
+        result: 'scanned',
+      })
+    ).toBe(1);
+    expect(
+      await valueFor('civitai_app_challenge_scan_result_total', {
+        source: 'User',
+        result: 'blocked',
+      })
+    ).toBe(1);
+    expect(
+      await valueFor('civitai_app_challenge_scan_result_total', {
+        source: 'System',
+        result: 'error',
+      })
+    ).toBe(1);
+  });
+
+  it('challenge_entry_submitted_total increments by count with paid label', async () => {
+    recordChallengeEntrySubmitted({ source: 'User', buzzType: 'green', paid: true, count: 3 });
+    recordChallengeEntrySubmitted({ source: 'User', buzzType: 'green', paid: false, count: 2 });
+    recordChallengeEntrySubmitted({ source: 'User', buzzType: 'yellow', paid: true });
+
+    expect(
+      await valueFor('civitai_app_challenge_entry_submitted_total', {
+        source: 'User',
+        buzzType: 'green',
+        paid: '1',
+      })
+    ).toBe(3);
+    expect(
+      await valueFor('civitai_app_challenge_entry_submitted_total', {
+        source: 'User',
+        buzzType: 'green',
+        paid: '0',
+      })
+    ).toBe(2);
+    expect(
+      await valueFor('civitai_app_challenge_entry_submitted_total', {
+        source: 'User',
+        buzzType: 'yellow',
+        paid: '1',
+      })
+    ).toBe(1);
+  });
+
+  it('review/completed/voided/deleted counters emit', async () => {
+    recordChallengeReviewRequested({ source: 'User' });
+    recordChallengeCompleted({ source: 'System' });
+    recordChallengeVoided({ source: 'User', reason: 'nsfw' });
+    recordChallengeVoided({ source: 'User', reason: 'made-up' });
+    recordChallengeDeleted({ source: 'User' });
+
+    expect(await valueFor('civitai_app_challenge_review_requested_total', { source: 'User' })).toBe(
+      1
+    );
+    expect(await valueFor('civitai_app_challenge_completed_total', { source: 'System' })).toBe(1);
+    expect(
+      await valueFor('civitai_app_challenge_voided_total', { source: 'User', reason: 'nsfw' })
+    ).toBe(1);
+    expect(
+      await valueFor('civitai_app_challenge_voided_total', { source: 'User', reason: 'other' })
+    ).toBe(1);
+    expect(await valueFor('civitai_app_challenge_deleted_total', { source: 'User' })).toBe(1);
+  });
+});
+
 describe('economy counters — inc by buzz amount, skip non-positive', () => {
+  it('entry fees / prize paid / operation spent sum by amount', async () => {
+    recordChallengeEntryFeesBuzz({ source: 'User', buzzType: 'yellow', amount: 100 });
+    recordChallengeEntryFeesBuzz({ source: 'User', buzzType: 'yellow', amount: 50 });
+    recordChallengePrizePaidBuzz({ source: 'User', buzzType: 'green', amount: 5000 });
+    recordChallengeOperationSpentBuzz({ source: 'System', buzzType: 'yellow', amount: 42 });
+
+    expect(
+      await valueFor('civitai_app_challenge_entry_fees_buzz_total', {
+        source: 'User',
+        buzzType: 'yellow',
+      })
+    ).toBe(150);
+    expect(
+      await valueFor('civitai_app_challenge_prize_paid_buzz_total', {
+        source: 'User',
+        buzzType: 'green',
+      })
+    ).toBe(5000);
+    expect(
+      await valueFor('civitai_app_challenge_operation_spent_buzz_total', {
+        source: 'System',
+        buzzType: 'yellow',
+      })
+    ).toBe(42);
+  });
+
   it('non-positive / non-finite amounts are ignored (no series, no NaN)', async () => {
     recordChallengeEntryFeesBuzz({ source: 'User', buzzType: 'yellow', amount: 0 });
     recordChallengeEntryFeesBuzz({ source: 'User', buzzType: 'yellow', amount: -10 });
@@ -69,6 +193,47 @@ describe('economy counters — inc by buzz amount, skip non-positive', () => {
 
     expect(await readMetric('civitai_app_challenge_entry_fees_buzz_total')).toHaveLength(0);
     expect(await readMetric('civitai_app_challenge_prize_paid_buzz_total')).toHaveLength(0);
+  });
+
+  it('refund buzz sums by reason; refund failures count by reason', async () => {
+    recordChallengeRefundBuzz({ source: 'User', buzzType: 'yellow', reason: 'void', amount: 300 });
+    recordChallengeRefundBuzz({ source: 'User', buzzType: 'yellow', reason: 'delete', amount: 75 });
+    recordChallengeRefundBuzz({
+      source: 'User',
+      buzzType: 'yellow',
+      reason: 'completion',
+      amount: 10,
+    });
+    recordChallengeRefundFailure({ source: 'User', reason: 'void' });
+    recordChallengeRefundFailure({ source: 'User', reason: 'void' });
+
+    expect(
+      await valueFor('civitai_app_challenge_refund_buzz_total', {
+        source: 'User',
+        buzzType: 'yellow',
+        reason: 'void',
+      })
+    ).toBe(300);
+    expect(
+      await valueFor('civitai_app_challenge_refund_buzz_total', {
+        source: 'User',
+        buzzType: 'yellow',
+        reason: 'delete',
+      })
+    ).toBe(75);
+    expect(
+      await valueFor('civitai_app_challenge_refund_buzz_total', {
+        source: 'User',
+        buzzType: 'yellow',
+        reason: 'other',
+      })
+    ).toBe(10);
+    expect(
+      await valueFor('civitai_app_challenge_refund_failures_total', {
+        source: 'User',
+        reason: 'void',
+      })
+    ).toBe(2);
   });
 });
 
@@ -92,6 +257,27 @@ describe('money-path anomaly counters — a unit must mean exactly one real even
   const DUPLICATE_PICK = 'civitai_app_challenge_winner_duplicate_pick_total';
   const DIVERGENCE = 'civitai_app_challenge_winner_place_divergence_total';
   const UNRESOLVED = 'civitai_app_challenge_winner_conflict_unresolved_total';
+
+  it('a real count is recorded verbatim, and origin/source are kept apart', async () => {
+    recordChallengeWinnerDuplicatePick({ source: 'User', count: 2, origin: 'caller' });
+    recordChallengeWinnerDuplicatePick({ count: 1, origin: 'chokepoint' });
+
+    expect(await seriesValue(DUPLICATE_PICK, { source: 'User', origin: 'caller' })).toBe(2);
+    expect(await seriesValue(DUPLICATE_PICK, { source: 'unknown', origin: 'chokepoint' })).toBe(1);
+    expect(
+      await seriesValue(DUPLICATE_PICK, { source: 'User', origin: 'chokepoint' })
+    ).toBeUndefined();
+  });
+
+  it('the divergence counter keeps its three field values separate', async () => {
+    recordChallengeWinnerPlaceDivergence({ field: 'place' });
+    recordChallengeWinnerPlaceDivergence({ field: 'prize' });
+    recordChallengeWinnerPlaceDivergence({ field: 'both' });
+
+    expect(await seriesValue(DIVERGENCE, { field: 'place' })).toBe(1);
+    expect(await seriesValue(DIVERGENCE, { field: 'prize' })).toBe(1);
+    expect(await seriesValue(DIVERGENCE, { field: 'both' })).toBe(1);
+  });
 
   it('an explicit count of 0 records NOTHING — "I dropped nothing" must never read as one drop', async () => {
     recordChallengeWinnerDuplicatePick({ source: 'System', count: 0, origin: 'caller' });

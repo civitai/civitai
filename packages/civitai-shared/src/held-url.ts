@@ -16,6 +16,11 @@ export const CSAM_HOLD_POST_UNPUBLISH_REASON = 'csam-text-hold';
 export const MATURE_UNDERAGE_REASON = 'mature-underage';
 /** Unpublish reasons that also say the model depicts a minor. */
 export const MINOR_UNPUBLISH_REASONS = ['mature-underage', 'photo-real-underage'] as const;
+/** Text-scan hold `hold` (an alias) is a CSAM hold not dismissed: Pending or Confirmed. */
+export function liveCsamTextHoldText(hold: string): string {
+  const h = sqlRef(hold);
+  return `(${h}.label = 'csam' AND ${h}.status IN ('Pending', 'Confirmed'))`;
+}
 /** Ban reason codes that always remove the owner's media: the minor-safety bans. */
 export const BAN_REASONS_ALWAYS_REMOVING_MEDIA = [
   'SexualMinor',
@@ -86,17 +91,22 @@ export function imageCoveredText(image: string, user: string): string {
  * - A shop takedown: no owner recorded, or the owner held or named on any report.
  * An unreadable fact fails the statement rather than reading as not held.
  */
-export function heldUrlSql(url: string): string {
+export function heldUrlSql(
+  url: string,
+  { exceptImageId }: { exceptImageId?: string } = {}
+): string {
   const u = sqlRef(url);
-  if (/^(hx|hp|hmv|hmo|hd|ht|hc|rc|cc)\./.test(u))
-    throw new Error(`Alias taken inside heldUrlSql: ${u}`);
+  const except = exceptImageId ? ` AND hx.id <> ${sqlRef(exceptImageId)}` : '';
+  const taken = /^"?(hx|hp|hmv|hmo|hd|ht|hc|rc|cc)"?\./;
+  for (const ref of [u, exceptImageId ? sqlRef(exceptImageId) : ''])
+    if (taken.test(ref)) throw new Error(`Alias taken inside heldUrlSql: ${ref}`);
   return `(
     EXISTS (
       SELECT 1 FROM "Image" hx
       LEFT JOIN "Post" hp ON hp.id = hx."postId"
       LEFT JOIN "ModelVersion" hmv ON hmv.id = hp."modelVersionId"
       LEFT JOIN "Model" hmo ON hmo.id = hmv."modelId"
-      WHERE hx.url = ${u} AND (
+      WHERE hx.url = ${u}${except} AND (
         hx."needsReview" IS NOT DISTINCT FROM 'csam'
         OR ${ownerHeldText('hx."userId"')}
         OR (NOT ${imageCoveredText('hx."id"', 'hx."userId"')} AND (
@@ -169,10 +179,11 @@ export function reportListedUrlSql(url: string): string {
     )
     OR EXISTS (
       SELECT 1 FROM "Image" rl_p
-      WHERE rl_p.url = ${u} AND rl_p."pHash" IN (
+      -- ARRAY(...) is uncorrelated, so it is computed once per statement, not per outer row.
+      WHERE rl_p.url = ${u} AND rl_p."pHash" = ANY(ARRAY(
         SELECT rl_x."pHash" FROM "Image" rl_x
         WHERE rl_x.id IN (${LISTED_IMAGE_IDS_SQL}) AND rl_x."pHash" IS NOT NULL
-      )
+      ))
     )
   )`;
 }

@@ -67,8 +67,8 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => hasModeratorGrant(...a),
 }));
 
-import grantHandler from '~/pages/api/mod/user/creator-score-grant';
-import revokeHandler from '~/pages/api/mod/user/creator-score-grant-revoke';
+import grantHandler from '~/server/api-routes/mod/user/creator-score-grant';
+import revokeHandler from '~/server/api-routes/mod/user/creator-score-grant-revoke';
 
 const MODERATOR = 990000007;
 const TARGET = 8675309;

@@ -47,7 +47,7 @@ vi.mock('~/server/services/image-models-reindex.service', () => ({
   queueDocumentsForImageMinorChanges,
 }));
 
-import handler from '~/pages/api/mod/adjust-tag-level';
+import handler from '~/server/api-routes/mod/adjust-tag-level';
 
 function createMocks(query: Record<string, string>) {
   const req = { method: 'GET', query } as unknown as NextApiRequest;

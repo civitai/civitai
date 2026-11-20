@@ -4,6 +4,7 @@ import type { RequestHandler } from './$types';
 import { canAccess } from '$lib/server/access';
 import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
 import { streamStoredMedia } from '$lib/server/held-media-stream';
+import { retractedMediaRetryAfter } from '$lib/server/retracted-media-rate';
 import {
   getRetractedMedia,
   recordRetractedView,
@@ -37,9 +38,17 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
   const imageId = Number(params.imageId);
   if (!Number.isInteger(imageId) || imageId <= 0 || imageId > MAX_INT) error(400, 'Bad image id.');
   const moderatorId = locals.user.id;
+  const retryAfter = await retractedMediaRetryAfter(moderatorId);
+  if (retryAfter !== null)
+    return json(
+      { message: 'Too many requests.' },
+      { status: 429, headers: { ...NO_STORE, 'retry-after': String(retryAfter) } }
+    );
   const csamReview = canAccess(locals.user, HELD_MEDIA_PAGE);
 
-  const media = await getRetractedMedia(imageId, { csamReview });
+  const media = await getRetractedMedia(imageId, { csamReview }).catch(() => {
+    error(503, 'Could not check this image; retry.');
+  });
   if (!media) error(404, 'Not available here.');
   // Eligibility alone, so a tile whose load failed can say why; nothing is served or audited.
   if (url.searchParams.get('probe') === '1')

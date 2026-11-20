@@ -84,7 +84,7 @@ func integRun(t *testing.T, pool *pgxpool.Pool, q ImagesQuery) []RawImage {
 	if err != nil {
 		t.Fatalf("query: %v\n%s", err, b.SQL)
 	}
-	out, err := scanRows(rows)
+	out, err := scanRows(rows, b.Collection)
 	if err != nil {
 		t.Fatalf("scan: %v\n%s", err, b.SQL)
 	}

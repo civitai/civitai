@@ -53,7 +53,7 @@ import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as UpdateUserScore from '~/server/jobs/update-user-score';
 import type * as SelfActivity from '~/server/services/creator-score-self-activity.service';
-import handler from '~/pages/api/admin/temp/backfill-image-scores';
+import handler from '~/server/api-routes/admin/temp/backfill-image-scores';
 
 function call(query: Record<string, string>) {
   const res = {

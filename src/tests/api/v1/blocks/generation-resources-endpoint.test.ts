@@ -227,6 +227,45 @@ describe('/api/v1/blocks/generation-resources — projection + clamp + bounds', 
     expect(res.body.maturity).toEqual({ browsingLevel: 1, sfwOnly: true });
   });
 
+  /**
+   * An app's SAVED nsfw-flagged checkpoint on a mature domain: the VIEWER's browsing level decides,
+   * as it does everywhere else (the clamp from #9311). A product decision, pinned here: a saved
+   * resource gets no exemption. `getResourceData` carries no cover here, so `model.nsfw` is the
+   * whole signal, and both cases use the same row so only the viewer's level differs.
+   */
+  const savedNsfwCheckpoint = () =>
+    row({
+      id: 400,
+      image: undefined,
+      model: { id: 4, name: 'Saved Checkpoint', type: 'Checkpoint', nsfw: true },
+    });
+
+  it("🔴 mature domain + an SFW viewer: an app's saved nsfw-flagged checkpoint is dropped", async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: 1,
+    });
+    mockGetResourceData.mockResolvedValue([row({ id: 100 }), savedNsfwCheckpoint()]);
+    const res = await invoke({ ids: '100,400' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items.map((i: any) => i.versionId)).toEqual([100]);
+    expect(res.body.maturity).toEqual({ browsingLevel: 1, sfwOnly: true });
+  });
+
+  it('🔴 mature domain + a viewer allowed mature content: the same checkpoint is served', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: allBrowsingLevelsFlag,
+    });
+    mockGetResourceData.mockResolvedValue([row({ id: 100 }), savedNsfwCheckpoint()]);
+    const res = await invoke({ ids: '100,400' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items.map((i: any) => i.versionId)).toEqual([100, 400]);
+    expect(res.body.maturity.sfwOnly).toBe(false);
+  });
+
   it('accepts an ids ARRAY, de-dupes + parses, and bounds at 30', async () => {
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
     mockGetResourceData.mockResolvedValue([]);

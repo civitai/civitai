@@ -9,9 +9,9 @@ import {
  * hand the blob back as today, or have the server copy it into a private scanned row.
  *
  * - The flag says OFF → the blob, byte-identical to today; the server copy is never asked for.
- * - The flag can't be read (the path query fails) → the blob. The generation gate stays the only
- *   authority, so this can never admit an unscanned source while the flag is ON; it only gets
- *   the pre-fix refusal at submit.
+ * - The flag can't be read (the path query fails, e.g. a pod without the query mid-rollout) → the
+ *   server copy is asked for anyway: it refuses while the flag is off, so a copy that succeeds is
+ *   the answer, and a copy that fails leaves the blob. The generation gate stays the authority.
  * - The flag says ON → the server copy, and a failed copy is an ERROR, never a fallback to the
  *   blob (that blob is exactly what the gate refuses while ON).
  */
@@ -51,9 +51,28 @@ describe('toGenerationSource', () => {
     expect(p.persist).not.toHaveBeenCalled();
   });
 
-  it('🔴 the path query FAILS: falls back to the blob, never to a copy', async () => {
-    const p = path({ usesScannedRows: vi.fn(async () => Promise.reject(new Error('503'))) });
+  const queryFails = () => vi.fn(async () => Promise.reject(new Error('NOT_FOUND')));
+
+  it('🔴 the path query FAILS and the copy succeeds: the server copy, not the blob', async () => {
+    const p = path({ usesScannedRows: queryFails() });
+    await expect(toGenerationSource(BLOB, p)).resolves.toEqual(PERSISTED);
+    expect(p.persist.mock.calls).toEqual([[BLOB.url]]);
+  });
+
+  it('🔴 the path query FAILS and the copy is refused (flag off): the blob, not the error', async () => {
+    const p = path({
+      usesScannedRows: queryFails(),
+      persist: vi.fn(async () =>
+        Promise.reject(new Error('picked generation sources are not enabled'))
+      ),
+    });
     await expect(toGenerationSource(BLOB, p)).resolves.toBe(BLOB);
+    expect(p.persist).toHaveBeenCalledTimes(1);
+  });
+
+  it('the path query FAILS for a pick no longer current: null, and no copy is asked for', async () => {
+    const p = path({ usesScannedRows: queryFails() });
+    await expect(toGenerationSource(BLOB, p, () => false)).resolves.toBeNull();
     expect(p.persist).not.toHaveBeenCalled();
   });
 

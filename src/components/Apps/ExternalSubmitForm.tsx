@@ -43,6 +43,7 @@ import {
   validateExternalCreateForm,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
+  setOfflineAccessDeclared,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { useEligibleOauthClients } from '~/components/Apps/useEligibleOauthClients';
@@ -679,6 +680,9 @@ function ExternalCreateForm() {
                   requestedScopes={values.requestedScopes}
                   justifications={values.scopeJustifications}
                   onJustificationChange={handleJustificationChange}
+                  onOfflineAccessDeclaredChange={(declared) =>
+                    setValues((v) => setOfflineAccessDeclared(v, declared))
+                  }
                   disabled={busy}
                   forceShowErrors={showScopeErrors}
                 />

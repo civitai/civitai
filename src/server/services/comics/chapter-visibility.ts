@@ -1,4 +1,4 @@
-import { isImageNotRestricted, type RestrictableImage } from '~/server/common/image-visibility';
+import { isImageServable, type RestrictableImage } from '~/server/common/image-visibility';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -38,7 +38,7 @@ export function withholdRestrictedPanelImages(
 ) {
   for (const { panels } of chapters) {
     for (const panel of panels) {
-      if (panel.image && !isImageNotRestricted(panel.image, viewerId)) {
+      if (panel.image && !isImageServable(panel.image, viewerId)) {
         panel.imageUrl = null;
         panel.image = null;
       }
