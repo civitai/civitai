@@ -356,7 +356,6 @@ func newInfFixture(t *testing.T) *infFixture {
 	return f
 }
 
-// infRows is the page query's rows in scanRows' column order.
 // infRows is the page query's answer over rows; collection: the query joined a collection, so each
 // row also carries its item's note, status and adder (a row without RawImage.Collection: an ACCEPTED
 // item with neither).

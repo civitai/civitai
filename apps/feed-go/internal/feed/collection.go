@@ -8,11 +8,6 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
 
-// image.getInfinite's `collectionId` (getAllImagesUncaptured in src/server/services/image.service.ts):
-// requiresImageDbPath sends it to Postgres, where the viewer's read permission is checked
-// (getUserCollectionPermissionsById, prefetched beside the other reads), no read is the empty page,
-// and the page query joins the collection's CollectionItem rows as the `ct` CTE.
-
 // SortRecentlyAdded is ImageSort.RecentlyAdded: `ct."collectionItemId" DESC`. Node refuses it without
 // a collectionId (BAD_REQUEST), so ParseInfinite accepts it only beside one.
 const SortRecentlyAdded = "Recently Added"
@@ -34,6 +29,11 @@ type CollectionItem struct {
 // granted only by the moderator branch or only by a contributor row falls back
 // (`collection-moderator`, `collection-contributor`): a private collection's items are served only to
 // its owner. viewer is the zero Viewer when signed out (no owner, contributor or moderator branch).
+//
+// infiniteFromDB reads the permission and decides it here before the page query runs, so no
+// collection row is fetched for a collection the viewer may not read (Node prefetches the permission
+// in parallel with its other reads, and checks it before running the page query). A page holding a
+// judged item falls back after the page query ran (`collection-judge-score`, fetchInfiniteRows).
 func collectionReadable(p *hydrate.CollectionPermission, viewer Viewer) (bool, error) {
 	if p == nil {
 		return false, nil
@@ -64,19 +64,19 @@ func collectionReadable(p *hydrate.CollectionPermission, viewer Viewer) (bool, e
 // absent or null. Any other score (a judge's verdict) is not rebuilt here: the caller falls back.
 func judgeScoreNull(note *string) bool {
 	if note == nil || *note == "" {
-		return true // `if (!note) return null`
+		return true
 	}
 	raw := []byte(*note)
 	if !json.Valid(raw) {
-		return true // JSON.parse throws: caught, null
+		return true
 	}
 	trimmed := bytes.TrimLeft(raw, " \t\r\n")
 	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return true // null, a number, a string, a boolean or an array: `.score` is undefined
+		return true
 	}
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		return false // valid but unreadable as an object: not answered here
+		return false
 	}
 	score, ok := obj["score"] // a repeated key: the last one, as JSON.parse keeps
 	return !ok || string(bytes.TrimSpace(score)) == "null"
