@@ -78,7 +78,7 @@ type ImagesInfiniteProps = {
   hideHatTurf?: boolean;
   /** Answer a `?query=` from the semantic search (Search v3, behind `feedSearch`). */
   searchable?: boolean;
-} & Pick<ImagesContextState, 'collectionId' | 'judgeInfo' | 'judgingCategories'>;
+} & Pick<ImagesContextState, 'collectionId' | 'judgeInfo' | 'judgingCategories' | 'hideCreator'>;
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {
   return (
@@ -198,7 +198,11 @@ function ImagesFeed({
     searchFailed && !!searchInput?.imageId && search.error?.data?.code === 'NOT_FOUND';
   const searching = !!searchInput && !searchFailed;
   const feed = useQueryImages(
-    { ...filters, browsingLevel, include: ['cosmetics'] },
+    {
+      ...filters,
+      browsingLevel,
+      include: imageProviderProps.hideCreator ? ['cosmetics'] : ['cosmetics', 'profilePictures'],
+    },
     { keepPreviousData: true, enabled: !searching && !refusal }
   );
   const { debugRetryActive, debugDelayMs } = feed;

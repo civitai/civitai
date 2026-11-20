@@ -39,6 +39,7 @@ type ImagesContextProps = {
   revealStickers?: boolean;
   /** No Hat Turf on these cards, and none of its fetches. */
   hideHatTurf?: boolean;
+  hideCreator?: boolean;
   collectionId?: number;
   judgeInfo?: JudgeInfo;
   judgingCategories?: JudgingCategory[] | null;
@@ -50,6 +51,7 @@ export type ImagesContextState = {
   hideReactions?: boolean;
   hideStickerBadge?: boolean;
   revealStickers?: boolean;
+  hideCreator?: boolean;
   collectionId?: number;
   judgeInfo?: JudgeInfo;
   judgingCategories?: JudgingCategory[] | null;
@@ -70,6 +72,7 @@ export function ImagesProvider({
   hideStickerBadge,
   revealStickers,
   hideHatTurf,
+  hideCreator,
   collectionId,
   judgeInfo,
   judgingCategories,
@@ -84,6 +87,7 @@ export function ImagesProvider({
       hideReactions,
       hideStickerBadge,
       revealStickers,
+      hideCreator,
       collectionId,
       judgeInfo,
       judgingCategories,
@@ -94,6 +98,7 @@ export function ImagesProvider({
       hideReactions,
       hideStickerBadge,
       revealStickers,
+      hideCreator,
       collectionId,
       judgeInfo,
       judgingCategories,

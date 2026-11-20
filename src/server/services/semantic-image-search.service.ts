@@ -183,7 +183,7 @@ export async function searchSemanticImages({
         excludedUserIds: [...excludedUserIds, ...alsoExcludedUserIds],
         disablePoi: addons.disablePoi,
         disableMinor: addons.disableMinor,
-        include: ['cosmetics', 'tagIds'],
+        include: ['cosmetics', 'tagIds', 'profilePictures'],
       }),
       user,
       asModerator,

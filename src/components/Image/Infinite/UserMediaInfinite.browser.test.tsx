@@ -10,6 +10,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
 const state = vi.hoisted(() => ({
   availability: { isModerator: false, canViewNsfw: false, showNsfw: false },
   feedFilters: undefined as Record<string, unknown> | undefined,
+  hideCreator: undefined as boolean | undefined,
   profileLookups: [] as unknown[],
   viewer: null as { id: number; username: string } | null,
 }));
@@ -33,8 +34,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 // Capture what the feed would query with; the feed's own fetching is not under test.
 vi.mock('~/components/Image/Infinite/ImagesInfinite', () => ({
-  default: (props: { filters: Record<string, unknown> }) => {
+  default: (props: { filters: Record<string, unknown>; hideCreator?: boolean }) => {
     state.feedFilters = props.filters;
+    state.hideCreator = props.hideCreator;
     return null;
   },
 }));
@@ -69,6 +71,8 @@ describe('UserMediaInfinite sort', () => {
 describe('UserMediaInfinite profile scope', () => {
   beforeEach(() => {
     state.feedFilters = undefined;
+    state.hideCreator = undefined;
+    useRouter().query = { username: 'alice' };
     state.profileLookups = [];
     state.viewer = null;
     state.availability = { isModerator: false, canViewNsfw: false, showNsfw: false };
@@ -94,6 +98,18 @@ describe('UserMediaInfinite profile scope', () => {
 
     await expect.element(page.getByText('My Reactions')).toBeVisible();
   });
+
+  test.each([MediaType.image, MediaType.video])(
+    'hides repeated creators only on the %s tab',
+    async (type) => {
+      state.viewer = { id: 7, username: 'alice' };
+      const screen = await renderWithProviders(<UserMediaInfinite type={type} />);
+      await expect.poll(() => state.hideCreator).toBe(true);
+      useRouter().query = { username: 'alice', section: 'reactions' };
+      await screen.rerender(<UserMediaInfinite type={type} />);
+      await expect.poll(() => state.hideCreator).toBe(false);
+    }
+  );
 
   test('a viewer whose name has the same slug does not', async () => {
     useRouter().query = { username: 'foo-bar' };
