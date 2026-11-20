@@ -38,6 +38,8 @@ const ACCEPTABLE_MINOR = 16;
 const NSFW_UNRATED = 17;
 const NSFW_RATED_R = 18;
 const NSFW_TEXT_RATED_R = 19;
+const MINOR_PG_ON_NSFW = 20;
+const X_ON_RATED_R = 21;
 
 let pg: PGlite;
 const db = {
@@ -96,13 +98,18 @@ beforeAll(async () => {
   `);
   await pg.exec(`
     INSERT INTO "Image" (id) VALUES (${NSFW_UNRATED}), (${NSFW_RATED_R}), (${NSFW_TEXT_RATED_R});
+    INSERT INTO "Image" (id, minor) VALUES (${MINOR_PG_ON_NSFW}, true);
+    INSERT INTO "Image" (id, "nsfwLevel") VALUES (${X_ON_RATED_R}, ${NsfwLevel.X});
     INSERT INTO "Bounty" (id, "userId", nsfw) VALUES (${NSFW_UNRATED}, ${OWNER}, true),
-      (${NSFW_TEXT_RATED_R}, ${OWNER}, true);
+      (${NSFW_TEXT_RATED_R}, ${OWNER}, true), (${MINOR_PG_ON_NSFW}, ${OWNER}, true);
+    INSERT INTO "Bounty" (id, "userId", nsfw, "moderatorNsfwLevel")
+      VALUES (${X_ON_RATED_R}, ${OWNER}, true, ${NsfwLevel.R});
     INSERT INTO "Bounty" (id, "userId", nsfw, "moderatorNsfwLevel")
       VALUES (${NSFW_RATED_R}, ${OWNER}, true, ${NsfwLevel.R});
     INSERT INTO "ImageConnection" VALUES (${NSFW_UNRATED}, ${NSFW_UNRATED}, 'Bounty'),
       (${NSFW_RATED_R}, ${NSFW_RATED_R}, 'Bounty'),
-      (${NSFW_TEXT_RATED_R}, ${NSFW_TEXT_RATED_R}, 'Bounty');
+      (${NSFW_TEXT_RATED_R}, ${NSFW_TEXT_RATED_R}, 'Bounty'),
+      (${MINOR_PG_ON_NSFW}, ${MINOR_PG_ON_NSFW}, 'Bounty'), (${X_ON_RATED_R}, ${X_ON_RATED_R}, 'Bounty');
   `);
   for (const id of [
     CLEAN,
@@ -208,5 +215,13 @@ describe('bounties search index images', () => {
       queryRaw.mockReset();
       queryRaw.mockResolvedValue([]);
     }
+  });
+
+  it('keeps an X image of an R-rated mature-marked bounty at X', async () => {
+    expect((await indexed(X_ON_RATED_R)).map((i) => i.nsfwLevel)).toEqual([NsfwLevel.X]);
+  });
+
+  it('leaves out a minor-flagged PG image that an unrated mature-marked bounty raises', async () => {
+    expect(await indexed(MINOR_PG_ON_NSFW)).toEqual([]);
   });
 });
