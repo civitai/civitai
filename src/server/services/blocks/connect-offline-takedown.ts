@@ -12,11 +12,11 @@ import { anotherApprovedListingDeclaresOffline } from './connect-offline-listing
  * Not when ANOTHER approved listing on the same client still declares offline access: the auth hub
  * grants per client, so that app keeps it, and cutting would only force its users to sign in again.
  *
- * Only a moderator DELIST does this. Every other way a listing stops declaring or stops being
- * approved only stops the chains sliding (the auth hub's listing-offline.ts), so the refresh tokens
- * already issued stay valid until their current expiry (at most 30 days): a moderator's reset to
- * pending or reject of a live connect listing, an owner withdrawing the offline declaration, and an
- * owner unpublishing their own listing. A moderator who needs the tokens gone at once delists.
+ * Only a moderator DELIST deletes refresh tokens. Other ways a listing stops declaring only stop
+ * chains sliding (listing-offline.ts); issued tokens live until their expiry (<=30 days).
+ *
+ * Every Refresh key of the client goes, device-flow ones included: the hub does not gate the
+ * device flow, but a delisted app loses offline access whatever flow its users signed in with.
  *
  * DARK: runs only while `oauth-offline-grant` is on. Runs AFTER the takedown commits and never
  * throws: the takedown stands whatever happens here.

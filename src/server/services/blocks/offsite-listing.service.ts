@@ -1259,11 +1259,8 @@ function materialPatchChanges(
   ) {
     changed.push('requestedScopes');
   }
-  // A change to the JUSTIFICATION MAP is material too, the whole map: the moderator approved these
-  // reasons (a sensitive scope's, and the `offline_access` declaration, which now decides whether
-  // the hub grants offline access at all), and the edit form already says "Editing a justification
-  // … is sent for review on a live listing". Compared canonically (trimmed, blank dropped, keys
-  // sorted), so re-sending the same reasons is not a change.
+  // The whole justification map is material: the moderator approved these reasons and
+  // offline_access decides hub offline access.
   if (
     patch.scopeJustifications !== undefined &&
     canonicalJustifications(patch.scopeJustifications) !==

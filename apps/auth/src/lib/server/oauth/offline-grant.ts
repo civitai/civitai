@@ -312,8 +312,7 @@ export async function planAuthCodeGrant(opts: {
   now?: Date;
 }): Promise<MintPlan> {
   const now = opts.now ?? new Date();
-  // Re-checked at the exchange: a listing whose declaration was withdrawn (or that was delisted)
-  // between the approval and here gets no refresh token (listing-offline.ts).
+  // Re-check at exchange: the listing may have been withdrawn or delisted since approval.
   const offline =
     opts.offlineRequested &&
     (await hasOfflineGrant(opts.userId, opts.clientId)) &&

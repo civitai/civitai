@@ -118,7 +118,6 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
    */
   const materialBlockedReason = materialEditBlockedReason(edit);
   const materialBlocked = materialBlockedReason != null;
-  // See scopeDisclosureLockedForEdit.
   const scopeLocked = scopeDisclosureLockedForEdit(edit);
   const STEP_DETAILS = showUrlStep ? 1 : 0;
   const STEP_ASSETS = showUrlStep ? 2 : 1;

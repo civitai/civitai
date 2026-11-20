@@ -517,6 +517,24 @@ describe('scopesDriftedForEdit', () => {
       scopesDriftedForEdit(makeCtx({ status: 'removed', ...connect, connectAllowedScopes: 28 }))
     ).toBe(true);
   });
+  it('no connect client is never drifted, even with the masks apart', () => {
+    expect(
+      scopesDriftedForEdit(
+        makeCtx({
+          status: 'removed',
+          connectClientId: null,
+          connectAllowedScopes: 28,
+          connectRequestedScopes: 12,
+        })
+      )
+    ).toBe(false);
+  });
+  it('drift on the requested side alone counts', () => {
+    // 28 carries a bit the allowed 12 lacks, so a check of only what the allowed mask gained misses it.
+    expect(
+      scopesDriftedForEdit(makeCtx({ status: 'removed', ...connect, connectRequestedScopes: 28 }))
+    ).toBe(true);
+  });
   it('drift on a live listing is not a lock (it is staged for review)', () => {
     for (const status of ['draft', 'pending', 'approved'] as const) {
       expect(

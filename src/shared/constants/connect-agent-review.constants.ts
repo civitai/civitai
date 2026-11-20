@@ -136,7 +136,7 @@ export function civitaiCheckLines(checks: ConnectCivitaiChecks): CivitaiCheckLin
   // line, not a "reachable" warning. The device flow is not gated there, so it stays ALWAYS.
   const undeclaredHere = o.declared === false && o.reachable && !o.alwaysOffline;
   // The hub decides per CLIENT: an undeclared listing whose client has another approved listing
-  // that declares it can still get offline access. Do not claim it cannot.
+  // that declares it can still get offline access.
   const undeclaredSoBlocked = undeclaredHere && o.anotherListingDeclares !== true;
   const undeclaredButSibling = undeclaredHere && o.anotherListingDeclares === true;
   lines.push(

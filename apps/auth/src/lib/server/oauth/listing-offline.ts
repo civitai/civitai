@@ -9,19 +9,10 @@ import { logAxiomError } from '$lib/server/axiom';
 // `offline_access` with a justification. An undeclared listed client never gets it. A client no
 // listing points at (Civitai's own apps, first-party spokes, plain OAuth apps) is not affected.
 //
-// LISTED means EVER LIVE: one of the client's listings has been approved at some point, whatever
-// its status now. A formerly-live listing can sit in `pending` (a moderator's reset to pending, or
-// an owner republish after an asset change), so status alone cannot tell. Any of these says it was
-// live:
-//   - its status is `approved` or `removed` (removed is only reachable from live);
-//   - an `approved` publish request points at it (every approve leaves one);
-//   - it has a moderation event (every moderation action applies to a listing that was live).
-// A client whose listings are only first-time drafts, pending first submissions or rejected ones
-// keeps the unlisted rule, so a first submission changes nothing for the app's existing users. A
-// delisted app stays listed, so it does not regain offline access through the unlisted rule: its
-// listing is `removed`, not deleted, because a moderator purge refuses an ever-live connect
-// listing (the site's offsite-moderation.service.ts, which shares this rule through
-// connect-offline-listing.ts — keep the two in step).
+// LISTED means EVER LIVE, whatever the status now (the signals are documented on the site's
+// `listingEverLive`, connect-offline-listing.ts; keep `anyEverLive` in step with it). A removed
+// row keeps a delisted client listed and undeclared, because a moderator purge refuses an
+// ever-live connect listing.
 //
 // Only `approved` listings DECLARE. A pending edit of a live listing sits on a shadow revision,
 // which is always a draft, so its declaration counts only once approve copies it onto the live

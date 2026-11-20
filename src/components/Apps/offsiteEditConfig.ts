@@ -256,13 +256,8 @@ export function isOwnerEdit(ctx: Pick<ListingEditContext, 'role'>): boolean {
  * Is the OAuth scope disclosure (every justification box, and the offline-access declaration)
  * locked? PURE.
  *
- * 🔴 YES ON EVERY UNPUBLISHED CONNECT LISTING. A change to the justification map is MATERIAL
- * (`materialPatchChanges` in the off-site listing service counts the whole map, the
- * `offline_access` declaration included, because it decides whether the sign-in hub grants
- * offline access), and the `removed` branch of `updateListing` refuses every material change. So
- * those boxes are disabled on the same verdict as the other material inputs, and
- * `materialEditBlockedReason` names them. On a live listing the same edit is staged for review
- * instead, so nothing is locked there.
+ * Justification-map edits are material (they decide hub offline access) and an unpublished
+ * listing refuses material changes, so the boxes lock with the other material inputs.
  */
 export function scopeDisclosureLockedForEdit(
   ctx: Pick<ListingEditContext, 'status' | 'connectClientId'>
