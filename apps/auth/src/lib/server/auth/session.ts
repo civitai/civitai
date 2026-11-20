@@ -347,9 +347,10 @@ export async function establishSession(
  * 2. REGISTERED first-party spoke — keeps this off the third-party OAuth flow, which reaches /login with a
  *    hub-relative returnUrl anyway.
  * 3. The landing is the spoke's `/api/auth/authorize` — the ONE shape that produces the second hop where the
- *    pending record gets consumed. Without this, a `createSpokeGuard` app (which sends the raw current page
- *    URL as returnUrl) on a foreign domain would hand off, receive no cookie, land on a page whose guard
- *    finds no session, bounce back to /login with the same returnUrl, and loop forever with no error. Trust
+ *    pending record gets consumed. Without this, an app that sends the raw current page URL to /login as
+ *    returnUrl (no `createSpokeGuard` app does now: they go through their own authorize) on a foreign domain
+ *    would hand off, receive no cookie, land on a page that finds no session, bounce back to /login with the
+ *    same returnUrl, and loop forever with no error. Trust
  *    is a `TrustedSpokeDomain` DB row, so that app needs no code change to appear.
  */
 async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | undefined> {

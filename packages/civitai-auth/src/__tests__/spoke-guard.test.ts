@@ -185,6 +185,29 @@ describe('createSpokeGuard (cookie mode)', () => {
     });
   });
 
+  it('shared mode: an unavailable shared session never falls back to the host cookie', async () => {
+    h.resolveSessionUser.mockImplementation(async (t: string) =>
+      t === 'own' ? { user: normie } : UNAVAILABLE
+    );
+    expect(await guardOf().check(`${SHARED}=busy; ${HOST}=own`, PAGE)).toEqual({
+      status: 'login',
+      redirect: AUTHORIZE,
+      reason: 'unavailable',
+    });
+    expect(h.resolveSessionUser).not.toHaveBeenCalledWith('own');
+  });
+
+  it('shared mode: an invalid shared cookie next to an unavailable host session reports unavailable', async () => {
+    h.resolveSessionUser.mockImplementation(async (t: string) =>
+      t === 'own' ? UNAVAILABLE : INVALID
+    );
+    expect(await guardOf().check(`${SHARED}=dead; ${HOST}=own`, PAGE)).toEqual({
+      status: 'login',
+      redirect: AUTHORIZE,
+      reason: 'unavailable',
+    });
+  });
+
   it('shared mode: an invalid shared cookie with an invalid host cookie still signs in', async () => {
     h.resolveSessionUser.mockResolvedValue(INVALID);
     expect(await guardOf().check(`${SHARED}=dead; ${HOST}=also-dead`, PAGE)).toEqual({
