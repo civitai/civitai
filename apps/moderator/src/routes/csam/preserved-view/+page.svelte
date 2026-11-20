@@ -57,8 +57,10 @@
     return async ({ update, result }) => {
       try {
         await update();
-        // The file is no longer shown, so its bytes should not stay in the tab either.
-        if (result.type === 'success') open = null;
+        // Ruled, by this reviewer or another: the file is no longer shown, and its bytes go too.
+        if (result.type === 'failure' && result.status === 409) await invalidateAll();
+        if (result.type === 'success' || (result.type === 'failure' && result.status === 409))
+          open = null;
       } finally {
         submitting = false;
         confirming = null;
@@ -109,9 +111,19 @@
               <ErrorAlert
                 message="This file did not render. No verdict can be recorded for it; tell the Moderation Lead."
               />
+              <div>
+                <Button type="button" variant="outline" size="sm" onclick={() => openFile(file.n)}>
+                  Open again
+                </Button>
+              </div>
             {/if}
           {:catch e}
             <ErrorAlert message={e instanceof Error ? e.message : 'The file could not be shown.'} />
+            <div>
+              <Button type="button" variant="outline" size="sm" onclick={() => openFile(file.n)}>
+                Open again
+              </Button>
+            </div>
           {/await}
         {:else}
           <div>

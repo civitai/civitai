@@ -13,7 +13,7 @@ import {
 export const load: PageServerLoad = async ({ locals }) => {
   const { config } = requirePreservedReviewer(locals);
   const { files } = await openPreservedFilesOrError(config);
-  const verdicts = await preservedVerdicts(files, config.reviewerIds);
+  const verdicts = await preservedVerdicts(files);
   return {
     files: files.map((f) => ({ n: f.n, size: f.size, verdict: verdicts.get(f.n) ?? null })),
   };
@@ -32,7 +32,7 @@ export const actions: Actions = {
     if (!file) return fail(404, { n, error: 'There is no such file.' });
     if (!(await deliveredTo([file], reviewerId)).has(n))
       return fail(409, { n, error: 'Open the file before recording a verdict.' });
-    if ((await recordPreservedVerdict(file, reviewerId, config.reviewerIds, verdict)) === 'already')
+    if ((await recordPreservedVerdict(file, reviewerId, verdict)) === 'already')
       return fail(409, { n, error: 'A verdict for this file is already recorded.' });
     return { recorded: n };
   },

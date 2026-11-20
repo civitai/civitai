@@ -182,11 +182,10 @@ export async function openPreservedFilesOrError(config: PreservedViewConfig) {
 
 /** Verdicts recorded so far, by file number. Read from the primary, so a verdict just made is seen. */
 export async function preservedVerdicts(
-  files: readonly PreservedFile[],
-  reviewerIds: ReadonlySet<number>
+  files: readonly PreservedFile[]
 ): Promise<Map<number, PreservedVerdict>> {
   if (!files.length) return new Map();
-  const rows = await verdictRows(dbWrite, files.map(entityTypeOf), reviewerIds);
+  const rows = await verdictRows(dbWrite, files.map(entityTypeOf));
   const out = new Map<number, PreservedVerdict>();
   for (const file of files) {
     const row = rows.find((r) => r.entityType === entityTypeOf(file));
@@ -232,16 +231,26 @@ export async function auditServe(file: PreservedFile, reviewerId: number): Promi
 }
 
 /**
- * Only a listed reviewer's verdict counts: these rows cannot be deleted, so one written by anything
- * else would close a file for good.
+ * A verdict counts only from someone the file was delivered to. These rows cannot be deleted, so one
+ * written by anything else would close a file for good; and this keeps a verdict counting after its
+ * author leaves the reviewer list.
  */
-function verdictRows(db: Kysely<DB>, entityTypes: string[], reviewerIds: ReadonlySet<number>) {
+function verdictRows(db: Kysely<DB>, entityTypes: string[]) {
   return db
-    .selectFrom('ModActivity')
-    .select(['entityType', 'activity'])
-    .where('entityType', 'in', entityTypes)
-    .where('activity', 'in', Object.values(PRESERVED_VERDICT_ACTIVITY))
-    .where('userId', 'in', [...reviewerIds])
+    .selectFrom('ModActivity as v')
+    .select(['v.entityType', 'v.activity'])
+    .where('v.entityType', 'in', entityTypes)
+    .where('v.activity', 'in', Object.values(PRESERVED_VERDICT_ACTIVITY))
+    .where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom('ModActivity as d')
+          .select('d.id')
+          .whereRef('d.entityType', '=', 'v.entityType')
+          .whereRef('d.userId', '=', 'v.userId')
+          .where('d.activity', '=', PRESERVED_DELIVERED_ACTIVITY)
+      )
+    )
+    .orderBy('v.id')
     .execute();
 }
 
@@ -250,19 +259,18 @@ const lockFile = (trx: Kysely<DB>, entityType: string) =>
   sql`SELECT pg_advisory_xact_lock(hashtext(${entityType}), 0)`.execute(trx);
 
 /**
- * The row that lets a verdict follow, written under the verdict lock so no verdict can land between
- * the check and the send. `ruled` and `failed` both mean send no bytes.
+ * The row that lets a verdict follow, written under the verdict lock so no verdict can land before
+ * it. `ruled` and `failed` both mean send no bytes.
  */
 export async function recordDelivery(
   file: PreservedFile,
-  reviewerId: number,
-  reviewerIds: ReadonlySet<number>
+  reviewerId: number
 ): Promise<'delivered' | 'ruled' | 'failed'> {
   const entityType = entityTypeOf(file);
   try {
     const id = await dbWrite.transaction().execute(async (trx) => {
       await lockFile(trx, entityType);
-      if ((await verdictRows(trx, [entityType], reviewerIds)).length) return null;
+      if ((await verdictRows(trx, [entityType])).length) return null;
       return insertModActivity(
         {
           userId: reviewerId,
@@ -282,17 +290,16 @@ export async function recordDelivery(
   }
 }
 
-/** One verdict per file, ever, from a listed reviewer. */
+/** One verdict per file, ever. */
 export async function recordPreservedVerdict(
   file: PreservedFile,
   reviewerId: number,
-  reviewerIds: ReadonlySet<number>,
   verdict: PreservedVerdict
 ): Promise<'recorded' | 'already'> {
   const entityType = entityTypeOf(file);
   return dbWrite.transaction().execute(async (trx) => {
     await lockFile(trx, entityType);
-    if ((await verdictRows(trx, [entityType], reviewerIds)).length) return 'already';
+    if ((await verdictRows(trx, [entityType])).length) return 'already';
     await insertModActivity(
       {
         userId: reviewerId,

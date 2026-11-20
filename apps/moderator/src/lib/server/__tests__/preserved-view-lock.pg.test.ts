@@ -29,7 +29,6 @@ vi.mock('../access', () => ({ canAccess: () => true }));
 vi.mock('../axiom', () => ({ logToAxiom: async () => {} }));
 
 const { recordDelivery, recordPreservedVerdict } = await import('../preserved-view');
-const IDS = new Set([501, 502]);
 
 const FILE = { n: 1, key: 'fixture/1.png', size: 10, sha256: 'c'.repeat(64) };
 const ENTITY = `preservedFile:${'c'.repeat(16)}`;
@@ -69,6 +68,11 @@ describePg('recordPreservedVerdict against a verdict in another session', () => 
   it('waits for the other verdict to commit, then refuses', async () => {
     const session = await other.pool.connect();
     try {
+      await session.query(
+        `INSERT INTO "ModActivity" ("userId", "activity", "entityType", "entityId")
+         VALUES (502, 'preservedFile:delivered', $1, 1)`,
+        [ENTITY]
+      );
       await session.query('BEGIN');
       await session.query('SELECT pg_advisory_xact_lock(hashtext($1), 0)', [ENTITY]);
       await session.query(
@@ -77,7 +81,7 @@ describePg('recordPreservedVerdict against a verdict in another session', () => 
         [ENTITY]
       );
       let settled = false;
-      const mine = recordPreservedVerdict(FILE, 501, IDS, 'not').finally(() => (settled = true));
+      const mine = recordPreservedVerdict(FILE, 501, 'not').finally(() => (settled = true));
       await new Promise((r) => setTimeout(r, 500));
       expect(settled).toBe(false);
       await session.query('COMMIT');
@@ -86,7 +90,7 @@ describePg('recordPreservedVerdict against a verdict in another session', () => 
       session.release();
     }
     const { rows } = await other.pool.query(
-      `SELECT count(*)::int AS n FROM "ModActivity" WHERE "entityId" = 1`
+      `SELECT count(*)::int AS n FROM "ModActivity" WHERE "entityId" = 1 AND activity LIKE '%verdict%'`
     );
     expect(rows[0].n).toBe(1);
   });
@@ -96,6 +100,11 @@ describePg('recordPreservedVerdict against a verdict in another session', () => 
     const entity = `preservedFile:${'d'.repeat(16)}`;
     const session = await other.pool.connect();
     try {
+      await session.query(
+        `INSERT INTO "ModActivity" ("userId", "activity", "entityType", "entityId")
+         VALUES (502, 'preservedFile:delivered', $1, 1)`,
+        [entity]
+      );
       await session.query('BEGIN');
       await session.query('SELECT pg_advisory_xact_lock(hashtext($1), 0)', [entity]);
       await session.query(
@@ -104,7 +113,7 @@ describePg('recordPreservedVerdict against a verdict in another session', () => 
         [entity]
       );
       let settled = false;
-      const mine = recordDelivery(file, 501, IDS).finally(() => (settled = true));
+      const mine = recordDelivery(file, 501).finally(() => (settled = true));
       await new Promise((r) => setTimeout(r, 500));
       expect(settled).toBe(false);
       await session.query('COMMIT');

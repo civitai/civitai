@@ -33,7 +33,7 @@ const modActivityRowExists = vi.hoisted(() => vi.fn(async (_id: number) => state
 const logToAxiom = vi.hoisted(() => vi.fn(async (_line: Record<string, unknown>) => {}));
 const recordPreservedVerdict = vi.hoisted(() =>
   vi.fn(
-    async (_file: unknown, _reviewer: number, _reviewers: unknown, _verdict: string) =>
+    async (_file: unknown, _reviewer: number, _verdict: string) =>
       'recorded' as 'recorded' | 'already'
   )
 );
@@ -68,7 +68,9 @@ const { actions, load } = await import('../../../routes/csam/preserved-view/+pag
 const { createPreservedObjectStore, OversizeObjectError, UnlistedKeyError } = await import(
   '../preserved-object-store'
 );
-const { openPreservedFiles, readPreservedViewConfig } = await import('../preserved-view');
+const { openPreservedFiles, readPreservedViewConfig, sniffImageType } = await import(
+  '../preserved-view'
+);
 
 const CAP = 10 * 1024 * 1024;
 
@@ -454,7 +456,6 @@ describe('the page', () => {
     expect(recordPreservedVerdict).toHaveBeenCalledWith(
       { n: 1, key: FILE_KEYS[0], size: FILES[0].byteLength, sha256: sha(FILES[0]) },
       REVIEWER.id,
-      new Set([REVIEWER.id, REVIEWER_2.id]),
       'apparent'
     );
   });
@@ -539,5 +540,29 @@ describe('the object store', () => {
     await expect(store.read(FILE_KEYS[0], FILES[0].byteLength - 1)).rejects.toBeInstanceOf(
       OversizeObjectError
     );
+  });
+});
+
+describe('sniffImageType', () => {
+  const bytes = (...parts: (number[] | string)[]) =>
+    Uint8Array.from(
+      parts.flatMap((p) => (typeof p === 'string' ? [...p].map((c) => c.charCodeAt(0)) : p))
+    );
+
+  it.each([
+    ['image/jpeg', bytes([0xff, 0xd8, 0xff, 0xe0], 'JFIF')],
+    ['image/png', bytes([0x89], 'PNG', [0x0d, 0x0a])],
+    ['image/gif', bytes('GIF89a')],
+    ['image/webp', bytes('RIFF', [0, 0, 0, 0], 'WEBPVP8 ')],
+  ])('reads %s from its signature', (type, data) => {
+    expect(sniffImageType(data)).toBe(type);
+  });
+
+  it.each([
+    ['svg', bytes('<svg xmlns="http://www.w3.org/2000/svg">')],
+    ['a RIFF that is not WEBP', bytes('RIFF', [0, 0, 0, 0], 'WAVEfmt ')],
+    ['html', bytes('<!doctype html>')],
+  ])('refuses %s', (_what, data) => {
+    expect(sniffImageType(data)).toBeNull();
   });
 });
