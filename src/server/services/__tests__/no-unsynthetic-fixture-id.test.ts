@@ -202,7 +202,7 @@ describe('🔴 moderation test fixtures use synthetic ids', () => {
     ['int4 bounds and values past them', `n <= 2_147_483_647; const big = 10_000_000_019;`],
     [
       'count and size settings',
-      `{ maxOpen: 18300, minScore: 25000, rateLimit: 12345 }; draft.maxOpen = ' 18300 ';`,
+      `{ maxOpen: 18300, minScore: 25001, rateLimit: 12345, uploadCap: 12347 }; draft.maxOpen = ' 18300 ';`,
     ],
     [
       'support-desk ids from the fake range',
