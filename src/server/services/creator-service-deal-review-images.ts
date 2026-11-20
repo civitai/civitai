@@ -59,7 +59,7 @@ export async function listReviewAttachableFinals({
  * Attaches one of the deal's finals to the buyer's review as a fresh image: a downscaled copy,
  * owned by the buyer and scanned like any upload. The image is shown only once it passes its scan
  * at or below the deal's level (see `reviewImageVisibleSql`). Eligibility is checked before the copy is
- * made and again, with the cap, as the row is written; a copy that loses that race is left unlinked.
+ * made and again, with the cap, as the row is written; a copy that loses that race is deleted.
  */
 export async function attachFinalToReview({
   dealId,
@@ -122,8 +122,7 @@ export async function attachFinalToReview({
 /**
  * True in SQL when a review image may be shown at `levels` (the viewer's levels, already limited to
  * what the domain serves), with `i` the image, `r` its review and `d` the deal: a review no
- * moderator hid, scanned clean of the flags
- * a deal preview must pass, rated no higher than the deal, shown at the deal's level (so an X deal's
+ * moderator hid, an image scanned clean of the flags a deal preview must pass, rated no higher than the deal, shown at the deal's level (so an X deal's
  * image that scanned PG is still X), and its seller still allows review work.
  */
 export const reviewImageVisibleSql = (
@@ -137,8 +136,7 @@ export const reviewImageVisibleSql = (
   AND EXISTS (SELECT 1 FROM "ServiceOffering" o WHERE o."id" = d."offeringId" AND o."allowReviewWork")
 )`;
 
-/** The shown images of a review, in attach order. */
-/** `includeHidden`: a moderator still sees a hidden review's images. */
+/** The shown images of a review, in attach order; `includeHidden` for a moderator. */
 export async function getReviewImages({
   reviewId,
   levels,

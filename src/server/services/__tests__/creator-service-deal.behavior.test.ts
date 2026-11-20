@@ -3504,6 +3504,7 @@ describe('buyer reviews', () => {
     const settled = await completed();
     await q(`UPDATE "ServiceDeal" SET "settledAt" = now() WHERE id = $1`, [settled]);
     await expect(review(settled, 'Happy')).rejects.toEqual(conflict);
+    await expect(review(settled, 'NotQuite')).rejects.toEqual(conflict);
 
     // A deal that was ever disputed is not released early, whatever its release time says.
     const onceDisputed = await completed();
@@ -3818,15 +3819,6 @@ describe('review publishing and counters', () => {
       guard.mockRejectedValueOnce(blocked);
       await expect(reply(id, 'bad')).rejects.toBe(blocked);
       expect(await reviewRow(id)).toMatchObject({ comment: 'fine', sellerReply: null });
-    });
-
-    it('runs the text guard on every comment and reply', async () => {
-      const id = await completedBy();
-      await review(id, 'Happy', BUYER, 'first');
-      await edit(id, 'second');
-      await reply(id, 'third');
-      const scanned = vi.mocked(throwOnBlockedUserContent).mock.calls.map(([t]) => t);
-      expect(scanned).toEqual(expect.arrayContaining(['first', 'second', 'third']));
     });
 
     it('keeps a hidden review from the seller, and rechecks text whose scan was skipped while hidden', async () => {

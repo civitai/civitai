@@ -13,7 +13,7 @@ import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-servi
 
 /**
  * Review texts whose check was never recorded: its submit failed, or a dismissed csam hold sent
- * the text back. A quarter hour lets a submit in progress record its check first. A recorded check
+ * the text back. The wait lets a submit in progress record its check first. A recorded check
  * that fails is retried by the moderation retry cron, not here. A hidden review's scan is skipped,
  * so it is left out rather than resent every run.
  */

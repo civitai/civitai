@@ -58,11 +58,6 @@ async function recountOffering(tx: Db, offeringId: number) {
 }
 
 /**
- * Publishes or unpublishes a deal's review to match `reviewPublic`, recounting its offering in the
- * same transaction only when the review's public state changed, so a repeat changes nothing.
- * Returns whether it changed.
- */
-/**
  * Serialises a deal's review writes and its offering's recounts without locking the offering row its
  * seller edits. Every writer of a review row takes it before the row's own lock, so two writers
  * never wait on each other in opposite orders. Returns the offering, or null for a deal with no review.
@@ -85,6 +80,11 @@ export const recountOfferingReviews = (offeringId: number) =>
     await recountOffering(tx, offeringId);
   });
 
+/**
+ * Publishes or unpublishes a deal's review to match `reviewPublic`, recounting its offering in the
+ * same transaction only when the review's public state changed, so a repeat changes nothing.
+ * Returns whether it changed.
+ */
 export async function syncDealReviewPublication(tx: Db, dealId: number) {
   const offeringId = await lockDealReviewCounters(tx, dealId);
   if (offeringId === null) return false;

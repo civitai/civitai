@@ -119,6 +119,7 @@ export async function reviewServiceDeal({
       SELECT d."id" FROM "ServiceDeal" d
       WHERE d."id" = ${dealId}::int AND d."buyerId" = ${userId}::int
         AND d."status" = 'Completed'::"ServiceDealStatus" AND d."reviewEnabledAt" IS NOT NULL
+        AND d."settledAt" IS NULL AND d."releaseAt" > now()
         AND NOT EXISTS (SELECT 1 FROM "ServiceDealReview" r WHERE r."dealId" = d."id")`;
     if (!eligible) return undefined;
     const id = await insertReview(tx, dealId, 'NotQuite', text);

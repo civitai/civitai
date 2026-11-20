@@ -236,7 +236,6 @@ const createReviewTextAdapter = (type: TextType): ModerationAdapter => ({
         AND ${cols.workflow} = ${workflowId}`;
   },
 
-  // Built per call: the csam hold's module is mocked whole where only the decision code is tested.
   applyTextScan: (args) => withCsamHold(type, applyVerdict(type))(args),
 });
 
