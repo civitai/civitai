@@ -7,6 +7,7 @@ import {
   MAX_BODY_BYTES,
   MAX_REMIX_SOURCE_BYTES,
   MAX_SOURCE_BYTES,
+  REMIX_QUARANTINE_MS,
   SIG_HEADER,
   remixBudgetMs,
 } from './limits.ts';
@@ -31,6 +32,8 @@ export type AppDeps = {
   metrics: Metrics;
   /** Test seam for the clock; seconds. */
   nowSec?: () => number;
+  /** Test seam for the quarantine clock; milliseconds. */
+  nowMs?: () => number;
   logger?: boolean;
 };
 
@@ -54,6 +57,7 @@ const STATUS: Record<RefusalCode, number> = {
   overloaded: 503,
   worker_crashed: 500,
   worker_terminated: 500,
+  quarantined: 423,
   shutting_down: 503,
 };
 
@@ -73,6 +77,7 @@ const SELF_TEST_TTL_MS = 5_000;
  */
 export function buildApp(deps: AppDeps): FastifyInstance {
   const nowSec = deps.nowSec ?? (() => Math.floor(Date.now() / 1000));
+  const nowMs = deps.nowMs ?? (() => performance.now());
   const app = Fastify({ logger: deps.logger ?? false, bodyLimit: MAX_BODY_BYTES });
 
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) => {
@@ -245,6 +250,26 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       return send(reply, 200, { ts: nowSec(), req, result: out.result, elapsedMs: out.elapsedMs });
     });
 
+  // An app whose call outran the interrupt can do it again on every call, and each costs a worker.
+  const quarantinedUntil = new Map<string, number>();
+  const isQuarantined = (appId: string) => {
+    const until = quarantinedUntil.get(appId);
+    if (until === undefined) return false;
+    if (nowMs() < until) return true;
+    quarantinedUntil.delete(appId);
+    return false;
+  };
+  const refuseQuarantined = (reply: FastifyReply, req: string, appId: string) =>
+    refuse(
+      reply,
+      req,
+      'quarantined',
+      `the app outran the interrupt and its worker was terminated; its calls are refused for ${
+        REMIX_QUARANTINE_MS / 60_000
+      } minutes`,
+      appId
+    );
+
   if (deps.mode === 'remix')
     app.post('/v1/remix/replay', async (request, reply) => {
       const signed = readSigned(request, reply, RemixReplayRequest, MAX_REMIX_SOURCE_BYTES);
@@ -253,6 +278,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const { source, base, branches = [], autoAnswer } = body.input;
       const logs = [base, ...branches.map((branch) => [...base, ...branch])];
 
+      if (isQuarantined(body.appId)) return refuseQuarantined(reply, req, body.appId);
       let out;
       try {
         out = await deps.pool.runRemix({
@@ -264,6 +290,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
           budgetMs: remixBudgetMs(logs.length),
         });
       } catch (err) {
+        if (err instanceof BackstopError) {
+          quarantinedUntil.set(body.appId, nowMs() + REMIX_QUARANTINE_MS);
+          return refuseQuarantined(reply, req, body.appId);
+        }
         return refusePoolError(reply, req, body.appId, err);
       }
 

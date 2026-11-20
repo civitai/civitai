@@ -40,7 +40,8 @@ export const COMPILE_ALLOWANCE_FLOOR_MS = 5;
  * native operation does not poll, so an allocation loop that grows towards the memory cap can run
  * far past its deadline between two polls. A call still running at
  * `timeoutMs + BACKSTOP_MS` gets its worker terminated and answers 500 (a runner fault, not the
- * author's `timeout`: see BackstopError in pool.ts).
+ * author's `timeout`: see BackstopError in pool.ts); a remix call answers 423 and quarantines its
+ * app (REMIX_QUARANTINE_MS).
  */
 export const BACKSTOP_MS = 100;
 
@@ -71,6 +72,12 @@ export const REMIX_REPLAY_OVERHEAD_MS = 30;
 
 /** A remix call's share for its fresh WebAssembly instance (measured in the README). */
 export const REMIX_INSTANCE_ALLOWANCE_MS = 50;
+
+/**
+ * How long a remix app is refused (423 `quarantined`) after the backstop terminated a worker
+ * running one of its calls. In-process: each pod keeps its own list.
+ */
+export const REMIX_QUARANTINE_MS = 10 * 60 * 1000;
 
 /** A remix call's budget, before the backstop's margin. */
 export function remixBudgetMs(replays: number): number {

@@ -109,6 +109,7 @@ transport failure or unverifiable response, to `hook_unavailable` (fail closed):
 | 400    | `bad_request`, `source_too_large`, `sha_mismatch` |
 | 401    | `bad_signature`, `stale_timestamp`                |
 | 413    | `body_too_large` (256 KiB)                        |
+| 423    | `quarantined` (remix only: below)                 |
 | 500    | `worker_crashed`, `worker_terminated`             |
 | 503    | `overloaded`, `shutting_down`                     |
 
@@ -123,7 +124,9 @@ about the steps themselves. The caller checks every step and output it gets back
 change anything inside the VM.
 
 Signed, timestamped and answered exactly as `/v1/check` is (same header, same `ts` and `req`, same
-non-2xx codes). Body (strict):
+non-2xx codes), except that a call the backstop terminates answers 423 `quarantined`, not 500
+`worker_terminated`, and so does every later call for that `appId` for 10 minutes (see "A remix
+call's backstop" below). Body (strict):
 
 | field       | type             | notes                                                                                            |
 | ----------- | ---------------- | ------------------------------------------------------------------------------------------------ |
@@ -184,7 +187,7 @@ All bounds live in `src/limits.ts`.
 | heap     | 16 MiB                                             | `runtime.setMemoryLimit`                                                                                        |
 | stack    | 256 KiB                                            | `runtime.setMaxStackSize` (see below)                                                                           |
 | time     | `timeoutMs`, [1, 500], default 50, evaluation only (a remix replay: 50, its awaits included) | interrupt handler (uncatchable; `catch`/`finally` cannot resume; a swallowed interrupt still ends as `timeout`) |
-| backstop | `timeoutMs` + 100 ms (a remix call: (50 + 30) ms per replay + 50 ms + 100 ms) | the pool terminates and replaces the worker; answered 500                         |
+| backstop | `timeoutMs` + 100 ms (a remix call: (50 + 30) ms per replay + 50 ms + 100 ms) | the pool terminates and replaces the worker; answered 500 (a remix call: 423 `quarantined`, and the app is refused for 10 minutes) |
 | per app  | ⌈`MAX_QUEUE` / 4⌉ calls queued plus in flight (remix mode: 4) | the pool; past it that app gets 503 while others proceed                                                        |
 | source   | 64 KiB (a remix app 32 KiB)                        | request validation                                                                                              |
 | body     | 256 KiB                                            | Fastify `bodyLimit`                                                                                             |
@@ -199,9 +202,12 @@ All bounds live in `src/limits.ts`.
 - **A remix call's backstop** allows each replay 30 ms beyond its 50 (the compile-only pass,
   the compile allowance and floor, runtime setup and disposal) and the call 50 ms for its fresh
   instance, so a looping app's own timeouts do not add up to a runner fault: 13 looping replays of
-  a 28 KiB app measured 755-863 ms against the 1,190 ms backstop. As for hooks, native work that
-  never polls the interrupt (a compile-heavy source, `Object.keys` over a huge proxy) can still
-  reach the backstop and answer 500; the caller says "unavailable right now" for that app.
+  a 28 KiB app measured 755-863 ms against the 1,190 ms backstop. Native work that never polls
+  the interrupt still reaches the backstop: `const a = []; a.length = 2 ** 32 - 1; a.includes(1);`
+  walks the holes inside QuickJS and runs on past any deadline. That call, and every remix call
+  for the same `appId` for the next 10 minutes (`REMIX_QUARANTINE_MS`, kept per process), answer
+  423 `quarantined`, so one app cannot keep killing workers; the caller says "unavailable right
+  now" for that app.
 - **A remix call gets more.** Every replay gets its own fresh runtime and deadline, and every
   remix call a fresh WebAssembly instance (measured above as the instance-per-call cost), since
   an author sees what their own unreviewed app returns. `Date` and `Math.random` are removed

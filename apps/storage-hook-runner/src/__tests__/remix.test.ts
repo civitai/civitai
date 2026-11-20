@@ -5,6 +5,7 @@ import {
   MAX_REMIX_BRANCHES,
   MAX_REMIX_EFFECTS,
   MAX_REMIX_SOURCE_BYTES,
+  REMIX_QUARANTINE_MS,
   SIG_HEADER,
 } from '../limits.ts';
 import { createMetrics } from '../metrics.ts';
@@ -310,6 +311,60 @@ it(`gives each of ${
   });
   expect(all).toHaveLength(1 + MAX_REMIX_BRANCHES);
   expect(all.every((r) => r.cause === 'timeout')).toBe(true);
+});
+
+describe('quarantine after the backstop', () => {
+  // A native intrinsic that never polls the interrupt: a sparse array's includes walks 2^32 - 1
+  // holes inside QuickJS. Only the backstop stops it.
+  const OUTRUNS = `export default defineRemixApp({ async run() {
+  const a = []; a.length = 2 ** 32 - 1; a.includes(1); return [];
+} });`;
+
+  it('refuses 423 quarantined, signed, for the call that hit the backstop and every later call of that app, until it expires', async () => {
+    let now = 0;
+    const p = await HookPool.start({ size: 1 });
+    const a = buildApp({
+      secret: SECRET,
+      mode: 'remix',
+      pool: p,
+      metrics: createMetrics(),
+      nowMs: () => now,
+    });
+    const call = (source: string, appId: string) => {
+      const body = JSON.stringify({ ...replayBody(source), appId });
+      return a.inject({
+        method: 'POST',
+        url: '/v1/remix/replay',
+        headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },
+        payload: body,
+      });
+    };
+    try {
+      const hit = await call(OUTRUNS, 'remix-outruns');
+      expect(hit.statusCode).toBe(423);
+      expect(hit.json().error.code).toBe('quarantined');
+      expect(hit.json().error.message).toContain('outran the interrupt');
+      expect(hit.headers[SIG_HEADER]).toBe(hmac(SECRET, hit.body));
+      expect(p.stats().terminated).toBe(1);
+
+      // A well-behaved source from the same app is refused too, without reaching a worker.
+      const later = await call(PICK_OF_FOUR, 'remix-outruns');
+      expect(later.statusCode).toBe(423);
+      expect(later.json().error.code).toBe('quarantined');
+      expect(p.stats().terminated).toBe(1);
+
+      // POSITIVE CONTROL: another app is answered.
+      expect((await call(PICK_OF_FOUR, 'remix-other')).statusCode).toBe(200);
+
+      now += REMIX_QUARANTINE_MS - 1;
+      expect((await call(PICK_OF_FOUR, 'remix-outruns')).statusCode).toBe(423);
+      now += 1;
+      expect((await call(PICK_OF_FOUR, 'remix-outruns')).statusCode).toBe(200);
+    } finally {
+      await a.close();
+      await p.close();
+    }
+  });
 });
 
 describe('remix mode', () => {

@@ -177,4 +177,5 @@ export type RefusalCode =
   | 'overloaded'
   | 'worker_crashed'
   | 'worker_terminated'
+  | 'quarantined'
   | 'shutting_down';
