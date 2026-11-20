@@ -31,7 +31,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * CI's unit job provides one (a `postgres:18` service in `.github/workflows/lint.yml`).
  * Without it every case here is skipped, and the properties below are NOT
  * exercised by that run: quota under concurrent writers, concurrent marks,
- * counters and first increments, and deadlock-freedom. Everything else is covered by `doc-store.pglite.test.ts`.
+ * counters and first increments, the lock timeout, and deadlock-freedom. Everything else is covered by `doc-store.pglite.test.ts`.
  */
 
 if (!REAL_PG_URL) {
@@ -145,6 +145,33 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
     expect(ok).toBe(2);
     expect(codes).toEqual(Array(N - 2).fill('quota_exceeded'));
     await assertUsageConsistent(h, app, NS_PROD);
+  });
+
+  it('a writer blocked on a held usage row gives up as rate_limited instead of parking its connection', async () => {
+    const app = freshApp('locked');
+    const store = createDocStore({ db: h.db });
+    await store.put(ctx(app, NS_PROD, 1), PREFS, 'seed', { a: 1 });
+    const holder = await h.rawAsRole();
+    try {
+      await holder.query(
+        `BEGIN; SELECT set_config('appdata.app_id', '${app}', true), set_config('appdata.ns', '${NS_PROD}', true)`
+      );
+      await holder.query(
+        `SELECT 1 FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2 FOR UPDATE`,
+        [app, NS_PROD]
+      );
+      const started = Date.now();
+      const err = await store.put(ctx(app, NS_PROD, 1), PREFS, 'blocked', { a: 1 }).catch((e) => e);
+      const waited = Date.now() - started;
+      expect(err).toBeInstanceOf(DocStoreError);
+      expect((err as DocStoreError).code).toBe('rate_limited');
+      expect(waited).toBeGreaterThanOrEqual(2_900);
+      expect(waited).toBeLessThan(15_000);
+      await holder.query('ROLLBACK');
+    } finally {
+      await holder.close();
+    }
+    expect(await store.get(ctx(app, NS_PROD, 1), PREFS, 'blocked')).toBeNull();
   });
 
   it('concurrent first increments of one absent key create ONE doc and lose no count', async () => {

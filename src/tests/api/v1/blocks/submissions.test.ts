@@ -64,6 +64,7 @@ const {
   mockIsAppBlocksAuthorEnabled,
   mockFindMany,
   mockFindFirst,
+  mockQueryRaw,
   mockSysRedis,
   mockMultiIncr,
 } = vi.hoisted(() => {
@@ -88,6 +89,7 @@ const {
     mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockFindMany: vi.fn(),
     mockFindFirst: vi.fn(),
+    mockQueryRaw: vi.fn(),
     mockSysRedis: {
       multi: vi.fn(multiFactory),
       ttl: vi.fn().mockResolvedValue(60),
@@ -104,7 +106,11 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
 vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlockPublishRequest: { findMany: mockFindMany, findFirst: mockFindFirst } },
+  dbRead: {
+    appBlockPublishRequest: { findMany: mockFindMany, findFirst: mockFindFirst },
+    // The `actions_run_*` columns are no-type, so they are read with raw SQL.
+    $queryRaw: mockQueryRaw,
+  },
 }));
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSysRedis,
@@ -113,6 +119,7 @@ vi.mock('~/server/redis/client', () => ({
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 
 import handler from '~/pages/api/v1/blocks/submissions';
+import { Prisma } from '@prisma/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const OWNER_ID = 7;
@@ -181,9 +188,13 @@ beforeEach(() => {
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   // Author capability defaults to the mod-floor (mirrors isAppBlocksAuthorEnabled
   // when the app-blocks-author Flipt flag is absent): mods pass, non-mods don't.
-  mockIsAppBlocksAuthorEnabled.mockImplementation(async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator);
+  mockIsAppBlocksAuthorEnabled.mockImplementation(
+    async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
+  );
   mockFindMany.mockResolvedValue([dbRow()]);
   mockFindFirst.mockResolvedValue(dbRow());
+  // No Actions run recorded for any row unless a test says otherwise.
+  mockQueryRaw.mockResolvedValue([]);
 });
 
 function authGet(query: Record<string, string> = {}) {
@@ -345,6 +356,8 @@ describe('GET /api/v1/blocks/submissions', () => {
       updatedAt: '2026-06-22T00:00:00.000Z',
       createdAt: '2026-06-20T00:00:00.000Z',
       liveUrl: 'https://my-page-app.civit.ai/',
+      // No Actions run recorded: present as a key, and null.
+      actionsRunSource: null,
     });
     // No internal-only columns leaked.
     expect(s).not.toHaveProperty('bundleKey');
@@ -561,6 +574,114 @@ describe('GET /api/v1/blocks/submissions', () => {
         .submissions[0];
       expect(s).not.toHaveProperty('forgejoCommitSha');
       expect(s.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // The GitHub Actions run that sent the submit (`actions_run_*`), for
+  // `civitai app status`. Shown under the SAME rule as the public store page:
+  // public repositories and tag refs only.
+  // ---------------------------------------------------------------------------
+  describe('actionsRunSource', () => {
+    const RUN_SHA = '177445b0c9d2e8f1a3b5c7d9e1f2a4b6c8d0e2f4';
+    const CLAIMED_SHA = '4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3';
+    function runRow(over: Record<string, unknown> = {}) {
+      return {
+        id: 'pubreq_01',
+        repository: 'harbor-tools/knot-tier',
+        repositoryId: '880011',
+        repositoryOwnerId: '770022',
+        sha: RUN_SHA,
+        ref: 'refs/tags/v0.9.1',
+        workflowRef: 'harbor-tools/knot-tier/.github/workflows/release.yml@refs/tags/v0.9.1',
+        repositoryVisibility: 'public',
+        runId: '9900112233',
+        ...over,
+      };
+    }
+
+    it('returns a recorded public run as { repository, tag, sha }, only on its own row', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockFindMany.mockResolvedValueOnce([
+        dbRow({ id: 'pubreq_01', sourceCommit: CLAIMED_SHA, sourceDirty: false }),
+        dbRow({ id: 'pubreq_02', version: '0.0.9' }),
+      ]);
+      mockQueryRaw.mockResolvedValueOnce([runRow()]);
+      const { req, res } = authGet();
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const out = res._getJSONData() as { submissions: Array<Record<string, unknown>> };
+      expect(out.submissions[0].actionsRunSource).toEqual({
+        repository: 'harbor-tools/knot-tier',
+        tag: 'v0.9.1',
+        sha: '177445b0c9d2e8f1a3b5c7d9e1f2a4b6c8d0e2f4',
+      });
+      // A different trust level from the client claim: neither replaces the other.
+      expect(out.submissions[0].sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+      // The row with no recorded run gets null, not its neighbour's run.
+      expect(out.submissions[1].actionsRunSource).toBeNull();
+      // The read is scoped to the rows this response returns.
+      const [strings, ...values] = mockQueryRaw.mock.calls[0] as [
+        TemplateStringsArray,
+        ...unknown[]
+      ];
+      expect(Prisma.sql(strings, ...(values as Prisma.Sql[])).values).toEqual([
+        'pubreq_01',
+        'pubreq_02',
+      ]);
+    });
+
+    it('the ?id= single-item read returns the recorded public run too', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockQueryRaw.mockResolvedValueOnce([runRow()]);
+      const { req, res } = authGet({ id: 'pubreq_01' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const out = res._getJSONData() as { submission: Record<string, unknown> };
+      expect(out.submission.actionsRunSource).toEqual({
+        repository: 'harbor-tools/knot-tier',
+        tag: 'v0.9.1',
+        sha: '177445b0c9d2e8f1a3b5c7d9e1f2a4b6c8d0e2f4',
+      });
+    });
+
+    it('a private or internal repository run is null, as on the public store page', async () => {
+      for (const repositoryVisibility of ['private', 'internal']) {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockQueryRaw.mockResolvedValueOnce([runRow({ repositoryVisibility })]);
+        const { req, res } = authGet();
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const out = res._getJSONData() as { submissions: Array<Record<string, unknown>> };
+        expect(out.submissions[0].actionsRunSource).toBeNull();
+      }
+    });
+
+    it('a run whose stored ref is not a tag, or whose sha is malformed, is null', async () => {
+      for (const over of [{ ref: 'refs/heads/main' }, { sha: 'not-a-sha' }]) {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockQueryRaw.mockResolvedValueOnce([runRow(over)]);
+        const { req, res } = authGet();
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const out = res._getJSONData() as { submissions: Array<Record<string, unknown>> };
+        expect(out.submissions[0].actionsRunSource).toBeNull();
+      }
+    });
+
+    it('a failed run read (columns not applied yet) still answers 200 with null', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockQueryRaw.mockRejectedValueOnce(
+        Object.assign(new Error('column "actions_run_sha" does not exist'), {
+          code: 'P2010',
+          meta: { code: '42703' },
+        })
+      );
+      const { req, res } = authGet();
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const out = res._getJSONData() as { submissions: Array<Record<string, unknown>> };
+      expect(out.submissions[0].actionsRunSource).toBeNull();
     });
   });
 

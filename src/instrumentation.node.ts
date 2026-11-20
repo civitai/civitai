@@ -13,6 +13,7 @@ import {
   registerOtelShutdown,
 } from '@civitai/telemetry/otel-logs';
 import { setStructuredLogSink } from '~/server/logging/structured-log-sink';
+import { armConsoleOtlpBackstop } from '~/server/logging/console-otlp-backstop';
 import { CredentialRedactingSpanProcessor } from '~/server/otel-redact-span-processor';
 import { trace } from '@opentelemetry/api';
 import {
@@ -314,6 +315,13 @@ if (!OTEL_ENABLED) {
 
     sdk.start();
     console.log(`[instrumentation.node] OTEL SDK started - traces and logs -> ${OTEL_ENDPOINT}`);
+
+    // Must run after `new NodeSDK`, which installs the diag logger the backstop re-registers.
+    try {
+      armConsoleOtlpBackstop();
+    } catch (err) {
+      console.error('[instrumentation.node] console backstop not installed (fail-open):', err);
+    }
 
     // Arm withSpan's unsampled-parent shortcut (dark until the `otel-withspan-skip-unsampled`
     // Flipt flag is on). Dynamic, like the warmer: keeps the Flipt client out of this module's
