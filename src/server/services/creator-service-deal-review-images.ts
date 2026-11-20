@@ -121,9 +121,8 @@ export async function attachFinalToReview({
 
 /**
  * True in SQL when a review image may be shown at `levels` (the viewer's levels, already limited to
- * what the domain serves), with `i` the image, `r` its review and `d` the deal: a review no
- * moderator hid, an image scanned clean of the flags a deal preview must pass, rated no higher than the deal, shown at the deal's level (so an X deal's
- * image that scanned PG is still X), and its seller still allows review work.
+ * what the domain serves), with `i` the image, `r` its review and `d` the deal. It is rated at the
+ * deal's level, so an X deal's image that scanned PG is still X.
  */
 export const reviewImageVisibleSql = (
   levels: number,

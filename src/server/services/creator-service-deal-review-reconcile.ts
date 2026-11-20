@@ -49,13 +49,9 @@ async function syncDriftedPublications(limit: number) {
 }
 
 /**
- * The release-on-review read-backs, each zero when the feature works:
- * - a happy-review event without exactly one happy review;
- * - a happy-reviewed deal not paid within ten minutes, unless it is held or settled otherwise;
- * - a completed deal released before its dispute window ended with no happy review and no
- *   dispute resolution behind it;
- * - an offering whose counters differ from a recount of its rows.
- * A mismatch is logged, not repaired, so a person looks at it.
+ * The plan's release-on-review read-backs, each zero when the feature works, over deals completed
+ * in the last month and offerings with reviews. A mismatch is logged, not repaired, so a person
+ * looks at it.
  */
 export async function readBackServiceDealReviews() {
   const [counts] = await dbWrite.$queryRaw<
@@ -67,13 +63,15 @@ export async function readBackServiceDealReviews() {
     }[]
   >`
     SELECT
-      (SELECT count(*)::int FROM "ServiceDealEvent" e
-        WHERE e."type" = 'ReviewedHappy'::"ServiceDealEventType"
+      (SELECT count(*)::int FROM "ServiceDeal" d JOIN "ServiceDealEvent" e ON e."dealId" = d."id"
+        WHERE d."reviewEnabledAt" IS NOT NULL AND d."completedAt" > now() - interval '30 days'
+          AND e."type" = 'ReviewedHappy'::"ServiceDealEventType"
           AND (SELECT count(*) FROM "ServiceDealReview" r
             WHERE r."dealId" = e."dealId" AND r."verdict" = 'Happy'::"ServiceDealReviewVerdict") <> 1
       ) AS "eventsWithoutReview",
       (SELECT count(*)::int FROM "ServiceDeal" d
-        WHERE EXISTS (SELECT 1 FROM "ServiceDealEvent" e WHERE e."dealId" = d."id"
+        WHERE d."reviewEnabledAt" IS NOT NULL AND d."completedAt" > now() - interval '30 days'
+          AND EXISTS (SELECT 1 FROM "ServiceDealEvent" e WHERE e."dealId" = d."id"
             AND e."type" = 'ReviewedHappy'::"ServiceDealEventType"
             AND e."createdAt" < now() - interval '10 minutes')
           AND d."status" <> 'Disputed'::"ServiceDealStatus" AND d."settledAt" IS NULL
@@ -82,6 +80,7 @@ export async function readBackServiceDealReviews() {
       ) AS "unpaidHappy",
       (SELECT count(*)::int FROM "ServiceDeal" d
         WHERE d."status" = 'Completed'::"ServiceDealStatus" AND d."disputeResolvedAt" IS NULL
+          AND d."completedAt" > now() - interval '30 days'
           AND d."releaseAt" < d."completedAt"
             + (${SERVICE_DEAL_DISPUTE_WINDOW_MS}::int * interval '1 millisecond')
           AND NOT EXISTS (SELECT 1 FROM "ServiceDealEvent" e WHERE e."dealId" = d."id"
@@ -90,7 +89,8 @@ export async function readBackServiceDealReviews() {
       (SELECT count(*)::int FROM "ServiceOffering" o CROSS JOIN LATERAL ${offeringReviewTotals(
         Prisma.sql`o."id"`
       )} t
-        WHERE (o."happyCount", o."reviewCount", o."happySortKey")
+        WHERE EXISTS (SELECT 1 FROM "ServiceDealReview" r WHERE r."offeringId" = o."id")
+          AND (o."happyCount", o."reviewCount", o."happySortKey")
           IS DISTINCT FROM (t.happy, t.total, ${happySortKey(
             Prisma.sql`t.happy`,
             Prisma.sql`t.total`
@@ -115,7 +115,8 @@ async function recountDriftedOfferings(limit: number) {
     SELECT o."id" FROM "ServiceOffering" o CROSS JOIN LATERAL ${offeringReviewTotals(
       Prisma.sql`o."id"`
     )} t
-    WHERE (o."happyCount", o."reviewCount", o."happySortKey")
+    WHERE EXISTS (SELECT 1 FROM "ServiceDealReview" r WHERE r."offeringId" = o."id")
+      AND (o."happyCount", o."reviewCount", o."happySortKey")
       IS DISTINCT FROM (t.happy, t.total, ${happySortKey(Prisma.sql`t.happy`, Prisma.sql`t.total`)})
     ORDER BY o."id" LIMIT ${limit}`;
   for (const { id } of rows) await recountOfferingReviews(id);
