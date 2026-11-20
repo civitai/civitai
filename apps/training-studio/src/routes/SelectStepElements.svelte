@@ -12,6 +12,7 @@
   } from '@tabler/icons-svelte';
   import { onMount, untrack } from 'svelte';
   import '$lib/civitai-elements';
+  import type { CivitaiTextInput } from '@civitai/components/civitai-text-input';
   import type { StudioChipGroup } from '$lib/elements/studio-chip-group';
   import { serviceStatus } from '$lib/service-status.svelte';
   import { modelUnavailability, UNAVAILABLE_LABEL } from '$lib/service-status-core';
@@ -506,7 +507,7 @@
         label="Civitai model AIR"
         value={run.customAir ?? ''}
         placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
-        oninput={(e: Event) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
+        oninput={(e: Event) => setCustomAir(runIndex, (e.currentTarget as CivitaiTextInput).value)}
       ></civitai-text-input>
       {#if pickModel()}
         <civitai-button

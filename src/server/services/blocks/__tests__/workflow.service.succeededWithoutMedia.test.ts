@@ -37,7 +37,13 @@ function wf(steps: unknown[], over: Record<string, unknown> = {}) {
   } as never;
 }
 const step = (s: Record<string, unknown>) => ({ status: 'succeeded', metadata: {}, ...s });
-const blob = (url: string, available = true) => ({ id: url, type: 'image', url, available });
+const blob = (url: string, available = true) => ({
+  id: url,
+  type: 'image',
+  url,
+  available,
+  nsfwLevel: 'pg',
+});
 
 function result(workflow: never, extra: Partial<BlockWorkflowSnapshot> = {}) {
   return classifySucceededWithoutMedia(workflow, {

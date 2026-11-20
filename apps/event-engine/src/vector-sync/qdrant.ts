@@ -64,6 +64,8 @@ export type CollectionSpec<P> = {
   /** Unset keeps Qdrant's default of 1, which the single-node image instance runs on. */
   replicationFactor?: number;
   writeConsistencyFactor?: number;
+  /** The profile whose recording marks the collection stamped; a video-only collection never records the image one. */
+  stampedBy?: 'profile' | 'videoProfile';
 };
 
 /**
@@ -180,7 +182,7 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
   async isStamped() {
     // The image profile too: a video-only first fill leaves it for a later writer to record.
     const stored = await this.readStamp();
-    this.stamped ||= !!stored.modelRevision && !!stored.profile;
+    this.stamped ||= !!stored.modelRevision && !!stored[this.spec.stampedBy ?? 'profile'];
     return this.stamped;
   }
 

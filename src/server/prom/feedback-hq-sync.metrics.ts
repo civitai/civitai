@@ -24,6 +24,8 @@ export const FEEDBACK_HQ_SYNC_EVENTS = [
   'gone',
   // A moderator reviewed the row and its task is a wontfix: the sync does not dismiss it.
   'human_set',
+  // A moderator moved the row back to `new` (it carries the sync hold): the sync left it alone.
+  'held',
   // A merged task was followed to the task it was merged into.
   'merge_followed',
   // The task's outcome could not be read as a status (hidden target, unknown done status, a merge
@@ -45,7 +47,7 @@ export type FeedbackHqSyncEvent = (typeof FEEDBACK_HQ_SYNC_EVENTS)[number];
 const HELP =
   'Feedback triage status sync from HQ tasks. event: moved_reviewed / moved_actioned / ' +
   'moved_dismissed (a row moved), stamped (only the HQ link recorded), conflict (the row moved ' +
-  'meanwhile; not written), gone, human_set (a moderator reviewed it and the task is wontfix; not dismissed), merge_followed, ' +
+  'meanwhile; not written), gone, human_set (a moderator reviewed it and the task is wontfix; not dismissed), held (moved back to new by a moderator; left alone), merge_followed, ' +
   'unresolved (the task outcome could not be read as a status), hq_read_failed, links_truncated, write_failed, area_mismatch, stopped_early. ' +
   'Per-pod counter; ' +
   'read with range functions.';

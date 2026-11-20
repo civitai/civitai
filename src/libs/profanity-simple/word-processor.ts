@@ -1,10 +1,10 @@
-// Import all NSFW word lists
 import { blockedWords } from '@civitai/mod-utils/profanity/lists';
+import { cleanWord, isValidWord } from '@civitai/mod-utils/profanity/word-rules';
 
 /**
  * NSFW Word Processor Utility
  *
- * Processes NSFW word lists from JSON files and deduplicates them.
+ * Processes NSFW word lists and deduplicates them.
  */
 
 export interface ProcessedWords {
@@ -12,65 +12,42 @@ export interface ProcessedWords {
 }
 
 /**
- * Clean and normalize a word by removing regex patterns and special characters
- * Preserves pipe characters (|) used for word boundaries
+ * Process a blocked word list (the shipped one by default) and return the deduplicated words
  */
-function cleanWord(word: string): string {
-  // Remove regex patterns like \w*, ?, etc. but preserve pipe boundaries
-  return word
-    .replace(/\\w\*/g, '') // Remove \w*
-    .replace(/\?/g, '') // Remove ?
-    .replace(/[\[\](){}]/g, '') // Remove brackets and parentheses
-    .replace(/[*+]/g, '') // Remove * and + quantifiers
-    .trim()
-    .toLowerCase();
-}
-
-/**
- * Check if a word is valid for processing (not empty, not too short, etc.)
- * Handles boundary words with pipe characters (|word|, |word, word|)
- */
-function isValidWord(word: string): boolean {
-  const cleaned = cleanWord(word);
-
-  // Extract content without pipe boundaries for length checking
-  const contentWithoutPipes = cleaned.replace(/\|/g, '');
-
-  // Dynamic length checking based on boundary markers
-  // Boundary words need at least 1 character of content
-  // Regular words need at least 2 characters total
-  const minLength = cleaned.includes('|') ? 1 : 2;
-
-  return (
-    contentWithoutPipes.length >= minLength && // Appropriate minimum length
-    !cleaned.includes('\\') && // No remaining regex patterns
-    /^[a-z\s\-'|]+$/i.test(cleaned) // Letters, spaces, hyphens, apostrophes, and pipes
-  );
-}
-
-/**
- * Process all NSFW word lists and return deduplicated word lists
- */
-export function processNsfwWords(): ProcessedWords {
-  // Clean and deduplicate original words
-  const originalWords = Array.from(new Set(blockedWords.filter(isValidWord).map(cleanWord))).sort();
+export function processNsfwWords(words: readonly string[] = blockedWords): ProcessedWords {
+  const originalWords = Array.from(new Set(words.filter(isValidWord).map(cleanWord))).sort();
 
   return {
     originalWords,
   };
 }
 
-// Cache the processed words to avoid recomputation
 let cachedProcessedWords: ProcessedWords | null = null;
 
+// Keyed by array identity: a managed list arrives once per fetched response, so a new array
+// means a new list. Bounded like the filter cache it feeds.
+const MAX_CACHED_MANAGED_LISTS = 2;
+const cachedManagedWords = new Map<readonly string[], ProcessedWords>();
+
 /**
- * Get processed words (cached for performance)
+ * Get processed words (cached for performance). `null` is the shipped list.
  */
-export function getCachedNsfwWords(): ProcessedWords {
-  if (!cachedProcessedWords) {
-    cachedProcessedWords = processNsfwWords();
+export function getCachedNsfwWords(managedWords: readonly string[] | null = null): ProcessedWords {
+  if (managedWords === null) {
+    if (!cachedProcessedWords) cachedProcessedWords = processNsfwWords();
+    return cachedProcessedWords;
   }
-  return cachedProcessedWords;
+
+  let processed = cachedManagedWords.get(managedWords);
+  if (!processed) {
+    processed = processNsfwWords(managedWords);
+    if (cachedManagedWords.size >= MAX_CACHED_MANAGED_LISTS) {
+      const oldest = cachedManagedWords.keys().next().value;
+      if (oldest !== undefined) cachedManagedWords.delete(oldest);
+    }
+    cachedManagedWords.set(managedWords, processed);
+  }
+  return processed;
 }
 
 /**
@@ -78,4 +55,5 @@ export function getCachedNsfwWords(): ProcessedWords {
  */
 export function clearWordCache(): void {
   cachedProcessedWords = null;
+  cachedManagedWords.clear();
 }

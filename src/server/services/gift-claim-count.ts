@@ -1,21 +1,23 @@
 import type { Prisma } from '@prisma/client';
 
 /**
- * The claimer's recorded claims in [start, end): what the monthly allowance counts. A removed claim
- * still counts, so removal cannot free allowance.
+ * Claims of the creator's gift links in [start, end): what the monthly limit counts. A claim the
+ * creator or a moderator removed does not count.
  */
-export async function countGiftClaims(
+export async function countCreatorGiftClaims(
   client: Pick<Prisma.TransactionClient, '$queryRaw'>,
-  userId: number,
+  creatorId: number,
   start: Date,
   end: Date
 ) {
   const [{ used }] = await client.$queryRaw<{ used: number }[]>`
     SELECT count(*)::int AS used
-      FROM "ModelVersionGiftRedemption"
-     WHERE "userId" = ${userId}
-       AND "claimedAt" >= ${start}::timestamp(3)
-       AND "claimedAt" < ${end}::timestamp(3)
+      FROM "ModelVersionGiftRedemption" r
+      JOIN "ModelVersionGiftLink" l ON l.id = r."giftLinkId"
+     WHERE l."createdById" = ${creatorId}
+       AND r."claimedAt" >= ${start}::timestamp(3)
+       AND r."claimedAt" < ${end}::timestamp(3)
+       AND r."revokedAt" IS NULL
   `;
   return used;
 }
