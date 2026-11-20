@@ -33,13 +33,15 @@ const (
 	MissModelTags        = "model-tags"        // modelTagCache (model.getAll)
 	MissOfficialModels   = "official-models"   // getOfficialModelIds' fetchThroughCache entry (model.getAll)
 	MissImageTags        = "image-tags"        // imageTagsCache (image.getInfinite with include 'tags'; never written)
+	MissUserFollows      = "user-follows"      // userFollowsCache (image.getInfinite with followed; never written nor kept)
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter. A label that is also a page cache
 // (PageCaches) or a model.getAll cache is the same string as that cache's probe label: the probe reads
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
-	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics, MissImageTags}
+	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics, MissImageTags,
+	MissUserFollows}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -48,8 +50,8 @@ var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecoratio
 // Each computed entry is built as the Node lookup builds it, packed exactly as Node's cache writer
 // packs `{...result, cachedAt}` (or the `{[idKey]: id, notFound: true, cachedAt}` marker), and read
 // back through the same decoder as a cache hit, so a computed miss and a later hit of what Node
-// wrote for it hydrate identically. The image meta (meta.go) is the exception: its misses are
-// neither written back nor kept in process (see memoized).
+// wrote for it hydrate identically. The image meta (meta.go) and the user follows (userfollows.go)
+// are the exceptions: their misses are neither written back nor kept in process (see memoized).
 type MissCompute struct {
 	// WriteBack (FEED_GO_CACHE_WRITEBACK, default none) is the caches whose computed entries are
 	// written where, and as, the Node lookup writes them: same key, same msgpackr bytes, same expiry.
@@ -90,6 +92,14 @@ type MissCompute struct {
 	// nil (no FEED_GO_CLICKHOUSE_HOST / FEED_GO_CLICKHOUSE_USERNAME) leaves those misses falling back
 	// (`metrics-miss`).
 	ClickHouse ClickHouse
+	// MetricsClickHouse is the dedicated ClickHouse for entity metrics (CLICKHOUSE_METRICS_*), and
+	// MetricsClickHouseOn the `image-metrics-dedicated-clickhouse` flag. The populate reads
+	// MetricsClickHouse instead of ClickHouse only while both are set and the flag reads on
+	// (metricsClickHouse); otherwise it reads ClickHouse, as before. Neither turns the computation on:
+	// without ClickHouse the misses fall back (`metrics-miss`) whatever these say. A failed read on
+	// it fails the lookup exactly as a failed ClickHouse read does; it is never retried on ClickHouse.
+	MetricsClickHouse   ClickHouse
+	MetricsClickHouseOn func() bool
 	// MetricsTimeout bounds one page's metrics lookup (FEED_GO_CLICKHOUSE_TIMEOUT_MS), held to at most
 	// metricsTimeoutMax (under Node's own budget); past it the page falls back (`metrics-miss-failed`).
 	MetricsTimeout time.Duration
@@ -154,9 +164,10 @@ type recentEntry struct {
 //     a traced joiner gets a `miss lookup join` span for its wait, joinSpan);
 //   - for a cache not written back, each answer (a record or "no row") is kept for recentTTL and
 //     answers the next miss of that id without a query. For one written back nothing is kept: the
-//     written cache entry answers repeats, and a kept answer could outlive the bust that should replace it. The
-//     image meta is never kept either (memoized): Node keeps no per-pod copy of it, so a meta its
-//     owner just hid is never served again, and its multi-KB values would crowd the cap.
+//     written cache entry answers repeats, and a kept answer could outlive the bust that should
+//     replace it. The image meta and the user follows are never kept either (memoized): Node keeps no
+//     per-pod copy of either, so a meta its owner just hid is never served again (and its multi-KB
+//     values would crowd the cap), and a viewer's changed follow set is read back at once.
 //
 // The records are shared between callers and must be treated as read-only.
 func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
@@ -249,15 +260,16 @@ func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
 	return kept, nil
 }
 
-// memoized is whether lookupShared keeps cache's answers in recent: for a cache not written back,
-// except the image meta (imageMetaCache has no per-pod L1 in Node, deliberately: a hideMeta flip
-// must not leave the old prompt served from a process's copy). The tag ids, the model frames, the
-// model decorations and the version showcases are kept: none depends on the viewer (the showcase
-// lookup reads no user, and the per-viewer image filter runs on every read), Node keeps tag ids in a
-// per-pod L1 far longer than recentTTL, and a model frame or decoration is the same lookup the image
-// ones keep.
+// memoized is whether lookupShared keeps cache's answers in recent: true for a cache not written
+// back, except the image meta and the user follows. Node keeps neither in a per-pod L1 (imageMetaCache
+// deliberately, userFollowsCache has none), so a hideMeta flip must not leave the old prompt served
+// from a process's copy, and a viewer who changes their follow set must read the new one back at once.
+// The tag ids, model frames, model decorations and version showcases are kept: none depends on the
+// viewer (the showcase lookup reads no user, and the per-viewer image filter runs on every read), Node
+// keeps tag ids in a per-pod L1 far longer than recentTTL, and a model frame or decoration is the same
+// lookup the image ones keep.
 func (c *MissCompute) memoized(cache string) bool {
-	return !c.writes(cache) && cache != MissImageMeta
+	return !c.writes(cache) && cache != MissImageMeta && cache != MissUserFollows
 }
 
 // fromRecent adds the kept, unexpired answers of ids to out and returns the ids it could not answer.
@@ -400,7 +412,7 @@ var (
 // missSpecs are the computed caches' write shapes, one per cache fill runs for; their reasons are
 // the fallbacks those misses raise without a computation (Sources.MissReason).
 var missSpecs = []lookupSpec{userCosmeticsSpec, frameSpec, modelFrameSpec, eventSpec, modelEventSpec, tagIDsSpec, versionImagesSpec,
-	modelDataSpec, modelTagsSpec, officialModelsSpec, imageTagsSpec}
+	modelDataSpec, modelTagsSpec, officialModelsSpec, imageTagsSpec, userFollowsSpec}
 
 // specReason is the fallback reason of the named cache's lookup spec ("" for none).
 func specReason(cache string) string {

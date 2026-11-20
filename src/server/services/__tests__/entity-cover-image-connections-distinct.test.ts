@@ -259,7 +259,7 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         // minor-mature-image-visibility.behavior.test.ts.
         'AND (NOT ((COALESCE(i."minor", FALSE)) AND (i."nsfwLevel" IS NULL OR i."nsfwLevel" = 0 OR i."nsfwLevel" >= ?))) ' +
         // `coverRated`: an unrated image is a cover for moderators only.
-        'AND (i."nsfwLevel" != 0 OR ?::boolean) ' +
+        'AND (i."nsfwLevel" NOT IN (0, ?) OR ?::boolean) ' +
         // `heldGalleryImageSql`, exempting the model owner and moderators; its rows are in
         // entity-cover-image-visibility.behavior.test.ts.
         'AND ( NOT (COALESCE(m.minor, FALSE) OR COALESCE(m."sfwOnly", FALSE)) ' +

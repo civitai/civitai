@@ -1,10 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
-import { DEFAULT_MAX_QUEUE, defaultMaxPerApp } from './limits.ts';
+import { DEFAULT_MAX_QUEUE, REMIX_DEFAULT_MAX_PER_APP, defaultMaxPerApp } from './limits.ts';
+
+/** The one signed route a process serves: `check` is /v1/check, `remix` is /v1/remix/replay. */
+export type RunnerMode = 'check' | 'remix';
 
 /** Runtime configuration, from the environment. See .env.example. Fails fast on a bad value. */
 export type Config = {
   secret: string;
+  mode: RunnerMode;
   host: string;
   port: number;
   metricsPort: number;
@@ -58,9 +62,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const secret = normalizeRunnerSecret(env.STORAGE_HOOK_RUNNER_SECRET);
   // The same secret signs requests (civitai) and responses (here); a short one is a config bug.
   if (secret.length < 32) throw new Error('STORAGE_HOOK_RUNNER_SECRET must be at least 32 chars');
+  // Required, so a process never serves unreviewed remix code from the permission-check pool.
+  const mode = env.RUNNER_MODE;
+  if (mode !== 'check' && mode !== 'remix') throw new Error('RUNNER_MODE must be check or remix');
   const maxQueue = int('MAX_QUEUE', DEFAULT_MAX_QUEUE, env);
   return {
     secret,
+    mode,
     host: env.HOST || '0.0.0.0',
     port: int('PORT', 8080, env),
     metricsPort: int('METRICS_PORT', 9091, env),
@@ -68,6 +76,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // the cores Node sees. POOL_SIZE overrides it.
     poolSize: int('POOL_SIZE', poolSizeFromCpuMax(readCpuMax(), availableParallelism()), env),
     maxQueue,
-    maxPerApp: int('MAX_PER_APP', defaultMaxPerApp(maxQueue), env),
+    maxPerApp: int(
+      'MAX_PER_APP',
+      mode === 'remix' ? REMIX_DEFAULT_MAX_PER_APP : defaultMaxPerApp(maxQueue),
+      env
+    ),
   };
 }

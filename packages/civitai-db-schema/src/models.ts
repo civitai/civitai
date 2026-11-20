@@ -280,7 +280,7 @@ export type ServiceBuzzType = "yellow" | "blue" | "green";
 
 export type ServiceDealStatus = "Requested" | "Accepted" | "Delivered" | "InRevision" | "Completed" | "Declined" | "Expired" | "CancellationRequested" | "Cancelled" | "Disputed";
 
-export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expired" | "Delivered" | "RevisionRequested" | "Completed" | "CancellationRequested" | "CancellationAccepted" | "CancellationDeclined" | "Cancelled" | "Disputed" | "DisputeResolved" | "DeadlineExtended" | "Held" | "Released" | "Refunded";
+export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expired" | "Delivered" | "RevisionRequested" | "Completed" | "CancellationRequested" | "CancellationAccepted" | "CancellationDeclined" | "Cancelled" | "Disputed" | "DisputeResolved" | "DeadlineExtended" | "Held" | "Released" | "Refunded" | "ReviewedHappy";
 
 export type ServiceDealFileKind = "Preview" | "Final" | "Attachment";
 
@@ -2687,10 +2687,20 @@ export interface AppReviewAgentReport {
   priorReportId: string | null;
   priorReport?: AppReviewAgentReport | null;
   nextReports?: AppReviewAgentReport[];
+  civitaiCheck?: AppReviewAgentReportCheck | null;
   tokenUsage: JsonValue | null;
   costUsd: Decimal | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AppReviewAgentReportCheck {
+  reportId: string;
+  report?: AppReviewAgentReport;
+  publishRequestId: string;
+  checks: JsonValue;
+  fingerprint: string;
+  createdAt: Date;
 }
 
 export interface BlockUserSettings {

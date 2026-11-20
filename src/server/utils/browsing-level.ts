@@ -6,6 +6,7 @@ import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
   allBrowsingLevelsFlag,
+  onlySelectableLevels,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -39,12 +40,21 @@ export function getServerBrowsingLevel({
   user,
 }: {
   canViewNsfw: boolean;
-  user?: { showNsfw?: boolean | null; browsingLevel?: number | null } | null;
+  user?: {
+    showNsfw?: boolean | null;
+    browsingLevel?: number | null;
+    isModerator?: boolean | null;
+  } | null;
 }): number {
   // Green (SFW) domain forces a cap that overrides the saved preference.
   if (!canViewNsfw) return user ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
   // Blue/red: honor the user's saved preference; fall back to public when nsfw is off.
-  return user?.showNsfw && user.browsingLevel ? user.browsingLevel : publicBrowsingLevelsFlag;
+  // Only a moderator's browsing picker offers Blocked, so anyone else's saved bit is dropped.
+  const saved =
+    user?.browsingLevel && !user.isModerator
+      ? onlySelectableLevels(user.browsingLevel)
+      : user?.browsingLevel;
+  return user?.showNsfw && saved ? saved : publicBrowsingLevelsFlag;
 }
 
 /**
@@ -153,6 +163,18 @@ export const clampToDomainCap = (requested: number | undefined, cap: number) =>
   (requested ?? 0) & cap || cap;
 
 export type RequestBrowsingLevels = { browsingLevel?: number; preCapBrowsingLevel?: number };
+
+/**
+ * Drops the Blocked bit from a request's levels, in place, unless a moderator asked: only their
+ * browsing picker offers it.
+ */
+export function stripBlockedForNonModerator(input: RequestBrowsingLevels, isModerator?: boolean) {
+  if (isModerator) return;
+  if (input.browsingLevel !== undefined)
+    input.browsingLevel = onlySelectableLevels(input.browsingLevel);
+  if (input.preCapBrowsingLevel !== undefined)
+    input.preCapBrowsingLevel = onlySelectableLevels(input.preCapBrowsingLevel);
+}
 
 /**
  * Clamps a request's levels to the domain cap, in place. `preCapBrowsingLevel`

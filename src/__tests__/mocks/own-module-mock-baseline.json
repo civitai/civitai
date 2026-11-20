@@ -1008,7 +1008,6 @@
   "src/server/__tests__/app-ssr-seeds.test.ts": 2,
   "src/server/__tests__/app-static-asset-private.test.ts": 4,
   "src/server/__tests__/app-trpc-pool-cookie.test.ts": 3,
-  "src/server/__tests__/article-category-backfill-endpoint.test.ts": 3,
   "src/server/__tests__/article-page-ssr.test.ts": 2,
   "src/server/__tests__/assistant-runner-app-activity-endpoint.test.ts": 6,
   "src/server/__tests__/assistant-runner-app-feedback-endpoints.test.ts": 4,

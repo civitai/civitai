@@ -16,6 +16,11 @@ export const CSAM_HOLD_POST_UNPUBLISH_REASON = 'csam-text-hold';
 export const MATURE_UNDERAGE_REASON = 'mature-underage';
 /** Unpublish reasons that also say the model depicts a minor. */
 export const MINOR_UNPUBLISH_REASONS = ['mature-underage', 'photo-real-underage'] as const;
+/** Text-scan hold `hold` (an alias) is a CSAM hold not dismissed: Pending or Confirmed. */
+export function liveCsamTextHoldText(hold: string): string {
+  const h = sqlRef(hold);
+  return `(${h}.label = 'csam' AND ${h}.status IN ('Pending', 'Confirmed'))`;
+}
 /** Ban reason codes that always remove the owner's media: the minor-safety bans. */
 export const BAN_REASONS_ALWAYS_REMOVING_MEDIA = [
   'SexualMinor',
@@ -174,10 +179,11 @@ export function reportListedUrlSql(url: string): string {
     )
     OR EXISTS (
       SELECT 1 FROM "Image" rl_p
-      WHERE rl_p.url = ${u} AND rl_p."pHash" IN (
+      -- ARRAY(...) is uncorrelated, so it is computed once per statement, not per outer row.
+      WHERE rl_p.url = ${u} AND rl_p."pHash" = ANY(ARRAY(
         SELECT rl_x."pHash" FROM "Image" rl_x
         WHERE rl_x.id IN (${LISTED_IMAGE_IDS_SQL}) AND rl_x."pHash" IS NOT NULL
-      )
+      ))
     )
   )`;
 }

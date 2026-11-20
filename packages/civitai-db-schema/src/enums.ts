@@ -1411,6 +1411,7 @@ export const ServiceDealEventType = {
   Held: 'Held',
   Released: 'Released',
   Refunded: 'Refunded',
+  ReviewedHappy: 'ReviewedHappy',
 } as const;
 
 export type ServiceDealEventType = (typeof ServiceDealEventType)[keyof typeof ServiceDealEventType];

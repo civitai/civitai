@@ -114,6 +114,23 @@ export async function readScannerCsamVerdict(imageId: number) {
   }
 }
 
+/** Each image's CSAM-label verdict in one read; null when the scanner cannot be read. */
+export async function readScannerCsamVerdicts(imageIds: number[]) {
+  if (!imageIds.length) return new Map<number, 'hit' | 'clear' | 'none'>();
+  try {
+    const result = await getClickhouse().query({
+      query: SCANNER_HITS_SQL,
+      query_params: { hashes: imageIds.map(imageAuditContentHash) },
+      format: 'JSONEachRow',
+      clickhouse_settings: { max_execution_time: 3 },
+    });
+    const rows = await result.json<{ contentHash: string; csamHit?: number | boolean | string }>();
+    return new Map(imageIds.map((id) => [id, scannerCsamVerdict(id, rows)] as const));
+  } catch {
+    return null;
+  }
+}
+
 export type BatchMedia = { imageId: number; url: string; type: string; mimeType: string | null };
 
 /**

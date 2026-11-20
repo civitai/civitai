@@ -56,6 +56,9 @@ type RawImage struct {
 	// CursorNull: the cursor column was NULL (only an index-ordered query's, ImagesQuery.IndexOrder,
 	// can be: `i."index"` is nullable).
 	CursorNull bool `json:"cursorNull,omitempty"`
+	// Collection is the row's collection item columns: set exactly on a collection page's rows
+	// (ImagesQuery.CollectionID), nil on every other query's.
+	Collection *CollectionItem `json:"collection,omitempty"`
 }
 
 // Querier runs the page query.
@@ -115,7 +118,7 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 		}
 		return nil, err
 	}
-	out, err := scanRows(rows)
+	out, err := scanRows(rows, b.Collection)
 	if err != nil {
 		if timedOut() {
 			return []RawImage{}, nil
@@ -138,21 +141,31 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 	return out, nil
 }
 
-func scanRows(rows pgx.Rows) ([]RawImage, error) {
+// scanRows reads the page query's rows. collection: the query selects the three collection item
+// columns after "cursorId" (Built.Collection).
+func scanRows(rows pgx.Rows, collection bool) ([]RawImage, error) {
 	defer rows.Close()
 	var out []RawImage
 	for rows.Next() {
 		var r RawImage
 		var remix, meta []byte
 		var cursorID *int
-		if err := rows.Scan(
+		dest := []any{
 			&r.ID, &r.Name, &r.URL, &r.NsfwLevel, &r.Width, &r.Height, &r.Hash, &r.HideMeta, &r.HasMeta,
 			&r.HasPositivePrompt, &r.OnSite, &remix, &r.CreatedAt, &r.SortAt, &r.MimeType, &r.Type, &meta,
 			&r.Ingestion, &r.BlockedFor, &r.ScannedAt, &r.NeedsReview, &r.UserID, &r.PostID, &r.PostTitle,
 			&r.Index, &r.PublishedAt, &r.UnpublishedAt, &r.ModelVersionID, &r.Model3DID, &r.Availability,
 			&r.Minor, &r.Poi, &r.AcceptableMinor, &r.Restricted, &cursorID,
-		); err != nil {
+		}
+		var item CollectionItem
+		if collection {
+			dest = append(dest, &item.Note, &item.Status, &item.AddedByID)
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
+		}
+		if collection {
+			r.Collection = &item
 		}
 		if cursorID != nil {
 			r.CursorID = *cursorID

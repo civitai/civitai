@@ -769,6 +769,13 @@ export type AppReviewAgentReport = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
+export type AppReviewAgentReportCheck = {
+  report_id: string;
+  publish_request_id: string;
+  checks: unknown;
+  fingerprint: string;
+  created_at: Generated<Timestamp>;
+};
 export type AppSubListing = {
   id: string;
   parent_listing_id: string;
@@ -7018,6 +7025,7 @@ export type DB = {
   app_ownership_events: AppOwnershipEvent;
   app_ownership_transfers: AppOwnershipTransfer;
   app_post_intents: AppPostIntent;
+  app_review_agent_report_checks: AppReviewAgentReportCheck;
   app_review_agent_reports: AppReviewAgentReport;
   app_sub_listing_parents: AppSubListingParent;
   app_sub_listings: AppSubListing;

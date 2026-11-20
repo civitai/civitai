@@ -1,6 +1,6 @@
 {
   "name": "@civitai/moderator-app",
-  "version": "0.0.229",
+  "version": "0.0.231",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,6 +15,7 @@
     "lint": "eslint . --ext .js,.ts,.svelte --cache --cache-strategy metadata"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.490.0",
     "@civitai/auth": "workspace:*",
     "@civitai/axiom": "workspace:*",
     "@civitai/brand": "workspace:*",
