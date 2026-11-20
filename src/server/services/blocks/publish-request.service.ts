@@ -4708,8 +4708,16 @@ async function approveRequestUnderClaim(
           }`
       );
     }
-    const { takeDownLiveApp } = await import('./live-unpublish.service');
-    const { liveNote } = await takeDownLiveApp(request.slug).catch(() => ({ liveNote: undefined }));
+    // Awaited (bounded): the hold re-suspended a version that was serving, and the moderator must
+    // hear if the previous version may still be up.
+    const { takeDownLiveApp, LATE_HOLD_TAKEDOWN_WAIT_MS, unconfirmedTakedownNote } = await import(
+      './live-unpublish.service'
+    );
+    const { liveNote } = await takeDownLiveApp(request.slug, {
+      awaitMs: LATE_HOLD_TAKEDOWN_WAIT_MS,
+    }).catch(() => ({
+      liveNote: unconfirmedTakedownNote(request.slug, 'its live takedown could not be started'),
+    }));
     const { forgetRevokedAppTokens } = await import('./app-block-token-revoke.service');
     await forgetRevokedAppTokens(revokedTokens);
     return {

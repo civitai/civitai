@@ -2201,7 +2201,8 @@ describe('approveRequest', () => {
     expect(mockTriggerBuild).not.toHaveBeenCalled();
     expect(result.lateHoldIds).toEqual([7]);
     // The previous version stops serving on the subdomain too.
-    expect(takeDown).toHaveBeenCalledWith('hello');
+    // Awaited, bounded, so a takedown that does not settle reaches the moderator as a note.
+    expect(takeDown).toHaveBeenCalledWith('hello', { awaitMs: 20_000 });
     // The put-back listing is not served from a stale catalog cache.
     expect(bust).toHaveBeenCalled();
     // The tokens the late hold revoked are dropped from the orchestrator's auth cache too.

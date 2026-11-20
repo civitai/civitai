@@ -231,14 +231,31 @@ export async function isReadinessProbeApp(
   return readinessListIncludes(slug, d);
 }
 
+/** How long the approve that a late hold re-suspends waits on the takedown before it answers. */
+export const LATE_HOLD_TAKEDOWN_WAIT_MS = 20_000;
+
+/** The line the moderator gets back when the app's subdomain may still serve it. */
+export function unconfirmedTakedownNote(slug: string, why: string): string {
+  return `${slug} may still be served on its subdomain: ${why}`;
+}
+
+const UNSETTLED_WHY: Record<Exclude<SyncOutcome, 'settled'> | 'waiting', string> = {
+  failed: 'its live takedown failed. It is reported, and the next takedown or deploy retries it',
+  unsettled: 'its live takedown did not settle. It is reported, and the next takedown retries it',
+  queued: 'its live takedown is queued behind another run of the app and is not confirmed yet',
+  waiting: 'its live takedown is still running and is not confirmed yet',
+};
+
 /**
- * After a takedown COMMITS: start reconciling the app's pointer (not awaited) and return the note
- * for the moderator, if any. For the readiness app nothing is started and the note says the app
- * keeps serving. With the flag off, nothing. Never throws; the takedown already happened.
+ * After a takedown COMMITS: reconcile the app's pointer and return the note for the moderator, if
+ * any. Not awaited by default. With `awaitMs`, waits up to that long and notes any outcome short of
+ * settled. For the readiness app nothing is started and the note says the app keeps serving. With
+ * the flag off, nothing; a flag or readiness read that fails is noted, never read as "off". Never
+ * throws; the takedown already happened.
  */
 export async function takeDownLiveApp(
   slug: string,
-  opts: Opts = {}
+  opts: Opts & { awaitMs?: number } = {}
 ): Promise<{ liveNote?: string }> {
   const d = { ...defaultDeps, ...opts.deps };
   try {
@@ -249,10 +266,23 @@ export async function takeDownLiveApp(
     }
   } catch (err) {
     warn(`live takedown of ${slug} not started`, err);
-    return {};
+    return {
+      liveNote: unconfirmedTakedownNote(slug, 'its live takedown could not be started'),
+    };
   }
-  void syncLivePointer(slug, opts).catch(() => undefined);
-  return {};
+  const sync = syncLivePointer(slug, opts).catch((): SyncOutcome => 'failed');
+  if (opts.awaitMs === undefined) return {};
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const outcome = await Promise.race([
+    sync,
+    new Promise<'waiting'>((resolve) => {
+      timer = setTimeout(() => resolve('waiting'), opts.awaitMs);
+    }),
+  ]);
+  clearTimeout(timer);
+  return outcome === 'settled'
+    ? {}
+    : { liveNote: unconfirmedTakedownNote(slug, UNSETTLED_WHY[outcome]) };
 }
 
 /**

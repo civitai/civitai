@@ -229,6 +229,49 @@ describe('takeDownLiveApp (after a takedown commits)', () => {
   });
 });
 
+describe('takeDownLiveApp awaited (the late-hold approve)', () => {
+  it('a takedown that settles in time: no note, and the app is unpublished', async () => {
+    const { w, deps } = world({ status: 'suspended' });
+    expect(await takeDownLiveApp(SLUG, { deps, awaitMs: 1000 })).toEqual({});
+    expect(actions(w)).toEqual(['unpublish']);
+    expect(w.served).toBe(false);
+  });
+
+  it('a failed takedown is noted for the moderator', async () => {
+    const { deps } = world({ status: 'suspended' });
+    deps.waitForJob.mockResolvedValue('failed');
+    const { liveNote } = await takeDownLiveApp(SLUG, { deps, awaitMs: 1000 });
+    expect(liveNote).toMatch(
+      /^cool-app may still be served on its subdomain: its live takedown failed/
+    );
+  });
+
+  it('a takedown still running past the wait is noted as not confirmed', async () => {
+    const { w, deps, finish } = world({ status: 'suspended', auto: false });
+    const { liveNote } = await takeDownLiveApp(SLUG, { deps, awaitMs: 20 });
+    expect(liveNote).toMatch(/still running and is not confirmed/);
+    await finish();
+    await vi.waitFor(() => expect(w.lock).toBe(false));
+  });
+
+  it('a takedown queued behind another run of the app is noted as not confirmed', async () => {
+    const { w, deps } = world({ status: 'suspended' });
+    w.lock = true;
+    const { liveNote } = await takeDownLiveApp(SLUG, { deps, awaitMs: 1000 });
+    expect(liveNote).toMatch(/queued behind another run/);
+  });
+
+  it('a flag read that fails is noted, never read as the flag being off', async () => {
+    const { w, deps } = world({ status: 'suspended' });
+    deps.flagOn.mockRejectedValueOnce(new Error('flipt down'));
+    expect(await takeDownLiveApp(SLUG, { deps })).toEqual({
+      liveNote:
+        'cool-app may still be served on its subdomain: its live takedown could not be started',
+    });
+    expect(w.jobs).toEqual([]);
+  });
+});
+
 describe('restoreLiveApp (after a relist commits)', () => {
   it('taken down here: re-publishes the approved build (image, slug, sha) and clears the marker', async () => {
     const { w, deps } = world({ status: 'approved', served: false });
