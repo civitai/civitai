@@ -26,7 +26,6 @@ export const routes: ApiRoutes = {
   'deliver-prepaid-buzz': () => import('~/server/api-routes/admin/deliver-prepaid-buzz'),
   'fetch-cache-by-pattern': () => import('~/server/api-routes/admin/fetch-cache-by-pattern'),
   'grant-subscription': () => import('~/server/api-routes/admin/grant-subscription'),
-  'header-check': () => import('~/server/api-routes/admin/header-check'),
   'huggingface-import': () => import('~/server/api-routes/admin/huggingface-import'),
   'klein9b-notice': () => import('~/server/api-routes/admin/klein9b-notice'),
   'manage-sanity-checks': () => import('~/server/api-routes/admin/manage-sanity-checks'),
