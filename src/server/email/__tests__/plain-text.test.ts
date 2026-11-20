@@ -1,9 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
-import { sendEmail } from '~/server/email/client';
+import { describe, expect, it } from 'vitest';
 import { htmlToPlainText } from '~/server/email/plain-text';
 import { createEmail } from '~/server/email/templates/base.email';
-
-vi.mock('~/server/email/client', () => ({ sendEmail: vi.fn() }));
 
 describe('htmlToPlainText', () => {
   it('keeps a link URL next to its label', () => {
@@ -33,14 +30,13 @@ describe('htmlToPlainText', () => {
 });
 
 describe('createEmail plain-text part', () => {
-  it('derives it from the HTML, links included, when the template has no text()', async () => {
+  it('derives it from the HTML, links included, when the template has no text()', () => {
     const email = createEmail({
       header: (data: { to: string }) => ({ subject: 'S', to: data.to }),
       html: () => '<p>Hi</p><a class="em-btn" href="https://civitai.com/apps/run/a%20b">Open</a>',
     });
-    await email.send({ to: 'a@example.com' });
-    expect(vi.mocked(sendEmail)).toHaveBeenCalledWith(
-      expect.objectContaining({ text: 'Hi\n\nOpen [https://civitai.com/apps/run/a%20b]' })
+    expect(email.getText({ to: 'a@example.com' })).toBe(
+      'Hi\n\nOpen [https://civitai.com/apps/run/a%20b]'
     );
   });
 

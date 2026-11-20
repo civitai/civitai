@@ -2,14 +2,15 @@ import { readdirSync } from 'fs';
 import { decode } from 'he';
 import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
-import type * as UrlHelpers from '~/server/utils/url-helpers';
+import type * as EnvServer from '~/env/server';
 
-// A production-shaped origin, so the logo's https URL is checked as it ships, not as http://localhost.
+// A production-shaped origin, so the logo's https URL is checked as it ships, not as
+// http://localhost. getBaseUrl reads NEXTAUTH_URL; the env module is the process boundary.
+vi.mock('~/env/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof EnvServer>();
+  return { ...actual, env: { ...actual.env, NEXTAUTH_URL: 'https://civitai.com' } };
+});
 const ORIGIN = 'https://civitai.com';
-vi.mock('~/server/utils/url-helpers', async (importOriginal) => ({
-  ...(await importOriginal<typeof UrlHelpers>()),
-  getBaseUrl: () => 'https://civitai.com',
-}));
 
 type Template = {
   getHtml: (data: unknown) => string;
