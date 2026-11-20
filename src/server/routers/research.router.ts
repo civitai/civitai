@@ -6,6 +6,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { cachedCounter } from '~/server/utils/cache-helpers';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
@@ -139,7 +140,7 @@ export const researchRouter = router({
         SELECT i.id, i.url, null as "nsfwLevel"
         FROM "Image" i
         WHERE i.id IN (${Prisma.join(sanityIds)})
-          AND (i."nsfwLevel" & ${getRequestBrowsingLevel(ctx)}) != 0
+          AND (i."nsfwLevel" & ${getRequestBrowsingLevel(ctx) & allBrowsingLevelsFlag}) != 0
           AND ${imageNotRestrictedSql()};
       `;
       }

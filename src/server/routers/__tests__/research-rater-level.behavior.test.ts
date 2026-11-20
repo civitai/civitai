@@ -16,7 +16,7 @@ const ALL = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X | NsfwLeve
 beforeAll(async () => {
   redisMock.redis.hGetAll.mockResolvedValue({ currentTrack: 't1', 'track:t1': '0' });
   // Every fixture image is a sanity image, and the rater has no strikes.
-  redisMock.sysRedis.sMembers.mockResolvedValue(['1', '2', '3', '4', '5']);
+  redisMock.sysRedis.sMembers.mockResolvedValue(['1', '2', '3', '4', '5', '6']);
   redisMock.redis.hGet.mockResolvedValue('0');
   redisMock.sysRedis.hGetAll.mockResolvedValue({
     t1: JSON.stringify({ startingPoint: 0, startTime: '2020-01-01T00:00:00Z' }),
@@ -56,7 +56,8 @@ beforeAll(async () => {
       (2, 1, 'pg13', ${NsfwLevel.PG13}),
       (3, 1, 'r', ${NsfwLevel.R}),
       (4, 1, 'x', ${NsfwLevel.X}),
-      (5, 1, 'xxx', ${NsfwLevel.XXX});
+      (5, 1, 'xxx', ${NsfwLevel.XXX}),
+      (6, 1, 'blocked', ${NsfwLevel.Blocked});
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -142,6 +143,12 @@ describe('research.raterGetImages level', () => {
 
     it('serves a user with mature content off only PG sanity images', async () => {
       expect(await sanityImageIds({ showNsfw: false, browsingLevel: ALL })).toEqual([1]);
+    });
+
+    it('never serves a Blocked sanity image, even to a saved level carrying that bit', async () => {
+      expect(
+        await sanityImageIds({ showNsfw: true, browsingLevel: ALL | NsfwLevel.Blocked })
+      ).toEqual([1, 2, 3, 4, 5]);
     });
 
     it('caps a caller on the SFW domain at PG-13', async () => {
