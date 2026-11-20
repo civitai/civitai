@@ -48,6 +48,7 @@
     timeZone: 'UTC',
   });
   const formatMonth = (m: string) => monthFmt.format(Date.parse(`${m}T00:00:00Z`));
+  const chartMonthLabel = $derived(data.throughIsToday ? 'this month' : formatMonth(data.range.from));
 
   // ClickHouse earnings are the buzz flow by source; cash is deliberately excluded here and shown from the buzz
   // service instead (below), since CH cash figures are a period flow and can drift from the real balance.
@@ -368,7 +369,7 @@
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <p class="text-sm font-medium text-white">
         Buzz earned over time
-        <span class="text-xs text-dark-3">· this month vs {data.compare.label}</span
+        <span class="text-xs text-dark-3">· {chartMonthLabel} vs {data.compare.label}</span
         >{#if isFiltered}<span class="text-xs font-medium text-yellow-5"> · filtered</span>{/if}
       </p>
       <ChartTypeToggle />

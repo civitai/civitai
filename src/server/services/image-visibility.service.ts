@@ -51,8 +51,8 @@ export function entityImageVisibilityConditions({
         userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
       })`,
       userId
-        ? Prisma.sql`(i."nsfwLevel" != 0 OR i."userId" = ${userId})`
-        : Prisma.sql`i."nsfwLevel" != 0`,
+        ? Prisma.sql`(i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) OR i."userId" = ${userId})`
+        : Prisma.sql`i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked})`,
       userId
         ? Prisma.sql`(${Prisma.join(
             [Prisma.sql`i."needsReview" IS NULL`, Prisma.sql`i."userId" = ${userId}`],

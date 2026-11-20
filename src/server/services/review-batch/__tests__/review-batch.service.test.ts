@@ -37,7 +37,7 @@ vi.mock('~/server/services/feature-flags.service', () => ({
   }),
 }));
 
-const { mintReviewBatch } = await import('../review-batch.service');
+const { mintReviewBatch, readScannerCsamVerdicts } = await import('../review-batch.service');
 const { revokeReviewBatchesOfKeys } = await import('../review-batch.store');
 
 // ---------------------------------------------------------------------------------------------
@@ -301,6 +301,34 @@ describe('the scanner leg', () => {
   it('an image with no scanner rows yet cannot be shown clean, so the batch is held', async () => {
     scannerRows.delete(2);
     expect((await mint()).tier).toBe('held');
+  });
+});
+
+describe('readScannerCsamVerdicts', () => {
+  it("reads each image's CSAM verdict in one query", async () => {
+    mockClickhouseQuery.mockClear();
+    mockClickhouseQuery.mockImplementationOnce(async () => ({
+      json: async () => [
+        { contentHash: imageAuditContentHash(1), hit: 1, csamHit: 1 },
+        { contentHash: imageAuditContentHash(2), hit: 0, csamHit: 0 },
+      ],
+    }));
+    expect(await readScannerCsamVerdicts([1, 2, 3])).toEqual(
+      new Map([
+        [1, 'hit'],
+        [2, 'clear'],
+        [3, 'none'],
+      ])
+    );
+    expect(mockClickhouseQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers null when the scanner cannot be read, and sends no query for no images', async () => {
+    mockClickhouseQuery.mockClear();
+    mockClickhouseQuery.mockRejectedValueOnce(new Error('timeout'));
+    expect(await readScannerCsamVerdicts([1])).toBeNull();
+    expect(await readScannerCsamVerdicts([])).toEqual(new Map());
+    expect(mockClickhouseQuery).toHaveBeenCalledTimes(1);
   });
 });
 

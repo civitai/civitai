@@ -896,14 +896,18 @@ the same writer as `PERSIST_GENERATION_SOURCE`, and replies with that row instea
   through or ignores them; its source still works, and a submit before the scan finishes is
   refused with `'source-scan-pending'`.
 - **Which path.** The host asks `blockImageUpload.generationSourceUsesScannedRows`, which reads
-  the gate's own flag, after the upload. If that query fails it replies with the blob: the gate
-  stays the only authority, so this never admits an unscanned source while the flag is on.
+  the gate's own flag, after the upload. If that query fails (a pod without it, mid-rollout),
+  the host asks for the copy anyway: the copy is refused while the flag is off, so a copy that
+  succeeds is the reply, and a refused one leaves the blob. The gate stays the authority, so
+  this never admits an unscanned source while the flag is on.
 - **Gates.** The app needs `ai:write:budgeted`, the signed-in viewer must be the token's subject
-  and Apps must be on for them, as for `PERSIST_GENERATION_SOURCE`. With the flag on, an app
-  without the scope gets an upload error (never the blob). The url must be a consumer blob on the orchestrator host, as the upload returns it. The row
+  and Apps must be on for them, as for `PERSIST_GENERATION_SOURCE`. With the flag read as on, an
+  app without the scope gets an upload error (never the blob). When the query failed, any
+  refused copy (the scope, a limit) leaves the blob, which the gate refuses at submit if the
+  flag is on. The url must be a consumer blob on the orchestrator host, as the upload returns it. The row
   is the viewer's own, at a fresh key, not on the shared grid and not postable.
-- **Limits.** Shared with `PERSIST_GENERATION_SOURCE`: 60 per hour per viewer across both, at
-  most 2 in flight, plus the per-user 60/h request limit.
+- **Limits.** The same sizes as `PERSIST_GENERATION_SOURCE`'s, in buckets of its own: 60 per
+  hour per viewer and at most 2 in flight, plus the per-user 60/h request limit.
 - **Not covered.** `OPEN_MEDIA_UPLOAD_BATCH` images and `trainingData` uploads are still blobs.
   Training data is not a generation input. Batch images are refused by the gate while the flag
   is on.

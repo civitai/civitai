@@ -11,7 +11,13 @@ import {
   type KnightsEscalationReason,
   type KnightsWritebackReason,
 } from '@civitai/shared/new-order';
-import { csamRestrictedSql, retractedImageWhereSql } from '@civitai/shared/retracted-media-tier';
+import {
+  csamRestrictedSql,
+  retractedImageWhereSql,
+  siblingsServable,
+  urlSiblingsSql,
+  type UrlSibling,
+} from '@civitai/shared/retracted-media-tier';
 import { RETRACTED_MEDIA_READ_TIMEOUT_MS } from '@civitai/shared/retracted-media';
 import { blockedForSignal } from '@civitai/shared/review-batch';
 import { INQUISITOR_FILTERS, type InquisitorFilter } from '$lib/knights/inquisitor-filters';
@@ -263,17 +269,23 @@ async function readViewable(imageIds: number[]): Promise<Set<number>> {
   const rows = await dbWrite.transaction().execute(async (trx) => {
     await sql.raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`).execute(trx);
     return trx
-      .selectFrom('Image as i')
+      .selectFrom((eb) =>
+        // OFFSET 0 keeps the id lookup a subquery, so the rest is read for these rows only.
+        eb.selectFrom('Image').selectAll().where('id', 'in', imageIds).offset(0).as('i')
+      )
       .select(['i.id', 'i.blockedFor'])
-      .where('i.id', 'in', imageIds)
+      .select(sql<UrlSibling[]>`${sql.raw(urlSiblingsSql('i'))}`.as('siblings'))
       .where(sql<boolean>`${sql.raw(retractedImageWhereSql('i'))}`)
       .where(sql<boolean>`NOT ${sql.raw(csamRestrictedSql('i'))}`)
       .execute();
   });
   const patterns = blockedForPatterns();
-  return new Set(
-    rows.filter((row) => !blockedForSignal(row.blockedFor, patterns)).map((row) => row.id)
-  );
+  const isSignal = (blockedFor: string | null) => blockedForSignal(blockedFor, patterns);
+  const viewable = new Set<number>();
+  for (const row of rows)
+    if (!isSignal(row.blockedFor) && (await siblingsServable(row.siblings, isSignal)))
+      viewable.add(row.id);
+  return viewable;
 }
 
 export type RulingOutcome = { ok: true } | { ok: false; error: string };

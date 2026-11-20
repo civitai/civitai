@@ -9,6 +9,7 @@ import {
 } from '@tabler/icons-react';
 import { ReportTabs } from '~/components/Apps/ReportTabs';
 import { AgentReviewChat } from '~/components/Apps/AgentReviewChat';
+import { CivitaiChecksBlock } from '~/components/Apps/CivitaiChecksBlock';
 import {
   degradedReportSummary,
   failedAgentReportSections,
@@ -79,10 +80,11 @@ export function computeAgentReviewPollInterval(input: {
 }
 
 /**
- * Whether a review request is on-site (this panel's scope). External / OAuth-
- * connect requests are out of P2 scope — the on-site modal only ever holds
- * on-site requests, but this stays defensive so a mis-routed external/connect
- * request never surfaces the agentic panel. Pure + structural (no heuristic).
+ * Whether a review request is on-site — the ON-SITE modal's gate. The on-site
+ * modal only ever holds on-site requests, but this stays defensive so a mis-routed
+ * external/connect request never surfaces the on-site lane's panel there. OAuth-connect
+ * requests get this same panel from the off-site modal instead, behind their own flag
+ * (`ConnectAgentReviewSection` in OffsiteReviewQueue). Pure + structural (no heuristic).
  */
 export function isOnsiteReviewRequest(request: {
   manifest?: unknown;
@@ -287,6 +289,7 @@ export function AgentReviewPanel({
         Dispatch an ephemeral, sandboxed agent to code-review + security-audit this pending bundle.
         Advisory decision-support only.
       </Text>
+      {report?.civitaiChecks && <CivitaiChecksBlock view={report.civitaiChecks} />}
 
       {reportQuery.isLoading ? (
         <Group gap={6}>

@@ -9,11 +9,14 @@ import {
   createScannerVerdictCache,
   csamRestrictedSql,
   retractedImageWhereSql,
+  siblingsServable,
+  urlSiblingsSql,
+  type UrlSibling,
 } from '@civitai/shared/retracted-media-tier';
 import { blockedForPatterns } from './blocked-for-patterns';
 import { dbWrite } from './db';
 import { insertModActivity } from './mod-activity';
-import { readScannerCsamVerdict } from './review-batch';
+import { readScannerCsamVerdict, readScannerCsamVerdicts } from './review-batch';
 
 export const scannerVerdicts = createScannerVerdictCache(readScannerCsamVerdict);
 
@@ -44,6 +47,11 @@ export async function getRetractedMedia(
         .select(
           sql<boolean>`${sql.raw(csamReview ? 'false' : csamRestrictedSql('i'))}`.as('restricted')
         )
+        .select(
+          sql<UrlSibling[]>`${sql.raw(csamReview ? "'[]'::json" : urlSiblingsSql('i'))}`.as(
+            'siblings'
+          )
+        )
         .where('i.id', '=', imageId)
         .where(
           sql<boolean>`${sql.raw(retractedImageWhereSql('i', { cdnLeg: retractedMediaCdnLeg() }))}`
@@ -62,6 +70,8 @@ export async function getRetractedMedia(
         ? await readScannerCsamVerdict(imageId)
         : await scannerVerdicts.read(imageId);
     if (verdict !== 'clear' && verdict !== 'none') return null;
+    const isSignal = (blockedFor: string | null) => blockedForSignal(blockedFor, patterns);
+    if (!(await siblingsServable(row.siblings, isSignal, readScannerCsamVerdicts))) return null;
   }
   return { url: row.url, type: row.type, mimeType: row.mimeType };
 }

@@ -257,6 +257,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // uninitialised client) keeps the plain behaviour, a bounded refetch that falls back to the last
   // list on failure.
   OAUTH_PROVIDERS_SERVE_STALE = 'oauth-providers-serve-stale',
+  // Offline access as a separate OAuth grant. Also read by the auth hub (apps/auth
+  // OFFLINE_GRANT_FLAG, same key). Here: a refresh-minted OAuth token's orchestrator work is held to
+  // its consent's Buzz cap (orchestrator/offline-spend-cap.ts). Global boolean, DEFAULT-OFF: a missing
+  // key or an unreachable Flipt reads false, today's behaviour.
+  OAUTH_OFFLINE_GRANT = 'oauth-offline-grant',
   // Writes superjson tRPC responses with `fastSuperjsonSerialize` (same output, cheaper walk)
   // instead of `superjson.serialize`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
@@ -554,6 +559,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // surfaces. The link-domain half throws either way — this flag has never governed it.
   USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
 
+  // BOOLEAN ONLY: read with no context into an edge-cached response shared by every visitor, so a
+  // segment or percentage rollout would cache one evaluation for everyone. OFF serves the
+  // profanity list shipped in the bundle; ON serves the moderator-managed ProfanityWord list.
+  PROFANITY_MANAGED_LIST = 'profanity-managed-list',
+
   // Kill switch for the event points engine (src/server/events/points). DEFAULT-OFF: an unknown
   // flag, or a client that never initialised, stops every award, removal, hat sync, signals tick
   // and referee run. Evaluated with no context and one fixed entity, so set the boolean and add no
@@ -642,14 +652,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // or unreachable): they are allowed and counted in generation_input_url_refusals_total{mode="log"}.
   GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',
   // On: App Blocks generation sources must be scanned Image rows, so orchestrator blob urls from
-  // apps are refused. Off (and unknown or unreachable): blob urls are accepted as before.
+  // apps are refused. Off: blob urls are accepted as before. Unreadable: answers on (refused).
   // EVALUATED PER APP like `app-blocks-storage-publish` (entityId = the app block id, NO context):
   // ramp it with an ENTITY_ID segment of app block ids. Read ONLY through
   // `appUsesScannedSourceRows` (`services/blocks/source-scanned-rows.ts`), so the host's picker,
   // the copy and the generation gate answer the same for one app.
   APP_BLOCK_SOURCE_SCANNED_ROWS = 'app-block-source-scanned-rows',
-  // On: App Blocks generation inputs on an external host are refused. Off (and unknown or
-  // unreachable): they are allowed and each one is logged as `app-block-source-refusal`.
+  // On: App Blocks generation inputs on an external host are refused. Off: they are allowed and
+  // each one is logged as `app-block-source-refusal`. Unreadable: answers on (refused), read
+  // through `readAppBlockSourceFlag`.
   APP_BLOCK_REFUSE_EXTERNAL_SOURCES = 'app-block-refuse-external-sources',
 
   // On: the followed creator-announcements feed first narrows to authors this viewer follows who

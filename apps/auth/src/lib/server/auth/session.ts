@@ -154,7 +154,9 @@ export async function mintSession(
     { jti: tokenId, expiresIn: sessionExpiresIn(lineage, now) }
   );
   // Best-effort: track the token so it can be invalidated later (logout / ban). A redis blip must not fail.
-  await sessions.trackToken(tokenId, user.id).catch(() => {});
+  await sessions.trackToken(tokenId, user.id).catch(() => {
+    // Swallowed on purpose: see above.
+  });
   return { token, family: familyId({ sid: lineage.sid, jti: tokenId }) ?? tokenId };
 }
 
@@ -347,9 +349,10 @@ export async function establishSession(
  * 2. REGISTERED first-party spoke — keeps this off the third-party OAuth flow, which reaches /login with a
  *    hub-relative returnUrl anyway.
  * 3. The landing is the spoke's `/api/auth/authorize` — the ONE shape that produces the second hop where the
- *    pending record gets consumed. Without this, a `createSpokeGuard` app (which sends the raw current page
- *    URL as returnUrl) on a foreign domain would hand off, receive no cookie, land on a page whose guard
- *    finds no session, bounce back to /login with the same returnUrl, and loop forever with no error. Trust
+ *    pending record gets consumed. Without this, an app that sends the raw current page URL to /login as
+ *    returnUrl (no `createSpokeGuard` app does now: they go through their own authorize) on a foreign domain
+ *    would hand off, receive no cookie, land on a page that finds no session, bounce back to /login with the
+ *    same returnUrl, and loop forever with no error. Trust
  *    is a `TrustedSpokeDomain` DB row, so that app needs no code change to appear.
  */
 async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | undefined> {
@@ -381,7 +384,7 @@ async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | und
   // THROWS without DATABASE_URL. A static import would put that in the graph of everything that touches
   // sessions, including unit tests that have no database.
   const { isFirstPartyOrigin } = await import('../oauth/first-party');
-  return (await isFirstPartyOrigin(origin)) ? domain : undefined;
+  return (await isFirstPartyOrigin(origin, 'post_login')) ? domain : undefined;
 }
 
 /** The valid session already on this request's civ-token cookie, or undefined. Best-effort. */

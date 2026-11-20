@@ -1,4 +1,7 @@
-import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  parseBitwiseBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 
 /**
@@ -242,13 +245,14 @@ export function filterImagesForViewer<
     viewer?: { id: number; isModerator?: boolean | null };
   }
 ) {
-  const maxLevel = Math.max(0, ...parseBitwiseBrowsingLevel(browsingLevel));
+  const level = browsingLevel & allBrowsingLevelsFlag;
+  const maxLevel = Math.max(0, ...parseBitwiseBrowsingLevel(level));
   return images.filter((image) => {
     const isOwner = !!viewer && image.userId === viewer.id;
     if (image.nsfwLevel === 0) return isOwner || !!viewer?.isModerator;
     const levelShown = modelNsfw
       ? image.nsfwLevel <= maxLevel
-      : Flags.intersects(image.nsfwLevel, browsingLevel);
+      : Flags.intersects(image.nsfwLevel, level);
     if (!levelShown) return false;
     if (image.poi && disablePoi && !isOwner) return false;
     if (image.minor && disableMinor && !isOwner) return false;

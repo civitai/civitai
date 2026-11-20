@@ -151,7 +151,7 @@ function PlacedBy({
 }: {
   counterparts: BookItems[number]['counterparts'];
   side: StickerBookSide;
-  /** When the most recent sticker landed — Ellie's mock carried a time. */
+  /** When the most recent sticker landed. */
   latestAt: Date | string | null;
 }) {
   if (!counterparts.length) return null;
