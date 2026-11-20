@@ -109,6 +109,14 @@ export const FEEDBACK_STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'] as
 
 export type FeedbackTriageStatus = (typeof FEEDBACK_STATUSES)[number];
 
+/**
+ * `Feedback.context` key holding the HQ sync HOLD: `{ at, by }`, written by the moderator queue's
+ * triage writes when a row moves BACK to `new`, removed when a row moves to any other status. The
+ * HQ status sync (`feedback-hq-sync`) skips a held row, so a moderator's reset is not undone by
+ * its next run. No column: `context` is jsonb, so this needs no migration.
+ */
+export const FEEDBACK_SYNC_HOLD_KEY = 'syncHold';
+
 /** Longest text one triage API call may append to the moderator-internal `triageNote`. */
 export const FEEDBACK_TRIAGE_NOTE_APPEND_MAX_LENGTH = 2000;
 

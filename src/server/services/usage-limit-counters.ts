@@ -1,7 +1,7 @@
 import type { NextApiRequest } from 'next';
 import { dbRead } from '~/server/db/client';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
-import { countGiftClaims } from '~/server/services/gift-claim-count';
+import { countCreatorGiftClaims } from '~/server/services/gift-claim-count';
 import type { UsageLimitId } from '~/shared/constants/usage-limits';
 import type { SessionUser } from '~/types/session';
 
@@ -24,7 +24,7 @@ export type UsageLimitCounter = (args: {
 export const usageLimitCounters: Partial<Record<UsageLimitId, UsageLimitCounter>> = {
   'gifts.monthly': async ({ user, req, start, end }) =>
     (await getFeatureFlagsAsync({ user, req })).modelGiftLinks
-      ? countGiftClaims(dbRead, user.id, start, end)
+      ? countCreatorGiftClaims(dbRead, user.id, start, end)
       : null,
 };
 

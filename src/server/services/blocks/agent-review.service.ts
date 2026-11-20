@@ -695,7 +695,9 @@ set -euo pipefail
 # envsubst only substitutes EXPORTED env vars; container env vars are already
 # exported into the process env, so AGENT_NAME / PUBLISH_REQUEST_ID / APP_SLUG /
 # BUNDLE_PRESIGNED_URL / CALLBACK_URL / CALLBACK_TOKEN / PRIOR_REPORT_JSON_B64 /
-# COST_CAP_USD / HOOKS_TOKEN all substitute.
+# COST_CAP_USD / HOOKS_TOKEN all substitute. AGENT_REVIEW_KIND and AGENT_REVIEW_SECTIONS
+# are set only on the connect lane / a targeted re-run, so the sed fallback reads them
+# with \${VAR:-}: under set -u a bare \${VAR} would abort the apply on every other run.
 if command -v envsubst >/dev/null 2>&1; then
   envsubst < /templates/review-agent.yaml.tmpl > /tmp/rendered.yaml
 else
@@ -708,6 +710,8 @@ else
       -e "s|\\\${PRIOR_REPORT_JSON_B64}|\${PRIOR_REPORT_JSON_B64}|g" \\
       -e "s|\\\${COST_CAP_USD}|\${COST_CAP_USD}|g" \\
       -e "s|\\\${HOOKS_TOKEN}|\${HOOKS_TOKEN}|g" \\
+      -e "s|\\\${AGENT_REVIEW_KIND}|\${AGENT_REVIEW_KIND:-}|g" \\
+      -e "s|\\\${AGENT_REVIEW_SECTIONS}|\${AGENT_REVIEW_SECTIONS:-}|g" \\
       /templates/review-agent.yaml.tmpl > /tmp/rendered.yaml
 fi
 

@@ -4,6 +4,7 @@ import {
   createScannerVerdictCache,
   csamRestrictedSql,
   retractedImageWhereSql,
+  upgradedRetractionSql,
   siblingsServable,
   urlSiblingsSql,
   type UrlSibling,
@@ -46,7 +47,9 @@ export async function getRetractedMedia(
       })[]
     >`
       SELECT i.url, i.type::text AS type, i."mimeType", i."blockedFor",
-        ${Prisma.raw(csamReview ? 'false' : csamRestrictedSql('i'))} AS restricted,
+        ${Prisma.raw(
+          csamReview ? 'false' : `(${csamRestrictedSql('i')} OR ${upgradedRetractionSql('i')})`
+        )} AS restricted,
         ${Prisma.raw(csamReview ? "'[]'::json" : urlSiblingsSql('i'))} AS siblings
       FROM "Image" i
       WHERE i.id = ${imageId} AND ${Prisma.raw(retractedImageWhereSql('i'))}

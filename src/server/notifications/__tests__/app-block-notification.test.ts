@@ -40,6 +40,7 @@ describe('app-block-approved — prepareMessage', () => {
       version: '1.2.0',
       hasPage: true,
       mature: false,
+      canOpenRunPage: true,
     });
     expect(m!.message).toBe('Your app "Cool App" was approved and will be live in a few minutes.');
     expect(m!.url).toBe('/apps/run/cool-app');
@@ -47,17 +48,25 @@ describe('app-block-approved — prepareMessage', () => {
   });
 
   it('encodes the slug into the run page path', () => {
-    expect(msg(approved, { slug: 'a b/c', hasPage: true })!.url).toBe('/apps/run/a%20b%2Fc');
+    expect(msg(approved, { slug: 'a b/c', hasPage: true, canOpenRunPage: true })!.url).toBe(
+      '/apps/run/a%20b%2Fc'
+    );
   });
 
   it.each([
-    ['the slug is missing', { hasPage: true }],
-    ['the slug is empty', { slug: '', hasPage: true }],
-    ['the slug is whitespace', { slug: '   ', hasPage: true }],
-    ['the slug is not a string', { slug: 42, hasPage: true }],
-    ['the app declares no page', { slug: 'cool-app', hasPage: false }],
-    ['the app is mature', { slug: 'cool-app', hasPage: true, mature: true }],
-    ['the notification predates hasPage', { slug: 'cool-app' }],
+    ['the slug is missing', { hasPage: true, canOpenRunPage: true }],
+    ['the slug is empty', { slug: '', hasPage: true, canOpenRunPage: true }],
+    ['the slug is whitespace', { slug: '   ', hasPage: true, canOpenRunPage: true }],
+    ['the slug is not a string', { slug: 42, hasPage: true, canOpenRunPage: true }],
+    ['the app declares no page', { slug: 'cool-app', hasPage: false, canOpenRunPage: true }],
+    ['the app is mature', { slug: 'cool-app', hasPage: true, mature: true, canOpenRunPage: true }],
+    ['the notification predates hasPage', { slug: 'cool-app', canOpenRunPage: true }],
+    // The run page 404s for a viewer outside its flags, and the submitter may be one.
+    [
+      'the submitter cannot open run pages',
+      { slug: 'cool-app', hasPage: true, canOpenRunPage: false },
+    ],
+    ['the notification predates canOpenRunPage', { slug: 'cool-app', hasPage: true }],
   ])('falls back to the submissions view when %s', (_label, details) => {
     const m = msg(approved, details as unknown as AppBlockModerationNotificationDetails);
     expect(m!.url).toBe('/apps/build?view=apps');
