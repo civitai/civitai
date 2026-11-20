@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   parseStickerAutoTrack,
   readStickerAutoTrackWorkflow,
@@ -7,6 +7,8 @@ import {
   takeStickerAutoTrackRun,
   autoTrackReadIsMissing,
   autoTrackSubmitGivesBack,
+  pollAutoTrack,
+  submitCountedAutoTrack,
 } from '~/server/utils/sticker-auto-track';
 
 const PLACER = 52;
@@ -214,5 +216,75 @@ describe('stickerAutoTrackDailyLimit', () => {
     for (let i = 0; i < 3; i++)
       expect((await takeStickerAutoTrackRun(store, { userId: PLACER, limit, now })).ok).toBe(true);
     expect((await takeStickerAutoTrackRun(store, { userId: PLACER, limit, now })).ok).toBe(false);
+  });
+
+  it('caps a moderator at their own number and everyone else at the entry', () => {
+    expect(stickerAutoTrackDailyLimit({ limit: 3, applies: true }, true)).toBe(25);
+    expect(stickerAutoTrackDailyLimit({ limit: 3, applies: true }, false)).toBe(3);
+  });
+});
+
+describe('submitCountedAutoTrack', () => {
+  const run = (submit: () => Promise<{ id?: string; status?: number }>) => {
+    const giveBack = vi.fn(async () => undefined);
+    const takeRun = vi.fn(async () => giveBack);
+    return { giveBack, takeRun, result: submitCountedAutoTrack({ takeRun, submit }) };
+  };
+
+  it('keeps the run when the job is created', async () => {
+    const { giveBack, result } = run(async () => ({ id: 'wf-1', status: 200 }));
+    await expect(result).resolves.toBe('wf-1');
+    expect(giveBack).not.toHaveBeenCalled();
+  });
+
+  it('hands the run back when the orchestrator refuses the job', async () => {
+    const { giveBack, result } = run(async () => ({ status: 400 }));
+    await expect(result).rejects.toThrow(/400/);
+    expect(giveBack).toHaveBeenCalledTimes(1);
+  });
+
+  // A 5xx or a thrown submit may still have made a job, so a give-back here would let a user
+  // run past the daily cap on the system account.
+  it('keeps the run when the submit errors or throws', async () => {
+    const failed = run(async () => ({ status: 503 }));
+    await expect(failed.result).rejects.toThrow(/503/);
+    const thrown = run(async () => Promise.reject(new Error('timeout')));
+    await expect(thrown.result).rejects.toThrow('timeout');
+    expect(failed.giveBack).not.toHaveBeenCalled();
+    expect(thrown.giveBack).not.toHaveBeenCalled();
+  });
+
+  it('submits nothing when no run can be taken', async () => {
+    const submit = vi.fn(async () => ({ id: 'wf-1' }));
+    const takeRun = vi.fn(async () => Promise.reject(new Error('limit reached')));
+    await expect(submitCountedAutoTrack({ takeRun, submit })).rejects.toThrow('limit reached');
+    expect(submit).not.toHaveBeenCalled();
+  });
+});
+
+describe('pollAutoTrack', () => {
+  const track = { ok: true, json: async () => TRACK };
+  const poll = (read: () => Promise<{ data?: unknown; error?: unknown; status?: number }>) =>
+    pollAutoTrack({ read, download: async () => track, maxScale: async () => 1 }, PLACER);
+
+  it('keeps polling through a failed read that is not a 404', async () => {
+    for (const status of [500, 502, undefined])
+      expect(await poll(async () => ({ error: new Error('read'), status }))).toEqual({
+        status: 'running',
+      });
+  });
+
+  it('reports a 404 as no such run', async () => {
+    expect(await poll(async () => ({ error: new Error('gone'), status: 404 }))).toEqual({
+      status: 'missing',
+    });
+  });
+
+  it('hands back the track of a finished run', async () => {
+    const result = await poll(async () => ({
+      data: finished([{ id: 'customcomfy-x-sticker_track_00002.json', url: BLOB_URL }]),
+      status: 200,
+    }));
+    expect(result).toMatchObject({ status: 'succeeded', startMs: START });
   });
 });

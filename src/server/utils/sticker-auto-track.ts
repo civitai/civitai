@@ -204,6 +204,60 @@ export function autoTrackReadIsMissing(status: number | undefined) {
   return status === 404;
 }
 
+type GiveBack = () => Promise<unknown>;
+
+/**
+ * Submit can only run after a run is counted, so no order of the callers' checks spends system
+ * Buzz uncounted. The run comes back only on an answered refusal.
+ */
+export async function submitCountedAutoTrack({
+  takeRun,
+  submit,
+}: {
+  takeRun: () => Promise<GiveBack | undefined>;
+  submit: () => Promise<{ id?: string; status?: number }>;
+}) {
+  const giveBack = await takeRun();
+  const { id, status } = await submit();
+  if (id) return id;
+  if (autoTrackSubmitGivesBack(status)) await giveBack?.().catch(() => undefined);
+  throw new Error(`sticker auto-track submit failed (${status ?? 'no response'})`);
+}
+
+export type StickerAutoTrackResult =
+  | { status: 'running' }
+  | { status: 'failed' }
+  | { status: 'missing' }
+  | { status: 'succeeded'; track: StickerTrackV1; startMs: number };
+
+/** Tick 0 is the placer's pose at `startMs`, not at video time 0. */
+export async function pollAutoTrack(
+  {
+    read,
+    download,
+    maxScale,
+  }: {
+    read: () => Promise<{ data?: unknown; error?: unknown; status?: number }>;
+    download: (url: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>;
+    maxScale: (imageId: number) => Promise<number>;
+  },
+  userId: number
+): Promise<StickerAutoTrackResult> {
+  const { data, error, status } = await read();
+  if (!data && error && !autoTrackReadIsMissing(status)) return { status: 'running' };
+  const run = readStickerAutoTrackWorkflow(data, userId);
+  if (run.status === 'running' || run.status === 'failed') return { status: run.status };
+  if (run.status !== 'download') return { status: 'missing' };
+
+  const response = await download(run.url);
+  if (!response.ok) return { status: 'failed' };
+  const track = parseStickerAutoTrack(
+    await response.json().catch(() => null),
+    await maxScale(run.imageId)
+  );
+  return track ? { status: 'succeeded', track, startMs: run.startMs } : { status: 'failed' };
+}
+
 export const STICKER_AUTO_TRACK_MODERATOR_DAILY_RUNS = 25;
 
 // `applies` is deliberately not read: a disabled entry must not lift this limit, because it is the

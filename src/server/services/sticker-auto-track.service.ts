@@ -13,14 +13,15 @@ import { usageLimitMessage } from '~/shared/constants/usage-limits';
 import type { SessionUser } from '~/types/session';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
-import type { StickerTrackV1 } from '~/shared/utils/sticker-track';
-import type { AutoTrackMetadata, StickerAutoTrackPose } from '~/server/utils/sticker-auto-track';
+import type {
+  AutoTrackMetadata,
+  StickerAutoTrackPose,
+  StickerAutoTrackResult,
+} from '~/server/utils/sticker-auto-track';
 import {
-  autoTrackReadIsMissing,
-  autoTrackSubmitGivesBack,
   buildStickerAutoTrackWorkflow,
-  parseStickerAutoTrack,
-  readStickerAutoTrackWorkflow,
+  pollAutoTrack,
+  submitCountedAutoTrack,
   stickerAutoTrackDailyLimit,
   takeStickerAutoTrackRun,
   stickerAutoTrackVideoAir,
@@ -94,38 +95,35 @@ export async function startStickerAutoTrack({
   if (maxMs === null)
     throw throwBadRequestError('placement: auto-track has to start before the video ends');
 
-  const giveBack = await takeDailyRun(user);
   const metadata: AutoTrackMetadata = { stickerAutoTrack: { userId, imageId, startMs } };
-  const { data, response } = await submitWorkflowWithRetry({
-    client: internalOrchestratorClient,
-    body: {
-      externalId: randomUUID(),
-      metadata,
-      tags: ['sticker-track'],
-      currencies: [],
-      steps: [
-        buildStickerAutoTrackWorkflow({
-          videoAir: stickerAutoTrackVideoAir(image.url),
-          pose,
-          startMs,
-          maxMs,
-        }),
-      ],
+  const workflowId = await submitCountedAutoTrack({
+    takeRun: () => takeDailyRun(user),
+    submit: async () => {
+      const { data, response } = await submitWorkflowWithRetry({
+        client: internalOrchestratorClient,
+        body: {
+          externalId: randomUUID(),
+          metadata,
+          tags: ['sticker-track'],
+          currencies: [],
+          steps: [
+            buildStickerAutoTrackWorkflow({
+              videoAir: stickerAutoTrackVideoAir(image.url),
+              pose,
+              startMs,
+              maxMs,
+            }),
+          ],
+        },
+      });
+      return { id: data?.id, status: response?.status };
     },
   });
-  if (!data?.id) {
-    if (autoTrackSubmitGivesBack(response?.status)) await giveBack?.().catch(() => undefined);
-    throw new Error(`sticker auto-track submit failed (${response?.status ?? 'no response'})`);
-  }
-  return { workflowId: data.id, startMs, maxMs };
+  return { workflowId, startMs, maxMs };
 }
 
-export type StickerAutoTrackResult =
-  | { status: 'running' }
-  | { status: 'failed' }
-  | { status: 'succeeded'; track: StickerTrackV1; startMs: number };
+export type { StickerAutoTrackResult };
 
-/** Tick 0 is the placer's pose at `startMs`, not at video time 0. */
 export async function getStickerAutoTrack({
   userId,
   workflowId,
@@ -133,26 +131,31 @@ export async function getStickerAutoTrack({
   userId: number;
   workflowId: string;
 }): Promise<StickerAutoTrackResult> {
-  const {
-    data,
-    error,
-    response: readResponse,
-  } = await getWorkflow({
-    client: internalOrchestratorClient,
-    path: { workflowId },
-  });
-  if (!data && error && !autoTrackReadIsMissing(readResponse?.status)) return { status: 'running' };
-  const read = readStickerAutoTrackWorkflow(data, userId);
-  if (read.status === 'running' || read.status === 'failed') return { status: read.status };
-  if (read.status !== 'download') throw throwNotFoundError('placement: auto-track run not found');
-
-  // The signed URL answers 301 to the file; fetch follows it.
-  const response = await outboundFetch(read.url, { timeoutMs: DOWNLOAD_TIMEOUT_MS });
-  if (!response.ok) return { status: 'failed' };
-  const space = await stickerSpaceFor(read.imageId, userId);
-  const track = parseStickerAutoTrack(
-    await response.json().catch(() => null),
-    stickerMaxScale(space.settings)
+  const result = await pollAutoTrack(
+    {
+      read: async () => {
+        const { data, error, response } = await getWorkflow({
+          client: internalOrchestratorClient,
+          path: { workflowId },
+        });
+        return { data, error, status: response?.status };
+      },
+      // The signed URL answers 301 to the file; fetch follows it.
+      download: (url) => outboundFetch(url, { timeoutMs: DOWNLOAD_TIMEOUT_MS }),
+      // Only the creator's size limit: a space turned off after submit fails at placing, not here.
+      maxScale: async (imageId) =>
+        stickerMaxScale(
+          (
+            await resolvePlacementSpaceFor({
+              surface: 'sticker',
+              targetType: 'image',
+              targetId: imageId,
+            })
+          ).settings
+        ),
+    },
+    userId
   );
-  return track ? { status: 'succeeded', track, startMs: read.startMs } : { status: 'failed' };
+  if (result.status === 'missing') throw throwNotFoundError('placement: auto-track run not found');
+  return result;
 }
