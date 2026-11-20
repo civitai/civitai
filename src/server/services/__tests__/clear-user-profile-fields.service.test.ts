@@ -92,6 +92,15 @@ describe('clearUserProfileFields', () => {
     expect(archive).toHaveBeenCalledWith(expect.objectContaining({ links }));
   });
 
+  it('archives the links of a user who has links but no profile row', async () => {
+    db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+    db.userProfile.findUnique.mockResolvedValue(null as never);
+    const links = [{ id: 1, url: 'https://example.invalid/pay', type: 'Sponsorship' }];
+    db.userLink.findMany.mockResolvedValue(links as never);
+    await clear();
+    expect(archive).toHaveBeenCalledWith(expect.objectContaining({ profile: null, links }));
+  });
+
   it('writes no archive and no record when the user has no profile row', async () => {
     db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
     db.userProfile.findUnique.mockResolvedValue(null as never);

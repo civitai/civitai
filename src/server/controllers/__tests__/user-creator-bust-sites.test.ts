@@ -244,20 +244,23 @@ describe('creator-card bust in the profile and user write handlers', () => {
         }
       );
 
-      it('archives the old links before a moderator replaces them', async () => {
-        dbMock.dbWrite.userLink.findMany.mockResolvedValue([
-          { id: 5, url: 'https://example.invalid/old', type: 'Social' },
-        ] as never);
-        await updateUserProfileHandler({
-          input: { userId: OWNER, socialLinks: [] },
-          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
-        } as never);
-        const archived = JSON.parse(upload.bodies[0]);
-        expect(archived.links).toEqual([
-          { id: 5, url: 'https://example.invalid/old', type: 'Social' },
-        ]);
-        expect(archived.clearedFields).toEqual(['links']);
-      });
+      it.each(['socialLinks', 'sponsorshipLinks'])(
+        'archives the old links before a moderator replaces %s',
+        async (key) => {
+          dbMock.dbWrite.userLink.findMany.mockResolvedValue([
+            { id: 5, url: 'https://example.invalid/old', type: 'Social' },
+          ] as never);
+          await updateUserProfileHandler({
+            input: { userId: OWNER, [key]: [] },
+            ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+          } as never);
+          const archived = JSON.parse(upload.bodies[0]);
+          expect(archived.links).toEqual([
+            { id: 5, url: 'https://example.invalid/old', type: 'Social' },
+          ]);
+          expect(archived.clearedFields).toEqual(['links']);
+        }
+      );
 
       it('archives nothing for an edit that touches no profile text', async () => {
         await updateUserProfileHandler({
