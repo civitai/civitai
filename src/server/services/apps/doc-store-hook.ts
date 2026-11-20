@@ -239,9 +239,9 @@ function readResult(result: unknown): HookVerdict {
 /**
  * One signed POST to the runner. Never throws: every failure is `unavailable`. A response counts
  * only when its signature verifies over the exact body bytes, its `req` is the sha256 of the
- * exact request body sent, and its `ts` is within the skew window; a non-2xx answer is a runner
- * fault whatever it says (a 500 includes the backstop terminating a call that outran its
- * interrupt), so it is `unavailable` without being read.
+ * exact request body sent, and its `ts` is within the skew window. Any other status is a runner
+ * fault whatever it says, `unavailable` without being read, unless the caller names it in
+ * `alsoStatuses`: never do that for `/v1/check`, where it would turn a fault into a verdict.
  */
 export async function postToHookRunner(
   config: HookRunnerConfig | null,

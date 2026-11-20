@@ -377,7 +377,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { fakeRemixRunner } from '~/__tests__/mocks/remix-runner.fake';
 import { bumpRemixAppRegistry } from '~/server/services/remix-app-registry.service';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { createHash } from 'crypto';
+import { createHash, createHmac } from 'crypto';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { OnboardingSteps } from '~/server/common/enums';
 import { verifyProvenance } from '~/server/services/orchestrator/remix-provenance';
@@ -390,6 +390,7 @@ import {
   REMIX_APP_UNJUDGED,
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
+import { REMIX_APP_UNAVAILABLE } from '~/server/services/remix-app-registry.service';
 import { REMIX_SYSTEM_ACTOR } from '~/shared/remix-apps/row.schema';
 import { listRemixApps, type RemixAppCaller } from '~/server/services/remix-app.service';
 import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
@@ -2145,23 +2146,75 @@ describe('a user app', () => {
         expect(submits()).toHaveLength(1);
       });
 
-      it('a call the runner quarantined sends the app back to review, and refuses the run', async () => {
+      it('a quarantine refuses the run as unavailable; three distinct viewers on one source hold the app', async () => {
         vi.stubGlobal(
           'fetch',
           fakeRemixRunner({ secret: SECRET, apps: {}, quarantined: true }).fetchImpl
         );
-        await expect(runAs(101)).rejects.toMatchObject({
+        // One viewer, many times: counted once, never a hold.
+        for (let i = 0; i < 4; i++)
+          await expect(runAs(101)).rejects.toMatchObject({
+            code: 'SERVICE_UNAVAILABLE',
+            message: REMIX_APP_UNAVAILABLE,
+          });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(stored.status).toBe('remix');
+        expect(written()).toHaveLength(1);
+        expect(stored.manifest).toMatchObject({
+          reviewLog: [expect.objectContaining({ action: 'held-runner-quarantine-observed' })],
+        });
+        // The author's own runs never count.
+        await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+        expect(written()).toHaveLength(1);
+        // A new source starts the count again.
+        stored = {
+          ...stored,
+          manifest: { ...stored.manifest, remix: { ...stored.manifest.remix, source: TWO_SOURCE } },
+        };
+        await bumpRemixAppRegistry();
+        await expect(runAs(102)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+        expect(
+          (stored.manifest as { runnerQuarantines?: { viewers: unknown[] } }).runnerQuarantines
+            ?.viewers
+        ).toHaveLength(1);
+        await expect(runAs(103)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+        expect(stored.status).toBe('remix');
+        // The third distinct viewer on this source holds it.
+        await expect(runAs(104)).rejects.toMatchObject({
           code: 'PRECONDITION_FAILED',
           message: REMIX_APP_HELD,
         });
-        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
         expect(stored.status).toBe('remix_disabled');
-        expect(stored.manifest).toMatchObject({
-          review: 'submitted',
-          reviewLog: [
-            expect.objectContaining({ action: 'held-runner-quarantine', by: REMIX_SYSTEM_ACTOR }),
-          ],
+        expect(stored.manifest).toMatchObject({ review: 'submitted' });
+        expect(
+          (stored.manifest as unknown as { reviewLog: { action: string }[] }).reviewLog.at(-1)
+        ).toMatchObject({
+          action: 'held-runner-quarantine',
+          by: REMIX_SYSTEM_ACTOR,
         });
+      });
+
+      it.each([
+        ['an unsigned 423', 'wrong-secret'.padEnd(32, 'x'), 'quarantined'],
+        ['a signed 423 of another kind', SECRET, 'overloaded'],
+      ])('%s is not a quarantine: unavailable, nothing recorded', async (_, signer, code) => {
+        vi.stubGlobal('fetch', (async (_url: string, init: RequestInit) => {
+          const request = JSON.parse(String(init.body)) as { ts: number };
+          const response = JSON.stringify({
+            ts: request.ts,
+            req: createHash('sha256').update(String(init.body)).digest('hex'),
+            error: { code, message: 'x' },
+          });
+          return new Response(response, {
+            status: 423,
+            headers: {
+              'x-storage-hook-sig': createHmac('sha256', signer).update(response).digest('hex'),
+            },
+          });
+        }) as unknown as typeof fetch);
+        for (const viewer of [101, 102, 103])
+          await expect(runAs(viewer)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+        expect(written()).toHaveLength(0);
       });
 
       it("calls the remix runner's own URL and secret, never the permission-check runner's", async () => {

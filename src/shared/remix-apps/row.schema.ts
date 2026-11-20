@@ -278,6 +278,7 @@ const reviewLogEntry = z.strictObject({
     'held-combination-blocks',
     'held-classifier-error',
     'held-runner-quarantine',
+    'held-runner-quarantine-observed',
   ]),
   sha256: z.string().optional(),
   mature: z.boolean().optional(),
@@ -329,6 +330,15 @@ export const remixManifestSchema = z
      * their id: distinct, not secret, so no listing returns it. A submit starts it again; an
      * approval clears it.
      */
+    /** Viewers the runner refused as quarantined on this source, keyed as `combinationBlocks`. */
+    runnerQuarantines: z
+      .strictObject({
+        sha256: z.string().regex(/^[0-9a-f]{64}$/),
+        viewers: z
+          .array(z.strictObject({ key: z.string().regex(/^[0-9a-f]{16}$/), at: z.string() }))
+          .max(REMIX_COMBINATION_BLOCKS_MAX),
+      })
+      .optional(),
     combinationBlocks: z
       .array(z.string().regex(/^[0-9a-f]{16}$/))
       .max(REMIX_COMBINATION_BLOCKS_MAX)

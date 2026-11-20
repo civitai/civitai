@@ -47,7 +47,9 @@ import {
   getRegisteredRemixApp,
   holdUserRemixApp,
   isRunnableBy,
+  recordRunnerQuarantine,
   REMIX_APP_HELD,
+  REMIX_APP_UNAVAILABLE,
   type RegisteredRemixApp,
 } from '~/server/services/remix-app-registry.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
@@ -75,6 +77,7 @@ import {
   REMIX_SEGMENT_TAG_PREFIX,
   remixRunTags,
 } from '~/shared/remix-apps/tags';
+import { RemixQuarantinedError } from '~/server/services/remix-app-runner';
 import { orchestratorRefundableStatuses } from '~/shared/constants/generation.constants';
 import { isMature } from '~/shared/constants/orchestrator.constants';
 import type { RemixSourceImage } from '~/shared/utils/remix-tier';
@@ -479,9 +482,31 @@ async function advance({
 
   const source = runtimeSourceOf(image);
   const currencies = getAllowedAccountTypes(caller.features, ['blue']);
+  // The runner's quarantine counts once per other viewer; it holds the app only on several.
+  const quarantined = async (error: unknown) => {
+    if (!(error instanceof RemixQuarantinedError)) return error;
+    const counts = !!author && author.userId !== caller.user.id;
+    const held =
+      counts &&
+      (await recordRunnerQuarantine(app.slug, {
+        viewerId: caller.user.id,
+        sha256: error.sha256,
+      }).catch((e: unknown) => {
+        logToAxiom({
+          name: 'remix-app-run',
+          type: 'error',
+          message: 'Could not record a quarantined run of a user remix app',
+          payload: { slug: app.slug, error: e instanceof Error ? e.message : String(e) },
+        });
+        return false;
+      }));
+    return held
+      ? new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD })
+      : new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
+  };
   const replay = () =>
-    replayer(source, log).catch((error) => {
-      throw error instanceof RemixReplayError ? damaged(error.message) : error;
+    replayer(source, log).catch(async (error) => {
+      throw error instanceof RemixReplayError ? damaged(error.message) : await quarantined(error);
     });
   const pending = [...answers];
   let outcome = await replay();
@@ -556,7 +581,12 @@ async function advance({
   // An author's own run is audited as any other, with the author as the viewer: their words count
   // against them, and their refusals never move their own app's count.
   const othersApp = !!author && author.userId !== caller.user.id && request.kind === 'image';
-  const part = othersApp && authorPrompt ? await authorPrompt(source, log) : null;
+  const part =
+    othersApp && authorPrompt
+      ? await authorPrompt(source, log).catch(async (error) => {
+          throw await quarantined(error);
+        })
+      : null;
   if (othersApp) await assertAuthorPartPasses(app.slug, part);
 
   const tags = remixRunTags({ slug: app.slug, runId, segment: index, runtime: true });

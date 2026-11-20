@@ -63,8 +63,12 @@ export function remixRunnerConfig(): HookRunnerConfig | null {
   return { url: url.replace(/\/+$/, ''), secret };
 }
 
-/** The runner quarantined this app: one of its calls outran the interrupt. */
-export class RemixQuarantinedError extends Error {}
+/** The runner quarantined this source of the app: one of its calls outran the interrupt. */
+export class RemixQuarantinedError extends Error {
+  constructor(readonly sha256: string) {
+    super('quarantined by the runner');
+  }
+}
 
 /** The runner's signed refusal of a quarantined app. */
 const QUARANTINED_STATUS = 423;
@@ -75,12 +79,13 @@ export async function callRemixRunner(
   opts: { config?: HookRunnerConfig | null; fetchImpl?: typeof fetch; nowSec?: () => number } = {}
 ): Promise<RunnerResult[]> {
   const branches = call.branches ?? [];
+  const sha256 = createHash('sha256').update(call.source).digest('hex');
   const answer = await postToHookRunner(
     opts.config === undefined ? remixRunnerConfig() : opts.config,
     '/v1/remix/replay',
     {
       appId: call.appId,
-      sha256: createHash('sha256').update(call.source).digest('hex'),
+      sha256,
       source: call.source,
       input: {
         source: call.image,
@@ -96,7 +101,7 @@ export async function callRemixRunner(
     answer.kind === 'ok' &&
     (answer.body.error as { code?: unknown } | undefined)?.code === 'quarantined'
   )
-    throw new RemixQuarantinedError(`${call.appId} is quarantined by the runner`);
+    throw new RemixQuarantinedError(sha256);
   const results =
     answer.kind === 'ok' && Array.isArray(answer.body.results)
       ? answer.body.results.map(readResult)

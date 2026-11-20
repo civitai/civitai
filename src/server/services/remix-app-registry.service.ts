@@ -43,7 +43,6 @@ import type { Prisma } from '@prisma/client';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
 import {
-  RemixQuarantinedError,
   userRemixAuthorPrompt,
   userRemixBranchReplayer,
   userRemixFirstRequest,
@@ -176,19 +175,14 @@ function register(
     app = compileRemixApp({ slug, name, description, version }, spec);
   }
   const loadSource = () => loadUserRemixSource(slug, (spec as { source: string }).source);
-  const held = holdOnQuarantine(slug);
   const replay: RemixReplayer =
     'source' in spec
-      ? held(userRemixReplayer(slug, remixBlockId(slug), loadSource))
+      ? userRemixReplayer(slug, remixBlockId(slug), loadSource)
       : (source, log) => replayRemixApp(app, source, log);
   const firstRequest =
-    'source' in spec
-      ? held(userRemixFirstRequest(slug, remixBlockId(slug), loadSource))
-      : undefined;
+    'source' in spec ? userRemixFirstRequest(slug, remixBlockId(slug), loadSource) : undefined;
   const authorPrompt =
-    'source' in spec
-      ? held(userRemixAuthorPrompt(slug, remixBlockId(slug), loadSource))
-      : undefined;
+    'source' in spec ? userRemixAuthorPrompt(slug, remixBlockId(slug), loadSource) : undefined;
   const shape = createHash('sha256').update(runShape(spec)).digest('hex').slice(0, 16);
   const { version: _, ...rest } = listing;
   return {
@@ -203,24 +197,6 @@ function register(
 }
 
 export const REMIX_APP_HELD = 'This app is back in review. Try another one.';
-
-/** A call the runner quarantined (it outran the interrupt) sends the app back to review. */
-const holdOnQuarantine =
-  (slug: string) =>
-  <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
-  (...args: A): Promise<R> =>
-    fn(...args).catch(async (error: unknown) => {
-      if (!(error instanceof RemixQuarantinedError)) throw error;
-      await holdUserRemixApp(slug, { action: 'held-runner-quarantine' }).catch((e: unknown) =>
-        logToAxiom({
-          name: 'remix-app-registry',
-          type: 'error',
-          message: 'Could not send a quarantined user remix app back to review',
-          payload: { slug, error: e instanceof Error ? e.message : String(e) },
-        })
-      );
-      throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD });
-    });
 
 /** A stored row as a registered app, or `null` (logged) when it no longer validates. */
 export function registerRow(
@@ -776,7 +752,7 @@ export async function reviewUserRemixApp({
     stored.minorThemed ??
     (reason === 'minor-themed' ? { by: moderatorId, at: new Date().toISOString() } : undefined);
   // A mod who approves has read the source the refused runs ran: the count starts again.
-  const { combinationBlocks: _blocks, ...unblocked } = stored;
+  const { combinationBlocks: _blocks, runnerQuarantines: _quarantines, ...unblocked } = stored;
   const manifest = withReviewLog(
     {
       ...(decision === 'approved' ? unblocked : stored),
@@ -909,7 +885,7 @@ async function holdMatureApp(first: RemixAppRow, moderatorId: number) {
 export async function holdUserRemixApp(
   slug: string,
   hold:
-    | { action: 'held-author-prompt' | 'held-runner-quarantine' }
+    | { action: 'held-author-prompt' }
     | {
         /** `held-classifier-error`: a first strike only because the classifier could not answer. */
         action: 'held-combination-blocks' | 'held-classifier-error';
@@ -968,6 +944,67 @@ export async function validateUserRemixApp(slug: string) {
     branches: userRemixBranchReplayer(slug, remixBlockId(slug), async () => remix.source),
   });
   return { sha256: remixReviewHash({ ...manifest, remix }), graph, paths, issues };
+}
+
+const QUARANTINE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The runner refused a viewer's run of an approved user app as quarantined (a call of this source
+ * outran the interrupt). Each viewer counts once per source and day; the
+ * {@link REMIX_COMBINATION_BLOCKS_MAX}th distinct one sends the app back to review, since a fault
+ * of the shared pool will not keep landing on one source for different viewers. `true` when this
+ * pulled it.
+ */
+export async function recordRunnerQuarantine(
+  slug: string,
+  { viewerId, sha256 }: { viewerId: number; sha256: string }
+): Promise<boolean> {
+  for (let attempt = 1; ; attempt++) {
+    const { row, manifest, remix } = await readUserRemixApp(slug);
+    if (manifest.review !== 'approved') return false;
+    const since = Date.now() - QUARANTINE_WINDOW_MS;
+    const seen =
+      manifest.runnerQuarantines?.sha256 === sha256
+        ? manifest.runnerQuarantines.viewers.filter(({ at }) => Date.parse(at) >= since)
+        : [];
+    const key = createHash('sha256').update(`${slug}:${viewerId}`).digest('hex').slice(0, 16);
+    if (seen.some((viewer) => viewer.key === key)) return false;
+    const viewers = [...seen, { key, at: new Date().toISOString() }];
+    const pull = viewers.length >= REMIX_COMBINATION_BLOCKS_MAX;
+    const counted = {
+      ...manifest,
+      runnerQuarantines: { sha256, viewers: viewers.slice(-REMIX_COMBINATION_BLOCKS_MAX) },
+    };
+    const entry = {
+      by: REMIX_SYSTEM_ACTOR,
+      sha256: remixReviewHash({ ...manifest, remix }),
+      note: `viewer ${key}`,
+    };
+    try {
+      await writeUserRemixApp(
+        row,
+        pull
+          ? {
+              manifest: withReviewLog(
+                { ...counted, review: 'submitted' },
+                { ...entry, action: 'held-runner-quarantine' }
+              ),
+              status: REMIX_STATUS.disabled,
+            }
+          : {
+              manifest: withReviewLog(counted, {
+                ...entry,
+                action: 'held-runner-quarantine-observed',
+              }),
+            }
+      );
+    } catch (error) {
+      if (attempt === SWEEP_ATTEMPTS || !(error instanceof TRPCError && error.code === 'CONFLICT'))
+        throw error;
+      continue;
+    }
+    return pull;
+  }
 }
 
 /** A minor-themed mark bars the mature engine on every app its author holds, not only the marked one. */
