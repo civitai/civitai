@@ -229,12 +229,12 @@ describe('applyModelNsfwTextScan and the .com face', () => {
   };
   const sqlWith = (fragment: string) =>
     dbMock.dbWrite.$executeRaw.mock.calls
-      .map(([strings]: [readonly string[]]) => strings.join('?'))
+      .map((call: unknown[]) => (call[0] as readonly string[]).join('?'))
       .find((sql: string) => sql.includes(fragment));
   const stampSql = () => sqlWith('sfwFaceCheckedAt');
   const markerSql = () =>
     dbMock.dbWrite.$executeRaw.mock.calls
-      .map(([strings]: [readonly string[]]) => strings.join('?'))
+      .map((call: unknown[]) => (call[0] as readonly string[]).join('?'))
       .find(
         (sql: string) =>
           sql.includes("'systemNsfwLock', jsonb_build_object('source'") &&
@@ -324,7 +324,11 @@ describe('applyModelNsfwTextScan and the .com face', () => {
     ['the .com cover changed', { meta: stampFor(face), sfwCoverImageId: 6 }],
     ['there is no stamp', { meta: null }],
   ])('re-checks the face when %s, and stamps it when it passes', async (_, over) => {
-    const row = model({ ...face, ...over });
+    const row = model({ ...face, ...over }) as ReturnType<typeof model> & {
+      sfwName: string | null;
+      sfwDescription: string | null;
+      sfwCoverImageId: number | null;
+    };
     dbMock.dbWrite.model.findUnique.mockResolvedValue(row);
     await scan(args(true));
     expect(checkSfwFaceMock).toHaveBeenCalledWith(
@@ -690,8 +694,8 @@ describe('applyComFaceHeldVerdict', () => {
   });
 
   it.each([
-    ['held', held, false],
-    ['nothing held (control)', {}, false],
+    ['held', held as Record<string, unknown>],
+    ['nothing held (control)', {} as Record<string, unknown>],
   ])('a PG-13 read leaves %s: no held verdict afterwards', async (_, meta) => {
     await insert({ ...face, meta });
     dbMock.dbWrite.$executeRaw.mockImplementation(db.$executeRaw as never);
