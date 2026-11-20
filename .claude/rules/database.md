@@ -13,6 +13,7 @@ Main-app service code gets this from `.claude/rules/server.md` (Use X for Y), wh
 
 - Reads use `dbRead` / `kyselyRead`; read-after-write uses `getDbWithoutLag` / `getKyselyWithoutLag`. A plain read on `dbWrite` needs a `// primary: <reason>` comment.
 - New queries use Kysely (`kyselyRead` / `kyselyWrite`) or a function in `@civitai/db-queries`; Prisma ORM is fine for simple CRUD. New raw SQL goes in `@civitai/db-queries` as a Kysely `sql` query (the package has no Prisma client); add no new `$queryRaw` / `$executeRaw` in app code. The plan: `docs/db-queries-kysely-plan.md`.
+- A row type comes from the generated Kysely types: `Selectable<DB['Table']>`, or `Pick<Selectable<DB['Table']>, 'id' | 'name'>` for a subset. Never hand-write an object type that repeats a table's columns, and keep the schema's nullability (no `| null` on a `NOT NULL` column). Let a query's result type be inferred rather than restated. `DB` is `@civitai/db-schema/kysely` (an app with its own database uses its own `DB`).
 
 ## Commands and schema files
 
