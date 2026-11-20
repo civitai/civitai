@@ -3519,6 +3519,22 @@ describe('buyer reviews', () => {
     expect(await reviewRows(id)).toEqual([]);
   });
 
+  it("copies the review's buyer, seller and offering from its deal, for either verdict", async () => {
+    const happy = await completed();
+    const notQuite = await completed();
+    await review(happy, 'Happy');
+    await review(notQuite, 'NotQuite');
+    for (const id of [happy, notQuite]) {
+      const d = (
+        await q<{ buyerId: number; sellerId: number; offeringId: number }>(
+          `SELECT "buyerId", "sellerId", "offeringId" FROM "ServiceDeal" WHERE id = $1`,
+          [id]
+        )
+      )[0];
+      expect(await reviewRows(id)).toMatchObject([d]);
+    }
+  });
+
   it('not quite records the review and leaves the release time alone', async () => {
     const id = await completed();
     const before = (await deal(id)).releaseAt;

@@ -12,7 +12,12 @@ import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/ac
 import { unpublishArticleById } from '~/server/services/article.service';
 import { violationMetadata } from '~/server/services/text-scan/public-content';
 import { deleteChatMessage } from '~/server/services/chat.service';
+import {
+  blockServiceDealReviewText,
+  requeueBlockedServiceDealReviewText,
+} from '~/server/services/service-deal-review-moderation.adapter';
 import { requeueBlockedServiceOffering } from '~/server/services/service-offering-moderation.adapter';
+import type { ServiceDealReviewTextType } from '~/server/services/text-scan/profiles/service-deal-review.profile';
 import { bulkSetCommentV3TosViolation } from '~/server/services/commentv3/moderation.service';
 import {
   CSAM_HOLD_POST_UNPUBLISH_REASON,
@@ -75,6 +80,8 @@ const REMOVABLE_ENTITY_TYPES = [
   'Article',
   'ServiceOffering',
   'PostText',
+  'ServiceDealReview',
+  'ServiceDealReviewReply',
 ] as const;
 const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[number] =>
   (REMOVABLE_ENTITY_TYPES as readonly string[]).includes(type);
@@ -229,6 +236,10 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
         where: { id: entityId, ingestion: { not: ServiceOfferingIngestionStatus.Blocked } },
         data: { ingestion: ServiceOfferingIngestionStatus.Blocked },
       });
+      return;
+    case 'ServiceDealReview':
+    case 'ServiceDealReviewReply':
+      await blockServiceDealReviewText(entityType, entityId);
       return;
   }
 }
@@ -391,8 +402,17 @@ export async function decideCsamHold(args: DecideArgs) {
 
   // A block for this queue files no report, so its dismiss is the way out. The requeue still refuses
   // while another hold or an undismissed verdict applies; the reconcile job settles what it lets out.
-  if (decision === 'dismiss' && hold.entityType === 'ServiceOffering')
-    await requeueBlockedServiceOffering(hold.entityId).catch((error) =>
+  const requeue =
+    decision !== 'dismiss'
+      ? null
+      : hold.entityType === 'ServiceOffering'
+      ? requeueBlockedServiceOffering
+      : hold.entityType === 'ServiceDealReview' || hold.entityType === 'ServiceDealReviewReply'
+      ? (id: number) =>
+          requeueBlockedServiceDealReviewText(hold.entityType as ServiceDealReviewTextType, id)
+      : null;
+  if (requeue)
+    await requeue(hold.entityId).catch((error) =>
       logToAxiom({
         name: 'text-scan',
         type: 'error',
