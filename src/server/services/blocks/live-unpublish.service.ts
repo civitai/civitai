@@ -251,7 +251,8 @@ const UNSETTLED_WHY: Record<Exclude<SyncOutcome, 'settled'> | 'waiting', string>
  * After a takedown COMMITS: reconcile the app's pointer and return the note for the moderator, if
  * any. Not awaited by default. With `awaitMs`, waits up to that long and notes any outcome short of
  * settled. For the readiness app nothing is started and the note says the app keeps serving. With
- * the flag off, nothing; a flag or readiness read that fails is noted, never read as "off". Never
+ * the flag off, nothing; a flag read that fails is noted, never read as "off". An unreadable
+ * readiness list does not stop the takedown (the unpublish script enforces the list). Never
  * throws; the takedown already happened.
  */
 export async function takeDownLiveApp(
