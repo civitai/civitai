@@ -776,6 +776,7 @@ export const JobQueueType = {
   CdnAccessSync: 'CdnAccessSync',
   ImageCdnPersistRetry: 'ImageCdnPersistRetry',
   CsamArchive: 'CsamArchive',
+  PendingDelete: 'PendingDelete',
 } as const;
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
 export const VaultItemStatus = {
@@ -1122,6 +1123,7 @@ export const ServiceDealEventType = {
   Held: 'Held',
   Released: 'Released',
   Refunded: 'Refunded',
+  ReviewedHappy: 'ReviewedHappy',
 } as const;
 export type ServiceDealEventType = (typeof ServiceDealEventType)[keyof typeof ServiceDealEventType];
 export const ServiceDealFileKind = {

@@ -125,6 +125,22 @@ function csamRowSql(image: string): string {
 }
 
 /**
+ * Whether the "Image" row aliased `image` sits on a url retracted by an upgraded deny. An upgraded
+ * deny may have capped a hold on a row since deleted, which nothing here can see, so its url stays
+ * with the CSAM grant. An outright retraction stamps both times from one expression in one INSERT,
+ * so they are equal; an upgrade keeps the earlier deny time. Anything but equal, NULL included,
+ * reads as upgraded.
+ */
+export function upgradedRetractionSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image.toLowerCase() === 'ua')
+    throw new Error(`Bad table alias: ${image}`);
+  return `(EXISTS (
+    SELECT 1 FROM "ImageCdnAccess" ua WHERE ua.url = ${image}."url" AND ua.state = 'Retracted'
+      AND ua."retractedAt" IS DISTINCT FROM ua."deniedAt"
+  ))`;
+}
+
+/**
  * Whether the "Image" row aliased `image` is kept to moderators cleared for CSAM review: it, or
  * one of the first `URL_SIBLING_CAP` other rows on its url, carries a CSAM signal in Postgres (`csamRowSql`); it is listed on a CSAM
  * report; or its bytes (by url or pHash copy) are reported, held or under an evidence hold. A minor

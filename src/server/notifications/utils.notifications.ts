@@ -21,6 +21,7 @@ import {
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { buzzNotifications } from '~/server/notifications/buzz.notifications';
 import { membershipGiftNotifications } from '~/server/notifications/membership-gift.notifications';
+import { modelVersionGiftNotifications } from '~/server/notifications/model-version-gift.notifications';
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
@@ -104,6 +105,7 @@ export const notificationProcessors = {
   ...strikeNotifications,
   ...referralNotifications,
   ...membershipGiftNotifications,
+  ...modelVersionGiftNotifications,
   ...textScanNotifications,
   ...creatorMilestoneNotifications,
 };

@@ -4156,6 +4156,8 @@ model AppReviewAgentReport {
   priorReportId    String?               @map("prior_report_id")
   priorReport      AppReviewAgentReport?  @relation("AppReviewAgentReportChain", fields: [priorReportId], references: [id], onDelete: SetNull)
   nextReports      AppReviewAgentReport[] @relation("AppReviewAgentReportChain")
+  // Connect lane only: what Civitai checked itself (see AppReviewAgentReportCheck).
+  civitaiCheck     AppReviewAgentReportCheck?
   // LLM token accounting (provider-shaped Json) + total cost. See costUsd note
   // in the model docstring for the Decimal(12,6) rationale.
   tokenUsage       Json?     @map("token_usage")
@@ -4173,6 +4175,28 @@ model AppReviewAgentReport {
   // (publish_request_id) WHERE status='running' live ONLY in the migration .sql —
   // Prisma cannot express CHECKs or partial-unique indexes.
   @@map("app_review_agent_reports")
+}
+
+/// Agent review, CONNECT lane: the facts Civitai checked itself for one report (offline-access
+/// reachability, whether server source was provided and reviewed) plus a fingerprint of the
+/// listing fields the review read. Written ONLY by the dispatch, never by the runner's callback,
+/// so nothing the runner reports can add to, edit or imitate it. The panel renders it as its own
+/// "Checked by Civitai" block and marks the review stale when the live listing's fingerprint
+/// differs. One row per connect report; on-site reports have none. Cascades with its report.
+/// MANUAL-APPLY migration `20271120120000_app_review_agent_report_checks`; the lane is dark until
+/// it is applied and the flag is on.
+model AppReviewAgentReportCheck {
+  reportId         String               @id @map("report_id")
+  report           AppReviewAgentReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  publishRequestId String               @map("publish_request_id")
+  // `ConnectCivitaiChecks` (connect-agent-review.logic.ts).
+  checks           Json
+  // `connectListingFingerprint` of the listing as reviewed.
+  fingerprint      String
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([publishRequestId], map: "app_review_agent_report_checks_publish_request_idx")
+  @@map("app_review_agent_report_checks")
 }
 
 // App review holds: a moderator or agent's open check on an app's pending publish requests;
@@ -7398,6 +7422,7 @@ model ModelVersionGiftLink {
 
   @@index([modelVersionId, createdAt(sort: Desc)])
   @@index([batchId])
+  @@index([createdById])
 }
 
 model ModelVersionGiftRedemption {
@@ -7864,7 +7889,7 @@ enum JobQueueType {
   ImageScan
   ReplacedImageDelete
   ImageStorageDelete
-  /// An image whose parent's delete orphaned it; `image-deletes` retries one its caller left.
+  /// Retired: replaced by `PendingDelete`; nothing drains it.
   ImageDelete
   CdnAccessSync
   ImageCdnPersistRetry
@@ -7872,6 +7897,9 @@ enum JobQueueType {
   /// by that service's own database functions. No job in this app processes these rows; the
   /// moderator queue-health panel only counts them.
   CsamArchive
+  /// A delete that has to wait: an owner's own delete a child-safety case keeps, or a parent's cleanup
+  /// of an image something still keeps. `pending-deletes` carries it out once nothing blocks it.
+  PendingDelete
 }
 
 /// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with
@@ -11542,6 +11570,8 @@ enum ServiceDealEventType {
   Held
   Released
   Refunded
+  /// The buyer's happy review, which pays the seller now instead of after the dispute window.
+  ReviewedHappy
 }
 
 /// Preview and Final are the seller's delivery. An Attachment is a file the buyer gives the seller

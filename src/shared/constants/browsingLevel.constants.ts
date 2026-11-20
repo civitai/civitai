@@ -377,9 +377,9 @@ export function effectiveBrowsingCeiling(
 }
 
 // helpers
+/** `level` held to the browsing levels: no Blocked bit, and nothing above it. */
 export function onlySelectableLevels(level: number) {
-  if (Flags.hasFlag(level, NsfwLevel.Blocked)) level = Flags.removeFlag(level, NsfwLevel.Blocked);
-  return level;
+  return level & allBrowsingLevelsFlag;
 }
 
 export function getIsPublicBrowsingLevel(level: number) {

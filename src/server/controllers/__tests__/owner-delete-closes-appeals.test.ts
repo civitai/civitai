@@ -7,8 +7,9 @@ import type * as Caches from '~/server/redis/caches';
 
 // A post delete emits no per-image event, so the sweep cannot attribute it to the owner.
 
-const { deleteImagesMock, deletePostMock, closeMock } = vi.hoisted(() => ({
+const { deleteImagesMock, deletePostMock, closeMock, pendingDeletionMock } = vi.hoisted(() => ({
   deleteImagesMock: vi.fn(),
+  pendingDeletionMock: vi.fn(),
   deletePostMock: vi.fn(),
   closeMock: vi.fn(),
 }));
@@ -16,6 +17,7 @@ const { deleteImagesMock, deletePostMock, closeMock } = vi.hoisted(() => ({
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   deleteImages: deleteImagesMock,
+  imagesPendingDeletion: pendingDeletionMock,
 }));
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
@@ -42,6 +44,7 @@ const ctx = (userId: number, isModerator = false) =>
 beforeEach(() => {
   vi.clearAllMocks();
   closeMock.mockResolvedValue(undefined);
+  pendingDeletionMock.mockResolvedValue(new Set());
 });
 
 describe('deleteImageHandler', () => {
@@ -82,6 +85,33 @@ describe('deleteImageHandler', () => {
     await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) });
 
     expect(closeMock).not.toHaveBeenCalled();
+  });
+});
+
+// Only a case the owner can already see is acknowledged; any other kept delete answers like a delete.
+describe('deleteImageHandler, a delete that waits on a review', () => {
+  it('answers with the notice when the kept image waits on a review its owner can see', async () => {
+    deleteImagesMock.mockResolvedValue([]);
+    pendingDeletionMock.mockResolvedValue(new Set([55]));
+
+    expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) })).toEqual({
+      deleteAfterReview: true,
+    });
+    expect(closeMock).not.toHaveBeenCalled();
+  });
+
+  it('answers like a delete when the review is one its owner cannot see', async () => {
+    deleteImagesMock.mockResolvedValue([]);
+
+    expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) })).toBeNull();
+    expect(pendingDeletionMock).toHaveBeenCalledWith([55]);
+  });
+
+  it('answers with the deleted id when the image went', async () => {
+    deleteImagesMock.mockResolvedValue([{ id: 55, userId: 7, nsfwLevel: 1 }]);
+    pendingDeletionMock.mockResolvedValue(new Set([55]));
+
+    expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) })).toEqual({ id: 55 });
   });
 });
 
@@ -129,5 +159,16 @@ describe('deletePostHandler', () => {
     await deletePostHandler({ input: { id: 3 }, ctx: ctx(8) });
 
     expect(closeMock).not.toHaveBeenCalled();
+  });
+
+  it('passes on the notice for a kept post, and closes and tracks nothing', async () => {
+    deletePostMock.mockResolvedValue({ deleteAfterReview: true });
+    const context = ctx(8);
+
+    expect(await deletePostHandler({ input: { id: 3 }, ctx: context })).toEqual({
+      deleteAfterReview: true,
+    });
+    expect(closeMock).not.toHaveBeenCalled();
+    expect(context.track.post).not.toHaveBeenCalled();
   });
 });

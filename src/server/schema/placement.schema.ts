@@ -23,6 +23,7 @@ import {
 import type { StickerTrack } from '~/shared/utils/sticker-track';
 import {
   STICKER_TRACK_EASES,
+  STICKER_TRACK_MAX_DURATION_MS,
   STICKER_TRACK_MAX_KEYS,
   STICKER_TRACK_MAX_PAIRS,
   stickerTrackRefusal,
@@ -124,6 +125,16 @@ export type CreateStickerPlacementInput = z.infer<typeof createStickerPlacementS
 
 export const getStickerPlacementsSchema = z.object({
   imageIds: z.array(z.number().int().positive()).min(1).max(100),
+});
+
+export const startStickerAutoTrackSchema = z.object({
+  imageId: z.number().int().positive(),
+  pose: stickerPlacementDataSchema.pick({ x: true, y: true, scale: true, rotation: true }),
+  startMs: z.number().int().nonnegative().max(STICKER_TRACK_MAX_DURATION_MS),
+});
+
+export const getStickerAutoTrackSchema = z.object({
+  workflowId: z.string().min(1).max(128),
 });
 
 export const getStickerTracksSchema = z.object({

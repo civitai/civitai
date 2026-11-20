@@ -4,7 +4,7 @@ import {
   formatWhen,
   windowCaption,
   type UsageLimitRow,
-} from '~/components/Account/usage/usage-limit-view';
+} from '../usage-limit-view';
 
 // 2026-11-02 21:00 UTC = 2:00 PM in Denver (MST), 6:00 AM Nov 3 in Tokyo.
 const NOW = Date.parse('2026-11-02T21:00:00Z');

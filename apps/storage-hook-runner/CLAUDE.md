@@ -26,4 +26,5 @@ app, so `docs/svelte-app-standard.md` does not apply.
 ## Commands
 
 `pnpm --filter @civitai/storage-hook-runner-app typecheck` (and `test`). From the root,
-`pnpm dev:storage-hook-runner` starts it; it needs `STORAGE_HOOK_RUNNER_SECRET` (32+ chars).
+`pnpm dev:storage-hook-runner` starts it; it needs `STORAGE_HOOK_RUNNER_SECRET` (32+ chars) and
+`RUNNER_MODE` (`check` or `remix`: the one signed route the process serves).

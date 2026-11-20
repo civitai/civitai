@@ -169,7 +169,8 @@ func TestMetricsReader(t *testing.T) {
 }
 
 // loadConfig is config.Load over the required variables plus env (every ClickHouse variable, the
-// app's and feed-go's, unset unless env sets it).
+// app's, feed-go's and the dedicated metrics server's, and every Flipt variable, unset unless env
+// sets it).
 func loadConfig(t *testing.T, env map[string]string) *config.Config {
 	t.Helper()
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
@@ -177,7 +178,9 @@ func loadConfig(t *testing.T, env map[string]string) *config.Config {
 	}
 	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "FEED_GO_CACHE_WRITEBACK", "FEED_GO_CLICKHOUSE_TIMEOUT_MS",
 		"FEED_GO_METRICS_LOCK_WAIT_MS", "FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", "FEED_GO_REQUEST_BUDGET_MS", "CLICKHOUSE_HOST", "CLICKHOUSE_USERNAME",
-		"CLICKHOUSE_PASSWORD", "FEED_GO_CLICKHOUSE_HOST", "FEED_GO_CLICKHOUSE_USERNAME", "FEED_GO_CLICKHOUSE_PASSWORD"} {
+		"CLICKHOUSE_PASSWORD", "FEED_GO_CLICKHOUSE_HOST", "FEED_GO_CLICKHOUSE_USERNAME", "FEED_GO_CLICKHOUSE_PASSWORD",
+		"CLICKHOUSE_METRICS_HOST", "CLICKHOUSE_METRICS_USERNAME", "CLICKHOUSE_METRICS_PASSWORD", "CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS",
+		"FLIPT_URL", "FLIPT_FETCHER_SECRET", "FLIPT_ENVIRONMENT"} {
 		t.Setenv(k, env[k])
 	}
 	cfg, err := config.Load()

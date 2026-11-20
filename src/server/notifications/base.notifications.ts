@@ -102,6 +102,8 @@ type NotificationMessage = {
   message: string;
   url?: string;
   target?: '_blank' | '_self';
+  /** The email button's label for this `url`. Without it the button reads "View on Civitai". */
+  emailButtonLabel?: string;
 };
 export type NotificationProcessorRunInput = {
   lastSent: string;
