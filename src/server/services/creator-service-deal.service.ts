@@ -37,6 +37,8 @@ import {
   SERVICE_DEAL_ACCEPT_WINDOW_MS,
   SERVICE_DEAL_AUTO_COMPLETE_MS,
   SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS,
+  SERVICE_DEAL_REVIEW_FIRST_NOTICE_MS,
+  SERVICE_DEAL_REVIEW_LAST_NOTICE_MS,
   SERVICE_DEAL_CANCELLATION_RESPONSE_MS,
   SERVICE_DEAL_DUE_SOON_NOTICE_MS,
   SERVICE_DEAL_DISPUTE_WINDOW_MS,
@@ -982,7 +984,14 @@ type Reminder = {
   at: Prisma.Sql;
   /** What must still be ahead for the reminder to make sense, if a late run reaches it. */
   until?: Prisma.Sql;
+  /** What else must hold for the deal, checked when the reminder is due. */
+  where?: Prisma.Sql;
 };
+
+/** Mirrors the eligibility check in `reviewServiceDeal`, plus no review left yet. */
+const awaitingReview = Prisma.sql`"reviewEnabledAt" IS NOT NULL AND "settledAt" IS NULL
+  AND "disputeOpenedAt" IS NULL
+  AND NOT EXISTS (SELECT 1 FROM "ServiceDealReview" r WHERE r."dealId" = "ServiceDeal"."id")`;
 
 const reminders: Reminder[] = [
   {
@@ -1008,6 +1017,25 @@ const reminders: Reminder[] = [
     // The due date, not `overdueClock`: a revision asked for after it starts a new round, not a late one.
     at: Prisma.sql`"dueAt"`,
   },
+  {
+    notice: 'reviewDue',
+    to: 'buyer',
+    statuses: ['Completed'],
+    at: Prisma.sql`"completedAt" + ${ms(SERVICE_DEAL_REVIEW_FIRST_NOTICE_MS)}`,
+    until: Prisma.sql`"releaseAt"`,
+    // A buyer who let the deal complete on its own already ignored one reminder; they get only the last.
+    where: Prisma.sql`${awaitingReview} AND NOT EXISTS (
+      SELECT 1 FROM "ServiceDealEvent" e
+      WHERE e."dealId" = "ServiceDeal"."id" AND e."type" = 'Completed' AND e."comment" = 'auto')`,
+  },
+  {
+    notice: 'reviewDue',
+    to: 'buyer',
+    statuses: ['Completed'],
+    at: Prisma.sql`"releaseAt" - ${ms(SERVICE_DEAL_REVIEW_LAST_NOTICE_MS)}`,
+    until: Prisma.sql`"releaseAt"`,
+    where: awaitingReview,
+  },
 ];
 
 /**
@@ -1016,12 +1044,13 @@ const reminders: Reminder[] = [
  */
 export async function remindServiceDeals({ since, upTo }: { since: Date; upTo: Date }) {
   let sent = 0;
-  for (const { notice, to, statuses, at, until } of reminders) {
+  for (const { notice, to, statuses, at, until, where } of reminders) {
     const due = await dbWrite.$queryRaw<{ id: number; at: Date }[]>`
       SELECT "id", ${at} AS "at" FROM "ServiceDeal"
       WHERE "status" IN (${statusList(statuses)})
         AND ${at} > ${since}::timestamptz AND ${at} <= ${upTo}::timestamptz
-        ${until ? Prisma.sql`AND ${until} > ${upTo}::timestamptz` : Prisma.empty}`;
+        ${until ? Prisma.sql`AND ${until} > ${upTo}::timestamptz` : Prisma.empty}
+        ${where ? Prisma.sql`AND ${where}` : Prisma.empty}`;
     for (const deal of due) {
       await notifyServiceDeal({ dealId: deal.id, notice, to, key: deal.at.getTime() });
       sent++;
