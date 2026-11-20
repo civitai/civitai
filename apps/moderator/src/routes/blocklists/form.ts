@@ -45,7 +45,7 @@ export function inertEntries(type: string, items: string[]): string[] {
 export function inertEntriesError(type: string, inert: string[]): string {
   const list = inert.map((i) => `"${i}"`).join(', ');
   if (type === 'ProfanityWord')
-    return `Each entry needs at least 3 letters, and only letters, spaces, hyphens, apostrophes or | around a word: ${list}.`;
+    return `Each entry needs at least 4 letters (3 with | at its start or end), and only letters, spaces, hyphens, apostrophes or | at its ends: ${list}.`;
   if (type === 'SemanticSearchPoiRefuse')
     return `Search matching only sees Latin letters, digits and spaces in a name, so these could never match: ${list}.`;
   return `Not a single word, so the filter can never match it: ${list}. Enter one word per entry, without spaces or punctuation.`;

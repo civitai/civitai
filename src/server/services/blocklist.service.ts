@@ -12,7 +12,11 @@ import { createLruCache } from '~/server/utils/lru-cache';
 import { logToAxiom } from '~/server/logging/client';
 import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/benign-phrases';
 import { hashify, removeTags, removeTagsCompact } from '~/utils/string-helpers';
-import { isValidWord } from '@civitai/mod-utils/profanity/word-rules';
+import {
+  cleanWord,
+  isValidWord,
+  MIN_DATASET_WORD_LENGTH,
+} from '@civitai/mod-utils/profanity/word-rules';
 import { foldConfusables } from '~/server/utils/confusable-fold';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { domainAcceptsMail } from '~/server/utils/email-domain';
@@ -465,7 +469,9 @@ async function getManagedProfanityWords(): Promise<
   try {
     if (!(await getFliptBoolean(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))) return null;
     const row = await getBlocklistDTO({ type: BlocklistType.ProfanityWord });
-    if (row.id == null || !row.data.some(isValidWord)) return null;
+    const usable = (word: string) =>
+      isValidWord(word) && cleanWord(word).length >= MIN_DATASET_WORD_LENGTH;
+    if (row.id == null || !row.data.some(usable)) return null;
     return { id: row.id, data: row.data };
   } catch (error) {
     logToAxiom({

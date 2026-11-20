@@ -209,7 +209,8 @@ export async function upsertBlocklist({
       .where('id', '=', existing.id)
       .where('type', '=', type)
       .executeTakeFirstOrThrow();
-    return { count: gained, rowId: existing.id, entries: next.slice(existing.data.length) };
+    const entries = items.filter((item) => !existing.data.includes(item));
+    return { count: gained, rowId: existing.id, entries };
   });
 
   if (added === undefined) throw new BlocklistRowMismatchError();

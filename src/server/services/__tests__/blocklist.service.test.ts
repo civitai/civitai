@@ -558,7 +558,7 @@ describe('getClientBenignLists', () => {
     });
 
     it('falls back when no entry in the row is one the filter can use', async () => {
-      blockedRow = { id: 31, data: ['z', '42'] };
+      blockedRow = { id: 31, data: ['z', '42', 'zq'] };
       expect((await getClientBenignLists()).profanityBlockedWords).toBeNull();
     });
 

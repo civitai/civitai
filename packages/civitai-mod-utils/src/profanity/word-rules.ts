@@ -27,6 +27,9 @@ export function isValidWord(word: string): boolean {
 /** The filter adds only words at least this long to its dataset, pipes included. */
 export const MIN_DATASET_WORD_LENGTH = 3;
 
+/** An entry with no `|` at either end matches inside any word, so it needs more letters. */
+export const MIN_UNBOUNDED_LETTERS = 4;
+
 /**
  * Whether a moderator entry would take effect in the filter and is long enough to be safe to
  * apply everywhere. Stricter than the filter on short boundary-marked entries, and refuses a
@@ -38,6 +41,9 @@ export function isUsableBlockedEntry(entry: string): boolean {
     isValidWord(entry) &&
     !cleaned.slice(1, -1).includes('|') &&
     cleaned.length >= MIN_DATASET_WORD_LENGTH &&
-    cleaned.replace(/[^a-z]/g, '').length >= MIN_DATASET_WORD_LENGTH
+    cleaned.replace(/[^a-z]/g, '').length >=
+      (cleaned.startsWith('|') || cleaned.endsWith('|')
+        ? MIN_DATASET_WORD_LENGTH
+        : MIN_UNBOUNDED_LETTERS)
   );
 }
