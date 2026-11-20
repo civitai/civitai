@@ -250,8 +250,8 @@ export function RichTextEditor({
       );
     if (addVideo) {
       arr.push(
-        EdgeMediaEditNode.configure({ accepts, inline: true }),
-        SizedImageEditNode.configure({ inline: true })
+        EdgeMediaEditNode.configure({ accepts, inline: true, resizable: addImageSize }),
+        SizedImageEditNode.configure({ inline: true, resizable: addImageSize })
       );
     } else if (addImages) {
       arr.push(CustomImage.configure({ inline: true }));

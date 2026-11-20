@@ -24,6 +24,8 @@ type NodeOptions = {
   accepts: MediaType[];
   maxFileSize: number;
   inline?: boolean;
+  /** Drag handles on a selected image; only editors that show the image placement menu. */
+  resizable?: boolean;
 };
 
 interface SetMediaOptions {
@@ -57,6 +59,7 @@ export const EdgeMediaEditNode = EdgeMediaNode.extend<NodeOptions>({
     return {
       ...this.parent?.(),
       inline: false,
+      resizable: false,
       accepts: ['image'],
       maxFileSize: constants.richTextEditor.maxFileSize,
     };
@@ -143,6 +146,7 @@ function EdgeMediaEditComponent({
   ref,
   selected,
   editor,
+  extension,
   getPos,
   updateAttributes,
 }: ReactNodeViewProps<HTMLDivElement>) {
@@ -198,7 +202,7 @@ function EdgeMediaEditComponent({
           <ResizableImageFrame
             size={parseImageWidth(size)}
             align={parseImageAlign(align)}
-            selected={selected}
+            selected={selected && !!extension.options.resizable}
             onResize={(next) => resizeAndKeepSelected({ editor, getPos, updateAttributes }, next)}
           >
             <EdgeMediaComponent url={url} type={type} filename={filename} />

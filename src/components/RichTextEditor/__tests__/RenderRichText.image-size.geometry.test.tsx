@@ -156,9 +156,9 @@ describe.each([
   });
 
   it.each([
-    ['left', 'right edge of the image', (img: DOMRect, col: DOMRect) => img.left - col.left],
-    ['right', 'right edge of the column', (img: DOMRect, col: DOMRect) => col.right - img.right],
-  ])('aligns a sized image %s', async (align, _label, gap) => {
+    ['left', (img: DOMRect, col: DOMRect) => img.left - col.left],
+    ['right', (img: DOMRect, col: DOMRect) => col.right - img.right],
+  ])('aligns a sized image %s, flush with that edge of the column', async (align, gap) => {
     const [img] = await renderArticle([media(await imageUrl(1600, 900), '40', align)]);
     expect(gap(box(img), columnBox())).toBeCloseTo(0, 0);
   });

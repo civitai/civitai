@@ -32,8 +32,8 @@ function Harness({ content }: { content: string }) {
     // The article editor's image nodes: the addVideo branch of RichTextEditorComponent.
     extensions: [
       StarterKit.configure({ heading: false }),
-      EdgeMediaEditNode.configure({ accepts: ['image', 'video'], inline: true }),
-      SizedImageEditNode.configure({ inline: true }),
+      EdgeMediaEditNode.configure({ accepts: ['image', 'video'], inline: true, resizable: true }),
+      SizedImageEditNode.configure({ inline: true, resizable: true }),
     ],
     content,
     immediatelyRender: true,
