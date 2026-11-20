@@ -1,4 +1,3 @@
-import { styleText } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prismaLogConfig, prismaLogPrinter } from './client';
 
@@ -6,15 +5,9 @@ const CLOSED = 'Error in PostgreSQL connection: Error { kind: Closed, cause: Non
 
 let logSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
-  // A test worker's stdout is not a TTY, so without this nothing is coloured and an uncoloured
-  // forward cannot be told apart from a coloured one.
-  vi.stubEnv('FORCE_COLOR', '1');
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 });
-afterEach(() => {
-  logSpy.mockRestore();
-  vi.unstubAllEnvs();
-});
+afterEach(() => logSpy.mockRestore());
 
 describe('prismaLogConfig', () => {
   it('subscribes to every configured level as an event and prints each of them', () => {
@@ -39,24 +32,29 @@ describe('prismaLogConfig', () => {
 });
 
 describe('prismaLogPrinter', () => {
-  it('prints the line Prisma prints and forwards it uncoloured', () => {
+  it.each([
+    ['error', CLOSED],
+    ['warn', 'pool exhausted'],
+  ] as const)('prints and forwards a %s line', (level, message) => {
     const onLog = vi.fn();
 
-    prismaLogPrinter('error', onLog)({ message: CLOSED });
+    prismaLogPrinter(level, onLog)({ message });
 
     expect(logSpy).toHaveBeenCalledTimes(1);
-    expect(logSpy).toHaveBeenCalledWith('\x1b[31mprisma:error\x1b[39m', CLOSED);
+    expect(logSpy).toHaveBeenCalledWith(`prisma:${level}`, message);
     expect(onLog).toHaveBeenCalledTimes(1);
-    expect(onLog).toHaveBeenCalledWith({ level: 'error', line: `prisma:error ${CLOSED}` });
+    expect(onLog).toHaveBeenCalledWith({ level, line: `prisma:${level} ${message}` });
   });
 
-  it('prints a query event by its query text', () => {
+  it('prints info and query lines but never forwards them', () => {
     const onLog = vi.fn();
 
+    prismaLogPrinter('info', onLog)({ message: 'Starting a postgresql pool' });
     prismaLogPrinter('query', onLog)({ query: 'SELECT 1' });
 
-    expect(logSpy).toHaveBeenCalledWith(styleText('blue', 'prisma:query'), 'SELECT 1');
-    expect(onLog).toHaveBeenCalledWith({ level: 'query', line: 'prisma:query SELECT 1' });
+    expect(logSpy).toHaveBeenCalledWith('prisma:info', 'Starting a postgresql pool');
+    expect(logSpy).toHaveBeenCalledWith('prisma:query', 'SELECT 1');
+    expect(onLog).not.toHaveBeenCalled();
   });
 
   it('still prints, and does not throw, when the forwarder throws', () => {
@@ -65,6 +63,6 @@ describe('prismaLogPrinter', () => {
     });
 
     expect(() => print({ message: 'pool exhausted' })).not.toThrow();
-    expect(logSpy).toHaveBeenCalledWith(styleText('yellow', 'prisma:warn'), 'pool exhausted');
+    expect(logSpy).toHaveBeenCalledWith('prisma:warn', 'pool exhausted');
   });
 });

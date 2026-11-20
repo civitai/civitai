@@ -1,4 +1,3 @@
-import { styleText } from 'node:util';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPrismaClients } from '@civitai/db/client';
 
@@ -47,7 +46,7 @@ describe('createPrismaClients log events', () => {
     raise(clients[name], 'error', CLOSED);
 
     expect(logSpy).toHaveBeenCalledTimes(1);
-    expect(logSpy).toHaveBeenCalledWith(styleText('red', 'prisma:error'), CLOSED.message);
+    expect(logSpy).toHaveBeenCalledWith('prisma:error', CLOSED.message);
     expect(onLog).toHaveBeenCalledTimes(1);
     expect(onLog).toHaveBeenCalledWith({ level: 'error', line: `prisma:error ${CLOSED.message}` });
   });

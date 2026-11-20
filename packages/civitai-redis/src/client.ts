@@ -1144,14 +1144,25 @@ export function attachSysSentinelListeners(
     errorCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
   }
 ) {
+  // @redis/client 6.3.0 emits SENTINE_LIST_CHANGE (sic) on sentinel scans even when the list has
+  // not changed, and the event carries only the list's size. Log it only when that size moves; the
+  // counter below still counts every event.
+  let lastSentinelListSize: unknown;
   client.on('topology-change', (event: any) => {
     const { type: eventType, node } = event ?? {};
     const host = node?.host ?? '?';
     const port = node?.port ?? '?';
-    ctx.log(
-      `Redis sentinel topology change [type=${eventType ?? 'unknown'}, host=${host}, port=${port}]`,
-      event
-    );
+    const unchangedSentinelList =
+      eventType === 'SENTINE_LIST_CHANGE' && event.size === lastSentinelListSize;
+    if (eventType === 'SENTINE_LIST_CHANGE') lastSentinelListSize = event.size;
+    if (!unchangedSentinelList) {
+      ctx.log(
+        `Redis sentinel topology change [type=${
+          eventType ?? 'unknown'
+        }, host=${host}, port=${port}]`,
+        event
+      );
+    }
     ctx.topologyCounter
       .labels({
         type: String(eventType ?? 'unknown'),

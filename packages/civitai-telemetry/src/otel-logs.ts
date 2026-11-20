@@ -61,7 +61,7 @@ export const otelLogRecordsEmittedCounter = registerInstrumentationMetric(
   () =>
     new promClient.Counter({
       name: EMITTED_METRIC,
-      help: 'Structured log records handed to the OTel Logs API by the Axiom bridge',
+      help: 'Log records handed to the OTel Logs API through the structured-log sink',
       registers: [instrumentationRegistry],
     })
 );
@@ -77,7 +77,7 @@ export const otelLogRecordsSkippedCounter = registerInstrumentationMetric(
     // values that label may take; putting it here type-checks the call sites backwards.)
     new promClient.Counter<'reason'>({
       name: SKIPPED_METRIC,
-      help: 'Structured log records NOT emitted over OTLP, by reason',
+      help: 'Log records sent to the structured-log sink but NOT emitted over OTLP, by reason',
       labelNames: ['reason'] as const,
       registers: [instrumentationRegistry],
     })

@@ -1,6 +1,5 @@
 // Prisma read/write client factory. The generated client + types come from the
 // @civitai/db-schema contract package, never @prisma/client directly.
-import { styleText } from 'node:util';
 import type { Prisma } from '@civitai/db-schema';
 import { PrismaClient } from '@civitai/db-schema';
 import { loadDbEnv, type DbConfig } from './env';
@@ -32,12 +31,19 @@ export function loggableQuery(e: { query: string; params: string }): string {
   return query;
 }
 
-export type PrismaLogLine = { level: Prisma.LogLevel; line: string };
+/**
+ * The levels whose lines reach `onLog`. info and query are printed only: a debug query log is one
+ * line per statement.
+ */
+export const FORWARDED_PRISMA_LOG_LEVELS = ['error', 'warn'] as const;
+export type ForwardedPrismaLogLevel = (typeof FORWARDED_PRISMA_LOG_LEVELS)[number];
+
+export type PrismaLogLine = { level: ForwardedPrismaLogLevel; line: string };
 
 export type CreatePrismaClientsOptions = Partial<DbConfig> & {
   /** Structured slow-query telemetry (the old logToAxiom call). Injected by the app. */
   onSlowQuery?: (e: { query: string; duration: number; target: 'read' | 'write' }) => void;
-  /** Receives every `prisma:<level>` line after it is written to stdout, without colour. */
+  /** Receives each printed `prisma:error` / `prisma:warn` line after it is written to stdout. */
   onLog?: (e: PrismaLogLine) => void;
 };
 
@@ -66,30 +72,27 @@ export function prismaLogConfig(logging: string[]): {
 }
 
 /**
- * The handler for one printed level: the line Prisma's own `emit: 'stdout'` writes, then
- * `onLog`. A throwing `onLog` is contained.
+ * The handler for one printed level: the line Prisma's own `emit: 'stdout'` writes (without its
+ * terminal-only colour), then `onLog` for a forwarded level. A throwing `onLog` is contained.
  */
 export function prismaLogPrinter(level: Prisma.LogLevel, onLog?: (e: PrismaLogLine) => void) {
   const tag = `prisma:${level}`;
-  const color = PRISMA_TAG_COLORS[level];
+  const forward = isForwardedLevel(level) ? onLog : undefined;
   return function printPrismaLog(e: { message?: string; query?: string }) {
     const text = e.message || e.query;
-    console.log(styleText(color, tag), text);
-    if (!onLog) return;
+    console.log(tag, text);
+    if (!forward) return;
     try {
-      onLog({ level, line: `${tag} ${text}` });
+      forward({ level: level as ForwardedPrismaLogLevel, line: `${tag} ${text}` });
     } catch {
       // contained: forwarding must not break logging
     }
   };
 }
 
-const PRISMA_TAG_COLORS: Record<Prisma.LogLevel, Parameters<typeof styleText>[0]> = {
-  error: 'red',
-  warn: 'yellow',
-  info: 'cyan',
-  query: 'blue',
-};
+function isForwardedLevel(level: Prisma.LogLevel): level is ForwardedPrismaLogLevel {
+  return (FORWARDED_PRISMA_LOG_LEVELS as readonly string[]).includes(level);
+}
 
 /** The handler for a client's query events: logs a statement slower than 2 s, as `loggableQuery`. */
 export function slowQueryLogger({
