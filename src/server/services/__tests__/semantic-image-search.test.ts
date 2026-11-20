@@ -112,7 +112,10 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ]),
 }));
 
-import { searchSemanticImages } from '~/server/services/semantic-image-search.service';
+import {
+  heldImageIds,
+  searchSemanticImages,
+} from '~/server/services/semantic-image-search.service';
 
 /** A session's views (`credentialViews`); the narrow-key cases pass their own after it. */
 const SESSION_VIEWS = { asModerator: true, asOwner: true };
@@ -1398,7 +1401,7 @@ describe('the video index', () => {
     expect(calls[0].filter.anyOf?.type).toBeUndefined();
   });
 
-  it('a held clip is a candidate but is not served', async () => {
+  it('a held clip is not served', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([201, 202, 203]));
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 202 }]);
     const { source } = rankedSource([201, 202, 203]);
@@ -1412,7 +1415,7 @@ describe('the video index', () => {
     expect(items.map((x) => x.id)).toEqual([201, 203]);
   });
 
-  it('a clip the image fetch path withholds (a restricted one) is a candidate but is not served', async () => {
+  it('hydration decides what is served', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([201]));
     const { source } = rankedSource([201, 202]);
     const { items } = await searchSemanticImages({
@@ -1440,7 +1443,7 @@ describe('the video index', () => {
     expect(calls).toEqual([]);
   });
 
-  it('a Blocked clip is not served to a non-moderator who asks for the Blocked level', async () => {
+  it('the Blocked level is dropped for a non-moderator who asks for it', async () => {
     const levels: Record<number, number> = { 201: 1, 202: 32 };
     h.fakeGetAllImages = async ({
       ids,
@@ -1461,6 +1464,67 @@ describe('the video index', () => {
     });
     expect(items.map((x) => x.id)).toEqual([201]);
     expect(calls[0].filter.gate).toMatchObject({ nsfwLevels: [1] });
+  });
+
+  it('a moderator keeps the Blocked level', async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'a fox running', browsingLevel: 1 | 32 }),
+      user: { id: 501, isModerator: true } as SessionUser,
+      asModerator: true,
+      collection: 'videos',
+      candidateSource: source,
+    });
+    expect(calls[0].filter.gate).toMatchObject({ nsfwLevels: [1, 32] });
+  });
+
+  it('a non-moderator asking for the Blocked level only gets nothing, not a wider search', async () => {
+    const { source, calls } = rankedSource([201]);
+    const { items } = await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'a fox running', browsingLevel: 32 }),
+      user: VIEWER,
+      collection: 'videos',
+      candidateSource: source,
+    });
+    expect(items).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it('searches the videos collection by default, and images by default for image search', async () => {
+    setEnv({ SEARCH_SERVICE_URL: 'http://search.test/', SEARCH_SERVICE_TOKEN: 'tok' });
+    const collections: unknown[] = [];
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      collections.push(JSON.parse(String(init.body)).collection);
+      return Response.json({ query: 'q', corrected: 'q', changes: [], hits: [] });
+    });
+    try {
+      h.fakeGetAllImages = visibleOnly(new Set());
+      await searchSemanticImages({
+        input: input({ imageId: undefined, query: 'a fox running' }),
+        user: VIEWER,
+        collection: 'videos',
+      });
+      await searchSemanticImages({
+        input: input({ imageId: undefined, query: 'a hare' }),
+        user: VIEWER,
+      });
+      expect(collections).toEqual(['videos', 'images']);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('the held lookup reads the held rule over exactly the hydrated ids', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+    await heldImageIds([201, 202]);
+    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const sql = strings.join('?');
+    expect(sql).toMatch(/i\.id = ANY\(\?::int\[\]\)/);
+    expect(values[0]).toEqual([201, 202]);
+    expect(JSON.stringify(values)).toContain('CsamReport');
   });
 
   it('an image search never runs the held lookup', async () => {

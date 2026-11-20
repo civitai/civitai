@@ -87,6 +87,7 @@ export function SemanticImageSearch() {
         baseModels,
         types,
         browsingLevel,
+        index: videos ? 'videos' : 'images',
       }),
       resultCount: items.length,
       latencyMs,
@@ -101,7 +102,7 @@ export function SemanticImageSearch() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <Title order={1}>Semantic image search</Title>
+        <Title order={1}>Semantic {videos ? 'video' : 'image'} search</Title>
         <Text size="sm" c="dimmed">
           Describe what you want to see. Testing only: results and ranking will change.
         </Text>
@@ -155,7 +156,7 @@ export function SemanticImageSearch() {
 
       {imageId && !isError && (
         <Alert color="blue">
-          Showing images similar to{' '}
+          Showing {videos ? 'videos' : 'images'} similar to{' '}
           <Link href={`/images/${imageId}`} className="underline">
             image {imageId}
           </Link>
@@ -179,7 +180,9 @@ export function SemanticImageSearch() {
       )}
 
       {!enabled ? (
-        <NoContent message="Enter a query to search images by meaning." />
+        <NoContent
+          message={`Enter a query to search ${videos ? 'videos' : 'images'} by meaning.`}
+        />
       ) : isLoading ? (
         <Center p="xl">
           <Loader />
@@ -191,7 +194,9 @@ export function SemanticImageSearch() {
             : 'Search is unavailable right now, try again.'}
         </Alert>
       ) : !items.length ? (
-        <NoContent message="No images matched. Try other words or fewer filters." />
+        <NoContent
+          message={`No ${videos ? 'videos' : 'images'} matched. Try other words or fewer filters.`}
+        />
       ) : (
         <div className="relative">
           <ImagesProvider images={items}>

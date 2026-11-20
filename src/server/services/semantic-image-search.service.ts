@@ -1,8 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import {
-  allBrowsingLevelsFlag,
-  publicBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { NsfwLevel } from '~/server/common/enums';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
@@ -61,7 +58,7 @@ const searchServiceCandidates: Record<MediaCollection, CandidateSource> = {
   videos: searchServiceSource('videos', { notFoundMessage: 'Video not found' }),
 };
 
-/** The ids among `ids` that are held media: never served from the video index. */
+/** The ids among `ids` that are held media. */
 export async function heldImageIds(ids: number[]): Promise<Set<number>> {
   if (!ids.length) return new Set();
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
@@ -116,9 +113,11 @@ export async function searchSemanticImages({
     user,
     await isNonModClampOn(user)
   );
-  // Blocked clips indexed before the writer refused them must never reach a non-moderator.
-  if (collection === 'videos' && !user?.isModerator)
-    browsingLevel = Flags.removeFlag(browsingLevel, NsfwLevel.Blocked) || publicBrowsingLevelsFlag;
+  // Video search serves the Blocked level to moderators only.
+  if (collection === 'videos' && !user?.isModerator) {
+    browsingLevel = Flags.removeFlag(browsingLevel, NsfwLevel.Blocked);
+    if (!browsingLevel) return emptyPage();
+  }
 
   const [hidden, addonData, blockedTags, namedUserIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),

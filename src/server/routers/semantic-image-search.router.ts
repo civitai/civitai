@@ -142,10 +142,12 @@ export const semanticImageSearchRouter = router({
 
   searchVideos: semanticVideoSearchProcedure
     .use(isFlagProtected('semanticVideoSearch'))
+    // As search: signed-out visitors share an IP bucket, so theirs is lower.
     .use(
-      rateLimit({ limit: 60, period: 60 }, undefined, {
-        sharedKey: 'semanticImageSearch:searchVideos',
-      })
+      rateLimit([
+        { limit: 20, period: 60 },
+        { limit: 60, period: 60, userReq: () => true },
+      ])
     )
     .input(semanticImageSearchSchema)
     .query(async ({ input, ctx }) => {

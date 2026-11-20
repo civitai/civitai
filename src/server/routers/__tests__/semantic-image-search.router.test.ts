@@ -318,6 +318,7 @@ describe('semanticImageSearch.searchVideos', () => {
   it('searches the clip index with the flag', async () => {
     h.videoOn = true;
     await caller().searchVideos({ query: 'fox' });
+    expect(h.search).toHaveBeenCalledTimes(1);
     expect(h.search).toHaveBeenCalledWith(expect.objectContaining({ collection: 'videos' }));
   });
 });
