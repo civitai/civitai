@@ -89,6 +89,8 @@ export type NotificationProcessor = {
    * `@civitai/notifications`, which the fan-out worker gates on.
    */
   defaultEmail?: boolean;
+  /** The email button's label when the message has a url. Without it the button reads "View on Civitai". */
+  emailButtonLabel?: string;
 };
 
 export const bareNotification = z.object({

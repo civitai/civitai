@@ -129,6 +129,7 @@ export async function sendNotificationEmails({
   const prepared = getNotificationMessage(bare);
   if (!prepared?.message) return { ...outcome, skipped: 'unrenderable' };
   const typeName = notificationProcessors[type]?.displayName ?? 'Civitai';
+  const btnLabel = notificationProcessors[type]?.emailButtonLabel;
 
   // Primary, not replica: an opt-out written a moment ago must already hold.
   const recipients = await dbWrite.$queryRaw<Recipient[]>`
@@ -153,6 +154,7 @@ export async function sendNotificationEmails({
         typeName,
         message: prepared.message,
         url: prepared.url,
+        btnLabel,
         unsubscribeUrl: getEmailUnsubscribeUrl(recipient.id, type),
       });
       outcome.sent++;

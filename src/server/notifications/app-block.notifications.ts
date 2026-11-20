@@ -37,17 +37,26 @@ export type AppBlockModerationNotificationDetails = {
 };
 
 /**
- * Both submitter notifications point the developer at their submissions view — state C of
- * `/apps/build`, which is the table `/apps/mine` used to be. Repointed with the rest of the
- * `/apps/build` consolidation; see the access-narrowing note on `OWNER_SUBMISSIONS_URL` in
- * `./app-listing.notifications`, which applies verbatim to these two.
+ * The rejected notification (and an approved one that has no slug) points the developer at their
+ * submissions view — state C of `/apps/build`, which is the table `/apps/mine` used to be.
+ * Repointed with the rest of the `/apps/build` consolidation; see the access-narrowing note on
+ * `OWNER_SUBMISSIONS_URL` in `./app-listing.notifications`, which applies verbatim here.
  */
 const SUBMITTER_SUBMISSIONS_URL = MY_APPS_HREF;
 
-/** `Your app block "Name"` when a name is present, else a terse `Your app block`. */
-function blockLabel(details: AppBlockModerationNotificationDetails): string {
+/**
+ * The approved app's full-page run route. An older notification without a slug falls back to the
+ * submissions view.
+ */
+export function approvedAppUrl(details: AppBlockModerationNotificationDetails): string {
+  const slug = typeof details.slug === 'string' ? details.slug.trim() : '';
+  return slug ? `/apps/run/${encodeURIComponent(slug)}` : SUBMITTER_SUBMISSIONS_URL;
+}
+
+/** `Your app "Name"` when a name is present, else a terse `Your app`. Users know these as apps. */
+function appLabel(details: AppBlockModerationNotificationDetails): string {
   const name = details.name?.trim();
-  return name ? `Your app block "${name}"` : 'Your app block';
+  return name ? `Your app "${name}"` : 'Your app';
 }
 
 /** Append ": <reason>" only when a non-empty reason is present, else a period. */
@@ -58,27 +67,28 @@ function withReason(base: string, reason?: string | null): string {
 
 export const appBlockNotifications = createNotificationProcessor({
   'app-block-approved': {
-    displayName: 'App block approved',
+    displayName: 'App approved',
     category: NotificationCategory.System,
     toggleable: false,
     defaultEmail: true,
+    emailButtonLabel: 'Open your app',
     prepareMessage: (notification) => {
       const details = notification.details as AppBlockModerationNotificationDetails;
       return {
-        message: `${blockLabel(details)} was approved and is being built and deployed.`,
-        url: SUBMITTER_SUBMISSIONS_URL,
+        message: `${appLabel(details)} was approved and will be live in a few minutes.`,
+        url: approvedAppUrl(details),
       };
     },
   },
   'app-block-rejected': {
-    displayName: 'App block not approved',
+    displayName: 'App not approved',
     category: NotificationCategory.System,
     toggleable: false,
     defaultEmail: true,
     prepareMessage: (notification) => {
       const details = notification.details as AppBlockModerationNotificationDetails;
       return {
-        message: withReason(`${blockLabel(details)} was not approved`, details.reason),
+        message: withReason(`${appLabel(details)} was not approved`, details.reason),
         url: SUBMITTER_SUBMISSIONS_URL,
       };
     },
