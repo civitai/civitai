@@ -4,6 +4,7 @@ import {
   dbUnavailableCause,
   isDbConnectionError,
   isDbUnavailableError,
+  isRetryableReadError,
   isTransientDbConnectionError,
 } from './db-errors';
 
@@ -50,11 +51,38 @@ describe('the connection-unavailable family', () => {
           'Error in connector: Error querying the database: FATAL: terminating connection due to administrator command'
         ),
     ],
-  ])('%s is a connection error, unavailable, and transient', (_label, make) => {
-    const e = make();
-    expect(isDbConnectionError(e)).toBe(true);
+    ...[
+      'the database system is not yet accepting connections',
+      'the database system is in recovery mode',
+      'the database system is starting up',
+      'the database system is shutting down',
+    ].map((m) => [
+      `Prisma unknown error wrapping 57P03 "${m}"`,
+      () => unknown(`Error in connector: Error querying the database: FATAL: ${m}`),
+    ]),
+  ] as [string, () => unknown][])(
+    '%s is a connection error, unavailable, transient, and a retryable read',
+    (_label, make) => {
+      const e = make();
+      expect(isDbConnectionError(e)).toBe(true);
+      expect(isDbUnavailableError(e)).toBe(true);
+      expect(isTransientDbConnectionError(e)).toBe(true);
+      expect(isRetryableReadError(e)).toBe(true);
+    }
+  );
+
+  // Any pg 08xxx with a server severity is a 503, as it always was. The read retry runs an 08P01
+  // again only with one of the pooler's listed outage messages.
+  it.each([
+    ['an outage message the list does not name', 'client_login_timeout (server down)'],
+    [
+      'a parameter-count bug',
+      'bind message supplies 1 parameters, but prepared statement "" requires 2',
+    ],
+  ])('a pg 08P01 with %s is unavailable (503) but not a retryable read', (_label, message) => {
+    const e = pgError('08P01', message, 'ERROR');
     expect(isDbUnavailableError(e)).toBe(true);
-    expect(isTransientDbConnectionError(e)).toBe(true);
+    expect(isRetryableReadError(e)).toBe(false);
   });
 
   it('a wrapped error is found through the cause chain, and only name and code are reported', () => {
@@ -81,17 +109,17 @@ describe('the connection-unavailable family', () => {
           'Error in connector: Error querying the database: FATAL: no more connections allowed (max_client_conn)'
         ),
     ],
-  ])('%s is unavailable (503) but not a connection error, and not retried', (_label, make) => {
+  ])('%s is unavailable (503) but not a retryable read', (_label, make) => {
     const e = make();
     expect(isDbUnavailableError(e)).toBe(true);
-    expect(isDbConnectionError(e)).toBe(false);
-    expect(isTransientDbConnectionError(e)).toBe(false);
+    expect(isRetryableReadError(e)).toBe(false);
   });
 
   it('P2024 (no pooled connection in time) is unavailable but not retried', () => {
     const e = known('P2024', 'Timed out fetching a new connection from the connection pool');
     expect(isDbUnavailableError(e)).toBe(true);
     expect(isTransientDbConnectionError(e)).toBe(false);
+    expect(isRetryableReadError(e)).toBe(false);
   });
 });
 
@@ -103,17 +131,6 @@ describe('not the connection-unavailable family', () => {
       () => pgError('23505', 'duplicate key value violates unique constraint', 'ERROR'),
     ],
     ['a pg syntax error', () => pgError('42601', 'syntax error at or near "SELEC"', 'ERROR')],
-    // 08P01 is also what Postgres raises for a malformed message from the client: a bug, not an
-    // outage, so it must stay a 500 and must not be retried.
-    [
-      'a pg 08P01 from a parameter-count bug',
-      () =>
-        pgError(
-          '08P01',
-          'bind message supplies 1 parameters, but prepared statement "" requires 2',
-          'ERROR'
-        ),
-    ],
     [
       'a Prisma unknown error that is not a connection failure',
       () => unknown('Error in connector: Error querying the database: ERROR: division by zero'),
@@ -125,5 +142,6 @@ describe('not the connection-unavailable family', () => {
     expect(isDbConnectionError(e)).toBe(false);
     expect(isDbUnavailableError(e)).toBe(false);
     expect(isTransientDbConnectionError(e)).toBe(false);
+    expect(isRetryableReadError(e)).toBe(false);
   });
 });

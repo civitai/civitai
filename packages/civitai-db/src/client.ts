@@ -48,7 +48,8 @@ export type CreatePrismaClientsOptions = Partial<DbConfig> & {
   onLog?: (e: PrismaLogLine) => void;
   /**
    * Retry policy for reads across a brief failover (`withReadRetry`), or `false` for none. Default:
-   * retried, with the READ_RETRY_* constants.
+   * retried, with the READ_RETRY_* constants, unless DB_READ_RETRY turns it off; the
+   * DB_READ_RETRY_* numbers override the constants and are overridden by this.
    */
   readRetry?: ReadRetryOptions | false;
 };
@@ -171,8 +172,14 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
 
   // Last, after every `$on`: the extended client is a new object. A read on the write client
   // (read-your-writes) is retried too; a write on either never is.
-  if (readRetry === false) return { dbRead, dbWrite };
-  const retryingWrite = withReadRetry(dbWrite, 'write', readRetry);
-  const retryingRead = singleClient ? retryingWrite : withReadRetry(dbRead, 'read', readRetry);
+  // DB_READ_RETRY=off (config.readRetryEnabled) turns it off without a release.
+  if (readRetry === false || !config.readRetryEnabled) return { dbRead, dbWrite };
+  const retryOptions = {
+    budgetMs: config.readRetryBudgetMs,
+    maxConcurrentRetries: config.readRetryMaxConcurrent,
+    ...readRetry,
+  };
+  const retryingWrite = withReadRetry(dbWrite, 'write', retryOptions);
+  const retryingRead = singleClient ? retryingWrite : withReadRetry(dbRead, 'read', retryOptions);
   return { dbRead: retryingRead, dbWrite: retryingWrite };
 }

@@ -4,14 +4,29 @@
 //
 // Only a read is retried, and only outside a transaction. A connection can drop after the server
 // committed a write but before the reply arrived, so a write is never run twice here.
+//
+// A read killed by hand (pg_terminate_backend, 57P01) is retried like a switchover's shutdown and
+// issued again within the budget; DB_READ_RETRY=off (env.ts) turns the retry off without a release.
+//
+// No request-scoped abort signal reaches the Prisma call path (no request context carries one), so
+// a read keeps retrying within its budget after its client has gone away.
 import client from 'prom-client';
-import { isTransientDbConnectionError } from './db-errors';
+import { isRetryableReadError } from './db-errors';
 
 /** Total time (ms), from the first attempt, after which a read is not started again. */
 export const READ_RETRY_BUDGET_MS = 5_000;
 /** Delay before the first retry (ms); each later one doubles, up to READ_RETRY_MAX_DELAY_MS. */
 export const READ_RETRY_BASE_DELAY_MS = 100;
 export const READ_RETRY_MAX_DELAY_MS = 1_000;
+/**
+ * Reads retrying at once, process-wide. Past it, a read that fails is not retried: a failover that
+ * fails every read must not hold an unbounded number of them waiting in this process.
+ */
+export const READ_RETRY_MAX_CONCURRENT = 32;
+
+/** In-flight retrying reads. One per process unless a caller passes its own (tests). */
+export type ReadRetrySlots = { inFlight: number };
+const processRetrySlots: ReadRetrySlots = { inFlight: 0 };
 
 /** The Prisma model operations that only read. */
 export const RETRYABLE_READ_OPERATIONS: ReadonlySet<string> = new Set([
@@ -112,13 +127,19 @@ export function isRetryableRead(operation: string, args: unknown): boolean {
   return sql !== undefined && isReadOnlySql(sql);
 }
 
-/** `failed`: a retry ran, then the read failed with an error that is not retried. */
-export type ReadRetryOutcome = 'recovered' | 'exhausted' | 'failed';
+/**
+ * `failed`: a retry ran, then the read failed with an error that is not retried. `capped`: the read
+ * failed with a retryable error but READ_RETRY_MAX_CONCURRENT reads were already retrying.
+ */
+export const READ_RETRY_OUTCOMES = ['recovered', 'exhausted', 'failed', 'capped'] as const;
+export type ReadRetryOutcome = (typeof READ_RETRY_OUTCOMES)[number];
 
 export type ReadRetryOptions = {
   budgetMs?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
+  maxConcurrentRetries?: number;
+  slots?: ReadRetrySlots;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   /** [0, 1); each delay is scaled by 0.5 + random(), so callers do not retry in step. */
@@ -131,8 +152,9 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 
 /**
  * Run `read`, running it again after a jittered, doubling delay while it fails with a transient
- * connection error (isTransientDbConnectionError) and the next attempt would still start within the
- * budget. Any other error, or the last connection error, is thrown as is.
+ * connection error (isRetryableReadError) and the next attempt would still start within the
+ * budget. A read takes a slot for as long as it is retrying; when every slot is taken it is not
+ * retried. Any other error, or the last connection error, is thrown as is.
  */
 export async function retryRead<T>(
   read: () => Promise<T>,
@@ -144,8 +166,10 @@ export async function retryRead<T>(
   const sleep = opts.sleep ?? defaultSleep;
   const now = opts.now ?? Date.now;
   const random = opts.random ?? Math.random;
+  const maxConcurrent = opts.maxConcurrentRetries ?? READ_RETRY_MAX_CONCURRENT;
+  const slots = opts.slots ?? processRetrySlots;
   const report = (outcome: ReadRetryOutcome, retries: number) => {
-    if (retries === 0) return;
+    if (retries === 0 && outcome !== 'capped') return;
     try {
       opts.onResult?.(outcome, retries);
     } catch {
@@ -154,23 +178,38 @@ export async function retryRead<T>(
   };
 
   const startedAt = now();
-  for (let retries = 0; ; retries++) {
-    try {
-      const value = await read();
-      report('recovered', retries);
-      return value;
-    } catch (err) {
-      if (!isTransientDbConnectionError(err)) {
-        report('failed', retries);
-        throw err;
+  let holdsSlot = false;
+  try {
+    for (let retries = 0; ; retries++) {
+      try {
+        const value = await read();
+        report('recovered', retries);
+        return value;
+      } catch (err) {
+        if (!isRetryableReadError(err)) {
+          report('failed', retries);
+          throw err;
+        }
+        if (!holdsSlot) {
+          if (slots.inFlight >= maxConcurrent) {
+            report('capped', retries);
+            throw err;
+          }
+          slots.inFlight++;
+          holdsSlot = true;
+        }
+        const delay = Math.round(
+          Math.min(maxDelayMs, baseDelayMs * 2 ** retries) * (0.5 + random())
+        );
+        if (now() - startedAt + delay > budgetMs) {
+          report('exhausted', retries);
+          throw err;
+        }
+        await sleep(delay);
       }
-      const delay = Math.round(Math.min(maxDelayMs, baseDelayMs * 2 ** retries) * (0.5 + random()));
-      if (now() - startedAt + delay > budgetMs) {
-        report('exhausted', retries);
-        throw err;
-      }
-      await sleep(delay);
     }
+  } finally {
+    if (holdsSlot) slots.inFlight--;
   }
 }
 
@@ -214,6 +253,9 @@ function getReadRetryCounter(): ReadRetryCounter {
       help: 'Prisma reads retried after a transient connection error, by client and how they ended',
       labelNames: ['target', 'outcome'] as const,
     });
+    // Every series from the start at 0, so a first retry reads as an increase, not a new series.
+    for (const target of ['read', 'write'] as const)
+      for (const outcome of READ_RETRY_OUTCOMES) readRetryCounter.inc({ target, outcome }, 0);
   } catch {
     readRetryCounter = client.register.getSingleMetric(
       PRISMA_READ_RETRY_COUNTER_NAME
@@ -230,16 +272,18 @@ type ExtendableClient = { $extends: (extension: never) => unknown };
  *
  * The budget is per read, not per request: there is no request-wide cap, so a request that makes N
  * reads during a failover can wait up to N budgets before its last one fails, and a caller that
- * catches a failed read has already waited out that read's budget.
+ * catches a failed read has already waited out that read's budget. The process-wide cap on reads
+ * retrying at once (READ_RETRY_MAX_CONCURRENT) bounds how many wait.
  */
 export function withReadRetry<C extends ExtendableClient>(
   prisma: C,
   target: 'read' | 'write',
   opts: ReadRetryOptions = {}
 ): C {
+  // Created here, not at the first retry, so the series exist at 0 before a failover.
+  const counter = opts.onResult ? undefined : getReadRetryCounter();
   const onResult =
-    opts.onResult ??
-    ((outcome: ReadRetryOutcome) => getReadRetryCounter().inc({ target, outcome }));
+    opts.onResult ?? ((outcome: ReadRetryOutcome) => counter?.inc({ target, outcome }));
   const extension = {
     name: 'read-retry',
     query: { $allOperations: readRetryHook({ ...opts, onResult }) },

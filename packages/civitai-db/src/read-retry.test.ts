@@ -150,6 +150,21 @@ describe('readRetryHook', () => {
     expect(calls).toHaveLength(2);
   });
 
+  // Still a 503, but the read retry runs an 08P01 again only with one of the pooler's listed outage
+  // messages: an unlisted one may be a client bug or a permanent refusal.
+  it.each([
+    'client_login_timeout (server down)',
+    'bind message supplies 1 parameters, but prepared statement "" requires 2',
+  ])('does not retry a read that failed with an unlisted 08P01 %j', async (message) => {
+    const clock = fakeClock();
+    const failure = pgError('08P01', message);
+    const { query, calls } = scriptedQuery([failure]);
+    await expect(
+      run(hook(clock.opts), { operation: 'findMany', args: {}, __internalParams: outside }, query)
+    ).rejects.toBe(failure);
+    expect(calls).toHaveLength(1);
+  });
+
   // A full pool, pooler or server: a retry would only add load to it, so the read fails at once.
   it.each([
     [
@@ -257,6 +272,54 @@ describe('readRetryHook', () => {
       )
     ).rejects.toMatchObject({ code: 'P1017' });
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('the process-wide cap on reads retrying at once', () => {
+  it('a read that fails while every slot is taken is not retried, and is reported as capped', async () => {
+    const slots = { inFlight: 0 };
+    let release!: () => void;
+    const backoff = new Promise<void>((resolve) => (release = resolve));
+    const capped = { maxConcurrentRetries: 1, slots, now: () => 0, random: () => 0.5 };
+
+    // The first read takes the only slot and waits in its backoff until released.
+    const first = scriptedQuery([serverClosed()]);
+    const firstRead = retryRead(() => first.query({}), { ...capped, sleep: () => backoff });
+    await vi.waitFor(() => expect(slots.inFlight).toBe(1));
+
+    const onResult = vi.fn();
+    const second = scriptedQuery([serverClosed()]);
+    await expect(
+      retryRead(() => second.query({}), { ...capped, onResult, sleep: async () => undefined })
+    ).rejects.toMatchObject({ code: 'P1017' });
+    expect(second.calls).toHaveLength(1);
+    expect(onResult).toHaveBeenCalledExactlyOnceWith('capped', 0);
+
+    release();
+    await expect(firstRead).resolves.toEqual([{ id: 1 }]);
+    expect(first.calls).toHaveLength(2);
+  });
+
+  it('gives its slot back however the read ends, so the next failing read is retried', async () => {
+    const slots = { inFlight: 0 };
+    const opts = { ...fakeClock().opts, maxConcurrentRetries: 1, slots };
+    // Recovered, exhausted (budget 150 ms: one retry, then the next would pass it), failed.
+    const recovered = scriptedQuery([serverClosed()]);
+    await retryRead(() => recovered.query({}), opts);
+    const exhausted = scriptedQuery([serverClosed(), serverClosed()]);
+    await expect(
+      retryRead(() => exhausted.query({}), { ...opts, budgetMs: 150 })
+    ).rejects.toMatchObject({ code: 'P1017' });
+    const failed = scriptedQuery([serverClosed(), uniqueViolation()]);
+    await expect(retryRead(() => failed.query({}), opts)).rejects.toMatchObject({ code: 'P2002' });
+    expect([recovered.calls.length, exhausted.calls.length, failed.calls.length]).toEqual([
+      2, 2, 2,
+    ]);
+    expect(slots.inFlight).toBe(0);
+
+    const next = scriptedQuery([serverClosed()]);
+    await retryRead(() => next.query({}), opts);
+    expect(next.calls).toHaveLength(2);
   });
 });
 

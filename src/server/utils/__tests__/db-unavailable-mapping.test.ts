@@ -142,6 +142,23 @@ describe('publicProcedure maps an uncaught unreachable-database error to 503', (
     ['pg-pool acquire timeout', () => new Error('timeout exceeded when trying to connect')],
     ['pg connect timeout', () => new Error('Connection terminated due to connection timeout')],
     ['Prisma unknown error wrapping a pooler login failure', prismaWrappedLoginFailing],
+    // Any pg 08xxx is a 503, including an 08P01 whose message the read retry's list does not name.
+    [
+      'pg 08P01 with an unlisted pooler message',
+      () =>
+        Object.assign(new Error('client_login_timeout (server down)'), {
+          severity: 'FATAL',
+          code: '08P01',
+        }),
+    ],
+    [
+      'Prisma unknown error wrapping 57P03 not yet accepting connections',
+      () =>
+        new Prisma.PrismaClientUnknownRequestError(
+          'Error in connector: Error querying the database: FATAL: the database system is not yet accepting connections',
+          { clientVersion: 'test' }
+        ),
+    ],
     // Pool saturation is not retried (read-retry.ts) but is still a 503.
     [
       'pg 08P01 from the pooler: no more connections allowed',

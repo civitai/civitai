@@ -6,8 +6,8 @@
 // What counts as database-originated:
 //   - a Prisma error code (P1001/P1002/P1017; P2024 for a pool acquire timeout),
 //   - a pg server error of the connection-exception class (SQLSTATE 08xxx) or a shutdown / too many
-//     connections (57P01-57P03, 53300), recognised by pg's `severity` field. 08P01 counts only with
-//     one of the pooler's own outage or saturation messages (POOLER_TRANSIENT_08P01_MESSAGE),
+//     connections (57P01-57P03, 53300), recognised by pg's `severity` field. (The read retry is
+//     narrower about 08P01: isRetryableReadError.)
 //   - a Prisma PrismaClientUnknownRequestError (no code) whose message carries one of those pooler
 //     messages or a server shutdown/startup message,
 //   - pg / pg-pool's own messages for a connection that never came up, died, or was not handed out,
@@ -37,14 +37,15 @@ const PG_UNAVAILABLE_SQLSTATES = new Set(['57P01', '57P02', '57P03']);
 
 /**
  * PgBouncer's 08P01 messages for a server it cannot use right now, e.g. while the primary switches
- * over. The code alone is not enough: Postgres also raises 08P01 (protocol_violation) for a malformed
- * message from the client ("bind message supplies 1 parameters, but prepared statement requires 2"),
- * a bug, and PgBouncer uses it for permanent refusals ("unsupported startup parameter").
+ * over. Any 08xxx is a 503, but the read retry and the doc store retry an 08P01 only with one of
+ * these: Postgres also raises 08P01 (protocol_violation) for a malformed message from the client
+ * ("bind message supplies 1 parameters, but prepared statement requires 2"), a bug that a retry only
+ * repeats, and PgBouncer uses it for permanent refusals ("unsupported startup parameter").
  */
 const POOLER_OUTAGE_08P01_MESSAGE =
   /server login has been failing|server conn crashed\?|pgbouncer cannot connect to server/i;
-// The same code when the pooler is full rather than the server unreachable: unavailable (503), but
-// grouped with the pool-wait timeouts below, which are not retried.
+// The same code when the pooler is full rather than the server unreachable: also grouped with the
+// pool-wait timeouts below, which the read retry does not retry.
 const POOLER_SATURATION_08P01_MESSAGE = /no more connections allowed|query_wait_timeout/i;
 /** Every PgBouncer 08P01 message for a server it cannot use right now: outage or saturation. */
 export const POOLER_TRANSIENT_08P01_MESSAGE = new RegExp(
@@ -57,7 +58,7 @@ export const POOLER_TRANSIENT_08P01_MESSAGE = new RegExp(
 // error class is Prisma's own, so the message is the database's, not another dependency's.
 const PRISMA_UNKNOWN_REQUEST_ERROR = 'PrismaClientUnknownRequestError';
 const PRISMA_WRAPPED_OUTAGE_MESSAGE = new RegExp(
-  `${POOLER_OUTAGE_08P01_MESSAGE.source}|terminating connection due to administrator command|the database system is (?:starting up|shutting down)`,
+  `${POOLER_OUTAGE_08P01_MESSAGE.source}|terminating connection due to administrator command|the database system is (?:starting up|shutting down|not yet accepting connections|in recovery mode)`,
   'i'
 );
 
@@ -121,9 +122,7 @@ function isConnectionLink(cur: Errorish): boolean {
   const message = typeof cur.message === 'string' ? cur.message : '';
   if (PRISMA_UNREACHABLE_CODES.has(code)) return true;
   if (typeof cur.severity === 'string') {
-    if (code === '08P01') {
-      if (POOLER_OUTAGE_08P01_MESSAGE.test(message)) return true;
-    } else if (code.startsWith('08') || PG_UNAVAILABLE_SQLSTATES.has(code)) return true;
+    if (code.startsWith('08') || PG_UNAVAILABLE_SQLSTATES.has(code)) return true;
   }
   if (cur.name === PRISMA_UNKNOWN_REQUEST_ERROR && PRISMA_WRAPPED_OUTAGE_MESSAGE.test(message))
     return true;
@@ -165,9 +164,8 @@ const PG_CONNECT_TIMEOUT_MESSAGE = 'Connection terminated due to connection time
 /**
  * Whether a single statement that failed with `e` is worth running again after a short wait: the
  * connection was lost or refused (isDbConnectionError), or the pooler failed its own login (a pg
- * 28P01). Not a pg connect timeout, and not a full pool, pooler or server (isDbAcquireTimeout: a
- * pool-wait timeout, the pooler's saturation messages, 53300): retrying only adds load to the pool
- * that is already full.
+ * 28P01). Not a pg connect timeout, and not a pool-wait timeout or 53300 (isDbAcquireTimeout):
+ * retrying only adds load to the pool that is already full. Any pg 08xxx counts, as for the 503.
  *
  * It says nothing about whether running the statement twice is safe; that is the caller's to know.
  */
@@ -182,6 +180,27 @@ export function isTransientDbConnectionError(e: unknown): boolean {
   if (isDbConnectionError(e)) return true;
   const top = e as Errorish | null | undefined;
   return typeof top?.severity === 'string' && top.code === PG_INVALID_PASSWORD;
+}
+
+/**
+ * The read retry's decision (read-retry.ts): isTransientDbConnectionError, minus anything that says
+ * the pool, pooler or server is full (isDbAcquireTimeout, which includes the pooler's 08P01 saturation
+ * messages), and minus an 08P01 that does not carry one of the pooler's outage messages (a client bug,
+ * a permanent refusal, or an outage message nobody has listed yet: those stay a 503 without a retry).
+ *
+ * 57P01 (admin_shutdown) is retried: it is what a switchover's shutdown sends. An operator's
+ * pg_terminate_backend sends the same code, so a read killed by hand is issued again within the
+ * retry budget; turn the retry off (DB_READ_RETRY=off) to stop that during an incident.
+ */
+export function isRetryableReadError(e: unknown): boolean {
+  if (!isTransientDbConnectionError(e) || isDbAcquireTimeout(e)) return false;
+  const protocolViolation = findInChain(
+    e,
+    (cur) => typeof cur.severity === 'string' && codeOf(cur) === '08P01'
+  );
+  if (!protocolViolation) return true;
+  const message = typeof protocolViolation.message === 'string' ? protocolViolation.message : '';
+  return POOLER_OUTAGE_08P01_MESSAGE.test(message);
 }
 
 /** Unreachable OR no pooled connection in time: a transient condition a client should retry. */
