@@ -115,7 +115,7 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 			return nil, fallback.New("infinite-hat-turf")
 		}
 	}
-	base, err := parseInput(withoutUnreadIncludes(m), infiniteUnsupported, infiniteAbsentKeys)
+	base, err := parseInput(withoutUnreadIncludes(m), infiniteUnsupported, infiniteAbsentKeys, true)
 	if err != nil {
 		return nil, err
 	}
@@ -211,6 +211,11 @@ func withoutUnreadIncludes(m map[string]any) map[string]any {
 	}
 	out["include"] = kept
 	return out
+}
+
+// hydration is what the include list hydrates: 'profilePictures', 'cosmetics' and 'tags'.
+func (in *InfiniteInput) hydration() includes {
+	return includes{profilePictures: in.IncludeProfilePictures, cosmetics: in.IncludeCosmetics, tags: in.IncludeTags}
 }
 
 // prioritized is getAllImages' prioritizeUser: a non-empty prioritizedUserIds.
@@ -695,7 +700,7 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 	hq.IDs, hq.Limit = ans.IDs, len(ans.IDs)
 	hq.Cursor, hq.ModelID, hq.ModelVersionID, hq.Period = 0, 0, 0, "AllTime"
 	hq.ThrowOnStatementTimeout = true
-	images, _, err := fetchInfiniteRows(ctx, d, hq, viewer, now, in.IncludeProfilePictures, in.IncludeCosmetics)
+	images, _, err := fetchInfiniteRows(ctx, d, hq, viewer, now, in.hydration())
 	if err != nil {
 		if fallback.Reason(err) != "" {
 			return nil, err
@@ -746,7 +751,7 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 			return nil, fallback.New("prioritized-system-user")
 		}
 	}
-	images, next, err := fetchInfiniteRows(ctx, d, q, viewer, now, in.IncludeProfilePictures, in.IncludeCosmetics)
+	images, next, err := fetchInfiniteRows(ctx, d, q, viewer, now, in.hydration())
 	if err != nil {
 		return nil, err
 	}
@@ -762,9 +767,8 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 // fetchInfiniteRows is one getAllImages call: the query (through the page cache), the hydration
 // and the per-image transform with image.getInfinite's wire trim. next is the response's
 // `nextCursor`: the look-ahead row's cursor column (the image id, or a post's nullable index), or
-// undefined at the end. profilePictures and cosmetics are the include list's 'profilePictures' and
-// 'cosmetics'.
-func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, viewer Viewer, now time.Time, profilePictures, cosmetics bool) ([]Image, any, error) {
+// undefined at the end. inc is what the include list hydrates (includes).
+func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, viewer Viewer, now time.Time, inc includes) ([]Image, any, error) {
 	rows, err := FetchRows(ctx, d.DB, d.Cache, q.Build())
 	if err != nil {
 		return nil, nil, err
@@ -779,7 +783,7 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 			next = int64(look.CursorID)
 		}
 	}
-	hy, err := hydrateRows(ctx, d.Hydrator, rows, viewer, d.Config.VisibleDecorationEvents, profilePictures, cosmetics)
+	hy, err := hydrateRows(ctx, d.Hydrator, rows, viewer, d.Config.VisibleDecorationEvents, inc)
 	if err != nil {
 		return nil, nil, err
 	}

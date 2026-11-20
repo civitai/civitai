@@ -1,6 +1,6 @@
 {
-  "name": "fallback-include-tags",
-  "description": "`include: [cosmetics, tags]`: the votable tags (imageTagsCache and the viewer’s votes) are not ported.",
+  "name": "fallback-include-meta-select",
+  "description": "`include: [cosmetics, tags, metaSelect]`: the tags are answered, but metaSelect (getMetaForImages) is not ported.",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "imageIndexFeed": true,
@@ -10,7 +10,7 @@
     "frameCacheNegative": false
   },
   "request": {
-    "input": "{\"json\":{\"include\":[\"cosmetics\",\"tags\"],\"browsingLevel\":1,\"limit\":2}}",
+    "input": "{\"json\":{\"include\":[\"cosmetics\",\"tags\",\"metaSelect\"],\"browsingLevel\":1,\"limit\":2}}",
     "headers": {
       "host": "green.example.test"
     },

@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { sql } from 'kysely';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyRead } from '~/server/db/kyselyDb';
 import { logToAxiom } from '~/server/logging/client';
 import type { ServiceDealNotice } from '~/server/notifications/creator-service.notifications';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -1034,6 +1036,34 @@ export async function countOpenDealsByOffering(offeringIds: number[]) {
       AND "status" IN (${OPEN})
     GROUP BY "offeringId"`;
   return new Map(rows.map((row) => [row.offeringId, row.open]));
+}
+
+/**
+ * A seller's Completed deals, how many of those were for one offering, and how many were first
+ * delivered by their due date (a later redelivery after a revision request does not make one late).
+ */
+export async function getServiceDealRecord({
+  sellerId,
+  offeringId,
+}: {
+  sellerId: number;
+  offeringId: number;
+}) {
+  return kyselyRead
+    .selectFrom('ServiceDeal as d')
+    .where('d.sellerId', '=', sellerId)
+    .where('d.status', '=', 'Completed')
+    .select([
+      sql<number>`count(*)::int`.as('completed'),
+      sql<number>`(count(*) FILTER (WHERE d."offeringId" = ${offeringId}))::int`.as(
+        'offeringCompleted'
+      ),
+      sql<number>`(count(*) FILTER (WHERE d."dueAt" >= (
+        SELECT min(e."createdAt") FROM "ServiceDealEvent" e
+        WHERE e."dealId" = d.id AND e."type" = 'Delivered'
+      )))::int`.as('onTime'),
+    ])
+    .executeTakeFirstOrThrow();
 }
 
 /** A held offering's text and cover stay with its seller and moderators. */
