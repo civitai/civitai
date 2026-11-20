@@ -888,9 +888,8 @@ export async function claimGift({ user, code }: { user: { id: number }; code: st
     });
   } catch (error) {
     if (!(error instanceof GiftAllowanceUsed)) throw error;
-    await notifyGiftLimitReached(link.createdById, resolved.limit, window.start).catch(
-      () => undefined
-    );
+    // Best effort: createNotification logs and swallows a failed send.
+    await notifyGiftLimitReached(link.createdById, resolved.limit, window.start);
     const message = usageLimitMessage(resolved.def, resolved) ?? 'Monthly gift limit reached.';
     const retryAfterSeconds = Math.max(1, Math.ceil((window.end.getTime() - now) / 1000));
     const resetAt = window.end.toISOString();

@@ -355,7 +355,7 @@ describe('claimGift', () => {
         new Date('2026-11-01T00:00:00.000Z'),
         new Date('2026-12-01T00:00:00.000Z'),
       ]);
-      // One notice per creator per month: the key is what the notifications app dedupes on.
+      // One notice per creator, month and limit: the key is what the notifications app dedupes on.
       expect(mockCreateNotification).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: OWNER,
@@ -389,7 +389,7 @@ describe('claimGift', () => {
       }
     );
 
-    it('still refuses with the limit when the notice fails to send', async () => {
+    it('still refuses with the limit when the notifications app rejects the notice', async () => {
       seedUsed(4);
       mockCreateNotification.mockRejectedValue(new Error('notifications app down'));
       await expect(claimGift({ user: { id: CLAIMER }, code })).rejects.toMatchObject({
