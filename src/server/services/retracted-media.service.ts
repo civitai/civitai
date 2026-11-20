@@ -27,7 +27,7 @@ export type RetractedMedia = {
  */
 export async function getRetractedMedia(
   imageId: number,
-  { csamReview }: { csamReview: boolean },
+  { csamReview, cdnLeg = false }: { csamReview: boolean; cdnLeg?: boolean },
   db = dbWrite
 ): Promise<RetractedMedia | null> {
   const [row] = await db.$transaction(async (tx) => {
@@ -38,7 +38,7 @@ export async function getRetractedMedia(
       SELECT i.url, i.type::text AS type, i."mimeType", i."blockedFor", i.ingestion,
         ${Prisma.raw(csamReview ? 'false' : csamRestrictedSql('i'))} AS restricted
       FROM "Image" i
-      WHERE i.id = ${imageId} AND ${Prisma.raw(retractedImageWhereSql('i', { cdnLeg: true }))}
+      WHERE i.id = ${imageId} AND ${Prisma.raw(retractedImageWhereSql('i', { cdnLeg }))}
     `;
   });
   if (!row) return null;

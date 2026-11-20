@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
-import { retractedMediaUrl, useCdnFailed } from '~/components/RetractedMedia/retracted-media';
+import { useRetractedMedia } from '~/components/RetractedMedia/retracted-media';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
 import { takesHats } from '~/components/HatTurf/detail/HatTurfDetailProvider';
@@ -336,13 +336,15 @@ function ImageContent({
   const features = useFeatureFlags();
   // Optional: the carousel also renders without a session provider.
   const session = useOptionalCivitaiSessionContext();
-  const [cdnFailed, onCdnError] = useCdnFailed(image.id);
-  const modSession = features.modRetractedMedia && session?.type === 'authed' ? session : null;
-  const retractedSrc = retractedMediaUrl(image, modSession, { cdnFailed });
-  // Only where the route could serve it, so everyone else's CDN errors are untouched.
-  const cdnFallback = retractedMediaUrl(image, modSession, { cdnFailed: true })
-    ? onCdnError
-    : undefined;
+  const {
+    src: retractedSrc,
+    onCdnError,
+    mediaRef,
+  } = useRetractedMedia(
+    image,
+    features.modRetractedMedia && session?.type === 'authed' ? session : null,
+    { cdnLeg: features.modRetractedMediaCdnLeg }
+  );
 
   const imageHeight = image?.height ?? 1200;
   const imageWidth = image?.width ?? 1200;
@@ -440,9 +442,10 @@ function ImageContent({
                   : undefined
               }
               controls={active && !timelineOpen}
-              onError={cdnFallback}
+              onError={onCdnError}
+              mediaRef={mediaRef}
               videoProps={{
-                onError: cdnFallback,
+                onError: onCdnError,
                 autoPlay: active,
                 // A slide mid-transition is still in view, which the player's own in-view check
                 // reads as a reason to play. The sticker timeline owns play and pause: dropping

@@ -8,7 +8,7 @@ import {
 } from './held-url';
 
 /** Whether the retracted-media routes may serve the "Image" row aliased `image` at all, to anyone:
- *  it is blocked (or, with `cdnLeg`, scanned with its url retracted or denied and not held), not held media
+ *  it is blocked (or, with `cdnLeg`, scanned with its url retracted and not held), not held media
  *  (`heldImageSql`, which the held-media route serves), and not under an evidence hold. With
  *  `cdnLeg`, the url must also be the row's alone. Who among moderators may see it is
  *  `csamRestrictedSql`'s call. */
@@ -18,8 +18,7 @@ export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): 
     ? `(${image}.ingestion = 'Blocked' OR (
       ${image}.ingestion = 'Scanned'
       AND EXISTS (
-        SELECT 1 FROM "ImageCdnAccess" ca
-        WHERE ca.url = ${image}."url" AND ca.state IN ('Retracted', 'Denied')
+        SELECT 1 FROM "ImageCdnAccess" ca WHERE ca.url = ${image}."url" AND ca.state = 'Retracted'
       )
       AND NOT ${heldUrlSql(`${image}."url"`)}
       -- Bytes are per url, the checks per row: another row's signal would not reach this one, so the

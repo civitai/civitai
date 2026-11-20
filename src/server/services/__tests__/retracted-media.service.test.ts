@@ -160,9 +160,9 @@ const { getRetractedMedia, scannerVerdicts } = await import(
 
 /** Who sees the image: `none` (refused to every moderator), `plain` (any moderator) or `suspect`
  *  (only a moderator cleared for CSAM review). */
-const tierOf = async (id: number) => {
-  const cleared = await getRetractedMedia(id, { csamReview: true });
-  const anyModAnswer = await getRetractedMedia(id, { csamReview: false });
+const tierOf = async (id: number, { cdnLeg = false } = {}) => {
+  const cleared = await getRetractedMedia(id, { csamReview: true, cdnLeg });
+  const anyModAnswer = await getRetractedMedia(id, { csamReview: false, cdnLeg });
   const anyMod = typeof anyModAnswer === 'string' ? null : anyModAnswer;
   if (!cleared) {
     expect(anyMod).toBeNull();
@@ -171,8 +171,8 @@ const tierOf = async (id: number) => {
   return anyMod ? 'plain' : 'suspect';
 };
 
-const expectTiers = async (tier: string, ids: number[]) => {
-  for (const id of ids) expect({ id, tier: await tierOf(id) }).toEqual({ id, tier });
+const expectTiers = async (tier: string, ids: number[], opts: { cdnLeg?: boolean } = {}) => {
+  for (const id of ids) expect({ id, tier: await tierOf(id, opts) }).toEqual({ id, tier });
 };
 
 describe('getRetractedMedia', () => {
@@ -538,39 +538,46 @@ describe('a model version unpublished for its subject', () => {
   });
 });
 
-describe('a scanned image the image CDN refuses', () => {
-  // 990000201..: scanned, each the only row on its url. The owners are plain unless a case says so.
-  const ids = { retracted: 12, denied: 990000201, served: 990000202, pending: 990000203 };
+describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
+  // 990000201..: scanned, each the only row on its url, each with its own plain owner.
+  const ids = { retracted: 990000204, denied: 990000201, served: 990000202, pending: 990000203 };
+  const leg = { cdnLeg: true };
   beforeAll(async () => {
     await pg.exec(`
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
         (990000201, 'key-990000201', 'Scanned', NULL, 990100201),
         (990000202, 'key-990000202', 'Scanned', NULL, 990100202),
-        (990000203, 'key-990000203', 'Pending', NULL, 990100203);
+        (990000203, 'key-990000203', 'Pending', NULL, 990100203),
+        (990000204, 'key-990000204', 'Scanned', NULL, 990100204);
       INSERT INTO "ImageCdnAccess" (url, state) VALUES
-        ('key-990000201', 'Denied'), ('key-990000203', 'Retracted');
+        ('key-990000201', 'Denied'), ('key-990000203', 'Retracted'), ('key-990000204', 'Retracted');
     `);
   });
   afterEach(async () => {
     await pg.exec(`
-      DELETE FROM "CsamReport" WHERE "userId" IN (512, 990100201);
-      DELETE FROM "User" WHERE id IN (512, 990100201);
-      UPDATE "Image" SET "userId" = 512 WHERE id = 12;
+      DELETE FROM "CsamReport" WHERE "userId" = 990100204;
+      DELETE FROM "User" WHERE id = 990100204;
     `);
   });
 
-  it('serves it to any moderator while its url is retracted or denied', async () => {
-    await expectTiers('plain', [ids.retracted, ids.denied]);
+  it('serves a scanned image whose url the CDN retracted to any moderator', async () => {
+    await expectTiers('plain', [ids.retracted], leg);
   });
 
-  it('refuses one the CDN still serves, and one whose scan is not final', async () => {
-    await expectTiers('none', [ids.served, ids.pending]);
+  it('is off unless the route asks for it', async () => {
+    await expectTiers('none', [ids.retracted]);
+  });
+
+  // 🔴 Not a denied one (Moderation Lead ruling, 2026-11-20): a url can be capped at Denied for a
+  // hold on a row that has since been deleted, and nothing here can see that row any more.
+  it('refuses a denied url, one the CDN still serves, and one whose scan is not final', async () => {
+    await expectTiers('none', [ids.denied, ids.served, ids.pending], leg);
   });
 
   it("reads a scanned image's verdict fresh each time, since a rescan can change it", async () => {
-    await expectTiers('plain', [ids.retracted]);
+    await expectTiers('plain', [ids.retracted], leg);
     scanner.verdict = 'hit';
-    expect(await getRetractedMedia(ids.retracted, { csamReview: false })).toBeNull();
+    expect(await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })).toBeNull();
   });
 
   // The route answers a null with 404: a moderator not cleared for CSAM review must not reach the
@@ -578,29 +585,20 @@ describe('a scanned image the image CDN refuses', () => {
   it.each([
     [
       'a CsamReport owner',
-      (userId: number) =>
-        pg.query(`INSERT INTO "CsamReport" ("userId", details, images) VALUES ($1, '{}', '[]')`, [
-          userId,
-        ]),
+      () =>
+        pg.query(
+          `INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100204, '{}', '[]')`
+        ),
     ],
     [
       'an owner banned for minor safety',
-      (userId: number) =>
+      () =>
         pg.query(
-          `INSERT INTO "User" (id, meta) VALUES ($1, '{"banDetails": {"reasonCode": "SexualMinor"}}')`,
-          [userId]
+          `INSERT INTO "User" (id, meta) VALUES (990100204, '{"banDetails": {"reasonCode": "SexualMinor"}}')`
         ),
     ],
   ])('refuses the image of %s to a moderator not cleared for CSAM review', async (_label, mark) => {
-    for (const [id, userId] of [
-      [ids.retracted, 512],
-      [ids.denied, 990100201],
-    ] as const) {
-      await mark(userId);
-      expect({ id, served: !!(await getRetractedMedia(id, { csamReview: false })) }).toEqual({
-        id,
-        served: false,
-      });
-    }
+    await mark();
+    expect(await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })).toBeNull();
   });
 });
