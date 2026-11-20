@@ -1,7 +1,7 @@
 import Script from 'next/script';
 import { useEffect, useState } from 'react';
 
-/** Sparteo's IAB TCF vendor id (Global Vendor List, checked at GVL v186). */
+/** Sparteo's vendor id in the IAB TCF Global Vendor List. */
 export const SPARTEO_TCF_VENDOR_ID = 1028;
 
 const SPARTEO_TAG_SRC = 'https://www.flashb.id/universal/f812656a-2eb5-5363-b9fb-90c27d71eb79.js';
