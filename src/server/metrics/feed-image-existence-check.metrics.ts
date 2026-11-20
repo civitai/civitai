@@ -67,7 +67,9 @@ export function ensureRegisterFeedImageExistenceCheckMetrics(
     reg,
     'images_search_request_duration_seconds',
     'Request duration in seconds',
-    ['route'],
+    // `credential` is set only by the /api/v1/images REST handler (route="api/v1/images"),
+    // from the fixed set in `apiCredentialLabel`; `getImagesFromSearch` observations omit it.
+    ['route', 'credential'],
     // Tail buckets (8-60s) added so the heavy-route pin window (the /api/v1/images
     // REST handler + Meili search routinely block 8-23s under load) lands in real
     // buckets instead of saturating +Inf, which made histogram_quantile blind above 5s.

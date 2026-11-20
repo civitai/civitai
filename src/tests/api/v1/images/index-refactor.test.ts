@@ -52,6 +52,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 // wrapping needed for the contract assertions).
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   PublicEndpoint: (handler: any) => (req: any, res: any) => handler(req, res),
+  apiCredentialLabel: () => 'anonymous',
 }));
 
 // Keep the eventloop-longtask wrapper inert (the disarmed default path).
