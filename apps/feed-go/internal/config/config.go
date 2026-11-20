@@ -37,7 +37,7 @@ type Config struct {
 	AuthJWKSURI      string            // AUTH_JWKS_URI
 	AuthRequireIat0  bool              // AUTH_REQUIRE_IAT0
 	AuthCookieMode   string            // AUTH_SESSION_COOKIE_MODE: host | shared (default)
-	AuthLegacyRead   bool              // AUTH_LEGACY_READ (default true): read the shared-slot cookie
+	AuthLegacyRead   bool              // AUTH_LEGACY_READ (see LegacyRead): read the shared-slot cookie
 	AuthSiteModes    map[string]string // AUTH_SESSION_COOKIE_MODE_BY_SITE: registrable domain -> host | shared
 	SysReadTimeout   time.Duration
 	FallbackURL      string // FEED_GO_FALLBACK_URL: the Node app, for everything not served here
@@ -200,7 +200,7 @@ func Load() (*Config, error) {
 		AuthJWKSURI:      os.Getenv("AUTH_JWKS_URI"),
 		AuthRequireIat0:  boolEnv("AUTH_REQUIRE_IAT0", false),
 		AuthCookieMode:   env("AUTH_SESSION_COOKIE_MODE", "shared"),
-		AuthLegacyRead:   boolEnv("AUTH_LEGACY_READ", true),
+		AuthLegacyRead:   LegacyRead(os.Getenv("AUTH_LEGACY_READ")),
 		AuthSiteModes:    SiteModes(os.Getenv("AUTH_SESSION_COOKIE_MODE_BY_SITE")),
 		FallbackURL:      os.Getenv("FEED_GO_FALLBACK_URL"),
 		CreatorPromotion: os.Getenv("FEED_GO_CREATOR_PROMOTIONS"),
@@ -327,6 +327,16 @@ func (c *Config) CookieNames(reqHost string) []string {
 		names = append(names, shared)
 	}
 	return append(names, host)
+}
+
+// LegacyRead parses AUTH_LEGACY_READ as legacyCookieReadEnabled (packages/civitai-auth) does: false only for
+// `false`, `0`, `off` or `no` (any case, surrounding whitespace ignored); unset or any other value is true.
+func LegacyRead(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "false", "0", "off", "no":
+		return false
+	}
+	return true
 }
 
 // SiteModes parses AUTH_SESSION_COOKIE_MODE_BY_SITE as siteCookieMode (packages/civitai-auth) does: comma-separated

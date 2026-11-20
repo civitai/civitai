@@ -170,7 +170,10 @@ import type {
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 type GetAllPostsRaw = {
   id: number;
@@ -2534,7 +2537,7 @@ export const getPostResourceCovers = async ({
       showSfwFace
     ).filter(
       (image) =>
-        Flags.intersects(image.nsfwLevel, browsingLevel) &&
+        Flags.intersects(image.nsfwLevel, browsingLevel & allBrowsingLevelsFlag) &&
         // The cache keeps images from private posts; only their owner may see them.
         (image.availability !== Availability.Private || image.userId === user.id)
     );
