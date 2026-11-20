@@ -268,7 +268,13 @@ async function markScanRating(db: RawDb, modelId: number, source: string) {
  * owner's rating back. `heldLead`: only while the lead is still there and unapplied, so a ruling
  * made since stands.
  */
-async function flipRow(db: RawDb, modelId: number, source: string, heldLead: boolean) {
+async function flipRow(
+  db: RawDb,
+  modelId: number,
+  source: string,
+  heldLead: boolean,
+  guard: Prisma.Sql = Prisma.empty
+) {
   const heldLeadGuard = heldLead
     ? Prisma.sql`AND jsonb_typeof(m.meta->'restrictedNsfwVerdict') = 'object'
       AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')
@@ -304,6 +310,52 @@ async function flipRow(db: RawDb, modelId: number, source: string, heldLead: boo
       AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
       AND NOT ${holdsRatingSql}
       ${heldLeadGuard}
+      ${guard}
+  `;
+}
+
+const noComFaceSql = Prisma.sql`(m."sfwName" IS NULL OR m."sfwDescription" IS NULL
+  OR m."sfwCoverImageId" IS NULL)`;
+
+/**
+ * Rates a model the text scan left unrated for its .com face, once the face is gone. Run in the
+ * transaction that takes the face away, so the model is never listed as safe without one. Returns
+ * whether it flipped; the caller refreshes the level (`finishHeldVerdictApply`).
+ */
+export async function applyComFaceHeldVerdict(db: RawDb, modelId: number) {
+  const flipped = await flipRow(
+    db,
+    modelId,
+    'text-scan',
+    false,
+    Prisma.sql`AND NOT m.nsfw AND ${asJsonbObjectSql('m.meta')} ? 'comFaceHeldVerdict'
+      AND ${noComFaceSql}`
+  );
+  await db.$executeRaw`
+    UPDATE "Model" m
+    SET meta = m.meta - 'comFaceHeldVerdict'
+    WHERE m.id = ${modelId}
+      AND ${asJsonbObjectSql('m.meta')} ? 'comFaceHeldVerdict'
+      AND ${noComFaceSql}
+  `;
+  return flipped > 0;
+}
+
+async function holdComFaceVerdict(db: RawDb, modelId: number, level: number) {
+  await db.$executeRaw`
+    UPDATE "Model" m
+    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
+      'comFaceHeldVerdict', jsonb_build_object('at', now(), 'level', ${level}::int)
+    )
+    WHERE m.id = ${modelId}
+  `;
+}
+
+async function dropComFaceHeldVerdict(db: RawDb, modelId: number) {
+  await db.$executeRaw`
+    UPDATE "Model" m
+    SET meta = m.meta - 'comFaceHeldVerdict'
+    WHERE m.id = ${modelId} AND ${asJsonbObjectSql('m.meta')} ? 'comFaceHeldVerdict'
   `;
 }
 
@@ -480,6 +532,7 @@ export async function applyModelNsfwTextScan(
   // change the rating again. The rating itself stays as it is.
   if (outcome.nsfw && outcome.nsfw.detectedLevel <= NsfwLevel.PG13) {
     await dropScanRatingMarker(dbWrite, entityId);
+    await dropComFaceHeldVerdict(dbWrite, entityId);
     return nothing;
   }
   // R+ rates a Model whatever it declared: an already-mature one gets the scan's marker.
@@ -522,6 +575,8 @@ export async function applyModelNsfwTextScan(
     result,
     level: outcome.nsfw.detectedLevel,
   });
+  if (result === 'skipped_com_face')
+    await holdComFaceVerdict(dbWrite, entityId, outcome.nsfw.detectedLevel);
   // A complete .com face already lists it on .com: the notice's advice to add one does not apply.
   if (result !== 'applied' || hasCompleteSfwFace(model)) return nothing;
 

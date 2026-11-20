@@ -529,6 +529,9 @@ export type ModelMeta = Partial<{
   /** The .com face text passed the face check. `hash` covers everything the check read (see
    *  `sfwFaceStampHash`), so any edit to it makes the stamp stale. Server-owned. */
   sfwFaceCheckedAt: { at: string; promptId: number | null; hash: string };
+  /** The text scan read the listing as R+ (`level`) and left the model unrated because of its .com
+   *  face. A write that takes the face away applies it in the same transaction. Server-owned. */
+  comFaceHeldVerdict: { at: string; level: number };
   /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
    *  moderator can restore it. `reason` says whether the check flagged the listing or never got a
    *  verdict; `detail` is the check's own reason, for moderators only. A save that sets a .com

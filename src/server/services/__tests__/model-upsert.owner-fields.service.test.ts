@@ -1869,6 +1869,16 @@ describe('the .com face stamp at save', () => {
 });
 
 describe('a .com face going away', () => {
+  /** The held-verdict flip: the scan's flip statement, guarded on the held verdict. */
+  const heldFlip = () =>
+    mockDbWrite.$executeRaw.mock.calls.find(
+      ([strings, ...values]) =>
+        Array.isArray(strings) &&
+        (strings as readonly string[]).join('?').includes('SET nsfw = TRUE') &&
+        values.some((v) =>
+          String((v as { sql?: string })?.sql ?? '').includes('comFaceHeldVerdict')
+        )
+    );
   const complete = {
     name: baseInput.name,
     description: baseInput.description,
@@ -1895,6 +1905,21 @@ describe('a .com face going away', () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID, ...change });
     expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledTimes(1);
     expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('rates the model in the save transaction when the scan held a verdict for that face', async () => {
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
+    const flip = heldFlip();
+    expect(flip).toBeDefined();
+    expect(flip).toContain(MODEL_ID);
+  });
+
+  it('does not try it when the face stays (control)', async () => {
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
+    const flip = heldFlip();
+    expect(flip).toBeUndefined();
   });
 
   it('rescans when a moderator turns it off too', async () => {

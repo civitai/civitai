@@ -48,6 +48,26 @@ export function hasSfwFaceParts(face: {
   );
 }
 
+type FaceFields = {
+  sfwName?: string | null;
+  sfwDescription?: string | null;
+  sfwCoverImageId?: number | null;
+};
+
+/** Whether a write of `data` over `before` leaves a model that had a complete .com face without one. */
+export function losesSfwFace(before: FaceFields, data: FaceFields) {
+  const pick = <K extends keyof FaceFields>(key: K) =>
+    data[key] !== undefined ? data[key] : before[key];
+  return (
+    hasSfwFaceParts(before) &&
+    !hasSfwFaceParts({
+      sfwName: pick('sfwName'),
+      sfwDescription: pick('sfwDescription'),
+      sfwCoverImageId: pick('sfwCoverImageId'),
+    })
+  );
+}
+
 /** Whether the face text check passed for exactly this face. */
 export function sfwFaceStampMatches(meta: unknown, face: SfwFaceStampFace) {
   const stamp = (meta as ModelMeta | null)?.sfwFaceCheckedAt;

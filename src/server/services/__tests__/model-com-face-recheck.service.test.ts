@@ -239,7 +239,13 @@ describe('the .com face listing re-check', () => {
 
     await processComFaceRechecks(NOW);
 
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    // The removal, then the scan verdict its face held back, rated in the same transaction.
+    const statements = tx.$executeRaw.mock.calls.map((call: unknown[]) => {
+      const [first] = call as [{ sql?: string } | readonly string[]];
+      return Array.isArray(first) ? first.join('?') : (first as { sql: string }).sql;
+    });
+    expect(statements[0]).toMatch(/SET "sfwCoverImageId" = NULL/);
+    expect(statements.some((sql) => sql.includes('SET nsfw = TRUE'))).toBe(true);
     expect(tx.modActivity.create).toHaveBeenCalledTimes(1);
     expect(db.$executeRaw).not.toHaveBeenCalled();
     expect(db.modActivity.create).not.toHaveBeenCalled();

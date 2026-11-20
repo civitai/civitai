@@ -173,6 +173,13 @@ async function removeComFace(
   };
   const removed = await dbWrite.$transaction(async (tx) => {
     const updated = await tx.$executeRaw(comFaceRemovalSql(modelId, coverId, marker));
+    if (updated) {
+      // Imported here: the action reaches services that import this module.
+      const { applyComFaceHeldVerdict } = await import(
+        '~/server/services/text-scan/actions/model-nsfw'
+      );
+      await applyComFaceHeldVerdict(tx, modelId);
+    }
     if (updated)
       await tx.modActivity.create({
         data: {

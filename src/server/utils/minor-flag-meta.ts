@@ -77,6 +77,7 @@ const HIDDEN_SERVER_OWNED_META_KEYS = [
   'comFaceIntent',
   'comFaceIntentRelockSuppressed',
   'sfwFaceCheckedAt',
+  'comFaceHeldVerdict',
 ] as const satisfies readonly (typeof SERVER_OWNED_META_KEYS)[number][];
 
 const CLIENT_HIDDEN_META_KEYS: readonly string[] = [
@@ -198,6 +199,7 @@ export const SERVER_OWNED_META_KEYS = [
   'comFaceIntent',
   'comFaceIntentRelockSuppressed',
   'sfwFaceCheckedAt',
+  'comFaceHeldVerdict',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
 /** The text checks whose unlocked mature rating the owner cannot undo alone until a read of the

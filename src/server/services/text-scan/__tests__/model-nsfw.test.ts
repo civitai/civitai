@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 
@@ -26,7 +28,7 @@ vi.mock('~/server/clickhouse/tracker', () => ({
   },
 }));
 
-const { applyModelNsfwTextScan, finishHeldVerdictApply } = await import(
+const { applyComFaceHeldVerdict, applyModelNsfwTextScan, finishHeldVerdictApply } = await import(
   '~/server/services/text-scan/actions/model-nsfw'
 );
 const { enqueueJobs } = await import('~/server/services/job-queue.service');
@@ -268,6 +270,17 @@ describe('applyModelNsfwTextScan and the .com face', () => {
     expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 5 } })
     );
+    // Held for the write that takes the face away.
+    const held = dbMock.dbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
+      (c[0] as readonly string[]).join('?').includes("'comFaceHeldVerdict', jsonb_build_object")
+    );
+    expect(held).toBeDefined();
+    expect(held).toContain(NsfwLevel.X);
+  });
+
+  it('drops the held verdict when the text reads PG-13', async () => {
+    await scan(rated(NsfwLevel.PG13, NsfwLevel.PG13));
+    expect(sqlWith("m.meta - 'comFaceHeldVerdict'")).toBeDefined();
   });
 
   it.each([
@@ -534,5 +547,110 @@ describe('finishHeldVerdictApply', () => {
     vi.mocked(updateModelNsfwLevels).mockRejectedValueOnce(new Error('db down'));
     vi.mocked(enqueueJobs).mockRejectedValueOnce(new Error('db down'));
     await expect(finishHeldVerdictApply(7)).resolves.toBeUndefined();
+  });
+});
+
+// Against a Postgres stand-in: the guards decide, so the test reads the row the statements leave.
+describe('applyComFaceHeldVerdict', () => {
+  let pg: PGlite;
+  const db = {
+    $executeRaw: async (strings: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
+      const sql = Array.isArray(strings)
+        ? Prisma.sql(strings as TemplateStringsArray, ...values)
+        : (strings as Prisma.Sql);
+      return (await pg.query(sql.text, sql.values)).affectedRows ?? 0;
+    },
+    $queryRaw: async () => [],
+  };
+  const held = { comFaceHeldVerdict: { at: '2026-11-20T00:00:00Z', level: NsfwLevel.X } };
+  const face = { sfwName: 'Retro', sfwDescription: '<p>Retro.</p>', sfwCoverImageId: 5 };
+  const noFace = { sfwName: null, sfwDescription: null, sfwCoverImageId: null };
+
+  async function insert(row: Record<string, unknown>) {
+    const r = {
+      nsfw: false,
+      locked: [] as string[],
+      meta: held,
+      minor: false,
+      poi: false,
+      availability: 'Public',
+      ...noFace,
+      ...row,
+    };
+    await pg.query(
+      `INSERT INTO "Model" (id, nsfw, "sfwOnly", "lockedProperties", meta, minor, poi, availability,
+        "sfwName", "sfwDescription", "sfwCoverImageId")
+       VALUES (1, $1, false, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        r.nsfw,
+        r.locked,
+        JSON.stringify(r.meta),
+        r.minor,
+        r.poi,
+        r.availability,
+        r.sfwName,
+        r.sfwDescription,
+        r.sfwCoverImageId,
+      ]
+    );
+  }
+  const read = async () =>
+    (
+      await pg.query<{ nsfw: boolean; meta: Record<string, unknown>; lockedProperties: string[] }>(
+        `SELECT nsfw, meta, "lockedProperties" FROM "Model" WHERE id = 1`
+      )
+    ).rows[0];
+
+  beforeEach(async () => {
+    pg = new PGlite();
+    await pg.exec(`CREATE TABLE "Model" (id int PRIMARY KEY, nsfw boolean, "sfwOnly" boolean,
+      "lockedProperties" text[], meta jsonb, minor boolean, poi boolean, availability text,
+      "sfwName" text, "sfwDescription" text, "sfwCoverImageId" int)`);
+  });
+  afterEach(async () => {
+    await pg.close();
+  });
+
+  it('rates a model whose face is gone, unlocked, with the scan marker, and spends the verdict', async () => {
+    await insert({});
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(true);
+    const row = await read();
+    expect(row.nsfw).toBe(true);
+    expect(row.lockedProperties).toEqual([]);
+    expect(row.meta).toMatchObject({ systemNsfwLock: { source: 'text-scan' } });
+    expect(row.meta).not.toHaveProperty('comFaceHeldVerdict');
+  });
+
+  it.each([
+    ['only the cover is gone', { ...face, sfwCoverImageId: null }],
+    ['only the description is gone', { ...face, sfwDescription: null }],
+  ])('rates it when %s', async (_, row) => {
+    await insert(row);
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(true);
+    expect((await read()).nsfw).toBe(true);
+  });
+
+  it('leaves a model that still has its face, and keeps the verdict for later', async () => {
+    await insert(face);
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(false);
+    const row = await read();
+    expect(row.nsfw).toBe(false);
+    expect(row.meta).toHaveProperty('comFaceHeldVerdict');
+  });
+
+  it('leaves a model the scan held nothing for (control)', async () => {
+    await insert({ meta: {} });
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(false);
+    expect((await read()).nsfw).toBe(false);
+  });
+
+  it.each([
+    ['a moderator nsfw lock', { locked: ['nsfw'] }],
+    ['a minor flag', { minor: true }],
+    ['Private', { availability: 'Private' }],
+  ])('never overrides %s', async (_, row) => {
+    await insert(row);
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(false);
+    expect((await read()).nsfw).toBe(false);
   });
 });
