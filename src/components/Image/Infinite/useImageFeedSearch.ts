@@ -105,15 +105,28 @@ export function useSearchPeriod(searching: boolean) {
 }
 
 /** The images feed answered by the semantic search, in the shape the feed renders. */
-export function useSemanticImageFeed(input: SemanticImageSearchInput | undefined) {
-  const { data, ...rest } = trpc.semanticImageSearch.search.useInfiniteQuery(input ?? idleInput, {
-    enabled: !!input,
-    getNextPageParam: (lastPage) => lastPage.nextCursor,
+/** `videos`: the search runs on the video index (`searchVideos`), as the /videos feed does. */
+export function useSemanticImageFeed(
+  input: SemanticImageSearchInput | undefined,
+  { videos = false }: { videos?: boolean } = {}
+) {
+  const options = {
+    getNextPageParam: (lastPage: { nextCursor?: number }) => lastPage.nextCursor,
     ...withPlaceholderData({ keepPreviousData: true }),
     // The feed's retry banner and its fall-back to the plain feed drive every attempt.
     retry: 0,
     trpc: { context: { skipBatch: true }, abortOnUnmount: true },
+  };
+  // Both hooks run on every render; only the one for this feed's index is enabled.
+  const imageSearch = trpc.semanticImageSearch.search.useInfiniteQuery(input ?? idleInput, {
+    ...options,
+    enabled: !!input && !videos,
   });
+  const videoSearch = trpc.semanticImageSearch.searchVideos.useInfiniteQuery(input ?? idleInput, {
+    ...options,
+    enabled: !!input && videos,
+  });
+  const { data, ...rest } = videos ? videoSearch : imageSearch;
 
   const { items } = useFeedImageItems(data?.pages, { isRefetching: rest.isRefetching });
 

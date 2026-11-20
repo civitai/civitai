@@ -112,8 +112,20 @@ describe('snapshotFromWorkflow', () => {
           metadata: {},
           output: {
             images: [
-              { id: 'b1', url: 'https://cdn/img1.png', available: true, type: 'image' },
-              { id: 'b2', url: 'https://cdn/img2.png', available: true, type: 'image' },
+              {
+                id: 'b1',
+                url: 'https://cdn/img1.png',
+                available: true,
+                nsfwLevel: 'pg',
+                type: 'image',
+              },
+              {
+                id: 'b2',
+                url: 'https://cdn/img2.png',
+                available: true,
+                nsfwLevel: 'pg',
+                type: 'image',
+              },
             ],
           },
         },
@@ -136,10 +148,16 @@ describe('snapshotFromWorkflow', () => {
           metadata: {},
           output: {
             images: [
-              { id: 'b1', url: 'https://cdn/ok.png', available: true, type: 'image' },
+              {
+                id: 'b1',
+                url: 'https://cdn/ok.png',
+                available: true,
+                nsfwLevel: 'pg',
+                type: 'image',
+              },
               { id: 'b2', url: null, available: false, type: 'image' },
               { id: 'b3', url: 'https://cdn/blocked.png', available: false, type: 'image' },
-              { id: 'b4', url: '', available: true, type: 'image' },
+              { id: 'b4', url: '', available: true, nsfwLevel: 'pg', type: 'image' },
             ],
           },
         },
@@ -199,7 +217,13 @@ describe('snapshotFromWorkflow', () => {
             metadata: {},
             output: {
               images: [
-                { id: 'b1', url: 'https://cdn/ok.png', available: true, type: 'image' },
+                {
+                  id: 'b1',
+                  url: 'https://cdn/ok.png',
+                  available: true,
+                  nsfwLevel: 'pg',
+                  type: 'image',
+                },
                 {
                   id: 'b2',
                   url: 'https://cdn/blocked.png',
@@ -279,7 +303,7 @@ describe('snapshotFromWorkflow', () => {
           name: 's1',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'x', url: 'https://leak/', available: true }] },
+          output: { images: [{ id: 'x', url: 'https://leak/', available: true, nsfwLevel: 'pg' }] },
         },
       ],
     });
@@ -353,7 +377,15 @@ describe('snapshotFromWorkflow', () => {
               status: 'succeeded',
               metadata: {},
               output: {
-                images: [{ id: 'b1', url: 'https://cdn/img1.png', available: true, type: 'image' }],
+                images: [
+                  {
+                    id: 'b1',
+                    url: 'https://cdn/img1.png',
+                    available: true,
+                    nsfwLevel: 'pg',
+                    type: 'image',
+                  },
+                ],
               },
             },
           ],
@@ -438,7 +470,9 @@ describe('snapshotFromWorkflow', () => {
           name: 's1',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'g1', url: 'https://cdn/gen.png', available: true }] },
+          output: {
+            images: [{ id: 'g1', url: 'https://cdn/gen.png', available: true, nsfwLevel: 'pg' }],
+          },
         },
       ],
     });
@@ -456,7 +490,15 @@ describe('snapshotFromWorkflow', () => {
           status: 'succeeded',
           metadata: {},
           output: {
-            blobs: [{ id: 'c1', type: 'image', url: 'https://cdn/comfy.png', available: true }],
+            blobs: [
+              {
+                id: 'c1',
+                type: 'image',
+                url: 'https://cdn/comfy.png',
+                available: true,
+                nsfwLevel: 'pg',
+              },
+            ],
           },
         },
       ],
@@ -473,7 +515,9 @@ describe('snapshotFromWorkflow', () => {
           name: 's1',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'a', url: 'https://cdn/a.png', available: true }] },
+          output: {
+            images: [{ id: 'a', url: 'https://cdn/a.png', available: true, nsfwLevel: 'pg' }],
+          },
         },
         {
           // A non-image step interleaved — must be skipped, not break ordering.
@@ -481,7 +525,9 @@ describe('snapshotFromWorkflow', () => {
           name: 's2',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'leak', url: 'https://leak/', available: true }] },
+          output: {
+            images: [{ id: 'leak', url: 'https://leak/', available: true, nsfwLevel: 'pg' }],
+          },
         },
         {
           $type: 'comfy',
@@ -489,7 +535,15 @@ describe('snapshotFromWorkflow', () => {
           status: 'succeeded',
           metadata: {},
           output: {
-            blobs: [{ id: 'b', type: 'image', url: 'https://cdn/b.png', available: true }],
+            blobs: [
+              {
+                id: 'b',
+                type: 'image',
+                url: 'https://cdn/b.png',
+                available: true,
+                nsfwLevel: 'pg',
+              },
+            ],
           },
         },
       ],
@@ -708,7 +762,6 @@ describe('projectAppWorkflow', () => {
       ['r', 4],
       ['x', 8],
       ['xxx', 16],
-      ['na', null], // genuinely unrated → null
     ];
     for (const [rating, expected] of cases) {
       const wf = fakeWorkflow({
@@ -730,7 +783,48 @@ describe('projectAppWorkflow', () => {
     }
   });
 
-  it('nulls width/height/nsfwLevel when the orchestrator omits them', () => {
+  it('an `na` output is restricted in position and never listed as an image', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            images: [{ id: 'b', url: 'https://cdn/x.png', available: true, nsfwLevel: 'na' }],
+          },
+        },
+      ],
+    });
+    const projected = projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING);
+    expect(projected.images).toStrictEqual([]);
+    expect(projected.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+  });
+
+  it('nulls width/height when the orchestrator omits them', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            images: [{ id: 'b', url: 'https://cdn/x.png', available: true, nsfwLevel: 'pg' }],
+          },
+        },
+      ],
+    });
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images[0]).toEqual({
+      url: 'https://cdn/x.png',
+      width: null,
+      height: null,
+      nsfwLevel: 1,
+    });
+  });
+
+  it('an unrated image is held in position and never listed, whatever the ceiling', () => {
     const wf = fakeWorkflow({
       steps: [
         {
@@ -742,12 +836,9 @@ describe('projectAppWorkflow', () => {
         },
       ],
     });
-    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images[0]).toEqual({
-      url: 'https://cdn/x.png',
-      width: null,
-      height: null,
-      nsfwLevel: null,
-    });
+    const projected = projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING);
+    expect(projected.images).toStrictEqual([]);
+    expect(projected.outputs).toStrictEqual([{ pending: true }]);
   });
 
   it('drops pending/blocked/urless blobs (no dead links leaked)', () => {
@@ -760,17 +851,23 @@ describe('projectAppWorkflow', () => {
           metadata: {},
           output: {
             images: [
-              { id: 'b1', url: 'https://cdn/ok.png', available: true, type: 'image' },
+              {
+                id: 'b1',
+                url: 'https://cdn/ok.png',
+                available: true,
+                nsfwLevel: 'pg',
+                type: 'image',
+              },
               { id: 'b2', url: null, available: false, type: 'image' },
               { id: 'b3', url: 'https://cdn/blocked.png', available: false, type: 'image' },
-              { id: 'b4', url: '', available: true, type: 'image' },
+              { id: 'b4', url: '', available: true, nsfwLevel: 'pg', type: 'image' },
             ],
           },
         },
       ],
     });
     expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images).toEqual([
-      { url: 'https://cdn/ok.png', width: null, height: null, nsfwLevel: null },
+      { url: 'https://cdn/ok.png', width: null, height: null, nsfwLevel: 1 },
     ]);
   });
 
@@ -808,7 +905,9 @@ describe('projectAppWorkflow', () => {
           name: 's1',
           status: 'succeeded',
           metadata: { params: { prompt: 'secret prompt' } },
-          output: { images: [{ id: 'b', url: 'https://cdn/x.png', available: true }] },
+          output: {
+            images: [{ id: 'b', url: 'https://cdn/x.png', available: true, nsfwLevel: 'pg' }],
+          },
         },
       ],
       tags: ['civitai', 'app-block:app_x'],
@@ -818,7 +917,7 @@ describe('projectAppWorkflow', () => {
     expect(Object.keys(projected).sort()).toEqual(
       ['cost', 'createdAt', 'images', 'outputs', 'status', 'workflowId'].sort()
     );
-    expect(projected.outputs).toStrictEqual([{ url: 'https://cdn/x.png' }]);
+    expect(projected.outputs).toStrictEqual([{ url: 'https://cdn/x.png', nsfwLevel: 'pg' }]);
     expect(JSON.stringify(projected)).not.toContain('secret prompt');
     expect(JSON.stringify(projected)).not.toContain('transactions');
   });
@@ -831,7 +930,7 @@ describe('projectAppWorkflow', () => {
           name: 's1',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'x', url: 'https://leak/', available: true }] },
+          output: { images: [{ id: 'x', url: 'https://leak/', available: true, nsfwLevel: 'pg' }] },
         },
       ],
     });
@@ -2348,7 +2447,13 @@ describe('snapshotFromWorkflow: customComfy blobs', () => {
           metadata: {},
           output: {
             blobs: [
-              { id: 'p1', type: 'image', url: 'https://cdn/pano.png', available: true },
+              {
+                id: 'p1',
+                type: 'image',
+                url: 'https://cdn/pano.png',
+                available: true,
+                nsfwLevel: 'pg',
+              },
               { id: 'p2', type: 'image', url: 'https://pending/', available: false },
             ],
           },
@@ -2414,6 +2519,7 @@ describe('projectAppWorkflow: customComfy blobs', () => {
                 type: 'image',
                 url: 'https://cdn/sized.png',
                 available: true,
+                nsfwLevel: 'pg',
                 width: 2048,
                 height: 1024,
               },
@@ -2422,6 +2528,7 @@ describe('projectAppWorkflow: customComfy blobs', () => {
                 type: 'image',
                 url: 'https://cdn/unsized.png',
                 available: true,
+                nsfwLevel: 'pg',
                 width: '2048',
               },
             ],
@@ -2515,7 +2622,13 @@ describe('comfy step blobs (output.blobs, not .images)', () => {
           metadata: {},
           output: {
             blobs: [
-              { id: 'ok', type: 'image', url: 'https://cdn/ok.jpeg', available: true },
+              {
+                id: 'ok',
+                type: 'image',
+                url: 'https://cdn/ok.jpeg',
+                available: true,
+                nsfwLevel: 'pg',
+              },
               { id: 'pending', type: 'image', url: 'https://cdn/pending.jpeg', available: false },
               {
                 id: 'blocked',
@@ -2524,8 +2637,8 @@ describe('comfy step blobs (output.blobs, not .images)', () => {
                 available: false,
                 blockedReason: 'moderation',
               },
-              { id: 'nourl', type: 'image', url: null, available: true },
-              { id: 'empty', type: 'image', url: '', available: true },
+              { id: 'nourl', type: 'image', url: null, available: true, nsfwLevel: 'pg' },
+              { id: 'empty', type: 'image', url: '', available: true, nsfwLevel: 'pg' },
             ],
           },
         },
@@ -2619,7 +2732,7 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
   // Keyed on `postureProducesMedia` because that is what `snapshotFromWorkflow`
   // and `projectAppWorkflow` themselves key on — one rule, one predicate, and
   // the test cannot drift from the code by asking a different question.
-  it('EVERY registered step surfaces its output on snapshotFromWorkflow.imageUrls', () => {
+  it('EVERY registered step surfaces its rated output on snapshotFromWorkflow.imageUrls, and holds an unrated one in position', () => {
     for (const [id, step] of listRegisteredSteps()) {
       for (const variant of step.variants) {
         const snap = snapshotFromWorkflow(
@@ -2634,18 +2747,26 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
           ).toEqual([]);
           continue;
         }
-        const expected = step.extractOutput!(step.canonicalOutputFor(variant)).map((m) => m.url);
-        expect(expected.length, `step '${id}' produced no expected urls`).toBeGreaterThan(0);
+        const media = step.extractOutput!(step.canonicalOutputFor(variant));
+        expect(media.length, `step '${id}' produced no expected urls`).toBeGreaterThan(0);
+        // With serving off nothing judges the blob later, so an output whose step carries no
+        // rating yet (convert-image's captured sample) is held until one lands.
+        const rated = media.filter((m) => m.nsfwLevel).map((m) => m.url);
+        const unrated = media.length - rated.length;
         expect(
-          snap.imageUrls,
+          snap.imageUrls ?? [],
           `step '${id}' variant '${variant}': the caller is CHARGED for this step and its ` +
-            'result is absent from every poll'
-        ).toEqual(expected);
+            'rated result is absent from every poll'
+        ).toEqual(rated);
+        expect(
+          (snap.outputs ?? []).filter((o) => 'pending' in o),
+          `step '${id}' variant '${variant}': an unrated output must be held in position`
+        ).toHaveLength(unrated);
       }
     }
   });
 
-  it('EVERY registered step surfaces its output on projectAppWorkflow.images', () => {
+  it('EVERY registered step surfaces its rated output on projectAppWorkflow.images', () => {
     for (const [id, step] of listRegisteredSteps()) {
       for (const variant of step.variants) {
         const projected = projectAppWorkflow(
@@ -2660,7 +2781,9 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
           ).toEqual([]);
           continue;
         }
-        const expected = step.extractOutput!(step.canonicalOutputFor(variant));
+        const expected = step.extractOutput!(step.canonicalOutputFor(variant)).filter(
+          (m) => m.nsfwLevel
+        );
         expect(
           projected.images.map((i) => i.url),
           `step '${id}' variant '${variant}': queryAppWorkflows returns images: [] for a ` +
@@ -2825,7 +2948,9 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
           name: 'x',
           status: 'succeeded',
           metadata: {},
-          output: { blob: { id: 'b', url: 'https://cdn/nope.png', available: true } },
+          output: {
+            blob: { id: 'b', url: 'https://cdn/nope.png', available: true, nsfwLevel: 'pg' },
+          },
         },
       ],
     });
@@ -2849,7 +2974,9 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
           name: BLOCK_STEP_NAME,
           status: 'succeeded',
           metadata: {},
-          output: { blob: { id: 'b', url: 'https://cdn/nope.png', available: true } },
+          output: {
+            blob: { id: 'b', url: 'https://cdn/nope.png', available: true, nsfwLevel: 'pg' },
+          },
         },
       ],
     });
@@ -2857,7 +2984,7 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
       'https://cdn/nope.png',
     ]);
     expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images).toEqual([
-      { url: 'https://cdn/nope.png', width: null, height: null, nsfwLevel: null },
+      { url: 'https://cdn/nope.png', width: null, height: null, nsfwLevel: 1 },
     ]);
     // The blob is lifted OUT of the forwarded output, never duplicated into it.
     expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).stepOutputs).toEqual([

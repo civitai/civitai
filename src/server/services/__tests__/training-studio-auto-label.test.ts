@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** The Studio's auto-label is free to the user: it must be submitted with the system client, and
@@ -22,7 +23,9 @@ vi.mock('~/env/client', () => ({ env: clientEnv }));
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import {
+  AUTO_LABEL_UNFINISHED,
   pollStudioAutoLabel,
+  SENDS_PER_FAILED_ITEM,
   STUDIO_AUTO_LABEL_DAILY_ITEMS,
   submitStudioAutoLabel,
 } from '~/server/services/training-studio-auto-label.service';
@@ -250,6 +253,29 @@ describe('Training Studio auto-label', () => {
     });
   });
 
+  it('marks every failed or expired step retryable, with a reason, but not a canceled one', async () => {
+    // The real shape of a step turned away at scheduling: startedAt set, no error on the step.
+    const startedAt = '2026-11-20T14:00:27Z';
+    orch.getWorkflow.mockResolvedValue({
+      data: {
+        id: 'wf-1',
+        status: 'failed',
+        metadata: { kind: 'studio-auto-label', userId: 7 },
+        steps: [
+          { name: '0', status: 'failed', startedAt, metadata: { key: 'refused' } },
+          { name: '1', status: 'expired', startedAt, metadata: { key: 'expired' } },
+          { name: '2', status: 'canceled', startedAt, metadata: { key: 'canceled' } },
+        ],
+      },
+    });
+    const { results } = await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-1' });
+    expect(results).toEqual([
+      { key: 'refused', status: 'failed', error: AUTO_LABEL_UNFINISHED, retryable: true },
+      { key: 'expired', status: 'failed', error: AUTO_LABEL_UNFINISHED, retryable: true },
+      { key: 'canceled', status: 'failed', error: AUTO_LABEL_UNFINISHED },
+    ]);
+  });
+
   it("refuses a batch past the user's daily item quota, and doesn't count it", async () => {
     counters.set(quotaKey(), STUDIO_AUTO_LABEL_DAILY_ITEMS - 1);
     const two = [
@@ -294,12 +320,17 @@ describe('Training Studio auto-label', () => {
         return counters.get(k)!;
       }) as never);
     });
+    // Every failed step carries startedAt, refused at scheduling or not.
     const workflow = (steps: { name: string; status: string }[]) => ({
       data: {
         id: 'wf-q',
         status: 'failed',
         metadata: { kind: 'studio-auto-label', userId: 7 },
-        steps: steps.map((s) => ({ ...s, metadata: { key: `k${s.name}` } })),
+        steps: steps.map((s) => ({
+          startedAt: '2026-11-20T00:00:00Z',
+          ...s,
+          metadata: { key: `k${s.name}` },
+        })),
       },
     });
     const failed = (n: number) =>
@@ -341,16 +372,48 @@ describe('Training Studio auto-label', () => {
       expect(counters.get(quotaKey())).toBe(1);
     });
 
-    it('gives back at most the daily limit per day: past it, failed items stay counted', async () => {
+    it('gives back at most four times the daily limit per day: past it, failed items stay counted', async () => {
       counters.set(quotaKey(), STUDIO_AUTO_LABEL_DAILY_ITEMS);
       counters.set(
         `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED_DAILY}:7:${today()}`,
-        STUDIO_AUTO_LABEL_DAILY_ITEMS - 1
+        STUDIO_AUTO_LABEL_DAILY_ITEMS * SENDS_PER_FAILED_ITEM - 1
       );
       record('wf-q', { userId: 7, day: today(), count: 2 });
       orch.getWorkflow.mockResolvedValue(failed(2));
       await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
       expect(counters.get(quotaKey())).toBe(STUDIO_AUTO_LABEL_DAILY_ITEMS - 1);
+    });
+
+    it("allows as many give-backs per item as the Studio's sends of a failed item", () => {
+      // Separate programs: read the Studio's resend delays from its source.
+      const src = readFileSync('apps/training-studio/src/lib/autolabel.ts', 'utf8');
+      const delays = /RESEND_DELAYS_MS = \[([^\]]*)\]/.exec(src)?.[1];
+      expect(delays).toBeDefined();
+      expect(delays!.split(',').filter((d) => d.trim()).length + 1).toBe(SENDS_PER_FAILED_ITEM);
+    });
+
+    it('an item that fails on every send leaves the quota where it started', async () => {
+      counters.set(quotaKey(), 5);
+      const one = [items[0]!];
+      for (let send = 0; send < SENDS_PER_FAILED_ITEM; send++) {
+        orch.submitWorkflow.mockResolvedValueOnce({ data: { id: `wf-s${send}` } });
+        const { workflowId } = await submitStudioAutoLabel({
+          userId: 7,
+          mode: 'tag',
+          media: 'image',
+          items: one,
+        });
+        expect(counters.get(quotaKey())).toBe(6);
+        orch.getWorkflow.mockResolvedValueOnce({
+          data: {
+            ...failed(1).data,
+            id: workflowId,
+          },
+        });
+        const { results } = await pollStudioAutoLabel({ userId: 7, workflowId });
+        expect(results[0]).toMatchObject({ status: 'failed', retryable: true });
+        expect(counters.get(quotaKey())).toBe(5);
+      }
     });
 
     it("gives nothing back to today's quota for a workflow counted on another day or user", async () => {

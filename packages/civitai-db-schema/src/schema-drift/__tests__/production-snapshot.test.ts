@@ -288,7 +288,14 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //     `20271117130000_app_block_publish_request_actions_run_source` — no-type, raw SQL in
     //     `actions-run-source.service.ts`, which degrades while it is unapplied.
     //   `ServiceDealFile.scannedEtag` / `.scannedVersionId`: `20271119070000_service_deal_file_scanned_etag`
+    //   `ServiceDeal.reviewEnabledAt` and the four `ServiceOffering` review columns:
+    //     `20271120100100_service_deal_reviews`
     const inFlightColumns = new Set([
+      'ServiceDeal.reviewEnabledAt',
+      'ServiceOffering.allowReviewWork',
+      'ServiceOffering.happyCount',
+      'ServiceOffering.reviewCount',
+      'ServiceOffering.happySortKey',
       'ServiceDealFile.scannedEtag',
       'ServiceDealFile.scannedVersionId',
       'ApiKey.tokenScopeWide',
@@ -360,6 +367,10 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'app_block_publish_requests.actions_run_workflow_ref',
       'app_block_publish_requests.actions_run_repository_visibility',
       'app_block_publish_requests.actions_run_id',
+      // OAuth offline grant, migration 20271119140000_oauth_offline_grant (manual apply).
+      'ApiKey.mintOrigin',
+      'ApiKey.refreshFamilyId',
+      'OauthConsent.offlineGrantedAt',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

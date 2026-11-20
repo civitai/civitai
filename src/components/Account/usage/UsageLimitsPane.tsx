@@ -3,7 +3,7 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import { useMemo, type ReactNode } from 'react';
 import { AppStorageCard } from '~/components/Account/AppStorageCard';
 import { UsageLimitCard } from '~/components/Account/usage/UsageLimitCard';
-import { formatWhen, type UsageLimitRow } from '~/components/Account/usage/usage-limit-view';
+import { formatWhen, type UsageLimitRow } from '@civitai/shared/usage-limit-view';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useNowTick } from '~/components/Apps/reviewRelativeTime';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

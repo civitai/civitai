@@ -108,4 +108,26 @@ describe('the app Prisma shim', () => {
     ]);
     expect(logSpy).toHaveBeenCalledWith('prisma:info', 'i');
   });
+
+  it('under the console backstop, still one record per error event and none for info', async () => {
+    const { installConsoleOtlpBackstop } = await import('~/server/logging/console-otlp-backstop');
+    const sink = await import('~/server/logging/structured-log-sink');
+    const backstop = installConsoleOtlpBackstop({ emit: sink.emitConsoleLog })!;
+    try {
+      await flushed();
+
+      raise(shim.dbWrite, 'error', { timestamp: new Date(0), message: CLOSED, target: 'quaint' });
+      raise(shim.dbWrite, 'info', { timestamp: new Date(0), message: 'i', target: 't' });
+      // Positive control: the backstop is live in this harness.
+      console.log('raw line');
+
+      const records = await flushed();
+      expect(records.map((r) => [r.attributes['civitai.source'], r.body])).toEqual([
+        ['prisma', `prisma:error ${CLOSED}`],
+        ['console', 'raw line'],
+      ]);
+    } finally {
+      backstop.uninstall();
+    }
+  });
 });

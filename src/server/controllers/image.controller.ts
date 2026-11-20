@@ -25,6 +25,7 @@ import {
   addBlockedImage,
   bulkRemoveBlockedImages,
   deleteImages,
+  imagesPendingDeletion,
   getAllImagesIndex,
   getImagesForModelVersionCache,
   getPostDetailByImageId,
@@ -68,7 +69,6 @@ import {
 } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
-import { trackModActivity } from '~/server/services/moderator.service';
 import {
   canConfirmReRemoval,
   heldRemovalSummary,
@@ -76,6 +76,7 @@ import {
 } from '~/server/services/image-removal-hold.service';
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
+import { queueDocumentsForBlockedImages } from '~/server/services/image-models-reindex.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
@@ -197,6 +198,9 @@ export const deleteImageHandler = async ({
       .map((tag) => ({ tagName: tag.tagName }));
 
     const [image] = await deleteImages([input.id], { actor: ctx.user });
+    // Only a case the owner can already see is acknowledged; any other kept delete answers like a delete.
+    if (!image && (await imagesPendingDeletion([input.id])).has(input.id))
+      return { deleteAfterReview: true as const };
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
@@ -273,11 +277,13 @@ export const setTosViolationHandler = async ({
 
     // Block image
     // This used to be a delete, but the mod team prefers to have the clean up happen later
-    const written = await writeModeratorBlock([id], {
-      blockedBy: user.id,
-      violationType,
-      reportReason: ReportReason.TOSViolation,
-    });
+    // 🔴 `moderatorId` records that a moderator took this image down, in the block's own transaction
+    // (see writeModeratorBlock). Without it the takedown reads as an automated block.
+    const written = await writeModeratorBlock(
+      [id],
+      { blockedBy: user.id, violationType, reportReason: ReportReason.TOSViolation },
+      { moderatorId: user.id }
+    );
     const held = written.held.has(id);
 
     if (!held) {
@@ -321,22 +327,6 @@ export const setTosViolationHandler = async ({
     // would let a later account restore un-block what was just moderated.
     await clearAccountDeletionImageMarkers({ ids: [id] });
 
-    // 🔴 The audit record that a MODERATOR — not automation, not a reporter, not a bulk account
-    // action — took this one image down. The other moderator-driven single-image blocks write it
-    // already (`handleBlockImages` when it is given an id list and a `moderatorId`, and
-    // `blockImage` in the moderator app); this handler, which is `moderatorProcedure`-gated and
-    // acts on exactly one image, did not, so this takedown left no row in the mod audit log at all.
-    //
-    // It is also load-bearing now: `remove-blocked-images` retracts an image's public copies
-    // only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
-    // after the block. Without this call a TOS takedown from the main app is hard-deleted with the
-    // bytes left in place — which is the safe direction, but not the intended one.
-    await trackModActivity(user.id, {
-      entityType: 'image',
-      entityId: id,
-      activity: 'review',
-    });
-
     // Remove image from all collections
     await removeEntityFromAllCollections('image', id);
 
@@ -348,13 +338,18 @@ export const setTosViolationHandler = async ({
     // After the steps that hide the image: a blocklist write that throws must not skip them.
     const pHash = written.pHashes.get(id);
     if (!pHash && written.removedForCsam.has(id)) logCsamBlocklistNoHash([id], 'block');
-    if (pHash)
-      await addBlockedImage({
-        hash: pHash,
-        // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
-        reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
-        context: { step: 'block', imageIds: [id], actorUserId: user.id },
-      });
+    // The requeue follows the blocklist write and runs when it throws: the block has landed.
+    try {
+      if (pHash)
+        await addBlockedImage({
+          hash: pHash,
+          // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+          reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
+          context: { step: 'block', imageIds: [id], actorUserId: user.id },
+        });
+    } finally {
+      await queueDocumentsForBlockedImages([id]);
+    }
 
     // Look up report details for violation type resolution
     const reportDetails = await getReportViolationDetailsForImages([id]);
@@ -1200,7 +1195,14 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
         return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
       }),
     ]);
-    const result = { ...image, eventDecoration: eventDecorations[image.id] ?? null };
+    // Told only to the owner, and only for a review they can already see.
+    const deleteAfterReview =
+      ctx.user?.id === image.user.id && (await imagesPendingDeletion([image.id])).has(image.id);
+    const result = {
+      ...image,
+      eventDecoration: eventDecorations[image.id] ?? null,
+      deleteAfterReview,
+    };
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: result.user.id });

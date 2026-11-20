@@ -49,7 +49,8 @@ import {
  * SCANNED ROWS. While `app-block-source-scanned-rows` is on, the generation gate refuses
  * that blob for an app, so (given `scannedRows`) the modal has the server copy it into a
  * PRIVATE, scanned `Image` row and resolves THAT row's url plus `imageId` and `ready`
- * (`toGenerationSource`). Off, or with the flag unreadable, it resolves the blob as above.
+ * (`toGenerationSource`). Off, it resolves the blob as above; with the flag unreadable, the
+ * copy is asked for anyway and the blob is the answer only when the copy is refused.
  */
 
 /** The blob as uploaded, or (scanned rows on) the private scanned row it was copied into. */

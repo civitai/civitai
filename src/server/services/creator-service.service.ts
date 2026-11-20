@@ -87,6 +87,7 @@ const ownServiceOfferingSelect = {
   declaredNsfwLevel: true,
   ingestion: true,
   sellerAffirmation: true,
+  allowReviewWork: true,
 } satisfies Prisma.ServiceOfferingSelect;
 
 /**

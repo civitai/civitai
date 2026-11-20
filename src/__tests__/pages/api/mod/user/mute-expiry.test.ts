@@ -50,7 +50,7 @@ vi.mock('~/server/services/user.service', () => ({
   setUserMuted: (...a: unknown[]) => setUserMuted(...(a as [])),
 }));
 
-import handler from '~/pages/api/mod/user/mute';
+import handler from '~/server/api-routes/mod/user/mute';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 function call(body: Record<string, unknown>) {

@@ -34,7 +34,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
 }));
 vi.mock('~/server/services/mystery-box-refund.service', () => ({ refundBoxPurchase }));
 
-import handler from '~/pages/api/mod/cosmetic/refund-box-purchase';
+import handler from '~/server/api-routes/mod/cosmetic/refund-box-purchase';
 
 const MODERATOR = 990000007;
 

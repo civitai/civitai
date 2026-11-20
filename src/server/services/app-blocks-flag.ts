@@ -7,6 +7,7 @@ import {
 } from '~/server/prom/store-scope.metrics';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility';
+import { APP_LISTINGS_AGENTIC_REVIEW_FLAG } from '~/shared/constants/connect-agent-review.constants';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import {
   narrowStoreScope,
@@ -1087,6 +1088,20 @@ export async function isAppBlocksAgenticReviewEnabled(opts?: {
   if (!opts?.user) return isFlipt(APP_BLOCKS_AGENTIC_REVIEW_FLAG);
   const user = opts.user;
   return isFlipt(APP_BLOCKS_AGENTIC_REVIEW_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * Mod-segmented gate for the agent review's CONNECT lane (OAuth-connect listing requests).
+ * Same evaluation shape and fail-closed posture as `isAppBlocksAgenticReviewEnabled`, on its own
+ * key (`APP_LISTINGS_AGENTIC_REVIEW_FLAG`), so the connect lane opens and closes independently of
+ * the on-site one. Create it base OFF with the `moderators` segment.
+ */
+export async function isAppListingsAgenticReviewEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_LISTINGS_AGENTIC_REVIEW_FLAG);
+  const user = opts.user;
+  return isFlipt(APP_LISTINGS_AGENTIC_REVIEW_FLAG, String(user.id), buildFliptContext(user));
 }
 
 /**

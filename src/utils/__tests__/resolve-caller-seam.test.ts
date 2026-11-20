@@ -217,7 +217,7 @@ describe('storage-resolver attribution call-site ledger', () => {
     expect(scan('resolveDownloadUrl')).toEqual({
       'pages/api/download/vault/[vaultItemId].ts': ['vault|derived'],
       'pages/api/internal/get-presigned-url.ts': ['internal-presigned|internal'],
-      'pages/api/mod/training-data/resolve.ts': ['training-data|derived'],
+      'server/api-routes/mod/training-data/resolve.ts': ['training-data|derived'],
       'server/controllers/model.controller.ts': ['link|derived', 'link|derived'],
       'server/services/download-link/download-link.service.ts': ['other|internal'],
       'server/services/file.service.ts': ['threaded'],

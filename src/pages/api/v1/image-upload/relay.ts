@@ -84,7 +84,7 @@ export const config = {
  *     /api/v1/image-upload/relay       matched     -> truncation warning
  *     /api/trpc/audit.probe            matched     -> truncation warning (*)
  *     /api/blocks/submit-version       NOT matched -> none
- *     /api/mod/clavata-image-process   NOT matched -> none
+ *     /api/mod/clavata-image-process   NOT matched -> none   (since deleted)
  *
  * (*) Matched when measured. `/api/trpc` has since left the matcher (#7128), so it is no
  * longer truncated at 10 MiB; its own 17mb `sizeLimit` is its only body limit now.

@@ -57,6 +57,8 @@ import { registryExportDiff } from '~/shared/constants/block-storage.constants';
 // the submitting developer of the moderator decision — best-effort, wrapped in a
 // try/catch at each call site so a notification failure can never fail the decision.
 import { notifyAppBlockSubmitter } from '~/server/services/blocks/app-block-notify';
+import { manifestDeclaresPage } from '~/shared/utils/app-manifest-page';
+import { isMatureContentRating } from '~/server/utils/server-domain';
 // Pure const (no env/Prisma) — the marketplace category taxonomy + type guard.
 // approveRequest copies a validated manifest `category` onto AppBlock.category.
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
@@ -4708,10 +4710,18 @@ async function approveRequestUnderClaim(
           }`
       );
     }
-    const { takeDownLiveApp } = await import('./live-unpublish.service');
-    const { liveNote } = await takeDownLiveApp(request.slug).catch(() => ({ liveNote: undefined }));
+    // Before the takedown wait: the orchestrator must stop honouring the revoked tokens at once.
     const { forgetRevokedAppTokens } = await import('./app-block-token-revoke.service');
     await forgetRevokedAppTokens(revokedTokens);
+    // Awaited, not fire-and-forget: the moderator must hear if the previous version may still serve.
+    const { takeDownLiveApp, LATE_HOLD_TAKEDOWN_WAIT_MS, unconfirmedTakedownNote } = await import(
+      './live-unpublish.service'
+    );
+    const { liveNote } = await takeDownLiveApp(request.slug, {
+      awaitMs: LATE_HOLD_TAKEDOWN_WAIT_MS,
+    }).catch(() => ({
+      liveNote: unconfirmedTakedownNote(request.slug, 'its live takedown could not be started'),
+    }));
     return {
       publishRequestId: request.id,
       appBlockId,
@@ -4892,6 +4902,10 @@ async function approveRequestUnderClaim(
         slug: request.slug,
         name: typeof manifest.name === 'string' ? manifest.name : null,
         version: request.version,
+        hasPage: manifestDeclaresPage(manifest),
+        mature: isMatureContentRating(
+          typeof manifest.contentRating === 'string' ? manifest.contentRating : null
+        ),
       },
     });
   } catch (err) {

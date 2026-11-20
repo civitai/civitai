@@ -1,4 +1,5 @@
 import { sendEmail } from '~/server/email/client';
+import { htmlToPlainText } from '~/server/email/plain-text';
 export function createEmail<T, T2>(email: {
   header: (data: T) => {
     subject: string;
@@ -16,19 +17,25 @@ export function createEmail<T, T2>(email: {
   // send() accepts anything.
   testData?: ((testDataInput: T2) => Promise<NoInfer<T>>) | (() => Promise<NoInfer<T>>);
 }) {
+  const getHtml = (data: T) => email.html(data);
+  // Without its own text(), an email's plain-text part is derived from the HTML. Left to the
+  // transport, that was a tag strip that dropped every href, so a button's link never reached it.
+  const getText = (data: T, html?: string) =>
+    email.text ? email.text(data) : htmlToPlainText(html ?? getHtml(data));
+
   const send = async (data: T) => {
+    const html = getHtml(data);
     await sendEmail({
       ...email.header(data),
-      html: email.html(data),
-      text: email.text?.(data),
+      html,
+      text: getText(data, html),
     });
   };
-
-  const getHtml = (data: T) => email.html(data);
 
   return {
     send,
     getHtml,
+    getText,
     getTestData: email.testData,
   };
 }

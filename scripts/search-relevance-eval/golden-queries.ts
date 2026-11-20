@@ -165,4 +165,44 @@ export const GOLDEN_QUERIES = defineGoldenSet([
     targets: ['images'],
     note: 'Single niche character name with no descriptive words to fall back on.',
   },
+  // Subject counts (tester report): semantic search ranks images with the wrong number of
+  // subjects, or with the count written as text in the picture, above prompts that name it.
+  {
+    id: 'subject-count-2-girls',
+    kind: 'subject',
+    text: '2 girls',
+    expectTerms: [['2girls', '2 girls', 'two girls']],
+    k: 10,
+    targets: ['images'],
+    note: 'Reported with no correct match in the top results.',
+  },
+  {
+    id: 'subject-count-3-girls',
+    kind: 'subject',
+    text: '3 girls',
+    expectTerms: [['3girls', '3 girls', 'three girls']],
+    k: 20,
+    targets: ['images'],
+    note: 'Reported with the first miss around rank 20, so k is 20.',
+  },
+  {
+    id: 'subject-count-3-boys',
+    kind: 'subject',
+    text: '3 boys',
+    expectTerms: [['3boys', '3 boys', 'three boys']],
+    k: 10,
+    targets: ['images'],
+  },
+  {
+    id: 'subject-count-mixed',
+    kind: 'subject',
+    text: '2 girls 1 boy',
+    expectTerms: [
+      ['2girls', '2 girls', 'two girls'],
+      ['1boy', '1 boy', 'one boy'],
+    ],
+    k: 10,
+    targets: ['images'],
+    note: 'Mixed-gender counts were reported as worse than single-gender ones.',
+  },
 ]);

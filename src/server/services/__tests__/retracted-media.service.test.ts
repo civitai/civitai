@@ -100,7 +100,11 @@ beforeAll(async () => {
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, meta jsonb, "modelId" int);
     CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb);
-    CREATE TABLE "ImageCdnAccess" (url text PRIMARY KEY, state text NOT NULL);
+    -- An outright retraction by default; an upgraded deny sets "deniedAt" earlier.
+    CREATE TABLE "ImageCdnAccess" (
+      url text PRIMARY KEY, state text NOT NULL,
+      "deniedAt" timestamptz NOT NULL DEFAULT now(), "retractedAt" timestamptz DEFAULT now()
+    );
     CREATE TABLE "ImageCdnModeratorDelete" ("imageId" int PRIMARY KEY, url text, "userId" int, "csamReview" boolean);
     CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" int, "userId" int);
     CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
@@ -300,6 +304,31 @@ describe('getRetractedMedia', () => {
         `DELETE FROM "Image" WHERE id = 990000110; DELETE FROM "User" WHERE id = 990100110;`
       );
     }
+  });
+});
+
+describe('a url retracted by a deny upgraded later', () => {
+  beforeAll(async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
+        (990000301, 'key-990000301', 'Blocked', 'moderated', 990100301),
+        (990000302, 'key-990000302', 'Blocked', 'moderated', 990100302),
+        (990000303, 'key-990000303', 'Blocked', 'moderated', 990100303),
+        (990000304, 'key-990000304', 'Blocked', 'moderated', 990100304);
+      INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES
+        ('key-990000301', 'Retracted', now() - interval '5 minutes', now()),
+        ('key-990000302', 'Retracted', now(), NULL),
+        ('key-990000303', 'Retracted', now(), now()),
+        ('key-990000304', 'Retracted', now() - interval '30 seconds', now());
+    `);
+  });
+
+  it('keeps a blocked image on it, or on one with no retraction time, to cleared moderators', async () => {
+    await expectTiers('cleared', [990000301, 990000302, 990000304]);
+  });
+
+  it('leaves a blocked image on an outright retraction open to any moderator', async () => {
+    await expectTiers('anyMod', [990000303]);
   });
 });
 
@@ -552,7 +581,14 @@ describe('a model version unpublished for its subject', () => {
 });
 
 describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
-  const ids = { retracted: 990000204, denied: 990000201, served: 990000202, pending: 990000203 };
+  const ids = {
+    retracted: 990000204,
+    denied: 990000201,
+    served: 990000202,
+    pending: 990000203,
+    upgraded: 990000205,
+    noRetractTime: 990000206,
+  };
   const leg = { cdnLeg: true };
   beforeAll(async () => {
     await pg.exec(`
@@ -560,9 +596,14 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
         (990000201, 'key-990000201', 'Scanned', NULL, 990100201),
         (990000202, 'key-990000202', 'Scanned', NULL, 990100202),
         (990000203, 'key-990000203', 'Pending', NULL, 990100203),
-        (990000204, 'key-990000204', 'Scanned', NULL, 990100204);
+        (990000204, 'key-990000204', 'Scanned', NULL, 990100204),
+        (990000205, 'key-990000205', 'Scanned', NULL, 990100205),
+        (990000206, 'key-990000206', 'Scanned', NULL, 990100206);
       INSERT INTO "ImageCdnAccess" (url, state) VALUES
         ('key-990000201', 'Denied'), ('key-990000203', 'Retracted'), ('key-990000204', 'Retracted');
+      INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES
+        ('key-990000205', 'Retracted', now() - interval '30 seconds', now()),
+        ('key-990000206', 'Retracted', now(), NULL);
     `);
   });
   afterEach(async () => {
@@ -574,6 +615,10 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
 
   it('serves a scanned image whose url the CDN retracted to any moderator', async () => {
     await expectTiers('anyMod', [ids.retracted], leg);
+  });
+
+  it('keeps a scanned image on a url retracted by an upgraded deny, or with no retraction time, to cleared moderators', async () => {
+    await expectTiers('cleared', [ids.upgraded, ids.noRetractTime], leg);
   });
 
   it('is off unless the route asks for it', async () => {
