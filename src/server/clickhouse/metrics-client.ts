@@ -35,10 +35,11 @@ const retryCounter = registerCounterWithLabels({
 });
 
 export function createClickhouseMetricsClient(
-  options: CreateClickhouseClientOptions
+  options: CreateClickhouseClientOptions & { requestTimeoutMs: number }
 ): CustomClickHouseClient {
   return withConnectionResetRetry(createClickhouseClient(options), {
     onRetry: (outcome) => retryCounter.inc({ outcome }),
+    requestTimeoutMs: options.requestTimeoutMs,
   });
 }
 

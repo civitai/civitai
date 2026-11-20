@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import client from 'prom-client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createClickhouseMetricsClient } from '~/server/clickhouse/metrics-client';
+import { isReadQuery } from '~/server/clickhouse/retry-on-connection-reset';
 
 // The dedicated metrics client's one-shot retry on a connection-level error, run through the REAL
 // clickhouse-js client (the factory production uses) against a local HTTP server that misbehaves
@@ -22,7 +23,10 @@ type Behaviour =
   // A server-side error that is not a timeout.
   | 'unknown-table'
   // No response at all, so the client's own request timeout fires.
-  | 'silent';
+  | 'silent'
+  // Headers and one row, then nothing: the request timeout fires while the body is read, which
+  // Node reports exactly like a reset (`aborted`, code ECONNRESET).
+  | 'silent-after-headers';
 
 const ROW = { entityId: 7, metricType: 'Like', value: 13 };
 const REQUEST_TIMEOUT_MS = 300;
@@ -67,6 +71,10 @@ const httpServer = http.createServer((req, res) => {
           'Code: 60. DB::Exception: Unknown table expression identifier. (UNKNOWN_TABLE) (version 25.8.1.1)'
         );
       case 'silent':
+        return;
+      case 'silent-after-headers':
+        res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+        res.write(JSON.stringify(ROW) + '\n');
         return;
       default:
         res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
@@ -229,6 +237,16 @@ describe('dedicated metrics ClickHouse client: one retry on a connection-level e
     expect(await counted()).toEqual(before);
   });
 
+  it("the client's own request timeout is not retried when it fires mid-body either", async () => {
+    const before = await counted();
+    server.queue = ['silent-after-headers', 'ok'];
+
+    const error = await rejection(pointLookup());
+    expect(error.code).toBe('ECONNRESET');
+    expect(server.requests).toHaveLength(1);
+    expect(await counted()).toEqual(before);
+  });
+
   it('a statement that is not a read is not retried, through query or any other method', async () => {
     const before = await counted();
 
@@ -253,5 +271,20 @@ describe('dedicated metrics ClickHouse client: one retry on a connection-level e
     expect(server.requests).toHaveLength(4);
 
     expect(await counted()).toEqual(before);
+  });
+});
+
+describe('isReadQuery', () => {
+  it('reads SELECT and WITH after whitespace and comments', () => {
+    expect(isReadQuery('-- lookup\n/* metrics */\n  SELECT 1')).toBe(true);
+    expect(isReadQuery('WITH a AS (SELECT 1) SELECT * FROM a')).toBe(true);
+    expect(isReadQuery('INSERT INTO t SELECT 1')).toBe(false);
+  });
+
+  // A regex that backtracks over the leading whitespace hangs the event loop on this input.
+  it('classifies a long run of leading whitespace in linear time', () => {
+    const start = performance.now();
+    expect(isReadQuery(' '.repeat(10_000) + 'INSERT INTO t VALUES (1)')).toBe(false);
+    expect(performance.now() - start).toBeLessThan(50);
   });
 });

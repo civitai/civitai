@@ -9,8 +9,9 @@ type BodyRead = 'json' | 'text';
 
 // Node's socket error codes, which clickhouse-js passes through unchanged. A "socket hang up"
 // and a reset mid-response ("aborted") both carry ECONNRESET. A server-side ClickHouse error
-// carries its numeric code ('159' for TIMEOUT_EXCEEDED) and a client request timeout carries none,
-// so neither can match.
+// carries its numeric code ('159' for TIMEOUT_EXCEEDED), so it cannot match. A client request
+// timeout before the headers carries no code, but one that fires while the body is read surfaces
+// as that same `aborted` ECONNRESET: see the elapsed-time check in withConnectionResetRetry.
 const CONNECTION_ERROR_CODES = new Set(['ECONNRESET', 'EPIPE', 'ECONNREFUSED']);
 
 function isConnectionLevelError(error: unknown): boolean {
@@ -19,8 +20,13 @@ function isConnectionLevelError(error: unknown): boolean {
   return typeof code === 'string' && CONNECTION_ERROR_CODES.has(code);
 }
 
-// Leading whitespace and SQL comments, then SELECT or WITH.
-const READ_QUERY = /^(?:\s+|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*(?:SELECT|WITH)\b/i;
+// Leading whitespace and SQL comments, then SELECT or WITH. `\s`, not `\s+`: a quantified run
+// inside the starred group backtracks exponentially on a long whitespace prefix.
+const READ_QUERY = /^(?:\s|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*(?:SELECT|WITH)\b/i;
+
+export function isReadQuery(sql: unknown): boolean {
+  return typeof sql === 'string' && READ_QUERY.test(sql);
+}
 
 const MAX_RETRY_DELAY_MS = 50;
 
@@ -31,11 +37,21 @@ const MAX_RETRY_DELAY_MS = 50;
  * reading the body (`json()`/`text()`) re-sends the query and reads the new response the same way.
  * If the retry fails too, the FIRST error is rethrown, so callers classify exactly what they did
  * before. clickhouse-js destroys a socket that errored, so the retry runs on another one.
+ *
+ * `requestTimeoutMs` must be the client's own request timeout. That timeout is socket inactivity,
+ * so when it fires at least that long has passed since the request started. Past that point a
+ * connection error may be the timeout, and it is not retried.
  */
 export function withConnectionResetRetry<C extends ClickHouseClient>(
   client: C,
-  { onRetry }: { onRetry: (outcome: ConnectionRetryOutcome) => void }
+  {
+    onRetry,
+    requestTimeoutMs,
+  }: { onRetry: (outcome: ConnectionRetryOutcome) => void; requestTimeoutMs: number }
 ): C {
+  const retryable = (error: unknown, startedAt: number) =>
+    isConnectionLevelError(error) && Date.now() - startedAt < requestTimeoutMs;
+
   // Never re-enters itself: the attempt runs on the unwrapped client, which bounds it at one.
   const retry = async <T>(original: unknown, attempt: () => Promise<T>): Promise<T> => {
     await sleep(Math.random() * MAX_RETRY_DELAY_MS);
@@ -49,14 +65,18 @@ export function withConnectionResetRetry<C extends ClickHouseClient>(
     }
   };
 
-  const withBodyRetry = (params: QueryParams, resultSet: ResultSetLike): ResultSetLike => {
+  const withBodyRetry = (
+    params: QueryParams,
+    startedAt: number,
+    resultSet: ResultSetLike
+  ): ResultSetLike => {
     const read =
       (method: BodyRead) =>
       async (...args: unknown[]) => {
         try {
           return await (resultSet[method] as (...a: unknown[]) => Promise<unknown>)(...args);
         } catch (error) {
-          if (!isConnectionLevelError(error)) throw error;
+          if (!retryable(error, startedAt)) throw error;
           return retry(error, async () => {
             const fresh = await client.query(params);
             return (fresh[method] as (...a: unknown[]) => Promise<unknown>)(...args);
@@ -72,12 +92,12 @@ export function withConnectionResetRetry<C extends ClickHouseClient>(
   };
 
   const query = async (params: QueryParams): Promise<ResultSetLike> => {
-    if (typeof params.query !== 'string' || !READ_QUERY.test(params.query))
-      return client.query(params);
+    if (!isReadQuery(params.query)) return client.query(params);
+    const startedAt = Date.now();
     try {
-      return withBodyRetry(params, await client.query(params));
+      return withBodyRetry(params, startedAt, await client.query(params));
     } catch (error) {
-      if (!isConnectionLevelError(error)) throw error;
+      if (!retryable(error, startedAt)) throw error;
       return retry(error, () => client.query(params));
     }
   };
