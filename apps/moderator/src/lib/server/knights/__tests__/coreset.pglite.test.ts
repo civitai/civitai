@@ -165,6 +165,16 @@ describe('addCoreImage', () => {
     expect(await row(id)).toMatchObject({ pool: 'hiddenCheck', source: 'harvested' });
   });
 
+  it('refuses an image that is a mod-confirmed skill check, and leaves it in that pool', async () => {
+    await seedImage(1);
+    const id = await seedRef(1, { pool: 'skillCheck', source: 'inquisitor' });
+
+    const result = await addCoreImage({ imageId: 1, level: 4, explanation: 'why' });
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('skill check') });
+    expect(await row(id)).toMatchObject({ pool: 'skillCheck', source: 'inquisitor' });
+  });
+
   it('refuses an image that is already an active core item', async () => {
     await seedImage(1);
     await seedRef(1, { source: 'core', explanation: 'why' });

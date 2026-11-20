@@ -77,7 +77,7 @@ const isFiniteNumber = (value: unknown): value is number =>
 /**
  * Each Knights game setting the moderator Config page can store, with the environment variable it overrides. A field
  * that is not stored leaves Knights on that variable (or its built-in default). Number ranges match the Knights
- * environment readers (`hidden/config.ts`, `yesno/config.ts`, `trials/config.ts`), so a stored value is never one the environment would refuse.
+ * environment readers (`hidden/config.ts`, `yesno/config.ts`, `trials/config.ts`, `skill-check/config.ts`), so a stored value is never one the environment would refuse.
  */
 export const KNIGHTS_GAME_SETTINGS = {
   hiddenCheckRate: {
@@ -155,6 +155,23 @@ export const KNIGHTS_GAME_SETTINGS = {
     label: 'Rulings used as skill checks',
     range: 'from 0 to 1',
     valid: (n: number) => n >= 0 && n <= 1,
+  },
+  skillCheckPoolCap: {
+    kind: 'number',
+    env: 'KNIGHTS_SKILL_CHECK_POOL_CAP',
+    label: 'Mod-confirmed checks kept',
+    range: 'a whole number greater than 0',
+    valid: (n: number) => Number.isInteger(n) && n > 0,
+  },
+  skillCheckServeJudged: {
+    kind: 'toggle',
+    env: 'KNIGHTS_SKILL_CHECK_SERVE_JUDGED',
+    label: 'Checks on images already seen',
+  },
+  inquisitorQueue: {
+    kind: 'toggle',
+    env: 'KNIGHTS_INQUISITOR_QUEUE',
+    label: 'In-game inquisitor queue',
   },
 } as const;
 

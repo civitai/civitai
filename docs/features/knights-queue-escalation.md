@@ -20,7 +20,7 @@ An item that still has no counted vote at its current stage once its extension i
 
 An item at a stage nobody can serve is not extended. It is handed up as rule 1 says when a later stage is served, and expires when that hand-up would reach the Inquisitors with no counted vote at its stage.
 
-The tick response carries `escalated`, `toInquisitor`, `extended`, `expired` and `rerated`; each expiry also counts as `knights_escalations_total{reason="expired"}`.
+The tick response carries `escalated`, `toInquisitor`, `extended`, `expired` and `rerated`; each expiry also counts as `knights_escalations_total{reason="expired"}`. It also reports `reviewsOpened`, the [inquisitor reviews](knights-inquisitor.md) its sweep opened. A moderator's "Send to Inquisitor" from a review opens a new `blocked` item here, source `inquisitor-review`.
 
 ## Rule 4: a split at the end of the path is re-rated
 

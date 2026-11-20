@@ -239,6 +239,12 @@ export async function addCoreImage(input: {
   if (existing?.pool === REFERENCE_POOL.hiddenCheck) {
     return { ok: false, error: 'This image is a hidden check, and an image is never in both.' };
   }
+  if (existing?.pool === REFERENCE_POOL.skillCheck) {
+    return {
+      ok: false,
+      error: 'This image is a mod-confirmed skill check, and an image is in one pool only.',
+    };
+  }
   if (existing?.source === REFERENCE_SOURCE.core && existing.status === REFERENCE_STATUS.active) {
     return { ok: false, error: 'This image is already in the core set.' };
   }

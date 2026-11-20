@@ -360,6 +360,22 @@ describe('saveGameSettings', () => {
     expect(parseKnightsSourcesConfig(redisStore.get(KEY)!).game?.yesNoMaxAgeDays).toBe(21);
   });
 
+  it('stores the skill-check pool cap and the serve-judged toggle under game, audits both, and keeps the other fields', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(
+      await saveGameSettings({ skillCheckPoolCap: 300, skillCheckServeJudged: true }, MOD)
+    ).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!).game).toEqual({
+      hiddenCheckRate: 0.1,
+      yesNoStretch: 4,
+      skillCheckPoolCap: 300,
+      skillCheckServeJudged: true,
+    });
+    const recorded = JSON.stringify(await audit());
+    expect(recorded).toContain('skillCheckPoolCap');
+    expect(recorded).toContain('skillCheckServeJudged');
+  });
+
   it('clears one stored field on request, so Knights uses its default for it, and audits it', async () => {
     redisStore.set(KEY, JSON.stringify(stored));
     await saveGameSettings({ hiddenCheckRate: null }, MOD);

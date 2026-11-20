@@ -39,6 +39,7 @@ import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { lockoutFor, voteGate } from '$lib/server/vote-limits/runtime';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
+import { skillChecks } from '$lib/server/skill-check/runtime';
 import { feedSecret, resetDeps } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
 import { castYesNoVote } from '$lib/server/yesno/vote';
@@ -53,6 +54,7 @@ import {
 } from '$lib/server/apprenticeship/apprenticeship.service';
 import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import { pickItem } from './next-item.server';
+import { inquisitorActions, inquisitorView } from './inquisitor.server';
 import { apprenticePayload, progressPayload } from './apprentice';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -120,6 +122,9 @@ async function acolyteLevelCard(progress: Notice | null, userId: number): Promis
 
 export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
+  // Moderators play the in-game inquisitor queue: settled player ratings to confirm as skill checks.
+  if (locals.user.isModerator && (await skillChecks()).enabled)
+    return inquisitorView(locals.user.id);
   const [status, { muted }] = await Promise.all([
     requireMember(db, locals.user.id),
     getStanding(db, locals.user.id),
@@ -148,7 +153,9 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
 
   // An Acolyte whose career reset is due falls through to the queue page, which serves nothing until it lands.
   if (status.rank === 'Acolyte' && !muted && !(status.smites >= status.maxSmites)) {
-    const view = await getApprentice(db, locals.user.id);
+    const view = await getApprentice(db, locals.user.id, {
+      skillCheckRate: (await skillChecks()).enabled ? (await hiddenSettings()).rate : 0,
+    });
     if (view.kind !== 'not-acolyte') {
       return {
         mode: 'apprentice' as const,
@@ -317,6 +324,8 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
               answer,
               blockReason,
               isModerator: locals.user.isModerator,
+              serveJudged: (await skillChecks()).serveJudged,
+              skillChecks: (await skillChecks()).enabled,
             },
             // Graded in this request, so the warning or smite shows on the answer that caused it.
             { ...queueDeps, grade: { settings: await hiddenSettings(), ...resetDeps } }
@@ -365,6 +374,7 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
 }
 
 export const actions: Actions = {
+  ...inquisitorActions,
   // Every kind of vote (rating, yes/no, hidden check) passes the Redis vote limits here, before any database work.
   vote: async (event) => {
     const userId = event.locals.user.id;
@@ -494,7 +504,10 @@ export const actions: Actions = {
           version: typeof version === 'string' ? version : null,
           answer,
         },
-        apprenticeDeps
+        {
+          ...apprenticeDeps,
+          skillCheckRate: (await skillChecks()).enabled ? (await hiddenSettings()).rate : 0,
+        }
       );
       if (result.status === 'rejected') {
         return fail(409, { message: APPRENTICE_REJECTION_TEXT[result.reason] });

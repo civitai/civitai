@@ -30,6 +30,10 @@ const ESCALATION_REASONS = [
   ...new Set([...KNIGHTS_ESCALATION_REASONS, ...KNIGHTS_WRITEBACK_REASONS]),
 ] as const;
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
+const SKILL_CHECK_RETIRE_REASONS = ['cap', 'failures'] as const;
+const REVIEW_OUTCOMES = ['confirmed', 'split', 'excluded'] as const;
+export type ReviewOutcome = (typeof REVIEW_OUTCOMES)[number];
+export type SkillCheckRetireReason = (typeof SKILL_CHECK_RETIRE_REASONS)[number];
 const REFUSAL_REASONS = [
   'no-player',
   'not-open',
@@ -131,6 +135,20 @@ const hiddenChecksGraded = counter(
   { verdict: HIDDEN_VERDICTS }
 );
 const smites = counter('knights_smites_total', 'Smites issued by hidden-check grading.');
+const reviewsClosed = counter(
+  'knights_inquisitor_reviews_closed_total',
+  'In-game inquisitor reviews closed, by outcome: two agreeing moderators, a split, or excluded (ruled, blocked, moved, held, or sent to the Inquisitors).',
+  { outcome: REVIEW_OUTCOMES }
+);
+const overridesUnclosed = counter(
+  'knights_inquisitor_overrides_unclosed_total',
+  "Two agreeing moderators' level written to an image whose review could then not be closed (no skill check added)."
+);
+const skillChecksRetired = counter(
+  'knights_skill_checks_retired_total',
+  'Mod-confirmed skill checks retired, by reason: pushed out by the pool cap, or failed by too many Knights.',
+  { reason: SKILL_CHECK_RETIRE_REASONS }
+);
 const careerResets = counter(
   'knights_career_resets_total',
   'Career resets, by trigger: the smite limit (done in the main app) or the player restarting.',
@@ -197,6 +215,12 @@ export const metrics = {
   hiddenCheckGraded: (verdict: string) =>
     safely(() => hiddenChecksGraded.inc({ verdict: bounded(verdict, HIDDEN_VERDICTS) })),
   smite: () => safely(() => smites.inc()),
+  reviewClosed: (outcome: ReviewOutcome) => safely(() => reviewsClosed.inc({ outcome })),
+  overrideUnclosed: () => safely(() => overridesUnclosed.inc()),
+  skillChecksRetired: (reason: SkillCheckRetireReason, count: number) =>
+    safely(() => {
+      if (count > 0) skillChecksRetired.inc({ reason }, count);
+    }),
   unhandledError: () => safely(() => unhandledErrors.inc()),
   tickItemFailures: (step: TickFailureStep, count: number) =>
     safely(() => {

@@ -217,7 +217,11 @@ async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Pr
     .where('r.source', '!=', REFERENCE_SOURCE.core)
     .where((eb) =>
       eb.or([
-        eb('r.harvestedAt', '<', utc(agedOut)),
+        // A mod-confirmed check has no TTL: it leaves by the pool cap, Knights' failures, or its image moving off its level.
+        eb.and([
+          eb('r.harvestedAt', '<', utc(agedOut)),
+          eb('r.source', '!=', REFERENCE_SOURCE.inquisitor),
+        ]),
         eb.not(
           eb.exists(
             eb

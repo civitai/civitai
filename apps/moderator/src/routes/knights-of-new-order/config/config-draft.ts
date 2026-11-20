@@ -66,6 +66,11 @@ export const NUMBER_ROWS: Record<NumberKey, { unit: string; percent?: true; desc
       percent: true,
       description: 'Share of new moderator rulings used as skill checks instead of trials.',
     },
+    skillCheckPoolCap: {
+      unit: 'checks',
+      description:
+        'Skill checks two moderators confirmed in game that are kept. When full, the oldest is retired as a new one comes in; a lower cap retires down to it at the next confirmed check.',
+    },
   };
 
 type ToggleOption = { value: ToggleChoice; label: string };
@@ -102,6 +107,24 @@ export const TOGGLE_ROWS: Record<ToggleKey, { description: string; options: Togg
       { value: 'default', label: 'Default' },
       { value: 'off', label: 'On' },
       { value: 'on', label: 'Off' },
+    ],
+  },
+  inquisitorQueue: {
+    description:
+      'Moderators review settled ratings in the game on /play, and two agreeing moderators add skill checks served to Acolytes and Knights. Off, no review opens and the mod-confirmed pool is not served.',
+    options: [
+      { value: 'default', label: 'Default' },
+      { value: 'off', label: 'Off' },
+      { value: 'on', label: 'On' },
+    ],
+  },
+  skillCheckServeJudged: {
+    description:
+      'On, a player can be served a mod-confirmed skill check on an image they already judged in the queue or answered as an Acolyte. Never the same check twice.',
+    options: [
+      { value: 'default', label: 'Default' },
+      { value: 'off', label: 'Off' },
+      { value: 'on', label: 'On' },
     ],
   },
   signalsDisabled: {

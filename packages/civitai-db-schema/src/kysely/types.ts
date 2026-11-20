@@ -3964,6 +3964,25 @@ export type KnightsHarvestCursor = {
   lastActivityId: Generated<number>;
   updatedAt: Timestamp;
 };
+export type KnightsInquisitorReview = {
+  id: Generated<number>;
+  queueItemId: number;
+  imageId: number;
+  questionKey: string;
+  consensusValue: string;
+  status: Generated<string>;
+  confirmedValue: string | null;
+  claimedBy: number | null;
+  claimExpiresAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  closedAt: Timestamp | null;
+};
+export type KnightsInquisitorVote = {
+  reviewId: number;
+  moderatorId: number;
+  answer: string;
+  createdAt: Generated<Timestamp>;
+};
 export type KnightsNotificationSend = {
   playerId: number;
   day: Timestamp;
@@ -7294,6 +7313,8 @@ export type DB = {
   KnightsApprenticeAnswer: KnightsApprenticeAnswer;
   KnightsGoldConversion: KnightsGoldConversion;
   KnightsHarvestCursor: KnightsHarvestCursor;
+  KnightsInquisitorReview: KnightsInquisitorReview;
+  KnightsInquisitorVote: KnightsInquisitorVote;
   KnightsNotificationSend: KnightsNotificationSend;
   KnightsPlayer: KnightsPlayer;
   KnightsPlayerDay: KnightsPlayerDay;
