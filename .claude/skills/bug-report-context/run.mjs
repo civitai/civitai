@@ -10,6 +10,8 @@ import { promisify } from 'node:util';
 import {
   OUTAGE_COLUMNS,
   faroLines,
+  reasonOf,
+  targetLabel,
   idsFromStageOne,
   outageRead,
   parseArgs,
@@ -61,19 +63,9 @@ async function exec(read) {
       maxBuffer: 32 * 1024 * 1024,
       timeout: 45_000,
     });
-    // postgres-query names the database that answered; on some machines --prod is not prod. Keep
-    // its label and access mode, not the host, since a reading may be pasted onto a report.
-    const label = String(stderr).match(/^Target: (\S+ \([^)]*\))(?: -> (\S+))?/m);
-    if (label) {
-      const host = (label[2] ?? '').replace(/^[^@]*@/, '').replace(/:\d+\/.*$|\/.*$/, '');
-      const where =
-        !host || host.startsWith('(')
-          ? 'host unknown'
-          : /^(localhost|127\.|\[?::1)/.test(host)
-          ? 'LOCAL host'
-          : 'remote host';
-      targets.add(`Target: ${label[1]}, ${where}`);
-    }
+    // postgres-query names the database that answered; on some machines --prod is not prod.
+    const target = targetLabel(stderr);
+    if (target) targets.add(target);
     const rows = rowsOf(
       read.tool,
       JSON.parse(stdout.slice(stdout.indexOf('{'))),
@@ -162,7 +154,7 @@ function render() {
   for (const e of results.errors ?? [])
     events.push([
       e._time,
-      `error  ${e.path ?? '?'} ${e.code ?? ''} ${e.reason ?? ''} ref=${e.errorRef ?? '-'}`,
+      `error  ${e.path ?? '?'} ${e.code ?? ''} ${reasonOf(e)} ref=${e.errorRef ?? '-'}`,
     ]);
   for (const i of results.images ?? []) {
     if (inWin(i.createdAt))
@@ -209,7 +201,7 @@ function render() {
     if (failed.has('ref')) out.push(`\n## Error ref ${opts.ref}: NOT READ`);
     else if (results.ref?.length) {
       out.push(`\n## Error ref ${opts.ref}`);
-      for (const r of results.ref) out.push(`${t(r._time)} ${r.path} ${r.code} ${r.reason}`);
+      for (const r of results.ref) out.push(`${t(r._time)} ${r.path} ${r.code} ${reasonOf(r)}`);
     } else out.push(`\n## Error ref ${opts.ref}: not found in the window`);
   }
 

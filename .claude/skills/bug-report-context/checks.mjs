@@ -103,11 +103,35 @@ export function pickChecks(opts) {
 // (buildServerFaultErrorLog in src/server/logging/client.ts).
 const REASON =
   'extend cause_message = tostring(cause.message) | extend reason = iff(isempty(cause_message), tostring(message), cause_message)';
-const ERROR_FIELDS = `${REASON} | project _time, path, code, reason, cause_message, errorRef, input`;
+// The raw `message` rides along: on the 303 desk run the computed `reason` came back null in the
+// rows, so reasonOf() falls back to it.
+const ERROR_FIELDS = `${REASON} | project _time, path, code, reason, cause_message, message, errorRef, input`;
 // One outage reaches users through many call sites: Prisma prefixes its message with the call
 // ("Invalid `prisma.post.update()` invocation: ..."), so group on what follows, digits folded.
 // No trim or cut here: signature() finishes the job on both sides, so they cannot drift apart.
-const SIGNATURE = String.raw`extend sig = replace_regex(replace_regex(reason, @"(?s)^.*invocation:", ""), @"\d+", "N")`;
+// Axiom's replace_regex is (regex, rewrite, text), not (text, regex, rewrite): the other order is a
+// 400 ("argument #1 must be a constant"), found on the 303 desk run.
+const SIGNATURE = String.raw`extend sig = replace_regex(@"\d+", "N", replace_regex(@"(?s)^.*invocation:", "", reason))`;
+
+/** The real error text of one logged line, whichever of its fields carried it. */
+export function reasonOf(e) {
+  const cause = typeof e?.cause === 'string' ? safeJson(e.cause) ?? { message: e.cause } : e?.cause;
+  return (
+    e?.reason || e?.cause_message || e?.['cause.message'] || cause?.message || e?.message || ''
+  );
+}
+
+/**
+ * Which database postgres-query read, from its stderr. Decided by its own hot-standby check (the
+ * `Server: ..., in recovery: true` line), not the host: on a desk prod is reached through a tunnel
+ * on 127.0.0.1, so the host says nothing.
+ */
+export function targetLabel(stderr) {
+  const label = String(stderr).match(/^Target: (\S+ \([^)]*\))/m);
+  if (!label) return null;
+  const standby = /^Server: .*in recovery: true\s*$/m.test(String(stderr));
+  return `Target: ${label[1]}, ${standby ? 'hot standby confirmed' : 'NOT confirmed as a replica'}`;
+}
 
 /** The reporter's side of SIGNATURE, then whitespace trimmed. Idempotent, and applied to the APL's sig too. */
 export function signature(reason) {
@@ -138,14 +162,13 @@ export function stageOne(opts, checks) {
       start,
       end,
       limit: 20,
-      query: `['civitai-prod'] | where errorRef == '${opts.ref}' | ${REASON} | project _time, ['user'], path, code, reason, cause_message, errorRef, input | take 20`,
+      query: `['civitai-prod'] | where errorRef == '${opts.ref}' | ${REASON} | project _time, ['user'], path, code, reason, cause_message, message, errorRef, input | take 20`,
     });
   if (checks.includes('feedback'))
     // The report itself: the Faro session id its browser attached (src/components/Feedback).
     reads.push({
       check: 'feedback',
       tool: 'pg',
-      limit: 1,
       query: `SELECT id, "userId", "createdAt", context->>'sessionId' AS "sessionId" FROM "Feedback" WHERE id = ${opts.feedback} LIMIT 1`,
     });
   if (checks.includes('images'))
@@ -443,7 +466,7 @@ export function reading(results, failed, checks = CHECKS) {
   const outage = (results.outage ?? []).map((o) => ({ ...o, sig: signature(o.sig) }));
   const mine = new Map();
   for (const e of results.errors ?? []) {
-    const sig = signature(e.reason);
+    const sig = signature(reasonOf(e));
     if (sig) mine.set(sig, mine.get(sig) || !!e.cause_message);
   }
   const shared = outage.filter((o) => Number(o.users) >= SITE_WIDE_USERS);

@@ -45,8 +45,8 @@ read (`Target:`), a timeline and a reading, writes the raw rows to `--json`, and
 read failed**. A failed check reads `NOT READ` in the reading, never as an absence, and a failed
 log read stops the reading from drawing a conclusion; a read that hit its row limit, or a post or
 rating check skipped for want of ids, prints a `WARNING`. All times are UTC. It needs the credentials the three underlying skills use; see
-their SKILL.md files. Check the `Target:` line says `PROD (read-only), remote host`: on some machines `--prod` resolves
-to a local copy, which shows as `LOCAL host`.
+their SKILL.md files. Check the `Target:` line ends `hot standby confirmed`: that is postgres-query's own check that
+it read a replica. The host cannot tell you, since prod is often reached through a local tunnel.
 
 ## 3. What it checks
 
