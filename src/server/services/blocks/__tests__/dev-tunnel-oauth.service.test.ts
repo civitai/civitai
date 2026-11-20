@@ -72,6 +72,7 @@ describe('mintDevTunnelOauthToken', () => {
       userId: USER_ID,
       clientId: 'appdev-42-my-app',
       scopes: ['ai:write:budgeted', 'user:read:self'],
+      impersonatedBy: null,
     });
 
     expect(minted).toEqual({ token: 'civ_dev_oauth', expiresAt: '2099-01-01T00:15:00Z' });
@@ -97,6 +98,7 @@ describe('mintDevTunnelOauthToken', () => {
       userId: USER_ID,
       clientId: 'appdev-42-my-app',
       scope: SPEND,
+      impersonatedBy: null,
     });
   });
 
@@ -105,6 +107,7 @@ describe('mintDevTunnelOauthToken', () => {
       userId: USER_ID,
       clientId: 'appblk-my-app',
       scopes: ['user:read:self'],
+      impersonatedBy: null,
     });
     expect(dbMock.dbWrite.oauthClient.upsert).not.toHaveBeenCalled();
     const consent = dbMock.dbWrite.oauthConsent.upsert.mock.calls[0][0];
@@ -114,7 +117,12 @@ describe('mintDevTunnelOauthToken', () => {
 
   it('refuses to mint on another author’s dev client', async () => {
     await expect(
-      mintDevTunnelOauthToken({ userId: 7, clientId: 'appdev-42-my-app', scopes: [] })
+      mintDevTunnelOauthToken({
+        userId: 7,
+        clientId: 'appdev-42-my-app',
+        scopes: [],
+        impersonatedBy: null,
+      })
     ).rejects.toThrow(/another user/);
     expect(mintAppTokenMock).not.toHaveBeenCalled();
   });

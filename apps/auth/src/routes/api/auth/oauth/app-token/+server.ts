@@ -25,6 +25,8 @@ export const POST: RequestHandler = async ({ request }) => {
   if (!isInternalRequest(request)) return bad('unauthorized', undefined, 401);
 
   const body = (await parseBody(request)) as Record<string, unknown>;
+  if (body.impersonatedBy != null)
+    return bad('impersonation_refused', 'Apps are paused while impersonating', 403);
   const userId = Number(body.userId);
   const clientId = typeof body.clientId === 'string' ? body.clientId : '';
   // A JSON number (or a decimal string), bounded against ALL_SCOPES (incl. the opt-in bits).
