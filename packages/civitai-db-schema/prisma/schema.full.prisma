@@ -1820,6 +1820,7 @@ model Report {
   gameFrameGame  GameFrameGameReport?
   serviceOffering ServiceOfferingReport?
   postText       PostTextReport?
+  serviceDealReview ServiceDealReviewReport?
   gameFrameReceipts GameFrameReportReceipt[]
 }
 
@@ -11681,6 +11682,7 @@ model ServiceOffering {
   deals             ServiceDeal[]
   reports           ServiceOfferingReport[]
   reviews           ServiceDealReview[]
+  reviewReports     ServiceDealReviewReport[]
 
   /// Target of the deal's composite FK that binds `ServiceDeal.sellerId` to the offering's seller.
   @@unique([id, sellerId])
@@ -11837,9 +11839,24 @@ model ServiceDealReview {
   createdAt                DateTime                       @default(now())
   updatedAt                DateTime                       @updatedAt
   images                   ServiceDealReviewImage[]
+  reports                  ServiceDealReviewReport[]
 
   @@index([offeringId, publishedAt])
   @@index([sellerId, publishedAt])
+}
+
+/// A report on one buyer review. The offering is kept so the review's reports join the service
+/// queue under it.
+model ServiceDealReviewReport {
+  reportId            Int               @id
+  report              Report            @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  serviceDealReviewId Int
+  serviceDealReview   ServiceDealReview @relation(fields: [serviceDealReviewId], references: [id], onDelete: Cascade)
+  serviceOfferingId   Int
+  serviceOffering     ServiceOffering   @relation(fields: [serviceOfferingId], references: [id], onDelete: Cascade)
+
+  @@index([serviceDealReviewId], type: Hash)
+  @@index([serviceOfferingId], type: Hash)
 }
 
 /// Delivered work a buyer attached to their review: a fresh upload, owned by the buyer and scanned

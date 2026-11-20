@@ -6005,6 +6005,11 @@ export type ServiceDealReviewImage = {
    */
   sourceFileId: number | null;
 };
+export type ServiceDealReviewReport = {
+  reportId: number;
+  serviceDealReviewId: number;
+  serviceOfferingId: number;
+};
 export type ServiceDealTransaction = {
   id: Generated<number>;
   dealId: number;
@@ -7430,6 +7435,7 @@ export type DB = {
   ServiceDealFilePurge: ServiceDealFilePurge;
   ServiceDealReview: ServiceDealReview;
   ServiceDealReviewImage: ServiceDealReviewImage;
+  ServiceDealReviewReport: ServiceDealReviewReport;
   ServiceDealTransaction: ServiceDealTransaction;
   ServiceDisputeReview: ServiceDisputeReview;
   ServiceOffering: ServiceOffering;

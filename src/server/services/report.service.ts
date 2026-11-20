@@ -12,6 +12,7 @@ import {
 } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { reviewPublic } from '~/server/services/creator-service-deal-review-publish';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -333,6 +334,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.Storyline]: 'storyline',
   [ReportEntity.ServiceOffering]: 'serviceOffering',
   [ReportEntity.PostText]: 'postText',
+  [ReportEntity.ServiceDealReview]: 'serviceDealReview',
 };
 
 const reportTypeConnectionMap = {
@@ -357,6 +359,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.Storyline]: 'storylineId',
   [ReportEntity.ServiceOffering]: 'serviceOfferingId',
   [ReportEntity.PostText]: 'postTextId',
+  [ReportEntity.ServiceDealReview]: 'serviceDealReviewId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
@@ -417,6 +420,27 @@ async function assertReportedPlacementIsOnEntity({
     throw throwBadRequestError('report: that sticker is not on the image being reported');
 }
 
+/** A buyer review as its reporter sees it: `shown` is whether it is public now. */
+async function readReportedServiceDealReview(reviewId: number) {
+  // primary: a moderator may have hidden it, or its buyer edited it, a moment ago.
+  const [review] = await dbWrite.$queryRaw<
+    {
+      offeringId: number;
+      dealId: number;
+      buyerId: number;
+      sellerId: number;
+      comment: string | null;
+      sellerReply: string | null;
+      shown: boolean;
+    }[]
+  >`
+    SELECT r."offeringId", r."dealId", r."buyerId", r."sellerId", r."comment", r."sellerReply",
+      (r."publishedAt" IS NOT NULL AND ${reviewPublic}) AS "shown"
+    FROM "ServiceDealReview" r JOIN "ServiceDeal" d ON d."id" = r."dealId"
+    WHERE r."id" = ${reviewId}::int`;
+  return review;
+}
+
 export const createReport = async ({
   userId,
   id,
@@ -473,6 +497,13 @@ export const createReport = async ({
     !(await dbRead.serviceOffering.findUnique({ where: { id }, select: { id: true } }))
   )
     throw throwNotFoundError('That service no longer exists.');
+  const reportedReview =
+    type === ReportEntity.ServiceDealReview ? await readReportedServiceDealReview(id) : null;
+  if (type === ReportEntity.ServiceDealReview) {
+    if (!reportedReview?.shown) throw throwNotFoundError('That review is not shown.');
+    if (reportedReview.buyerId === userId || reportedReview.sellerId === userId)
+      throw throwBadRequestError('You cannot report a review of your own deal.');
+  }
   // Read here for the author guard; the words it also yields are stamped below the dedupe, as the
   // announcement's are.
   const readReportedText = () =>
@@ -516,6 +547,7 @@ export const createReport = async ({
     type === ReportEntity.Storyline ||
     type === ReportEntity.ServiceOffering ||
     type === ReportEntity.PostText ||
+    type === ReportEntity.ServiceDealReview ||
     castsNoTagVotes;
   // Decides who is paid when the report is actioned, so it is the server's, whatever the client sent.
   // Stamped before the dedupe so a folded-in reporter's `additionalReports` entry carries it too.
@@ -524,6 +556,7 @@ export const createReport = async ({
   else delete details[NO_REPORT_REWARD_KEY];
   // The server's snapshot of a reported text (stamped below); never one the reporter sent.
   delete details.postText;
+  delete details.serviceDealReview;
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -539,6 +572,7 @@ export const createReport = async ({
             castsNoTagVotes ||
             reportsStorylineChapter ||
             type === ReportEntity.PostText ||
+            type === ReportEntity.ServiceDealReview ||
             foldIntoPendingOnly,
           tx: callerTx,
         })
@@ -572,6 +606,13 @@ export const createReport = async ({
       index: reportedText.index,
       postId: reportedText.postId,
     };
+  // As a text's: the buyer can still edit the comment, and the seller their reply.
+  if (reportedReview)
+    (data.details as MixedObject).serviceDealReview = {
+      dealId: reportedReview.dealId,
+      comment: reportedReview.comment,
+      sellerReply: reportedReview.sellerReply,
+    };
 
   let recomputeArticleNsfwLevelId: number | null = null;
 
@@ -596,6 +637,7 @@ export const createReport = async ({
           create: {
             [reportTypeConnectionMap[type]]: id,
             ...(reportedText ? { postId: reportedText.postId } : {}),
+            ...(reportedReview ? { serviceOfferingId: reportedReview.offeringId } : {}),
           },
         },
       },

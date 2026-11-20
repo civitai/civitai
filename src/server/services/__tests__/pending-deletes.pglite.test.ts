@@ -48,7 +48,8 @@ afterAll(() => pg.close());
 
 beforeEach(async () => {
   await pg.exec(`TRUNCATE "JobQueue", "Image", "Post", "Report", "ImageReport", "PostReport",
-    "CsamReport", "CsamQueueSetAside", "ImageConnection"`);
+    "CsamReport", "CsamQueueSetAside", "ImageConnection", "ServiceDealReviewImage",
+    "ServiceDealReviewReport"`);
   await pg.exec(`INSERT INTO "Image" (id, "userId") VALUES (${PLAIN}, ${OWNER})`);
 });
 
@@ -128,6 +129,20 @@ describe('childSafetyImageCase', () => {
         await pg.exec(`INSERT INTO "PostReport" VALUES (50, 1)`);
       },
     ],
+    // T&S ruling (hub mail 2026-11-20-224207-28bf58b5): a child-safety report on a service review
+    // holds the delete of the images attached to it.
+    [
+      'attached to a service review reported as a minor',
+      async () => {
+        await addImage();
+        await report(
+          1,
+          `reason = 'TOSViolation', details = '{"violation": "Photorealistic depiction of a minor"}'`
+        );
+        await pg.exec(`INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId") VALUES (9, ${IMAGE});
+          INSERT INTO "ServiceDealReviewReport" ("reportId", "serviceDealReviewId") VALUES (1, 9)`);
+      },
+    ],
   ])('holds an image %s', async (_, setup) => {
     await setup();
 
@@ -184,6 +199,16 @@ describe('childSafetyImageCase', () => {
         await addImage({ postId: 50 });
         await report(1, `reason = 'CSAM', status = 'Actioned'`);
         await pg.exec(`INSERT INTO "PostReport" VALUES (50, 1)`);
+      },
+    ],
+    [
+      'attached to a service review whose CSAM report was ruled on, or reported only as spam',
+      async () => {
+        await addImage();
+        await report(1, `reason = 'CSAM', status = 'Actioned'`);
+        await report(2, `reason = 'Spam'`);
+        await pg.exec(`INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId") VALUES (9, ${IMAGE});
+          INSERT INTO "ServiceDealReviewReport" ("reportId", "serviceDealReviewId") VALUES (1, 9), (2, 9)`);
       },
     ],
   ])('releases an image %s', async (_, setup) => {
