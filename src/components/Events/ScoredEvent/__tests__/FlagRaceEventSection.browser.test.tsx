@@ -33,11 +33,6 @@ vi.mock('~/components/HatTurf/FlagRace/FlagRaceTotals', () => ({
 vi.mock('~/components/Cards/ImageCard', () => ({
   ImageCard: ({ data }: { data: { id: number } }) => <div data-testid="card">{data.id}</div>,
 }));
-vi.mock('~/components/HatTurf/FlagRace/HiddenFlagCard', () => ({
-  HiddenFlagCard: ({ imageId }: { imageId: number }) => (
-    <div data-testid="card">hidden {imageId}</div>
-  ),
-}));
 vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
   ImagesProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
@@ -47,8 +42,11 @@ import { FlagRaceEventSection } from '../FlagRaceEventSection';
 import { renderWithProviders } from '../../../../../test/component-setup';
 
 const section = () => document.querySelector('[data-testid="flag-race-event-section"]');
+// Each flag slot in order: a visible flag's id, or 'hidden' for the real hidden-for-you card.
 const cards = () =>
-  [...document.querySelectorAll('[data-testid="card"]')].map((c) => c.textContent);
+  [...document.querySelectorAll('[data-testid="card"], [data-testid="flag-hidden-for-you"]')].map(
+    (c) => (c.getAttribute('data-testid') === 'card' ? c.textContent : 'hidden')
+  );
 const day = (...ids: number[]) => ({
   event: 'birthday2026',
   summary: { flags: ids.map((imageId) => ({ imageId })) },
@@ -78,7 +76,7 @@ describe('Flag Race on the event page', () => {
     // 10's creator has blocked the viewer, so the image query leaves it out.
     h.images = [{ id: 20 }, { id: 30 }];
     await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
-    expect(cards()).toEqual(['30', 'hidden 10', '20']);
+    expect(cards()).toEqual(['30', 'hidden', '20']);
   });
 
   test('keeps the panel and race so far when the viewer may see none of the flags', async () => {
@@ -87,7 +85,7 @@ describe('Flag Race on the event page', () => {
     expect(section()).not.toBeNull();
     expect(document.querySelector('[data-testid="panel"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="totals"]')).not.toBeNull();
-    expect(cards()).toEqual(['hidden 30', 'hidden 10', 'hidden 20']);
+    expect(cards()).toEqual(['hidden', 'hidden', 'hidden']);
   });
 
   test('a failed image fetch shows no hidden cards, only the flags it did get', async () => {
