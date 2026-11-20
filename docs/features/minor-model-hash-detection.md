@@ -25,7 +25,7 @@ Both unattended paths are behind one Flipt kill switch and ship **default-off**.
 | `src/server/notifications/minor-flag.notifications.ts` | `model-flagged-minor` owner notification |
 | `src/pages/models/[id]/[[...slug]].tsx` | Owner-facing alert on the model page |
 | `src/server/jobs/minor-hash-sweep.ts` | Nightly sweep job (`45 3 * * *`) |
-| `src/pages/api/admin/temp/minor-hash-sweep.ts` | Backfill + rollback endpoint (`WEBHOOK_TOKEN`) |
+| `src/server/api-routes/admin/temp/minor-hash-sweep.ts` | Backfill + rollback endpoint (`WEBHOOK_TOKEN`) |
 | `apps/moderator/src/routes/models/flags/` | Moderator review: Model Flags, three tabs (see [moderator-model-flags.md](moderator-model-flags.md)) |
 | `src/server/routers/moderator/index.ts` | `moderator.models.*` procedures |
 | `src/server/schema/minor-hash.schema.ts` | Zod inputs |

@@ -57,7 +57,7 @@ deferred), #4 (user moderation, out of scope), #8 (dispute auto-resolve, needs a
   - [x] Wire into `deleteArticle`: capture `coverId` + content image ids before deleting connections; hand
         cover, banner and content images to the shared `queueImageDeletes` in the delete's transaction, which
         queues the author's images nothing else uses, the same rule as `deleteArticleById`; the main app's
-        `image-deletes` job deletes them.
+        `pending-deletes` job deletes them.
   - [x] **Storage app tested functional** — `STORAGE_ENDPOINT`/`STORAGE_TOKEN` pulled from the civitai main
         worktree `.env` (localhost:8084). `/health` OK; auth enforced (401 w/o token); `head`/`delete`/
         `delete-many` all 200 with the token.

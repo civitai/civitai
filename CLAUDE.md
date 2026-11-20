@@ -40,7 +40,7 @@ where it loads on demand:
   rule first; read one directly whenever you need it before touching code.
 - **`docs/dev/`** — `local-setup.md` (env setup and the traps that cost hours: auth hub, SSL, env
   precedence, feature flags), `worktrees.md`, `prettier.md`, `filing-follow-ups.md`,
-  `convention-guards.md` (every guard and what it enforces).
+  `convention-guards.md` (every guard and what it enforces), `api-routes.md` (`src/server/api-routes`).
 - **`docs/features/`** — check before implementing a feature (index: `docs/features/README.md`).
 - **Skills** — `dev-server` (dev servers **and** worktrees), `postgres-query`, `civitai-review`,
   `pr-review` (the hosted review of your PR: intent, findings, fixes), etc.

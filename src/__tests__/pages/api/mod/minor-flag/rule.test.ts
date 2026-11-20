@@ -48,7 +48,7 @@ vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOri
   settleFlagAppealsAfterModeratorLift: m.settle,
 }));
 
-import handler from '~/pages/api/mod/minor-flag/rule';
+import handler from '~/server/api-routes/mod/minor-flag/rule';
 
 function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];

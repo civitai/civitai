@@ -22,6 +22,8 @@ import { createLogger } from '~/utils/logging';
 import type { JobContext } from './job';
 import { createJob, getJobDate } from './job';
 
+import { intArrayLiteral, withMetricExcludedUsers } from '~/server/jobs/leaderboard-board-query';
+
 const log = createLogger('leaderboard', 'blue');
 
 // Accounts that must never appear on any leaderboard, regardless of the board's query.
@@ -36,11 +38,6 @@ const eligibleAccountSql = (excludedUserIds: number[], alias = 'u') =>
 // `isModerator` is nullable: `IS TRUE` keeps a NULL from excluding the account.
 const leaderboardExcludedSql = (alias = 'u') =>
   `(${alias}."excludeFromLeaderboards" OR ${alias}."isModerator" IS TRUE)`;
-
-function intArrayLiteral(ids: number[]) {
-  if (!ids.every(Number.isSafeInteger)) throw new Error('excluded user ids must be integers');
-  return `'{${ids.join(',')}}'::int[]`;
-}
 
 /** Must run before the board is sliced, or an excluded account costs the board a slot. */
 function withoutExcluded<T extends { userId: number }>(rows: T[], excludedUserIds: number[]) {
@@ -356,8 +353,9 @@ type LeaderboardResult = {
   position: number;
 };
 async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
+  const query = withMetricExcludedUsers(ctx.query, ctx.excludedUserIds);
   const leaderboardScoreQuery = await pgDbReadLong.cancellableQuery<LeaderboardResult>(`
-    ${ctx.includesCTE ? ctx.query : `WITH scores AS (${ctx.query})`}
+    ${ctx.includesCTE ? query : `WITH scores AS (${query})`}
     SELECT
       s."userId",
       ROUND(s.score)::int as score,

@@ -1447,8 +1447,7 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
   `src/server/metrics/post.metrics-old.ts` (used while `simplified-post-metrics` is off; ported in Phase 3) and `src/server/notifications/report.notifications.ts` (CASE over the comment report join tables; the
   `CommentV3Report` arm since Phase 3).
 - Entity-label/URL maps: `src/utils/string-helpers.ts` (`commentV2`/`CommentV2` → 'Comment'
-  entries), `src/pages/moderator/strikes.tsx` entity→URL map, and
-  `src/server/utils/moderator-endpoint-catalog.generated.ts` (regenerate). The
+  entries) and the `src/pages/moderator/strikes.tsx` entity→URL map. The
   permalink redirect is now `src/pages/comments/[id].tsx` (`/comments/v2/[id].tsx` re-exports it
   as an alias); it keeps working because v2 ids are preserved. Strike links to `CommentV2` and
   `CommentV3` point at `/comments/<id>`, and `strikes.tsx` no longer links v1 `Comment` ids.
@@ -1616,7 +1615,7 @@ deletes about half of each:
   listed twice.
 - `entity-url.ts` + `retool/user-lookup/CommentsPanel.svelte`: `modelCommentUrl()`/`commentV2Url()`
   collapse to one builder (`commentUrl`); the "Model comments"/"Other comments" panels become one
-  list (both done in Phase 5). The backing mod endpoints (`src/pages/api/mod/comment/bulk-delete.ts`,
+  list (both done in Phase 5). The backing mod endpoints (`src/server/api-routes/mod/comment/bulk-delete.ts`,
   `remove-as-tos.ts`, `restore-from-tos.ts`) take `{ commentIds }` (CommentV3 ids) since Phase 5
   (`commentV2Ids` from the model flip until then) and return `{ deleted }` / `{ comments }`.
 

@@ -69,7 +69,7 @@ faithful choice (no callback, no query/packed-write duplication).
   - `rewardReportReporters` builds the `buzzEvents` row inline (field set + `pending` status + ip/transactionDetails normalization mirror `base.reward.ts`; `awardAmount=50` mirrors `reportAccepted.reward.ts`) and inserts via `getClickhouse()`. Kept in sync by doc-comments — it's a faithful copy of the main-app shapes, not a shared package (a spoke-only recorder needs no cross-app contract; the row shape is enforced by the CH table DDL both apps write to).
   - Multiplier is resolved spoke-side: base supporter multiplier read from the **shared** `MULTIPLIERS_FOR_USER` cache the main app populates (cold miss → 1), × the active global bonus event (`RewardsBonusEvent`, `multiplier/10` clamped to `[1, 5]`) — a faithful port of `getMultipliersForUser`.
   - Wired into `setReportStatus` via `UPDATE … RETURNING userId, alsoReportedBy` so only a real transition to Actioned rewards (re-actioning can't double-reward). Page action threads the moderator `ip` via `getClientAddress()`.
-- **No cutover** (`bulkSetReportStatus` stays): its 3 callers — `pages/api/mod/action-report.ts` (retool webhook), `csam.controller.ts` (CSAM flow), `image.service.ts` (image-TOS flow) — are internal/external **server** flows, **not** the migrated reports page (which uses the spoke's own `setReportStatus`). Exactly like `handleBlockImages` + the KoNO game, these keep the main-app primitive; repointing internal flows to HTTP-call the spoke isn't warranted. `bulkSetReportStatus` retires when *those* slices migrate. See Deliverable 2 below.
+- **No cutover** (`bulkSetReportStatus` stays): its 3 callers — `server/api-routes/mod/action-report.ts` (retool webhook), `csam.controller.ts` (CSAM flow), `image.service.ts` (image-TOS flow) — are internal/external **server** flows, **not** the migrated reports page (which uses the spoke's own `setReportStatus`). Exactly like `handleBlockImages` + the KoNO game, these keep the main-app primitive; repointing internal flows to HTTP-call the spoke isn't warranted. `bulkSetReportStatus` retires when *those* slices migrate. See Deliverable 2 below.
 
 ### Article restore — `restoreArticle`  ·  (articles) — ✅ complete
 - [x] Recompute ingestion state (`recomputeArticleIngestionInTx` — image/text scan-state → Blocked/Error/Scanned/Pending) — **DB**
@@ -105,7 +105,7 @@ main-app procedure deleted. Everything else stays spoke-owned (no endpoint).
 
 ### ❎ NOT AN ENDPOINT — `report-set-status` (no cutover)
 - Re-scoped after inspecting the callers. `bulkSetReportStatus`'s only callers are internal/external **server**
-  flows — `pages/api/mod/action-report.ts` (retool webhook), `csam.controller.ts` (CSAM flow),
+  flows — `server/api-routes/mod/action-report.ts` (retool webhook), `csam.controller.ts` (CSAM flow),
   `image.service.ts` (image-TOS flow) — **not** the migrated reports page. The reports page uses the spoke's
   own `setReportStatus` directly, so there is no duplicated *page* mutation to lift into an endpoint.
 - This is the same call as `handleBlockImages` + the KoNO game: an internal main-app primitive with non-page

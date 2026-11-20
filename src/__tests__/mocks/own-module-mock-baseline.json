@@ -1473,7 +1473,6 @@
   "src/server/jobs/__tests__/grant-creator-milestones.test.ts": 3,
   "src/server/jobs/__tests__/handle-auctions.coverage-bust.test.ts": 8,
   "src/server/jobs/__tests__/handle-auctions.refund-losers.test.ts": 7,
-  "src/server/jobs/__tests__/image-deletes.pglite.test.ts": 1,
   "src/server/jobs/__tests__/image-storage-deletes.pglite.test.ts": 1,
   "src/server/jobs/__tests__/image-storage-deletes.test.ts": 1,
   "src/server/jobs/__tests__/ingest-images-cap.test.ts": 1,
