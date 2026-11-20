@@ -131,6 +131,8 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { HighlightedBadgesInput } from '~/components/Profile/HighlightedBadgesInput';
 import { InputProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
 import { InputShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
+import { ProfileCustomizerTabs } from '~/components/Profile/ProfileCustomizerTabs';
+import type { ProfileCustomizerPanel } from '~/components/Profile/ProfileCustomizerTabs';
 
 const schema = z.object({
   ...userProfileUpdateSchema.shape,
@@ -161,6 +163,7 @@ export default function UserProfileEditModal() {
   const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
+  const [customizerTab, setCustomizerTab] = useState('profile');
 
   // Keep track of old data to compare and make only the necessary requests
   const previousData = useRef<FormDataSchema>();
@@ -526,9 +529,444 @@ export default function UserProfileEditModal() {
     cardDecoration ? cardDecorations.find((c) => c.id === cardDecoration.id) : undefined,
   ].filter(isDefined);
 
+  const profileGroup = (
+    <>
+      <Stack>
+        {userWithCosmetics && (
+          <>
+            {featureFlags.cosmeticShop ? (
+              <Stack align="center">
+                <CreatorCardV2
+                  user={userWithCosmetics}
+                  cosmeticOverwrites={cosmeticOverwrites}
+                  useEquippedCosmetics={false}
+                  style={{ width: '100%', maxWidth: '450px' }}
+                  statDisplayOverwrite={creatorCardStatsPreferences}
+                />
+              </Stack>
+            ) : (
+              <ProfilePreview
+                user={user}
+                badge={badge ? badges.find((c) => c.id === badge.id) : undefined}
+                nameplate={nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined}
+                profileImage={profilePicture?.url ?? profileImage}
+              />
+            )}
+          </>
+        )}
+        <Stack gap="md">
+          {featureFlags.cosmeticShop && (
+            <>
+              <InputProfileImageUpload name="profilePicture" label="Edit avatar" />
+              <Divider label="Showcase Stats" />
+              <InputChipGroup name="creatorCardStatsPreferences" multiple>
+                <Group gap={8}>
+                  {Object.values(creatorCardStats).map((type, index) => (
+                    <Chip key={index} value={type} {...chipProps}>
+                      <span>{getDisplayName(type)}</span>
+                    </Chip>
+                  ))}
+                </Group>
+              </InputChipGroup>
+              {(creatorCardStatsPreferences?.length ?? 0) > creatorCardMaxStats && (
+                <Text c="red" size="xs">
+                  A maximum of {creatorCardMaxStats} stats can be displayed
+                </Text>
+              )}
+              <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
+              <InputCosmeticSelect
+                name="profileDecoration"
+                label="Avatar decoration"
+                shopUrl={`/shop?cosmeticTypes=${CosmeticType.ProfileDecoration}`}
+                data={decorations}
+                nothingFound={
+                  <Text size="xs">You don&rsquo;t have any avatar decorations yet</Text>
+                }
+                onShopClick={handleClose}
+              />
+              <InputCosmeticSelect
+                name="profileBackground"
+                label="Creator Card Backgrounds"
+                shopUrl={`/shop?cosmeticTypes=${CosmeticType.ProfileBackground}`}
+                nothingFound={
+                  <Text size="xs">You don&rsquo;t have any profile backgrounds yet</Text>
+                }
+                data={backgrounds}
+                onShopClick={handleClose}
+              />
+              {/* No shop link: card glows are not in the shop yet. */}
+              {cardDecorations.length > 0 && (
+                <InputCosmeticSelect
+                  name="cardDecoration"
+                  label="Creator Card Glow"
+                  description="Select it again to turn the glow off"
+                  data={cardDecorations}
+                />
+              )}
+            </>
+          )}
+
+          <Switch
+            label="Show badges on profile"
+            checked={privacySettings?.showBadges !== false}
+            onChange={(e) =>
+              form.setValue('privacySettings', {
+                ...privacySettings,
+                showBadges: e.currentTarget.checked,
+              })
+            }
+          />
+          <Switch
+            label="Show what my Creator Score is made of"
+            description="Visitors see the share from models, images, articles and followers, never the score"
+            checked={privacySettings?.showScoreSplit !== false}
+            onChange={(e) =>
+              form.setValue('privacySettings', {
+                ...privacySettings,
+                showScoreSplit: e.currentTarget.checked,
+              })
+            }
+          />
+          <InputCosmeticSelect
+            name="badge"
+            label="Featured Badge"
+            shopUrl={`/shop?cosmeticTypes=${CosmeticType.Badge}`}
+            nothingFound={<Text size="xs">You don&rsquo;t have any badges yet</Text>}
+            data={badges}
+            onShopClick={handleClose}
+          />
+          <CollapsibleSection
+            label="Highlighted badges"
+            description="Pin badges to the top of your profile's badge list."
+            count={highlightedBadgeIds.length}
+          >
+            <HighlightedBadgesInput
+              badges={allBadges}
+              value={highlightedBadgeIds}
+              onChange={(nextHighlighted) =>
+                form.setValue('privacySettings', {
+                  ...privacySettings,
+                  highlightedBadgeIds: withUnownedBadgeIds(
+                    nextHighlighted,
+                    privacySettings?.highlightedBadgeIds,
+                    ownedBadgeIds
+                  ),
+                  // A pinned badge can't also be hidden.
+                  hiddenBadgeIds: withUnownedBadgeIds(
+                    hiddenBadgeIds.filter((id) => !nextHighlighted.includes(id)),
+                    privacySettings?.hiddenBadgeIds,
+                    ownedBadgeIds
+                  ),
+                })
+              }
+            />
+          </CollapsibleSection>
+          <CollapsibleSection
+            label="Hidden badges"
+            description="Hidden badges won't be shown on your profile."
+            count={hiddenBadgeIds.length}
+          >
+            <HighlightedBadgesInput
+              variant="hide"
+              badges={allBadges}
+              value={hiddenBadgeIds}
+              onChange={(nextHidden) =>
+                form.setValue('privacySettings', {
+                  ...privacySettings,
+                  hiddenBadgeIds: withUnownedBadgeIds(
+                    nextHidden,
+                    privacySettings?.hiddenBadgeIds,
+                    ownedBadgeIds
+                  ),
+                  // Hiding a badge unpins it.
+                  highlightedBadgeIds: withUnownedBadgeIds(
+                    highlightedBadgeIds.filter((id) => !nextHidden.includes(id)),
+                    privacySettings?.highlightedBadgeIds,
+                    ownedBadgeIds
+                  ),
+                })
+              }
+            />
+          </CollapsibleSection>
+        </Stack>
+        <Stack>
+          <InputSelect
+            name="nameplateId"
+            placeholder="Select style"
+            label={
+              <Group gap={4} wrap="nowrap">
+                <Input.Label>Nameplate Style</Input.Label>
+                <Popover withArrow width={300} withinPortal position="top">
+                  <Popover.Target>
+                    <Box
+                      display="inline-block"
+                      style={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
+                    >
+                      <IconInfoCircle size={16} />
+                    </Box>
+                  </Popover.Target>
+                  <Popover.Dropdown>
+                    <Text fw={500} size="sm">
+                      Nameplates
+                    </Text>
+                    <Text size="sm">
+                      Nameplates change the appearance of your username. They can include special
+                      colors or effects. You can earn nameplates by being a subscriber or earning
+                      trophies on the site.
+                    </Text>
+                  </Popover.Dropdown>
+                </Popover>
+              </Group>
+            }
+            nothingFoundMessage="Your earned nameplate styles will appear here"
+            data={
+              nameplates.map((cosmetic) => ({
+                label: cosmetic.name,
+                value: cosmetic.id,
+              })) ?? []
+            }
+            clearable
+          />
+          <InputSelect
+            label="Showcase Leaderboard"
+            placeholder="Select a leaderboard"
+            description="Choose which leaderboard badge to display on your profile card"
+            name="leaderboardShowcase"
+            data={leaderboardOptions}
+            disabled={loadingLeaderboards}
+            searchable
+            clearable
+          />
+        </Stack>
+      </Stack>
+    </>
+  );
+  const linksGroup = (
+    <>
+      <InputInlineSocialLinkInput name="socialLinks" label="Social Links" type={LinkType.Social} />
+      <InputInlineSocialLinkInput
+        name="sponsorshipLinks"
+        label="Sponsorship Links"
+        type={LinkType.Sponsorship}
+      />
+    </>
+  );
+  const profilePageGroup = (
+    <>
+      <InputSimpleImageUpload
+        name="coverImage"
+        label="Cover Image"
+        description={`Suggested resolution: ${constants.profile.coverImageWidth}x${constants.profile.coverImageHeight}px`}
+        aspectRatio={constants.profile.coverImageAspectRatio}
+        // Im aware ideally this should ideally be 450, but images will look better on a higher res here
+        previewWidth={constants.profile.coverImageWidth}
+      />
+      <InputTextArea
+        autosize
+        name="message"
+        description="Have something you want to share with people visiting your profile? Put it here and we'll display it at the top of your page"
+        maxLength={constants.profile.messageMaxLength}
+        labelProps={{ style: { width: '100%' } }}
+        label={
+          <Group className="w-full" justify="space-between">
+            <Text>Announcement</Text>
+            <Text size="xs">
+              {message?.length ?? 0}/{constants.profile.messageMaxLength}
+            </Text>
+          </Group>
+        }
+      />
+      <InputTextArea
+        name="bio"
+        labelProps={{ style: { width: '100%' } }}
+        label={
+          <Group className="w-full" justify="space-between">
+            <Text>Bio</Text>
+            <Text size="xs">
+              {bio?.length ?? 0}/{constants.profile.bioMaxLength}
+            </Text>
+          </Group>
+        }
+        autosize
+        maxLength={constants.profile.bioMaxLength}
+      />
+      <InputText
+        name="location"
+        labelProps={{ style: { width: '100%' } }}
+        label={
+          <Group className="w-full" justify="space-between">
+            <Text>Location</Text>
+            <Text size="xs">
+              {location?.length ?? 0}/{constants.profile.locationMaxLength}
+            </Text>
+          </Group>
+        }
+        maxLength={constants.profile.locationMaxLength}
+      />
+    </>
+  );
+  const civitaiComGroup = (
+    <>
+      <Text size="xs" c="dimmed">
+        Show something different to visitors on civitai.com. Anything you leave off here is shown
+        the same on every Civitai site.
+      </Text>
+      <InputSimpleImageUpload
+        name="sfwCoverImage"
+        label="Cover Image (civitai.com)"
+        description="Leave empty to use the cover image above."
+        aspectRatio={constants.profile.coverImageAspectRatio}
+        previewWidth={constants.profile.coverImageWidth}
+      />
+      <Stack gap="xs">
+        <Switch
+          label="Different announcement on civitai.com"
+          checked={sfwMessage != null}
+          onChange={(e) =>
+            form.setValue('sfwMessage', e.currentTarget.checked ? '' : null, {
+              shouldDirty: true,
+            })
+          }
+        />
+        {sfwMessage != null && (
+          <InputTextArea
+            autosize
+            name="sfwMessage"
+            description="Leave blank to show no announcement on civitai.com."
+            maxLength={constants.profile.messageMaxLength}
+            labelProps={{ style: { width: '100%' } }}
+            label={
+              <Group className="w-full" justify="space-between">
+                <Text>Announcement (civitai.com)</Text>
+                <Text size="xs">
+                  {sfwMessage.length}/{constants.profile.messageMaxLength}
+                </Text>
+              </Group>
+            }
+          />
+        )}
+      </Stack>
+      <Stack gap="xs">
+        <Switch
+          label="Different bio on civitai.com"
+          checked={sfwBio != null}
+          onChange={(e) =>
+            form.setValue('sfwBio', e.currentTarget.checked ? '' : null, { shouldDirty: true })
+          }
+        />
+        {sfwBio != null && (
+          <InputTextArea
+            autosize
+            name="sfwBio"
+            description="Leave blank to show no bio on civitai.com."
+            maxLength={constants.profile.bioMaxLength}
+            labelProps={{ style: { width: '100%' } }}
+            label={
+              <Group className="w-full" justify="space-between">
+                <Text>Bio (civitai.com)</Text>
+                <Text size="xs">
+                  {sfwBio.length}/{constants.profile.bioMaxLength}
+                </Text>
+              </Group>
+            }
+          />
+        )}
+      </Stack>
+    </>
+  );
+  const sectionsGroup = (
+    <>
+      {user?.profile && (
+        <InputProfileSectionsSettingsInput
+          name="profileSectionsSettings"
+          label="Page sections"
+          showcaseSections={user.profile.showcaseSections}
+          description="Drag diferent sections on your profile in order of your preference"
+        />
+      )}
+    </>
+  );
+  const showcaseGroup = (
+    <>
+      {displayShowcase && (
+        <InputShowcaseItemsInput
+          name="showcaseItems"
+          label="Showcase Items"
+          limit={constants.profile.showcaseItemsLimit}
+          description={`Select up to ${constants.profile.showcaseItemsLimit} items to showcase on your profile. You do this via the "Add to showcase" button on models and images`}
+        />
+      )}
+    </>
+  );
+
+  const customizerPanels: ProfileCustomizerPanel[] = [
+    {
+      value: 'profile',
+      label: 'Profile',
+      fields: [
+        'badge',
+        'cardDecoration',
+        'creatorCardStatsPreferences',
+        'leaderboardShowcase',
+        'nameplateId',
+        'profileBackground',
+        'profileDecoration',
+        'profilePicture',
+      ],
+      content: profileGroup,
+    },
+    {
+      value: 'links',
+      label: 'Links',
+      fields: ['socialLinks', 'sponsorshipLinks'],
+      content: linksGroup,
+    },
+    {
+      value: 'page',
+      label: 'Profile page',
+      fields: ['bio', 'coverImage', 'location', 'message'],
+      content: profilePageGroup,
+    },
+    {
+      value: 'com',
+      label: 'Civitai.com',
+      fields: ['sfwBio', 'sfwCoverImage', 'sfwMessage'],
+      content: civitaiComGroup,
+    },
+    ...(!!user?.profile
+      ? [
+          {
+            value: 'sections',
+            label: 'Page sections',
+            fields: ['profileSectionsSettings'],
+            content: sectionsGroup,
+          },
+        ]
+      : []),
+    ...(!!displayShowcase
+      ? [
+          {
+            value: 'showcase',
+            label: 'Showcase items',
+            fields: ['showcaseItems'],
+            content: showcaseGroup,
+          },
+        ]
+      : []),
+  ];
+
   return (
     <Modal {...dialog} withCloseButton={false} closeOnEscape={false} withinPortal={false} size="xl">
-      <Form form={form} onSubmit={handleSubmit}>
+      <Form
+        form={form}
+        onSubmit={handleSubmit}
+        onError={(errors) => {
+          // A field with an error may sit on a tab that isn't showing.
+          const field = Object.keys(errors)[0];
+          const panel = customizerPanels.find((p) => p.fields.includes(field));
+          if (panel) setCustomizerTab(panel.value);
+        }}
+      >
         <Stack>
           <Group justify="space-between">
             <Text fz={24} fw={590}>
@@ -552,363 +990,25 @@ export default function UserProfileEditModal() {
               />
             </Group>
           </Group>
-          <Divider label="Profile" />
-          <Stack>
-            {userWithCosmetics && (
-              <>
-                {featureFlags.cosmeticShop ? (
-                  <Stack align="center">
-                    <CreatorCardV2
-                      user={userWithCosmetics}
-                      cosmeticOverwrites={cosmeticOverwrites}
-                      useEquippedCosmetics={false}
-                      style={{ width: '100%', maxWidth: '450px' }}
-                      statDisplayOverwrite={creatorCardStatsPreferences}
-                    />
-                  </Stack>
-                ) : (
-                  <ProfilePreview
-                    user={user}
-                    badge={badge ? badges.find((c) => c.id === badge.id) : undefined}
-                    nameplate={
-                      nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined
-                    }
-                    profileImage={profilePicture?.url ?? profileImage}
-                  />
-                )}
-              </>
-            )}
-            <Stack gap="md">
-              {featureFlags.cosmeticShop && (
-                <>
-                  <InputProfileImageUpload name="profilePicture" label="Edit avatar" />
-                  <Divider label="Showcase Stats" />
-                  <InputChipGroup name="creatorCardStatsPreferences" multiple>
-                    <Group gap={8}>
-                      {Object.values(creatorCardStats).map((type, index) => (
-                        <Chip key={index} value={type} {...chipProps}>
-                          <span>{getDisplayName(type)}</span>
-                        </Chip>
-                      ))}
-                    </Group>
-                  </InputChipGroup>
-                  {(creatorCardStatsPreferences?.length ?? 0) > creatorCardMaxStats && (
-                    <Text c="red" size="xs">
-                      A maximum of {creatorCardMaxStats} stats can be displayed
-                    </Text>
-                  )}
-                  <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
-                  <InputCosmeticSelect
-                    name="profileDecoration"
-                    label="Avatar decoration"
-                    shopUrl={`/shop?cosmeticTypes=${CosmeticType.ProfileDecoration}`}
-                    data={decorations}
-                    nothingFound={
-                      <Text size="xs">You don&rsquo;t have any avatar decorations yet</Text>
-                    }
-                    onShopClick={handleClose}
-                  />
-                  <InputCosmeticSelect
-                    name="profileBackground"
-                    label="Creator Card Backgrounds"
-                    shopUrl={`/shop?cosmeticTypes=${CosmeticType.ProfileBackground}`}
-                    nothingFound={
-                      <Text size="xs">You don&rsquo;t have any profile backgrounds yet</Text>
-                    }
-                    data={backgrounds}
-                    onShopClick={handleClose}
-                  />
-                  {/* No shop link: card glows are not in the shop yet. */}
-                  {cardDecorations.length > 0 && (
-                    <InputCosmeticSelect
-                      name="cardDecoration"
-                      label="Creator Card Glow"
-                      description="Select it again to turn the glow off"
-                      data={cardDecorations}
-                    />
-                  )}
-                </>
-              )}
-
-              <Switch
-                label="Show badges on profile"
-                checked={privacySettings?.showBadges !== false}
-                onChange={(e) =>
-                  form.setValue('privacySettings', {
-                    ...privacySettings,
-                    showBadges: e.currentTarget.checked,
-                  })
-                }
-              />
-              <Switch
-                label="Show what my Creator Score is made of"
-                description="Visitors see the share from models, images, articles and followers, never the score"
-                checked={privacySettings?.showScoreSplit !== false}
-                onChange={(e) =>
-                  form.setValue('privacySettings', {
-                    ...privacySettings,
-                    showScoreSplit: e.currentTarget.checked,
-                  })
-                }
-              />
-              <InputCosmeticSelect
-                name="badge"
-                label="Featured Badge"
-                shopUrl={`/shop?cosmeticTypes=${CosmeticType.Badge}`}
-                nothingFound={<Text size="xs">You don&rsquo;t have any badges yet</Text>}
-                data={badges}
-                onShopClick={handleClose}
-              />
-              <CollapsibleSection
-                label="Highlighted badges"
-                description="Pin badges to the top of your profile's badge list."
-                count={highlightedBadgeIds.length}
-              >
-                <HighlightedBadgesInput
-                  badges={allBadges}
-                  value={highlightedBadgeIds}
-                  onChange={(nextHighlighted) =>
-                    form.setValue('privacySettings', {
-                      ...privacySettings,
-                      highlightedBadgeIds: withUnownedBadgeIds(
-                        nextHighlighted,
-                        privacySettings?.highlightedBadgeIds,
-                        ownedBadgeIds
-                      ),
-                      // A pinned badge can't also be hidden.
-                      hiddenBadgeIds: withUnownedBadgeIds(
-                        hiddenBadgeIds.filter((id) => !nextHighlighted.includes(id)),
-                        privacySettings?.hiddenBadgeIds,
-                        ownedBadgeIds
-                      ),
-                    })
-                  }
-                />
-              </CollapsibleSection>
-              <CollapsibleSection
-                label="Hidden badges"
-                description="Hidden badges won't be shown on your profile."
-                count={hiddenBadgeIds.length}
-              >
-                <HighlightedBadgesInput
-                  variant="hide"
-                  badges={allBadges}
-                  value={hiddenBadgeIds}
-                  onChange={(nextHidden) =>
-                    form.setValue('privacySettings', {
-                      ...privacySettings,
-                      hiddenBadgeIds: withUnownedBadgeIds(
-                        nextHidden,
-                        privacySettings?.hiddenBadgeIds,
-                        ownedBadgeIds
-                      ),
-                      // Hiding a badge unpins it.
-                      highlightedBadgeIds: withUnownedBadgeIds(
-                        highlightedBadgeIds.filter((id) => !nextHidden.includes(id)),
-                        privacySettings?.highlightedBadgeIds,
-                        ownedBadgeIds
-                      ),
-                    })
-                  }
-                />
-              </CollapsibleSection>
-            </Stack>
-            <Stack>
-              <InputSelect
-                name="nameplateId"
-                placeholder="Select style"
-                label={
-                  <Group gap={4} wrap="nowrap">
-                    <Input.Label>Nameplate Style</Input.Label>
-                    <Popover withArrow width={300} withinPortal position="top">
-                      <Popover.Target>
-                        <Box
-                          display="inline-block"
-                          style={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
-                        >
-                          <IconInfoCircle size={16} />
-                        </Box>
-                      </Popover.Target>
-                      <Popover.Dropdown>
-                        <Text fw={500} size="sm">
-                          Nameplates
-                        </Text>
-                        <Text size="sm">
-                          Nameplates change the appearance of your username. They can include
-                          special colors or effects. You can earn nameplates by being a subscriber
-                          or earning trophies on the site.
-                        </Text>
-                      </Popover.Dropdown>
-                    </Popover>
-                  </Group>
-                }
-                nothingFoundMessage="Your earned nameplate styles will appear here"
-                data={
-                  nameplates.map((cosmetic) => ({
-                    label: cosmetic.name,
-                    value: cosmetic.id,
-                  })) ?? []
-                }
-                clearable
-              />
-              <InputSelect
-                label="Showcase Leaderboard"
-                placeholder="Select a leaderboard"
-                description="Choose which leaderboard badge to display on your profile card"
-                name="leaderboardShowcase"
-                data={leaderboardOptions}
-                disabled={loadingLeaderboards}
-                searchable
-                clearable
-              />
-            </Stack>
-          </Stack>
-
-          <Divider label="Links" />
-          <InputInlineSocialLinkInput
-            name="socialLinks"
-            label="Social Links"
-            type={LinkType.Social}
-          />
-          <InputInlineSocialLinkInput
-            name="sponsorshipLinks"
-            label="Sponsorship Links"
-            type={LinkType.Sponsorship}
-          />
-          <Divider label="Profile Page" />
-          <InputSimpleImageUpload
-            name="coverImage"
-            label="Cover Image"
-            description={`Suggested resolution: ${constants.profile.coverImageWidth}x${constants.profile.coverImageHeight}px`}
-            aspectRatio={constants.profile.coverImageAspectRatio}
-            // Im aware ideally this should ideally be 450, but images will look better on a higher res here
-            previewWidth={constants.profile.coverImageWidth}
-          />
-          <InputTextArea
-            autosize
-            name="message"
-            description="Have something you want to share with people visiting your profile? Put it here and we'll display it at the top of your page"
-            maxLength={constants.profile.messageMaxLength}
-            labelProps={{ style: { width: '100%' } }}
-            label={
-              <Group className="w-full" justify="space-between">
-                <Text>Announcement</Text>
-                <Text size="xs">
-                  {message?.length ?? 0}/{constants.profile.messageMaxLength}
-                </Text>
-              </Group>
-            }
-          />
-          <InputTextArea
-            name="bio"
-            labelProps={{ style: { width: '100%' } }}
-            label={
-              <Group className="w-full" justify="space-between">
-                <Text>Bio</Text>
-                <Text size="xs">
-                  {bio?.length ?? 0}/{constants.profile.bioMaxLength}
-                </Text>
-              </Group>
-            }
-            autosize
-            maxLength={constants.profile.bioMaxLength}
-          />
-          <InputText
-            name="location"
-            labelProps={{ style: { width: '100%' } }}
-            label={
-              <Group className="w-full" justify="space-between">
-                <Text>Location</Text>
-                <Text size="xs">
-                  {location?.length ?? 0}/{constants.profile.locationMaxLength}
-                </Text>
-              </Group>
-            }
-            maxLength={constants.profile.locationMaxLength}
-          />
-
-          <Divider label="Civitai.com" />
-          <Text size="xs" c="dimmed">
-            Show something different to visitors on civitai.com. Anything you leave off here is
-            shown the same on every Civitai site.
-          </Text>
-          <InputSimpleImageUpload
-            name="sfwCoverImage"
-            label="Cover Image (civitai.com)"
-            description="Leave empty to use the cover image above."
-            aspectRatio={constants.profile.coverImageAspectRatio}
-            previewWidth={constants.profile.coverImageWidth}
-          />
-          <Stack gap="xs">
-            <Switch
-              label="Different announcement on civitai.com"
-              checked={sfwMessage != null}
-              onChange={(e) =>
-                form.setValue('sfwMessage', e.currentTarget.checked ? '' : null, {
-                  shouldDirty: true,
-                })
-              }
+          {featureFlags.profileRedesign ? (
+            <ProfileCustomizerTabs
+              panels={customizerPanels}
+              value={customizerTab}
+              onChange={setCustomizerTab}
             />
-            {sfwMessage != null && (
-              <InputTextArea
-                autosize
-                name="sfwMessage"
-                description="Leave blank to show no announcement on civitai.com."
-                maxLength={constants.profile.messageMaxLength}
-                labelProps={{ style: { width: '100%' } }}
-                label={
-                  <Group className="w-full" justify="space-between">
-                    <Text>Announcement (civitai.com)</Text>
-                    <Text size="xs">
-                      {sfwMessage.length}/{constants.profile.messageMaxLength}
-                    </Text>
-                  </Group>
-                }
-              />
-            )}
-          </Stack>
-          <Stack gap="xs">
-            <Switch
-              label="Different bio on civitai.com"
-              checked={sfwBio != null}
-              onChange={(e) =>
-                form.setValue('sfwBio', e.currentTarget.checked ? '' : null, { shouldDirty: true })
-              }
-            />
-            {sfwBio != null && (
-              <InputTextArea
-                autosize
-                name="sfwBio"
-                description="Leave blank to show no bio on civitai.com."
-                maxLength={constants.profile.bioMaxLength}
-                labelProps={{ style: { width: '100%' } }}
-                label={
-                  <Group className="w-full" justify="space-between">
-                    <Text>Bio (civitai.com)</Text>
-                    <Text size="xs">
-                      {sfwBio.length}/{constants.profile.bioMaxLength}
-                    </Text>
-                  </Group>
-                }
-              />
-            )}
-          </Stack>
-
-          {user?.profile && (
-            <InputProfileSectionsSettingsInput
-              name="profileSectionsSettings"
-              label="Page sections"
-              showcaseSections={user.profile.showcaseSections}
-              description="Drag diferent sections on your profile in order of your preference"
-            />
-          )}
-          {displayShowcase && (
-            <InputShowcaseItemsInput
-              name="showcaseItems"
-              label="Showcase Items"
-              limit={constants.profile.showcaseItemsLimit}
-              description={`Select up to ${constants.profile.showcaseItemsLimit} items to showcase on your profile. You do this via the "Add to showcase" button on models and images`}
-            />
+          ) : (
+            <>
+              <Divider label="Profile" />
+              {profileGroup}
+              <Divider label="Links" />
+              {linksGroup}
+              <Divider label="Profile Page" />
+              {profilePageGroup}
+              <Divider label="Civitai.com" />
+              {civitaiComGroup}
+              {sectionsGroup}
+              {showcaseGroup}
+            </>
           )}
           <Group justify="flex-end" align="flex-end">
             <Button radius="xl" size="md" loading={loading} type="submit">
