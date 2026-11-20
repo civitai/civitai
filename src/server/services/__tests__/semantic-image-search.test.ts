@@ -322,13 +322,15 @@ describe('the shared held-media rule', () => {
 
   /** Postgres answering the held query: the held ids among those it was asked about. */
   function heldQuery() {
-    const asked: { ids: number[]; rule: string }[] = [];
+    const asked: { ids: number[]; rule: string; statement: string }[] = [];
     dbMock.dbRead.$queryRaw.mockImplementation((async (
-      _strings: TemplateStringsArray,
+      strings: TemplateStringsArray,
       ids: number[],
       rule: { sql: string }
     ) => {
-      asked.push({ ids, rule: rule.sql });
+      // The statement as Postgres would get it, with the rule spliced in and the ids as $1.
+      const statement = strings[0] + '$1' + strings[1] + rule.sql + strings[2];
+      asked.push({ ids, rule: rule.sql, statement: statement.replace(/\s+/g, ' ') });
       return ids.filter((id) => HELD.has(id)).map((id) => ({ id }));
     }) as never);
     return asked;
@@ -350,6 +352,57 @@ describe('the shared held-media rule', () => {
       expect(items.map((x) => x.id)).toEqual([201, 203]);
       expect(asked.at(-1)?.rule).toBe(semanticImageHeldText('i'));
     }
+  });
+
+  it('asks about the hydrated ids, with the rule on the same "Image" alias', async () => {
+    const asked = heldQuery();
+    h.fakeGetAllImages = visibleOnly(new Set([201, HELD_IMAGE]));
+    const { source } = rankedSource([201, HELD_IMAGE]);
+
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input(),
+      user: VIEWER,
+      candidateSource: source,
+    });
+
+    const { ids, statement } = asked.at(-1)!;
+    // The last call is the page's hydration; the anchor's came first.
+    expect([...ids].sort()).toEqual([201, HELD_IMAGE]);
+    expect(statement).toMatch(
+      /^ ?SELECT i\.id FROM "Image" i WHERE i\.id = ANY\(\$1::int\[\]\) AND /
+    );
+    expect(statement.endsWith(semanticImageHeldText('i').replace(/\s+/g, ' '))).toBe(true);
+  });
+
+  it('fills the page from further candidates when held images are dropped', async () => {
+    heldQuery();
+    h.fakeGetAllImages = visibleOnly(new Set([201, HELD_IMAGE, HELD_OWNER_IMAGE, 205, 206]));
+    const { source } = rankedSource([HELD_IMAGE, 201, HELD_OWNER_IMAGE, 205, 206]);
+
+    const { items } = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ limit: 3 }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+
+    expect(items.map((x) => x.id)).toEqual([201, 205, 206]);
+  });
+
+  it('fails the search, rather than serving unfiltered results, when the held query fails', async () => {
+    dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('replica down') as never);
+    h.fakeGetAllImages = visibleOnly(new Set([201]));
+    const { source } = rankedSource([201]);
+
+    await expect(
+      searchSemanticImages({
+        ...SESSION_VIEWS,
+        input: input(),
+        user: VIEWER,
+        candidateSource: source,
+      })
+    ).rejects.toThrow('replica down');
   });
 
   it('answers "more like this" from a held image as not found', async () => {
