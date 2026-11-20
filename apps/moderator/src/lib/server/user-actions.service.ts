@@ -266,6 +266,7 @@ export type ModEndpoint =
   | 'messages/claim'
   | 'messages/release'
   | 'creator-services/resolve-dispute'
+  | 'creator-services/review-report'
   | 'csam/training-data-report'
   | 'image/report-csam'
   | 'image/tag-vote'

@@ -18,8 +18,9 @@ export type ReportEntityMeta = {
   /** The reported thing's own table. */
   table: string;
   /** Column on `table` naming the account the report is ABOUT. `null` where no single column says
-   *  that: `reportedUser` (the reported thing IS an account) and `chat`, whose subject is inferred by
-   *  `chatReportSubject` and added back at both `OWNED_REPORT_ENTITIES` call sites. */
+   *  that: `reportedUser` (the reported thing IS an account), `serviceDealReview` (its author, the
+   *  buyer, is not on the offering) and `chat`, whose subject is inferred by `chatReportSubject` and
+   *  added back at both `OWNED_REPORT_ENTITIES` call sites. */
   ownerColumn: 'userId' | 'ownerId' | 'createdById' | 'sellerId' | null;
   label: string;
 };
@@ -108,6 +109,15 @@ const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
     table: 'ServiceOffering',
     ownerColumn: 'sellerId',
   },
+  // A buyer review's report, keyed by its offering: it is worked in the offering queue
+  // (`REPORT_QUEUE_OF`). The review is `ServiceDealReviewReport.serviceDealReviewId`; its author is
+  // the buyer, whom no column on the offering names, so it is credited to nobody's received reports.
+  serviceDealReview: {
+    reportTable: 'ServiceDealReviewReport',
+    fk: 'serviceOfferingId',
+    table: 'ServiceOffering',
+    ownerColumn: null,
+  },
   challenge: {
     reportTable: 'ChallengeReport',
     fk: 'challengeId',
@@ -188,7 +198,8 @@ export const chatReportSubject = (
 `;
 
 /** Every type whose row names its owner in one column — i.e. all but `reportedUser` (the reported
- *  thing IS an account) and `chat` (no single column says it; see `chatReportSubject`). */
+ *  thing IS an account), `chat` (no single column says it; see `chatReportSubject`) and
+ *  `serviceDealReview` (its author is not on the offering it is keyed by). */
 export const OWNED_REPORT_ENTITIES = REPORT_ENTITIES.filter(
   (e): e is ReportEntityMeta & { ownerColumn: NonNullable<ReportEntityMeta['ownerColumn']> } =>
     e.ownerColumn !== null

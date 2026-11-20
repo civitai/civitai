@@ -43,6 +43,8 @@
   } from '$lib/reports';
   import { serviceOfferingTakedownReasons } from '@civitai/shared/service-offering-takedown';
   import { browsingLevelLabels } from '@civitai/shared';
+  import { serviceReviewActionAllowed } from '$lib/service-review-report';
+  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
   import type { PageData } from './$types';
@@ -110,6 +112,11 @@
     onSettled: reloadIfGone,
   });
   let confirmingOfferingTakedown = $state<number | null>(null);
+  const reviewForm = new FormState({
+    onSuccess: (result) => toast.success(String(result?.serviceReviewAction ?? 'Done')),
+    reload: true,
+    onSettled: reloadIfGone,
+  });
   let offeringReason = $state<string>('');
   // The reporter's own words, wherever this entity type puts them: `comment` is the free-text field on
   // most forms, `violation`/`reason` is what the picker-driven ones carry.
@@ -581,7 +588,109 @@
           </div>
         {/if}
 
-        {#if data.type === 'serviceOffering'}
+        {#if data.type === 'serviceOffering' && data.serviceReviews[selected.id]}
+          {@const review = data.serviceReviews[selected.id]}
+          {@const offering = data.serviceOfferings.find((o) => o.id === selected.entityId)}
+          {@const canHold = serviceReviewActionAllowed('hold', selected)}
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            <p class="mb-1 flex flex-wrap items-center gap-2 text-sm">
+              <span class="font-medium">Buyer review ({review.verdict})</span>
+              {#if review.hidden}
+                <Badge variant="outline">hidden by a moderator</Badge>
+              {:else if !review.shown}
+                <Badge variant="outline">not shown</Badge>
+              {/if}
+              {#if review.commentHeld || review.replyHeld}
+                <Badge variant="outline">held for CSAM review</Badge>
+              {/if}
+            </p>
+            <p class="mb-2 text-sm text-dark-2">
+              On {offering?.title ?? `service #${selected.entityId}`} ·
+              <a
+                href={`${data.civitaiUrl}/services/deals/${review.dealId}`}
+                target="_blank"
+                rel="noopener"
+                class="underline">Deal #{review.dealId}</a
+              >
+            </p>
+            {#each [{ label: 'Comment', now: review.comment, then: review.reportedComment }, { label: 'Seller reply', now: review.sellerReply, then: review.reportedReply }] as part (part.label)}
+              {#if part.now || part.then}
+                <p class="text-xs font-medium">{part.label}</p>
+                <p class="mb-1 whitespace-pre-wrap text-sm">{part.now ?? '(removed)'}</p>
+                {#if part.then != null && part.then !== part.now}
+                  <p class="mb-2 whitespace-pre-wrap text-xs text-dark-2">When reported: {part.then}</p>
+                {/if}
+              {/if}
+            {/each}
+            {#if review.images.length}
+              <div class="mb-2 flex flex-wrap gap-2">
+                {#each review.images as image (image.id)}
+                  <EdgeMedia src={image.url} width={200} alt="Review image" class="h-24 w-24 rounded object-cover" />
+                {/each}
+              </div>
+            {/if}
+            <form method="POST" use:enhance={reviewForm.enhance} class="flex flex-wrap gap-2">
+              <input type="hidden" name="id" value={selected.id} />
+              {#if canHold}
+                {#if review.comment}
+                  <Button
+                    type="submit"
+                    formaction="?/holdServiceReview"
+                    name="text"
+                    value="comment"
+                    size="sm"
+                    variant="destructive"
+                    disabled={reviewForm.submitting || review.commentHeld}
+                  >
+                    Hold comment for CSAM review
+                  </Button>
+                {/if}
+                {#if review.sellerReply}
+                  <Button
+                    type="submit"
+                    formaction="?/holdServiceReview"
+                    name="text"
+                    value="reply"
+                    size="sm"
+                    variant="destructive"
+                    disabled={reviewForm.submitting || review.replyHeld}
+                  >
+                    Hold reply for CSAM review
+                  </Button>
+                {/if}
+              {:else if !review.hidden}
+                <Button
+                  type="submit"
+                  formaction="?/hideServiceReview"
+                  size="sm"
+                  variant="destructive"
+                  disabled={reviewForm.submitting}
+                >
+                  Hide review
+                </Button>
+              {/if}
+              {#if review.hidden}
+                <Button
+                  type="submit"
+                  formaction="?/restoreServiceReview"
+                  size="sm"
+                  variant="outline"
+                  disabled={reviewForm.submitting}
+                >
+                  Restore review
+                </Button>
+              {/if}
+            </form>
+            <p class="mt-2 text-xs text-dark-2">
+              {canHold
+                ? 'A CSAM or minor report sends the text to the CSAM text-hold queue, which keeps the review off the site until it is decided there, and sets this report Actioned.'
+                : 'Hiding takes the review off the service page and out of its counts, and sets this report Actioned. Restoring sets it Unactioned.'}
+            </p>
+            {#if reviewForm.error}
+              <p class="mt-2 text-sm text-red-300" role="alert">{reviewForm.error}</p>
+            {/if}
+          </div>
+        {:else if data.type === 'serviceOffering'}
           {@const offering = data.serviceOfferings.find((o) => o.id === selected.entityId)}
           <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
             {#if offering}
