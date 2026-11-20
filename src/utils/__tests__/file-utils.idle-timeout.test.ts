@@ -16,6 +16,8 @@ type Plan = {
   chunk: number;
   everyMs: number;
   stallAfter?: number;
+  headersAfterMs?: number;
+  status?: number;
 };
 
 const DEADLINE = 600;
@@ -46,7 +48,13 @@ beforeAll(async () => {
     const plan = JSON.parse(
       decodeURIComponent(new URL(req.url!, 'http://x').searchParams.get('p')!)
     ) as Plan;
-    stream(plan, res);
+    if (plan.status) {
+      res.writeHead(plan.status, { 'content-type': 'application/json' });
+      res.end('{"error":"expired"}');
+      return;
+    }
+    const timer = setTimeout(() => stream(plan, res), plan.headersAfterMs ?? 0);
+    res.on('close', () => clearTimeout(timer));
   });
   server.on('connection', (s) => {
     sockets.add(s);
@@ -88,6 +96,23 @@ describe('fetchBlob idle timeout', () => {
     expect(Date.now() - started).toBeLessThan(IDLE * 4);
   });
 
+  it('waits for headers up to the deadline, not the idle window', async () => {
+    const blob = await fetchBlob(
+      url({ bytes: 100_000, chunk: 50_000, everyMs: 20, headersAfterMs: IDLE + 200 }),
+      DEADLINE,
+      idle
+    );
+
+    expect(blob?.size).toBe(100_000);
+  });
+  it('resolves null for an error response when asked to require OK', async () => {
+    const blob = await fetchBlob(url({ bytes: 0, chunk: 1, everyMs: 10, status: 403 }), DEADLINE, {
+      ...idle,
+      requireOk: true,
+    });
+
+    expect(blob).toBeNull();
+  });
   // Server jobs (process-vault-items, youtube, csam) budget their leases on this total cap.
   it('keeps the total cap for callers that do not opt in', async () => {
     // Control: the same body arrives in full under a cap it fits in.

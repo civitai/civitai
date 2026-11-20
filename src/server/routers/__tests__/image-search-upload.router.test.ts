@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   prepare: vi.fn(),
   anchor: vi.fn(),
   claimDay: vi.fn(),
+  searchSlot: vi.fn(),
   search: vi.fn(),
 }));
 
@@ -24,6 +25,7 @@ vi.mock('~/server/services/image-search-upload.service', async (importOriginal) 
   prepareSearchUpload: h.prepare,
   resolveSearchUploadAnchor: h.anchor,
   claimSearchUploadUserDay: h.claimDay,
+  claimSearchUploadSearchSlot: h.searchSlot,
 }));
 vi.mock('~/server/services/semantic-image-search.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SemanticSearch>()),
@@ -55,6 +57,7 @@ beforeEach(() => {
   h.prepare.mockReset().mockResolvedValue({ uploadId: UPLOAD });
   h.anchor.mockReset().mockResolvedValue(ANCHOR);
   h.claimDay.mockReset().mockResolvedValue(undefined);
+  h.searchSlot.mockReset().mockResolvedValue(undefined);
   h.search.mockReset().mockResolvedValue({ items: [], nextCursor: undefined });
 });
 
@@ -186,6 +189,28 @@ describe('imageSearchUpload', () => {
     finish();
     await first;
     await expect(search(MOD)).resolves.toBeDefined();
+  });
+
+  it('counts each search page against the site-wide daily cap, after the per-user count and the upload check', async () => {
+    await search(MOD);
+    expect(h.searchSlot).toHaveBeenCalledTimes(1);
+    const [day, anchor, slot] = [h.claimDay, h.anchor, h.searchSlot].map(
+      (fn) => fn.mock.invocationCallOrder[0]
+    );
+    expect(day).toBeLessThan(anchor);
+    expect(anchor).toBeLessThan(slot);
+  });
+
+  it('stops before searching when the site-wide cap is spent', async () => {
+    h.searchSlot.mockRejectedValue(Object.assign(new Error('busy'), { code: 'TOO_MANY_REQUESTS' }));
+    await expect(search(MOD)).rejects.toThrow('busy');
+    expect(h.search).not.toHaveBeenCalled();
+  });
+
+  it('spends no site-wide page on an upload the gate refuses', async () => {
+    h.anchor.mockRejectedValue(Object.assign(new Error('refused'), { code: 'FORBIDDEN' }));
+    await expect(search(MOD)).rejects.toThrow('refused');
+    expect(h.searchSlot).not.toHaveBeenCalled();
   });
 
   it('stops before searching when the gate refuses the upload', async () => {
