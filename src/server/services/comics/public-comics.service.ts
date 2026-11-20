@@ -55,8 +55,6 @@ export type PublicComicsCtx = Pick<Context, 'user'> & {
 // like ModelMetric/ArticleMetric:
 //   - tips/followers/hides ← BuzzTip + ComicProjectEngagement
 //   - readers/reads        ← ComicChapterRead (keyed by stable chapter id)
-// There is no ClickHouse read path for comics anymore; the old ClickHouse drift
-// (ClickUp 868k5m8bk) is moot now that every counter is Postgres-owned.
 export async function getComicMetricRows(projectIds: number[]) {
   if (!projectIds.length)
     return new Map<

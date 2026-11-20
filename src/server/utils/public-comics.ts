@@ -17,16 +17,14 @@ import {
 } from '~/server/services/comics/public-comics.service';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
-import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import {
-  allBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { Availability, ImageIngestionStatus, type ComicGenre } from '~/shared/utils/prisma/enums';
+import { Availability, type ComicGenre } from '~/shared/utils/prisma/enums';
 import { slugitOr } from '~/utils/string-helpers';
 
 // The public REST API for comics. Every request is evaluated as an anonymous civitai.red visitor,
@@ -58,9 +56,8 @@ const chapterUrl = (
   )}`;
 
 /**
- * The public `coverImage` for each id in `ids`, judged as /api/v1/collections judges its covers
- * (`toPublicCoverImage` at the held-level-narrowed browsing level) plus the shared cover filter. A cover is any image the creator picked, so
- * unlike a page it has not passed the reader's panel check.
+ * The public `coverImage` for each id. A cover is any image the creator picked, so unlike a page it
+ * has not passed the reader's panel check.
  */
 async function publicCovers(ids: (number | undefined)[], browsingLevel: number) {
   const wanted = ids.filter((id): id is number => id != null);
@@ -110,7 +107,7 @@ const isInEarlyAccess = (
 export function comicsBrowsingLevel(req: NextApiRequest, res: NextApiResponse, nsfw?: boolean) {
   if (!nsfw) return publicBrowsingLevelsFlag;
   res.setHeader('Cache-Control', 'private, no-store');
-  return isRegionRestricted(getRegion(req)) ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  return apiBrowsingLevel(req);
 }
 
 /**
@@ -124,6 +121,8 @@ export async function admitComicsRequest(
   user: Session['user'] | undefined
 ) {
   if (!getFeatureFlagsLazy({ req }).comicCreator) {
+    // A cached 404 would outlive the flag being turned on.
+    res.setHeader('Cache-Control', 'no-store');
     res.status(404).json({ error: 'Not found' });
     return false;
   }
