@@ -59,7 +59,7 @@ const openingTags = (html: string, tag: string) =>
 describe('every email template renders the shared document', () => {
   it('finds every template, in index.ts and on disk', () => {
     // Pinned so a discovery that silently matches fewer files fails here instead of passing the loop.
-    expect(fromFiles.size).toBe(27);
+    expect(fromFiles.size).toBe(29);
     expect(indexNames).toHaveLength(21);
     for (const name of indexNames) expect(fromFiles.has(name), name).toBe(true);
     expect(rendered.map((r) => r.name)).toContain('notificationEmail');
