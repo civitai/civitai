@@ -31,7 +31,7 @@ const full = () => {
     '--post',
     '7',
     '--feedback',
-    '303',
+    '9',
   ]);
   const checks = pickChecks(opts);
   return [
@@ -63,8 +63,8 @@ describe('bug-report-context runs only the queries it builds', () => {
     for (const r of reads) expect(() => toCommand(r)).not.toThrow();
   });
 
-  // Every bypass the three review rounds found, plus the obvious ones. Each is refused because it is
-  // not one of the built shapes, whatever its quoting or comments.
+  // Known bypasses of a refusal-list guard, plus the obvious ones. Each is refused because it is not
+  // one of the built shapes, whatever its quoting or comments.
   it.each([
     ['a write', 'images', `UPDATE "Image" SET "nsfwLevel" = 1 WHERE id = 1`],
     ['a second statement', 'images', `${read('images').query}; DELETE FROM "Image"`],
@@ -226,16 +226,15 @@ describe('bug-report-context Faro pointer', () => {
 });
 
 describe('bug-report-context against the real tools', () => {
-  // Found on the first prod run (bug report 303): the other order is an Axiom 400, and the outage
-  // check then reads NOT READ on every report.
+  // The other order is an Axiom 400, and the outage check then reads NOT READ on every report.
   it("calls Axiom's replace_regex as (regex, rewrite, text)", () => {
     expect(read('outage').query).toContain(
       String.raw`replace_regex(@"\d+", "N", replace_regex(@"(?s)^.*invocation:", "", reason))`
     );
   });
 
-  // Also from that run: on a desk prod is reached through a tunnel on 127.0.0.1, so the host cannot
-  // tell prod from a local copy; postgres-query's own hot-standby check can.
+  // Prod can sit behind a local forward, so the host cannot tell prod from a local copy;
+  // postgres-query's own hot-standby check can.
   it('names the database by its hot-standby check, not its host', () => {
     const tunnel =
       'Target: PROD (read-only) -> ro@127.0.0.1:6543/civitai [X]\nServer: 10.0.0.9/32, in recovery: true\n';

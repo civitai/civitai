@@ -103,14 +103,14 @@ export function pickChecks(opts) {
 // (buildServerFaultErrorLog in src/server/logging/client.ts).
 const REASON =
   'extend cause_message = tostring(cause.message) | extend reason = iff(isempty(cause_message), tostring(message), cause_message)';
-// The raw `message` rides along: on the 303 desk run the computed `reason` came back null in the
-// rows, so reasonOf() falls back to it.
+// The raw `message` rides along: a computed column can come back null in the rows, so reasonOf()
+// falls back to it.
 const ERROR_FIELDS = `${REASON} | project _time, path, code, reason, cause_message, message, errorRef, input`;
 // One outage reaches users through many call sites: Prisma prefixes its message with the call
 // ("Invalid `prisma.post.update()` invocation: ..."), so group on what follows, digits folded.
 // No trim or cut here: signature() finishes the job on both sides, so they cannot drift apart.
 // Axiom's replace_regex is (regex, rewrite, text), not (text, regex, rewrite): the other order is a
-// 400 ("argument #1 must be a constant"), found on the 303 desk run.
+// 400 ("argument #1 must be a constant").
 const SIGNATURE = String.raw`extend sig = replace_regex(@"\d+", "N", replace_regex(@"(?s)^.*invocation:", "", reason))`;
 
 /** The real error text of one logged line, whichever of its fields carried it. */
@@ -123,8 +123,8 @@ export function reasonOf(e) {
 
 /**
  * Which database postgres-query read, from its stderr. Decided by its own hot-standby check (the
- * `Server: ..., in recovery: true` line), not the host: on a desk prod is reached through a tunnel
- * on 127.0.0.1, so the host says nothing.
+ * `Server: ..., in recovery: true` line), not the host: prod can sit behind a local forward, so
+ * the host says nothing.
  */
 export function targetLabel(stderr) {
   const label = String(stderr).match(/^Target: (\S+ \([^)]*\))/m);
@@ -306,8 +306,8 @@ export function outageRead(opts, results) {
     tool: 'axiom',
     start: iso(center - 10 * 60_000),
     end: iso(center + 10 * 60_000),
-    // No `limit`: prod fills the top 100 groups every time, and they are ordered by row count, so a
-    // signature with enough users to read as site-wide is among them.
+    // No `limit` warning: the groups are ordered by row count, so a capped list still holds every
+    // signature big enough to read as site-wide.
     query: `['civitai-prod'] | where type == 'error' | ${REASON} | ${SIGNATURE} | summarize n = count(), first = min(_time), last = max(_time), users = dcount(['user']) by sig | order by n desc | take 100`,
   };
 }

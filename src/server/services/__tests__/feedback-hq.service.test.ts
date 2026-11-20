@@ -529,8 +529,7 @@ describe('what HQ gets of the session and the failed requests', () => {
       { moderatorUrl: 'https://moderator.example.test/feedback/7', screenshotAttached: false }
     );
 
-  // Reversed from the original ruling on Justin's call (hub:request:2026-11-20-212641-e6185e6a): the
-  // id is how a report is joined to its Faro telemetry. Do not drop it again without asking him.
+  // The session id is how a report is joined to its Faro telemetry; dropping it breaks that join.
   it('carries the Faro session id', () => {
     expect(body()).toContain('- Faro session: `faro-session-abc123`');
   });

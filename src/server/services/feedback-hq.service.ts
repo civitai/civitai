@@ -167,8 +167,8 @@ function headerSection(input: FeedbackHqFilingInput, moderatorUrl: string) {
     ['Device', describeDevice(context?.device)],
     ['Sent at (their clock)', context?.clientAt],
     ['Error ref', context?.errorRef],
-    // Joins the report to that session's browser telemetry (Faro, kept 72h). A random telemetry id,
-    // never a login credential. Added on Justin's call (hub:request:2026-11-20-212641-e6185e6a).
+    // Joins the report to that session's browser telemetry (Faro). A random telemetry id, never a
+    // login credential.
     ['Faro session', context?.sessionId],
     ['Workflow', context?.workflowId],
     ['Job', context?.jobId],
