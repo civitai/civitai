@@ -8,8 +8,8 @@
 -- banned. The boards take the Writers board's domain.
 -- Inserted inactive and non-public: updateLegendsBoardResults scores every populated board regardless of the
 -- public flag, so populating before review hands out Legendary Nameplates. To go live, run each
--- query read-only, then set active = true and public = true together, not between 23:00 and 00:05 UTC
--- (prepare-leaderboard reads active boards at 23:00; update-user-leaderboard-rank checks at 00:01).
+-- query read-only, then set active = true and public = true together, and not while prepare-leaderboard
+-- or update-user-leaderboard-rank is running (their schedules are in src/server/jobs/prepare-leaderboard.ts).
 -- Activate only once the build that replaces {{metricExcludedUserIds}} is deployed: before it the token is a
 -- syntax error, and one failing board stops the whole nightly run, Legends and the cache purge included.
 -- Queries end in a `scores` CTE with no final SELECT (the job appends one) and may use {{metricExcludedUserIds}}.
@@ -195,6 +195,7 @@ $q$WITH guide AS (
     g."userId",
     GREATEST(am."viewCount", 0) AS views,
     GREATEST(am."collectedCount", 0) AS bookmarks,
+    COALESCE(p.participants, 0) AS participants,
     POWER(0.5, EXTRACT(EPOCH FROM (now() - g."publishedAt")) / 86400.0 / 365) * (
       SQRT(GREATEST(am."viewCount", 0)) / 2
       + SQRT(GREATEST(am."collectedCount", 0)) * 12
@@ -210,7 +211,12 @@ $q$WITH guide AS (
   SELECT
     "userId",
     100 * SUM(v) AS score,
-    jsonb_build_object('articles', count(*), 'viewCount', SUM(views), 'bookmark', SUM(bookmarks)) AS metrics
+    jsonb_build_object(
+      'articles', count(*),
+      'viewCount', SUM(views),
+      'bookmark', SUM(bookmarks),
+      'participants', SUM(participants)
+    ) AS metrics
   FROM ranked
   WHERE rn <= 20
     AND "userId" IN (SELECT "userId" FROM guide WHERE "publishedAt" > now() - interval '365 days')

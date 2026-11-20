@@ -27,6 +27,8 @@ const EARLY = 66;
 const COMMENTERS = [70, 71, 72];
 const EXCLUDED_COMMENTER = 73;
 const DELETED_COMMENTER = 74; // a deleted comment on the article, and a live one on an image with the same id
+const HIDDEN_COMMENTER = 75;
+const TOS_COMMENTER = 76;
 // Categories the system assigned that differ from the author's pick.
 const SYSTEM_MUSING_AUTHOR_NOTES = 32;
 const SYSTEM_NOTES_AUTHOR_MUSING = 33;
@@ -152,7 +154,9 @@ beforeAll(async () => {
     -- the host's own follow-up and an answer published before the challenge do not count.
     INSERT INTO "User" (id) SELECT unnest(ARRAY[${HOST}, ${ANSWERERS.join(
     ','
-  )}, ${EARLY}, ${COMMENTERS.join(',')}, ${EXCLUDED_COMMENTER}, ${DELETED_COMMENTER}]);
+  )}, ${EARLY}, ${COMMENTERS.join(
+    ','
+  )}, ${EXCLUDED_COMMENTER}, ${DELETED_COMMENTER}, ${HIDDEN_COMMENTER}, ${TOS_COMMENTER}]);
     INSERT INTO "Article" VALUES (600, ${HOST}, 'Published', 'Public', false, false, now() - interval '30 days', ''),
       (615, ${HOST}, 'Published', 'Public', false, false, now() - interval '10 days', '<a href="/articles/600">mine</a>'),
       (616, ${EARLY}, 'Published', 'Public', false, false, now() - interval '40 days', '<a href="/articles/600">early</a>');
@@ -181,6 +185,15 @@ beforeAll(async () => {
       (9, 'article', 641, NULL, ${
         COMMENTERS[0]
       }, NULL), (10, 'image', 600, NULL, ${DELETED_COMMENTER}, NULL);
+    -- A hidden comment and a ToS-violating one on the challenge.
+    INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId", hidden, "tosViolation") VALUES
+      (11, 'article', 600, ${HIDDEN_COMMENTER}, true, false), (12, 'article', 600, ${TOS_COMMENTER}, false, true);
+    -- On the recent guide: one commenter who counts, its author, a metric-excluded account, and a comment
+    -- older than a year.
+    INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId", "createdAt") VALUES
+      (20, 'article', 201, ${COMMENTERS[0]}, now()), (21, 'article', 201, ${OLD_HIT}, now()),
+      (22, 'article', 201, ${EXCLUDED_COMMENTER}, now()),
+      (23, 'article', 201, ${COMMENTERS[1]}, now() - interval '400 days');
 
     INSERT INTO "User" (id) VALUES (${SYSTEM_MUSING_AUTHOR_NOTES}), (${SYSTEM_NOTES_AUTHOR_MUSING}),
       (${SYSTEM_GUIDE_AUTHOR_MUSING}), (${SYSTEM_MUSING_AUTHOR_GUIDE});
@@ -355,6 +368,11 @@ describe('Guide Writers', () => {
     const rows = await run('writer-guide');
     expect(rows[0].userId).toBe(OLD_HIT);
     expect(byUser(rows, DORMANT_GUIDE)).toBeUndefined();
+  });
+
+  it("counts only other people's comments from the past year, never metric-excluded accounts", async () => {
+    const rows = await run('writer-guide', [EXCLUDED_COMMENTER]);
+    expect(byUser(rows, OLD_HIT)!.metrics.participants).toBe(1);
   });
 
   it("counts a guide by its system category, not the author's pick", async () => {

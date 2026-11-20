@@ -88,8 +88,8 @@ migration once a board is public.
 
 Order matters both ways, because one board whose query fails stops the whole nightly run: activate
 the boards only after the build that replaces `{{metricExcludedUserIds}}` is deployed, and roll them
-back before reverting that build. Do not activate between 23:00 and 00:05 UTC: `prepare-leaderboard`
-reads active boards at 23:00 and `update-user-leaderboard-rank` checks at 00:01.
+back before reverting that build. Do not activate while `prepare-leaderboard` or
+`update-user-leaderboard-rank` is running; their schedules are in `prepare-leaderboard.ts`.
 
 The rollback is the `ROLLBACK` block in the migration header. It refuses to run while a badge for one
 of the boards exists, then removes the boards with their results, Legends rows and populated
