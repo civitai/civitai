@@ -1,0 +1,72 @@
+// Article image size (data-width, % of the column) and placement (data-align). Shared by the
+// rendered article (GuardedBodyMedia, plain html) and the editor, so both lay an image out alike.
+@mixin image-layout {
+  // A size the author picked centres the image unless they aligned it.
+  &[data-width] {
+    margin-inline: auto;
+  }
+
+  @for $i from 2 through 19 {
+    &[data-width='#{$i * 5}'] {
+      max-width: $i * 5%;
+    }
+  }
+
+  &[data-width='33'] {
+    max-width: 33%;
+  }
+
+  &[data-align='left'] {
+    margin-inline: 0 auto;
+  }
+
+  &[data-align='center'] {
+    margin-inline: auto;
+  }
+
+  &[data-align='right'] {
+    margin-inline: auto 0;
+  }
+
+  &[data-align='float-left'] {
+    float: left;
+    margin: 0.25rem 1.25rem 0.75rem 0;
+  }
+
+  &[data-align='float-right'] {
+    float: right;
+    margin: 0.25rem 0 0.75rem 1.25rem;
+  }
+
+  // 640px: no theme breakpoint matches. Small sizes are too small on a phone, and text squeezed
+  // beside a float is unreadable, so floats stack as a full-width block.
+  @media (max-width: 640px) {
+    @for $i from 2 through 11 {
+      &[data-width='#{$i * 5}'] {
+        max-width: 60%;
+      }
+    }
+
+    &[data-width='33'] {
+      max-width: 60%;
+    }
+
+    &[data-align='float-left'],
+    &[data-align='float-right'] {
+      float: none;
+      max-width: 100%;
+      margin: 0 0 0.75rem;
+    }
+  }
+}
+
+// A section starts below the previous section's floated image, and the body grows to contain it.
+@mixin image-float-container {
+  display: flow-root;
+
+  h1,
+  h2,
+  h3 {
+    clear: both;
+  }
+}

@@ -32,7 +32,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { EmbedNode } from '~/shared/tiptap/embed.node';
-import { SizedImage } from '~/shared/tiptap/sized-image.node';
+import { SizedImageEditNode } from './SizedImageEditNode';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
 import { StickerEditNode } from '~/components/TipTap/StickerNode';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
@@ -251,7 +251,7 @@ export function RichTextEditor({
     if (addVideo) {
       arr.push(
         EdgeMediaEditNode.configure({ accepts, inline: true }),
-        SizedImage.configure({ inline: true })
+        SizedImageEditNode.configure({ inline: true })
       );
     } else if (addImages) {
       arr.push(CustomImage.configure({ inline: true }));

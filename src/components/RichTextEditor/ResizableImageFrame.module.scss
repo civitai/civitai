@@ -1,0 +1,22 @@
+.handle {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  width: 10px;
+  height: 48px;
+  max-height: 60%;
+  transform: translateY(-50%);
+  border: 2px solid var(--mantine-color-white);
+  border-radius: var(--mantine-radius-sm);
+  background-color: var(--mantine-primary-color-filled);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.handle[data-side='left'] {
+  left: -5px;
+}
+
+.handle[data-side='right'] {
+  right: -5px;
+}
