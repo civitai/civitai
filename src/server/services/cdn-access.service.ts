@@ -1406,6 +1406,13 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     ])
   );
   const planned = urls.filter((url) => plannedCall.get(url));
+  // A paced url whose rows no longer want a retraction (a hold now caps it) loses its marker.
+  const unpaced = new Set(
+    urls.filter((url) => {
+      const f = facts.get(url);
+      return pacedUrls.has(url) && (!f || desiredUrlAccess(f) !== 'retract');
+    })
+  );
   // The cap goes to the oldest deferral first, then to new rows in queue order; the rest are denied.
   const wantsRetract = planned.filter((url) => plannedCall.get(url) === 'retract');
   const mayRetract = new Set(
@@ -1418,6 +1425,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   let liftFailed = 0;
   const retractFailed = new Set<string>();
   const retractSent = new Set<string>();
+  const lifted = new Set<string>();
   await limitConcurrency(
     planned.map((url) => async () => {
       let call: CdnCall | null = null;
@@ -1437,6 +1445,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
           if (call === 'retract') retracts++;
           await applyCall(url, call, gate, claim);
           if (call === 'retract') retractSent.add(url);
+          if (call === 'allow') lifted.add(url);
         });
         if (!result.claimed) pending.add(url);
       } catch (error) {
@@ -1510,20 +1519,12 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   });
 
   for (const q of rotate) {
-    const paced = [
-      ...new Set([
-        ...(q.data?.pacedUrls ?? []),
-        ...urlsByRow[queue.indexOf(q)].filter((url) => deferred.has(url)),
-      ]),
-    ];
     await dbWrite.$executeRaw`
       UPDATE "JobQueue"
       SET "createdAt" = CASE WHEN data ? 'deferred' THEN "createdAt" ELSE now() END,
           data = (COALESCE(data, '{}'::jsonb) - ${
             failuresNext.get(q) === null ? 'retractFailures' : ''
-          }::text) || jsonb_build_object('deferred', data->'seq', 'pacedUrls', ${JSON.stringify(
-      paced
-    )}::jsonb)
+          }::text) || jsonb_build_object('deferred', data->'seq')
       WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
         AND "entityType" = ${q.entityType}::"EntityType"
         AND "entityId" = ${q.entityId}
@@ -1582,6 +1583,36 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   // A re-queued row still carries its first-deferral time, so its wait counts from the re-queue.
   const waitedSince = (q: QueueRow) =>
     q.data && 'deferred' in q.data && q.data.seq ? new Date(q.data.seq) : q.createdAt;
+  // Pacing markers are per url, and written apart from the rotation: a row with a url still pending,
+  // a row already deferred, or one a trigger re-queued mid-run must still record what this run
+  // deferred. A url loses its marker once retracted or lifted, or once its rows no longer want a
+  // retraction, so a hold that lands later is never undone by an old deferral.
+  for (const [i, q] of queue.entries()) {
+    const paced = urlsByRow[i].filter((url) => deferred.has(url));
+    if (removed.has(q) || !paced.length) continue;
+    await dbWrite.$executeRaw`
+      UPDATE "JobQueue"
+      SET data = jsonb_set(COALESCE(data, '{}'::jsonb), '{pacedUrls}', (
+        SELECT jsonb_agg(DISTINCT u)
+        FROM jsonb_array_elements_text(
+          COALESCE(data->'pacedUrls', '[]'::jsonb) || ${JSON.stringify(paced)}::jsonb
+        ) u))
+      WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+        AND "entityType" = ${q.entityType}::"EntityType"
+        AND "entityId" = ${q.entityId}
+    `;
+  }
+  const unpace = [...new Set([...retractSent, ...lifted, ...unpaced])];
+  if (unpace.length)
+    await dbWrite.$executeRaw`
+      UPDATE "JobQueue"
+      SET data = jsonb_set(data, '{pacedUrls}', COALESCE((
+        SELECT jsonb_agg(u) FROM jsonb_array_elements_text(data->'pacedUrls') u
+        WHERE u <> ALL(${unpace}::text[])), '[]'::jsonb))
+      WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+        AND data->'pacedUrls' ?| ${unpace}::text[]
+    `;
+
   const oldest = earliest(queue.filter((q) => !q.deferred).map(waitedSince));
   if (failed && oldest && Date.now() - oldest.getTime() > QUEUE_AGE_ALERT_MS)
     logToAxiom({

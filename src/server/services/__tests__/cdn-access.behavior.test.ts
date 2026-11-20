@@ -2717,6 +2717,48 @@ describe('retractions per run', () => {
     expect(await stateOf(u(3))).toBe('Denied');
   });
 
+  it('records a deferral on a row that keeps a url pending, so it still retracts later', async () => {
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+    await publishedPost(5);
+    for (const id of [1, 2, 3]) await image(id, { postId: 5 });
+    respond = (c) => (onUrl(u(3))(c) ? 500 : undefined);
+    await moderatorPostUnpublish(5);
+    await syncCdnAccess();
+    expect(callsFor(u(2))).toEqual(['deny']);
+
+    respond = null;
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 5 });
+    await syncCdnAccess();
+    expect(callsFor(u(2))).toEqual(['deny', 'retract']);
+  });
+
+  // Moderation Lead ruling 2026-11-20: a deny changes only through a moderator delete, a shop takedown or this path's own deferral.
+  it('drops the pacing marker once a hold lands, so deleting the held row does not retract', async () => {
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+    await publishedPost(5);
+    for (const id of [1, 2, 3]) await image(id, { postId: 5 });
+    await moderatorPostUnpublish(5);
+    await syncCdnAccess();
+    expect(callsFor(u(2))).toEqual(['deny']);
+
+    // A held row lands on the paced url; the post row stays queued behind a failing retraction.
+    await image(9, { url: u(2) });
+    await sql`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 9`;
+    await moderatorBlock(9);
+    respond = (c) => (onUrl(u(3))(c) ? 500 : undefined);
+    await syncCdnAccess();
+    expect(callsFor(u(2))).toEqual(['deny']);
+
+    // Its owner deletes the held row, leaving no record.
+    await sql`DELETE FROM "Image" WHERE id = 9`;
+    respond = null;
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 5 });
+    await syncCdnAccess();
+    expect(callsFor(u(3)).at(-1)).toBe('retract');
+    expect(callsFor(u(2))).toEqual(['deny']);
+    expect(await stateOf(u(2))).toBe('Denied');
+  });
+
   const retracted = async (ids: number[]) => {
     await blockAll(ids);
     await syncCdnAccess();
