@@ -1484,7 +1484,6 @@ export async function handleBlockImages({
     await clearAccountDeletionImageMarkers({ ids });
     // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
     if (postIds.length) await bustCachesForPosts(postIds);
-    await queueDocumentsForBlockedImages(ids);
     if (include?.includes('phash-block')) {
       logCsamBlocklistNoHash(
         ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
@@ -1507,6 +1506,8 @@ export async function handleBlockImages({
         context: { step: 'block', imageIds: images.map(({ id }) => id), actorUserId: moderatorId },
       });
     }
+    // After the blocklist write, so a slow requeue cannot hold it up.
+    await queueDocumentsForBlockedImages(ids);
     if (include?.includes('user-notification')) {
       const notified = images.filter(
         (img) => !held.has(img.id) && !isFeedbackCaptureOwner(img.userId)

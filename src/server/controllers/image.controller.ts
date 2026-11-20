@@ -76,6 +76,7 @@ import {
 } from '~/server/services/image-removal-hold.service';
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
+import { queueDocumentsForBlockedImages } from '~/server/services/image-models-reindex.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
@@ -355,6 +356,8 @@ export const setTosViolationHandler = async ({
         reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
         context: { step: 'block', imageIds: [id], actorUserId: user.id },
       });
+    // After the blocklist write, so a slow requeue cannot hold it up.
+    await queueDocumentsForBlockedImages([id]);
 
     // Look up report details for violation type resolution
     const reportDetails = await getReportViolationDetailsForImages([id]);

@@ -306,6 +306,7 @@ describe('handleBlockImages and the search documents showing the images', () => 
   // queued here, whatever its minor flag.
   it('queues every document showing the blocked images', async () => {
     await handleBlockImages({ ids: [128489949], moderatorId: 9 } as any);
+    expect(queueDocumentsForBlockedImages).toHaveBeenCalledTimes(1);
     expect(queueDocumentsForBlockedImages).toHaveBeenCalledWith([128489949]);
   });
 });

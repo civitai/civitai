@@ -332,6 +332,7 @@ describe('queueDocumentsForBlockedImages', () => {
   it('does not throw when every attempt fails', async () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('db down'));
     await expect(queueDocumentsForBlockedImages([1])).resolves.toBeUndefined();
-    expect(dbMock.dbWrite.$queryRaw.mock.calls.length).toBeGreaterThan(3);
+    // The model lookup runs once per attempt: two attempts.
+    expect(queries().filter((q) => q.text.includes('"Post"'))).toHaveLength(2);
   });
 });
