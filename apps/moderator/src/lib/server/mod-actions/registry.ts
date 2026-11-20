@@ -207,7 +207,7 @@ const caseIntakeAction: ModAction<z.infer<typeof caseIntakeInput>> = {
         mainDb: dbWrite,
         appUrl: civitaiAppUrl(),
         systemUserId: SYSTEM_USER_ID,
-        log: (data) => void logToAxiom(data),
+        log: ({ name, ...payload }) => void logToAxiom({ name, payload }),
       })
     ),
 };

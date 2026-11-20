@@ -18,8 +18,11 @@ function call(action: string, tokenClient?: 'webhook' | 'cases') {
     method: 'POST',
     body: '{}',
   });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (POST as any)({ params: { action }, request, locals: { tokenClient } });
+  // The wrapper refuses synchronously, as SvelteKit allows; a promise either way here.
+  return Promise.resolve().then(() =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (POST as any)({ params: { action }, request, locals: { tokenClient } })
+  );
 }
 
 async function statusOf(p: Promise<Response>) {

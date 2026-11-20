@@ -33,7 +33,13 @@ export type CaseIntakeDeps = {
   sendDeps: () => Omit<SendDeps, 'holdsLock'>;
   appUrl: string;
   systemUserId: number;
-  log: (data: Record<string, unknown>) => void;
+  log: (data: {
+    name: string;
+    processKey?: string;
+    publicRef: string;
+    receipt?: string;
+    outcome?: string;
+  }) => void;
   /** Runs the receipt send after the answer has gone. */
   background: (work: Promise<unknown>) => void;
   now?: () => Date;

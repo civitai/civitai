@@ -193,13 +193,16 @@ export function authenticateWebhookToken(event: { url: URL; request: Request }):
 // Generic over the event so a route's own `RequestHandler` type survives the wrap — otherwise `params`
 // widens to `Partial<Record<string, string>>` and every `params.id` becomes possibly-undefined.
 export function WebhookEndpoint<E extends RequestEvent, R>(
-  handler: (event: E) => R
+  handler: (event: E) => R,
+  /** Also admit the scoped intake credential; the handler then decides what it may call. */
+  { alsoCases = false }: { alsoCases?: boolean } = {}
 ): (event: E) => R {
   return (event) => {
     // The hook already verified the token; this is the opt-in that makes THIS endpoint token-callable.
     // A signed-in moderator hitting it is refused too — like the main app's WebhookEndpoint, these are
     // service endpoints, and there is no user behind one.
-    if (event.locals.tokenClient !== 'webhook') error(401, SEND_A_TOKEN);
+    const client = event.locals.tokenClient;
+    if (client !== 'webhook' && !(alsoCases && client === 'cases')) error(401, SEND_A_TOKEN);
     return handler(event);
   };
 }
