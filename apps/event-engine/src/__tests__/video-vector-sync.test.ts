@@ -4,6 +4,8 @@ import { nextRefreshIds } from '@/vector-sync/domain/refresh';
 import { syncIds, type RejectedMemo } from '@/vector-sync/domain/sync';
 import type { EmbedInput } from '@/vector-sync/embedder';
 import { videoDomain, videoRefFromEvent } from '@/vector-sync/videos/domain';
+import { VectorStore } from '@/vector-sync/qdrant';
+import { VIDEO_COLLECTION } from '@/vector-sync/videos/collection';
 import { kvRejectedMemo } from '@/vector-sync/videos/rejected';
 import { getVideoDocs, type VideoPayload } from '@/vector-sync/videos/source';
 
@@ -35,7 +37,8 @@ async function pglite(seed = '') {
 
 type Pg = Parameters<typeof getVideoDocs>[0];
 
-function fakes(pg: unknown, refuse: number[] = []) {
+/** `refuse`: ids that fail; `media`: the subset failing as the media's fault (default: all). */
+function fakes(pg: unknown, refuse: number[] = [], media: number[] = refuse) {
   const points = new Map<number, VideoPayload>();
   const sent: EmbedInput[] = [];
   const store = {
@@ -58,7 +61,7 @@ function fakes(pg: unknown, refuse: number[] = []) {
       return {
         vectors: new Map(ok.map((i) => [Number(i.id), [1]])),
         failed,
-        rejected: failed,
+        rejected: failed.filter((id) => media.includes(id)),
         stamp: null,
       };
     },
@@ -141,6 +144,17 @@ describe('which videos get a point', () => {
     }
   }, 60_000);
 
+  test('a clip stored off our CDN gets no document', async () => {
+    const pg = await pglite(
+      `${video(1)} UPDATE "Image" SET url = 'https://elsewhere.example/a.mp4' WHERE id = 1;`
+    );
+    try {
+      expect((await getVideoDocs(pg as unknown as Pg, [1])).size).toBe(0);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
   test('clips past the worker limits are never documents, so never sent', async () => {
     const pg = await pglite(`
       ${video(1)} ${video(2)} ${video(3)} ${video(4)}
@@ -193,6 +207,51 @@ describe('media the embedder refuses', () => {
       await pg.exec(`UPDATE "Image" SET url = 'key-2b' WHERE id = 2`);
       await syncIds(getVideoDocs, [2], deps);
       expect(sent.map((i) => i.id)).toEqual(['2']);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
+  test('only media faults are remembered; another failure is sent again', async () => {
+    const pg = await pglite(`${video(1)} ${video(2)} ${video(3)}`);
+    try {
+      const { sent, deps } = fakes(pg, [2, 3], [3]);
+      await syncIds(getVideoDocs, [1, 2, 3], deps);
+      sent.length = 0;
+      await syncIds(getVideoDocs, [2, 3], deps);
+      expect(sent.map((i) => i.id)).toEqual(['2']);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
+  test('a call where everything is refused is not remembered: it reads as an incident', async () => {
+    const pg = await pglite(`${video(1)} ${video(2)}`);
+    try {
+      const { sent, deps } = fakes(pg, [1, 2]);
+      await syncIds(getVideoDocs, [1, 2], deps);
+      sent.length = 0;
+      await syncIds(getVideoDocs, [1, 2], deps);
+      expect(sent.map((i) => i.id).sort()).toEqual(['1', '2']);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
+  test('a replaced clip that is refused loses its old point and is not sent again', async () => {
+    const pg = await pglite(`${video(1)}`);
+    try {
+      const { points, sent, deps, store } = fakes(pg, [1]);
+      const healthy = fakes(pg);
+      await syncIds(getVideoDocs, [1], { ...(healthy.deps as object), store } as never);
+      expect(points.has(1)).toBe(true);
+
+      await pg.exec(`UPDATE "Image" SET url = 'key-1b' WHERE id = 1; ${video(2)}`);
+      await syncIds(getVideoDocs, [1, 2], deps);
+      sent.length = 0;
+      await syncIds(getVideoDocs, [1], deps);
+      expect(sent).toEqual([]);
+      expect(points.has(1)).toBe(false);
     } finally {
       await pg.close();
     }
@@ -260,17 +319,26 @@ describe('walks over the videos of Image', () => {
     }
   }, 60_000);
 
-  test('the backfill embeds only videos', async () => {
+  test('the backfill pages over videos only', async () => {
     const pg = await pglite(seed);
     try {
       const { sent, store, embedder } = fakes(pg);
+      let pages = 0;
+      const counted = {
+        query: (sql: string, params?: unknown[]) => {
+          if (/ORDER BY id DESC LIMIT/.test(sql)) pages++;
+          return pg.query(sql, params);
+        },
+      };
       const { complete } = await backfillDomain(
         videoDomain,
         { from: 0, to: 10, page: 2 },
-        { pg: pg as unknown as Pg, store, embedder }
+        { pg: counted as unknown as Pg, store, embedder }
       );
       expect(complete).toBe(true);
       expect(sent.map((i) => i.id).sort()).toEqual(['1', '4', '5']);
+      // Ids 5,4 then 1; over all of Image it would be 5,4 then 3,2 then 1.
+      expect(pages).toBe(2);
     } finally {
       await pg.close();
     }
@@ -284,7 +352,7 @@ describe('walks over the videos of Image', () => {
       const sleeps: number[] = [];
       await backfillDomain(
         videoDomain,
-        { from: 0, to: 10, page: 1, maxRate: 1 },
+        { from: 0, to: 10, page: 2, maxRate: 1 },
         {
           pg: pg as unknown as Pg,
           store,
@@ -296,10 +364,22 @@ describe('walks over the videos of Image', () => {
           },
         }
       );
-      // Pages 5, 4, 1 and the empty last one; at 1 write/s each after the first waits a second.
-      expect(sleeps).toEqual([1000, 1000, 1000]);
+      // Two writes on the first page at 1 write/s: the next page waits two seconds.
+      expect(sleeps).toEqual([2000]);
     } finally {
       await pg.close();
     }
   }, 60_000);
+});
+
+describe('video collection stamp', () => {
+  const client = (metadata: Record<string, string>) =>
+    ({ getCollection: async () => ({ config: { metadata } }) } as never);
+
+  test('a collection filled only with clips counts as stamped once the video profile is recorded', async () => {
+    const stamp = { model: 'wemm-2b', modelRevision: 'r1', videoProfile: 'video-v1' };
+    expect(await new VectorStore(client(stamp), 'v', VIDEO_COLLECTION).isStamped()).toBe(true);
+    // The image collection still waits for its image profile.
+    expect(await new VectorStore(client(stamp), 'i').isStamped()).toBe(false);
+  });
 });

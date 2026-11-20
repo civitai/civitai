@@ -88,7 +88,7 @@ export async function runSyncConsumer(opts: {
         pg,
         store,
         embedder: enabled ? Embedder.fromConfig('normal') : null,
-        rejected: await domain.rejected?.(),
+        rejected: enabled ? await domain.rejected?.() : undefined,
       },
     });
   }

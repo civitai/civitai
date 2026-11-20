@@ -2192,6 +2192,17 @@ describe('one input per step (orchestration #460)', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  test('a step that succeeds with an unusable output fails, but is not the media refused', async () => {
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(workflowBody(stepIds(init)));
+      body.steps[1].output.embedding = [1, 2];
+      return new Response(JSON.stringify(body), { status: 200 });
+    }) as unknown as typeof fetch;
+    const result = await embedderWith(fetchImpl).embed(inputs(3));
+    expect(result.failed).toEqual([2]);
+    expect(result.rejected).toEqual([]);
+  });
+
   test('one step from another model revision rejects the workflow it came in', async () => {
     const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(workflowBody(stepIds(init)));

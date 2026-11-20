@@ -44,7 +44,7 @@ export async function backfillDomain<P extends DomainPayload>(
   const started = now();
   let cursor = opts.to;
   while (cursor > opts.from) {
-    if (opts.maxRate) {
+    if (opts.maxRate && !opts.dryRun) {
       const writes = stats.embedded + stats.updated + stats.deleted;
       const wait = started + (writes / opts.maxRate) * 1000 - now();
       if (wait > 0) await sleep(wait);
@@ -149,6 +149,7 @@ export async function runBackfill<P extends DomainPayload>(
     (m, err) => logger.error({ err }, m)
   );
   const store = domain.store();
+  const rejected = args.dryRun ? undefined : await domain.rejected?.();
   try {
     if (!args.dryRun) await store.bootstrap({ alias: domain.alias() });
     // A dry run creates nothing, so before the first real run there is no collection to read.
@@ -158,7 +159,7 @@ export async function runBackfill<P extends DomainPayload>(
       pg,
       store: exists ? store : { ...bind(store), ...empty },
       embedder: args.dryRun ? null : Embedder.fromConfig('low'),
-      rejected: await domain.rejected?.(),
+      rejected,
     });
     logger.info(result, `${log}: done`);
     if (args.dryRun) {
@@ -188,5 +189,6 @@ export async function runBackfill<P extends DomainPayload>(
     }
   } finally {
     await pg.end();
+    await rejected?.close?.();
   }
 }

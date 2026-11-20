@@ -28,7 +28,7 @@ type Rule =
   | { column: keyof ImageRow & string; isNull: boolean }
   | { column: keyof ImageRow & string; bitClear: number };
 
-/** NsfwLevel.Blocked: a moderator's Blocked rating sets it and nothing else on the row. */
+/** NsfwLevel.Blocked. */
 const BLOCKED_LEVEL = 32;
 
 const RULES: Rule[] = [

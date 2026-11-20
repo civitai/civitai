@@ -482,6 +482,8 @@ export class Embedder {
     const steps = new Map((workflow.steps ?? []).map((step) => [step.name, step]));
     const accepted: Array<[number, number[], ModelStamp, InputKind]> = [];
     const failed: string[] = [];
+    // A step that reports success with an unusable output is the orchestrator's fault, not the media's.
+    const malformed = new Set<string>();
     for (const input of batch) {
       const out = steps.get(stepName(input.id));
       const output = out?.output;
@@ -495,6 +497,7 @@ export class Embedder {
         (output.precision && output.precision !== 'float32')
       ) {
         failed.push(input.id);
+        if (out?.status === 'succeeded') malformed.add(input.id);
         continue;
       }
       const kind = kindOf(input);
@@ -548,7 +551,7 @@ export class Embedder {
         'vector-sync: steps failed to embed'
       );
       call.result.failed.push(...failed.map(Number));
-      call.result.rejected?.push(...failed.map(Number));
+      call.result.rejected?.push(...failed.filter((id) => !malformed.has(id)).map(Number));
     }
 
     // Every distinct stamp in this workflow is checked before any of its vectors is kept.

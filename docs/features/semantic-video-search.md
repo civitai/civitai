@@ -29,9 +29,10 @@ is sent, and the worker's own limit decides.
 
 A clip the orchestrator rejects on its own (a lone input refused, or a failed step in a workflow
 that otherwise ran; for example a codec it cannot decode) is remembered in Redis by id and
-`docHash` for 7 days (`videos/rejected.ts`). Until the file changes or the entry expires, it is
+`docHash` for 3 days (`videos/rejected.ts`). Until the file changes or the entry expires, it is
 treated as having nothing to embed, so the refresh walk does not pay for the same failure every
-pass. Outage failures are not remembered. Refusals count as
+pass. Outage failures, steps that report success with an unusable output, and calls where most
+inputs fail are not remembered. A Redis error sends the clip again rather than failing the sync. Refusals count as
 `vector_sync_points_total{domain="video",outcome="refused"}`.
 
 ## Keeping it in sync
@@ -41,9 +42,9 @@ The domain framework, as for the other content indexes:
 - **CDC**: `postgres.Image` (non-video updates dropped at routing), `postgres.TagsOnImageNew` and
   `postgres.ImageResourceNew`. Embedding needs all three streamed.
 - **Refresh walk**: re-syncs every video id and visits the collection's points in the same id
-  range, so a deleted row or newly held media loses its point. It reads `Image` filtered to
-  videos; until the partial index `Image_video_id_idx` exists that is a scan of the whole table,
-  so `VECTOR_VIDEO_REFRESH_MINUTES` defaults to 720.
+  range, so a point whose row is gone or no longer qualifies is deleted. It reads `Image`
+  filtered to videos; the partial index `Image_video_id_idx` keeps that cheap. Its interval is
+  `VECTOR_VIDEO_REFRESH_MINUTES`.
 - **Backfill**: `node dist/vector-sync/content/backfill.js --domain video --to <id> --confirm`,
   newest id first. Use `--limit` as a cap on a slice and `--max-rate <writes/s>` to pace it; the
   embed workers also carry the live image sync, so watch its lag and pause if it climbs. The

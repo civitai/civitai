@@ -41,6 +41,7 @@ export type RejectedMemo = {
   /** The ids among `docs` refused before with the same docHash. */
   has(docs: Array<[id: number, docHash: string]>): Promise<Set<number>>;
   add(docs: Array<[id: number, docHash: string]>): Promise<void>;
+  close?(): Promise<void>;
 };
 
 /**
@@ -209,7 +210,7 @@ async function syncRound<P extends DomainPayload>(
   });
   await store(result.vectors);
   stats.failed += result.failed.length;
-  if (deps.rejected && result.rejected?.length)
+  if (deps.rejected && result.rejected?.length && isolatedRefusals(result, inputs.length))
     await deps.rejected.add(result.rejected.map((id) => [id, docs.get(id)!.docHash]));
 
   // The documents were read before a slow embed. An unpublish, delete or edit committed meanwhile
@@ -237,6 +238,19 @@ async function syncRound<P extends DomainPayload>(
 
   if (result.error) throw result.error;
   return changed;
+}
+
+/**
+ * Refusals are remembered only when they look like the media's fault: the call raised no error,
+ * something in it embedded, and no more than half of it was refused. An orchestrator incident that
+ * fails a whole call is retried by the next sync instead.
+ */
+export function isolatedRefusals(
+  result: { error?: unknown; vectors: Map<number, unknown>; rejected?: number[] },
+  inputs: number
+) {
+  const refused = result.rejected?.length ?? 0;
+  return !result.error && result.vectors.size > 0 && refused * 2 <= inputs;
 }
 
 /** What a change event touches: a row of the domain, or a deleted child found through its payload. */

@@ -6,6 +6,7 @@ import type { VideoPayload } from './source';
 export const VIDEO_COLLECTION: CollectionSpec<VideoPayload> = {
   ...SITE_REPLICATION,
   quantile: 1.0,
+  stampedBy: 'videoProfile',
   indexes: [
     ['nsfwLevel', { type: 'integer', lookup: true, range: true, on_disk: true }],
     ['tagIds', { type: 'integer', lookup: true, range: false, on_disk: true }],

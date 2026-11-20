@@ -108,9 +108,10 @@ export function startRefreshers(
         const recheck = orphans.filter((id) => heldLastPass.has(id));
         if (recheck.length) {
           const present = await pg
-            .query<{ id: number }>(`SELECT id FROM "${domain.table}" WHERE id = ANY($1::int[])`, [
-              recheck,
-            ])
+            .query<{ id: number }>(
+              `SELECT id FROM "${domain.table}" WHERE id = ANY($1::int[])${andWhere(domain)}`,
+              [recheck]
+            )
             .then(({ rows: found }) => new Set(found.map((r) => Number(r.id))))
             .catch((err) => {
               logger.error(
