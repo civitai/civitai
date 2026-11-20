@@ -6,12 +6,14 @@ import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
 // This repo is public. A job on a self-hosted runner executes whatever the triggering commit
-// contains, so a pull_request from a fork must never land on one. Every job that names the
+// contains, so a pull_request from a fork, or a bot's dependency-update branch (its packages'
+// install scripts run with sudo), must never land on one. Every job that names the
 // self-hosted label must use exactly this gate; anything else (a bare label, a hand-written
 // variant) fails here.
 const SELF_HOSTED = 'civitai-dc';
 const gate = (fallback: string) =>
   "${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && " +
+  "!endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && " +
   "(github.event_name == 'push' || github.event_name == 'workflow_dispatch' || " +
   "(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) " +
   `&& '${SELF_HOSTED}' || '${fallback}' }}`;
@@ -19,7 +21,7 @@ const gate = (fallback: string) =>
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
 
-type Job = { 'runs-on'?: unknown };
+type Job = { 'runs-on'?: unknown; permissions?: unknown };
 type Workflow = { on?: Record<string, unknown>; jobs?: Record<string, Job> };
 
 const workflows = readdirSync(WORKFLOW_DIR)
@@ -32,12 +34,16 @@ const workflows = readdirSync(WORKFLOW_DIR)
 const selfHostedJobs = workflows.flatMap(({ file, doc }) =>
   Object.entries(doc.jobs ?? {})
     .filter(([, job]) => JSON.stringify(job['runs-on'] ?? '').includes(SELF_HOSTED))
-    .map(([name, job]) => ({ file, name, runsOn: job['runs-on'], on: doc.on ?? {} }))
+    .map(([name, job]) => ({ file, name, job, runsOn: job['runs-on'], on: doc.on ?? {} }))
 );
 
 // Evaluates the gate the way the Actions expression engine does for this subset: property
 // lookups on a missing object give null, `==`/`!=` compare, and `&&`/`||` return an operand.
 function evaluate(expr: string, ctx: { github: unknown; vars: Record<string, string> }) {
+  const endsWith = (s: unknown, suffix: string) =>
+    String(s ?? '')
+      .toLowerCase()
+      .endsWith(suffix.toLowerCase());
   const body = expr
     .replace(/^\$\{\{\s*|\s*\}\}$/g, '')
     .replace(/!=/g, '!==')
@@ -46,14 +52,24 @@ function evaluate(expr: string, ctx: { github: unknown; vars: Record<string, str
       /\b(github|vars)((?:\.[\w-]+)+)/g,
       (_, root: string, rest: string) => `(${root}${rest.replace(/\./g, '?.')} ?? null)`
     );
-  return new Function('github', 'vars', `return (${body});`)(ctx.github, ctx.vars) as string;
+  return new Function('github', 'vars', 'endsWith', `return (${body});`)(
+    ctx.github,
+    ctx.vars,
+    endsWith
+  ) as string;
 }
 
 const repo = 'civitai/civitai';
-const pr = (headRepo: string | null) => ({
+const pr = (headRepo: string | null, author = 'someone', actor = author) => ({
   repository: repo,
   event_name: 'pull_request',
-  event: { pull_request: { head: { repo: headRepo === null ? null : { full_name: headRepo } } } },
+  actor,
+  event: {
+    pull_request: {
+      user: { login: author },
+      head: { repo: headRepo === null ? null : { full_name: headRepo } },
+    },
+  },
 });
 
 describe('self-hosted runner gate', () => {
@@ -74,10 +90,30 @@ describe('self-hosted runner gate', () => {
     expect(triggers).not.toContain('workflow_run');
   });
 
+  // A runner whose lifetime is not ours to guarantee must not hold a write token or a secret.
+  it.each(selfHostedJobs)('$file → $name holds no write permission and no secret', ({ job }) => {
+    expect(JSON.stringify(job.permissions ?? {})).not.toMatch(/write/);
+    expect(JSON.stringify(job)).not.toMatch(/secrets\.|github\.token/);
+  });
+
   const cases: Array<[string, unknown, Record<string, string>, string]> = [
     ['fork pull_request', pr('someone/civitai'), {}, 'ubuntu-latest'],
     ['pull_request whose fork was deleted', pr(null), {}, 'ubuntu-latest'],
     ['same-repo pull_request', pr(repo), {}, SELF_HOSTED],
+    ['dependabot pull_request', pr(repo, 'dependabot[bot]'), {}, 'ubuntu-latest'],
+    ['renovate pull_request', pr(repo, 'renovate[bot]'), {}, 'ubuntu-latest'],
+    [
+      'a person pushing to a bot pull_request',
+      pr(repo, 'renovate[bot]', 'someone'),
+      {},
+      'ubuntu-latest',
+    ],
+    [
+      'push by a bot',
+      { repository: repo, event_name: 'push', actor: 'renovate[bot]', event: {} },
+      {},
+      'ubuntu-latest',
+    ],
     ['push', { repository: repo, event_name: 'push', event: {} }, {}, SELF_HOSTED],
     [
       'workflow_dispatch',
