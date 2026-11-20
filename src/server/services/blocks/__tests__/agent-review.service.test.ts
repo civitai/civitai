@@ -729,6 +729,8 @@ async function stagedConnectBundle() {
 
 describe('startAgentReview — CONNECT lane dispatch', () => {
   beforeEach(() => {
+    // An on-site lookup must find nothing, so no test here can pass through the on-site lane.
+    mockFindUnique.mockResolvedValue(null);
     mockListingRequestFindUnique.mockResolvedValue(connectRequest());
     mockListingFindUnique.mockResolvedValue({ sourceRepoUrl: null });
   });
@@ -904,6 +906,9 @@ describe('startAgentReview — CONNECT lane dispatch', () => {
     await expect(startAgentReview({ publishRequestId: ALPR, modUserId: 7 })).rejects.toMatchObject({
       code: 'CONFLICT',
     });
+    // Reached through the CONNECT lane: the listing request was loaded, the on-site one never.
+    expect(mockListingRequestFindUnique).toHaveBeenCalled();
+    expect(mockFindUnique).not.toHaveBeenCalled();
     expect(mockStage).not.toHaveBeenCalled();
   });
 
