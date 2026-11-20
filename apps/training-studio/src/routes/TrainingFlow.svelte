@@ -7,7 +7,8 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
   import SelectStepElements from './SelectStepElements.svelte';
-  import { setElementsUi } from '$lib/elements-ui';
+  import '$lib/civitai-elements';
+  import { useElementsUi } from '$lib/elements-ui';
   import DataStep from './DataStep.svelte';
   import DataStepElements from './DataStepElements.svelte';
   import EditDataStep from './EditDataStep.svelte';
@@ -37,7 +38,6 @@
     type Selection,
   } from './trainingFlow';
   import {
-    ELEMENTS_UI_FLAG_KEY,
     TAG_FIND_REPLACE_FLAG_KEY,
     type FromPrices,
     type LabelType,
@@ -55,8 +55,8 @@
     onExit,
   }: { prices: FromPrices; enabledModelFlags?: string[]; onExit: () => void } = $props();
 
-  const elementsUi = $derived(enabledModelFlags.includes(ELEMENTS_UI_FLAG_KEY));
-  setElementsUi(() => elementsUi);
+  const useElements = useElementsUi();
+  const elementsUi = $derived(useElements());
   const Select = $derived(elementsUi ? SelectStepElements : SelectStep);
   const Data = $derived(elementsUi ? DataStepElements : DataStep);
 
@@ -423,9 +423,15 @@
         </div>
       {/each}
     </nav>
-    <Button variant="outline" size="sm" onclick={onExit}>
-      <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Exit
-    </Button>
+    {#if elementsUi}
+      <civitai-button variant="outline" size="sm" onclick={onExit}>
+        <span slot="left"><IconArrowLeft size={15} stroke={2} /></span>Exit
+      </civitai-button>
+    {:else}
+      <Button variant="outline" size="sm" onclick={onExit}>
+        <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Exit
+      </Button>
+    {/if}
   </div>
 
   <ServiceStatusBanner />
