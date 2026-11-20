@@ -1,7 +1,7 @@
 import { dbRead } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { offlineAccessJustification } from '~/shared/constants/token-scope.constants';
+import { anotherApprovedListingDeclaresOffline } from './connect-offline-listing';
 
 /**
  * A MODERATOR TAKEDOWN of an App Store connect listing cuts the app's offline access: every
@@ -12,9 +12,11 @@ import { offlineAccessJustification } from '~/shared/constants/token-scope.const
  * Not when ANOTHER approved listing on the same client still declares offline access: the auth hub
  * grants per client, so that app keeps it, and cutting would only force its users to sign in again.
  *
- * Only a moderator takedown does this. An owner withdrawing the offline declaration, or
- * unpublishing their own listing, only stops the chains sliding (the auth hub's
- * listing-offline.ts): they lapse at their current expiry.
+ * Only a moderator DELIST does this. Every other way a listing stops declaring or stops being
+ * approved only stops the chains sliding (the auth hub's listing-offline.ts), so the refresh tokens
+ * already issued stay valid until their current expiry (at most 30 days): a moderator's reset to
+ * pending or reject of a live connect listing, an owner withdrawing the offline declaration, and an
+ * owner unpublishing their own listing. A moderator who needs the tokens gone at once delists.
  *
  * DARK: runs only while `oauth-offline-grant` is on. Runs AFTER the takedown commits and never
  * throws: the takedown stands whatever happens here.
@@ -28,17 +30,12 @@ export async function cutConnectOfflineAccessAfterTakedown(opts: {
   try {
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.OAUTH_OFFLINE_GRANT)))
       return { cut: false, deleted: 0 };
-    const others = await dbRead.appListing.findMany({
-      where: {
+    if (
+      await anotherApprovedListingDeclaresOffline(dbRead, {
         connectClientId,
-        kind: 'offsite',
-        status: 'approved',
-        revisionOfId: null,
-        id: { not: takenDownListingId },
-      },
-      select: { connectScopeJustifications: true },
-    });
-    if (others.some((l) => offlineAccessJustification(l.connectScopeJustifications) != null)) {
+        excludeListingIds: [takenDownListingId],
+      })
+    ) {
       return { cut: false, deleted: 0 };
     }
     const { deleteApiKeys } = await import('~/server/services/api-key.service');

@@ -840,35 +840,50 @@ describe('startAgentReview — CONNECT lane dispatch', () => {
     });
   });
 
-  it('🔴 TWO listings on one client: another approved one declares → recorded, read excludes this listing', async () => {
+  /** A row of the client's listings as the sibling read selects it. */
+  const clientListing = (r: {
+    id: string;
+    status: string;
+    connectScopeJustifications?: unknown;
+  }) => ({
+    kind: 'offsite',
+    revisionOfId: null,
+    connectScopeJustifications: null,
+    ...r,
+  });
+
+  it('🔴 TWO listings on one client: another approved one declares → recorded', async () => {
     mockSiblingFindMany.mockResolvedValue([
-      { connectScopeJustifications: { offline_access: 'the other app syncs nightly' } },
+      clientListing({ id: 'apl_LISTING', status: 'pending' }),
+      clientListing({
+        id: 'apl_OTHER',
+        status: 'approved',
+        connectScopeJustifications: { offline_access: 'the other app syncs nightly' },
+      }),
     ]);
     await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
     expect(checksRow().checks.offlineAccess).toMatchObject({
       declared: false,
       anotherListingDeclares: true,
     });
-    expect(mockSiblingFindMany).toHaveBeenCalledWith({
-      where: {
-        connectClientId: 'oc_CLIENT',
-        kind: 'offsite',
-        status: 'approved',
-        revisionOfId: null,
-        id: { notIn: ['apl_LISTING'] },
-      },
-      select: { connectScopeJustifications: true },
-    });
+    expect(mockSiblingFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { connectClientId: 'oc_CLIENT' } })
+    );
   });
 
-  it('a revision\'s own live parent is not "another listing"', async () => {
+  it('a revision\'s own live parent is not "another listing", even when it declares', async () => {
     mockListingRequestFindUnique.mockResolvedValue(
       connectRequest({ listing: { revisionOfId: 'apl_PARENT' } })
     );
+    mockSiblingFindMany.mockResolvedValue([
+      clientListing({
+        id: 'apl_PARENT',
+        status: 'approved',
+        connectScopeJustifications: { offline_access: 'nightly sync' },
+      }),
+    ]);
     await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
-    const where = (mockSiblingFindMany.mock.calls as unknown as Array<[{ where: any }]>)[0][0]
-      .where;
-    expect(where.id).toEqual({ notIn: ['apl_LISTING', 'apl_PARENT'] });
+    expect(checksRow().checks.offlineAccess).toMatchObject({ anotherListingDeclares: false });
   });
 
   it('a DECLARED offline_access: the checks record it, and the runner gets the justification to judge', async () => {

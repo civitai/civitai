@@ -231,6 +231,7 @@ describe('ConnectScopesPanel — offline-access declaration', () => {
     const row = page.getByTestId('connect-offline-access-declared');
     await expect.element(row).toBeInTheDocument();
     await expect.element(row.getByText('offline_access')).toBeInTheDocument();
+    await expect.element(row.getByTestId('sensitive-scope-badge')).toBeInTheDocument();
     await expect.element(row.getByText('copies new images every night')).toBeInTheDocument();
     expect(page.getByTestId('connect-offline-access-undeclared').elements()).toHaveLength(0);
   });

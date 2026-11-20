@@ -179,9 +179,6 @@ export function materialEditBlockedReason(
   >
 ): string | null {
   if (!isUnpublishedEdit(ctx)) return null;
-  // A CONNECT listing's permission justifications (the offline_access declaration among them) are
-  // material too: `materialPatchChanges` counts any change to the map, so the server refuses them
-  // here as it does the fields below, and the form disables those boxes on the same verdict.
   const fields = isOnsiteEdit(ctx)
     ? 'name, source repository, issue tracker and content rating'
     : ctx.connectClientId != null

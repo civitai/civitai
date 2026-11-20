@@ -12,6 +12,7 @@ import {
   assertListingOwnerAcceptedAppDeveloperTerms,
 } from '~/server/services/blocks/app-developer-terms.service';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
+import { listingEverLive } from '~/server/services/blocks/connect-offline-listing';
 import {
   APP_LISTING_REPORT_REASONS,
   OFFSITE_MOD_REASON_MIN,
@@ -345,7 +346,8 @@ async function classifyOffsiteListing(
  * The Prisma predicate for "a listing a mod may PURGE".
  *
  * Two disjoint shapes:
- *   - any OFF-SITE listing (unchanged — purge has always been the off-site final expunge);
+ *   - any OFF-SITE listing (unchanged — purge has always been the off-site final expunge),
+ *     except an ever-live CONNECT listing, refused in the tx ({@link assertNotEverLiveConnectListing});
  *   - an ON-SITE **orphan pre-approval draft**: `status:'draft'` + `appBlockId: null`
  *     (never approved, so no backing `AppBlock`) + `revisionOfId: null`.
  *
@@ -459,6 +461,25 @@ async function assertNoLivePendingSubmission(
   }
 }
 
+/**
+ * An off-site CONNECT listing that was ever live cannot be purged: the removed row is what keeps
+ * its OAuth client "listed but undeclared" at the auth hub. Without any row the client reads as
+ * unlisted, and the app would regain offline access after its delist (listing-offline.ts).
+ * Delist is the takedown for these.
+ */
+async function assertNotEverLiveConnectListing(
+  client: Pick<typeof dbWrite, 'appListingPublishRequest' | 'appListingModerationEvent'>,
+  listing: { id: string; kind: string; status: string; connectClientId: string | null }
+): Promise<void> {
+  if (listing.kind !== 'offsite' || !listing.connectClientId) return;
+  if (!(await listingEverLive(client, listing))) return;
+  throw new OffsiteModerationError(
+    'NOT_TRANSITIONABLE',
+    'This connect app has been live, so it cannot be purged. Delist it instead: the delisted ' +
+      'listing stays as the record that keeps the app from regaining offline access.'
+  );
+}
+
 /** The `select` both purge reads use — every field {@link isPurgeableListing} inspects, so
  * neither call site can hand it an `undefined` the guard would then judge. */
 const PURGE_CLASSIFY_SELECT = {
@@ -469,6 +490,7 @@ const PURGE_CLASSIFY_SELECT = {
   appBlockId: true,
   revisionOfId: true,
   name: true,
+  connectClientId: true,
 } satisfies Prisma.AppListingSelect;
 
 /**
@@ -1110,7 +1132,8 @@ export type PurgeListingResult = { appListingId: string; purged: true };
 /**
  * MOD hard-delete (purge) a listing — the genuine final expunge that also makes the
  * delist round-trip self-cleaning. Targets are {@link PURGEABLE_LISTING_WHERE}: any
- * OFF-SITE listing, or an ON-SITE orphan pre-approval draft.
+ * OFF-SITE listing, or an ON-SITE orphan pre-approval draft. An off-site CONNECT listing that
+ * was ever live is refused ({@link assertNotEverLiveConnectListing}).
  *
  * 🔴 THE ON-SITE ARM IS THE DELIBERATE REPLACEMENT FOR A SILENT SIDE-EFFECT, NOT NEW
  * DESTRUCTIVE POWER. `rejectRequest` used to run `deleteOnsiteDraftListingForSlug` on
@@ -1182,6 +1205,7 @@ export async function purgeListing(opts: {
     // expressed in the `deleteMany` predicate below (no FK to traverse; see the fn's note).
     // A throw here rolls the tx back before the audit event is written.
     await assertNoLivePendingSubmission(tx, current);
+    await assertNotEverLiveConnectListing(tx, { id: input.appListingId, ...current });
     // Read INSIDE the tx, from the row we are about to delete, for the post-commit
     // notification below — after the delete there is nothing left to read it from. Held in a
     // local and returned at the end of the callback, AFTER the delete has been confirmed.
@@ -1208,7 +1232,12 @@ export async function purgeListing(opts: {
     // rolls back. This is the SQL twin of `isPurgeableListing` above; they are kept
     // next to each other so they can only drift together.
     const deleted = await tx.appListing.deleteMany({
-      where: { id: input.appListingId, ...PURGEABLE_LISTING_WHERE },
+      where: {
+        id: input.appListingId,
+        ...PURGEABLE_LISTING_WHERE,
+        // The status half of assertNotEverLiveConnectListing, against an approve racing it.
+        NOT: { connectClientId: { not: null }, status: { in: ['approved', 'removed'] } },
+      },
     });
     if (deleted.count === 0) {
       // Raced (concurrently purged between the snapshot and here) → roll the event back.

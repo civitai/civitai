@@ -1,6 +1,5 @@
 import { createHash } from 'crypto';
 import JSZip from 'jszip';
-import { offlineAccessJustification } from '~/shared/constants/token-scope.constants';
 import {
   buildConnectReviewInput,
   commitShaFromArchiveUrl,
@@ -12,6 +11,7 @@ import {
   CONNECT_REVIEW_VERSION,
   type ConnectReviewSubject,
 } from './connect-agent-review.logic';
+import { anotherApprovedListingDeclaresOffline } from './connect-offline-listing';
 import type {
   ConnectCivitaiChecks,
   ConnectCivitaiChecksView,
@@ -184,22 +184,12 @@ export async function readConnectRequest(
   const { readListingSourceRepoUrl } = await import('./app-listing-source-repo.service');
   const repo = await readListingSourceRepoUrl(listing.id, dbRead);
   const justifications = listing.connectScopeJustifications;
-  // ANOTHER live listing on the same OAuth client that declares offline access: the auth hub grants
-  // offline access per CLIENT, so this listing's own "not declared" does not stop the app. This
+  // The hub grants per CLIENT, so another listing's declaration still reaches this app. This
   // listing and, for a revision, the live listing it revises are the same app, not another one.
-  const siblings = await dbRead.appListing.findMany({
-    where: {
-      connectClientId: listing.connectClient.id,
-      kind: 'offsite',
-      status: 'approved',
-      revisionOfId: null,
-      id: { notIn: [listing.id, ...(listing.revisionOfId ? [listing.revisionOfId] : [])] },
-    },
-    select: { connectScopeJustifications: true },
+  const anotherListingDeclaresOffline = await anotherApprovedListingDeclaresOffline(dbRead, {
+    connectClientId: listing.connectClient.id,
+    excludeListingIds: [listing.id, ...(listing.revisionOfId ? [listing.revisionOfId] : [])],
   });
-  const anotherListingDeclaresOffline = siblings.some(
-    (s) => offlineAccessJustification(s.connectScopeJustifications) != null
-  );
   const subject: ConnectReviewSubject = {
     publishRequestId,
     slug: request.slug,

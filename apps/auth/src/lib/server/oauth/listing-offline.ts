@@ -18,7 +18,10 @@ import { logAxiomError } from '$lib/server/axiom';
 //   - it has a moderation event (every moderation action applies to a listing that was live).
 // A client whose listings are only first-time drafts, pending first submissions or rejected ones
 // keeps the unlisted rule, so a first submission changes nothing for the app's existing users. A
-// delisted app stays listed, so it does not regain offline access through the unlisted rule.
+// delisted app stays listed, so it does not regain offline access through the unlisted rule: its
+// listing is `removed`, not deleted, because a moderator purge refuses an ever-live connect
+// listing (the site's offsite-moderation.service.ts, which shares this rule through
+// connect-offline-listing.ts — keep the two in step).
 //
 // Only `approved` listings DECLARE. A pending edit of a live listing sits on a shadow revision,
 // which is always a draft, so its declaration counts only once approve copies it onto the live

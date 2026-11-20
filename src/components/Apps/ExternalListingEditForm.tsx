@@ -118,9 +118,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
    */
   const materialBlockedReason = materialEditBlockedReason(edit);
   const materialBlocked = materialBlockedReason != null;
-  // See `scopeDisclosureLockedForEdit`: a justification edit (the offline-access declaration
-  // included) is MATERIAL, so on an unpublished connect listing the server refuses it and the
-  // boxes are locked; `materialBlockedReason` names them among the locked fields.
+  // See scopeDisclosureLockedForEdit.
   const scopeLocked = scopeDisclosureLockedForEdit(edit);
   const STEP_DETAILS = showUrlStep ? 1 : 0;
   const STEP_ASSETS = showUrlStep ? 2 : 1;
@@ -664,9 +662,6 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                   onOfflineAccessDeclaredChange={(declared) =>
                     setValues((v) => setOfflineAccessDeclared(v, declared))
                   }
-                  // 🔴 `scopeLocked` — see `scopeDisclosureLockedForEdit`. A justification edit
-                  // is material, so it cannot be saved on an unpublished listing; the reason is
-                  // the `materialBlockedReason` alert above, which names these boxes.
                   disabled={saving || scopeLocked}
                   forceShowErrors={showScopeErrors}
                   intro="These are your OAuth app's allowed scopes — they're derived from the app and can't be changed here. Editing a justification (or a change to your app's scopes) is sent for review on a live listing."

@@ -75,6 +75,8 @@ type WriteMock = {
   appListingPublishRequest: {
     updateMany: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
+    // purge reads whether an approved request ever pointed at the listing.
+    findFirst: ReturnType<typeof vi.fn>;
   };
   // relist/republish now re-read attached assets on the primary for the go-live
   // scan-clean gate (assertAssetsScanClean).
@@ -133,6 +135,7 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
     appListingPublishRequest: {
       updateMany: vi.fn(async () => ({ count: 1 })),
       create: vi.fn(async (a: { data: unknown }) => a.data),
+      findFirst: vi.fn(async (): Promise<unknown> => null),
     },
     // Default: no screenshots + every queried image `Scanned` → the go-live scan-clean
     // gate is a no-op for a normally-scanned listing. A scan-gate test overrides these.
@@ -307,6 +310,7 @@ beforeEach(() => {
   mockWrite.appListingPublishRequest.create.mockImplementation(
     async (a: { data: unknown }) => a.data
   );
+  mockWrite.appListingPublishRequest.findFirst.mockResolvedValue(null);
   mockRead.appListing.findUnique.mockResolvedValue(null);
   mockRead.appListingReport.findUnique.mockResolvedValue(null);
   mockRead.appListingModerationEvent.findMany.mockResolvedValue([]);
@@ -325,6 +329,17 @@ beforeEach(() => {
 
 describe('delistListing — a moderator takedown of a CONNECT listing cuts offline access', () => {
   const connectListing = () => ({ ...offsiteListing('approved'), connectClientId: 'oc_connect' });
+  /** A row of the client's listings as the sibling read selects it. */
+  const clientListing = (r: {
+    id: string;
+    status: string;
+    connectScopeJustifications?: unknown;
+  }) => ({
+    kind: 'offsite',
+    revisionOfId: null,
+    connectScopeJustifications: null,
+    ...r,
+  });
   // Through `deleteApiKeys`: its delete is `{ AND: [where, { id: { in } }] }`.
   const refreshDeletes = () =>
     mockWrite.apiKey.deleteMany.mock.calls.filter((c) =>
@@ -362,17 +377,6 @@ describe('delistListing — a moderator takedown of a CONNECT listing cuts offli
       input: { appListingId: APP_ID, reason: GOOD_REASON },
       reviewerUserId: REVIEWER,
     });
-    // The sibling check: the client's OTHER approved, top-level listings.
-    expect(mockRead.appListing.findMany).toHaveBeenCalledWith({
-      where: {
-        connectClientId: 'oc_connect',
-        kind: 'offsite',
-        status: 'approved',
-        revisionOfId: null,
-        id: { not: APP_ID },
-      },
-      select: { connectScopeJustifications: true },
-    });
     expect(refreshDeletes().map((c) => c[0])).toEqual([
       {
         where: {
@@ -390,7 +394,12 @@ describe('delistListing — a moderator takedown of a CONNECT listing cuts offli
     flipt.on.add('oauth-offline-grant');
     mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
     mockRead.appListing.findMany.mockResolvedValue([
-      { connectScopeJustifications: { offline_access: 'the other listing syncs nightly' } },
+      clientListing({ id: APP_ID, status: 'approved' }),
+      clientListing({
+        id: 'apl_other',
+        status: 'approved',
+        connectScopeJustifications: { offline_access: 'the other listing syncs nightly' },
+      }),
     ]);
     await delistListing({
       input: { appListingId: APP_ID, reason: GOOD_REASON },
@@ -404,7 +413,11 @@ describe('delistListing — a moderator takedown of a CONNECT listing cuts offli
     flipt.on.add('oauth-offline-grant');
     mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
     mockRead.appListing.findMany.mockResolvedValue([
-      { connectScopeJustifications: { ModelsWrite: 'uploads' } },
+      clientListing({
+        id: 'apl_other',
+        status: 'approved',
+        connectScopeJustifications: { ModelsWrite: 'uploads' },
+      }),
     ]);
     await delistListing({
       input: { appListingId: APP_ID, reason: GOOD_REASON },
@@ -1590,6 +1603,8 @@ describe('purgeListing', () => {
           { kind: 'offsite' },
           { kind: 'onsite', status: 'draft', appBlockId: null, revisionOfId: null },
         ],
+        // A connect listing that went live in between is not deleted.
+        NOT: { connectClientId: { not: null }, status: { in: ['approved', 'removed'] } },
       },
     });
   });
@@ -1643,6 +1658,7 @@ describe('purgeListing', () => {
         name: true,
         appBlockId: true,
         revisionOfId: true,
+        connectClientId: true,
         // The relation term's projection. Without it `isPurgeableListing` would read
         // `undefined` for the pending-request count — which THROWS rather than defaulting
         // to "not under review", so the destructive op refuses instead of proceeding.
@@ -1694,6 +1710,74 @@ describe('purgeListing', () => {
         reviewerUserId: REVIEWER,
       })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  // The removed row is what keeps a delisted connect app "listed but undeclared" at the auth hub;
+  // with no row left the app reads as unlisted and gets offline access back.
+  describe('an off-site CONNECT listing that was ever live is refused', () => {
+    const connect = (status: string) => ({
+      ...offsiteListing(status),
+      connectClientId: 'oc_connect',
+    });
+    const purge = () =>
+      purgeListing({
+        input: { appListingId: APP_ID, reason: 'spam expunge' },
+        reviewerUserId: REVIEWER,
+      });
+    const expectNothingDeleted = () => {
+      expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
+      expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+    };
+
+    it.each(['removed', 'approved'])('status %s → refused, nothing deleted', async (status) => {
+      mockRead.appListing.findUnique.mockResolvedValueOnce(connect(status));
+      mockWrite.appListing.findUnique.mockResolvedValueOnce(connect(status));
+      await expect(purge()).rejects.toMatchObject({
+        code: 'NOT_TRANSITIONABLE',
+        message: expect.stringContaining('Delist it instead'),
+      });
+      expectNothingDeleted();
+    });
+
+    it('a pending listing an approved publish request points at → refused', async () => {
+      mockRead.appListing.findUnique.mockResolvedValueOnce(connect('pending'));
+      mockWrite.appListing.findUnique.mockResolvedValueOnce(connect('pending'));
+      mockWrite.appListingPublishRequest.findFirst.mockImplementation(
+        async (a: { where: { appListingId: string; status: string } }) =>
+          a.where.appListingId === APP_ID && a.where.status === 'approved' ? { id: 'alpr_1' } : null
+      );
+      await expect(purge()).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+      expectNothingDeleted();
+    });
+
+    it('a pending listing with a moderation event → refused', async () => {
+      mockRead.appListing.findUnique.mockResolvedValueOnce(connect('pending'));
+      mockWrite.appListing.findUnique.mockResolvedValueOnce(connect('pending'));
+      mockWrite.appListingModerationEvent.findFirst.mockImplementation(
+        async (a: { where: { appListingId?: string } }) =>
+          a.where.appListingId === APP_ID ? { id: 'alme_old' } : null
+      );
+      await expect(purge()).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+      expectNothingDeleted();
+    });
+
+    it.each(['draft', 'pending', 'rejected'])(
+      'a never-live connect listing (%s) is still purged',
+      async (status) => {
+        mockRead.appListing.findUnique.mockResolvedValueOnce(connect(status));
+        mockWrite.appListing.findUnique.mockResolvedValueOnce(connect(status));
+        await expect(purge()).resolves.toEqual({ appListingId: APP_ID, purged: true });
+        expect(mockWrite.appListing.deleteMany).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('a removed off-site listing with no connect client is still purged', async () => {
+      mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+      mockWrite.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+      mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ id: 'alme_old' });
+      await expect(purge()).resolves.toEqual({ appListingId: APP_ID, purged: true });
+      expect(mockWrite.appListing.deleteMany).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
