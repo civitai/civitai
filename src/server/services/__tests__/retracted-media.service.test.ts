@@ -568,8 +568,8 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
     await expectTiers('none', [ids.retracted]);
   });
 
-  // 🔴 Not a denied one (Moderation Lead ruling, 2026-11-20): a url can be capped at Denied for a
-  // hold on a row that has since been deleted, and nothing here can see that row any more.
+  // 🔴 Do not widen to Denied: a url can be capped at Denied for a hold on a row that has since been
+  // deleted, and nothing here can see that row any more.
   it('refuses a denied url, one the CDN still serves, and one whose scan is not final', async () => {
     await expectTiers('none', [ids.denied, ids.served, ids.pending], leg);
   });

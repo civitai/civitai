@@ -15,7 +15,7 @@ const features: Record<string, boolean> = {
 };
 const viewer = { isModerator: false };
 /** Whether the mocked CDN media refuses to load. */
-const cdn = { refuses: false };
+const cdn = { refuses: false, failedBeforeAttach: null as HTMLImageElement | null };
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
@@ -60,10 +60,18 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => {
   const { useEffect } = await import('react');
-  function EdgeMedia2({ onError }: { onError?: (e: { target: EventTarget | null }) => void }) {
+  function EdgeMedia2({
+    onError,
+    mediaRef,
+  }: {
+    onError?: (e: { target: EventTarget | null }) => void;
+    mediaRef?: [HTMLImageElement | null, (img: HTMLImageElement | null) => void];
+  }) {
     useEffect(() => {
       if (cdn.refuses) onError?.({ target: null });
-    }, [onError]);
+      // As EdgeMedia does: the element, once mounted, whatever already happened to it.
+      if (cdn.failedBeforeAttach) mediaRef?.[1](cdn.failedBeforeAttach);
+    }, [onError, mediaRef]);
     return (
       <div
         data-testid="cdn-mock"
@@ -273,6 +281,20 @@ describe('a scanned image the CDN refuses', () => {
     features.modRetractedMedia = false;
     features.modRetractedMediaCdnLeg = false;
     cdn.refuses = false;
+    cdn.failedBeforeAttach = null;
+  });
+
+  // A server-rendered image can fail before hydration attaches onError, and that event is not replayed.
+  test("moves a moderator's card whose image failed before it was attached", async () => {
+    setUp(true, true);
+    cdn.refuses = false;
+    cdn.failedBeforeAttach = await new Promise<HTMLImageElement>((resolve) => {
+      const img = new Image();
+      img.onerror = () => resolve(img);
+      img.src = '/__missing__.png';
+    });
+    await renderScanned();
+    await expect.poll(routeImg).not.toBeNull();
   });
 
   test("moves a moderator's card to the retracted-media route", async () => {
