@@ -44,6 +44,7 @@ import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
 import { capNestedImages } from '~/server/utils/browsing-level';
 import {
+  bountyImageNsfwLevel,
   bountyNsfwFlagLevel,
   getTextRatedBountyLevels,
   mayBeTextRated,
@@ -125,17 +126,15 @@ export const getInfiniteBountiesHandler = async ({
             { ...item, moderatorNsfwLevel },
             textRated.get(item.id)
           );
-          const unrated = moderatorNsfwLevel == null && !textRated.has(item.id);
           const itemImages = capNestedImages(
             (images[item.id] ?? []).filter(showsImage).map((image) => ({
               ...image,
               tagIds: image.tags.map((x) => x.id),
-              nsfwLevel:
-                flagLevel == null
-                  ? image.nsfwLefel
-                  : unrated
-                  ? NsfwLevel.XXX
-                  : Math.max(image.nsfwLefel, flagLevel),
+              nsfwLevel: bountyImageNsfwLevel(
+                { ...item, moderatorNsfwLevel },
+                textRated.get(item.id),
+                image.nsfwLefel
+              ),
             })),
             ctx
           );
