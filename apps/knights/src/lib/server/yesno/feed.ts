@@ -50,17 +50,20 @@ function unanswered(
           )
         )
       )
-      .where((eb) =>
-        // The same words about the same image under another id are the same question.
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom('KnightsVote as v')
-              .innerJoin('KnightsQueueItem as o', 'o.id', 'v.itemId')
-              .select(sql<number>`1`.as('one'))
-              .where('v.playerId', '=', userId)
-              .whereRef('o.imageId', '=', 'i.imageId')
-              .whereRef('o.prompt', '=', 'i.prompt')
+      // The same words about the same image under another id are the same question, except for tag review: a re-flagged
+      // tag is asked again as a new item (a new episode) with the same words, and is judged afresh.
+      .$if(axis !== TAG_REVIEW_KEY, (qb) =>
+        qb.where((eb) =>
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom('KnightsVote as v')
+                .innerJoin('KnightsQueueItem as o', 'o.id', 'v.itemId')
+                .select(sql<number>`1`.as('one'))
+                .where('v.playerId', '=', userId)
+                .whereRef('o.imageId', '=', 'i.imageId')
+                .whereRef('o.prompt', '=', 'i.prompt')
+            )
           )
         )
       )

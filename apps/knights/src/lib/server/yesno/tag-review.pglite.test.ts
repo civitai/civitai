@@ -192,6 +192,19 @@ describe('creating tag review items', () => {
 });
 
 describe('a moderator ruling ends the episode', () => {
+  it('reconciles an item of any age: an old one ends when moderators rule, and a re-flag opens episode 2', async () => {
+    await run();
+    await pg.exec(`UPDATE "KnightsQueueItem" SET "createdAt" = now() - interval '90 days'`);
+    await rule(100, 10, false);
+    expect(await run()).toMatchObject({ ruled: 1 });
+    await flag(100, 10);
+    await run();
+    expect((await items()).map((i) => [i.externalId, i.status])).toEqual([
+      ['mod-tag:100:10:1', 'Closed'],
+      ['mod-tag:100:10:2', 'Open'],
+    ]);
+  });
+
   it.each([
     ['cleared', () => rule(100, 10, false)],
     ['disabled', () => rule(100, 10, true)],

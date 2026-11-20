@@ -6,7 +6,12 @@ import { bootTagReview, createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { ensureVotePartitions, MAX_APPLY_ATTEMPTS } from '../queue/queue.service';
 import { runTagReview } from './tag-review';
-import { createTagReviewPort, writeBackTagReviews } from './tag-writeback';
+import {
+  createTagReviewPort,
+  TAG_WRITEBACK_LEASE_MINUTES,
+  TAG_WRITEBACK_TIMEOUT_MS,
+  writeBackTagReviews,
+} from './tag-writeback';
 import { castYesNoVote } from './vote';
 
 const NOW = new Date();
@@ -27,14 +32,16 @@ const fakeFetch: typeof fetch = async (url, init) => {
   return answer();
 };
 const ok = (outcome: string) => () => Response.json({ ok: true, result: { outcome } });
-const port = (o: { endpoint?: string; token?: string } = {}) =>
+const port = (o: { endpoint?: string; token?: string; timeoutMs?: number } = {}) =>
   createTagReviewPort({
     endpoint: 'endpoint' in o ? o.endpoint : 'http://moderator.test',
     token: 'token' in o ? o.token : 'scoped-token',
     fetch: fakeFetch,
+    timeoutMs: o.timeoutMs,
   });
-const writeBack = (o: { at?: Date; enabled?: boolean; endpoint?: string; token?: string } = {}) =>
-  writeBackTagReviews(db, port(o), { now: o.at ?? NOW, enabled: o.enabled ?? true });
+const writeBack = (
+  o: { at?: Date; enabled?: boolean; endpoint?: string; token?: string; timeoutMs?: number } = {}
+) => writeBackTagReviews(db, port(o), { now: o.at ?? NOW, enabled: o.enabled ?? true });
 
 beforeAll(async () => {
   ({ pg, db } = await createQueueDb());
@@ -191,6 +198,38 @@ describe('writing a tag review consensus back', () => {
     });
     await writeBack({ at: new Date(at + 7 * 3_600_000) });
     expect(calls).toHaveLength(MAX_APPLY_ATTEMPTS);
+  });
+
+  it('gives up on a call that does not answer before the lease ends, counting it as a failure', async () => {
+    expect(TAG_WRITEBACK_TIMEOUT_MS).toBeLessThan(TAG_WRITEBACK_LEASE_MINUTES * 60_000);
+    const id = await settled(['yes', 'yes']);
+    const hanging: typeof fetch = (url, init) =>
+      new Promise((_, reject) => {
+        calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    const result = await writeBackTagReviews(
+      db,
+      createTagReviewPort({ endpoint: 'http://m.test', token: 't', fetch: hanging, timeoutMs: 20 }),
+      { now: NOW, enabled: true }
+    );
+    expect(result).toMatchObject({ failed: 1 });
+    expect(await item(id)).toMatchObject({ applyAttempts: 1, appliedAt: null });
+  });
+
+  it('never overwrites a result another tick already recorded as applied', async () => {
+    const id = await settled(['yes', 'yes']);
+    let nested = false;
+    answer = async () => {
+      if (nested) return Response.json({ ok: true, result: { outcome: 'applied' } });
+      nested = true;
+      // While this call hangs past its lease, a later tick claims the item and applies it.
+      await writeBack({ at: LATER });
+      return Response.json({ ok: true, result: { outcome: 'already-ruled' } });
+    };
+    await writeBack();
+    expect(calls).toHaveLength(2);
+    expect(await item(id)).toMatchObject({ reason: null, appliedAt: expect.any(Date) });
   });
 
   it('makes no call with the switch off', async () => {

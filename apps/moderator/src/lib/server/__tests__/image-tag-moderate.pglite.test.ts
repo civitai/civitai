@@ -9,7 +9,10 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
-const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
+const { dbHandle, h } = vi.hoisted(() => ({
+  dbHandle: { current: null as unknown },
+  h: { tagRules: '[]', reindexFails: false },
+}));
 
 vi.mock('../db', () => ({
   get dbRead() {
@@ -20,13 +23,15 @@ vi.mock('../db', () => ({
   },
 }));
 // Process boundaries: Redis (tag rules cache), Meilisearch, the CDN and the reindex queue.
-vi.mock('../redis', () => ({ getRedis: () => ({ get: async () => '[]' }) }));
+vi.mock('../redis', () => ({ getRedis: () => ({ get: async () => h.tagRules }) }));
 vi.mock('../search-index', () => ({ syncSearchIndexBulk: vi.fn() }));
 vi.mock('../cache', () => ({ bustImageTagCaches: vi.fn(async () => undefined) }));
 vi.mock('../thumbnail-cache', () => ({ invalidateThumbnails: vi.fn(async () => undefined) }));
 vi.mock('../profile-picture-cache', () => ({ bustProfilePictures: vi.fn(async () => undefined) }));
 vi.mock('../image-models-reindex', () => ({
-  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async () => {
+    if (h.reindexFails) throw new Error('reindex queue down');
+  }),
 }));
 vi.mock('../axiom', () => ({ logAxiomError: vi.fn(async () => undefined) }));
 
@@ -85,6 +90,8 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  h.tagRules = '[]';
+  h.reindexFails = false;
   await pg.exec(`
     TRUNCATE "TagsOnImageNew", "Image", "Post", "Tag", "CsamReport", "EvidenceHeldUser", "Report",
       "ImageReport", "ModActivity", "ImageTagForReview";
@@ -222,6 +229,30 @@ describe('moderateImageTags guarded (Knights write-back)', () => {
     await pg.query(`SELECT upsert_tag_on_image(100, 12)`);
     expect(await guarded(true, { settledAtMinimum: true })).toMatchObject({ outcome: 'applied' });
     expect(await level()).toBe(X);
+  });
+});
+
+describe('moderateImageTags guarded, with tag rules', () => {
+  it.each([
+    ['an Append rule would also write another tag', 'Append'],
+    ['a Replace rule would write another tag instead', 'Replace'],
+  ])('is ineligible and changes nothing when %s', async (_, type) => {
+    h.tagRules = JSON.stringify([{ fromId: 11, toId: 10, type }]);
+    expect(await guarded(true)).toMatchObject({ outcome: 'ineligible' });
+    expect(await tagRow(100, 10)).toEqual({ disabled: false, needsReview: true });
+    expect(await tagRow(100, 11)).toEqual({ disabled: false, needsReview: false });
+    expect(await activities()).toEqual([]);
+  });
+});
+
+describe('moderateImageTags guarded, when a side effect fails after the write', () => {
+  it('still records the moderateTagKono history row for the applied ruling', async () => {
+    h.reindexFails = true;
+    await expect(guarded(true)).rejects.toThrow('reindex queue down');
+    expect(await tagRow(100, 10)).toEqual({ disabled: true, needsReview: false });
+    expect(await activities()).toEqual([
+      { userId: PLAYER, activity: 'moderateTagKono', entityId: 100 },
+    ]);
   });
 });
 

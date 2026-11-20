@@ -3,7 +3,7 @@ import { modReviewEligibleImage, removalLowersLevel } from '@civitai/db/knights'
 import type { ImageTagModerateResult } from '@civitai/moderation';
 import { dbRead, dbWrite } from './db';
 import { takePage } from './keyset-page';
-import { recordModActivity } from './mod-activity';
+import { insertModActivity, recordModActivity } from './mod-activity';
 import {
   afterTagWrite,
   upsertTagsOnImageNew,
@@ -135,10 +135,14 @@ export async function moderateImageTags({
   if (onlyIfFlagged) {
     const [tagId] = tagIds ?? [];
     if (tagIds?.length !== 1) throw new Error('A guarded tag write takes exactly one tag.');
-    const result = await writeFlaggedTag({ imageId, tagId, disable, settledAtMinimum });
-    if (result.outcome !== 'applied') return { tagIds: [], ...result };
-    await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity });
-    return { tagIds: [tagId], ...result };
+    const result = await writeFlaggedTag({
+      imageId,
+      tagId,
+      disable,
+      settledAtMinimum,
+      activity: { userId, entityType: 'image', entityId: imageId, activity },
+    });
+    return { tagIds: result.outcome === 'applied' ? [tagId] : [], ...result };
   }
 
   let targets = tagIds ?? [];
@@ -179,15 +183,21 @@ async function writeFlaggedTag({
   tagId,
   disable,
   settledAtMinimum,
+  activity,
 }: {
   imageId: number;
   tagId: number;
   disable: boolean;
   settledAtMinimum: boolean;
+  /** Written in the same transaction as the tag, so a failing side effect afterwards cannot lose the history row. */
+  activity: Parameters<typeof insertModActivity>[0];
 }): Promise<GuardedTagOutcome> {
   const items = await withTagRules([
     { imageId, tagId, automated: false, disabled: disable, needsReview: false },
   ]);
+  // A tag rule (Replace, Append) would write tags the guard below never checked.
+  if (items.length !== 1 || items[0].tagId !== tagId || items[0].imageId !== imageId)
+    return { outcome: 'ineligible', reason: 'tag-rules' };
   const outcome = await dbWrite.transaction().execute(async (trx): Promise<GuardedTagOutcome> => {
     const row = await trx
       .selectFrom('TagsOnImageNew')
@@ -214,6 +224,7 @@ async function writeFlaggedTag({
     if (disable && settledAtMinimum && (await removalLowersLevel(trx, imageId, tagId)))
       return { outcome: 'ineligible', reason: 'lowers-level' };
     await writeTagRows(trx, items);
+    await insertModActivity(activity, trx);
     return { outcome: 'applied' };
   });
   if (outcome.outcome === 'applied') await afterTagWrite(items);

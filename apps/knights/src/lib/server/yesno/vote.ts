@@ -67,15 +67,18 @@ export async function castYesNoVote(
         .executeTakeFirst();
       if (!item) return rejected('unavailable');
 
-      // The same words about the same image under another id are the same question to the player.
-      const asked = await trx
-        .selectFrom('KnightsVote as v')
-        .innerJoin('KnightsQueueItem as o', 'o.id', 'v.itemId')
-        .select('v.itemId')
-        .where('v.playerId', '=', input.userId)
-        .where('o.imageId', '=', item.imageId)
-        .where('o.prompt', '=', item.prompt)
-        .executeTakeFirst();
+      // The same words about the same image under another id are the same question to the player. A tag review item is the
+      // exception: each flag episode is asked anew with the same words, and one vote per item is enforced by `insertVote`.
+      const asked =
+        !tagReview &&
+        (await trx
+          .selectFrom('KnightsVote as v')
+          .innerJoin('KnightsQueueItem as o', 'o.id', 'v.itemId')
+          .select('v.itemId')
+          .where('v.playerId', '=', input.userId)
+          .where('o.imageId', '=', item.imageId)
+          .where('o.prompt', '=', item.prompt)
+          .executeTakeFirst());
       if (asked) return rejected('already-voted');
 
       const vote = await insertVote(

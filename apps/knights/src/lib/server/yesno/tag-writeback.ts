@@ -41,10 +41,12 @@ export function createTagReviewPort({
   endpoint,
   token,
   fetch: doFetch = fetch,
+  timeoutMs = TAG_WRITEBACK_TIMEOUT_MS,
 }: {
   endpoint: string | undefined;
   token: string | undefined;
   fetch?: typeof fetch;
+  timeoutMs?: number;
 }): TagReviewPort {
   return {
     async moderate(input) {
@@ -56,6 +58,7 @@ export function createTagReviewPort({
       const client = createModeratorClient({
         endpoint: endpoint.trim(),
         token: token.trim(),
+        timeoutMs,
         fetch: (url, init) =>
           doFetch(url, init).catch((error: unknown) => {
             refused = isConnectionRefused(error);
@@ -78,7 +81,10 @@ export function createTagReviewPort({
   };
 }
 
-const LEASE_MINUTES = 2;
+/** How long a claim holds an item before another tick may take it. */
+export const TAG_WRITEBACK_LEASE_MINUTES = 2;
+/** The moderator call gives up well before the lease ends, so no second tick calls while one is still waiting. */
+export const TAG_WRITEBACK_TIMEOUT_MS = 30_000;
 /** How soon an item waiting on a moderator app that is not ready is tried again. Not counted as an attempt. */
 export const NOT_READY_RETRY_MINUTES = 5;
 
@@ -135,7 +141,7 @@ export async function writeBackTagReviews(
   for (const { id } of due) {
     const claimed = await db
       .updateTable('KnightsQueueItem')
-      .set({ nextAttemptAt: utc(addMinutes(now, LEASE_MINUTES)) })
+      .set({ nextAttemptAt: utc(addMinutes(now, TAG_WRITEBACK_LEASE_MINUTES)) })
       .where('id', '=', id)
       .where('status', '=', 'Consensus')
       .where('appliedAt', 'is', null)
@@ -144,6 +150,23 @@ export async function writeBackTagReviews(
       .returning(['imageId', 'meta', 'minRank', 'resolvedValue', 'resolvedBy', 'applyAttempts'])
       .executeTakeFirst();
     if (!claimed) continue;
+
+    // A moderator ruled after the consensus (the flag cleared, maybe flagged again since): the players' answer is stale.
+    if ((claimed.meta as Record<string, unknown> | null)?.[EPISODE_ENDED_META_KEY] === true) {
+      const stamped = await db
+        .updateTable('KnightsQueueItem')
+        .set({
+          appliedAt: utc(now),
+          nextAttemptAt: null,
+          reason: 'already-ruled',
+          updatedAt: utc(now),
+        })
+        .where('id', '=', id)
+        .where('appliedAt', 'is', null)
+        .executeTakeFirst();
+      if (Number(stamped.numUpdatedRows) > 0) result.skipped++;
+      continue;
+    }
 
     const tagId = tagIdOf(claimed.meta);
     const answers = await db
@@ -164,7 +187,7 @@ export async function writeBackTagReviews(
         settledAtMinimum: settledAtNeeded(answers, claimed.minRank),
       });
       const endsEpisode = answer.outcome === 'applied' || answer.outcome === 'already-ruled';
-      await db
+      const recorded = await db
         .updateTable('KnightsQueueItem')
         .set({
           appliedAt: utc(now),
@@ -174,7 +197,11 @@ export async function writeBackTagReviews(
           ...(endsEpisode ? { meta: mergeMeta({ [EPISODE_ENDED_META_KEY]: true }) } : {}),
         })
         .where('id', '=', id)
-        .execute();
+        // Another tick may have recorded a result while this call waited; the first one stands.
+        .where('appliedAt', 'is', null)
+        .executeTakeFirst()
+        .then((r) => Number(r.numUpdatedRows) > 0);
+      if (!recorded) continue;
       if (answer.outcome === 'applied') result.applied++;
       else result.skipped++;
     } catch (error) {
@@ -188,6 +215,7 @@ export async function writeBackTagReviews(
           .updateTable('KnightsQueueItem')
           .set({ nextAttemptAt: utc(addMinutes(now, NOT_READY_RETRY_MINUTES)) })
           .where('id', '=', id)
+          .where('appliedAt', 'is', null)
           .execute();
         continue;
       }
@@ -207,6 +235,7 @@ export async function writeBackTagReviews(
           ...(exhausted ? { reason: 'attempts-exhausted' } : {}),
         })
         .where('id', '=', id)
+        .where('appliedAt', 'is', null)
         .execute();
       if (exhausted) result.exhausted++;
       else result.failed++;

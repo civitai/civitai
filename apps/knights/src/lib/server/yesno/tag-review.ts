@@ -6,7 +6,6 @@ import {
   modReviewEligibleImage,
   servableImage,
 } from '@civitai/db/knights';
-import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import { staffedRanks } from '../queue/queue.service';
@@ -17,7 +16,6 @@ import { YESNO_AUDIENCE } from './keys';
 export const TAG_REVIEW_RANK = 'Paladin';
 /** Set on an item once its tag stopped being flagged (a ruling, either side): a re-flag then opens the next episode. */
 export const EPISODE_ENDED_META_KEY = 'episodeEnded';
-const EPISODE_WATCH_DAYS = 30;
 
 export type TagReviewMeta = { tagId?: unknown; episode?: unknown; episodeEnded?: unknown };
 
@@ -49,7 +47,7 @@ export type TagReviewResult = {
 /**
  * One tick of the moderator tag review source.
  *
- * First, every item of the last 30 days whose tag is no longer flagged (a moderator ruled, or the tag was disabled or
+ * First, every item not yet ended whose tag is no longer flagged (a moderator ruled, or the tag was disabled or
  * removed) ends its episode: an Open one is closed `moderator-ruled` (its votes inconclusive), a finished one is only
  * stamped. This runs with the switch off too.
  *
@@ -157,7 +155,6 @@ async function createEpisodes(
 }
 
 async function endEpisodes(db: Kysely<DB>, now: Date, limit: number, result: TagReviewResult) {
-  const since = new Date(now.getTime() - EPISODE_WATCH_DAYS * 86_400_000);
   const done = await db
     .selectFrom('KnightsQueueItem as i')
     .select(['i.id', 'i.status', 'i.externalId'])
@@ -165,7 +162,6 @@ async function endEpisodes(db: Kysely<DB>, now: Date, limit: number, result: Tag
     .where('i.minRank', '=', TAG_REVIEW_RANK)
     .where('i.audience', '=', YESNO_AUDIENCE.players)
     .where('i.source', '=', MOD_TAG_REVIEW_SOURCE)
-    .where('i.createdAt', '>', utc(since))
     .where(sql<SqlBool>`NOT COALESCE(i.meta ? ${sql.lit(EPISODE_ENDED_META_KEY)}, false)`)
     .where((eb) =>
       eb.not(

@@ -151,6 +151,47 @@ describe('serving tag review items', () => {
   );
 });
 
+describe('a re-flagged tag is a new question', () => {
+  it('a Paladin who answered episode 1 is served episode 2 and can answer it', async () => {
+    const first = await createItem();
+    expect(await vote(1, first, 'yes')).toEqual({ status: 'recorded' });
+    // A moderator rules, the tick ends episode 1, and the tag is flagged again.
+    await enable(100, 10);
+    await runTagReview(db, { now: NOW, enabled: true, walk: { after: null } });
+    await flag(100, 10);
+    await runTagReview(db, { now: NOW, enabled: true, walk: { after: null } });
+    const { rows } = await pg.query<{ id: number }>(
+      `SELECT id FROM "KnightsQueueItem" WHERE "externalId" = 'mod-tag:100:10:2'`
+    );
+    const second = rows[0].id;
+    expect(await offer(1)).toMatchObject({ itemId: second });
+    expect(await vote(1, second, 'no')).toEqual({ status: 'recorded' });
+  });
+
+  it('keeps the same-words rule for every other source: a reworded copy of an answered question is refused', async () => {
+    const question = (externalId: string): YesNoRow => ({
+      externalId,
+      imageId: 100,
+      axis: 'violence',
+      audience: 'players',
+      prompt: 'Is blood shown?',
+      yesEffect: null,
+      noEffect: null,
+      meta: {},
+    });
+    await importYesNo(db, [question('v1'), question('v1-copy')]);
+    const { rows } = await pg.query<{ id: number; externalId: string }>(
+      `SELECT id, "externalId" FROM "KnightsQueueItem" ORDER BY id`
+    );
+    expect(await vote(1, rows[0].id, 'yes')).toEqual({ status: 'recorded' });
+    expect(await offer(1, { tagReview: false, share: 1 })).toBeNull();
+    expect(await vote(1, rows[1].id, 'yes')).toMatchObject({
+      status: 'rejected',
+      reason: 'already-voted',
+    });
+  });
+});
+
 describe('deciding tag review items (Paladin: 2 unanimous, then 75% to 4)', () => {
   it('four split votes close no-consensus, never to the Inquisitors', async () => {
     const id = await createItem();
