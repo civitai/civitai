@@ -39,9 +39,26 @@ export function kvRejectedMemo(kv: Kv, collection: string): RejectedMemo {
   };
 }
 
-export async function redisRejectedMemo(): Promise<RejectedMemo> {
+const NO_MEMO: RejectedMemo = { has: async () => new Set(), add: async () => undefined };
+
+/** Without Redis at start, the lane runs with no memo rather than holding up the consumer. */
+export async function redisRejectedMemo(connectTimeoutMs = 10_000): Promise<RejectedMemo> {
   const redis = createEngineCluster(new URL(config.redis.url));
-  await redis.connect();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      redis.connect(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('connect timed out')), connectTimeoutMs);
+      }),
+    ]);
+  } catch (err) {
+    logger.warn({ err }, 'video-sync: refused-media memo unavailable; running without it');
+    void redis.disconnect().catch(() => undefined);
+    return NO_MEMO;
+  } finally {
+    clearTimeout(timer);
+  }
   return {
     ...kvRejectedMemo(redis, config.vectorSync.videoCollection),
     close: async () => void (await redis.quit().catch(() => undefined)),

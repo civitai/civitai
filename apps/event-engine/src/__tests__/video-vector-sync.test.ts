@@ -257,6 +257,28 @@ describe('media the embedder refuses', () => {
     }
   }, 60_000);
 
+  test('an unreadable memo sends the clips rather than failing the sync', async () => {
+    const pg = await pglite(`${video(1)}`);
+    try {
+      const { sent, deps } = fakes(pg);
+      const broken = kvRejectedMemo(
+        {
+          mGet: async () => {
+            throw new Error('redis down');
+          },
+          set: async () => {
+            throw new Error('redis down');
+          },
+        },
+        'c'
+      );
+      await syncIds(getVideoDocs, [1], { ...(deps as object), rejected: broken } as never);
+      expect(sent.map((i) => i.id)).toEqual(['1']);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
   test('the memo matches only the same id and docHash', async () => {
     const memo = new Map<string, string>();
     const m: RejectedMemo = kvRejectedMemo(
