@@ -106,6 +106,7 @@ beforeAll(async () => {
       (7, 'key-7', 307, 'Scanned', NULL, false),
       (28, 'key-28', 328, 'Scanned', NULL, false),
       (29, 'key-29', 329, 'Scanned', NULL, false),
+      (30, 'key-30', 330, 'Scanned', NULL, false),
       (8, 'key-8', 308, 'Scanned', NULL, false),
       (9, 'key-9', 309, 'Scanned', NULL, false),
       (10, 'key-10', 310, 'Pending', NULL, false),
@@ -134,7 +135,8 @@ beforeAll(async () => {
       ('key-21', 'Retracted'), ('key-23', 'Retracted'), ('key-24', 'Retracted'),
       ('key-25', 'Retracted'), ('key-26', 'Retracted'), ('key-27', 'Retracted');
     INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES
-      ('key-28', 'Retracted', now() - interval '1 day', now()), ('key-29', 'Retracted', now(), NULL);
+      ('key-28', 'Retracted', now() - interval '5 minutes', now()), ('key-29', 'Retracted', now(), NULL),
+      ('key-30', 'Retracted', now() - interval '30 seconds', now());
     INSERT INTO "Model" (id, meta) VALUES
       (15, '{"unpublishedReason": "mature-underage"}'), (99, '{}'),
       (26, '{"unpublishedReason": "photo-real-underage"}');
@@ -226,6 +228,8 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
   it('keeps a url retracted by an upgraded deny, or with no retraction time, to cleared moderators', async () => {
     expect(await tierOf(28)).toBe('cleared');
     expect(await tierOf(29)).toBe('cleared');
+    // Within the minute the deny and the retraction are one takedown, allowing for clock skew.
+    expect(await tierOf(30)).toBe('anyMod');
   });
 
   it('is off unless the switch is exactly true', async () => {
