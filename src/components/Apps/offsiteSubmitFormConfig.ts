@@ -27,6 +27,7 @@ import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.cons
 import {
   SCOPE_JUSTIFICATION_MAX_LENGTH,
   SENSITIVE_TOKEN_SCOPES,
+  OFFLINE_ACCESS_JUSTIFICATION_KEY,
   connectScopesSubsetOfCeiling,
   isSensitiveTokenScope,
   tokenScopeKeyByBit,
@@ -507,7 +508,45 @@ export function scopeJustificationError(values: OffsiteSubmitFormValues): string
   if (missingSensitiveJustifications(values).length > 0) {
     return 'Add a justification for each sensitive permission.';
   }
+  if (offlineAccessJustificationMissing(values)) {
+    return 'Explain why your app needs offline access, or untick it.';
+  }
   return undefined;
+}
+
+/**
+ * OFFLINE ACCESS DECLARATION (treated like a sensitive scope). In the form, the `offline_access`
+ * key being PRESENT in `scopeJustifications` is the ticked box; its text is the justification. The
+ * payload keeps it only with text, so a ticked box with no reason blocks the step instead.
+ */
+export function isOfflineAccessDeclaredInForm(values: {
+  scopeJustifications: Record<string, string>;
+}): boolean {
+  return Object.hasOwn(values.scopeJustifications, OFFLINE_ACCESS_JUSTIFICATION_KEY);
+}
+
+/** Tick or untick the declaration. Unticking drops its justification. PURE. */
+export function setOfflineAccessDeclared<V extends { scopeJustifications: Record<string, string> }>(
+  values: V,
+  declared: boolean
+): V {
+  const { [OFFLINE_ACCESS_JUSTIFICATION_KEY]: current, ...rest } = values.scopeJustifications;
+  return {
+    ...values,
+    scopeJustifications: declared
+      ? { ...rest, [OFFLINE_ACCESS_JUSTIFICATION_KEY]: current ?? '' }
+      : rest,
+  };
+}
+
+/** Ticked with no (non-blank) justification. */
+export function offlineAccessJustificationMissing(values: {
+  scopeJustifications: Record<string, string>;
+}): boolean {
+  return (
+    isOfflineAccessDeclaredInForm(values) &&
+    (values.scopeJustifications[OFFLINE_ACCESS_JUSTIFICATION_KEY] ?? '').trim().length === 0
+  );
 }
 
 /**
@@ -520,6 +559,8 @@ export function pruneJustificationsToMask(
   mask: number | bigint
 ): Record<string, string> {
   const keys = new Set(tokenScopeMaskToList(BigInt(mask)).map((s) => s.key));
+  // The offline-access declaration is not a scope bit; it survives any mask.
+  keys.add(OFFLINE_ACCESS_JUSTIFICATION_KEY);
   const out: Record<string, string> = {};
   for (const [key, text] of Object.entries(justifications)) {
     if (keys.has(key)) out[key] = text;
@@ -556,6 +597,8 @@ export function shapeScopeJustifications(
   mask: number | bigint
 ): Record<string, string> {
   const keys = new Set(tokenScopeMaskToList(BigInt(mask)).map((s) => s.key));
+  // The offline-access declaration is not a scope bit; it survives any mask (with text only).
+  keys.add(OFFLINE_ACCESS_JUSTIFICATION_KEY);
   const out: Record<string, string> = {};
   for (const [key, text] of Object.entries(justifications)) {
     const trimmed = text.trim();

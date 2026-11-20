@@ -1,10 +1,20 @@
-import { Alert, Collapse, Group, Stack, Text, Textarea, UnstyledButton } from '@mantine/core';
+import {
+  Alert,
+  Checkbox,
+  Collapse,
+  Group,
+  Stack,
+  Text,
+  Textarea,
+  UnstyledButton,
+} from '@mantine/core';
 import { useDisclosure, useReducedMotion } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronRight } from '@tabler/icons-react';
 import { useState } from 'react';
 import { PERMISSION_GROUP_LABELS } from '~/components/Apps/listingPermissions';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import {
+  OFFLINE_ACCESS_JUSTIFICATION_KEY,
   SCOPE_JUSTIFICATION_MAX_LENGTH,
   isSensitiveTokenScope,
   tokenScopeKeyByBit,
@@ -46,6 +56,7 @@ export function DerivedScopesDisclosure({
   disabled = false,
   intro,
   forceShowErrors = false,
+  onOfflineAccessDeclaredChange,
 }: {
   /** The derived requested-scope mask (= the selected client's `allowedScopes`). */
   requestedScopes: number | bigint;
@@ -61,6 +72,12 @@ export function DerivedScopesDisclosure({
    * error shows only after the input is touched.
    */
   forceShowErrors?: boolean;
+  /**
+   * Renders the OFFLINE-ACCESS declaration (a box + a required justification, treated like a
+   * sensitive scope) when given. The box is ticked while `justifications` carries the
+   * `offline_access` key; this handler adds or removes it.
+   */
+  onOfflineAccessDeclaredChange?: (declared: boolean) => void;
 }) {
   const reduceMotion = useReducedMotion();
   const [otherOpened, { toggle: toggleOther }] = useDisclosure(false);
@@ -204,6 +221,81 @@ export function DerivedScopesDisclosure({
             </div>
           )}
         </Stack>
+      )}
+
+      {onOfflineAccessDeclaredChange && (
+        <OfflineAccessDeclaration
+          justifications={justifications}
+          onDeclaredChange={onOfflineAccessDeclaredChange}
+          onJustificationChange={(text) =>
+            onJustificationChange(OFFLINE_ACCESS_JUSTIFICATION_KEY, text)
+          }
+          disabled={disabled}
+          forceShowErrors={forceShowErrors}
+        />
+      )}
+    </Stack>
+  );
+}
+
+/**
+ * The offline-access declaration: does the app act for users while they are away (a refresh
+ * token, OAuth `offline_access`)? Ticking it requires a justification, as a sensitive scope does;
+ * a moderator approves only with one, and the agent review compares the declaration with what
+ * the OAuth client can actually do.
+ */
+function OfflineAccessDeclaration({
+  justifications,
+  onDeclaredChange,
+  onJustificationChange,
+  disabled,
+  forceShowErrors,
+}: {
+  justifications: Record<string, string>;
+  onDeclaredChange: (declared: boolean) => void;
+  onJustificationChange: (text: string) => void;
+  disabled: boolean;
+  forceShowErrors: boolean;
+}) {
+  const [touched, setTouched] = useState(false);
+  const declared = Object.hasOwn(justifications, OFFLINE_ACCESS_JUSTIFICATION_KEY);
+  const text = justifications[OFFLINE_ACCESS_JUSTIFICATION_KEY] ?? '';
+  const showError = declared && text.trim().length === 0 && (forceShowErrors || touched);
+  return (
+    <Stack gap={6} data-testid="apps-offsite-offline-access">
+      <Checkbox
+        checked={declared}
+        disabled={disabled}
+        onChange={(e) => onDeclaredChange(e.currentTarget.checked)}
+        label={
+          <Group gap={8} wrap="nowrap">
+            <Text size="sm" fw={600} style={{ fontFamily: 'ui-monospace, monospace' }}>
+              {OFFLINE_ACCESS_JUSTIFICATION_KEY}
+            </Text>
+            <SensitiveScopeBadge />
+          </Group>
+        }
+        description="My app acts for users while they are away (it keeps a refresh token). Tick this if your app ever requests offline_access."
+        data-testid="apps-offsite-offline-access-checkbox"
+      />
+      {declared && (
+        <Textarea
+          aria-label="Why your app needs offline access"
+          placeholder="Explain what your app does while the user is away, and why…"
+          autosize
+          minRows={2}
+          maxRows={4}
+          withAsterisk
+          required
+          value={text}
+          onChange={(e) => onJustificationChange(e.currentTarget.value)}
+          onBlur={() => setTouched(true)}
+          maxLength={SCOPE_JUSTIFICATION_MAX_LENGTH}
+          disabled={disabled}
+          error={showError ? 'A justification is required for offline access.' : undefined}
+          description={showError ? undefined : `${text.length}/${SCOPE_JUSTIFICATION_MAX_LENGTH}`}
+          data-testid="apps-offsite-offline-access-justification"
+        />
       )}
     </Stack>
   );

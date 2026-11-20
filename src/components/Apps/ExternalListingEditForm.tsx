@@ -33,6 +33,7 @@ import {
   SOURCE_REPO_HOSTS_LABEL,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
+  setOfflineAccessDeclared,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { DerivedScopesDisclosure } from '~/components/Apps/DerivedScopesDisclosure';
 import { FadeIn } from '~/components/Apps/wizardMotion';
@@ -660,6 +661,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                   requestedScopes={values.requestedScopes}
                   justifications={values.scopeJustifications}
                   onJustificationChange={handleJustificationChange}
+                  onOfflineAccessDeclaredChange={(declared) =>
+                    setValues((v) => setOfflineAccessDeclared(v, declared))
+                  }
                   // 🔴 `scopeLocked`, NOT `materialBlocked` — see `scopeDisclosureLockedForEdit`.
                   // A justification edit is trivial and saves fine on an unpublished listing
                   // while the scope masks agree; it is only unsaveable once they have DRIFTED,

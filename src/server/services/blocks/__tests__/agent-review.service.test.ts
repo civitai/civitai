@@ -828,9 +828,39 @@ describe('startAgentReview — CONNECT lane dispatch', () => {
         reachable: true,
         alwaysOffline: false,
         grants: ['authorization_code', 'refresh_token'],
+        // The fixture's justifications carry no `offline_access` key.
+        declared: false,
       },
       source: { provided: false },
     });
+  });
+
+  it('a DECLARED offline_access: the checks record it, and the runner gets the justification to judge', async () => {
+    mockListingRequestFindUnique.mockResolvedValue(
+      connectRequest({
+        listing: {
+          connectScopeJustifications: {
+            MediaRead: 'to copy your images',
+            offline_access: 'copies new images every night while you sleep',
+          },
+        },
+      })
+    );
+    await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
+    expect(checksRow().checks.offlineAccess).toMatchObject({ reachable: true, declared: true });
+    const { input } = await stagedConnectBundle();
+    expect(input.offlineAccess).toEqual({
+      scope: 'offline_access',
+      reachable: true,
+      alwaysOffline: false,
+      declared: true,
+      justification: 'copies new images every night while you sleep',
+    });
+    // Not mistaken for a scope: the requested-scope list is the mask's scopes only.
+    expect(input.requestedScopes.map((r: { key: string }) => r.key)).toEqual([
+      'ModelsRead',
+      'MediaRead',
+    ]);
   });
 
   it.each([
@@ -839,7 +869,7 @@ describe('startAgentReview — CONNECT lane dispatch', () => {
   ])('grants %j → offline access %j', async (grants, posture) => {
     mockListingRequestFindUnique.mockResolvedValue(connectRequest({ grants }));
     await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
-    expect(checksRow().checks.offlineAccess).toEqual({ ...posture, grants });
+    expect(checksRow().checks.offlineAccess).toEqual({ ...posture, grants, declared: false });
   });
 
   it('no linked source: the checks say so, and the bundle carries the plain statement and no archive', async () => {

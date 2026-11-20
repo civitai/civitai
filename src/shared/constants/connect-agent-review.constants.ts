@@ -1,3 +1,5 @@
+import { OFFLINE_ACCESS_JUSTIFICATION_KEY } from '~/shared/constants/token-scope.constants';
+
 /**
  * The agent review's two LANES, and the flag that opens the connect one.
  *
@@ -30,7 +32,20 @@ export function agentReviewLaneFor(publishRequestId: string): AgentReviewLane {
 }
 
 /** The OAuth scope name an app asks for to get a refresh token (phase 1 of the token work). */
-export const OFFLINE_ACCESS_SCOPE = 'offline_access';
+export const OFFLINE_ACCESS_SCOPE = OFFLINE_ACCESS_JUSTIFICATION_KEY;
+
+/**
+ * A connect listing's offline-access declaration, read from its justification map: declared ⇔ the
+ * `offline_access` key carries a non-empty rationale. A listing from before declarations existed
+ * has no key, and reads as not declared.
+ */
+export function offlineAccessDeclaration(
+  justifications: Record<string, string> | null | undefined
+): { declared: boolean; justification: string | null } {
+  const raw = justifications?.[OFFLINE_ACCESS_JUSTIFICATION_KEY];
+  const text = typeof raw === 'string' ? raw.trim() : '';
+  return text ? { declared: true, justification: text } : { declared: false, justification: null };
+}
 
 // ---------------------------------------------------------------------------
 // What Civitai checks itself (server-written, rendered in the "Checked by Civitai" block)
@@ -61,7 +76,11 @@ export type OfflineAccessPosture = {
  * has no path to that table, so nothing it reports can appear in, edit or imitate this block.
  */
 export type ConnectCivitaiChecks = {
-  offlineAccess: OfflineAccessPosture & { grants: string[] };
+  /**
+   * `declared`: the listing's own declaration. Absent on checks stored before declarations
+   * existed; those render as before, with no mismatch line.
+   */
+  offlineAccess: OfflineAccessPosture & { grants: string[]; declared?: boolean };
   source: ConnectSourceResult;
 };
 
@@ -104,6 +123,27 @@ export function civitaiCheckLines(checks: ConnectCivitaiChecks): CivitaiCheckLin
           text: 'Offline access: not reachable. The OAuth client holds no refresh-token or device grant.',
         }
   );
+  // The declaration against reachability. Both mismatches are flagged; a match is stated so the
+  // reviewer knows the justification is the thing left to judge.
+  if (o.declared === true && !o.reachable)
+    lines.push({
+      tone: 'warn',
+      text:
+        'Declaration MISMATCH: the listing declares offline access, but its OAuth client cannot ' +
+        'get refresh tokens. The declaration does not describe this client.',
+    });
+  else if (o.declared === false && o.reachable)
+    lines.push({
+      tone: 'warn',
+      text:
+        'Declaration MISMATCH: the OAuth client can get refresh tokens, but the listing does NOT ' +
+        'declare offline access. Users are not told this app can act while they are away.',
+    });
+  else if (o.declared === true && o.reachable)
+    lines.push({
+      tone: 'info',
+      text: 'Offline access is declared and reachable. Judge the stated justification.',
+    });
   if (!s.provided) lines.push({ tone: 'warn', text: NO_SOURCE_STATEMENT });
   else if (!s.fetched)
     lines.push({

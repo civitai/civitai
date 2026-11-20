@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import {
   NO_SOURCE_STATEMENT,
   OFFLINE_ACCESS_SCOPE,
+  offlineAccessDeclaration,
   type ConnectCivitaiChecks,
   type ConnectSourceResult,
   type OfflineAccessPosture,
@@ -152,7 +153,13 @@ export function buildConnectReviewInput(
       sensitive: isSensitiveTokenScope(s.bit),
       justification: listing.scopeJustifications?.[s.key] ?? null,
     })),
-    offlineAccess: { scope: OFFLINE_ACCESS_SCOPE, ...offline },
+    // The listing's own declaration and its justification, for the runner to judge against the
+    // stated purpose. Reachability is the client's; the declaration is the author's.
+    offlineAccess: {
+      scope: OFFLINE_ACCESS_SCOPE,
+      ...offline,
+      ...offlineAccessDeclaration(listing.scopeJustifications),
+    },
     source:
       source.provided === false
         ? { provided: false as const, statement: NO_SOURCE_STATEMENT }
@@ -183,6 +190,7 @@ export function connectCivitaiChecks(
     offlineAccess: {
       ...offlineAccessPosture(subject.client.grants),
       grants: [...subject.client.grants],
+      declared: offlineAccessDeclaration(subject.listing.scopeJustifications).declared,
     },
     source,
   };

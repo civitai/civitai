@@ -219,3 +219,28 @@ describe('OffsiteReviewModal — ConnectScopesPanel conditional', () => {
     expect(page.getByTestId('connect-scopes-panel').elements()).toHaveLength(0);
   });
 });
+
+describe('ConnectScopesPanel — offline-access declaration', () => {
+  test('declared: an offline_access row, badged sensitive, with the justification', async () => {
+    renderWithProviders(
+      <ConnectScopesPanel
+        requestedScopes={Number(TokenScope.ModelsRead)}
+        justifications={{ offline_access: 'copies new images every night' }}
+      />
+    );
+    const row = page.getByTestId('connect-offline-access-declared');
+    await expect.element(row).toBeInTheDocument();
+    await expect.element(row.getByText('offline_access')).toBeInTheDocument();
+    await expect.element(row.getByText('copies new images every night')).toBeInTheDocument();
+    expect(page.getByTestId('connect-offline-access-undeclared').elements()).toHaveLength(0);
+  });
+
+  test('not declared (every listing from before this existed): says so', async () => {
+    renderWithProviders(
+      <ConnectScopesPanel requestedScopes={Number(TokenScope.ModelsRead)} justifications={{}} />
+    );
+    await expect
+      .element(page.getByTestId('connect-offline-access-undeclared'))
+      .toHaveTextContent('Offline access (offline_access): not declared.');
+  });
+});

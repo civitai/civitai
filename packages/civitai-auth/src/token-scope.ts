@@ -429,6 +429,15 @@ export function connectScopesSubsetOfCeiling(requested: bigint, allowedScopes: b
 }
 
 /**
+ * The reserved justification key for an OAuth-connect listing's OFFLINE-ACCESS declaration: the
+ * OAuth scope name itself (`offline_access` asks for a refresh token, so the app can act while
+ * the user is away). Present with a non-empty rationale ⇔ the listing declares it. It is never a
+ * TokenScope key (those are PascalCase) and is not part of the requested-scope mask, because
+ * offline access is a grant, not a bit.
+ */
+export const OFFLINE_ACCESS_JUSTIFICATION_KEY = 'offline_access';
+
+/**
  * Validate an OAuth-connect listing's per-scope justifications against its
  * requested-scope mask. Returns an array of human-readable error strings (empty
  * ⇒ valid). Mirrors the App Blocks manifest justification loop
@@ -438,6 +447,9 @@ export function connectScopesSubsetOfCeiling(requested: bigint, allowedScopes: b
  * ≤ SCOPE_JUSTIFICATION_MAX_LENGTH. An empty map (`{}`) is valid — this only
  * CAPTURES the dev's stated rationale, it does not verify it. Justifications for
  * scopes NOT requested are rejected so no dangling rationale reaches the mod.
+ *
+ * The one non-scope key is {@link OFFLINE_ACCESS_JUSTIFICATION_KEY}, the offline-access
+ * declaration: accepted whatever the mask, held to the same non-empty / length rules.
  */
 export function validateConnectScopeJustifications(
   requestedScopes: bigint,
@@ -445,6 +457,16 @@ export function validateConnectScopeJustifications(
 ): string[] {
   const errors: string[] = [];
   for (const [key, value] of Object.entries(justifications)) {
+    if (key === OFFLINE_ACCESS_JUSTIFICATION_KEY) {
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        errors.push(`scopeJustifications["${key}"] must be a non-empty string`);
+      } else if (value.length > SCOPE_JUSTIFICATION_MAX_LENGTH) {
+        errors.push(
+          `scopeJustifications["${key}"] must be ≤${SCOPE_JUSTIFICATION_MAX_LENGTH} chars`
+        );
+      }
+      continue;
+    }
     const bit = Object.hasOwn(TokenScope, key)
       ? TokenScope[key as keyof typeof TokenScope]
       : undefined;

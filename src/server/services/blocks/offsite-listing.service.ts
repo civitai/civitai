@@ -74,6 +74,7 @@ import {
   LEGACY_TOKEN_SCOPE_MASK,
   validateConnectScopeJustifications,
   SENSITIVE_TOKEN_SCOPES,
+  OFFLINE_ACCESS_JUSTIFICATION_KEY,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
 import {
@@ -3429,14 +3430,28 @@ function assertConnectSensitiveScopesJustified(listing: {
   connectScopeJustifications: Prisma.JsonValue | null;
 }): void {
   if (listing.connectClientId == null) return; // external-link listing — no scopes.
-  const sensitiveRequested = BigInt(listing.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
-  if (sensitiveRequested === 0n) return; // nothing sensitive requested.
   const justifications =
     listing.connectScopeJustifications &&
     typeof listing.connectScopeJustifications === 'object' &&
     !Array.isArray(listing.connectScopeJustifications)
       ? (listing.connectScopeJustifications as Record<string, unknown>)
       : {};
+  // OFFLINE ACCESS is treated like a sensitive scope: a listing that declares it must justify it.
+  // A key that is present but blank is a declaration with no reason, and is refused. Not
+  // declaring is allowed (see the PR: `refresh_token` is a default client grant, so requiring a
+  // declaration from every reachable client would block nearly every approval); the agent
+  // review flags a reachable-but-undeclared client instead.
+  if (Object.hasOwn(justifications, OFFLINE_ACCESS_JUSTIFICATION_KEY)) {
+    const raw = justifications[OFFLINE_ACCESS_JUSTIFICATION_KEY];
+    if (!(typeof raw === 'string' && raw.trim().length > 0)) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'offline access is declared but has no justification; add one before approval',
+      });
+    }
+  }
+  const sensitiveRequested = BigInt(listing.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
+  if (sensitiveRequested === 0n) return; // nothing sensitive requested.
   // Each sensitive requested bit is keyed by its TokenScope enum-key (same mapping
   // the author-side justification map uses).
   const missing = tokenScopeMaskToList(sensitiveRequested)
