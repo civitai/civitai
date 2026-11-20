@@ -156,6 +156,8 @@ globalThis.defineRemixApp = (app) => app;
         } catch {
           stop(effect);
         }
+        // The app's getters ran inside firstAnswer: one that took a step has already stopped the run.
+        if (stopped) stop();
         if (!isAnswer(answer)) {
           badAnswer = true;
           stop(effect);
@@ -216,7 +218,8 @@ export async function evaluateRemix(
   let qjs = await create();
   const results: RemixReplayResult[] = [];
   for (const log of args.logs) {
-    const input = JSON.stringify({ source: args.image, log, autoAnswer: args.autoAnswer });
+    // Always an own property: an absent one would be read through a prototype the app can change.
+    const input = JSON.stringify({ source: args.image, log, autoAnswer: args.autoAnswer ?? null });
     // A failed dispose throws SandboxDisposeError: a runner fault, which fails the whole call.
     const { result, poisoned } = evaluateOn(qjs, REMIX_REPLAY_TIMEOUT_MS, (scope) =>
       replay(scope, args.source, input)
