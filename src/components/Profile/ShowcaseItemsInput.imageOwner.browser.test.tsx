@@ -189,6 +189,7 @@ describe('Images search in the showcase picker', () => {
     expect(state.semanticQuery).not.toHaveBeenCalled();
     // Whose images is the session's call: the request names no user.
     expect(state.myImages).toHaveBeenCalledWith(expect.objectContaining({ publishedOnly: true }));
+    expect(state.myImages.mock.calls[0][0]).not.toHaveProperty('userId');
   });
 
   test('on open, it lists more than one page of the caller’s media, videos included', async () => {
