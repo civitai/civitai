@@ -341,7 +341,7 @@ export async function requestServiceDeal({
   expectedPrice: number;
   expectedRevisionsIncluded: number;
   expectedDeliveryDays: number;
-  /** Left out, the offering must have no license, or the terms have changed. */
+  /** Left out, it means no license: a request on an offering that has one gets termsChanged. */
   expectedLicense?: ServiceLicense;
   /** The buyer ticked the license checkbox. */
   licenseAgreed?: boolean;
