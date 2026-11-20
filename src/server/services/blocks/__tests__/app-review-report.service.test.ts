@@ -1,20 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-import {
-  getAgentReport,
-  getPriorAgentReport,
-} from '../app-review-report.service';
+import { getAgentReport, getPriorAgentReport } from '../app-review-report.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindMany = dbMock.dbRead.appReviewAgentReport.findMany;
 const mockFindFirst = dbMock.dbRead.appReviewAgentReport.findFirst;
 
 // Minimal row factory — only the fields the selection logic reads.
-const report = (over: {
-  id: string;
-  version: string;
-  startedAt?: Date;
-  status?: string;
-}) => ({
+const report = (over: { id: string; version: string; startedAt?: Date; status?: string }) => ({
   id: over.id,
   version: over.version,
   status: over.status ?? 'complete',
@@ -38,11 +30,12 @@ describe('getPriorAgentReport', () => {
     expect(prior?.id).toBe('arar_c');
   });
 
-  it('queries only status="complete" and scopes to the slug key', async () => {
+  it('queries only status="complete" on-site reports and scopes to the slug key', async () => {
     mockFindMany.mockResolvedValue([]);
     await getPriorAgentReport({ slug: 's_x', version: '2.0.0' });
     expect(mockFindMany).toHaveBeenCalledWith({
-      where: { slug: 's_x', status: 'complete' },
+      // `kind: 'onsite'` keeps a connect-listing report (placeholder version) out of the chain.
+      where: { slug: 's_x', status: 'complete', kind: 'onsite' },
       orderBy: { startedAt: 'desc' },
       take: 100,
     });
@@ -77,8 +70,16 @@ describe('getPriorAgentReport', () => {
     // The query is bounded/ordered by startedAt desc; the in-app semver sort is
     // authoritative, so the greatest older version wins regardless of fetch order.
     mockFindMany.mockResolvedValue([
-      report({ id: 'arar_newest_started', version: '0.2.0', startedAt: new Date('2026-03-01T00:00:00Z') }),
-      report({ id: 'arar_highest_semver', version: '0.10.0', startedAt: new Date('2026-01-01T00:00:00Z') }),
+      report({
+        id: 'arar_newest_started',
+        version: '0.2.0',
+        startedAt: new Date('2026-03-01T00:00:00Z'),
+      }),
+      report({
+        id: 'arar_highest_semver',
+        version: '0.10.0',
+        startedAt: new Date('2026-01-01T00:00:00Z'),
+      }),
       report({ id: 'arar_mid', version: '0.9.0', startedAt: new Date('2026-02-01T00:00:00Z') }),
     ]);
     const prior = await getPriorAgentReport({ slug: 's_x', version: '1.0.0' });
@@ -93,9 +94,9 @@ describe('getPriorAgentReport', () => {
   });
 
   it('throws on an invalid semver version', async () => {
-    await expect(
-      getPriorAgentReport({ slug: 's_x', version: 'not-a-version' })
-    ).rejects.toThrow(/invalid semver/);
+    await expect(getPriorAgentReport({ slug: 's_x', version: 'not-a-version' })).rejects.toThrow(
+      /invalid semver/
+    );
     expect(mockFindMany).not.toHaveBeenCalled();
   });
 });

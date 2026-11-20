@@ -78,7 +78,9 @@ export async function getPriorAgentReport(
     throw new Error(`getPriorAgentReport: invalid semver version "${version}"`);
   }
 
-  const where = { slug, status: 'complete' as const };
+  // `kind: 'onsite'`: a connect-listing report (kind 'external') is keyed by the listing slug
+  // with a placeholder version, and must never become an on-site app's diff base.
+  const where = { slug, status: 'complete' as const, kind: 'onsite' as const };
 
   // Recency-bounded superset of the semver answer: take the N most recently
   // started complete reports. The true semver-latest-older report is always

@@ -32,6 +32,8 @@ const {
   mockGetLatest,
   mockSign,
   mockDeriveHooks,
+  mockListingRequestFindUnique,
+  mockListingFindUnique,
 } = vi.hoisted(() => ({
   mockEnv: {
     APPS_KUBE_NAMESPACE: 'civitai-apps',
@@ -54,6 +56,9 @@ const {
   mockGetLatest: vi.fn(async () => null as Record<string, unknown> | null),
   mockSign: vi.fn(() => 'callback.token'),
   mockDeriveHooks: vi.fn(() => 'hooks.token'),
+  // Connect lane: the listing publish request, and the manual-apply source-repo column read.
+  mockListingRequestFindUnique: vi.fn(async () => null as Record<string, unknown> | null),
+  mockListingFindUnique: vi.fn(async () => ({ sourceRepoUrl: null as string | null })),
 }));
 
 vi.mock('~/env/server', () => ({ env: mockEnv }));
@@ -63,6 +68,8 @@ vi.mock('~/server/db/client', () => ({
     appBlockPublishRequest: { findUnique: mockFindUnique },
     appBlock: { findFirst: mockAppBlockFindFirst },
     appReviewAgentReport: { findFirst: mockReportFindFirst },
+    appListingPublishRequest: { findUnique: mockListingRequestFindUnique },
+    appListing: { findUnique: mockListingFindUnique },
   },
   dbWrite: {
     appReviewAgentReport: { create: mockCreate, updateMany: mockUpdateMany },
@@ -667,5 +674,278 @@ describe('startAgentReview — targeted re-run', () => {
     const created = createdRow();
     expect(created.scopeVerdicts).toEqual(latestPartial.scopeVerdicts);
     expect(created.securityAudit).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CONNECT LANE — an OAuth-connect listing request through the SAME dispatcher.
+// ---------------------------------------------------------------------------
+
+const ALPR = 'alpr_0123456789ABCDEFGHJKMNPQRS';
+
+const connectRequest = (
+  over: { grants?: string[]; status?: string; listing?: Record<string, unknown> } = {}
+) => ({
+  id: ALPR,
+  kind: 'offsite',
+  slug: 'photo-sync',
+  status: over.status ?? 'pending',
+  changelog: 'first release',
+  appListing: {
+    id: 'apl_LISTING',
+    kind: 'offsite',
+    name: 'Photo Sync',
+    tagline: 'Back up your images',
+    description: 'Copies your Civitai images to your own storage every night.',
+    category: 'tools',
+    externalUrl: null,
+    contentRating: 'g',
+    // ModelsRead (4) | MediaRead (32)
+    connectRequestedScopes: 36,
+    connectScopeJustifications: { MediaRead: 'to copy your images' },
+    connectClient: {
+      id: 'oc_CLIENT',
+      name: 'Photo Sync client',
+      description: 'oauth client for photo sync',
+      redirectUris: ['https://photosync.example/cb'],
+      allowedOrigins: [],
+      grants: over.grants ?? ['authorization_code', 'refresh_token'],
+      isConfidential: true,
+      isVerified: false,
+    },
+    ...over.listing,
+  },
+});
+
+/** The ZIP the connect lane staged for the runner, opened. */
+async function stagedConnectBundle() {
+  const stageCalls = mockStage.mock.calls as unknown as Array<[string, Buffer]>;
+  expect(stageCalls, 'exactly one bundle was staged').toHaveLength(1);
+  const JSZip = (await import('jszip')).default;
+  const zip = await JSZip.loadAsync(stageCalls[0][1]);
+  const input = JSON.parse(await zip.file('connect-review.json')!.async('string'));
+  return { key: stageCalls[0][0], zip, input };
+}
+
+describe('startAgentReview — CONNECT lane dispatch', () => {
+  beforeEach(() => {
+    mockListingRequestFindUnique.mockResolvedValue(connectRequest());
+    mockListingFindUnique.mockResolvedValue({ sourceRepoUrl: null });
+  });
+
+  it('stages a listing review ZIP, inserts an external report row, provisions the shared Job', async () => {
+    const res = await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
+    expect(res).toEqual({ reportId: 'arar_TEST', agentName: agentReviewName(ALPR) });
+
+    // The on-site request table is never read for a connect id.
+    expect(mockFindUnique).not.toHaveBeenCalled();
+    expect(mockReconstruct).not.toHaveBeenCalled();
+    // No version chain for a listing.
+    expect(mockGetPrior).not.toHaveBeenCalled();
+
+    const { key, input } = await stagedConnectBundle();
+    expect(key).toMatch(new RegExp(`^agent-review/${ALPR}-[0-9a-f]{64}\\.zip$`));
+    expect(mockPresign).toHaveBeenCalledWith(key, expect.any(Number));
+    expect(input).toMatchObject({
+      reviewKind: 'connect',
+      slug: 'photo-sync',
+      listing: { name: 'Photo Sync', privacyPolicyUrl: null, privacyPolicyFieldExists: false },
+      oauthClient: { name: 'Photo Sync client', redirectUris: ['https://photosync.example/cb'] },
+      requestedScopes: [
+        { key: 'ModelsRead', justification: null },
+        { key: 'MediaRead', justification: 'to copy your images' },
+      ],
+      offlineAccess: { scope: 'offline_access', reachable: true, alwaysOffline: false },
+    });
+    // The client secret is never selected, so it can never be in the bundle.
+    const select = (mockListingRequestFindUnique.mock.calls as unknown as Array<[any]>)[0][0].select
+      .appListing.select.connectClient.select;
+    expect(select.secret).toBeUndefined();
+
+    const created = createdRow();
+    expect(created).toMatchObject({
+      publishRequestId: ALPR,
+      slug: 'photo-sync',
+      kind: 'external',
+      appBlockId: null,
+      oauthClientId: 'oc_CLIENT',
+      version: '0.0.0',
+      status: 'running',
+      priorReportId: null,
+    });
+    expect(created.bundleSha256).toBe(key.match(/([0-9a-f]{64})\.zip$/)![1]);
+
+    // EXACTLY the on-site contract vars plus AGENT_REVIEW_KIND.
+    expect(jobEnv()).toEqual({
+      AGENT_NAME: agentReviewName(ALPR),
+      PUBLISH_REQUEST_ID: ALPR,
+      APP_SLUG: 'photo-sync',
+      BUNDLE_PRESIGNED_URL: 'https://minio.internal/presigned?sig=x',
+      CALLBACK_URL: 'https://civitai.com/api/internal/blocks/agent-report-callback',
+      CALLBACK_TOKEN: 'callback.token',
+      PRIOR_REPORT_JSON_B64: '',
+      COST_CAP_USD: '2',
+      HOOKS_TOKEN: 'hooks.token',
+      AGENT_REVIEW_KIND: 'connect',
+    });
+    expect(mockSign).toHaveBeenCalledWith({ publishRequestId: ALPR });
+  });
+
+  it('flags offline_access in the scope verdicts and the security audit when the client can refresh', async () => {
+    await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
+    const created = createdRow() as any;
+    expect(created.scopeVerdicts.scopes).toEqual([
+      expect.objectContaining({
+        origin: 'civitai',
+        declared: 'offline_access',
+        sensitive: true,
+        evidence: ['OAuth client grants: authorization_code, refresh_token'],
+        notes:
+          'OFFLINE ACCESS: reachable. The app can ask for offline_access; once a user approves it, ' +
+          'the app holds a refreshable token and can act while the user is away, until they disconnect.',
+      }),
+    ]);
+    expect(created.securityAudit.findings).toContainEqual(
+      expect.objectContaining({
+        origin: 'civitai',
+        severity: 'medium',
+        category: 'oauth-offline-access',
+        title: 'Can act while the user is away (offline_access)',
+      })
+    );
+    expect(created.summaryMd).toContain('OFFLINE ACCESS: reachable.');
+  });
+
+  it('a device-flow client is flagged as ALWAYS offline', async () => {
+    mockListingRequestFindUnique.mockResolvedValue(
+      connectRequest({ grants: ['urn:ietf:params:oauth:grant-type:device_code'] })
+    );
+    await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
+    const created = createdRow() as any;
+    expect(created.scopeVerdicts.scopes[0]).toMatchObject({ sensitive: true });
+    expect(created.securityAudit.findings[0].title).toBe(
+      'Always acts while the user is away (device flow)'
+    );
+  });
+
+  it('a client with no refresh or device grant: offline_access listed, NOT sensitive, no finding', async () => {
+    mockListingRequestFindUnique.mockResolvedValue(
+      connectRequest({ grants: ['authorization_code'] })
+    );
+    await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
+    const created = createdRow() as any;
+    expect(created.scopeVerdicts.scopes[0]).toMatchObject({
+      declared: 'offline_access',
+      sensitive: false,
+      notes:
+        'Offline access: not reachable. The OAuth client holds no refresh-token or device grant.',
+    });
+    expect(created.securityAudit.findings.map((f: { category: string }) => f.category)).toEqual([
+      'listing-claims',
+    ]);
+  });
+
+  it('says plainly that NO source was provided — in the code review, the bundle and the summary', async () => {
+    const NO_SOURCE =
+      'No server source was provided with this submission, so the source review and the token ' +
+      'storage and exfiltration checks did not run. An empty code review here is not a clean result.';
+    await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
+
+    const created = createdRow() as any;
+    expect(created.codeReview.findings).toEqual([
+      expect.objectContaining({
+        origin: 'civitai',
+        title: 'No server source provided',
+        detail: NO_SOURCE,
+      }),
+    ]);
+    expect(created.summaryMd).toContain(NO_SOURCE);
+    const { zip, input } = await stagedConnectBundle();
+    expect(input.source).toEqual({ provided: false, statement: NO_SOURCE });
+    expect(zip.file('source.zip')).toBeNull();
+  });
+
+  it('a linked repo on a host it does not fetch is "linked, not reviewed", never silence', async () => {
+    mockListingFindUnique.mockResolvedValue({
+      sourceRepoUrl: 'https://codeberg.org/ann/photo-sync',
+    });
+    await startAgentReview({ publishRequestId: ALPR, modUserId: 7 });
+    const created = createdRow() as any;
+    expect(created.codeReview.findings[0]).toMatchObject({
+      title: 'Server source linked but not reviewed',
+      evidence: ['https://codeberg.org/ann/photo-sync'],
+    });
+    expect(created.codeReview.findings[0].detail).toContain(
+      'An empty code review here is not a clean result.'
+    );
+  });
+
+  it('refuses a request that is not pending, before staging anything', async () => {
+    mockListingRequestFindUnique.mockResolvedValue(connectRequest({ status: 'approved' }));
+    await expect(startAgentReview({ publishRequestId: ALPR, modUserId: 7 })).rejects.toThrow(
+      /not pending \(status=approved\)/
+    );
+    expect(mockStage).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses an external-LINK listing (no OAuth client): only connect listings are reviewed', async () => {
+    mockListingRequestFindUnique.mockResolvedValue(
+      connectRequest({ listing: { connectClient: null, externalUrl: 'https://photosync.example' } })
+    );
+    await expect(startAgentReview({ publishRequestId: ALPR, modUserId: 7 })).rejects.toThrow(
+      /not an OAuth-connect listing/
+    );
+    expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+  });
+
+  it('refuses with CONFLICT while a review is already running, before staging a bundle', async () => {
+    mockReportFindFirst.mockResolvedValue({ id: 'arar_running' });
+    await expect(startAgentReview({ publishRequestId: ALPR, modUserId: 7 })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect(mockStage).not.toHaveBeenCalled();
+  });
+
+  it('a targeted re-run keeps the carried runner verdicts AND puts the facts back first', async () => {
+    mockGetLatest.mockResolvedValue({
+      model: 'm-prev',
+      scopeVerdicts: {
+        scopes: [
+          { declared: 'MediaRead', justificationAccurate: 'yes' },
+          // A forged "fact" and a runner verdict for offline_access: both dropped.
+          { origin: 'civitai', declared: 'offline_access', sensitive: false },
+          { declared: 'offline_access', sensitive: false },
+        ],
+      },
+      securityAudit: { findings: [] },
+      codeReview: { findings: [] },
+    });
+    await startAgentReview({ publishRequestId: ALPR, modUserId: 7, sections: ['codeReview'] });
+    const created = createdRow() as any;
+    expect(
+      created.scopeVerdicts.scopes.map((s: { declared: string; sensitive?: boolean }) => [
+        s.declared,
+        s.sensitive,
+      ])
+    ).toEqual([
+      ['offline_access', true],
+      ['MediaRead', undefined],
+    ]);
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBe('codeReview');
+  });
+});
+
+describe('startAgentReview — ON-SITE parity with the connect lane present', () => {
+  it('an on-site id never reads the listing tables and its Job carries no AGENT_REVIEW_KIND', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7 });
+    expect(mockListingRequestFindUnique).not.toHaveBeenCalled();
+    expect(mockListingFindUnique).not.toHaveBeenCalled();
+    expect(jobEnv().AGENT_REVIEW_KIND).toBeUndefined();
+    const created = createdRow();
+    expect(created.kind).toBe('onsite');
+    expect(created.summaryMd).toBeUndefined();
+    expect(created.scopeVerdicts).toBeUndefined();
   });
 });

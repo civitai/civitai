@@ -13,23 +13,26 @@ import type * as ImpersonationCheckService from '~/server/services/blocks/app-im
  *   - UPDATE guarded to status='running' — a torn-down/decided review is a no-op
  */
 
-const { mockFlag, mockVerify, mockUpdateMany, mockTs, mockImpersonation } = vi.hoisted(() => ({
-  mockImpersonation: vi.fn(async (_id: string) => 'checked'),
-  mockFlag: { enabled: true },
-  mockVerify: vi.fn((): { ok: boolean; publishRequestId?: string } => ({
-    ok: true,
-    publishRequestId: 'x',
-  })),
-  mockUpdateMany: vi.fn(async (_args: { where: unknown; data: any }) => ({ count: 1 })),
-  // Faithful ±300s stand-in for the reused checkCallbackTimestamp.
-  mockTs: vi.fn((ts: unknown) => {
-    if (ts === undefined || ts === null) return { ok: true };
-    if (typeof ts !== 'number' || !Number.isFinite(ts)) return { ok: false, reason: 'bad' };
-    return Math.abs(Math.floor(Date.now() / 1000) - ts) > 300
-      ? { ok: false, reason: 'skew' }
-      : { ok: true };
-  }),
-}));
+const { mockFlag, mockVerify, mockUpdateMany, mockFindFirst, mockTs, mockImpersonation } =
+  vi.hoisted(() => ({
+    // Connect lane: the running row's seeded sections, read before the update.
+    mockFindFirst: vi.fn(async (_args: unknown) => null as Record<string, unknown> | null),
+    mockImpersonation: vi.fn(async (_id: string) => 'checked'),
+    mockFlag: { enabled: true },
+    mockVerify: vi.fn((): { ok: boolean; publishRequestId?: string } => ({
+      ok: true,
+      publishRequestId: 'x',
+    })),
+    mockUpdateMany: vi.fn(async (_args: { where: unknown; data: any }) => ({ count: 1 })),
+    // Faithful ±300s stand-in for the reused checkCallbackTimestamp.
+    mockTs: vi.fn((ts: unknown) => {
+      if (ts === undefined || ts === null) return { ok: true };
+      if (typeof ts !== 'number' || !Number.isFinite(ts)) return { ok: false, reason: 'bad' };
+      return Math.abs(Math.floor(Date.now() / 1000) - ts) > 300
+        ? { ok: false, reason: 'skew' }
+        : { ok: true };
+    }),
+  }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
@@ -46,7 +49,7 @@ vi.mock('~/server/services/blocks/app-impersonation-check.service', async (impor
   runImpersonationCheckForRequest: mockImpersonation,
 }));
 vi.mock('~/server/db/client', () => ({
-  dbWrite: { appReviewAgentReport: { updateMany: mockUpdateMany } },
+  dbWrite: { appReviewAgentReport: { updateMany: mockUpdateMany, findFirst: mockFindFirst } },
 }));
 
 import handler, {
@@ -382,5 +385,113 @@ describe('the impersonation record is civitai-written only', () => {
       )
     );
     expect(data.securityAudit).toEqual({ findings: [{ severity: 'low', title: 'x' }] });
+  });
+});
+
+describe('CONNECT lane (an alpr_ listing request)', () => {
+  const ALPR = 'alpr_0123456789ABCDEFGHJKMNPQRS';
+  const OFFLINE_FACT = {
+    origin: 'civitai',
+    declared: 'offline_access',
+    kind: 'oauth-grant',
+    sensitive: true,
+    evidence: ['OAuth client grants: refresh_token'],
+    notes: 'OFFLINE ACCESS: reachable.',
+    summaryLine: 'OFFLINE ACCESS: reachable.',
+  };
+  const NO_SOURCE_FACT = {
+    origin: 'civitai',
+    severity: 'info',
+    category: 'source',
+    title: 'No server source provided',
+    detail: 'No server source was provided.',
+    evidence: [],
+    summaryLine: 'No server source was provided.',
+  };
+  const seededRow = {
+    scopeVerdicts: { scopes: [OFFLINE_FACT], overBroad: [], underDeclared: [] },
+    securityAudit: { findings: [] },
+    codeReview: { findings: [NO_SOURCE_FACT], priorFindingsReconciled: [] },
+  };
+
+  beforeEach(() => {
+    mockVerify.mockReturnValue({ ok: true, publishRequestId: ALPR });
+    mockFindFirst.mockResolvedValue(seededRow);
+  });
+
+  it('accepts a listing request id and puts the seeded facts back ahead of the runner output', async () => {
+    const { req, res } = makeReqRes(
+      JSON.stringify({
+        publishRequestId: ALPR,
+        status: 'complete',
+        scopeVerdicts: {
+          scopes: [
+            { declared: 'MediaRead', justificationAccurate: 'yes' },
+            // The runner tries to clear the offline flag, and to forge a fact.
+            { declared: 'offline_access', sensitive: false },
+            { origin: 'civitai', declared: 'ModelsWrite', notes: 'fine' },
+          ],
+        },
+        codeReview: { findings: [] },
+        summaryMd: 'Listing looks consistent.',
+      })
+    );
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { publishRequestId: ALPR, status: 'running' } })
+    );
+    const { where, data } = mockUpdateMany.mock.calls[0][0] as { where: unknown; data: any };
+    expect(where).toEqual({ publishRequestId: ALPR, status: 'running' });
+    expect(data.scopeVerdicts.scopes).toEqual([
+      OFFLINE_FACT,
+      { declared: 'MediaRead', justificationAccurate: 'yes' },
+    ]);
+    // An empty runner code review cannot erase the "no source" statement.
+    expect(data.codeReview.findings).toEqual([NO_SOURCE_FACT]);
+    expect(data.summaryMd).toBe(
+      'Checked by Civitai, not by the review agent:\n' +
+        '- OFFLINE ACCESS: reachable.\n' +
+        '- No server source was provided.\n\n' +
+        'Listing looks consistent.'
+    );
+  });
+
+  it('a section the runner FAILED stays a failure; the summary still carries the facts', async () => {
+    const { req, res } = makeReqRes(
+      JSON.stringify({
+        publishRequestId: ALPR,
+        status: 'failed',
+        codeReview: { error: 'non-json-response' },
+      })
+    );
+    await handler(req, res);
+    const { data } = mockUpdateMany.mock.calls[0][0] as { data: any };
+    expect(data.codeReview).toEqual({ error: 'non-json-response' });
+    expect(data.summaryMd).toContain('- No server source was provided.');
+  });
+
+  it('runs no impersonation check (it reads an on-site request a listing request is not)', async () => {
+    const { req, res } = makeReqRes(JSON.stringify({ publishRequestId: ALPR, status: 'complete' }));
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockImpersonation).not.toHaveBeenCalled();
+  });
+
+  it('an on-site report reads no row before its update and is merged with nothing', async () => {
+    mockVerify.mockReturnValue({ ok: true, publishRequestId: PUBREQ });
+    const { req, res } = makeReqRes(goodBody());
+    await handler(req, res);
+    expect(mockFindFirst).not.toHaveBeenCalled();
+    const { data } = mockUpdateMany.mock.calls[0][0] as { data: any };
+    expect(data.summaryMd).toBe('# Looks fine');
+  });
+
+  it('still refuses an id that is neither shape', async () => {
+    const { req, res } = makeReqRes(
+      JSON.stringify({ publishRequestId: 'alpr_short', status: 'complete' })
+    );
+    await handler(req, res);
+    expect(res.statusCode).toBe(400);
   });
 });
