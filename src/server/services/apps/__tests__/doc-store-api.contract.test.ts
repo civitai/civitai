@@ -3238,7 +3238,136 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     expect(over.body).toMatchObject({ code: 'quota_exceeded' });
   });
 
-  it('a dev, hub or review token cannot import: 403 not_eligible, before any grant is read', async () => {
+  /**
+   * A hub token: the claims `withBlockScope` builds for a hub-issued OAuth bearer of an approved
+   * app (`resolveHubTokenClaims`: `hub_<api key id>` jti, no `dev`). `scopes` is what it carries
+   * after the viewer's scope ledger: `apps:storage:import` only when the viewer granted it.
+   */
+  const hubClaims = (C: AppRow, uid: number, scopes = CONSUMER_SCOPES): BlockTokenClaims => {
+    const iat = Math.floor(Date.now() / 1000);
+    return {
+      iss: 'civitai',
+      aud: 'civitai-app-block',
+      sub: `user:${uid}`,
+      iat,
+      exp: iat + 900,
+      jti: `${HUB_TOKEN_JTI_PREFIX}7713`,
+      blockId: C.blockId,
+      appId: C.appId,
+      appBlockId: C.id,
+      blockInstanceId: `page_${C.id}`,
+      ctx: { entityType: 'none' },
+      scopes,
+      maxBrowsingLevel: 1,
+    };
+  };
+  const hubImport = async (
+    C: AppRow,
+    S: AppRow,
+    collection: string,
+    opts: { uid?: number; scopes?: string[]; op?: 'read' | 'delete' | 'author' } = {}
+  ) => {
+    const own = await resolveStorageAccess(hubClaims(C, opts.uid ?? VIEWER_IDS.v1, opts.scopes), {
+      consentUnavailable: false,
+    });
+    expect(own.tokenKind).toBe('hub');
+    return resolveImportAccess(own, { from: S.blockId, collection, op: opts.op ?? 'read' });
+  };
+
+  it("🔴 a hub token with the viewer's full grant imports, as the viewer, into the source app", async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    const access = await hubImport(C, S, 'notes');
+    expect(access).toMatchObject({
+      ctx: { appId: S.id, ns: 'prod', viewerUid: VIEWER_IDS.v1 },
+      blockId: S.blockId,
+      tokenKind: 'hub',
+      importedFrom: S.blockId,
+      importer: C.blockId,
+      importAccess: 'readwrite',
+      // No publish consent in the source was given, so none is carried.
+      scopes: ['apps:storage'],
+    });
+    // Another viewer's grant is not this viewer's.
+    await expect(hubImport(C, S, 'notes', { uid: VIEWER_IDS.v2 })).rejects.toMatchObject({
+      code: 'consent_required',
+    });
+  });
+
+  it('🔴 a hub token is refused exactly as a block token is, at every check the import rests on', async () => {
+    const { S, C, N } = importApps();
+    const blockRefusal = async (app: AppRow, collection: string, scopes = CONSUMER_SCOPES) =>
+      (
+        await call({
+          token: await as(app, VIEWER_IDS.v1, scopes),
+          method: 'GET',
+          path: `/${collection}/k1`,
+          query: { from: S.blockId },
+        })
+      ).body as { code: string; details?: unknown };
+    const hubRefusal = async (app: AppRow, collection: string, scopes = CONSUMER_SCOPES) => {
+      const err = (await hubImport(app, S, collection, { scopes }).then(
+        () => null,
+        (e: unknown) => e
+      )) as { code: string; details?: unknown } | null;
+      expect(err, `${app.blockId}/${collection} was not refused`).not.toBeNull();
+      return { code: err!.code, details: err!.details };
+    };
+
+    // No per-source grant: the same consent_required, naming the scope and the source.
+    const noGrant = await hubRefusal(C, 'notes');
+    expect(noGrant).toEqual({
+      code: 'consent_required',
+      details: { scope: IMPORT_SCOPE, from: S.blockId },
+    });
+    expect(await blockRefusal(C, 'notes')).toMatchObject(noGrant);
+
+    await grant(VIEWER_IDS.v1, C, S);
+    // The viewer never granted apps:storage:import itself (the ledger withheld it from the token).
+    const noScope = await hubRefusal(C, 'notes', ['apps:storage']);
+    expect(noScope.code).toBe('consent_required');
+    expect(await blockRefusal(C, 'notes', ['apps:storage'])).toMatchObject({ code: noScope.code });
+    // A collection the source does not export.
+    const secret = await hubRefusal(C, 'secret');
+    expect(secret.code).toBe('not_exportable');
+    expect(await blockRefusal(C, 'secret')).toMatchObject({ code: secret.code });
+    // A collection the consumer's manifest does not import, and an app that imports nothing.
+    expect((await hubRefusal(C, 'extra')).code).toBe('import_not_declared');
+    expect((await hubRefusal(N, 'notes')).code).toBe('import_not_declared');
+    // The source no longer approved.
+    const source = apps.find((a) => a.id === S.id)!;
+    source.status = 'suspended';
+    try {
+      expect(await hubRefusal(C, 'notes')).toEqual({
+        code: 'not_eligible',
+        details: { reason: 'source_not_approved' },
+      });
+    } finally {
+      source.status = 'approved';
+    }
+    // POSITIVE CONTROL: with the grant and the scope, the same hub import resolves.
+    await expect(hubImport(C, S, 'notes')).resolves.toMatchObject({ importedFrom: S.blockId });
+  });
+
+  it('🔴 a hub token writing through a readwrite import needs the source publish consent, as a block token does', async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    expect((await hubImport(C, S, 'board', { op: 'author' })).scopes).toEqual(['apps:storage']);
+    grantPublishInSource(VIEWER_IDS.v1, S);
+    expect((await hubImport(C, S, 'board', { op: 'author' })).scopes).toEqual([
+      'apps:storage',
+      PUBLISH_SCOPE,
+    ]);
+    // A read import refuses every write, for a hub token too.
+    const { S: S2, C: C2 } = importApps('read');
+    await grant(VIEWER_IDS.v1, C2, S2);
+    await expect(hubImport(C2, S2, 'notes', { op: 'author' })).rejects.toMatchObject({
+      code: 'write_policy',
+      details: { reason: 'import_read_only' },
+    });
+  });
+
+  it('a dev or review token cannot import: 403 not_eligible, before any grant is read', async () => {
     const { S, C } = importApps();
     await grant(VIEWER_IDS.v1, C, S);
     await call({
@@ -3283,33 +3412,6 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     expect(
       await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1 AND key = 'devdoc'`, [S.id])
     ).toEqual([]);
-
-    // A hub token: the claims `withBlockScope` builds for a hub-issued OAuth bearer of an
-    // approved app (`resolveHubTokenClaims`: `hub_<api key id>` jti, no `dev`).
-    const iat = Math.floor(Date.now() / 1000);
-    const hub: BlockTokenClaims = {
-      iss: 'civitai',
-      aud: 'civitai-app-block',
-      sub: `user:${VIEWER_IDS.v1}`,
-      iat,
-      exp: iat + 900,
-      jti: `${HUB_TOKEN_JTI_PREFIX}7713`,
-      blockId: C.blockId,
-      appId: C.appId,
-      appBlockId: C.id,
-      blockInstanceId: `page_${C.id}`,
-      ctx: { entityType: 'none' },
-      scopes: CONSUMER_SCOPES,
-      maxBrowsingLevel: 1,
-    };
-    const own = await resolveStorageAccess(hub, { consentUnavailable: false });
-    await expect(
-      resolveImportAccess(own, { from: S.blockId, collection: 'notes', op: 'read' })
-    ).rejects.toMatchObject({
-      code: 'not_eligible',
-      message: 'a hub token cannot reach another app',
-      details: { reason: 'import_hub_token' },
-    });
 
     // A review token reaches no other app at all.
     const pr = {

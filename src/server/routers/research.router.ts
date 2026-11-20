@@ -5,6 +5,8 @@ import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { cachedCounter } from '~/server/utils/cache-helpers';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
@@ -139,6 +141,7 @@ export const researchRouter = router({
         FROM "Image" i
         LEFT JOIN "Post" p ON p.id = i."postId"
         WHERE i.id IN (${Prisma.join(sanityIds)})
+          AND (i."nsfwLevel" & ${getRequestBrowsingLevel(ctx) & allBrowsingLevelsFlag}) != 0
           AND ${Prisma.join(imageVisibilityConditions({}), ' AND ')}
           AND i."tosViolation" = FALSE;
       `;
@@ -211,7 +214,7 @@ export const researchRouter = router({
       SELECT i.id, i.url, i."nsfwLevel"
       FROM "Image" i
       JOIN "Post" p ON i."postId" = p.id
-      WHERE (i."nsfwLevel" & ${input.level}) != 0
+      WHERE (i."nsfwLevel" & ${input.level & getRequestBrowsingLevel(ctx)}) != 0
         AND i.type = 'image'
         AND p."publishedAt" IS NOT NULL
         AND ${Prisma.join(imageVisibilityConditions({}), ' AND ')}
