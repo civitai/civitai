@@ -55,7 +55,9 @@ import {
   PLACEHOLDER_OWNER_ID,
 } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
-import { uniq } from 'lodash-es';
+import { isEqual, uniq } from 'lodash-es';
+import { trackModActivity } from '~/server/services/moderator.service';
+import { notifyModAlert } from '~/server/common/mod-alert';
 import dayjs from '~/shared/utils/dayjs';
 import {
   banReasonDetails,
@@ -240,6 +242,7 @@ import {
   reopenGenerationRestrictionsOfRestoredAccount,
 } from '~/server/services/user-restriction.service';
 import {
+  bustUserCreator,
   bustUserCreatorCache,
   fetchUserCreator,
   getCachedUserCreator,
@@ -477,20 +480,125 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
 export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
+ * Before a moderator changes another user's profile text: when the user is named on a CSAM report,
+ * or `alwaysArchive` is set, `archive` stores the current text and links, and this throws if it
+ * rejects so the change does not happen. A copy that changed during its upload is taken again, at most
+ * three times.
+ */
+export async function archiveProfileBeforeModeratorChange({
+  userId,
+  actorId,
+  fields,
+  archive,
+  alwaysArchive = false,
+}: {
+  userId: number;
+  actorId: number;
+  fields: ProfileClearSnapshot['clearedFields'];
+  archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+  alwaysArchive?: boolean;
+}) {
+  // Every account hold `deleteUser` refuses on (`accountHoldSql`: holding reports, CSAM-flagged or
+  // blocked images, images on a holding report, evidence holds), plus any report naming the user,
+  // held or not: archiving more is the safe side here.
+  const heldSql = accountHoldSql(Prisma.sql`${userId}::int`, await holdMarkerViewExists());
+  const idText = String(userId);
+  const mustArchive =
+    alwaysArchive ||
+    // primary: a report or hold made a moment ago must not let this change skip the archive.
+    !!(
+      await dbWrite.$queryRaw<{ named: boolean }[]>`
+        SELECT (
+          EXISTS (
+            SELECT 1 FROM "CsamReport" r
+            WHERE r."userId" = ${userId}
+              OR r.details ->> 'secondaryUserId' = ${idText}
+          )
+          OR ${heldSql}
+        ) AS named
+      `
+    )[0]?.named;
+  if (mustArchive) {
+    let archived: Pick<ProfileClearSnapshot, 'profile' | 'links'> | null = null;
+    for (let attempt = 0; ; attempt++) {
+      const [profile, links] = await Promise.all([
+        // primary: the archived text must be the text this call changes.
+        dbWrite.userProfile.findUnique({
+          where: { userId },
+          select: PROFILE_CLEAR_SNAPSHOT_SELECT,
+        }),
+        // primary: as above, for the user's social and sponsorship links.
+        dbWrite.userLink.findMany({
+          where: { userId },
+          select: { id: true, url: true, type: true },
+          orderBy: { id: 'asc' },
+        }),
+      ]);
+      const current = { profile, links };
+      if ((!profile && !links.length) || (archived && isEqual(current, archived))) break;
+      if (attempt === 3) throw new Error(`profile ${userId} kept changing while it was archived`);
+      await archive({ userId, actorId, clearedFields: fields, ...current });
+      archived = current;
+    }
+  }
+}
+
+/** A user's profile text and links as stored just before a moderator clear, edit or ban changes them. */
+export type ProfileClearSnapshot = {
+  userId: number;
+  actorId: number;
+  clearedFields: (ProfileClearField | 'links')[];
+  /** Social and sponsorship links: offsite contact and payment details. */
+  links: { id: number; url: string; type: string }[];
+  profile: null | {
+    bio: string | null;
+    message: string | null;
+    messageAddedAt: Date | null;
+    sfwBio: string | null;
+    sfwMessage: string | null;
+    location: string | null;
+    showcaseSections: Prisma.JsonValue;
+  };
+};
+export type ProfileClearField = 'location' | 'bio' | 'message' | 'showcaseSections';
+const PROFILE_CLEAR_SNAPSHOT_SELECT = {
+  bio: true,
+  message: true,
+  messageAddedAt: true,
+  sfwBio: true,
+  sfwMessage: true,
+  location: true,
+  showcaseSections: true,
+} as const;
+
+/**
  * Mod-driven: clear public profile fields (location/bio/message/showcaseSections) on UserProfile.
  * No-op if no UserProfile row exists yet.
  *
  * Clearing bio/message also clears its SFW (civitai.com) override — otherwise the
  * copy a moderator just removed keeps rendering on the green domain.
+ *
+ * For a user with a CSAM report, or when `alwaysArchive` is set, `archive` stores the text first and
+ * the clear does not happen if it rejects. A clear that changed a row records who ran it in
+ * `ModActivity`.
  */
 export async function clearUserProfileFields({
   userId,
   fields = ['location', 'bio', 'message', 'showcaseSections'],
+  actorId,
+  archive,
+  alwaysArchive = false,
 }: {
   userId: number;
-  fields?: Array<'location' | 'bio' | 'message' | 'showcaseSections'>;
+  fields?: ProfileClearField[];
+  actorId: number;
+  archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+  alwaysArchive?: boolean;
 }) {
   if (fields.length === 0) return { updated: false };
+
+  await archiveProfileBeforeModeratorChange({ userId, actorId, fields, archive, alwaysArchive });
+
   const data: Prisma.UserProfileUpdateInput = {};
   if (fields.includes('location')) data.location = null;
   if (fields.includes('bio')) {
@@ -504,6 +612,23 @@ export async function clearUserProfileFields({
   }
   if (fields.includes('showcaseSections')) data.showcaseSections = [];
   const result = await dbWrite.userProfile.updateMany({ where: { userId }, data });
+  // The clear has committed: a failed record must not report it as failed.
+  if (result.count > 0) {
+    try {
+      await trackModActivity(actorId, {
+        entityType: 'user',
+        activity: 'clearProfile',
+        entityId: userId,
+      });
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'clear-user-profile-mod-activity',
+        userId,
+        message: (error as Error).message,
+      });
+    }
+  }
   return { updated: result.count > 0 };
 }
 
@@ -2998,6 +3123,54 @@ async function refreshOwnModelShowcases(userId: number) {
     .catch(handleLogError);
 }
 
+/**
+ * A ban deletes the user's links. For a user named on a CSAM report, or with `alwaysArchive`, the
+ * profile and links are archived first; if that fails the links are kept and the ban still stands.
+ */
+async function deleteBannedUserLinks({
+  userId,
+  actorId,
+  archive = async (snapshot) =>
+    (await import('~/server/services/csam.service-new')).archiveUserProfile(snapshot),
+  alwaysArchive,
+}: {
+  userId: number;
+  actorId: number;
+  archive?: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+  alwaysArchive?: boolean;
+}) {
+  try {
+    await archiveProfileBeforeModeratorChange({
+      userId,
+      actorId,
+      fields: ['links'],
+      archive,
+      alwaysArchive,
+    });
+  } catch (error) {
+    // The links stay as evidence; public link reads already skip a banned user's.
+    logToAxiom({
+      type: 'error',
+      name: 'ban-user-archive-profile',
+      userId,
+      message: (error as Error).message,
+      error,
+    });
+    await notifyModAlert(
+      'Ban kept profile links: archive failed',
+      `User ${userId} is banned, but archiving their profile failed, so their links were kept (hidden from public pages). Archive and remove them once the archive works again.`
+    ).catch(handleLogError);
+    return;
+  }
+  await dbWrite.userLink.deleteMany({ where: { userId } }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'ban-user-delete-user-links',
+      message: (error as Error).message,
+    })
+  );
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -3011,6 +3184,8 @@ export const toggleBan = async ({
   removeComments,
   mediaBlockedByCaller,
   keepProfileLinks,
+  archiveProfile,
+  alwaysArchiveProfile,
   onlyBan,
   banActivity,
 }: ToggleBanUser & {
@@ -3021,6 +3196,10 @@ export const toggleBan = async ({
   mediaBlockedByCaller?: boolean;
   /** Server-only: a ban an unban may need to undo leaves the profile links, which no unban restores. */
   keepProfileLinks?: boolean;
+  /** Server-only: stores the profile and links before they are deleted; defaults to `archiveUserProfile`. */
+  archiveProfile?: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+  /** Server-only: archive the profile and links even when the user is not named on a CSAM report. */
+  alwaysArchiveProfile?: boolean;
   /**
    * Server-only: never lifts a ban. Reads the primary, because a replica that has not yet seen a
    * moderator's ban or unban would otherwise decide the direction, and throws on an account that is
@@ -3077,6 +3256,10 @@ export const toggleBan = async ({
   void (bannedAt ? onStorySparkPostsRestored : onStorySparkPostsHidden)({ authorId: id });
   const { afterAccountBanChanged } = await import('~/server/services/account-standing.service');
   await afterAccountBanChanged(id);
+  // The creator card carries the links, which public reads drop for a banned user.
+  await bustUserCreator(id, { usernames: user.username ? [user.username] : [] }).catch(
+    handleLogError
+  );
 
   // The ban has committed: a throw here would skip every step below and fail an action that took.
   await invalidateSession(id, 'ban').catch((error) =>
@@ -3117,13 +3300,12 @@ export const toggleBan = async ({
       // disappear immediately (replaces a manual Retool DELETE step).
       keepProfileLinks
         ? Promise.resolve()
-        : dbWrite.userLink.deleteMany({ where: { userId: id } }).catch((error) =>
-            logToAxiom({
-              type: 'error',
-              name: 'ban-user-delete-user-links',
-              message: (error as Error).message,
-            })
-          ),
+        : deleteBannedUserLinks({
+            userId: id,
+            actorId: userId,
+            archive: archiveProfile,
+            alwaysArchive: alwaysArchiveProfile,
+          }),
 
       // Revoke every live App Block instance of every block this user PUBLISHES.
       // `invalidateSession` above ends their own browser sessions; it does not touch

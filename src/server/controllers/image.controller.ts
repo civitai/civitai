@@ -69,7 +69,6 @@ import {
 } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
-import { trackModActivity } from '~/server/services/moderator.service';
 import {
   canConfirmReRemoval,
   heldRemovalSummary,
@@ -278,11 +277,13 @@ export const setTosViolationHandler = async ({
 
     // Block image
     // This used to be a delete, but the mod team prefers to have the clean up happen later
-    const written = await writeModeratorBlock([id], {
-      blockedBy: user.id,
-      violationType,
-      reportReason: ReportReason.TOSViolation,
-    });
+    // 🔴 `moderatorId` records that a moderator took this image down, in the block's own transaction
+    // (see writeModeratorBlock). Without it the takedown reads as an automated block.
+    const written = await writeModeratorBlock(
+      [id],
+      { blockedBy: user.id, violationType, reportReason: ReportReason.TOSViolation },
+      { moderatorId: user.id }
+    );
     const held = written.held.has(id);
 
     if (!held) {
@@ -325,22 +326,6 @@ export const setTosViolationHandler = async ({
     // A moderator block outranks an account-deletion grace block; leaving the grace breadcrumbs on
     // would let a later account restore un-block what was just moderated.
     await clearAccountDeletionImageMarkers({ ids: [id] });
-
-    // 🔴 The audit record that a MODERATOR — not automation, not a reporter, not a bulk account
-    // action — took this one image down. The other moderator-driven single-image blocks write it
-    // already (`handleBlockImages` when it is given an id list and a `moderatorId`, and
-    // `blockImage` in the moderator app); this handler, which is `moderatorProcedure`-gated and
-    // acts on exactly one image, did not, so this takedown left no row in the mod audit log at all.
-    //
-    // It is also load-bearing now: `remove-blocked-images` retracts an image's public copies
-    // only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
-    // after the block. Without this call a TOS takedown from the main app is hard-deleted with the
-    // bytes left in place — which is the safe direction, but not the intended one.
-    await trackModActivity(user.id, {
-      entityType: 'image',
-      entityId: id,
-      activity: 'review',
-    });
 
     // Remove image from all collections
     await removeEntityFromAllCollections('image', id);
@@ -1192,6 +1177,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
         ...input,
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
       }),
       // The hat the image detail draws when it is opened on its own, with no feed to seed it.
       // Safe per viewer only while image.get caches nothing per URL.
@@ -1285,7 +1271,11 @@ export const getImageResourcesHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const { resources, visibleSignedOut } = await getImageResources({ ...input, viewer: ctx.user });
+    const { resources, visibleSignedOut } = await getImageResources({
+      ...input,
+      viewer: ctx.user,
+      ownerSeesHeld: isSessionOrFullUserKey(ctx),
+    });
     // The edge cache replays this body to every caller of the URL, signed in or not, so an image
     // only its owner or a moderator may open stays out of it. So does a .com face, which makes the
     // name depend on the viewer.

@@ -1,3 +1,8 @@
+import {
+  OFFLINE_ACCESS_JUSTIFICATION_KEY,
+  offlineAccessJustification,
+} from '~/shared/constants/token-scope.constants';
+
 /**
  * The agent review's two LANES, and the flag that opens the connect one.
  *
@@ -30,7 +35,20 @@ export function agentReviewLaneFor(publishRequestId: string): AgentReviewLane {
 }
 
 /** The OAuth scope name an app asks for to get a refresh token (phase 1 of the token work). */
-export const OFFLINE_ACCESS_SCOPE = 'offline_access';
+export const OFFLINE_ACCESS_SCOPE = OFFLINE_ACCESS_JUSTIFICATION_KEY;
+
+/**
+ * A connect listing's offline-access declaration, read from its justification map: declared ⇔ the
+ * `offline_access` key carries a non-empty rationale. A listing from before declarations existed
+ * has no key, and reads as not declared.
+ */
+export function offlineAccessDeclaration(
+  justifications: Record<string, string> | null | undefined
+): { declared: boolean; justification: string | null } {
+  // The shared rule (`offlineAccessJustification`), so the hub's offline-grant check agrees.
+  const text = offlineAccessJustification(justifications);
+  return text ? { declared: true, justification: text } : { declared: false, justification: null };
+}
 
 // ---------------------------------------------------------------------------
 // What Civitai checks itself (server-written, rendered in the "Checked by Civitai" block)
@@ -61,7 +79,16 @@ export type OfflineAccessPosture = {
  * has no path to that table, so nothing it reports can appear in, edit or imitate this block.
  */
 export type ConnectCivitaiChecks = {
-  offlineAccess: OfflineAccessPosture & { grants: string[] };
+  /**
+   * `declared`: the listing's own declaration. Absent on checks stored before declarations
+   * existed; those render as before, with no mismatch line.
+   */
+  offlineAccess: OfflineAccessPosture & {
+    grants: string[];
+    declared?: boolean;
+    /** Another approved listing on the same client declares it, so the hub still grants it. */
+    anotherListingDeclares?: boolean;
+  };
   source: ConnectSourceResult;
 };
 
@@ -76,6 +103,25 @@ export const NO_SOURCE_STATEMENT =
   'No server source was provided with this submission, so the source review and the token ' +
   'storage and exfiltration checks did not run. An empty code review is not a clean result.';
 
+/**
+ * A listed client that could refresh but whose listing does not declare offline access. With the
+ * hub's enforcement it cannot get offline access at all: no "Stay connected" line, no refresh token.
+ */
+export const UNDECLARED_NO_OFFLINE_STATEMENT =
+  'Offline access: NOT DECLARED, so this app cannot get it. Its OAuth client could get refresh ' +
+  'tokens, but because the listing does not declare offline access, the sign-in screen does not ' +
+  'offer "Stay connected" and no refresh token is issued. Until offline access is a separate ' +
+  'grant on the sign-in service, every app still receives refresh tokens.';
+
+/**
+ * This listing does not declare offline access, but another approved listing on the same OAuth
+ * client does, so the hub (which decides per client) still grants it.
+ */
+export const UNDECLARED_SIBLING_DECLARES_STATEMENT =
+  'Offline access: not declared on this listing, but another listing on this client declares ' +
+  'offline access, so this app can still get it: users are offered "Stay connected" and the app ' +
+  'can hold a refresh token.';
+
 export const STALE_REVIEW_STATEMENT = 'Stale — the listing changed after this review.';
 
 export type CivitaiCheckLine = { tone: 'warn' | 'info'; text: string };
@@ -84,6 +130,15 @@ export type CivitaiCheckLine = { tone: 'warn' | 'info'; text: string };
 export function civitaiCheckLines(checks: ConnectCivitaiChecks): CivitaiCheckLine[] {
   const { offlineAccess: o, source: s } = checks;
   const lines: CivitaiCheckLine[] = [];
+  // The hub offers offline access to a listed connect client only when its APPROVED listing
+  // declares it (auth hub, listing-offline.ts, while offline access is its own grant). So a client
+  // that could refresh but whose listing does not declare it simply cannot get it; that is the
+  // line, not a "reachable" warning. The device flow is not gated there, so it stays ALWAYS.
+  const undeclaredHere = o.declared === false && o.reachable && !o.alwaysOffline;
+  // The hub decides per CLIENT: an undeclared listing whose client has another approved listing
+  // that declares it can still get offline access.
+  const undeclaredSoBlocked = undeclaredHere && o.anotherListingDeclares !== true;
+  const undeclaredButSibling = undeclaredHere && o.anotherListingDeclares === true;
   lines.push(
     o.alwaysOffline
       ? {
@@ -92,6 +147,10 @@ export function civitaiCheckLines(checks: ConnectCivitaiChecks): CivitaiCheckLin
             'Offline access: ALWAYS. The app uses the device flow, so every token it gets can be ' +
             'refreshed and it can act while the user is away, with no consent line to untick.',
         }
+      : undeclaredSoBlocked
+      ? { tone: 'warn', text: UNDECLARED_NO_OFFLINE_STATEMENT }
+      : undeclaredButSibling
+      ? { tone: 'warn', text: UNDECLARED_SIBLING_DECLARES_STATEMENT }
       : o.reachable
       ? {
           tone: 'warn',
@@ -104,6 +163,27 @@ export function civitaiCheckLines(checks: ConnectCivitaiChecks): CivitaiCheckLin
           text: 'Offline access: not reachable. The OAuth client holds no refresh-token or device grant.',
         }
   );
+  // The declaration against what the client can do. Mismatches are flagged; a match is stated so
+  // the reviewer knows the justification is the thing left to judge.
+  if (o.declared === true && !o.reachable)
+    lines.push({
+      tone: 'warn',
+      text:
+        'Declaration MISMATCH: the listing declares offline access, but its OAuth client cannot ' +
+        'get refresh tokens. The declaration does not describe this client.',
+    });
+  else if (o.declared === false && o.alwaysOffline)
+    lines.push({
+      tone: 'warn',
+      text:
+        'Declaration MISMATCH: the app uses the device flow, which always gets refresh tokens, but ' +
+        'the listing does NOT declare offline access.',
+    });
+  else if (o.declared === true && o.reachable)
+    lines.push({
+      tone: 'info',
+      text: 'Offline access is declared and reachable. Judge the stated justification.',
+    });
   if (!s.provided) lines.push({ tone: 'warn', text: NO_SOURCE_STATEMENT });
   else if (!s.fetched)
     lines.push({

@@ -20,7 +20,6 @@ vi.mock('~/server/services/text-scan/actions/csam-hold', () => ({ lockCsamHold: 
 vi.mock('~/server/services/service-offering-moderation.adapter', () => ({
   requeueBlockedServiceOffering: vi.fn(),
 }));
-
 const {
   CSAM_HOLD_BATCH_MAX,
   STALE_HOLD_MESSAGE,

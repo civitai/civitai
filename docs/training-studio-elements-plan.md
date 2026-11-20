@@ -1,6 +1,6 @@
 # Training Studio on Civitai Elements
 
-**Status:** in progress, behind the `training-studio-elements-ui` flag. The Select step (#9552) and the Data step (#9878) are redesigned; the shell and the Review step are next.
+**Status:** in progress, behind the `training-studio-elements-ui` flag. The Select step (#9552) and the Data step (#9878) are redesigned; the shell is in progress; the Review step is next.
 Tracked in HQ as `training_studio_civitai_ww5n`; slice 0 is `elements_training_studio_d595`.
 
 ## Goal
@@ -114,11 +114,14 @@ the embed as well as the standalone app.
 The whole redesign ships dark behind one Flipt flag, `training-studio-elements-ui`
 (`ELEMENTS_UI_FLAG_KEY`), and is opened to testers before anyone else (Luis, 2026-11-19). It has the same
 fail-closed semantics as the Studio's other gates: moderators only until the flag exists in Flipt, then
-its segments decide. The standalone shell evaluates it in `/new`'s load (it is in `hostFlagKeys()`); the
-main-app embed answers it through the `trainingStudioElementsUi` feature (`studioModelFlagFeatures`).
+its segments decide. The standalone shell evaluates it in the root layout load, so every page has it;
+the main-app embed answers it through the `trainingStudioElementsUi` feature (`studioModelFlagFeatures`,
+which is why the key is in `hostFlagKeys()`). Each shell puts it in context once (`+layout.svelte`,
+`StudioApp.svelte`), and everything below reads it through `$lib/elements-ui`.
 
 Each redesigned screen is a separate copy, and the flag picks one, so the old screen stays exactly as
 it was: `SelectStep.svelte` (old) beside `SelectStepElements.svelte` (new), chosen in `TrainingFlow`.
-Shared components read the flag through `$lib/elements-ui` (`StickySummary` renders either panel).
+Shared components render either version (`StickySummary`, `ServiceStatusBanner`, and `StudioHeader`,
+which picks `AppHeader` or `AppHeaderElements`).
 While both copies exist, a fix to a redesigned screen goes into both. The cleanup slice deletes the old
 copies, the context and the flag.

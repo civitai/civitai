@@ -9,6 +9,7 @@
   import { connectSignals, onSignal } from '$lib/signals';
   import { BUZZ_UPDATE_SIGNAL } from '$lib/signal-events';
   import { buzzBalance } from '$lib/buzz-balance.svelte';
+  import { setElementsUi } from '$lib/elements-ui';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
@@ -55,6 +56,8 @@
     publishUrl: (req) => `${data.civitaiUrl}${PUBLISH_PATH}?${publishSearchParams(req)}`,
     modelPageUrl: ({ modelId }) => `${data.civitaiUrl}/models/${modelId}`,
   });
+
+  setElementsUi(() => data.elementsUi);
 
   // Open the shared signals connection once per tab and keep the header balance live: a `buzz:update` fires
   // whenever the user spends or earns, so we re-read the authoritative balance. Best-effort — everything

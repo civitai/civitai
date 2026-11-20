@@ -66,7 +66,9 @@ Where to look, in this order (record each search you ran, including the ones tha
 4. **Search by shape, not by name**: the table, the column, the URL shape, the Mantine component. The
    duplicate is never named like the new code.
 5. **Packages and sibling apps**: `packages/civitai-*`, `apps/*` (Svelte apps have their own
-   conventions, `docs/svelte-app-standard.md`).
+   conventions, `docs/svelte-app-standard.md`). Found it where the new caller cannot import it? The
+   row says "move into a shared package", not "new". A decision two callers make is one shared function.
+   Changing a rule? Add a row for every place that decides it today, each marked changes or why not.
 6. **History**: was it built, tried or rejected before?
    - `gh pr list -R civitai/civitai --state all --search "<concept>" --limit 20`
    - `git log --oneline -S "<symbol>" -- <path>` for removed code

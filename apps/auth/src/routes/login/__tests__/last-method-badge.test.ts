@@ -13,7 +13,7 @@ vi.mock('$lib/server/auth/captcha', () => ({
   isCaptchaEnabled: () => false,
   verifyCaptchaToken: vi.fn(),
 }));
-vi.mock('$lib/server/auth/rate-limit', () => ({ checkRateLimit: vi.fn() }));
+vi.mock('$lib/server/auth/rate-limit', () => ({ consumeRateLimit: vi.fn() }));
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => null }));
 vi.mock('$lib/server/metrics', () => ({
   blockedEmailDomainSignupsTotal: { inc: vi.fn() },

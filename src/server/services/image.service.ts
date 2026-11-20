@@ -1,7 +1,7 @@
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
-import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
+import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
@@ -1359,11 +1359,14 @@ const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needs
 /**
  * Returns the ids the block left held, and those under the moderator-only review flag, read on the
  * primary under the block's row locks: not as a replica last saw them. With `deferFor`, a held image
- * not removed for CSAM gets its deferred-effect row in the same transaction.
+ * not removed for CSAM gets its deferred-effect row in the same transaction. With `moderatorId`, so
+ * does the takedown's ModActivity row: the CDN access sync reads the block as a takedown only with
+ * that row, and a run between the two would deny without ever retracting.
  */
 export async function writeModeratorBlock(
   ids: number[],
-  deferFor?: { blockedBy?: number; violationType?: string; reportReason?: ReportReason }
+  deferFor?: { blockedBy?: number; violationType?: string; reportReason?: ReportReason },
+  { moderatorId }: { moderatorId?: number } = {}
 ): Promise<{
   held: Set<number>;
   underReview: Set<number>;
@@ -1393,6 +1396,12 @@ export async function writeModeratorBlock(
         "metadata" = CASE WHEN jsonb_typeof("metadata") = 'object' THEN "metadata" - 'ruleId' - 'ruleReason' ELSE "metadata" END
       WHERE id = ANY(${ids}::int[])
     `;
+    if (moderatorId)
+      await trackModActivity(
+        moderatorId,
+        { entityType: 'image', entityId: [...ids], activity: 'review' },
+        tx
+      );
     // A statement of its own, after the UPDATE took the row locks: one that waited on a dismissal
     // reads the set-aside row that dismissal committed.
     const rows = await tx.$queryRaw<
@@ -1471,7 +1480,8 @@ export async function handleBlockImages({
     await Promise.all([
       writeModeratorBlock(
         ids,
-        include?.includes('user-notification') ? { blockedBy: moderatorId } : undefined
+        include?.includes('user-notification') ? { blockedBy: moderatorId } : undefined,
+        { moderatorId: imageIds?.length ? moderatorId : undefined }
       )
         .then((written) => {
           ({ held, underReview, removedForCsam, pHashes } = written);
@@ -1550,14 +1560,6 @@ export async function handleBlockImages({
           }).catch()
         )
       );
-    }
-
-    if (moderatorId && !!imageIds?.length) {
-      await trackModActivity(moderatorId, {
-        entityType: 'image',
-        entityId: ids,
-        activity: 'review',
-      });
     }
 
     // A moderator's removal settles the images' open TOS reports, as the reports queue does. Held
@@ -1775,9 +1777,10 @@ export const getImageDetail = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  ownerSeesHeld = false,
+}: GetByIdInput & { userId?: number; isModerator?: boolean; ownerSeesHeld?: boolean }) => {
   // The resource and tag caches are keyed by image id alone, so the viewer check runs first.
-  await assertImageVisibleToViewer({ id, userId, isModerator });
+  await assertImageVisibleToViewer({ id, userId, isModerator, ownerSeesHeld });
   const [resourcesData, tagsData] = await Promise.all([
     imageResourcesCache.fetch([id]),
     imageTagsCache.fetch([id]),
@@ -4299,8 +4302,17 @@ export const getImage = async ({
   id,
   userId,
   isModerator,
-}: GetImageInput & { userId?: number; isModerator?: boolean }) => {
-  const AND = [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })];
+  ownerSeesHeld = false,
+}: GetImageInput & {
+  userId?: number;
+  isModerator?: boolean;
+  /** `imageVisibilityConditions`' `ownerSeesHeld`: the image page's read, not a remix or other use. */
+  ownerSeesHeld?: boolean;
+}) => {
+  const AND = [
+    Prisma.sql`i.id = ${id}`,
+    ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld }),
+  ];
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
@@ -4415,12 +4427,14 @@ export const getImage = async ({
 export const getImageResources = async ({
   id,
   viewer,
-}: GetByIdInput & { viewer?: { id: number; isModerator?: boolean } }) => {
+  ownerSeesHeld = false,
+}: GetByIdInput & { viewer?: { id: number; isModerator?: boolean }; ownerSeesHeld?: boolean }) => {
   const { visibleSignedOut } = await assertImageVisibleToViewer({
     id,
     userId: viewer?.id,
     isModerator: viewer?.isModerator,
     withSignedOutVerdict: true,
+    ownerSeesHeld,
   });
   const resources = await dbRead.$queryRaw<
     (ImageResourceHelperModel & { sfwName: string | null })[]
@@ -4809,7 +4823,8 @@ export const getImagesForPosts = async ({
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
       imageWhere.push(
-        ...pendingOthersImageConditions(userId),
+        // `user` must come from a request that carries the owner's view: their held images show.
+        ...pendingOthersImageConditions(userId, { ownerSeesHeld: true }),
         pendingLevelImageSql(userId, browsingLevel)
       );
     } else {
@@ -5076,6 +5091,7 @@ export const getImagesByEntity = async ({
   include,
   userId,
   isModerator,
+  ownerSeesHeld = false,
 }: {
   id?: number;
   ids?: number[];
@@ -5084,14 +5100,15 @@ export const getImagesByEntity = async ({
   include?: ['tags'];
   userId?: number;
   isModerator?: boolean;
+  /** The request carries the owner's view (`credentialViews`): `userId`'s held images show. */
+  ownerSeesHeld?: boolean;
 }) => {
   if (!id && (!ids || ids.length === 0)) {
     return [];
   }
 
   const AND = entityImageVisibilityConditions({ userId, isModerator });
-  // Owner-hidden review holds are left out here even for the owner; bounty images keep their own rule.
-  if (!isModerator) AND.push(notHeldForReviewSql());
+  if (!isModerator) AND.push(notHeldForReviewSql(ownerSeesHeld ? userId : undefined));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -6942,6 +6959,7 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
     id,
     userId: viewer.user?.id,
     isModerator: viewer.user?.isModerator,
+    ownerSeesHeld: isSessionOrFullUserKey(viewer),
   });
   const showMedia = await viewerCanSeeImageMedia(viewer, visible);
 

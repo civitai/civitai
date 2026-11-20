@@ -76,6 +76,7 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
 vi.mock('../profile-picture-cache', () => ({ bustProfilePictures: vi.fn(async () => undefined) }));
 vi.mock('../mod-activity', () => ({
   recordModActivity: vi.fn(async () => undefined),
+  insertModActivity: vi.fn(async () => 1),
   insertModActivityBatch: vi.fn(async () => undefined),
 }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
