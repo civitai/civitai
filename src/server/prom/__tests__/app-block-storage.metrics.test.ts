@@ -11,6 +11,7 @@ import { seedAppBlockStorageMetrics } from '../app-block-storage.metrics';
  * every later assertion would be about an empty registry.
  */
 
+const OPS = 'civitai_app_block_storage_ops_total';
 const QUOTA_EXCEEDED = 'civitai_app_block_storage_quota_exceeded_total';
 const USER_QUOTA_UNTRACKED = 'civitai_app_block_storage_user_quota_untracked_total';
 const LATENCY = 'civitai_app_block_storage_latency_seconds';
@@ -31,6 +32,21 @@ beforeAll(async () => {
 });
 
 describe('seedAppBlockStorageMetrics', () => {
+  it('a counter child created by real traffic survives re-seeding', async () => {
+    const ops = client.register.getSingleMetric(OPS) as unknown as {
+      inc(labels: { op: string; outcome: string }): void;
+    };
+    ops.inc({ op: 'delete', outcome: 'ok' });
+    ops.inc({ op: 'delete', outcome: 'ok' });
+
+    await seedAppBlockStorageMetrics();
+
+    const v = (await valuesOf(OPS)).find(
+      (x) => x.labels.op === 'delete' && x.labels.outcome === 'ok'
+    );
+    expect(v?.value).toBe(2);
+  });
+
   it('🔴 gives each app_block_id-labelled counter a presence beacon, since its label domain is unbounded', async () => {
     // `app_block_id` is omitted, not placeholdered — prom-client drops an unsupplied label, so
     // the row's `app_block_id` is the empty string. It stays 0 forever; its job is to make
