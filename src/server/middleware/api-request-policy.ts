@@ -1,5 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
+import {
+  CF_VERIFIED_BOT_HEADER,
+  edgeVerifiedBotRefusal,
+} from '~/server/utils/bot-detection/edge-verified-bot';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { verifyBot, type VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 import { getRegion, isAPIAccessBlocked, type RegionInfo } from '~/server/utils/region-blocking';
@@ -81,15 +85,16 @@ export type VerifiedBotHeaderChange = { set: VerifiedBot } | { remove: true } | 
 /**
  * What the verified-crawler request header must become. Only this decision may set it: a value
  * that arrived with the request is removed unless the request verifies as a crawler on a path
- * that uses it. `null` means leave the request as it is.
+ * that uses it, and carries the edge-set header. `null` means leave the request as it is.
  */
 export function resolveVerifiedBotHeader(
   pathname: string,
   getHeader: HeaderGetter
 ): VerifiedBotHeaderChange {
-  const bot = isBotAwarePath(pathname)
-    ? verifyBot(getHeader('user-agent'), getClientIp(getHeader))
-    : null;
+  const bot =
+    isBotAwarePath(pathname) && edgeVerifiedBotRefusal(getHeader(CF_VERIFIED_BOT_HEADER)) === null
+      ? verifyBot(getHeader('user-agent'), getClientIp(getHeader))
+      : null;
   if (bot) return { set: bot };
   return getHeader(VERIFIED_BOT_HEADER) != null ? { remove: true } : null;
 }
