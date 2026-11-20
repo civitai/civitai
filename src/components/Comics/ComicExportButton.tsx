@@ -4,6 +4,7 @@ import { IconDownload, IconFileTypePdf, IconFileZip } from '@tabler/icons-react'
 import { useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useChapterPermission } from '~/components/Comics/comic-chapter.utils';
+import { buildChapterCbz, type ChapterComicInfo } from '~/components/Comics/comic-info.utils';
 import { downloadBlob } from '~/utils/file-utils';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
@@ -11,6 +12,11 @@ interface ChapterExportButtonProps {
   projectName: string;
   chapterName: string;
   panels: { imageUrl: string | null }[];
+  /** Required: every download path must emit ComicInfo.xml. */
+  comicInfo: Pick<
+    ChapterComicInfo,
+    'projectId' | 'writer' | 'chapterPosition' | 'chapterNsfwLevel'
+  >;
 }
 
 async function fetchWithRetry(url: string, retries = 2): Promise<Response> {
@@ -80,7 +86,12 @@ function safeName(name: string) {
  * button + the mobile kebab menu items) share a single implementation
  * instead of replicating the fetch/zip/pdf machinery.
  */
-export function useChapterExport({ projectName, chapterName, panels }: ChapterExportButtonProps) {
+export function useChapterExport({
+  projectName,
+  chapterName,
+  panels,
+  comicInfo,
+}: ChapterExportButtonProps) {
   const [exporting, setExporting] = useState(false);
 
   const filename = `${safeName(projectName)}_${safeName(chapterName)}`;
@@ -88,18 +99,15 @@ export function useChapterExport({ projectName, chapterName, panels }: ChapterEx
   const exportCBZ = async () => {
     try {
       setExporting(true);
-      const JSZip = (await import('jszip')).default;
-      const zip = new JSZip();
-
       const images = await fetchPanelBlobs(panels);
       if (images.length === 0) {
         return;
       }
-      for (let i = 0; i < images.length; i++) {
-        zip.file(`${String(i + 1).padStart(3, '0')}.${images[i].ext}`, images[i].blob);
-      }
-
-      const content = await zip.generateAsync({ type: 'blob' });
+      const content = await buildChapterCbz(
+        images,
+        { ...comicInfo, projectName, chapterName },
+        window.location.origin
+      );
       downloadBlob(content, `${filename}.cbz`);
       showSuccessNotification({ message: 'CBZ file downloaded' });
     } catch (err) {
@@ -180,11 +188,13 @@ export function ChapterExportButton({
   projectName,
   chapterName,
   panels,
+  comicInfo,
 }: ChapterExportButtonProps) {
   const { exporting, exportCBZ, exportPDF } = useChapterExport({
     projectName,
     chapterName,
     panels,
+    comicInfo,
   });
 
   return (
@@ -220,15 +230,21 @@ export function ChapterExportButton({
  * don't need hooks. Renders nothing if the user can't download.
  */
 export function ChapterDownloadButton({
+  projectId,
   projectName,
   projectUserId,
+  writer,
   chapter,
 }: {
+  projectId: number;
   projectName: string;
   projectUserId: number;
+  writer: string | null;
   chapter: {
     id: number;
     name: string;
+    position: number;
+    nsfwLevel: number;
     earlyAccessEndsAt?: Date | string | null;
     panels: { imageUrl: string | null }[];
   };
@@ -252,6 +268,12 @@ export function ChapterDownloadButton({
         projectName={projectName}
         chapterName={chapter.name}
         panels={chapter.panels}
+        comicInfo={{
+          projectId,
+          writer,
+          chapterPosition: chapter.position,
+          chapterNsfwLevel: chapter.nsfwLevel,
+        }}
       />
     </span>
   );

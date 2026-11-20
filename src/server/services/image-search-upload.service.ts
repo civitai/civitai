@@ -145,10 +145,7 @@ const searchingKey = (userId: number) =>
   `${REDIS_KEYS.CACHES.SEARCH_UPLOAD_SEARCHING}:${userId}` as RedisKeyTemplateCache;
 const SEARCHING_HOLD_SECONDS = 60;
 
-/**
- * Runs one of the viewer's upload searches at a time: the daily claim reads then writes its count,
- * so two at once would both pass it. The second is refused while the first runs.
- */
+/** Runs one of the viewer's upload searches at a time: the second is refused while the first runs. */
 export async function withSearchUploadSearch<T>(userId: number, run: () => Promise<T>) {
   // Widened so the reply is read as SET's ('OK' | null), not as the token's template type.
   const token: string = randomUUID();

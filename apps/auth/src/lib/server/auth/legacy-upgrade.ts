@@ -20,9 +20,16 @@ import { setDeviceCookie } from './device';
 import { clearLegacyCookies } from './legacy-cookies';
 import { acceptHubSession, addDeviceFamily, markFamilyLive } from './lineage';
 import { sessions } from './registry';
-import { canHoldSession, getSigner, sessionExpiresIn, setSessionCookie } from './session';
+import {
+  canHoldSession,
+  getSigner,
+  requireLiveSession,
+  sessionExpiresIn,
+  setSessionCookie,
+} from './session';
 import { getOrProduceSessionUser } from './session-producer';
 import { signatureVerifier, verifier } from './verifier';
+import { isUnconfirmedSession } from './unconfirmed-session';
 
 // The hub moves its own session from the shared slot (Domain=<registrable>) to its host-only slot. Before the hub
 // reads the host-only slot first, /authorize copies the shared session into it (preUpgradeHubSession). Once it
@@ -57,7 +64,9 @@ const slotsDiffer = () => hostSessionCookieName() !== sessionCookieName();
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function newUpgrade(from: SessionClaims): Upgrade {
+/** `live`: the revocation-checked claims that authorize the copy (`from` may be signature-only). */
+function newUpgrade(from: SessionClaims, live: SessionClaims): Upgrade {
+  requireLiveSession(live);
   const now = Date.now();
   const { iat0, sid } = familyClaims(from, { clearImpersonation: true, now });
   return {
@@ -111,7 +120,7 @@ export async function preUpgradeHubSession(
 ): Promise<void> {
   if (!slotsDiffer() || shared.impersonatedBy != null || !canHoldSession(user)) return;
   if (await isSameSession(cookies.get(hostSessionCookieName()), shared)) return;
-  const upgrade = newUpgrade(shared);
+  const upgrade = newUpgrade(shared, shared);
   const token = await sign(upgrade);
   await sessions.trackToken(upgrade.jti, Number(upgrade.claims.sub)).catch(() => undefined);
   await recordFamily(cookies, familyId({ ...upgrade.claims, jti: upgrade.jti }));
@@ -193,14 +202,15 @@ export async function upgradeHubSession(
     if (stored) return finish(cookies, j0, await sign(stored), { won: false });
 
     const live = await verifier.verifyToken(sharedToken).catch(() => null);
-    if (!live || !(await acceptHubSession(live))) return null;
+    // Runs on every page request: an unconfirmed session is served as it is, not moved.
+    if (!live || isUnconfirmedSession(live) || !(await acceptHubSession(live))) return null;
 
     if (!(await takeLock(j0.jti))) {
       const winner = await awaitWinner(j0.jti);
       if (winner) return finish(cookies, j0, await sign(winner), { won: false });
       continue;
     }
-    const upgrade = newUpgrade(j0);
+    const upgrade = newUpgrade(j0, live);
     await sessions.trackToken(upgrade.jti, Number(upgrade.claims.sub)).catch(() => undefined);
     await evalSys(
       STORE_SCRIPT,

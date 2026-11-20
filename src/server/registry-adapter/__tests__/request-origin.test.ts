@@ -110,6 +110,35 @@ describe('🔴 a region the site blocks is held to SFW as well', () => {
   });
 });
 
+describe('🔴 a padded or lowercased value is held exactly as its clean form', () => {
+  // Knownness and the lists are judged on one normalised region (normalizeRegion). Before, the
+  // country was trimmed to decide it was known but the lists were read untrimmed, so ` FR` and
+  // `gb\n` counted as known countries, matched no list, and were served unrestricted.
+  it.each([
+    ['a restricted country with a leading space', { 'cf-ipcountry': ' FR' }],
+    ['a restricted country with a trailing newline', { 'cf-ipcountry': 'fr\n' }],
+    ['a blocked country with a leading space', { 'cf-ipcountry': ' GB' }],
+    ['a blocked country lowercased with a trailing newline', { 'cf-ipcountry': 'gb\n' }],
+    [
+      'a restricted US state, lowercased and padded',
+      { 'cf-ipcountry': 'us', 'cf-region-code': ' ny ' },
+    ],
+  ])('%s is held', async (_name, headers) => {
+    const { describeRegion } = await load('FR:2026-01-01,US:NY:2026-01-01', 'GB:2026-01-01');
+    expect(describeRegion({ headers }, NOW).restricted).toBe(true);
+  });
+
+  it('positive control: the same padding on a country no list names is not held', async () => {
+    const { describeRegion } = await load('FR:2026-01-01', 'GB:2026-01-01');
+    expect(describeRegion({ headers: { 'cf-ipcountry': ' DE\n' } }, NOW)).toEqual({
+      country: 'DE',
+      region: undefined,
+      source: 'header',
+      restricted: false,
+    });
+  });
+});
+
 describe('🔴 meta is ignored until REGISTRY_ADAPTER_TRUST_META is 1', () => {
   it.each([
     ['unset', undefined],

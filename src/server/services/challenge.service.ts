@@ -124,6 +124,10 @@ import {
 } from '~/server/games/daily-challenge/challenge-visibility';
 import { isChallengeDetailHidden } from '~/server/games/daily-challenge/challenge-detail-visibility';
 import {
+  getIncompatibleEntryImageIds,
+  INCOMPATIBLE_BASE_MODEL_REASON,
+} from '~/server/games/daily-challenge/challenge-resource-compat';
+import {
   getChallengeExcludedUserIds,
   challengeCreatorBlockSql,
 } from '~/server/services/challenge-block.service';
@@ -3305,6 +3309,7 @@ export async function checkImageEligibility(
   );
 
   const imageMap = new Map(images.map((img) => [img.id, img]));
+  const incompatible = await getIncompatibleEntryImageIds(imageIds, challenge.modelVersionIds, db);
 
   return imageIds.map((imageId) => {
     const image = imageMap.get(imageId);
@@ -3338,6 +3343,8 @@ export async function checkImageEligibility(
           challenge.modelVersionIds.includes(vid)
         );
         reasons.push(claimsEligibleModel ? 'Model not detected' : 'Wrong model');
+      } else if (incompatible.has(imageId)) {
+        reasons.push(INCOMPATIBLE_BASE_MODEL_REASON);
       }
     }
 

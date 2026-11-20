@@ -1265,6 +1265,7 @@ export const comicsRouter = router({
           id: true,
           name: true,
           userId: true,
+          user: { select: { username: true } },
           meta: true,
           chapters: {
             orderBy: { position: 'asc' },
@@ -1313,6 +1314,7 @@ export const comicsRouter = router({
       return {
         id: project.id,
         name: project.name,
+        username: project.user.username,
         meta: parseComicProjectMeta(project.meta),
         chapters: project.chapters,
       };
@@ -1745,8 +1747,8 @@ export const comicsRouter = router({
 
       // For prefiltered sorts the findMany result came back in arbitrary
       // (id-ordered) order — restore the raw-SQL ranking by matching each
-      // project against its position in `prefilteredIds`. After re-sorting,
-      // trim to `limit` and use the next-in-line item's id as the cursor.
+      // project against its position in `prefilteredIds`. Either way the
+      // page is trimmed to `limit` and the cursor is its last shown item.
       if (prefilteredIds) {
         const orderMap = new Map(prefilteredIds.map((id, i) => [id, i]));
         projects.sort(
@@ -1775,8 +1777,9 @@ export const comicsRouter = router({
           }
           projects.length = limit;
         } else {
-          const nextItem = projects.pop()!;
-          nextCursor = nextItem.id;
+          // The last comic shown: the next page's `cursor` + `skip: 1` starts right after it.
+          projects.length = limit;
+          nextCursor = projects[limit - 1].id;
         }
       }
 

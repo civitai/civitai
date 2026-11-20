@@ -3,7 +3,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { constants } from '~/server/common/constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-const session = vi.hoisted(() => ({ user: null as Record<string, unknown> | null }));
+const session = vi.hoisted(() => ({
+  user: null as Record<string, unknown> | null,
+  impersonatedBy: undefined as number | undefined,
+}));
 
 // Module-scope allowlists and the router tree; none of them derive the credential fields.
 vi.mock('~/server/utils/origin-helpers', () => ({
@@ -16,7 +19,9 @@ vi.mock('~/server/utils/server-domain', () => ({
   getAllServerHosts: () => ['civitai.com'],
 }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
-  getServerAuthSession: vi.fn(async () => (session.user ? { user: session.user } : null)),
+  getServerAuthSession: vi.fn(async () =>
+    session.user ? { user: session.user, impersonatedBy: session.impersonatedBy } : null
+  ),
 }));
 vi.mock('~/server/services/feature-flags.service', () => ({
   getFeatureFlagsLazy: vi.fn(() => ({})),
@@ -57,6 +62,17 @@ describe('createContext credential fields', () => {
     };
     const ctx = await createContext({ req: req(credential), res: res() });
     expect(ctx).toMatchObject(credential);
+  });
+
+  it("carries the session's impersonation", async () => {
+    session.user = { id: 42 };
+    session.impersonatedBy = 7;
+    try {
+      expect((await createContext({ req: req(), res: res() })).impersonatedBy).toBe(7);
+    } finally {
+      session.user = null;
+      session.impersonatedBy = undefined;
+    }
   });
 
   it('gives a session the full scope and no key fields', async () => {

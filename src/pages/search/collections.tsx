@@ -138,7 +138,8 @@ export function CollectionHitList() {
                 // Reset values not relevant
                 // Image is filled via images
                 images: hit.images.slice(0, 4),
-                srcs: hit.srcs.slice(0, 4),
+                // A capped or below-every-level viewer's hit carries no srcs (they are unrated).
+                srcs: hit.srcs?.slice(0, 4) ?? [],
                 _count: {
                   items: hit.metrics?.itemCount ?? 0,
                   contributors: hit.metrics?.followerCount ?? 0,

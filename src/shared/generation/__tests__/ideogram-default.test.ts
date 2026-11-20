@@ -9,12 +9,12 @@ const v40 = ideogramVersionIds['v4.0'];
 describe('Ideogram generator default', () => {
   it.each(['txt2img', 'img2img:edit'])('%s neither defaults to nor offers 4.0', (workflow) => {
     const capability = getWorkflowCapability('Ideogram', workflow);
-    expect(capability?.defaultModelId).toBe(ideogramVersionIds['v4.5']);
+    expect(capability?.defaultModelId).toBe(ideogramVersionIds['v4.6']);
     expect(JSON.stringify(capability?.versions)).not.toContain(String(v40));
   });
 
-  it('the locked ecosystem default is 4.5', () => {
+  it('the locked ecosystem default is 4.6', () => {
     const settings = ecosystemSettings.find((s) => s.ecosystemId === ECO.Ideogram);
-    expect(settings?.defaults?.model?.id).toBe(ideogramVersionIds['v4.5']);
+    expect(settings?.defaults?.model?.id).toBe(ideogramVersionIds['v4.6']);
   });
 });

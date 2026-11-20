@@ -7,16 +7,19 @@ A search index of the apps a registry streams. It subscribes to the app entity s
 the registry spec's model-index example.
 
 The `/apps` store reads it for text search when the `app-index-search` Flipt flag is on for the
-viewer (`src/server/services/blocks/app-index-search.service.ts`, `APP_INDEX_URL`).
+viewer (`src/server/services/blocks/app-index-search.service.ts`, `APP_INDEX_URL`). Any failed
+call serves the store's database search instead, and a run of them opens a per-process breaker
+that stops calling the index for a cooldown (`APP_INDEX_BREAKER_FAILURE_THRESHOLD`,
+`APP_INDEX_BREAKER_COOLDOWN_MS`).
 
 ## HTTP
 
-| Route          | What                                                                                                                                                                                    |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Route          | What                                                                                                                                                            |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /search`  | `q`, `kind` (`onsite` / `offsite`), `category`, `limit` (1-50, default 20) → `{results:[{urn, slug, name, tagline, kind, category, rating, iconUrl, creator}]}` |
-| `GET /healthz` | the process is up                                                                                                                                                                       |
-| `GET /readyz`  | 200 once a generation is serving (the first `Live`), 503 before                                                                                                                          |
-| `GET /metrics` | Prometheus (`app_index_*`)                                                                                                                                                              |
+| `GET /healthz` | the process is up                                                                                                                                               |
+| `GET /readyz`  | 200 once a generation is serving (the first `Live`), 503 before                                                                                                 |
+| `GET /metrics` | Prometheus (`app_index_*`)                                                                                                                                      |
 
 `q` matches word by word: every word must be a prefix of a word of the app's name, slug, tagline or
 creator. Results are in relevance order, Postgres `ts_rank` (name above slug and tagline above
@@ -56,8 +59,51 @@ once it treats the path as cacheable: the TTL lives here, and the CDN rule only 
   Writes to a generation also check that this process still owns it (`Postgres.Claim` says exactly
   what that guarantees).
 
-The subscription is anonymous unless `APP_INDEX_REGISTRY_TOKEN` is set, so the registry serves it the
-audience anyone may read: SFW apps only.
+The subscription is anonymous unless `APP_INDEX_REGISTRY_TOKEN` or a client is set, so the registry
+serves it the audience anyone may read: SFW apps only.
+
+### Subscribing as itself (client credentials)
+
+With `APP_INDEX_CLIENT_ID`, `APP_INDEX_CLIENT_SECRET`, `APP_INDEX_TOKEN_URL` and
+`APP_INDEX_TOKEN_RESOURCE` set, the index gets its own access token from the auth hub with the
+OAuth client credentials grant (`internal/token`) and sends it on every subscription.
+`APP_INDEX_TOKEN_RESOURCE` is the resource the token is for (the hub issues a service token only
+for a named resource), and `APP_INDEX_TOKEN_SCOPE` is sent as `scope` when set.
+`APP_INDEX_TOKEN_URL` must be https, or http only to a cluster-local service name (`*.svc`,
+`*.svc.cluster.local`), since the client secret crosses that hop. The token is kept until 30 s
+before it expires.
+
+- A stream that ends with `invalid_token` (the token expired or was revoked) drops the token and
+  subscribes again from the stored cursor, never an empty one, with a new token. This waits the
+  ordinary backoff, which grows while the registry keeps refusing.
+- A token that cannot be fetched opens no subscription and is retried with the same backoff
+  (`app_index_reconnects_total{reason="token"}`). The stored cursor and the serving generation are
+  kept.
+- `app_index_token_fetches_total{outcome}` counts calls to the token endpoint.
+
+Setting a client together with `APP_INDEX_REGISTRY_TOKEN`, or any of these settings without the
+others it needs, refuses to start. Unset, nothing changes: no token is fetched and no
+`Authorization` header is sent.
+
+**Rollout order.** Configure the client last:
+
+1. The auth hub: the index's service client, and `serviceSubjects` and relay listings on the
+   resources its token is exchanged for.
+2. The apps origin: `REGISTRY_ADAPTER_SERVICE_CLIENTS` names the index's client.
+3. Only then this service's client settings, and only once search filters mature apps per viewer.
+
+Configured before steps 1 and 2, every token is refused: the index stops taking in changes and
+keeps retrying with backoff. Its stored cursor and serving generation are kept, and it catches up
+once the steps are done.
+
+**What to expect once it is on:**
+
+- One `cursor_expired` rebuild at switch-on (`app_index_rebuilds_total{reason="cursor_expired"}`).
+  The stored cursor names the anonymous audience, the origin refuses it for the service's, and a
+  new generation is built beside the serving one.
+- After that, `app_index_reconnects_total{reason="auth"}` rises about every 15 minutes: an
+  exchanged token lasts at most that long, and each expiry ends the stream with `invalid_token`,
+  which resumes from the cursor with a new token.
 
 ## Configuration
 
