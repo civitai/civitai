@@ -20,7 +20,11 @@ const DB_NAME = 'model_gift_claim_test';
 
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 const { getFeatureFlagsAsync } = vi.hoisted(() => ({ getFeatureFlagsAsync: vi.fn() }));
-vi.mock('~/server/services/feature-flags.service', () => ({ getFeatureFlagsAsync }));
+// Partial: the claim path now imports modules that read other exports of this one at load.
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getFeatureFlagsAsync,
+}));
 vi.mock('~/server/services/paid-access.service', () => ({ getPaidAccess: vi.fn() }));
 const { insertWithinLiveCap, queryGiftList, redeemGiftLink, revokeGiftRedemption } = await import(
   '~/server/services/model-version-gift.service'
