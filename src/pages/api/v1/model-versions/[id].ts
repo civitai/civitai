@@ -235,6 +235,20 @@ export async function getVersionShowcaseImages(modelVersionIds: number[], browsi
 const aboveSfw = (nsfwLevel: number) => (nsfwLevel & ~sfwBrowsingLevelsFlag) !== 0;
 
 /**
+ * `getShowcaseImageFilter` at `browsingLevel`, but an image within the SFW levels is held to the minor
+ * rule as resolved at SFW: the minor exclusion is for mature images, so an SFW image of a minor is
+ * served wherever SFW images are. Tag and poi rules still apply at `browsingLevel`.
+ */
+async function getVersionImageFilter(browsingLevel: number) {
+  const [shows, withinSfw] = await Promise.all([
+    getShowcaseImageFilter({ browsingLevel }),
+    resolveShowcaseExclusions({ browsingLevel: sfwBrowsingLevelsFlag }),
+  ]);
+  return (image: Parameters<typeof shows>[0] & { nsfwLevel: number }) =>
+    shows(aboveSfw(image.nsfwLevel) || withinSfw.disableMinor ? image : { ...image, minor: false });
+}
+
+/**
  * Whether a caller in a region served only SFW levels could get a different body than one served
  * every level: the version or a showcase image is above SFW, or the exclusions resolved at the two
  * levels keep different images.
@@ -245,8 +259,8 @@ export async function showcaseVariesByRegion(
 ) {
   if (aboveSfw(versionNsfwLevel) || images.some((image) => aboveSfw(image.nsfwLevel))) return true;
   const [withinSfw, withinAll] = await Promise.all([
-    getShowcaseImageFilter({ browsingLevel: sfwBrowsingLevelsFlag }),
-    getShowcaseImageFilter({ browsingLevel: allBrowsingLevelsFlag }),
+    getVersionImageFilter(sfwBrowsingLevelsFlag),
+    getVersionImageFilter(allBrowsingLevelsFlag),
   ]);
   return images.some((image) => withinSfw(image) !== withinAll(image));
 }
@@ -286,7 +300,7 @@ export async function prepareModelVersionResponse(
   if (!primaryFile) return null;
 
   images ??= await getVersionShowcaseImages([version.id], browsingLevel);
-  const shows = await getShowcaseImageFilter({ browsingLevel });
+  const shows = await getVersionImageFilter(browsingLevel);
   images = images.filter((image) => (image.nsfwLevel & browsingLevel) !== 0 && shows(image));
   images = (
     await holdShowcaseImages(
