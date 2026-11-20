@@ -173,6 +173,10 @@ func (q *ImagesQuery) Build() Built {
 			and = append(and, `(i."minor" != TRUE)`)
 		}
 	}
+	// minorMatureImageVisibleSql({ userId: ownerId, isModerator }), whatever DisableMinor says: on every
+	// read built here (the page, the post completion, the pinned and sponsored posts, the feed-service
+	// hydrate, the REST endpoint).
+	and = append(and, hydrate.MinorMatureImageVisibleSQL("i", q.ViewerID, q.IsModerator, a.add))
 	if len(q.ExcludedTagIDs) > 0 {
 		notExcluded := `NOT EXISTS (
       SELECT 1 FROM "TagsOnImageDetails" toi

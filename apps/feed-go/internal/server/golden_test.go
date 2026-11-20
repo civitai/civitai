@@ -45,10 +45,10 @@ const (
 	goldenDir = "../../testdata/golden"
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
-	goldenMinAsPosts  = 32
+	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
-	goldenMinInfinite = 52
-	goldenMinModels   = 31
+	goldenMinInfinite = 58
+	goldenMinModels   = 34
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -601,7 +601,26 @@ var (
 	goldenReCollTag    = regexp.MustCompile(`ci\."tagId" = \$(\d+)`)
 	goldenReCollOwner  = regexp.MustCompile(`ci\."status" <> 'REJECTED' AND ci\."addedById" = \$(\d+)`)
 	goldenReMinorOwner = regexp.MustCompile(`\(i\."acceptableMinor" = FALSE OR i\."userId" = \$(\d+)\)`)
+	// The minor content rule (minorMatureImageVisibleSql): a minor-flagged image rated NULL, 0 or at
+	// least the captured level is kept only for the bound owner (none bound: for nobody).
+	goldenReMinorMature = regexp.MustCompile(`\(NOT \(\(COALESCE\(i\."minor", FALSE\)\) AND \(i\."nsfwLevel" IS NULL OR i\."nsfwLevel" = 0 OR i\."nsfwLevel" >= (\d+)\)\)(?: OR i\."userId" = \$(\d+))?\)`)
 )
+
+// goldenMinorMature reads the minor content rule's clause from sql: present, the level it restricts
+// from, and the owner it exempts (0: none).
+func goldenMinorMature(args []any, sql string) (present bool, from, owner int) {
+	m := goldenReMinorMature.FindStringSubmatch(sql)
+	if m == nil {
+		return false, 0, 0
+	}
+	from, _ = strconv.Atoi(m[1])
+	if m[2] != "" {
+		if n, _ := strconv.Atoi(m[2]); n >= 1 && n <= len(args) {
+			owner = goldenInt(args[n-1])
+		}
+	}
+	return true, from, owner
+}
 
 func goldenArg(args []any, re *regexp.Regexp, sql string) (any, bool) {
 	m := re.FindStringSubmatch(sql)
@@ -658,8 +677,8 @@ func goldenHas(list []int, n int) bool {
 
 // goldenImageRows answers the getAllImages page query: the clauses the fixtures reach, evaluated
 // over the images table as Postgres would (ids, posts, version or model scope, level, creator,
-// followed creators, excluded creators, types, tools, base models, the minor exclusion,
-// published-before-now, order, cursor, offset, limit).
+// followed creators, excluded creators, types, tools, base models, the minor exclusion, the minor
+// content rule, published-before-now, order, cursor, offset, limit).
 func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, error) {
 	versionModel := map[int]int{}
 	versionBase := map[int]string{}
@@ -686,6 +705,7 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	published := strings.Contains(sql, `(p."publishedAt" < now())`)
 	acceptableMinorOwner, hasAcceptableMinorOwner := goldenArg(args, goldenReMinorOwner, sql)
 	acceptableMinorAll := strings.Contains(sql, ` AND i."acceptableMinor" = FALSE AND `)
+	minorMature, minorMatureFrom, minorMatureOwner := goldenMinorMature(args, sql)
 	collection, hasCollection := goldenArg(args, goldenReCollection, sql)
 	collTag, hasCollTag := goldenArg(args, goldenReCollTag, sql)
 	collOwner, hasCollOwner := goldenArg(args, goldenReCollOwner, sql)
@@ -806,6 +826,10 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 			}
 		}
 		if img.Minor && (minorAll || (hasMinorOwner && img.UserID != goldenInt(minorOwner))) {
+			continue
+		}
+		if minorMature && img.Minor && (img.NsfwLevel == 0 || img.NsfwLevel >= minorMatureFrom) &&
+			(minorMatureOwner == 0 || img.UserID != minorMatureOwner) {
 			continue
 		}
 		if published && (img.PublishedAt.T == nil || !img.PublishedAt.T.Before(fx.Now)) {
