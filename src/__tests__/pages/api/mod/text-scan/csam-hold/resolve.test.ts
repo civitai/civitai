@@ -369,7 +369,6 @@ describe('textScan.resolveCsamHold', () => {
     it('clears the profile text of a user profile hold', async () => {
       findFirst.mockResolvedValue(pendingHold({ entityType: 'UserProfile', entityId: 900 }));
       await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' });
-      // Archived first, whether or not the author has a report: the hold path is the CSAM path.
       expect(mocks.clearUserProfileFields).toHaveBeenCalledTimes(1);
       expect(mocks.clearUserProfileFields).toHaveBeenCalledWith({
         userId: 900,

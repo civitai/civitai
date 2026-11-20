@@ -1,4 +1,3 @@
-import { isEqual } from 'lodash-es';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { markUserDealUploadsRemovedSql } from '~/server/services/creator-service-deal-file-retention';
 import {
@@ -56,7 +55,7 @@ import {
   PLACEHOLDER_OWNER_ID,
 } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
-import { uniq } from 'lodash-es';
+import { isEqual, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import {
   banReasonDetails,
@@ -499,7 +498,7 @@ export async function archiveProfileBeforeModeratorChange({
 }) {
   const mustArchive =
     alwaysArchive ||
-    // primary: a report filed a moment ago must not let this clear skip the archive.
+    // primary: a report filed a moment ago must not let this change skip the archive.
     !!(await dbWrite.csamReport.findFirst({
       where: {
         OR: [

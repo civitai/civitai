@@ -25,10 +25,10 @@ import { constants } from '~/server/common/constants';
 import {
   amIBlockedByUser,
   archiveProfileBeforeModeratorChange,
-  type ProfileClearField,
 } from '~/server/services/user.service';
 import { archiveUserProfile } from '~/server/services/csam.service-new';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { getShowcaseHatForUser } from '~/server/events/showcase-hat';
 
 export const getUserContentOverviewHandler = async ({
@@ -163,15 +163,26 @@ export const updateUserProfileHandler = async ({
     });
 
     await bustUserCreator(userId);
-    if (byModerator)
-      await dbWrite.modActivity.create({
-        data: {
-          userId: sessionUser.id,
-          activity: 'editProfile',
-          entityType: 'User',
-          entityId: userId,
-        },
-      });
+    // The edit has committed: a failed record must not report it as failed.
+    if (byModerator) {
+      try {
+        await dbWrite.modActivity.create({
+          data: {
+            userId: sessionUser.id,
+            activity: 'editProfile',
+            entityType: 'User',
+            entityId: userId,
+          },
+        });
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'edit-profile-mod-activity',
+          userId,
+          message: (error as Error).message,
+        });
+      }
+    }
 
     return user;
   } catch (error) {

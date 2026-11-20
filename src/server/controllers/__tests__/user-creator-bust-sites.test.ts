@@ -183,6 +183,13 @@ describe('creator-card bust in the profile and user write handlers', () => {
       });
     });
 
+    it('returns the committed edit when its record fails to write', async () => {
+      dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(null as never);
+      dbMock.dbWrite.modActivity.create.mockRejectedValueOnce(new Error('db blip'));
+      await expect(edit({ id: MODERATOR, isModerator: true })).resolves.not.toThrow();
+      expect(mocks.updateUserProfile).toHaveBeenCalledTimes(1);
+    });
+
     describe('of a user a report names', () => {
       const stored = {
         bio: 'b',

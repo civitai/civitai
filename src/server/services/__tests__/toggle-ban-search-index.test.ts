@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as HatSync from '~/server/events/points/sync';
 
 /**
@@ -93,6 +94,24 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
     return refreshShowcases;
   },
 }));
+
+// The CSAM bucket: what the default archive writes when the caller passes none.
+const upload = vi.hoisted(() => ({ fail: undefined as Error | undefined, done: [] as string[] }));
+vi.mock('@aws-sdk/lib-storage', () => {
+  const Upload = class {
+    private readonly params: { Body: NodeJS.ReadableStream; Key: string };
+    constructor({ params }: { params: { Body: NodeJS.ReadableStream; Key: string } }) {
+      this.params = params;
+    }
+    async done() {
+      for await (const chunk of this.params.Body) void chunk;
+      if (upload.fail) throw upload.fail;
+      upload.done.push(this.params.Key);
+      return { ETag: '"etag"' };
+    }
+  };
+  return { Upload, default: { Upload } };
+});
 
 const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
@@ -473,6 +492,41 @@ describe('toggleBan -> profile links', () => {
 
     expect(archive).toHaveBeenCalledWith(expect.objectContaining({ links: LINKS }));
     expect(userLinkDeleteMany).toHaveBeenCalled();
+  });
+
+  describe('with no archive passed', () => {
+    beforeEach(() => {
+      setEnv({
+        CSAM_UPLOAD_KEY: 'test-key',
+        CSAM_UPLOAD_SECRET: 'test-secret',
+        CSAM_UPLOAD_REGION: 'test-region',
+        CSAM_UPLOAD_ENDPOINT: 'https://example.invalid',
+        CSAM_BUCKET_NAME: 'test-bucket',
+      });
+      upload.fail = undefined;
+      upload.done = [];
+      reported();
+    });
+
+    it('writes profile.json to the CSAM bucket before deleting a reported user’s links', async () => {
+      userLinkDeleteMany.mockImplementationOnce(async () => {
+        expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+        return { count: 1 };
+      });
+
+      await call();
+
+      expect(userLinkDeleteMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the links when the bucket upload fails', async () => {
+      upload.fail = new Error('s3 down');
+
+      await call();
+
+      expect(userUpdate).toHaveBeenCalled();
+      expect(userLinkDeleteMany).not.toHaveBeenCalled();
+    });
   });
 
   it('does not archive an unreported user’s links, and deletes them', async () => {
