@@ -30,7 +30,7 @@ To open the app to everyone, drop the `accessFor` check in the hook.
 ## Game settings (`src/lib/server/settings`)
 
 The game-tuning variables (`KNIGHTS_HIDDEN_CHECK_*`, `KNIGHTS_YESNO_*`, `KNIGHTS_APPRENTICE_SMITES`, `KNIGHTS_HARVEST`,
-`KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE`, `KNIGHTS_SHOP_DISABLED`, `KNIGHTS_CONVERSION_DISABLED`, `KNIGHTS_SIGNALS_DISABLED`) can also be saved on the moderator app's Config page, as the optional `game` (and `yesNoShare`) fields of
+`KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE`, `KNIGHTS_SKILL_CHECK_*`, `KNIGHTS_SHOP_DISABLED`, `KNIGHTS_CONVERSION_DISABLED`, `KNIGHTS_SIGNALS_DISABLED`) can also be saved on the moderator app's Config page, as the optional `game` (and `yesNoShare`) fields of
 `system:knights-v2-sources` (`KnightsSourcesConfig` in `@civitai/shared/new-order`). Every reader goes through `storedSettings()`
 (`settings/runtime.ts`, one cached read at most every 30 s): a saved value wins, a failed or slow read keeps the last value read, and
 with none read yet the environment applies. Kill switches follow the same rule. Detail: [game settings](../../docs/features/knights-sources.md#game-settings).
