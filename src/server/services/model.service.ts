@@ -4148,7 +4148,7 @@ async function assertScanRatingKept({
   // A row already not mature (an older one): only removing the face that listed it.
   if (!before.nsfw && (faceAfter || !hasFace(before))) return;
   if (await moderatorRuledNsfwSince(modelId, ratedAt, { db })) return;
-  // The versions the scan read, for the explanation; a draft version's text is not scanned.
+  // The versions the scan reads, for the explanation: published ones only.
   const versions = await (db ?? dbWrite).modelVersion.findMany({
     where: { modelId, status: { in: PUBLIC_MODEL_STATUSES } },
     select: { name: true, description: true, trainedWords: true },
@@ -4245,7 +4245,8 @@ export const upsertModel = async (
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
   normalizeSfwFaceInput(data);
-  if (beforeUpdate && id && !isModerator)
+  // Only the owner is told about the scan's rating; anyone else gets the not-found below.
+  if (beforeUpdate && id && !isModerator && beforeUpdate.userId === userId)
     await assertScanRatingKept({ modelId: id, before: beforeUpdate, data });
   // `?? null`: on a create there is no stored row, and a null from the form is not a change.
   const sfwFaceChanged =

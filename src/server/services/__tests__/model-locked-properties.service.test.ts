@@ -1467,6 +1467,30 @@ describe('upsertModel — content flags the row ends up with', () => {
             'This model is marked mature because of its text on civitai.red, which includes its title and its description. It stays'
           );
         });
+        it("tells only the owner: someone else's save gets no scan explanation", async () => {
+          mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+          mockVersions([
+            {
+              index: 0,
+              status: ModelStatus.Published,
+              name: 'v1.0',
+              description: null,
+              trainedWords: [],
+            },
+          ]);
+
+          await expect(
+            upsert({
+              id: MODEL_ID,
+              userId: OWNER_ID + 1,
+              nsfw: false,
+              minor: false,
+              sfwOnly: false,
+            })
+          ).resolves.toBeNull();
+          expect(mockDbWrite.modelVersion.findMany).not.toHaveBeenCalled();
+          expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+        });
       });
 
       it('lets it through once a clean rescan has dropped the marker', async () => {
