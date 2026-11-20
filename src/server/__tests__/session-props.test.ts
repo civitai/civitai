@@ -98,7 +98,7 @@ describe('jsonSafeSession', () => {
       fs.readFileSync(path.resolve(__dirname, '../utils/server-side-helpers.ts'), 'utf8');
 
     it('applies jsonSafeSession to the session prop', () => {
-      expect(source()).toContain('session: jsonSafeSession(session)');
+      expect(source()).toContain('session: jsonSafeSession(resolverSession)');
     });
 
     // A resolver's `notFound` must reach Next, or every page's 404 silently becomes a 200 with
@@ -114,7 +114,7 @@ describe('jsonSafeSession', () => {
       expect(
         source(),
         'nothing may be added after `session:` in the returned props object'
-      ).toMatch(/session: jsonSafeSession\(session\),\s*\}\s*as NonNullable<P>/);
+      ).toMatch(/session: jsonSafeSession\(resolverSession\),\s*\}\s*as NonNullable<P>/);
     });
   });
 });

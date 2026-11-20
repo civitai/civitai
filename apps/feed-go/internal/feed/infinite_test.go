@@ -111,7 +111,7 @@ func TestInfiniteOwnScopeAndPath(t *testing.T) {
 		{InfiniteInput{PostID: 1}, true},
 		{InfiniteInput{Input: Input{ModelID: 2}}, true},
 		{InfiniteInput{Input: Input{ModelID: 2, ModelVersionID: 3}}, false},
-		{InfiniteInput{UserID: 4, Tags: []int{1}}, false},
+		{InfiniteInput{UserID: 4, Input: Input{Tags: []int{1}}}, false},
 	} {
 		if got := c.in.dbPath(); got != c.want {
 			t.Errorf("dbPath(%+v) = %v, want %v", c.in, got, c.want)
@@ -718,5 +718,47 @@ func TestBuildInfiniteImagesAddsTheInfiniteWireFields(t *testing.T) {
 	r.PublishedAt = nil
 	if got := BuildInfiniteImages([]RawImage{r}, &Hydrated{}, Viewer{ID: 99}, published); len(got) != 0 {
 		t.Fatalf("unpublished image kept: %v", got)
+	}
+}
+
+// `include: ['tags']`: the hydration is asked for the votable tags (PageRequest.Tags) and each image
+// carries what it answered, an image it answered none for `tags: undefined`; without the include the
+// hydration is not asked for them. Regression: before the port the request fell back (input-include).
+func TestServeInfiniteIncludeTags(t *testing.T) {
+	const q = "levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=2"
+	for _, include := range []bool{true, false} {
+		f := newInfFixture(t)
+		f.feed.answers[q] = feedsvc.Answer{Status: 200, IDs: []int{11, 12}}
+		f.rows = []RawImage{infRow(11, 100), infRow(12, 100)}
+		f.hydrator.page.Tags = map[int][]any{11: {superjson.Object{{Key: "id", Val: int64(21)}, {Key: "name", Val: "red"}}}}
+		m := map[string]any{"limit": num("2")}
+		if include {
+			m["include"] = []any{"cosmetics", "tags"}
+		}
+		j, ann, _, err := serveInf(t, f, m, InfiniteRequest{Cap: 1})
+		if err != nil {
+			t.Fatalf("include %v: serve: %v (queries %v)", include, err, f.feed.queries)
+		}
+		if f.hydrator.req.Tags != include {
+			t.Fatalf("include %v: hydration asked for tags = %v", include, f.hydrator.req.Tags)
+		}
+		items := j["items"].([]any)
+		if len(items) != 2 {
+			t.Fatalf("include %v: %d items", include, len(items))
+		}
+		// The page's tags reach the wire only through the hydration's answer: the recording hydrator
+		// answers them either way, so without the include they must still be ignored.
+		tags, ok := items[0].(map[string]any)["tags"]
+		if include {
+			list, _ := tags.([]any)
+			if !ok || len(list) != 1 || list[0].(map[string]any)["name"] != "red" {
+				t.Fatalf("image 11 tags = %v, want the hydration's", tags)
+			}
+		} else if a, _ := ann["items.0.tags"].([]any); ok && tags != nil || len(a) != 1 || a[0] != "undefined" {
+			t.Fatalf("without the include: image 11 tags = %v (annotation %v), want undefined", tags, ann["items.0.tags"])
+		}
+		if a, _ := ann["items.1.tags"].([]any); len(a) != 1 || a[0] != "undefined" {
+			t.Fatalf("include %v: image 12 tags annotation = %v, want undefined", include, ann["items.1.tags"])
+		}
 	}
 }

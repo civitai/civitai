@@ -5,6 +5,7 @@ import { parsePlainEmailAddress } from '@civitai/auth/plain-email';
 import { addressparser, isEmailConfigured } from '@civitai/email';
 import type { Actions, PageServerLoad } from './$types';
 import { listEnabledProviders } from '$lib/server/auth/providers';
+import { readLastMethod } from '$lib/server/auth/last-method';
 import { readReturnUrl, readSync, buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
 import { createVerificationToken } from '$lib/server/auth/email-tokens';
@@ -25,7 +26,7 @@ import { logAxiomError } from '$lib/server/axiom';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export const load: PageServerLoad = async ({ url, locals, request }) => {
+export const load: PageServerLoad = async ({ url, locals, request, cookies }) => {
   const returnUrl = readReturnUrl(url);
   const sync = readSync(url);
   const reason = url.searchParams.get('reason');
@@ -66,6 +67,8 @@ export const load: PageServerLoad = async ({ url, locals, request }) => {
     error,
     prompt,
     addAccount,
+    // Not shown when adding an account: the point there is a different identity.
+    lastMethod: addAccount ? null : readLastMethod(cookies),
     // Public Turnstile site keys (delivered via SSR data, not PUBLIC_ env vars). The invisible widget is the
     // ~99% path; the managed key is rendered by the client ONLY as a fallback when the invisible one fails —
     // null when unprovisioned, so the fallback never appears (behavior == pre-fallback).

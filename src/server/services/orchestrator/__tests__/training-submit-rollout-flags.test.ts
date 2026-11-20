@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *  workflow is submitted; the flag is not only the form's. */
 
 import type * as TrainingConstants from '~/shared/constants/training.constants';
+import type * as UserService from '~/server/services/user.service';
+import type * as S3Utils from '~/utils/s3-utils';
 
 // The classic trainer's submit is date-gated; these cases cover a run it still accepts.
 vi.mock('~/shared/constants/training.constants', async (importOriginal) => ({
@@ -12,10 +14,15 @@ vi.mock('~/shared/constants/training.constants', async (importOriginal) => ({
   isClassicTrainerRetired: () => false,
 }));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.fn() }));
+vi.mock('~/server/services/user.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserService>()),
+  getUserSettings: vi.fn(async () => ({})),
+}));
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),
 }));
-vi.mock('~/utils/s3-utils', () => ({
+vi.mock('~/utils/s3-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof S3Utils>()),
   getGetUrl: vi.fn(async () => ({ url: 'https://example.com/data.zip' })),
   getB2S3Client: vi.fn(),
   isB2Url: vi.fn(() => false),
@@ -27,6 +34,8 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 import { createTrainingWorkflow } from '~/server/services/orchestrator/training/training.orch';
 import { isAiToolkitMandatory, isAudioTrainingBaseType, trainingModelInfo } from '~/utils/training';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { getUserSettings } from '~/server/services/user.service';
+import { GENERATION_LICENSE_TERMS } from '~/shared/constants/generation-license.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 
@@ -103,6 +112,7 @@ const ROLLOUT_FLAG_BY_MODEL: Record<string, string> = {
   ltx23: 'ltx23Training',
   ltx25: 'ltx25Training',
   minimaxh3: 'minimaxh3Training',
+  minimaxh3image: 'minimaxh3ImageTraining',
   ming: 'mingTraining',
   qwen21: 'qwen21Training',
   yue2: 'yue2Training',
@@ -138,6 +148,7 @@ describe('createTrainingWorkflow rollout flags', () => {
     dbMock.dbWrite.modelFile.update.mockResolvedValue({});
     dbMock.dbWrite.modelVersion.update.mockResolvedValue({});
     dbMock.dbWrite.modelVersion.updateMany.mockReset();
+    vi.mocked(getUserSettings).mockClear();
     dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 1 });
     givenVersion();
   });
@@ -193,6 +204,49 @@ describe('createTrainingWorkflow rollout flags', () => {
   it('still submits a run whose baseModelType disagrees with the catalog when the flags allow it', async () => {
     givenVersion({ baseModelType: 'qwen' });
     await submit(true);
+    expect(submitWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a MiniMax H3 Image run before submitting while its licence is not accepted', async () => {
+    const info = trainingModelInfo.minimaxh3image;
+    givenVersion({
+      baseModel: 'minimaxh3image',
+      baseModelType: info.type,
+      params: aiToolkitParams(info.aiToolkit!.ecosystem),
+    });
+    await expect(submitWith({})).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(/licence terms before training/),
+    });
+    expect(dbMock.dbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  // The licence binds the weights, so an engine other than AI Toolkit is asked too.
+  it('refuses a non-AI Toolkit run on the MiniMax H3 Image base while its licence is not accepted', async () => {
+    givenVersion({ baseModel: 'minimaxh3image', baseModelType: 'sdxl', params: kohyaParams });
+    await expect(submitWith({})).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(/licence terms before training/),
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('submits a MiniMax H3 Image run once its licence is accepted', async () => {
+    const info = trainingModelInfo.minimaxh3image;
+    givenVersion({
+      baseModel: 'minimaxh3image',
+      baseModelType: info.type,
+      params: aiToolkitParams(info.aiToolkit!.ecosystem),
+    });
+    const [terms] = GENERATION_LICENSE_TERMS;
+    vi.mocked(getUserSettings).mockResolvedValueOnce({
+      generationLicenseAcceptances: {
+        [terms.key]: { version: terms.version, acceptedAt: new Date().toISOString() },
+      },
+    } as never);
+    await submitWith({});
+    expect(getUserSettings).toHaveBeenCalledWith(7);
     expect(submitWorkflow).toHaveBeenCalledTimes(1);
   });
 

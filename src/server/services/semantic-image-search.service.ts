@@ -20,7 +20,10 @@ import {
   resolveSemanticBrowsingLevel,
 } from '~/server/services/semantic-query-guard';
 import { withCandidateCache } from '~/server/services/semantic-candidate-cache';
-import type { RefusedCandidates } from '~/server/services/semantic-search-audit.service';
+import type {
+  RefusedCandidates,
+  RefusedSearchPath,
+} from '~/server/services/semantic-search-audit.service';
 import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { Flags } from '~/shared/utils/flags';
@@ -29,8 +32,10 @@ import type { SessionUser } from '~/types/session';
 import {
   collectPage,
   resolveTagIds,
+  resolveTags,
   resolveUserIds,
   searchServiceSource,
+  withTagMatchesFirst,
   type CandidateFilter,
   type CandidateSource,
   type Hydrate,
@@ -58,6 +63,7 @@ export async function searchSemanticImages({
   track,
   candidateSource = searchServiceCandidates,
   refuseNarrowing = false,
+  tagMatchesFirst = false,
   uploadAnchor,
 }: {
   input: SemanticImageSearchInput;
@@ -71,6 +77,8 @@ export async function searchSemanticImages({
   candidateSource?: CandidateSource;
   /** A verdict that would narrow the level refuses instead (the showcase picker's own images). */
   refuseNarrowing?: boolean;
+  /** A query that names a tag ranks the images carrying it first (the showcase picker). */
+  tagMatchesFirst?: boolean;
   /**
    * Search by uploaded image: the upload's scanned level and the URL to embed, from an upload that
    * passed the scan gate. Replaces `imageId` and `query`.
@@ -135,6 +143,8 @@ export async function searchSemanticImages({
   const refusal = input.query ? await refusalOf(input.query, 'query') : false;
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
   const queryRefused = verdictLevel === 'refuse' || (refuseNarrowing && !!refusal);
+  const refusedPath: RefusedSearchPath =
+    verdictLevel === 'refuse' ? 'refused_query' : 'refused_own_images';
   if (!queryRefused && verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
@@ -198,7 +208,7 @@ export async function searchSemanticImages({
     // An upload is never served, so no visibility check refuses it: refuse a level the viewer
     // (already capped to the domain) may not see here.
     if (!Flags.intersects(browsingLevel, uploadAnchor.nsfwLevel))
-      return audit.done(emptyPage(), browsingLevel);
+      return audit.done(emptyPage(), browsingLevel, 'refused_upload_level');
     if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
       level = anchorBrowsingLevel(browsingLevel, uploadAnchor.nsfwLevel);
   }
@@ -247,16 +257,25 @@ export async function searchSemanticImages({
   if (queryRefused)
     return input.query && !input.imageId
       ? audit.refused(
+          refusedPath,
           emptyPage(),
           browsingLevel,
           refusedTextCandidates(cachedSource, { text: input.query, filter, viewer })
         )
-      : audit.done(emptyPage(), browsingLevel);
+      : audit.done(emptyPage(), browsingLevel, refusedPath);
   const query: SearchQuery = uploadAnchor
     ? { imageUrl: uploadAnchor.imageUrl }
     : input.imageId
     ? { similarTo: input.imageId }
     : { text: input.query ?? '' };
+
+  const queryTag =
+    tagMatchesFirst && 'text' in query && query.text.trim()
+      ? (await resolveTags([query.text.trim()])).find(
+          (t) => !blockedTags.some((b) => b.id === t.id)
+        )
+      : undefined;
+  const ranked = queryTag ? withTagMatchesFirst(cachedSource, queryTag.id) : cachedSource;
 
   let correctedQuery: string | undefined;
   // Every correction is audited, not only the first: rounds of one page can come from cached blocks
@@ -268,7 +287,7 @@ export async function searchSemanticImages({
     candidates: async (offset, limit) => {
       const result = await timed(
         'candidates',
-        cachedSource({ query, filter, offset, limit, viewer, sort: input.sort })
+        ranked({ query, filter, offset, limit, viewer, sort: input.sort })
       );
       audit.candidates(result);
       first ??= result;
@@ -288,6 +307,12 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
-  if (correctedRefusal) return audit.refused(emptyPage(), level, async () => first ?? { ids: [] });
+  if (correctedRefusal)
+    return audit.refused(
+      'refused_correction',
+      emptyPage(),
+      level,
+      async () => first ?? { ids: [] }
+    );
   return audit.done({ ...page, correctedQuery }, level);
 }

@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { TRPCError } from '@trpc/server';
 import { readServiceDealFileAccess } from '~/server/services/creator-service-deal-file-access';
 import { listServiceDealFiles } from '~/server/services/creator-service-deal-file.service';
@@ -51,6 +52,8 @@ export default defineModeratorEndpoint('creatorServices.dealFiles', {
               userId: actor.id,
               isModerator: true,
               canReviewCsam,
+              // Moderators review every level.
+              servableLevels: allBrowsingLevelsFlag,
             });
             return files.map((file) => ({ dealId: id, ...file }));
           } catch (error) {

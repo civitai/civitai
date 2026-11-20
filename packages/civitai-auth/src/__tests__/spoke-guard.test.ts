@@ -203,6 +203,16 @@ describe('createSpokeGuard (cookie mode)', () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
+  it('reports the cookie slot of each authenticated request, and none for a signed-out one', async () => {
+    const onSessionSlot = vi.fn();
+    const guard = guardOf({ onSessionSlot });
+    await guard.check(`${SHARED}=${aged(0)}`, PAGE);
+    await guard.check(`${HOST}=${aged(0)}`, PAGE);
+    h.resolveSessionUser.mockResolvedValue(INVALID);
+    await guard.check(`${HOST}=bad`, PAGE);
+    expect(onSessionSlot.mock.calls).toEqual([['shared'], ['host']]);
+  });
+
   it('shared mode: an old shared cookie is not rolled here (the hub and the main app roll it)', async () => {
     const refresh = vi.fn(async () => ({ token: aged(0) }));
     const r = await guardOf({ sessionTokenClient: { refresh } }).check(

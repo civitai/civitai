@@ -73,6 +73,7 @@ async function submit(id: string, appJs: string) {
 async function approve(id: string, lateHoldIds: number[]) {
   resolveHoldsAtApprove.mockResolvedValueOnce({ late: lateHoldIds });
   const tx = {
+    $queryRaw: async () => [],
     appBlockPublishRequest: requests,
     appBlock: {
       update: async () => ({}),

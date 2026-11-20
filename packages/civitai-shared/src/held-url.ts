@@ -1,4 +1,4 @@
-import { sqlRef } from './held-media';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, sqlRef } from './held-media';
 
 /**
  * When the image CDN must not retract a stored url: the url-level hold that the main app's
@@ -86,17 +86,22 @@ export function imageCoveredText(image: string, user: string): string {
  * - A shop takedown: no owner recorded, or the owner held or named on any report.
  * An unreadable fact fails the statement rather than reading as not held.
  */
-export function heldUrlSql(url: string): string {
+export function heldUrlSql(
+  url: string,
+  { exceptImageId }: { exceptImageId?: string } = {}
+): string {
   const u = sqlRef(url);
-  if (/^(hx|hp|hmv|hmo|hd|ht|hc|rc|cc)\./.test(u))
-    throw new Error(`Alias taken inside heldUrlSql: ${u}`);
+  const except = exceptImageId ? ` AND hx.id <> ${sqlRef(exceptImageId)}` : '';
+  const taken = /^"?(hx|hp|hmv|hmo|hd|ht|hc|rc|cc)"?\./;
+  for (const ref of [u, exceptImageId ? sqlRef(exceptImageId) : ''])
+    if (taken.test(ref)) throw new Error(`Alias taken inside heldUrlSql: ${ref}`);
   return `(
     EXISTS (
       SELECT 1 FROM "Image" hx
       LEFT JOIN "Post" hp ON hp.id = hx."postId"
       LEFT JOIN "ModelVersion" hmv ON hmv.id = hp."modelVersionId"
       LEFT JOIN "Model" hmo ON hmo.id = hmv."modelId"
-      WHERE hx.url = ${u} AND (
+      WHERE hx.url = ${u}${except} AND (
         hx."needsReview" IS NOT DISTINCT FROM 'csam'
         OR ${ownerHeldText('hx."userId"')}
         OR (NOT ${imageCoveredText('hx."id"', 'hx."userId"')} AND (
@@ -122,6 +127,56 @@ export function heldUrlSql(url: string): string {
         ht."userId" IS NULL
         OR ${ownerHeldText('ht."userId"')}
         OR ${ownerReportedText('ht."userId"')}
+      )
+    )
+  )`;
+}
+
+/** The ids `CSAM_REPORT_LISTED_IMAGE_IDS_SQL` lists, as bigints, so a join on "Image".id can use its
+ *  primary key. An entry that is not a number lists nothing. */
+// The CASE, not a WHERE: Postgres may run the cast before a WHERE's pattern test.
+const LISTED_IMAGE_IDS_SQL = `SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
+  FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) rl_ids`;
+
+/**
+ * Whether the url `url` (a column reference) carries bytes under an evidence hold: an image row on
+ * it, or a moderator delete of one, is held. Bytes are per url, so a copy row is held with it.
+ */
+export function evidenceHeldUrlSql(url: string): string {
+  const u = sqlRef(url);
+  if (/^eh_/.test(u)) throw new Error(`Alias taken inside evidenceHeldUrlSql: ${u}`);
+  return `(
+    EXISTS (
+      SELECT 1 FROM "EvidenceHoldImage" eh_h JOIN "Image" eh_i ON eh_i.id = eh_h."imageId"
+      WHERE eh_i.url = ${u}
+    )
+    OR EXISTS (
+      SELECT 1 FROM "EvidenceHoldImage" eh_h
+      JOIN "ImageCdnModeratorDelete" eh_d ON eh_d."imageId" = eh_h."imageId"
+      WHERE eh_d.url = ${u}
+    )
+  )`;
+}
+
+/**
+ * Whether the url `url` (a column reference) carries reported bytes: an image row or moderator delete
+ * on it is listed on any CsamReport, whatever the report's state, or an image row on it has the pHash
+ * of a listed image. A copy under another url counts through its pHash only.
+ */
+export function reportListedUrlSql(url: string): string {
+  const u = sqlRef(url);
+  if (/^rl_/.test(u)) throw new Error(`Alias taken inside reportListedUrlSql: ${u}`);
+  return `(
+    EXISTS (SELECT 1 FROM "Image" rl_i WHERE rl_i.url = ${u} AND rl_i.id IN (${LISTED_IMAGE_IDS_SQL}))
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" rl_d
+      WHERE rl_d.url = ${u} AND rl_d."imageId" IN (${LISTED_IMAGE_IDS_SQL})
+    )
+    OR EXISTS (
+      SELECT 1 FROM "Image" rl_p
+      WHERE rl_p.url = ${u} AND rl_p."pHash" IN (
+        SELECT rl_x."pHash" FROM "Image" rl_x
+        WHERE rl_x.id IN (${LISTED_IMAGE_IDS_SQL}) AND rl_x."pHash" IS NOT NULL
       )
     )
   )`;

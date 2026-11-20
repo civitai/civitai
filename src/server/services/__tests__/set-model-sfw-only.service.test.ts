@@ -261,7 +261,7 @@ describe('setModelSfwOnly — set', () => {
     });
   });
 
-  it('runs the side-effect fan-out so the listing and image rows follow the flag', async () => {
+  it('runs the listing fan-out, and leaves the image rows as they are', async () => {
     mockBefore({});
     mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }]);
     mockDbWrite.$queryRaw.mockResolvedValue([{ id: 900 }]);
@@ -270,7 +270,8 @@ describe('setModelSfwOnly — set', () => {
 
     expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
     expect(mockModelsQueueUpdate).toHaveBeenCalled();
-    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalled();
+    // The image rows carry no sfwOnly flag, so nothing about them changes.
+    expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
   });
 
   it('tracks mod activity as setSfwOnly, before the fan-out', async () => {

@@ -102,13 +102,7 @@ export async function streamStoredMedia(input: {
   );
   // Awaited, so the row is there before the page that loads these bytes reports them shown.
   if (request.method !== 'HEAD' && (input.auditEveryRange || isAuditedServe(upstream))) {
-    const written = await input.audit().then(
-      () => true,
-      (e) => {
-        console.error('[held-media] view row not written', e);
-        return false;
-      }
-    );
+    const written = await recorded(input.audit);
     if (!written) {
       void upstream.body.cancel();
       error(503, 'Could not record this view.');
@@ -119,3 +113,12 @@ export async function streamStoredMedia(input: {
   if (input.setCookie) headers['set-cookie'] = input.setCookie;
   return new Response(upstream.body, { status: upstream.status, headers });
 }
+
+const recorded = (audit: () => Promise<unknown>) =>
+  audit().then(
+    () => true,
+    (e) => {
+      console.error('[held-media] view row not written', e);
+      return false;
+    }
+  );

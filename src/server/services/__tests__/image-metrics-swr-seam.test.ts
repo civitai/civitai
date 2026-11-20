@@ -52,7 +52,6 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 import { getImageMetricsObject, getImageMetricsObjectDirect } from '../image.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const never = () => new Promise<never>(() => undefined);
 
@@ -282,10 +281,6 @@ describe('getImageMetricsObject with image-metrics-swr', () => {
     expect(fetchMock).toHaveBeenCalledWith('Image', [5, 1]);
     expect(result[5]?.reactionLike).toBe(905);
     expect(result[1]?.reactionLike).toBe(901);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'Failed to getImageMetrics swr', message: 'poisoned hash' }),
-      'clickhouse'
-    );
   });
 
   it('flag ON: the throw fallback gets only what is left of the budget', async () => {

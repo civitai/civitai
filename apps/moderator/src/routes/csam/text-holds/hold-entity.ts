@@ -124,6 +124,11 @@ export function holdDecisionEnabled(
 export const CSAM_HOLD_CONFIRMS: Partial<
   Record<CsamHoldDecision, { label: string; title: string; description: string }>
 > = {
+  remove: {
+    label: 'Remove content',
+    title: 'Remove the content?',
+    description: 'The content is taken down.',
+  },
   remove_strike: {
     label: 'Remove content + strike',
     title: 'Remove the content and strike the author?',

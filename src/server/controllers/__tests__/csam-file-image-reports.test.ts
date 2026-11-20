@@ -221,6 +221,25 @@ describe('fileCsamReport', () => {
     );
   });
 
+  it('still files and removes when a filed image has no hash, logging only its id and step', async () => {
+    dbMock.dbWrite.image.findMany.mockResolvedValue([
+      { id: IMAGE, pHash: null },
+      { id: OTHER_IMAGE, pHash: BigInt(123) },
+    ] as never);
+    vi.mocked(logToAxiom).mockClear();
+
+    await file(OWNER, [IMAGE, OTHER_IMAGE]);
+
+    expect(softDeleteUser).toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([e]) => e as { name?: string; payload?: unknown })
+        .filter((e) => e.name === 'csam-blocklist-no-hash')
+        .map((e) => e.payload)
+    ).toEqual([{ imageId: IMAGE, step: 'csam-report' }]);
+  });
+
   it('leaves the blocklist write to after the removal, not to the report service', async () => {
     dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: BigInt(123) }] as never);
     vi.mocked(logToAxiom).mockClear();

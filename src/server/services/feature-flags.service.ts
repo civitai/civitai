@@ -108,6 +108,10 @@ const featureFlags = createFeatureFlags({
   // feed; its own flag, so either can be turned on or killed alone. Enable only once the edge routes
   // `/api/trpc-go/model.getAll`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransportModelGetAll: { availability: [], fliptKey: 'feed-go-transport-model-getall' },
+  // Sends `image.getInfinite` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the
+  // gallery feed; its own flag, so each can be turned on or killed alone. Enable only once the edge
+  // routes `/api/trpc-go/image.getInfinite`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransportInfinite: { availability: [], fliptKey: 'feed-go-transport-infinite' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -388,6 +392,7 @@ const featureFlags = createFeatureFlags({
   ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
   ltx25Training: { availability: ['public'], fliptKey: 'ltx25-training' },
   minimaxh3Training: { availability: ['mod'], fliptKey: 'minimaxh3-training' },
+  minimaxh3ImageTraining: { availability: ['mod'], fliptKey: 'minimaxh3-image-training' },
   wan22Training: { availability: ['mod'] },
   ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
@@ -407,6 +412,8 @@ const featureFlags = createFeatureFlags({
   },
   // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
   trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
+  // Training Studio's Civitai Elements redesign (the embed's answer for `training-studio-elements-ui`).
+  trainingStudioElementsUi: { availability: ['mod'], fliptKey: 'training-studio-elements-ui' },
   // Training Studio's Manage tags find-and-replace row.
   trainingStudioTagFindReplace: {
     availability: ['mod'],
@@ -569,11 +576,14 @@ const featureFlags = createFeatureFlags({
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
+  creatorServicesNext: { availability: [], fliptKey: 'creator-services-next' },
   // The header bar filters the /services feed in place (`?query=`).
   servicesFeedSearch: { availability: ['public'], fliptKey: 'creator-services-feed-search' },
   // Search v3 on pages that filter their own list (PAGE_SEARCH in search-target.ts): the header bar
   // writes the page's ?query= and the page filters by it, instead of a search box of its own.
   pageSearch: { availability: [], fliptKey: 'search-v3-pages' },
+  // Only takes effect with `feedSearch` on too.
+  videoFeedSearch: { availability: [], fliptKey: 'video-feed-search' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
   // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step; Flipt
   // unreachable keeps it.
@@ -886,6 +896,10 @@ const featureFlags = createFeatureFlags({
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
   // Remix Apps P1: one-tap remix apps from the Remix menu (`remixApp` router).
   remixApps: { availability: ['mod'], fliptKey: 'remix-apps' },
+  // Remix Apps v2-C: apps whose code a user wrote (rows with an `author`). Dark until their runner ships.
+  remixAppsUserCode: { availability: [], fliptKey: 'remix-apps-user-code' },
+  // Who may submit a user app's code.
+  remixAppBuilder: { availability: [], fliptKey: 'remix-app-builder' },
   // App Blocks — "App builders" get-started pitch, now state A of the
   // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
   // launch: a single marketing/funnel page that explains the platform to
@@ -956,6 +970,10 @@ const featureFlags = createFeatureFlags({
   // `app_sub_listing_parents` row), so items can queue for moderation while the store side is
   // dark.
   appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
+  // App index store search — `/apps` store text search through the app index service
+  // (`app-index-search.service.ts`, APP_INDEX_URL) instead of filtering the loaded grid in the
+  // browser. `[]`: dark for everyone, mods included, until the Flipt flag turns it on.
+  appIndexSearch: { availability: [], fliptKey: 'app-index-search' },
   // Membership-tiered app limits, the viewer-facing half: the running app's paused notice at the
   // plan's daily app Buzz cap, with an upgrade prompt and continue-on-own-Buzz. `[]`: dark for
   // everyone, mods included, until the Flipt flag turns it on — the client twin of the server's

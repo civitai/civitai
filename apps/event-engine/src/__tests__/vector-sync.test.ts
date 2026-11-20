@@ -67,6 +67,7 @@ class FakePg {
   images = new Map<number, ImageRow>();
   tags = new Map<number, number[]>();
   baseModels = new Map<number, string[]>();
+  modelVersionIds = new Map<number, number[]>();
   queries: string[] = [];
 
   put(...rows: ImageRow[]) {
@@ -89,7 +90,11 @@ class FakePg {
       return {
         rows: ids
           .filter((id) => this.baseModels.has(id))
-          .map((imageId) => ({ imageId, baseModels: this.baseModels.get(imageId) })),
+          .map((imageId) => ({
+            imageId,
+            baseModels: this.baseModels.get(imageId),
+            modelVersionIds: this.modelVersionIds.get(imageId),
+          })),
       };
     }
     if (sql.includes('i.id = ANY')) {
@@ -258,6 +263,7 @@ describe('sync transitions', () => {
     const pg = new FakePg().put(imageRow(1, { ingestion: 'Pending' }));
     pg.tags.set(1, [5, 9]);
     pg.baseModels.set(1, ['SDXL 1.0']);
+    pg.modelVersionIds.set(1, [128078, 290640]);
     const store = new FakeStore();
     const embedder = new FakeEmbedder();
     await syncImageIds([1], deps(pg, store, embedder));
@@ -270,6 +276,7 @@ describe('sync transitions', () => {
       nsfwLevel: 4,
       tagIds: [5, 9],
       baseModels: ['SDXL 1.0'],
+      modelVersionIds: [128078, 290640],
       type: 'image',
       userId: 7,
       postId: 70,

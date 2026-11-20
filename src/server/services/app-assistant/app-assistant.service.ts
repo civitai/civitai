@@ -282,13 +282,15 @@ export async function enableAppAssistant(userId: number): Promise<void> {
  */
 export async function mintAppAssistantToken(
   userId: number,
-  purpose: AppAssistantTokenPurpose
+  purpose: AppAssistantTokenPurpose,
+  impersonatedBy: number | null
 ): Promise<AppAssistantToken | null> {
   if (!(await hasAppAssistantConsent(userId, purpose))) return null;
   const minted = await mintAppToken({
     userId,
     clientId: appAssistantClientId(userId),
     scope: scopeFor(purpose),
+    impersonatedBy,
   });
   return { token: minted.accessToken, expiresAt: minted.expiresAt };
 }

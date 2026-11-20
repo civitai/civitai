@@ -41,6 +41,8 @@ type Resolver struct {
 	// CookieNames gives the session cookie names to look for on a request to a host (e.g.
 	// `__Secure-civ-token`, `__Host-civ-token`): a site's cookie mode picks them.
 	CookieNames func(host string) []string
+	// OnSlot, when set, is told the cookie slot ("host" | "shared", see CookieSlot) of each session it resolves.
+	OnSlot func(slot string)
 	// SessionReadTimeout bounds the session-cache read (400ms in session-client.ts).
 	SessionReadTimeout time.Duration
 	// ModerationAccountID is CIVITAI_MODERATION_USER_ID (0 = unset): the shared moderation account,
@@ -117,6 +119,9 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 	if IsModerationAccount(u.ID, u.Username, r.ModerationAccountID) {
 		return nil, nil
 	}
+	if r.OnSlot != nil {
+		r.OnSlot(CookieSlot(tokenCookie))
+	}
 	u.Claims, u.CookieName = claims, tokenCookie
 	return u, nil
 }
@@ -172,4 +177,13 @@ func SessionUserFrom(id int, m map[string]any) (*SessionUser, error) {
 // FixedCookieNames is a CookieNames that gives the same names for every host.
 func FixedCookieNames(names ...string) func(string) []string {
 	return func(string) []string { return names }
+}
+
+// CookieSlot is the slot a session cookie name belongs to: "host" for the host-only `__Host-` name, else
+// "shared". Without the secure prefixes (dev) both slots share one name, which counts as "shared".
+func CookieSlot(name string) string {
+	if strings.HasPrefix(name, "__Host-") {
+		return "host"
+	}
+	return "shared"
 }

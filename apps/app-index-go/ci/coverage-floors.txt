@@ -1,0 +1,15 @@
+# Statement-coverage floors for the unit run (`go test -race -coverprofile`, each package measured by
+# its own tests), checked by ci/coverage_gate.py in .github/workflows/app-index-go.yml.
+#
+# Ratchet: each floor is a measured value rounded DOWN to a whole percent. To raise one, read the
+# measured value the "Coverage floors" step prints and set the floor to it. Never lower a floor to
+# get a red run green. Packages without unit tests (cmd/app-index-go, metrics, pgtest) are not
+# listed. internal/store is low here because its Postgres half runs only in the integration tier
+# (`-tags integration`, against the job's Postgres), which this profile does not include.
+total 66
+internal/api 100
+internal/config 97
+internal/index 76
+internal/registry 98
+internal/store 51
+internal/token 88

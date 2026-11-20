@@ -91,8 +91,8 @@ import {
   isListingAudienceFloor,
   type ListingAudienceFloor,
 } from '~/shared/utils/app-listing-visibility';
+import { enforceAppBlocksAuthorFlag } from '~/server/trpc/app-blocks-author.middleware';
 import {
-  isAppBlocksAuthorEnabled,
   isAppBlocksEnabled,
   resolveStoreVisibilityScope,
   resolveViewerAudienceFloor,
@@ -138,31 +138,6 @@ import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 const enforceAppBlocksFlag = middleware(async ({ ctx, next }) => {
   if (await isAppBlocksEnabled({ user: ctx.user })) return next();
   throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
-});
-
-/**
- * AUTHOR flag gate (P3a) — the WIDENED gate for the creator asset-CRUD procs +
- * the off-site submit/withdraw/my-submissions procs. Evaluated WITH the caller's
- * context against `app-blocks-author` (`isAppBlocksAuthorEnabled`: mod floor +
- * the `app-dev-testers` cohort segment), so an app-dev-tester may manage their
- * OWN listing's assets + submit off-site apps — while the SERVICE-layer owner
- * check still bounds every mutation to the caller's own listings. This REPLACES
- * the mod-only `enforceAppBlocksFlag` (`isAppBlocksEnabled`) on those procs;
- * mods still pass via the author floor. Fail-CLOSED: absent flag / Flipt-down →
- * mods only. (The mod-only `backfillAssets` proc keeps `enforceAppBlocksFlag`.)
- */
-const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
-  // Every attachment below is `protectedProcedure.use(...)`, so `isAuthed` has already
-  // run and `ctx.user` is non-null at runtime — but this is a bare `middleware`, whose
-  // ctx type does not carry that narrowing. `isAppBlocksAuthorEnabled` REQUIRES a
-  // subject (a capability has nothing to authorize without one), so the compiler makes
-  // this refusal mandatory rather than optional. Keep it: it is also what makes the
-  // middleware safe if it is ever attached to a `publicProcedure`.
-  if (!ctx.user) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
-  }
-  if (await isAppBlocksAuthorEnabled({ user: ctx.user })) return next();
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
 });
 
 /**
@@ -2047,20 +2022,21 @@ export const appListingsRouter = router({
       if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
-      const { listAvailableListings } = await import(
-        '~/server/services/blocks/app-listing.service'
+      const { listStoreGrid, storeGridRequest } = await import(
+        '~/server/services/blocks/app-index-search.service'
       );
-      return listAvailableListings(input, {
-        redCapable: isRedCapableRequest(ctx),
-        scope,
-        floor,
-        viewer: listingViewerFromCtx(ctx),
-        // Opt-in AND flag: a `ListingCard`-only caller (the related rail) must never receive a
-        // `SubListingCard` just because the viewer has the flag.
-        includeSubListings:
-          input.includeSubListings === true && !!ctx.features?.appStoreSubListings,
-        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
-      });
+      return listStoreGrid(
+        input,
+        // The sub-listing opt-in and the index switch meet the viewer's flags there.
+        ...storeGridRequest(input, {
+          features: ctx.features,
+          redCapable: isRedCapableRequest(ctx),
+          scope,
+          floor,
+          viewer: listingViewerFromCtx(ctx),
+          viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+        })
+      );
     }),
 
   /**

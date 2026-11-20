@@ -4,6 +4,7 @@ import {
 } from '~/server/services/app-assistant/assistant-runner-tokens';
 import { getAppAssistantRefusal } from '~/server/services/app-assistant/app-assistant.service';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { refuseWhileImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 
@@ -14,8 +15,9 @@ import { requireFullScopeSession } from '~/server/utils/require-full-scope-sessi
  *
  *   GET → `{ token, expiresAt }`
  */
-export default AuthedEndpoint(async (req, res, user) => {
+export default AuthedEndpoint(async (req, res, user, session) => {
   if (!requireFullScopeSession(req, res)) return;
+  if (refuseWhileImpersonating(session, res)) return;
   const refusal = await getAppAssistantRefusal({ user, req });
   if (refusal) return res.status(refusal.status).json({ error: refusal.error });
   res.setHeader('Cache-Control', 'no-store');

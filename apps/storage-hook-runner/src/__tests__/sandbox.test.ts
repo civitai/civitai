@@ -45,7 +45,7 @@ describe('allow and deny', () => {
     const input = hookInputJson({
       op: 'increment',
       after: null,
-      tally: { kind: 'counter', name: 'likes', by: 5 },
+      tally: { $inc: { likes: 5 } },
       from: 'importer-app',
     });
     const { result } = await run(
@@ -56,7 +56,7 @@ describe('allow and deny', () => {
       allow: false,
       cause: 'denied',
       reason:
-        '["increment","key-7f3a",null,{"kind":"counter","name":"likes","by":5},{"likes":3},4242,"app-storage-demo","importer-app"]',
+        '["increment","key-7f3a",null,{"$inc":{"likes":5}},{"likes":3},4242,"app-storage-demo","importer-app"]',
     });
   });
 });

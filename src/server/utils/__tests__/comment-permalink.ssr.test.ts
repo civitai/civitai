@@ -1,5 +1,6 @@
 import type * as CommentPermalink from '~/server/utils/comment-permalink';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 // Module scope, not a test body: from a body this transform is charged to one test's 60s
 // budget. See vitest.config.mts.
 import { getServerSideProps } from '~/pages/comments/[id]';
@@ -53,10 +54,15 @@ const row = (over: Record<string, unknown>) => ({
   ...over,
 });
 
-const run = async () => {
+const run = async (reqContext?: Record<string, unknown>) => {
   return (await (getServerSideProps as any)({
     params: { id: String(COMMENT_ID) },
-    req: { url: `/comments/${COMMENT_ID}`, headers: {}, cookies: {} },
+    req: {
+      url: `/comments/${COMMENT_ID}`,
+      headers: {},
+      cookies: {},
+      ...(reqContext ? { context: reqContext } : {}),
+    },
     res: { setHeader: vi.fn(), getHeader: vi.fn() },
     query: {},
     resolvedUrl: `/comments/${COMMENT_ID}`,
@@ -159,6 +165,18 @@ describe('/comments/<id> — getServerSideProps wiring', () => {
       [COMMENT_ID, { includeHidden: true }],
       [COMMENT_ID, { includeHidden: false }],
     ]);
+  });
+
+  it("does not read hidden comments for a moderator's reduced-scope API key", async () => {
+    getRow.mockResolvedValue(undefined);
+    getSession.mockResolvedValue({ user: { id: 1, isModerator: true } });
+    await run({
+      tokenScope: TokenScope.UserRead,
+      apiKeyId: 11,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 11 },
+    });
+    expect(getRow).toHaveBeenCalledWith(COMMENT_ID, { includeHidden: false });
   });
 
   it('positive control: the mock is actually consulted (it is not answering from nothing)', async () => {

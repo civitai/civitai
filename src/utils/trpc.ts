@@ -373,7 +373,8 @@ export function shouldBatch(op: {
  * Send this operation over the Go transport only when ALL hold:
  *  - it's a `query` for a procedure in `GO_TRANSPORT_PROCEDURES`,
  *  - THAT procedure's own flag is on for this user (`feedGoTransport` for
- *    `image.getImagesAsPostsInfinite`, `feedGoTransportModelGetAll` for `model.getAll`),
+ *    `image.getImagesAsPostsInfinite`, `feedGoTransportModelGetAll` for `model.getAll`,
+ *    `feedGoTransportInfinite` for `image.getInfinite`),
  *  - we're in an authenticated browser — signed-out responses are edge-cached under the
  *    `/api/trpc` path, and moving them to another path would trade those hits for origin load,
  *  - it would leave as a GET (`shouldSendQueryAsPost` false): the Go service answers GETs only.

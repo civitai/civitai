@@ -124,7 +124,7 @@ const SURFACES: [string, (state: ModelState, user: Viewer) => Promise<File[]>][]
         files: [weights(), dataset()],
       });
       const res = await modelFileRouter.createCaller(ctx(user)).getByVersionId({ id: VERSION });
-      return res.files as File[];
+      return res!.files as File[];
     },
   ],
   [

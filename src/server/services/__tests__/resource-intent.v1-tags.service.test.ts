@@ -238,7 +238,9 @@ type Insert = { table: string; values: Record<string, unknown>[] };
 const inserts = (table: string) =>
   mockInsert.mock.calls.map((c) => c[0] as Insert).filter((c) => c.table === table);
 const shadowRow = () => inserts('resourceIntentShadow')[0].values[0];
-const flush = () => vi.waitFor(() => expect(inserts('resourceIntentShadow')).toHaveLength(1));
+// Polled every 1ms: the default 50ms interval dominated this file's runtime.
+const WAIT = { interval: 1 };
+const flush = () => vi.waitFor(() => expect(inserts('resourceIntentShadow')).toHaveLength(1), WAIT);
 
 beforeEach(() => {
   clickhouseState.present = true;
@@ -791,7 +793,7 @@ describe('🔴 the shadow beside another arm', () => {
       const result = await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
       expect(ids(result)).toEqual(POOL_IDS);
       expect(mockTagResolve).not.toHaveBeenCalled();
-      await vi.waitFor(() => expect(mockTagResolve).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(mockTagResolve).toHaveBeenCalledTimes(1), WAIT);
       // Its row waits on the shadow.
       expect(inserts('resourceIntentShadow')).toHaveLength(0);
     } finally {
@@ -815,7 +817,7 @@ describe('🔴 the shadow beside another arm', () => {
           mockStage1();
           await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
         }
-        await vi.waitFor(() => expect(mockTagResolve).toHaveBeenCalledTimes(4));
+        await vi.waitFor(() => expect(mockTagResolve).toHaveBeenCalledTimes(4), WAIT);
         mockStage1();
         await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
         await flush();
@@ -824,7 +826,7 @@ describe('🔴 the shadow beside another arm', () => {
       } finally {
         for (const p of pending) finish(p as never);
       }
-      await vi.waitFor(() => expect(inserts('resourceIntentShadow')).toHaveLength(5));
+      await vi.waitFor(() => expect(inserts('resourceIntentShadow')).toHaveLength(5), WAIT);
       mockInsert.mockClear();
       mockTagResolve.mockResolvedValue(held());
       mockStage1();
@@ -935,7 +937,7 @@ describe('🔴 judge capture', () => {
       now: () => new Date('2026-10-17T01:02:03.456Z'),
     };
     await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, ctx);
-    await vi.waitFor(() => expect(inserts(JUDGE_SAMPLE_TABLE)).toHaveLength(1));
+    await vi.waitFor(() => expect(inserts(JUDGE_SAMPLE_TABLE)).toHaveLength(1), WAIT);
     const promptHash = createHash('sha256').update(PROMPT).digest('hex');
     expect(inserts(JUDGE_SAMPLE_TABLE)[0].values).toEqual([
       {
@@ -962,7 +964,7 @@ describe('🔴 judge capture', () => {
       criteriaVersion: 2,
     });
     await getResourceIntent({ prompt: PROMPT }, { ...CTX, judgeCapture: true });
-    await vi.waitFor(() => expect(inserts(JUDGE_SAMPLE_TABLE)).toHaveLength(1));
+    await vi.waitFor(() => expect(inserts(JUDGE_SAMPLE_TABLE)).toHaveLength(1), WAIT);
   });
 
   it('a failed write is not logged, so the prompt never reaches a log', async () => {
@@ -971,7 +973,7 @@ describe('🔴 judge capture', () => {
     });
     mockStage1();
     await getResourceIntent({ prompt: PROMPT }, { ...CTX, judgeCapture: true });
-    await vi.waitFor(() => expect(inserts(JUDGE_SAMPLE_TABLE)).toHaveLength(1));
+    await vi.waitFor(() => expect(inserts(JUDGE_SAMPLE_TABLE)).toHaveLength(1), WAIT);
     await flush();
     for (const call of loggingMock.logToAxiom.mock.calls)
       expect(JSON.stringify(call)).not.toContain(PROMPT);

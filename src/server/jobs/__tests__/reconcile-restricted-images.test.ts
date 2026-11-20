@@ -9,6 +9,14 @@ const queryRaw = dbMock.dbWrite.$queryRaw;
 // in for it and returns the chunk's rowcount.
 const executeRaw = vi.fn<(...call: unknown[]) => Promise<number>>();
 const bustCachesForPosts = vi.fn(async (_postIds: number[]) => undefined);
+// The search-index queues, at the Redis boundary: `<index>:<action>` and the ids queued under it.
+const { addToQueue } = vi.hoisted(() => ({
+  addToQueue: vi.fn(async (_key: string, _ids: number[]) => true),
+}));
+vi.mock('~/server/redis/queues', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  addToQueue,
+}));
 
 import { reconcileRestrictedImages } from '~/server/jobs/reconcile-restricted-images';
 import {
@@ -30,7 +38,10 @@ vi.mock('~/shared/constants/basemodel.constants', async (importOriginal) => ({
   matureRestrictedBaseModels: () => restricted.list,
 }));
 
-const sqlOf = (call: unknown[]) => (call[0] as string[]).join('');
+const sqlOf = (call: unknown[]) =>
+  Array.isArray(call[0])
+    ? (call[0] as string[]).join('')
+    : ((call[0] as Prisma.Sql | undefined)?.strings ?? []).join('');
 const valuesOf = (call: unknown[]) =>
   call.slice(1).flatMap((v) => ((v as Prisma.Sql)?.values ?? [v]) as unknown[]);
 const isUpdateQuery = (call: unknown[]) => /SET\s+"modelRestricted"/i.test(sqlOf(call));
@@ -43,6 +54,14 @@ const isVersionQuery = (call: unknown[]) =>
 let versionIds: number[] = [1, 2, 3];
 let overhidden = 0;
 let chunkPostIds: number[][] = [];
+let chunkImageIds: number[][] = [];
+let notMature = new Set<number>();
+let collectionsShowing: number[] = [];
+let collectionLookups: unknown[][] = [];
+let articlesShowing: number[] = [];
+// Fixture image ids start here; the lookup's other numeric parameter (its cap) is far above them.
+const FIRST_IMAGE_ID = 501;
+const CAP_PARAM = 5000;
 
 const run = () =>
   reconcileRestrictedImages.run({}).result as Promise<{
@@ -57,16 +76,35 @@ beforeEach(() => {
   restricted.list = ['Alpha', 'Beta'];
   overhidden = 0;
   chunkPostIds = [];
+  chunkImageIds = [];
+  notMature = new Set();
+  collectionsShowing = [];
+  collectionLookups = [];
+  articlesShowing = [];
   executeRaw.mockReset();
   executeRaw.mockResolvedValue(0);
   queryRaw.mockImplementation((...call: unknown[]) => {
     if (isUpdateQuery(call)) {
       const chunk = executeRaw.mock.calls.length;
       return executeRaw(...call).then((flagged) => [
-        { flagged, postIds: chunkPostIds[chunk] ?? [] },
+        {
+          flagged,
+          postIds: chunkPostIds[chunk] ?? [],
+          imageIds: chunkImageIds[chunk] ?? [],
+          matureImageIds: (chunkImageIds[chunk] ?? []).filter((id) => !notMature.has(id)),
+        },
       ]);
     }
     if (isOverhiddenQuery(call)) return Promise.resolve([{ count: BigInt(overhidden) }]);
+    if (sqlOf(call).includes('pg_index')) return Promise.resolve([{ present: true }]);
+    if (sqlOf(call).includes('"ComicProject"'))
+      return Promise.resolve(articlesShowing.map((id) => ({ kind: 'article', id })));
+    if (sqlOf(call).includes('"CollectionItem"')) {
+      collectionLookups.push(
+        valuesOf(call).filter((v) => typeof v === 'number' && v >= FIRST_IMAGE_ID && v < CAP_PARAM)
+      );
+      return Promise.resolve(collectionsShowing.map((collectionId) => ({ collectionId })));
+    }
     if (isVersionQuery(call)) return Promise.resolve(versionIds.map((id) => ({ id })));
     return Promise.resolve([]);
   });
@@ -161,7 +199,8 @@ describe('reconcile-restricted-images', () => {
     // The parameters, not the statement text. Every assertion in an earlier draft read
     // only the static strings, so slicing the id list down to one version per chunk
     // passed the whole file while flagging a fraction of what it should.
-    const sent = executeRaw.mock.calls.map(valuesOf);
+    // The level mask that picks the mature images is the last parameter, after the versions.
+    const sent = executeRaw.mock.calls.map((call) => valuesOf(call).slice(0, -1));
     expect(sent.flat()).toEqual(versionIds);
     expect(sent.map((ids) => ids.length)).toEqual([100, 100, 50]);
   });
@@ -218,22 +257,132 @@ describe('reconcile-restricted-images', () => {
       'webhooks'
     );
   });
+});
 
-  it('logs drift for an operator, and stays quiet when there is none', async () => {
-    executeRaw.mockResolvedValue(4);
+describe('reconcile-restricted-images search reindex', () => {
+  // The image Delete path refreshes the cached thumbnails; that read is how the batch shows up here.
+  const thumbnailRefreshes = () =>
+    queryRaw.mock.calls
+      .filter((call) => sqlOf(call).includes("'parentId'"))
+      .map((call) => valuesOf(call).filter((v) => typeof v === 'number'));
+
+  it('takes each newly restricted image out of the image queues as a Delete', async () => {
+    versionIds = Array.from({ length: 250 }, (_, i) => i + 1);
+    executeRaw.mockResolvedValue(1);
+    chunkImageIds = [[501, 502], [], [503]];
 
     await run();
 
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'reconcile-restricted-images', flagged: 4 }),
-      'webhooks'
+    expect(thumbnailRefreshes()).toEqual([[501, 502], [503]]);
+  });
+
+  const collectionUpdates = () =>
+    addToQueue.mock.calls
+      .filter(([key]) => key.startsWith('collections') && key.endsWith(':Update'))
+      .flatMap(([, ids]) => ids);
+
+  it('rebuilds the collection documents showing each newly restricted image', async () => {
+    versionIds = Array.from({ length: 250 }, (_, i) => i + 1);
+    executeRaw.mockResolvedValue(1);
+    chunkImageIds = [[501, 502], [], [503]];
+    collectionsShowing = [77];
+
+    await run();
+
+    expect(collectionLookups.map((ids) => [...new Set(ids)])).toEqual([[501, 502], [503]]);
+    expect(collectionUpdates()).toEqual([77, 77]);
+  });
+
+  it('retries a failed image queue removal once', async () => {
+    chunkImageIds = [[501]];
+    executeRaw.mockResolvedValue(1);
+    const flag = queryRaw.getMockImplementation()!;
+    let failed = false;
+    queryRaw.mockImplementation((...call: unknown[]) => {
+      if (sqlOf(call).includes("'parentId'") && !failed) {
+        failed = true;
+        return Promise.reject(new Error('db blip'));
+      }
+      return flag(...call);
+    });
+
+    await run();
+
+    expect(thumbnailRefreshes()).toEqual([[501], [501]]);
+    expect(
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.some(
+          ([entry]) => (entry as { message?: string }).message === 'Image queue removal failed'
+        )
+    ).toBe(false);
+  });
+
+  it('keeps a restricted image the restriction does not hide in the image queues', async () => {
+    chunkImageIds = [[501, 502]];
+    notMature = new Set([502]);
+    executeRaw.mockResolvedValue(2);
+
+    await run();
+
+    expect(thumbnailRefreshes()).toEqual([[501]]);
+  });
+
+  it('leaves the documents of a restricted image the restriction does not hide', async () => {
+    chunkImageIds = [[501]];
+    notMature = new Set([501]);
+    articlesShowing = [9];
+    executeRaw.mockResolvedValue(1);
+
+    await run();
+
+    expect(addToQueue).not.toHaveBeenCalled();
+  });
+
+  it('also queues the articles whose cover or banner it is', async () => {
+    chunkImageIds = [[501]];
+    articlesShowing = [9];
+    executeRaw.mockResolvedValue(1);
+
+    await run();
+
+    const articleUpdates = addToQueue.mock.calls
+      .filter(([key]) => key.startsWith('articles') && key.endsWith(':Update'))
+      .flatMap(([, ids]) => ids);
+    expect(articleUpdates).toEqual([9]);
+  });
+
+  it('queues nothing when no image was newly restricted', async () => {
+    collectionsShowing = [77];
+    await run();
+    expect(collectionLookups).toEqual([]);
+    expect(addToQueue).not.toHaveBeenCalled();
+  });
+
+  it('looks the collections up in bounded batches', async () => {
+    chunkImageIds = [Array.from({ length: 1200 }, (_, i) => i + 501)];
+    executeRaw.mockResolvedValue(1200);
+    await run();
+    expect(collectionLookups.map((ids) => new Set(ids).size)).toEqual([500, 500, 200]);
+  });
+
+  it('logs counts, not ids, when the reindex fails, and still finishes the run', async () => {
+    chunkImageIds = [[501, 502]];
+    executeRaw.mockResolvedValue(2);
+    const flag = queryRaw.getMockImplementation()!;
+    queryRaw.mockImplementation((...call: unknown[]) =>
+      sqlOf(call).includes("'parentId'") ? Promise.reject(new Error('db down')) : flag(...call)
     );
 
-    vi.clearAllMocks();
-    executeRaw.mockResolvedValue(0);
+    const result = await run();
 
-    await run();
-
-    expect(logToAxiom).not.toHaveBeenCalled();
+    expect(result.flagged).toBe(2);
+    expect(restrictedImageReconcileLastSuccessGauge.set).toHaveBeenCalledTimes(1);
+    const failure = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .find((entry) => entry.message === 'Image queue removal failed');
+    expect(failure).toMatchObject({ images: 2, failedBatches: 1 });
+    expect(JSON.stringify(failure)).not.toContain('501');
   });
 });

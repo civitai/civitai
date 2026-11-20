@@ -145,9 +145,20 @@ const creatorAnnouncement = {
   },
 };
 
-async function renderPanel(sources: Array<'civitai' | 'creators'>) {
+async function renderPanel(sources: Array<'civitai' | 'creators'>, onNavigate?: () => void) {
   const { AnnouncementsPanel } = await import('~/components/Announcements/AnnouncementsPanel');
-  renderWithProviders(<AnnouncementsPanel sources={sources} />);
+  renderWithProviders(<AnnouncementsPanel sources={sources} onNavigate={onNavigate} />);
+}
+
+/** Presses a link without letting the test frame navigate, which would end the run. */
+async function withClickSwallowed(act: () => unknown) {
+  const swallow = (e: Event) => e.preventDefault();
+  document.addEventListener('click', swallow);
+  try {
+    await act();
+  } finally {
+    document.removeEventListener('click', swallow);
+  }
 }
 
 describe('AnnouncementsPanel', () => {
@@ -170,6 +181,31 @@ describe('AnnouncementsPanel', () => {
 
     await expect.element(page.getByText('Civitai says hello')).toBeInTheDocument();
     await expect.element(page.getByText('Creator says hello')).toBeInTheDocument();
+  });
+
+  // The notifications drawer floats over the page, so a button that takes the viewer elsewhere
+  // has to hand control back to it. Both sources render through different components; each must
+  // carry the callback, so each is pressed.
+  test('a button that navigates inside the site reports it, for either source', async () => {
+    mocks.civitai = [
+      {
+        ...civitaiAnnouncement,
+        metadata: { actions: [{ link: '/articles/1', linkText: 'Read it' }] },
+      },
+    ];
+    mocks.creators = [
+      {
+        ...creatorAnnouncement,
+        metadata: { actions: [{ link: '/models/2', linkText: 'See it' }] },
+      },
+    ];
+    const onNavigate = vi.fn();
+    await renderPanel(['civitai', 'creators'], onNavigate);
+
+    for (const [i, name] of ['Read it', 'See it'].entries()) {
+      await withClickSwallowed(() => page.getByRole('link', { name }).click());
+      expect(onNavigate).toHaveBeenCalledTimes(i + 1);
+    }
   });
 
   test('creators chip off removes creator announcements from the panel', async () => {

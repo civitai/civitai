@@ -5,7 +5,8 @@ description: Run queries against the moderator PostgreSQL database (the former R
 
 # Moderator Database Query
 
-Queries the moderator PostgreSQL database — `MODERATOR_DATABASE_URL`, one instance since the
+Queries the moderator PostgreSQL database. Reads use the read-only login (`MODERATOR_DATABASE_READONLY_URL`),
+and only `--writable` uses the application login (`MODERATOR_DATABASE_URL`). It is one instance since the
 2026-08-21 consolidation, holding the Retool-era moderation tables (`UserNotes`, `UserStrikes`,
 `ReToolActions`, …) alongside the xguard-lab tables.
 

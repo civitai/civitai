@@ -1,3 +1,7 @@
+import {
+  fallbackUserImageColumn,
+  fallbackUserImageColumnOf,
+} from '~/server/services/profile-picture-fallback.sql';
 import { Prisma } from '@prisma/client';
 import { ilikeContains } from '~/server/utils/ilike';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
@@ -114,12 +118,15 @@ import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { enrichMyChallengeCards } from '~/server/services/challenge-participation.util';
 import {
   getEffectiveBrowsingLevel,
-  isChallengeHiddenByCoverScan,
-  isChallengeHiddenByPoiCover,
   isImageHiddenFromGreenViewer,
   winnerImageFields,
   winnerImageStateSql,
 } from '~/server/games/daily-challenge/challenge-visibility';
+import { isChallengeDetailHidden } from '~/server/games/daily-challenge/challenge-detail-visibility';
+import {
+  getIncompatibleEntryImageIds,
+  INCOMPATIBLE_BASE_MODEL_REASON,
+} from '~/server/games/daily-challenge/challenge-resource-compat';
 import {
   getChallengeExcludedUserIds,
   challengeCreatorBlockSql,
@@ -137,7 +144,6 @@ import {
 } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   deriveDomainCurrency,
-  isChallengeHiddenByDomainCurrency,
   isNonSfwForGreen,
   type ChallengeBuzzType,
 } from '~/server/games/daily-challenge/challenge-currency';
@@ -160,6 +166,7 @@ import {
   hasBlockMarker,
   imageNotRestrictedSql,
   imageNotRestrictedWhere,
+  challengeCoverWhere,
 } from '~/server/common/image-visibility';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
@@ -351,14 +358,14 @@ const challengeCardQuery = Prisma.sql`
       c."collectionId",
       c."createdById",
       u.username as "creatorUsername",
-      u.image as "creatorImage",
+      ${Prisma.raw(fallbackUserImageColumn)} as "creatorImage",
       u."deletedAt" as "creatorDeletedAt",
       cj.id as "judgeId",
       cj.name as "judgeName",
       cj.bio as "judgeBio",
       cj."userId" as "judgeUserId",
       ju.username as "judgeUsername",
-      ju.image as "judgeImage",
+      ${Prisma.raw(fallbackUserImageColumnOf('ju'))} as "judgeImage",
       ju."deletedAt" as "judgeDeletedAt"
     FROM "Challenge" c
     JOIN "User" u ON u.id = c."createdById"
@@ -400,7 +407,10 @@ async function mapChallengeRowsToCards(
 
   const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
   const coverImages = await dbRead.image.findMany({
-    where: { id: { in: coverImageIds }, ...imageNotRestrictedWhere({ viewerId: site.viewerId }) },
+    where: {
+      id: { in: coverImageIds },
+      AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
+    },
     select: imageSelect,
   });
 
@@ -517,8 +527,12 @@ export async function getMyChallenges({
            c."nsfwLevel", c."allowedNsfwLevel", c."modelVersionIds",
            NULL::int AS "modelId", NULL::text AS "modelName",
            c."collectionId", c."createdById",
-           u.username AS "creatorUsername", u.image AS "creatorImage", u."deletedAt" AS "creatorDeletedAt",
-           cj."userId" AS "judgeUserId", ju.username AS "judgeUsername", ju.image AS "judgeImage", ju."deletedAt" AS "judgeDeletedAt",
+           u.username AS "creatorUsername", ${Prisma.raw(
+             fallbackUserImageColumn
+           )} AS "creatorImage", u."deletedAt" AS "creatorDeletedAt",
+           cj."userId" AS "judgeUserId", ju.username AS "judgeUsername", ${Prisma.raw(
+             fallbackUserImageColumnOf('ju')
+           )} AS "judgeImage", ju."deletedAt" AS "judgeDeletedAt",
            cw."place" AS "myPlace",
            (c."createdById" = ${userId} AND c.source = ${
     ChallengeSource.User
@@ -951,9 +965,9 @@ async function buildChallengeDetail(
   const [creator] = await dbRead.$queryRaw<
     [{ id: number; username: string | null; image: string | null; deletedAt: Date | null }]
   >`
-    SELECT id, username, image, "deletedAt"
-    FROM "User"
-    WHERE id = ${createdById}
+    SELECT u.id, u.username, ${Prisma.raw(fallbackUserImageColumn)} AS image, u."deletedAt"
+    FROM "User" u
+    WHERE u.id = ${createdById}
   `;
 
   // Fetch profile picture and cosmetics for creator
@@ -970,7 +984,14 @@ async function buildChallengeDetail(
         where: {
           id: challenge.coverImageId,
           // The edit form must round-trip the cover it keeps, or a save would drop it.
-          ...(forEdit ? {} : imageNotRestrictedWhere({ viewerId: green?.viewerId })),
+          ...(forEdit
+            ? {}
+            : {
+                AND: [
+                  imageNotRestrictedWhere({ viewerId: green?.viewerId }),
+                  challengeCoverWhere(),
+                ],
+              }),
         },
         select: imageSelect,
       })
@@ -1019,7 +1040,9 @@ async function buildChallengeDetail(
         | undefined
       ]
     >`
-      SELECT cj.id, cj."userId", cj.name, cj.bio, u.username, u.image, u."deletedAt"
+      SELECT cj.id, cj."userId", cj.name, cj.bio, u.username, ${Prisma.raw(
+        fallbackUserImageColumn
+      )} AS image, u."deletedAt"
       FROM "ChallengeJudge" cj
       JOIN "User" u ON u.id = cj."userId"
       WHERE cj.id = ${challenge.judgeId}
@@ -1130,94 +1153,24 @@ export async function getChallengeDetail(
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
-  // User-created challenges are still flag-gated. Hiding them here (rather than only in the UI)
-  // covers the direct-link case: the detail page's SSG prefetch and every client fetch go through
-  // this function, so without the flag the page falls through to its not-found branch.
-  if (challenge.source === ChallengeSource.User && !canAccessUserChallenges) return null;
-
-  // Block gate: a viewer the creator has blocked can't open the challenge — direct-link parity
-  // with model/article/post detail. Scoped to user challenges (System/mod challenges have no owner
-  // to block); moderators exempt. A creator viewing their own challenge is self-safe:
-  // amIBlockedByUser returns false when targetUserId === userId.
-  if (viewerId != null && isModerator !== true && challenge.source === ChallengeSource.User) {
-    const blocked = await amIBlockedByUser({
-      userId: viewerId,
-      targetUserId: challenge.createdById ?? undefined,
-    });
-    if (blocked) return null;
-  }
-
-  // Visibility check: only show challenges that are visible to the public. The creator and
-  // moderators may preview a not-yet-visible or Cancelled challenge, and are likewise exempt
-  // from the scan/POI/cover gates below (mods need to inspect hidden challenges; the creator
-  // needs to see their own pending/blocked one).
-  const now = new Date();
-  const canPreviewUnpublished =
-    isModerator === true || (viewerId != null && challenge.createdById === viewerId);
-  if (challenge.visibleAt > now && !canPreviewUnpublished) return null;
-  if (challenge.status === ChallengeStatus.Cancelled && !canPreviewUnpublished) return null;
-
-  // Scan gate: user-created challenges stay hidden until moderation scan passes.
+  const checksUserGates = challenge.source === ChallengeSource.User && canAccessUserChallenges;
+  const [blockedByCreator, cover] = await Promise.all([
+    checksUserGates && viewerId != null && !isModerator
+      ? amIBlockedByUser({ userId: viewerId, targetUserId: challenge.createdById ?? undefined })
+      : false,
+    checksUserGates && challenge.coverImageId
+      ? dbRead.image.findUnique({
+          where: { id: challenge.coverImageId },
+          select: { poi: true, ingestion: true, nsfwLevel: true },
+        })
+      : null,
+  ]);
   if (
-    !canPreviewUnpublished &&
-    challenge.source === ChallengeSource.User &&
-    challenge.ingestion !== ChallengeIngestionStatus.Scanned
-  ) {
-    return null;
-  }
-
-  // POI + cover-scan gate: a cover depicting a real person (Image.poi, set by the image scanner),
-  // or one that hasn't finished moderation scanning yet, keeps the challenge out of public view —
-  // direct-URL parity with the feed filter. Mod/creator exempt; skip the lookup entirely for trusted
-  // System challenges. NSFW-on-green page gating is handled client-side by <Gated> (MatureContentRedirect),
-  // matching model/image detail pages; buildChallengeDetail applies the site's ceiling to the cover
-  // and winner images.
-  if (
-    !canPreviewUnpublished &&
-    challenge.source === ChallengeSource.User &&
-    challenge.coverImageId
-  ) {
-    const cover = await dbRead.image.findUnique({
-      where: { id: challenge.coverImageId },
-      select: { poi: true, ingestion: true, nsfwLevel: true },
-    });
-    if (
-      isChallengeHiddenByPoiCover(
-        {
-          source: challenge.source,
-          createdById: challenge.createdById,
-          coverPoi: cover?.poi ?? false,
-        },
-        viewerId
-      )
-    )
-      return null;
-
-    if (
-      isChallengeHiddenByCoverScan(
-        { source: challenge.source, createdById: challenge.createdById, coverImage: cover },
-        viewerId
-      )
-    )
-      return null;
-  }
-
-  // Domain-currency gate — direct-URL parity with the feed filter. Like the other gates above,
-  // moderators and creators can preview unpublished/hidden challenges regardless of domain.
-  // On the green site a mismatched (yellow) challenge is returned anyway: the detail page's
-  // <Gated> shows the civitai.red redirect card instead of a bare 404. The red side keeps
-  // hiding green challenges — there's no equivalent redirect surface pointing back to green.
-  if (
-    !isGreen &&
-    !canPreviewUnpublished &&
-    isChallengeHiddenByDomainCurrency(
-      {
-        source: challenge.source,
-        buzzType: challenge.buzzType,
-        createdById: challenge.createdById,
-      },
-      isGreen ?? false,
-      viewerId
+    isChallengeDetailHidden(
+      challenge,
+      { id: viewerId, isModerator, isGreen, canAccessUserChallenges, blockedByCreator },
+      cover,
+      new Date()
     )
   )
     return null;
@@ -3356,6 +3309,7 @@ export async function checkImageEligibility(
   );
 
   const imageMap = new Map(images.map((img) => [img.id, img]));
+  const incompatible = await getIncompatibleEntryImageIds(imageIds, challenge.modelVersionIds, db);
 
   return imageIds.map((imageId) => {
     const image = imageMap.get(imageId);
@@ -3389,6 +3343,8 @@ export async function checkImageEligibility(
           challenge.modelVersionIds.includes(vid)
         );
         reasons.push(claimsEligibleModel ? 'Model not detected' : 'Wrong model');
+      } else if (incompatible.has(imageId)) {
+        reasons.push(INCOMPATIBLE_BASE_MODEL_REASON);
       }
     }
 
@@ -3449,7 +3405,9 @@ async function getEventCoverImages(
   const images = await dbRead.image.findMany({
     where: {
       id: { in: ids },
-      ...(forEdit ? {} : imageNotRestrictedWhere({ viewerId: site.viewerId })),
+      ...(forEdit
+        ? {}
+        : { AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()] }),
     },
     select: imageSelect,
   });
@@ -3600,7 +3558,7 @@ export async function getActiveEvents(
           .findMany({
             where: {
               id: { in: coverImageIds },
-              ...imageNotRestrictedWhere({ viewerId: site.viewerId }),
+              AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
             },
             select: imageSelect,
           })
@@ -4396,14 +4354,14 @@ export async function getCompletedChallengesWithWinners(
       c."collectionId",
       c."createdById",
       u.username as "creatorUsername",
-      u.image as "creatorImage",
+      ${Prisma.raw(fallbackUserImageColumn)} as "creatorImage",
       u."deletedAt" as "creatorDeletedAt",
       cj.id as "judgeId",
       cj.name as "judgeName",
       cj.bio as "judgeBio",
       cj."userId" as "judgeUserId",
       ju.username as "judgeUsername",
-      ju.image as "judgeImage",
+      ${Prisma.raw(fallbackUserImageColumnOf('ju'))} as "judgeImage",
       ju."deletedAt" as "judgeDeletedAt",
       c.metadata,
       c."judgingCategories"
@@ -4515,7 +4473,7 @@ export async function getCompletedChallengesWithWinners(
       ? await dbRead.image.findMany({
           where: {
             id: { in: coverImageIds },
-            ...imageNotRestrictedWhere({ viewerId: currentUserId }),
+            AND: [imageNotRestrictedWhere({ viewerId: currentUserId }), challengeCoverWhere()],
           },
           select: imageSelect,
         })

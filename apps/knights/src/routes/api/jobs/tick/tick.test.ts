@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const escalateExpired = vi.hoisted(() => vi.fn());
 const applyPendingResolutions = vi.hoisted(() => vi.fn());
 const closeModeratorRuledItems = vi.hoisted(() => vi.fn());
+const closeUnservableItems = vi.hoisted(() => vi.fn());
 const settleFinalItems = vi.hoisted(() => vi.fn());
 const expireSmites = vi.hoisted(() => vi.fn());
 const settleHiddenChecks = vi.hoisted(() => vi.fn());
@@ -39,6 +40,7 @@ vi.mock('$lib/server/queue/queue.service', () => ({
   escalateExpired,
   applyPendingResolutions,
   closeModeratorRuledItems,
+  closeUnservableItems,
 }));
 const tickItemFailures = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/metrics', () => ({ metrics: { tickItemFailures } }));
@@ -55,6 +57,13 @@ beforeEach(() => {
   applyPendingResolutions.mockReset();
   closeModeratorRuledItems.mockReset();
   closeModeratorRuledItems.mockResolvedValue({ closed: 0, failed: 0 });
+  closeUnservableItems.mockReset();
+  closeUnservableItems.mockResolvedValue({
+    unservable: 0,
+    publishesAfterExpiry: 0,
+    unpublishedDrafts: 0,
+    imageUnservable: 0,
+  });
   settleFinalItems.mockReset();
   settleFinalItems.mockResolvedValue({ items: 0, votes: 0, failed: 0 });
   settleHiddenChecks.mockReset();
@@ -94,6 +103,10 @@ describe('POST /api/jobs/tick', () => {
       extended: 3,
       applied: 1,
       moderatorRuled: 0,
+      unservable: 0,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+      imageUnservable: 0,
       settledVotes: 0,
       hiddenChecksGraded: 0,
       yesNoClosed: 0,
@@ -118,6 +131,46 @@ describe('POST /api/jobs/tick', () => {
     expect(closeModeratorRuledItems.mock.invocationCallOrder[0]).toBeLessThan(
       settleFinalItems.mock.invocationCallOrder[0]
     );
+  });
+
+  it('closes items that can never be served before paying out, and reports each kind', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    closeUnservableItems.mockResolvedValue({
+      unservable: 7,
+      publishesAfterExpiry: 3,
+      unpublishedDrafts: 5,
+      imageUnservable: 2,
+    });
+
+    const response = await run();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      unservable: 7,
+      publishesAfterExpiry: 3,
+      unpublishedDrafts: 5,
+      imageUnservable: 2,
+    });
+    expect(closeUnservableItems.mock.invocationCallOrder[0]).toBeLessThan(
+      settleFinalItems.mock.invocationCallOrder[0]
+    );
+    // A level a moderator locked is closed against that level first, never set aside as unservable.
+    expect(closeModeratorRuledItems.mock.invocationCallOrder[0]).toBeLessThan(
+      closeUnservableItems.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('hands the open items the unservable sweep closes to the same live-update list as the other moves', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+
+    expect((await run()).status).toBe(200);
+
+    const collect = escalateExpired.mock.calls[0][1].moved;
+    expect(typeof collect).toBe('function');
+    expect(closeUnservableItems.mock.calls[0][1].moved).toBe(collect);
+    expect(closeModeratorRuledItems.mock.calls[0][1].moved).toBe(collect);
   });
 
   it('reports how many unvoted items the escalation closed as expired', async () => {

@@ -5,7 +5,6 @@ import {
   SET_ASIDE_TABLE_SQL,
 } from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
-import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -16,10 +15,10 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
  * has to evict that user's entry, and must not fail the action when the eviction fails.
  */
 
-const { dbHandle, del, hSet, syncSearchIndexBulk } = vi.hoisted(() => ({
+const MODERATOR = { id: 1, isModerator: true };
+const { dbHandle, del, syncSearchIndexBulk } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   del: vi.fn(async (_keys: string[]) => 0),
-  hSet: vi.fn(async (_key: string, _value: Record<string, string>) => 1),
   syncSearchIndexBulk: vi.fn(async (_batch: { entityIds: number[]; action?: string }) => undefined),
 }));
 
@@ -41,7 +40,7 @@ vi.mock('../db', () => ({
   },
 }));
 vi.mock('../redis', () => ({
-  getRedis: () => ({ del, hSet, expire: async () => true }),
+  getRedis: () => ({ del }),
   getSysRedis: () => ({ packed: { set: vi.fn(async () => undefined) } }),
 }));
 vi.mock('../image-moderation-effects', () => ({
@@ -58,21 +57,12 @@ vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
 vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
-vi.mock('../storage', () => ({
-  getStorage: () => ({
-    deleteObject: vi.fn(async () => undefined),
-    purgeObjectVersions: vi.fn(async () => ({ versionsDeleted: 1, remaining: 0 })),
-  }),
-}));
 
 const { blockImage, acceptImage } = await import('../image-moderation.service');
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
-const { deleteImageRows, finishImageDeletes } = await import('../image-deletion');
+const { deleteImages: deleteModeratorImages } = await import('../image-deletion');
 const { bustProfilePictures } = await import('../profile-picture-cache');
-const deleteImages = async (ids: number[]) =>
-  finishImageDeletes(
-    await (dbHandle.current as Kysely<DB>).transaction().execute((trx) => deleteImageRows(trx, ids))
-  );
+const deleteImages = (ids: number[]) => deleteModeratorImages(ids, MODERATOR);
 
 const SCHEMA = `
 CREATE TABLE "Image" (
@@ -103,7 +93,12 @@ CREATE TABLE "CsamReport" (
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+CREATE TYPE "JobQueueType" AS ENUM (
+  'BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync', 'ImageDelete'
+);
+CREATE TABLE "JobQueue" ("type" "JobQueueType", "entityType" "EntityType", "entityId" INTEGER,
+  "data" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Model3D" (
   "id" INTEGER PRIMARY KEY,
@@ -147,7 +142,6 @@ const ownerRow = async () =>
 beforeEach(async () => {
   del.mockReset();
   del.mockImplementation(async () => 0);
-  hSet.mockClear();
   syncSearchIndexBulk.mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);
@@ -173,20 +167,12 @@ describe('moderator writes to an image that is a profile picture', () => {
     await blockImage({ imageId: AVATAR_ID, userId: 1 });
 
     expect(bustedKeys()).toContain(avatarKey);
-    // The event engine's copy too.
-    expect(hSet).toHaveBeenCalledWith(`user:profilePicture:v3:${AVATAR_OWNER}`, {
-      debounce: '1',
-      cachedAt: expect.any(String),
-    });
   });
 
-  it('blockImage clears a User.image naming the blocked picture, marks it, and evicts the basic user', async () => {
+  it('blockImage clears a User.image naming the blocked picture and evicts the basic user', async () => {
     await blockImage({ imageId: AVATAR_ID, userId: 1 });
 
-    expect(await ownerRow()).toEqual({
-      image: null,
-      meta: { heldImageCleared: { pictureId: AVATAR_ID } },
-    });
+    expect(await ownerRow()).toEqual({ image: null, meta: {} });
     expect(bustedKeys()).toContain(`${REDIS_KEYS.CACHES.BASIC_USERS}:${AVATAR_OWNER}`);
     expect(del.mock.calls.flat()).toContain(`${REDIS_KEYS.USER.SESSION}:${AVATAR_OWNER}`);
     expect(syncSearchIndexBulk).toHaveBeenCalledWith({
@@ -205,58 +191,14 @@ describe('moderator writes to an image that is a profile picture', () => {
     });
   });
 
-  it('acceptImage after a block puts User.image back from the picture', async () => {
+  it('🔴 acceptImage after a block leaves User.image empty: the picture serves the avatar', async () => {
     await blockImage({ imageId: AVATAR_ID, userId: 1 });
+    del.mockClear();
     await acceptImage({ imageId: AVATAR_ID, userId: 1 });
 
-    expect(await ownerRow()).toEqual({ image: 'avatar-key', meta: {} });
-  });
-
-  it('a partly lifted block keeps User.image empty and the marker in place', async () => {
-    await blockImage({ imageId: AVATAR_ID, userId: 1 });
-    await db.query(
-      `UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1, "blockedFor" = 'tos' WHERE id = $1`,
-      [AVATAR_ID]
-    );
-    await bustProfilePictures({ imageIds: [AVATAR_ID] });
-
-    expect(await ownerRow()).toEqual({
-      image: null,
-      meta: { heldImageCleared: { pictureId: AVATAR_ID } },
-    });
-  });
-
-  it('never restores a picture under a csam or minor hold', async () => {
-    for (const review of ['csam', 'minor']) {
-      await db.query(
-        `UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1, "blockedFor" = NULL, "needsReview" = $2 WHERE id = $1`,
-        [AVATAR_ID, review]
-      );
-      await db.query(`UPDATE "User" SET image = NULL, meta = $2 WHERE id = $1`, [
-        AVATAR_OWNER,
-        JSON.stringify({ heldImageCleared: { pictureId: AVATAR_ID } }),
-      ]);
-      await bustProfilePictures({ imageIds: [AVATAR_ID] });
-
-      expect(await ownerRow()).toEqual({
-        image: null,
-        meta: { heldImageCleared: { pictureId: AVATAR_ID } },
-      });
-    }
-  });
-
-  it("restores nothing for a write to an image that is not the user's picture", async () => {
-    await db.query(
-      `UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1 WHERE id IN ($1, $2)`,
-      [AVATAR_ID, OTHER_IMAGE_ID]
-    );
-    await db.query(`UPDATE "User" SET image = NULL, meta = $2 WHERE id = $1`, [
-      AVATAR_OWNER,
-      JSON.stringify({ heldImageCleared: { pictureId: AVATAR_ID } }),
-    ]);
-    await blockImage({ imageId: OTHER_IMAGE_ID, userId: 1 });
-
-    expect((await ownerRow()).image).toBeNull();
+    expect(await ownerRow()).toEqual({ image: null, meta: {} });
+    // The accept itself evicts the picture's cache entry, so the accepted picture is read afresh.
+    expect(bustedKeys()).toContain(avatarKey);
   });
 
   it('updateImageNsfwLevel evicts it', async () => {
@@ -295,5 +237,21 @@ describe('moderator writes to an image that is a profile picture', () => {
       [AVATAR_ID]
     );
     expect(rows[0].nsfwLevel).toBe(16);
+  });
+});
+
+describe('a moderator block of an image a stale User.image names', () => {
+  const OLD_KEY = '3f6e2a10-9b4c-4d7e-8a21-6c0b5d9e1f42';
+
+  it("🔴 clears that User.image and evicts the owner's session", async () => {
+    await db.query(`UPDATE "Image" SET "url" = $1 WHERE "id" = $2`, [OLD_KEY, OTHER_IMAGE_ID]);
+    await db.query(`UPDATE "User" SET "image" = $1 WHERE "id" = $2`, [
+      `https://cdn.example/${OLD_KEY}/width=96`,
+      AVATAR_OWNER,
+    ]);
+    await blockImage({ imageId: OTHER_IMAGE_ID, userId: 1 });
+
+    expect(await ownerRow()).toEqual({ image: null, meta: {} });
+    expect(bustedKeys()).toContain(`${REDIS_KEYS.USER.SESSION}:${AVATAR_OWNER}`);
   });
 });
