@@ -101,8 +101,8 @@ export async function takeDueUploadPromptRetries({
         name: 'upload-prompt-scan',
         type: 'error',
         message: `retry take stopped: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        taken: due.length,
-      }).catch(() => null);
+        payload: { taken: due.length },
+      });
       break;
     }
     if (!removed) continue;
