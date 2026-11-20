@@ -2369,6 +2369,7 @@ export async function archiveUserProfile(snapshot: ProfileClearSnapshot) {
         ['actorId', { value: snapshot.actorId }],
         ['clearedFields', { value: snapshot.clearedFields }],
         ['profile', { value: snapshot.profile }],
+        ['links', { value: snapshot.links }],
       ],
     }),
     uploadStream({ stream: sink, userId: snapshot.userId, filename: 'profile.json' }),

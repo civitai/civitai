@@ -1391,6 +1391,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
       actorId: report.userId + 1,
       clearedFields: ['bio', 'showcaseSections'],
       profile,
+      links: [{ id: 1, url: 'https://example.invalid/pay', type: 'Sponsorship' }],
     });
 
     const archived = JSON.parse(uploads.get('profile.json')!.toString('utf8'));
@@ -1400,6 +1401,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
       'actorId',
       'clearedFields',
       'profile',
+      'links',
     ]);
     const keys = uploadedKeys.filter((k) => k.endsWith('_profile.json'));
     expect(keys).not.toHaveLength(0);
@@ -1421,6 +1423,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
           userId: report.userId,
           actorId: report.userId + 1,
           clearedFields: ['bio'],
+          links: [],
           profile: {
             bio: 'b',
             message: null,

@@ -141,10 +141,11 @@ export const updateUserProfileHandler = async ({
         bio: ['bio', 'sfwBio'],
         message: ['message', 'sfwMessage'],
         location: ['location'],
+        links: ['socialLinks', 'sponsorshipLinks'],
       };
       const fields = (Object.keys(touched) as (keyof typeof touched)[]).filter((field) =>
         touched[field].some((key) => key in input)
-      ) as ProfileClearField[];
+      );
       if (fields.length)
         await archiveProfileBeforeModeratorChange({
           userId,

@@ -493,7 +493,7 @@ export async function archiveProfileBeforeModeratorChange({
 }: {
   userId: number;
   actorId: number;
-  fields: ProfileClearField[];
+  fields: ProfileClearSnapshot['clearedFields'];
   archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
   alwaysArchive?: boolean;
 }) {
@@ -512,17 +512,26 @@ export async function archiveProfileBeforeModeratorChange({
       select: { id: true },
     }));
   if (mustArchive) {
-    let archived: ProfileClearSnapshot['profile'] | null = null;
+    let archived: Pick<ProfileClearSnapshot, 'profile' | 'links'> | null = null;
     for (let attempt = 0; ; attempt++) {
-      // primary: the archived text must be the text this call clears.
-      const profile = await dbWrite.userProfile.findUnique({
-        where: { userId },
-        select: PROFILE_CLEAR_SNAPSHOT_SELECT,
-      });
-      if (!profile || (archived && isEqual(profile, archived))) break;
+      const [profile, links] = await Promise.all([
+        // primary: the archived text must be the text this call changes.
+        dbWrite.userProfile.findUnique({
+          where: { userId },
+          select: PROFILE_CLEAR_SNAPSHOT_SELECT,
+        }),
+        // primary: as above, for the user's social and sponsorship links.
+        dbWrite.userLink.findMany({
+          where: { userId },
+          select: { id: true, url: true, type: true },
+          orderBy: { id: 'asc' },
+        }),
+      ]);
+      const current = { profile, links };
+      if ((!profile && !links.length) || (archived && isEqual(current, archived))) break;
       if (attempt === 3) throw new Error(`profile ${userId} kept changing while it was archived`);
-      await archive({ userId, actorId, clearedFields: fields, profile });
-      archived = profile;
+      await archive({ userId, actorId, clearedFields: fields, ...current });
+      archived = current;
     }
   }
 }
@@ -531,8 +540,10 @@ export async function archiveProfileBeforeModeratorChange({
 export type ProfileClearSnapshot = {
   userId: number;
   actorId: number;
-  clearedFields: ProfileClearField[];
-  profile: {
+  clearedFields: (ProfileClearField | 'links')[];
+  /** Social and sponsorship links: offsite contact and payment details. */
+  links: { id: number; url: string; type: string }[];
+  profile: null | {
     bio: string | null;
     message: string | null;
     messageAddedAt: Date | null;

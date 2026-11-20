@@ -18,7 +18,11 @@ import type * as UtilService from '~/server/services/util.service';
  */
 
 // The CSAM bucket upload a moderator's edit of a reported user waits on.
-const upload = vi.hoisted(() => ({ fail: undefined as Error | undefined, done: [] as string[] }));
+const upload = vi.hoisted(() => ({
+  fail: undefined as Error | undefined,
+  done: [] as string[],
+  bodies: [] as string[],
+}));
 vi.mock('@aws-sdk/lib-storage', () => {
   const Upload = class {
     private readonly params: { Body: NodeJS.ReadableStream; Key: string };
@@ -26,9 +30,12 @@ vi.mock('@aws-sdk/lib-storage', () => {
       this.params = params;
     }
     async done() {
-      for await (const chunk of this.params.Body) void chunk;
+      const chunks: Buffer[] = [];
+      for await (const chunk of this.params.Body)
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
       if (upload.fail) throw upload.fail;
       upload.done.push(this.params.Key);
+      upload.bodies.push(Buffer.concat(chunks).toString('utf8'));
       return { ETag: '"etag"' };
     }
   };
@@ -196,6 +203,8 @@ describe('creator-card bust in the profile and user write handlers', () => {
         });
         upload.fail = undefined;
         upload.done = [];
+        upload.bodies = [];
+        dbMock.dbWrite.userLink.findMany.mockResolvedValue([] as never);
         dbMock.dbWrite.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
         dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(stored as never);
       });
@@ -222,6 +231,32 @@ describe('creator-card bust in the profile and user write handlers', () => {
           ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
         } as never);
         expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+      });
+
+      it.each(['message', 'sfwMessage', 'location'])(
+        'archives before an edit of %s',
+        async (key) => {
+          await updateUserProfileHandler({
+            input: { userId: OWNER, [key]: '' },
+            ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+          } as never);
+          expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+        }
+      );
+
+      it('archives the old links before a moderator replaces them', async () => {
+        dbMock.dbWrite.userLink.findMany.mockResolvedValue([
+          { id: 5, url: 'https://example.invalid/old', type: 'Social' },
+        ] as never);
+        await updateUserProfileHandler({
+          input: { userId: OWNER, socialLinks: [] },
+          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+        } as never);
+        const archived = JSON.parse(upload.bodies[0]);
+        expect(archived.links).toEqual([
+          { id: 5, url: 'https://example.invalid/old', type: 'Social' },
+        ]);
+        expect(archived.clearedFields).toEqual(['links']);
       });
 
       it('archives nothing for an edit that touches no profile text', async () => {

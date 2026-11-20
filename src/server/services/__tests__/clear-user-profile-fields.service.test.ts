@@ -22,6 +22,7 @@ beforeEach(() => {
   db.userProfile.findUnique.mockResolvedValue(stored as never);
   db.csamReport.findFirst.mockResolvedValue(null as never);
   db.modActivity.create.mockResolvedValue({} as never);
+  db.userLink.findMany.mockResolvedValue([] as never);
   archive = vi.fn(async () => ({}));
 });
 
@@ -64,7 +65,7 @@ describe('clearUserProfileFields', () => {
       .mockResolvedValueOnce(edited as never)
       .mockResolvedValue(edited as never);
     await clear();
-    expect(archive.mock.calls.map(([s]) => s.profile.bio)).toEqual(['b', 'edited']);
+    expect(archive.mock.calls.map(([s]) => s.profile?.bio)).toEqual(['b', 'edited']);
     // Read, archive, read (changed), archive, read (settled), then clear.
     expect(db.userProfile.findUnique).toHaveBeenCalledTimes(3);
     expect(db.userProfile.updateMany).toHaveBeenCalledTimes(1);
@@ -81,6 +82,14 @@ describe('clearUserProfileFields', () => {
     await expect(clear()).rejects.toThrow('kept changing');
     expect(archive).toHaveBeenCalledTimes(3);
     expect(db.userProfile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('archives the social and sponsorship links with the text', async () => {
+    db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+    const links = [{ id: 1, url: 'https://example.invalid/pay', type: 'Sponsorship' }];
+    db.userLink.findMany.mockResolvedValue(links as never);
+    await clear();
+    expect(archive).toHaveBeenCalledWith(expect.objectContaining({ links }));
   });
 
   it('writes no archive and no record when the user has no profile row', async () => {
@@ -113,6 +122,7 @@ describe('clearUserProfileFields', () => {
       actorId: MOD,
       clearedFields: ['bio', 'showcaseSections'],
       profile: stored,
+      links: [],
     });
     expect(db.userProfile.findUnique).toHaveBeenCalledWith({
       where: { userId: USER },
