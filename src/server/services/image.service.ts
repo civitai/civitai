@@ -338,7 +338,9 @@ import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import {
   deleteImageRows,
+  imagesPendingDeletion as readImagesPendingDeletion,
   moderatorPurge,
+  ownImageDeleteBlocked,
   queueImageStorageDelete as queueStorageDelete,
   queuePostNsfwLevelUpdates,
   type DeleteActor,
@@ -948,6 +950,12 @@ export async function queueReplacedImageDeletion(ids: number[]) {
   }
 }
 
+/** Of `ids`, the images whose delete waits on a review their owner can see. */
+export async function imagesPendingDeletion(ids: number[]) {
+  // Primary: read straight after the delete that queued it.
+  return readImagesPendingDeletion(kyselyOver(dbWrite), ids);
+}
+
 type ImageDeleteOptions = {
   actor: DeleteActor;
   /** Extra condition on the DELETE itself; ids it (or a member actor's ownership limit) excludes
@@ -1022,13 +1030,18 @@ export async function deleteImages(
         : imagesWithOpenReports(ids).catch(() => new Set(ids)),
     ]);
 
+    const callerWhere =
+      !onlyWhere || 'toOperationNode' in onlyWhere ? onlyWhere : fromPrismaSql<boolean>(onlyWhere);
+    // The deleter's own image in a child-safety case waits for the case to close, as a pending
+    // delete. Never under a caller's condition, which the job would not carry out with it.
     const rows = await deleteImageRows(kyselyOver(dbWrite), {
       ids,
       actor,
-      where:
-        !onlyWhere || 'toOperationNode' in onlyWhere
-          ? onlyWhere
-          : fromPrismaSql<boolean>(onlyWhere),
+      where: callerWhere,
+      pending:
+        deletedById === undefined || callerWhere
+          ? undefined
+          : { blocked: ownImageDeleteBlocked(deletedById), data: { ownerId: deletedById } },
       files: keepStoredFiles
         ? undefined
         : {

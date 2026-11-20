@@ -218,7 +218,7 @@ await linkArticleContentImages({
 **Optimizations**:
 - **Batch queries**: 50 images → 3 queries (not 150 queries)
 - **Transaction safety**: All-or-nothing atomicity
-- **Orphaned cleanup**: Removes connections for deleted images and queues the unused ones for `image-deletes`
+- **Orphaned cleanup**: Removes connections for deleted images and queues the unused ones as pending cleanups for `pending-deletes`
 - **Race protection**: `skipDuplicates` handles concurrent saves
 - **Content change detection**: Only processes if content actually changed
 

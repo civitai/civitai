@@ -446,6 +446,8 @@ export type ReportedImageItem = {
   ruleBlocked: boolean;
   userId: number;
   username: string | null;
+  /** Its owner deleted it while a child-safety case held it; it goes once every such case closes. */
+  deleteRequested: boolean;
   report: {
     id: number;
     reason: string;
@@ -477,57 +479,73 @@ export async function getReportedImageQueue({
    *  the hand-off panels. Without it a link to a ruled report landed on an unrelated Pending list. */
   reportId?: number;
 }): Promise<{ items: ReportedImageItem[]; nextCursor?: number }> {
-  const fetched = await dbRead
-    .selectFrom('Image as i')
-    .innerJoin('User as u', 'u.id', 'i.userId')
-    .innerJoin('ImageReport as imgr', 'imgr.imageId', 'i.id')
-    .innerJoin('Report as r', 'r.id', 'imgr.reportId')
-    .innerJoin('User as ru', 'ru.id', 'r.userId')
-    .select([
-      'i.id',
-      'i.url',
-      'i.nsfwLevel',
-      'i.width',
-      'i.height',
-      'i.type',
-      'i.needsReview',
-      'i.minor',
-      'i.poi',
-      'i.modelRestricted',
-      'i.ingestion',
-      'i.blockedFor',
-      sql<boolean>`(i."metadata" -> 'ruleId') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "ModerationRule" mr WHERE mr.id::text = i."metadata"->>'ruleId' AND mr.action <> 'Block' AND NOT EXISTS (SELECT 1 FROM "ModerationRuleVersion" v WHERE v."ruleId" = mr.id AND v.action = 'Block')) AND (i."metadata" -> 'accountDeletionPriorIngestion') IS NULL`.as(
-        'ruleBlocked'
-      ),
-      'i.userId',
-      'u.username',
-      'r.id as reportId',
-      'r.reason as reportReason',
-      'r.status as reportStatus',
-      'r.details as reportDetails',
-      'r.createdAt as reportCreatedAt',
-      sql<number>`coalesce(array_length(r."alsoReportedBy", 1), 0)`.as('reportCount'),
-      'ru.username as reportUsername',
-      'ru.id as reportUserId',
-    ])
-    .$if(reportId != null, (qb) => qb.where('r.id', '=', reportId!))
-    .$if(reportId == null, (qb) =>
-      qb
-        .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
-        .where('r.status', '=', 'Pending')
-        // The reasons the Reports badge counts (`report:image`), so the badge and this grid are one
-        // number. Today it removes nothing: Automated reports are filed for other entity types.
-        .where('r.reason', 'in', DEFAULT_REPORT_REASONS)
-    )
+  const deleteRequested = sql<boolean>`EXISTS (
+    SELECT 1 FROM "JobQueue" jq
+    WHERE jq.type = 'PendingDelete' AND jq."entityType" = 'Image' AND jq."entityId" = i.id
+      AND jq.data ? 'ownerId'
+  )`;
+  const base = () =>
+    dbRead
+      .selectFrom('Image as i')
+      .innerJoin('User as u', 'u.id', 'i.userId')
+      .innerJoin('ImageReport as imgr', 'imgr.imageId', 'i.id')
+      .innerJoin('Report as r', 'r.id', 'imgr.reportId')
+      .innerJoin('User as ru', 'ru.id', 'r.userId')
+      .select([
+        'i.id',
+        'i.url',
+        'i.nsfwLevel',
+        'i.width',
+        'i.height',
+        'i.type',
+        'i.needsReview',
+        'i.minor',
+        'i.poi',
+        'i.modelRestricted',
+        'i.ingestion',
+        'i.blockedFor',
+        sql<boolean>`(i."metadata" -> 'ruleId') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "ModerationRule" mr WHERE mr.id::text = i."metadata"->>'ruleId' AND mr.action <> 'Block' AND NOT EXISTS (SELECT 1 FROM "ModerationRuleVersion" v WHERE v."ruleId" = mr.id AND v.action = 'Block')) AND (i."metadata" -> 'accountDeletionPriorIngestion') IS NULL`.as(
+          'ruleBlocked'
+        ),
+        'i.userId',
+        'u.username',
+        'r.id as reportId',
+        'r.reason as reportReason',
+        'r.status as reportStatus',
+        'r.details as reportDetails',
+        'r.createdAt as reportCreatedAt',
+        sql<number>`coalesce(array_length(r."alsoReportedBy", 1), 0)`.as('reportCount'),
+        'ru.username as reportUsername',
+        'ru.id as reportUserId',
+        deleteRequested.as('deleteRequested'),
+      ])
+      .$if(reportId != null, (qb) => qb.where('r.id', '=', reportId!))
+      .$if(reportId == null, (qb) =>
+        qb
+          .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
+          .where('r.status', '=', 'Pending')
+          // The reasons the Reports badge counts (`report:image`), so the badge and this grid are one
+          // number. Today it removes nothing: Automated reports are filed for other entity types.
+          .where('r.reason', 'in', DEFAULT_REPORT_REASONS)
+      )
+      .$if(agents != null, (qb) =>
+        qb.where('r.userId', agents!.mode === 'only' ? 'in' : 'not in', agents!.ids)
+      )
+      .orderBy('r.id', 'asc');
+
+  // Reports on an image its owner deleted come first: it is kept only until its review is done. Up
+  // to `limit` of them head page one and are left out of every page, so the cursor still runs on
+  // report id alone and any beyond them stay in report order.
+  const first = reportId == null ? await base().where(deleteRequested).limit(limit).execute() : [];
+  const firstIds = first.map((r) => r.reportId);
+  const fetched = await base()
+    .$if(firstIds.length > 0, (qb) => qb.where('r.id', 'not in', firstIds))
     .$if(cursor != null, (qb) => qb.where('r.id', '>', cursor!))
-    .$if(agents != null, (qb) =>
-      qb.where('r.userId', agents!.mode === 'only' ? 'in' : 'not in', agents!.ids)
-    )
-    .orderBy('r.id', 'asc')
     .limit(limit + 1)
     .execute();
 
-  const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.reportId);
+  const { items: page, nextCursor } = takePage(fetched, limit, (r) => r.reportId);
+  const rows = cursor == null ? [...first, ...page] : page;
 
   const items: ReportedImageItem[] = rows.map((r) => ({
     id: r.id,
@@ -545,6 +563,7 @@ export async function getReportedImageQueue({
     ruleBlocked: !!r.ruleBlocked,
     userId: r.userId,
     username: r.username,
+    deleteRequested: r.deleteRequested,
     report: {
       id: r.reportId,
       reason: String(r.reportReason),

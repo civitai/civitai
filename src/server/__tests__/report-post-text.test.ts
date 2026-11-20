@@ -3,7 +3,10 @@ import { TOS_VIOLATIONS } from '~/server/schema/report.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { MINOR_SEXUALIZATION_VIOLATION } from '@civitai/shared/post-text-report';
+import {
+  CHILD_SAFETY_VIOLATIONS,
+  MINOR_SEXUALIZATION_VIOLATION,
+} from '@civitai/shared/post-text-report';
 
 const reportCreate = vi.fn();
 dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
@@ -161,4 +164,5 @@ describe('report.create on a storyline text', () => {
 // The moderator app routes a minor-sexualization report on a text to the CSAM queue by this string.
 it('names a violation the report form offers', () => {
   expect(TOS_VIOLATIONS).toContain(MINOR_SEXUALIZATION_VIOLATION);
+  expect(TOS_VIOLATIONS).toEqual(expect.arrayContaining([...CHILD_SAFETY_VIOLATIONS]));
 });

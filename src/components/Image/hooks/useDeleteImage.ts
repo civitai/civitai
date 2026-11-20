@@ -1,10 +1,21 @@
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { DELETE_AFTER_REVIEW_MESSAGE } from '~/shared/constants/delete-after-review.constants';
+
+export const isDeleteAfterReview = (result: unknown) =>
+  !!(result as { deleteAfterReview?: boolean } | null | undefined)?.deleteAfterReview;
+
+export function notifyDeleteAfterReview() {
+  showSuccessNotification({ message: DELETE_AFTER_REVIEW_MESSAGE, autoClose: 8000 });
+}
 
 export function useDeleteImage() {
   const deleteImageMutation = trpc.image.delete.useMutation({
+    onSuccess: (result) => {
+      if (isDeleteAfterReview(result)) notifyDeleteAfterReview();
+    },
     onError: (error: any) => showErrorNotification({ error: new Error(error.message) }),
   });
 
