@@ -22,6 +22,11 @@ import {
 import { createCollectionReadDecider } from '~/server/services/apps/data-read-grant';
 import type { PrivateFeedDocument } from '~/server/services/apps/doc-store';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { Registry } from 'prom-client';
+import {
+  createEnforceMetrics,
+  createPolicyEnforcer,
+} from '~/server/registry-adapter/policy-enforce';
 import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 
 /**
@@ -57,8 +62,11 @@ const OTHER_RECORD = 'c5e8f3a1-9d2b-4e70-8f16-3a7b0d5c9e24';
 const OWNER_URN = `urn:apps.civitai.com:${SOURCE_BLOCK}/journal/${OWNER_RECORD}`;
 const OWNER_URN_2 = `urn:apps.civitai.com:${SOURCE_BLOCK}/journal/${OWNER_RECORD_2}`;
 
+/** The source app's content rating: PG-13 unless a case sets a mature one. */
+let sourceRating: string;
+
 const sourceManifest = () => ({
-  contentRating: 'pg13',
+  contentRating: sourceRating,
   scopes: ['apps:storage'],
   storage: {
     collections: {
@@ -101,7 +109,7 @@ const catalog = (): CatalogApp[] => [
       name: 'Notes Hub',
       tagline: null,
       category: null,
-      contentRating: 'pg13',
+      contentRating: sourceRating,
       iconUrl: null,
       creatorUsername: null,
       externalUrl: null,
@@ -113,7 +121,7 @@ const catalog = (): CatalogApp[] => [
       blockId: SOURCE_BLOCK,
       version: '1.0.0',
       status: 'approved',
-      contentRating: 'pg13',
+      contentRating: sourceRating,
       manifest: sourceManifest(),
     },
     approved: [],
@@ -207,6 +215,9 @@ const TOKENS: Record<string, VerifiedToken> = {
   'owner-no-appdataread': userToken(OWNER, SOURCE_CLIENT, { scope: TokenScope.AppsRead }),
   'owner-unlisted-relay': userToken(OWNER, SOURCE_CLIENT, { actor: UNLISTED_RELAY }),
   'owner-no-relay': userToken(OWNER, SOURCE_CLIENT, { actor: null }),
+  // The owner with settings that read every rating, for the content-policy enforcement seam.
+  'owner-r-only': userToken(OWNER, SOURCE_CLIENT, { user: { showNsfw: true, browsingLevel: 7 } }),
+  'owner-full': userToken(OWNER, SOURCE_CLIENT, { user: { showNsfw: true, browsingLevel: 31 } }),
 };
 const verify: VerifyToken = async (t) => TOKENS[t] ?? null;
 const principalOf = (bearer: string | undefined): Promise<Principal> =>
@@ -258,6 +269,7 @@ const upserts = (events: StreamEvent[]) =>
   events.flatMap((e) => (e.type === 'upsert' ? [e.entity.urn] : []));
 
 beforeEach(() => {
+  sourceRating = 'pg13';
   now = Date.UTC(2026, 10, 19, 12);
   runGateReadable = true;
   wakers = [];
@@ -409,6 +421,61 @@ describe('🔴 leak canaries: who receives a private record', () => {
     );
     expect(privateTokenGate(relays, reader(TOKENS['owner-no-appdataread']))).toBe('scope_missing');
     expect(privateTokenGate(relays, reader(TOKENS['owner-own']))).toBeNull();
+  });
+});
+
+describe('🔴 content-policy enforcement reaches the private feed (policy-enforce.ts)', () => {
+  /** An enforcer whose service answers R and below: narrower than a full user's own settings. */
+  const narrowing = createPolicyEnforcer({
+    compare: async () => ({
+      result: 'disagree',
+      answer: { ratings: ['g', 'pg', 'pg13', 'r'], unknownRating: false, regionHold: 'none' },
+    }),
+    counter: createEnforceMetrics(new Registry()),
+    log: () => undefined,
+  });
+  const enforced = async (bearer: string) =>
+    narrowing({
+      origin: { headers: { 'cf-ipcountry': 'NL' } },
+      principal: await principalOf(bearer),
+      held: false,
+    });
+  /** The source app rated `rating` everywhere the feed reads it: the catalog and its DB row. */
+  const rateSource = (rating: string) => {
+    sourceRating = rating;
+    rows[0].manifest = sourceManifest();
+  };
+  const snapshotFor = async (principal: Principal) => {
+    const run = subscribe(composeAdapter(entities, publicFeed(), privateFeed()), principal);
+    await settle(run);
+    run.stop();
+    wake();
+    const err = await run.done;
+    return { events: run.events, err };
+  };
+
+  it('POSITIVE CONTROL: unenforced, the full owner receives an X-rated app’s private record', async () => {
+    rateSource('x');
+    const { events, err } = await snapshotFor(await principalOf('owner-full'));
+    expect(err).toBeUndefined();
+    expect(upserts(events)).toEqual([OWNER_URN]);
+  });
+
+  it('control: unenforced, an owner whose own settings leave out X is not sent it either', async () => {
+    rateSource('x');
+    const p = await principalOf('owner-r-only');
+    const { events } = await snapshotFor(p);
+    expect({ key: p.audience.key, urns: upserts(events) }).toEqual({ key: 'mr', urns: [] });
+  });
+
+  it('a service answer without X withholds the same record: the feed reads the enforced audience', async () => {
+    rateSource('x');
+    const principal = await enforced('owner-full');
+    expect(principal.audience.key).toBe('mr');
+    const { events, err } = await snapshotFor(principal);
+    expect(err).toBeUndefined();
+    expect(upserts(events)).toEqual([]);
+    expect(JSON.stringify(events)).not.toContain(OWNER_CANARY);
   });
 });
 

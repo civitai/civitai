@@ -61,7 +61,8 @@ export type Audience = {
 // The key names each mature rating the audience may read. An audience without XXX keeps the key
 // it had before audiences recorded XXX (`m`, `mr`, `mx`, `mrx`), so its cursors stay valid; one
 // with XXX gains `+xxx` (`mrx+xxx`), a key no audience had, so a cursor issued before is refused.
-const audienceOf = (allowed: MatureRatingsAllowed): Audience => ({
+// Exported for `policy-enforce.ts`, which builds the content-policy service's answer into one.
+export const audienceOf = (allowed: MatureRatingsAllowed): Audience => ({
   key: `m${allowed.r ? 'r' : ''}${allowed.x ? 'x' : ''}${allowed.xxx ? '+xxx' : ''}`,
   allowed: { r: allowed.r, x: allowed.x, xxx: allowed.xxx },
 });

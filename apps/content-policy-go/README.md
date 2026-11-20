@@ -17,7 +17,9 @@ GET  /metrics                   (9090, its own listener)
 ```
 
 Today it runs in shadow for the registry adapter (`REGISTRY_ADAPTER_POLICY_URL`,
-`src/server/registry-adapter/policy-shadow.ts`); no caller's decision comes from it yet.
+`src/server/registry-adapter/policy-shadow.ts`); no caller's decision comes from it yet. The
+adapter's switch to it, `REGISTRY_ADAPTER_POLICY_ENFORCE=1`, is built and off (`policy-enforce.ts`;
+DESIGN.md, "Migrating a caller").
 
 ## Layout
 
