@@ -14,6 +14,7 @@ import {
 import {
   csamRestrictedSql,
   retractedImageWhereSql,
+  upgradedRetractionSql,
   siblingsServable,
   urlSiblingsSql,
   type UrlSibling,
@@ -277,6 +278,7 @@ async function readViewable(imageIds: number[]): Promise<Set<number>> {
       .select(sql<UrlSibling[]>`${sql.raw(urlSiblingsSql('i'))}`.as('siblings'))
       .where(sql<boolean>`${sql.raw(retractedImageWhereSql('i'))}`)
       .where(sql<boolean>`NOT ${sql.raw(csamRestrictedSql('i'))}`)
+      .where(sql<boolean>`NOT ${sql.raw(upgradedRetractionSql('i'))}`)
       .execute();
   });
   const patterns = blockedForPatterns();
