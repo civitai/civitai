@@ -15,6 +15,8 @@ export const COMPANION_ACTIVITIES = ['clearMinor', 'minorQueueAccept'];
 export const RATING_ACTIVITIES = [
   // Knights of New Order crowd votes — not a moderator's decision at all, and a busy image carries several.
   'setNsfwLevelKono',
+  // A Paladin consensus on a flagged tag, written back by Knights; the player is the actor.
+  'moderateTagKono',
   'ratingReview',
   'moderateTag',
   'disableTag',

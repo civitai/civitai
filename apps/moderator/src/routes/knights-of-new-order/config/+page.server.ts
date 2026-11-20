@@ -8,6 +8,7 @@ import {
   getSourcesContext,
   getSourcesSettings,
   saveGameSettings,
+  saveModTagReview,
   saveSourcesConfig,
 } from '$lib/server/knights/sources-config.service';
 import { parseGameForm } from './game-form';
@@ -97,6 +98,21 @@ export const actions: Actions = {
     } catch (error) {
       console.error('knights sources: could not save the config', { error });
       return fail(500, { error: 'The config could not be saved. Nothing was changed; try again.' });
+    }
+  },
+  tagReview: async ({ request, locals, url }) => {
+    requireAccess(locals.user, url.pathname);
+    const value = (await request.formData()).get('modTagReview');
+    if (value !== 'on' && value !== 'off')
+      return fail(400, { error: 'Tag review must be on or off.' });
+    try {
+      const result = await saveModTagReview(value === 'on', locals.user.id);
+      return result.ok
+        ? { success: true, changed: result.changed }
+        : fail(400, { error: result.error });
+    } catch (error) {
+      console.error('knights tag review: could not save the switch', { error });
+      return fail(500, { error: 'The switch could not be saved. Nothing was changed; try again.' });
     }
   },
   game: async ({ request, locals, url }) => {

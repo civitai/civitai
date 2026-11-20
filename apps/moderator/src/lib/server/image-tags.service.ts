@@ -1,8 +1,15 @@
 import { sql } from '@civitai/db/kysely';
-import { dbRead } from './db';
+import { modReviewEligibleImage, removalLowersLevel } from '@civitai/db/knights';
+import type { ImageTagModerateResult } from '@civitai/moderation';
+import { dbRead, dbWrite } from './db';
 import { takePage } from './keyset-page';
 import { recordModActivity } from './mod-activity';
-import { upsertTagsOnImageNew } from './tags-on-image.service';
+import {
+  afterTagWrite,
+  upsertTagsOnImageNew,
+  withTagRules,
+  writeTagRows,
+} from './tags-on-image.service';
 import { NsfwLevel } from '@civitai/shared';
 import type { MediaType } from '$lib/media/edge-url';
 
@@ -97,17 +104,43 @@ export async function getImageTagReviewQueue({
   };
 }
 
+export type GuardedTagOutcome = ImageTagModerateResult;
+
+/**
+ * A moderator's Keep/Remove on an image's flagged tags (all of them when `tagIds` is empty), recorded as `activity`.
+ *
+ * `onlyIfFlagged` is the guarded mode Knights' tag write-back uses: one tag, decided by a player consensus, and written
+ * only while that tag is still flagged and the image may still be judged by players. It locks the tag row first; a
+ * moderator's own write takes the same lock, so a consensus never overwrites a moderator's ruling. A removal settled on
+ * the minimum votes (`settledAtMinimum`) that would now lower the image's rating is refused, since it needs the stricter
+ * rule. Every refusal changes nothing and leaves the tag in the queue.
+ */
 export async function moderateImageTags({
   imageId,
   tagIds,
   disable,
   userId,
+  activity = 'moderateTag',
+  onlyIfFlagged = false,
+  settledAtMinimum = false,
 }: {
   imageId: number;
   tagIds?: number[];
   disable: boolean;
   userId: number;
-}): Promise<{ tagIds: number[] }> {
+  activity?: string;
+  onlyIfFlagged?: boolean;
+  settledAtMinimum?: boolean;
+}): Promise<{ tagIds: number[] } & Partial<GuardedTagOutcome>> {
+  if (onlyIfFlagged) {
+    const [tagId] = tagIds ?? [];
+    if (tagIds?.length !== 1) throw new Error('A guarded tag write takes exactly one tag.');
+    const result = await writeFlaggedTag({ imageId, tagId, disable, settledAtMinimum });
+    if (result.outcome !== 'applied') return { tagIds: [], ...result };
+    await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity });
+    return { tagIds: [tagId], ...result };
+  }
+
   let targets = tagIds ?? [];
   if (!targets.length) {
     const { rows } = await sql<{ tagId: number }>`
@@ -135,8 +168,58 @@ export async function moderateImageTags({
     userId,
     entityType: 'image',
     entityId: imageId,
-    activity: 'moderateTag',
+    activity,
   });
 
   return { tagIds: targets };
 }
+
+async function writeFlaggedTag({
+  imageId,
+  tagId,
+  disable,
+  settledAtMinimum,
+}: {
+  imageId: number;
+  tagId: number;
+  disable: boolean;
+  settledAtMinimum: boolean;
+}): Promise<GuardedTagOutcome> {
+  const items = await withTagRules([
+    { imageId, tagId, automated: false, disabled: disable, needsReview: false },
+  ]);
+  const outcome = await dbWrite.transaction().execute(async (trx): Promise<GuardedTagOutcome> => {
+    const row = await trx
+      .selectFrom('TagsOnImageNew')
+      .select('attributes')
+      .where('imageId', '=', imageId)
+      .where('tagId', '=', tagId)
+      .forUpdate()
+      .executeTakeFirst();
+    const image = await trx
+      .selectFrom('Image as img')
+      .leftJoin('Post as p', 'p.id', 'img.postId')
+      .select((eb) => ['img.id', modReviewEligibleImage(eb).as('eligible')])
+      .where('img.id', '=', imageId)
+      .executeTakeFirst();
+    if (!image) return { outcome: 'missing' };
+    if (!row || !isFlagged(row.attributes)) return { outcome: 'already-ruled' };
+    if (image.eligible !== true) return { outcome: 'ineligible', reason: 'image' };
+    const tag = await trx
+      .selectFrom('Tag')
+      .select('nsfwLevel')
+      .where('id', '=', tagId)
+      .executeTakeFirst();
+    if (!tag || tag.nsfwLevel >= NsfwLevel.Blocked) return { outcome: 'ineligible', reason: 'tag' };
+    if (disable && settledAtMinimum && (await removalLowersLevel(trx, imageId, tagId)))
+      return { outcome: 'ineligible', reason: 'lowers-level' };
+    await writeTagRows(trx, items);
+    return { outcome: 'applied' };
+  });
+  if (outcome.outcome === 'applied') await afterTagWrite(items);
+  return outcome;
+}
+
+/** In the review queue: needsReview (bit 9) set, disabled (bit 10) clear. */
+const isFlagged = (attributes: number) =>
+  ((attributes >> 9) & 1) === 1 && ((attributes >> 10) & 1) === 0;

@@ -5,6 +5,7 @@ import {
   abuseReportInput,
   feedbackTriageInput,
   imageModerateInput,
+  imageTagModerateInput,
   relabelBuildBatchInput,
 } from '@civitai/moderation';
 import { hqTaskFromUrl } from '@civitai/shared/clickup-url';
@@ -23,6 +24,7 @@ import { triageFeedback } from '../feedback.service';
 import { getModeratorDb } from '../moderator-db';
 import { relabelBuildBatchAction } from '../relabel-batch-build';
 import { heldRemovalMessage, type HeldRemoval } from '../removal-hold';
+import { moderateImageTags } from '../image-tags.service';
 
 // The cross-app moderator-action registry. Each entry maps an action the main app invokes over
 // `/api/mod/[action]` to a spoke handler. The input SCHEMA is the shared `@civitai/moderation` contract
@@ -187,9 +189,35 @@ const feedbackTriage: ModAction<z.infer<typeof feedbackTriageInput>> = {
     }),
 };
 
+/**
+ * Backs Knights' write-back of a Paladin consensus on one flagged tag of the tag review queue.
+ *
+ * 🔴 THE STATED EXCEPTION TO THE ACTOR CONVENTION ABOVE: `userId` is not a moderator. It is the player whose vote
+ * completed the consensus, asserted by Knights, and it is granted nothing beyond this one tag write and its
+ * `moderateTagKono` row. The write is the queue's own `moderateImageTags`, in its guarded mode: it changes nothing
+ * unless the tag is still flagged and the image may still be judged by players. Called with the path-scoped
+ * `KNIGHTS_TAG_REVIEW_TOKEN` (`webhook-endpoint.ts`).
+ */
+const imageTagModerate: ModAction<z.infer<typeof imageTagModerateInput>> = {
+  schema: imageTagModerateInput,
+  handler: async ({ imageId, tagId, disable, userId, settledAtMinimum }) => {
+    const { outcome = 'applied', reason } = await moderateImageTags({
+      imageId,
+      tagIds: [tagId],
+      disable,
+      userId,
+      activity: 'moderateTagKono',
+      onlyIfFlagged: true,
+      settledAtMinimum,
+    });
+    return reason ? { outcome, reason } : { outcome };
+  },
+};
+
 export const modActions: Record<string, ModAction> = {
   [MOD_ACTION.imageModerate]: imageModerate,
   [MOD_ACTION.abuseReport]: abuseReport,
   [MOD_ACTION.relabelBuildBatch]: relabelBuildBatch,
   [MOD_ACTION.feedbackTriage]: feedbackTriage,
+  [MOD_ACTION.imageTagModerate]: imageTagModerate,
 };

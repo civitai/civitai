@@ -214,6 +214,19 @@ describe('getYesNoQuestionItems', () => {
   });
 });
 
+describe('tag review items', () => {
+  it('are neither listed nor retired here: their answer is written back to the tag they name', async () => {
+    await seedItem(7, { imageId: 1, prompt: 'Should this image have the tag x?' });
+    await db.query(`UPDATE "KnightsQueueItem" SET "source" = 'mod-tag-review' WHERE "id" = 7`);
+    await seedItem(8, { imageId: 2 });
+    expect((await getYesNoQuestionItems()).items.map((i) => i.id)).toEqual([8]);
+    expect(await retireYesNoQuestion({ id: 7, by: MOD, note: 'no', now: NOW })).toMatchObject({
+      ok: false,
+    });
+    expect(await row(7)).toMatchObject({ status: 'Open', reason: null });
+  });
+});
+
 describe('retireYesNoQuestion', () => {
   it('closes an open question as moderator-retired, settles its pending votes inconclusive and records who and why', async () => {
     await seedItem(1, { voteCount: 3 });

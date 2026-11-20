@@ -95,6 +95,7 @@ const same = (a: KnightsSourcesConfig, b: KnightsSourcesConfig) =>
   a.nsfwRate === b.nsfwRate &&
   a.maxOpen === b.maxOpen &&
   a.yesNoShare === b.yesNoShare &&
+  a.modTagReview === b.modTagReview &&
   sameGame(a.game, b.game);
 
 /** Sets the key only while it still holds what was read (ARGV[1] '0': absent; '1': equal to ARGV[2]). 1 when written. */
@@ -167,7 +168,7 @@ export async function saveSourcesConfig(input: unknown, moderatorId: number): Pr
   if (!checked.ok) return checked;
 
   return updateSourcesConfig(moderatorId, (before) => {
-    const { game } = before.config;
+    const { game, modTagReview } = before.config;
     const maxOpen = checked.config.maxOpen ?? before.config.maxOpen;
     const yesNoShare = checked.clearYesNoShare
       ? undefined
@@ -181,9 +182,22 @@ export async function saveSourcesConfig(input: unknown, moderatorId: number): Pr
         ...(maxOpen === undefined ? {} : { maxOpen }),
         ...(yesNoShare === undefined ? {} : { yesNoShare }),
         ...(game === undefined ? {} : { game }),
+        ...(modTagReview === undefined ? {} : { modTagReview }),
       },
     };
   });
+}
+
+/**
+ * Turns the moderator tag review source on or off: Paladins answer the tag review queue as yes/no questions and their
+ * consensus is written back. Every other stored field is carried over; audited like any save.
+ */
+export async function saveModTagReview(on: boolean, moderatorId: number): Promise<SaveOutcome> {
+  if (typeof on !== 'boolean') return { ok: false, error: 'Tag review must be on or off.' };
+  return updateSourcesConfig(moderatorId, (before) => ({
+    ok: true,
+    config: { ...before.config, modTagReview: on },
+  }));
 }
 
 /** A field set to a value stores it; `null` removes it, so Knights falls back to its environment; a field left out is untouched. */
