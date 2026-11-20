@@ -47,8 +47,10 @@ import {
   COM_FACE_RECHECK_GAVE_UP,
   COM_FACE_RECHECK_MAX_DELAY_MS,
   COM_FACE_RECHECK_WINDOW_MS,
+  faceLossRescan,
   processComFaceRechecks,
   queueComFaceRecheck,
+  rescanTextAfterFaceLoss,
 } from '~/server/services/model-com-face-recheck.service';
 
 const db = dbMock.dbWrite;
@@ -596,6 +598,45 @@ describe('the .com face listing re-check', () => {
     expect(counts.gaveUp).toBe(0);
     expect(intentLogs()).toEqual([]);
     expect(db.keyValue.deleteMany).toHaveBeenCalledWith({ where: { key: KEY } });
+  });
+});
+
+describe('the text rescan after a face loss', () => {
+  const realLoad = faceLossRescan.loadSubmit;
+  const scan = vi.fn();
+  beforeEach(() => {
+    scan.mockReset();
+    faceLossRescan.loadSubmit = (async () => ({ scanEntityInBackground: scan })) as never;
+  });
+  afterEach(() => {
+    faceLossRescan.loadSubmit = realLoad;
+  });
+
+  it('forces a text rescan of a model the re-check takes off .com', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+    await processComFaceRechecks(NOW);
+    expect(coverCleared()).toBe(true);
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(scan).toHaveBeenCalledWith({ entityType: 'Model', entityId: MODEL_ID, force: true });
+  });
+
+  it('forces none when the face stays (control)', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    await processComFaceRechecks(NOW);
+    expect(scan).not.toHaveBeenCalled();
+  });
+
+  it('never throws when the scan cannot be started', async () => {
+    faceLossRescan.loadSubmit = (async () => {
+      throw new Error('import failed');
+    }) as never;
+    await expect(rescanTextAfterFaceLoss(MODEL_ID)).resolves.toBeUndefined();
+    scan.mockImplementation(() => {
+      throw new Error('scan threw');
+    });
+    faceLossRescan.loadSubmit = (async () => ({ scanEntityInBackground: scan })) as never;
+    await expect(rescanTextAfterFaceLoss(MODEL_ID)).resolves.toBeUndefined();
   });
 });
 

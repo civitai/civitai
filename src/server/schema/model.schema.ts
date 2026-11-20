@@ -526,9 +526,8 @@ export type ModelMeta = Partial<{
   /** A moderator lifted an nsfw lock that was not the intent check's: the check still gates the
    *  face, but does not lock this listing text (`textHash`) again. Server-owned. */
   comFaceIntentRelockSuppressed: { textHash: string; at: string };
-  /** The .com face text passed the face check: `hash` covers the .com title, description and cover
-   *  id it read, so any edit to them makes the stamp stale. Written by the save gate and by the
-   *  text scan's re-check. Server-owned. */
+  /** The .com face text passed the face check. `hash` covers everything the check read (see
+   *  `sfwFaceStampHash`), so any edit to it makes the stamp stale. Server-owned. */
   sfwFaceCheckedAt: { at: string; promptId: number | null; hash: string };
   /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
    *  moderator can restore it. `reason` says whether the check flagged the listing or never got a

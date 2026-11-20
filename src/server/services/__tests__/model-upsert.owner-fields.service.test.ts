@@ -1893,12 +1893,14 @@ describe('a .com face going away', () => {
   ])('rescans the text when an owner %s', async (_, change) => {
     mockStored(complete);
     await upsert({ id: MODEL_ID, userId: OWNER_ID, ...change });
+    expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledTimes(1);
     expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledWith(MODEL_ID);
   });
 
   it('rescans when a moderator turns it off too', async () => {
     mockStored(complete);
     await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, sfwName: '' });
+    expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledTimes(1);
     expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledWith(MODEL_ID);
   });
 

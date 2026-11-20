@@ -159,11 +159,7 @@ export async function applySystemModelNsfwFlag({
  */
 const locksRating = (source: string) => !SCAN_RATING_SOURCES.includes(source);
 
-/**
- * A complete .com face whose text passed the face check: a .com title and description, a .com cover
- * rated PG-13 or below, and a stamp for exactly these values. A stale or missing stamp re-runs the
- * check; no verdict is no face (fails closed), and a pass is stamped onto the face it read.
- */
+/** A complete .com face whose text passed the face check. No verdict counts as no face (fails closed). */
 async function hasCleanComFace(
   model: {
     id: number;
@@ -474,7 +470,6 @@ async function reviveDormantVerdict(db: RawDb, modelId: number): Promise<boolean
 
 export async function applyModelNsfwTextScan(
   { entityId, workflowId, outcome }: ApplyTextScanArgs,
-  /** The face re-check, passed in by tests. */
   deps: {
     checkSfwFace?: typeof checkSfwFace;
     getOwnVersionFields?: typeof getOwnVersionFields;

@@ -227,14 +227,18 @@ async function finishRemoval(modelId: number) {
   await rescanTextAfterFaceLoss(modelId);
 }
 
+/** Swapped by tests. Imported lazily: the scan reaches services that import this module. */
+export const faceLossRescan = {
+  loadSubmit: () => import('~/server/services/text-scan/submit'),
+};
+
 /**
  * Scans the model's text again past the unchanged-text skip: the text scan may have left an R+
  * listing unrated on the strength of a .com face that is now gone. Never throws.
  */
 export async function rescanTextAfterFaceLoss(modelId: number) {
   try {
-    // Imported here: the scan reaches services that import this module.
-    const { scanEntityInBackground } = await import('~/server/services/text-scan/submit');
+    const { scanEntityInBackground } = await faceLossRescan.loadSubmit();
     scanEntityInBackground({ entityType: 'Model', entityId: modelId, force: true });
   } catch (error) {
     logToAxiom({
