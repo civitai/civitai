@@ -385,6 +385,18 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
           />
         )}
       />
+      <Controller
+        graph={imageHub}
+        name="editPrecision"
+        render={({ value, meta, onChange }) => (
+          <SegmentedEnumField
+            label="Edit precision"
+            value={value}
+            onChange={onChange}
+            options={meta.options}
+          />
+        )}
+      />
       <div className="flex gap-4">
         <Controller
           graph={generationHub}

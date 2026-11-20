@@ -172,7 +172,7 @@ import {
   getEventDecorationsForEntity,
 } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
@@ -2890,7 +2890,7 @@ export async function applyModelFlagSideEffects({
       // The documents showing these images apply the minor rule. Not awaited: a gallery can be
       // large, and it never throws.
       if (after.minor !== before.minor && updatedImages.length !== 0)
-        void queueModelsForImageChildTagChanges({
+        void queueDocumentsForImageMinorChanges({
           minorImageIds: updatedImages.map(({ id }) => id),
         });
     }

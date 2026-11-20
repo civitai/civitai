@@ -1545,11 +1545,11 @@ async function resolveHubTokenClaims(
     scopes?: unknown;
     page?: { buzzBudgetPerGen?: unknown };
   };
-  // `apps:storage:import` is never carried, and its grant ledger is never read or pruned here: the
-  // storage route refuses an import on any hub token (`import_hub_token`).
-  const declared = effectiveBlockScopes(manifest, block.approvedScopes)
-    .filter(isKnownBlockScope)
-    .filter((s) => s !== 'apps:storage:import');
+  // `apps:storage:import` is carried exactly when the viewer's scope ledger grants it, like every
+  // consent-gated scope. That is not the import's grant: the storage route still reads the
+  // per-source grant on every import call and refuses without one (`resolveImportAccess`). The
+  // per-source grant ledger is never read or pruned here; there is no prompt to withhold it for.
+  const declared = effectiveBlockScopes(manifest, block.approvedScopes).filter(isKnownBlockScope);
   const scopes = partitionByConsent(declared, granted).signable;
 
   const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');

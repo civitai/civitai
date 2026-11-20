@@ -1,5 +1,5 @@
 import { clearHeldUserImages, pictureUserIds } from '@civitai/db-queries/profile-picture-clear';
-import { bustEventEngineProfilePictures, REDIS_KEYS } from '@civitai/redis';
+import { REDIS_KEYS } from '@civitai/redis';
 import { logAxiomError } from './axiom';
 import { bustCachedObject } from './cache';
 import type { Kysely } from 'kysely';
@@ -16,8 +16,8 @@ export async function profilePictureUserIds(
   return pictureUserIds(db, imageIds);
 }
 
-// The main app and the event engine each cache a user's profile picture for a day, and avatars are
-// shown or hidden on its rating. A held or blocked picture also clears the legacy `User.image` naming
+// The main app caches a user's profile picture for a day, and avatars are shown or hidden on its
+// rating. A held or blocked picture also clears the legacy `User.image` naming
 // it, by the statement the main app runs; the users whose picture is held or blocked get their
 // basic-user entry, session and search document refreshed.
 // Never throws: it follows a committed moderation write.
@@ -54,9 +54,6 @@ export async function bustProfilePictures(
       ),
       bustCachedObject(REDIS_KEYS.CACHES.PROFILE_PICTURES, userIds).catch((error) =>
         logAxiomError(error, { event: 'profile-picture-cache-bust' })
-      ),
-      bustEventEngineProfilePictures(getRedis(), userIds).catch((error) =>
-        logAxiomError(error, { event: 'profile-picture-cache-bust', cache: 'event-engine' })
       ),
     ]);
   } catch (error) {

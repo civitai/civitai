@@ -3,6 +3,7 @@ import Script from 'next/script';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
+import { SparteoTag } from '~/components/Ads/SparteoTag';
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { detectPrivacyUi } from '~/components/Consent/privacy-ui';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -21,6 +22,7 @@ declare global {
     __tcfapi: (...args: any[]) => void;
     googletag: any;
     adngin: any;
+    _hbdbrk?: unknown[];
   }
 }
 
@@ -222,6 +224,16 @@ export function AdsProvider({
     };
   }, []);
 
+  const pageType = router.pathname.split('/')[1] || 'home';
+  const path = router.asPath.split('?')[0];
+
+  // Sparteo asks a single-page app to push `_vars` on every route change.
+  useEffect(() => {
+    if (!adsEnabled || useDirectAds) return;
+    window._hbdbrk = window._hbdbrk || [];
+    window._hbdbrk.push(['_vars', { page_type: pageType }]);
+  }, [adsEnabled, useDirectAds, pageType, path]);
+
   return (
     <AdsContext.Provider
       value={{
@@ -284,6 +296,8 @@ export function AdsProvider({
           onLoad={handleLoaded}
         />
       )}
+      {/* Sparteo, which replaces Snigel, serves nothing from this tag until it activates the site. */}
+      {adsEnabled && !useDirectAds && <SparteoTag />}
       {/* Client-gated: the engine is resolved from sessionStorage, which SSR can't see. */}
       <IsClient>
         {adEngine === 'staging' && (

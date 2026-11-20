@@ -68,6 +68,11 @@ export { declaredCollections, declaredStorage } from '~/server/services/apps/doc
 
 export type StorageAccess = {
   ctx: DocStoreContext;
+  /**
+   * The blockId of the app whose storage this is (`ctx.appId` is its internal id): the source
+   * app's, through an import. What a permission hook is told the app is (`doc-store-hook.ts`).
+   */
+  blockId: string;
   /** The token's scopes AFTER the middleware's consent strip. */
   scopes: readonly string[];
   /** The consent marker was unreadable, so every consent-gated scope was stripped. */
@@ -76,16 +81,28 @@ export type StorageAccess = {
   /** The imports this app's reviewed manifest declares (source blockId → import). */
   imports: DeclaredStorageImports;
   /**
-   * Which kind of token this is: only an ordinary `app` token may import (`resolveImportAccess`).
-   * `hub` is a hub-issued OAuth bearer of an approved app; `dev` any token carrying `dev: true`
+   * Which kind of token this is: an ordinary `app` token and a `hub` token may import
+   * (`resolveImportAccess`), under the same declaration, export and grant checks; `dev` and
+   * `review` may not. `hub` is a hub-issued OAuth bearer of an approved app; `dev` any token carrying `dev: true`
    * (the dev-token route, the tunnels — including a tunnel's hub bearer); `review` the
    * run-for-real review mint.
    */
   tokenKind: 'app' | 'dev' | 'hub' | 'review';
   /** The token's maturity ceiling (`maxBrowsingLevel` claim): which sources' ratings it may reach. */
   maxBrowsingLevel?: number;
+  /**
+   * The app block id a per-app OPERATOR lever is evaluated for, when it is not `ctx.appId`: a
+   * review preview's `ctx.appId` is its publish request's id, so this is the request's app block
+   * id (the request's own id for a first submission, which has no app yet). Unset: `ctx.appId`.
+   */
+  operatorFlagAppId?: string;
   /** Set when this access was resolved through an import: the source app's blockId. */
   importedFrom?: string;
+  /**
+   * With `importedFrom`: the CONSUMER's blockId, the app the call came through. A permission
+   * hook sees it as `from`. Never the consumer's internal id.
+   */
+  importer?: string;
   /** With `importedFrom`: the import's access. A `read` import refuses every write. */
   importAccess?: 'read' | 'readwrite';
   /**
@@ -153,7 +170,7 @@ export async function resolveStorageAccess(
     const pr = await dependency(
       dbWrite.appBlockPublishRequest.findUnique({
         where: { id: publishRequestId },
-        select: { status: true, manifest: true },
+        select: { status: true, manifest: true, appBlockId: true },
       })
     );
     if (!pr || pr.status !== 'pending') {
@@ -167,7 +184,11 @@ export async function resolveStorageAccess(
     }
     return {
       ...base,
+      blockId: claims.blockId,
       tokenKind: 'review',
+      // The app's own id (null only for a first submission, before the app exists), so a per-app
+      // operator lever reaches its review previews too.
+      operatorFlagAppId: pr.appBlockId ?? publishRequestId,
       ctx: {
         appId: publishRequestId,
         ns: reviewNamespace(publishRequestId, viewerUid),
@@ -197,6 +218,7 @@ export async function resolveStorageAccess(
   );
   return {
     ...base,
+    blockId: claims.blockId,
     tokenKind: claims.dev === true ? 'dev' : isHubTokenClaims(claims) ? 'hub' : 'app',
     ctx: { appId: approval.appBlockId, ns, viewerUid },
     ...declaredStorage(approval.appBlockId, row?.manifest),
@@ -289,9 +311,6 @@ export async function resolveImportAccess(
   if (consumer.tokenKind === 'dev') {
     throw notEligible('import_dev_token', 'a development token cannot reach another app');
   }
-  if (consumer.tokenKind === 'hub') {
-    throw notEligible('import_hub_token', 'a hub token cannot reach another app');
-  }
   // The predicate checks this too; it is read here first because the write check below needs the
   // declared access, and both answer before any database read.
   const declared = consumer.imports.get(from);
@@ -342,6 +361,7 @@ export async function resolveImportAccess(
     ).has(APP_STORAGE_PUBLISH_SCOPE);
   return {
     ctx: { appId: source.id, ns: PUBLISHED_NS, viewerUid },
+    blockId: from,
     scopes: publishes
       ? [APP_STORAGE_BASE_SCOPE, APP_STORAGE_PUBLISH_SCOPE]
       : [APP_STORAGE_BASE_SCOPE],
@@ -352,6 +372,7 @@ export async function resolveImportAccess(
     tokenKind: consumer.tokenKind,
     maxBrowsingLevel: consumer.maxBrowsingLevel,
     importedFrom: from,
+    importer: consumer.blockId,
     importAccess: declared.access,
     enforcedManifest: enforcedManifestOf(source),
   };

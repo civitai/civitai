@@ -528,6 +528,7 @@ export function ArticleUpsertForm({ article }: Props) {
               }
               cardCrop={aspectRatioMap.portrait}
               previewWidth={constants.article.coverImageWidth}
+              ratingClickable
               withAsterisk={!features.articleTypography}
             />
             <MatureRestrictedBadge
@@ -548,6 +549,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 aspectRatio={
                   constants.article.bannerImageHeight / constants.article.bannerImageWidth
                 }
+                ratingClickable
               />
             )}
             {features.articleTypography && (

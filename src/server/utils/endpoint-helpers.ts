@@ -675,7 +675,8 @@ export function AuthedEndpoint(
   handler: (
     req: AxiomAPIRequest,
     res: NextApiResponse,
-    user: SessionUser
+    user: SessionUser,
+    session: Session
   ) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET'],
   { allowBanned = false, scope }: EndpointAuthOptions = {}
@@ -701,7 +702,7 @@ export function AuthedEndpoint(
         );
     if (session === false) return;
     if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
-    await handler(req, res, session.user);
+    await handler(req, res, session.user, session);
   });
 }
 

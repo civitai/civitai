@@ -160,7 +160,11 @@ export function createSubscriber(adapter: Adapter) {
     if (!servesAnyUrn(req.urns, adapter.namespace)) return sink.send({ type: 'end' });
     const filter = compileFilter(req.filter);
     const matches = filter ?? (() => true);
-    const ctx = { signal, audience: principal.audience };
+    const reader =
+      principal.subject !== null && principal.token !== null
+        ? { subject: principal.subject, ...principal.token }
+        : null;
+    const ctx = { signal, audience: principal.audience, reader };
 
     const binding = requestBinding(req, principal.subject);
     const bind = (cursor: string) => bindCursor(cursor, binding);

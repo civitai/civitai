@@ -118,8 +118,7 @@ import {
   userDownloadsCache,
   userFollowsCache,
 } from '~/server/redis/caches';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { bustEventEngineProfilePictures } from '@civitai/redis';
+import { REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   DeleteUserInput,
@@ -2459,9 +2458,6 @@ export async function getCosmeticsAndProfilePicturesForUsers(
 
 export async function deleteUserProfilePictureCache(userId: number) {
   await profilePictureCache.refresh(userId);
-  await bustEventEngineProfilePictures(redis, [userId]).catch((error) =>
-    logProfilePictureRefreshError(error, { userIds: String(userId), step: 'event-engine-cache' })
-  );
 }
 
 /** `getPictureUserIds` on the primary. */
@@ -2485,9 +2481,7 @@ function logProfilePictureRefreshError(error: unknown, meta: Record<string, unkn
  * their sessions, whose shape carries the picture's url. For a user whose picture is under an
  * owner-hidden hold or carries a block marker, a `User.image` naming it is cleared first
  * (`clearHeldUserImages`), and their basic-user cache entry and search document are refreshed too.
- * The event engine's copy of the picture is busted as well. Never throws: the write it follows has
- * committed, and a moderation action must not fail on a cache refill. A failed step is logged and
- * alerted (`alertRefreshStepFailure`).
+ * Never throws: the write it follows has committed.
  */
 export async function refreshProfilePicturesForUsers(userIds: number[]) {
   const ids = [...new Set(userIds)];
@@ -2505,7 +2499,6 @@ export async function refreshProfilePicturesForUsers(userIds: number[]) {
     heldIds = await clearHeldUserImages(dbWrite, ids);
   });
   await step('picture-cache', () => profilePictureCache.refresh(ids));
-  await step('event-engine-cache', () => bustEventEngineProfilePictures(redis, ids));
   if (heldIds.length) {
     await step('basic-cache', () => userBasicCache.refresh(heldIds));
     await step('search-index', () =>

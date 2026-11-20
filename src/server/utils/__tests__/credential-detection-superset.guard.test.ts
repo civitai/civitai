@@ -67,16 +67,19 @@ const SRC = path.resolve(__dirname, '../../..');
 const ENTRY = 'server/auth/get-server-auth-session.ts';
 
 /** Modules that turn a raw request into a session. A ledger, enforced below. */
-const SESSION_PATH_FILES = [ENTRY, 'server/auth/session-client.ts', 'server/auth/bearer-token.ts'];
+const SESSION_PATH_FILES = [
+  ENTRY,
+  'server/auth/session-client.ts',
+  'server/auth/bearer-token.ts',
+  // The Authorization header / `?token=` read, shared with the orchestrator token path.
+  'server/auth/request-bearer-token.ts',
+];
 
 /** Entry-point imports that do NOT read credentials off the request. */
 const NON_CREDENTIAL_MODULES: Record<string, string> = {
   'server/auth/preview-session-cookie.ts':
     'decodes a cookie value the entry point already read; takes no request',
   'server/auth/moderation-account.ts': 'compares a resolved user id with config; takes no request',
-  'server/utils/url-helpers.ts': 'builds a base URL from config; reads nothing off the request',
-  'server/utils/webhook-token.ts':
-    'compares a value the entry point already read with config; takes no request',
   'env/server.ts': 'environment config; reads nothing off the request',
   'server/auth/session-metrics.ts':
     'counts a session by the cookie slot the entry point already read; takes no request',

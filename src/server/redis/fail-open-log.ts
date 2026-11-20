@@ -45,7 +45,8 @@ export type SysRedisFailOpenSubtype =
   | 'token-mint-amplification'
   | 'read-degraded'
   | 'write-degraded'
-  | 'rate-limit-write-degraded';
+  | 'rate-limit-write-degraded'
+  | 'rate-limit-claim-script-error';
 
 /**
  * Emit a structured fail-open warning. Fire-and-forget — never blocks

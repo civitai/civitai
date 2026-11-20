@@ -469,7 +469,7 @@ describe('service token — the JWT', () => {
     expect(await verifier.verifyToken(session)).toMatchObject({ user: { id: USER_ID } });
   });
 
-  it('is not a subject the user token exchange accepts', async () => {
+  it('is not a subject the user token exchange accepts, nor one an app may exchange', async () => {
     const exchange = async (subject: string) => {
       const form = new URLSearchParams({
         grant_type: TOKEN_EXCHANGE_GRANT,
@@ -486,7 +486,13 @@ describe('service token — the JWT', () => {
       } as never);
       return { status: res.status, body: (await res.json()) as Row };
     };
-    expect((await exchange(await minted())).body.error).toBe('invalid_grant');
+    // A service token goes to the client token exchange (client-exchange.ts), never the user one, and
+    // an app is no relay there.
+    const refused = await exchange(await minted());
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toBe('unauthorized_client');
+    expect(refused.body).not.toHaveProperty('access_token');
+    expect(h.logs.some((l) => l.event === 'token_exchange')).toBe(false);
     // Control: the app's own access token exchanges.
     expect((await exchange(SUBJECT)).status).toBe(200);
   });
