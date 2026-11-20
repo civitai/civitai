@@ -8,6 +8,7 @@ import {
 import type { RemixApp } from '~/shared/remix-apps/define';
 import { RemixReplayError, type RemixLogEntry } from '~/shared/remix-apps/replay';
 import { createHash } from 'crypto';
+import { firstAnswer } from '~/shared/remix-apps/mock-host';
 
 const SECRET = 's'.repeat(32);
 const config = { url: 'http://runner', secret: SECRET };
@@ -142,7 +143,7 @@ describe('a user app replayed on the runner', () => {
       { config, fetchImpl: runner.fetchImpl }
     );
     expect(
-      remixRunnerOutcome('u7-probe', image, [made(1)], result, { autoAnswers: true })
+      remixRunnerOutcome('u7-probe', image, [made(1)], result, { autoAnswer: firstAnswer })
     ).toMatchObject({
       answered: ['ink'],
       outcome: { status: 'effect', index: 2, effect: { request: { prompt: 'in ink' } } },
@@ -150,6 +151,23 @@ describe('a user app replayed on the runner', () => {
     expect(() => remixRunnerOutcome('u7-probe', image, [made(1)], result)).toThrow(
       RemixReplayError
     );
+  });
+
+  it('refuses an answer the runner gave that the host would not', async () => {
+    const runner = fakeRemixRunner({ secret: SECRET, apps: { [SHA]: app } });
+    const [result] = await callRemixRunner(
+      { appId: 'remix-u7-probe', source: SOURCE, image, base: [made(1)], autoAnswer: true },
+      { config, fetchImpl: runner.fetchImpl }
+    );
+    const oil = {
+      ...result,
+      effects: (result as { effects: object[] }).effects.map((e) =>
+        'answer' in e ? { ...e, answer: 'oil' } : e
+      ),
+    };
+    expect(() =>
+      remixRunnerOutcome('u7-probe', image, [made(1)], oil, { autoAnswer: firstAnswer })
+    ).toThrow('with an answer the host would not');
   });
 
   it.each([

@@ -1,14 +1,13 @@
 import { TRPCError } from '@trpc/server';
 import { createHash } from 'crypto';
 import {
-  HOOK_RUNNER_NETWORK_ALLOWANCE_MS,
-  HOOK_RUNNER_QUEUE_ALLOWANCE_MS,
   hookRunnerConfig,
   postToHookRunner,
   type HookRunnerConfig,
 } from '~/server/services/apps/doc-store-hook';
 import { logToAxiom } from '~/server/logging/client';
-import type { RemixAppSource } from '~/shared/remix-apps/define';
+import type { RemixAppSource, RemixWorkflowRequest } from '~/shared/remix-apps/define';
+import { firstAnswer } from '~/shared/remix-apps/mock-host';
 import {
   checkRemixReplay,
   RemixReplayError,
@@ -25,11 +24,9 @@ const CALL_BACKSTOP_MS = 50 + 100;
 /** At most this many branches beside `base` in one call (the runner's `MAX_REMIX_BRANCHES`). */
 export const REMIX_RUNNER_MAX_BRANCHES = 12;
 
+/** The runner's own answer time for `replays` (its backstop), plus the network. */
 export const remixRunnerTimeoutMs = (replays: number) =>
-  replays * REPLAY_BACKSTOP_MS +
-  CALL_BACKSTOP_MS +
-  HOOK_RUNNER_QUEUE_ALLOWANCE_MS +
-  HOOK_RUNNER_NETWORK_ALLOWANCE_MS;
+  replays * REPLAY_BACKSTOP_MS + CALL_BACKSTOP_MS + 200;
 
 type RunnerResult =
   | { effects: unknown[]; done?: { outputs: unknown } }
@@ -100,7 +97,7 @@ export function remixRunnerOutcome(
   source: RemixAppSource,
   log: readonly RemixLogEntry[],
   result: RunnerResult,
-  options?: { autoAnswers?: boolean }
+  options?: Parameters<typeof checkRemixReplay>[4]
 ) {
   if ('cause' in result) throw new RemixReplayError(`${slug} stopped: ${result.cause}`);
   return checkRemixReplay(slug, source, log, result, options);
@@ -119,5 +116,27 @@ export function userRemixReplayer(
       opts
     );
     return remixRunnerOutcome(slug, source, log, result).outcome;
+  };
+}
+
+/**
+ * A user app's first workflow, through any asks before it on their first answers, in one runner
+ * call; `null` when the app asks for none. The host recomputes each answer the runner gave.
+ */
+export function userRemixFirstRequest(
+  slug: string,
+  appId: string,
+  loadSource: () => Promise<string>,
+  opts?: Parameters<typeof callRemixRunner>[1]
+) {
+  return async (source: RemixAppSource): Promise<RemixWorkflowRequest | null> => {
+    const [result] = await callRemixRunner(
+      { appId, source: await loadSource(), image: { ...source }, base: [], autoAnswer: true },
+      opts
+    );
+    const { outcome } = remixRunnerOutcome(slug, source, [], result, { autoAnswer: firstAnswer });
+    return outcome.status === 'effect' && outcome.effect.type === 'workflow'
+      ? outcome.effect.request
+      : null;
   };
 }

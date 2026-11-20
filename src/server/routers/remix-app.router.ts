@@ -185,7 +185,7 @@ export const remixAppRouter = router({
   quote: remixAppProcedure
     .use(quoteRateLimit)
     .meta({ requiredScope: TokenScope.AIServicesRead })
-    .input(z.object({ imageId }))
+    .input(z.object({ imageId, slug: remixAppSlugSchema.optional() }))
     .query(async ({ ctx, input }) => quoteRemixApps({ ...input, caller: await getCaller(ctx) })),
   teamQuote: remixAppProcedure
     .use(teamQuoteRateLimit)

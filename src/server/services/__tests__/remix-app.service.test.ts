@@ -1,4 +1,7 @@
 import { TRPCError } from '@trpc/server';
+import { fakeRemixRunner } from '~/__tests__/mocks/remix-runner.fake';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { createHash } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
@@ -794,5 +797,66 @@ describe('a user app in the menu', () => {
       const { prices } = await quoteRemixApps({ imageId: 22, caller: viewer });
       expect(prices.map((p) => p.slug)).toEqual([MENU_APPS[0].slug]);
     }
+  });
+
+  describe('priced alone when its modal opens', () => {
+    const SECRET = 'r'.repeat(32);
+    const runnerFor = (answer?: () => unknown) => {
+      const source = (userRow.manifest.remix as { source: string }).source;
+      const runner = fakeRemixRunner({
+        secret: SECRET,
+        apps: {
+          [createHash('sha256').update(source).digest('hex')]: {
+            async run(ctx) {
+              const style = await ctx.ask({
+                kind: 'choice',
+                prompt: 'Style?',
+                options: [{ value: 'ink', label: 'Ink' }],
+              });
+              await ctx.workflow({
+                kind: 'image',
+                prompt: `in ${style}`,
+                images: [ctx.source],
+                aspectRatio: 'source',
+                quantity: 1,
+              });
+              return [];
+            },
+          },
+        },
+        answer,
+      });
+      setEnv({ STORAGE_HOOK_RUNNER_URL: 'http://runner', STORAGE_HOOK_RUNNER_SECRET: SECRET });
+      vi.stubGlobal('fetch', runner.fetchImpl);
+      dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(userRow as never);
+      return runner;
+    };
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      setEnv({ STORAGE_HOOK_RUNNER_URL: '', STORAGE_HOOK_RUNNER_SECRET: '' });
+    });
+
+    it('in one runner call, through its asks on their first answers', async () => {
+      const runner = runnerFor();
+      addImage(23);
+      const { prices } = await quoteRemixApps({ imageId: 23, slug: 'u5-mine', caller: flagOn });
+      expect(prices).toMatchObject([{ slug: 'u5-mine', cost: 30 }]);
+      expect(runner.calls).toHaveLength(1);
+      expect(runner.calls[0]).toMatchObject({ input: { base: [], autoAnswer: 'first' } });
+      // The menu quote with the same runner up makes no runner call at all.
+      addImage(24);
+      await quoteRemixApps({ imageId: 24, caller: flagOn });
+      expect(runner.calls).toHaveLength(1);
+    });
+
+    it.each([
+      ['the app faults', () => [{ cause: 'timeout', detail: 'x' }]],
+      ['the runner cannot answer', () => []],
+    ])('is refused a price, not an error, when %s', async (_, answer) => {
+      runnerFor(answer);
+      addImage(25);
+      const { prices } = await quoteRemixApps({ imageId: 25, slug: 'u5-mine', caller: flagOn });
+      expect(prices).toEqual([{ slug: 'u5-mine', refusal: 'Price unavailable' }]);
+    });
   });
 });

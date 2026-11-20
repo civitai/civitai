@@ -186,7 +186,16 @@ export function buildRuntimeRequest({
 }
 
 /** The first workflow the app runs, through any asks before it on their first answers; `null` if none is reached. */
-export async function firstRuntimeRequest(replay: RemixReplayer, image: RemixSourceImage) {
+export async function firstRuntimeRequest(
+  { replay, firstRequest }: Pick<RegisteredRemixApp, 'replay' | 'firstRequest'>,
+  image: RemixSourceImage
+) {
+  // A user app's runner answers them all in one call.
+  if (firstRequest)
+    return firstRequest(runtimeSourceOf(image)).catch((error) => {
+      if (error instanceof RemixReplayError) return null;
+      throw error;
+    });
   const log: RemixLogEntry[] = [];
   // Bounded: an app that only ever asks has no first workflow to price.
   for (let asked = 0; asked <= 8; asked++) {
@@ -327,24 +336,43 @@ export async function assertInputsUsable(
   });
 }
 
-/** Prices every system app this source can run, from one source load. */
+/**
+ * Prices every system app this source can run, from one source load; with `slug`, that one app,
+ * which is how a user app is priced: when its modal opens, never in the menu's quote.
+ */
 export async function quoteRemixApps({
   imageId,
+  slug,
   caller,
 }: {
   imageId: number;
+  slug?: string;
   caller: RemixAppCaller;
 }) {
   const image = await loadSource(imageId, caller, false);
   await assertInputsUsable([getRemixSourceUrl(image)], caller, 'remixAppQuote');
   const pricing = await pricingFor(caller);
 
-  // A user app is priced when its modal opens, never in the menu's quote.
   const apps = (await getEnabledRemixApps(caller)).filter(
-    (entry) => entry.target === 'image.remix' && !entry.author
+    (entry) =>
+      entry.target === 'image.remix' && (slug === undefined ? !entry.author : entry.slug === slug)
   );
   const prices = await Promise.all(
-    apps.map((entry) => quoteRuntimeApp(entry, image, caller, pricing))
+    apps.map((entry) =>
+      // One app that can't be priced refuses only itself.
+      quoteRuntimeApp(entry, image, caller, pricing).catch((error) => {
+        logToAxiom({
+          name: 'remix-app-quote',
+          type: 'warning',
+          message: 'Could not price a remix app',
+          payload: {
+            slug: entry.slug,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+        return { slug: entry.slug, refusal: PRICE_UNAVAILABLE };
+      })
+    )
   );
   return { prices };
 }
@@ -395,14 +423,14 @@ async function quoteApp(
 }
 
 async function quoteRuntimeApp(
-  { app, replay }: Pick<RegisteredRemixApp, 'app' | 'replay'>,
+  { app, replay, firstRequest }: Pick<RegisteredRemixApp, 'app' | 'replay' | 'firstRequest'>,
   image: RemixSourceImage,
   caller: RemixAppCaller,
   pricing: Pricing
 ) {
   const resolved = resolveRemixAppEngine(app, image, viewerOf(caller));
   if ('refusal' in resolved) return { slug: app.slug, refusal: resolved.refusal };
-  const request = await firstRuntimeRequest(replay, image);
+  const request = await firstRuntimeRequest({ replay, firstRequest }, image);
   if (!request) return { slug: app.slug, refusal: PRICE_UNAVAILABLE };
   const { tier, shape, graphInput } = buildRuntimeRequest({
     app,

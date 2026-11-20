@@ -11,7 +11,7 @@ import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { compileRemixApp } from '~/shared/remix-apps/compile';
-import type { RemixApp } from '~/shared/remix-apps/define';
+import type { RemixApp, RemixAppSource, RemixWorkflowRequest } from '~/shared/remix-apps/define';
 import { replayRemixApp, type RemixReplayer } from '~/shared/remix-apps/replay';
 import {
   REMIX_BLOCK_ID_PREFIX,
@@ -40,7 +40,7 @@ import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import type { Prisma } from '@prisma/client';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
-import { userRemixReplayer } from '~/server/services/remix-app-runner';
+import { userRemixFirstRequest, userRemixReplayer } from '~/server/services/remix-app-runner';
 
 /** The OAuth client every remix row hangs off: no secret, no redirect, no scopes. */
 export const REMIX_APPS_CLIENT_ID = 'civitai-remix-apps';
@@ -71,6 +71,8 @@ export type RegisteredRemixApp = {
   app: RemixApp;
   /** What `start` and `advance` replay. */
   replay: RemixReplayer;
+  /** A user app's first workflow, in one runner call. */
+  firstRequest?: (source: RemixAppSource) => Promise<RemixWorkflowRequest | null>;
   /** A hash of what it runs: a run started on another shape is not replayed. */
   shape: string;
 };
@@ -149,13 +151,23 @@ function register(
   } else {
     app = compileRemixApp({ slug, name, description, version }, spec);
   }
+  const loadSource = () => loadUserRemixSource(slug, (spec as { source: string }).source);
   const replay: RemixReplayer =
     'source' in spec
-      ? userRemixReplayer(slug, remixBlockId(slug), () => loadUserRemixSource(slug, spec.source))
+      ? userRemixReplayer(slug, remixBlockId(slug), loadSource)
       : (source, log) => replayRemixApp(app, source, log);
+  const firstRequest =
+    'source' in spec ? userRemixFirstRequest(slug, remixBlockId(slug), loadSource) : undefined;
   const shape = createHash('sha256').update(runShape(spec)).digest('hex').slice(0, 16);
   const { version: _, ...rest } = listing;
-  return { ...rest, icon: spec.icon, app, replay, shape };
+  return {
+    ...rest,
+    icon: spec.icon,
+    app,
+    replay,
+    shape,
+    ...(firstRequest ? { firstRequest } : {}),
+  };
 }
 
 /** A stored row as a registered app, or `null` (logged) when it no longer validates. */

@@ -168,15 +168,20 @@ export type RemixClaimedReplay = {
 /**
  * A sandboxed replay's claim, checked against the host's own log with the same checks an
  * in-process replay gets: the runner is the app's own interpreter, so nothing it says is taken
- * on trust. With `autoAnswers`, an ask past the log that carries an answer is checked and
- * recorded; those answers come back beside the outcome.
+ * on trust. With `autoAnswer`, an ask past the log may carry the runner's answer: it must be the
+ * one `autoAnswer` gives, and it is recorded; those answers come back beside the outcome.
  */
 export function checkRemixReplay(
   slug: string,
   source: RemixAppSource,
   log: readonly RemixLogEntry[],
   claimed: RemixClaimedReplay,
-  { autoAnswers = false }: { autoAnswers?: boolean } = {}
+  {
+    autoAnswer,
+  }: {
+    /** The answer the runner must have given each ask past the log; none may be given without it. */
+    autoAnswer?: (spec: RemixAsk) => RemixAnswer;
+  } = {}
 ): { outcome: RemixReplayOutcome; answered: RemixAnswer[] } {
   const extended = [...log];
   const answered: RemixAnswer[] = [];
@@ -188,13 +193,17 @@ export function checkRemixReplay(
       throw new RemixReplayError(`${slug} reported a step that is not one, at step ${index}`);
     const { answer, ...effect } = raw as { answer?: unknown };
     if (answer !== undefined) {
-      if (!autoAnswers || index < extended.length || (effect as { type?: unknown }).type !== 'ask')
+      if (!autoAnswer || index < extended.length || (effect as { type?: unknown }).type !== 'ask')
         throw new RemixReplayError(`${slug} answered a step itself, at step ${index}`);
       extended.push({ type: 'ask', answer: answer as RemixAnswer });
       answered.push(answer as RemixAnswer);
     }
     try {
       checks.step(effect as RemixEffect);
+      if (answer !== undefined && answer !== autoAnswer!((effect as { spec: RemixAsk }).spec))
+        throw new RemixReplayError(
+          `${slug} answered step ${index} with an answer the host would not`
+        );
     } catch (error) {
       if (!(error instanceof Suspend)) throw error;
       // The first step past the log is where the run stops: it must be the last one claimed.
