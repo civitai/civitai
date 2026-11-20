@@ -462,6 +462,25 @@ describe('image takedowns', () => {
     expect((await queued()).n).toBe(0);
   });
 
+  // The moderator retracted-media reads tell an upgraded deny from an outright retraction by these
+  // two stamps, so an outright one must carry both, on one clock.
+  it('stamps an outright retraction with its deny time, and a deny with none', async () => {
+    await image(1);
+    await image(2);
+    await moderatorBlock(1);
+    await scannerBlock(2);
+    await syncCdnAccess();
+    const stamps = (
+      await sql`SELECT url, "retractedAt" IS NULL AS unset,
+                  abs(extract(epoch FROM "retractedAt" - "deniedAt")) < 60 AS together
+                FROM "ImageCdnAccess" ORDER BY url`
+    ).rows;
+    expect(stamps).toEqual([
+      { url: u(1), unset: false, together: true },
+      { url: u(2), unset: true, together: null },
+    ]);
+  });
+
   it('an automated block denies without retracting', async () => {
     await image(1);
     await scannerBlock(1);
