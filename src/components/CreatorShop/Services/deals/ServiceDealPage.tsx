@@ -20,6 +20,7 @@ import { DealActionsPanel } from '~/components/CreatorShop/Services/deals/DealAc
 import { DealEscrowPanel } from '~/components/CreatorShop/Services/deals/DealEscrowPanel';
 import { DealAttachmentsPanel } from '~/components/CreatorShop/Services/deals/DealAttachmentsPanel';
 import { DealFilesPanel } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
+import { DealReviewCard } from '~/components/CreatorShop/Services/deals/DealReviewCard';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
 import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
 import { Gated } from '~/components/Gated/Gated';
@@ -198,8 +199,18 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
           <Grid.Col span={{ base: 12, md: 7 }}>
             <Stack gap="lg">
               <DealEscrowPanel deal={deal} />
-              {deal.deadlines.disputeUntil && (
-                <DisputeWindow deal={deal} until={deal.deadlines.disputeUntil} />
+              {features.creatorServicesNext &&
+              deal.review &&
+              (deal.deadlines.disputeUntil || deal.review.review) ? (
+                <DealReviewCard
+                  deal={deal}
+                  state={deal.review}
+                  until={deal.deadlines.disputeUntil}
+                />
+              ) : (
+                deal.deadlines.disputeUntil && (
+                  <DisputeWindow deal={deal} until={deal.deadlines.disputeUntil} />
+                )
               )}
               {lines.length > 0 && (
                 <Paper withBorder radius="md" p="md">

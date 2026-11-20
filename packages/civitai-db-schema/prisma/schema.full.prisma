@@ -2307,6 +2307,7 @@ model Image {
   crucibles              Crucible[]             @relation("CrucibleImage")
   crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
   serviceOfferingCovers  ServiceOffering[]      @relation("ServiceOfferingCover")
+  serviceDealReviewImage ServiceDealReviewImage?
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
@@ -11649,10 +11650,19 @@ model ServiceOffering {
   /// The seller's agreement to the services terms when they published: userId, offeringId,
   /// affirmedAt, version and the statement verbatim. Null until first published.
   sellerAffirmation Json?
+  /// The seller lets buyers attach delivered work to their review. Off until the seller opts in.
+  allowReviewWork   Boolean               @default(false)
+  /// Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
+  /// only in the transaction that publishes or hides a review; the deals job compares them to rows.
+  happyCount        Int                   @default(0)
+  reviewCount       Int                   @default(0)
+  /// happyCount / reviewCount once reviewCount >= 3, else -1. Never null, so the feed pages by it with an id cursor.
+  happySortKey      Float                 @default(-1)
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   deals             ServiceDeal[]
   reports           ServiceOfferingReport[]
+  reviews           ServiceDealReview[]
 
   /// Target of the deal's composite FK that binds `ServiceDeal.sellerId` to the offering's seller.
   @@unique([id, sellerId])
@@ -11721,9 +11731,13 @@ model ServiceDeal {
   disputeResolvedById       Int?
   closedAt                  DateTime?
   closeReason               String?
+  /// Set at accept when the buyer had the review flag: the deal ends in a review card, and a happy
+  /// review may release the Buzz early.
+  reviewEnabledAt           DateTime?
   createdAt                 DateTime                @default(now())
   updatedAt                 DateTime                @updatedAt
   events                    ServiceDealEvent[]
+  review                    ServiceDealReview?
   files                     ServiceDealFile[]
   transactions              ServiceDealTransaction[]
   disputeReviews            ServiceDisputeReview[]
@@ -11765,6 +11779,58 @@ model ServiceDisputeReview {
   createdAt    DateTime                  @default(now())
 
   @@index([dealId])
+}
+
+enum ServiceDealReviewVerdict {
+  Happy
+  NotQuite
+}
+
+/// The buyer's review of a completed deal, one per deal. A Happy review releases the Buzz at once.
+/// Public only once its text passed its check and (Happy, or the deal has settled), and while not hidden.
+model ServiceDealReview {
+  id                       Int                            @id @default(autoincrement())
+  dealId                   Int                            @unique
+  deal                     ServiceDeal                    @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  offeringId               Int
+  offering                 ServiceOffering                @relation(fields: [offeringId], references: [id], onDelete: Restrict)
+  sellerId                 Int
+  buyerId                  Int
+  verdict                  ServiceDealReviewVerdict
+  comment                  String?
+  /// The content check of `comment`; reset to Pending on every edit.
+  scanStatus               ServiceOfferingIngestionStatus @default(Pending)
+  scanWorkflowId           String?
+  publishedAt              DateTime?
+  /// The buyer may edit until then.
+  editableUntil            DateTime
+  sellerReply              String?
+  sellerReplyAt            DateTime?
+  sellerReplyScanStatus    ServiceOfferingIngestionStatus?
+  sellerReplyScanWorkflowId String?
+  hiddenAt                 DateTime?
+  hiddenById               Int?
+  createdAt                DateTime                       @default(now())
+  updatedAt                DateTime                       @updatedAt
+  images                   ServiceDealReviewImage[]
+
+  @@index([offeringId, publishedAt])
+  @@index([sellerId, publishedAt])
+}
+
+/// Delivered work a buyer attached to their review: a fresh upload, owned by the buyer and scanned
+/// as any upload. Also the takedown list for review images.
+model ServiceDealReviewImage {
+  reviewId Int
+  review   ServiceDealReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  imageId  Int               @unique
+  image    Image             @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  /// The final it was copied from; one copy per final per review.
+  sourceFileId Int?
+  sourceFile   ServiceDealFile? @relation(fields: [sourceFileId], references: [id], onDelete: SetNull)
+
+  @@id([reviewId, imageId])
+  @@unique([reviewId, sourceFileId])
 }
 
 /// The deal's accountability sheet. Append-only. `actorId` -1 is the system.
@@ -11847,6 +11913,7 @@ model ServiceDealFile {
   removedAt      DateTime?
   createdAt      DateTime                  @default(now())
   entries        ServiceDealFileEntry[]
+  reviewImages   ServiceDealReviewImage[]
 
   @@index([dealId, round, kind])
 }

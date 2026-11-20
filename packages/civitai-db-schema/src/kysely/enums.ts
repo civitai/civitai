@@ -1161,6 +1161,12 @@ export const ServiceDealLeg = {
   Refund: 'Refund',
 } as const;
 export type ServiceDealLeg = (typeof ServiceDealLeg)[keyof typeof ServiceDealLeg];
+export const ServiceDealReviewVerdict = {
+  Happy: 'Happy',
+  NotQuite: 'NotQuite',
+} as const;
+export type ServiceDealReviewVerdict =
+  (typeof ServiceDealReviewVerdict)[keyof typeof ServiceDealReviewVerdict];
 export const UserHubSourceType = {
   User: 'User',
   Model: 'Model',
