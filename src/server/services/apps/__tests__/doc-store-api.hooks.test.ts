@@ -604,7 +604,7 @@ type RunnerPool = {
   close: () => Promise<void>;
 };
 type RunnerModules = {
-  buildApp: (deps: { secret: string; pool: unknown; metrics: unknown }) => {
+  buildApp: (deps: { secret: string; mode: 'check'; pool: unknown; metrics: unknown }) => {
     listen: (o: { port: number; host: string }) => Promise<string>;
     close: () => Promise<void>;
   };
@@ -642,7 +642,12 @@ async function startRealRunner(): Promise<Runner> {
     seen.push({ sha256: sha(args.source), input: JSON.parse(args.inputJson), appId: args.appId });
     return run(args);
   };
-  const app = m.buildApp({ secret: RUNNER_SECRET, pool, metrics: m.createMetrics() });
+  const app = m.buildApp({
+    secret: RUNNER_SECRET,
+    mode: 'check',
+    pool,
+    metrics: m.createMetrics(),
+  });
   const url = await app.listen({ port: 0, host: '127.0.0.1' });
   return {
     kind: 'real',

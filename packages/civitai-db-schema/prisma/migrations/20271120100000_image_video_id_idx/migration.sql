@@ -1,0 +1,12 @@
+-- The videos of "Image", for the video search index's refresh walk and backfill, which read
+--   SELECT id FROM "Image" WHERE id > $1 AND (type = 'video') ORDER BY id LIMIT $2
+-- Without it each page is a backward scan of "Image_pkey" filtering on type, and a refresh pass
+-- reads every row of the table. Partial, so it holds only video ids; it lives only in this
+-- migration (Prisma cannot declare a partial index).
+--
+-- MANUAL APPLY, per environment. CONCURRENTLY cannot run inside a transaction, so run this ONE
+-- statement on its own, outside BEGIN/COMMIT (the BEGIN; ... ROLLBACK; dry run does not apply to
+-- it). It does not block writes to "Image". IF NOT EXISTS also skips an INVALID index left by an
+-- interrupted build; after applying, check pg_index.indisvalid, and if false run
+-- `DROP INDEX CONCURRENTLY IF EXISTS "Image_video_id_idx"` and re-run.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Image_video_id_idx" ON "Image" (id) WHERE type = 'video';

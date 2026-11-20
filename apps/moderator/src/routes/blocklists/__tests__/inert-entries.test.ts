@@ -19,6 +19,27 @@ describe('inertEntries', () => {
     expect(inertEntries('ProfanityBenignWord', ['cockpit', 'Scunthorpe', 'h3ll_o'])).toEqual([]);
   });
 
+  it('refuses Profanity Word entries the filter would drop or that are too short to apply safely', () => {
+    expect(
+      inertEntries('ProfanityWord', [
+        'zorblat',
+        '|zorb|',
+        'zo',
+        '|z|',
+        '|zq|',
+        'zor8lat',
+        'z-q',
+        'zor|blat',
+      ])
+    ).toEqual(['zo', '|z|', '|zq|', 'zor8lat', 'z-q', 'zor|blat']);
+  });
+
+  it('needs 4 letters for an entry that matches inside words, 3 for a bounded one', () => {
+    expect(inertEntries('ProfanityWord', ['zor', '|zor', 'zor|', '|zor|', 'zorb'])).toEqual([
+      'zor',
+    ]);
+  });
+
   it('leaves the phrase lists alone, where multi-word entries are the point', () => {
     expect(inertEntries('PromptBenignPhrase', ['teen titans'])).toEqual([]);
   });

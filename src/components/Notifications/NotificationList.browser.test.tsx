@@ -1,3 +1,4 @@
+import Router from 'next/router';
 import { describe, expect, test, vi } from 'vitest';
 import type * as NotificationThumbnails from '~/components/Notifications/notification-thumbnails';
 
@@ -127,5 +128,59 @@ describe('NotificationList announcement icon', () => {
     expect(document.body.querySelector('.tabler-icon-bell')).toBeTruthy();
     expect(document.body.querySelector('.tabler-icon-speakerphone')).toBeNull();
     expect(document.body.querySelector('.tabler-icon-alert-octagon')).toBeNull();
+  });
+});
+
+// A mature item's appeal result links to .red, which the client router cannot reach.
+describe('NotificationList link to another host', () => {
+  const appealResult = (url?: string) =>
+    ({
+      id: 4,
+      type: 'entity-appeal-resolved',
+      category: 'Moderation',
+      createdAt: new Date('2026-09-10T00:00:00Z'),
+      read: false,
+      details: { entityType: 'Model', entityId: 7, status: 'Approved', ...(url && { url }) },
+    } as any);
+
+  // Runs after React's handler; whatever the list left unprevented, the browser would follow.
+  async function clickRow(item: any) {
+    renderWithProviders(
+      <IsClientProvider>
+        <NotificationList items={[item]} searchText="" onItemClick={vi.fn()} />
+      </IsClientProvider>
+    );
+    await vi.waitFor(() => {
+      expect(
+        document.body.querySelector('a[href]'),
+        `body: ${document.body.textContent}`
+      ).toBeTruthy();
+    });
+    const row = document.body.querySelector('a[href]') as HTMLAnchorElement;
+    let followed: string | null = null;
+    const capture = (e: Event) => {
+      if (!e.defaultPrevented) followed = row.href;
+      e.preventDefault();
+    };
+    window.addEventListener('click', capture);
+    vi.mocked(Router.push).mockClear();
+    try {
+      row.click();
+    } finally {
+      window.removeEventListener('click', capture);
+    }
+    return { followed, push: vi.mocked(Router.push) };
+  }
+
+  test('an absolute .red url leaves the origin instead of a client-side push', async () => {
+    const { followed, push } = await clickRow(appealResult('https://civitai.red.test/models/7'));
+    expect(followed).toBe('https://civitai.red.test/models/7');
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  test('a relative url stays on the client router', async () => {
+    const { followed, push } = await clickRow(appealResult());
+    expect(followed).toBeNull();
+    expect(push).toHaveBeenCalledWith('/models/7');
   });
 });

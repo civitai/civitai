@@ -105,7 +105,12 @@ export function NotificationList({
         const milestoneNotification = notification.type.includes('milestone');
 
         const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
-          e.preventDefault();
+          // The client router cannot reach another host (a mature item's result links to .red): let the anchor navigate.
+          const leavesSite =
+            !!details.url &&
+            details.target !== '_blank' &&
+            new URL(details.url, window.location.href).origin !== window.location.origin;
+          if (!leavesSite) e.preventDefault();
           // The url is derived here by `getNotificationMessage`; the raw `notification.details`
           // carries one for announcements only, so a consumer reading it off there sees
           // `undefined` for every other type.
@@ -113,7 +118,7 @@ export function NotificationList({
             keepOpened: details.target === '_blank',
             url: details.url,
           });
-          if (!details.url) return;
+          if (!details.url || leavesSite) return;
           if (details.target === '_blank') return window.open(details.url, '_blank');
           const toModal = details.url.includes('?dialog=');
           if (toModal) {

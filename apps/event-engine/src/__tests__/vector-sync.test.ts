@@ -230,10 +230,13 @@ describe('eligibility', () => {
     ['needs review', { needsReview: 'poi' }],
     ['minor', { minor: true }],
     ['poi', { poi: true }],
+    ['rated Blocked', { nsfwLevel: 32 }],
+    ['rated Blocked among other levels', { nsfwLevel: 36 }],
   ];
 
-  test('a scanned, posted, unflagged image is eligible', () => {
+  test('a scanned, posted, unflagged image is eligible, at any level but Blocked', () => {
     expect(isEligible(imageRow(1))).toBe(true);
+    expect(isEligible(imageRow(1, { nsfwLevel: 16 }))).toBe(true);
   });
 
   test.each(ineligible)('%s is not eligible', (_name, patch) => {
@@ -242,7 +245,7 @@ describe('eligibility', () => {
 
   test('the SQL predicate names every rule the row check applies', () => {
     expect(eligibleSql('i')).toBe(
-      `i."ingestion" = 'Scanned' AND i."tosViolation" = false AND i."blockedFor" IS NULL AND i."postId" IS NOT NULL AND i."needsReview" IS NULL AND i."minor" = false AND i."poi" = false`
+      `i."ingestion" = 'Scanned' AND i."tosViolation" = false AND i."blockedFor" IS NULL AND i."postId" IS NOT NULL AND i."needsReview" IS NULL AND i."minor" = false AND i."poi" = false AND (i."nsfwLevel" & 32) = 0`
     );
   });
 });
@@ -448,6 +451,7 @@ describe('embedder', () => {
     const result = await e.embed(['1', '2', '3', '4'].map((id) => ({ id, imageUrl: 'u' })));
     expect([...result.vectors.keys()].sort()).toEqual([1, 2, 4]);
     expect(result.failed).toEqual([3]);
+    expect(result.rejected).toEqual([3]);
   });
 
   test('an auth failure stops the run instead of being bisected', async () => {
@@ -2184,7 +2188,19 @@ describe('one input per step (orchestration #460)', () => {
     const result = await embedderWith(fetchImpl).embed(inputs(3));
     expect([...result.vectors.keys()].sort()).toEqual([1, 3]);
     expect(result.failed).toEqual([2]);
+    expect(result.rejected).toEqual([2]);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test('a step that succeeds with an unusable output fails, but is not the media refused', async () => {
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(workflowBody(stepIds(init)));
+      body.steps[1].output.embedding = [1, 2];
+      return new Response(JSON.stringify(body), { status: 200 });
+    }) as unknown as typeof fetch;
+    const result = await embedderWith(fetchImpl).embed(inputs(3));
+    expect(result.failed).toEqual([2]);
+    expect(result.rejected).toEqual([]);
   });
 
   test('one step from another model revision rejects the workflow it came in', async () => {
@@ -2643,6 +2659,8 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     expect(posts).toBe(2); // at 10 min one re-submit fits the 15-min window; at 20 min none does
 
     expect(result.failed.sort()).toEqual([1, 2]);
+    // An outage is not the media's fault: the refused-media memo must not hold these back.
+    expect(result.rejected).toEqual([]);
     expect(result.error).toBeUndefined();
   });
 

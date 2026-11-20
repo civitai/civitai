@@ -356,3 +356,58 @@ describe('Creator Studio "Who reacted" and "Who collected" avatars', () => {
     expect(avatars(page?.collectors)).toEqual(expected);
   });
 });
+
+describe('Creator Studio "Who collected" leaves out collectors the metrics do not count', () => {
+  const NC_IMAGE = 960;
+  const COUNTED = 110;
+  const NOT_COUNTED = 210;
+  let nextCollection = 9300;
+  const collectedBy = async (image: number, users: number[]) => {
+    const values = users.map((u) => ({ u, c: nextCollection++ }));
+    await holder.db.exec(`
+      INSERT INTO "User" (id, username) VALUES ${users.map((u) => `(${u}, 'u${u}')`).join(', ')}
+        ON CONFLICT (id) DO NOTHING;
+      INSERT INTO "Collection" VALUES
+        ${values.map(({ u, c }) => `(${c}, ${u}, 'Public', 'Public', NULL)`).join(', ')};
+      INSERT INTO "CollectionItem" ("collectionId", "imageId", status, "addedById") VALUES
+        ${values.map(({ u, c }) => `(${c}, ${image}, 'ACCEPTED', ${u})`).join(', ')};
+    `);
+  };
+  const page = (image: number) => getCollectors(holder.db as never, OWNER, 'image', image, null);
+
+  beforeAll(async () => {
+    await holder.db.exec(`INSERT INTO "Image" (id, "userId") VALUES (${NC_IMAGE}, ${OWNER});`);
+    await collectedBy(NC_IMAGE, [COUNTED, NOT_COUNTED]);
+  });
+
+  afterEach(() => {
+    notCounted.ids = [];
+  });
+
+  it('absent from the list and the total; a counted collector stays', async () => {
+    notCounted.ids = [NOT_COUNTED];
+    const p = await page(NC_IMAGE);
+    expect(p?.collectors.map((c) => c.userId)).toEqual([COUNTED]);
+    expect(p?.total).toBe(1);
+  });
+
+  it('still fills a page when the newest collectors are not counted', async () => {
+    const image = 961;
+    const newest = [6001, 6002, 6003];
+    const counted = Array.from({ length: REACTORS_PAGE_SIZE }, (_, i) => 4000 + i);
+    await holder.db.exec(`INSERT INTO "Image" (id, "userId") VALUES (${image}, ${OWNER});`);
+    await collectedBy(image, [...counted, ...newest]);
+    notCounted.ids = newest;
+    const p = await page(image);
+    expect(p?.collectors).toHaveLength(REACTORS_PAGE_SIZE);
+    expect(p?.collectors.map((c) => c.userId)).not.toContain(6001);
+    expect(p?.total).toBe(REACTORS_PAGE_SIZE);
+    expect(p?.next).toBeNull();
+  });
+
+  it('lists and counts everyone when the set is empty', async () => {
+    const p = await page(NC_IMAGE);
+    expect(p?.collectors.map((c) => c.userId)).toEqual([NOT_COUNTED, COUNTED]);
+    expect(p?.total).toBe(2);
+  });
+});
