@@ -33,6 +33,7 @@ const UNRATED = 12;
 const MINOR_R = 13;
 const HIDDEN_META = 14;
 const TOS_VIOLATION = 15;
+const ACCEPTABLE_MINOR = 16;
 
 let pg: PGlite;
 const db = {
@@ -67,7 +68,8 @@ beforeAll(async () => {
       type text DEFAULT 'image', meta jsonb, "hideMeta" boolean NOT NULL DEFAULT false,
       "generationProcess" text, "needsReview" text, minor boolean NOT NULL DEFAULT false,
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "blockedFor" text,
-      "modelRestricted" boolean NOT NULL DEFAULT false, "tosViolation" boolean NOT NULL DEFAULT false
+      "modelRestricted" boolean NOT NULL DEFAULT false, "tosViolation" boolean NOT NULL DEFAULT false,
+      "acceptableMinor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
@@ -79,6 +81,7 @@ beforeAll(async () => {
 
     INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner');
     INSERT INTO "Image" (id, "tosViolation") VALUES (${TOS_VIOLATION}, true);
+    INSERT INTO "Image" (id, "acceptableMinor") VALUES (${ACCEPTABLE_MINOR}, true);
     INSERT INTO "Image" (id, meta, "nsfwLevel", "blockedFor", minor, "hideMeta") VALUES
       (${CLEAN}, '{"prompt": "p"}', 1, NULL, false, false),
       (${BLOCKED_FOR}, NULL, 1, 'tos', false, false),
@@ -86,7 +89,15 @@ beforeAll(async () => {
       (${MINOR_R}, NULL, ${NsfwLevel.R}, NULL, true, false),
       (${HIDDEN_META}, '{"prompt": "secret"}', 1, NULL, false, true);
   `);
-  for (const id of [CLEAN, BLOCKED_FOR, UNRATED, MINOR_R, HIDDEN_META, TOS_VIOLATION]) {
+  for (const id of [
+    CLEAN,
+    BLOCKED_FOR,
+    UNRATED,
+    MINOR_R,
+    HIDDEN_META,
+    TOS_VIOLATION,
+    ACCEPTABLE_MINOR,
+  ]) {
     await pg.exec(`
       INSERT INTO "Bounty" (id, "userId") VALUES (${id}, ${OWNER});
       INSERT INTO "ImageConnection" VALUES (${id}, ${id}, 'Bounty');
@@ -123,6 +134,7 @@ describe('bounties search index images', () => {
     ['is unrated', UNRATED],
     ['is minor-flagged and rated R', MINOR_R],
     ['violates the ToS', TOS_VIOLATION],
+    ['is marked acceptable-minor', ACCEPTABLE_MINOR],
   ])('drops the document of a bounty whose only image %s', async (_, id) => {
     expect(await pull(id)).toBeUndefined();
     expect(onSearchIndexDocumentsCleanup).toHaveBeenCalledWith({

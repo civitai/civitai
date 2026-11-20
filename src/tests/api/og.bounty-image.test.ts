@@ -52,7 +52,8 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int, url text, type text, width int, height int,
       "nsfwLevel" int, ingestion "ImageIngestionStatus", "needsReview" text, "blockedFor" text,
-      "tosViolation" boolean, minor boolean, "modelRestricted" boolean NOT NULL
+      "tosViolation" boolean, minor boolean, "modelRestricted" boolean NOT NULL,
+      "acceptableMinor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
   `);
