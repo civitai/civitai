@@ -85,6 +85,7 @@ import {
 import {
   liveDecideCollectionRead,
   livePrivateDocSource,
+  liveRunGateReadable,
 } from '~/server/registry-adapter/private-feed.live';
 import { STATES_KEPT_PER_STREAM } from '~/server/registry-adapter/cursor';
 import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
@@ -217,6 +218,7 @@ function main() {
           source: livePrivateDocSource(),
           resolve: resolvePrivateFromCatalog(readApps),
           decide: liveDecideCollectionRead,
+          runGateReadable: liveRunGateReadable,
           store: createRedisSnapshotStore(
             undefined,
             STATES_KEPT_PER_STREAM,

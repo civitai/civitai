@@ -129,6 +129,8 @@ const sleep = (_ms: number, signal: AbortSignal) =>
   });
 const wake = () => wakers.splice(0).forEach((w) => w());
 
+/** Whether the run gate's flag reads (false: a Flipt outage, when the gate refuses everyone). */
+let runGateReadable: boolean;
 let now: number;
 let store: ReturnType<typeof createMemorySnapshotStore>;
 
@@ -138,6 +140,7 @@ function privateFeed(relays = parsePrivateRelays(RELAY)) {
     source: { versions: async (...a) => page(...a), documents: async (...a) => page(...a) },
     resolve: resolvePrivateFromCatalog(async () => catalog()),
     decide,
+    runGateReadable: async () => runGateReadable,
     store,
     pollMs: 60_000,
     sleep,
@@ -256,6 +259,7 @@ const upserts = (events: StreamEvent[]) =>
 
 beforeEach(() => {
   now = Date.UTC(2026, 10, 19, 12);
+  runGateReadable = true;
   wakers = [];
   store = createMemorySnapshotStore();
   rows = [
@@ -371,9 +375,9 @@ describe('🔴 leak canaries: who receives a private record', () => {
   });
 
   it("🔴 with only the experimental relay's client listed, a token the main gateway exchanged receives ZERO", async () => {
-    // The two relays' real hub clients: the experimental registry's own, and the main gateway's.
-    const EXP = '3e5fdfd2-c9f7-4df1-9ce8-6622a5612ffb';
-    const MAIN_GATEWAY = '6a5f2797-dbc7-4a0b-bde2-43a0c65a4010';
+    // Synthetic stand-ins for the two relays' hub clients; the property does not depend on them.
+    const EXP = '00000000-0000-4000-8000-0000000e0e01';
+    const MAIN_GATEWAY = '00000000-0000-4000-8000-00000a1a0002';
     const adapter = () =>
       composeAdapter(entities, publicFeed(), privateFeed(parsePrivateRelays(EXP)));
     TOKENS['owner-via-main'] = userToken(OWNER, SOURCE_CLIENT, { actor: MAIN_GATEWAY });
@@ -452,6 +456,31 @@ describe('🔴 revocation and deletion leave the stream as Deletes', () => {
     expect(deletes(run.events)).toEqual([OWNER_URN]);
     run.stop();
     wake();
+  });
+
+  it('🔴 the run gate unreadable (a Flipt outage): the stream ends unavailable, with zero Deletes', async () => {
+    const run = await liveStream('owner-own');
+    // What the run gate does while its flag cannot be read: it refuses everyone.
+    runGate.mockRejectedValue(
+      new (await import('@trpc/server')).TRPCError({ code: 'UNAUTHORIZED' })
+    );
+    runGateReadable = false;
+    await poll(run);
+    expect(deletes(run.events)).toEqual([]);
+    const err = await run.done;
+    expect(err).toBeInstanceOf(ProtocolError);
+    expect((err as ProtocolError).code).toBe('unavailable');
+    expect((err as ProtocolError).message).toBe('the App Blocks run gate cannot be read');
+  });
+
+  it('🔴 a snapshot while the run gate is unreadable is unavailable, not an empty stream', async () => {
+    runGate.mockRejectedValue(
+      new (await import('@trpc/server')).TRPCError({ code: 'UNAUTHORIZED' })
+    );
+    runGateReadable = false;
+    const { events, err } = await snapshotOf('owner-own');
+    expect(events).toEqual([]);
+    expect((err as ProtocolError).code).toBe('unavailable');
   });
 
   it('a deleted record: a Delete for it alone; a new record: an Upsert', async () => {

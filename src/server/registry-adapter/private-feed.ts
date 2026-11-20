@@ -37,7 +37,9 @@
  * default 60 s) re-runs gate 5 and re-reads the user's records. A grant revoked, the import scope
  * withdrawn, the app no longer approved, the user no longer allowed to run apps, the source
  * re-rated above the audience: the stream then holds nothing, and every record it had sent goes as
- * a `Delete`. A record deleted or hidden goes as a `Delete` the same way. So the lag is at most one
+ * a `Delete`. A record deleted or hidden goes as a `Delete` the same way. One refusal is checked
+ * before it is believed: `apps_disabled` while the run gate's flag cannot be read (a Flipt outage)
+ * ends the stream `unavailable`, with no `Delete` ({@link PrivateFeedOptions.runGateReadable}). So the lag is at most one
  * poll interval plus that poll's reads (and the read replica's lag on the app rows). A failed read
  * is never taken for a revocation: it ends the stream `unavailable`, and the consumer resumes.
  * A resume is judged the same way: a cursor whose gates 1–4 still pass resumes, and its first poll
@@ -48,8 +50,9 @@
  * (`cursor_expired`) before its state is used when the token fails gates 1–4, when it was issued to
  * another subject (the auth extension's relay rule 3, enforced here too, since the request binding
  * in `subscription.ts` is a public digest) or another audience, or when it is older than
- * {@link PRIVATE_CURSOR_TTL_MS} (7 days). Private states are kept apart from public ones, under a
- * retention of {@link PRIVATE_STATE_RETENTION_SECONDS}.
+ * {@link PRIVATE_CURSOR_TTL_MS} (7 days). Private states share the snapshot store's key space with
+ * public ones and differ only in retention ({@link PRIVATE_STATE_RETENTION_SECONDS}); what keeps
+ * them apart is the state format (`p1`, refused by the public feed) and the subject check above.
  *
  * A private record's URN is `urn:apps.civitai.com:<slug>/<coll>/<record_id>`, the record core's
  * (`app-record.ts`): its stored random id, since a private key is unique only within one user's
@@ -146,7 +149,17 @@ export type PrivateFeedOptions = {
   source: PrivateDocSource;
   resolve: ResolvePrivateStream;
   decide: DecideCollectionRead;
-  /** A store of its own: private states are never kept beside public ones. */
+  /**
+   * Whether the App Blocks run gate's answer for `userId` can be trusted right now: false while the
+   * flag it reads cannot be read (Flipt unreachable with no snapshot), when the run gate answers
+   * "not enabled" for everyone. Asked only after the predicate refused with `apps_disabled`: an
+   * unreadable gate then ends the stream `unavailable` instead of sending `Delete`s.
+   */
+  runGateReadable: (userId: number) => Promise<boolean>;
+  /**
+   * The private states' store: the same key space as the public feed's, with a retention of its
+   * own ({@link PRIVATE_STATE_RETENTION_SECONDS}).
+   */
   store: SnapshotStore;
   pollMs: number;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -273,7 +286,14 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       { userId, clientId, matureAllowed: (rating) => audienceAdmits(audience, rating) },
       { sourceBlockId: slug, collection }
     );
-    if (!decision.ok) return nothing();
+    if (!decision.ok) {
+      // The run gate reads a flag, and an unreadable flag reads as "not enabled" for everyone: that
+      // is an outage, not a revocation, and must not delete what every consumer holds.
+      if (decision.reason === 'apps_disabled' && !(await opts.runGateReadable(userId))) {
+        throw new ProtocolError('unavailable', 'the App Blocks run gate cannot be read');
+      }
+      return nothing();
+    }
     // The predicate read the app's row itself: it must be the app the catalog named, and still
     // declare the collection private.
     if (decision.source.id !== appId) return nothing();
