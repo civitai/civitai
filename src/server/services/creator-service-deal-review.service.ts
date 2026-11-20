@@ -221,16 +221,16 @@ export async function setServiceDealReviewHidden({
       WHERE "id" = ${reviewId}::int AND ("hiddenAt" IS NULL) = ${hidden}
       RETURNING "dealId"`;
     if (!review) return false;
-    // A scan skipped while hidden left its text unsettled: a restore sends it back to its check.
+    // A scan skipped while hidden failed its text to Error: a restore sends it back to its check. A
+    // check still in flight is left to land.
     if (!hidden)
       await tx.$executeRaw`
         UPDATE "ServiceDealReview" SET
-          "scanStatus" = CASE WHEN "scanStatus" IN ('Pending', 'Error') AND "comment" IS NOT NULL
-            THEN 'Pending' ELSE "scanStatus" END,
-          "scanWorkflowId" = CASE WHEN "scanStatus" IN ('Pending', 'Error') THEN NULL ELSE "scanWorkflowId" END,
-          "sellerReplyScanStatus" = CASE WHEN "sellerReplyScanStatus" IN ('Pending', 'Error')
+          "scanStatus" = CASE WHEN "scanStatus" = 'Error' THEN 'Pending' ELSE "scanStatus" END,
+          "scanWorkflowId" = CASE WHEN "scanStatus" = 'Error' THEN NULL ELSE "scanWorkflowId" END,
+          "sellerReplyScanStatus" = CASE WHEN "sellerReplyScanStatus" = 'Error'
             THEN 'Pending' ELSE "sellerReplyScanStatus" END,
-          "sellerReplyScanWorkflowId" = CASE WHEN "sellerReplyScanStatus" IN ('Pending', 'Error')
+          "sellerReplyScanWorkflowId" = CASE WHEN "sellerReplyScanStatus" = 'Error'
             THEN NULL ELSE "sellerReplyScanWorkflowId" END
         WHERE "id" = ${reviewId}::int`;
     await syncDealReviewPublication(tx, review.dealId);
@@ -294,7 +294,11 @@ export async function getDealReviewView({
       sellerReply: sees('seller', row.sellerReplyScanStatus) ? row.sellerReply : null,
       sellerReplyScanStatus: own('seller') ? row.sellerReplyScanStatus : null,
       hidden: row.hidden,
-      images: await getReviewImages({ reviewId: row.id, levels: servableLevels }),
+      images: await getReviewImages({
+        reviewId: row.id,
+        levels: servableLevels,
+        includeHidden: viewerRole === 'moderator',
+      }),
     },
   };
 }

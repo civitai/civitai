@@ -126,8 +126,11 @@ export async function attachFinalToReview({
  * a deal preview must pass, rated no higher than the deal, shown at the deal's level (so an X deal's
  * image that scanned PG is still X), and its seller still allows review work.
  */
-export const reviewImageVisibleSql = (levels: number) => Prisma.sql`(
-  r."hiddenAt" IS NULL AND i."ingestion" = 'Scanned'::"ImageIngestionStatus" AND NOT i."tosViolation"
+export const reviewImageVisibleSql = (
+  levels: number,
+  { includeHidden = false } = {}
+) => Prisma.sql`(
+  (${includeHidden} OR r."hiddenAt" IS NULL) AND i."ingestion" = 'Scanned'::"ImageIngestionStatus" AND NOT i."tosViolation"
   AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
   AND i."nsfwLevel" BETWEEN 1 AND d."maxNsfwLevel"
   AND (GREATEST(i."nsfwLevel", d."maxNsfwLevel") & ${levels}::int) <> 0
@@ -135,13 +138,22 @@ export const reviewImageVisibleSql = (levels: number) => Prisma.sql`(
 )`;
 
 /** The shown images of a review, in attach order. */
-export async function getReviewImages({ reviewId, levels }: { reviewId: number; levels: number }) {
+/** `includeHidden`: a moderator still sees a hidden review's images. */
+export async function getReviewImages({
+  reviewId,
+  levels,
+  includeHidden = false,
+}: {
+  reviewId: number;
+  levels: number;
+  includeHidden?: boolean;
+}) {
   return dbWrite.$queryRaw<{ id: number; url: string; nsfwLevel: number }[]>`
     SELECT i."id", i."url", GREATEST(i."nsfwLevel", d."maxNsfwLevel") AS "nsfwLevel"
     FROM "ServiceDealReviewImage" ri
     JOIN "Image" i ON i."id" = ri."imageId"
     JOIN "ServiceDealReview" r ON r."id" = ri."reviewId"
     JOIN "ServiceDeal" d ON d."id" = r."dealId"
-    WHERE ri."reviewId" = ${reviewId}::int AND ${reviewImageVisibleSql(levels)}
+    WHERE ri."reviewId" = ${reviewId}::int AND ${reviewImageVisibleSql(levels, { includeHidden })}
     ORDER BY i."id"`;
 }

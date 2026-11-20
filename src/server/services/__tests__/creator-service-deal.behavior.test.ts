@@ -3672,17 +3672,18 @@ describe('review publishing and counters', () => {
     expect(await counters()).toEqual({ happyCount: 1, reviewCount: 1, happySortKey: -1 });
   });
 
-  it('stops counting a buyer once banned or deleted, at the next recount', async () => {
-    const id = await completedBy(10);
-    await review(id, 'Happy', 10);
-    expect((await counters()).reviewCount).toBe(1);
+  it("stops counting a buyer once banned or deleted, at the deals job's next recount", async () => {
+    const banned = await completedBy(10);
+    const deleted = await completedBy(11);
+    await review(banned, 'Happy', 10);
+    await review(deleted, 'Happy', 11);
+    expect((await counters()).reviewCount).toBe(2);
     await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = 10`);
-    await q(`UPDATE "ServiceDealReview" SET "publishedAt" = NULL WHERE "dealId" = $1`, [id]);
-    const [{ id: reviewId }] = await q<{ id: number }>(
-      `SELECT id FROM "ServiceDealReview" WHERE "dealId" = $1`,
-      [id]
-    );
-    await publish.syncReviewPublication(reviewId);
+    await q(`UPDATE "User" SET "deletedAt" = now() WHERE id = 11`);
+    expect(await reconcile.reconcileServiceDealReviews({ limit: 10 })).toMatchObject({
+      recounted: 1,
+      counterDrift: 0,
+    });
     expect((await counters()).reviewCount).toBe(0);
   });
 

@@ -4,6 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   happySortKey,
   offeringReviewTotals,
+  recountOfferingReviews,
   reviewPublic,
   syncDealReviewPublication,
 } from '~/server/services/creator-service-deal-review-publish';
@@ -105,10 +106,37 @@ export async function readBackServiceDealReviews() {
   return counts;
 }
 
-/** The deals job's review step: recheck stranded texts, fix drifted publications, then read back. */
+/**
+ * Offerings whose counters differ from their rows with no review having changed state: a buyer
+ * banned or deleted since. Logged when found, so a recount that should have happened is visible.
+ */
+async function recountDriftedOfferings(limit: number) {
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT o."id" FROM "ServiceOffering" o CROSS JOIN LATERAL ${offeringReviewTotals(
+      Prisma.sql`o."id"`
+    )} t
+    WHERE (o."happyCount", o."reviewCount", o."happySortKey")
+      IS DISTINCT FROM (t.happy, t.total, ${happySortKey(Prisma.sql`t.happy`, Prisma.sql`t.total`)})
+    ORDER BY o."id" LIMIT ${limit}`;
+  for (const { id } of rows) await recountOfferingReviews(id);
+  if (rows.length)
+    logToAxiom({
+      name: 'creator-service-deal-review',
+      type: 'warning',
+      message: 'offering review counters recounted',
+      payload: { offeringIds: rows.map((r) => r.id) },
+    });
+  return rows.length;
+}
+
+/**
+ * The deals job's review step: recheck stranded texts, fix drifted publications and counters, then
+ * read back. Counter drift that survives the recount is what the read-back reports.
+ */
 export async function reconcileServiceDealReviews({ limit }: { limit: number }) {
   const rescanned = await rescanUnsubmittedTexts(limit);
   const synced = await syncDriftedPublications(limit);
+  const recounted = await recountDriftedOfferings(limit);
   const readBack = await readBackServiceDealReviews();
-  return { rescanned, synced, ...readBack };
+  return { rescanned, synced, recounted, ...readBack };
 }

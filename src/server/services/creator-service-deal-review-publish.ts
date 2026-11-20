@@ -75,6 +75,16 @@ export async function lockDealReviewCounters(tx: Db, dealId: number) {
   return review.offeringId;
 }
 
+/**
+ * Recounts an offering whose counters no longer match its rows: a buyer banned or deleted since
+ * leaves the count with no review changing state. Returns whether it changed anything.
+ */
+export const recountOfferingReviews = (offeringId: number) =>
+  dbWrite.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('service-offering-reviews'), ${offeringId}::int)`;
+    await recountOffering(tx, offeringId);
+  });
+
 export async function syncDealReviewPublication(tx: Db, dealId: number) {
   const offeringId = await lockDealReviewCounters(tx, dealId);
   if (offeringId === null) return false;
