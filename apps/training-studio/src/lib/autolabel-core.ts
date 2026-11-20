@@ -15,6 +15,8 @@ export interface AutoLabelResult {
   status: 'succeeded' | 'failed' | 'pending';
   tags?: string[];
   caption?: string;
-  /** Why a failed item was refused, when the submit itself was rejected (shown on the tile). */
+  /** Why the item failed (shown on the tile). */
   error?: string;
+  /** Refused before it ran (no worker free): sending it again later may succeed. */
+  retryable?: boolean;
 }

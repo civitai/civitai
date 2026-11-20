@@ -3,7 +3,7 @@
 // prod; a touch faster here). Results are keyed by the `key` the caller sends, which must be unique per run.
 
 import { autoLabelAvailable, backend } from '$lib/host';
-import { abortableDelay } from '$lib/pool';
+import { abortableDelay, pool } from '$lib/pool';
 import { isAbort } from '$lib/upload';
 import { AutoLabelRefusedError } from '$lib/autolabel-errors';
 import type { Media } from '$lib/data/trainingModels';
@@ -14,6 +14,10 @@ export type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/backend
 const BATCH_SIZE = 16;
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+const MAX_BATCHES_IN_FLIGHT = 2;
+/** Waits before each resend of items turned away for capacity; its length bounds the resends. */
+export const BUSY_RETRY_DELAYS_MS = [15_000, 45_000, 120_000];
+export const BUSY_GAVE_UP = 'Auto-labeling is busy right now. Try again in a few minutes.';
 
 // Every submitted item is a charged orchestrator job. However a caller asks — the drain, a format
 // switch, the editor's Re-run — one media URL is sent at most this many times per page session, so a
@@ -85,13 +89,16 @@ function pollOnce(
   return backend().autoLabelPoll(workflowId, signal);
 }
 
+/** Runs one workflow; resolves with the items it turned away for capacity, which got no result. */
 async function runBatch(
   mode: AutoLabelMode,
   media: Media,
   batch: AutoLabelItem[],
   onResult: (r: AutoLabelResult) => void,
   signal: AbortSignal
-): Promise<void> {
+): Promise<AutoLabelItem[]> {
+  const byKey = new Map(batch.map((item) => [item.key, item]));
+  const busy: AutoLabelItem[] = [];
   const applied = new Set<string>();
   let submitError: string | undefined;
   try {
@@ -107,7 +114,9 @@ async function runBatch(
         for (const r of results) {
           if (r.status !== 'pending' && !applied.has(r.key)) {
             applied.add(r.key);
-            onResult(r);
+            const item = byKey.get(r.key);
+            if (r.status === 'failed' && r.retryable && item) busy.push(item);
+            else onResult(r);
           }
         }
         if (done) break;
@@ -128,6 +137,7 @@ async function runBatch(
       }
     }
   }
+  return busy;
 }
 
 /** Auto-label every item, batched. `onResult` fires at most once per key as each image resolves;
@@ -152,8 +162,22 @@ export async function runAutoLabel(
     );
     for (const item of refused) onResult({ key: item.key, status: 'failed', error: CAP_REFUSAL });
   }
-  await Promise.all(
-    chunk(allowed, BATCH_SIZE).map((batch) => runBatch(mode, media, batch, onResult, signal))
-  );
+  // A resend keeps the item's one cap slot: the turned-away step did no work. The server gives the
+  // turned-away item back to the daily quota in the same poll that reports it, before the resend.
+  let pending = allowed;
+  for (let attempt = 0; pending.length > 0; attempt++) {
+    if (attempt > 0) await abortableDelay(BUSY_RETRY_DELAYS_MS[attempt - 1]!, signal);
+    const busy: AutoLabelItem[] = [];
+    await pool(chunk(pending, BATCH_SIZE), MAX_BATCHES_IN_FLIGHT, async (batch) => {
+      busy.push(...(await runBatch(mode, media, batch, onResult, signal)));
+    });
+    if (attempt >= BUSY_RETRY_DELAYS_MS.length) {
+      // Never ran, so a later Retry from the tile starts with its slot back.
+      releaseSubmits(submitsByMedia, busy);
+      for (const item of busy) onResult({ key: item.key, status: 'failed', error: BUSY_GAVE_UP });
+      break;
+    }
+    pending = busy;
+  }
   return allowed.length;
 }

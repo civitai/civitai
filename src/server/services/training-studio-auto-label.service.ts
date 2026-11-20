@@ -67,7 +67,13 @@ export type StudioAutoLabelResult = {
   status: 'succeeded' | 'failed' | 'pending';
   tags?: string[];
   caption?: string;
+  error?: string;
+  /** The step was turned away before it ran, so the same item may be sent again. */
+  retryable?: boolean;
 };
+
+export const AUTO_LABEL_BUSY = 'Auto-labeling is busy right now.';
+export const AUTO_LABEL_STEP_FAILED = 'Auto-labeling failed for this image.';
 
 export async function submitStudioAutoLabel({
   userId,
@@ -224,6 +230,7 @@ export async function pollStudioAutoLabel({
     const step = raw as {
       name?: string | null;
       status: string;
+      startedAt?: string | null;
       metadata?: { key?: string };
       output?: {
         tags?: Record<string, number>;
@@ -251,7 +258,11 @@ export async function pollStudioAutoLabel({
     }
     if (TERMINAL_STATUSES.has(step.status)) {
       failedSteps.push(step.name ?? String(index));
-      return { key, status: 'failed' };
+      // The workflow read carries no failure reason. A step that ended without starting was refused
+      // at scheduling (no worker free), not by its input.
+      if (!step.startedAt && step.status !== 'canceled')
+        return { key, status: 'failed', error: AUTO_LABEL_BUSY, retryable: true };
+      return { key, status: 'failed', error: AUTO_LABEL_STEP_FAILED };
     }
     return { key, status: 'pending' };
   });

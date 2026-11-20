@@ -22,6 +22,8 @@ vi.mock('~/env/client', () => ({ env: clientEnv }));
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import {
+  AUTO_LABEL_BUSY,
+  AUTO_LABEL_STEP_FAILED,
   pollStudioAutoLabel,
   STUDIO_AUTO_LABEL_DAILY_ITEMS,
   submitStudioAutoLabel,
@@ -248,6 +250,34 @@ describe('Training Studio auto-label', () => {
       done: true,
       results: [{ key: 'a.png', status: 'succeeded', tags: ['dog', 'cat'] }],
     });
+  });
+
+  it('says why a step failed, and marks one turned away before it ran as retryable', async () => {
+    orch.getWorkflow.mockResolvedValue({
+      data: {
+        id: 'wf-1',
+        status: 'failed',
+        metadata: { kind: 'studio-auto-label', userId: 7 },
+        steps: [
+          { name: '0', status: 'failed', metadata: { key: 'never-ran' } },
+          { name: '1', status: 'expired', metadata: { key: 'queued-out' } },
+          {
+            name: '2',
+            status: 'failed',
+            startedAt: '2026-11-20T00:00:00Z',
+            metadata: { key: 'ran' },
+          },
+          { name: '3', status: 'canceled', metadata: { key: 'canceled' } },
+        ],
+      },
+    });
+    const { results } = await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-1' });
+    expect(results).toEqual([
+      { key: 'never-ran', status: 'failed', error: AUTO_LABEL_BUSY, retryable: true },
+      { key: 'queued-out', status: 'failed', error: AUTO_LABEL_BUSY, retryable: true },
+      { key: 'ran', status: 'failed', error: AUTO_LABEL_STEP_FAILED },
+      { key: 'canceled', status: 'failed', error: AUTO_LABEL_STEP_FAILED },
+    ]);
   });
 
   it("refuses a batch past the user's daily item quota, and doesn't count it", async () => {
