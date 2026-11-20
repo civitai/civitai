@@ -175,6 +175,25 @@ describe('createSpokeGuard (cookie mode)', () => {
     });
   });
 
+  it('shared mode: an invalid shared cookie falls back to the host cookie sign-in set, instead of looping', async () => {
+    h.resolveSessionUser.mockImplementation(async (t: string) =>
+      t === 'own' ? { user: normie } : INVALID
+    );
+    expect(await guardOf().check(`${SHARED}=dead; ${HOST}=own`, PAGE)).toMatchObject({
+      status: 'ok',
+      user: normie,
+    });
+  });
+
+  it('shared mode: an invalid shared cookie with an invalid host cookie still signs in', async () => {
+    h.resolveSessionUser.mockResolvedValue(INVALID);
+    expect(await guardOf().check(`${SHARED}=dead; ${HOST}=also-dead`, PAGE)).toEqual({
+      status: 'login',
+      redirect: AUTHORIZE,
+      reason: 'invalid',
+    });
+  });
+
   it('reads the host-only cookie when it is the only one (shared mode falls back to it)', async () => {
     // What the authorize → callback sign-in leaves behind in shared mode; it must sign the next page load in.
     expect(await guardOf().check(`${HOST}=host-token`, PAGE)).toMatchObject({ status: 'ok' });

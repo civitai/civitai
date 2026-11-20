@@ -94,7 +94,7 @@ training-studio` (port 5176; the hub holds 5173).
 
 - **Auth allows any signed-in user.** Training is a normal user feature, so the spoke guard in
   `src/lib/server/auth.ts` requires only a resolved session (`(user) => !!user`) — NOT `isModerator`.
-  `hooks.server.ts` sends an unauthenticated request to the hub login and a forbidden one to
+  `hooks.server.ts` sends an unauthenticated page load to this app's `/api/auth/authorize` and a forbidden one to
   civitai.com.
 
 - **No form actions.** The flow UI also ships as a web component embedded in the main app, so every

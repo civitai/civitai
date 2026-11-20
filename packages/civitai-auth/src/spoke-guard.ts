@@ -141,9 +141,18 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
   ): Promise<SpokeGuardResult> {
     const navigation = opts.navigation ?? true;
     const jar = parseCookieHeader(cookieHeader);
-    const read = readSessionToken(jar, { host: null });
+    let read = readSessionToken(jar, { host: null });
     if (!read) return signIn(returnUrl, navigation, 'no-session');
-    const resolved = await sessions.resolveSessionUser(read.value);
+    let resolved = await sessions.resolveSessionUser(read.value);
+    // A dead shared cookie outlives the host one sign-in sets (a host-only expiry can't remove a Domain cookie), so
+    // without this fallback every sign-in would come back to the same invalid shared token and start over.
+    if (!resolved.user && resolved.reason === 'invalid' && read.slot === 'shared') {
+      const own = readSessionToken(jar, { host: null, mode: 'host' });
+      if (own?.slot === 'host') {
+        const ownResolved = await sessions.resolveSessionUser(own.value);
+        if (ownResolved.user) [read, resolved] = [own, ownResolved];
+      }
+    }
     if (!resolved.user) return signIn(returnUrl, navigation, resolved.reason);
     const { user } = resolved;
     try {
