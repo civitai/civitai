@@ -373,7 +373,7 @@ $q$WITH hosted AS (
   GROUP BY th.id
 ), citations AS (
   SELECT DISTINCT a.id, a."userId", a."publishedAt", m[1]::int AS target
-  FROM "Article" a, regexp_matches(a.content, '/articles/([0-9]+)', 'g') m
+  FROM "Article" a, regexp_matches(a.content, '/articles/([0-9]{1,9})(?![0-9])', 'g') m
   WHERE a.status = 'Published'
     AND a.ingestion = 'Scanned'
     AND a.availability <> 'Private'

@@ -34,6 +34,20 @@ const SYSTEM_MUSING_AUTHOR_GUIDE = 52;
 const UNRATED = 80;
 const UNSCANNED = 81;
 const BANNED = 82;
+// One article each that every board would count but for one gate; PASSES_GATES is the same article with none.
+const GATED = {
+  unrated: 80,
+  unscanned: 81,
+  banned: 82,
+  private: 83,
+  tosViolation: 84,
+  deletedOwner: 85,
+  unlisted: 86,
+};
+const PASSES_GATES = 87;
+const ANSWERS_GATED = 90; // answers each of those articles
+const CITED_BY_EVERY_FIXTURE = 91; // cited by every gated article and by the one that passes
+const UNCATEGORISED = 92;
 
 type Row = { userId: number; position: number; score: number; metrics: Record<string, number> };
 
@@ -155,17 +169,50 @@ beforeAll(async () => {
       (2, ${HOST}), (2, ${HOST}), (1, ${EXCLUDED_COMMENTER}), (3, ${COMMENTERS[0]});
 
     INSERT INTO "User" (id) VALUES (${SYSTEM_MUSING_AUTHOR_NOTES}), (${SYSTEM_NOTES_AUTHOR_MUSING}),
-      (${SYSTEM_GUIDE_AUTHOR_MUSING}), (${SYSTEM_MUSING_AUTHOR_GUIDE}), (${UNRATED}), (${UNSCANNED});
-    INSERT INTO "User" (id, "bannedAt") VALUES (${BANNED}, now());
+      (${SYSTEM_GUIDE_AUTHOR_MUSING}), (${SYSTEM_MUSING_AUTHOR_GUIDE});
     INSERT INTO "Article" (id, "userId", status, availability, "publishedAt", "systemCategoryId", ingestion, "nsfwLevel")
     VALUES (700, ${SYSTEM_MUSING_AUTHOR_NOTES}, 'Published', 'Public', now() - interval '5 days', 4, 'Scanned', 1),
       (701, ${SYSTEM_NOTES_AUTHOR_MUSING}, 'Published', 'Public', now() - interval '5 days', 2, 'Scanned', 1),
       (710, ${SYSTEM_GUIDE_AUTHOR_MUSING}, 'Published', 'Public', now() - interval '20 days', 3, 'Scanned', 1),
-      (711, ${SYSTEM_MUSING_AUTHOR_GUIDE}, 'Published', 'Public', now() - interval '20 days', 4, 'Scanned', 1),
-      (800, ${UNRATED}, 'Published', 'Public', now() - interval '5 days', 4, 'Scanned', 0),
-      (801, ${UNSCANNED}, 'Published', 'Public', now() - interval '5 days', 4, 'Pending', 1),
-      (802, ${BANNED}, 'Published', 'Public', now() - interval '5 days', 4, 'Scanned', 1);
-    INSERT INTO "TagsOnArticle" VALUES (700, 2), (701, 4), (710, 4), (711, 3), (800, 4), (801, 4), (802, 4);
+      (711, ${SYSTEM_MUSING_AUTHOR_GUIDE}, 'Published', 'Public', now() - interval '20 days', 4, 'Scanned', 1);
+    INSERT INTO "TagsOnArticle" VALUES (700, 2), (701, 4), (710, 4), (711, 3);
+
+    -- A recent guide by a first-time writer, with 30 readers and an answer: it would make every board.
+    INSERT INTO "User" (id, "deletedAt", "bannedAt") VALUES
+      (${GATED.unrated}, NULL, NULL), (${GATED.unscanned}, NULL, NULL), (${
+    GATED.banned
+  }, NULL, now()),
+      (${GATED.private}, NULL, NULL), (${GATED.tosViolation}, NULL, NULL), (${
+    GATED.deletedOwner
+  }, now(), NULL),
+      (${
+        GATED.unlisted
+      }, NULL, NULL), (${PASSES_GATES}, NULL, NULL), (${ANSWERS_GATED}, NULL, NULL),
+      (${CITED_BY_EVERY_FIXTURE}, NULL, NULL), (${UNCATEGORISED}, NULL, NULL);
+    INSERT INTO "Article" (id, "userId", status, availability, "publishedAt", content, "systemCategoryId") VALUES
+      (900, ${CITED_BY_EVERY_FIXTURE}, 'Published', 'Public', now() - interval '30 days', '', 4),
+      (920, ${UNCATEGORISED}, 'Published', 'Public', now() - interval '5 days', '', NULL);
+    INSERT INTO "Article"
+      (id, "userId", status, availability, unlisted, "tosViolation", "publishedAt", content, "systemCategoryId", ingestion, "nsfwLevel")
+    SELECT 800 + u - 80, u, 'Published',
+      CASE WHEN u = ${GATED.private} THEN 'Private' ELSE 'Public' END,
+      u = ${GATED.unlisted}, u = ${
+    GATED.tosViolation
+  }, now() - interval '5 days', '<a href="/articles/900">answer</a>', 3,
+      CASE WHEN u = ${GATED.unscanned} THEN 'Pending' ELSE 'Scanned' END,
+      CASE WHEN u = ${GATED.unrated} THEN 0 ELSE 1 END
+    FROM generate_series(80, 87) u;
+    INSERT INTO "Article" (id, "userId", status, availability, "publishedAt", content, "systemCategoryId")
+    SELECT 850 + g, ${ANSWERS_GATED}, 'Published', 'Public', now() - interval '2 days',
+      '<a href="/articles/' || (800 + g) || '">answer</a>', 4
+    FROM generate_series(0, 7) g;
+    INSERT INTO "ArticleReaction" ("articleId", "userId", reaction, "createdAt")
+    SELECT 800 + a, 4000 + r, 'Like', now() FROM generate_series(0, 7) a, generate_series(0, 29) r;
+    -- A link whose number is past int4 must not break the board.
+    INSERT INTO "Article" (id, "userId", status, availability, "publishedAt", content)
+    VALUES (930, ${ANSWERS_GATED}, 'Published', 'Public', now() - interval '1 day', '<a href="/articles/99999999999">x</a>');
+    -- The newcomer hearts their own article; it must not count as a reader.
+    INSERT INTO "ArticleReaction" ("articleId", "userId", reaction, "createdAt") VALUES (400, ${NEWCOMER}, 'Heart', now());
 
     INSERT INTO "ArticleMetric"
     SELECT id, 'AllTime', 10, 5, 1, 0, 3, 400, 4 FROM "Article";
@@ -219,6 +266,11 @@ describe('Community Builders', () => {
     });
   });
 
+  it('drops answers from metric-excluded accounts', async () => {
+    const rows = await run('writer-community', [EXCLUDED_COMMENTER, ANSWERERS[0]]);
+    expect(byUser(rows, HOST)!.metrics.answers).toBe(ANSWERERS.length - 1);
+  });
+
   it('leaves out a writer whose articles drew comments but no answers', async () => {
     const rows = await run('writer-community', [EXCLUDED_COMMENTER]);
     expect(byUser(rows, ANSWERERS[0])).toBeUndefined();
@@ -254,11 +306,33 @@ describe('Active Writers', () => {
     ).toBeLessThanOrEqual(4);
   });
 
-  it('leaves out unrated and unscanned articles and articles by a banned owner', async () => {
+  it('scores an article with no category in full', async () => {
     const rows = await run('writer-active');
-    expect(byUser(rows, UNRATED)).toBeUndefined();
-    expect(byUser(rows, UNSCANNED)).toBeUndefined();
-    expect(byUser(rows, BANNED)).toBeUndefined();
+    expect(byUser(rows, UNCATEGORISED)!.score).toBe(byUser(rows, MUSER)!.score);
+  });
+});
+
+describe.each(['writer-active', 'writer-guide', 'writer-rising', 'writer-community'])(
+  '%s gates',
+  (board) => {
+    it('counts an article that passes every gate', async () => {
+      expect(byUser(await run(board), PASSES_GATES)).toBeDefined();
+    });
+
+    it.each(Object.entries(GATED))(
+      'leaves out an article that fails one: %s',
+      async (_, userId) => {
+        expect(byUser(await run(board), userId)).toBeUndefined();
+      }
+    );
+  }
+);
+
+describe('Community Builders answers', () => {
+  it('counts only answers that pass the gates', async () => {
+    const rows = await run('writer-community');
+    expect(byUser(rows, PASSES_GATES)!.metrics.answers).toBe(1);
+    expect(byUser(rows, CITED_BY_EVERY_FIXTURE)!.metrics.answers).toBe(1);
   });
 });
 
@@ -282,6 +356,11 @@ describe('Rising Writers', () => {
     expect(byUser(rows, NEWCOMER)!.metrics).toEqual({ articles: 1, readers: 30 });
     expect(byUser(rows, NEWCOMER_FEW_READERS)).toBeUndefined();
     expect(byUser(rows, OLD_HIT)).toBeUndefined();
+  });
+
+  it('drops reactions from metric-excluded accounts', async () => {
+    const rows = await run('writer-rising', [2000, 2001]);
+    expect(byUser(rows, NEWCOMER)!.metrics.readers).toBe(28);
   });
 });
 
