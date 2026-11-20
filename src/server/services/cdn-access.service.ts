@@ -1434,7 +1434,8 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
         AND "entityType" = ${q.entityType}::"EntityType"
         AND "entityId" = ${q.entityId}
-        AND data ? 'deferred' AND NOT data ? 'pacedUrls'
+        -- Re-queued since the read: left for the next run, which reads facts after the re-queue.
+        AND data IS NOT DISTINCT FROM ${JSON.stringify(q.data)}::jsonb
       RETURNING data
     `;
     if (converted) q.data = converted.data;
