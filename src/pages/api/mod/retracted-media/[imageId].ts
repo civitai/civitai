@@ -10,7 +10,7 @@ import {
 } from '@civitai/shared/retracted-media';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { getRetractedMedia, NEEDS_CSAM_QUEUE } from '~/server/services/retracted-media.service';
+import { getRetractedMedia } from '~/server/services/retracted-media.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
 import { streamStoredMedia } from '~/server/utils/stream-stored-media';
@@ -46,8 +46,6 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   }
 
   const media = await getRetractedMedia(imageId, { csamReview: !!flags.csamReports });
-  if (media === NEEDS_CSAM_QUEUE)
-    return void res.status(403).json({ error: 'Needs CSAM-queue access' });
   if (!media) return void res.status(404).json({ error: 'Not available here' });
   if (!isProbeableMediaKey(media.url))
     return void res.status(422).json({ error: 'This file is not in a servable place' });
