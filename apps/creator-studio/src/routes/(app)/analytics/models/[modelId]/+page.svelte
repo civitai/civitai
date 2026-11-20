@@ -16,6 +16,7 @@
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import CurrencyDisplay from '$lib/components/CurrencyDisplay.svelte';
   import { formatRange, eachDayIso, shiftIso, dayDiff } from '$lib/date-range';
+  import BuzzCurrencyToggleGroup from '$lib/components/BuzzCurrencyToggleGroup.svelte';
   import { currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import {
     CHANNEL_HEAD,
@@ -23,11 +24,7 @@
     shownChannels,
     type PerformanceChannel,
   } from '$lib/analytics/earning-channels';
-  import {
-    BANKABLE_CURRENCIES,
-    FILTERABLE_CURRENCIES,
-    currencySelectionKind,
-  } from '$lib/buzz-currency-filter';
+  import { currencySelectionKind } from '$lib/buzz-currency-filter';
   import { buzzCurrencyState } from '$lib/state/buzz-currency.svelte';
   import { modelUrl } from '$lib/model-url';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
@@ -324,32 +321,12 @@
   <div class="cs-panel p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <span class="rounded bg-dark-5 px-1.5 py-0.5 text-xs text-dark-2">{selectionLabel}</span>
-      <div class="flex items-center gap-2">
+      <div class="flex min-w-0 flex-wrap items-center gap-2">
         <span class="text-xs text-dark-3">Counting</span>
-        <ToggleGroup
-          type="multiple"
-          variant="outline"
-          size="sm"
-          spacing={1}
-          value={[...selected]}
-          onValueChange={(v: string[]) => currencies.set(v)}
-          aria-label="Which buzz types the earnings columns count"
-        >
-          {#each FILTERABLE_CURRENCIES as c (c)}
-            {@const withdrawable = (BANKABLE_CURRENCIES as readonly string[]).includes(c)}
-            <ToggleGroupItem
-              value={c}
-              title="{currencyMeta(c).label} — {withdrawable
-                ? 'can be withdrawn'
-                : 'cannot be withdrawn'}"
-              class="gap-1.5 text-xs"
-            >
-              <span class="size-2 shrink-0 rounded-full" style="background:{currencyMeta(c).color}"
-              ></span>
-              {currencyMeta(c).label}
-            </ToggleGroupItem>
-          {/each}
-        </ToggleGroup>
+        <BuzzCurrencyToggleGroup
+          {currencies}
+          ariaLabel="Which buzz types the earnings columns count"
+        />
       </div>
     </div>
     {#snippet sortHead(key: string, label: string, extra = '')}
