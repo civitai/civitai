@@ -56,7 +56,7 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
 }));
 vi.mock('~/utils/application-error', () => ({ reportApplicationError: vi.fn() }));
 
-import { isImageOwner, SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
+import { SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { imageStore } from '~/store/image.store';
 import { FixedSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
@@ -270,15 +270,20 @@ describe('SimpleImageUpload rating badge', () => {
     await badgeShown();
     expect(changeRating()).toBeNull();
   });
+
   test.each([
-    [{ userId: 7 }, 7, true],
-    [{ user: { id: 7 } }, 7, true],
-    [{ userId: 7, user: { id: 8 } }, 7, true],
-    [{ userId: 8 }, 7, false],
-    [{ user: { id: 8 } }, 7, false],
-    [{}, 7, false],
-    [{ userId: 7 }, undefined, false],
-  ])('isImageOwner(%j, viewer %s) is %s', (image, viewer, expected) => {
-    expect(isImageOwner(viewer, image)).toBe(expected);
+    ['userId', { userId: 7 }, 7, true],
+    ['only user.id', { userId: undefined, user: { id: 7 } }, 7, true],
+    ['another owner', { userId: 8 }, 7, false],
+  ])('isOwner by %s', async (_, owner, viewerId, expected) => {
+    await renderWithProviders(
+      <FixedSessionProvider user={{ id: viewerId }}>
+        <SimpleImageUpload label="Cover" value={{ ...saved, ...owner }} ratingClickable />
+      </FixedSessionProvider>
+    );
+    await expect.poll(changeRating).not.toBeNull();
+    (changeRating() as HTMLElement).click();
+
+    expect(useDialogStore.getState().dialogs[0]?.props.isOwner).toBe(expected);
   });
 });

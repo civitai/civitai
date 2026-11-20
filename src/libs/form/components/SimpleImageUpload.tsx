@@ -18,6 +18,7 @@ import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-brow
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { NsfwLevel } from '~/server/common/enums';
 import { useImageStore } from '~/store/image.store';
+import { isViewer } from '~/utils/is-viewer';
 import type { DataFromFile } from '~/hooks/useCFImageUpload';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants, isOrchestratorUrl } from '~/server/common/constants';
@@ -57,7 +58,7 @@ type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
   dropzoneProps?: Omit<DropzoneProps, 'children' | 'onDrop'>;
   previewDisabled?: boolean;
   withNsfwLevel?: boolean;
-  /** A saved image's rating badge opens the rating vote, as in the post editor. */
+  /** Only a saved image (one with an id) can be voted on. */
   ratingClickable?: boolean;
   disabled?: boolean;
 };
@@ -293,10 +294,6 @@ export function SimpleImageUpload({
 
 type SavedImage = { id: number; nsfwLevel?: number; userId?: number; user?: { id: number } };
 
-export function isImageOwner(userId: number | undefined, image: Omit<SavedImage, 'id'>) {
-  return userId !== undefined && userId === (image.userId ?? image.user?.id);
-}
-
 function VotableRatingBadge({ image }: { image: SavedImage }) {
   const currentUser = useCurrentUser();
   // The modal writes the new rating to imageStore; read it back so the badge updates.
@@ -310,7 +307,7 @@ function VotableRatingBadge({ image }: { image: SavedImage }) {
         openSetBrowsingLevelModal({
           imageId: image.id,
           nsfwLevel: nsfwLevel as NsfwLevel,
-          isOwner: isImageOwner(currentUser?.id, image),
+          isOwner: isViewer(currentUser, image.userId) || isViewer(currentUser, image.user?.id),
         })
       }
     >
