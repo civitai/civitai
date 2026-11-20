@@ -4,8 +4,8 @@ import type { CandidateFilter } from '~/server/services/semantic-search-client';
 
 /**
  * The request search-by-upload sends to the search service's POST /v1/similar. The fields and
- * bounds below are the service's SimilarRequest (civitai/search-service openapi.json): a renamed
- * or dropped field there fails the search for every upload, and nothing else here would notice.
+ * bounds below are the search service's SimilarRequest schema: a renamed or dropped field there
+ * fails the search for every upload, and nothing else here would notice.
  */
 const SIMILAR_REQUEST_FIELDS = [
   'collection',
