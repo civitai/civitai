@@ -41,12 +41,14 @@ export const scannerContentHash = (input: string) =>
 export const imageAuditContentHash = (imageId: number) => scannerContentHash(`image:${imageId}`);
 
 /**
- * Per image, whether its scanner rows mark CSAM or a minor, or cannot show it does not. The audit
- * write is best-effort and lands after the verdict, so an image with no rows at all is unreadable,
- * never clean. Every scan writes at least its `nsfw_level` row.
+ * Per image, whether its scanner rows mark CSAM or a minor (`hit`), and CSAM alone (`csamHit`). The
+ * audit write is best-effort and lands after the verdict, so for routing an image with no rows at all
+ * is unreadable, never clean (`scannerCsamVerdict` reads it as `none` instead). Every scan writes at
+ * least its `nsfw_level` row.
  */
 export const SCANNER_HITS_SQL = `
-  SELECT contentHash, max(label IN ('csam', 'minor') AND triggered = 1) AS hit
+  SELECT contentHash, max(label IN ('csam', 'minor') AND triggered = 1) AS hit,
+    max(label = 'csam' AND triggered = 1) AS csamHit
   FROM scanner_label_results
   WHERE contentHash IN {hashes:Array(String)}
   GROUP BY contentHash
@@ -60,6 +62,19 @@ export function scannerVerdict(
   const row = rows.find((r) => r.contentHash === imageAuditContentHash(id));
   if (!row) return 'none';
   return Number(row.hit) === 1 || row.hit === true ? 'hit' : 'clear';
+}
+
+/** One image's CSAM verdict from `SCANNER_HITS_SQL` rows: the CSAM label alone, for media access,
+ *  where a minor label does not restrict a moderator. 'none' when the scanner has no rows for it. */
+export function scannerCsamVerdict(
+  id: number,
+  rows: readonly { contentHash: string; csamHit?: number | boolean | string }[]
+): 'hit' | 'clear' | 'none' {
+  const row = rows.find((r) => r.contentHash === imageAuditContentHash(id));
+  if (!row) return 'none';
+  // A row without the column refuses: it cannot show the label is absent.
+  if (row.csamHit === undefined) return 'hit';
+  return Number(row.csamHit) === 1 || row.csamHit === true ? 'hit' : 'clear';
 }
 
 export function scannerHeldIds(

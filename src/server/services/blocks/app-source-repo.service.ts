@@ -568,6 +568,7 @@ export async function zipEntries(buffer: Buffer | ArrayBuffer): Promise<SourceFi
 export async function saveAssistantSourceFromSandbox(args: {
   userId: number;
   app: string;
+  impersonatedBy: number | null;
 }): Promise<AssistantSaveResult> {
   if (!SOURCE_SLUG_RE.test(args.app)) return { kind: 'refused' };
   // Off until the table exists: no sandbox call, no token minted.
@@ -583,7 +584,7 @@ export async function saveAssistantSourceFromSandbox(args: {
   const client = createSandboxClient({
     baseUrl,
     getToken: async () => {
-      const minted = await mintAppAssistantToken(args.userId, 'sandbox');
+      const minted = await mintAppAssistantToken(args.userId, 'sandbox', args.impersonatedBy);
       if (!minted) throw new Error('no App Assistant consent');
       return minted.token;
     },

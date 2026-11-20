@@ -42,34 +42,30 @@ const settledAs = async (p: Promise<unknown>, ms: number) => {
 describe('outboundFetch against a server that never responds', () => {
   it('rejects with a TimeoutError within its timeout when the flag client is uninitialised', async () => {
     const started = Date.now();
-    expect(await settledAs(outboundFetch(server.url, { timeoutMs: 250 }), 750)).toBe(
-      'TimeoutError'
-    );
-    expect(Date.now() - started).toBeLessThan(750);
+    expect(await settledAs(outboundFetch(server.url, { timeoutMs: 50 }), 300)).toBe('TimeoutError');
+    expect(Date.now() - started).toBeLessThan(300);
   });
 
   it("a caller's own signal still aborts the request first", async () => {
     const controller = new AbortController();
     const call = outboundFetch(server.url, { timeoutMs: 5_000, signal: controller.signal });
-    setTimeout(() => controller.abort(), 100);
-    expect(await settledAs(call, 750)).toBe('AbortError');
+    setTimeout(() => controller.abort(), 20);
+    expect(await settledAs(call, 300)).toBe('AbortError');
   });
 
   it('the timeout still applies when the caller passes a signal that never fires', async () => {
     const controller = new AbortController();
-    const call = outboundFetch(server.url, { timeoutMs: 250, signal: controller.signal });
-    expect(await settledAs(call, 750)).toBe('TimeoutError');
+    const call = outboundFetch(server.url, { timeoutMs: 50, signal: controller.signal });
+    expect(await settledAs(call, 300)).toBe('TimeoutError');
   });
 
   it('a flag read that throws keeps the deadline and does not throw out of the call', async () => {
     flags.throws = true;
-    expect(await settledAs(outboundFetch(server.url, { timeoutMs: 250 }), 750)).toBe(
-      'TimeoutError'
-    );
+    expect(await settledAs(outboundFetch(server.url, { timeoutMs: 50 }), 300)).toBe('TimeoutError');
   });
 
   it('only the off-switch set to true removes the deadline', async () => {
     flags.values.set('outbound-fetch-timeouts-off', true);
-    expect(await settledAs(outboundFetch(server.url, { timeoutMs: 250 }), 1_000)).toBe('hung');
+    expect(await settledAs(outboundFetch(server.url, { timeoutMs: 50 }), 300)).toBe('hung');
   });
 });

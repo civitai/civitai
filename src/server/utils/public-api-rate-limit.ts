@@ -58,7 +58,20 @@ export const PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS = 60;
 // limiter's keys.
 const KEY_PREFIX = 'public-api:rate-limit';
 
-export type PublicApiRateLimitFamily = 'articles' | 'collections' | 'posts' | 'comics';
+export type PublicApiRateLimitFamily =
+  | 'articles'
+  | 'collections'
+  | 'posts'
+  | 'comics'
+  | 'verify'
+  | 'verify-signed-in-ip';
+
+// /api/v1/verify parses an uploaded file of up to 10 MiB in-process, so it gets a tighter budget.
+const FAMILY_MAX: Partial<Record<PublicApiRateLimitFamily, { unauth: number; auth: number }>> = {
+  verify: { unauth: 10, auth: 30 },
+  // Keyed by IP across signed-in callers, so one address can't multiply its budget with accounts.
+  'verify-signed-in-ip': { unauth: 60, auth: 60 },
+};
 
 export type PublicApiRateLimitResult =
   | { allowed: true }
@@ -112,18 +125,23 @@ export async function checkPublicApiRateLimit({
   req,
   family,
   userId,
+  failOpen,
 }: {
   req: NextApiRequest;
   family: PublicApiRateLimitFamily;
   userId?: number;
+  failOpen?: boolean;
 }): Promise<PublicApiRateLimitResult> {
   const authed = typeof userId === 'number';
-  const max = authed ? PUBLIC_API_RATE_LIMIT_AUTH_MAX : PUBLIC_API_RATE_LIMIT_UNAUTH_MAX;
+  const limits = FAMILY_MAX[family];
+  const max = authed
+    ? limits?.auth ?? PUBLIC_API_RATE_LIMIT_AUTH_MAX
+    : limits?.unauth ?? PUBLIC_API_RATE_LIMIT_UNAUTH_MAX;
   const bucket = authed ? `user:${userId}` : `ip:${resolveClientIp(req)}`;
   // Minted from a literal rather than derived from REDIS_KEYS, so it does not inherit the
   // environment namespace from the key table — apply it explicitly. Without this a non-production
   // deployment burns PRODUCTION users' rate-limit budget and can 429 real traffic. No-op in
   // production.
   const key = prefixCacheKey(`${KEY_PREFIX}:${family}:${bucket}`);
-  return checkFixedWindow(key, max, PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS);
+  return checkFixedWindow(key, max, PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS, { failOpen });
 }

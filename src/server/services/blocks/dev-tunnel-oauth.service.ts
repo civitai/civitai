@@ -44,8 +44,9 @@ export async function mintDevTunnelOauthToken(opts: {
   userId: number;
   clientId: string;
   scopes: readonly string[];
+  impersonatedBy: number | null;
 }): Promise<DevTunnelOauthMint> {
-  const { userId, clientId, scopes } = opts;
+  const { userId, clientId, scopes, impersonatedBy } = opts;
   const scope = oauthScopeBitsFor([...scopes]);
 
   const dev = parseDevTunnelClientId(clientId);
@@ -75,6 +76,6 @@ export async function mintDevTunnelOauthToken(opts: {
     : null;
   await writeOauthConsent({ userId, clientId, scope, buzzLimit });
 
-  const minted = await mintAppToken({ userId, clientId, scope });
+  const minted = await mintAppToken({ userId, clientId, scope, impersonatedBy });
   return { token: minted.accessToken, expiresAt: minted.expiresAt };
 }

@@ -102,7 +102,11 @@ describe('POST /api/internal/app-assistant/source-save', () => {
       status: 200,
       json: { saved: true, sha: 'f'.repeat(40), branch: 'main', conflict: false },
     });
-    expect(m.save).toHaveBeenCalledExactlyOnceWith({ userId: OWNER, app: 'my-app' });
+    expect(m.save).toHaveBeenCalledExactlyOnceWith({
+      userId: OWNER,
+      app: 'my-app',
+      impersonatedBy: null,
+    });
   });
 
   it('a gate that refuses the user answers its own status, and saves nothing', async () => {

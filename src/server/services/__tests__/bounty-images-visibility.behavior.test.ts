@@ -42,6 +42,9 @@ type ImageRow = {
   blockedFor: string | null;
   minor: boolean;
   modelRestricted: boolean;
+  meta: Record<string, unknown> | null;
+  hideMeta: boolean;
+  acceptableMinor: boolean;
 };
 const image = (id: number, over: Partial<ImageRow> = {}): ImageRow => ({
   id,
@@ -52,6 +55,9 @@ const image = (id: number, over: Partial<ImageRow> = {}): ImageRow => ({
   blockedFor: null,
   minor: false,
   modelRestricted: false,
+  meta: { prompt: 'p' },
+  hideMeta: false,
+  acceptableMinor: false,
   ...over,
 });
 
@@ -65,6 +71,8 @@ const HELD = 5;
 const UNSCANNED = 6;
 const OTHERS_HELD = 7;
 const RESTRICTED_R = 8; // rated R, made with a base model that restricts mature images
+const HIDDEN_META = 9; // its uploader hid its generation data
+const ACCEPTABLE_MINOR = 10;
 const TWO_IMAGES = 20;
 const FIRST_OF_TWO = 21;
 const SECOND_OF_TWO = 22;
@@ -77,6 +85,8 @@ const images: ImageRow[] = [
   image(UNSCANNED, { ingestion: 'Pending' }),
   image(OTHERS_HELD, { userId: OTHER_UPLOADER, needsReview: 'minor' }),
   image(RESTRICTED_R, { nsfwLevel: 4, modelRestricted: true }),
+  image(HIDDEN_META, { hideMeta: true }),
+  image(ACCEPTABLE_MINOR, { acceptableMinor: true }),
   image(FIRST_OF_TWO),
   image(SECOND_OF_TWO),
 ];
@@ -114,12 +124,13 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int, "nsfwLevel" int, ingestion "ImageIngestionStatus",
-      "needsReview" text, "blockedFor" text, minor boolean, "modelRestricted" boolean NOT NULL
+      "needsReview" text, "blockedFor" text, minor boolean, "modelRestricted" boolean NOT NULL,
+      "acceptableMinor" boolean NOT NULL
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
   `);
   for (const i of images) {
-    await db.query('INSERT INTO "Image" VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [
+    await db.query('INSERT INTO "Image" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)', [
       i.id,
       i.userId,
       i.nsfwLevel,
@@ -128,6 +139,7 @@ beforeAll(async () => {
       i.blockedFor,
       i.minor,
       i.modelRestricted,
+      i.acceptableMinor,
     ]);
   }
   for (const c of connections) {
@@ -171,6 +183,7 @@ describe.each(Object.keys(readers) as (keyof typeof readers)[])('%s', (reader) =
     ['a minor-flagged image rated R', MINOR_R],
     ['an image held for review', HELD],
     ['an unscanned image', UNSCANNED],
+    ['an image marked acceptable-minor', ACCEPTABLE_MINOR],
   ] as const)('%s', (_label, id) => {
     it.each(['anonymous', 'stranger'] as const)('is withheld from the %s', async (who) => {
       expect(await imagesOf(id, viewers[who])).toEqual([]);
@@ -222,3 +235,38 @@ describe('getImagesForBounties over several bounties', () => {
     expect(ids).toEqual({ [CLEAN]: [CLEAN], [TWO_IMAGES]: [FIRST_OF_TWO, SECOND_OF_TWO] });
   });
 });
+
+const metaReaders = {
+  getBountyImages: async (bountyId: number, viewer: Viewer) =>
+    (await getBountyImages({ id: bountyId, ...viewer }))[0]?.meta,
+  getImagesForBounties: async (bountyId: number, viewer: Viewer) =>
+    (await getImagesForBounties({ bountyIds: [bountyId], ...viewer }))[bountyId]?.[0]?.meta,
+};
+
+describe.each(Object.keys(metaReaders) as (keyof typeof metaReaders)[])(
+  '%s generation data',
+  (reader) => {
+    const metaOf = metaReaders[reader];
+
+    it.each(Object.keys(viewers) as (keyof typeof viewers)[])(
+      'sends shown generation data to the %s (control)',
+      async (who) => {
+        expect(await metaOf(CLEAN, viewers[who])).toEqual({ prompt: 'p' });
+      }
+    );
+
+    it.each(['anonymous', 'stranger'] as const)(
+      'withholds hidden generation data from the %s',
+      async (who) => {
+        expect(await metaOf(HIDDEN_META, viewers[who])).toBeNull();
+      }
+    );
+
+    it.each(['owner', 'moderator'] as const)(
+      'sends hidden generation data to the %s',
+      async (who) => {
+        expect(await metaOf(HIDDEN_META, viewers[who])).toEqual({ prompt: 'p' });
+      }
+    );
+  }
+);
