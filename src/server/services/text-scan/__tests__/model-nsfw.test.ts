@@ -2,7 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 
-const { entityChangesMock } = vi.hoisted(() => ({ entityChangesMock: vi.fn() }));
+const { entityChangesMock, checkSfwFaceMock } = vi.hoisted(() => ({
+  entityChangesMock: vi.fn(),
+  checkSfwFaceMock: vi.fn(),
+}));
+
+// The package's ESM build can't be loaded here; the face check it backs is passed in instead.
+vi.mock('@civitai/orchestration-client', () => ({
+  createCivitaiClient: vi.fn(() => ({})),
+  submitWorkflow: vi.fn(),
+}));
 
 // Hand-listed, as in model-moderation.adapter.test.ts: each real module builds clients at load.
 vi.mock('~/server/services/nsfwLevels.service', () => ({ updateModelNsfwLevels: vi.fn() }));
@@ -24,6 +33,7 @@ const { enqueueJobs } = await import('~/server/services/job-queue.service');
 const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
 const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
 const { createNotification } = await import('~/server/services/notification.service');
+const { sfwFaceStampHash } = await import('~/server/services/model-sfw-face-stamp');
 
 const args = (raised: boolean) => ({
   entityId: 1,
@@ -179,12 +189,210 @@ describe('applyModelNsfwTextScan', () => {
     expect(await applyModelNsfwTextScan(args(false))).toEqual({ deferredRatingNotice: null });
   });
 
-  it('does nothing when the verdict did not raise, or the model is gone', async () => {
-    await applyModelNsfwTextScan(args(false));
+  it('does nothing when the model is gone', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(null);
     await applyModelNsfwTextScan(args(true));
     expect(flipSql()).toBeUndefined();
     expect(createNotification).not.toHaveBeenCalled();
+  });
+});
+
+// W1: a Model is rated on R+ text whatever it declared, unless it has a complete .com face whose text
+// passed the face check. That face lists it on .com as safe; anything less and the scan rates it.
+describe('applyModelNsfwTextScan and the .com face', () => {
+  const face = {
+    sfwName: 'Retro Poster Style',
+    sfwDescription: '<p>A retro poster illustration style.</p>',
+    sfwCoverImageId: 5,
+    nsfwLevel: NsfwLevel.PG,
+  };
+  const stampFor = (f: {
+    sfwName: string | null;
+    sfwDescription: string | null;
+    sfwCoverImageId: number | null;
+  }) => ({
+    sfwFaceCheckedAt: { at: '2026-11-20T00:00:00.000Z', promptId: 7, hash: sfwFaceStampHash(f) },
+  });
+  /** A face as the save gate leaves it: stamped for its own values. */
+  const stamped = (over: Record<string, unknown> = {}) => {
+    const f = { ...face, ...over } as typeof face;
+    return model({ ...f, meta: stampFor(f) });
+  };
+  const sqlWith = (fragment: string) =>
+    dbMock.dbWrite.$executeRaw.mock.calls
+      .map(([strings]: [readonly string[]]) => strings.join('?'))
+      .find((sql: string) => sql.includes(fragment));
+  const stampSql = () => sqlWith('sfwFaceCheckedAt');
+  const markerSql = () =>
+    dbMock.dbWrite.$executeRaw.mock.calls
+      .map(([strings]: [readonly string[]]) => strings.join('?'))
+      .find(
+        (sql: string) =>
+          sql.includes("'systemNsfwLock', jsonb_build_object('source'") &&
+          !sql.includes('SET nsfw = TRUE')
+      );
+  const clean = { status: 'clean', promptId: 7 } as const;
+  const scan = (a: Parameters<typeof applyModelNsfwTextScan>[0]) =>
+    applyModelNsfwTextScan(a, { checkSfwFace: checkSfwFaceMock });
+  const rated = (detectedLevel: number, declaredLevel: number) => ({
+    ...args(detectedLevel > declaredLevel),
+    outcome: {
+      nsfw: { detectedLevel, declaredLevel, raised: detectedLevel > declaredLevel, reason: 'r' },
+      triggeredLabels: detectedLevel > declaredLevel ? ['nsfw' as const] : [],
+      nsfwLevel: detectedLevel,
+    },
+  });
+
+  beforeEach(() => {
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ nsfwLevel: NsfwLevel.PG });
+    checkSfwFaceMock.mockResolvedValue({ sfwName: clean, sfwDescription: clean });
+  });
+
+  it('leaves a model with a complete, clean, stamped face unrated, without re-checking it', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(stamped());
+    await scan(args(true));
+    expect(flipSql()).toBeUndefined();
+    expect(markerSql()).toBeUndefined();
+    expect(updateModelNsfwLevels).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(checkSfwFaceMock).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 5 } })
+    );
+  });
+
+  it.each([
+    ['no .com description', { sfwDescription: null }],
+    ['a .com description that is only markup', { sfwDescription: '<p> </p>' }],
+    ['no .com title', { sfwName: null }],
+    ['no .com cover', { sfwCoverImageId: null }],
+  ])('flips a model with no complete face (%s)', async (_, over) => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(stamped(over));
+    await scan(args(true));
+    expect(flipSql()).toBeDefined();
+    expect(checkSfwFaceMock).not.toHaveBeenCalled();
+  });
+
+  it('flips a model whose .com cover image is gone', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(stamped());
+    dbMock.dbWrite.image.findUnique.mockResolvedValue(null);
+    await scan(args(true));
+    expect(flipSql()).toBeDefined();
+  });
+
+  it.each([
+    ['R', NsfwLevel.R],
+    ['X', NsfwLevel.X],
+    ['not rated yet', 0],
+  ])('flips a model whose .com cover is over the PG-13 cap (%s)', async (_, nsfwLevel) => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(stamped());
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ nsfwLevel });
+    await scan(args(true));
+    expect(flipSql()).toBeDefined();
+  });
+
+  it('lets a PG-13 .com cover count as clean', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(stamped());
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ nsfwLevel: NsfwLevel.PG13 });
+    await scan(args(true));
+    expect(flipSql()).toBeUndefined();
+  });
+
+  it.each([
+    ['the .com title changed', { meta: stampFor(face), sfwName: 'Edited title' }],
+    ['the .com description changed', { meta: stampFor(face), sfwDescription: '<p>New text.</p>' }],
+    ['the .com cover changed', { meta: stampFor(face), sfwCoverImageId: 6 }],
+    ['there is no stamp', { meta: null }],
+  ])('re-checks the face when %s, and stamps it when it passes', async (_, over) => {
+    const row = model({ ...face, ...over });
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(row);
+    await scan(args(true));
+    expect(checkSfwFaceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sfwName: row.sfwName,
+        sfwDescription: row.sfwDescription,
+        modelId: 1,
+        userId: 99,
+      })
+    );
+    expect(flipSql()).toBeUndefined();
+    const stampCall = dbMock.dbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
+      (c[0] as readonly string[]).join('?').includes('sfwFaceCheckedAt')
+    );
+    expect(stampCall).toBeDefined();
+    // Only onto the face it checked: an edit landing since leaves its row unstamped.
+    expect(stampSql()).toMatch(/"sfwName" IS NOT DISTINCT FROM \?/);
+    expect(stampSql()).toMatch(/"sfwDescription" IS NOT DISTINCT FROM \?/);
+    expect(stampSql()).toMatch(/"sfwCoverImageId" IS NOT DISTINCT FROM \?/);
+    const stamp = JSON.parse(
+      (stampCall as unknown[]).find((v) => typeof v === 'string' && v.includes('"hash"')) as string
+    );
+    expect(stamp).toMatchObject({
+      promptId: 7,
+      hash: sfwFaceStampHash({
+        sfwName: row.sfwName as string,
+        sfwDescription: row.sfwDescription as string,
+        sfwCoverImageId: row.sfwCoverImageId as number,
+      }),
+    });
+  });
+
+  it.each([
+    ['unavailable', { sfwName: clean, sfwDescription: { status: 'unavailable' } }],
+    ['flagged', { sfwName: { status: 'flagged', level: 'X', reason: 'r' }, sfwDescription: clean }],
+    [
+      'flagged on the version text',
+      {
+        sfwName: clean,
+        sfwDescription: clean,
+        versions: { status: 'flagged', level: 'R', reason: 'r' },
+      },
+    ],
+    ['missing a verdict for the description', { sfwName: clean }],
+  ])('fails closed: flips when the re-check is %s, and writes no stamp', async (_, verdicts) => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(model({ ...face, meta: null }));
+    checkSfwFaceMock.mockResolvedValue(verdicts);
+    await scan(args(true));
+    expect(flipSql()).toBeDefined();
+    expect(stampSql()).toBeUndefined();
+  });
+
+  it('fails closed when the re-check throws', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(model({ ...face, meta: null }));
+    checkSfwFaceMock.mockRejectedValue(new Error('orchestrator down'));
+    await scan(args(true));
+    expect(flipSql()).toBeDefined();
+    expect(stampSql()).toBeUndefined();
+  });
+
+  it('records the scan marker on an already-mature model with R+ text and no face, though it declared mature', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(model({ nsfw: true, nsfwLevel: 60 }));
+    await scan(rated(NsfwLevel.R, NsfwLevel.XXX));
+    expect(markerSql()).toBeDefined();
+    expect(flipSql()).toBeUndefined();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('records no marker on an already-mature model with a complete, clean face', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(stamped({ nsfw: true, nsfwLevel: 61 }));
+    await scan(rated(NsfwLevel.X, NsfwLevel.XXX));
+    expect(markerSql()).toBeUndefined();
+    expect(flipSql()).toBeUndefined();
+  });
+
+  it('never rates on PG-13 text, face or not', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(model());
+    await scan(rated(NsfwLevel.PG13, NsfwLevel.PG13));
+    expect(flipSql()).toBeUndefined();
+    expect(markerSql()).toBeUndefined();
+    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('still holds a restricted model for a moderator, without checking its face', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(stamped({ minor: true }));
+    await scan(args(true));
+    expect(flipSql()).toBeUndefined();
+    expect(checkSfwFaceMock).not.toHaveBeenCalled();
   });
 });
 

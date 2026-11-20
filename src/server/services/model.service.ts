@@ -356,6 +356,7 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
+import { sfwFaceStamp } from '~/server/services/model-sfw-face-stamp';
 import {
   queueComFaceRecheck,
   queueComFaceRestore,
@@ -4253,16 +4254,33 @@ export const upsertModel = async (
   // Checked as it will be stored: a save carrying only one .com field, or only a cover (the step
   // that lists a mature model on .com), still has its whole face checked.
   const storedSfwName = data.sfwName !== undefined ? data.sfwName : beforeUpdate?.sfwName;
-  if (!isModerator && storedSfwName && (sfwFaceChanged || coverChanged))
-    await assertSfwFaceSafe({
+  if (!isModerator && storedSfwName && (sfwFaceChanged || coverChanged)) {
+    const storedSfwDescription =
+      data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription;
+    const { promptId } = await assertSfwFaceSafe({
       sfwName: storedSfwName,
-      sfwDescription:
-        data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription,
+      sfwDescription: storedSfwDescription,
       name: data.name ?? beforeUpdate?.name ?? '',
       description: data.description !== undefined ? data.description : beforeUpdate?.description,
       modelId: id,
       userId,
     });
+    // The text scan trusts this pass for as long as the face it read is unchanged.
+    meta = {
+      ...(meta ?? {}),
+      sfwFaceCheckedAt: sfwFaceStamp(
+        {
+          sfwName: storedSfwName,
+          sfwDescription: storedSfwDescription ?? null,
+          sfwCoverImageId:
+            (data.sfwCoverImageId !== undefined
+              ? data.sfwCoverImageId
+              : beforeUpdate?.sfwCoverImageId) ?? null,
+        },
+        promptId
+      ),
+    };
+  }
   if (coverChanged) {
     if (!beforeUpdate || !id)
       throw throwBadRequestError('Covers can be picked once the model has published images.');

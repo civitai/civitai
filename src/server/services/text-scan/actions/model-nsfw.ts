@@ -25,7 +25,14 @@ import {
   holdsRatingSql,
 } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { hasCompleteSfwFace } from '~/shared/utils/model-sfw-face';
+import { hasCompleteSfwFace, isComSafeLevel } from '~/shared/utils/model-sfw-face';
+import { checkSfwFace } from '~/server/services/model-sfw-face.service';
+import {
+  passedSfwFaceCheck,
+  sfwFaceStamp,
+  sfwFaceStampMatches,
+} from '~/server/services/model-sfw-face-stamp';
+import { removeTags } from '~/utils/string-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
 const SYSTEM_USER_ID = constants.system.user.id;
@@ -47,6 +54,7 @@ export async function applySystemModelNsfwFlag({
   model,
   source,
   heldLead = false,
+  hasCleanComFace,
 }: {
   model: {
     id: number;
@@ -64,6 +72,9 @@ export async function applySystemModelNsfwFlag({
   source: string;
   /** The flip applies a held lead (`applyHeldRestrictedVerdict`). */
   heldLead?: boolean;
+  /** Whether the model has a complete .com face whose text passed the check: then nothing is
+   *  rated. Asked only once no lock or restriction decided first, as it may re-run the check. */
+  hasCleanComFace?: () => Promise<boolean>;
 }): Promise<ModelTextModerationOutcome> {
   const stored = model.lockedProperties ?? [];
   // A stored lock is a moderator's call: minor-flagging sets nsfw:false and locks it.
@@ -87,6 +98,8 @@ export async function applySystemModelNsfwFlag({
     const held = await holdRestrictedVerdict(dbWrite, model.id, source);
     if (held) return 'held_restricted';
   }
+
+  if (hasCleanComFace && (await hasCleanComFace())) return 'skipped_com_face';
 
   // Already mature: nothing to flip. The verdict is still recorded as the origin marker, so the
   // owner cannot undo it alone while the text it was read from stands (`assertScanRatingKept`).
@@ -150,6 +163,75 @@ const locksRating = (source: string) => !SCAN_RATING_SOURCES.includes(source);
  * Drops the text scan's own origin marker after it reads the text as not mature: the owner's way
  * out of `assertScanRatingKept`. Never under a lock, nor another check's marker.
  */
+/**
+ * A complete .com face whose text passed the face check: a .com title and description, a .com cover
+ * rated PG-13 or below, and a stamp for exactly these values. A stale or missing stamp re-runs the
+ * check; no verdict is no face (fails closed), and a pass is stamped onto the face it read.
+ */
+async function hasCleanComFace(
+  model: {
+    id: number;
+    userId: number;
+    sfwName: string | null;
+    sfwDescription: string | null;
+    sfwCoverImageId: number | null;
+    meta: unknown;
+  },
+  check: typeof checkSfwFace
+) {
+  const { sfwName, sfwDescription, sfwCoverImageId } = model;
+  if (!sfwName?.trim() || !removeTags(sfwDescription ?? '').trim() || sfwCoverImageId == null)
+    return false;
+  // primary: the cover's rating gates a rating write; a fresh re-rate must count.
+  const cover = await dbWrite.image.findUnique({
+    where: { id: sfwCoverImageId },
+    select: { nsfwLevel: true },
+  });
+  if (!cover || !isComSafeLevel(cover.nsfwLevel)) return false;
+
+  const face = { sfwName, sfwDescription, sfwCoverImageId };
+  if (sfwFaceStampMatches(model.meta, face)) return true;
+  try {
+    const verdicts = await check({
+      sfwName,
+      sfwDescription,
+      modelId: model.id,
+      userId: model.userId,
+      db: dbWrite,
+    });
+    const passed = passedSfwFaceCheck(verdicts, { requireDescription: true });
+    logToAxiom({
+      name: 'text-scan',
+      type: 'info',
+      message: 'model sfw face re-checked',
+      modelId: model.id,
+      payload: { passed: !!passed },
+    });
+    if (!passed) return false;
+    const stamp = sfwFaceStamp(face, passed.promptId);
+    await dbWrite.$executeRaw`
+      UPDATE "Model" m
+      SET meta = ${asJsonbObjectSql(
+        'm.meta'
+      )} || jsonb_build_object('sfwFaceCheckedAt', ${JSON.stringify(stamp)}::jsonb)
+      WHERE m.id = ${model.id}
+        AND m."sfwName" IS NOT DISTINCT FROM ${sfwName}
+        AND m."sfwDescription" IS NOT DISTINCT FROM ${sfwDescription}
+        AND m."sfwCoverImageId" IS NOT DISTINCT FROM ${sfwCoverImageId}
+    `;
+    return true;
+  } catch (error) {
+    logToAxiom({
+      name: 'text-scan',
+      type: 'error',
+      message: 'model sfw face re-check failed',
+      modelId: model.id,
+      error: (error as Error).message,
+    });
+    return false;
+  }
+}
+
 async function dropScanRatingMarker(db: RawDb, modelId: number) {
   // A scan marker an intent lock parked goes too, so lifting that lock does not bring it back.
   await db.$executeRaw`
@@ -392,11 +474,11 @@ async function reviveDormantVerdict(db: RawDb, modelId: number): Promise<boolean
   return revived > 0;
 }
 
-export async function applyModelNsfwTextScan({
-  entityId,
-  workflowId,
-  outcome,
-}: ApplyTextScanArgs): Promise<RatingFloorResult> {
+export async function applyModelNsfwTextScan(
+  { entityId, workflowId, outcome }: ApplyTextScanArgs,
+  /** The face re-check, passed in by tests. */
+  deps: { checkSfwFace?: typeof checkSfwFace } = {}
+): Promise<RatingFloorResult> {
   const nothing: RatingFloorResult = { deferredRatingNotice: null };
   // Read as not mature (an edit since the rating): the scan's own marker goes, so the owner can
   // change the rating again. The rating itself stays as it is.
@@ -404,7 +486,8 @@ export async function applyModelNsfwTextScan({
     await dropScanRatingMarker(dbWrite, entityId);
     return nothing;
   }
-  if (!outcome.nsfw?.raised) return nothing;
+  // R+ rates a Model whatever it declared: an already-mature one gets the scan's marker.
+  if (!outcome.nsfw) return nothing;
   const model = await dbWrite.model.findUnique({
     where: { id: entityId },
     select: {
@@ -419,12 +502,18 @@ export async function applyModelNsfwTextScan({
       sfwOnly: true,
       availability: true,
       sfwName: true,
+      sfwDescription: true,
       sfwCoverImageId: true,
+      meta: true,
     },
   });
   if (!model) return nothing;
 
-  const result = await applySystemModelNsfwFlag({ model, source: 'text-scan' });
+  const result = await applySystemModelNsfwFlag({
+    model,
+    source: 'text-scan',
+    hasCleanComFace: () => hasCleanComFace(model, deps.checkSfwFace ?? checkSfwFace),
+  });
   logToAxiom({
     name: 'text-scan',
     type: 'info',

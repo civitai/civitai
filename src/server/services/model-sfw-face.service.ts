@@ -37,6 +37,7 @@ import {
   COM_FACE_REFUSED_EDIT_MESSAGE,
   COM_FACE_REFUSED_MESSAGE,
 } from '~/shared/utils/model-sfw-face';
+import { passedSfwFaceCheck } from '~/server/services/model-sfw-face-stamp';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { removeTags } from '~/utils/string-helpers';
 
@@ -58,7 +59,7 @@ export async function getSfwModelNames(modelIds: number[], showSfwFace: boolean)
 }
 
 export type SfwFaceVerdict =
-  | { status: 'clean' }
+  | { status: 'clean'; promptId?: number }
   | { status: 'flagged'; level: string; reason: string }
   | { status: 'unavailable' };
 
@@ -69,7 +70,7 @@ async function checkFields(fields: TextScanField[]): Promise<SfwFaceVerdict> {
   try {
     const preview = await previewTextScanNsfw({ fields, waitSeconds: SFW_FACE_CHECK_WAIT_SECONDS });
     if (preview.status !== 'ok') return { status: 'unavailable' };
-    if (preview.level <= NsfwLevel.PG13) return { status: 'clean' };
+    if (preview.level <= NsfwLevel.PG13) return { status: 'clean', promptId: preview.promptId };
     return {
       status: 'flagged',
       level: browsingLevelLabels[preview.level as keyof typeof browsingLevelLabels] ?? 'mature',
@@ -356,6 +357,8 @@ export async function assertSfwFaceSafe({
     throw throwBadRequestError(
       "We couldn't check the civitai.com title and description just now. Try saving again."
     );
+  // Every field it read is clean by now: the caller stamps the face it stores with this pass.
+  return passedSfwFaceCheck(verdicts.value) ?? { promptId: null };
 }
 
 const DRAFT_MODEL = 'openai/gpt-4o-mini';

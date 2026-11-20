@@ -108,8 +108,8 @@ describe('assertSfwFaceSafe', () => {
     );
   });
 
-  it('lets a clean face through', async () => {
-    mockPreviewTextScanNsfw.mockResolvedValue(rated(NsfwLevel.PG));
+  it('lets a clean face through, naming the prompt that passed it for the stamp', async () => {
+    mockPreviewTextScanNsfw.mockResolvedValue({ ...rated(NsfwLevel.PG), promptId: 31 });
     await expect(
       assertSfwFaceSafe({
         sfwName: 'Retro Pinup Style',
@@ -117,7 +117,7 @@ describe('assertSfwFaceSafe', () => {
         name: 'n',
         userId: 1,
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ promptId: 31 });
   });
 });
 
