@@ -30,6 +30,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import {
+  MUSIC_UP_NEXT_DRAG_Z_INDEX,
   MUSIC_UP_NEXT_Z_INDEX,
   PlayerTooltip,
   MUSIC_PLAYER_BAR_HEIGHT,
@@ -266,11 +267,15 @@ export function MusicUpNextList({
                 ))}
               </SortableContext>
             </div>
-            <DragOverlay>
-              {dragging ? (
-                <RowContent track={dragging} cover={covers.get(dragging.id)} className={LIFTED} />
-              ) : null}
-            </DragOverlay>
+            {/* In a portal: inside the sheet's transformed drawer, the fixed-position overlay would be
+                placed against the drawer, not the window, and the drop would land rows off. */}
+            <Portal>
+              <DragOverlay zIndex={MUSIC_UP_NEXT_DRAG_Z_INDEX}>
+                {dragging ? (
+                  <RowContent track={dragging} cover={covers.get(dragging.id)} className={LIFTED} />
+                ) : null}
+              </DragOverlay>
+            </Portal>
           </DndContext>
         )}
       </div>

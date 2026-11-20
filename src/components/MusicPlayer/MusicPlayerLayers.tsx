@@ -15,6 +15,8 @@ const MUSIC_PLAYER_TOOLTIP_Z_INDEX = MUSIC_PLAYER_Z_INDEX + 2;
 export const MUSIC_SHEET_Z_INDEX = MUSIC_PLAYER_Z_INDEX + 1;
 /** The phone's Up next sheet, and menus opened from the now-playing sheet: over that sheet. */
 export const MUSIC_UP_NEXT_SHEET_Z_INDEX = MUSIC_SHEET_Z_INDEX + 1;
+/** A row being dragged in Up next: over the panel and the sheet. */
+export const MUSIC_UP_NEXT_DRAG_Z_INDEX = MUSIC_UP_NEXT_SHEET_Z_INDEX + 1;
 
 /** The desktop bar's height, above the safe-area inset. */
 export const MUSIC_PLAYER_BAR_HEIGHT = 72;

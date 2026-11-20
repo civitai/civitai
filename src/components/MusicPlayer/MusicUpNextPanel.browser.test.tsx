@@ -353,6 +353,14 @@ describe('the Up next sheet on a phone', () => {
 
     (inSheet('Reorder Rain on Shibuya').element() as HTMLElement).focus();
     await userEvent.keyboard('{Space}');
+    // The lifted row is placed against the window: inside the drawer, whose transform makes it the
+    // containing block, it would sit rows off where the drop is measured.
+    await vi.waitFor(() => {
+      const lifted = [...document.querySelectorAll('[aria-label="Play Rain on Shibuya"]')].filter(
+        (el) => !upNextSheet().element().contains(el)
+      );
+      expect(lifted).toHaveLength(1);
+    });
     await userEvent.keyboard('{ArrowUp}');
     await userEvent.keyboard('{Space}');
     await vi.waitFor(() =>
