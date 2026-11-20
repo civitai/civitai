@@ -7,12 +7,12 @@ import {
 } from './held-media';
 import {
   CSAM_HOLD_POST_UNPUBLISH_REASON,
+  csamQueueHeldText,
   evidenceHeldUrlSql,
   heldUrlSql,
   liveCsamTextHoldText,
   postTextCsamHeldText,
   reportListedUrlSql,
-  serviceOfferingCsamHeldText,
 } from './held-url';
 import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from './media-signals';
 
@@ -95,7 +95,7 @@ function csamRowSql(image: string): string {
     )
     OR EXISTS (
       SELECT 1 FROM "ServiceOffering" cso
-      WHERE cso."coverImageId" = ${id} AND ${serviceOfferingCsamHeldText('cso."id"')}
+      WHERE cso."coverImageId" = ${id} AND ${csamQueueHeldText('ServiceOffering', 'cso."id"')}
     )
     OR EXISTS (
       SELECT 1 FROM "TextScanHold" cuph

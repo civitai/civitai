@@ -173,6 +173,13 @@ async function removeComFace(
   };
   const removed = await dbWrite.$transaction(async (tx) => {
     const updated = await tx.$executeRaw(comFaceRemovalSql(modelId, coverId, marker));
+    if (updated) {
+      // Imported here: the action reaches services that import this module.
+      const { applyComFaceHeldVerdict } = await import(
+        '~/server/services/text-scan/actions/model-nsfw'
+      );
+      await applyComFaceHeldVerdict(tx, modelId);
+    }
     if (updated)
       await tx.modActivity.create({
         data: {
@@ -224,6 +231,31 @@ async function finishRemoval(modelId: number) {
   // Imported here: model-version.service imports this module.
   const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
   await bustPublicModelResponseCache(modelId);
+  await rescanTextAfterFaceLoss(modelId);
+}
+
+/** Swapped by tests. Imported lazily: the scan reaches services that import this module. */
+export const faceLossRescan = {
+  loadSubmit: () => import('~/server/services/text-scan/submit'),
+};
+
+/**
+ * Scans the model's text again past the unchanged-text skip: the text scan may have left an R+
+ * listing unrated on the strength of a .com face that is now gone. Never throws.
+ */
+export async function rescanTextAfterFaceLoss(modelId: number) {
+  try {
+    const { scanEntityInBackground } = await faceLossRescan.loadSubmit();
+    scanEntityInBackground({ entityType: 'Model', entityId: modelId, force: true });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'com-face-recheck',
+      message: 'text rescan after face loss failed',
+      modelId,
+      error: (error as Error).message,
+    });
+  }
 }
 
 /** A model whose face the re-check removed waits here, after a listing edit, for one restore check. */

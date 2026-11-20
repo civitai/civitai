@@ -5,7 +5,7 @@ import {
   serviceOfferingTakenDownKey,
   type ServiceOfferingTakedownReason,
 } from '@civitai/shared/service-offering-takedown';
-import { serviceOfferingCsamHeldText } from '@civitai/shared/held-url';
+import { csamQueueHeldText } from '@civitai/shared/held-url';
 import { sql } from 'kysely';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
@@ -156,7 +156,9 @@ export async function releaseServiceOffering({
   seenUpdatedAt: Date;
   moderatorId: number;
 }): Promise<(ReportedServiceOffering & { changed: boolean; csamHeld: boolean }) | null> {
-  const csamHeld = sql<boolean>`${sql.raw(serviceOfferingCsamHeldText(String(offeringId)))}`;
+  const csamHeld = sql<boolean>`${sql.raw(
+    csamQueueHeldText('ServiceOffering', String(offeringId))
+  )}`;
   const { numUpdatedRows } = await dbWrite
     .updateTable('ServiceOffering')
     .set({ ingestion: 'Scanned', scannedAt: new Date(), updatedAt: new Date() })

@@ -21,7 +21,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/services/minor-hash.service', () => ({ resolveMinorFlagAppeal: mockResolve }));
 
-import handler from '~/pages/api/mod/minor-flag/resolve-appeal';
+import handler from '~/server/api-routes/mod/minor-flag/resolve-appeal';
 
 function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];

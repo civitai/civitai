@@ -34,7 +34,7 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 vi.mock('~/server/services/post-text-moderation.service', () => svc);
 vi.mock('~/server/services/moderator-grants', () => ({ hasModeratorPageAccess }));
 
-const { default: handler } = (await import('~/pages/api/mod/post-text/moderate')) as {
+const { default: handler } = (await import('~/server/api-routes/mod/post-text/moderate')) as {
   default: (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>;
 };
 

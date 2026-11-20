@@ -31,7 +31,7 @@ export type RetractedMedia = {
  */
 export async function getRetractedMedia(
   imageId: number,
-  { csamReview }: { csamReview: boolean },
+  { csamReview, cdnLeg = false }: { csamReview: boolean; cdnLeg?: boolean },
   db = dbWrite
 ): Promise<RetractedMedia | null> {
   const access = retractedAccessColumnsSql('i', { csamReview });
@@ -40,22 +40,27 @@ export async function getRetractedMedia(
     return tx.$queryRaw<
       (RetractedMedia & {
         blockedFor: string | null;
+        ingestion: string;
         restricted: boolean;
         siblings: UrlSibling[];
       })[]
     >`
-      SELECT i.url, i.type::text AS type, i."mimeType", i."blockedFor",
+      SELECT i.url, i.type::text AS type, i."mimeType", i."blockedFor", i.ingestion,
         ${Prisma.raw(access.restricted)} AS restricted,
         ${Prisma.raw(access.siblings)} AS siblings
       FROM "Image" i
-      WHERE i.id = ${imageId} AND ${Prisma.raw(retractedImageWhereSql('i'))}
+      WHERE i.id = ${imageId} AND ${Prisma.raw(retractedImageWhereSql('i', { cdnLeg }))}
     `;
   });
   if (!row) return null;
   if (!csamReview) {
     const viewable = await retractedViewable(row, {
       patterns: blockedForPatterns(),
-      readVerdict: () => scannerVerdicts.read(imageId),
+      // A scanned image can be rescanned, so its verdict is read fresh rather than from the cache.
+      readVerdict: () =>
+        row.ingestion === 'Scanned'
+          ? readScannerCsamVerdict(imageId)
+          : scannerVerdicts.read(imageId),
       readVerdicts: readScannerCsamVerdicts,
     });
     if (!viewable) return null;

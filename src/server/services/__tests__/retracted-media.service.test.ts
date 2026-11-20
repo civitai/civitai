@@ -177,9 +177,9 @@ const { getRetractedMedia, scannerVerdicts } = await import(
 
 /** Who sees the image: `none` (refused to every moderator), `anyMod` (any moderator) or `cleared`
  *  (only a moderator cleared for CSAM review). */
-const tierOf = async (id: number) => {
-  const cleared = await getRetractedMedia(id, { csamReview: true });
-  const anyModAnswer = await getRetractedMedia(id, { csamReview: false });
+const tierOf = async (id: number, { cdnLeg = false } = {}) => {
+  const cleared = await getRetractedMedia(id, { csamReview: true, cdnLeg });
+  const anyModAnswer = await getRetractedMedia(id, { csamReview: false, cdnLeg });
   const anyMod = typeof anyModAnswer === 'string' ? null : anyModAnswer;
   if (!cleared) {
     expect(anyMod).toBeNull();
@@ -188,8 +188,8 @@ const tierOf = async (id: number) => {
   return anyMod ? 'anyMod' : 'cleared';
 };
 
-const expectTiers = async (tier: string, ids: number[]) => {
-  for (const id of ids) expect({ id, tier: await tierOf(id) }).toEqual({ id, tier });
+const expectTiers = async (tier: string, ids: number[], opts: { cdnLeg?: boolean } = {}) => {
+  for (const id of ids) expect({ id, tier: await tierOf(id, opts) }).toEqual({ id, tier });
 };
 
 describe('getRetractedMedia', () => {
@@ -241,13 +241,8 @@ describe('getRetractedMedia', () => {
     await expectTiers('none', [11, 13, 20]);
   });
 
-  it('refuses an image that is not blocked, and a missing id', async () => {
-    await expectTiers('none', [12, 999]);
-  });
-
-  // The CDN-refusal leg is the moderator app's alone: this app's client only asks for blocked images.
-  it('refuses a scanned image even while the image CDN has retracted its url', async () => {
-    await expectTiers('none', [12]);
+  it('refuses a missing id', async () => {
+    await expectTiers('none', [999]);
   });
 
   it('keeps an image under an evidence hold to cleared moderators', async () => {
@@ -581,6 +576,86 @@ describe('a model version unpublished for its subject', () => {
     expect(await getRetractedMedia(990000124, { csamReview: true })).toMatchObject({
       url: 'key-990000124',
     });
+  });
+});
+
+describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
+  const ids = {
+    retracted: 990000204,
+    denied: 990000201,
+    served: 990000202,
+    pending: 990000203,
+    upgraded: 990000205,
+    noRetractTime: 990000206,
+  };
+  const leg = { cdnLeg: true };
+  beforeAll(async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
+        (990000201, 'key-990000201', 'Scanned', NULL, 990100201),
+        (990000202, 'key-990000202', 'Scanned', NULL, 990100202),
+        (990000203, 'key-990000203', 'Pending', NULL, 990100203),
+        (990000204, 'key-990000204', 'Scanned', NULL, 990100204),
+        (990000205, 'key-990000205', 'Scanned', NULL, 990100205),
+        (990000206, 'key-990000206', 'Scanned', NULL, 990100206);
+      INSERT INTO "ImageCdnAccess" (url, state) VALUES
+        ('key-990000201', 'Denied'), ('key-990000203', 'Retracted'), ('key-990000204', 'Retracted');
+      INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES
+        ('key-990000205', 'Retracted', now() - interval '30 seconds', now()),
+        ('key-990000206', 'Retracted', now(), NULL);
+    `);
+  });
+  afterEach(async () => {
+    await pg.exec(`
+      DELETE FROM "CsamReport" WHERE "userId" = 990100204;
+      DELETE FROM "User" WHERE id = 990100204;
+    `);
+  });
+
+  it('serves a scanned image whose url the CDN retracted to any moderator', async () => {
+    await expectTiers('anyMod', [ids.retracted], leg);
+  });
+
+  it('keeps a scanned image on a url retracted by an upgraded deny, or with no retraction time, to cleared moderators', async () => {
+    await expectTiers('cleared', [ids.upgraded, ids.noRetractTime], leg);
+  });
+
+  it('is off unless the route asks for it', async () => {
+    await expectTiers('none', [ids.retracted]);
+  });
+
+  // 🔴 Do not widen to Denied: a url can be capped at Denied for a hold on a row that has since been
+  // deleted, and nothing here can see that row any more.
+  it('refuses a denied url, one the CDN still serves, and one whose scan is not final', async () => {
+    await expectTiers('none', [ids.denied, ids.served, ids.pending], leg);
+  });
+
+  it("reads a scanned image's verdict fresh each time, since a rescan can change it", async () => {
+    await expectTiers('anyMod', [ids.retracted], leg);
+    scanner.verdict = 'hit';
+    expect(await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })).toBeNull();
+  });
+
+  // The route answers a null with 404: a moderator not cleared for CSAM review must not reach the
+  // image of a report's owner or of an owner banned for minor safety through this leg.
+  it.each([
+    [
+      'a CsamReport owner',
+      () =>
+        pg.query(
+          `INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100204, '{}', '[]')`
+        ),
+    ],
+    [
+      'an owner banned for minor safety',
+      () =>
+        pg.query(
+          `INSERT INTO "User" (id, meta) VALUES (990100204, '{"banDetails": {"reasonCode": "SexualMinor"}}')`
+        ),
+    ],
+  ])('refuses the image of %s to a moderator not cleared for CSAM review', async (_label, mark) => {
+    await mark();
+    expect(await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })).toBeNull();
   });
 });
 

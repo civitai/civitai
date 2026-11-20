@@ -23,7 +23,7 @@ vi.mock('~/server/services/text-scan/actions/redetection', () => ({
   resolveTextScanRedetection: mockResolve,
 }));
 
-import handler from '~/pages/api/mod/minor-flag/resolve-redetection';
+import handler from '~/server/api-routes/mod/minor-flag/resolve-redetection';
 
 function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];

@@ -117,7 +117,6 @@ vi.mock('~/server/services/text-scan/actions/hold-restricted-verdict', async (im
 import {
   MINOR_LOCKED_PROPERTIES,
   privateModelFromTraining,
-  SCAN_RATING_KEPT_MESSAGE,
   upsertModel,
 } from '~/server/services/model.service';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
@@ -133,6 +132,8 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
+
+const SCAN_RATING_KEPT = /^This model is marked mature because of its text on civitai\.red/;
 
 const OWNER_ID = 101;
 const MODERATOR_ID = 7;
@@ -1219,7 +1220,7 @@ describe('upsertModel — content flags the row ends up with', () => {
         mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
         await expect(
           upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false })
-        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+        ).rejects.toThrow(SCAN_RATING_KEPT);
         expect(mockDbWrite.model.update).not.toHaveBeenCalled();
       });
 
@@ -1232,7 +1233,7 @@ describe('upsertModel — content flags the row ends up with', () => {
         });
         await expect(
           upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false })
-        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+        ).rejects.toThrow(SCAN_RATING_KEPT);
         expect(mockDbWrite.model.update).not.toHaveBeenCalled();
       });
 
@@ -1271,7 +1272,7 @@ describe('upsertModel — content flags the row ends up with', () => {
             sfwName: null,
             sfwCoverImageId: null,
           })
-        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+        ).rejects.toThrow(SCAN_RATING_KEPT);
       });
 
       // A rescan dedups on the scanned text, so an edit alone may bring no fresh verdict.
@@ -1280,7 +1281,7 @@ describe('upsertModel — content flags the row ends up with', () => {
         mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
         await expect(
           upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: true })
-        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+        ).rejects.toThrow(SCAN_RATING_KEPT);
       });
 
       // As on main, where the scan's lock kept nsfw and the SFW-only flow was then refused.
@@ -1318,7 +1319,7 @@ describe('upsertModel — content flags the row ends up with', () => {
             sfwOnly: false,
             description: 'A description ',
           })
-        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+        ).rejects.toThrow(SCAN_RATING_KEPT);
       });
 
       it('judges the face as stored: an empty .com title is no face', async () => {
@@ -1333,7 +1334,7 @@ describe('upsertModel — content flags the row ends up with', () => {
             sfwName: '<p></p>',
             sfwCoverImageId: 4,
           })
-        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+        ).rejects.toThrow(SCAN_RATING_KEPT);
       });
 
       // The read before the save's transaction saw no rating; the scan rated it before the save's row lock.
@@ -1347,8 +1348,149 @@ describe('upsertModel — content flags the row ends up with', () => {
         });
         await expect(
           upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false })
-        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+        ).rejects.toThrow(SCAN_RATING_KEPT);
         expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      });
+
+      describe('the message names the text the scan read', () => {
+        type Version = {
+          modelId?: number;
+          index: number;
+          status: ModelStatus;
+          name: string;
+          description: string | null;
+          trainedWords: string[];
+        };
+        // Honours the model and status filters and the order, so a query that read another
+        // model's versions or drafts would name them.
+        function mockVersions(versions: Version[]) {
+          mockDbWrite.modelVersion.findMany.mockImplementation((async (args: {
+            where?: { modelId?: number; status?: { in?: ModelStatus[] } };
+            orderBy?: { index?: 'asc' | 'desc' };
+          }) => {
+            const found = versions.filter(
+              (v) =>
+                (args?.where?.modelId === undefined ||
+                  (v.modelId ?? MODEL_ID) === args.where.modelId) &&
+                (!args?.where?.status?.in || args.where.status.in.includes(v.status))
+            );
+            return args?.orderBy?.index === 'asc'
+              ? [...found].sort((a, b) => a.index - b.index)
+              : found;
+          }) as never);
+        }
+        const unticking = () =>
+          upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
+
+        it('lists the title, description and published versions, never a draft', async () => {
+          mockStored({
+            nsfw: true,
+            lockedProperties: [],
+            meta: { systemNsfwLock: { ...scanLock, reason: 'stored-scan-reason' } },
+          });
+          mockVersions([
+            {
+              index: 2,
+              status: ModelStatus.Scheduled,
+              name: 'v2.0',
+              description: null,
+              trainedWords: [],
+            },
+            {
+              modelId: MODEL_ID + 1,
+              index: 0,
+              status: ModelStatus.Published,
+              name: 'other-model',
+              description: '<p>Other</p>',
+              trainedWords: [],
+            },
+            {
+              index: 0,
+              status: ModelStatus.Published,
+              name: 'v1.0',
+              description: '<p>Notes</p>',
+              trainedWords: ['tag'],
+            },
+            {
+              index: 1,
+              status: ModelStatus.Draft,
+              name: 'draft-only',
+              description: '<p>Draft</p>',
+              trainedWords: [],
+            },
+          ]);
+
+          const error = await unticking().catch((e: Error) => e);
+
+          expect((error as Error).message).toBe(
+            'This model is marked mature because of its text on civitai.red, which includes its title, its description, and the names, descriptions, and trained words of its published versions ("v1.0" and "v2.0"). It stays marked mature until that text changes: edit it and save, and once the new text is checked and passes, you can change the rating.'
+          );
+          expect((error as Error).message).not.toContain('stored-scan-reason');
+          expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+        });
+
+        it('leaves out the fields with no text', async () => {
+          mockStored({
+            nsfw: true,
+            lockedProperties: [],
+            description: '<p> </p>',
+            meta: { systemNsfwLock: scanLock },
+          });
+          mockVersions([
+            {
+              index: 3,
+              status: ModelStatus.Published,
+              name: 'v1.0',
+              description: '<p></p>',
+              trainedWords: [],
+            },
+          ]);
+
+          await expect(unticking()).rejects.toThrow(
+            'This model is marked mature because of its text on civitai.red, which includes its title and the names of its published versions ("v1.0"). It stays'
+          );
+        });
+
+        it('names only the title and description when no version is published', async () => {
+          mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+          mockVersions([
+            {
+              index: 4,
+              status: ModelStatus.Draft,
+              name: 'draft-only',
+              description: '<p>Draft</p>',
+              trainedWords: ['tag'],
+            },
+          ]);
+
+          await expect(unticking()).rejects.toThrow(
+            'This model is marked mature because of its text on civitai.red, which includes its title and its description. It stays'
+          );
+        });
+        it("tells only the owner: someone else's save gets no scan explanation", async () => {
+          mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+          mockVersions([
+            {
+              index: 0,
+              status: ModelStatus.Published,
+              name: 'v1.0',
+              description: null,
+              trainedWords: [],
+            },
+          ]);
+
+          await expect(
+            upsert({
+              id: MODEL_ID,
+              userId: OWNER_ID + 1,
+              nsfw: false,
+              minor: false,
+              sfwOnly: false,
+            })
+          ).resolves.toBeNull();
+          expect(mockDbWrite.modelVersion.findMany).not.toHaveBeenCalled();
+          expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+        });
       });
 
       it('lets it through once a clean rescan has dropped the marker', async () => {

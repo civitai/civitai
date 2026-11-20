@@ -1,4 +1,10 @@
-import { guardedProcedure, isFlagProtected, protectedProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  isFlagProtected,
+  moderatorProcedure,
+  protectedProcedure,
+  router,
+} from '~/server/trpc';
 import {
   declineServiceDealSchema,
   getServiceDealSchema,
@@ -8,6 +14,11 @@ import {
   requestServiceDealRevisionSchema,
   requestServiceDealSchema,
   respondServiceDealCancellationSchema,
+  reviewServiceDealSchema,
+  editServiceDealReviewSchema,
+  replyServiceDealReviewSchema,
+  hideServiceDealReviewSchema,
+  attachServiceDealReviewImageSchema,
   serviceDealActionSchema,
 } from '~/server/schema/creator-service-deal.schema';
 import {
@@ -26,6 +37,18 @@ import {
   respondServiceDealCancellation,
   withdrawServiceDeal,
 } from '~/server/services/creator-service-deal.service';
+import {
+  attachFinalToReview,
+  listReviewAttachableFinals,
+} from '~/server/services/creator-service-deal-review-images';
+import {
+  editServiceDealReview,
+  getDealReviewView,
+  replyToServiceDealReview,
+  reviewServiceDeal,
+  setServiceDealReviewHidden,
+} from '~/server/services/creator-service-deal-review.service';
+import { rateLimit } from '~/server/middleware.trpc';
 import { domainServableLevels, getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 
@@ -50,6 +73,8 @@ export const creatorServiceDealRouter = router({
       expectedPrice: input.expectedPrice,
       expectedRevisionsIncluded: input.expectedRevisionsIncluded,
       expectedDeliveryDays: input.expectedDeliveryDays,
+      expectedLicense: input.expectedLicense,
+      licenseAgreed: input.licenseAgreed,
       requestText: input.requestText,
       disclosureVersion: input.disclosureVersion,
       buyerId: ctx.user.id,
@@ -57,6 +82,61 @@ export const creatorServiceDealRouter = router({
       buzzType: domainSpendType(ctx.features),
       servableLevels: domainServableLevels(ctx),
       consentLevels: getRequestBrowsingLevel(ctx),
+      reviewEnabled: !!ctx.features.creatorServicesNext,
+    })
+  ),
+  // Behind the live review flag inside the service, so the brake stops new reviews at once.
+  review: gated.input(reviewServiceDealSchema).mutation(({ input, ctx }) =>
+    reviewServiceDeal({
+      dealId: input.id,
+      userId: ctx.user.id,
+      verdict: input.verdict,
+      comment: input.comment,
+      reviewFlag: !!ctx.features.creatorServicesNext,
+    })
+  ),
+  // Each edit is a fresh paid scan and a recount.
+  editReview: gated
+    .use(rateLimit({ limit: 10, period: 3600, errorMessage: 'Too many edits. Try again later.' }))
+    .input(editServiceDealReviewSchema)
+    .mutation(({ input, ctx }) =>
+      editServiceDealReview({
+        dealId: input.id,
+        userId: ctx.user.id,
+        comment: input.comment,
+        reviewFlag: !!ctx.features.creatorServicesNext,
+      })
+    ),
+  replyToReview: gated.input(replyServiceDealReviewSchema).mutation(({ input, ctx }) =>
+    replyToServiceDealReview({
+      dealId: input.id,
+      userId: ctx.user.id,
+      reply: input.reply,
+      reviewFlag: !!ctx.features.creatorServicesNext,
+    })
+  ),
+  reviewAttachableFinals: gated
+    .input(serviceDealActionSchema)
+    .query(({ input, ctx }) =>
+      listReviewAttachableFinals({ dealId: input.id, userId: ctx.user.id })
+    ),
+  attachReviewImage: gated
+    .use(rateLimit({ limit: 20, period: 3600, errorMessage: 'Too many images. Try again later.' }))
+    .input(attachServiceDealReviewImageSchema)
+    .mutation(({ input, ctx }) =>
+      attachFinalToReview({
+        dealId: input.id,
+        userId: ctx.user.id,
+        fileId: input.fileId,
+        reviewFlag: !!ctx.features.creatorServicesNext,
+      })
+    ),
+  // Not behind the flag: moderation of what was published must outlast a brake.
+  hideReview: moderatorProcedure.input(hideServiceDealReviewSchema).mutation(({ input, ctx }) =>
+    setServiceDealReviewHidden({
+      reviewId: input.reviewId,
+      moderatorId: ctx.user.id,
+      hidden: input.hidden,
     })
   ),
   accept: gated
@@ -76,14 +156,20 @@ export const creatorServiceDealRouter = router({
     })
   ),
 
-  get: protectedProcedure.input(getServiceDealSchema).query(({ input, ctx }) =>
-    getServiceDealView({
+  get: protectedProcedure.input(getServiceDealSchema).query(async ({ input, ctx }) => {
+    const view = await getServiceDealView({
       dealId: input.id,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
       servicesEnabled: !!ctx.features?.creatorServices,
-    })
-  ),
+    });
+    const review = await getDealReviewView({
+      dealId: view.id,
+      viewerRole: view.viewerRole,
+      servableLevels: domainServableLevels(ctx),
+    });
+    return { ...view, review };
+  }),
   withdraw: protectedProcedure
     .input(serviceDealActionSchema)
     .mutation(({ input, ctx }) =>

@@ -35,9 +35,9 @@ type ScannerRow = { id: number; ingestion: string };
  * Which of these images `/api/retracted-media` serves at all (`eligible`) and, with each one's
  * storage key, which it serves to this moderator (`viewable`). A moderator without `csamReview` is
  * refused what `retractedViewable` refuses; `readVerdicts` reads the scanner for the rows Postgres has
- * not already refused. The same rules as the main app's `getRetractedMedia`, which has no
- * CDN-refusal leg and no held leg, read on the primary for the same reason: a flag or hold the
- * replica has not seen would otherwise be missed. A read that fails throws.
+ * not already refused. The same rules as the main app's `getRetractedMedia`, which has no held leg,
+ * read on the primary for the same reason: a flag or hold the replica has not seen would otherwise
+ * be missed. A read that fails throws.
  */
 export async function readRetractedMedia(
   imageIds: number[],

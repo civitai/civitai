@@ -17,7 +17,7 @@ import {
   verifyCaptchaToken,
 } from '$lib/server/auth/captcha';
 import { normalizeEmailAddress } from '$lib/server/auth/blocklist';
-import { checkRateLimit } from '$lib/server/auth/rate-limit';
+import { consumeRateLimit } from '$lib/server/auth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
 import { signupRefusal } from '$lib/server/auth/signup-rules';
 import { trackLoginRedirect } from '$lib/server/tracking';
@@ -97,13 +97,12 @@ export const actions: Actions = {
     const plain = parsePlainEmailAddress(email, addressparser);
 
     // Resolve the real client IP from proxy headers (not the shared ingress socket peer) so the per-IP
-    // limit is genuinely per-client; null behind a misconfigured proxy → checkRateLimit skips the limit.
+    // limit is genuinely per-client; null behind a misconfigured proxy → consumeRateLimit skips the limit.
     const ip = getClientIp(request);
 
     // 1. Rate limit (per IP) — cheap gate before any captcha/DB work.
-    if (!(await checkRateLimit('email-login', ip, 5, 600))) {
-      return fail(429, { email, rateLimited: true });
-    }
+    const limit = await consumeRateLimit('email-login', ip, 5, 600);
+    if (!limit.ok) return fail(429, { email, rateLimited: true, retryAfter: limit.retryAfter });
 
     // 2. Turnstile. The invisible widget auto-injects `cf-turnstile-response`; the interactive fallback rides
     //    `managed-turnstile-response` + `captchaMode=managed`, verified against the managed secret. On a

@@ -16,8 +16,9 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 
-const handler = (await import('~/pages/api/admin/temp/queue-held-cover-collections-reindex'))
-  .default;
+const handler = (
+  await import('~/server/api-routes/admin/temp/queue-held-cover-collections-reindex')
+).default;
 const { getCollectionPageCoveredByHeldModels } = await import(
   '~/server/services/collection-index-sync'
 );

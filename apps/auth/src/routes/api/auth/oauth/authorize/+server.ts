@@ -2,7 +2,11 @@ import { json, redirect, type RequestHandler } from '@sveltejs/kit';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { oauthServer } from '$lib/server/oauth/server';
-import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import {
+  checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+} from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { getOrCreateDeviceId, touchAccount } from '$lib/server/auth/device';
@@ -41,6 +45,7 @@ import {
   parseOfflineBuzzCap,
   readConsentForOffline,
 } from '$lib/server/oauth/offline-grant';
+import { offlineAllowedForClient } from '$lib/server/oauth/listing-offline';
 
 // GET /api/auth/oauth/authorize — return-after-consent + issue the authorization code.
 // Ported from the main app's src/pages/api/auth/oauth/authorize.ts. The session gate uses the hub's
@@ -167,7 +172,11 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
       // Answering needs the client looked up, which a signed-out request never did before: charge the
       // caller's IP first, as there's no user to charge.
       if (!(await checkOAuthRateLimit('authorize-anon', getClientIp(request)))) {
-        return oauthError(429, 'rate_limited', 'Too many authorization requests');
+        return rateLimitedResponse(
+          oauthRetryAfter('authorize-anon'),
+          undefined,
+          'Too many authorization requests'
+        );
       }
       const verified = await resolveVerifiedClient(params);
       if ('error' in verified) return verified.error;
@@ -178,7 +187,11 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
 
   // Rate limit by user id.
   if (!(await checkOAuthRateLimit('authorize', String(user.id)))) {
-    return oauthError(429, 'rate_limited', 'Too many authorization requests');
+    return rateLimitedResponse(
+      oauthRetryAfter('authorize'),
+      undefined,
+      'Too many authorization requests'
+    );
   }
 
   const verified = await resolveVerifiedClient(params);
@@ -248,8 +261,14 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
 
   // Offline access is its own grant only with the flag on; off, the request is handled as before.
   // First-party codes go to /session, never /token, so they never carry it.
-  const offlineAsked =
+  // A listed App Store connect client is offered it only when its approved listing declares it
+  // (listing-offline.ts); otherwise the request is handled as one without offline_access.
+  // `offlineRequested`: the request carries offline_access and the flag is on, whatever the
+  // listing says. An approval with the line unticked declines on THAT, so an untick is never lost
+  // to a listing read that failed or came back undeclared.
+  const offlineRequested =
     !client.isFirstParty && scopeRequest.offlineAccess && (await isOfflineGrantOn());
+  const offlineAsked = offlineRequested && (await offlineAllowedForClient(clientId));
   if (
     offlineAsked &&
     parseOfflineBuzzCap(params.offline_buzz_limit, params.offline_buzz_period) === 'invalid'
@@ -332,8 +351,10 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
     });
     offlineGranted = true;
   } else if (isApproval) {
-    // An approval with the offline line unticked takes away a previous offline grant.
-    if (offlineAsked) await declineOffline(user.id, clientId);
+    // An approval with the offline line unticked takes away a previous offline grant, including
+    // when the listing read failed or says undeclared (the line was not shown, but the user's
+    // "no" still stands).
+    if (offlineRequested && params.offline !== 'true') await declineOffline(user.id, clientId);
     // Buzz spend-limit at consent (AIServicesWrite) is a fast-follow (§E) — not parsed in this first
     // pass, so buzzLimit is left null. Persist the consent only when "remember" was checked.
     if (params.remember === 'true') {

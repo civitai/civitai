@@ -19,7 +19,7 @@ import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const buzzService = () => import('~/server/services/buzz.service');
 
 // Retry budget for the batch `process` (cron) path — can afford to block.

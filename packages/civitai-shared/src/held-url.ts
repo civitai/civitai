@@ -31,26 +31,27 @@ export function postTextCsamHeldText(text: string): string {
   )}))`;
 }
 /**
- * Service offering `offering` (a column reference or an integer literal) is held for the CSAM queue:
- * a live CSAM text hold, or a csam verdict no moderator dismissed for its text, since the verdict is
- * recorded before its hold is written. Like `csamHoldBars`, but a Confirmed hold bars here too.
+ * Entity `entity` (a column reference or an integer literal) of `entityType` is held for the CSAM
+ * queue: a live CSAM text hold, or a csam verdict no moderator dismissed for its text, since the
+ * verdict is recorded before its hold is written. Like `csamHoldBars`, but a Confirmed hold bars here
+ * too.
  */
-export function serviceOfferingCsamHeldText(offering: string): string {
-  const o = /^\d{1,18}$/.test(offering) ? offering : sqlRef(offering);
-  if (/^"?(soh|som|sod)"?\./.test(o))
-    throw new Error(`Alias taken inside serviceOfferingCsamHeldText: ${o}`);
+export function csamQueueHeldText(entityType: string, entity: string): string {
+  if (!/^[A-Za-z]+$/.test(entityType)) throw new Error(`Bad entity type: ${entityType}`);
+  const e = /^d{1,18}$/.test(entity) ? entity : sqlRef(entity);
+  if (/^"?(qh|qm|qd)"?./.test(e)) throw new Error(`Alias taken inside csamQueueHeldText: ${e}`);
   return `(
-    EXISTS (SELECT 1 FROM "TextScanHold" soh
-      WHERE soh."entityType" = 'ServiceOffering' AND soh."entityId" = ${o}
-        AND ${liveCsamTextHoldText('soh')})
-    OR EXISTS (SELECT 1 FROM "EntityModeration" som
-      WHERE som."entityType" = 'ServiceOffering' AND som."entityId" = ${o}
-        AND som."status" = 'Succeeded' AND 'csam' = ANY(som."triggeredLabels")
-        AND NOT EXISTS (SELECT 1 FROM "TextScanHold" sod
-          WHERE sod."entityType" = 'ServiceOffering' AND sod."entityId" = ${o}
-            AND sod."label" = 'csam' AND sod."status" = 'Dismissed'
-            AND sod."textHash" = som."result"->>'textHash'
-            AND sod."meta"->>'decision' IS DISTINCT FROM 'superseded'))
+    EXISTS (SELECT 1 FROM "TextScanHold" qh
+      WHERE qh."entityType" = '${entityType}' AND qh."entityId" = ${e}
+        AND ${liveCsamTextHoldText('qh')})
+    OR EXISTS (SELECT 1 FROM "EntityModeration" qm
+      WHERE qm."entityType" = '${entityType}' AND qm."entityId" = ${e}
+        AND qm."status" = 'Succeeded' AND 'csam' = ANY(qm."triggeredLabels")
+        AND NOT EXISTS (SELECT 1 FROM "TextScanHold" qd
+          WHERE qd."entityType" = '${entityType}' AND qd."entityId" = ${e}
+            AND qd."label" = 'csam' AND qd."status" = 'Dismissed'
+            AND qd."textHash" = qm."result"->>'textHash'
+            AND qd."meta"->>'decision' IS DISTINCT FROM 'superseded'))
   )`;
 }
 /** Ban reason codes that always remove the owner's media: the minor-safety bans. */

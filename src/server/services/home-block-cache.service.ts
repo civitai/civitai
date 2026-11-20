@@ -18,7 +18,7 @@ import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { colorDomainNames } from '~/shared/constants/domain.constants';
 import { createLogger } from '~/utils/logging';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const homeBlockService = () => import('~/server/services/home-block.service');
 
 const CACHE_EXPIRY = {
