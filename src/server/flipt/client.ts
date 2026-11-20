@@ -559,6 +559,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // surfaces. The link-domain half throws either way — this flag has never governed it.
   USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
 
+  // BOOLEAN ONLY: read with no context into an edge-cached response shared by every visitor, so a
+  // segment or percentage rollout would cache one evaluation for everyone. OFF serves the
+  // profanity list shipped in the bundle; ON serves the moderator-managed ProfanityWord list.
+  PROFANITY_MANAGED_LIST = 'profanity-managed-list',
+
   // Kill switch for the event points engine (src/server/events/points). DEFAULT-OFF: an unknown
   // flag, or a client that never initialised, stops every award, removal, hat sync, signals tick
   // and referee run. Evaluated with no context and one fixed entity, so set the boolean and add no

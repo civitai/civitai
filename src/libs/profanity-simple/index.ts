@@ -47,7 +47,15 @@ export interface ProfanityFilterOptions {
    * 424 shipped words over the top of it would be the opposite of what they asked for.
    */
   moderatorWhitelist: string[] | null;
+  /**
+   * The moderator-managed blocked words (`BlocklistType.ProfanityWord`). Like the whitelist it
+   * REPLACES the shipped list. `null` falls back to the shipped list.
+   */
+  moderatorBlocklist: readonly string[] | null;
 }
+
+/** A managed blocked list and the version that identifies it in caches. */
+export type ManagedProfanityList = { version: string; words: readonly string[] };
 
 export interface ProfanityThresholdConfig {
   /** Word count threshold for considering content as "short" */
@@ -142,13 +150,13 @@ export class SimpleProfanityFilter {
     this.options = {
       replacementStyle: 'asterisk',
       moderatorWhitelist: null,
+      moderatorBlocklist: null,
       ...options,
     };
 
     const whitelist = this.options.moderatorWhitelist ?? whitelistWords;
 
-    // Cache NSFW words once during construction
-    this.nsfwWords = getCachedNsfwWords();
+    this.nsfwWords = getCachedNsfwWords(this.options.moderatorBlocklist);
 
     // Initialize dataset with default English dictionary
     this.dataset = new DataSet();
@@ -504,14 +512,22 @@ export function createProfanityFilter(
 const MAX_CACHED_FILTERS = 2;
 const filtersByWhitelist = new Map<string, SimpleProfanityFilter>();
 export function getProfanityFilter(
-  moderatorWhitelist: string[] | null = null
+  moderatorWhitelist: string[] | null = null,
+  managedBlocklist: ManagedProfanityList | null = null
 ): SimpleProfanityFilter {
   // `null` (no row) and `[]` (emptied by a moderator) mean different things, so they must not
   // collide on the same cache key.
-  const key = moderatorWhitelist === null ? 'no-moderator-row' : `list:${moderatorWhitelist}`;
+  const whitelistKey =
+    moderatorWhitelist === null ? 'no-moderator-row' : `list:${moderatorWhitelist}`;
+  const key = managedBlocklist
+    ? `${whitelistKey}|blocked:${managedBlocklist.version}`
+    : whitelistKey;
   let filter = filtersByWhitelist.get(key);
   if (!filter) {
-    filter = createProfanityFilter({ moderatorWhitelist });
+    filter = createProfanityFilter({
+      moderatorWhitelist,
+      moderatorBlocklist: managedBlocklist?.words ?? null,
+    });
     if (filtersByWhitelist.size >= MAX_CACHED_FILTERS) {
       const oldest = filtersByWhitelist.keys().next().value;
       if (oldest !== undefined) filtersByWhitelist.delete(oldest);

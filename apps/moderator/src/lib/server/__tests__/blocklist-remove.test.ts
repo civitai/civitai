@@ -173,8 +173,14 @@ vi.mock('../mod-activity', () => ({
 /** The moderator making the edit. Attribution is the whole point, so it is never a default. */
 const MOD_ID = 77;
 
-const { removeBlocklistItems, upsertBlocklist, getBlocklistDTO, BlocklistRowMismatchError } =
-  await import('../blocklist.service');
+const {
+  removeBlocklistItems,
+  upsertBlocklist,
+  getBlocklistDTO,
+  BlocklistRowMismatchError,
+  BlocklistNotSeededError,
+} = await import('../blocklist.service');
+const { logToAxiom } = await import('../axiom');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -418,6 +424,31 @@ describe('upsertBlocklist', () => {
       type: 'UsernameExact',
       data: ['scammer', 'phisher', 'spammer'],
     });
+  });
+
+  // A one-entry ProfanityWord row would replace the whole shipped list, and the seed only
+  // inserts when no row exists, so it would never repair it.
+  it('refuses to create the ProfanityWord row, which only the seed may create', async () => {
+    await expect(
+      upsertBlocklist({ userId: MOD_ID, type: 'ProfanityWord', blocklist: ['zorblat'] })
+    ).rejects.toBeInstanceOf(BlocklistNotSeededError);
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it('adds to the ProfanityWord row once it exists, and logs the entries', async () => {
+    rows[12] = { type: 'ProfanityWord', data: ['zorblat'] };
+    const { count } = await upsertBlocklist({
+      userId: MOD_ID,
+      type: 'ProfanityWord',
+      blocklist: ['Quaxle'],
+    });
+    expect(count).toBe(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'profanity-word-list-change',
+        payload: { userId: MOD_ID, activity: 'add', entries: ['quaxle'], countDelta: 1 },
+      })
+    );
   });
 });
 

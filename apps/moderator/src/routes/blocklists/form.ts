@@ -6,6 +6,8 @@
  * nothing in it can be unit-tested without standing up an environment.
  */
 
+import { isUsableBlockedEntry } from '@civitai/mod-utils/profanity/word-rules';
+
 /**
  * `undefined` for an absent field, `null` for anything that is not a usable row id, the number
  * otherwise. The three are distinct and none may collapse into another: `undefined` means "no row
@@ -30,6 +32,7 @@ export function parseRowId(raw: FormDataEntryValue | null): number | undefined |
  * `profanity-simple`), so an entry with a space or punctuation in it can never equal one.
  */
 export function inertEntries(type: string, items: string[]): string[] {
+  if (type === 'ProfanityWord') return items.filter((item) => !isUsableBlockedEntry(item));
   if (type === 'ProfanityBenignWord') return items.filter((item) => /[\s\W]/.test(item));
   // The main app's POI matching keeps only ASCII word characters, spaces and a few separators of
   // a query (`poiCheckOptions` in src/utils/metadata/audit.ts), and drops a name it strips to
@@ -41,6 +44,8 @@ export function inertEntries(type: string, items: string[]): string[] {
 
 export function inertEntriesError(type: string, inert: string[]): string {
   const list = inert.map((i) => `"${i}"`).join(', ');
+  if (type === 'ProfanityWord')
+    return `Each entry needs at least 3 letters, and only letters, spaces, hyphens, apostrophes or | around a word: ${list}.`;
   if (type === 'SemanticSearchPoiRefuse')
     return `Search matching only sees Latin letters, digits and spaces in a name, so these could never match: ${list}.`;
   return `Not a single word, so the filter can never match it: ${list}. Enter one word per entry, without spaces or punctuation.`;

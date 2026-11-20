@@ -6,6 +6,7 @@ import { formatDiscordTimestamp, normalizeTimestampStyle } from '~/utils/timesta
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { useCurrentDomainHosts } from '~/hooks/useCurrentDomainHref';
 import { getSanitizedRenderHtml } from './sanitize-render-html';
+import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 import classes from './RenderHtml.module.scss';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import clsx from 'clsx';
@@ -35,11 +36,14 @@ export function RenderHtml({
   const { allowed: thirdPartyAllowed } = useThirdPartyConsent();
   const contentRef = useRef<HTMLDivElement>(null);
   const { host, ownHosts } = useCurrentDomainHosts();
+  const { profanityBlocklist } = useBenignPhrases();
+  const maskProfanity = withProfanityFilter && blurNsfw;
 
   html = useMemo(
     () =>
       getSanitizedRenderHtml(html, {
-        maskProfanity: withProfanityFilter && blurNsfw,
+        maskProfanity,
+        profanityBlocklist: maskProfanity ? profanityBlocklist : null,
         allowStickers,
         allowCustomStyles,
         colorScheme,
@@ -50,11 +54,11 @@ export function RenderHtml({
       }),
     [
       html,
-      blurNsfw,
+      maskProfanity,
+      profanityBlocklist,
       allowCustomStyles,
       colorScheme,
       withMentions,
-      withProfanityFilter,
       thirdPartyAllowed,
       allowStickers,
       host,

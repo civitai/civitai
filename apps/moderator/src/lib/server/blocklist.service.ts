@@ -127,6 +127,22 @@ export class BlocklistRowMismatchError extends Error {
   }
 }
 
+/** Types whose row is created only by a hand-applied seed, never by a moderator's first add. */
+const SEEDED_TYPES: readonly string[] = ['ProfanityWord'];
+
+export class BlocklistNotSeededError extends Error {
+  constructor() {
+    super('This list has not been seeded yet.');
+    this.name = 'BlocklistNotSeededError';
+  }
+}
+
+// The list replaces a shipped one site-wide, so each edit is logged with its entries.
+function logListChange(type: string, change: Record<string, unknown>) {
+  if (type !== 'ProfanityWord') return;
+  void logToAxiom({ name: 'profanity-word-list-change', type: 'info', payload: change });
+}
+
 /** What a write did, and whether readers will see it before the cache TTL expires. */
 export type BlocklistWriteResult = { count: number; cacheStale: boolean };
 
@@ -170,6 +186,9 @@ export async function upsertBlocklist({
       // An `id` that names no row of this type is a stale tab or a hand-crafted post. Refuse; do
       // NOT fall through to an insert, which would add a second row for the type.
       if (id !== undefined) return undefined;
+      // A first add would create a row holding only that entry, which the seed then skips and
+      // which replaces the whole shipped list.
+      if (SEEDED_TYPES.includes(type)) throw new BlocklistNotSeededError();
       const inserted = await trx
         .insertInto('Blocklist')
         .values({ type, data: items, updatedAt: new Date() })
@@ -203,6 +222,7 @@ export async function upsertBlocklist({
     entityId: added.rowId,
     activity: 'add',
   });
+  logListChange(type, { userId, activity: 'add', entries: items, countDelta: added.count });
   return { count: added.count, cacheStale };
 }
 
@@ -258,6 +278,7 @@ export async function removeBlocklistItems({
     entityId: removed.rowId,
     activity: 'remove',
   });
+  logListChange(type, { userId, activity: 'remove', entries: lower, countDelta: -removed.count });
   return { count: removed.count, cacheStale };
 }
 

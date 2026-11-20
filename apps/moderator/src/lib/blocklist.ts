@@ -13,6 +13,7 @@ export const BLOCKLIST_TYPES = [
   'AppProtectedBrandTerm',
   'SemanticSearchPoiRefuse',
   'SemanticSearchMinorSafe',
+  'ProfanityWord',
 ] as const;
 
 /** The semantic search query rule types, read by the main app's query audit. */
@@ -79,6 +80,11 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
     ' for everyone but moderators, and refused for moderators. Matched as whole words, plurals' +
     ' included, case-insensitive. Use the dry run below to check a query; changes apply within a few' +
     ' minutes.',
+  ProfanityWord:
+    'Words the profanity filter masks in comments and refuses in search on civitai.com. This list REPLACES the one shipped with the site (it was seeded from it), so removing an entry here really does remove it.' +
+    ' Matching is inside words too, so a short entry can mask parts of many ordinary words: each entry needs at least 3 letters, and wrap it in | (as in |word|) to match it only as a whole word.' +
+    ' Entries are publicly readable, like the shipped list: never add names, handles or other personal details.' +
+    ' Takes effect in search and comments within about 20 minutes. Model and bounty checks still use the shipped list.',
   AppProtectedBrandTerm:
     'Brand, product and company names that flag an app. The agent review flags a submission whose' +
     ' name or slug contains one (look-alike spellings included) and sends it to the normal review' +

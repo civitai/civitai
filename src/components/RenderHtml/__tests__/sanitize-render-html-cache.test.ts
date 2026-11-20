@@ -17,6 +17,7 @@ import {
 
 const BASE: RenderHtmlSanitizeOptions = {
   maskProfanity: false,
+  profanityBlocklist: null,
   allowStickers: false,
   allowCustomStyles: true,
   colorScheme: 'dark',
@@ -29,6 +30,7 @@ const BASE: RenderHtmlSanitizeOptions = {
 /** One alternative value per option, each different from BASE. */
 const FLIPPED: { [K in keyof RenderHtmlSanitizeOptions]: RenderHtmlSanitizeOptions[K] } = {
   maskProfanity: true,
+  profanityBlocklist: { version: '1:42', words: ['zorblat'] },
   allowStickers: true,
   allowCustomStyles: false,
   colorScheme: 'light',
