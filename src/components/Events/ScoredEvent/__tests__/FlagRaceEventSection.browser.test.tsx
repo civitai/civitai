@@ -6,7 +6,8 @@ const h = vi.hoisted(() => ({
   flagRace: true,
   row: null as { event: string; summary: { flags: { imageId: number }[] } } | null,
   images: [] as { id: number }[],
-  isError: false,
+  // What the server served before the viewer's hidden preferences; defaults to `images`.
+  served: null as { id: number }[] | null,
   asked: [] as (number[] | undefined)[],
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -21,7 +22,7 @@ vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageUtils>()),
   useQueryImages: (filters: { ids?: number[] }) => {
     h.asked.push(filters.ids);
-    return { images: h.images, isLoading: false, isError: h.isError };
+    return { images: h.images, flatData: h.served ?? h.images, isLoading: false };
   },
 }));
 vi.mock('~/components/HatTurf/FlagRace/FlagRacePanel', () => ({
@@ -57,7 +58,7 @@ beforeEach(() => {
   h.row = day(30, 10, 20);
   h.images = [{ id: 10 }, { id: 20 }, { id: 30 }];
   h.asked = [];
-  h.isError = false;
+  h.served = null;
 });
 afterEach(async () => {
   await cleanup();
@@ -73,13 +74,15 @@ describe('Flag Race on the event page', () => {
   });
 
   test('stands a hidden card in, in its place, for a flag the viewer may not see', async () => {
-    // 10's creator has blocked the viewer, so the image query leaves it out.
+    // 10's creator has blocked the viewer: served, then taken out by their hidden preferences.
+    h.served = [{ id: 30 }, { id: 10 }, { id: 20 }];
     h.images = [{ id: 20 }, { id: 30 }];
     await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
     expect(cards()).toEqual(['30', 'hidden', '20']);
   });
 
   test('keeps the panel and race so far when the viewer may see none of the flags', async () => {
+    h.served = [{ id: 10 }, { id: 20 }, { id: 30 }];
     h.images = [];
     await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
     expect(section()).not.toBeNull();
@@ -88,9 +91,15 @@ describe('Flag Race on the event page', () => {
     expect(cards()).toEqual(['hidden', 'hidden', 'hidden']);
   });
 
+  test('a flag a moderator removed (not served) gets no card, hidden or otherwise', async () => {
+    h.served = [{ id: 30 }, { id: 20 }];
+    h.images = [{ id: 30 }, { id: 20 }];
+    await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
+    expect(cards()).toEqual(['30', '20']);
+  });
+
   test('a failed image fetch shows no hidden cards, only the flags it did get', async () => {
     h.images = [{ id: 30 }];
-    h.isError = true;
     await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
     expect(document.querySelector('[data-testid="panel"]')).not.toBeNull();
     expect(cards()).toEqual(['30']);

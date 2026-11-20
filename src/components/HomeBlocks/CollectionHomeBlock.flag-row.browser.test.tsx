@@ -196,4 +196,13 @@ describe('the Flag Race home row for a viewer a flag creator has blocked', () =>
     expect(cards()).toBe(0);
     expect(hiddenCards()).toBe(2);
   });
+
+  test('a flag the collection no longer serves (removed by a moderator) gets no hidden card', async () => {
+    h.summary = day([101, 102, 103]);
+    h.items = byCreator([101, 102], () => 5);
+    block();
+    await vi.waitFor(() => expect(cards()).toBe(2));
+    expect(hiddenCards()).toBe(0);
+    expect(panel()).not.toBeNull();
+  });
 });
