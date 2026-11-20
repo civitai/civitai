@@ -122,9 +122,11 @@ globalThis.defineRemixApp = (app) => app;
     }
     return text;
   };
-  // A choice's option value is the app's: it crosses as an answer only if it is one.
+  // A choice's option value is the app's: it crosses as an answer only if the log can carry it back.
   const isAnswer = (v) =>
-    typeof v === 'string' ? v.length <= ${MAX_REMIX_ANSWER_CHARS} : typeof v === 'number' && isFinite(v);
+    typeof v === 'string'
+      ? v.length <= ${MAX_REMIX_ANSWER_CHARS}
+      : typeof v === 'number' && isFinite(v) && v >= 0 && v % 1 === 0;
   const firstAnswer = (spec) =>
     spec.kind === 'choice' ? spec.options[0].value : spec.kind === 'pick' ? 0 : 'remix';
   return (app, input) => {
@@ -196,6 +198,8 @@ globalThis.defineRemixApp = (app) => app;
       if (!settled) return '{"pending":true}';
       if (failed) throw value;
       if (next < log.length) return '{"short":true}';
+      // A getter run while the result is written must not record a step the log check missed.
+      stopped = true;
       return toJson({ effects, done: { outputs: value } });
     };
   };

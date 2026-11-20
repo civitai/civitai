@@ -23,9 +23,10 @@ export class PoolOverloadedError extends Error {
 /** A worker died or could not evaluate. Answered 500 (`hook_unavailable`). */
 export class WorkerCrashedError extends Error {}
 /**
- * The backstop terminated the call's worker. A RUNNER fault, answered 500: the in-VM interrupt
- * is what bounds a hook's time, and the backstop firing means it did not (native work that never
- * polled it, or a worker starved of CPU), so the author is not blamed with `timeout`.
+ * The backstop terminated the call's worker. For a hook, a RUNNER fault answered 500: the in-VM
+ * interrupt is what bounds a hook's time, and the backstop firing means it did not (native work
+ * that never polled it, or a worker starved of CPU), so the author is not blamed with `timeout`.
+ * A remix call answers 423 `quarantined` instead (see app.ts).
  */
 export class BackstopError extends Error {}
 /** The pool is shutting down. */

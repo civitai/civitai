@@ -305,8 +305,8 @@ export function loadModule(
 
   // quickjs-ng's base objects include non-ES globals: `performance` (a high-resolution clock, a
   // timing side channel), `queueMicrotask` (a scheduler) and `InternalError` (above). None is
-  // needed by a pure check, so all three are removed before the hook runs. `Date` stays: it is
-  // ECMAScript.
+  // needed by a pure check, so all three are removed before the hook runs. A hook keeps `Date` (it
+  // is ECMAScript); the remix prelude removes it.
   const strip = ctx.evalCode(
     'delete globalThis.performance; delete globalThis.queueMicrotask; delete globalThis.InternalError;' +
       prelude,

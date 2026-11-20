@@ -236,7 +236,7 @@ All bounds live in `src/limits.ts`.
 - **Why a backstop.** The interrupt handler runs only when QuickJS polls it. A single native
   operation does not: an allocation loop near the heap cap was measured running 1.3 s with one
   poll against a 50 ms deadline. The backstop bounds that case, and answers it as a runner fault
-  (500 `worker_terminated`).
+  (500 `worker_terminated`); a remix call answers 423 `quarantined` (below).
 - Worker pool: `POOL_SIZE` workers, one evaluation each, plus a FIFO queue of `MAX_QUEUE`
   (default 64); past it the answer is 503. The `POOL_SIZE` default is the container's CPU quota
   (cgroup v2 `/sys/fs/cgroup/cpu.max`, rounded up, capped at the cores Node sees), else

@@ -297,6 +297,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         });
       } catch (err) {
         if (err instanceof BackstopError) {
+          // A call admitted before another call tripped the quarantine is the same fault.
+          if (isQuarantined(key)) return refuseQuarantined(reply, req, body.appId, false);
           // Expired entries go here too, or apps that tripped once and never called again pile up.
           for (const [k, until] of quarantinedUntil)
             if (nowMs() >= until) quarantinedUntil.delete(k);

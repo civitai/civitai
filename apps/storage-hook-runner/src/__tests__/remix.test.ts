@@ -162,20 +162,23 @@ export default defineRemixApp({
     ['an object', '{ nested: true }'],
     ['a string over the answer cap', `'x'.repeat(${MAX_REMIX_ANSWER_CHARS + 1})`],
     ['a non-finite number', 'Infinity'],
+    // The log carries a number answer back only as a non-negative integer.
+    ['a negative number', '-1'],
+    ['a fraction', '2.5'],
     ['undefined', 'undefined'],
   ])("refuses an option whose value is %s as the app's invalid_result", async (_what, value) => {
     const [result] = await results(choiceOf(value), { autoAnswer: 'first' });
     expect(result).toMatchObject({ cause: 'invalid_result' });
   });
 
-  it('answers with an option value at the cap, or a finite number', async () => {
+  it('answers with an option value at the cap, or a non-negative integer', async () => {
     const [atCap] = await results(choiceOf(`'x'.repeat(${MAX_REMIX_ANSWER_CHARS})`), {
       autoAnswer: 'first',
     });
     expect(atCap).toMatchObject({ done: { outputs: [] } });
     expect((atCap.effects as { answer: string }[])[0].answer).toHaveLength(MAX_REMIX_ANSWER_CHARS);
-    const [num] = await results(choiceOf('2.5'), { autoAnswer: 'first' });
-    expect((num.effects as { answer: number }[])[0].answer).toBe(2.5);
+    const [num] = await results(choiceOf('2'), { autoAnswer: 'first' });
+    expect((num.effects as { answer: number }[])[0].answer).toBe(2);
   });
 });
 
@@ -251,6 +254,28 @@ export default defineRemixApp({
 });`;
     const [result] = await results(forger);
     expect(result).toEqual({ effects: [expect.objectContaining({ type: 'workflow' })] });
+  });
+
+  it('records no step a getter takes while a finished result is written', async () => {
+    const app = (getter: boolean) => `
+export default defineRemixApp({
+  async run(ctx) {
+    const request = { kind: 'upscale', image: ctx.source, scale: 2 };
+    ${
+      getter
+        ? "Object.defineProperty(request, 'extra', { enumerable: true, get() { ctx.workflow({ kind: 'upscale', image: ctx.source, scale: 2 }); return 1; } });"
+        : ''
+    }
+    await ctx.workflow(request);
+    return [];
+  },
+});`;
+    const base = [{ type: 'workflow', result: { workflowId: 'w1', images: [] } }];
+    // POSITIVE CONTROL: without the getter the same app finishes over its log.
+    const [plain] = await results(app(false), { base });
+    expect(plain).toMatchObject({ done: { outputs: [] } });
+    const [result] = await results(app(true), { base });
+    expect(result.effects).toHaveLength(1);
   });
 
   it('still reports a run that never settles, whatever Promise.prototype.then claims', async () => {
@@ -425,6 +450,31 @@ describe('quarantine after the backstop', () => {
       await p.close();
     }
   });
+});
+
+it('counts one trip when calls admitted together all outrun the interrupt', async () => {
+  const OUTRUNS = `export default defineRemixApp({ async run() {
+  const a = []; a.length = 2 ** 32 - 1; a.includes(1); return [];
+} });`;
+  const p = await HookPool.start({ size: 2 });
+  const a = buildApp({ secret: SECRET, mode: 'remix', pool: p, metrics: createMetrics() });
+  try {
+    const body = JSON.stringify({ ...replayBody(OUTRUNS), appId: 'remix-together' });
+    const call = () =>
+      a.inject({
+        method: 'POST',
+        url: '/v1/remix/replay',
+        headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },
+        payload: body,
+      });
+    const answers = await Promise.all([call(), call()]);
+    expect(answers.map((res) => res.statusCode)).toEqual([423, 423]);
+    expect(p.stats().terminated).toBe(2);
+    expect(answers.map((res) => res.json().error.tripped).sort()).toEqual([false, true]);
+  } finally {
+    await a.close();
+    await p.close();
+  }
 });
 
 describe('remix mode', () => {
