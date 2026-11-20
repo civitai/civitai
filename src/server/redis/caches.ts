@@ -846,7 +846,7 @@ const createUserContentCountCache = <T extends Record<string, any>>(
 
 // Individual cache objects for each user content counter
 type UserModelCount = { id: number; modelCount: number };
-export const userModelCountCache = createUserContentCountCache<UserModelCount>(
+const userModelCountAllCache = createUserContentCountCache<UserModelCount>(
   'modelCount',
   async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
@@ -890,6 +890,18 @@ export const userModelCountPublicCache = createUserContentCountCache<UserModelCo
     GROUP BY "userId"
   `
 );
+// A rating change can move a model in or out of the sfw/public counts while 'all' stays put,
+// so every model-count refresh covers all three variants.
+export const userModelCountCache = {
+  ...userModelCountAllCache,
+  refresh: async (userIds: number | number[]) => {
+    await Promise.all([
+      userModelCountAllCache.refresh(userIds),
+      userModelCountSfwCache.refresh(userIds),
+      userModelCountPublicCache.refresh(userIds),
+    ]);
+  },
+};
 
 type UserPostCount = { id: number; postCount: number };
 export const userPostCountCache = createUserContentCountCache<UserPostCount>(
@@ -1450,8 +1462,6 @@ export const userContentOverviewCache = {
     const ids = Array.isArray(userIds) ? userIds : [userIds];
     await Promise.all([
       userModelCountCache.refresh(ids),
-      userModelCountSfwCache.refresh(ids),
-      userModelCountPublicCache.refresh(ids),
       userPostCountCache.refresh(ids),
       userPostCountSfwCache.refresh(ids),
       userPostCountPublicCache.refresh(ids),
