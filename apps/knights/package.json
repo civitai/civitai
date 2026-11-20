@@ -25,6 +25,7 @@
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/flipt": "workspace:*",
+    "@civitai/moderation": "workspace:*",
     "@civitai/notifications": "workspace:*",
     "@civitai/redis": "workspace:*",
     "@civitai/shared": "workspace:*",
