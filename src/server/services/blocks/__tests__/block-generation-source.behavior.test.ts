@@ -120,9 +120,9 @@ function workflow(over: Record<string, unknown> = {}) {
         $type: 'textToImage',
         output: {
           images: [
-            { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320 },
-            { url: OFF_HOST_OUTPUT, available: true, width: 640, height: 320 },
-            { url: SECOND_OUTPUT, available: true, width: 640, height: 320 },
+            { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            { url: OFF_HOST_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
           ],
         },
       },

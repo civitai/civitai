@@ -447,12 +447,12 @@ describe("'ceiling' and 'unrated': never charged", () => {
     expectNothingSpent(f);
   });
 
-  it("'unrated' on an SFW domain is treated exactly like 'ceiling': link out, no charge", async () => {
+  it("'unrated' on an SFW domain is never linked out, since no domain can show it, and nothing is charged", async () => {
     const plan = planBlockOutputUnlock(unratedSample(), SFW_DOMAIN, 0, NO_VIEW);
     expect(plan).toStrictEqual({
-      kind: 'link-out',
+      kind: 'unavailable',
       position: 0,
-      message: OUTPUT_UNLOCK_LINK_OUT_MESSAGE,
+      message: 'This output cannot be shown here.',
     });
     const f = fakes([unratedSample]);
     await rejection(unlockBlockOutput({ ...request(SFW_DOMAIN, 0), expectedTotal: TOTAL }, f));
@@ -474,11 +474,11 @@ describe("'ceiling' and 'unrated': never charged", () => {
     expectNothingSpent(f);
   });
 
-  it("'unrated' with the viewer's own level cutting it on red: the same settings pointer", () => {
+  it("'unrated' with the viewer's own level cutting it on red: no settings pointer, since no level shows it", () => {
     expect(planBlockOutputUnlock(unratedSample(), RED_VIEWER_SFW, 0, NO_VIEW)).toStrictEqual({
       kind: 'unavailable',
       position: 0,
-      message: OUTPUT_UNLOCK_SETTINGS_MESSAGE,
+      message: 'This output cannot be shown here.',
     });
   });
 

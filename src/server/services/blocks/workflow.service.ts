@@ -347,7 +347,12 @@ function classifyOutputs(
     }
     return view.serving
       ? applyServingRules(output, m, { neverRatedVideoStep: neverRatedVideo })
-      : applyServingOffRules(output, m, { neverRatedVideoStep: neverRatedVideo });
+      : applyServingOffRules(
+          output,
+          m,
+          { neverRatedVideoStep: neverRatedVideo },
+          { neverRated: m.neverRated === true }
+        );
   });
 }
 

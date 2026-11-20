@@ -40,6 +40,7 @@ function blob(url: string, available = true, type = 'image'): Blob {
     id: url.split('/').pop() as string,
     available,
     url,
+    ...(type === 'image' ? { nsfwLevel: 'pg' } : {}),
     urlExpiresAt: '2026-10-06T00:00:00Z',
     jobId: 'job_1',
     nsfwLevel: 'pg',
@@ -150,7 +151,7 @@ describe('pass-through `training` step — the checkpoint never rides out', () =
 });
 
 describe('pass-through `imageResourceTraining` step — the plain-string checkpoint', () => {
-  it('drops the checkpoint, lifts the sample urls to imageUrls, and forwards the rest', () => {
+  it('drops the checkpoint, restricts the never-rated sample urls, and forwards the rest', () => {
     const snap = snapshotFromWorkflow(
       workflow('imageResourceTraining', imageResourceTrainingOutput()),
       TEST_OUTPUT_CEILING
@@ -170,17 +171,17 @@ describe('pass-through `imageResourceTraining` step — the plain-string checkpo
         },
       },
     ]);
-    expect(snap.imageUrls).toEqual([LEGACY_SAMPLE_URL]);
+    expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+    expect(wire).not.toContain(LEGACY_SAMPLE_URL);
   });
 
-  it('surfaces the sample urls on AppWorkflow.images (the publish path), never the checkpoint', () => {
+  it('never surfaces the never-rated samples or the checkpoint on AppWorkflow.images (the publish path)', () => {
     const projected = projectAppWorkflow(
       workflow('imageResourceTraining', imageResourceTrainingOutput()),
       TEST_OUTPUT_CEILING
     );
-    expect(projected.images).toEqual([
-      { url: LEGACY_SAMPLE_URL, width: null, height: null, nsfwLevel: null },
-    ]);
+    expect(projected.images).toEqual([]);
+    expect(JSON.stringify(projected)).not.toContain(LEGACY_CKPT_URL);
   });
 });
 

@@ -420,8 +420,9 @@ describe('🔴 F1 — unrated outputs are held, at every level', () => {
     expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
     expect(snap).not.toHaveProperty('ratingPending');
     expect(JSON.stringify(snap)).not.toContain('sample.png');
+    // A mature token too: no rating will ever come, and nothing is left to judge it later.
     expect(snapshotFromWorkflow(training, MATURE).outputs).toStrictEqual([
-      { url: 'https://cdn/sample.png' },
+      { restricted: true, reason: 'unrated' },
     ]);
   });
 });

@@ -309,6 +309,17 @@ describe('🔴 the poll and the route agree on what serving hides', () => {
     expect(JSON.stringify(snap)).not.toContain('orch.example');
   });
 
+  it('with serving off an unrated image is held, for an all-ratings viewer too', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('u0', null)])]), OFF);
+    expect(snap.outputs).toStrictEqual([{ pending: true }]);
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('CONTROL: with serving off a rated image keeps its url', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('r0', 'pg')])]), OFF);
+    expect(snap.imageUrls).toStrictEqual([blobUrl('r0')]);
+  });
+
   it('with serving off an output of an unknown blob type is restricted, as with serving on', () => {
     const shown = { url: blobUrl('u1') } as const;
     const slot = { url: blobUrl('u1'), type: 'movie', nsfwLevel: null };

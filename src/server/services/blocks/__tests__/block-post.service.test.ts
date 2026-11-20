@@ -373,6 +373,7 @@ describe('resolveOwnedWorkflowOutputs', () => {
             {
               url: 'https://orchestration.civitai.com/v2/blobs/a.jpg',
               available: true,
+              nsfwLevel: 'pg',
               width: 1,
               height: 1,
             },
@@ -512,10 +513,17 @@ describe('resolveOwnedWorkflowOutputs', () => {
           $type: 'textToImage',
           output: {
             images: [
-              { url: 'https://evil.example/a.jpg', available: true, width: 1, height: 1 },
+              {
+                url: 'https://evil.example/a.jpg',
+                available: true,
+                nsfwLevel: 'pg',
+                width: 1,
+                height: 1,
+              },
               {
                 url: 'https://orchestration.civitai.com/v2/blobs/ok.jpg',
                 available: true,
+                nsfwLevel: 'pg',
                 width: 1,
                 height: 1,
               },
@@ -551,10 +559,17 @@ describe('an off-allowlist output REFUSES the index that named it — never subs
           $type: 'textToImage',
           output: {
             images: [
-              { url: 'https://evil.example/a.jpg', available: true, width: 1, height: 1 },
+              {
+                url: 'https://evil.example/a.jpg',
+                available: true,
+                nsfwLevel: 'pg',
+                width: 1,
+                height: 1,
+              },
               {
                 url: 'https://orchestration.civitai.com/v2/blobs/ok.jpg',
                 available: true,
+                nsfwLevel: 'pg',
                 width: 2,
                 height: 3,
               },
@@ -621,16 +636,24 @@ describe('an off-allowlist output REFUSES the index that named it — never subs
             $type: 'textToImage',
             output: {
               images: [
-                { url: 'https://evil.example/a.jpg', available: true, width: 1, height: 1 },
+                {
+                  url: 'https://evil.example/a.jpg',
+                  available: true,
+                  nsfwLevel: 'pg',
+                  width: 1,
+                  height: 1,
+                },
                 {
                   url: 'https://orchestration.civitai.com/v2/blobs/b.jpg',
                   available: true,
+                  nsfwLevel: 'pg',
                   width: 2,
                   height: 3,
                 },
                 {
                   url: 'https://orchestration.civitai.com/v2/blobs/c.jpg',
                   available: true,
+                  nsfwLevel: 'pg',
                   width: 5,
                   height: 7,
                 },
@@ -672,6 +695,7 @@ describe('an off-allowlist output REFUSES the index that named it — never subs
               images: Array.from({ length: n }, (_, i) => ({
                 url: `https://evil.example/${i}.jpg`,
                 available: true,
+                nsfwLevel: 'pg',
                 width: 1,
                 height: 1,
               })),
@@ -909,6 +933,7 @@ describe('resolveBlockPostSources — the image cap REFUSES rather than truncati
             images: Array.from({ length: n }, (_, i) => ({
               url: `https://orchestration.civitai.com/v2/blobs/${i}.jpg`,
               available: true,
+              nsfwLevel: 'pg',
               width: 1,
               height: 1,
             })),
