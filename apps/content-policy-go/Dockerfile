@@ -17,6 +17,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS runtime
 COPY --from=build /out/content-policy-go /content-policy-go
 USER nonroot:nonroot
-# 8080 (CONTENT_POLICY_ADDR): POST /v1/decide, GET /healthz, /readyz and /metrics.
-EXPOSE 8080
+# 8080 (CONTENT_POLICY_ADDR): POST /v1/decide, GET /healthz and /readyz.
+# 9090 (CONTENT_POLICY_METRICS_ADDR): GET /metrics only.
+EXPOSE 8080 9090
 ENTRYPOINT ["/content-policy-go"]

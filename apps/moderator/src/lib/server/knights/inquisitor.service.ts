@@ -11,8 +11,17 @@ import {
   type KnightsEscalationReason,
   type KnightsWritebackReason,
 } from '@civitai/shared/new-order';
+import { evidenceHeldUrlSql, reportListedUrlSql } from '@civitai/shared/held-url';
+import {
+  retractedImageWhereSql,
+  retractedSuspectSql,
+  retractedTier,
+} from '@civitai/shared/retracted-media-tier';
 import { INQUISITOR_FILTERS, type InquisitorFilter } from '$lib/knights/inquisitor-filters';
+import { BLOCKED_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
 import { isRatingLevel } from '$lib/nsfw-levels';
+import { logToAxiom } from '../axiom';
+import { blockedForPatterns } from '../blocked-for-patterns';
 import { dbRead, dbWrite } from '../db';
 import { updateImageNsfwLevel } from '../image-nsfw-level';
 import {
@@ -49,10 +58,14 @@ export type InquisitorItem = {
   locked: boolean;
   hasBlockMarker: boolean;
   blockedFor: string | null;
+  /** Where the page may draw the image from: the public CDN, `/api/retracted-media`, or nowhere. */
+  media: InquisitorMedia;
   createdAt: Date;
   votes: InquisitorVote[];
   blockReason: ConsensusBlockReason | null;
 };
+
+export type InquisitorMedia = 'cdn' | 'retracted' | 'restricted';
 
 type QuestionOption = { value: string; label: string };
 
@@ -205,6 +218,10 @@ export async function getInquisitorQueue(
     .where('weight', '>', 0)
     .execute();
 
+  const viewable = await blockedImagesAnyModeratorMaySee(
+    items.filter((item) => item.ingestion === 'Blocked').map((item) => item.imageId)
+  );
+
   return items.map(({ options, ingestion, reason, escalationReason, ...item }) => {
     const labels = new Map(parseOptions(options).map((option) => [option.value, option.label]));
     return {
@@ -212,6 +229,11 @@ export async function getInquisitorQueue(
       reason: narrow(KNIGHTS_WRITEBACK_REASONS, reason),
       escalationReason: narrow(KNIGHTS_ESCALATION_REASONS, escalationReason),
       hasBlockMarker: hasBlockMarker({ ingestion, blockedFor: item.blockedFor }),
+      media: (ingestion !== 'Blocked'
+        ? 'cdn'
+        : viewable.has(item.imageId)
+        ? 'retracted'
+        : 'restricted') satisfies InquisitorMedia,
       blockReason: consensusBlockReason(blockedVotes.filter((vote) => vote.itemId === item.id)),
       votes: tallyByAnswer(
         tallies.filter((tally) => tally.itemId === item.id),
@@ -219,6 +241,43 @@ export async function getInquisitorQueue(
       ),
     };
   });
+}
+
+/**
+ * The blocked images `/api/retracted-media` would serve to a moderator without the CSAM page's grant,
+ * by the same shared predicates, before its scanner check (the route still makes that one, and logs
+ * the view). Anything else is restricted media: it keeps its existing access path, and this page
+ * fetches it from nowhere, whatever the route's settings.
+ */
+async function blockedImagesAnyModeratorMaySee(imageIds: number[]): Promise<Set<number>> {
+  if (imageIds.length === 0) return new Set();
+  try {
+    return await readViewable(imageIds);
+  } catch (e) {
+    // Every blocked row is restricted rather than the whole queue failing to load.
+    void logToAxiom({
+      name: 'inquisitor-media-read-failed',
+      type: 'error',
+      payload: { message: e instanceof Error ? e.message : String(e) },
+    });
+    return new Set();
+  }
+}
+
+async function readViewable(imageIds: number[]): Promise<Set<number>> {
+  const rows = await dbWrite
+    .selectFrom('Image as i')
+    .select(['i.id', 'i.blockedFor'])
+    .select(sql<boolean>`${sql.raw(retractedSuspectSql('i'))}`.as('suspect'))
+    .where('i.id', 'in', imageIds)
+    .where(sql<boolean>`${sql.raw(retractedImageWhereSql('i'))}`)
+    .where(sql<boolean>`NOT ${sql.raw(reportListedUrlSql('i."url"'))}`)
+    .where(sql<boolean>`NOT ${sql.raw(evidenceHeldUrlSql('i."url"'))}`)
+    .execute();
+  const patterns = blockedForPatterns();
+  return new Set(
+    rows.filter((row) => retractedTier(row, patterns) === 'plain').map((row) => row.id)
+  );
 }
 
 export type RulingOutcome = { ok: true } | { ok: false; error: string };
@@ -310,11 +369,7 @@ export async function ruleOnInquisitorItem(
       .executeTakeFirst();
     if (image && hasBlockMarker(image) && level !== NsfwLevel.Blocked) {
       await release(itemId, moderatorId, now);
-      return {
-        ok: false,
-        error:
-          'This image is blocked, and rating it does not unblock it. Rule Blocked, or restore the image from the image queue first and rule again.',
-      };
+      return { ok: false, error: BLOCKED_RATING_REFUSED };
     }
 
     await updateImageNsfwLevel({

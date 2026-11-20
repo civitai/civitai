@@ -11,6 +11,7 @@ import {
   reviewBatchHash,
   reviewBatchLink,
   SCANNER_HITS_SQL,
+  scannerCsamVerdict,
   scannerHeldIds,
   scannerVerdict,
   type ImageSignalRow,
@@ -53,7 +54,7 @@ export async function readImageSignals(ids: number[]): Promise<Map<number, Image
   return new Map(rows.map((row) => [row.id, row]));
 }
 
-type ScannerRow = { contentHash: string; hit: number };
+type ScannerRow = { contentHash: string; hit: number; csamHit: number };
 
 /** The scanner's ClickHouse rows for `ids`; null when ClickHouse cannot answer in time. */
 async function readScannerRows(ids: number[]): Promise<ScannerRow[] | null> {
@@ -95,6 +96,12 @@ export async function readScannerHits(
 export async function readScannerVerdict(imageId: number) {
   const rows = await readScannerRows([imageId]);
   return rows ? scannerVerdict(imageId, rows) : null;
+}
+
+/** One image's CSAM-label verdict (`scannerCsamVerdict`); null when the scanner cannot be read. */
+export async function readScannerCsamVerdict(imageId: number) {
+  const rows = await readScannerRows([imageId]);
+  return rows ? scannerCsamVerdict(imageId, rows) : null;
 }
 
 /** Whether the batch is declared suspect: by its minter, or by having no source card. */

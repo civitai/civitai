@@ -41,7 +41,6 @@ vi.mock('~/server/services/feature-flags.service', () => ({
 }));
 vi.mock('~/server/services/retracted-media.service', () => ({
   getRetractedMedia,
-  NEEDS_CSAM_QUEUE: 'needs-csam-queue',
 }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 vi.mock('~/server/utils/public-api-rate-limit', () => ({ checkFixedWindow }));
@@ -144,15 +143,6 @@ describe('/api/mod/retracted-media refusals', () => {
     expect(res.headers['cache-control']).toBe('private, no-store');
     expect(getGetUrlByKey).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('tells a moderator an image with no scanner verdict needs CSAM-queue access', async () => {
-    getRetractedMedia.mockResolvedValue('needs-csam-queue');
-    const res = await call();
-    expect(res.statusCode).toBe(403);
-    expect(JSON.stringify(res.body)).toContain('Needs CSAM-queue access');
-    expect(res.headers['cache-control']).toBe('private, no-store');
-    expect(getGetUrlByKey).not.toHaveBeenCalled();
   });
 
   it('answers a probe with eligibility alone: no storage, no audit row', async () => {

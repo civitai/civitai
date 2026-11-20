@@ -15,6 +15,7 @@
     coverBlurred = false,
     cover = true,
     coverIcon,
+    coverMedia,
     verdict,
     error,
     onselect,
@@ -35,6 +36,8 @@
     /** False for items with no image, which drops the thumbnail slot. */
     cover?: boolean;
     coverIcon?: Snippet;
+    /** The thumbnail drawn by the page, for media `EdgeMedia` alone cannot show. */
+    coverMedia?: Snippet;
     verdict: string | undefined;
     error: string | undefined;
     onselect: () => void;
@@ -69,6 +72,8 @@
             width={96}
             class={cn('size-full object-cover', coverBlurred && 'scale-125 blur-md')}
           />
+        {:else if coverMedia}
+          {@render coverMedia()}
         {:else if coverIcon}
           <div class="grid size-full place-items-center text-dark-2 [&_svg]:size-[18px]">
             {@render coverIcon()}

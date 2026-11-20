@@ -10,7 +10,12 @@
   import { LINK_CLASS, num } from '$lib/format';
   import { optimisticEnhancer } from '$lib/form-action';
   import { submitDecisionForm } from '$lib/triage/decision-form';
-  import { isDialogOpen, isTypingTarget, triageKeyAction } from '$lib/triage/keys';
+  import {
+    isDialogOpen,
+    isTypingTarget,
+    refusedDecisionKey,
+    triageKeyAction,
+  } from '$lib/triage/keys';
   import { reasonPicker } from '$lib/triage/reason-picker.svelte';
   import { failureBanner, failureMessage, nextUndecided, step, type Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
@@ -49,6 +54,7 @@
     settled,
     decisionActions = ['uphold', 'overturn'],
     ondecision,
+    ondecisionrefused,
     pinned = null,
     current = $bindable(null),
     outcomeFor = (_result, outcome) => outcome,
@@ -80,6 +86,8 @@
     decisionActions?: readonly string[];
     /** Handles a decision key itself instead of submitting that decision's form. */
     ondecision?: (row: R, index: number) => void;
+    /** A decision key pressed while that decision is disabled for the row, so the page can say why. */
+    ondecisionrefused?: (row: R, index: number) => void;
     /** A row that is selectable although it is not on this page (a deep link). */
     pinned?: R | null;
     /** The key of the open item, for a queue that keeps state per item. */
@@ -210,7 +218,7 @@
   };
 
   function onkeydown(e: KeyboardEvent) {
-    const action = triageKeyAction({
+    const keyEvent = {
       key: e.key,
       ctrlKey: e.ctrlKey,
       metaKey: e.metaKey,
@@ -224,8 +232,16 @@
         selected && selectedRowKey !== null && !acted.has(selectedRowKey)
           ? decisionEnabled(selected)
           : [],
-    });
-    if (!action) return;
+    };
+    const action = triageKeyAction(keyEvent);
+    if (!action) {
+      const refused = ondecisionrefused && selected ? refusedDecisionKey(keyEvent) : null;
+      if (refused !== null && selected) {
+        e.preventDefault();
+        ondecisionrefused?.(selected, refused);
+      }
+      return;
+    }
     e.preventDefault();
     if (action === 'next' || action === 'previous') {
       const to = step(keys, selectedRowKey, action === 'next' ? 1 : -1);

@@ -474,7 +474,7 @@ export function createGrpcServer(
             regionRestricted: () => restricted(origin),
           });
           slot?.claim(principal.subject);
-          opts.onRegion?.(subscriptionRegionLine('grpc', origin, restricted));
+          opts.onRegion?.(subscriptionRegionLine('grpc', origin, restricted, principal));
           runShadow(opts.policyShadow, { origin, principal, held: restricted(origin) });
           unwatch = watchPrincipal(
             principal,

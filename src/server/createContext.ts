@@ -119,6 +119,8 @@ export const createContext = async ({
     apiKeyId,
     apiKeyType,
     subject,
+    // Optional, so the contexts built outside a session (public API, server-side helpers) omit it.
+    ...(session?.impersonatedBy != null ? { impersonatedBy: session.impersonatedBy } : {}),
   };
 };
 
@@ -146,13 +148,22 @@ export type Context = AsyncReturnType<typeof createContext>;
 
 /**
  * Context shape for protected procedures, where `user` (and other base fields)
- * are guaranteed non-null but `apiKeyId`/`apiKeyType`/`subject` legitimately remain
- * nullable (session auth has no apiKeyId), and `appBlocksAuthorSubject` stays optional (contexts built
- * outside `createContext` do not set it). Replaces `DeepNonNullable<Context>` for
+ * are guaranteed non-null but `apiKeyId`/`apiKeyType`/`subject`/`impersonatedBy` legitimately
+ * remain nullable (session auth has no apiKeyId; most sessions are no impersonation), and
+ * `appBlocksAuthorSubject` stays optional (contexts built outside `createContext` do not set it).
+ * Replaces `DeepNonNullable<Context>` for
  * controllers, which would otherwise strip the nullability of these fields.
  */
 export type ProtectedContext = Omit<
   DeepNonNullable<Context>,
-  'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser' | 'appBlocksAuthorSubject'
+  'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser' | 'impersonatedBy' | 'appBlocksAuthorSubject'
 > &
-  Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser' | 'appBlocksAuthorSubject'>;
+  Pick<
+    Context,
+    | 'apiKeyId'
+    | 'apiKeyType'
+    | 'subject'
+    | 'bannedUser'
+    | 'impersonatedBy'
+    | 'appBlocksAuthorSubject'
+  >;

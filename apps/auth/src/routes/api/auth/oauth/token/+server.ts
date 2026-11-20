@@ -1,5 +1,5 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
-import { maybeCreateSessionSigner } from '@civitai/auth';
+import { isAccessTokenJwt, maybeCreateSessionSigner } from '@civitai/auth';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { oauthServer } from '$lib/server/oauth/server';
@@ -25,6 +25,7 @@ import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { hasScope, parseScopeRequest, stringToScope } from '$lib/server/oauth/scope';
 import { deviceTokenGrant } from '$lib/server/oauth/device-token';
 import { handleUserTokenExchange } from '$lib/server/oauth/user-exchange';
+import { handleClientTokenExchange } from '$lib/server/oauth/client-exchange';
 import { handleServiceToken, serviceTokenClient } from '$lib/server/oauth/service-token';
 import {
   parseBody,
@@ -109,9 +110,15 @@ export const POST: RequestHandler = async ({ request }) => {
   if (body.grant_type === DEVICE_CODE_GRANT) return deviceTokenGrant(request, body);
 
   // A user's access token exchanged for a resource JWT has its own client auth and limits (user-exchange.ts).
-  // Every other token exchange is a worker's, handled by the library's worker grant.
+  // A subject that is one of this hub's at+jwt access tokens is a service's own token passed on by a relay
+  // (client-exchange.ts); a user's token is never one (the user exchange takes opaque tokens only, and the
+  // client exchange refuses a JWT with a user). Every other token exchange is a worker's, handled by the
+  // library's worker grant.
   if (body.grant_type === TOKEN_EXCHANGE_GRANT && body.subject_token_type === ACCESS_TOKEN_TYPE) {
     const resources = await formResources();
+    if (typeof body.subject_token === 'string' && isAccessTokenJwt(body.subject_token)) {
+      return handleClientTokenExchange({ request, body, resources, clientIp, formEncoded });
+    }
     return handleUserTokenExchange({ request, body, resources, clientIp, formEncoded });
   }
 

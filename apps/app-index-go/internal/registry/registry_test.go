@@ -232,6 +232,26 @@ func TestSubscribeWithoutCursorOrTokenSendsNeither(t *testing.T) {
 	}
 }
 
+// A request's own token is sent in place of the client's, with or without one on the client.
+func TestSubscribeRequestTokenReplacesTheClientToken(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "text/event-stream")
+	}))
+	defer srv.Close()
+	for _, c := range []*Client{{BaseURL: srv.URL, Token: "static-1"}, {BaseURL: srv.URL}} {
+		s, err := c.Subscribe(context.Background(), Request{Schema: "s", Token: "own-2"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = s.Close()
+	}
+	if len(got) != 2 || got[0] != "Bearer own-2" || got[1] != "Bearer own-2" {
+		t.Fatalf("Authorization %q, want Bearer own-2 twice", got)
+	}
+}
+
 func TestSubscribeErrorBeforeStream(t *testing.T) {
 	cases := []struct {
 		status int

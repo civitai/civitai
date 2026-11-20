@@ -5,6 +5,7 @@ import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
+import { INQUISITOR_IMAGE_SCHEMA } from './inquisitor-schema';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
@@ -117,11 +118,7 @@ const item = async (id: number) =>
 
 beforeAll(async () => {
   db = await freshPglite();
-  await db.exec(`CREATE TABLE "Image" (
-    "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
-    "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false,
-    "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT
-  );`);
+  await db.exec(INQUISITOR_IMAGE_SCHEMA);
   await db.exec(migration('20261210120000_knights_v2_tables'));
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });

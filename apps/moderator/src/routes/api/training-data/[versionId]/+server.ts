@@ -1,8 +1,10 @@
 import { error } from '@sveltejs/kit';
+import { sql } from 'kysely';
 import type { RequestHandler } from './$types';
 import { requireIdParam } from '$lib/server/api-guard';
 import { callModEndpoint } from '$lib/server/user-actions.service';
 import { recordModActivity } from '$lib/server/mod-activity';
+import { dbRead } from '$lib/server/db';
 
 /**
  * Streams a version's training-data zip so the review pages can unpack it in the browser.
@@ -37,6 +39,10 @@ export const GET: RequestHandler = async ({ params, locals, fetch }) => {
   );
   if (!resolved.ok) {
     console.error('[training-data] resolve failed', resolved.error);
+    // The resolver only serves live datasets, so a failure on an all-purged version is expected.
+    // A failed read keeps the resolver's own 502 rather than replacing it with a bare 500.
+    if (await allTrainingDataPurged(versionId).catch(() => false))
+      error(410, 'Training data was purged.');
     error(502, resolved.error);
   }
 
@@ -72,3 +78,14 @@ export const GET: RequestHandler = async ({ params, locals, fetch }) => {
     },
   });
 };
+
+/** bool_and is NULL with no rows, so a version that never had training data reads false. */
+async function allTrainingDataPurged(versionId: number): Promise<boolean> {
+  const row = await dbRead
+    .selectFrom('ModelFile')
+    .select(sql<boolean | null>`bool_and("dataPurged")`.as('purged'))
+    .where('modelVersionId', '=', versionId)
+    .where('type', '=', 'Training Data')
+    .executeTakeFirst();
+  return row?.purged === true;
+}
