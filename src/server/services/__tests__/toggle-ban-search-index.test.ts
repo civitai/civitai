@@ -391,6 +391,7 @@ describe('toggleBan -> removeMedia', () => {
 
 describe('toggleBan -> profile links', () => {
   beforeEach(() => {
+    dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(null);
     userFindUnique.mockResolvedValue({
       bannedAt: null,
       meta: {},
@@ -463,8 +464,7 @@ describe('toggleBan -> profile links', () => {
     );
   });
 
-  it('archives on the CSAM hold path even without a report', async () => {
-    dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(null);
+  it('archives without a report when the caller asks to', async () => {
     dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(null);
     dbMock.dbWrite.userLink.findMany.mockResolvedValue(LINKS);
     const archive = vi.fn(async () => undefined);
@@ -476,7 +476,6 @@ describe('toggleBan -> profile links', () => {
   });
 
   it('does not archive an unreported user’s links, and deletes them', async () => {
-    dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(null);
     const archive = vi.fn(async () => undefined);
 
     await banWithArchive(archive);
