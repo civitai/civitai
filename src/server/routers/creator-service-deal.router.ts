@@ -18,6 +18,7 @@ import {
   editServiceDealReviewSchema,
   replyServiceDealReviewSchema,
   hideServiceDealReviewSchema,
+  attachServiceDealReviewImageSchema,
   serviceDealActionSchema,
 } from '~/server/schema/creator-service-deal.schema';
 import {
@@ -36,6 +37,10 @@ import {
   respondServiceDealCancellation,
   withdrawServiceDeal,
 } from '~/server/services/creator-service-deal.service';
+import {
+  attachFinalToReview,
+  listReviewAttachableFinals,
+} from '~/server/services/creator-service-deal-review-images';
 import {
   editServiceDealReview,
   replyToServiceDealReview,
@@ -99,6 +104,19 @@ export const creatorServiceDealRouter = router({
       dealId: input.id,
       userId: ctx.user.id,
       reply: input.reply,
+      reviewFlag: !!ctx.features.creatorServicesNext,
+    })
+  ),
+  reviewAttachableFinals: gated
+    .input(serviceDealActionSchema)
+    .query(({ input, ctx }) =>
+      listReviewAttachableFinals({ dealId: input.id, userId: ctx.user.id })
+    ),
+  attachReviewImage: gated.input(attachServiceDealReviewImageSchema).mutation(({ input, ctx }) =>
+    attachFinalToReview({
+      dealId: input.id,
+      userId: ctx.user.id,
+      fileId: input.fileId,
       reviewFlag: !!ctx.features.creatorServicesNext,
     })
   ),

@@ -40,6 +40,9 @@ export const reviewServiceDealSchema = dealId.extend({
 });
 export const editServiceDealReviewSchema = dealId.extend({ comment: text(2000).optional() });
 export const replyServiceDealReviewSchema = dealId.extend({ reply: text(2000) });
+export const attachServiceDealReviewImageSchema = dealId.extend({
+  fileId: z.number().int().positive(),
+});
 export const hideServiceDealReviewSchema = z.object({
   reviewId: z.number().int().positive(),
   hidden: z.boolean(),

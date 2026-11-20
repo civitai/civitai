@@ -7256,6 +7256,8 @@ export interface ServiceDealReviewImage {
   review?: ServiceDealReview;
   imageId: number;
   image?: Image;
+  sourceFileId: number | null;
+  sourceFile?: ServiceDealFile | null;
 }
 
 export interface ServiceDealEvent {
@@ -7313,6 +7315,7 @@ export interface ServiceDealFile {
   removedAt: Date | null;
   createdAt: Date;
   entries?: ServiceDealFileEntry[];
+  reviewImages?: ServiceDealReviewImage[];
 }
 
 export interface ServiceDealFileEntry {

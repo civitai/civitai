@@ -47,3 +47,14 @@ CREATE TABLE IF NOT EXISTS "ServiceDealReviewImage" (
   PRIMARY KEY ("reviewId", "imageId")
 );
 CREATE UNIQUE INDEX IF NOT EXISTS "ServiceDealReviewImage_imageId_key" ON "ServiceDealReviewImage"("imageId");
+
+-- The final each image was copied from: one copy per final per review, and the takedown list says
+-- which delivered file an image came from.
+ALTER TABLE "ServiceDealReviewImage" ADD COLUMN IF NOT EXISTS "sourceFileId" INTEGER;
+DO $$ BEGIN
+  ALTER TABLE "ServiceDealReviewImage" ADD CONSTRAINT "ServiceDealReviewImage_sourceFileId_fkey"
+    FOREIGN KEY ("sourceFileId") REFERENCES "ServiceDealFile"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS "ServiceDealReviewImage_reviewId_sourceFileId_key"
+  ON "ServiceDealReviewImage"("reviewId", "sourceFileId");

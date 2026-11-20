@@ -11797,8 +11797,12 @@ model ServiceDealReviewImage {
   review   ServiceDealReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   imageId  Int               @unique
   image    Image             @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  /// The final it was copied from; one copy per final per review.
+  sourceFileId Int?
+  sourceFile   ServiceDealFile? @relation(fields: [sourceFileId], references: [id], onDelete: SetNull)
 
   @@id([reviewId, imageId])
+  @@unique([reviewId, sourceFileId])
 }
 
 /// The deal's accountability sheet. Append-only. `actorId` -1 is the system.
@@ -11881,6 +11885,7 @@ model ServiceDealFile {
   removedAt      DateTime?
   createdAt      DateTime                  @default(now())
   entries        ServiceDealFileEntry[]
+  reviewImages   ServiceDealReviewImage[]
 
   @@index([dealId, round, kind])
 }

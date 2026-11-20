@@ -5982,6 +5982,10 @@ export type ServiceDealReview = {
 export type ServiceDealReviewImage = {
   reviewId: number;
   imageId: number;
+  /**
+   * The final it was copied from; one copy per final per review.
+   */
+  sourceFileId: number | null;
 };
 export type ServiceDealTransaction = {
   id: Generated<number>;

@@ -145,6 +145,7 @@ dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Prom
   holder.db.transaction((tx) => fn(bridge(tx)))) as never);
 
 const files = await import('~/server/services/creator-service-deal-file.service');
+const reviewImages = await import('~/server/services/creator-service-deal-review-images');
 const deals = await import('~/server/services/creator-service-deal.service');
 const unpack = await import('~/server/services/creator-service-deal-unpack.service');
 const reviews = await import('~/server/services/creator-service-dispute-review.service');
@@ -1549,5 +1550,126 @@ describe('attachments take no part in delivery, acceptance or payout', () => {
     expect(await finalsClear(dealId)).toBe(true);
     await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
     expect((await dealStatus(dealId)).status).toBe('Completed');
+  });
+});
+
+describe('review images', () => {
+  const ART = Buffer.from('final-art-bytes');
+
+  /** A completed, review-enrolled deal whose one Final is a still image, with a review row. */
+  async function reviewed({ allow = true } = {}) {
+    const dealId = await accepted();
+    const finalId = await delivered(dealId);
+    await q(`UPDATE "ServiceDealFile" SET "mimeType" = 'image/png' WHERE id = $1`, [finalId]);
+    bucket.objects.set((await fileRow(finalId)).s3Key, ART);
+    await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
+    await q(`UPDATE "ServiceDeal" SET "reviewEnabledAt" = now() WHERE id = $1`, [dealId]);
+    await q(`UPDATE "ServiceOffering" SET "allowReviewWork" = $1`, [allow]);
+    await q(
+      `INSERT INTO "ServiceDealReview" ("dealId", "offeringId", "sellerId", "buyerId", verdict, "scanStatus", "editableUntil", "updatedAt")
+       SELECT id, "offeringId", "sellerId", "buyerId", 'Happy', 'Scanned', now(), now() FROM "ServiceDeal" WHERE id = $1`,
+      [dealId]
+    );
+    return { dealId, finalId };
+  }
+  const picker = async (dealId: number, userId = BUYER) =>
+    (await reviewImages.listReviewAttachableFinals({ dealId, userId })).map((f) => f.id);
+  const attachFinal = async (dealId: number, fileId: number, userId = BUYER) =>
+    reviewImages.attachFinalToReview({ dealId, userId, fileId, reviewFlag: true });
+  const linked = () =>
+    q<{ sourceFileId: number; imageId: number }>(
+      `SELECT "sourceFileId", "imageId" FROM "ServiceDealReviewImage" ORDER BY "imageId"`
+    );
+  const refused = expect.objectContaining({ code: 'CONFLICT' });
+
+  beforeEach(() => {
+    s3.send.mockImplementation(async (command: { input: { Key: string } }) =>
+      body(bucket.objects.get(command.input.Key) ?? Buffer.alloc(0))
+    );
+    preview.entryCopy.mockResolvedValue({
+      data: SCAN_COPY(1),
+      mimeType: 'image/webp',
+      width: 10,
+      height: 10,
+      frames: 1,
+    });
+  });
+
+  it("offers the deal's scanned image final, and attaches a fresh copy owned by the buyer", async () => {
+    const { dealId, finalId } = await reviewed();
+    expect(await picker(dealId)).toEqual([finalId]);
+    const { imageId } = await attachFinal(dealId, finalId);
+    expect(images.createImage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userId: BUYER, url: expect.stringMatching(/^scan-key-/) })
+    );
+    expect(await linked()).toEqual([{ sourceFileId: finalId, imageId }]);
+    // Once per final.
+    expect(await picker(dealId)).toEqual([]);
+    await expect(attachFinal(dealId, finalId)).rejects.toEqual(refused);
+  });
+
+  it('offers nothing when the seller does not allow review work, or the deal was ever disputed', async () => {
+    const { dealId, finalId } = await reviewed({ allow: false });
+    expect(await picker(dealId)).toEqual([]);
+    await expect(attachFinal(dealId, finalId)).rejects.toEqual(refused);
+    await q(`UPDATE "ServiceOffering" SET "allowReviewWork" = true`);
+    await q(`UPDATE "ServiceDeal" SET "disputeOpenedAt" = now() WHERE id = $1`, [dealId]);
+    expect(await picker(dealId)).toEqual([]);
+  });
+
+  it('refuses a file of another deal, a file that is not a Final, a non-image, and the seller', async () => {
+    const { dealId, finalId } = await reviewed();
+    const other = await reviewed();
+    await expect(attachFinal(dealId, other.finalId)).rejects.toEqual(refused);
+    await expect(attachFinal(dealId, finalId, SELLER)).rejects.toEqual(refused);
+    await q(`UPDATE "ServiceDealFile" SET "mimeType" = 'application/zip' WHERE id = $1`, [finalId]);
+    await expect(attachFinal(dealId, finalId)).rejects.toEqual(refused);
+    await q(`UPDATE "ServiceDealFile" SET "mimeType" = 'image/png' WHERE id = $1`, [finalId]);
+    // A scanned image of the same deal and round that is not a Final, beside the Final that clears it.
+    const [{ id: notFinal }] = await q<{ id: number }>(
+      `INSERT INTO "ServiceDealFile" ("dealId", round, kind, "s3Key", "mimeType", size, status, "scanStatus", "malwareScanStatus")
+       SELECT "dealId", round, 'Attachment', "s3Key" || '-attachment', "mimeType", size, status, "scanStatus", "malwareScanStatus"
+       FROM "ServiceDealFile" WHERE id = $1 RETURNING id`,
+      [finalId]
+    );
+    expect(await picker(dealId)).toEqual([finalId]);
+    await expect(attachFinal(dealId, notFinal)).rejects.toEqual(refused);
+    expect(await linked()).toEqual([]);
+    expect(images.createImage).not.toHaveBeenCalledWith(expect.objectContaining({ userId: BUYER }));
+  });
+
+  it('stops at the cap', async () => {
+    const { dealId } = await reviewed();
+    const [{ id: reviewId }] = await q<{ id: number }>(
+      `SELECT id FROM "ServiceDealReview" WHERE "dealId" = $1`,
+      [dealId]
+    );
+    for (let i = 0; i < 4; i++) {
+      const [{ id }] = await q<{ id: number }>(
+        `INSERT INTO "Image" (url) VALUES ('x') RETURNING id`
+      );
+      await q(`INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId") VALUES ($1, $2)`, [
+        reviewId,
+        id,
+      ]);
+    }
+    expect(await picker(dealId)).toEqual([]);
+  });
+
+  it("rates a review image at its deal's level, so an X deal's PG image never shows at SFW levels", async () => {
+    const { dealId, finalId } = await reviewed();
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 8 WHERE id = $1`, [dealId]);
+    const { imageId } = await attachFinal(dealId, finalId);
+    const [{ id: reviewId }] = await q<{ id: number }>(
+      `SELECT id FROM "ServiceDealReview" WHERE "dealId" = $1`,
+      [dealId]
+    );
+    const shown = async (levels: number) =>
+      (await reviewImages.getReviewImages({ reviewId, levels })).map((i) => [i.id, i.nsfwLevel]);
+    // Unscanned: not shown at any level.
+    expect(await shown(31)).toEqual([]);
+    await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1 WHERE id = $1`, [imageId]);
+    expect(await shown(1 | 2 | 4)).toEqual([]);
+    expect(await shown(31)).toEqual([[imageId, 8]]);
   });
 });
