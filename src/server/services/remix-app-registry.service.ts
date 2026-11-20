@@ -41,6 +41,11 @@ import type { Prisma } from '@prisma/client';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
 import { userRemixFirstRequest, userRemixReplayer } from '~/server/services/remix-app-runner';
+import {
+  auditRemixAppSource,
+  REMIX_SOURCE_UNREADABLE,
+} from '~/server/services/remix-app-audit.service';
+import { remixSourceLiterals } from '~/server/services/remix-app-literals';
 
 /** The OAuth client every remix row hangs off: no secret, no redirect, no scopes. */
 export const REMIX_APPS_CLIENT_ID = 'civitai-remix-apps';
@@ -524,7 +529,9 @@ export const remixReviewHash = (manifest: {
  * Creates or replaces the author's app `u<authorId>-<name>`. Every submit, an edit of an approved
  * app included, takes it out of menus until a mod approves the new source.
  */
-export async function submitUserRemixApp(input: RemixAppSubmitInput & { authorId: number }) {
+export async function submitUserRemixApp(
+  input: RemixAppSubmitInput & { authorId: number; isGreen: boolean }
+) {
   // One author's saves run one at a time, so the per-author cap holds against concurrent creates.
   const result = await withDistributedLock(
     { key: `remix-user-apps:${input.authorId}`, ttl: 30 },
@@ -540,12 +547,13 @@ export async function submitUserRemixApp(input: RemixAppSubmitInput & { authorId
 
 async function submitUserRemixAppLocked({
   authorId,
+  isGreen,
   name,
   title,
   description,
   icon,
   source,
-}: RemixAppSubmitInput & { authorId: number }) {
+}: RemixAppSubmitInput & { authorId: number; isGreen: boolean }) {
   await assertRemixAppsClient();
   const slug = userRemixSlugPrefix(authorId) + name;
   const slugError = remixAppSlugSchema.safeParse(slug).success
@@ -579,6 +587,10 @@ async function submitUserRemixAppLocked({
       code: 'CONFLICT',
       message: 'This app needs a moderator before it can be edited',
     });
+  // Condition A: a save that changes the code (and so its prompts or steps) is audited first.
+  const before =
+    previous?.success && 'source' in previous.data.remix ? previous.data.remix.source : undefined;
+  if (source !== before) await auditRemixAppSource({ source, authorId, blockId, isGreen });
   const spec: RemixUserSpec = { icon, engine: { safe: DEFAULT_ENGINE.safe }, source };
   const runVersion = nextRunVersion(existing, previous, spec);
   const listing = {
@@ -698,6 +710,9 @@ export async function reviewUserRemixApp({
   const { row, parsed, manifest: stored, remix } = await readUserRemixApp(slug);
   if (remixReviewHash({ ...stored, remix }) !== sha256 || stored.review !== seenReview)
     throw userAppChanged();
+  // No literal set, no check of what it shows: unreadable code is never approved.
+  if (decision === 'approved' && !remixSourceLiterals(remix.source))
+    throw new TRPCError({ code: 'BAD_REQUEST', message: REMIX_SOURCE_UNREADABLE });
   const withMature = decision === 'approved' && mature;
   if (withMature && (await authorHasMinorThemedApp(stored.author?.userId ?? 0)))
     throw new TRPCError({

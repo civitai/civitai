@@ -8,6 +8,7 @@ import {
 import { logToAxiom } from '~/server/logging/client';
 import type { RemixAppSource, RemixWorkflowRequest } from '~/shared/remix-apps/define';
 import { firstAnswer } from '~/shared/remix-apps/mock-host';
+import { remixAskTextRefusal } from '~/server/services/remix-app-literals';
 import {
   checkRemixReplay,
   RemixReplayError,
@@ -111,11 +112,19 @@ export function userRemixReplayer(
   opts?: Parameters<typeof callRemixRunner>[1]
 ): RemixReplayer {
   return async (source, log): Promise<RemixReplayOutcome> => {
+    const code = await loadSource();
     const [result] = await callRemixRunner(
-      { appId, source: await loadSource(), image: { ...source }, base: log },
+      { appId, source: code, image: { ...source }, base: log },
       opts
     );
-    return remixRunnerOutcome(slug, source, log, result).outcome;
+    const { outcome } = remixRunnerOutcome(slug, source, log, result);
+    // What a viewer is shown must be what the reviewer read.
+    const refusal =
+      outcome.status === 'effect' && outcome.effect.type === 'ask'
+        ? remixAskTextRefusal(code, outcome.effect.spec)
+        : undefined;
+    if (refusal) throw new RemixReplayError(`${slug} asked with ${refusal}`);
+    return outcome;
   };
 }
 

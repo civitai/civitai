@@ -51,6 +51,7 @@ import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import { REMIX_REVIEW_LOG_MAX } from '~/shared/remix-apps/row.schema';
+import { REMIX_SOURCE_UNREADABLE } from '~/server/services/remix-app-audit.service';
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 
@@ -550,7 +551,7 @@ describe('user apps: submit, review and enable', () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(null);
     dbMock.dbWrite.appBlock.aggregate.mockResolvedValue({ _max: { featuredOrder: 3 } } as never);
 
-    const result = await submitUserRemixApp({ ...submission, authorId: 7 });
+    const result = await submitUserRemixApp({ ...submission, authorId: 7, isGreen: false });
 
     expect(result).toEqual({ slug: 'u7-probe', version: 1, sha256: hashOf(userRow('submitted')) });
     const { data } = dbMock.dbWrite.appBlock.create.mock.calls[0][0];
@@ -579,6 +580,7 @@ describe('user apps: submit, review and enable', () => {
       ...submission,
       source: `${SOURCE}\n`,
       authorId: 7,
+      isGreen: false,
     });
 
     expect(version).toBe(2);
@@ -600,6 +602,7 @@ describe('user apps: submit, review and enable', () => {
     await submitUserRemixApp({
       ...submission,
       authorId: 7,
+      isGreen: false,
       ...({ reviewLog: [], minorThemed: undefined, review: 'approved' } as object),
     });
 
@@ -615,7 +618,9 @@ describe('user apps: submit, review and enable', () => {
   it('refuses a new app past the per-author cap, and still takes an edit there', async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(null);
     dbMock.dbWrite.appBlock.count.mockResolvedValue(10);
-    await expect(submitUserRemixApp({ ...submission, authorId: 7 })).rejects.toMatchObject({
+    await expect(
+      submitUserRemixApp({ ...submission, authorId: 7, isGreen: false })
+    ).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
     expect(dbMock.dbWrite.appBlock.count.mock.calls[0][0]).toEqual({
@@ -626,13 +631,15 @@ describe('user apps: submit, review and enable', () => {
     // CONTROL: an edit of an app the author already has is not a new row.
     redis.generation.clear(); // the lock the refused call held; a real release deletes it
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(userRow('approved') as never);
-    await submitUserRemixApp({ ...submission, authorId: 7 });
+    await submitUserRemixApp({ ...submission, authorId: 7, isGreen: false });
     expect(dbMock.dbWrite.appBlock.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it('will not take over a block id a system app holds', async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(stored(pixelArt, 1) as never);
-    await expect(submitUserRemixApp({ ...submission, authorId: 7 })).rejects.toMatchObject({
+    await expect(
+      submitUserRemixApp({ ...submission, authorId: 7, isGreen: false })
+    ).rejects.toMatchObject({
       code: 'CONFLICT',
     });
     expect(dbMock.dbWrite.appBlock.update).not.toHaveBeenCalled();
@@ -1182,6 +1189,26 @@ describe('user apps: submit, review and enable', () => {
     });
   });
 
+  it('never approves code that does not parse: nothing it shows could be checked', async () => {
+    const row = userRow('submitted', 'export default defineRemixApp({');
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row as never);
+    const approve = (r: RemixAppRow) =>
+      reviewUserRemixApp({
+        slug: 'u7-probe',
+        sha256: hashOf(r),
+        seenReview: 'submitted',
+        decision: 'approved',
+        moderatorId: MOD,
+      });
+    await expect(approve(row)).rejects.toThrow(REMIX_SOURCE_UNREADABLE);
+    expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+    // POSITIVE CONTROL: the same app, readable.
+    const readable = userRow('submitted');
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(readable as never);
+    await approve(readable);
+    expect(dbMock.dbWrite.appBlock.updateMany).toHaveBeenCalled();
+  });
+
   it('will not delete a marked app, which would drop its mark', async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(
       userRow('rejected', SOURCE, 'remix_disabled', marked) as never
@@ -1193,7 +1220,9 @@ describe('user apps: submit, review and enable', () => {
   it("refuses an author's save that lost a race to a mod's write, and one over a row it cannot read", async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(userRow('submitted') as never);
     dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
-    await expect(submitUserRemixApp({ ...submission, authorId: 7 })).rejects.toMatchObject({
+    await expect(
+      submitUserRemixApp({ ...submission, authorId: 7, isGreen: false })
+    ).rejects.toMatchObject({
       code: 'CONFLICT',
     });
 
@@ -1202,7 +1231,9 @@ describe('user apps: submit, review and enable', () => {
     (broken.manifest as Record<string, unknown>).version = 'not-a-version';
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(broken as never);
     dbMock.dbWrite.appBlock.updateMany.mockClear();
-    await expect(submitUserRemixApp({ ...submission, authorId: 7 })).rejects.toMatchObject({
+    await expect(
+      submitUserRemixApp({ ...submission, authorId: 7, isGreen: false })
+    ).rejects.toMatchObject({
       code: 'CONFLICT',
     });
     expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
@@ -1213,7 +1244,9 @@ describe('user apps: submit, review and enable', () => {
       ...userRow('submitted'),
       status: 'published',
     } as never);
-    await expect(submitUserRemixApp({ ...submission, authorId: 7 })).rejects.toMatchObject({
+    await expect(
+      submitUserRemixApp({ ...submission, authorId: 7, isGreen: false })
+    ).rejects.toMatchObject({
       code: 'CONFLICT',
     });
     expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();

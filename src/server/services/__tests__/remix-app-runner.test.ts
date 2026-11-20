@@ -12,8 +12,6 @@ import { firstAnswer } from '~/shared/remix-apps/mock-host';
 
 const SECRET = 's'.repeat(32);
 const config = { url: 'http://runner', secret: SECRET };
-const SOURCE = 'export default defineRemixApp({ async run(ctx) { return []; } });';
-const SHA = createHash('sha256').update(SOURCE).digest('hex');
 const image = { imageId: 7, url: 'https://img/source.jpeg', width: 512, height: 512 };
 
 /** Generates, asks a style, generates again from the first result, returns the last. */
@@ -44,6 +42,10 @@ const app: Pick<RemixApp, 'run'> = {
     return second.images;
   },
 };
+
+// The fake runner runs `app` itself; the source the host reads its fixed text from is its code.
+const SOURCE = `export default defineRemixApp({ ${app.run.toString()} });`;
+const SHA = createHash('sha256').update(SOURCE).digest('hex');
 
 const made = (n: number): RemixLogEntry => ({
   type: 'workflow',
@@ -168,6 +170,31 @@ describe('a user app replayed on the runner', () => {
     expect(() =>
       remixRunnerOutcome('u7-probe', image, [made(1)], oil, { autoAnswer: firstAnswer })
     ).toThrow('with an answer the host would not');
+  });
+
+  it('refuses an ask whose text is not fixed in the reviewed code', async () => {
+    const computed: Pick<RemixApp, 'run'> = {
+      async run(ctx) {
+        const style = await ctx.ask({
+          kind: 'choice',
+          prompt: 'Style?',
+          options: [{ value: 'ink', label: ['In', 'k'].join('') }],
+        });
+        return [style as never];
+      },
+    };
+    const source = `export default defineRemixApp({ ${computed.run.toString()} });`;
+    const runner = fakeRemixRunner({
+      secret: SECRET,
+      apps: { [createHash('sha256').update(source).digest('hex')]: computed },
+    });
+    const replay = userRemixReplayer('u7-probe', 'remix-u7-probe', async () => source, {
+      config,
+      fetchImpl: runner.fetchImpl,
+    });
+    await expect(replay(image, [])).rejects.toThrow(
+      'asked with text that is not fixed in its code'
+    );
   });
 
   it.each([

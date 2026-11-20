@@ -178,7 +178,9 @@ export const remixAppRouter = router({
   submit: remixAppBuilderProcedure
     .use(submitRateLimit)
     .input(remixAppSubmitSchema)
-    .mutation(({ ctx, input }) => submitUserRemixApp({ ...input, authorId: ctx.user.id })),
+    .mutation(({ ctx, input }) =>
+      submitUserRemixApp({ ...input, authorId: ctx.user.id, isGreen: !!ctx.features.isGreen })
+    ),
   list: remixAppProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(({ ctx }) => listRemixApps(ctx)),

@@ -37,11 +37,7 @@ import {
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import type { RemixApp, RemixImage, RemixWorkflowRequest } from '~/shared/remix-apps/define';
 import { firstAnswer } from '~/shared/remix-apps/mock-host';
-import {
-  type RemixLogEntry,
-  RemixReplayError,
-  type RemixReplayer,
-} from '~/shared/remix-apps/replay';
+import { type RemixLogEntry, RemixReplayError } from '~/shared/remix-apps/replay';
 import { remixRunTags } from '~/shared/remix-apps/tags';
 import {
   getRemixSourceUrl,
