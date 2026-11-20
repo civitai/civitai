@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';

@@ -21,6 +21,39 @@ export function liveCsamTextHoldText(hold: string): string {
   const h = sqlRef(hold);
   return `(${h}.label = 'csam' AND ${h}.status IN ('Pending', 'Confirmed'))`;
 }
+/** Post text `text` (an alias) is CSAM-held: flagged, or under a live CSAM text hold. */
+export function postTextCsamHeldText(text: string): string {
+  const t = sqlRef(text);
+  if (t === 'pth') throw new Error(`Alias taken inside postTextCsamHeldText: ${t}`);
+  return `(${t}."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" pth
+    WHERE pth."entityType" = 'PostText' AND pth."entityId" = ${t}.id AND ${liveCsamTextHoldText(
+    'pth'
+  )}))`;
+}
+/**
+ * Entity `entity` (a column reference or an integer literal) of `entityType` is held for the CSAM
+ * queue: a live CSAM text hold, or a csam verdict no moderator dismissed for its text, since the
+ * verdict is recorded before its hold is written. Like `csamHoldBars`, but a Confirmed hold bars here
+ * too.
+ */
+export function csamQueueHeldText(entityType: string, entity: string): string {
+  if (!/^[A-Za-z]+$/.test(entityType)) throw new Error(`Bad entity type: ${entityType}`);
+  const e = /^d{1,18}$/.test(entity) ? entity : sqlRef(entity);
+  if (/^"?(qh|qm|qd)"?./.test(e)) throw new Error(`Alias taken inside csamQueueHeldText: ${e}`);
+  return `(
+    EXISTS (SELECT 1 FROM "TextScanHold" qh
+      WHERE qh."entityType" = '${entityType}' AND qh."entityId" = ${e}
+        AND ${liveCsamTextHoldText('qh')})
+    OR EXISTS (SELECT 1 FROM "EntityModeration" qm
+      WHERE qm."entityType" = '${entityType}' AND qm."entityId" = ${e}
+        AND qm."status" = 'Succeeded' AND 'csam' = ANY(qm."triggeredLabels")
+        AND NOT EXISTS (SELECT 1 FROM "TextScanHold" qd
+          WHERE qd."entityType" = '${entityType}' AND qd."entityId" = ${e}
+            AND qd."label" = 'csam' AND qd."status" = 'Dismissed'
+            AND qd."textHash" = qm."result"->>'textHash'
+            AND qd."meta"->>'decision' IS DISTINCT FROM 'superseded'))
+  )`;
+}
 /** Ban reason codes that always remove the owner's media: the minor-safety bans. */
 export const BAN_REASONS_ALWAYS_REMOVING_MEDIA = [
   'SexualMinor',
@@ -90,16 +123,26 @@ export function imageCoveredText(image: string, user: string): string {
  *   review flag at deletion or an owner named on any report.
  * - A shop takedown: no owner recorded, or the owner held or named on any report.
  * An unreadable fact fails the statement rather than reading as not held.
+ * With `matureUnderage: false` a `mature-underage` unpublish alone does not hold: it takes the
+ * media off the site but does not limit which moderators may view it.
  */
 export function heldUrlSql(
   url: string,
-  { exceptImageId }: { exceptImageId?: string } = {}
+  {
+    exceptImageId,
+    matureUnderage = true,
+  }: { exceptImageId?: string; matureUnderage?: boolean } = {}
 ): string {
   const u = sqlRef(url);
   const except = exceptImageId ? ` AND hx.id <> ${sqlRef(exceptImageId)}` : '';
   const taken = /^"?(hx|hp|hmv|hmo|hd|ht|hc|rc|cc)"?\./;
   for (const ref of [u, exceptImageId ? sqlRef(exceptImageId) : ''])
     if (taken.test(ref)) throw new Error(`Alias taken inside heldUrlSql: ${ref}`);
+  const minorRemoval = matureUnderage
+    ? `
+          OR COALESCE(hmv.meta ->> 'unpublishedReason' = '${MATURE_UNDERAGE_REASON}', false)
+          OR COALESCE(hmo.meta ->> 'unpublishedReason' = '${MATURE_UNDERAGE_REASON}', false)`
+    : '';
   return `(
     EXISTS (
       SELECT 1 FROM "Image" hx
@@ -111,9 +154,7 @@ export function heldUrlSql(
         OR ${ownerHeldText('hx."userId"')}
         OR (NOT ${imageCoveredText('hx."id"', 'hx."userId"')} AND (
           ${ownerReportedText('hx."userId"')}
-          OR COALESCE(hp.metadata ->> 'unpublishedReason' = '${CSAM_HOLD_POST_UNPUBLISH_REASON}', false)
-          OR COALESCE(hmv.meta ->> 'unpublishedReason' = '${MATURE_UNDERAGE_REASON}', false)
-          OR COALESCE(hmo.meta ->> 'unpublishedReason' = '${MATURE_UNDERAGE_REASON}', false)
+          OR COALESCE(hp.metadata ->> 'unpublishedReason' = '${CSAM_HOLD_POST_UNPUBLISH_REASON}', false)${minorRemoval}
         ))
       )
     )

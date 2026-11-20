@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { imageAuditContentHash } from '@civitai/shared/review-batch';
+import { imageAuditContentHash } from '@civitai/shared/media-signals';
 
 const query = vi.hoisted(() => vi.fn());
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ query }) }));
