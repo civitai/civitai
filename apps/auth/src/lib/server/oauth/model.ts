@@ -24,6 +24,7 @@ import {
 } from './token-helpers';
 import {
   isOfflineGrantOn,
+  isRefreshReuse,
   newRefreshFamilyId,
   planAuthCodeGrant,
   planRefreshGrant,
@@ -348,12 +349,13 @@ export const oauthModel = {
       .executeTakeFirst();
 
     // Offline-grant flag on: a token with no live row may be one that was already rotated, i.e.
-    // replayed. Its tombstone names the chain, which is revoked whole (offline-grant.ts).
+    // replayed. Its tombstone names the chain, which is revoked whole once the reuse grace has
+    // passed (offline-grant.ts); inside it, the replay is plain invalid_grant.
     const offlineGrant = await isOfflineGrantOn();
     if (!apiKey) {
       if (offlineGrant) {
         const tombstone = await readRefreshTombstone(refreshToken);
-        if (tombstone) await revokeRefreshFamily(tombstone);
+        if (tombstone && isRefreshReuse(tombstone)) await revokeRefreshFamily(tombstone);
       }
       return false;
     }
@@ -403,7 +405,12 @@ export const oauthModel = {
     if (revoked && chain) {
       await tombstoneRotatedRefreshToken(
         token.refreshToken,
-        { familyId: chain.familyId, userId: token.user.id, clientId: token.client.id },
+        {
+          familyId: chain.familyId,
+          userId: token.user.id,
+          clientId: token.client.id,
+          rotatedAt: Date.now(),
+        },
         chain.expiresAt
       );
     }
@@ -507,6 +514,7 @@ async function issueToken(token: Token, client: Client, user: User): Promise<Tok
       (await planRefreshGrant({
         userId: user.id,
         clientId: client.id,
+        clientGrants: ([] as string[]).concat(client.grants ?? []),
         chain: grantUser.refreshChain,
       }))
     : (await isOfflineGrantOn())

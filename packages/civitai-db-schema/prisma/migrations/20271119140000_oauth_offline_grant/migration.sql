@@ -31,7 +31,7 @@
 -- Part 1 — the columns and the CHECK (NOT VALID, so adding it takes no full scan under the lock).
 BEGIN;
 
-SET LOCAL lock_timeout = '3s';
+SET LOCAL lock_timeout = '1s';
 
 ALTER TABLE "OauthConsent" ADD COLUMN IF NOT EXISTS "offlineGrantedAt" TIMESTAMP(3) NULL;
 ALTER TABLE "ApiKey" ADD COLUMN IF NOT EXISTS "mintOrigin" TEXT NULL;

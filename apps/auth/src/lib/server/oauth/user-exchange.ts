@@ -10,7 +10,6 @@ import { basicCredentials } from './http';
 import { findExchangeResource } from './exchange-resources';
 import { chargeTokenExchangeFailure, checkTokenExchangeRateLimit } from './rate-limit';
 import { parseScopeRequest } from './scope';
-import { isOfflineGrantOn, readAccessMintOrigin } from './offline-grant';
 import {
   EXCHANGED_TOKEN_MAX_TTL,
   exchangeScopeCeiling,
@@ -224,9 +223,6 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     if (exp <= iat) return refuse('invalid_grant', 'subject token expiring');
     const jti = randomUUID();
     ctx.jti = jti;
-    // Offline-grant flag on: carry how the subject token was minted (the presence marker), so a
-    // resource can tell a user-present token from an app-renewed one. Enforced nowhere here.
-    const mintOrigin = (await isOfflineGrantOn()) ? await readAccessMintOrigin(subject.id) : null;
 
     let accessToken: string;
     try {
@@ -240,7 +236,6 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
         iat,
         exp,
         ...(actor ? { act: { sub: actor } } : {}),
-        ...(mintOrigin ? { mint_origin: mintOrigin } : {}),
       });
     } catch (err) {
       void logToAxiom({

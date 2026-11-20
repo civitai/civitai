@@ -112,15 +112,30 @@ export function offlineCapOrchestratorToken(
   );
 }
 
-/** The `mintOrigin` of an `Access` key, or null. */
-async function readMintOrigin(apiKeyId: number): Promise<string | null> {
-  // primary: a refresh mints the token moments before the app first uses it, so a replica can
-  // still lack the row, which would read as "no origin" and skip the cap.
-  const row = await kyselyWrite
-    .selectFrom('ApiKey')
-    .select(sql<string | null>`"mintOrigin"`.as('mintOrigin'))
-    .where('id', '=', apiKeyId)
-    .where('type', '=', 'Access')
-    .executeTakeFirst();
-  return row?.mintOrigin ?? null;
+/** Postgres `undefined_column`: the migration adding `ApiKey.mintOrigin` has not been applied. */
+const UNDEFINED_COLUMN = '42703';
+
+/**
+ * The `mintOrigin` of an `Access` key, or null. Null too when the column does not exist yet (the
+ * flag turned on before the manual migration), so that ordering mistake skips the cap instead of
+ * breaking generation; any other error is thrown.
+ */
+export async function readMintOrigin(
+  apiKeyId: number,
+  executor: Pick<typeof kyselyWrite, 'selectFrom'> = kyselyWrite
+): Promise<string | null> {
+  try {
+    // primary: a refresh mints the token moments before the app first uses it, so a replica can
+    // still lack the row, which would read as "no origin" and skip the cap.
+    const row = await executor
+      .selectFrom('ApiKey')
+      .select(sql<string | null>`"mintOrigin"`.as('mintOrigin'))
+      .where('id', '=', apiKeyId)
+      .where('type', '=', 'Access')
+      .executeTakeFirst();
+    return row?.mintOrigin ?? null;
+  } catch (err) {
+    if ((err as { code?: unknown } | null)?.code === UNDEFINED_COLUMN) return null;
+    throw err;
+  }
 }

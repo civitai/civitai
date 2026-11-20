@@ -15,9 +15,11 @@
   // Which decision is on its way. Both forms are native submits, so the page gives no sign of the round
   // trip through the client's callback on its own; this shows it and blocks a second click.
   let submitting = $state<'approve' | 'deny' | null>(null);
-  // The offline line (shown only when the app asked for offline access): ticked to start with, so the
-  // user sees what the app asked for and can untick it.
-  let stayConnected = $state(true);
+  // The offline line (shown only when the app asked for offline access) starts unticked: the user
+  // grants offline access by ticking it. If this app already holds the grant, it starts ticked
+  // (`offline.granted`). `toggledStay` is the user's own click, which then wins.
+  let toggledStay = $state<boolean | null>(null);
+  const stayConnected = $derived(toggledStay ?? (!data.invalid && !!data.offline?.granted));
   // User images are sometimes bare CDN keys, not URLs — only render an <img> for an absolute URL, else
   // fall back to an initial avatar so the picker never shows a broken image.
   const isUrl = (s: string | undefined) => !!s && /^https?:\/\//.test(s);
@@ -138,7 +140,13 @@
         {#if data.offline}
           <div class="offline">
             <label class="offline-line">
-              <input type="checkbox" name="offline" value="true" bind:checked={stayConnected} />
+              <input
+                type="checkbox"
+                name="offline"
+                value="true"
+                checked={stayConnected}
+                onchange={(e) => (toggledStay = e.currentTarget.checked)}
+              />
               <span>Stay connected while you're away, until you disconnect</span>
             </label>
             {#if stayConnected}
@@ -152,7 +160,7 @@
                     min="1"
                     step="1"
                     inputmode="numeric"
-                    placeholder="No limit"
+                    placeholder={data.offline.custom ? 'Keep your current limit' : 'No limit'}
                     value={data.offline.cap?.limit ?? ''}
                   />
                   <select name="offline_cap_period" aria-label="Per">
@@ -164,6 +172,11 @@
                   </select>
                 </div>
               </div>
+              {#if data.offline.custom}
+                <p class="offline-note">
+                  This app already has a custom limit, set in Connected apps. Leave this blank to keep it.
+                </p>
+              {/if}
               <p class="offline-note">
                 Staying connected remembers this approval. Change the limit or disconnect the app any
                 time in Connected apps.

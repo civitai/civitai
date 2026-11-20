@@ -23,9 +23,10 @@ import {
 import { mintUserSession, setSessionCookie } from '$lib/server/auth/session';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { NO_FRAMING } from '$lib/server/auth/same-origin';
-import { budgetsToSimpleBuzzLimit, type SimpleBuzzLimit } from '@civitai/auth/buzz-limit';
+import type { SimpleBuzzLimit } from '@civitai/auth/buzz-limit';
 import {
   isOfflineGrantOn,
+  offlineCapInitial,
   parseOfflineBuzzCap,
   readConsentForOffline,
 } from '$lib/server/oauth/offline-grant';
@@ -95,9 +96,10 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
   }));
 
   // Offline access (flag `oauth-offline-grant`; offline-grant.ts): the "Stay connected while you're
-  // away" line, with a Buzz cap prefilled from the consent's current cap, else the app's proposal. Off,
-  // the page is unchanged.
-  let offline: { cap: SimpleBuzzLimit | null; granted: boolean } | null = null;
+  // away" line, ticked only when this app already holds the grant (`granted`), with a Buzz cap
+  // prefilled per offlineCapInitial (`custom`: a current cap the fields cannot show, kept unless the
+  // user sets one). Off, the page is unchanged.
+  let offline: { cap: SimpleBuzzLimit | null; custom: boolean; granted: boolean } | null = null;
   const offlineParams: Record<string, string> = {};
   if (requested.offlineAccess && (await isOfflineGrantOn())) {
     const proposed = parseOfflineBuzzCap(
@@ -106,12 +108,8 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
     );
     if (proposed === 'invalid') return { invalid: true as const };
     const consent = await readConsentForOffline(locals.user.id, clientId);
-    const current = budgetsToSimpleBuzzLimit(
-      Array.isArray(consent?.buzzLimit)
-        ? (consent.buzzLimit as Parameters<typeof budgetsToSimpleBuzzLimit>[0])
-        : null
-    );
-    offline = { cap: current ?? proposed, granted: consent?.offlineGrantedAt != null };
+    const { initial, custom } = offlineCapInitial(consent?.buzzLimit ?? null, proposed);
+    offline = { cap: initial, custom, granted: consent?.offlineGrantedAt != null };
     // Carried so a switch of account reloads this page with the app's proposal intact.
     for (const key of ['offline_buzz_limit', 'offline_buzz_period'] as const) {
       const value = url.searchParams.get(key);

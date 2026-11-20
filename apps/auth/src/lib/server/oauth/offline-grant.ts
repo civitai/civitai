@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import {
   SIMPLE_BUZZ_LIMIT_PERIODS,
+  budgetsToSimpleBuzzLimit,
   simpleBuzzLimitToBudgets,
   type SimpleBuzzLimit,
 } from '@civitai/auth/buzz-limit';
@@ -8,9 +9,19 @@ import { REDIS_KEYS } from '@civitai/redis';
 import { getRedis } from '$lib/server/redis';
 import { isGlobalFlagOn } from '$lib/server/flipt';
 import { logToAxiom } from '$lib/server/axiom';
+import {
+  bustOAuthBuzzLimitCache,
+  expireOrchestratorUserTokens,
+} from '$lib/server/orchestrator-cache';
 import { db } from '$lib/server/db/db';
 import { logOAuthEvent } from './audit-log';
-import { OFFLINE_GRANT_FLAG, REFRESH_TOKEN_TTL, REFRESH_TOMBSTONE_TTL } from './constants';
+import {
+  DEVICE_CODE_GRANT,
+  OFFLINE_GRANT_FLAG,
+  REFRESH_REUSE_GRACE,
+  REFRESH_TOKEN_TTL,
+  REFRESH_TOMBSTONE_TTL,
+} from './constants';
 import { offlineDb, type ChainOrigin, type MintOrigin } from './offline-columns';
 import { scopeToColumn } from './scope';
 
@@ -27,15 +38,19 @@ import { scopeToColumn } from './scope';
 //   2. Refreshing a chain whose consent has no offline grant still rotates, but the new refresh
 //      token keeps the presented one's expiry (non-sliding), so a chain issued before the flag lapses
 //      at its current expiry, within 30 days. A chain under an offline grant gets a fresh 30 days.
-//      A device-flow chain keeps the fresh 30 days: the device approval is its own grant, and this
-//      change does not alter that flow.
+//      A chain of a client that holds the device-code grant always slides: the device flow is the
+//      user's own tool signing in on purpose, so it is offline by nature. That is read off the
+//      client's grants, not the chain's recorded origin, which is null on every pre-flag chain.
 //   3. Every rotation leaves a tombstone for the rotated token, keyed by its hash, pointing at the
 //      chain's family id (`ApiKey.refreshFamilyId`). Presenting a tombstoned token is reuse: someone
 //      holds a token that was already exchanged. The hub deletes every refresh token of that family
-//      and every access token for that user and client, and records `token.reuse_detected` (a count
-//      by event type; no user or client in the metric).
-//   4. Every OAuth access token records how it was minted (`ApiKey.mintOrigin`), and an exchanged
-//      at+jwt carries its subject token's origin as the `mint_origin` claim.
+//      and every access token for that user and client, expires the orchestrator's cached
+//      authentication of the user's tokens, and records `token.reuse_detected` (a count by event
+//      type; no user or client in the metric). Within REFRESH_REUSE_GRACE of the rotation the old
+//      token is plain invalid_grant instead: a client that sent the same refresh twice (a retry, two
+//      tabs) has not been robbed.
+//   4. Every OAuth access token records how it was minted (`ApiKey.mintOrigin`). Nothing reads it yet
+//      except the main app's offline Buzz cap.
 //
 // Tombstones live on the cache redis, one key per rotated token with a TTL, not in Postgres: they are
 // write-once, read only on a refresh that misses its row, and expire on their own, which is what a
@@ -90,6 +105,45 @@ export function parseOfflineBuzzCap(
   return { limit: value, period: p as SimpleBuzzLimit['period'] };
 }
 
+/**
+ * What the consent screen's cap fields start at, from the consent's current cap and the app's
+ * proposal: the current cap when it fits the simple form, else the proposal when there is no current
+ * cap. A current cap the simple form cannot show (several budgets, a currency, another window) is
+ * `custom`: the fields start blank, and leaving them blank keeps it.
+ */
+export function offlineCapInitial(
+  current: unknown,
+  proposed: SimpleBuzzLimit | null
+): { initial: SimpleBuzzLimit | null; custom: boolean } {
+  const budgets = Array.isArray(current) && current.length > 0 ? current : null;
+  if (!budgets) return { initial: proposed, custom: false };
+  const simple = budgetsToSimpleBuzzLimit(
+    budgets as Parameters<typeof budgetsToSimpleBuzzLimit>[0]
+  );
+  return simple ? { initial: simple, custom: false } : { initial: null, custom: true };
+}
+
+const sameCap = (a: SimpleBuzzLimit | null, b: SimpleBuzzLimit | null) =>
+  a === b || (!!a && !!b && a.limit === b.limit && a.period === b.period);
+
+/**
+ * The consent's `buzzLimit` after an approval: unchanged when the user left the fields at what they
+ * started at and the consent already has a cap (so a custom or multi-budget cap survives a
+ * re-consent), else the fields' value (null when cleared).
+ */
+export function offlineCapAfterApproval(opts: {
+  current: unknown;
+  proposed: SimpleBuzzLimit | null;
+  submitted: SimpleBuzzLimit | null;
+}): { change: false } | { change: true; budgets: ReturnType<typeof simpleBuzzLimitToBudgets> } {
+  const { initial } = offlineCapInitial(opts.current, opts.proposed);
+  const hasCurrent = Array.isArray(opts.current) && opts.current.length > 0;
+  if (hasCurrent && sameCap(opts.submitted, initial)) return { change: false };
+  const budgets = simpleBuzzLimitToBudgets(opts.submitted);
+  if (!hasCurrent && !budgets) return { change: false };
+  return { change: true, budgets };
+}
+
 /** A consent's columns the authorize flow reads with the flag on. */
 export async function readConsentForOffline(
   userId: number,
@@ -107,22 +161,33 @@ export async function readConsentForOffline(
 
 /**
  * Record the user's approval of the offline line: the consent row (created if missing, so the grant
- * has something Connected apps lists and Disconnect removes) gets `offlineGrantedAt` and the chosen
- * cap. `scope` is written on a new row, and on an existing one only when `rememberScope` (the
- * "remember my decision" box), as the plain approval does.
+ * has something Connected apps lists and Disconnect removes) gets `offlineGrantedAt`, and the cap
+ * per `offlineCapAfterApproval`. `scope` is written on a new row, and on an existing one only when
+ * `rememberScope` (the "remember my decision" box), as the plain approval does. A changed cap also
+ * drops the orchestrator's cached copy, as Connected apps does when the limit is edited there.
  */
 export async function grantOffline(opts: {
   userId: number;
   clientId: string;
   scope: bigint;
   rememberScope: boolean;
-  cap: SimpleBuzzLimit | null;
+  /** The app's proposed cap, from the authorize request. */
+  proposed: SimpleBuzzLimit | null;
+  /** The cap fields as the user submitted them. */
+  submitted: SimpleBuzzLimit | null;
   now?: Date;
 }): Promise<void> {
   const now = opts.now ?? new Date();
-  const budgets = simpleBuzzLimitToBudgets(opts.cap);
+  const current = (await readConsentForOffline(opts.userId, opts.clientId))?.buzzLimit ?? null;
+  const cap = offlineCapAfterApproval({
+    current,
+    proposed: opts.proposed,
+    submitted: opts.submitted,
+  });
   // pg serializes a JS array as a Postgres array, not JSON, so the jsonb value goes as a string.
-  const buzzLimit = budgets ? JSON.stringify(budgets) : null;
+  const capColumn = cap.change
+    ? { buzzLimit: cap.budgets ? JSON.stringify(cap.budgets) : null }
+    : {};
   await offlineDb()
     .insertInto('OauthConsent')
     .values({
@@ -130,17 +195,18 @@ export async function grantOffline(opts: {
       clientId: opts.clientId,
       scope: scopeToColumn(opts.scope),
       offlineGrantedAt: now,
-      buzzLimit,
+      ...capColumn,
     })
     .onConflict((oc) =>
       oc.columns(['userId', 'clientId']).doUpdateSet({
         offlineGrantedAt: now,
-        buzzLimit,
+        ...capColumn,
         updatedAt: now,
         ...(opts.rememberScope && { scope: scopeToColumn(opts.scope) }),
       })
     )
     .execute();
+  if (cap.change) await bustOAuthBuzzLimitCache(opts.userId, opts.clientId);
 }
 
 /**
@@ -155,6 +221,8 @@ export async function grantOfflineImplied(opts: {
   scope: bigint;
   now?: Date;
 }): Promise<void> {
+  // Already granted: nothing to write, so a skip-consent sign-in costs one read.
+  if (await hasOfflineGrant(opts.userId, opts.clientId)) return;
   const now = opts.now ?? new Date();
   await offlineDb()
     .insertInto('OauthConsent')
@@ -168,14 +236,25 @@ export async function grantOfflineImplied(opts: {
     .execute();
 }
 
-/** The user unticked the offline line: the consent, if any, loses its offline grant. */
+/**
+ * The user unticked the offline line: the consent, if any, loses its offline grant, and when it had
+ * one, the refresh tokens that grant let the app hold are deleted too (the app keeps working while
+ * its current access token lasts, then needs the user again).
+ */
 export async function declineOffline(userId: number, clientId: string): Promise<void> {
+  if (!(await hasOfflineGrant(userId, clientId))) return;
   await offlineDb()
     .updateTable('OauthConsent')
     .set({ offlineGrantedAt: null })
     .where('userId', '=', userId)
     .where('clientId', '=', clientId)
     .executeTakeFirst();
+  await db
+    .deleteFrom('ApiKey')
+    .where('type', '=', 'Refresh')
+    .where('userId', '=', userId)
+    .where('clientId', '=', clientId)
+    .execute();
 }
 
 /** A refresh chain as read off its live `Refresh` row (flag on only). */
@@ -256,19 +335,23 @@ export function planDeviceGrant(now = new Date()): MintPlan {
 
 /**
  * The tokens a refresh grant mints, flag on. The new refresh token joins the presented one's family.
- * Its expiry slides to a fresh REFRESH_TOKEN_TTL only under an offline grant (or for a device-flow
- * chain); otherwise it keeps the presented token's expiry, so the chain lapses then.
+ * Its expiry slides to a fresh REFRESH_TOKEN_TTL under an offline grant, or when the client holds the
+ * device-code grant (`clientGrants`, the client's own grants, so a pre-flag device chain with no
+ * recorded origin slides too); otherwise it keeps the presented token's expiry, so the chain lapses
+ * then.
  */
 export async function planRefreshGrant(opts: {
   userId: number;
   clientId: string;
+  clientGrants: readonly string[];
   chain: RefreshChain;
   now?: Date;
 }): Promise<MintPlan> {
   const now = opts.now ?? new Date();
   const fresh = new Date(now.getTime() + REFRESH_TOKEN_TTL * 1000);
   const slides =
-    opts.chain.rootOrigin === 'device_code' || (await hasOfflineGrant(opts.userId, opts.clientId));
+    opts.clientGrants.includes(DEVICE_CODE_GRANT) ||
+    (await hasOfflineGrant(opts.userId, opts.clientId));
   // A row with no expiry (none is written so, but the column allows it) is held to a fresh TTL, so
   // even it lapses; an expiry is never extended past what a fresh token would get.
   const kept = opts.chain.expiresAt && opts.chain.expiresAt < fresh ? opts.chain.expiresAt : fresh;
@@ -282,24 +365,23 @@ export async function planRefreshGrant(opts: {
   };
 }
 
-/** The mint origin recorded on an `Access` row, or null (none recorded, or no such row). */
-export async function readAccessMintOrigin(apiKeyId: number): Promise<MintOrigin | null> {
-  const row = await offlineDb()
-    .selectFrom('ApiKey')
-    .select(['mintOrigin'])
-    .where('id', '=', apiKeyId)
-    .where('type', '=', 'Access')
-    .executeTakeFirst();
-  return row?.mintOrigin ?? null;
-}
-
 // ── Reuse detection ──────────────────────────────────────────────────────────────────────────────
 
-/** The chain a rotated refresh token belonged to. */
+/** The chain a rotated refresh token belonged to, and when it was rotated (epoch ms). */
 export interface RefreshTombstone {
   familyId: string;
   userId: number;
   clientId: string;
+  rotatedAt: number;
+}
+
+/**
+ * Whether presenting a tombstoned token is reuse: only once REFRESH_REUSE_GRACE has passed since the
+ * rotation. Inside it, the same client most likely sent one refresh twice. A tombstone with no
+ * `rotatedAt` counts as past the grace.
+ */
+export function isRefreshReuse(tombstone: RefreshTombstone, now = Date.now()): boolean {
+  return !(now - (tombstone.rotatedAt ?? 0) < REFRESH_REUSE_GRACE * 1000);
 }
 
 const tombstoneKey = (refreshToken: string) =>
@@ -365,5 +447,6 @@ export async function revokeRefreshFamily(tombstone: RefreshTombstone): Promise<
     .where('userId', '=', userId)
     .where('clientId', '=', clientId)
     .execute();
+  await expireOrchestratorUserTokens(userId);
   logOAuthEvent({ type: 'token.reuse_detected', userId, clientId });
 }

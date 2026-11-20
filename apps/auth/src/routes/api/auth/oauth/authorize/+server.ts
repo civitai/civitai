@@ -315,17 +315,20 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
       offlineGranted = true;
     }
   } else if (isApproval && offlineAsked && params.offline === 'true') {
-    // The user approved the offline line, with the cap as they left it (the screen's own fields, not
-    // the app's proposal). That grant needs a consent row, so it is stored whether or not "remember"
-    // was ticked; "remember" still decides whether the row's scope is updated.
-    const cap = parseOfflineBuzzCap(params.offline_cap_limit, params.offline_cap_period);
-    if (cap === 'invalid') return oauthError(400, 'invalid_request', 'Invalid Buzz limit');
+    // The user approved the offline line, with the cap as they left it (the screen's own fields; the
+    // app's proposal only decides what they started at). That grant needs a consent row, so it is
+    // stored whether or not "remember" was ticked; "remember" still decides whether the row's scope
+    // is updated. An existing cap the user did not change is kept (offlineCapAfterApproval).
+    const submitted = parseOfflineBuzzCap(params.offline_cap_limit, params.offline_cap_period);
+    if (submitted === 'invalid') return oauthError(400, 'invalid_request', 'Invalid Buzz limit');
+    const proposed = parseOfflineBuzzCap(params.offline_buzz_limit, params.offline_buzz_period);
     await grantOffline({
       userId: user.id,
       clientId,
       scope: requestedScope,
       rememberScope: params.remember === 'true',
-      cap,
+      proposed: proposed === 'invalid' ? null : proposed,
+      submitted,
     });
     offlineGranted = true;
   } else if (isApproval) {

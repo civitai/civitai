@@ -18,6 +18,11 @@ export const OFFLINE_GRANT_FLAG = 'oauth-offline-grant';
  * thief rotated it; short enough that one tombstone per rotation stays bounded. See offline-grant.ts.
  */
 export const REFRESH_TOMBSTONE_TTL = 7 * 24 * 60 * 60; // 7 days
+/**
+ * How long after a rotation presenting the rotated refresh token is plain invalid_grant rather than
+ * reuse: a client that retried a refresh, or two tabs refreshing at once, is not a thief.
+ */
+export const REFRESH_REUSE_GRACE = 60; // seconds
 
 // Worker identity: a workload client's worker trades a device credential for a short-lived `Worker` token
 // through the token-exchange grant (RFC 8693). No refresh token; the worker exchanges again before expiry.

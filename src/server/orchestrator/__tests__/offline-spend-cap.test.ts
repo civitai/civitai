@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { BuzzSpendEntry } from '~/server/http/orchestrator/api-key-spend';
 import {
   OFFLINE_BUZZ_CAP_REACHED,
+  readMintOrigin,
   resolveOfflineCapToken,
   type OfflineCapReads,
   type OfflineCapRequest,
@@ -116,5 +117,38 @@ describe('the offline Buzz cap', () => {
     const { r, calls } = reads({ flagOn: async () => false });
     await expect(resolveOfflineCapToken(request(), r)).resolves.toBeNull();
     expect(calls.origin).toEqual([]);
+  });
+});
+
+describe('reading the mint origin', () => {
+  // A query builder whose terminal call yields `result`, or throws `error`.
+  const executor = (outcome: { row?: unknown; error?: unknown }) => {
+    const qb = {
+      select: () => qb,
+      where: () => qb,
+      executeTakeFirst: async () => {
+        if (outcome.error) throw outcome.error;
+        return outcome.row;
+      },
+    };
+    return { selectFrom: () => qb } as unknown as Parameters<typeof readMintOrigin>[1];
+  };
+
+  it('returns the recorded origin (positive control)', async () => {
+    await expect(readMintOrigin(9, executor({ row: { mintOrigin: 'refresh' } }))).resolves.toBe(
+      'refresh'
+    );
+  });
+
+  it('reads as no origin when the column does not exist yet (flag on before the migration)', async () => {
+    const missing = Object.assign(new Error('column "mintOrigin" does not exist'), {
+      code: '42703',
+    });
+    await expect(readMintOrigin(9, executor({ error: missing }))).resolves.toBeNull();
+  });
+
+  it('throws any other database error', async () => {
+    const down = Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' });
+    await expect(readMintOrigin(9, executor({ error: down }))).rejects.toBe(down);
   });
 });

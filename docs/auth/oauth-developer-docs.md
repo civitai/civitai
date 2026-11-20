@@ -171,13 +171,18 @@ is switched on; elsewhere every authorization-code grant still gets a refresh to
   change it later in Connected apps. A malformed value is refused with `invalid_request`. While the
   cap applies, Buzz spent with a token you obtained by refreshing is held to it; over the cap, the
   request is refused with `403`.
+- **Unticking the line revokes it.** If the user re-authorizes and leaves "Stay connected" unticked,
+  the app's refresh tokens for that user are deleted.
+- **Device-flow clients are unaffected.** A client registered for the device authorization grant keeps
+  getting sliding 30-day refresh tokens, as before.
 - **Refresh tokens issued before the switch keep working until their current expiry.** Refreshing one
   whose consent has no offline grant returns a new refresh token with the same expiry, so it does not
   slide; re-authorize with `offline_access` to keep access past it.
 - **Never reuse a refresh token.** Each refresh returns a new refresh token; store it and discard the
   old one. Presenting a refresh token that was already exchanged revokes every refresh token in its
-  chain and all of the user's access tokens for your app, and the user must authorize again. If two
-  parts of your app may refresh at once, serialize the refresh.
+  chain and all of the user's access tokens for your app, and the user must authorize again. A
+  retry of the same refresh within a minute is only refused (`invalid_grant`), but serialize
+  refreshes if two parts of your app may run them at once.
 
 ## Device Authorization Flow
 
@@ -432,23 +437,6 @@ Buckets are keyed differently per endpoint — check which one applies before si
   before client authentication
 
 The hub sends no rate-limit headers and no `Retry-After`. A throttled request is `429` with `{"error":"rate_limited"}` — back off on the 429 itself.
-
-## How a token was minted: `mint_origin`
-
-Where offline access is switched on, a resource JWT (`typ: at+jwt`) obtained by token exchange carries
-a `mint_origin` claim naming how the access token it was exchanged from was minted:
-
-| Value | Meaning |
-| --- | --- |
-| `auth_code` | The user signed in to the app (authorization-code grant). |
-| `device_code` | The user approved a device (device authorization grant). |
-| `refresh` | The app renewed access with a refresh token; no user was necessarily present. |
-| `app_token` | Minted for a user using the app on civitai.com. |
-| `client_credentials` | The app acting as itself. |
-
-The claim is absent for tokens minted before it was recorded. Civitai enforces nothing on it apart from
-the offline Buzz cap; a resource may use it, for example to ask for a fresh sign-in before a sensitive
-action when the value is `refresh`.
 
 ## Token Lifetime
 

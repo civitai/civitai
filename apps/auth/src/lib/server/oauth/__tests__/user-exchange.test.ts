@@ -35,7 +35,6 @@ const h = await vi.hoisted(async () => {
     rateCalls: [] as string[],
     clientIp: '203.0.113.7' as string | null,
     logs: [] as Record<string, unknown>[],
-    offlineGrantFlag: false,
   };
 });
 
@@ -135,9 +134,6 @@ vi.mock('$lib/server/axiom', () => ({
   logAxiomError: async () => undefined,
 }));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: () => undefined }));
-vi.mock('$lib/server/flipt', () => ({
-  isGlobalFlagOn: async (flag: string) => flag === 'oauth-offline-grant' && h.offlineGrantFlag,
-}));
 vi.mock('$lib/server/auth/request', async (orig) => ({
   ...(await orig<typeof RequestModule>()),
   getClientIp: () => h.clientIp,
@@ -235,7 +231,6 @@ beforeEach(() => {
   h.rateCalls = [];
   h.clientIp = '203.0.113.7';
   h.logs = [];
-  h.offlineGrantFlag = false;
   invalidateRoleCache();
   process.env.AUTH_JWT_ISSUER = 'https://auth.test';
   process.env.OAUTH_EXCHANGE_RESOURCES = registry();
@@ -916,26 +911,5 @@ describe('user token exchange — client_id mismatch with an encoded Basic id', 
     const res = await exchange({ caller: 'app.v2', auth: 'body', headers: { authorization } });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(decodeJwt(res.body.access_token as string).act).toEqual({ sub: 'app.v2' });
-  });
-});
-
-describe('user token exchange — the presence marker (mint_origin)', () => {
-  it.each(['refresh', 'auth_code', 'app_token'])(
-    'with the offline-grant flag on, carries the subject token’s mint origin %s as mint_origin',
-    async (origin) => {
-      h.offlineGrantFlag = true;
-      subjectRow().mintOrigin = origin;
-      expect(decodeJwt(await minted()).mint_origin).toBe(origin);
-    }
-  );
-
-  it('with the flag on, omits the claim for a token that recorded no origin', async () => {
-    h.offlineGrantFlag = true;
-    expect(decodeJwt(await minted())).not.toHaveProperty('mint_origin');
-  });
-
-  it('with the flag off, never carries the claim, even for a token that recorded an origin', async () => {
-    subjectRow().mintOrigin = 'refresh';
-    expect(decodeJwt(await minted())).not.toHaveProperty('mint_origin');
   });
 });

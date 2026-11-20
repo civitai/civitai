@@ -19,6 +19,8 @@ const h = vi.hoisted(() => {
     strings: new Map<string, { value: unknown; ex?: number }>(),
     hashes: new Map<string, Map<string, unknown>>(),
     events: [] as { type: string; userId?: number; clientId?: string }[],
+    // Outbound calls (the orchestrator cache invalidations), as "METHOD path".
+    fetches: [] as string[],
   };
 });
 
@@ -95,6 +97,8 @@ const USER = 41;
 const OTHER_USER = 42;
 const CLIENT = 'offline-app';
 const OTHER_CLIENT = 'other-app';
+const DEVICE_CLIENT = 'cli-app';
+const SYSTEM_CLIENT = 'system-app';
 const REDIRECT = 'https://app.example/callback';
 const NOW = new Date('2026-11-20T12:00:00.000Z');
 const DAY = 86_400_000;
@@ -109,7 +113,7 @@ function seed() {
     deletedAt: null,
     bannedAt: null,
   }));
-  h.tables.OauthClient = [CLIENT, OTHER_CLIENT].map((id) => ({
+  const client = (id: string, over: Record<string, unknown> = {}) => ({
     id,
     secret: null,
     name: id,
@@ -121,7 +125,17 @@ function seed() {
     allowedOrigins: [],
     accessMode: 'open',
     skipConsent: false,
-  }));
+    ...over,
+  });
+  h.tables.OauthClient = [
+    client(CLIENT),
+    client(OTHER_CLIENT),
+    client(DEVICE_CLIENT, {
+      grants: ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
+    }),
+    // A confidential app owned by the system account (-1) that skips the consent screen.
+    client(SYSTEM_CLIENT, { isConfidential: true, secret: 'x', userId: -1, skipConsent: true }),
+  ];
   h.tables.ApiKey = [];
   h.tables.OauthConsent = [];
 }
@@ -131,6 +145,7 @@ function consent(extra: Record<string, unknown> = {}) {
     id: h.tables.OauthConsent.length + 1,
     userId: USER,
     clientId: CLIENT,
+    updatedAt: new Date(NOW.getTime() - 5 * DAY),
     scope: Number(TokenScope.UserRead | TokenScope.ModelsRead),
     buzzLimit: null,
     ...extra,
@@ -200,12 +215,12 @@ async function authorize(params: Record<string, string>, approve: Record<string,
   throw new Error('authorize did not redirect');
 }
 
-async function token(body: Record<string, string>) {
+async function token(body: Record<string, string>, clientId = CLIENT) {
   const res = await TOKEN({
     request: new Request('https://auth.civitai.com/api/auth/oauth/token', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: CLIENT, ...body }),
+      body: new URLSearchParams({ client_id: clientId, ...body }),
     }),
   } as never);
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
@@ -222,8 +237,8 @@ async function exchangeCode(redirect: URL) {
   });
 }
 
-const refresh = (refreshToken: string) =>
-  token({ grant_type: 'refresh_token', refresh_token: refreshToken });
+const refresh = (refreshToken: string, clientId = CLIENT) =>
+  token({ grant_type: 'refresh_token', refresh_token: refreshToken }, clientId);
 
 const row = (raw: unknown) =>
   h.tables.ApiKey.find((k) => k.key === generateSecretHash(String(raw)));
@@ -238,8 +253,25 @@ beforeEach(() => {
   h.strings.clear();
   h.hashes.clear();
   h.events.length = 0;
+  h.fetches.length = 0;
+  process.env.ORCHESTRATOR_ENDPOINT = 'https://orchestrator.test';
+  process.env.ORCHESTRATOR_ACCESS_TOKEN = 'test-orchestrator-token';
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) => {
+      h.fetches.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`);
+      return new Response(null, { status: 204 });
+    })
+  );
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+const BUST_LIMIT = `DELETE /v1/manager/users/${USER}/auth/oauth/${CLIENT}/limits`;
+const EXPIRE_TOKENS = `DELETE /v2/consumer/civitai/${USER}/tokens`;
+const SECOND = 1000;
 
 describe('flag off: today’s behaviour exactly', () => {
   it('issues a refresh token on an authorization-code grant, offline_access or not, and writes no offline column', async () => {
@@ -310,13 +342,27 @@ describe('flag on: the offline grant', () => {
     expect(redirect.searchParams.get('scope')).toBe(`offline_access ${TokenScope.ModelsRead}`);
   });
 
-  it('issues no refresh token when the user unticks the offline line, and clears an earlier grant', async () => {
+  it('unticking the line clears an earlier grant, deletes that app’s refresh tokens, and issues none', async () => {
     consent({ offlineGrantedAt: new Date(NOW.getTime() - DAY) });
+    const held = legacyRefresh(new Date(NOW.getTime() + 20 * DAY));
+    const otherClient = legacyRefresh(new Date(NOW.getTime() + 20 * DAY), USER, OTHER_CLIENT);
+    const otherUser = legacyRefresh(new Date(NOW.getTime() + 20 * DAY), OTHER_USER, CLIENT);
     const params = authorizeParams(`offline_access ${TokenScope.ModelsRead}`);
     const res = await exchangeCode(await authorize(params, { remember: 'true' }));
     expect(res.status).toBe(200);
     expect(res.body).not.toHaveProperty('refresh_token');
     expect(h.tables.OauthConsent[0].offlineGrantedAt).toBeNull();
+    expect(row(held)).toBeUndefined();
+    expect(row(otherClient)).toBeDefined();
+    expect(row(otherUser)).toBeDefined();
+  });
+
+  it('unticking the line with no earlier grant leaves the app’s (grandfathered) refresh tokens alone', async () => {
+    consent();
+    const held = legacyRefresh(new Date(NOW.getTime() + 20 * DAY));
+    const params = authorizeParams(`offline_access ${TokenScope.ModelsRead}`);
+    expect((await exchangeCode(await authorize(params, { remember: 'true' }))).status).toBe(200);
+    expect(row(held)).toBeDefined();
   });
 
   it('approving the offline line stores the grant and the chosen cap, and the code earns a refresh token', async () => {
@@ -343,6 +389,7 @@ describe('flag on: the offline grant', () => {
     expect(JSON.parse(String(h.tables.OauthConsent[0].buzzLimit))).toEqual([
       { type: 'sliding', limit: 2000, window: 'day', unit: 7 },
     ]);
+    expect(h.fetches).toEqual([BUST_LIMIT]);
     const refreshRow = row(res.body.refresh_token)!;
     expect(refreshRow).toMatchObject({
       mintOrigin: 'auth_code',
@@ -360,6 +407,63 @@ describe('flag on: the offline grant', () => {
     const res = await exchangeCode(redirect);
     expect(res.status).toBe(200);
     expect(res.body).not.toHaveProperty('refresh_token');
+  });
+
+  it('re-consent keeps a custom (multi-budget) cap when the fields are left blank, and busts nothing', async () => {
+    const custom = [
+      { type: 'sliding', limit: 300, window: 'hour', unit: 1 },
+      { type: 'absolute', limit: 9000 },
+    ];
+    consent({ buzzLimit: custom });
+    const params = authorizeParams(`offline_access ${TokenScope.ModelsRead}`, {
+      offline_buzz_limit: '500',
+    });
+    await authorize(params, { offline: 'true', offline_cap_limit: '' });
+    expect(h.tables.OauthConsent[0].buzzLimit).toEqual(custom);
+    expect(h.tables.OauthConsent[0].offlineGrantedAt).toEqual(NOW);
+    expect(h.fetches).toEqual([]);
+  });
+
+  it('re-consent keeps a simple cap left as it was, and writes and busts one the user changed', async () => {
+    const before = [{ type: 'sliding', limit: 700, window: 'day', unit: 1 }];
+    consent({ buzzLimit: before });
+    const params = authorizeParams(`offline_access ${TokenScope.ModelsRead}`, {
+      offline_buzz_limit: '500',
+    });
+    // Left at what the screen showed (the current 700/day, not the app's 500).
+    await authorize(params, {
+      offline: 'true',
+      offline_cap_limit: '700',
+      offline_cap_period: 'day',
+    });
+    expect(h.tables.OauthConsent[0].buzzLimit).toEqual(before);
+    expect(h.fetches).toEqual([]);
+
+    await authorize(params, {
+      offline: 'true',
+      offline_cap_limit: '900',
+      offline_cap_period: 'day',
+    });
+    expect(JSON.parse(String(h.tables.OauthConsent[0].buzzLimit))).toEqual([
+      { type: 'sliding', limit: 900, window: 'day', unit: 1 },
+    ]);
+    expect(h.fetches).toEqual([BUST_LIMIT]);
+  });
+
+  it('a skip-consent app gets the grant implied once; a later sign-in writes nothing', async () => {
+    const params = {
+      ...authorizeParams(`offline_access ${TokenScope.ModelsRead}`),
+      client_id: SYSTEM_CLIENT,
+    };
+    expect((await authorize(params, null)).searchParams.get('code')).toBeTruthy();
+    expect(h.tables.OauthConsent).toMatchObject([
+      { userId: USER, clientId: SYSTEM_CLIENT, offlineGrantedAt: NOW },
+    ]);
+    const firstRow = { ...h.tables.OauthConsent[0] };
+
+    vi.setSystemTime(new Date(NOW.getTime() + DAY));
+    expect((await authorize(params, null)).searchParams.get('code')).toBeTruthy();
+    expect(h.tables.OauthConsent).toEqual([firstRow]);
   });
 
   it('refuses a malformed proposed cap', async () => {
@@ -411,16 +515,31 @@ describe('flag on: refresh expiry', () => {
     expect(lapsed.body.error).toBe('invalid_grant');
   });
 
-  it('a device-flow chain keeps sliding without a consent', async () => {
-    const old = legacyRefresh(new Date(NOW.getTime() + 3 * DAY));
+  it('a device-flow client’s chain keeps sliding without a consent', async () => {
+    const old = legacyRefresh(new Date(NOW.getTime() + 3 * DAY), USER, DEVICE_CLIENT);
     row(old)!.mintOrigin = 'device_code';
     row(old)!.refreshFamilyId = 'fam-device';
-    const res = await refresh(old);
+    const res = await refresh(old, DEVICE_CLIENT);
     expect(row(res.body.refresh_token)).toMatchObject({
       expiresAt: new Date(NOW.getTime() + 30 * DAY),
       refreshFamilyId: 'fam-device',
       mintOrigin: 'device_code',
     });
+  });
+
+  it('a pre-flag device chain (no recorded origin) keeps sliding: read off the client’s device grant', async () => {
+    const old = legacyRefresh(new Date(NOW.getTime() + 3 * DAY), USER, DEVICE_CLIENT);
+    const res = await refresh(old, DEVICE_CLIENT);
+    expect(res.status).toBe(200);
+    expect(row(res.body.refresh_token)?.expiresAt).toEqual(new Date(NOW.getTime() + 30 * DAY));
+  });
+
+  it('a chain recorded as device_code under a client without the device grant does not slide', async () => {
+    const original = new Date(NOW.getTime() + 3 * DAY + 4321);
+    const old = legacyRefresh(original);
+    row(old)!.mintOrigin = 'device_code';
+    const res = await refresh(old);
+    expect(row(res.body.refresh_token)?.expiresAt).toEqual(original);
   });
 });
 
@@ -446,11 +565,18 @@ describe('flag on: refresh reuse detection', () => {
     // One tombstone, for t1, bounded by REFRESH_TOMBSTONE_TTL (7 days < t1's 20 days left).
     expect([...h.strings.values()]).toEqual([
       {
-        value: { familyId: row(t2)!.refreshFamilyId, userId: USER, clientId: CLIENT },
+        value: {
+          familyId: row(t2)!.refreshFamilyId,
+          userId: USER,
+          clientId: CLIENT,
+          rotatedAt: NOW.getTime(),
+        },
         ex: 7 * 86_400,
       },
     ]);
 
+    // Past the 60 s reuse grace.
+    vi.setSystemTime(new Date(NOW.getTime() + 90 * SECOND));
     const replay = await refresh(t1);
     expect(replay.status).toBe(400);
     expect(replay.body.error).toBe('invalid_grant');
@@ -465,9 +591,25 @@ describe('flag on: refresh reuse detection', () => {
       userId: USER,
       clientId: CLIENT,
     });
+    expect(h.fetches).toEqual([EXPIRE_TOKENS]);
 
     // The thief's (or the client's) newer token is dead too.
     expect((await refresh(t2)).status).toBe(400);
+  });
+
+  it('replaying a rotated token inside the 60 s grace is plain invalid_grant and revokes nothing', async () => {
+    consent({ offlineGrantedAt: NOW });
+    const t1 = legacyRefresh(new Date(NOW.getTime() + 20 * DAY));
+    const rotated = await refresh(t1);
+    const t2 = String(rotated.body.refresh_token);
+    vi.setSystemTime(new Date(NOW.getTime() + 30 * SECOND));
+    const replay = await refresh(t1);
+    expect(replay.status).toBe(400);
+    expect(replay.body.error).toBe('invalid_grant');
+    expect(row(t2)).toBeDefined();
+    expect(row(rotated.body.access_token)).toBeDefined();
+    expect(h.events.map((e) => e.type)).not.toContain('token.reuse_detected');
+    expect(h.fetches).toEqual([]);
   });
 
   it('a tombstone never outlives the rotated token: one with 2 days left lasts 2 days', async () => {
