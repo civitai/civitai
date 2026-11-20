@@ -901,8 +901,9 @@ the same writer as `PERSIST_GENERATION_SOURCE`, and replies with that row instea
   succeeds is the reply, and a refused one leaves the blob. The gate stays the authority, so
   this never admits an unscanned source while the flag is on.
 - **Gates.** The app needs `ai:write:budgeted`, the signed-in viewer must be the token's subject
-  and Apps must be on for them, as for `PERSIST_GENERATION_SOURCE`. With the flag on, an app
-  without the scope gets an upload error (never the blob). The url must be a consumer blob on the orchestrator host, as the upload returns it. The row
+  and Apps must be on for them, as for `PERSIST_GENERATION_SOURCE`. With the flag read as on, an
+  app without the scope gets an upload error (never the blob). When the query failed, any
+  refused copy (the scope, a limit) leaves the blob, and the gate refuses it at submit. The url must be a consumer blob on the orchestrator host, as the upload returns it. The row
   is the viewer's own, at a fresh key, not on the shared grid and not postable.
 - **Limits.** The same sizes as `PERSIST_GENERATION_SOURCE`'s, in buckets of its own: 60 per
   hour per viewer and at most 2 in flight, plus the per-user 60/h request limit.
