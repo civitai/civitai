@@ -1144,14 +1144,25 @@ export function attachSysSentinelListeners(
     errorCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
   }
 ) {
+  // @redis/client emits SENTINE_LIST_CHANGE (sic) on every sentinel scan, carrying only the list
+  // size; log it only when the size moves. The Symbol seed makes the first event always log, even
+  // without a size.
+  let lastSentinelListSize: unknown = Symbol('no sentinel list size seen');
   client.on('topology-change', (event: any) => {
     const { type: eventType, node } = event ?? {};
     const host = node?.host ?? '?';
     const port = node?.port ?? '?';
-    ctx.log(
-      `Redis sentinel topology change [type=${eventType ?? 'unknown'}, host=${host}, port=${port}]`,
-      event
-    );
+    const unchangedSentinelList =
+      eventType === 'SENTINE_LIST_CHANGE' && event.size === lastSentinelListSize;
+    if (eventType === 'SENTINE_LIST_CHANGE') lastSentinelListSize = event.size;
+    if (!unchangedSentinelList) {
+      ctx.log(
+        `Redis sentinel topology change [type=${
+          eventType ?? 'unknown'
+        }, host=${host}, port=${port}]`,
+        event
+      );
+    }
     ctx.topologyCounter
       .labels({
         type: String(eventType ?? 'unknown'),
