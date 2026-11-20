@@ -473,8 +473,8 @@ describe('verdicts', () => {
     replies.node.gate = nodeGate.promise;
     replies.go.gate = goGate.promise;
 
-    // No `vi.waitFor` here: under fake timers it advances the clock on every check, which would
-    // add to both latencies.
+    // No `vi.waitFor` until both legs have read their clocks: under fake timers it advances the
+    // clock on every check, which would add to both latencies.
     const pending = callQuery(INFINITE, INFINITE_INPUT);
     await settleAll();
     expect(sent).toHaveLength(2);
@@ -484,9 +484,10 @@ describe('verdicts', () => {
     await settleAll();
     vi.advanceTimersByTime(230);
     goGate.open();
-
-    for (let i = 0; i < 50 && shadowPushes().length === 0; i++) await macrotask();
-    expect(shadowPushes()).toHaveLength(1);
+    // The candidate reads its clock once its body is read; the hash after that runs off-thread
+    // and can take longer than a few event-loop turns, so only then poll.
+    await settleAll();
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
     expect(shadowPushes()[0][0].values).toMatchObject({ control_ms: 120, candidate_ms: 350 });
   });
 });
