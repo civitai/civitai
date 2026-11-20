@@ -363,7 +363,6 @@ export async function getUsersWithSearch({
   return (
     results.hits
       .filter((x) => !x.deletedAt)
-      // `image` is the unrated legacy avatar: a document indexed before it was dropped can still hold it.
       .map(({ deletedAt, profilePicture, image: _legacyImage, ...user }) => ({
         ...user,
         avatarUrl: profilePicture?.url,

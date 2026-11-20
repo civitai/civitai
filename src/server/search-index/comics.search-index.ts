@@ -228,7 +228,6 @@ async function pullComics(db: RawQueryClient, filters: Prisma.Sql[]) {
           'id', u.id,
           'username', u.username,
           'deletedAt', u."deletedAt",
-          -- The legacy avatar URL is unrated, so it is stored as null.
           'image', NULL,
           'profilePictureId', u."profilePictureId"
         ) "user"
