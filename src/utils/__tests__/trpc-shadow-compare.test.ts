@@ -473,8 +473,11 @@ describe('verdicts', () => {
     replies.node.gate = nodeGate.promise;
     replies.go.gate = goGate.promise;
 
+    // No `vi.waitFor` here: under fake timers it advances the clock on every check, which would
+    // add to both latencies.
     const pending = callQuery(INFINITE, INFINITE_INPUT);
-    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    await settleAll();
+    expect(sent).toHaveLength(2);
     vi.advanceTimersByTime(120);
     nodeGate.open();
     await pending;
@@ -482,7 +485,8 @@ describe('verdicts', () => {
     vi.advanceTimersByTime(230);
     goGate.open();
 
-    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    for (let i = 0; i < 50 && shadowPushes().length === 0; i++) await macrotask();
+    expect(shadowPushes()).toHaveLength(1);
     expect(shadowPushes()[0][0].values).toMatchObject({ control_ms: 120, candidate_ms: 350 });
   });
 });
