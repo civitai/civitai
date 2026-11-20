@@ -30,6 +30,8 @@ const ESCALATION_REASONS = [
   ...new Set([...KNIGHTS_ESCALATION_REASONS, ...KNIGHTS_WRITEBACK_REASONS]),
 ] as const;
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
+const SKILL_CHECK_RETIRE_REASONS = ['cap', 'failures'] as const;
+export type SkillCheckRetireReason = (typeof SKILL_CHECK_RETIRE_REASONS)[number];
 const REFUSAL_REASONS = [
   'no-player',
   'not-open',
@@ -131,6 +133,11 @@ const hiddenChecksGraded = counter(
   { verdict: HIDDEN_VERDICTS }
 );
 const smites = counter('knights_smites_total', 'Smites issued by hidden-check grading.');
+const skillChecksRetired = counter(
+  'knights_skill_checks_retired_total',
+  'Mod-confirmed skill checks retired, by reason: pushed out by the pool cap, or failed by too many Knights.',
+  { reason: SKILL_CHECK_RETIRE_REASONS }
+);
 const careerResets = counter(
   'knights_career_resets_total',
   'Career resets, by trigger: the smite limit (done in the main app) or the player restarting.',
@@ -197,6 +204,10 @@ export const metrics = {
   hiddenCheckGraded: (verdict: string) =>
     safely(() => hiddenChecksGraded.inc({ verdict: bounded(verdict, HIDDEN_VERDICTS) })),
   smite: () => safely(() => smites.inc()),
+  skillChecksRetired: (reason: SkillCheckRetireReason, count: number) =>
+    safely(() => {
+      if (count > 0) skillChecksRetired.inc({ reason }, count);
+    }),
   unhandledError: () => safely(() => unhandledErrors.inc()),
   tickItemFailures: (step: TickFailureStep, count: number) =>
     safely(() => {

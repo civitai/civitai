@@ -32,6 +32,13 @@ ordinary vote in every way a player can see.
   bounded number per level bucket. A probation check grades nobody. Once enough independent players have answered it, the
   review promotes it to `active` or retires it; the review runs even while the harvest is paused. Active checks are not
   reviewed this way. The rules live in those two services.
+- Mod-confirmed checks (`skill-check/pool.ts`, pool `skillCheck`, source `inquisitor`): an image two moderators gave the same
+  level in the [in-game inquisitor queue](knights-inquisitor.md) becomes a check at that level, served to Acolytes and Knights
+  alike. An image already in another pool moves here with its counters reset; a core trial image never moves. The pool keeps
+  `skillCheckPoolCap` active checks (Config page, default 500) and retires the oldest when a new one comes in. An image under
+  a review or hold (reports, appeals, evidence holds, scan holds, an open Inquisitor item and similar) never enters, checked
+  again at every serve (`skill-check/eligible.ts`). These checks have no age limit; they leave by the cap, by Knights' own
+  failures (below), or when a moderator moves the image off their level (the harvest job's stale sweep).
 
 - The draw (`pickHiddenCheck`) is balanced across level buckets: each bucket (the reference's `answer`: PG, PG-13, R, X,
   XXX, with any other answer as a group of its own) that still has a check the player can take is equally likely, whatever
@@ -65,6 +72,9 @@ ordinary vote in every way a player can see.
   `KNIGHTS_HIDDEN_CHECK_RETIRE_FAILURE_RATE` (default 0.5) of at least `KNIGHTS_HIDDEN_CHECK_RETIRE_MIN_ANSWERS` (default 20)
   answers is retired in the same transaction: its known answer is more likely wrong or unclear than its players in bad faith.
   The harvest never re-adds a retired image (`imageId` is unique).
+  A mod-confirmed check skips that shared-counter rule, since Acolytes' exact-match misses land on the same counters; it
+  retires when Knights' graded answers in the ledger (correct or failed; close answers are inconclusive) pass the same two
+  thresholds (`knights_skill_checks_retired_total{reason="failures"}`).
   A check still pending when its reference is retired (by this rule or by hand) is graded `inconclusive`: no pay, no penalty.
 - A wrong answer can cost the player a warning or a smite, decided when the check is graded: the first failure (a `warning`
   or `smite` consequence, never `close`) in `failureWindowHours` is a warning, each later one (or a severe under-rating) a smite, one check at a time. It is stored on the

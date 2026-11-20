@@ -349,6 +349,69 @@ describe('retiring checks players keep failing', () => {
   });
 });
 
+describe('retiring mod-confirmed checks', () => {
+  const statusOf = async (id: number) =>
+    (
+      await pg.query<{ status: string }>(`SELECT status FROM "KnightsReferenceImage" WHERE id=$1`, [
+        id,
+      ])
+    ).rows[0].status;
+  const inquisitorRef = async (imageId: number) => {
+    const ref = await reference(imageId, '4');
+    await pg.query(`UPDATE "KnightsReferenceImage" SET source='inquisitor' WHERE id=$1`, [ref]);
+    return ref;
+  };
+  /** Earlier graded Knight answers on the check, as the ledger holds them. */
+  const priorVotes = (ref: number, verdicts: string[]) =>
+    pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict")
+       SELECT $1, 1000 + n, $2::timestamp + (n || ' seconds')::interval, $3, 0, 'Knight', '4', 1, v
+       FROM unnest($4::text[]) WITH ORDINALITY AS t(v, n)`,
+      [-ref, '2026-12-14 00:00:00', Q, verdicts]
+    );
+
+  it('keeps an inquisitor check whose shared counters are past the bar when Knights mostly got it right', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await inquisitorRef(10);
+    await pg.query(`UPDATE "KnightsReferenceImage" SET answers=19, failures=15 WHERE id=$1`, [ref]);
+    await priorVotes(ref, Array(19).fill('correct'));
+    await answer(1, ref, '16');
+    await settle(minutes(31));
+    expect(await statusOf(ref)).toBe('active');
+  });
+
+  it('still retires a harvested check with the same shared counters', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10, '4');
+    await pg.query(`UPDATE "KnightsReferenceImage" SET answers=19, failures=15 WHERE id=$1`, [ref]);
+    await answer(1, ref, '16');
+    await settle(minutes(31));
+    expect(await statusOf(ref)).toBe('retired');
+  });
+
+  it('retires an inquisitor check once Knights hard-fail more than the bar, and counts it', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await inquisitorRef(10);
+    await priorVotes(ref, [...Array(10).fill('failed'), ...Array(9).fill('correct')]);
+    const before = await counterValue('knights_skill_checks_retired_total', { reason: 'failures' });
+    await answer(1, ref, '16');
+    await settle(minutes(31));
+    expect(await statusOf(ref)).toBe('retired');
+    expect(await counterValue('knights_skill_checks_retired_total', { reason: 'failures' })).toBe(
+      before + 1
+    );
+  });
+
+  it('does not count close answers toward retiring an inquisitor check', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await inquisitorRef(10);
+    await priorVotes(ref, [...Array(10).fill('inconclusive'), ...Array(9).fill('failed')]);
+    await answer(1, ref, '8');
+    await settle(minutes(31));
+    expect(await statusOf(ref)).toBe('active');
+  });
+});
+
 describe('naming the check behind a notice', () => {
   it('names the image, the answer given and the answer it wanted', async () => {
     await seedPlayer(pg, 1);

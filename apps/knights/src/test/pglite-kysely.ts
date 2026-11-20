@@ -49,7 +49,30 @@ CREATE TABLE "Image" (
   "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
   "poi" BOOLEAN NOT NULL DEFAULT false,
   "minor" BOOLEAN NOT NULL DEFAULT false,
+  "tosViolation" BOOLEAN NOT NULL DEFAULT false,
   "postId" INTEGER
+);
+CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
+CREATE TABLE "EvidenceHoldPost" ("postId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
+CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT NOT NULL);
+CREATE TABLE "ImageReport" ("reportId" INTEGER NOT NULL, "imageId" INTEGER NOT NULL, PRIMARY KEY ("reportId", "imageId"));
+CREATE TABLE "ImageFlag" (
+  "imageId" INTEGER PRIMARY KEY,
+  "promptNsfw" BOOLEAN NOT NULL DEFAULT false,
+  "resourcesNsfw" BOOLEAN NOT NULL DEFAULT false
+);
+CREATE TABLE "Appeal" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER NOT NULL DEFAULT 0,
+  "entityType" TEXT,
+  "entityId" INTEGER,
+  "status" TEXT NOT NULL DEFAULT 'Pending'
+);
+CREATE TABLE "TextScanHold" (
+  "id" SERIAL PRIMARY KEY,
+  "entityType" TEXT NOT NULL,
+  "entityId" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Pending'
 );
 CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY,
@@ -139,7 +162,6 @@ const LABEL_STORE_MIGRATION = fileURLToPath(
 /** The site tables the label store's migration hooks into; `Image` is already a stand-in above. */
 const LABEL_STORE_SOURCES = `
 CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
-CREATE TABLE "Appeal" ("id" serial PRIMARY KEY, "userId" integer NOT NULL);
 CREATE TABLE "ScanLabelItem" (
   "id" serial PRIMARY KEY,
   "imageId" integer NOT NULL REFERENCES "Image"("id") ON DELETE CASCADE,
