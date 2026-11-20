@@ -76,6 +76,7 @@ import {
 } from '~/server/services/image-removal-hold.service';
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
+import { queueDocumentsForBlockedImages } from '~/server/services/image-models-reindex.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
@@ -348,13 +349,18 @@ export const setTosViolationHandler = async ({
     // After the steps that hide the image: a blocklist write that throws must not skip them.
     const pHash = written.pHashes.get(id);
     if (!pHash && written.removedForCsam.has(id)) logCsamBlocklistNoHash([id], 'block');
-    if (pHash)
-      await addBlockedImage({
-        hash: pHash,
-        // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
-        reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
-        context: { step: 'block', imageIds: [id], actorUserId: user.id },
-      });
+    // The requeue follows the blocklist write and runs when it throws: the block has landed.
+    try {
+      if (pHash)
+        await addBlockedImage({
+          hash: pHash,
+          // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+          reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
+          context: { step: 'block', imageIds: [id], actorUserId: user.id },
+        });
+    } finally {
+      await queueDocumentsForBlockedImages([id]);
+    }
 
     // Look up report details for violation type resolution
     const reportDetails = await getReportViolationDetailsForImages([id]);

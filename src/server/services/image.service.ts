@@ -197,7 +197,10 @@ import type {
 import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { imagesMetricsSearchIndex } from '~/server/search-index';
-import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
+import {
+  queueDocumentsForBlockedImages,
+  queueDocumentsForImageMinorChanges,
+} from '~/server/services/image-models-reindex.service';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -1481,27 +1484,36 @@ export async function handleBlockImages({
     await clearAccountDeletionImageMarkers({ ids });
     // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
     if (postIds.length) await bustCachesForPosts(postIds);
-    if (include?.includes('phash-block')) {
-      logCsamBlocklistNoHash(
-        ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
-        'block'
-      );
-      await bulkAddBlockedImages({
-        data: images
-          .map(({ id, blockedFor }) => {
-            const pHash = pHashes.get(id);
-            if (!pHash) return null;
-            return {
-              hash: pHash,
-              // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
-              reason: removedForCsam.has(id)
-                ? BlockImageReason.CSAM
-                : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
-            };
-          })
-          .filter(isDefined),
-        context: { step: 'block', imageIds: images.map(({ id }) => id), actorUserId: moderatorId },
-      });
+    // The requeue runs even when the blocklist write throws: the block has landed.
+    try {
+      if (include?.includes('phash-block')) {
+        logCsamBlocklistNoHash(
+          ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
+          'block'
+        );
+        await bulkAddBlockedImages({
+          data: images
+            .map(({ id, blockedFor }) => {
+              const pHash = pHashes.get(id);
+              if (!pHash) return null;
+              return {
+                hash: pHash,
+                // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+                reason: removedForCsam.has(id)
+                  ? BlockImageReason.CSAM
+                  : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
+              };
+            })
+            .filter(isDefined),
+          context: {
+            step: 'block',
+            imageIds: images.map(({ id }) => id),
+            actorUserId: moderatorId,
+          },
+        });
+      }
+    } finally {
+      await queueDocumentsForBlockedImages(ids);
     }
     if (include?.includes('user-notification')) {
       const notified = images.filter(
