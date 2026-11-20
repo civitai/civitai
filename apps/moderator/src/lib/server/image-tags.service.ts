@@ -33,7 +33,9 @@ export type ImageTagReviewItem = {
   tags: ImageTagReviewTag[];
 };
 
-// needsReview/disabled live in TagsOnImageNew.attributes as a bitmask: bit 9 = needsReview, bit 10 = disabled.
+// needsReview/disabled live in TagsOnImageNew.attributes as a bitmask (upsert_tag_on_image packs them).
+export const NEEDS_REVIEW_BIT = 9;
+export const DISABLED_BIT = 10;
 export async function getImageTagReviewQueue({
   cursor,
   limit,
@@ -51,8 +53,8 @@ export async function getImageTagReviewQueue({
     WITH reviewable AS MATERIALIZED (
       SELECT DISTINCT "imageId"
       FROM "TagsOnImageNew"
-      WHERE (((attributes >> 9)::integer & 1) = 1)
-        AND (((attributes >> 10)::integer & 1) <> 1)
+      WHERE (((attributes >> ${sql.raw(String(NEEDS_REVIEW_BIT))})::integer & 1) = 1)
+        AND (((attributes >> ${sql.raw(String(DISABLED_BIT))})::integer & 1) <> 1)
         ${cursor ? sql`AND "imageId" < ${cursor}` : sql``}
       ORDER BY "imageId" DESC
     )
@@ -231,6 +233,6 @@ async function writeFlaggedTag({
   return outcome;
 }
 
-/** In the review queue: needsReview (bit 9) set, disabled (bit 10) clear. */
+/** In the review queue: needsReview set, disabled clear. */
 const isFlagged = (attributes: number) =>
-  ((attributes >> 9) & 1) === 1 && ((attributes >> 10) & 1) === 0;
+  ((attributes >> NEEDS_REVIEW_BIT) & 1) === 1 && ((attributes >> DISABLED_BIT) & 1) === 0;

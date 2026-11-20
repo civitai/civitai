@@ -6,14 +6,20 @@ import { bootTagReview, createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { ensureVotePartitions, escalateExpired } from '../queue/queue.service';
 import { runTagReview, type TagReviewWalk } from './tag-review';
+import {
+  BLOCKED,
+  flagTag,
+  R,
+  resetTagReview,
+  ruleTag,
+  staffPaladin,
+  X,
+} from './tag-review.fixtures';
 
-// The items' createdAt is the database clock, which the 30-day episode watch is measured against.
+// The items' createdAt is the database clock.
 const NOW = new Date();
-const DAY_AGO = new Date(NOW.getTime() - 86_400_000).toISOString();
+const DAY_AGO = new Date(NOW.getTime() - 86_400_000);
 const PALADIN = 1;
-const R = 4;
-const X = 16;
-const BLOCKED = 32;
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -26,36 +32,21 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 
 beforeEach(async () => {
-  await pg.exec(`
-    TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","TagsOnImageNew","Tag",
-      "CsamReport","EvidenceHeldUser","Report","ImageReport" RESTART IDENTITY CASCADE;
-    DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%';
-    INSERT INTO "Tag" (id, name, type, "nsfwLevel") VALUES
-      (10, 'nudity', 'Moderation', ${X}), (11, 'swimwear', 'Moderation', ${R}),
-      (12, 'blocked thing', 'Moderation', ${BLOCKED}), (13, 'cat', 'Label', 1);
-  `);
-  await staffPaladin();
+  await resetTagReview(pg, [
+    [10, 'nudity', 'Moderation', X],
+    [11, 'swimwear', 'Moderation', R],
+    [12, 'blocked thing', 'Moderation', BLOCKED],
+    [13, 'cat', 'Label', 1],
+  ]);
+  await seedPlayer(pg, PALADIN, 'Paladin');
+  await staffPaladin(pg, PALADIN, DAY_AGO);
   await seedImage(pg, 100, { nsfwLevel: X, userId: 5 });
   await flag(100, 10);
 });
 
-async function staffPaladin() {
-  await seedPlayer(pg, PALADIN, 'Paladin');
-  await pg.query(
-    `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict")
-     VALUES (999999, $1, $2::timestamp, 'knights.image.nsfwLevel', 0, 'Paladin', '4', 1, 'pending')`,
-    [PALADIN, DAY_AGO]
-  );
-}
-
-const flag = (imageId: number, tagId: number) =>
-  pg.query(`SELECT upsert_tag_on_image($1, $2, NULL, NULL, NULL, false, true)`, [imageId, tagId]);
+const flag = (imageId: number, tagId: number) => flagTag(pg, imageId, tagId);
 const rule = (imageId: number, tagId: number, disabled: boolean) =>
-  pg.query(`SELECT upsert_tag_on_image($1, $2, NULL, NULL, false, $3, false)`, [
-    imageId,
-    tagId,
-    disabled,
-  ]);
+  ruleTag(pg, imageId, tagId, disabled);
 
 const run = (
   o: { enabled?: boolean; walk?: TagReviewWalk; pageSize?: number; pagesPerRun?: number } = {}
@@ -217,7 +208,7 @@ describe('a moderator ruling ends the episode', () => {
       await pg.query(
         `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict")
        VALUES ($1, 2, $2::timestamp, 'knights.yesno.tag_review', 100, 'Paladin', 'yes', 1, 'pending')`,
-        [id, DAY_AGO]
+        [id, DAY_AGO.toISOString()]
       );
       await ruled();
       expect(await run()).toMatchObject({ ruled: 1, created: 0 });

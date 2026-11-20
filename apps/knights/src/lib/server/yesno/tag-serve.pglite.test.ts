@@ -10,14 +10,13 @@ import { pickYesNo } from './feed';
 import { importYesNo, type YesNoRow } from './import';
 import { closeStrandedYesNo } from './sweep';
 import { runTagReview } from './tag-review';
+import { flagTag, R, resetTagReview, ruleTag, staffPaladin, X } from './tag-review.fixtures';
 import { castYesNoVote } from './vote';
 
 const NOW = new Date();
-const DAY_AGO = new Date(NOW.getTime() - 86_400_000).toISOString();
+const DAY_AGO = new Date(NOW.getTime() - 86_400_000);
 const PALADINS = [1, 2, 3, 4];
 const TEMPLAR = 9;
-const R = 4;
-const X = 16;
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -30,32 +29,22 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 
 beforeEach(async () => {
-  await pg.exec(`
-    TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay","Image","Post",
-      "TagsOnImageNew","Tag","CsamReport","EvidenceHeldUser","Report","ImageReport" RESTART IDENTITY CASCADE;
-    DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%';
-    INSERT INTO "Tag" (id, name, type, "nsfwLevel") VALUES
-      (10, 'nudity', 'Moderation', ${X}), (11, 'swimwear', 'Moderation', ${R}), (12, 'also x', 'Moderation', ${X});
-  `);
+  await resetTagReview(pg, [
+    [10, 'nudity', 'Moderation', X],
+    [11, 'swimwear', 'Moderation', R],
+    [12, 'also x', 'Moderation', X],
+  ]);
   for (const id of PALADINS) await seedPlayer(pg, id, 'Paladin');
   await seedPlayer(pg, TEMPLAR, 'Templar');
-  // An earlier vote keeps the Paladin stage staffed.
-  await pg.query(
-    `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict")
-     VALUES (999999, 1, $1::timestamp, 'knights.image.nsfwLevel', 0, 'Paladin', '4', 1, 'pending')`,
-    [DAY_AGO]
-  );
+  await staffPaladin(pg, 1, DAY_AGO);
   await seedImage(pg, 100, { nsfwLevel: X, userId: 50 });
   await flag(100, 10);
   await enable(100, 11);
 });
 
-const flag = (imageId: number, tagId: number) =>
-  pg.query(`SELECT upsert_tag_on_image($1, $2, NULL, NULL, NULL, false, true)`, [imageId, tagId]);
-const enable = (imageId: number, tagId: number) =>
-  pg.query(`SELECT upsert_tag_on_image($1, $2, NULL, NULL, false, false, false)`, [imageId, tagId]);
-const disable = (imageId: number, tagId: number) =>
-  pg.query(`SELECT upsert_tag_on_image($1, $2, NULL, NULL, false, true, false)`, [imageId, tagId]);
+const flag = (imageId: number, tagId: number) => flagTag(pg, imageId, tagId);
+const enable = (imageId: number, tagId: number) => ruleTag(pg, imageId, tagId, false);
+const disable = (imageId: number, tagId: number) => ruleTag(pg, imageId, tagId, true);
 
 async function createItem(): Promise<number> {
   await runTagReview(db, { now: NOW, enabled: true, walk: { after: null } });

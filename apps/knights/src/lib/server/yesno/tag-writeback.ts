@@ -8,7 +8,12 @@ import {
   type ImageTagModerateInput,
   type ImageTagModerateResult,
 } from '@civitai/moderation';
-import { backoffMinutes, MAX_APPLY_ATTEMPTS } from '../queue/queue.service';
+import {
+  addMinutes,
+  backoffMinutes,
+  LEASE_MINUTES,
+  MAX_APPLY_ATTEMPTS,
+} from '../queue/queue.service';
 import { settledAtNeeded } from './decide';
 import { EPISODE_ENDED_META_KEY, tagIdOf } from './tag-review';
 
@@ -81,14 +86,10 @@ export function createTagReviewPort({
   };
 }
 
-/** How long a claim holds an item before another tick may take it. */
-export const TAG_WRITEBACK_LEASE_MINUTES = 2;
 /** The moderator call gives up well before the lease ends, so no second tick calls while one is still waiting. */
 export const TAG_WRITEBACK_TIMEOUT_MS = 30_000;
 /** How soon an item waiting on a moderator app that is not ready is tried again. Not counted as an attempt. */
 export const NOT_READY_RETRY_MINUTES = 5;
-
-const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60_000);
 
 export type TagWriteBackResult = {
   applied: number;
@@ -141,7 +142,7 @@ export async function writeBackTagReviews(
   for (const { id } of due) {
     const claimed = await db
       .updateTable('KnightsQueueItem')
-      .set({ nextAttemptAt: utc(addMinutes(now, TAG_WRITEBACK_LEASE_MINUTES)) })
+      .set({ nextAttemptAt: utc(addMinutes(now, LEASE_MINUTES)) })
       .where('id', '=', id)
       .where('status', '=', 'Consensus')
       .where('appliedAt', 'is', null)
@@ -219,6 +220,8 @@ export async function writeBackTagReviews(
           .execute();
         continue;
       }
+      // Attempts are counted here, on a failed call, not when the item is claimed as `settleResolved` does: a moderator app
+      // that is not ready must never spend one, and a claim cannot know yet which it will be.
       const attempts = claimed.applyAttempts + 1;
       const exhausted = attempts >= MAX_APPLY_ATTEMPTS;
       console.error(
