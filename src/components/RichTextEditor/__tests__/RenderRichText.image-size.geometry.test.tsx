@@ -109,12 +109,22 @@ describe.each([
     expect(box(unsized).width).toBe(200);
   });
 
-  it('fits an unsized tall portrait to 80% of the screen height', async () => {
+  // Product decision: an unsized image keeps the pre-sizing layout (natural size up to the column,
+  // start of the line, no screen-height cap). The 80vh cap and centring shrank existing stories;
+  // do not bring them back for unsized images.
+  it('shows an unsized tall portrait at its natural size, from the start of the column', async () => {
     const [portrait] = await renderArticle([media(await imageUrl(832, 1216))]);
-    const { width, height } = box(portrait);
+    const host = portrait.closest('div[style]') as HTMLElement;
+    const { width, height, left } = box(portrait);
 
-    expect(height).toBeCloseTo(DESKTOP.height * 0.8, 0);
-    expect(width / height).toBeCloseTo(832 / 1216, 2);
+    expect({ width, height }).toEqual({ width: 832, height: 1216 });
+    expect(left).toBe(box(host).left);
+  });
+
+  it('leaves an unsized small image at the start of the line', async () => {
+    const [unsized] = await renderArticle([inlineImage(await imageUrl(200, 150))]);
+    const host = unsized.closest('div[style]') as HTMLElement;
+    expect(box(unsized).left).toBe(box(host).left);
   });
 
   it('on a phone, shows S and M at 60% of the column and keeps L as set', async () => {

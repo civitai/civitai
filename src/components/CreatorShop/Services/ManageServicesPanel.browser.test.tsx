@@ -2,7 +2,6 @@
 import '@mantine/core/styles.css';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
-import type * as DomainColorModule from '~/hooks/useDomainColor';
 import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
@@ -33,15 +32,12 @@ vi.mock('~/components/CreatorShop/Services/ServiceOfferingFormModal', () => ({
 vi.mock('~/providers/AppProvider', () => ({
   useServerDomains: () => ({ green: 'green.test', blue: 'blue.test', red: 'civitai.red' }),
 }));
-// The domain comes from the feature-flag context, which this harness does not mount.
-vi.mock('~/hooks/useDomainColor', async (importOriginal) => ({
-  ...(await importOriginal<typeof DomainColorModule>()),
-  useDomainColor: () => 'green',
-}));
 vi.mock('~/hooks/useSyncAccount', () => ({ useSyncAccount: () => (url: string) => url }));
 vi.mock('next/router', () => ({ useRouter: () => ({ asPath: '/user/seller/shop/manage' }) }));
 
 import { ManageServicesPanel } from '~/components/CreatorShop/Services/ManageServicesPanel';
+import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 describe('incoming requests on the seller panel', () => {
   test('lists open requests first, and closed ones from the Closed tab', async () => {
@@ -76,7 +72,11 @@ describe('a service row on a phone', () => {
       },
     ];
     await page.viewport(390, 844);
-    renderWithProviders(<ManageServicesPanel />);
+    renderWithProviders(
+      <FeatureFlagsProvider flags={{ isGreen: true } as FeatureAccess}>
+        <ManageServicesPanel />
+      </FeatureFlagsProvider>
+    );
     await expect.element(page.getByRole('button', { name: 'Service actions' })).toBeVisible();
 
     const button = document.querySelector<HTMLElement>('[aria-label="Service actions"]')!;

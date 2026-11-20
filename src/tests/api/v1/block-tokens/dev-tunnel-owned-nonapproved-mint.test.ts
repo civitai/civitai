@@ -551,6 +551,7 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
       userId: MOD.user.id,
       clientId: 'appblk-my-app',
       scopes: ['ai:write:budgeted', 'user:read:self'],
+      impersonatedBy: null,
     });
   });
 

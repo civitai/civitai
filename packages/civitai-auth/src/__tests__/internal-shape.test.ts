@@ -130,4 +130,15 @@ describe('refresh onFailure', () => {
 
     expect(onFailure.mock.calls).toEqual([['declined'], ['unreachable']]);
   });
+
+  it('reports unavailable when the hub answers 503', async () => {
+    const m = await load(undefined);
+    const onFailure = vi.fn();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) }))
+    );
+    expect(await m.createSessionTokenClient().refresh('cur', { onFailure })).toBeNull();
+    expect(onFailure.mock.calls).toEqual([['unavailable']]);
+  });
 });

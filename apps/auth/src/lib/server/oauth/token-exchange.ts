@@ -2,6 +2,7 @@ import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { parseTokenScope, TokenScope, tokenScopeMaskToList } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getSysRedis } from '$lib/server/redis';
+import { waitForRedisReady } from '$lib/server/redis-ready';
 import { isRefusedModerationAccount } from '$lib/server/auth/moderation-account';
 import { checkClientAccess, userHasRole } from './access';
 import { SYSTEM_USER_ID, SYSTEM_WORKLOAD_ROLE } from './constants';
@@ -196,20 +197,14 @@ type StringRedis = {
 
 /** How long an exchange record read or write may wait, including for the client to be ready. */
 const RECORD_TIMEOUT_MS = 2000;
-const READY_POLL_MS = 20;
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// The sys client rejects commands until it is ready (at startup, and while reconnecting) instead of
-// queueing them, so wait for it here. Throws when it is not ready in time or the command overruns.
+// Throws when the client is not ready in time or the command overruns.
 async function withSysRedis<T>(op: (redis: StringRedis) => Promise<T>): Promise<T> {
   const deadline = Date.now() + RECORD_TIMEOUT_MS;
   const redis = getSysRedis() as unknown as StringRedis | null;
   if (!redis) throw new Error('REDIS_SYS_URL is not configured');
-  while (redis.isReady === false) {
-    if (Date.now() >= deadline) throw new Error('exchange record store not ready');
-    await sleep(READY_POLL_MS);
-  }
+  if (!(await waitForRedisReady(redis, RECORD_TIMEOUT_MS)))
+    throw new Error('exchange record store not ready');
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(

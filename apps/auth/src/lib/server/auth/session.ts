@@ -28,6 +28,7 @@ import { getOrCreateDeviceId, linkAccount, rotateDeviceId } from './device';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
 import { cookieJar } from './cookie-jar';
 import { verifier } from './verifier';
+import { isUnconfirmedSession } from './unconfirmed-session';
 import { acceptHubSession } from './lineage';
 import { issuePendingAuthz } from './pending-authz';
 import { registrableDomain } from './domain';
@@ -108,6 +109,14 @@ export function sessionExpiresIn(lineage: FamilyClaims, now = Date.now()): numbe
   return Math.max(1, Math.floor((until - now) / 1000));
 }
 
+/**
+ * 503 when these claims were accepted without reading the session store: nothing that outlives the request may
+ * be minted from them, since the store may hold a revocation for them. The caller retries once it is back.
+ */
+export function requireLiveSession(claims: SessionClaims | null | undefined): void {
+  if (claims && isUnconfirmedSession(claims)) error(503, 'session store unavailable, try again');
+}
+
 export interface MintOptions {
   /** The session this one descends from (refreshed, switched or impersonated from, or the browser's prior
    *  session on an add-account login). Null or absent: a new sign-in. */
@@ -128,6 +137,7 @@ export async function mintSession(
   opts: MintOptions = {}
 ): Promise<{ token: string; family: string }> {
   refuseModerationAccount(user, opts.impersonatedBy ? 'impersonate' : 'mint');
+  requireLiveSession(opts.parent);
   const now = Date.now();
   const tokenId = randomUUID();
   const lineage = familyClaims(opts.parent ?? null, {
@@ -154,6 +164,7 @@ export async function reissueSession(
   userId: number,
   jti: string
 ): Promise<string> {
+  requireLiveSession(claims);
   const now = Date.now();
   const lineage = familyClaims(claims, { now });
   const token = await getSigner().mintSessionToken(
@@ -269,6 +280,9 @@ export async function establishSession(
   refuseModerationAccount(user, 'login');
   const prior = await resolvePriorSession(cookies);
   const priorUserId = prior ? Number(prior.sub) : undefined;
+  // A prior session the store could not confirm may be revoked: this sign-in stands on its own credentials and
+  // takes nothing from it (no family, no device-record proof), like a sign-in with no prior session.
+  const confirmedPrior = prior && !isUnconfirmedSession(prior) ? prior : undefined;
 
   // A login bound for a spoke on another registrable domain must not re-point THIS domain's session — the hub
   // cookie is civitai.com's session too. Hand the identity to /authorize out-of-band instead, leaving whoever
@@ -290,7 +304,7 @@ export async function establishSession(
   let family: string | undefined;
   if (!handedOff) {
     const minted = await mintSession(user, {
-      parent: prior,
+      parent: confirmedPrior ?? null,
       iat0: Date.now(),
       clearImpersonation: true,
     });
@@ -300,9 +314,11 @@ export async function establishSession(
 
   // Link this account and family to the browser's records (docs/auth/auth-hub-spoke-overview.md). Records this
   // browser can't show it is signed in to stay with the old device id; the sign-in starts on a new one.
-  const proofFamily = prior ? familyId(prior) : undefined;
+  const proofFamily = confirmedPrior ? familyId(confirmedPrior) : undefined;
   // The prior session proves the browser is signed in to its principal: the moderator, when impersonating.
-  const priorPrincipal = prior ? prior.impersonatedBy ?? priorUserId : undefined;
+  const priorPrincipal = confirmedPrior
+    ? confirmedPrior.impersonatedBy ?? Number(confirmedPrior.sub)
+    : undefined;
   const link = (id: string, proof?: string) =>
     linkAccount(
       id,

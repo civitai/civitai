@@ -88,6 +88,12 @@ export const getServiceOfferingFeedSchema = z.object({
   limit: z.number().int().min(1).max(50).default(24),
 });
 
+export type GetServiceOfferingByIdInput = z.infer<typeof getServiceOfferingByIdSchema>;
+export const getServiceOfferingByIdSchema = z.object({
+  id: z.number().int().positive(),
+  browsingLevel: z.number().int().optional(),
+});
+
 export type GetShopServiceOfferingsInput = z.infer<typeof getShopServiceOfferingsSchema>;
 export const getShopServiceOfferingsSchema = z.object({
   userId: z.number().int().positive(),

@@ -1251,6 +1251,15 @@ async function getVisibleBountyImageIds({
   return rows.map(({ imageId }) => imageId);
 }
 
+/** Generation data its uploader hid goes only to the uploader and moderators. */
+const withVisibleMeta = <T extends { meta: unknown; hideMeta: boolean; userId: number }>(
+  image: T,
+  viewer: { userId?: number; isModerator?: boolean }
+) =>
+  image.hideMeta && !viewer.isModerator && image.userId !== viewer.userId
+    ? { ...image, meta: null }
+    : image;
+
 export const getBountyImages = async ({
   id,
   userId,
@@ -1264,7 +1273,7 @@ export const getBountyImages = async ({
   });
 
   return connections.map(({ image }) => ({
-    ...image,
+    ...withVisibleMeta(image, { userId, isModerator }),
     nsfwLevel: image.nsfwLevel as NsfwLevel,
     tags: image.tags.map((t) => t.tag),
   }));
@@ -1413,7 +1422,7 @@ export const getImagesForBounties = async ({
 
   const groupedImages = groupBy(
     connections.map(({ entityId, image }) => ({
-      ...image,
+      ...withVisibleMeta(image, { userId, isModerator }),
       nsfwLefel: image.nsfwLevel as NsfwLevel,
       tags: image.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
       entityId,
