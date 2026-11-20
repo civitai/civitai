@@ -15,7 +15,8 @@ const gate = (fallback: string) =>
   "${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && " +
   "!endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && " +
   "(github.event_name == 'push' || github.event_name == 'workflow_dispatch' || " +
-  "(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) " +
+  "(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && " +
+  "(github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) " +
   `&& '${SELF_HOSTED}' || '${fallback}' }}`;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -60,13 +61,19 @@ function evaluate(expr: string, ctx: { github: unknown; vars: Record<string, str
 }
 
 const repo = 'civitai/civitai';
-const pr = (headRepo: string | null, author = 'someone', actor = author) => ({
+const pr = (
+  headRepo: string | null,
+  author = 'someone',
+  actor = author,
+  association = 'MEMBER'
+) => ({
   repository: repo,
   event_name: 'pull_request',
   actor,
   event: {
     pull_request: {
       user: { login: author },
+      author_association: association,
       head: { repo: headRepo === null ? null : { full_name: headRepo } },
     },
   },
@@ -100,6 +107,18 @@ describe('self-hosted runner gate', () => {
     ['fork pull_request', pr('someone/civitai'), {}, 'ubuntu-latest'],
     ['pull_request whose fork was deleted', pr(null), {}, 'ubuntu-latest'],
     ['same-repo pull_request', pr(repo), {}, SELF_HOSTED],
+    [
+      'same-repo pull_request by an outside collaborator',
+      pr(repo, 'someone', 'someone', 'COLLABORATOR'),
+      {},
+      'ubuntu-latest',
+    ],
+    [
+      'same-repo pull_request by an owner',
+      pr(repo, 'someone', 'someone', 'OWNER'),
+      {},
+      SELF_HOSTED,
+    ],
     ['dependabot pull_request', pr(repo, 'dependabot[bot]'), {}, 'ubuntu-latest'],
     ['renovate pull_request', pr(repo, 'renovate[bot]'), {}, 'ubuntu-latest'],
     [
