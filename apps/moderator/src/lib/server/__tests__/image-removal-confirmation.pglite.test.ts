@@ -19,15 +19,21 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
-const { dbHandle, recordModActivity, applyBlockSideEffects, setReportStatus, chQuery } = vi.hoisted(
-  () => ({
-    dbHandle: { current: null as unknown },
-    recordModActivity: vi.fn(async () => undefined),
-    applyBlockSideEffects: vi.fn(async () => undefined),
-    setReportStatus: vi.fn(async (_input: { id: number }) => ({ ok: true, changed: true })),
-    chQuery: vi.fn(async (): Promise<object[]> => []),
-  })
-);
+const {
+  dbHandle,
+  recordModActivity,
+  insertModActivity,
+  applyBlockSideEffects,
+  setReportStatus,
+  chQuery,
+} = vi.hoisted(() => ({
+  dbHandle: { current: null as unknown },
+  recordModActivity: vi.fn(async () => undefined),
+  insertModActivity: vi.fn(async (_input: object, _db?: unknown) => 1),
+  applyBlockSideEffects: vi.fn(async () => undefined),
+  setReportStatus: vi.fn(async (_input: { id: number }) => ({ ok: true, changed: true })),
+  chQuery: vi.fn(async (): Promise<object[]> => []),
+}));
 
 vi.mock('../db', () => ({
   get dbRead() {
@@ -54,7 +60,7 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
   invalidateThumbnails: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
-vi.mock('../mod-activity', () => ({ recordModActivity }));
+vi.mock('../mod-activity', () => ({ insertModActivity, recordModActivity }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../reports.service', () => ({ setReportStatus }));
 
@@ -216,6 +222,16 @@ describe('a removal of an image approved on appeal', () => {
     await approve();
     const result = await blockImage({ imageId: IMAGE, userId: REQUESTER });
     expect(result.held).toBeDefined();
+    expect((await image()).ingestion).toBe('Scanned');
+  });
+
+  // The CDN access sync reads a block as a takedown only once its ModActivity row exists, so the two
+  // must commit together: a sync run between them would deny without ever retracting.
+  it('takes nothing down when its audit row cannot be written', async () => {
+    insertModActivity.mockRejectedValueOnce(new Error('audit write failed'));
+    await expect(
+      blockImage({ imageId: IMAGE, userId: REQUESTER, violationType: 'gore' })
+    ).rejects.toThrow('audit write failed');
     expect((await image()).ingestion).toBe('Scanned');
   });
 
@@ -419,8 +435,9 @@ describe('deciding a held removal', () => {
       expect.anything(),
       expect.objectContaining({ actorUserId: REQUESTER, violationType: 'animatedMinorNsfw' })
     );
-    expect(recordModActivity).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: REQUESTER, activity: 'review' })
+    expect(insertModActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: REQUESTER, activity: 'review' }),
+      expect.anything()
     );
     expect(recordModActivity).toHaveBeenCalledWith(
       expect.objectContaining({ userId: CONFIRMER, activity: 'confirmRemoval' })

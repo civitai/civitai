@@ -3,7 +3,7 @@ import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
 import { dbRead, dbWrite } from './db';
 import { dropBlockedImageDeleteQueue } from './blocked-image-queue';
-import { insertModActivityBatch, recordModActivity } from './mod-activity';
+import { insertModActivity, insertModActivityBatch, recordModActivity } from './mod-activity';
 import { syncSearchIndex } from './search-index';
 import { upsertTagsOnImageNew } from './tags-on-image.service';
 import {
@@ -545,6 +545,13 @@ export async function blockImage({
       .$if(skipModeratorRemoved, (qb) => qb.where(sql<boolean>`NOT ${KEPT_BY_REMOVE}`))
       .returning('id')
       .executeTakeFirst();
+    // In the block's transaction: the CDN access sync reads the block as a takedown only once this
+    // row exists, and a run between the two would deny without ever retracting.
+    if (updated)
+      await insertModActivity(
+        { userId, entityType: 'image', entityId: imageId, activity: 'review' },
+        tx
+      );
     // A statement of its own, after the UPDATE took the row lock: one that waited on a dismissal
     // reads the set-aside row that dismissal committed.
     const state = await tx
@@ -601,7 +608,6 @@ export async function blockImage({
   await invalidateThumbnails(imageId, [img.parentId]);
   await bustProfilePictures({ imageIds: [imageId] });
 
-  await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
 
   // The pre-block row (read above, before the update), with the hash read under the block.

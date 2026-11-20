@@ -68,7 +68,6 @@ import {
 } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
-import { trackModActivity } from '~/server/services/moderator.service';
 import {
   canConfirmReRemoval,
   heldRemovalSummary,
@@ -273,11 +272,16 @@ export const setTosViolationHandler = async ({
 
     // Block image
     // This used to be a delete, but the mod team prefers to have the clean up happen later
-    const written = await writeModeratorBlock([id], {
-      blockedBy: user.id,
-      violationType,
-      reportReason: ReportReason.TOSViolation,
-    });
+    // 🔴 `moderatorId` writes the audit record that a MODERATOR took this one image down, in the
+    // block's own transaction. `remove-blocked-images` retracts public copies only for images with one
+    // of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or after the block, and the CDN access sync reads
+    // the block as a takedown only once the row exists: written later, a sync run between the two
+    // would deny without ever retracting.
+    const written = await writeModeratorBlock(
+      [id],
+      { blockedBy: user.id, violationType, reportReason: ReportReason.TOSViolation },
+      { moderatorId: user.id }
+    );
     const held = written.held.has(id);
 
     if (!held) {
@@ -320,22 +324,6 @@ export const setTosViolationHandler = async ({
     // A moderator block outranks an account-deletion grace block; leaving the grace breadcrumbs on
     // would let a later account restore un-block what was just moderated.
     await clearAccountDeletionImageMarkers({ ids: [id] });
-
-    // 🔴 The audit record that a MODERATOR — not automation, not a reporter, not a bulk account
-    // action — took this one image down. The other moderator-driven single-image blocks write it
-    // already (`handleBlockImages` when it is given an id list and a `moderatorId`, and
-    // `blockImage` in the moderator app); this handler, which is `moderatorProcedure`-gated and
-    // acts on exactly one image, did not, so this takedown left no row in the mod audit log at all.
-    //
-    // It is also load-bearing now: `remove-blocked-images` retracts an image's public copies
-    // only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
-    // after the block. Without this call a TOS takedown from the main app is hard-deleted with the
-    // bytes left in place — which is the safe direction, but not the intended one.
-    await trackModActivity(user.id, {
-      entityType: 'image',
-      entityId: id,
-      activity: 'review',
-    });
 
     // Remove image from all collections
     await removeEntityFromAllCollections('image', id);

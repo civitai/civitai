@@ -1342,11 +1342,14 @@ const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needs
 /**
  * Returns the ids the block left held, and those under the moderator-only review flag, read on the
  * primary under the block's row locks: not as a replica last saw them. With `deferFor`, a held image
- * not removed for CSAM gets its deferred-effect row in the same transaction.
+ * not removed for CSAM gets its deferred-effect row in the same transaction. With `moderatorId`, so
+ * does the takedown's ModActivity row: the CDN access sync reads the block as a takedown only with
+ * that row, and a run between the two would deny without ever retracting.
  */
 export async function writeModeratorBlock(
   ids: number[],
-  deferFor?: { blockedBy?: number; violationType?: string; reportReason?: ReportReason }
+  deferFor?: { blockedBy?: number; violationType?: string; reportReason?: ReportReason },
+  { moderatorId }: { moderatorId?: number } = {}
 ): Promise<{
   held: Set<number>;
   underReview: Set<number>;
@@ -1376,6 +1379,12 @@ export async function writeModeratorBlock(
         "metadata" = CASE WHEN jsonb_typeof("metadata") = 'object' THEN "metadata" - 'ruleId' - 'ruleReason' ELSE "metadata" END
       WHERE id = ANY(${ids}::int[])
     `;
+    if (moderatorId)
+      await trackModActivity(
+        moderatorId,
+        { entityType: 'image', entityId: [...ids], activity: 'review' },
+        tx
+      );
     // A statement of its own, after the UPDATE took the row locks: one that waited on a dismissal
     // reads the set-aside row that dismissal committed.
     const rows = await tx.$queryRaw<
@@ -1454,7 +1463,8 @@ export async function handleBlockImages({
     await Promise.all([
       writeModeratorBlock(
         ids,
-        include?.includes('user-notification') ? { blockedBy: moderatorId } : undefined
+        include?.includes('user-notification') ? { blockedBy: moderatorId } : undefined,
+        { moderatorId: imageIds?.length ? moderatorId : undefined }
       )
         .then((written) => {
           ({ held, underReview, removedForCsam, pHashes } = written);
@@ -1524,14 +1534,6 @@ export async function handleBlockImages({
           }).catch()
         )
       );
-    }
-
-    if (moderatorId && !!imageIds?.length) {
-      await trackModActivity(moderatorId, {
-        entityType: 'image',
-        entityId: ids,
-        activity: 'review',
-      });
     }
 
     // A moderator's removal settles the images' open TOS reports, as the reports queue does. Held

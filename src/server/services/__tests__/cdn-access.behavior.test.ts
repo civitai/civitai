@@ -2778,6 +2778,56 @@ describe('retractions per run', () => {
     expect(callsFor(u(2))).toEqual(['deny']);
   });
 
+  // Rows deferred before this change carry no per-url marker.
+  describe('a row deferred before per-url markers', () => {
+    const deferredWithoutMarkers = async () => {
+      setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+      await publishedPost(5);
+      for (const id of [1, 2, 3, 4]) await image(id, { postId: 5 });
+      await moderatorPostUnpublish(5);
+      await syncCdnAccess();
+      expect([1, 2, 3, 4].map((id) => callsFor(u(id)))).toEqual([
+        ['retract'],
+        ['deny'],
+        ['deny'],
+        ['deny'],
+      ]);
+      await sql`UPDATE "JobQueue" SET data = data - 'pacedUrls' WHERE type = 'CdnAccessSync'`;
+    };
+
+    it('still retracts the urls it deferred', async () => {
+      await deferredWithoutMarkers();
+      setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 5 });
+      await syncCdnAccess();
+      expect([2, 3, 4].map((id) => callsFor(u(id)))).toEqual([
+        ['deny', 'retract'],
+        ['deny', 'retract'],
+        ['deny', 'retract'],
+      ]);
+    });
+
+    it('keeps a url held when the row is first read, after its held row is deleted', async () => {
+      await deferredWithoutMarkers();
+      // A held row lands on one url; another url's retraction fails, so the post row stays queued.
+      await image(9, { url: u(2) });
+      await sql`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 9`;
+      await moderatorBlock(9);
+      respond = (c) => (onUrl(u(4))(c) ? 500 : undefined);
+      setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 5 });
+      await syncCdnAccess();
+      expect(callsFor(u(3))).toEqual(['deny', 'retract']);
+      expect(callsFor(u(2))).toEqual(['deny']);
+
+      // Its owner deletes the held row, leaving no record.
+      respond = null;
+      await sql`DELETE FROM "Image" WHERE id = 9`;
+      await syncCdnAccess();
+      expect(callsFor(u(4)).at(-1)).toBe('retract');
+      expect(callsFor(u(2))).toEqual(['deny']);
+      expect(await stateOf(u(2))).toBe('Denied');
+    });
+  });
+
   it('keeps a pacing marker an overlapping run wrote after this run read the url', async () => {
     setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
     await image(1);

@@ -1417,6 +1417,28 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   // Urls whose retraction this path itself deferred past the cap, re-queued since or not: their deny
   // is this path's own pacing, so they may still upgrade. Kept per url, not per row: a post row can
   // also cover a url denied by a hold, and that deny must never upgrade on its own.
+  // A row deferred before per-url markers existed carries none. Each of its urls that still wants a
+  // retraction is taken as this path's own pacing, once, and written as a marker, so a later read
+  // that sees a hold drops it as it would any other. Remove once a deploy-time count finds no such row.
+  for (const [i, q] of queue.entries()) {
+    if (!q.data || !('deferred' in q.data) || 'pacedUrls' in q.data) continue;
+    const legacy = urlsByRow[i].filter((url) => {
+      const f = facts.get(url);
+      return !!f && desiredUrlAccess(f) === 'retract';
+    });
+    const [converted] = await dbWrite.$queryRaw<{ data: QueueRow['data'] }[]>`
+      UPDATE "JobQueue"
+      SET data = jsonb_set(data, '{pacedUrls}', COALESCE((
+        SELECT jsonb_object_agg(u, ${readAt}::timestamptz) FROM unnest(${legacy}::text[]) u
+      ), '{}'::jsonb))
+      WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+        AND "entityType" = ${q.entityType}::"EntityType"
+        AND "entityId" = ${q.entityId}
+        AND data ? 'deferred' AND NOT data ? 'pacedUrls'
+      RETURNING data
+    `;
+    if (converted) q.data = converted.data;
+  }
   const pacedUrls = new Set(queue.flatMap((q) => Object.keys(q.data?.pacedUrls ?? {})));
   const plannedCall = new Map(
     urls.map((url) => [
