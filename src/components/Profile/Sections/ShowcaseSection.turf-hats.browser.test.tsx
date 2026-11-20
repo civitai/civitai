@@ -198,6 +198,10 @@ describe('View all on a profile Showcase', () => {
 
     await screen.getByRole('button', { name: 'View all 13' }).click();
     await vi.waitFor(() => expect(shown()).toBe(13));
-    expect(screen.getByRole('button', { name: 'Show less' })).toBeTruthy();
+    await expect.element(screen.getByRole('button', { name: 'Show less' })).toBeVisible();
+
+    await screen.getByRole('button', { name: 'Show less' }).click();
+    await vi.waitFor(() => expect(shown()).toBeLessThan(13));
+    await expect.element(screen.getByRole('button', { name: 'View all 13' })).toBeVisible();
   });
 });

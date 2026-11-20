@@ -96,7 +96,7 @@ export function ShowcaseGrid({
 
 /**
  * A shelf's "View all": while the grid's row clip hides items, a toggle unfolds every item in place.
- * The count is not re-read while unfolded (nothing is hidden then), so "Show less" stays mounted.
+ * The count is not re-read while unfolded, so the folded count is ready the moment it folds back.
  */
 export function useShowcaseViewAll({ rows, itemCount }: { rows: number; itemCount: number }) {
   const [hidden, setHidden] = useState(0);
