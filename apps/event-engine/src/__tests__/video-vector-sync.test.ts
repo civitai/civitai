@@ -6,7 +6,8 @@ import type { EmbedInput } from '@/vector-sync/embedder';
 import { videoDomain, videoRefFromEvent } from '@/vector-sync/videos/domain';
 import { VectorStore } from '@/vector-sync/qdrant';
 import { VIDEO_COLLECTION } from '@/vector-sync/videos/collection';
-import { kvRejectedMemo } from '@/vector-sync/videos/rejected';
+import { EventEmitter } from 'node:events';
+import { kvRejectedMemo, redisRejectedMemo } from '@/vector-sync/videos/rejected';
 import { getVideoDocs, type VideoPayload } from '@/vector-sync/videos/source';
 
 const SCHEMA = `
@@ -278,6 +279,29 @@ describe('media the embedder refuses', () => {
       await pg.close();
     }
   }, 60_000);
+
+  test('a stalled memo sends the clips and the sync completes', async () => {
+    const pg = await pglite(`${video(1)} ${video(2)}`);
+    try {
+      const { sent, deps } = fakes(pg, [2], [2]);
+      const never = () => new Promise<never>(() => undefined);
+      const stalled = kvRejectedMemo({ mGet: never, set: never }, 'c', 50);
+      await syncIds(getVideoDocs, [1, 2], { ...(deps as object), rejected: stalled } as never);
+      expect(sent.map((i) => i.id).sort()).toEqual(['1', '2']);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
+  test('without Redis at start the lane runs with no memo, and a later Redis error is only logged', async () => {
+    const cluster = Object.assign(new EventEmitter(), {
+      connect: () => new Promise<never>(() => undefined),
+      disconnect: async () => undefined,
+    });
+    const memo = await redisRejectedMemo(50, () => cluster as never);
+    expect(await memo.has([[1, 'h']])).toEqual(new Set());
+    expect(() => cluster.emit('error', new Error('topology refresh failed'))).not.toThrow();
+  });
 
   test('the memo matches only the same id and docHash', async () => {
     const memo = new Map<string, string>();
