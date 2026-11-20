@@ -58,6 +58,7 @@ vi.mock('~/utils/application-error', () => ({ reportApplicationError: vi.fn() })
 
 import { isImageOwner, SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
+import { imageStore } from '~/store/image.store';
 import { FixedSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 
 const EXISTING_KEY = 'existing-banner-key';
@@ -230,6 +231,22 @@ describe('SimpleImageUpload rating badge', () => {
 
     const [dialog] = useDialogStore.getState().dialogs;
     expect(dialog?.props).toEqual({ imageId: 42, nsfwLevel: 4, isOwner: true });
+  });
+
+  test('a vote recorded in the image store updates the badge and the next vote', async () => {
+    await renderWithProviders(
+      asOwner(<SimpleImageUpload label="Cover" value={{ ...saved, id: 43 }} ratingClickable />)
+    );
+    await expect.poll(changeRating).not.toBeNull();
+
+    imageStore.setImage(43, { nsfwLevel: 8 });
+    await expect.poll(() => changeRating()?.textContent).toBe('X');
+    (changeRating() as HTMLElement).click();
+
+    expect(useDialogStore.getState().dialogs[0]?.props).toMatchObject({
+      imageId: 43,
+      nsfwLevel: 8,
+    });
   });
 
   test('stays read-only without ratingClickable, for an unsaved image, or when disabled', async () => {
