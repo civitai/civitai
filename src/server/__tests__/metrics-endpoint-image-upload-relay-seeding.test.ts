@@ -146,6 +146,13 @@ describe('/api/metrics seeds the search-by-upload counter', () => {
   // Written out, not imported: importing the metrics module here loads it before the mocks above.
   const SEARCH_UPLOADS = 'search_upload_embed_total';
   const SEARCH_UPLOAD_RESULTS = ['prepared', 'refused', 'embedded'];
+  it('lists every result the counter takes', async () => {
+    // Imported here, after the mocks: a result added to the module must be added above too.
+    const metrics = await import('~/server/metrics/search-upload.metrics');
+    expect(metrics.SEARCH_UPLOAD_RESULTS).toEqual(SEARCH_UPLOAD_RESULTS);
+    expect(metrics.SEARCH_UPLOADS).toBe(SEARCH_UPLOADS);
+  });
+
   it('exposes every result at 0 on a pod where no upload has been searched', async () => {
     const body = await scrape();
     for (const result of SEARCH_UPLOAD_RESULTS)

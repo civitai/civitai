@@ -191,14 +191,26 @@ describe('imageSearchUpload', () => {
     await expect(search(MOD)).resolves.toBeDefined();
   });
 
-  it('counts each search page against the site-wide daily cap, and stops when it is spent', async () => {
+  it('counts each search page against the site-wide daily cap, after the per-user count and the upload check', async () => {
     await search(MOD);
     expect(h.searchSlot).toHaveBeenCalledTimes(1);
+    const [day, anchor, slot] = [h.claimDay, h.anchor, h.searchSlot].map(
+      (fn) => fn.mock.invocationCallOrder[0]
+    );
+    expect(day).toBeLessThan(anchor);
+    expect(anchor).toBeLessThan(slot);
+  });
+
+  it('stops before searching when the site-wide cap is spent', async () => {
     h.searchSlot.mockRejectedValue(Object.assign(new Error('busy'), { code: 'TOO_MANY_REQUESTS' }));
-    h.anchor.mockClear();
     await expect(search(MOD)).rejects.toThrow('busy');
-    expect(h.anchor).not.toHaveBeenCalled();
-    expect(h.search).toHaveBeenCalledTimes(1);
+    expect(h.search).not.toHaveBeenCalled();
+  });
+
+  it('spends no site-wide page on an upload the gate refuses', async () => {
+    h.anchor.mockRejectedValue(Object.assign(new Error('refused'), { code: 'FORBIDDEN' }));
+    await expect(search(MOD)).rejects.toThrow('refused');
+    expect(h.searchSlot).not.toHaveBeenCalled();
   });
 
   it('stops before searching when the gate refuses the upload', async () => {

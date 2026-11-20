@@ -34,9 +34,14 @@ const BUCKET = rateLimitBucket('imageSearchUpload:global-search', { id: 0 } as n
 describe.skipIf(!url)('the site-wide upload search cap on a real Redis', () => {
   const real = createClient({ url });
   const binary = real.withTypeMapping({ [RESP_TYPES.BLOB_STRING]: Buffer });
-  // The bucket's key is fixed, so the run moves it under its own prefix: never a shared key.
+  // The limiter's keys are fixed, so the run moves every key it touches under its own prefix and
+  // deletes them after: never a shared key.
   const prefix = `search-upload-cap-${randomUUID().slice(0, 8)}:`;
-  const own = (key: string) => (key === BUCKET.cacheKey ? prefix + key : key);
+  const touched = new Set<string>([prefix + BUCKET.cacheKey]);
+  const own = (key: string) => {
+    touched.add(prefix + key);
+    return prefix + key;
+  };
 
   beforeAll(async () => {
     await real.connect();
@@ -51,7 +56,7 @@ describe.skipIf(!url)('the site-wide upload search cap on a real Redis', () => {
     ) => real.eval(script, { ...options, keys: options.keys.map(own) })) as never);
   });
   afterAll(async () => {
-    await real.del(prefix + BUCKET.cacheKey);
+    await real.del([...touched]);
     await real.quit();
   });
 
