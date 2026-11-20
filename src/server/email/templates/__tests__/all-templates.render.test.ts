@@ -1,15 +1,12 @@
 import { readdirSync } from 'fs';
 import { decode } from 'he';
 import path from 'path';
-import { describe, expect, it, vi } from 'vitest';
-import type * as EnvServer from '~/env/server';
+import { describe, expect, it } from 'vitest';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 
 // A production-shaped origin, so the logo's https URL is checked as it ships, not as
-// http://localhost. getBaseUrl reads NEXTAUTH_URL; the env module is the process boundary.
-vi.mock('~/env/server', async (importOriginal) => {
-  const actual = await importOriginal<typeof EnvServer>();
-  return { ...actual, env: { ...actual.env, NEXTAUTH_URL: 'https://civitai.com' } };
-});
+// http://localhost. getBaseUrl reads NEXTAUTH_URL when it is called; setEnv is per-file.
+setEnv({ NEXTAUTH_URL: 'https://civitai.com' });
 const ORIGIN = 'https://civitai.com';
 
 type Template = {

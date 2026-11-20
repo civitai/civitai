@@ -25,7 +25,8 @@ describe('htmlToPlainText', () => {
     expect(text).not.toContain('Preview');
     expect(text).not.toContain('Civitai');
     expect(text).toContain('Layout cell');
-    expect(text).toMatch(/Plan\s+Price\n\s*Gold\s+\$10/);
+    // html-to-text upper-cases data-table headings; the point is the columns survive.
+    expect(text).toMatch(/PLAN\s+PRICE\n\s*Gold\s+\$10/);
   });
 });
 
