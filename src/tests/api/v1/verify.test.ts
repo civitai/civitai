@@ -22,7 +22,11 @@ const signed = readFileSync(
 
 async function post(body: Buffer, headers: Record<string, string>) {
   vi.mocked(getServerAuthSession).mockResolvedValue(null as never);
-  const { req, res } = createRealApiPair({ method: 'POST', url: '/api/v1/verify', headers });
+  const { req, res, header } = createRealApiPair({
+    method: 'POST',
+    url: '/api/v1/verify',
+    headers,
+  });
   (req as unknown as NodeJS.ReadableStream & { push: (b: Buffer | null) => void }).push(body);
   (req as unknown as { push: (b: null) => void }).push(null);
   let json: Record<string, unknown> | undefined;
@@ -32,7 +36,7 @@ async function post(body: Buffer, headers: Record<string, string>) {
     return send(b);
   }) as typeof res.json;
   await (handler as (req: unknown, res: unknown) => Promise<void>)(req, res);
-  return { status: res.statusCode, json };
+  return { status: res.statusCode, json, retryAfter: header('retry-after') };
 }
 
 describe('POST /api/v1/verify', () => {
@@ -57,5 +61,26 @@ describe('POST /api/v1/verify', () => {
     });
     expect(status).toBe(400);
     expect(json).toMatchObject({ code: 'BAD_REQUEST', message: 'Upload body was incomplete' });
+  });
+
+  it('answers 429 with Retry-After past the anonymous limit', async () => {
+    redisMock.redis.incrBy.mockResolvedValue(11);
+    redisMock.redis.ttl.mockResolvedValue(42);
+    const { status, json, retryAfter } = await post(signed, {
+      'content-length': String(signed.length),
+    });
+    expect(status).toBe(429);
+    expect(json).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(retryAfter).toBe('42');
+  });
+
+  it('tells a caller over the read queue to retry, not that the file is unreadable', async () => {
+    const results = await Promise.all(
+      Array.from({ length: 9 }, () => post(signed, { 'content-length': String(signed.length) }))
+    );
+    const busy = results.filter((r) => r.status === 503);
+    expect(busy).toHaveLength(1);
+    expect(busy[0]).toMatchObject({ json: { code: 'TOO_MANY_REQUESTS' }, retryAfter: '5' });
+    expect(results.filter((r) => r.status === 200)).toHaveLength(8);
   });
 });
