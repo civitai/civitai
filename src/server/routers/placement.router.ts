@@ -19,7 +19,9 @@ import {
   getRemixGalleryCardSummariesSchema,
   getStickerPlacementDetailSchema,
   getStickerPlacementsSchema,
+  getStickerAutoTrackSchema,
   getStickerTracksSchema,
+  startStickerAutoTrackSchema,
   placementPriceRangeSchema,
   placementSpaceSchema,
   placerSchema,
@@ -72,6 +74,10 @@ import {
   getStickerPlacementTracks,
   setStickerCommentHidden,
 } from '~/server/services/sticker-placement.service';
+import {
+  getStickerAutoTrack,
+  startStickerAutoTrack,
+} from '~/server/services/sticker-auto-track.service';
 import {
   actOnRemixGallerySubmission,
   declineOutOfBandRemixGallerySubmissions,
@@ -295,6 +301,19 @@ export const placementRouter = router({
         })
       : []
   ),
+
+  startStickerAutoTrack: guardedProcedure
+    .input(startStickerAutoTrackSchema)
+    .mutation(({ input, ctx }) => {
+      assertPlacementEnabled(ctx);
+      if (!ctx.features.stickerVideoTracks || !ctx.features.stickerAutoTrack)
+        throw throwAuthorizationError('placement: auto-track is not available yet');
+      return startStickerAutoTrack({ ...input, user: ctx.user });
+    }),
+
+  getStickerAutoTrack: protectedProcedure
+    .input(getStickerAutoTrackSchema)
+    .query(({ input, ctx }) => getStickerAutoTrack({ ...input, userId: ctx.user.id })),
 
   // Derived from the ledger, never from `Placement.status` — that column says a
   // placement was processed, not that anyone was paid.
