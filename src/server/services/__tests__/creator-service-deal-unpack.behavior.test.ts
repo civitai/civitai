@@ -2807,6 +2807,17 @@ describe('a video Final', () => {
     expect(s3.deleteObject).toHaveBeenCalledWith('image-store', 'scan-key-1', expect.anything());
   });
 
+  it('refuses as too long a video whose header claims a short length over a stream past the limit', async () => {
+    probe.video.mockResolvedValue({ width: 640, height: 360, duration: 20 });
+    const seconds = constants.mediaUpload.maxVideoDurationSeconds + 20;
+    const { fileId } = await videoFinal(4, mp4Clip({ seconds, headerSeconds: 20 }));
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: SERVICE_FINAL_VIDEO_TOO_LONG,
+    });
+    expect(images.createImage).not.toHaveBeenCalled();
+  });
+
   it('refuses a short video whose stated and real lengths disagree', async () => {
     const { fileId } = await videoFinal(4, mp4Clip({ seconds: 30, headerSeconds: 10 }));
     expect(await fileRow(fileId)).toMatchObject({

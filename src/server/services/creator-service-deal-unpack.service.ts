@@ -429,10 +429,10 @@ const VIDEO_UNREADABLE =
 const VIDEO_LENGTH_TOLERANCE_SECONDS = 1;
 
 /**
- * A video Final has a single entry: the video itself, scanned whole. The scan copy is the exact
- * version of the held object the buyer will be served, and that version's ETag is recorded on the
- * file, so a download can refuse bytes the scan did not see. A video longer than the scan covers is
- * refused before its copy is scanned.
+ * A video Final has a single entry: the video itself, scanned as a site upload is. The scan copy is
+ * the exact version of the held object the buyer will be served, and that version's ETag is recorded
+ * on the file, so a download can refuse bytes the scan did not see. A video longer than site uploads
+ * allow is refused before its copy is scanned.
  */
 async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDimensions) {
   if (file.size > constants.mediaUpload.maxVideoFileSize)
