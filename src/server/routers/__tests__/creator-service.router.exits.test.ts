@@ -62,6 +62,7 @@ describe('creator service router: a seller without the services flag', () => {
     expect(mockSetStatus).toHaveBeenCalledWith({
       sellerId: 7,
       input: { id: 5, status: 'Paused' },
+      licenseRequired: false,
     });
     expect(mockRemove).toHaveBeenCalledWith({ sellerId: 7, id: 5 });
     expect(mockGetMine).toHaveBeenCalledWith(expect.objectContaining({ sellerId: 7 }));
