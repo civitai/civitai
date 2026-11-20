@@ -841,6 +841,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       url: request.url,
       headers: request.headers,
       cookies,
+      signedIn: !!session?.user,
     });
     if (sync) [guardTo, guardCookies] = [sync.location, sync.setCookies];
   }
