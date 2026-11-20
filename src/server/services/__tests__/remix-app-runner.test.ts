@@ -10,7 +10,7 @@ import {
 } from '~/server/services/remix-app-runner';
 import { validateRemixApp } from '~/shared/remix-apps/validate';
 import type { RemixApp } from '~/shared/remix-apps/define';
-import { RemixReplayError, type RemixLogEntry } from '~/shared/remix-apps/replay';
+import { checkRemixReplay, RemixReplayError, type RemixLogEntry } from '~/shared/remix-apps/replay';
 import { createHash } from 'crypto';
 import { firstAnswer } from '~/shared/remix-apps/mock-host';
 
@@ -69,6 +69,52 @@ const REFUSALS: Record<string, string> = {
   'a step past the one with no result': 'went on past step 0',
   'nothing at all': 'stopped without asking',
 };
+
+// The shapes a runner that let an app steer its loop returned (civitai/civitai#9697, fixed in the
+// runner too): the host must refuse both itself, whatever the runner claims.
+describe('a runner reply the host refuses on its own', () => {
+  const choice = { kind: 'choice', prompt: 'Which?', options: [{ value: 'a', label: 'A' }] };
+  const upscale = { kind: 'upscale', image: { url: image.url }, scale: 2 };
+  const check = (effects: unknown[], autoAnswer?: () => string) =>
+    checkRemixReplay('u7-probe', image, [], { effects } as never, autoAnswer ? { autoAnswer } : {});
+
+  it('accepts a stop at the first step with no result', () => {
+    expect(check([{ type: 'ask', spec: choice }]).outcome).toMatchObject({
+      status: 'effect',
+      index: 0,
+    });
+  });
+
+  it('refuses an auto-answered ask after the step with no result', () => {
+    expect(() =>
+      check(
+        [
+          { type: 'workflow', request: upscale },
+          { type: 'ask', spec: choice, answer: 'a' },
+        ],
+        () => 'a'
+      )
+    ).toThrow('went on past step 0');
+  });
+
+  it('refuses asks the app answered itself when the host asked for no answers', () => {
+    const ask = {
+      type: 'ask',
+      spec: { kind: 'text', prompt: 'Who?', maxLength: 40 },
+      answer: 'remix',
+    };
+    expect(() => check([ask, { type: 'workflow', request: upscale }])).toThrow(
+      'answered a step itself'
+    );
+  });
+
+  it('refuses an auto-answer the host would not give', () => {
+    const two = { ...choice, options: [...choice.options, { value: 'b', label: 'B' }] };
+    expect(() => check([{ type: 'ask', spec: two, answer: 'b' }], () => 'a')).toThrow(
+      'an answer the host would not'
+    );
+  });
+});
 
 describe('a user app replayed on the runner', () => {
   it('advances step by step over its log and finishes with outputs it made', async () => {
