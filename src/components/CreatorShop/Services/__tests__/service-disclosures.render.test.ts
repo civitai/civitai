@@ -107,7 +107,8 @@ describe('license in the request modal', () => {
     });
     expect(out).toContain('License: Custom');
     expect(out).toContain('Print runs under 500 only.');
-    expect(out).toContain('May re-share or resell the files');
+    // The seller's own text governs resale; a toggle line could contradict it.
+    expect(out).not.toContain('May re-share or resell the files');
   });
 
   it('shows no license block for an offering without one, outside the rollout', () => {

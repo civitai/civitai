@@ -10,7 +10,7 @@ export const SERVICES_TERMS_VERSION = 'services-terms-2026-11-20';
 
 export const SELLER_AFFIRMATION_INTRO = 'I confirm that:';
 export const SELLER_AFFIRMATION_ITEMS = [
-  "I own or have the rights to everything I deliver, including any training data I use to make it, and it doesn't infringe anyone else's rights.",
+  "Everything I deliver is my own work or I have the rights to it, and to my knowledge it doesn't infringe anyone else's rights.",
   "This service doesn't depict or imitate a real person.",
   "I'll follow Civitai's Terms of Service and content rules, and I'll take payment only through Civitai.",
   "I'm responsible for any taxes on what I earn.",

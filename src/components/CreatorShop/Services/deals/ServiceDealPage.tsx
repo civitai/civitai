@@ -228,7 +228,7 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
                 <ServiceLicenseTerms license={deal.license}>
                   {deal.license.agreedAt && (
                     <Text size="xs" c="dimmed">
-                      Agreed by the buyer on {formatDate(deal.license.agreedAt, DATE)}
+                      Agreed by the buyer on {formatDate(deal.license.agreedAt, 'MMM D, YYYY')}
                     </Text>
                   )}
                 </ServiceLicenseTerms>
