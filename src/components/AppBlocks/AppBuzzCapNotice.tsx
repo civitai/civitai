@@ -2,7 +2,7 @@ import { Box, Button, Group, Stack, Text } from '@mantine/core';
 import { useEffect } from 'react';
 import { IconPlayerPause } from '@tabler/icons-react';
 import NextLink from 'next/link';
-import { formatWhen } from '~/components/Account/usage/usage-limit-view';
+import { formatWhen } from '@civitai/shared/usage-limit-view';
 import type { MyAppBuzzCap } from '~/server/services/blocks/app-buzz-usage.service';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
