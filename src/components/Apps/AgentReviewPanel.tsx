@@ -79,10 +79,11 @@ export function computeAgentReviewPollInterval(input: {
 }
 
 /**
- * Whether a review request is on-site (this panel's scope). External / OAuth-
- * connect requests are out of P2 scope — the on-site modal only ever holds
- * on-site requests, but this stays defensive so a mis-routed external/connect
- * request never surfaces the agentic panel. Pure + structural (no heuristic).
+ * Whether a review request is on-site — the ON-SITE modal's gate. The on-site
+ * modal only ever holds on-site requests, but this stays defensive so a mis-routed
+ * external/connect request never surfaces the on-site lane's panel there. OAuth-connect
+ * requests get this same panel from the off-site modal instead, behind their own flag
+ * (`ConnectAgentReviewSection` in OffsiteReviewQueue). Pure + structural (no heuristic).
  */
 export function isOnsiteReviewRequest(request: {
   manifest?: unknown;
