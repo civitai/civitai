@@ -25,7 +25,7 @@ vi.mock('~/server/services/username-permitted', async (importOriginal) => ({
   isUsernamePermitted,
 }));
 
-const handler = (await import('~/pages/api/admin/create-system-account')).default;
+const handler = (await import('~/server/api-routes/admin/create-system-account')).default;
 
 type Row = {
   id: number;

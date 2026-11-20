@@ -417,8 +417,12 @@ func (s *Server) computeV1(ctx context.Context, r *http.Request) (*computed, err
 	if err != nil {
 		return nil, err
 	}
-	// getApiAuthSession(whenBanned: 'anonymous'): a bearer/API key falls back (Resolve), a banned
-	// session is no user at all.
+	// getApiAuthSession(whenBanned: 'anonymous'): a banned session is no user at all. An API credential
+	// falls back: PublicEndpoint's credentialed cache headers and REST_SCOPE_ENFORCE are not ported
+	// (DESIGN.md §4.2), and the sampler never sends one.
+	if auth.HasAPICredential(r) {
+		return nil, fallback.New("bearer-token")
+	}
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
 		return nil, err
@@ -698,6 +702,22 @@ func (s *Server) ServeInfiniteHTTP(w http.ResponseWriter, r *http.Request) {
 	s.serve(w, r, EndpointInfinite, ProcedureInfinite, off, fn)
 }
 
+// bearerOrigin is fn for a request whose Origin the app would refuse unless its API key resolves to a
+// session: the key is resolved first (inside the serve slot and the budget), the answer kept on the
+// context for fn's own Resolve, and anything but an API-key viewer is the `origin` fallback.
+func (s *Server) bearerOrigin(fn func(context.Context, *http.Request) (*computed, error)) func(context.Context, *http.Request) (*computed, error) {
+	return func(ctx context.Context, r *http.Request) (*computed, error) {
+		user, err := s.Resolver.Resolve(ctx, r)
+		if err != nil {
+			return nil, err
+		}
+		if user == nil || !user.APIKey {
+			return nil, fallback.New("origin")
+		}
+		return fn(auth.WithResolved(ctx, user, nil), r)
+	}
+}
+
 // serve is a public route: off (non-nil) is the fallback answered before anything else; then the API
 // request policy, the origin check, and fn inside a serve slot. An answer is written here; any
 // fallback is proxied to the Node app. The serve slots (MaxInFlight) are shared by every public route.
@@ -721,6 +741,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		case err != nil:
 		case AcceptableOrigin(r, s.AllowedOrigins):
 			c, err = s.computeServe(r, endpoint, fn)
+		case s.Resolver != nil && s.Resolver.APIKeys != nil && auth.CarriesBearer(r):
+			// createContext accepts any origin for a request whose API key resolved to a session
+			// (isBearerAuth); a key that resolves to none is held to the origin like a cookie caller.
+			c, err = s.computeServe(r, endpoint, s.bearerOrigin(fn))
 		default:
 			// The app's answer differs by environment and credential (non-production and bearer callers
 			// are accepted, a cookie caller in production is refused): never decided here.
@@ -910,9 +934,11 @@ func SyntheticModelGetAllRequest(ctx context.Context, req ShadowRequest) (*http.
 	return syntheticTRPCRequest(ctx, req, ProcedureModelGetAll)
 }
 
+// The synthetic requests carry the sampler's credential placeholder, never a key: their context is
+// marked so an API credential stays the `bearer-token` fallback (auth.WithRedactedCredentials).
 func syntheticTRPCRequest(ctx context.Context, req ShadowRequest, procedure string) (*http.Request, error) {
 	u := &url.URL{Path: "/api/trpc/" + procedure, RawQuery: url.Values{"input": {req.Input}}.Encode()}
-	r, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	r, err := http.NewRequestWithContext(auth.WithRedactedCredentials(ctx), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -928,7 +954,7 @@ func syntheticTRPCRequest(ctx context.Context, req ShadowRequest, procedure stri
 // SyntheticV1Request rebuilds the REST request a v1-images sample describes: its path and raw query
 // string as Node received them, and the forwarded headers.
 func SyntheticV1Request(ctx context.Context, req ShadowRequest) (*http.Request, error) {
-	r, err := http.NewRequestWithContext(ctx, http.MethodGet, V1ImagesPath, nil)
+	r, err := http.NewRequestWithContext(auth.WithRedactedCredentials(ctx), http.MethodGet, V1ImagesPath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -979,6 +1005,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
 	}
 	span := trace.SpanFromContext(ctx)
+	// The sample's credential is the sampler's placeholder, never a key: the compute's Resolve reads
+	// the marker off this context (auth.WithRedactedCredentials).
+	ctx = auth.WithRedactedCredentials(ctx)
 	r, err := build(ctx, req)
 	if err != nil {
 		setOutcome(span, "bad_request")

@@ -30,7 +30,7 @@ function VideosPage() {
               filters={{ ...filters, types: ['video'] }}
               showEof
               showAds
-              searchable={!!features.videoFeedSearch}
+              searchable={!!features.videoFeedSearch && !!features.semanticVideoSearch}
             />
           </IsClient>
         </Stack>

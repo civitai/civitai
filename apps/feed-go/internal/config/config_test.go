@@ -229,6 +229,30 @@ func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_BEARER_AUTH is off by default; its two secrets are read only when it is on.
+func TestLoadBearerAuth(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("NEXTAUTH_SECRET", "salt-value")
+	t.Setenv("ORCHESTRATOR_SERVICE_TOKEN", "service-value")
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_BEARER_AUTH", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantSecret, wantToken := "", ""
+		if want {
+			wantSecret, wantToken = "salt-value", "service-value"
+		}
+		if c.BearerAuth != want || c.APIKeySecret != wantSecret || c.OrchestratorServiceToken != wantToken {
+			t.Errorf("FEED_GO_BEARER_AUTH=%q -> %v, secret set %v, token set %v; want %v, %v, %v", in, c.BearerAuth,
+				c.APIKeySecret != "", c.OrchestratorServiceToken != "", want, wantSecret != "", wantToken != "")
+		}
+	}
+}
+
 // SESSION_REVOCATION_CACHE is a default-on switch (isEnvSwitchOn): only off/0/false, any case and
 // surrounding whitespace, turn it off; unset, empty and unknown values keep it on. The cases are the
 // package's own env-switch.test.ts.

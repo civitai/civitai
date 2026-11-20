@@ -205,18 +205,16 @@ export function planBlockOutputUnlock(
     return { kind: 'unavailable', position, message: OUTPUT_UNLOCK_BLOCKED_MESSAGE };
   }
   if (output.reason === 'pool') {
-    // With serving on, the lifted output must itself be usable: a never-rated engine's video or
-    // an `na` output is restricted the moment it is released, so it is never offered for pay.
-    if (view.serving) {
-      const lifted = outputAt(
-        { ...workflow, allowMatureContent: true },
-        blockOutputCeilingFromClaims(claims),
-        position,
-        { serving: true, mint: null }
-      ).output;
-      if (!lifted || !isUnrestrictedOutput(lifted)) {
-        return { kind: 'unavailable', position, message: OUTPUT_UNLOCK_CANNOT_SHOW_MESSAGE };
-      }
+    // The lifted output must itself be usable: a never-rated engine's video or an `na` output
+    // is restricted the moment it is released, serving on or off, so it is never offered for pay.
+    const lifted = outputAt(
+      { ...workflow, allowMatureContent: true },
+      blockOutputCeilingFromClaims(claims),
+      position,
+      { serving: view.serving, mint: null }
+    ).output;
+    if (!lifted || !isUnrestrictedOutput(lifted)) {
+      return { kind: 'unavailable', position, message: OUTPUT_UNLOCK_CANNOT_SHOW_MESSAGE };
     }
     const list = (workflow.transactions as { list?: unknown } | null | undefined)?.list;
     const unlockBuzz = unlockPriceFromTransactions(Array.isArray(list) ? list : []);

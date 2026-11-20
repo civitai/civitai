@@ -143,9 +143,9 @@ describe('a login bound for a spoke OUTSIDE the hub cookie scope', () => {
 });
 
 describe('the hand-off requires the spoke AUTHORIZE LANDING, not just a foreign first-party url', () => {
-  // A createSpokeGuard app sends the raw current page URL as returnUrl. If such an app is ever on a foreign
-  // registrable domain — a TrustedSpokeDomain row, no code change — handing off would give it no cookie, its
-  // guard would bounce back to /login with the same returnUrl, and the login would loop forever with no error.
+  // An app that sends the raw current page URL to /login as returnUrl, on a foreign registrable domain (a
+  // TrustedSpokeDomain row, no code change), would get no cookie from a hand-off, bounce back to /login with
+  // the same returnUrl, and loop forever with no error.
   // Only the /api/auth/authorize landing produces the second hop where the pending record is consumed.
   it.each([
     ['a bare page url on a foreign first-party host', 'https://civitai.red/models/123'],

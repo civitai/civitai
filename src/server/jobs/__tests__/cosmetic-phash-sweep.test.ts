@@ -76,6 +76,16 @@ describe('sweepCosmeticPerceptualHashes', () => {
     expect(mocks.markCosmeticHashFailed).toHaveBeenCalledWith(2);
   });
 
+  it('counts a hash the store refused as failed, not hashed', async () => {
+    mocks.queryRaw.mockResolvedValue([{ id: 7, url: 'artwork-7' }]);
+    mocks.getPerceptualHash.mockResolvedValue('a'.repeat(64));
+    mocks.storeCosmeticPerceptualHash.mockRejectedValue(
+      new Error('Hash is wider than lane perceptualDct256/256: 128 > 64')
+    );
+
+    expect(await sweepCosmeticPerceptualHashes()).toEqual({ scanned: 1, hashed: 0, failed: 1 });
+  });
+
   it('selects on the version as well as the url, which is what drains a lane upgrade', async () => {
     mocks.queryRaw.mockResolvedValue([]);
 
