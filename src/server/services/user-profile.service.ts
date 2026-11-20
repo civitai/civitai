@@ -64,6 +64,7 @@ import { userUpdateCounter } from '~/server/prom/client';
 import { usersSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
+import { isShowcaseHiddenOn } from '~/shared/constants/profile-showcase.constants';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
@@ -232,7 +233,10 @@ export const getUserWithProfile = async ({
         privacySettings: (profile?.privacySettings ?? {}) as PrivacySettingsSchema,
         profileSectionsSettings: (profile?.profileSectionsSettings ?? []) as ProfileSectionSchema[],
         showcaseItems: (profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
-        showcaseSections: (profile?.showcaseSections ?? []) as ShowcaseSectionSchema[],
+        // The owner and moderators edit every section, so only other viewers lose the hidden ones.
+        showcaseSections: ((profile?.showcaseSections ?? []) as ShowcaseSectionSchema[]).filter(
+          (section) => canEdit || !isShowcaseHiddenOn(section.hiddenOn, domain)
+        ),
         bio: (useSfwBio ? profile?.sfwBio : profile?.bio) ?? null,
         message: (useSfwMessage ? profile?.sfwMessage : profile?.message) ?? null,
         messageAddedAt:

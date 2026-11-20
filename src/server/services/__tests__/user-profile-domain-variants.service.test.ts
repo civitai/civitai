@@ -209,3 +209,47 @@ describe('getUserWithProfile — SFW (civitai.com) profile overrides', () => {
     expect(owner.profile.coverImage?.id).toBe(2);
   });
 });
+
+describe('getUserWithProfile — showcase sections hidden on a site', () => {
+  const section = (id: string, hiddenOn?: number) => ({
+    id,
+    type: 'Model',
+    title: id,
+    items: [1],
+    ...(hiddenOn !== undefined && { hiddenOn }),
+  });
+  beforeEach(() =>
+    setProfile({
+      showcaseSections: [
+        section('everywhere'),
+        section('notRed', 2),
+        section('notCom', 1),
+        section('nowhere', 3),
+      ],
+    })
+  );
+  const ids = async (args: Parameters<typeof getUserWithProfile>[0]) =>
+    (await getUserWithProfile(args)).profile.showcaseSections.map((s) => s.id);
+
+  it('drops a section hidden on red for a visitor on red', async () => {
+    expect(await ids({ id: USER_ID, domain: 'red' })).toEqual(['everywhere', 'notCom']);
+  });
+
+  it.each(['green', 'blue'] as const)(
+    'drops a section hidden on .com for a visitor on %s',
+    async (color) => {
+      expect(await ids({ id: USER_ID, domain: color, sessionUserId: 5 })).toEqual([
+        'everywhere',
+        'notRed',
+      ]);
+    }
+  );
+
+  it('keeps every section for the owner and for a moderator', async () => {
+    const all = ['everywhere', 'notRed', 'notCom', 'nowhere'];
+    expect(await ids({ id: USER_ID, domain: 'red', sessionUserId: USER_ID })).toEqual(all);
+    expect(await ids({ id: USER_ID, domain: 'red', sessionUserId: 5, isModerator: true })).toEqual(
+      all
+    );
+  });
+});
