@@ -4197,7 +4197,7 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
-  // After the merge commits, and best effort: the showcase never decides whether a merge succeeds.
+  // A showcase failure never fails the merge.
   const { repointVersionShowcases } = await import('~/server/services/version-showcase.service');
   await repointVersionShowcases(targetVersionId, sourceVersionIds);
   // Then the AIRs read before the write, and the file-pinned AIRs, which version busts never reach: a

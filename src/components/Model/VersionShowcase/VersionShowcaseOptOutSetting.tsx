@@ -1,5 +1,4 @@
-import { Switch } from '@mantine/core';
-import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
+import { SettingSwitch } from '~/components/Account/SettingsLayout';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 
 const LABEL = 'Let creators feature my images in their model showcases';
@@ -14,22 +13,16 @@ const DESCRIPTION =
 export function VersionShowcaseOptOutSetting({ flat }: { flat?: boolean }) {
   const { hideFromVersionShowcases } = useCurrentUserSettings();
   const { mutate, isPending } = useMutateUserSettings();
-  const control = (
-    <Switch
+  return (
+    <SettingSwitch
       name="allowVersionShowcaseFeatures"
-      aria-label={flat ? LABEL : undefined}
-      label={flat ? undefined : LABEL}
-      description={flat ? undefined : DESCRIPTION}
+      sectionTitle="Model showcases"
+      label={LABEL}
+      description={DESCRIPTION}
       checked={!(hideFromVersionShowcases ?? false)}
       disabled={isPending}
-      onChange={(e) => mutate({ hideFromVersionShowcases: !e.target.checked })}
-      styles={flat ? undefined : { track: { flex: '0 0 1em' } }}
+      onChange={(allowed) => mutate({ hideFromVersionShowcases: !allowed })}
+      flat={flat}
     />
-  );
-  if (!flat) return control;
-  return (
-    <SettingsSection title="Model showcases">
-      <SettingRow label={LABEL} description={DESCRIPTION} control={control} />
-    </SettingsSection>
   );
 }
