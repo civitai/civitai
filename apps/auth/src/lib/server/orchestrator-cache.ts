@@ -13,7 +13,7 @@ async function orchestratorDelete(path: string, what: string): Promise<boolean> 
   const base = env.ORCHESTRATOR_ENDPOINT;
   const token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!base || !token) {
-    void logToAxiom({ type: 'info', name: 'orchestrator-cache-skipped', what });
+    void logToAxiom({ type: 'info', name: 'orchestrator-cache-skipped', message: what });
     return false;
   }
   try {
@@ -29,8 +29,7 @@ async function orchestratorDelete(path: string, what: string): Promise<boolean> 
     void logToAxiom({
       type: 'error',
       name: 'orchestrator-cache-invalidate-failed',
-      what,
-      message: String(err),
+      message: `${what}: ${String(err)}`,
     });
     return false;
   }

@@ -1,9 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import { sql } from 'kysely';
 import type { NextApiRequest } from 'next';
+import type { kyselyWrite } from '~/server/db/kyselyDb';
+
+type KyselyWrite = typeof kyselyWrite;
 import { readRequestBearerToken } from '~/server/auth/request-bearer-token';
 import { getRequestCredential, type RequestCredential } from '~/server/auth/request-credential';
-import { kyselyWrite } from '~/server/db/kyselyDb';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   getBuzzLimitForSubject,
@@ -122,12 +124,15 @@ const UNDEFINED_COLUMN = '42703';
  */
 export async function readMintOrigin(
   apiKeyId: number,
-  executor: Pick<typeof kyselyWrite, 'selectFrom'> = kyselyWrite
+  executor?: Pick<KyselyWrite, 'selectFrom'>
 ): Promise<string | null> {
+  // Loaded on first use: this module sits on getOrchestratorToken's import path, and the Kysely
+  // module opens its pools at load.
+  const db = executor ?? (await import('~/server/db/kyselyDb')).kyselyWrite;
   try {
     // primary: a refresh mints the token moments before the app first uses it, so a replica can
     // still lack the row, which would read as "no origin" and skip the cap.
-    const row = await executor
+    const row = await db
       .selectFrom('ApiKey')
       .select(sql<string | null>`"mintOrigin"`.as('mintOrigin'))
       .where('id', '=', apiKeyId)
