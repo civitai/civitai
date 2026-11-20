@@ -1673,14 +1673,14 @@ describe('a user app', () => {
           },
         },
       });
-      setEnv({ STORAGE_HOOK_RUNNER_URL: 'http://runner', STORAGE_HOOK_RUNNER_SECRET: SECRET });
+      setEnv({ REMIX_RUNNER_URL: 'http://runner', REMIX_RUNNER_SECRET: SECRET });
       vi.stubGlobal('fetch', runner.fetchImpl);
       dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(matureRow() as never);
       addImage(MATURE_SOURCE, { nsfwLevel: 8 });
     });
     afterEach(() => {
       vi.unstubAllGlobals();
-      setEnv({ STORAGE_HOOK_RUNNER_URL: '', STORAGE_HOOK_RUNNER_SECRET: '' });
+      setEnv({ REMIX_RUNNER_URL: '', REMIX_RUNNER_SECRET: '' });
     });
     let nonce = 0;
     const startOn = (imageId: number) =>
@@ -2143,6 +2143,44 @@ describe('a user app', () => {
           await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject({ code: 'NOT_FOUND' });
         }
         expect(submits()).toHaveLength(1);
+      });
+
+      it('a call the runner quarantined sends the app back to review, and refuses the run', async () => {
+        vi.stubGlobal(
+          'fetch',
+          fakeRemixRunner({ secret: SECRET, apps: {}, quarantined: true }).fetchImpl
+        );
+        await expect(runAs(101)).rejects.toMatchObject({
+          code: 'PRECONDITION_FAILED',
+          message: REMIX_APP_HELD,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(stored.status).toBe('remix_disabled');
+        expect(stored.manifest).toMatchObject({
+          review: 'submitted',
+          reviewLog: [
+            expect.objectContaining({ action: 'held-runner-quarantine', by: REMIX_SYSTEM_ACTOR }),
+          ],
+        });
+      });
+
+      it("calls the remix runner's own URL and secret, never the permission-check runner's", async () => {
+        setEnv({
+          REMIX_RUNNER_URL: '',
+          REMIX_RUNNER_SECRET: '',
+          STORAGE_HOOK_RUNNER_URL: 'http://runner',
+          STORAGE_HOOK_RUNNER_SECRET: SECRET,
+        });
+        await expect(runAs(101)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+        expect(submits()).toHaveLength(0);
+        setEnv({
+          REMIX_RUNNER_URL: 'http://runner',
+          REMIX_RUNNER_SECRET: SECRET,
+          STORAGE_HOOK_RUNNER_URL: '',
+          STORAGE_HOOK_RUNNER_SECRET: '',
+        });
+        // POSITIVE CONTROL: on its own config the same run goes through.
+        await expect(runAs(101)).resolves.toMatchObject({ status: 'running' });
       });
 
       it('a mod dry run plays the stored source and names the hash it reviewed', async () => {

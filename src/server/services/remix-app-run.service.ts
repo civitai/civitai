@@ -47,6 +47,7 @@ import {
   getRegisteredRemixApp,
   holdUserRemixApp,
   isRunnableBy,
+  REMIX_APP_HELD,
   type RegisteredRemixApp,
 } from '~/server/services/remix-app-registry.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
@@ -307,7 +308,7 @@ async function cachedOptionPrices(
   return prices;
 }
 
-export const REMIX_APP_HELD = 'This app is back in review. Try another one.';
+export { REMIX_APP_HELD };
 export const REMIX_APP_UNCHECKED = 'This app cannot be checked right now. Try again in a moment.';
 export const REMIX_APP_UNJUDGED = 'This app cannot be checked with these answers. Try other ones.';
 

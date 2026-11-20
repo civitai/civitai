@@ -1351,6 +1351,17 @@ export const serverSchema = z
         message: 'STORAGE_HOOK_RUNNER_SECRET must be at least 32 characters',
       })
       .optional(),
+    // Remix user apps: the same runner image started in remix mode, a pool of its own so author
+    // code never shares the permission-check workers, with a secret of its own. Base URL (the
+    // client posts to `<url>/v1/remix/replay`) and HMAC secret, as above. Unset or blank, every
+    // user remix app is unavailable.
+    REMIX_RUNNER_URL: z.union([z.url(), z.literal('')]).optional(),
+    REMIX_RUNNER_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'REMIX_RUNNER_SECRET must be at least 32 characters',
+      })
+      .optional(),
     // How long a run grant lasts: the runner's wall clock per run (2 h) plus a margin.
     ASSISTANT_RUNNER_GRANT_TTL_SECONDS: z.coerce
       .number()

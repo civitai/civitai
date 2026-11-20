@@ -277,6 +277,7 @@ const reviewLogEntry = z.strictObject({
     'held-author-prompt',
     'held-combination-blocks',
     'held-classifier-error',
+    'held-runner-quarantine',
   ]),
   sha256: z.string().optional(),
   mature: z.boolean().optional(),

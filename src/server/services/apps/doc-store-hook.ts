@@ -248,7 +248,12 @@ export async function postToHookRunner(
   path: '/v1/check' | '/v1/remix/replay',
   payload: Record<string, unknown>,
   clientTimeoutMs: number,
-  opts: { nowSec?: () => number; fetchImpl?: typeof fetch } = {}
+  opts: {
+    nowSec?: () => number;
+    fetchImpl?: typeof fetch;
+    /** Other statuses whose signed body the caller reads (a refusal it acts on). */
+    alsoStatuses?: readonly number[];
+  } = {}
 ): Promise<{ kind: 'ok'; body: Record<string, unknown> } | { kind: 'unavailable'; why: string }> {
   if (!config) return { kind: 'unavailable', why: 'runner not configured' };
   const nowSec = opts.nowSec ?? (() => Math.floor(Date.now() / 1000));
@@ -277,7 +282,8 @@ export async function postToHookRunner(
     const name = err instanceof Error ? err.name : typeof err;
     return { kind: 'unavailable', why: name === 'TimeoutError' ? 'timeout' : `transport ${name}` };
   }
-  if (status !== 200) return { kind: 'unavailable', why: `status ${status}` };
+  if (status !== 200 && !opts.alsoStatuses?.includes(status))
+    return { kind: 'unavailable', why: `status ${status}` };
   if (!signatureMatches(config.secret, raw, sig)) {
     return { kind: 'unavailable', why: 'bad response signature' };
   }

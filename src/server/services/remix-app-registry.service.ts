@@ -43,6 +43,7 @@ import type { Prisma } from '@prisma/client';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
 import {
+  RemixQuarantinedError,
   userRemixAuthorPrompt,
   userRemixBranchReplayer,
   userRemixFirstRequest,
@@ -175,14 +176,19 @@ function register(
     app = compileRemixApp({ slug, name, description, version }, spec);
   }
   const loadSource = () => loadUserRemixSource(slug, (spec as { source: string }).source);
+  const held = holdOnQuarantine(slug);
   const replay: RemixReplayer =
     'source' in spec
-      ? userRemixReplayer(slug, remixBlockId(slug), loadSource)
+      ? held(userRemixReplayer(slug, remixBlockId(slug), loadSource))
       : (source, log) => replayRemixApp(app, source, log);
   const firstRequest =
-    'source' in spec ? userRemixFirstRequest(slug, remixBlockId(slug), loadSource) : undefined;
+    'source' in spec
+      ? held(userRemixFirstRequest(slug, remixBlockId(slug), loadSource))
+      : undefined;
   const authorPrompt =
-    'source' in spec ? userRemixAuthorPrompt(slug, remixBlockId(slug), loadSource) : undefined;
+    'source' in spec
+      ? held(userRemixAuthorPrompt(slug, remixBlockId(slug), loadSource))
+      : undefined;
   const shape = createHash('sha256').update(runShape(spec)).digest('hex').slice(0, 16);
   const { version: _, ...rest } = listing;
   return {
@@ -195,6 +201,26 @@ function register(
     ...(authorPrompt ? { authorPrompt } : {}),
   };
 }
+
+export const REMIX_APP_HELD = 'This app is back in review. Try another one.';
+
+/** A call the runner quarantined (it outran the interrupt) sends the app back to review. */
+const holdOnQuarantine =
+  (slug: string) =>
+  <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+  (...args: A): Promise<R> =>
+    fn(...args).catch(async (error: unknown) => {
+      if (!(error instanceof RemixQuarantinedError)) throw error;
+      await holdUserRemixApp(slug, { action: 'held-runner-quarantine' }).catch((e: unknown) =>
+        logToAxiom({
+          name: 'remix-app-registry',
+          type: 'error',
+          message: 'Could not send a quarantined user remix app back to review',
+          payload: { slug, error: e instanceof Error ? e.message : String(e) },
+        })
+      );
+      throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD });
+    });
 
 /** A stored row as a registered app, or `null` (logged) when it no longer validates. */
 export function registerRow(
@@ -883,7 +909,7 @@ async function holdMatureApp(first: RemixAppRow, moderatorId: number) {
 export async function holdUserRemixApp(
   slug: string,
   hold:
-    | { action: 'held-author-prompt' }
+    | { action: 'held-author-prompt' | 'held-runner-quarantine' }
     | {
         /** `held-classifier-error`: a first strike only because the classifier could not answer. */
         action: 'held-combination-blocks' | 'held-classifier-error';
@@ -902,9 +928,7 @@ export async function holdUserRemixApp(
       if (!blocks.includes(viewer.slice(0, 16))) blocks = [...blocks, viewer.slice(0, 16)];
     }
     const pull =
-      hold.action === 'held-author-prompt' ||
-      hold.firstStrike ||
-      blocks.length >= REMIX_COMBINATION_BLOCKS_MAX;
+      !('viewerId' in hold) || hold.firstStrike || blocks.length >= REMIX_COMBINATION_BLOCKS_MAX;
     if (!pull && blocks === before) return false;
     const counted = { ...manifest, combinationBlocks: blocks.slice(-REMIX_COMBINATION_BLOCKS_MAX) };
     try {

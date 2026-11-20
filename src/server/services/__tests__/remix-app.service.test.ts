@@ -826,14 +826,14 @@ describe('a user app in the menu', () => {
         },
         answer,
       });
-      setEnv({ STORAGE_HOOK_RUNNER_URL: 'http://runner', STORAGE_HOOK_RUNNER_SECRET: SECRET });
+      setEnv({ REMIX_RUNNER_URL: 'http://runner', REMIX_RUNNER_SECRET: SECRET });
       vi.stubGlobal('fetch', runner.fetchImpl);
       dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(userRow as never);
       return runner;
     };
     afterEach(() => {
       vi.unstubAllGlobals();
-      setEnv({ STORAGE_HOOK_RUNNER_URL: '', STORAGE_HOOK_RUNNER_SECRET: '' });
+      setEnv({ REMIX_RUNNER_URL: '', REMIX_RUNNER_SECRET: '' });
     });
 
     it('in one runner call, through its asks on their first answers', async () => {

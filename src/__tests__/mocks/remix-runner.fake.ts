@@ -10,11 +10,14 @@ export function fakeRemixRunner({
   secret,
   apps,
   answer,
+  quarantined = false,
 }: {
   secret: string;
   /** By the sha256 of the source the request sends. */
   apps: Record<string, Pick<RemixApp, 'run'>>;
   answer?: (request: Record<string, unknown>) => unknown;
+  /** Answer every call as the runner answers an app it quarantined. */
+  quarantined?: boolean;
 }) {
   const calls: Record<string, unknown>[] = [];
   const fetchImpl = (async (_url: string, init: RequestInit) => {
@@ -24,17 +27,20 @@ export function fakeRemixRunner({
     // The runner's MAX_REMIX_BRANCHES: it refuses a call with more.
     if (((request.input as ReplayInput).branches?.length ?? 0) > 12)
       return new Response('too many branches', { status: 400 });
-    const results = answer
-      ? answer(request)
-      : await replayAll(apps[request.sha256 as string], request.input as ReplayInput);
-    const response = JSON.stringify({
-      ts: request.ts,
-      req: createHash('sha256').update(body).digest('hex'),
-      elapsedMs: 1,
-      results,
-    });
+    const req = createHash('sha256').update(body).digest('hex');
+    const message = 'this app outran the interrupt and is quarantined';
+    const response = quarantined
+      ? JSON.stringify({ ts: request.ts, req, error: { code: 'quarantined', message } })
+      : JSON.stringify({
+          ts: request.ts,
+          req,
+          elapsedMs: 1,
+          results: answer
+            ? answer(request)
+            : await replayAll(apps[request.sha256 as string], request.input as ReplayInput),
+        });
     return new Response(response, {
-      status: 200,
+      status: quarantined ? 423 : 200,
       headers: {
         'x-storage-hook-sig': createHmac('sha256', secret).update(response).digest('hex'),
       },

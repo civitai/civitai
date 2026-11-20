@@ -1,7 +1,8 @@
 import { TRPCError } from '@trpc/server';
 import { createHash } from 'crypto';
+import { env } from '~/env/server';
 import {
-  hookRunnerConfig,
+  normalizeHookRunnerSecret,
   postToHookRunner,
   type HookRunnerConfig,
 } from '~/server/services/apps/doc-store-hook';
@@ -54,6 +55,20 @@ const readResult = (raw: unknown): RunnerResult | undefined => {
   return { effects: r.effects, done: { outputs: (r.done as { outputs?: unknown }).outputs } };
 };
 
+/** The remix runner's own URL and secret: never the permission-check runner's. Null when unset. */
+export function remixRunnerConfig(): HookRunnerConfig | null {
+  const url = (env.REMIX_RUNNER_URL ?? '').trim();
+  const secret = normalizeHookRunnerSecret(env.REMIX_RUNNER_SECRET);
+  if (!url || secret.length < 32) return null;
+  return { url: url.replace(/\/+$/, ''), secret };
+}
+
+/** The runner quarantined this app: one of its calls outran the interrupt. */
+export class RemixQuarantinedError extends Error {}
+
+/** The runner's signed refusal of a quarantined app. */
+const QUARANTINED_STATUS = 423;
+
 /** One signed replay call: one result per replay, `base` first. Throws when the runner can't answer. */
 export async function callRemixRunner(
   call: RemixRunnerCall,
@@ -61,7 +76,7 @@ export async function callRemixRunner(
 ): Promise<RunnerResult[]> {
   const branches = call.branches ?? [];
   const answer = await postToHookRunner(
-    opts.config === undefined ? hookRunnerConfig() : opts.config,
+    opts.config === undefined ? remixRunnerConfig() : opts.config,
     '/v1/remix/replay',
     {
       appId: call.appId,
@@ -75,8 +90,13 @@ export async function callRemixRunner(
       },
     },
     remixRunnerTimeoutMs(1 + branches.length),
-    opts
+    { ...opts, alsoStatuses: [QUARANTINED_STATUS] }
   );
+  if (
+    answer.kind === 'ok' &&
+    (answer.body.error as { code?: unknown } | undefined)?.code === 'quarantined'
+  )
+    throw new RemixQuarantinedError(`${call.appId} is quarantined by the runner`);
   const results =
     answer.kind === 'ok' && Array.isArray(answer.body.results)
       ? answer.body.results.map(readResult)
