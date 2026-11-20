@@ -540,6 +540,7 @@ export async function setReportStatus({
   userId,
   ip,
   noRewardFor = [],
+  noReward = false,
 }: {
   id: number;
   status: ReportStatus;
@@ -547,6 +548,8 @@ export async function setReportStatus({
   ip?: string;
   /** Reporters paid nothing for this report, whatever it says. */
   noRewardFor?: readonly number[];
+  /** Closes the report without paying any of its reporters. */
+  noReward?: boolean;
 }) {
   // A stale tab or a forged id must not report success. The UPDATE is deliberately a no-op when the
   // report is ALREADY in the requested status (that guard protects the reward path), so "nothing
@@ -587,7 +590,9 @@ export async function setReportStatus({
     await rewardReportReporters({
       reportId: id,
       reporterIds,
-      unpaidReporterIds: [...reportersWithoutReward(updated), ...noRewardFor],
+      unpaidReporterIds: noReward
+        ? reporterIds
+        : [...reportersWithoutReward(updated), ...noRewardFor],
       ip,
     });
   }

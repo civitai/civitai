@@ -169,7 +169,23 @@ export interface ServiceTokenRecord {
   exp: number;
 }
 
-export type TokenRecord = ExchangeRecord | ServiceTokenRecord;
+/**
+ * What ties a token minted by a client token exchange (client-exchange.ts) to its client, the relay that
+ * exchanged it and the token it came from. Introspection does not answer for these yet (it reads them as
+ * inactive); a further exchange reads the record to know the hub issued the token.
+ */
+export interface ServiceExchangeRecord {
+  kind: 'service-exchange';
+  clientId: string;
+  actor: string;
+  resource: string;
+  scopeBits: bigint;
+  exp: number;
+  /** The `jti` of the token it was exchanged from. */
+  subjectJti: string;
+}
+
+export type TokenRecord = ExchangeRecord | ServiceTokenRecord | ServiceExchangeRecord;
 
 const recordKey = (jti: string) => `${REDIS_SYS_KEYS.OAUTH.TOKEN_EXCHANGES}:${jti}` as const;
 

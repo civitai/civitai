@@ -165,4 +165,21 @@ describe('actioning from the main app', () => {
     expect(paid()).toEqual([]);
     expect(await stored()).toMatchObject({ status: 'Unactioned', statusSetBy: MAIN_MODERATOR });
   });
+
+  // A report another moderator ruled on after it was read as Pending is not overruled.
+  it('with fromStatus, leaves a report no longer in that status as it is, and pays nobody', async () => {
+    await seed([CO_REPORTER]);
+    replicaSees([CO_REPORTER]);
+    await moderatorAppSets(ReportStatus.Unactioned);
+
+    await bulkSetReportStatus({
+      ids: [REPORT],
+      status: ReportStatus.Actioned,
+      userId: MAIN_MODERATOR,
+      fromStatus: ReportStatus.Pending,
+    });
+
+    expect(paid()).toEqual([]);
+    expect(await stored()).toMatchObject({ status: 'Unactioned', statusSetBy: MOD_APP_MODERATOR });
+  });
 });
