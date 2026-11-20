@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
 import type * as InputUrls from '~/server/services/generation-input-urls';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
@@ -373,6 +373,10 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
 });
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { fakeRemixRunner } from '~/__tests__/mocks/remix-runner.fake';
+import { bumpRemixAppRegistry } from '~/server/services/remix-app-registry.service';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { createHash } from 'crypto';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { OnboardingSteps } from '~/server/common/enums';
 import { verifyProvenance } from '~/server/services/orchestrator/remix-provenance';
@@ -1620,6 +1624,79 @@ describe('a user app', () => {
   }
 
   beforeEach(() => addImage(SOURCE_ID));
+
+  describe('on the runner', () => {
+    const SECRET = 'r'.repeat(32);
+    const MATURE_SOURCE = SOURCE_ID + 1;
+    const matureEngine = {
+      ecosystem: REMIX_ENGINES.edit.mature.ecosystemKey,
+      versionId: REMIX_ENGINES.edit.mature.modelVersionId,
+    };
+    const matureRow = () => {
+      const row = userRow();
+      (row.manifest.remix as { engine: object }).engine = {
+        ...row.manifest.remix.engine,
+        mature: matureEngine,
+      };
+      return row;
+    };
+    const markedSibling = {
+      ...userRow('remix_disabled'),
+      id: 'ab_rx_u5_other______________',
+      blockId: 'remix-u5-other',
+      manifest: { ...userRow().manifest, review: 'rejected', minorThemed: { by: 88, at: 'x' } },
+    };
+    beforeEach(() => {
+      const source = userRow().manifest.remix.source;
+      const runner = fakeRemixRunner({
+        secret: SECRET,
+        apps: {
+          [createHash('sha256').update(source).digest('hex')]: {
+            async run(ctx) {
+              const out = await ctx.workflow({
+                kind: 'image',
+                prompt: 'a portrait',
+                images: [ctx.source],
+                aspectRatio: 'source',
+                quantity: 1,
+              });
+              return out.images;
+            },
+          },
+        },
+      });
+      setEnv({ STORAGE_HOOK_RUNNER_URL: 'http://runner', STORAGE_HOOK_RUNNER_SECRET: SECRET });
+      vi.stubGlobal('fetch', runner.fetchImpl);
+      dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(matureRow() as never);
+      addImage(MATURE_SOURCE, { nsfwLevel: 8 });
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      setEnv({ STORAGE_HOOK_RUNNER_URL: '', STORAGE_HOOK_RUNNER_SECRET: '' });
+    });
+    let nonce = 0;
+    const startOn = (imageId: number) =>
+      startRemixRun({
+        slug: 'u5-mine',
+        imageId,
+        nonce: `nonce-on-${imageId}-${nonce++}`,
+        quote: 30,
+        caller: flagOn(),
+      });
+
+    it("refuses a marked author's app on a mature source, through the real runner path", async () => {
+      // POSITIVE CONTROL: unmarked, the same app runs on the same mature source.
+      serve(matureRow());
+      await expect(startOn(MATURE_SOURCE)).resolves.toMatchObject({ status: 'running' });
+      expect(submits()).toHaveLength(1);
+
+      serve(matureRow(), markedSibling);
+      // As the minor-themed reject does when it writes the mark.
+      await bumpRemixAppRegistry();
+      await expect(startOn(MATURE_SOURCE)).rejects.toThrow('Mine does not run on mature images.');
+      expect(submits()).toHaveLength(1);
+    });
+  });
 
   it('is absent from start with its flag off, and refuses to run in-process with it on', async () => {
     serve(userRow());
