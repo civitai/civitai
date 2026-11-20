@@ -1320,10 +1320,15 @@ async function dbClock() {
   return row.at;
 }
 
-/** A row's `pacedUrls` with `urls` stamped as deferred now. */
-const pacedWith = (urls: string[]) => Prisma.sql`
+/**
+ * A row's `pacedUrls` with each url stamped by the read that deferred it, not by this write: a
+ * read that saw a hold after the deferral, but before this write, must still win.
+ */
+const pacedWith = (paced: [url: string, at: string][]) => Prisma.sql`
   COALESCE(data->'pacedUrls', '{}'::jsonb) || COALESCE((
-    SELECT jsonb_object_agg(u, clock_timestamp()) FROM unnest(${urls}::text[]) u
+    SELECT jsonb_object_agg(x.url, x.at::timestamptz)
+    FROM unnest(${paced.map(([url]) => url)}::text[], ${paced.map(([, at]) => at)}::text[])
+      AS x(url, at)
   ), '{}'::jsonb)`;
 
 /**
@@ -1398,8 +1403,9 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   const [facts, state] = await Promise.all([loadFacts(urls), loadState(urls)]);
 
   const pending = new Set<string>();
-  // Retractions past this run's cap: denied for now, and retracted by a later run.
-  const deferred = new Set<string>();
+  // Retractions past this run's cap, with the read that deferred each: denied for now, and
+  // retracted by a later run.
+  const deferred = new Map<string, string>();
   const maxRetracts = env.CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN;
   let retracts = 0;
   let calls = 0;
@@ -1452,7 +1458,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
           call = callFor(url, f, freshState.get(url), { deferred: pacedUrls.has(url) });
           if (!call) return;
           if (call === 'retract' && !mayRetract.has(url)) {
-            deferred.add(url);
+            deferred.set(url, freshAt);
             if (freshState.get(url)?.state === 'Denied') return;
             call = 'deny';
           }
@@ -1508,6 +1514,11 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   }
 
   const settled = (url: string) => !pending.has(url) && !deferred.has(url);
+  const pacedIn = (urls: string[]) =>
+    urls.flatMap((url): [string, string][] => {
+      const at = deferred.get(url);
+      return at ? [[url, at]] : [];
+    });
   const done = queue.filter((_, i) => urlsByRow[i].every(settled));
   // A row keeps its first-deferral time, even after a re-queue, so the oldest deferral goes first.
   const rotate = queue.filter(
@@ -1539,7 +1550,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
           data = (COALESCE(data, '{}'::jsonb) - ${
             failuresNext.get(q) === null ? 'retractFailures' : ''
           }::text) || jsonb_build_object('deferred', data->'seq', 'pacedUrls', ${pacedWith(
-      urlsByRow[queue.indexOf(q)].filter((url) => deferred.has(url))
+      pacedIn(urlsByRow[queue.indexOf(q)])
     )})
       WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
         AND "entityType" = ${q.entityType}::"EntityType"
@@ -1602,7 +1613,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   // The rotation skips a row with a url still pending, a row already deferred, and one a trigger
   // re-queued mid-run; each must still record what this run deferred.
   for (const [i, q] of queue.entries()) {
-    const paced = urlsByRow[i].filter((url) => deferred.has(url));
+    const paced = pacedIn(urlsByRow[i]);
     if (removed.has(q) || !paced.length) continue;
     await dbWrite.$executeRaw`
       UPDATE "JobQueue"

@@ -2805,6 +2805,56 @@ describe('retractions per run', () => {
     expect(callsFor(u(2))).toEqual(['deny', 'retract']);
   });
 
+  it('drops a deferral that a later read saw held, even when the deferring run writes its marker last', async () => {
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+    await image(1);
+    await image(2);
+    await moderatorBlock(1);
+    await moderatorBlock(2);
+    const gate = () => {
+      let open: () => void = () => undefined;
+      const shut = new Promise<void>((resolve) => (open = resolve));
+      return { shut, open };
+    };
+    const deferring = gate(); // the first run, paused on its deny of the deferred url
+    const reading = gate(); // the second run, paused after its read
+    const paused = gate();
+    respond = async (c) => {
+      if (onUrl(u(2))(c) && kind(c) === 'deny') {
+        paused.open();
+        await deferring.shut;
+      }
+      if (onUrl(u(3))(c)) {
+        deferring.open();
+        await reading.shut;
+      }
+      return 202;
+    };
+    // The first run defers u(2) past the cap and pauses before writing its marker.
+    const first = syncCdnAccess();
+    await paused.shut;
+    // A hold lands on u(2), and a second run reads it held, then waits for the first to finish.
+    await image(9, { url: u(2) });
+    await sql`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 9`;
+    await moderatorBlock(9);
+    await image(3);
+    await moderatorBlock(3);
+    const second = syncCdnAccess();
+    await first;
+    reading.open();
+    await second;
+
+    // The held row is deleted by its owner, leaving no record.
+    respond = null;
+    await sql`DELETE FROM "Image" WHERE id = 9`;
+    await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+              VALUES (${MOD}, 'review', 'image', 2)`;
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 5 });
+    await syncCdnAccess();
+    expect(callsFor(u(2))).toEqual(['deny']);
+    expect(await stateOf(u(2))).toBe('Denied');
+  });
+
   it('drops the pacing marker once a paced url is lifted', async () => {
     const pacedOn = async (postId: number) =>
       Object.keys(
