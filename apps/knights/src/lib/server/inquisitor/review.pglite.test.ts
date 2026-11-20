@@ -35,7 +35,11 @@ const applyConsensus = vi.fn<QueueDeps['applyConsensus']>(async ({ imageId, valu
   await lockImage(pg, imageId, { reason: KNIGHTS_VOTE_NSFW_LEVEL_REASON, level: Number(value) });
   return { outcome: 'applied' };
 });
-const deps = (): QueueDeps => ({ applyConsensus, now: () => NOW });
+const deps = (inquisitorQueue = true): QueueDeps => ({
+  applyConsensus,
+  now: () => NOW,
+  inquisitorQueue: () => inquisitorQueue,
+});
 const voteDeps = { now: () => NOW, poolCap: 500 };
 
 beforeAll(async () => {
@@ -46,7 +50,7 @@ afterAll(() => pg.close());
 beforeEach(async () => {
   applyConsensus.mockClear();
   await pg.exec(
-    `TRUNCATE "KnightsInquisitorVote","KnightsInquisitorReview","KnightsReferenceImage","KnightsVote","KnightsQueueItem","NewOrderPlayer","Image","Post","ImageReport","Report" RESTART IDENTITY CASCADE`
+    `TRUNCATE "ModActivity","KnightsInquisitorVote","KnightsInquisitorReview","KnightsReferenceImage","KnightsVote","KnightsQueueItem","NewOrderPlayer","Image","Post","ImageReport","Report" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -114,6 +118,12 @@ describe('opening reviews', () => {
     expect(
       (await pg.query(`SELECT count(*)::int n FROM "KnightsInquisitorReview"`)).rows[0]
     ).toEqual({ n: 1 });
+  });
+
+  it('opens no review while the inquisitor queue is switched off', async () => {
+    const itemId = await settled(1);
+    expect(await applyPendingResolutions(db, deps(false))).toMatchObject({ applied: 1 });
+    expect(await reviewOf(itemId)).toBeUndefined();
   });
 
   it('opens none for a yes/no item, a hidden check, or an item that was rerouted instead of written', async () => {
@@ -362,6 +372,29 @@ describe('overriding the image level', () => {
     expect((await nextReview(db, { moderatorId: MOD_C }))?.reviewId).toBe(id);
   });
 
+  it('never overrides an image a moderator set or locked outside Knights: the review is excluded, nothing is sent', async () => {
+    const id = await reviewed(1);
+    await voteWith(id, MOD_A, '8');
+    await lockImage(pg, 1, { reason: 'moderator', level: 2 });
+    expect(await voteWith(id, MOD_B, '8')).toEqual({ status: 'excluded' });
+    expect(setImageLevel).not.toHaveBeenCalled();
+    expect((await pg.query(`SELECT "nsfwLevel" FROM "Image" WHERE id=1`)).rows[0]).toEqual({
+      nsfwLevel: 2,
+    });
+  });
+
+  it('writes the level only through the main-app port: Knights itself writes no image level and no moderator activity', async () => {
+    const id = await reviewed(1);
+    const port = vi.fn(async () => undefined);
+    await voteWith(id, MOD_A, '8', port);
+    expect(await voteWith(id, MOD_B, '8', port)).toEqual({ status: 'confirmed' });
+    expect(port).toHaveBeenCalledWith(1, 8);
+    expect((await pg.query(`SELECT "nsfwLevel" FROM "Image" WHERE id=1`)).rows[0]).toEqual({
+      nsfwLevel: 4,
+    });
+    expect((await pg.query(`SELECT count(*)::int n FROM "ModActivity"`)).rows[0]).toEqual({ n: 0 });
+  });
+
   it('never writes a blocked image: the review is excluded first', async () => {
     const id = await reviewed(1);
     await voteWith(id, MOD_A, '8');
@@ -441,6 +474,22 @@ describe('excluding reviews', () => {
     expect(await vote(id, MOD_A, '4')).toEqual({ status: 'excluded' });
     expect(await votesOn(id)).toEqual([]);
     expect((await reviewRow(id)).status).toBe('excluded');
+  });
+});
+
+describe('failing closed', () => {
+  it('serves no review and records no vote while a safety check cannot be read, and closes nothing', async () => {
+    const id = await reviewed(1);
+    await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      expect(await nextReview(db, { moderatorId: MOD_A })).toBeNull();
+      expect(await vote(id, MOD_A, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    } finally {
+      await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+    }
+    expect(await votesOn(id)).toEqual([]);
+    expect((await reviewRow(id)).status).toBe('open');
   });
 });
 

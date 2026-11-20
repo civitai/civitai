@@ -18,7 +18,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsReferenceImage","KnightsQueueItem","Image","Post","EvidenceHoldImage","EvidenceHoldPost","ImageReport","Report","ImageFlag","Appeal","TextScanHold" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsReferenceImage","KnightsQueueItem","Image","Post","EvidenceHoldImage","EvidenceHoldPost","ImageReport","Report","ImageFlag","Appeal","TextScanHold","CsamReport","EvidenceHeldUser","ImageCdnModeratorDelete","ImageResourceNew","ModelVersion","Model","User" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -78,6 +78,28 @@ describe('addSkillCheck', () => {
   ])('moves a %s %s reference into the pool, same row, counters reset', async (pool, source) => {
     await seedImage(pg, 1);
     const id = await seedRef(1, { pool, source });
+    expect(await add(1, '8')).toBe('moved');
+    expect(await rows()).toEqual([
+      {
+        id,
+        imageId: 1,
+        pool: 'skillCheck',
+        source: 'inquisitor',
+        status: 'active',
+        answer: '8',
+        answers: 0,
+        failures: 0,
+      },
+    ]);
+  });
+
+  it('takes over a probation check from the agreement intake: the mod-confirmed row wins', async () => {
+    await seedImage(pg, 1);
+    const id = (
+      await pg.query<{ id: number }>(
+        `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","status") VALUES (1,'hiddenCheck','4','agreement','probation') RETURNING id`
+      )
+    ).rows[0].id;
     expect(await add(1, '8')).toBe('moved');
     expect(await rows()).toEqual([
       {
@@ -161,6 +183,21 @@ describe('addSkillCheck', () => {
         (id) => pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=$1`, [id]),
       ],
       [
+        'its owner under a legal hold',
+        async (id) => {
+          await pg.query(`UPDATE "Image" SET "userId"=40 WHERE id=$1`, [id]);
+          await pg.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (40)`);
+        },
+      ],
+      [
+        'it listed on a report',
+        (id) =>
+          pg.query(
+            `INSERT INTO "CsamReport" ("userId","images") VALUES (41, jsonb_build_array(jsonb_build_object('id',$1::int)))`,
+            [id]
+          ),
+      ],
+      [
         'an evidence hold on the image',
         (id) =>
           pg.query(`INSERT INTO "EvidenceHoldImage" ("imageId","userId") VALUES ($1,1)`, [id]),
@@ -204,6 +241,24 @@ describe('addSkillCheck', () => {
             [id]
           ),
       ],
+      [
+        'a banned or muted uploader',
+        async (id) => {
+          await pg.query(`INSERT INTO "User" ("id","username","muted") VALUES (42,'m',true)`);
+          await pg.query(`UPDATE "Image" SET "userId"=42 WHERE id=$1`, [id]);
+        },
+      ],
+      [
+        'a model flagged as depicting a minor',
+        async (id) => {
+          await pg.query(`INSERT INTO "Model" ("id","minor") VALUES (60,true)`);
+          await pg.query(`INSERT INTO "ModelVersion" ("id","modelId") VALUES (61,60)`);
+          await pg.query(
+            `INSERT INTO "ImageResourceNew" ("imageId","modelVersionId") VALUES ($1,61)`,
+            [id]
+          );
+        },
+      ],
     ];
 
     it('has one test per exclusion clause', () => {
@@ -214,6 +269,32 @@ describe('addSkillCheck', () => {
       await seedImage(pg, 1);
       await flag(1);
       expect(await add(1)).toBe('ineligible');
+      expect(await rows()).toEqual([]);
+    });
+
+    it('refuses a banned uploader too, and counts a clean account, an unflagged model and a closed report as fine', async () => {
+      await seedImage(pg, 1);
+      await pg.query(`INSERT INTO "User" ("id","username","bannedAt") VALUES (43,'b',now())`);
+      await pg.query(`UPDATE "Image" SET "userId"=43 WHERE id=1`);
+      expect(await add(1)).toBe('ineligible');
+
+      await seedImage(pg, 2);
+      await pg.query(`INSERT INTO "User" ("id","username") VALUES (44,'ok')`);
+      await pg.query(`UPDATE "Image" SET "userId"=44 WHERE id=2`);
+      await pg.query(`INSERT INTO "Model" ("id","minor") VALUES (70,false)`);
+      await pg.query(`INSERT INTO "ModelVersion" ("id","modelId") VALUES (71,70)`);
+      await pg.query(`INSERT INTO "ImageResourceNew" ("imageId","modelVersionId") VALUES (2,71)`);
+      expect(await add(2)).toBe('added');
+    });
+
+    it('fails closed: a check that cannot be read keeps the image out, without failing the caller', async () => {
+      await seedImage(pg, 1);
+      await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+      try {
+        expect(await add(1)).toBe('ineligible');
+      } finally {
+        await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+      }
       expect(await rows()).toEqual([]);
     });
 

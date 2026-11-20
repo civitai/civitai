@@ -11,6 +11,7 @@ import { grantRankBadges } from '../progression/badges';
 import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import type { QuestionOption } from '../queue/queue.service';
 import { servableReferences } from '../reference';
+import { failClosed } from '../skill-check/eligible';
 import { ACOLYTE_WRONG_ANSWER_SMITE, BASE_SMITE_SIZE, SMITES } from '../smites/config';
 import {
   activeSmiteCount,
@@ -313,7 +314,13 @@ async function findNext(
     !(yesNoSlot && yesNo) &&
     skillRoll(playerId, position) < skillCheckRate
   ) {
-    const skill = await nextRating(db, playerId, position, 'skill');
+    // The mod-confirmed pool's safety reads fail closed: unreadable, the slot serves another image.
+    const skill = await failClosed(
+      db,
+      'a skill-check serve to an Acolyte',
+      () => nextRating(db, playerId, position, 'skill'),
+      null
+    );
     if (skill) return skill;
   }
   // Harvested references only once the player has answered every core one.

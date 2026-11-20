@@ -109,6 +109,15 @@ export const TOGGLE_ROWS: Record<ToggleKey, { description: string; options: Togg
       { value: 'on', label: 'Off' },
     ],
   },
+  inquisitorQueue: {
+    description:
+      'Moderators review settled ratings in the game on /play, and two agreeing moderators add skill checks served to Acolytes and Knights. Off, no review opens and the mod-confirmed pool is not served.',
+    options: [
+      { value: 'default', label: 'Default' },
+      { value: 'off', label: 'Off' },
+      { value: 'on', label: 'On' },
+    ],
+  },
   skillCheckServeJudged: {
     description:
       'On, a player can be served a mod-confirmed skill check on an image they already judged in the queue or answered as an Acolyte. Never the same check twice.',

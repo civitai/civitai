@@ -6,7 +6,7 @@ import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { metrics, type ReviewOutcome } from '../metrics';
 import { readImageState } from '../queue/image-state';
 import { hasBlockMarker, moderatorRuling, type ImageState } from '../queue/resolution';
-import { skillCheckEligible } from '../skill-check/eligible';
+import { failClosed, skillCheckEligible } from '../skill-check/eligible';
 import { addSkillCheck } from '../skill-check/pool';
 
 type Executor = Kysely<DB> | Transaction<DB>;
@@ -91,14 +91,22 @@ async function exclusionOf(
   const ownOverride = acceptLevel !== null && String(image.nsfwLevel) === acceptLevel;
   if (!ownOverride && moderatorRuling(image)) return 'moderator-ruled';
   if (!ownOverride && String(image.nsfwLevel) !== review.consensusValue) return 'level-moved';
-  const eligible = await db
-    .selectFrom('Image as img')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .select('img.id')
-    .where('img.id', '=', review.imageId)
-    .where(skillCheckEligible)
-    .executeTakeFirst();
-  return eligible ? null : 'held';
+  const eligible = await failClosed(
+    db,
+    'the safety exclusions of a review',
+    async () =>
+      (await db
+        .selectFrom('Image as img')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .select('img.id')
+        .where('img.id', '=', review.imageId)
+        .where(skillCheckEligible)
+        .executeTakeFirst())
+        ? 'eligible'
+        : 'held',
+    'unreadable'
+  );
+  return eligible === 'eligible' ? null : eligible;
 }
 
 async function closeReview(
@@ -203,7 +211,10 @@ export async function nextReview(
       .limit(1)
       .executeTakeFirst();
     if (!row) return null;
-    if (await exclusionOf(db, row, row.firstAnswer ?? null)) {
+    const exclusion = await exclusionOf(db, row, row.firstAnswer ?? null);
+    // Unreadable safety checks serve nothing (fail closed) and close nothing: the review waits for them.
+    if (exclusion === 'unreadable') return null;
+    if (exclusion) {
       await closeReview(db, row.id, 'excluded', now);
       continue;
     }
@@ -229,6 +240,7 @@ export type ReviewVoteRejection =
   | 'own-image'
   | 'already-voted'
   | 'claimed'
+  | 'unavailable'
   | 'override-unavailable'
   | 'override-failed';
 
@@ -355,7 +367,9 @@ async function voteOrClaim(
   }
   const [first] = votes;
   const agrees = first?.answer === input.answer;
-  if (await exclusionOf(trx, review, agrees ? input.answer : first?.answer ?? null)) {
+  const exclusion = await exclusionOf(trx, review, agrees ? input.answer : first?.answer ?? null);
+  if (exclusion === 'unreadable') return done({ status: 'rejected', reason: 'unavailable' });
+  if (exclusion) {
     await closeReview(trx, review.id, 'excluded', now);
     return done({ status: 'excluded' });
   }

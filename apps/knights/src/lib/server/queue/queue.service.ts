@@ -78,6 +78,8 @@ export type QueueDeps = {
   mirrorXp?: XpMirror;
   /** Pacing for non-moderators; absent means unpaced. */
   voteLimits?: readonly VoteLimit[];
+  /** Whether the in-game inquisitor queue is on (`inquisitorQueue`); absent means off, so no review opens. */
+  inquisitorQueue?: () => boolean | Promise<boolean>;
 };
 
 /** A write-back that keeps failing is handed to the Inquisitors after this many tries. */
@@ -965,7 +967,9 @@ async function markApplied(db: Kysely<DB>, itemId: number, now: Date, deps: Queu
     })
   );
   // The moderators' in-game review of the settled rating; the tick sweep opens any this misses.
-  await openReview(db, itemId, now).catch((error) =>
+  await (async () => {
+    if (await deps.inquisitorQueue?.()) await openReview(db, itemId, now);
+  })().catch((error) =>
     console.error('knights: could not open the inquisitor review, the sweep will retry it', {
       itemId,
       error,

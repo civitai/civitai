@@ -13,6 +13,7 @@ const runLabelPass = vi.hoisted(() => vi.fn());
 const retryPendingPurchases = vi.hoisted(() => vi.fn());
 const closeStrandedYesNo = vi.hoisted(() => vi.fn());
 const sweepMissingReviews = vi.hoisted(() => vi.fn());
+const inquisitorOn = vi.hoisted(() => ({ value: true }));
 vi.mock('$lib/server/db', () => ({ db: {} }));
 const logToAxiom = vi.hoisted(() => vi.fn());
 const buzzConfigured = vi.hoisted(() => vi.fn());
@@ -31,7 +32,9 @@ vi.mock('$lib/server/yesno/sweep', () => ({ closeStrandedYesNo }));
 vi.mock('$lib/server/inquisitor/review.service', () => ({ sweepMissingReviews }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ maxAgeDays: 14 }) }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
-vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { mirrorXp: undefined } }));
+vi.mock('$lib/server/queue/runtime', () => ({
+  queueDeps: { mirrorXp: undefined, inquisitorQueue: () => inquisitorOn.value },
+}));
 vi.mock('$lib/server/progression/progression', () => ({ settleFinalItems }));
 const resetDeps = vi.hoisted(() => ({} as { acolyteSmites?: () => boolean }));
 vi.mock('$lib/server/smites/runtime', () => ({ resetDeps }));
@@ -122,6 +125,18 @@ describe('POST /api/jobs/tick', () => {
       reviewsOpened: 2,
       labels: { done: true, labelsWritten: 0, labelFailures: 0 },
     });
+  });
+
+  it('runs no review sweep while the inquisitor queue is switched off', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    inquisitorOn.value = false;
+    try {
+      expect(await (await run()).json()).toMatchObject({ reviewsOpened: 0 });
+      expect(sweepMissingReviews).not.toHaveBeenCalled();
+    } finally {
+      inquisitorOn.value = true;
+    }
   });
 
   it('fails the tick when the inquisitor review sweep throws', async () => {

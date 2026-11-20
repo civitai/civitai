@@ -47,7 +47,7 @@ async function hiddenRef(imageId: number, answer = '4') {
   );
   return row.rows[0].id;
 }
-const pick = (userId: number, serveJudged = false) =>
+const pick = (userId: number, serveJudged = false, skillChecks = true) =>
   pickHiddenCheck(db, {
     userId,
     rank: 'Knight',
@@ -55,11 +55,18 @@ const pick = (userId: number, serveJudged = false) =>
     questionKey: Q,
     rate: 1,
     serveJudged,
+    skillChecks,
   });
-const answer = (userId: number, referenceId: number, value: string, serveJudged = false) =>
+const answer = (
+  userId: number,
+  referenceId: number,
+  value: string,
+  serveJudged = false,
+  skillChecks = true
+) =>
   answerHiddenCheck(
     db,
-    { userId, referenceId, answer: value, serveJudged },
+    { userId, referenceId, answer: value, serveJudged, skillChecks },
     { now: () => NOW, grade: { settings, resetPlayer } }
   );
 /** The player judged the image in the queue: a ledger vote on a real queue item. */
@@ -78,6 +85,16 @@ const ledger = async (userId: number) =>
   ).rows;
 
 describe('serving mod-confirmed checks to Knights', () => {
+  it('serves and accepts none while the inquisitor queue is switched off', async () => {
+    await seedPlayer(pg, 1);
+    const id = await skillCheck(10);
+    expect(await pick(1, false, false)).toBeNull();
+    expect(await answer(1, id, '4', false, false)).toEqual({
+      status: 'rejected',
+      reason: 'unavailable',
+    });
+  });
+
   it('offers a skill-check row, also when it is the only kind in the pool', async () => {
     await seedPlayer(pg, 1);
     const id = await skillCheck(10);
@@ -155,6 +172,37 @@ describe('serving mod-confirmed checks to Knights', () => {
     await pg.query(`INSERT INTO "ImageReport" ("reportId","imageId") VALUES (70,10)`);
     expect(await pick(1)).toBeNull();
     expect(await answer(1, id, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+  });
+});
+
+describe('failing closed on serve', () => {
+  it('serves no skill check, but still the hidden-check pool, when a safety check cannot be read', async () => {
+    await seedPlayer(pg, 1);
+    const check = await skillCheck(10);
+    const hidden = await hiddenRef(11);
+    await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+    try {
+      expect((await pick(1))?.referenceId).toBe(hidden);
+      expect(await answer(1, check, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    } finally {
+      await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+    }
+  });
+
+  it('serves an Acolyte something else when a safety check cannot be read', async () => {
+    await seedPlayer(pg, 1, 'Acolyte');
+    await seedImage(pg, 1);
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","explanation") VALUES (1,'trials','4','core','why')`
+    );
+    const check = await skillCheck(10);
+    await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+    try {
+      const view = await getApprentice(db, 1, { skillCheckRate: 1 });
+      expect(view.kind === 'question' && view.item.referenceId).not.toBe(check);
+    } finally {
+      await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+    }
   });
 });
 

@@ -73,7 +73,7 @@
         'hiddenCheckRetireFailureRate',
         'skillCheckPoolCap',
       ],
-      toggles: ['skillCheckServeJudged'],
+      toggles: ['inquisitorQueue', 'skillCheckServeJudged'],
     },
     { id: 'yes-no', title: 'Yes/no questions', numbers: ['yesNoStretch', 'yesNoMaxAgeDays'], toggles: [] },
     { id: 'acolytes', title: 'Acolytes', numbers: [], toggles: ['apprenticeSmites'] },

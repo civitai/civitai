@@ -4,7 +4,7 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { metrics } from '../metrics';
-import { skillCheckEligible } from './eligible';
+import { failClosed, skillCheckEligible } from './eligible';
 
 /** Serialises adds, so concurrent confirmations cannot leave the pool over its cap or retire two checks for one. */
 const POOL_LOCK_NAMESPACE = 7_310;
@@ -31,13 +31,19 @@ export async function addSkillCheck(
     .executeTakeFirst();
   if (existing?.source === REFERENCE_SOURCE.core) return 'kept-core';
 
-  const eligible = await trx
-    .selectFrom('Image as img')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .select('img.id')
-    .where('img.id', '=', imageId)
-    .where(skillCheckEligible)
-    .executeTakeFirst();
+  const eligible = await failClosed(
+    trx,
+    'the skill-check exclusions',
+    async () =>
+      !!(await trx
+        .selectFrom('Image as img')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .select('img.id')
+        .where('img.id', '=', imageId)
+        .where(skillCheckEligible)
+        .executeTakeFirst()),
+    false
+  );
   if (!eligible) return 'ineligible';
 
   const at = utc(now);

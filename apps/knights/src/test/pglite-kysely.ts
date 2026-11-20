@@ -52,6 +52,19 @@ CREATE TABLE "Image" (
   "tosViolation" BOOLEAN NOT NULL DEFAULT false,
   "postId" INTEGER
 );
+CREATE TABLE "CsamReport" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER,
+  "reportSentAt" TIMESTAMP(3),
+  "archivedAt" TIMESTAMP(3),
+  "details" JSONB NOT NULL DEFAULT '{}',
+  "images" JSONB NOT NULL DEFAULT '[]'
+);
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER NOT NULL);
+CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, "url" TEXT NOT NULL);
+CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "minor" BOOLEAN NOT NULL DEFAULT false);
+CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL);
+CREATE TABLE "ImageResourceNew" ("imageId" INTEGER NOT NULL, "modelVersionId" INTEGER NOT NULL, PRIMARY KEY ("imageId", "modelVersionId"));
 CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
 CREATE TABLE "EvidenceHoldPost" ("postId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
 CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT NOT NULL);
@@ -161,7 +174,6 @@ const LABEL_STORE_MIGRATION = fileURLToPath(
 
 /** The site tables the label store's migration hooks into; `Image` is already a stand-in above. */
 const LABEL_STORE_SOURCES = `
-CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
 CREATE TABLE "ScanLabelItem" (
   "id" serial PRIMARY KEY,
   "imageId" integer NOT NULL REFERENCES "Image"("id") ON DELETE CASCADE,

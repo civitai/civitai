@@ -172,6 +172,14 @@ describe('fieldError', () => {
 });
 
 describe('skill-check pool rows', () => {
+  it('offers the inquisitor queue switch as Default, then Off, then On', () => {
+    expect(TOGGLE_ROWS.inquisitorQueue.options.map((o) => [o.value, o.label])).toEqual([
+      ['default', 'Default'],
+      ['off', 'Off'],
+      ['on', 'On'],
+    ]);
+  });
+
   it('offers the serve-judged toggle as Default, then Off, then On', () => {
     expect(TOGGLE_ROWS.skillCheckServeJudged.options.map((o) => [o.value, o.label])).toEqual([
       ['default', 'Default'],

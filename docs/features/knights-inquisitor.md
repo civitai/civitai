@@ -5,6 +5,12 @@ mod-confirmed skill check ([hidden checks and smites](knights-hidden-checks-and-
 Code: `apps/knights/src/lib/server/inquisitor/`. Tables: `KnightsInquisitorReview`, `KnightsInquisitorVote` (migration
 `20271120160000_knights_inquisitor_review`, applied by hand).
 
+## The switch
+
+The whole feature sits behind the `inquisitorQueue` game setting (Config page "In-game inquisitor queue", else
+`KNIGHTS_INQUISITOR_QUEUE`), off by default. Off, no review opens (neither on write-back nor in the tick's sweep), moderators
+get the player game on `/play`, the review actions answer 404, and the mod-confirmed pool is served to nobody.
+
 ## Entry
 
 Every rating item the players settle opens one review once its level is written to the image (`markApplied`), whether it

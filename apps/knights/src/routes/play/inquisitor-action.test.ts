@@ -10,7 +10,7 @@ vi.mock('$lib/server/queue/runtime', () => ({
   queueDeps: { now: () => new Date('2026-12-15T12:00:00Z') },
 }));
 vi.mock('$lib/server/skill-check/runtime', () => ({
-  skillChecks: async () => ({ poolCap: 500, serveJudged: false }),
+  skillChecks: async () => ({ enabled: true, poolCap: 500, serveJudged: false }),
 }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/inquisitor/review.service', () => ({

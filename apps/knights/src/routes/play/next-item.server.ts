@@ -83,6 +83,7 @@ export async function pickItem(
     exclude: skipped?.hidden,
     slot,
     serveJudged: (await skillChecks()).serveJudged,
+    skillChecks: (await skillChecks()).enabled,
   });
   if (hidden) {
     return {

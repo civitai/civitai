@@ -29,13 +29,15 @@ const REJECTION_TEXT: Record<ReviewVoteRejection | 'not-found', string> = {
   'bad-answer': 'Pick one of the levels.',
   'own-image': 'You cannot review your own image.',
   'already-voted': 'You already voted on this one.',
+  unavailable: 'This image cannot be checked right now. Try again shortly.',
   claimed: 'Another moderator is closing this one right now. Here is the next one.',
   'override-unavailable': 'The level cannot be written right now. Try again.',
   'override-failed': 'Civitai did not take the new level. Your vote was not recorded; try again.',
 };
 
-function assertModerator(locals: App.Locals) {
+async function assertModerator(locals: App.Locals) {
   if (locals.user?.isModerator !== true) error(403, 'Moderators only.');
+  if (!(await skillChecks()).enabled) error(404, 'The inquisitor queue is switched off.');
 }
 
 /** What `/play` shows a moderator: the next review with its sidebar, and their stats. */
@@ -67,7 +69,7 @@ function reviewIdFrom(form: FormData, moderatorId: number) {
 
 export const inquisitorActions = {
   inquisitorVote: async ({ request, locals }: RequestEvent) => {
-    assertModerator(locals);
+    await assertModerator(locals);
     const form = await request.formData();
     const reviewId = reviewIdFrom(form, locals.user.id);
     const answer = form.get('answer');
@@ -94,7 +96,7 @@ export const inquisitorActions = {
   },
 
   sendToInquisitor: async ({ request, locals }: RequestEvent) => {
-    assertModerator(locals);
+    await assertModerator(locals);
     const reviewId = reviewIdFrom(await request.formData(), locals.user.id);
     if (reviewId === null) {
       return fail(400, { message: 'This page is out of date. Reload it to keep reviewing.' });

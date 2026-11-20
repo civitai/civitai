@@ -18,7 +18,8 @@ import {
 import { BLOCKED_ANSWER } from '../../block-reasons';
 import { creditVote, insertVote } from '../queue/vote-record';
 import { isRank } from '../ranks';
-import { servableReferences, type ServedStatus } from '../reference';
+import { servableReferences, type Pool, type ServedStatus } from '../reference';
+import { failClosed } from '../skill-check/eligible';
 import { activeSmiteCount, resetNow, type ResetDeps } from '../smites/smites.service';
 import type { HiddenCheckSettings } from './config';
 import { gradeHiddenVotes, type CheckOutcome } from './settle';
@@ -75,8 +76,11 @@ const bucketOrder = (digest: Buffer) =>
     .sort((a, b) => a.key - b.key)
     .map(({ group }) => group);
 
-/** The pools a Knight's skill checks are drawn from. */
-const CHECK_POOLS = [REFERENCE_POOL.hiddenCheck, REFERENCE_POOL.skillCheck] as const;
+/** The pools a Knight's skill checks are drawn from; the mod-confirmed one only while the inquisitor queue is on. */
+const checkPools = (skillChecks: boolean | undefined): Pool[] =>
+  skillChecks
+    ? [REFERENCE_POOL.hiddenCheck, REFERENCE_POOL.skillCheck]
+    : [REFERENCE_POOL.hiddenCheck];
 
 function eligibleReferences(
   db: Executor,
@@ -84,7 +88,8 @@ function eligibleReferences(
   questionKey: string,
   statuses: ServedStatus[],
   exclude: number[] = [],
-  serveJudged = false
+  serveJudged = false,
+  pools: Pool[] = checkPools(false)
 ) {
   // A check is a vote on its reference's image, so (player, image) rides the ("playerId","imageId") index. It also keeps a
   // probation check from the players whose votes made it.
@@ -96,7 +101,7 @@ function eligibleReferences(
         .where('v.playerId', '=', userId)
         .whereRef('v.imageId', '=', 'r.imageId')
     );
-  return servableReferences(db, CHECK_POOLS, statuses)
+  return servableReferences(db, pools, statuses)
     .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
     .where('r.questionKey', '=', questionKey)
     .where('q.active', '=', true)
@@ -167,7 +172,26 @@ export async function pickHiddenCheck(
     slot?: number;
     /** `skillCheckServeJudged`: a mod-confirmed check may be on an image the player already saw. */
     serveJudged?: boolean;
+    /** The inquisitor queue is on: mod-confirmed checks are drawn too. Off by default. */
+    skillChecks?: boolean;
   }
+): Promise<HiddenCheckOffer | null> {
+  if (!input.skillChecks) return drawHiddenCheck(db, input);
+  // The mod-confirmed pool's safety reads fail closed: if they cannot be read, draw from the other pool alone.
+  const withSkill = await failClosed(
+    db,
+    'a skill-check serve',
+    () => drawHiddenCheck(db, input),
+    undefined
+  );
+  return withSkill !== undefined
+    ? withSkill
+    : drawHiddenCheck(db, { ...input, skillChecks: false });
+}
+
+async function drawHiddenCheck(
+  db: Executor,
+  input: Parameters<typeof pickHiddenCheck>[1]
 ): Promise<HiddenCheckOffer | null> {
   if (!isRank(input.rank) || !canVote(input.rank, 'Knight')) return null;
   const seed = `${input.secret}:hidden:${input.userId}:${
@@ -190,7 +214,7 @@ export async function pickHiddenCheck(
       eb.fn.min<number | null>('id').as('low'),
       eb.fn.max<number | null>('id').as('top'),
     ])
-    .where('pool', 'in', CHECK_POOLS)
+    .where('pool', 'in', checkPools(input.skillChecks))
     .where('questionKey', '=', input.questionKey)
     .executeTakeFirstOrThrow();
   const first = low ?? 0;
@@ -213,7 +237,8 @@ export async function pickHiddenCheck(
       input.questionKey,
       [status],
       input.exclude,
-      input.serveJudged
+      input.serveJudged,
+      checkPools(input.skillChecks)
     )
       .where((eb) =>
         answers === null ? eb('r.answer', 'not in', BUCKET_ANSWERS) : eb('r.answer', '=', answers)
@@ -285,6 +310,8 @@ export async function answerHiddenCheck(
     isModerator?: boolean;
     /** `skillCheckServeJudged`: a mod-confirmed check may be answered on an image the player judged in the queue. */
     serveJudged?: boolean;
+    /** The inquisitor queue is on: a mod-confirmed check may be answered. Off by default. */
+    skillChecks?: boolean;
   },
   deps: Pick<QueueDeps, 'now' | 'voteLimits'> & {
     mirrorXp?: XpMirror;
@@ -298,14 +325,18 @@ export async function answerHiddenCheck(
     const until = await pacingGate(trx, input, now, deps);
     if (until) return { status: 'limited', until };
 
-    const ref = await servableReferences(trx, CHECK_POOLS, [
-      REFERENCE_STATUS.active,
-      REFERENCE_STATUS.probation,
-    ])
-      .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
-      .select(['r.id', 'r.imageId', 'r.questionKey', 'r.status', 'r.pool', 'q.options'])
-      .where('r.id', '=', input.referenceId)
-      .executeTakeFirst();
+    const findRef = (pools: Pool[]) =>
+      servableReferences(trx, pools, [REFERENCE_STATUS.active, REFERENCE_STATUS.probation])
+        .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
+        .select(['r.id', 'r.imageId', 'r.questionKey', 'r.status', 'r.pool', 'q.options'])
+        .where('r.id', '=', input.referenceId)
+        .executeTakeFirst();
+    // The mod-confirmed pool's safety reads fail closed: unreadable, only the other pool is open to an answer.
+    const ref = input.skillChecks
+      ? await failClosed(trx, 'a skill-check answer', () => findRef(checkPools(true)), null).then(
+          async (found) => found ?? (await findRef(checkPools(false)))
+        )
+      : await findRef(checkPools(false));
     if (!ref) return { status: 'rejected', reason: 'unavailable' };
     const probation = ref.status === REFERENCE_STATUS.probation;
     // Fail closed on any other status.

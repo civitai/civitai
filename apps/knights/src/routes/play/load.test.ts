@@ -23,6 +23,10 @@ const NOW = new Date('2026-12-15T12:00:00Z');
 const PRIMARY = vi.hoisted(() => ({ client: 'primary' }));
 const REPLICA = vi.hoisted(() => ({ client: 'replica' }));
 vi.mock('$lib/server/db', () => ({ db: PRIMARY, dbRead: REPLICA }));
+const inquisitorQueue = vi.hoisted(() => ({ enabled: true }));
+vi.mock('$lib/server/skill-check/runtime', () => ({
+  skillChecks: async () => ({ enabled: inquisitorQueue.enabled, poolCap: 500, serveJudged: false }),
+}));
 vi.mock('./inquisitor.server', () => ({
   inquisitorView: async () => ({ mode: 'inquisitor' }),
   inquisitorActions: {},
@@ -374,6 +378,16 @@ describe('play load vote pacing', () => {
     lockoutFor.mockResolvedValue(null);
     expect((await run()).lockoutSeconds).toBeNull();
     expect(getFeed).toHaveBeenCalled();
+  });
+
+  it('serves a moderator the player feed while the inquisitor queue is switched off', async () => {
+    inquisitorQueue.enabled = false;
+    try {
+      expect(await run({ isModerator: true })).toMatchObject({ mode: 'queue' });
+      expect(getFeed).toHaveBeenCalled();
+    } finally {
+      inquisitorQueue.enabled = true;
+    }
   });
 
   it('serves a moderator the inquisitor queue instead of the feed, unpaced', async () => {

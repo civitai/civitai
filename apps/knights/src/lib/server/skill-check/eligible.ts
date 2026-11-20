@@ -1,6 +1,15 @@
-import { sql, type ExpressionBuilder, type Expression, type SqlBool } from 'kysely';
+import {
+  sql,
+  type ExpressionBuilder,
+  type Expression,
+  type Kysely,
+  type SqlBool,
+  type Transaction,
+} from 'kysely';
 import { servableImage } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
+import { heldImageSql } from '@civitai/shared/held-media';
+import { evidenceHeldUrlSql, reportListedUrlSql } from '@civitai/shared/held-url';
 
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 type Builder = ExpressionBuilder<Joined, 'img' | 'p'>;
@@ -17,16 +26,21 @@ export const SKILL_CHECK_EXCLUSIONS: {
   clause: (eb: Builder) => Expression<SqlBool>;
 }[] = [
   { name: 'tos-violation', clause: (eb) => eb('img.tosViolation', '=', false) },
+  // The shared legal-hold predicate: the image flagged for CSAM, or its owner's account held (named on a report, or under
+  // an active evidence hold). Its legs compare nullable columns, so NULL reads as not held, as its own callers read it.
+  {
+    name: 'legal-hold',
+    clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(heldImageSql('img'))}, false)`,
+  },
+  // The shared reported-image predicate: the image's bytes listed on a report.
+  {
+    name: 'reported-image',
+    clause: () => sql<SqlBool>`NOT ${sql.raw(reportListedUrlSql('img."url"'))}`,
+  },
+  // The shared evidence-hold predicate, by the image's bytes.
   {
     name: 'evidence-hold-image',
-    clause: (eb) =>
-      none(
-        eb,
-        eb
-          .selectFrom('EvidenceHoldImage as ehi')
-          .select(sql<number>`1`.as('one'))
-          .whereRef('ehi.imageId', '=', 'img.id')
-      ),
+    clause: () => sql<SqlBool>`NOT ${sql.raw(evidenceHeldUrlSql('img."url"'))}`,
   },
   {
     name: 'evidence-hold-post',
@@ -95,6 +109,40 @@ export const SKILL_CHECK_EXCLUSIONS: {
       ),
   },
   {
+    // As `getStanding` reads a player: a banned, deleted or muted account.
+    name: 'uploader-banned-or-muted',
+    clause: (eb) =>
+      none(
+        eb,
+        eb
+          .selectFrom('User as u')
+          .select(sql<number>`1`.as('one'))
+          .whereRef('u.id', '=', 'img.userId')
+          .where((w) =>
+            w.or([
+              w('u.bannedAt', 'is not', null),
+              w('u.deletedAt', 'is not', null),
+              w('u.muted', '=', true),
+            ])
+          )
+      ),
+  },
+  {
+    // A resource the image was made with is a model flagged as depicting a minor (`Model.minor`).
+    name: 'minor-flagged-model',
+    clause: (eb) =>
+      none(
+        eb,
+        eb
+          .selectFrom('ImageResourceNew as irn')
+          .innerJoin('ModelVersion as mv', 'mv.id', 'irn.modelVersionId')
+          .innerJoin('Model as m', 'm.id', 'mv.modelId')
+          .select(sql<number>`1`.as('one'))
+          .whereRef('irn.imageId', '=', 'img.id')
+          .where('m.minor', '=', true)
+      ),
+  },
+  {
     name: 'open-inquisitor-item',
     clause: (eb) =>
       none(
@@ -111,3 +159,42 @@ export const SKILL_CHECK_EXCLUSIONS: {
 /** `servableImage` and every `SKILL_CHECK_EXCLUSIONS` clause. Expects `Image as img` joined to `Post as p`. */
 export const skillCheckEligible = (eb: Builder) =>
   eb.and([servableImage(eb), ...SKILL_CHECK_EXCLUSIONS.map(({ clause }) => clause(eb))]);
+
+type Executor = Kysely<DB> | Transaction<DB>;
+let savepoints = 0;
+
+/**
+ * Runs a read that applies the safety exclusions and fails closed: when it cannot be read (a missing table or view, a
+ * timeout), it logs and returns `fallback`, which must keep the image out. Inside a transaction the read runs under a
+ * savepoint, so the failure does not abort the caller's transaction.
+ */
+export async function failClosed<T>(
+  db: Executor,
+  label: string,
+  read: () => Promise<T>,
+  fallback: T
+): Promise<T> {
+  if (!db.isTransaction) {
+    try {
+      return await read();
+    } catch (error) {
+      console.error(`knights: ${label} could not be read; keeping mod-confirmed checks out`, {
+        error,
+      });
+      return fallback;
+    }
+  }
+  const name = sql.id(`skill_check_${++savepoints}`);
+  await sql`SAVEPOINT ${name}`.execute(db);
+  try {
+    const result = await read();
+    await sql`RELEASE SAVEPOINT ${name}`.execute(db);
+    return result;
+  } catch (error) {
+    await sql`ROLLBACK TO SAVEPOINT ${name}`.execute(db);
+    console.error(`knights: ${label} could not be read; keeping mod-confirmed checks out`, {
+      error,
+    });
+    return fallback;
+  }
+}

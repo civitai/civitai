@@ -93,6 +93,18 @@ const references = async () =>
   ).rows;
 
 describe('takeAgreementIntake', () => {
+  it('never overwrites a mod-confirmed skill check on the same image: the mod-confirmed row wins', async () => {
+    await verdict(1, { level: 4, answers: ['4', '4', '4'] });
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey") VALUES (1,'skillCheck','4','inquisitor',$1)`,
+      [Q]
+    );
+    expect(await takeAgreementIntake(db, { now: NOW })).toEqual({ added: 0 });
+    expect(await references()).toEqual([
+      { imageId: 1, answer: '4', status: 'active', source: 'inquisitor', pool: 'skillCheck' },
+    ]);
+  });
+
   it('takes a unanimous Knight verdict of 3+ players in as a probation agreement check', async () => {
     await verdict(1, { level: 4, answers: ['4', '4', '4'] });
     expect(await takeAgreementIntake(db, { now: NOW })).toEqual({ added: 1 });

@@ -57,8 +57,8 @@ export const POST: RequestHandler = async ({ request }) => {
   const unservable = await settle('unservable sweep', () =>
     closeUnservableItems(db, { now: new Date(), moved: collect })
   );
-  const reviews = await settle('inquisitor review sweep', () =>
-    sweepMissingReviews(db, { now: new Date() })
+  const reviews = await settle('inquisitor review sweep', async () =>
+    (await queueDeps.inquisitorQueue?.()) ? sweepMissingReviews(db, { now: new Date() }) : 0
   );
   const progression = await settle('progression', () =>
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })

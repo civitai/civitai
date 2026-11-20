@@ -168,6 +168,11 @@ export const KNIGHTS_GAME_SETTINGS = {
     env: 'KNIGHTS_SKILL_CHECK_SERVE_JUDGED',
     label: 'Checks on images already seen',
   },
+  inquisitorQueue: {
+    kind: 'toggle',
+    env: 'KNIGHTS_INQUISITOR_QUEUE',
+    label: 'In-game inquisitor queue',
+  },
 } as const;
 
 type GameSettingSpec = (typeof KNIGHTS_GAME_SETTINGS)[keyof typeof KNIGHTS_GAME_SETTINGS];
