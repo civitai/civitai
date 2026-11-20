@@ -19,6 +19,7 @@ const RELEASE_NOTES = 30;
 const MUSER = 31;
 const NEWCOMER = 40;
 const NEWCOMER_FEW_READERS = 41;
+const VETERAN = 42;
 const DORMANT_GUIDE = 50;
 const READERS = Array.from({ length: 40 }, (_, i) => 1000 + i);
 const HOST = 60;
@@ -145,6 +146,13 @@ beforeAll(async () => {
       (410, ${NEWCOMER_FEW_READERS}, 'Published', 'Public', false, false, now() - interval '10 days'),
       (500, ${DORMANT_GUIDE}, 'Published', 'Public', false, false, now() - interval '500 days');
     INSERT INTO "TagsOnArticle" VALUES (400, 1), (410, 1), (500, 3);
+    -- A veteran who unpublished their old articles: still not a newcomer.
+    INSERT INTO "User" (id) VALUES (${VETERAN});
+    INSERT INTO "Article" (id, "userId", status, availability, "publishedAt") VALUES
+      (420, ${VETERAN}, 'Unpublished', 'Public', now() - interval '400 days'),
+      (421, ${VETERAN}, 'Published', 'Public', now() - interval '10 days');
+    INSERT INTO "ArticleReaction" ("articleId", "userId", reaction, "createdAt")
+    SELECT 421, 5000 + g, 'Like', now() FROM generate_series(0, 29) g;
 
     -- A challenge 30 days old. Five people answer it later (one with their first article, one answering twice);
     -- the host's own follow-up and an answer published before the challenge do not count.
@@ -388,6 +396,7 @@ describe('Rising Writers', () => {
     expect(byUser(rows, NEWCOMER)!.metrics).toEqual({ articles: 1, readers: 30 });
     expect(byUser(rows, NEWCOMER_FEW_READERS)).toBeUndefined();
     expect(byUser(rows, OLD_HIT)).toBeUndefined();
+    expect(byUser(rows, VETERAN)).toBeUndefined();
   });
 
   it('drops reactions from metric-excluded accounts', async () => {

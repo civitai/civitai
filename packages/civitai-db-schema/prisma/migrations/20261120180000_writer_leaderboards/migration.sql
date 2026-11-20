@@ -229,7 +229,8 @@ $q$WITH guide AS (
 $q$WITH newcomers AS (
   SELECT "userId"
   FROM "Article"
-  WHERE status = 'Published' AND "publishedAt" IS NOT NULL
+  -- Any article that was ever published, so unpublishing older ones does not make a writer new again.
+  WHERE "publishedAt" IS NOT NULL
   GROUP BY "userId"
   HAVING MIN("publishedAt") > now() - interval '90 days'
 ), art AS (
@@ -381,7 +382,7 @@ $q$WITH hosted AS (
 ), firsts AS (
   SELECT DISTINCT ON ("userId") "userId", id
   FROM "Article"
-  WHERE status = 'Published' AND "publishedAt" IS NOT NULL
+  WHERE "publishedAt" IS NOT NULL
   ORDER BY "userId", "publishedAt", id
 ), answers AS (
   SELECT
