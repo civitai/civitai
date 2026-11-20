@@ -165,6 +165,7 @@ export default defineRemixApp({
     // The log carries a number answer back only as a non-negative integer.
     ['a negative number', '-1'],
     ['a fraction', '2.5'],
+    ['an unsafe integer', '2 ** 53'],
     ['undefined', 'undefined'],
   ])("refuses an option whose value is %s as the app's invalid_result", async (_what, value) => {
     const [result] = await results(choiceOf(value), { autoAnswer: 'first' });

@@ -127,8 +127,9 @@ change anything inside the VM.
 Signed, timestamped and answered exactly as `/v1/check` is (same header, same `ts` and `req`, same
 non-2xx codes), except that a call the backstop terminates answers 423 `quarantined`, not 500
 `worker_terminated`, and so does every later call for that `appId` and `sha256` for 10 minutes (see
-"A remix call's backstop" below). Its `error.tripped` is `true` on the call the backstop terminated
-and `false` on each cached refusal after it; a caller counting faults counts only trips. Body (strict):
+"A remix call's backstop" below). Its `error.tripped` is `true` on the one call that started the
+quarantine and `false` on every other refusal of it (cached, or a call admitted alongside that the
+backstop also terminated); a caller counting faults counts only trips. Body (strict):
 
 | field       | type             | notes                                                                                            |
 | ----------- | ---------------- | ------------------------------------------------------------------------------------------------ |
@@ -145,7 +146,7 @@ each branch (at most 12, each with `base` at most 16 entries): how the caller pr
 options in one call. With `autoAnswer: 'first'`, each ask past the log is answered with its first
 answer (a choice's first option, a pick's first image, the text `remix`) until the first workflow.
 A choice's first option value is the app's own: unless it is a string of at most 1000 characters or
-a finite number, the replay is the app's `invalid_result`.
+a non-negative safe integer, the replay is the app's `invalid_result`.
 
 `200` answers `{ ts, req, elapsedMs, results }`, one result per replay in order:
 

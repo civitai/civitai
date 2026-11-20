@@ -126,7 +126,7 @@ globalThis.defineRemixApp = (app) => app;
   const isAnswer = (v) =>
     typeof v === 'string'
       ? v.length <= ${MAX_REMIX_ANSWER_CHARS}
-      : typeof v === 'number' && isFinite(v) && v >= 0 && v % 1 === 0;
+      : typeof v === 'number' && v >= 0 && v <= 9007199254740991 && v % 1 === 0;
   const firstAnswer = (spec) =>
     spec.kind === 'choice' ? spec.options[0].value : spec.kind === 'pick' ? 0 : 'remix';
   return (app, input) => {
@@ -296,7 +296,7 @@ export function validateRemixReturn(json: string | undefined): RemixReplayResult
   if (v.badAnswer === true)
     return fault(
       'invalid_result',
-      `an auto-answered option's value is not a string of at most ${MAX_REMIX_ANSWER_CHARS} characters or a finite number`
+      `an auto-answered option's value is not a string of at most ${MAX_REMIX_ANSWER_CHARS} characters or a non-negative safe integer`
     );
   const effects = v.effects;
   if (

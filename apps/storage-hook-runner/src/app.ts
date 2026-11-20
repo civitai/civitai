@@ -262,7 +262,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     quarantinedUntil.delete(key);
     return false;
   };
-  // `tripped` marks the call the backstop terminated: the caller counts trips, never the cached refusals.
+  // `tripped` marks the one call that started the quarantine: the caller counts trips, never other refusals.
   const refuseQuarantined = (reply: FastifyReply, req: string, appId: string, tripped: boolean) =>
     refuse(
       reply,
