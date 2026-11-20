@@ -1401,6 +1401,9 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
       'clearedFields',
       'profile',
     ]);
+    const keys = uploadedKeys.filter((k) => k.endsWith('_profile.json'));
+    expect(keys).not.toHaveLength(0);
+    expect(keys.every((k) => k.startsWith(`${report.userId}/`))).toBe(true);
     expect(archived).toMatchObject({
       userId: report.userId,
       actorId: report.userId + 1,

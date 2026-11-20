@@ -44,6 +44,39 @@ describe('clearUserProfileFields', () => {
     expect(data).not.toHaveProperty('showcaseSections');
   });
 
+  it('counts the user named second on a report as reported', async () => {
+    await clear();
+    const where = db.csamReport.findFirst.mock.calls[0][0]?.where as { OR: unknown[] };
+    expect(where.OR).toEqual(
+      expect.arrayContaining([
+        { userId: USER },
+        { details: { path: ['secondaryUserId'], equals: USER } },
+        { details: { path: ['secondaryUserId'], equals: String(USER) } },
+      ])
+    );
+  });
+
+  it('archives again when the text changes during the upload', async () => {
+    db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+    const edited = { ...stored, bio: 'edited' };
+    db.userProfile.findUnique
+      .mockResolvedValueOnce(stored as never)
+      .mockResolvedValueOnce(edited as never)
+      .mockResolvedValue(edited as never);
+    await clear();
+    expect(archive.mock.calls.map(([s]) => s.profile.bio)).toEqual(['b', 'edited']);
+    expect(db.userProfile.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes no archive and no record when the user has no profile row', async () => {
+    db.csamReport.findFirst.mockResolvedValue({ id: 990200001 } as never);
+    db.userProfile.findUnique.mockResolvedValue(null as never);
+    db.userProfile.updateMany.mockResolvedValue({ count: 0 } as never);
+    await clear();
+    expect(archive).not.toHaveBeenCalled();
+    expect(db.modActivity.create).not.toHaveBeenCalled();
+  });
+
   it('records who cleared the profile, on every clear', async () => {
     await clear();
     expect(db.modActivity.create).toHaveBeenCalledWith({
@@ -85,5 +118,6 @@ describe('clearUserProfileFields', () => {
     archive.mockRejectedValueOnce(new Error('upload failed'));
     await expect(clear()).rejects.toThrow('upload failed');
     expect(db.userProfile.updateMany).not.toHaveBeenCalled();
+    expect(db.modActivity.create).not.toHaveBeenCalled();
   });
 });
