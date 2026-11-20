@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as LoggingClient from '~/server/logging/client';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import { TRPCError } from '@trpc/server';
 
@@ -188,10 +189,22 @@ const { mockRevokeOrchestratorTokens, mockDeleteAuthSubject } = vi.hoisted(() =>
 }));
 // Flipt (a process boundary): every flag off unless a test turns one on, as the real client reads
 // an unconfigured Flipt.
-const flipt = vi.hoisted(() => ({ on: new Set<string>() }));
+// `failing` makes evaluating that one flag reject, as an unreachable Flipt would.
+const flipt = vi.hoisted(() => ({ on: new Set<string>(), failing: new Set<string>() }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
-  isFlipt: async (key: string) => flipt.on.has(key),
+  isFlipt: async (key: string) => {
+    if (flipt.failing.has(key)) throw new Error(`flipt unreachable: ${key}`);
+    return flipt.on.has(key);
+  },
+}));
+// Axiom (a process boundary): spied so a test can read which events were logged.
+const { mockLogToAxiom } = vi.hoisted(() => ({
+  mockLogToAxiom: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof LoggingClient>()),
+  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
 }));
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   revokeCivitaiUserTokens: mockRevokeOrchestratorTokens,
@@ -347,6 +360,7 @@ describe('delistListing — a moderator takedown of a CONNECT listing cuts offli
     );
   beforeEach(() => {
     flipt.on.clear();
+    flipt.failing.clear();
     mockRead.appListing.findMany.mockResolvedValue([]);
     mockWrite.apiKey.findMany.mockResolvedValue([
       { id: 501, key: 'h1', userId: 11 },
@@ -424,6 +438,71 @@ describe('delistListing — a moderator takedown of a CONNECT listing cuts offli
       reviewerUserId: REVIEWER,
     });
     expect(refreshDeletes()).toHaveLength(1);
+  });
+
+  // The cut runs after the takedown commits and must never throw: whatever fails in it, the delist
+  // stands and the failure is logged.
+  describe('🔴 a failing cut never undoes or fails the takedown', () => {
+    const delistWithCommitOrder = async () => {
+      const order: string[] = [];
+      mockWrite.$transaction.mockImplementationOnce(
+        async (cb: (tx: WriteMock) => Promise<unknown>) => {
+          const out = await cb(mockWrite);
+          order.push('commit');
+          return out;
+        }
+      );
+      mockLogToAxiom.mockImplementation(async (...a: unknown[]) => {
+        const name = (a[0] as { name?: string } | undefined)?.name;
+        if (name) order.push(name);
+      });
+      const res = await delistListing({
+        input: { appListingId: APP_ID, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      });
+      return { res, order };
+    };
+
+    it.each([
+      [
+        'the sibling read rejects',
+        () => mockRead.appListing.findMany.mockRejectedValue(new Error('replica down')),
+        'replica down',
+      ],
+      [
+        'the refresh-key delete rejects',
+        () => mockWrite.apiKey.deleteMany.mockRejectedValue(new Error('delete failed')),
+        'delete failed',
+      ],
+      [
+        'the flag evaluation rejects',
+        () => flipt.failing.add('oauth-offline-grant'),
+        'flipt unreachable: oauth-offline-grant',
+      ],
+    ])(
+      '%s → the delist still resolves as removed, committed, then the failure is logged',
+      async (_l, fail, message) => {
+        flipt.on.add('oauth-offline-grant');
+        mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+        fail();
+        const { res, order } = await delistWithCommitOrder();
+        expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+        expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ data: { status: 'removed' } })
+        );
+        const failedLogs = mockLogToAxiom.mock.calls.filter(
+          (c) => (c[0] as { name?: string }).name === 'app-listing.takedown.offline-cut-failed'
+        );
+        expect(failedLogs).toHaveLength(1);
+        expect(failedLogs[0][0]).toMatchObject({
+          payload: { clientId: 'oc_connect', message },
+        });
+        expect(order.indexOf('commit')).toBeGreaterThanOrEqual(0);
+        expect(order.indexOf('commit')).toBeLessThan(
+          order.indexOf('app-listing.takedown.offline-cut-failed')
+        );
+      }
+    );
   });
 
   it('flag off: a takedown is unchanged — no refresh token is touched', async () => {
