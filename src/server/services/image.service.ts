@@ -4821,7 +4821,7 @@ export const getImagesForPosts = async ({
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
       imageWhere.push(
-        // Its one caller passes `user` only with the owner view (getPostsInfinite's `ownerId`).
+        // `user` must come from a request that carries the owner's view: their held images show.
         ...pendingOthersImageConditions(userId, { ownerSeesHeld: true }),
         pendingLevelImageSql(userId, browsingLevel)
       );
