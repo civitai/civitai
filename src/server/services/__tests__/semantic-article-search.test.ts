@@ -163,7 +163,7 @@ describe('semantic article search', () => {
     expect(items.filter((a) => a.user.id === 7)).toHaveLength(MAX_HITS_PER_USER);
   });
 
-  describe('a level carrying the Blocked bit, as the procedure middleware leaves it', () => {
+  describe('a level after stripBlockedForNonModerator, which the procedure middleware runs', () => {
     const VIEWER = { id: 500, isModerator: false } as SessionUser;
     const askedLevels = async (browsingLevel: number, user: SessionUser) => {
       const input = { browsingLevel };
