@@ -5,23 +5,27 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PreservedViewModule from '../preserved-view';
 
 /**
- * The preserved-file review: three files from a pinned manifest, served to one named reviewer, each
- * serve audited before the store is called. The store is the real client with `send` stubbed, so the
- * allowlist and the order of calls are what production runs.
+ * The preserved-file review: the files of a pinned manifest, served to its named reviewers, each serve
+ * audited before the store is called. The store is the real client with `send` stubbed, so the
+ * allowlist and the order of calls are what production runs. The SQL behind the mocked reads is pinned
+ * in preserved-view.pglite.test.ts.
  */
 
 const state = vi.hoisted(() => ({
   grants: new Set<string>(),
   verdicts: new Map<number, 'apparent' | 'not'>(),
-  served: new Set<number>(),
-  insertFails: false,
+  delivered: new Set<number>(),
+  failActivity: null as string | null,
   rowExists: true,
+  ruleDuringAudit: null as number | null,
   order: [] as string[],
 }));
 const insertModActivity = vi.hoisted(() =>
-  vi.fn(async (_row: Record<string, unknown>) => {
-    state.order.push('audit');
-    if (state.insertFails) throw new Error('db down');
+  vi.fn(async (row: Record<string, unknown>) => {
+    state.order.push(`audit:${String(row.activity)}`);
+    if (state.failActivity === row.activity) throw new Error('db down');
+    if (state.ruleDuringAudit) state.verdicts.set(state.ruleDuringAudit, 'not');
+    if (row.activity === 'preservedFile:delivered') state.delivered.add(Number(row.entityId));
     return 77;
   })
 );
@@ -29,7 +33,8 @@ const modActivityRowExists = vi.hoisted(() => vi.fn(async (_id: number) => state
 const logToAxiom = vi.hoisted(() => vi.fn(async (_line: Record<string, unknown>) => {}));
 const recordPreservedVerdict = vi.hoisted(() =>
   vi.fn(
-    async (_reviewer: number, _n: number, _verdict: string) => 'recorded' as 'recorded' | 'already'
+    async (_config: unknown, _reviewer: number, _n: number, _verdict: string) =>
+      'recorded' as 'recorded' | 'already'
   )
 );
 
@@ -45,7 +50,7 @@ vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
 vi.mock('$lib/server/preserved-view', async (importOriginal) => ({
   ...(await importOriginal<typeof PreservedViewModule>()),
   preservedVerdicts: async () => new Map(state.verdicts),
-  servedTo: async () => new Set(state.served),
+  deliveredTo: async () => new Set(state.delivered),
   recordPreservedVerdict,
 }));
 
@@ -54,13 +59,17 @@ const { actions, load } = await import('../../../routes/csam/preserved-view/+pag
 const { createPreservedObjectStore, OversizeObjectError, UnlistedKeyError } = await import(
   '../preserved-object-store'
 );
-const { openPreservedFiles, readPreservedViewConfig } = await import('../preserved-view');
+const { MAX_FILE_BYTES, openPreservedFiles, readPreservedViewConfig } = await import(
+  '../preserved-view'
+);
 
 const PAGE = '/csam/preserved-view';
 const REVIEWER = { id: 501, roles: ['moderator:preserved-review'] };
 const ADMIN = { id: 900, roles: ['moderator:admin'] };
 const MANIFEST_KEY = 'fixture/run-1/manifest.json';
 const FILE_KEYS = ['fixture/held/a.png', 'fixture/held/b.png', 'fixture/held/c.png'];
+const SERVED = 'audit:preservedFile:served';
+const DELIVERED = 'audit:preservedFile:delivered';
 
 const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 const png = (seed: number) =>
@@ -70,21 +79,23 @@ const FILES = FILE_KEYS.map((_, i) => png(i * 10));
 function manifestBytes(entries: unknown[]) {
   return new TextEncoder().encode(JSON.stringify({ version: 1, run: {}, entries, skipped: [] }));
 }
-const ENTRIES = FILE_KEYS.map((key, i) => ({
+const entry = (key: string, bytes: Uint8Array) => ({
   status: 'external',
-  path: `files/${i}`,
-  size: FILES[i].byteLength,
-  sha256: sha(FILES[i]),
+  path: `files/${key}`,
+  size: bytes.byteLength,
+  sha256: sha(bytes),
   source: { store: 'held', bucket: 'b', key },
-}));
+});
+const ENTRIES = FILE_KEYS.map((key, i) => entry(key, FILES[i]));
 const MANIFEST = manifestBytes(ENTRIES);
 
-const objects = new Map<string, Uint8Array>();
+const objects = new Map<string, Uint8Array | Error>();
 const send = vi.spyOn(S3Client.prototype, 'send').mockImplementation((async (command: {
   input: { Key: string };
 }) => {
   state.order.push(`get:${command.input.Key}`);
   const bytes = objects.get(command.input.Key);
+  if (bytes instanceof Error) throw bytes;
   if (!bytes) throw Object.assign(new Error('missing'), { name: 'NoSuchKey' });
   return { Body: Readable.from([Buffer.from(bytes)]), ContentLength: bytes.byteLength };
 }) as never);
@@ -100,14 +111,21 @@ const ENV = {
   PRESERVED_VIEW_S3_SECRET: 'test-secret',
 };
 
+function pinManifest(entries: unknown[]) {
+  const manifest = manifestBytes(entries);
+  objects.set(MANIFEST_KEY, manifest);
+  process.env.PRESERVED_VIEW_MANIFEST_SHA256 = sha(manifest);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   Object.assign(process.env, ENV);
   state.grants = new Set([PAGE]);
   state.verdicts = new Map();
-  state.served = new Set();
-  state.insertFails = false;
+  state.delivered = new Set();
+  state.failActivity = null;
   state.rowExists = true;
+  state.ruleDuringAudit = null;
   state.order = [];
   objects.clear();
   objects.set(MANIFEST_KEY, MANIFEST);
@@ -118,14 +136,19 @@ type Outcome = { status: number; res?: Response };
 
 async function get(
   n: string,
-  { search = '', method = 'GET', user = REVIEWER as unknown }: Record<string, unknown> = {}
+  {
+    search = '',
+    method = 'GET',
+    user = REVIEWER as unknown,
+    site = 'same-origin' as string | null,
+  } = {}
 ): Promise<Outcome> {
   const url = new URL(`http://mod.test/api/preserved-view/${n}${search}`);
   try {
     const res = await GET({
       params: { n },
       url,
-      request: new Request(url, { method: method as string }),
+      request: new Request(url, { method, headers: site ? { 'sec-fetch-site': site } : {} }),
       locals: { user, grants: {} },
     } as never);
     return { status: res.status, res };
@@ -135,20 +158,23 @@ async function get(
 }
 
 const fileReads = () => state.order.filter((step) => FILE_KEYS.some((k) => step === `get:${k}`));
+const serveLine = () => logToAxiom.mock.calls.at(-1)?.[0];
 
 describe('serving a file', () => {
-  it('serves the pinned bytes once the audit row is written and read back', async () => {
+  it('serves the pinned bytes between the served row and the delivered row', async () => {
     const { status, res } = await get('2');
     expect(status).toBe(200);
     expect(new Uint8Array(await res!.arrayBuffer())).toEqual(FILES[1]);
     expect(res!.headers.get('content-type')).toBe('image/png');
     expect(res!.headers.get('cache-control')).toBe('private, no-store');
+    expect(res!.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res!.headers.get('cross-origin-resource-policy')).toBe('same-origin');
     expect(res!.headers.get('accept-ranges')).toBe('none');
-    expect(state.order).toEqual([`get:${MANIFEST_KEY}`, 'audit', `get:${FILE_KEYS[1]}`]);
+    expect(state.order).toEqual([`get:${MANIFEST_KEY}`, SERVED, `get:${FILE_KEYS[1]}`, DELIVERED]);
     expect(modActivityRowExists).toHaveBeenCalledWith(77);
-    expect(insertModActivity).toHaveBeenCalledWith({
+    expect(insertModActivity).toHaveBeenNthCalledWith(1, {
       userId: REVIEWER.id,
-      entityType: 'preservedFile',
+      entityType: `preservedFile:${sha(MANIFEST).slice(0, 16)}`,
       entityId: 2,
       activity: 'preservedFile:served',
       credential: 'web',
@@ -162,12 +188,20 @@ describe('serving a file', () => {
   });
 
   it('refuses a request that names a key, before touching the store', async () => {
-    expect((await get('1', { search: `?key=${encodeURIComponent(FILE_KEYS[2])}` })).status).toBe(
-      404
-    );
+    const search = `?key=${encodeURIComponent(FILE_KEYS[2])}`;
+    expect((await get('1', { search })).status).toBe(404);
     expect(send).not.toHaveBeenCalled();
     expect(insertModActivity).not.toHaveBeenCalled();
   });
+
+  it.each([['cross-site'], ['same-site'], ['none'], [null]])(
+    'refuses a request whose Sec-Fetch-Site is %s, before any audit row',
+    async (site) => {
+      expect((await get('1', { site })).status).toBe(403);
+      expect(insertModActivity).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+    }
+  );
 
   it('refuses everything when the manifest does not match its pinned sha256', async () => {
     process.env.PRESERVED_VIEW_MANIFEST_SHA256 = sha(manifestBytes(ENTRIES.slice(0, 2)));
@@ -175,60 +209,99 @@ describe('serving a file', () => {
     expect(state.order).toEqual([`get:${MANIFEST_KEY}`]);
   });
 
-  it('refuses a manifest entry whose hash disagrees with its pinned input', async () => {
-    const entries = ENTRIES.map((e, i) =>
-      i === 0 ? { ...e, pinned: { size: e.size, sha256: sha(FILES[2]) } } : e
-    );
-    const manifest = manifestBytes(entries);
-    objects.set(MANIFEST_KEY, manifest);
-    process.env.PRESERVED_VIEW_MANIFEST_SHA256 = sha(manifest);
+  it.each([
+    [
+      'an entry whose hash disagrees with its pinned input',
+      () =>
+        pinManifest(
+          ENTRIES.map((e, i) => (i ? e : { ...e, pinned: { size: e.size, sha256: sha(FILES[2]) } }))
+        ),
+    ],
+    [
+      'an entry over the size cap',
+      () => pinManifest(ENTRIES.map((e, i) => (i ? e : { ...e, size: MAX_FILE_BYTES + 1 }))),
+    ],
+    [
+      'an entry with no sha256',
+      () => pinManifest(ENTRIES.map((e, i) => (i ? e : { ...e, sha256: null }))),
+    ],
+    [
+      'more external entries than file numbers',
+      () => pinManifest(Array.from({ length: 100 }, (_, i) => ({ ...ENTRIES[0], path: `f${i}` }))),
+    ],
+    [
+      'a manifest that is not JSON',
+      () => {
+        const bytes = new TextEncoder().encode('{"entries": [');
+        objects.set(MANIFEST_KEY, bytes);
+        process.env.PRESERVED_VIEW_MANIFEST_SHA256 = sha(bytes);
+      },
+    ],
+    ['a missing manifest', () => objects.delete(MANIFEST_KEY)],
+  ])('refuses %s with 409, before any audit row', async (_what, arrange) => {
+    arrange();
     expect((await get('1')).status).toBe(409);
     expect(insertModActivity).not.toHaveBeenCalled();
   });
 
+  it('answers 502 when the store cannot be read for the manifest', async () => {
+    objects.set(MANIFEST_KEY, Object.assign(new Error('boom'), { name: 'InternalError' }));
+    expect((await get('1')).status).toBe(502);
+    expect(insertModActivity).not.toHaveBeenCalled();
+  });
+
   it.each([
-    ['sha256', Uint8Array.from(FILES[0]).map((b, i) => (i === 9 ? b ^ 1 : b))],
-    ['size', Uint8Array.from([...FILES[0], 0])],
-  ])('answers 409 with no body when the stored bytes differ in %s', async (what, stored) => {
+    ['sha256', Uint8Array.from(FILES[0]).map((b, i) => (i === 9 ? b ^ 1 : b)), { sizeMatch: true }],
+    ['size', Uint8Array.from([...FILES[0], 0]), { sizeMatch: false }],
+    ['size, past the cap', new Uint8Array(MAX_FILE_BYTES + 1), { sizeMatch: false, bytes: null }],
+  ])('answers 409 with no body when the stored bytes differ in %s', async (_what, stored, line) => {
     objects.set(FILE_KEYS[0], stored);
     const { status, res } = await get('1');
     expect(status).toBe(409);
     expect(await res!.text()).toBe('');
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'preserved-file-serve',
-        n: 1,
-        status: 409,
-        sha256Match: false,
-      })
-    );
-    if (what === 'size') expect(logToAxiom.mock.calls[0][0].sizeMatch).toBe(false);
+    expect(serveLine()).toMatchObject({ name: 'preserved-file-serve', n: 1, status: 409, ...line });
+    expect(state.order).not.toContain(DELIVERED);
   });
+
+  it.each([
+    ['404', undefined, 404],
+    ['502', Object.assign(new Error('boom'), { name: 'InternalError' }), 502],
+  ])(
+    'answers %s for a file the store does not give, and logs it',
+    async (_what, stored, status) => {
+      if (stored) objects.set(FILE_KEYS[0], stored);
+      else objects.delete(FILE_KEYS[0]);
+      expect((await get('1')).status).toBe(status);
+      expect(serveLine()).toMatchObject({ n: 1, status });
+      expect(state.order).not.toContain(DELIVERED);
+    }
+  );
 
   it('refuses bytes that are not an image it renders', async () => {
     const text = new TextEncoder().encode('<svg onload=alert(1)>');
-    const entries = ENTRIES.map((e, i) =>
-      i === 0 ? { ...e, size: text.byteLength, sha256: sha(text) } : e
-    );
-    const manifest = manifestBytes(entries);
-    objects.set(MANIFEST_KEY, manifest);
     objects.set(FILE_KEYS[0], text);
-    process.env.PRESERVED_VIEW_MANIFEST_SHA256 = sha(manifest);
+    pinManifest(ENTRIES.map((e, i) => (i ? e : entry(FILE_KEYS[0], text))));
     const { status, res } = await get('1');
     expect(status).toBe(415);
     expect(await res!.text()).toBe('');
+    expect(state.order).not.toContain(DELIVERED);
   });
 
-  it('sends no bytes and never reads the file when the audit row is not written', async () => {
-    state.insertFails = true;
+  it('sends no bytes and never reads the file when the served row is not written', async () => {
+    state.failActivity = 'preservedFile:served';
     expect((await get('1')).status).toBe(503);
     expect(fileReads()).toEqual([]);
   });
 
-  it('sends no bytes and never reads the file when the audit row does not read back', async () => {
+  it('sends no bytes and never reads the file when the served row does not read back', async () => {
     state.rowExists = false;
     expect((await get('1')).status).toBe(503);
     expect(fileReads()).toEqual([]);
+  });
+
+  it('sends no bytes when the delivered row is not written', async () => {
+    state.failActivity = 'preservedFile:delivered';
+    expect((await get('1')).status).toBe(503);
   });
 
   it('no longer serves a file that has a verdict', async () => {
@@ -237,6 +310,12 @@ describe('serving a file', () => {
     expect(insertModActivity).not.toHaveBeenCalled();
     expect(fileReads()).toEqual([]);
     expect((await get('1')).status).toBe(200);
+  });
+
+  it('does not serve a file whose verdict lands while its view is being recorded', async () => {
+    state.ruleDuringAudit = 1;
+    expect((await get('1')).status).toBe(410);
+    expect(fileReads()).toEqual([]);
   });
 
   it('answers HEAD without auditing or reading', async () => {
@@ -297,8 +376,8 @@ describe('the page', () => {
     }
   }
 
-  it('lists each file with no storage key', async () => {
-    state.served = new Set([1]);
+  it('lists each file with no storage key or hash', async () => {
+    state.delivered = new Set([1]);
     state.verdicts.set(3, 'apparent');
     const data = (await load({ locals: { user: REVIEWER, grants: {} } } as never)) as {
       files: unknown[];
@@ -312,34 +391,47 @@ describe('the page', () => {
     expect(fileReads()).toEqual([]);
   });
 
-  it('records a verdict for a file this reviewer was served', async () => {
-    state.served = new Set([1]);
+  it('records a verdict for a file this reviewer was sent', async () => {
+    state.delivered = new Set([1]);
     expect(await verdict({ n: '1', verdict: 'apparent' })).toEqual({ recorded: 1 });
-    expect(recordPreservedVerdict).toHaveBeenCalledWith(REVIEWER.id, 1, 'apparent');
+    expect(recordPreservedVerdict).toHaveBeenCalledWith(
+      expect.objectContaining({ manifestKey: MANIFEST_KEY }),
+      REVIEWER.id,
+      1,
+      'apparent'
+    );
   });
 
-  it('refuses a verdict on a file this reviewer has not opened', async () => {
+  it('records a verdict after a serve that delivered the bytes', async () => {
+    expect((await get('1')).status).toBe(200);
+    expect(await verdict({ n: '1', verdict: 'not' })).toEqual({ recorded: 1 });
+  });
+
+  it('refuses a verdict on a file whose serve was refused', async () => {
+    objects.set(FILE_KEYS[1], Uint8Array.from([...FILES[1], 0]));
+    expect((await get('2')).status).toBe(409);
     expect(await verdict({ n: '2', verdict: 'not' })).toMatchObject({ status: 409 });
     expect(recordPreservedVerdict).not.toHaveBeenCalled();
   });
 
   it('refuses a second verdict', async () => {
-    state.served = new Set([1]);
+    state.delivered = new Set([1]);
     recordPreservedVerdict.mockResolvedValueOnce('already');
     expect(await verdict({ n: '1', verdict: 'not' })).toMatchObject({ status: 409 });
   });
 
-  it.each([[{ n: '1', verdict: 'maybe' }], [{ n: '4', verdict: 'not' }], [{ verdict: 'not' }]])(
-    'refuses %o',
-    async (fields) => {
-      state.served = new Set([1, 4]);
-      expect(await verdict(fields)).toMatchObject({ status: expect.any(Number) });
-      expect(recordPreservedVerdict).not.toHaveBeenCalled();
-    }
-  );
+  it.each([
+    [{ n: '1', verdict: 'maybe' }, 400],
+    [{ verdict: 'not' }, 400],
+    [{ n: '4', verdict: 'not' }, 404],
+  ])('refuses %o with %i', async (fields, status) => {
+    state.delivered = new Set([1, 4]);
+    expect(await verdict(fields)).toMatchObject({ status });
+    expect(recordPreservedVerdict).not.toHaveBeenCalled();
+  });
 
   it('refuses a verdict from an admin who is not the reviewer', async () => {
-    state.served = new Set([1]);
+    state.delivered = new Set([1]);
     expect(await verdict({ n: '1', verdict: 'not' }, ADMIN)).toMatchObject({ status: 403 });
     expect(recordPreservedVerdict).not.toHaveBeenCalled();
   });

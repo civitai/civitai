@@ -24,10 +24,7 @@ export class OversizeObjectError extends Error {
 
 type Body = AsyncIterable<Uint8Array> & { destroy?: () => void };
 
-/**
- * GetObject and nothing else, for the keys `isListed` names. Any other key throws before a request
- * is built, so no caller can point this credential at the rest of the bucket.
- */
+/** GetObject and nothing else, for the keys `isListed` names; any other key throws before a request is built. */
 export function createPreservedObjectStore(
   config: PreservedStoreConfig,
   isListed: (key: string) => boolean

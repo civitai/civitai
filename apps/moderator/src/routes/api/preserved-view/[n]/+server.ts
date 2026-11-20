@@ -1,17 +1,21 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { heldMediaHeaders } from '@civitai/shared/held-media';
+import { OversizeObjectError } from '$lib/server/preserved-object-store';
 import {
   auditServe,
-  ManifestRefusedError,
-  openPreservedFiles,
+  errorName,
+  openPreservedFilesOrError,
   parseFileNumber,
   preservedVerdicts,
+  recordDelivery,
   recordPreservedServe,
   requirePreservedReviewer,
   sha256Hex,
   sniffImageType,
 } from '$lib/server/preserved-view';
+
+const NO_STORE = { 'cache-control': 'private, no-store' };
 
 /**
  * One preserved file, for its one named reviewer. The browser names a file number and nothing else:
@@ -24,39 +28,52 @@ export const GET: RequestHandler = async ({ params, locals, request, url }) => {
   const { config, reviewerId } = requirePreservedReviewer(locals);
   const n = parseFileNumber(params.n);
   if (!n || url.search) error(404, 'Not found.');
+  // The session cookie is SameSite=Lax, so another page on the same site could make the browser
+  // request this and write a view row the reviewer never saw.
+  if (request.headers.get('sec-fetch-site') !== 'same-origin')
+    error(403, 'Open this file from its review page.');
 
-  const opened = await openPreservedFiles(config).catch((e: unknown) => {
-    if (e instanceof ManifestRefusedError) {
-      console.error('[preserved-view] manifest refused', e.reason);
-      return 'refused' as const;
-    }
-    console.error('[preserved-view] manifest read failed', e);
-    return null;
-  });
-  if (opened === 'refused') error(409, 'The manifest does not match its pin.');
-  if (!opened) error(502, 'Could not reach storage.');
+  const opened = await openPreservedFilesOrError(config);
   const file = opened.files.find((f) => f.n === n);
   if (!file) error(404, 'Not found.');
-  if ((await preservedVerdicts()).has(n))
-    error(410, 'This file has a verdict and is no longer served.');
+  const ruled = async () => (await preservedVerdicts(config)).has(n);
+  if (await ruled()) error(410, 'This file has a verdict and is no longer served.');
 
-  if (!(await auditServe(reviewerId, n))) error(503, 'Could not record this view.');
+  if (!(await auditServe(config, reviewerId, n))) error(503, 'Could not record this view.');
+  // A verdict recorded since the check above.
+  if (await ruled()) error(410, 'This file has a verdict and is no longer served.');
 
   const bytes = await opened.read(file, request.signal).catch((e: unknown) => {
-    console.error('[preserved-view] file read failed', e);
+    if (e instanceof OversizeObjectError) return 'oversize' as const;
+    console.error('[preserved-view] file read failed', errorName(e));
     return undefined;
   });
-  if (bytes === undefined) error(502, 'Could not reach storage.');
-  if (bytes === null) error(404, 'The file is not in storage.');
+  const sizeMatch = bytes instanceof Uint8Array ? bytes.byteLength === file.size : null;
+  const sha256Match =
+    bytes instanceof Uint8Array ? sizeMatch === true && sha256Hex(bytes) === file.sha256 : null;
+  const contentType = bytes instanceof Uint8Array && sha256Match ? sniffImageType(bytes) : null;
+  const status =
+    bytes === undefined
+      ? 502
+      : bytes === null
+      ? 404
+      : bytes === 'oversize' || !sha256Match
+      ? 409
+      : contentType
+      ? 200
+      : 415;
+  recordPreservedServe({
+    reviewerId,
+    n,
+    status,
+    bytes: bytes instanceof Uint8Array ? bytes.byteLength : null,
+    sizeMatch: bytes === 'oversize' ? false : sizeMatch,
+    sha256Match,
+  });
+  if (status !== 200 || !(bytes instanceof Uint8Array) || !contentType)
+    return new Response(null, { status, headers: NO_STORE });
 
-  const sizeMatch = bytes.byteLength === file.size;
-  const sha256Match = sizeMatch && sha256Hex(bytes) === file.sha256;
-  const contentType = sha256Match ? sniffImageType(bytes) : null;
-  const status = !sha256Match ? 409 : contentType ? 200 : 415;
-  recordPreservedServe({ reviewerId, n, status, bytes: bytes.byteLength, sizeMatch, sha256Match });
-  if (!sha256Match || !contentType)
-    return new Response(null, { status, headers: { 'cache-control': 'private, no-store' } });
-
+  if (!(await recordDelivery(config, reviewerId, n))) error(503, 'Could not record this view.');
   const headers = heldMediaHeaders(
     contentType,
     new Headers({ 'content-length': String(bytes.byteLength) })

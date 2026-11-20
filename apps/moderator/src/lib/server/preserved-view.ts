@@ -12,15 +12,18 @@ import { createPreservedObjectStore, type PreservedStoreConfig } from './preserv
 
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
+const MAX_FILES = 99;
 
-const ENTITY_TYPE = 'preservedFile';
-export const SERVED_ACTIVITY = 'preservedFile:served';
-export const VERDICT_ACTIVITY: Record<PreservedVerdict, string> = {
+/** Written before the store is called for a file, whatever happens next. */
+export const PRESERVED_SERVED_ACTIVITY = 'preservedFile:served';
+/** Written only once the bytes matched the manifest, just before they are sent. */
+export const PRESERVED_DELIVERED_ACTIVITY = 'preservedFile:delivered';
+export const PRESERVED_VERDICT_ACTIVITY: Record<PreservedVerdict, string> = {
   apparent: 'preservedFile:verdict-apparent',
   not: 'preservedFile:verdict-not',
 };
 const VERDICT_BY_ACTIVITY = new Map(
-  Object.entries(VERDICT_ACTIVITY).map(([verdict, activity]) => [
+  Object.entries(PRESERVED_VERDICT_ACTIVITY).map(([verdict, activity]) => [
     activity,
     verdict as PreservedVerdict,
   ])
@@ -60,6 +63,13 @@ export function readPreservedViewConfig(
 }
 
 /**
+ * Every row names the pinned manifest as well as the file's position in it, so pinning another
+ * manifest never inherits a verdict or a view recorded against a different file at that position.
+ */
+const entityTypeOf = (config: PreservedViewConfig) =>
+  `preservedFile:${config.manifestSha256.slice(0, 16)}`;
+
+/**
  * Both gates: the page grant (a role), and the reviewer list, which an admin's grant does not pass.
  * Unconfigured is a 404 for everyone, before either.
  */
@@ -91,6 +101,9 @@ export class ManifestRefusedError extends Error {
   }
 }
 
+/** Only the error's name: an S3 error carries the bucket and key in its other fields. */
+export const errorName = (e: unknown) => (e as { name?: unknown } | null)?.name ?? 'unknown';
+
 const externalEntry = z
   .object({
     status: z.literal('external'),
@@ -104,14 +117,14 @@ const externalEntry = z
 function externalFiles(manifest: unknown): PreservedFile[] {
   const entries = (manifest as { entries?: unknown } | null)?.entries;
   if (!Array.isArray(entries)) throw new ManifestRefusedError('shape');
-  return entries
-    .filter((e) => (e as { status?: unknown } | null)?.status === 'external')
-    .map((e, i) => {
-      const parsed = externalEntry.safeParse(e);
-      if (!parsed.success) throw new ManifestRefusedError('shape');
-      const { source, size, sha256 } = parsed.data;
-      return { n: i + 1, key: source.key, size, sha256 };
-    });
+  const external = entries.filter((e) => (e as { status?: unknown } | null)?.status === 'external');
+  if (external.length > MAX_FILES) throw new ManifestRefusedError('shape');
+  return external.map((e, i) => {
+    const parsed = externalEntry.safeParse(e);
+    if (!parsed.success) throw new ManifestRefusedError('shape');
+    const { source, size, sha256 } = parsed.data;
+    return { n: i + 1, key: source.key, size, sha256 };
+  });
 }
 
 export const sha256Hex = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -143,13 +156,29 @@ export async function openPreservedFiles(config: PreservedViewConfig) {
   };
 }
 
+/** `openPreservedFiles` as a route answers it: 409 for a refused manifest, 502 for a store error. */
+export async function openPreservedFilesOrError(config: PreservedViewConfig) {
+  try {
+    return await openPreservedFiles(config);
+  } catch (e) {
+    if (e instanceof ManifestRefusedError) {
+      console.error('[preserved-view] manifest refused', e.reason);
+      error(409, 'The manifest does not match its pin.');
+    }
+    console.error('[preserved-view] manifest read failed', errorName(e));
+    error(502, 'Could not reach storage.');
+  }
+}
+
 /** Verdicts recorded so far, by file number. Read from the primary, so a verdict just made is seen. */
-export async function preservedVerdicts(): Promise<Map<number, PreservedVerdict>> {
+export async function preservedVerdicts(
+  config: PreservedViewConfig
+): Promise<Map<number, PreservedVerdict>> {
   const rows = await dbWrite
     .selectFrom('ModActivity')
     .select(['entityId', 'activity'])
-    .where('entityType', '=', ENTITY_TYPE)
-    .where('activity', 'in', Object.values(VERDICT_ACTIVITY))
+    .where('entityType', '=', entityTypeOf(config))
+    .where('activity', 'in', Object.values(PRESERVED_VERDICT_ACTIVITY))
     .execute();
   const out = new Map<number, PreservedVerdict>();
   for (const row of rows) {
@@ -159,61 +188,78 @@ export async function preservedVerdicts(): Promise<Map<number, PreservedVerdict>
   return out;
 }
 
-/** The file numbers this reviewer has been served. */
-export async function servedTo(reviewerId: number): Promise<Set<number>> {
+/** The file numbers whose bytes this reviewer has been sent. */
+export async function deliveredTo(
+  config: PreservedViewConfig,
+  reviewerId: number
+): Promise<Set<number>> {
   const rows = await dbWrite
     .selectFrom('ModActivity')
     .select('entityId')
     .distinct()
-    .where('entityType', '=', ENTITY_TYPE)
-    .where('activity', '=', SERVED_ACTIVITY)
+    .where('entityType', '=', entityTypeOf(config))
+    .where('activity', '=', PRESERVED_DELIVERED_ACTIVITY)
     .where('userId', '=', reviewerId)
     .execute();
   return new Set(rows.flatMap((r) => (r.entityId === null ? [] : [r.entityId])));
 }
 
-/** The audit row for one serve, written and then read back. `false` means send no bytes. */
-export async function auditServe(reviewerId: number, n: number): Promise<boolean> {
+async function writeAndReadBack(
+  config: PreservedViewConfig,
+  reviewerId: number,
+  n: number,
+  activity: string
+): Promise<boolean> {
   try {
     const id = await insertModActivity({
       userId: reviewerId,
-      entityType: ENTITY_TYPE,
+      entityType: entityTypeOf(config),
       entityId: n,
-      activity: SERVED_ACTIVITY,
+      activity,
       credential: 'web',
     });
     return await modActivityRowExists(id);
   } catch (e) {
-    console.error('[preserved-view] audit row not written', e);
+    console.error('[preserved-view] audit row not written', activity, errorName(e));
     return false;
   }
 }
+
+/** The audit row for one serve, written and read back. `false` means call no store and send no bytes. */
+export const auditServe = (config: PreservedViewConfig, reviewerId: number, n: number) =>
+  writeAndReadBack(config, reviewerId, n, PRESERVED_SERVED_ACTIVITY);
+
+/** The row that lets a verdict follow. `false` means send no bytes. */
+export const recordDelivery = (config: PreservedViewConfig, reviewerId: number, n: number) =>
+  writeAndReadBack(config, reviewerId, n, PRESERVED_DELIVERED_ACTIVITY);
 
 /**
  * One verdict per file, ever. The advisory lock serialises two submits for the same file, which a
  * check-then-insert alone would let both through.
  */
 export async function recordPreservedVerdict(
+  config: PreservedViewConfig,
   reviewerId: number,
   n: number,
   verdict: PreservedVerdict
 ): Promise<'recorded' | 'already'> {
+  const entityType = entityTypeOf(config);
   return dbWrite.transaction().execute(async (trx) => {
-    await sql`SELECT pg_advisory_xact_lock(hashtext(${ENTITY_TYPE}), ${n}::int)`.execute(trx);
+    await sql`SELECT pg_advisory_xact_lock(hashtext(${entityType}), ${n}::int)`.execute(trx);
     const existing = await trx
       .selectFrom('ModActivity')
       .select('id')
-      .where('entityType', '=', ENTITY_TYPE)
+      .where('entityType', '=', entityType)
       .where('entityId', '=', n)
-      .where('activity', 'in', Object.values(VERDICT_ACTIVITY))
+      .where('activity', 'in', Object.values(PRESERVED_VERDICT_ACTIVITY))
       .executeTakeFirst();
     if (existing) return 'already';
     await insertModActivity(
       {
         userId: reviewerId,
-        entityType: ENTITY_TYPE,
+        entityType,
         entityId: n,
-        activity: VERDICT_ACTIVITY[verdict],
+        activity: PRESERVED_VERDICT_ACTIVITY[verdict],
       },
       trx
     );
