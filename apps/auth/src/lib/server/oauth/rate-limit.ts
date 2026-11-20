@@ -94,15 +94,36 @@ export function oauthRetryAfter(bucket: OAuthRateLimitBucket): number {
   return OAUTH_RATE_LIMITS[bucket].windowSeconds;
 }
 
-/** A 429 with `Retry-After` and `retry_after` (whole seconds, at least 1). */
+const waitText = (seconds: number) => {
+  if (seconds < 60) return seconds === 1 ? '1 second' : `${seconds} seconds`;
+  const minutes = Math.ceil(seconds / 60);
+  return minutes === 1 ? '1 minute' : `${minutes} minutes`;
+};
+
+const escapeHtml = (text: string) =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * A 429 with `Retry-After` and `retry_after` (whole seconds, at least 1). Pass `request` on a route a
+ * browser navigates to: a request that accepts text/html gets a readable page instead of JSON.
+ */
 export function rateLimitedResponse(
   retryAfter: number,
   headers?: HeadersInit,
-  description = 'Too many requests'
+  description = 'Too many requests',
+  options: { request?: Request } = {}
 ): Response {
   const seconds = Math.max(1, Math.ceil(retryAfter));
   const out = new Headers(headers);
   out.set('Retry-After', String(seconds));
+  if (options.request?.headers.get('accept')?.includes('text/html')) {
+    out.set('Content-Type', 'text/html; charset=utf-8');
+    const text = `${escapeHtml(description)}. Try again in ${waitText(seconds)}.`;
+    return new Response(
+      `<!doctype html><html lang="en"><meta charset="utf-8"><title>Too many requests</title><p>${text}</p></html>`,
+      { status: RATE_LIMITED_STATUS, headers: out }
+    );
+  }
   return json(
     { error: 'rate_limited', error_description: description, retry_after: seconds },
     { status: RATE_LIMITED_STATUS, headers: out }

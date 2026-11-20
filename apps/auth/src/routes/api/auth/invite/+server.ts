@@ -69,10 +69,16 @@ export const POST: RequestHandler = async ({ request, url }) => {
     clientLimited ||
     (await isRateLimited('invite-recipient', recipientKey, RECIPIENT_LIMIT.count))
   ) {
-    // Never the recipient key's TTL: it would tell any client when that address was last invited.
-    const retryAfter = clientLimited
-      ? (await rateLimitTtl('invite-client', client.id)) ?? CLIENT_LIMIT.windowSeconds
-      : RECIPIENT_LIMIT.windowSeconds;
+    let retryAfter = RECIPIENT_LIMIT.windowSeconds;
+    if (clientLimited) {
+      retryAfter =
+        (await rateLimitTtl('invite-client', client.id, CLIENT_LIMIT.windowSeconds)) ??
+        CLIENT_LIMIT.windowSeconds;
+    } else {
+      // Called only to repair a lost expiry. Never answer with this TTL: it would tell any client
+      // when someone last invited that address.
+      await rateLimitTtl('invite-recipient', recipientKey, RECIPIENT_LIMIT.windowSeconds);
+    }
     return rateLimitedResponse(retryAfter, undefined, 'Too many invites. Try again later.');
   }
 

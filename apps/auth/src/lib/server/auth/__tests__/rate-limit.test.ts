@@ -7,7 +7,7 @@ import { createLuaRedis, type LuaRedis } from '../../../../test/lua-sys-redis';
 const h = vi.hoisted(() => ({ getRedis: vi.fn() }));
 vi.mock('../../redis', () => ({ getRedis: h.getRedis }));
 
-import { checkRateLimit, consumeRateLimit } from '../rate-limit';
+import { checkRateLimit, consumeRateLimit, rateLimitTtl } from '../rate-limit';
 
 type Options = { keys: string[]; arguments: string[] };
 
@@ -110,5 +110,28 @@ describe('consumeRateLimit', () => {
       expect(await consumeRateLimit('login', id, 0, 60)).toEqual({ ok: true });
     }
     expect(redis.evalSha).not.toHaveBeenCalled();
+  });
+});
+
+describe('rateLimitTtl', () => {
+  it('answers the seconds left in a window', async () => {
+    lua.setString(KEY, '3', 20_000);
+    expect(await rateLimitTtl('login', 'ip-1', 60)).toBe(20);
+  });
+
+  it('repairs a key that lost its expiry, so a peek-only bucket cannot refuse forever', async () => {
+    lua.setString(KEY, '50'); // no TTL
+    expect(await rateLimitTtl('login', 'ip-1', 3600)).toBe(3600);
+    expect(lua.pttl(KEY)).toBe(3_600_000);
+  });
+
+  it('answers null for no key, and when redis errors', async () => {
+    expect(await rateLimitTtl('login', 'ip-1', 60)).toBeNull();
+    h.getRedis.mockReturnValue({
+      eval: async () => {
+        throw new Error('connection reset');
+      },
+    });
+    expect(await rateLimitTtl('login', 'ip-1', 60)).toBeNull();
   });
 });

@@ -147,7 +147,9 @@ describe('POST /api/auth/invite', () => {
     const res = await invite(VALID);
     expect(res.status).toBe(429);
     expect(res.retryAfter).toBe('86400');
-    expect(mocks.rateLimitTtl).not.toHaveBeenCalledWith('invite-recipient', expect.anything());
+    expect(res.body.retry_after).toBe(86400);
+    // Still read, so a recipient key that lost its expiry is repaired rather than refusing forever.
+    expect(mocks.rateLimitTtl).toHaveBeenCalledWith('invite-recipient', 'bob@example.com', 86400);
   });
 });
 

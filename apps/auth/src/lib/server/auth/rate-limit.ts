@@ -65,17 +65,30 @@ export async function checkRateLimit(
   return (await consumeRateLimit(bucket, identifier, limit, windowSeconds)).ok;
 }
 
+// Repairs a key that lost its expiry, which would otherwise hold a peek-only bucket over its limit for good.
+const TTL_SCRIPT = `local ttl = redis.call('TTL', KEYS[1])
+if ttl == -1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return ttl`;
+
 /** Seconds left in `identifier`'s current window; null with no window or no redis. */
 export async function rateLimitTtl(
   bucket: string,
-  identifier: string | null | undefined
+  identifier: string | null | undefined,
+  windowSeconds: number
 ): Promise<number | null> {
   if (!identifier) return null;
-  const redis = getRedis();
+  const redis = getRedis() as unknown as ScriptClient | null;
   if (!redis) return null;
   try {
-    const r = redis as unknown as { ttl(k: string): Promise<number> };
-    const ttl = await r.ttl(`auth:rate-limit:${bucket}:${identifier}`);
+    const ttl = Number(
+      await redis.eval(TTL_SCRIPT, {
+        keys: [`auth:rate-limit:${bucket}:${identifier}`],
+        arguments: [String(windowSeconds)],
+      })
+    );
     return ttl > 0 ? ttl : null;
   } catch {
     return null;

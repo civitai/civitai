@@ -72,6 +72,14 @@ describe('every auth 429 says when to retry', () => {
 });
 
 describe('rateLimitedResponse', () => {
+  it('answers a request that accepts HTML with a page, in minutes from 60 s', async () => {
+    const request = new Request('https://auth.civitai.com/x', { headers: { accept: 'text/html' } });
+    const res = rateLimitedResponse(90, undefined, 'Too many <attempts>', { request });
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('90');
+    expect(await res.text()).toContain('Too many &lt;attempts&gt;. Try again in 2 minutes.');
+  });
+
   it('sets Retry-After and retry_after in whole seconds, never below 1, keeping the caller headers', async () => {
     const res = rateLimitedResponse(
       0.2,

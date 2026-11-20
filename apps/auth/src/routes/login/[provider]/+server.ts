@@ -24,7 +24,14 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals, reques
   // Use the proxy-resolved client IP (not the ingress socket peer) so this never throttles all users
   // through one shared bucket; getClientIp returns null behind a misconfigured proxy → limit is skipped.
   const limit = await consumeRateLimit('oauth-start', getClientIp(request), 30, 60);
-  if (!limit.ok) return rateLimitedResponse(limit.retryAfter);
+  if (!limit.ok) {
+    return rateLimitedResponse(
+      limit.retryAfter,
+      undefined,
+      'Too many sign-in attempts from your network',
+      { request }
+    );
+  }
 
   const provider = getProvider(params.provider);
   if (!provider || !provider.clientId() || !provider.clientSecret()) {
