@@ -32,6 +32,20 @@ const FALLBACK = 'fallback' as ErrorStrategy;
 export type FliptLogFn = (message: string, ...args: unknown[]) => void;
 
 /**
+ * One structured log record for an `onEvalError` call, for an app that routes it through its own
+ * logger. The stack travels as a field so the record stays one line.
+ */
+export function fliptEvalErrorRecord(error: unknown, flag: string) {
+  return {
+    name: 'flipt-eval-error',
+    type: 'error',
+    flag,
+    message: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  };
+}
+
+/**
  * Tuning is resolved when the instance is built; connection config may still be pending (read from
  * env on first evaluation), so it's optional here.
  */

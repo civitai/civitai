@@ -1,4 +1,4 @@
-import { createFliptClient } from '@civitai/flipt';
+import { createFliptClient, fliptEvalErrorRecord } from '@civitai/flipt';
 import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
 
@@ -54,7 +54,7 @@ export enum FLIPT_FEATURE_FLAGS {
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false is fine) BEFORE THIS CODE SERVES TRAFFIC,
   // and must not be deleted while it does. A MISSING key makes `evaluateBoolean` throw; the throw
-  // bypasses the eval cache and the default `onEvalError` console.errors — on every call of a
+  // bypasses the eval cache and `onEvalError` logs an error record — on every call of a
   // read issued on every signed-in image feed page. It still answers false (Prisma), but the log
   // flood and the uncached wasm eval also inflate the "off" baseline this flag exists to measure.
   //
@@ -70,7 +70,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // The reads in packages/civitai-db-queries/src/hot-reads-7.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call — and
   // several of these reads run on most feed pages.
   //
   // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead`. Its acquire wait is
@@ -81,7 +81,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // The reads in packages/civitai-db-queries/src/hot-reads-8.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call, and
   // the storyline read runs on most feed pages.
   //
   // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead`. Its acquire wait is
@@ -94,7 +94,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // one per relation. Evaluated with no entity id, once per call.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call, and
   // this read runs on every profile page view.
   //
   // 🔴 ON MOVES THIS READ OFF PRISMA'S PRIMARY POOL ONTO `pgDbWrite` (kyselyWrite), keeping it on
@@ -109,7 +109,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // per call.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call, and
   // this read runs on every collection page view.
   //
   // 🔴 ON MOVES THIS READ OFF PRISMA'S POOLS ONTO `pgDbRead` (kyselyRead), or `pgDbWrite`
@@ -838,6 +838,7 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
       'temp-search'
     );
   },
+  onEvalError: (error, flag) => logToAxiom(fliptEvalErrorRecord(error, flag)),
 }));
 
 // 🔴 THE ENTITY-ID TRAP. All four evaluators below take `(flag, entityId?,
