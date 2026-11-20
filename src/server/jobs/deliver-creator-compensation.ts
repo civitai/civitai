@@ -287,7 +287,7 @@ export async function runPayout(lastUpdate: Date) {
       type: 'warning',
       name: 'creator-compensation-unknown-source',
       message,
-      details: { date: dateStr, sources: unknown },
+      payload: { date: dateStr, sources: unknown },
     });
   }
 

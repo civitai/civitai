@@ -567,7 +567,7 @@ describe('runPayout: sources beyond compensation, tip and licence fee', () => {
     const notices = unknownSourceNotices();
     expect(notices).toHaveLength(1);
     expect(notices[0][0]).toMatchObject({
-      details: {
+      payload: {
         date: '2026-10-13',
         sources: { compensation_recovered_20261201: { rows: 2, amount: 42 } },
       },
