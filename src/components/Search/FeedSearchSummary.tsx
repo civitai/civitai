@@ -16,8 +16,6 @@ type Props = {
 /** Above a feed while it answers a search: what was searched, and the way back out. */
 export function FeedSearchSummary({ noun, query, correctedQuery, failed, onRetry }: Props) {
   const router = useRouter();
-  const { searchAsTyped } = useSearchAsTyped(query);
-  const shownQuery = correctedQuery && correctedQuery !== query ? correctedQuery : undefined;
 
   return (
     <div className="flex flex-col gap-2 pb-2">
@@ -47,14 +45,7 @@ export function FeedSearchSummary({ noun, query, correctedQuery, failed, onRetry
           Clear search
         </Anchor>
       </div>
-      {shownQuery && (
-        <Text size="sm" c="dimmed">
-          Showing results for <strong>{shownQuery}</strong>. Search instead for{' '}
-          <Anchor component="button" size="sm" onClick={searchAsTyped}>
-            {query}
-          </Anchor>
-        </Text>
-      )}
+      <CorrectedQueryNote query={query} correctedQuery={correctedQuery} />
       {failed && (
         <Alert color="yellow" icon={<IconCloudOff size={18} />} p="xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -68,5 +59,25 @@ export function FeedSearchSummary({ noun, query, correctedQuery, failed, onRetry
         </Alert>
       )}
     </div>
+  );
+}
+
+/** "Showing results for <correction>", with the way back to the query as typed. */
+export function CorrectedQueryNote({
+  query,
+  correctedQuery,
+}: {
+  query: string;
+  correctedQuery?: string;
+}) {
+  const { searchAsTyped } = useSearchAsTyped(query);
+  if (!correctedQuery || correctedQuery === query) return null;
+  return (
+    <Text size="sm" c="dimmed">
+      Showing results for <strong>{correctedQuery}</strong>. Search instead for{' '}
+      <Anchor component="button" size="sm" onClick={searchAsTyped}>
+        {query}
+      </Anchor>
+    </Text>
   );
 }

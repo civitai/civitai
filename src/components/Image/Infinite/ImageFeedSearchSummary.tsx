@@ -14,7 +14,8 @@ import useIsClient from '~/hooks/useIsClient';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
+import { SEARCH_AS_TYPED_PARAM } from '~/components/Search/useSearchAsTyped';
+import { CorrectedQueryNote } from '~/components/Search/FeedSearchSummary';
 
 const isEmptyFilter = (value: unknown) =>
   value === undefined || (Array.isArray(value) && value.length === 0);
@@ -42,7 +43,6 @@ export function ImageFeedSearchSummary({
 }: Props) {
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const { searchAsTyped } = useSearchAsTyped(query);
   // The saved feed filters load in the browser, so the server can't render their chips.
   const isClient = useIsClient();
   const setStoreFilters = useFiltersContext((state) => state.setImageFilters);
@@ -69,6 +69,8 @@ export function ImageFeedSearchSummary({
           query: removeEmpty({
             ...router.query,
             ...Object.fromEntries(inUrl.map((key) => [key, patch[key as keyof typeof patch]])),
+            // A changed or cleared query is corrected again.
+            ...('query' in patch && { [SEARCH_AS_TYPED_PARAM]: undefined }),
           }),
         },
         undefined,
@@ -81,7 +83,6 @@ export function ImageFeedSearchSummary({
   };
 
   const ignored = ignoredWhileSearching(filters);
-  const shownQuery = correctedQuery && correctedQuery !== query ? correctedQuery : undefined;
 
   return (
     <div className="flex flex-col gap-2 pb-2">
@@ -97,14 +98,7 @@ export function ImageFeedSearchSummary({
           <>Images matching &ldquo;{query}&rdquo;</>
         )}
       </Title>
-      {shownQuery && (
-        <Text size="sm" c="dimmed">
-          Showing results for <strong>{shownQuery}</strong>. Search instead for{' '}
-          <Anchor component="button" size="sm" onClick={searchAsTyped}>
-            {query}
-          </Anchor>
-        </Text>
-      )}
+      <CorrectedQueryNote query={query} correctedQuery={correctedQuery} />
       {unavailable ? (
         <Alert color="gray" p="xs">
           <Text size="sm">

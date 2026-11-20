@@ -3,15 +3,14 @@ import { baseQuerySchema } from '~/server/schema/base.schema';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import {
   SEMANTIC_QUERY_MAX_LENGTH,
+  semanticSpellcheckField,
   SEMANTIC_SEARCH_PAGE_SIZE,
 } from '~/server/schema/semantic-image-search.schema';
 
 export type SemanticArticleSearchInput = z.infer<typeof semanticArticleSearchSchema>;
 export const semanticArticleSearchSchema = baseQuerySchema.extend({
   query: z.string().trim().min(1, 'Enter a query').max(SEMANTIC_QUERY_MAX_LENGTH),
-  // The query as typed: the service's spelling correction is skipped ("Search instead for").
-  // The text is still audited as any query is.
-  spellcheck: z.literal(false).optional(),
+  spellcheck: semanticSpellcheckField,
   // By name, as the article search URLs and pickers carry them; resolved to ids on the server.
   tagNames: z.string().trim().min(1).array().max(20).optional(),
   usernames: z.string().trim().min(1).array().max(20).optional(),
