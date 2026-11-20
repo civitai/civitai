@@ -12,8 +12,8 @@ const tail = (examples: string) =>
   `Transfers on any other network (for example ${examples}) won't be credited and may not be recoverable. On exchanges like OKX or Binance, check the network selector before you confirm.`;
 const TAIL = tail('X Layer, BNB Chain or Ethereum');
 
-const tokenLine = (token: string, where: string) =>
-  `Only ${token} is credited. Any other token sent to this address, even ${where}, isn't converted and needs a manual refund.`;
+const tokenLine = (where: string) =>
+  `Only the currencies listed in the selector are credited at this address. Any other token sent to it, even ${where}, isn't converted and needs a manual refund.`;
 
 describe('DepositNetworkWarning', () => {
   it('names USDC on Base for usdcbase', async () => {
@@ -25,25 +25,25 @@ describe('DepositNetworkWarning', () => {
   });
 
   // Other tokens on the right network are not converted by the payment processor.
-  it('says only the resolved token is credited, even on its own network', async () => {
+  it('says only listed currencies are credited, naming the resolved network', async () => {
     renderWithProviders(<DepositNetworkWarning code="USDCBASE" />);
     await expect
       .element(page.getByTestId('deposit-token-warning'))
-      .toHaveTextContent(tokenLine('USDC', 'on Base'));
+      .toHaveTextContent(tokenLine('on Base'));
   });
 
   it('uses the live ticker and network for the token line', async () => {
     renderWithProviders(<DepositNetworkWarning code="ltc2" ticker="ltc" network="ltc" />);
     await expect
       .element(page.getByTestId('deposit-token-warning'))
-      .toHaveTextContent(tokenLine('LTC', 'on Litecoin'));
+      .toHaveTextContent(tokenLine('on Litecoin'));
   });
 
   it('says it generically when the code cannot be placed', async () => {
     renderWithProviders(<DepositNetworkWarning code="foocoinx" network="xlayer" />);
     await expect
       .element(page.getByTestId('deposit-token-warning'))
-      .toHaveTextContent(tokenLine('FOOCOINX', 'on the same network'));
+      .toHaveTextContent(tokenLine('on the same network'));
   });
 
   it('names USDT on Tron for usdttrc20', async () => {
