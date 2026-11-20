@@ -637,13 +637,16 @@ func TestCookieNamesPerSite(t *testing.T) {
 // AUTH_LEGACY_READ as legacyCookieReadEnabled reads it: only false/0/off/no (any case, trimmed) turn the
 // shared-slot read off; unset and any other value leave it on.
 func TestLegacyRead(t *testing.T) {
-	cases := map[string]bool{
-		"": true, "true": true, "1": true, "yes": true, "garbage": true,
-		"false": false, "0": false, "off": false, "no": false, " OFF ": false, "No": false, "FALSE": false,
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", true}, {"true", true}, {"1", true}, {"yes", true}, {"garbage", true},
+		{"false", false}, {"0", false}, {"off", false}, {"no", false}, {" OFF ", false}, {"No", false}, {"FALSE", false},
 	}
-	for in, want := range cases {
-		if got := LegacyRead(in); got != want {
-			t.Errorf("LegacyRead(%q) = %v, want %v", in, got, want)
+	for _, c := range cases {
+		if got := LegacyRead(c.in); got != c.want {
+			t.Errorf("LegacyRead(%q) = %v, want %v", c.in, got, c.want)
 		}
 	}
 }
