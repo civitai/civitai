@@ -27,7 +27,8 @@ describe('createApiRouter', () => {
     expect(req.query).toEqual({ id: '5' });
   });
 
-  it.each([['homeblock', 'nope'], ['constructor'], ['__proto__']])(
+  // `homeblock%2Fcreate` reaches the router as the one decoded segment `homeblock/create`.
+  it.each([['homeblock', 'nope'], ['constructor'], ['__proto__'], ['homeblock/create']])(
     'answers 404 for a path with no route: %s',
     async (...path) => {
       const { handler, call } = setup();

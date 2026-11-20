@@ -11,9 +11,14 @@ export type ApiRoutes = Record<string, () => Promise<{ default: NextApiHandler }
 export function createApiRouter(routes: ApiRoutes) {
   return async function apiRouter(req: NextApiRequest, res: NextApiResponse) {
     const { path, ...query } = req.query;
-    const key = (path as string[]).join('/');
+    const segments = path as string[];
+    const key = segments.join('/');
     // Own keys only: `constructor` or `__proto__` would otherwise resolve to an Object.prototype member.
-    const load = Object.hasOwn(routes, key) ? routes[key] : undefined;
+    // Next decodes each segment, so `user%2Fdelete` arrives as one segment holding a slash; a file route 404s it.
+    const load =
+      Object.hasOwn(routes, key) && !segments.some((segment) => segment.includes('/'))
+        ? routes[key]
+        : undefined;
     if (!load) return res.status(404).json({ error: 'Not found' });
     req.query = query;
     const { default: handler } = await load();
