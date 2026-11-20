@@ -8,11 +8,9 @@ vi.mock('@civitai/next-axiom', () => ({
     (...args: unknown[]) =>
       h(...args),
 }));
-vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession: vi.fn() }));
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
 import handler from '~/pages/api/v1/verify';
 
@@ -21,7 +19,6 @@ const signed = readFileSync(
 );
 
 async function post(body: Buffer, headers: Record<string, string>) {
-  vi.mocked(getServerAuthSession).mockResolvedValue(null as never);
   const { req, res, header } = createRealApiPair({
     method: 'POST',
     url: '/api/v1/verify',
