@@ -63,10 +63,11 @@ func (f *fakeFlipt) del(key string) {
 	delete(f.flags, key)
 }
 
-func (f *fakeFlipt) set(key string, on bool) {
+// setK sets the flag "k", the one the switch tests read.
+func (f *fakeFlipt) setK(on bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.flags[key] = on
+	f.flags["k"] = on
 }
 
 // The request is the one Node's client would evaluate the flag as: the default namespace, the
@@ -162,13 +163,13 @@ func TestSwitchFollowsTheFlag(t *testing.T) {
 		want bool
 	}{
 		{"off", func() {}, false},
-		{"flipped on", func() { f.set("k", true) }, true},
+		{"flipped on", func() { f.setK(true) }, true},
 		{"server error", func() { f.setCode(http.StatusServiceUnavailable) }, false},
 		{"recovered", func() { f.setCode(0) }, true},
 		{"flag deleted", func() { f.del("k") }, false},
-		{"re-created off", func() { f.set("k", false) }, false},
-		{"on again", func() { f.set("k", true) }, true},
-		{"flipped off", func() { f.set("k", false) }, false},
+		{"re-created off", func() { f.setK(false) }, false},
+		{"on again", func() { f.setK(true) }, true},
+		{"flipped off", func() { f.setK(false) }, false},
 	}
 	for _, s := range steps {
 		s.do()

@@ -38,8 +38,10 @@ func dedicatedSources(on *atomic.Bool) (*Sources, *testkit.Redis, *fakeCH, *fake
 	}}, r, shared, dedicated
 }
 
-func readLike(t *testing.T, s *Sources, r *testkit.Redis, id int) int {
+// readLike is image 32's Like count, its hash cleared first so the read is a populate.
+func readLike(t *testing.T, s *Sources, r *testkit.Redis) int {
 	t.Helper()
+	const id = 32
 	r.DelKey(metricHashKey(id))
 	got, err := s.ImageMetrics(context.Background(), []int{id})
 	if err != nil {
@@ -52,7 +54,7 @@ func readLike(t *testing.T, s *Sources, r *testkit.Redis, id int) int {
 func TestMetricsDedicatedFlagOffReadsShared(t *testing.T) {
 	var on atomic.Bool
 	s, r, shared, dedicated := dedicatedSources(&on)
-	if got := readLike(t, s, r, 32); got != 11 {
+	if got := readLike(t, s, r); got != 11 {
 		t.Fatalf("Like %d, want 11 (the shared reader's)", got)
 	}
 	if len(shared.seen()) != 1 || len(dedicated.seen()) != 0 {
@@ -66,7 +68,7 @@ func TestMetricsDedicatedFlagOnReadsDedicated(t *testing.T) {
 	var on atomic.Bool
 	on.Store(true)
 	s, r, shared, dedicated := dedicatedSources(&on)
-	if got := readLike(t, s, r, 32); got != 29 {
+	if got := readLike(t, s, r); got != 29 {
 		t.Fatalf("Like %d, want 29 (the dedicated reader's)", got)
 	}
 	if len(shared.seen()) != 0 {
@@ -89,12 +91,12 @@ func TestMetricsDedicatedNotConfiguredReadsShared(t *testing.T) {
 	on.Store(true)
 	s, r, shared, _ := dedicatedSources(&on)
 	s.Compute.MetricsClickHouse = nil
-	if got := readLike(t, s, r, 32); got != 11 {
+	if got := readLike(t, s, r); got != 11 {
 		t.Fatalf("no dedicated reader: Like %d, want 11", got)
 	}
 	s, r, shared2, dedicated := dedicatedSources(&on)
 	s.Compute.MetricsClickHouseOn = nil
-	if got := readLike(t, s, r, 32); got != 11 {
+	if got := readLike(t, s, r); got != 11 {
 		t.Fatalf("no flag read: Like %d, want 11", got)
 	}
 	if len(shared.seen()) != 1 || len(shared2.seen()) != 1 || len(dedicated.seen()) != 0 {
@@ -129,7 +131,7 @@ func TestMetricsDedicatedRuntimeFlip(t *testing.T) {
 	}{{false, 11}, {true, 29}, {true, 29}, {false, 11}}
 	for i, w := range want {
 		on.Store(w.on)
-		if got := readLike(t, s, r, 32); got != w.like {
+		if got := readLike(t, s, r); got != w.like {
 			t.Fatalf("read %d (flag %v): Like %d, want %d", i, w.on, got, w.like)
 		}
 	}
