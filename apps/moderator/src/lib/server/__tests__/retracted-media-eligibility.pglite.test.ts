@@ -413,7 +413,9 @@ describe('a model version unpublished for its subject', () => {
           served: true,
         });
       } finally {
-        await db.exec(`DELETE FROM "TextScanHold"`);
+        await db.exec(
+          `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129)`
+        );
       }
     }
     // A pending hold restricts too: a removal runs before its hold is marked confirmed.
@@ -423,7 +425,9 @@ describe('a model version unpublished for its subject', () => {
     try {
       expect(await getRetractedMedia(990000126, { csamReview: false })).toBeNull();
     } finally {
-      await db.exec(`DELETE FROM "TextScanHold"`);
+      await db.exec(
+        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129)`
+      );
     }
     await db.exec(
       `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500126, 'csam', 'Confirmed')`
@@ -464,6 +468,29 @@ describe('a model version unpublished for its subject', () => {
     expect(await getRetractedMedia(990000125, { csamReview: false })).toMatchObject({
       url: 'key-990000125',
     });
+  });
+
+  it('keeps an image on a post a CSAM hold removed, after the post is republished', async () => {
+    await db.exec(`
+      INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400129, '{"unpublishedReason": "csam-text-hold"}', NULL);
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
+        (990000129, 'key-990000129', 'Blocked', 'moderated', 990100129, 990400129);
+      INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Post', 990400129, 'csam', 'Confirmed');
+    `);
+    try {
+      expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
+      // A republish clears the post's reason; the hold still restricts.
+      await db.exec(`UPDATE "Post" SET metadata = '{}' WHERE id = 990400129`);
+      expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
+      await db.exec(`UPDATE "TextScanHold" SET status = 'Dismissed' WHERE "entityId" = 990400129`);
+      expect(await getRetractedMedia(990000129, { csamReview: false })).toMatchObject({
+        url: 'key-990000129',
+      });
+    } finally {
+      await db.exec(
+        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129)`
+      );
+    }
   });
 
   it('keeps an image whose own post is on a CSAM hold to cleared moderators', async () => {
