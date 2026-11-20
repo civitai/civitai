@@ -25,6 +25,7 @@ import {
   addBlockedImage,
   bulkRemoveBlockedImages,
   deleteImages,
+  imagesPendingDeletion,
   getAllImagesIndex,
   getImagesForModelVersionCache,
   getPostDetailByImageId,
@@ -197,6 +198,9 @@ export const deleteImageHandler = async ({
       .map((tag) => ({ tagName: tag.tagName }));
 
     const [image] = await deleteImages([input.id], { actor: ctx.user });
+    // Only a case the owner can already see is acknowledged; any other kept delete answers like a delete.
+    if (!image && (await imagesPendingDeletion([input.id])).has(input.id))
+      return { deleteAfterReview: true as const };
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
@@ -1200,7 +1204,14 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
         return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
       }),
     ]);
-    const result = { ...image, eventDecoration: eventDecorations[image.id] ?? null };
+    // Told only to the owner, and only for a review they can already see.
+    const deleteAfterReview =
+      ctx.user?.id === image.user.id && (await imagesPendingDeletion([image.id])).has(image.id);
+    const result = {
+      ...image,
+      eventDecoration: eventDecorations[image.id] ?? null,
+      deleteAfterReview,
+    };
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: result.user.id });

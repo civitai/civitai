@@ -122,6 +122,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { DELETE_AFTER_REVIEW_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -292,6 +293,8 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
   const handleSidebarToggle = () => setSidebarOpen((o) => !o);
 
   const isOwner = currentUser?.id === image.user.id;
+  // Only `image.get` carries it; a feed item never does.
+  const deleteAfterReview = 'deleteAfterReview' in image && !!image.deleteAfterReview;
   const canRemix = isRemixMenuVisible(image);
 
   const IconChevron = !active ? IconChevronUp : IconChevronDown;
@@ -817,18 +820,24 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                         label="Posted to 3D Model"
                       />
                     )}
-                    {!text && image.needsReview && isOwner && (
+                    {!text && (deleteAfterReview || image.needsReview) && isOwner && (
                       <AlertWithIcon
                         icon={<IconAlertTriangle />}
                         color="yellow"
                         iconColor="yellow"
                         title={
-                          image.needsReview === 'appeal' ? 'Under appeal' : 'Flagged for review'
+                          deleteAfterReview
+                            ? 'Deletion pending'
+                            : image.needsReview === 'appeal'
+                            ? 'Under appeal'
+                            : 'Flagged for review'
                         }
                         radius={0}
                         px="md"
                       >
-                        {image.needsReview === 'appeal'
+                        {deleteAfterReview
+                          ? DELETE_AFTER_REVIEW_MESSAGE
+                          : image.needsReview === 'appeal'
                           ? `Your appeal has been submitted, but the image will remain hidden until it's reviewed by our moderators.`
                           : `This image won't be visible to other users until it's reviewed by our moderators.`}
                       </AlertWithIcon>
