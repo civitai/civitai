@@ -3234,7 +3234,7 @@ export const modelVersionDonationGoal = async ({
 };
 
 // Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
-// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler). Read per call.
+// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
 const publicModelResponseCacheEnabled = () => env.IS_DATAPACKET;
 
 export function publicModelResponseKey(
