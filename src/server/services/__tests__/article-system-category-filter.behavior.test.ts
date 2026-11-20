@@ -45,7 +45,7 @@ const ids = async (where: Prisma.Sql) =>
   ).rows.map((r) => r.id);
 
 describe('articleTagFilterSql', () => {
-  it('lists an article under its system category, not the category its author picked', async () => {
+  it("lists an article under its system category, and under its author's pick only when it has none", async () => {
     expect(await ids(articleTagFilterSql([STORY], CATEGORIES))).toEqual([
       SYSTEM_STORY_AUTHOR_GUIDE,
     ]);
@@ -53,10 +53,6 @@ describe('articleTagFilterSql', () => {
       UNSCANNED_AUTHOR_GUIDE,
       SYSTEM_GUIDE_NO_AUTHOR_PICK,
     ]);
-  });
-
-  it("falls back to the author's pick when the article has no system category", async () => {
-    expect(await ids(articleTagFilterSql([GUIDE], CATEGORIES))).toContain(UNSCANNED_AUTHOR_GUIDE);
   });
 
   it("matches a tag that is not a category on the author's tags", async () => {
