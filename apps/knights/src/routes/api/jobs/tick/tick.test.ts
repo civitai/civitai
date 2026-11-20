@@ -13,6 +13,7 @@ const runLabelPass = vi.hoisted(() => vi.fn());
 const retryPendingPurchases = vi.hoisted(() => vi.fn());
 const closeStrandedYesNo = vi.hoisted(() => vi.fn());
 const runTagReview = vi.hoisted(() => vi.fn());
+const writeBackTagReviews = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 const logToAxiom = vi.hoisted(() => vi.fn());
 const buzzConfigured = vi.hoisted(() => vi.fn());
@@ -29,7 +30,11 @@ vi.mock('$lib/server/shop/purchase', () => ({ retryPendingPurchases }));
 vi.mock('$lib/server/shop/main-app', () => ({ getMainAppPort: () => ({}) }));
 vi.mock('$lib/server/yesno/sweep', () => ({ closeStrandedYesNo }));
 vi.mock('$lib/server/yesno/tag-review', () => ({ runTagReview }));
-vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ maxAgeDays: 14 }) }));
+vi.mock('$lib/server/yesno/tag-writeback', () => ({ writeBackTagReviews }));
+vi.mock('$lib/server/yesno/runtime', () => ({
+  yesNoConfig: () => ({ maxAgeDays: 14, tagReview: false }),
+  tagReviewPort: () => ({}),
+}));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { mirrorXp: undefined } }));
 vi.mock('$lib/server/progression/progression', () => ({ settleFinalItems }));
@@ -87,6 +92,14 @@ beforeEach(() => {
   closeStrandedYesNo.mockResolvedValue({ unplayable: 0, stale: 0, failed: 0 });
   runTagReview.mockReset();
   runTagReview.mockResolvedValue({ created: 0, ruled: 0, ended: 0, failed: 0 });
+  writeBackTagReviews.mockReset();
+  writeBackTagReviews.mockResolvedValue({
+    applied: 0,
+    skipped: 0,
+    waiting: 0,
+    failed: 0,
+    exhausted: 0,
+  });
   runLabelPass.mockReset();
   runLabelPass.mockResolvedValue({ done: true, labelsWritten: 0, labelFailures: 0 });
   tickItemFailures.mockReset();
@@ -116,6 +129,8 @@ describe('POST /api/jobs/tick', () => {
       yesNoClosed: 0,
       tagReviewCreated: 0,
       tagReviewRuled: 0,
+      tagReviewWrittenBack: 0,
+      tagReviewWaiting: 0,
       expiredSmites: 0,
       resets: 0,
       conversionsRetried: 0,
