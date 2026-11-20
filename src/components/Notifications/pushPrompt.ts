@@ -3,7 +3,11 @@ import dayjs from 'dayjs';
 import { usePushSubscription } from '~/components/Notifications/usePushSubscription';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import type { PushSupport } from '~/store/push-subscription.store';
-import type { PUSH_PROMPT_ACTIONS, PUSH_PROMPT_VARIANTS } from '~/server/schema/track.schema';
+import type {
+  PUSH_PROMPT_ACTIONS,
+  PUSH_PROMPT_SURFACES,
+  PUSH_PROMPT_VARIANTS,
+} from '~/server/schema/track.schema';
 import { trpc } from '~/utils/trpc';
 
 // One re-ask budget for every surface that asks: "Not now" anywhere spends it.
@@ -12,7 +16,7 @@ const REASK_AFTER_DAYS = 90;
 
 export type PushPromptAction = (typeof PUSH_PROMPT_ACTIONS)[number];
 export type PushPromptVariant = (typeof PUSH_PROMPT_VARIANTS)[number];
-export type PushPromptSurface = 'visit-prompt' | 'settings-card' | 'deal-flow';
+export type PushPromptSurface = (typeof PUSH_PROMPT_SURFACES)[number];
 
 export function isPushAskSnoozed(
   settings: { pushPromptDismissedCount?: number; pushPromptDismissedAt?: Date | null } | undefined,

@@ -924,11 +924,12 @@ export const PUSH_PROMPT_ACTIONS = [
   'failed',
 ] as const;
 export const PUSH_PROMPT_VARIANTS = ['new', 'finish', 'another-device'] as const;
+export const PUSH_PROMPT_SURFACES = ['visit-prompt', 'settings-card', 'deal-flow'] as const;
 const pushPromptSchema = z.object({
   type: z.literal('Push_Prompt'),
   details: z.object({
     action: z.enum(PUSH_PROMPT_ACTIONS),
-    surface: z.enum(['visit-prompt', 'settings-card', 'deal-flow']),
+    surface: z.enum(PUSH_PROMPT_SURFACES),
     variant: z.enum(PUSH_PROMPT_VARIANTS),
     platform: z.enum(['desktop', 'mobile']),
   }),
