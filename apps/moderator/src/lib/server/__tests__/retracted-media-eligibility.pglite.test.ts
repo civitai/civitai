@@ -94,6 +94,8 @@ beforeAll(async () => {
   await db.exec(`
     INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview", "blockedFor", minor) VALUES
       (1, 'key-1', 301, 'Blocked', NULL, 'moderated', false),
+      (31, 'key-31', 331, 'Blocked', NULL, 'moderated', false),
+      (32, 'key-32', 332, 'Blocked', NULL, 'moderated', false),
       (2, 'key-2', 302, 'Blocked', NULL, 'moderated', true),
       (3, 'key-3', 303, 'Blocked', NULL, NULL, false),
       (4, 'key-4', 304, 'Blocked', 'csam', 'moderated', false),
@@ -136,7 +138,9 @@ beforeAll(async () => {
       ('key-25', 'Retracted'), ('key-26', 'Retracted'), ('key-27', 'Retracted');
     INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES
       ('key-28', 'Retracted', now() - interval '5 minutes', now()), ('key-29', 'Retracted', now(), NULL),
-      ('key-30', 'Retracted', now() - interval '30 seconds', now());
+      ('key-30', 'Retracted', now() - interval '30 seconds', now()),
+      ('key-31', 'Retracted', now() - interval '5 minutes', now()),
+      ('key-32', 'Retracted', now() - interval '30 seconds', now());
     INSERT INTO "Model" (id, meta) VALUES
       (15, '{"unpublishedReason": "mature-underage"}'), (99, '{}'),
       (26, '{"unpublishedReason": "photo-real-underage"}');
@@ -175,6 +179,13 @@ const tierOf = async (id: number) => {
 };
 
 describe('retracted media eligibility', () => {
+  // Moderation Lead ruling 2026-11-20: an upgraded deny may have capped a hold on a row since
+  // deleted, so its url stays with the CSAM grant whatever the row's own state.
+  it('keeps a blocked image on a url retracted by an upgraded deny to cleared moderators', async () => {
+    expect(await tierOf(31)).toBe('cleared');
+    expect(await tierOf(32)).toBe('anyMod');
+  });
+
   it('keeps an image the scanner marks, or cannot read, to moderators cleared for CSAM review', async () => {
     for (const verdict of ['hit', null] as const) {
       scanner.verdict = verdict;
