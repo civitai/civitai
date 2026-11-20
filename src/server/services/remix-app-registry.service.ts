@@ -1004,7 +1004,7 @@ async function recordRunnerQuarantine(
       sha256: remixReviewHash({ ...manifest, remix }),
       note: `viewer ${viewers.length} of ${REMIX_COMBINATION_BLOCKS_MAX}`,
     };
-    // Fewer observed rows than a hold takes, so they never push a mod's decision out of the log.
+    // At most two observed rows at a time: a run of trips cannot flush mod decisions from the log.
     const observed = (manifest.reviewLog ?? []).filter(
       ({ action }) => action === QUARANTINE_OBSERVED
     );
