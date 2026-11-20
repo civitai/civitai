@@ -63,6 +63,8 @@ beforeEach(() => {
   vi.useRealTimers();
   resetEnv();
   vi.mocked(hSetWithTTL).mockResolvedValue(undefined as never);
+  // An admitting claim-script reply: a fail-closed scope refuses when the script has none.
+  redisMock.redis.eval.mockResolvedValue([1] as never);
 });
 
 // imageSearchUpload: the Moderation Lead's ruling on civitai#9445 (its global upload cap bounds paid scans and embeds).

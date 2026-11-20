@@ -1,5 +1,8 @@
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { evidenceVerifiedText } from '@civitai/shared/held-url';
+import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
+import { CHILD_SAFETY_VIOLATIONS } from '@civitai/shared/post-text-report';
 
 // The only DELETEs on "Image" and "Post" (guarded by `no-direct-image-post-delete.test.ts`).
 
@@ -53,6 +56,12 @@ type DeleteOptions = {
    * table is read from the statement's snapshot.
    */
   where?: RawBuilder<boolean>;
+  /**
+   * Listed rows `blocked` keeps are left and queued as a `PendingDelete` with `data`, in the same
+   * statement: from one snapshot, each row it locks is either deleted (unless a hold marker's trigger
+   * keeps it) or queued. Read against the unaliased table.
+   */
+  pending?: { blocked: RawBuilder<boolean>; data: PendingDelete };
 };
 
 function conditions({ actor, where }: DeleteOptions) {
@@ -60,21 +69,39 @@ function conditions({ actor, where }: DeleteOptions) {
   return sql`${own} ${where ? sql`AND (${where})` : sql``}`;
 }
 
-/** The DELETE itself. With a caller's condition, the rows are locked first and it is re-checked. */
+/**
+ * The DELETE itself, and the CTEs it needs. With a caller's condition or `pending`, the rows are
+ * locked first and the condition re-checked; `pending` queues the locked rows it keeps.
+ */
 function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: number[]) {
   const t = sql.table(table);
   const on = conditions(options);
   // One array parameter, not one per id: an account wipe can list more ids than a statement binds.
   const listed = sql`id = ANY(${ids}::int[])`;
+  const { where, pending } = options;
+  if (!where && !pending) return { ctes: [], remove: sql`DELETE FROM ${t} WHERE ${listed} ${on}` };
+  const ctes = [
+    sql`doomed AS (
+      SELECT id, ${pending?.blocked ?? sql`false`} AS blocked FROM ${t}
+      WHERE ${listed} ${on} ORDER BY id FOR UPDATE
+    )`,
+  ];
+  if (pending)
+    ctes.push(sql`pending AS (
+      INSERT INTO "JobQueue" ("entityId", "entityType", "type", "data")
+      SELECT id, ${table}::"EntityType", 'PendingDelete'::"JobQueueType",
+        ${JSON.stringify(pending.data)}::jsonb
+      FROM doomed WHERE blocked ORDER BY id
+      ${PENDING_DELETE_UPSERT}
+    )`);
   return {
-    lock: options.where
-      ? sql`doomed AS (SELECT id FROM ${t} WHERE ${listed} ${on} ORDER BY id FOR UPDATE)`
-      : sql``,
-    remove: sql`DELETE FROM ${t} WHERE ${
-      options.where ? sql`id IN (SELECT id FROM doomed)` : listed
-    } ${on}`,
+    ctes,
+    remove: sql`DELETE FROM ${t} WHERE id IN (SELECT id FROM doomed WHERE NOT blocked) ${on}`,
   };
 }
+
+const withCtes = (ctes: RawBuilder<unknown>[], more: boolean) =>
+  ctes.length ? sql`WITH ${sql.join(ctes)}${more ? sql`,` : sql``}` : more ? sql`WITH` : sql``;
 
 // A queued all-versions purge of the same key stays one: a later key-only delete cannot downgrade it.
 const STORAGE_DELETE_UPSERT = sql`
@@ -86,6 +113,25 @@ const STORAGE_DELETE_UPSERT = sql`
 // delete then leaves it for the next run.
 const POST_RECOUNT_UPSERT = sql`
   ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET "createdAt" = clock_timestamp()`;
+
+const pendingRank = (data: string) =>
+  sql.raw(
+    `CASE WHEN ${data} ? 'moderatorDelete' THEN 3 WHEN ${data} ? 'ownerId' THEN 2 ELSE 1 END`
+  );
+
+// A stronger kind replaces a queued one (a moderator's cleanup, the owner's own delete, an owner's
+// cleanup, strongest first) and the row keeps its earlier due time. The owner's ask survives either
+// way, as `ownerId` on a moderator's cleanup. Anything else changes nothing.
+const PENDING_DELETE_UPSERT = sql`
+  ON CONFLICT ("entityType", "entityId", "type") DO UPDATE
+    SET "data" = CASE
+        WHEN ${pendingRank('EXCLUDED."data"')} > ${pendingRank('"JobQueue"."data"')}
+        THEN EXCLUDED."data" ELSE "JobQueue"."data" END
+      || jsonb_strip_nulls(jsonb_build_object(
+        'ownerId', COALESCE(EXCLUDED."data"->'ownerId', "JobQueue"."data"->'ownerId'))),
+      "createdAt" = LEAST("JobQueue"."createdAt", EXCLUDED."createdAt")
+    WHERE ${pendingRank('EXCLUDED."data"')} > ${pendingRank('"JobQueue"."data"')}
+      OR (EXCLUDED."data" ? 'ownerId' AND NOT "JobQueue"."data" ? 'ownerId')`;
 
 /**
  * Deletes image rows and, in the same statement, queues what can wait: each stored file for the main
@@ -100,10 +146,10 @@ export async function deleteImageRows(
 ): Promise<DeletedImage[]> {
   const ids = [...new Set(options.ids)];
   if (!ids.length) return [];
-  const { lock, remove } = deleteStatement('Image', options, ids);
+  const { ctes, remove } = deleteStatement('Image', options, ids);
   const { files, recountPosts = false, cdnTakedown = false } = options;
   const { rows } = await sql<DeletedImage>`
-    WITH ${options.where ? sql`${lock},` : sql``}
+    ${withCtes(ctes, true)}
     gone AS (
       ${remove}
       RETURNING id, url, "userId", "postId", "nsfwLevel", ingestion, "needsReview", "blockedFor",
@@ -157,9 +203,9 @@ export async function deleteImageRows(
 export async function deletePostRows(db: Kysely<DB>, options: DeleteOptions) {
   const ids = [...new Set(options.ids)];
   if (!ids.length) return [];
-  const { lock, remove } = deleteStatement('Post', options, ids);
+  const { ctes, remove } = deleteStatement('Post', options, ids);
   const { rows } = await sql<DeletedPostRow>`
-    ${options.where ? sql`WITH ${lock}` : sql``}
+    ${withCtes(ctes, false)}
     ${remove} RETURNING id, "userId", "nsfwLevel"`.execute(db);
   return rows;
 }
@@ -237,42 +283,96 @@ const key = (column: string) => sql.raw(storedKeySql(column));
 /** `NsfwLevel.Blocked`. */
 const NSFW_LEVEL_BLOCKED = 32;
 
-/** Not reported, awaiting review or blocked: moderation decides what happens to those. */
-const notUnderModeration = sql`"Image"."needsReview" IS NULL
-    AND "Image"."blockedFor" IS NULL
-    AND "Image".ingestion <> 'Blocked'
-    AND "Image"."nsfwLevel" <> ${NSFW_LEVEL_BLOCKED}
-    AND NOT EXISTS (SELECT 1 FROM "ImageReport" r WHERE r."imageId" = "Image".id)`;
+const openChildSafetyReport = (reportId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
+  SELECT 1 FROM "Report" cs_r
+  WHERE cs_r.id = ${reportId}
+    AND cs_r.status IN ('Pending', 'Processing')
+    AND (cs_r.reason = 'CSAM' OR (cs_r.reason = 'TOSViolation'
+      AND cs_r.details ->> 'violation' IN (${sql.join([...CHILD_SAFETY_VIOLATIONS])})))
+)`;
+
+const postReported = (postId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
+  SELECT 1 FROM "PostReport" cs_pr
+  WHERE cs_pr."postId" = ${postId} AND ${openChildSafetyReport(sql.ref('cs_pr.reportId'))}
+)`;
 
 /**
- * Not under CSAM review, blocked for CSAM, reported for CSAM or listed in a `CsamReport`, which
- * lists an image as `{"id": n}`, `n` or `"n"`.
+ * The image's CyberTip is filed with verified evidence. A report lists an image as `{"id": n}` or a
+ * bare id, number or text.
  */
-const notCsamReported = sql`${notCsamFlagged}
-    AND NOT EXISTS (
-      SELECT 1 FROM "ImageReport" ir JOIN "Report" r ON r.id = ir."reportId"
-      WHERE ir."imageId" = "Image".id AND r.reason = 'CSAM'
+const evidenceFiled = (id: RawBuilder<unknown>) => sql<boolean>`EXISTS (
+  SELECT 1 FROM "CsamReport" cs_cr
+  -- CASE, not AND, so the cheap images test runs first and "details" is only read on a match.
+  WHERE CASE
+    WHEN jsonb_typeof(cs_cr.images) = 'array' AND (
+      cs_cr.images @> jsonb_build_array(jsonb_build_object('id', ${id}))
+      OR cs_cr.images @> jsonb_build_array(jsonb_build_object('id', ${id}::text))
+      OR cs_cr.images @> jsonb_build_array(${id})
+      OR cs_cr.images @> jsonb_build_array(${id}::text)
     )
-    AND "Image".id::text NOT IN (
-      SELECT CASE jsonb_typeof(e) WHEN 'object' THEN e->>'id' ELSE e#>>'{}' END
-      FROM "CsamReport" c,
-        jsonb_array_elements(CASE jsonb_typeof(c.images) WHEN 'array' THEN c.images ELSE '[]' END) e
-      WHERE CASE jsonb_typeof(e) WHEN 'object' THEN e->>'id' ELSE e#>>'{}' END IS NOT NULL
-    )`;
+    THEN cs_cr."reportSentAt" IS NOT NULL AND ${sql.raw(evidenceVerifiedText('cs_cr'))}
+    ELSE false
+  END
+)`;
+
+// Each leg is a CASE so its subquery runs only on a row the leg can hold: an AND whose first test is
+// NULL (no flag, the usual image) still evaluates its second.
 
 /**
- * An image a parent's delete may take with it, read against the unaliased "Image": `ownerId`'s own
- * (when given), in no post, used nowhere in `IMAGE_USES` and its stored object not shop artwork. An
- * owner's delete also leaves any image under moderation; a moderator's leaves only those reported for
- * CSAM. Checked when the delete is queued, and again by the delete itself.
+ * Blocked for CSAM, until its CyberTip is filed with verified evidence. Read against `image` (a
+ * table name or alias). The broader "held" rule is `heldImageSql` in @civitai/shared/held-media.
  */
-export function unusedImage({
-  ownerId,
-  moderatorDelete,
-}: {
-  ownerId?: number;
-  moderatorDelete: boolean;
-}) {
+const csamBlockOpen = (image: string) => {
+  const col = (name: string) => sql.ref(`${image}.${name}`);
+  return sql<boolean>`CASE WHEN ${col('blockedFor')} = 'CSAM'
+    THEN NOT ${evidenceFiled(col('id'))} ELSE false END`;
+};
+
+/** Under CSAM review, until the CSAM queue dismisses it; once blocked as CSAM, the block decides. */
+const csamReviewOpen = (image: string) => {
+  const col = (name: string) => sql.ref(`${image}.${name}`);
+  return sql<boolean>`CASE WHEN ${col('needsReview')} = 'csam'
+    AND ${col('blockedFor')} IS DISTINCT FROM 'CSAM'
+    THEN NOT EXISTS (
+      SELECT 1 FROM "CsamQueueSetAside" cs_s
+      WHERE cs_s."imageId" = ${col('id')} AND cs_s.outcome = 'Dismissed'
+    )
+    ELSE false END`;
+};
+
+/**
+ * A child-safety case its owner can already see, read against `image`: the image is served to them
+ * as blocked. Only this case may tell the owner their delete waits on a review.
+ */
+export const childSafetyVisibleCase = (image = 'Image') => {
+  const needsReview = sql.ref(`${image}.needsReview`);
+  return sql<boolean>`(${csamBlockOpen(image)}
+    AND COALESCE(${needsReview}, '') <> ALL(${sql.val([...OWNER_HIDDEN_REVIEWS])}::text[]))`;
+};
+
+/**
+ * An image in an open child-safety case, read against `image`: under CSAM review, blocked for CSAM,
+ * or under an open child-safety report on itself or its post. Its owner's delete waits for the case
+ * to close.
+ */
+export const childSafetyImageCase = (image = 'Image') => {
+  const col = (name: string) => sql.ref(`${image}.${name}`);
+  return sql<boolean>`(
+    ${csamReviewOpen(image)}
+    OR ${csamBlockOpen(image)}
+    OR EXISTS (
+      SELECT 1 FROM "ImageReport" cs_ir
+      WHERE cs_ir."imageId" = ${col('id')} AND ${openChildSafetyReport(sql.ref('cs_ir.reportId'))}
+    )
+    OR CASE WHEN ${col('postId')} IS NOT NULL THEN ${postReported(col('postId'))} ELSE false END
+  )`;
+};
+
+/** A post under an open child-safety report, read against `post`; deleting it takes the report. */
+export const childSafetyPostCase = (post = 'Post') => postReported(sql.ref(`${post}.id`));
+
+/** In no post, used nowhere in `IMAGE_USES` and its stored object not shop artwork. */
+export function imageNotUsed() {
   const id = sql.ref('Image.id');
   const uses = Object.values(IMAGE_USES).map(
     ([table, column]) =>
@@ -280,9 +380,7 @@ export function unusedImage({
   );
   // A stored "Image".url is the bare key, so its first key is the one.
   const imageKey = key('"Image".url');
-  const owner = ownerId === undefined ? sql`` : sql`"Image"."userId" = ${ownerId} AND`;
-  return sql<boolean>`${owner} "Image"."postId" IS NULL
-    AND ${moderatorDelete ? notCsamReported : notUnderModeration}
+  return sql<boolean>`"Image"."postId" IS NULL
     AND ${sql.join(uses, sql` AND `)}
     AND NOT EXISTS (
       SELECT 1 FROM "Cosmetic" c WHERE ${key(`c."data"->>'url'`)} = ${imageKey}
@@ -296,9 +394,74 @@ export function unusedImage({
     AND NOT EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" t WHERE t.url = ${imageKey})`;
 }
 
+/** Moderation still open on an image: a review other than CSAM, any block, or an open report. */
+const moderationOpen = sql<boolean>`(
+  ("Image"."needsReview" IS NOT NULL AND "Image"."needsReview" <> 'csam')
+  OR "Image"."blockedFor" IS NOT NULL
+  OR "Image".ingestion = 'Blocked'
+  OR "Image"."nsfwLevel" = ${NSFW_LEVEL_BLOCKED}
+  OR EXISTS (
+    SELECT 1 FROM "ImageReport" pd_ir JOIN "Report" pd_r ON pd_r.id = pd_ir."reportId"
+    WHERE pd_ir."imageId" = "Image".id AND pd_r.status IN ('Pending', 'Processing')
+  )
+)`;
+
 /**
- * Of `imageIds`, records the ones `ownerId`'s parent no longer needs (`unusedImage`) for deletion, in
- * the transaction that unlinks them: the main app's `image-deletes` job deletes those still unused.
+ * A delete that has to wait, one per entity in the `PendingDelete` queue: an owner's own delete a
+ * child-safety case keeps, or a parent's cleanup of an image it no longer uses (a moderator's when
+ * `moderatorDelete`). The main app's `pending-deletes` job carries it out once nothing blocks it.
+ */
+/** A moderator's cleanup carries `ownerId` when the owner also asked: it then goes though in use. */
+export type PendingDelete =
+  | { ownerId: number }
+  | { cleanup: true; moderatorDelete?: true; ownerId?: number };
+
+/** An owner's delete of their own image waits on its child-safety case. Read against "Image". */
+export const ownImageDeleteBlocked = (ownerId: number | RawBuilder<unknown>) =>
+  sql<boolean>`("Image"."userId" = ${ownerId} AND ${childSafetyImageCase()})`;
+
+/** An owner's delete of their own post waits on a child-safety report on it. Read against "Post". */
+export const ownPostDeleteBlocked = (ownerId: number | RawBuilder<unknown>) =>
+  sql<boolean>`("Post"."userId" = ${ownerId} AND ${childSafetyPostCase()})`;
+
+/**
+ * What keeps a parent's cleanup of an image for now, read against "Image": its child-safety case, a
+ * held owner (`heldOwner`, the caller's), and for an owner's cleanup any moderation still open,
+ * which decides those images first.
+ */
+export const cleanupBlocked = (moderatorDelete: boolean, heldOwner: RawBuilder<boolean>) =>
+  sql<boolean>`(${childSafetyImageCase()} OR ${heldOwner}${
+    moderatorDelete ? sql`` : sql` OR ${moderationOpen}`
+  })`;
+
+/** What keeps the pending delete `data` (a queue row's) of an image, read against "Image". */
+export const imageDeleteBlocked = (data: RawBuilder<unknown>, heldOwner: RawBuilder<boolean>) =>
+  sql<boolean>`CASE
+    WHEN ${data} ? 'moderatorDelete' THEN ${cleanupBlocked(true, heldOwner)}
+    WHEN ${data} ? 'cleanup' THEN ${cleanupBlocked(false, heldOwner)}
+    ELSE ${ownImageDeleteBlocked(sql`(${data}->>'ownerId')::int`)}
+  END`;
+
+/**
+ * Of `imageIds`, those with a pending delete whose case their owner can see
+ * (`childSafetyVisibleCase`): only those owners may be told their delete waits on a review.
+ */
+export async function imagesPendingDeletion(db: Kysely<DB>, imageIds: number[]) {
+  const ids = [...new Set(imageIds)];
+  if (!ids.length) return new Set<number>();
+  const { rows } = await sql<{ id: number }>`
+    SELECT id FROM "Image"
+    WHERE id = ANY(${ids}::int[]) AND ${childSafetyVisibleCase()} AND EXISTS (
+      SELECT 1 FROM "JobQueue" q
+      WHERE q.type = 'PendingDelete' AND q."entityType" = 'Image' AND q."entityId" = "Image".id
+    )
+  `.execute(db);
+  return new Set(rows.map((row) => row.id));
+}
+
+/**
+ * Of `imageIds`, records `ownerId`'s own that the parent no longer needs (`imageNotUsed`) as
+ * pending cleanups.
  */
 export async function queueImageDeletes(
   db: Kysely<DB>,
@@ -307,28 +470,68 @@ export async function queueImageDeletes(
 ) {
   const ids = [...new Set(imageIds)];
   if (!ids.length) return;
+  const data: PendingDelete = { cleanup: true, ...(moderatorDelete && { moderatorDelete: true }) };
   await sql`
     INSERT INTO "JobQueue" ("entityId", "entityType", "type", "data")
-    SELECT id, 'Image'::"EntityType", 'ImageDelete'::"JobQueueType",
-      ${JSON.stringify(moderatorDelete ? { moderatorDelete: true } : {})}::jsonb
+    SELECT id, 'Image'::"EntityType", 'PendingDelete'::"JobQueueType", ${JSON.stringify(
+      data
+    )}::jsonb
     FROM "Image"
-    WHERE id = ANY(${ids}::int[]) AND ${unusedImage({ ownerId, moderatorDelete })}
+    WHERE id = ANY(${ids}::int[]) AND "userId" = ${ownerId} AND ${imageNotUsed()}
     -- In id order, so two deletes upserting the same rows cannot lock them in opposite orders.
     ORDER BY id
-    -- A moderator's flag is added to a row already queued, never taken off it.
-    ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET "data" = EXCLUDED."data"
-      WHERE EXCLUDED."data"->>'moderatorDelete' IS NOT NULL
-        AND "JobQueue"."data"->>'moderatorDelete' IS NULL
+    ${PENDING_DELETE_UPSERT}
   `.execute(db);
 }
 
-export async function dequeueImageDeletes(db: Kysely<DB>, imageIds: number[]) {
-  const ids = [...new Set(imageIds)];
-  if (!ids.length) return;
-  await sql`
-    DELETE FROM "JobQueue"
-    WHERE type = 'ImageDelete' AND "entityType" = 'Image' AND "entityId" = ANY(${ids}::int[])
+/**
+ * Up to `limit` pending deletes of `entityType` due now, first attempts before retries, earliest due
+ * first. A row is due from its `createdAt`, which a waiting row has moved to when it is next due.
+ */
+export async function readDueDeletes(db: Kysely<DB>, entityType: 'Image' | 'Post', limit: number) {
+  const { rows } = await sql<{ id: number; data: PendingDelete; attempted: boolean }>`
+    SELECT "entityId" AS id, data, COALESCE(data ? 'attempted', false) AS attempted
+    FROM "JobQueue"
+    WHERE type = 'PendingDelete' AND "entityType" = ${entityType}::"EntityType"
+      AND "createdAt" <= now()
+    ORDER BY COALESCE(data ? 'attempted', false), "createdAt"
+    LIMIT ${limit}
   `.execute(db);
+  return rows;
+}
+
+/**
+ * Settles a run of pending deletes. `done` leave the queue: deleted, gone, or no longer wanted.
+ * `waiting` are still blocked and come back later: their `createdAt` moves to then, so the overdue
+ * check (`JOB_QUEUE_OVERDUE_MINUTES`) reads only a row the job has stopped reaching. `failed` threw,
+ * and come back on the next run, after its first attempts.
+ */
+export async function settleDeletes(
+  db: Kysely<DB>,
+  entityType: 'Image' | 'Post',
+  {
+    done = [],
+    waiting = [],
+    failed = [],
+  }: { done?: number[]; waiting?: number[]; failed?: number[] }
+) {
+  const of = (ids: number[]) => sql`type = 'PendingDelete'
+    AND "entityType" = ${entityType}::"EntityType" AND "entityId" = ANY(${ids}::int[])`;
+  if (done.length) await sql`DELETE FROM "JobQueue" WHERE ${of(done)}`.execute(db);
+  // An owner's ask comes due just inside the job's 5-minute interval, so the next run takes it; a
+  // cleanup waits on moderation, so hourly.
+  if (waiting.length)
+    await sql`
+      UPDATE "JobQueue"
+      SET "createdAt" = now() + CASE WHEN data ? 'cleanup' AND NOT data ? 'ownerId'
+          THEN interval '1 hour' ELSE interval '4 minutes' END,
+        data = data - 'attempted'
+      WHERE ${of(waiting)}
+    `.execute(db);
+  if (failed.length)
+    await sql`
+      UPDATE "JobQueue" SET data = data || '{"attempted": true}'::jsonb WHERE ${of(failed)}
+    `.execute(db);
 }
 
 /** Queues posts for the main app's `update-nsfw-levels` job, which recounts their rating. */

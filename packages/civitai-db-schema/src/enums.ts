@@ -963,6 +963,7 @@ export const JobQueueType = {
   CdnAccessSync: 'CdnAccessSync',
   ImageCdnPersistRetry: 'ImageCdnPersistRetry',
   CsamArchive: 'CsamArchive',
+  PendingDelete: 'PendingDelete',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];

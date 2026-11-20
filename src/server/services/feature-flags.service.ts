@@ -631,6 +631,7 @@ const featureFlags = createFeatureFlags({
   // Stickers that follow a video's time. Gates sending a track on create, reading tracks
   // (`getStickerTracks`) and the pin control. Without it a track sticker draws at its `data` pose.
   stickerVideoTracks: { availability: ['mod'], fliptKey: 'sticker-video-tracks' },
+  stickerAutoTrack: { availability: ['mod'], fliptKey: 'sticker-auto-track' },
   // The sticker book profile tab. Its own flag rather than riding `stickers`:
   // the tab publishes what a creator owns and what their work has collected on a
   // PUBLIC profile, which is a disclosure decision separate from whether

@@ -38,6 +38,7 @@ import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import {
   queueArticlesAndComicsForImages,
+  queueDocumentsForBlockedImages,
   queueDocumentsForImageMinorChanges,
 } from '~/server/services/image-models-reindex.service';
 import {
@@ -1269,6 +1270,8 @@ export async function applyIngestionSideEffects({
     // moderation gates in `comics.search-index.ts:WHERE`.
     await queueComicsForPanelImage(image.id);
     await refreshProfilePicturesForImages([image.id]);
+    // No trigger watches a block, so the documents showing the image are queued here.
+    await queueDocumentsForBlockedImages([image.id]);
     return;
   }
 

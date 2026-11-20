@@ -4,6 +4,7 @@ import type { NextApiRequest } from 'next';
 import { isDev, isPreview, isTest } from '~/env/other';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
+import { logToAxiom } from '~/server/logging/client';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import {
@@ -86,13 +87,6 @@ export const FAIL_CLOSED_RATE_LIMIT_SCOPES: readonly string[] = [
   'imageSearchUpload',
   'training',
 ];
-
-/**
- * Fail-closed routers that also refuse when the claim script itself errors, rather than deciding on
- * the read-then-write path.
- */
-export const SCRIPT_ERROR_REFUSED_SCOPES: readonly string[] = ['imageSearchUpload'];
-const scriptErrorRefusedScopes = new Set(SCRIPT_ERROR_REFUSED_SCOPES);
 
 /** Routers whose rate-limited procedures use the per-process fallback count. See above. */
 export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
@@ -596,9 +590,12 @@ export async function claimRateLimitAttempt({
       if (failClosed) throw storeUnavailable();
       degraded = true;
     } else {
-      // The script errored: a scope in SCRIPT_ERROR_REFUSED_SCOPES refuses; any other decides on
-      // the read-then-write path below.
-      if (scriptErrorRefusedScopes.has(scope.split(/[.:]/, 1)[0])) throw storeUnavailable();
+      // The script errored. The read-then-write path below can admit up to N-1 extra concurrent
+      // claimers, which a fail-closed scope must not.
+      if (failClosed) {
+        logToAxiom({ name: 'rate-limit-script-error-refused', type: 'warning', scope, cacheKey });
+        throw storeUnavailable();
+      }
       rateLimitClaimPathCounter.inc({ path: 'fallback' });
     }
   } else rateLimitClaimPathCounter.inc({ path: 'degraded' });

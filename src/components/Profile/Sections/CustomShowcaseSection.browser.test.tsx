@@ -122,6 +122,41 @@ describe('CustomShowcaseSection', () => {
     expect(cards()).toEqual(['model 1', 'model 2']);
   });
 
+  describe('more items than its rows show, on a wide screen', () => {
+    const many = Array.from({ length: 12 }, (_, i) => i + 1);
+    const renderWide = async (ids: number[]) => {
+      feedReturns(ids);
+      const screen = await renderWithProviders(
+        <div style={{ width: 1200 }}>
+          <CustomShowcaseSection section={{ ...sectionOf('Model'), items: ids }} user={user} />
+        </div>
+      );
+      await vi.waitFor(() => expect(cards()).toHaveLength(ids.length));
+      return screen;
+    };
+    const shown = () =>
+      [...document.querySelectorAll<HTMLElement>('[data-testid="card"]')].filter(
+        (c) => getComputedStyle(c).visibility !== 'hidden'
+      ).length;
+
+    test('offers View all, which unfolds every item in place and folds back', async () => {
+      const screen = await renderWide(many);
+      await vi.waitFor(() => expect(shown()).toBeLessThan(12));
+
+      await screen.getByRole('button', { name: 'View all 12' }).click();
+      await vi.waitFor(() => expect(shown()).toBe(12));
+
+      await screen.getByRole('button', { name: 'Show less' }).click();
+      await vi.waitFor(() => expect(shown()).toBeLessThan(12));
+    });
+
+    test('offers nothing when every item already shows', async () => {
+      await renderWide([1, 2]);
+      await vi.waitFor(() => expect(shown()).toBe(2));
+      expect(document.body.textContent).not.toContain('View all');
+    });
+  });
+
   test('a section the feed returns nothing for renders nothing', async () => {
     feedReturns([]);
     const { container } = await renderSection();
