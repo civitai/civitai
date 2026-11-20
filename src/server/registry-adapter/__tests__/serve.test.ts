@@ -234,6 +234,7 @@ describe('🔴 each HTTP subscription logs its region decision once, and no addr
   it('🔴 the line records the audience decision, client and relay: a service reads every rating with no hold, a user is held', async () => {
     const service: VerifyToken = async () => ({
       subject: 'service:7e3a1c55-2b4d-4f60-9a8e-1c2d3e4f5a6b',
+      userId: null,
       clientId: '7e3a1c55-2b4d-4f60-9a8e-1c2d3e4f5a6b',
       scope: 0n,
       actor: 'relay-exp-2a',
@@ -242,6 +243,7 @@ describe('🔴 each HTTP subscription logs its region decision once, and no addr
     });
     const user: VerifyToken = async () => ({
       subject: 'user:3301/client:app-5d1f',
+      userId: 3301,
       clientId: 'app-5d1f',
       scope: 0n,
       actor: null,
@@ -288,6 +290,43 @@ describe('🔴 each HTTP subscription logs its region decision once, and no addr
     });
     expect([status, error]).toEqual([401, 'invalid_token']);
     expect(logged).toEqual([]);
+  });
+});
+
+describe('🔴 an authorized stream belongs to one consumer (auth extension, relay rule 2)', () => {
+  async function head(headers: Record<string, string>) {
+    server = createRegistryServer(adapter(), {
+      verifyToken: async () => ({
+        subject: 'user:6120/client:oc-cache-3d9e',
+        userId: 6120,
+        clientId: 'oc-cache-3d9e',
+        scope: 0n,
+        actor: null,
+        user: { showNsfw: false, browsingLevel: 1 },
+        expiresAt: null,
+      }),
+    });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    const res = await fetch(`http://127.0.0.1:${port}${sub(APPS)}`, { headers });
+    await res.text();
+    return {
+      status: res.status,
+      cacheControl: res.headers.get('cache-control'),
+      vary: res.headers.get('vary'),
+    };
+  }
+
+  it('a stream with a token is private, no-store, varying on Authorization', async () => {
+    expect(await head({ authorization: 'Bearer tok-6120' })).toEqual({
+      status: 200,
+      cacheControl: 'private, no-store',
+      vary: 'Authorization',
+    });
+  });
+
+  it('an anonymous stream keeps no-cache (POSITIVE CONTROL: the header is per subscription)', async () => {
+    expect(await head({})).toEqual({ status: 200, cacheControl: 'no-cache', vary: null });
   });
 });
 

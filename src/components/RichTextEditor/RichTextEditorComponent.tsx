@@ -32,12 +32,13 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { EmbedNode } from '~/shared/tiptap/embed.node';
-import { SizedImage } from '~/shared/tiptap/sized-image.node';
+import { SizedImageEditNode } from './SizedImageEditNode';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
 import { StickerEditNode } from '~/components/TipTap/StickerNode';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
+import { TextColorControl } from './TextColorControl';
 import { TextAlignControl } from '~/components/RichTextEditor/TextAlignControl';
 import { TextAlignExtension } from '~/shared/tiptap/text-align';
 import { InsertBlurbControl } from '~/components/RichTextEditor/InsertBlurbControl';
@@ -250,8 +251,8 @@ export function RichTextEditor({
       );
     if (addVideo) {
       arr.push(
-        EdgeMediaEditNode.configure({ accepts, inline: true }),
-        SizedImage.configure({ inline: true })
+        EdgeMediaEditNode.configure({ accepts, inline: true, resizable: addImageSize }),
+        SizedImageEditNode.configure({ inline: true, resizable: addImageSize })
       );
     } else if (addImages) {
       arr.push(CustomImage.configure({ inline: true }));
@@ -493,9 +494,7 @@ export function RichTextEditor({
                       {!withoutBlockContainers && <RTE.CodeBlock />}
                     </>
                   )}
-                  {addColors && (
-                    <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
-                  )}
+                  {addColors && <TextColorControl colors={constants.richTextEditor.presetColors} />}
                 </RTE.ControlsGroup>
               )}
 

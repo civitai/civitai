@@ -57,6 +57,7 @@ const USERS = {
 // session:data2:<id> — the cached session user (packages/civitai-auth/src/session-client.ts).
 const SESSIONS = {
   1001: { id: 1001, username: 'artist_one', isModerator: false, bannedAt: null, tier: null },
+  1002: { id: 1002, username: 'artist_two', isModerator: false, bannedAt: null, tier: null },
   1003: { id: 1003, username: 'viewer_three', isModerator: false, bannedAt: null, tier: null },
   1004: { id: 1004, username: 'mod_four', isModerator: true, bannedAt: null, tier: null },
 };
@@ -216,6 +217,7 @@ for (const [id, userId, versionId, publishedAt] of [
   [7301, 1002, 6101, day(11)],
   [7401, 1001, 6201, day(11)],
   [7011, 1002, null, day(6, 12)],
+  [7501, 1001, null, day(9, 14)],
 ])
   POSTS[id] = { id, userId, modelVersionId: versionId, publishedAt };
 
@@ -311,6 +313,42 @@ image(8302, 7301, { index: 1, nsfwLevel: 4 });
 image(8401, 7401);
 // An image that hides its meta: the column holds one, the cache and the lookup answer null.
 image(8030, 7011, { hideMeta: true, hasMeta: false });
+// An acceptableMinor image (1001's), listed only in a collection, and there only to its owner and to
+// moderators.
+image(8501, 7501);
+IMAGES[8501].acceptableMinor = true;
+
+// Collections (Collection rows, getUserCollectionPermissionsByIds' read) and their CollectionItem
+// rows (the `ct` CTE). 9101 is public (1001's): items accepted, in review and rejected, one of each
+// by 1003, a tagged one and one whose note holds no score. 9102 is private (1001's): 1002 holds VIEW
+// as a contributor, 1003 a contributor row without it. 9103 is public with a judged item (a score in
+// its note).
+const COLLECTIONS = {
+  9101: { id: 9101, read: 'Public', userId: 1001, contributors: [] },
+  9102: {
+    id: 9102,
+    read: 'Private',
+    userId: 1001,
+    contributors: [
+      { userId: 1002, permissions: ['VIEW', 'ADD'] },
+      { userId: 1003, permissions: ['ADD'] },
+    ],
+  },
+  9103: { id: 9103, read: 'Public', userId: 1002, contributors: [] },
+};
+const COLLECTION_ITEMS = [
+  { id: 95001, collectionId: 9101, imageId: 8001, status: 'ACCEPTED', addedById: 1001, note: null, tagId: null },
+  { id: 95004, collectionId: 9101, imageId: 8003, status: 'ACCEPTED', addedById: 1003, note: null, tagId: 31 },
+  { id: 95002, collectionId: 9101, imageId: 8007, status: 'ACCEPTED', addedById: null, note: '{"comment":"no score"}', tagId: null },
+  { id: 95006, collectionId: 9101, imageId: 8006, status: 'REVIEW', addedById: 1003, note: null, tagId: null },
+  { id: 95005, collectionId: 9101, imageId: 8204, status: 'REVIEW', addedById: 1002, note: null, tagId: null },
+  { id: 95003, collectionId: 9101, imageId: 8203, status: 'REJECTED', addedById: 1003, note: null, tagId: null },
+  { id: 95101, collectionId: 9102, imageId: 8002, status: 'ACCEPTED', addedById: 1001, note: null, tagId: null },
+  { id: 95102, collectionId: 9102, imageId: 8501, status: 'ACCEPTED', addedById: 1001, note: null, tagId: null },
+  { id: 95103, collectionId: 9102, imageId: 8105, status: 'ACCEPTED', addedById: 1002, note: null, tagId: null },
+  { id: 95201, collectionId: 9103, imageId: 8201, status: 'ACCEPTED', addedById: 1001, note: null, tagId: null },
+  { id: 95202, collectionId: 9103, imageId: 8202, status: 'ACCEPTED', addedById: 1001, note: '{"score":{"theme":7,"wittiness":5}}', tagId: null },
+];
 
 // Image.meta (jsonb), the generation parameters imageMetaCache serves (withMeta). Each differs; the
 // first holds an integer-like key ("10", listed first in JS, after "a" in jsonb's order), a fraction,
@@ -424,6 +462,12 @@ const TAG_VOTES = [
   { imageId: 8007, tagId: 999, userId: 1003, vote: 1 },
   { imageId: 8007, tagId: 531, userId: 1001, vote: 1 },
 ];
+// userFollowsCache (packed:caches:user-follows, src/server/redis/caches.ts): each user's followed
+// creators, the lookupFn's `{userId, follows}`. 1003 follows 1002 only; every other user's entry is a
+// notFound marker (the lookup found no Follow row).
+const USER_FOLLOWS = {
+  1003: [1002],
+};
 // system:blocked-browsing-tags (cache cluster): getBlockedBrowsingTags' list. Synthetic names; the
 // ids are two of BLOCKED_BROWSING_TAG_IDS (src/shared/constants/browsing-settings-addons.ts).
 const BLOCKED_TAGS = [
@@ -454,6 +498,7 @@ const K = {
   session: 'session:data2',
   meta: 'packed:caches:image-meta',
   imageTags: 'packed:caches:image-tags',
+  userFollows: 'packed:caches:user-follows',
 };
 const notFound = (idKey, id) => ({ [idKey]: id, notFound: true, cachedAt: CACHED_AT });
 const entry = (v) => ({ ...v, cachedAt: CACHED_AT });
@@ -506,6 +551,9 @@ function worldPacked(prefix, id) {
       return VERSIONS[id] ? entry({ id, modelId: VERSIONS[id] }) : undefined;
     case K.session:
       return SESSIONS[id];
+    case K.userFollows:
+      if (!USERS[id]) return undefined;
+      return USER_FOLLOWS[id] ? entry({ userId: id, follows: USER_FOLLOWS[id] }) : notFound('userId', id);
     case K.imageTags:
       if (!IMAGES[id]) return undefined;
       return IMAGE_TAGS[id] ? entry({ imageId: id, tags: IMAGE_TAGS[id] }) : notFound('imageId', id);
@@ -540,6 +588,9 @@ class Trace {
     this.baseModelsRead = false; // a query filtered by `baseModels`: the tables then carry each version's baseModel
     this.baseModelsCandidatePosts = new Set(); // posts of every row such a query matches without that clause
     this.tagVotesRead = false; // the viewer's TagsOnImageVote rows were read (include 'tags', signed in)
+    this.followedRead = false; // a query filtered by the viewer's follow list (`followed`, signed in)
+    this.followedCandidatePosts = new Set(); // posts of every row such a query matches without that clause
+    this.collectionIds = new Set(); // collections a request reads (`collectionId`): their rows and items are in the tables
   }
 }
 let T; // the fixture being traced
@@ -601,6 +652,38 @@ function cacheFetch(prefix, ids, { appendFn, lookup, idKey, ttl, notFoundTtl, ne
 
 const DAY = 24 * 60 * 60;
 const HOUR = 60 * 60;
+
+/** getUserCollectionPermissionsById (src/server/services/collection.service.ts), its `read` flag only:
+ *  Public or Unlisted, then (signed in) the owner, a moderator, a contributor row holding VIEW. A
+ *  collection that does not exist reads for no one (createEmptyPermissions). */
+function getUserCollectionPermissionsById({ id, userId, isModerator }) {
+  T.collectionIds.add(id);
+  const collection = COLLECTIONS[id];
+  if (!collection) return { read: false };
+  const permissions = { read: collection.read === 'Public' || collection.read === 'Unlisted' };
+  if (!userId) return permissions;
+  if (userId === collection.userId) permissions.read = true;
+  if (isModerator && userId !== collection.userId) permissions.read = true;
+  const contributor = collection.contributors.find((c) => c.userId === userId);
+  if (contributor && userId !== collection.userId && contributor.permissions.includes('VIEW')) permissions.read = true;
+  return permissions;
+}
+
+/** parseJudgeScore (src/server/games/daily-challenge/daily-challenge.utils.ts). */
+function parseJudgeScore(note) {
+  if (!note) return null;
+  try {
+    const parsed = JSON.parse(note);
+    return parsed?.score ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** getUserFollows (src/server/redis/caches.ts): `userFollows[userId]?.follows ?? []`. */
+function getUserFollows(userId) {
+  return cacheFetch(K.userFollows, [userId])[userId]?.follows ?? [];
+}
 
 // --- the lookupFns (src/server/redis/caches.ts) over the world tables ---------------------------
 function isListingDisplayable(listing) {
@@ -801,6 +884,14 @@ function mapSearchInputToFeedQuery(input, mode, caller) {
     if (postIds.length > 50) return skip('postIds>50');
     if (input.postIdsInRequestedSort === true && typeof input.limit === 'number' && input.limit > 200) return skip('postIds:limit>200');
   }
+  // Signed out, the search path drops the flag and serves the global feed.
+  const followedOn = input.followed === true && present(input.currentUserId);
+  const followed = followedOn ? input.followedUserIds : undefined;
+  if (followedOn) {
+    if (!Array.isArray(followed)) return skip('flag:followed');
+    if (followed.length > 10_000) return skip('followed>10000');
+    if (present(input.userId)) return skip('flag:followed:userId');
+  }
   const sort = SORTS[String(input.sort)];
   if (!sort) return skip(`sort:${String(input.sort || 'none')}`);
   const period = String(input.period ?? 'AllTime');
@@ -844,6 +935,8 @@ function mapSearchInputToFeedQuery(input, mode, caller) {
   if (excludedUsers.length) params.set('excludedUserIds', excludedUsers.slice(0, 1000).join(','));
   if (versionIds) params.set('versionIds', versionIds.join(','));
   if (userId) params.set('userIds', String(userId));
+  const followedIds = ints(followed);
+  if (followedIds.length) params.set('userIds', followedIds.join(','));
   if (types.length) params.set('types', types.join(','));
   if (input.withMeta === true) params.set('withMeta', '1');
   if (input.fromPlatform === true) params.set('fromPlatform', '1');
@@ -885,8 +978,10 @@ function fetchFeed(query) {
   };
 }
 
-/** serveFromFeed (feed-primary.service.ts) for a feed without hubs, follows or degrade. */
+/** serveFromFeed (feed-primary.service.ts) for a feed without hubs, new creators or degrade. */
 function serveFromFeed(input, { hydrate, route }) {
+  // A follow list with no creators is an empty feed, whatever else is set.
+  if (input.followed === true && input.followedUserIds?.length === 0) return { ok: true, page: { data: [], nextCursor: undefined } };
   const mapping = mapSearchInputToFeedQuery(input, 'primary', route);
   if (!mapping.ok && (mapping.reason === 'tags:none' || mapping.reason === 'ids:none')) return { ok: true, page: { data: [], nextCursor: undefined } };
   if (!mapping.ok) return { ok: false, reason: mapping.reason };
@@ -930,8 +1025,23 @@ function imageSql(q) {
   if (q.baseModels?.length) T.baseModelsRead = true;
   const isModerator = !!q.user?.isModerator;
   const userId = q.user?.id;
+  // getAllImagesUncaptured's prefetch: `userId && followed ? getUserFollows(userId) : undefined`, and
+  // the clause only for a non-empty list.
+  const follows = userId && q.followed ? getUserFollows(userId) : undefined;
+  if (follows?.length) T.followedRead = true;
   let browsingLevel = onlySelectableLevels(q.browsingLevel ?? 0);
   if (!browsingLevel) browsingLevel = publicBrowsingLevelsFlag;
+  // The `ct` CTE: the collection's image items, its tag, ACCEPTED or (signed in) the viewer's own
+  // not REJECTED (`ownerId`: a session, as every fixture's viewer is).
+  const collectionItems = q.collectionId
+    ? COLLECTION_ITEMS.filter(
+        (ci) =>
+          ci.collectionId === q.collectionId &&
+          (!q.collectionTagId || ci.tagId === q.collectionTagId) &&
+          ci.imageId != null &&
+          (ci.status === 'ACCEPTED' || (userId && ci.status !== 'REJECTED' && ci.addedById === userId))
+      )
+    : undefined;
   // `without` names one more filter clause to leave out (the candidate rows below).
   let without;
   const viaVersion = q.modelVersionId || q.modelId;
@@ -950,6 +1060,8 @@ function imageSql(q) {
     if (q.modelVersionId && !RESOURCES[i.id].some((r) => r.modelVersionId === q.modelVersionId)) return false;
     if (!q.modelVersionId && q.modelId && !RESOURCES[i.id].some((r) => VERSIONS[r.modelVersionId] === q.modelId)) return false;
     if (q.userId && i.userId !== q.userId) return false;
+    // i."userId" IN (follows), after the creator clause.
+    if (without !== 'followed' && follows?.length && !follows.includes(i.userId)) return false;
     if (without !== 'tags' && q.tags?.length && !tagIdsOf(i.id).some((t) => q.tags.includes(t))) return false;
     // EXISTS (… FROM "ImageTechnique" … "techniqueId" IN (techniques)): any listed technique.
     if (without !== 'techniques' && q.techniques?.length && !techniqueIdsOf(i.id).some((t) => q.techniques.includes(t))) return false;
@@ -964,16 +1076,31 @@ function imageSql(q) {
     // existing version carrying one of the names (the whole list, an empty name included).
     if (applyBaseModels && q.baseModels?.length && !RESOURCES[i.id].some((r) => r.modelVersionId in VERSION_BASE_MODELS && q.baseModels.includes(VERSION_BASE_MODELS[r.modelVersionId])))
       return false;
-    if (i.needsReview !== null || i.acceptableMinor) return false;
+    if (i.needsReview !== null) return false;
+    // `acceptableMinor = FALSE`; in a collection the image's owner (and a moderator) still sees it.
+    if (i.acceptableMinor && (!q.collectionId || (!isModerator && i.userId !== userId))) return false;
     if ((i.nsfwLevel & browsingLevel) === 0 || i.nsfwLevel === 0) return false;
     return true;
   };
   let rows = Object.values(IMAGES).filter((i) => passes(i, true));
+  // JOIN ct ON ct."imageId" = i.id: one row per matching item, with its note, status and adder.
+  if (collectionItems)
+    rows = rows.flatMap((i) =>
+      collectionItems
+        .filter((ci) => ci.imageId === i.id)
+        .map((ci) => ({ ...i, collectionItemId: ci.id, collectionItemNote: ci.note, collectionItemStatus: ci.status, collectionItemAddedById: ci.addedById }))
+    );
   // As for `tools` below: every row the query would match without its techniques (or tags) clause.
   for (const key of ['techniques', 'tags']) {
     if (!q[key]?.length) continue;
     without = key;
     for (const i of Object.values(IMAGES)) if (passes(i, true)) T[`${key}CandidatePosts`].add(i.postId);
+    without = undefined;
+  }
+  // The same for the follow clause.
+  if (follows?.length) {
+    without = 'followed';
+    for (const i of Object.values(IMAGES)) if (passes(i, true)) T.followedCandidatePosts.add(i.postId);
     without = undefined;
   }
   // Every row the same query would match WITHOUT the tools clause (before order, cursor and limit):
@@ -985,18 +1112,24 @@ function imageSql(q) {
   // index (getCursor('i."index"'), inclusive), and the index as the cursor column.
   const byIndex = !!q.postId && !q.modelId;
   const asc = q.sort === 'Oldest';
+  // Recently Added: ORDER BY ct."collectionItemId" DESC, the cursor on it.
+  const byItem = !byIndex && q.sort === 'Recently Added';
   if (byIndex) rows.sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
+  else if (byItem) rows.sort((a, b) => b.collectionItemId - a.collectionItemId);
   else rows.sort((a, b) => (asc ? a.id - b.id : b.id - a.id));
   if (q.cursor) {
     // getCursor: a single-field sort's cursor is one integer (parseCursor's parseInt).
     const c = typeof q.cursor === 'string' ? parseInt(q.cursor, 10) : q.cursor;
     if (Number.isNaN(c)) throw new NodeError(400, 'cursor');
-    rows = rows.filter((r) => (byIndex ? (r.index ?? 0) >= c : asc ? r.id >= c : r.id <= c));
+    rows = rows.filter((r) => (byIndex ? (r.index ?? 0) >= c : byItem ? r.collectionItemId <= c : asc ? r.id >= c : r.id <= c));
   }
   for (const r of rows) T.posts.add(r.postId);
   void viaVersion;
   const skip = q.skip ?? 0; // OFFSET
-  return rows.slice(skip, skip + q.limit + 1).map((r) => ({ ...structuredClone(r), cursorId: byIndex ? r.index : r.id }));
+  return rows.slice(skip, skip + q.limit + 1).map(({ collectionItemId, ...r }) => ({
+    ...structuredClone(r),
+    cursorId: byIndex ? r.index : byItem ? collectionItemId : r.id,
+  }));
 }
 
 /** toImageV2Stats(shapeImageMetrics(...)) over MetricService.fetch's parse of the hash. */
@@ -1043,6 +1176,9 @@ function getAllImagesUncaptured(input) {
   const { limit, include = [], includeBaseModel } = input;
   const userId = input.user?.id;
   const isModerator = input.user?.isModerator ?? false;
+  // The prefetched collection permission: no read is an empty page.
+  if (input.collectionId && !getUserCollectionPermissionsById({ userId, isModerator, id: input.collectionId }).read)
+    return { nextCursor: undefined, items: [] };
   const includeCosmetics = include.includes('cosmetics');
   const rawImages = imageSql(input);
   const imageIds = rawImages.map((i) => i.id);
@@ -1180,7 +1316,7 @@ function getAllImagesUncaptured(input) {
       cosmetic: frames?.[i.id] ?? null,
       eventDecoration: eventDecorations?.[i.id] ?? null,
       thumbnailUrl: thumbnail?.url,
-      judgeScore: null,
+      judgeScore: parseJudgeScore(collectionItemNote ?? null),
     };
   });
   // stripImageForInfiniteWire
@@ -1206,6 +1342,8 @@ function getAllImagesIndex(input) {
   const offset = isNumber(cursorParsed?.[0]) ? Number(cursorParsed?.[0]) : 0;
   const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
   const searchInput = { ...input, userId, currentUserId: user?.id, isModerator: user?.isModerator, offset, entry };
+  // serveImagesFromFeedService: the viewer's follow list, signed in only.
+  if (searchInput.followed && searchInput.currentUserId) searchInput.followedUserIds = getUserFollows(searchInput.currentUserId);
   const served = serveFromFeed(withoutUnservedFilters(searchInput), {
     route: 'website',
     hydrate: (ids) => {
@@ -1512,7 +1650,7 @@ function runAsPosts(spec) {
 
 // --- image.getInfinite ----------------------------------------------------------------------------
 /** requiresImageDbPath (src/server/schema/image.schema.ts), for the inputs these fixtures send. */
-const requiresImageDbPath = (input) => !!input.postId || (!!input.modelId && !input.modelVersionId);
+const requiresImageDbPath = (input) => !!input.postId || !!input.collectionId || (!!input.modelId && !input.modelVersionId);
 
 /** getInfiniteImagesHandler (image.controller.ts) without Hat Turf (no fixture sends a hat key),
  *  hubs or ids; then withSharedFeedUsers, which changes no decoded value (one shared `user` object
@@ -2579,7 +2717,122 @@ const INFINITE = [
       'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=10': { body: { items: [8204, 8007, 8006, 8004, 8002, 8001] } },
     },
   },
+  {
+    name: 'followed-signed-in',
+    description: '`followed: true` signed in: the viewer’s follow list (userFollowsCache: 1002) as the feed’s userIds, and as the hydrate’s `i."userId" IN (…)`, which drops 8004 (1001’s), which the feed named.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { followed: true, sort: 'Newest', browsingLevel: 31, limit: 10 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&userIds=1002&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=10': { body: { items: [8006, 8004, 8003] } },
+    },
+  },
+  {
+    name: 'followed-signed-in-no-follows',
+    description: '`followed: true` signed in with an empty follow list (a notFound marker): serveFromFeed’s empty page, no feed call.',
+    viewer: 1001,
+    host: HOST.green,
+    input: { followed: true, sort: 'Newest', browsingLevel: 1, limit: 10 },
+    replies: {},
+  },
+  {
+    name: 'followed-signed-out',
+    description: '`followed: true` signed out: the flag is dropped (no follow read, no userIds): the global feed.',
+    viewer: null,
+    host: HOST.green,
+    input: { followed: true, sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
+  {
+    name: 'followed-with-creator',
+    description: '`followed: true` with a `userId` signed in: the mapper refuses a follow list beside a creator (flag:followed:userId), an empty page; no feed call.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { followed: true, userId: 1001, sort: 'Newest', browsingLevel: 31, limit: 5 },
+    replies: {},
+  },
+  {
+    name: 'followed-model-only-db-path',
+    description: '`followed: true` signed in on the Postgres path (a model without a version): only the followed creator’s (1002) images of the model, irr.imageId DESC, the look-ahead row’s id as the cursor.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { followed: true, modelId: 5001, sort: 'Newest', browsingLevel: 31, limit: 2 },
+    replies: {},
+  },
+  {
+    name: 'collection-public-signed-out',
+    description: 'A public collection (9101) signed out: its ACCEPTED items only (not 8006 or 8204 in review, nor the rejected 8203), Newest; 8007’s note holds no score (judgeScore null).',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 9101, sort: 'Newest', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'collection-public-signed-in-own-items',
+    description: 'A public collection (9101) signed in as 1003: the ACCEPTED items and 1003’s own item in review (8006), not 1002’s in review (8204) nor 1003’s rejected one (8203); Recently Added (item id DESC), the look-ahead item’s id as the cursor.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { collectionId: 9101, sort: 'Recently Added', browsingLevel: 31, limit: 3 },
+  },
+  {
+    name: 'collection-recently-added-cursor',
+    description: 'The next Recently Added page of 9101 for 1003: the cursor is an item id, inclusive.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { collectionId: 9101, sort: 'Recently Added', cursor: 95002, browsingLevel: 31, limit: 3 },
+  },
+  {
+    name: 'collection-tag',
+    description: 'A collection narrowed by `collectionTagId` (31): only 8003’s item.',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 9101, collectionTagId: 31, sort: 'Newest', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'collection-public-moderator',
+    description: 'A public collection read by a moderator (1004): read is granted whatever the branch, so it is answered; the moderator view’s filters apply.',
+    viewer: 1004,
+    host: HOST.blue,
+    input: { collectionId: 9101, sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'collection-private-owner',
+    description: 'A private collection (9102) read by its owner (1001): its items, 1001’s acceptableMinor 8501 included (an owner still sees it in a collection).',
+    viewer: 1001,
+    host: HOST.blue,
+    input: { collectionId: 9102, sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'collection-private-other-viewer',
+    description: 'A private collection (9102) read by 1003, whose contributor row holds no VIEW: no read, Node’s empty page; no page query.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { collectionId: 9102, sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'collection-private-signed-out',
+    description: 'A private collection (9102) signed out: no read, the empty page.',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 9102, browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'collection-missing',
+    description: 'A collection that does not exist (88): createEmptyPermissions reads for no one, the empty page.',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 88, browsingLevel: 1, limit: 10 },
+  },
   // Fallbacks.
+  {
+    name: 'fallback-followed-not-a-boolean',
+    description: '`followed: "true"`: z.boolean() is not coerced, so the schema’s BAD_REQUEST, which Node answers itself.',
+    fallback: 'input-invalid',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { followed: 'true', browsingLevel: 31, limit: 2 },
+  },
   {
     name: 'fallback-base-models-not-a-list',
     description: '`baseModels` as a bare string: the schema’s BAD_REQUEST (z.string().array()), which Node answers itself.',
@@ -2621,12 +2874,44 @@ const INFINITE = [
     input: { hubId: 77, browsingLevel: 1, limit: 10 },
   },
   {
-    name: 'fallback-collection',
-    description: 'A collection scope: permissions, item statuses and the collection sorts; not ported.',
-    fallback: 'input-collectionId',
+    name: 'fallback-collection-contributor',
+    description: 'A private collection read by a contributor whose row holds VIEW (1002 on 9102): Node grants read; the contributor branch is not answered here.',
+    fallback: 'collection-contributor',
+    viewer: 1002,
+    host: HOST.blue,
+    input: { collectionId: 9102, sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'fallback-collection-moderator',
+    description: 'A private collection read by a moderator who does not own it (1004 on 9102): Node grants read; the moderator branch is not answered here.',
+    fallback: 'collection-moderator',
+    viewer: 1004,
+    host: HOST.blue,
+    input: { collectionId: 9102, sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'fallback-collection-judge-score',
+    description: 'A collection item whose note holds a judge’s score (9103’s 8202): parseJudgeScore’s value is not rebuilt here.',
+    fallback: 'collection-judge-score',
     viewer: null,
     host: HOST.green,
-    input: { collectionId: 88, browsingLevel: 1, limit: 10 },
+    input: { collectionId: 9103, sort: 'Newest', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'fallback-collection-random',
+    description: 'A collection’s Random sort (the hourly seed, the seed:sortKey:id cursor): not ported.',
+    fallback: 'input-sort',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 9101, sort: 'Random', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'fallback-collection-tag-without-collection',
+    description: 'A `collectionTagId` without a `collectionId`: Node’s BAD_REQUEST, which it answers itself.',
+    fallback: 'input-collectionTagId',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionTagId: 31, browsingLevel: 1, limit: 10 },
   },
 ];
 
@@ -2656,6 +2941,14 @@ function dbTables({ tags = false, meta = false } = {}) {
     for (const f of T.feed) for (const id of f.body?.items ?? []) if (IMAGES[id]) T.posts.add(IMAGES[id].postId);
     for (const id of T.baseModelsCandidatePosts) T.posts.add(id);
   }
+  if (T.followedRead) {
+    // And for the follow clause: each row it alone decides on (another creator's).
+    for (const id of T.followedCandidatePosts) T.posts.add(id);
+  }
+  // A collection request: every item's image of the collections it reads, whatever its status or
+  // tag, so a row the status, tag or permission check alone decides on is in the tables.
+  const collectionItems = COLLECTION_ITEMS.filter((ci) => T.collectionIds.has(ci.collectionId));
+  for (const ci of collectionItems) T.posts.add(IMAGES[ci.imageId].postId);
   const postIds = [...T.posts].sort((a, b) => a - b);
   const images = Object.values(IMAGES)
     .filter((i) => postIds.includes(i.postId))
@@ -2693,6 +2986,14 @@ function dbTables({ tags = false, meta = false } = {}) {
     cosmeticShopItems: SHOP_ITEMS.map((x) => ({ ...x, meta: jsonbText(x.meta) })),
     // The TagsOnImageVote rows, only in a fixture whose request read the viewer's votes.
     ...(T.tagVotesRead ? { tagVotes: TAG_VOTES } : {}),
+    // The Collection rows (with their contributor rows) and CollectionItem rows, only in a fixture
+    // whose request names a collection.
+    ...(T.collectionIds.size
+      ? {
+          collections: [...T.collectionIds].filter((id) => COLLECTIONS[id]).map((id) => COLLECTIONS[id]),
+          collectionItems,
+        }
+      : {}),
   };
 }
 
@@ -2843,6 +3144,9 @@ function emitInfinite() {
     const nodeFlags = { ...FLAGS_ON, ...(spec.nodeFlags ?? {}) };
     const goConfig = { ...GO_ON, ...(spec.goConfig ?? {}), decorationEvents: spec.events ?? [], frameCacheNegative: FRAME_CACHE_NEGATIVE };
     let expect;
+    // A collection's rows are in the tables whether or not the mirror runs: a fallback fixture's
+    // reason may be decided on them.
+    if (spec.input.collectionId) T.collectionIds.add(spec.input.collectionId);
     if (spec.fallback) {
       if (spec.viewer) T.packed.set(`${K.session}:${spec.viewer}`, SESSIONS[spec.viewer]);
       expect = { fallback: spec.fallback };
