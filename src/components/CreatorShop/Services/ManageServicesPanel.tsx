@@ -210,7 +210,7 @@ function OfferingRow({
     <Paper withBorder radius="md" p="md">
       <Group justify="space-between" wrap="nowrap" gap="md">
         <Stack gap={2} className="min-w-0">
-          <Group gap="xs" rowGap={4}>
+          <Group gap="xs">
             <Text fw={600} lineClamp={1}>
               {offering.title}
             </Text>

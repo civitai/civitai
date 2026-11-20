@@ -84,7 +84,6 @@ describe('a service row on a phone', () => {
     const icon = button.querySelector('svg')!.getBoundingClientRect();
     expect(icon.width).toBeGreaterThanOrEqual(16);
     expect(box.right).toBeLessThanOrEqual(390);
-    // What a tap on the button's centre lands on.
     const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
     expect(button.contains(hit)).toBe(true);
   });
