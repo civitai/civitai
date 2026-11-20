@@ -241,23 +241,23 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
         steps, epochs, "clipSkip", "createdAt", "updatedAt", "publishedAt", status,
         "trainingStatus", "trainingDetails", inaccurate, "baseModel", "baseModelType", meta,
         "requireAuth", settings, availability, "nsfwLevel", "uploadType", "usageControl", flags,
-        "generatorLoaded", "licensingFee") VALUES
+        "generatorLoaded", "licensingFee", "licensingFeeType") VALUES
         (${V_FULL}, 2, 'v-full', 'full version', ${MODEL}, '{alpha,beta}', 1000, 10, 2,
           '2026-04-01 00:00:00.111', '2026-04-02 00:00:00.222', '2026-04-03 00:00:00.333',
           'Published', NULL, NULL, true, 'SDXL 1.0', 'Standard', '{"earlyAccessConfig": {"timeframe": 3}}',
-          true, '{"strength": 0.7}', 'EarlyAccess', 4, 'Created', 'Generation', 5, true, 12.50),
+          true, '{"strength": 0.7}', 'EarlyAccess', 4, 'Created', 'Generation', 5, true, 12.50, 'PercentOfCompute'),
         (${V_EMPTY}, 0, 'v-empty', NULL, ${MODEL}, '{}', NULL, NULL, NULL,
           '2026-04-04 00:00:00.444', '2026-04-05 00:00:00.555', NULL, 'Draft', NULL, NULL, false,
           'Flux.1 D', 'Inpainting', '{}', false, NULL, 'Public', 0, 'Created', 'Download', 0,
-          false, NULL),
+          false, NULL, NULL),
         (${V_TRAINED}, 1, 'v-trained', 'trained', ${MODEL}, '{gamma}', 200, 4, NULL,
           '2026-04-06 00:00:00.666', '2026-04-07 00:00:00.777', NULL, 'Training', 'Approved',
           '{"type": "Character", "params": {"epochs": 4}}', false, 'SD 1.5', 'Standard', '{}',
-          false, NULL, 'Private', 1, 'Trained', 'InternalGeneration', 1, false, 0.05),
+          false, NULL, 'Private', 1, 'Trained', 'InternalGeneration', 1, false, 0.05, 'PerImageBuzz'),
         (${V_OTHER_MODEL}, 0, 'v-other', NULL, ${MODEL_OF_DELETED}, '{}', NULL, NULL, NULL,
           '2026-04-08 00:00:00.888', '2026-04-09 00:00:00.999', NULL, 'Published', NULL, NULL,
           false, 'SD 1.5', 'Standard', '{}', false, NULL, 'Public', 1, 'Created', 'Download', 0,
-          false, NULL)
+          false, NULL, NULL)
     `);
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('ModelVersionMetric')} VALUES
@@ -358,6 +358,8 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       expect(model?.modelVersions.map((v) => v.id)).toEqual([V_EMPTY, V_TRAINED, V_FULL]);
       const full = model?.modelVersions.find((v) => v.id === V_FULL);
       expect(full?.licensingFee).toBeInstanceOf(Prisma.Decimal);
+      // The model page shows a percent fee as a percent only if this read carries the type.
+      expect(full?.licensingFeeType).toBe('PercentOfCompute');
       expect(full?.files.map((f) => f.id).sort()).toEqual([FILE_A, FILE_B]);
       expect(full?.files.find((f) => f.id === FILE_B)?.hashes).toHaveLength(2);
       expect(full?.files.find((f) => f.id === FILE_B)?.scannedAt).toBeInstanceOf(Date);

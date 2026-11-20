@@ -542,8 +542,8 @@ describe('runPayout: sources beyond compensation, tip and licence fee', () => {
     );
 
   // Deliberate: a denylist, not an allowlist. A one-off source such as a
-  // `compensation_recovered_*` recovery was paid as compensation before this PR and the earnings view
-  // shows it as earned, so withholding it would show a creator money they never get. Only platform
+  // `compensation_recovered_*` recovery is compensation the earnings view shows as
+  // earned, so withholding it would show a creator money they never get. Only platform
   // revenue is skipped; an unknown source is paid and named in a notice.
   it('pays a source it does not recognise as compensation and names it in a notice', async () => {
     mockClickhouseQuery.mockResolvedValue([

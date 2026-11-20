@@ -754,6 +754,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // (`createCachedFlagGate`, `~/server/services/site-search-passthrough`). The key must exist in
   // flag state (enabled: false) before this code serves traffic.
   SITE_SEARCH_PASSTHROUGH = 'site-search-passthrough',
+  // Lets staff set a PercentOfCompute licence fee. Off until the orchestrator charges by the type:
+  // before that, a percent is charged as that many Buzz per image.
+  LICENSING_FEE_PERCENT_OF_COMPUTE = 'licensing-fee-percent-of-compute',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

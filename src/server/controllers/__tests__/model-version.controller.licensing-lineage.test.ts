@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * `licensingSourceVersionId` makes a version inherit a root's per-image licence fee: the fee is
@@ -12,9 +13,15 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * the reporter paid 10 Buzz/image instead of 5 for a month and no surface on the site could clear it.
  */
 
-const { mockUpsertModelVersion, mockGetModel } = vi.hoisted(() => ({
+const { mockUpsertModelVersion, mockGetModel, mockReadFliptBoolean } = vi.hoisted(() => ({
   mockUpsertModelVersion: vi.fn(),
   mockGetModel: vi.fn(),
+  mockReadFliptBoolean: vi.fn(),
+}));
+
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  readFliptBoolean: mockReadFliptBoolean,
 }));
 
 vi.mock('~/server/services/model-version.service', () => ({
@@ -138,6 +145,8 @@ const creating = (type: string | null) => ({ modelTypes: { [PAYLOAD_MODEL_ID]: t
 beforeEach(() => {
   vi.clearAllMocks();
   mockUpsertModelVersion.mockResolvedValue({ id: VERSION_ID, modelId: PAYLOAD_MODEL_ID });
+  mockReadFliptBoolean.mockReset();
+  mockReadFliptBoolean.mockResolvedValue(true);
 });
 
 describe('upsertModelVersionHandler — licensing lineage scope', () => {
@@ -394,6 +403,19 @@ describe('upsertModelVersionHandler — percent-of-compute fee, type-only write'
 
   it('lets a moderator (control)', async () => {
     expect(await typeOnly(true)).toMatchObject({ licensingFeeType: 'PercentOfCompute' });
+    expect(mockReadFliptBoolean).toHaveBeenCalledWith('licensing-fee-percent-of-compute');
+  });
+
+  // Until the orchestrator charges by the type, a percent is charged as that many Buzz per image, so
+  // not even staff may set one before the flag is turned on. Do not drop this gate while the
+  // orchestrator still reads the fee as Buzz per image.
+  it.each([
+    ['off', false],
+    ['unreadable', null],
+  ])('refuses a moderator while the percent flag is %s', async (_label, flag) => {
+    mockReadFliptBoolean.mockResolvedValue(flag);
+    await expect(typeOnly(true)).rejects.toThrow(/Percentage license fees are not available yet/);
+    expect(mockUpsertModelVersion).not.toHaveBeenCalled();
   });
 
   // The handler defaults an omitted type. Defaulting to PerImageBuzz would turn a staff-set 35% into

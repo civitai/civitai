@@ -156,6 +156,7 @@ export function listModelWithDetailsVersions(db: Kysely<DB>, modelId: number) {
       'ModelVersion.uploadType',
       'ModelVersion.usageControl',
       sql<string | null>`${eb.ref('ModelVersion.licensingFee')}::text`.as('licensingFee'),
+      'ModelVersion.licensingFeeType',
       'ModelVersion.generatorLoaded',
       jsonArrayFrom(
         eb

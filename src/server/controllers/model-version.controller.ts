@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { FLIPT_FEATURE_FLAGS, readFliptBoolean } from '~/server/flipt/client';
 import { toPublicApiVersionFlags } from '~/shared/constants/model-version-flags.constants';
 import {
   coverageAudience,
@@ -710,6 +711,12 @@ export const upsertModelVersionHandler = async ({
     // A null type means "keep the stored one", as an omitted one does: written through, it would turn a
     // staff-set percent into Buzz per image.
     if (input.licensingFeeType === null) input.licensingFeeType = undefined;
+    // Fails closed: an unreadable flag refuses, since a percent charged early is charged as Buzz per image.
+    if (
+      input.licensingFeeType === LicensingFeeType.PercentOfCompute &&
+      (await readFliptBoolean(FLIPT_FEATURE_FLAGS.LICENSING_FEE_PERCENT_OF_COMPUTE)) !== true
+    )
+      throw throwBadRequestError('Percentage license fees are not available yet.');
     const percentRefusal = percentOfComputeFeeRefusal({
       isModerator: !!ctx.user.isModerator,
       requestedType: input.licensingFeeType,
