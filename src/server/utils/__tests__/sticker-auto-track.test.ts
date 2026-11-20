@@ -5,6 +5,8 @@ import {
   stickerAutoTrackWindow,
   stickerAutoTrackDailyLimit,
   takeStickerAutoTrackRun,
+  autoTrackReadIsMissing,
+  autoTrackSubmitGivesBack,
 } from '~/server/utils/sticker-auto-track';
 
 const PLACER = 52;
@@ -175,6 +177,32 @@ describe('takeStickerAutoTrackRun', () => {
     await expect(
       takeStickerAutoTrackRun(store, { userId: PLACER, limit: LIMIT, now: LATE })
     ).rejects.toBe(down);
+  });
+});
+
+describe('autoTrackSubmitGivesBack', () => {
+  it('hands the run back only when the orchestrator answered with a refusal', () => {
+    expect([400, 402, 499].map(autoTrackSubmitGivesBack)).toEqual([true, true, true]);
+    // A 5xx or a thrown submit (no response) may still have made a job, so the run stays spent.
+    expect([undefined, 200, 399, 500, 503].map(autoTrackSubmitGivesBack)).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+  });
+});
+
+describe('autoTrackReadIsMissing', () => {
+  it('treats only a 404 as no such run, so other read errors keep polling', () => {
+    expect(autoTrackReadIsMissing(404)).toBe(true);
+    expect([undefined, 401, 500, 502].map(autoTrackReadIsMissing)).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
   });
 });
 

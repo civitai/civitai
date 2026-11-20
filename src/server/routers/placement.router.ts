@@ -140,6 +140,12 @@ function assertPlacementEnabled(ctx: Context) {
     throw throwAuthorizationError('placement: sticker placement is not available yet');
 }
 
+function assertAutoTrackEnabled(ctx: Context) {
+  assertPlacementEnabled(ctx);
+  if (!ctx.features.stickerVideoTracks || !ctx.features.stickerAutoTrack)
+    throw throwAuthorizationError('placement: auto-track is not available yet');
+}
+
 /**
  * The gallery's own gate. Not `assertPlacementEnabled`: that one requires the
  * sticker flags, and the two surfaces open on different schedules.
@@ -305,15 +311,16 @@ export const placementRouter = router({
   startStickerAutoTrack: guardedProcedure
     .input(startStickerAutoTrackSchema)
     .mutation(({ input, ctx }) => {
-      assertPlacementEnabled(ctx);
-      if (!ctx.features.stickerVideoTracks || !ctx.features.stickerAutoTrack)
-        throw throwAuthorizationError('placement: auto-track is not available yet');
+      assertAutoTrackEnabled(ctx);
       return startStickerAutoTrack({ ...input, user: ctx.user });
     }),
 
   getStickerAutoTrack: protectedProcedure
     .input(getStickerAutoTrackSchema)
-    .query(({ input, ctx }) => getStickerAutoTrack({ ...input, userId: ctx.user.id })),
+    .query(({ input, ctx }) => {
+      assertAutoTrackEnabled(ctx);
+      return getStickerAutoTrack({ ...input, userId: ctx.user.id });
+    }),
 
   // Derived from the ledger, never from `Placement.status` — that column says a
   // placement was processed, not that anyone was paid.

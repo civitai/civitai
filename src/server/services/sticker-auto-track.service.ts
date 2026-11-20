@@ -16,6 +16,8 @@ import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import type { StickerTrackV1 } from '~/shared/utils/sticker-track';
 import type { AutoTrackMetadata, StickerAutoTrackPose } from '~/server/utils/sticker-auto-track';
 import {
+  autoTrackReadIsMissing,
+  autoTrackSubmitGivesBack,
   buildStickerAutoTrackWorkflow,
   parseStickerAutoTrack,
   readStickerAutoTrackWorkflow,
@@ -112,10 +114,7 @@ export async function startStickerAutoTrack({
     },
   });
   if (!data?.id) {
-    // The run comes back only when the orchestrator answered and refused it. A thrown submit
-    // (a timeout, say) may still have created a job, so it keeps the count.
-    if (response && response.status >= 400 && response.status < 500)
-      await giveBack?.().catch(() => undefined);
+    if (autoTrackSubmitGivesBack(response?.status)) await giveBack?.().catch(() => undefined);
     throw new Error(`sticker auto-track submit failed (${response?.status ?? 'no response'})`);
   }
   return { workflowId: data.id, startMs, maxMs };
@@ -142,8 +141,7 @@ export async function getStickerAutoTrack({
     client: internalOrchestratorClient,
     path: { workflowId },
   });
-  // A failed read is not a missing run: the client keeps polling a job it already spent a run on.
-  if (!data && error && readResponse?.status !== 404) return { status: 'running' };
+  if (!data && error && !autoTrackReadIsMissing(readResponse?.status)) return { status: 'running' };
   const read = readStickerAutoTrackWorkflow(data, userId);
   if (read.status === 'running' || read.status === 'failed') return { status: read.status };
   if (read.status !== 'download') throw throwNotFoundError('placement: auto-track run not found');

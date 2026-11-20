@@ -85,10 +85,7 @@ const CREATE_CALLS = [
   },
 ] as const;
 
-/**
- * Guarded too, but not a placement writer: covered by the chain check below only, since the caller
- * cases would need its service mocked and the guard is the same middleware either way.
- */
+/** Guarded too, though it writes no placement: it spends system-account Buzz. */
 const GUARDED_NAMES = [...CREATE_CALLS.map((call) => call.name), 'startStickerAutoTrack'];
 
 type ProcedureDef = { _def: { type: string; middlewares: unknown[] } };
@@ -127,7 +124,7 @@ describe('placement router — account state refuses a placement', () => {
    * fails on what matters: a new create mutation added without the guard, or one of these quietly
    * reverted.
    */
-  it('guards exactly the placement-writing mutations', () => {
+  it('guards exactly the placement-writing and Buzz-spending mutations', () => {
     expect(guardedMiddlewares.length).toBeGreaterThan(0);
     expect(mutationNames.length).toBeGreaterThan(GUARDED_NAMES.length);
 
@@ -171,6 +168,35 @@ describe('placement router — account state refuses a placement', () => {
    * refuses a request that cannot currently be made. If that stops being true,
    * this is the test that names what changed.
    */
+  const AUTO_TRACK_FLAGS = { stickerVideoTracks: true, stickerAutoTrack: true };
+  const AUTO_TRACK_INPUT = {
+    imageId: 99,
+    pose: { x: STICKER_DATA.x, y: STICKER_DATA.y, scale: STICKER_DATA.scale, rotation: 0 },
+    startMs: 0,
+  };
+
+  // The service never runs on these paths, so no mock is needed: each message names the gate.
+  for (const { state, user, message } of REFUSED_STATES) {
+    it(`refuses a ${state} user on sticker auto-track`, async () => {
+      await expect(
+        placementCaller({ user, features: AUTO_TRACK_FLAGS }).startStickerAutoTrack(
+          AUTO_TRACK_INPUT
+        )
+      ).rejects.toMatchObject({ code: 'FORBIDDEN', message: expect.stringMatching(message) });
+    });
+  }
+
+  for (const flag of Object.keys(AUTO_TRACK_FLAGS)) {
+    it(`refuses sticker auto-track start and poll without ${flag}`, async () => {
+      const caller = placementCaller({ features: { ...AUTO_TRACK_FLAGS, [flag]: false } });
+      const refused = { message: expect.stringMatching(/auto-track is not available/) };
+      await expect(caller.startStickerAutoTrack(AUTO_TRACK_INPUT)).rejects.toMatchObject(refused);
+      await expect(caller.getStickerAutoTrack({ workflowId: 'wf-1' })).rejects.toMatchObject(
+        refused
+      );
+    });
+  }
+
   it('refuses a user who has not finished onboarding', async () => {
     await expect(
       placementCaller({ user: { onboarding: 0 } }).createSticker({

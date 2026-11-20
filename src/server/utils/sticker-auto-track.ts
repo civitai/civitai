@@ -175,8 +175,7 @@ type RunCounter = Pick<typeof redis, 'incrBy' | 'decrBy' | 'expire'>;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Takes one of the placer's runs for the UTC day of `now`. A store error throws, so nothing is
-// submitted: this limit is the only bound on what the system account spends.
+/** A store error throws, so nothing is submitted. */
 export async function takeStickerAutoTrackRun(
   store: RunCounter,
   { userId, limit, now }: { userId: number; limit: number; now: number }
@@ -191,6 +190,18 @@ export async function takeStickerAutoTrackRun(
     return { ok: false as const, used: used - 1, resetAt };
   }
   return { ok: true as const, giveBack: () => store.decrBy(key, 1) };
+}
+
+/**
+ * Only an answered refusal hands the run back: a thrown or 5xx submit may still have created a job.
+ */
+export function autoTrackSubmitGivesBack(status: number | undefined) {
+  return status !== undefined && status >= 400 && status < 500;
+}
+
+/** Only a 404 means no such run: any other failed read keeps polling a job a run was spent on. */
+export function autoTrackReadIsMissing(status: number | undefined) {
+  return status === 404;
 }
 
 export const STICKER_AUTO_TRACK_MODERATOR_DAILY_RUNS = 25;
