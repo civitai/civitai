@@ -1,7 +1,7 @@
 import React, { forwardRef } from 'react';
 import type { ComboboxItem } from '@mantine/core';
 import { Group, Stack, Text, ThemeIcon } from '@mantine/core';
-import { IconBook2, IconPhotoOff, IconUsers } from '@tabler/icons-react';
+import { IconBook2, IconEyeOff, IconPhotoOff, IconUsers } from '@tabler/icons-react';
 import { Highlight } from 'react-instantsearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
@@ -10,6 +10,21 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ActionIconBadge } from '~/components/AutocompleteSearch/renderItems/common';
 import styles from './common.module.scss';
+import {
+  getHighestBrowsingLevelBit,
+  getIsSafeBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
+
+/**
+ * The level a comic's search cover is shown at: the worst of the cover and the comic itself, as the
+ * feed card (ComicCard) gates it, reduced to one level so a blur check can read it.
+ */
+export function comicSearchCoverLevel(hit: {
+  nsfwLevel: number;
+  coverImageNsfwLevel: number | null;
+}) {
+  return getHighestBrowsingLevelBit((hit.coverImageNsfwLevel ?? 0) | hit.nsfwLevel);
+}
 
 export const ComicsSearchItem = forwardRef<
   HTMLDivElement,
@@ -18,6 +33,7 @@ export const ComicsSearchItem = forwardRef<
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
   const { name, coverImageUrl, user, stats, genre } = hit;
+  const hidden = !getIsSafeBrowsingLevel(comicSearchCoverLevel(hit));
 
   return (
     <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
@@ -34,7 +50,11 @@ export const ComicsSearchItem = forwardRef<
           justifyContent: 'center',
         }}
       >
-        {coverImageUrl ? (
+        {coverImageUrl && hidden ? (
+          <ThemeIcon variant="light" size={64} radius={0} data-testid="comic-cover-hidden">
+            <IconEyeOff size={32} />
+          </ThemeIcon>
+        ) : coverImageUrl ? (
           <EdgeMedia
             src={coverImageUrl}
             name={name}
