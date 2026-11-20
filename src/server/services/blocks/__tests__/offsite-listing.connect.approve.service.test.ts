@@ -524,6 +524,20 @@ describe('approveExternalRequest — offline-access declaration (treated like a 
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
+  it('🔴 a NON-sensitive scope set with a blank declaration is still refused, by message (the sensitive gate has nothing to check, so this one must not sit behind it)', async () => {
+    stageConnectApprove({
+      requestedScopes: TokenScope.ModelsRead,
+      justifications: { offline_access: '' },
+    });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'offline access is declared but has no justification; add one before approval',
+    });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
   it('🔴 the in-tx re-gate catches a declaration blanked on the PRIMARY after the replica read', async () => {
     stageConnectApprove({
       requestedScopes: REQUESTED,
@@ -532,7 +546,10 @@ describe('approveExternalRequest — offline-access declaration (treated like a 
     });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'offline access is declared but has no justification; add one before approval',
+    });
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
   });
 

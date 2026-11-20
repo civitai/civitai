@@ -438,6 +438,21 @@ export function connectScopesSubsetOfCeiling(requested: bigint, allowedScopes: b
 export const OFFLINE_ACCESS_JUSTIFICATION_KEY = 'offline_access';
 
 /**
+ * The ONE rule for whether a connect listing declares offline access, read from its stored
+ * justification map (any JSON): the reserved key carries a non-blank string. Shared by the main app
+ * (forms, approve gate, agent review) and the auth hub (which offers offline access to a listed
+ * client only when its approved listing declares it), so the two cannot disagree.
+ */
+export function offlineAccessJustification(justifications: unknown): string | null {
+  if (!justifications || typeof justifications !== 'object' || Array.isArray(justifications)) {
+    return null;
+  }
+  const raw = (justifications as Record<string, unknown>)[OFFLINE_ACCESS_JUSTIFICATION_KEY];
+  const text = typeof raw === 'string' ? raw.trim() : '';
+  return text.length > 0 ? text : null;
+}
+
+/**
  * Validate an OAuth-connect listing's per-scope justifications against its
  * requested-scope mask. Returns an array of human-readable error strings (empty
  * ⇒ valid). Mirrors the App Blocks manifest justification loop

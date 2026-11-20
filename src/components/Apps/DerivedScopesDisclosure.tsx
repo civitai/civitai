@@ -275,7 +275,7 @@ function OfflineAccessDeclaration({
             <SensitiveScopeBadge />
           </Group>
         }
-        description="My app acts for users while they are away (it keeps a refresh token). Tick this if your app ever requests offline_access."
+        description="My app acts for users while they are away (it keeps a refresh token). Without this, your app is never offered offline access. Changing it on a live listing is sent for review."
         data-testid="apps-offsite-offline-access-checkbox"
       />
       {declared && (

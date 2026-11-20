@@ -1202,6 +1202,7 @@ function materialPatchChanges(
     sourceRepoUrl: string | null;
     issueTrackerUrl: string | null;
     connectRequestedScopes: number | null;
+    connectScopeJustifications: Prisma.JsonValue | null;
   }
 ): string[] {
   const changed: string[] = [];
@@ -1257,7 +1258,29 @@ function materialPatchChanges(
   ) {
     changed.push('requestedScopes');
   }
+  // A change to the JUSTIFICATION MAP is material too, the whole map: the moderator approved these
+  // reasons (a sensitive scope's, and the `offline_access` declaration, which now decides whether
+  // the hub grants offline access at all), and the edit form already says "Editing a justification
+  // … is sent for review on a live listing". Compared canonically (trimmed, blank dropped, keys
+  // sorted), so re-sending the same reasons is not a change.
+  if (
+    patch.scopeJustifications !== undefined &&
+    canonicalJustifications(patch.scopeJustifications) !==
+      canonicalJustifications(live.connectScopeJustifications)
+  ) {
+    changed.push('scopeJustifications');
+  }
   return changed;
+}
+
+/** A justification map as a stable string: trimmed non-blank string values, keys sorted. */
+function canonicalJustifications(raw: unknown): string {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return '[]';
+  const entries = Object.entries(raw as Record<string, unknown>)
+    .map(([k, v]) => [k, typeof v === 'string' ? v.trim() : ''] as const)
+    .filter(([, v]) => v.length > 0)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return JSON.stringify(entries);
 }
 
 /**
@@ -1684,6 +1707,7 @@ export async function updateListing(opts: {
         sourceRepoUrl: listing.sourceRepoUrl,
         issueTrackerUrl: listing.issueTrackerUrl,
         connectRequestedScopes: listing.connectRequestedScopes,
+        connectScopeJustifications: listing.connectScopeJustifications,
       });
       if (material.length > 0) {
         throw new OffsiteRequestError(
@@ -1754,6 +1778,7 @@ export async function updateListing(opts: {
         sourceRepoUrl: listing.sourceRepoUrl,
         issueTrackerUrl: listing.issueTrackerUrl,
         connectRequestedScopes: listing.connectRequestedScopes,
+        connectScopeJustifications: listing.connectScopeJustifications,
       });
       if (!material) {
         // TRIVIAL-only edit → apply to the LIVE row in place (no re-review). Any

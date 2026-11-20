@@ -1,4 +1,7 @@
-import { OFFLINE_ACCESS_JUSTIFICATION_KEY } from '~/shared/constants/token-scope.constants';
+import {
+  OFFLINE_ACCESS_JUSTIFICATION_KEY,
+  offlineAccessJustification,
+} from '~/shared/constants/token-scope.constants';
 
 /**
  * The agent review's two LANES, and the flag that opens the connect one.
@@ -42,8 +45,8 @@ export const OFFLINE_ACCESS_SCOPE = OFFLINE_ACCESS_JUSTIFICATION_KEY;
 export function offlineAccessDeclaration(
   justifications: Record<string, string> | null | undefined
 ): { declared: boolean; justification: string | null } {
-  const raw = justifications?.[OFFLINE_ACCESS_JUSTIFICATION_KEY];
-  const text = typeof raw === 'string' ? raw.trim() : '';
+  // The shared rule (`offlineAccessJustification`), so the hub's offline-grant check agrees.
+  const text = offlineAccessJustification(justifications);
   return text ? { declared: true, justification: text } : { declared: false, justification: null };
 }
 
@@ -95,6 +98,16 @@ export const NO_SOURCE_STATEMENT =
   'No server source was provided with this submission, so the source review and the token ' +
   'storage and exfiltration checks did not run. An empty code review is not a clean result.';
 
+/**
+ * A listed client that could refresh but whose listing does not declare offline access. With the
+ * hub's enforcement it cannot get offline access at all: no "Stay connected" line, no refresh token.
+ */
+export const UNDECLARED_NO_OFFLINE_STATEMENT =
+  'Offline access: NOT DECLARED, so this app cannot get it. Its OAuth client could get refresh ' +
+  'tokens, but because the listing does not declare offline access, the sign-in screen does not ' +
+  'offer "Stay connected" and no refresh token is issued. Until offline access is a separate ' +
+  'grant on the sign-in service, every app still receives refresh tokens.';
+
 export const STALE_REVIEW_STATEMENT = 'Stale — the listing changed after this review.';
 
 export type CivitaiCheckLine = { tone: 'warn' | 'info'; text: string };
@@ -103,6 +116,11 @@ export type CivitaiCheckLine = { tone: 'warn' | 'info'; text: string };
 export function civitaiCheckLines(checks: ConnectCivitaiChecks): CivitaiCheckLine[] {
   const { offlineAccess: o, source: s } = checks;
   const lines: CivitaiCheckLine[] = [];
+  // The hub offers offline access to a listed connect client only when its APPROVED listing
+  // declares it (auth hub, listing-offline.ts, while offline access is its own grant). So a client
+  // that could refresh but whose listing does not declare it simply cannot get it; that is the
+  // line, not a "reachable" warning. The device flow is not gated there, so it stays ALWAYS.
+  const undeclaredSoBlocked = o.declared === false && o.reachable && !o.alwaysOffline;
   lines.push(
     o.alwaysOffline
       ? {
@@ -111,6 +129,8 @@ export function civitaiCheckLines(checks: ConnectCivitaiChecks): CivitaiCheckLin
             'Offline access: ALWAYS. The app uses the device flow, so every token it gets can be ' +
             'refreshed and it can act while the user is away, with no consent line to untick.',
         }
+      : undeclaredSoBlocked
+      ? { tone: 'warn', text: UNDECLARED_NO_OFFLINE_STATEMENT }
       : o.reachable
       ? {
           tone: 'warn',
@@ -123,8 +143,8 @@ export function civitaiCheckLines(checks: ConnectCivitaiChecks): CivitaiCheckLin
           text: 'Offline access: not reachable. The OAuth client holds no refresh-token or device grant.',
         }
   );
-  // The declaration against reachability. Both mismatches are flagged; a match is stated so the
-  // reviewer knows the justification is the thing left to judge.
+  // The declaration against what the client can do. Mismatches are flagged; a match is stated so
+  // the reviewer knows the justification is the thing left to judge.
   if (o.declared === true && !o.reachable)
     lines.push({
       tone: 'warn',
@@ -132,12 +152,12 @@ export function civitaiCheckLines(checks: ConnectCivitaiChecks): CivitaiCheckLin
         'Declaration MISMATCH: the listing declares offline access, but its OAuth client cannot ' +
         'get refresh tokens. The declaration does not describe this client.',
     });
-  else if (o.declared === false && o.reachable)
+  else if (o.declared === false && o.alwaysOffline)
     lines.push({
       tone: 'warn',
       text:
-        'Declaration MISMATCH: the OAuth client can get refresh tokens, but the listing does NOT ' +
-        'declare offline access. Users are not told this app can act while they are away.',
+        'Declaration MISMATCH: the app uses the device flow, which always gets refresh tokens, but ' +
+        'the listing does NOT declare offline access.',
     });
   else if (o.declared === true && o.reachable)
     lines.push({

@@ -22,6 +22,7 @@ import {
   REFRESH_TOKEN_TTL,
   REFRESH_TOMBSTONE_TTL,
 } from './constants';
+import { offlineAllowedForClient } from './listing-offline';
 import { offlineDb, type ChainOrigin, type MintOrigin } from './offline-columns';
 import { scopeToColumn } from './scope';
 
@@ -34,7 +35,9 @@ import { scopeToColumn } from './scope';
 //      `offline_access` AND the user's consent for that client carries an offline grant
 //      (`OauthConsent.offlineGrantedAt`, set when they approve "Stay connected while you're away").
 //      Otherwise the grant gets an access token alone. Disconnecting the app deletes the consent,
-//      and the offline grant with it.
+//      and the offline grant with it. A client that backs an App Store connect listing is offered
+//      the line, and gets the refresh token and a sliding chain, only while its approved listing
+//      declares offline access (listing-offline.ts); fail-closed if the listings cannot be read.
 //   2. Refreshing a chain whose consent has no offline grant still rotates, but the new refresh
 //      token keeps the presented one's expiry (non-sliding), so a chain issued before the flag lapses
 //      at its current expiry, within 30 days. A chain under an offline grant gets a fresh 30 days.
@@ -309,7 +312,12 @@ export async function planAuthCodeGrant(opts: {
   now?: Date;
 }): Promise<MintPlan> {
   const now = opts.now ?? new Date();
-  const offline = opts.offlineRequested && (await hasOfflineGrant(opts.userId, opts.clientId));
+  // Re-checked at the exchange: a listing whose declaration was withdrawn (or that was delisted)
+  // between the approval and here gets no refresh token (listing-offline.ts).
+  const offline =
+    opts.offlineRequested &&
+    (await hasOfflineGrant(opts.userId, opts.clientId)) &&
+    (await offlineAllowedForClient(opts.clientId));
   return {
     accessOrigin: 'auth_code',
     refresh: offline
@@ -357,7 +365,13 @@ export async function planRefreshGrant(opts: {
   const origin = opts.chain.rootOrigin;
   const deviceChain =
     origin === 'device_code' || (origin === null && opts.clientGrants.includes(DEVICE_CODE_GRANT));
-  const slides = deviceChain || (await hasOfflineGrant(opts.userId, opts.clientId));
+  // An auth-code chain slides only while the offline grant stands AND the client may hold it: a
+  // listed connect client whose approved listing no longer declares offline access stops sliding,
+  // so its chains lapse at their current expiry (listing-offline.ts). Device chains are unchanged.
+  const slides =
+    deviceChain ||
+    ((await hasOfflineGrant(opts.userId, opts.clientId)) &&
+      (await offlineAllowedForClient(opts.clientId)));
   // A row with no expiry (none is written so, but the column allows it) is held to a fresh TTL, so
   // even it lapses; an expiry is never extended past what a fresh token would get.
   const kept = opts.chain.expiresAt && opts.chain.expiresAt < fresh ? opts.chain.expiresAt : fresh;

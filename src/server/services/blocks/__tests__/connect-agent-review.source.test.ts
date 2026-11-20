@@ -235,31 +235,45 @@ describe('civitaiCheckLines', () => {
   });
 });
 
-describe('civitaiCheckLines — offline-access declaration vs reachability', () => {
-  const lines = (reachable: boolean, declared: boolean | undefined) =>
+describe('civitaiCheckLines — offline-access declaration vs what the client can do', () => {
+  const lines = (reachable: boolean, declared: boolean | undefined, alwaysOffline = false) =>
     civitaiCheckLines({
-      offlineAccess: { reachable, alwaysOffline: false, grants: [], declared },
+      offlineAccess: { reachable, alwaysOffline, grants: [], declared },
       source: { provided: false },
     }).map((l) => [l.tone, l.text]);
-  const MISMATCH_UNDECLARED =
-    'Declaration MISMATCH: the OAuth client can get refresh tokens, but the listing does NOT ' +
-    'declare offline access. Users are not told this app can act while they are away.';
+  const UNDECLARED =
+    'Offline access: NOT DECLARED, so this app cannot get it. Its OAuth client could get refresh ' +
+    'tokens, but because the listing does not declare offline access, the sign-in screen does not ' +
+    'offer "Stay connected" and no refresh token is issued. Until offline access is a separate ' +
+    'grant on the sign-in service, every app still receives refresh tokens.';
   const MISMATCH_UNREACHABLE =
     'Declaration MISMATCH: the listing declares offline access, but its OAuth client cannot ' +
     'get refresh tokens. The declaration does not describe this client.';
+  const MISMATCH_DEVICE =
+    'Declaration MISMATCH: the app uses the device flow, which always gets refresh tokens, but ' +
+    'the listing does NOT declare offline access.';
 
-  it('🔴 reachable but NOT declared → flagged', () => {
-    expect(lines(true, false)).toContainEqual(['warn', MISMATCH_UNDECLARED]);
-    expect(lines(true, false)).not.toContainEqual(['warn', MISMATCH_UNREACHABLE]);
+  it('🔴 reachable but NOT declared → "this app cannot get offline access", not a REACHABLE warning', () => {
+    const l = lines(true, false);
+    expect(l[0]).toEqual(['warn', UNDECLARED]);
+    expect(l.some(([, t]) => t.startsWith('Offline access: REACHABLE'))).toBe(false);
+    expect(l.some(([, t]) => t.includes('Users are not told'))).toBe(false);
   });
 
   it('🔴 declared but NOT reachable → flagged', () => {
     expect(lines(false, true)).toContainEqual(['warn', MISMATCH_UNREACHABLE]);
-    expect(lines(false, true)).not.toContainEqual(['warn', MISMATCH_UNDECLARED]);
   });
 
-  it('declared and reachable → no mismatch; the justification is what is left to judge', () => {
+  it('🔴 a device-flow client (not gated by the hub) that does not declare → a mismatch, still ALWAYS', () => {
+    const l = lines(true, false, true);
+    expect(l[0][1]).toMatch(/^Offline access: ALWAYS\./);
+    expect(l).toContainEqual(['warn', MISMATCH_DEVICE]);
+    expect(l).not.toContainEqual(['warn', UNDECLARED]);
+  });
+
+  it('declared and reachable → REACHABLE, and the justification is what is left to judge', () => {
     const l = lines(true, true);
+    expect(l[0][1]).toMatch(/^Offline access: REACHABLE\./);
     expect(l).toContainEqual([
       'info',
       'Offline access is declared and reachable. Judge the stated justification.',
@@ -272,7 +286,9 @@ describe('civitaiCheckLines — offline-access declaration vs reachability', () 
   });
 
   it('checks stored before declarations existed (no `declared`) render as before', () => {
-    expect(lines(true, undefined).some(([, t]) => /declar/i.test(t))).toBe(false);
+    const l = lines(true, undefined);
+    expect(l[0][1]).toMatch(/^Offline access: REACHABLE\./);
+    expect(l.some(([, t]) => /declar/i.test(t))).toBe(false);
   });
 });
 

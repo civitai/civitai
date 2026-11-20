@@ -41,6 +41,7 @@ import {
   parseOfflineBuzzCap,
   readConsentForOffline,
 } from '$lib/server/oauth/offline-grant';
+import { offlineAllowedForClient } from '$lib/server/oauth/listing-offline';
 
 // GET /api/auth/oauth/authorize — return-after-consent + issue the authorization code.
 // Ported from the main app's src/pages/api/auth/oauth/authorize.ts. The session gate uses the hub's
@@ -248,8 +249,13 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
 
   // Offline access is its own grant only with the flag on; off, the request is handled as before.
   // First-party codes go to /session, never /token, so they never carry it.
+  // A listed App Store connect client is offered it only when its approved listing declares it
+  // (listing-offline.ts); otherwise the request is handled as one without offline_access.
   const offlineAsked =
-    !client.isFirstParty && scopeRequest.offlineAccess && (await isOfflineGrantOn());
+    !client.isFirstParty &&
+    scopeRequest.offlineAccess &&
+    (await isOfflineGrantOn()) &&
+    (await offlineAllowedForClient(clientId));
   if (
     offlineAsked &&
     parseOfflineBuzzCap(params.offline_buzz_limit, params.offline_buzz_period) === 'invalid'
