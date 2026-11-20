@@ -18,6 +18,7 @@ import {
   pickChecks,
   reading,
   rowsOf,
+  signature,
   stageOne,
   stageTwo,
   toCommand,
@@ -209,7 +210,12 @@ function render() {
   if (outage.length) {
     out.push("\n## Site-wide errors around the reporter's last error (±10 min), top 15");
     for (const o of outage.slice(0, 15))
-      out.push(`${o.n} rows, ${o.users} users, ${t(o.first)}..${t(o.last)}  ${o.sig}`);
+      out.push(
+        // 0 users is real: lines from jobs and services carry no user field.
+        `${o.n} rows, ${Number(o.users) ? `${o.users} users` : 'no user field'}, ${t(o.first)}..${t(
+          o.last
+        )}  ${signature(o.sig).replace(/\s+/g, ' ').slice(0, 200)}`
+      );
   }
 
   if (checks.includes('feedback')) {
