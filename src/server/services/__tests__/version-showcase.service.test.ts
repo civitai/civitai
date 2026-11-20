@@ -2,6 +2,10 @@ import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { notifications } from '~/server/notifications/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 /**
  * The version showcase's own rules, with the database mocked: how the carousel orders a curated
@@ -13,57 +17,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const mocks = vi.hoisted(() => ({
   entry: undefined as unknown,
   fetchError: null as Error | null,
-  communityCovers: new Map<number, { image: { nsfwLevel: number }; sites: Set<string> }>(),
-  queueComFaceRecheck: vi.fn(async () => undefined),
-  updateModelNsfwLevels: vi.fn(async () => undefined),
-  bustPublicModelResponseCache: vi.fn(async () => undefined),
-  queueUpdate: vi.fn(async () => undefined),
   entityChanges: vi.fn(async () => undefined),
-  ownerImages: [] as { id: number; nsfwLevel: number }[],
 }));
 
-vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  createCachedObject: () => ({
-    fetch: async (ids: number[]) => {
-      if (mocks.fetchError) throw mocks.fetchError;
-      return Object.fromEntries(ids.map((id) => [id, mocks.entry]));
-    },
-    refresh: async () => undefined,
-  }),
-}));
-const notify = vi.hoisted(() => vi.fn(async (_args: unknown) => undefined));
-vi.mock('~/server/services/notification.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  createNotification: notify,
-}));
-vi.mock('~/server/services/model.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  getGallerySettingsByModelId: async () => null,
-}));
-vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  queueComFaceRecheck: mocks.queueComFaceRecheck,
-}));
-vi.mock('~/server/services/nsfwLevels.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  updateModelNsfwLevels: mocks.updateModelNsfwLevels,
-}));
-vi.mock('~/server/services/image.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  imagesForModelVersionsCache: {
-    fetch: async (ids: number[]) =>
-      Object.fromEntries(ids.map((id) => [id, { images: mocks.ownerImages }])),
-  },
-}));
-vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  bustPublicModelResponseCache: mocks.bustPublicModelResponseCache,
-}));
-vi.mock('~/server/search-index', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  modelsSearchIndex: { queueUpdate: mocks.queueUpdate },
-}));
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: {},
   Tracker: class {
@@ -86,13 +42,59 @@ const row = (imageId: number, site: 'com' | 'red', extra: object = {}) => ({
   ...extra,
 });
 
-beforeEach(() => {
+type Entry = { modelVersionId: number; rows: object[]; community: object[] };
+/**
+ * The showcase reads from the database, answered from `mocks.entry` as the database would: its
+ * rows (failing with `mocks.fetchError`), the community images that pass the filters, their live
+ * ratings, and the versions a cover is featured on (all of model 1). Anything else answers empty.
+ */
+const answerShowcase = (async (query: unknown) => {
+  const sql = (
+    Array.isArray(query) ? (query as string[]) : (query as { strings?: string[] })?.strings ?? []
+  ).join('?');
+  const entry = mocks.entry as Entry | undefined;
+  if (sql.includes('SELECT s."modelVersionId", s."imageId", s.site, s.source')) {
+    if (mocks.fetchError) throw mocks.fetchError;
+    return (entry?.rows ?? []).map((row) => ({ modelVersionId: entry!.modelVersionId, ...row }));
+  }
+  if (sql.includes('u.username AS "authorUsername"'))
+    return (entry?.community ?? []).map((image) => ({
+      modelVersionId: entry!.modelVersionId,
+      galleryHiddenUserIds: null,
+      ...image,
+    }));
+  if (sql.includes('SELECT i.id, i."nsfwLevel" FROM "Image" i'))
+    return (entry?.community ?? []).map((image) => image as { id: number; nsfwLevel: number });
+  if (sql.includes('SELECT DISTINCT s."modelVersionId", mv."modelId", s."imageId"'))
+    return (entry?.rows ?? [])
+      .filter((row) => (row as { source: string }).source === 'Community')
+      .map((row) => ({
+        modelVersionId: entry!.modelVersionId,
+        modelId: 1,
+        imageId: (row as { imageId: number }).imageId,
+      }));
+  return [];
+}) as never;
+
+let notify: ReturnType<typeof vi.spyOn>;
+
+/** The model ids each level recompute (`updateModelNsfwLevels`) ran for. */
+const levelRecomputes = () =>
+  dbMock.dbWrite.$queryRaw.mock.calls.flatMap(([query]) => {
+    const sql = query as { strings?: string[]; values?: unknown[] };
+    return (sql?.strings ?? []).join('').includes('bit_or(mv."nsfwLevel")') ? [sql.values] : [];
+  });
+
+beforeEach(async () => {
   vi.clearAllMocks();
+  // The showcase cache keeps a local copy too: each test reads its own entry.
+  await showcase.getVersionShowcaseCache().bust([VERSION]);
   dbMock.dbWrite.$queryRaw.mockReset();
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+  dbMock.dbWrite.$queryRaw.mockImplementation(answerShowcase);
+  dbMock.dbRead.$queryRaw.mockImplementation(answerShowcase);
+  notify = vi.spyOn(notifications, 'createNotification').mockResolvedValue(undefined as never);
   mocks.entry = undefined;
   mocks.fetchError = null;
-  mocks.communityCovers = new Map();
 });
 
 describe('withCuratedShowcases: the public API list', () => {
@@ -107,7 +109,6 @@ describe('withCuratedShowcases: the public API list', () => {
       ],
       community: [{ id: 9, site: 'red', nsfwLevel: 1 }],
     };
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 9, nsfwLevel: 1 }] as never);
     const result = await showcase.withCuratedShowcases(
       { [VERSION]: { images: [owner(1), owner(2)] } },
       'red'
@@ -251,12 +252,9 @@ describe('assertCoverImagesValid: which images may be a cover', () => {
   // A community image featured in the model's showcase, on the given sites.
   const featuredOn = (imageId: number, sites: string[], nsfwLevel = 1) => {
     dbMock.dbRead.image.findMany.mockResolvedValue([]);
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
-      { modelVersionId: VERSION, modelId: 1, imageId },
-    ] as never);
     mocks.entry = {
       modelVersionId: VERSION,
-      rows: [],
+      rows: sites.map((site) => row(imageId, site as 'com' | 'red', { source: 'Community' })),
       community: sites.map((site) => ({ id: imageId, site, nsfwLevel, modelVersionId: VERSION })),
     };
   };
@@ -342,7 +340,9 @@ describe('saveModelCovers: the cover gate', () => {
     });
     expect(changed).toBe(true);
     expect(dbMock.dbRead.image.findMany).not.toHaveBeenCalled();
-    expect(mocks.updateModelNsfwLevels).toHaveBeenCalledWith([1]);
+    // The model's level is recomputed, for the cover it no longer has.
+    expect(levelRecomputes()).toHaveLength(1);
+    expect(levelRecomputes()[0]).toContain(1);
     expect(mocks.entityChanges).toHaveBeenCalledWith([
       expect.objectContaining({
         field: 'coverImageId',
@@ -510,13 +510,9 @@ describe('setVersionShowcase: a valid save', () => {
 describe('getCoverImages: a community cover on a model card', () => {
   const featuredOnRedOnly = () => {
     dbMock.dbRead.image.findMany.mockResolvedValue([]);
-    // The showcase rows, then the image's live state.
-    dbMock.dbRead.$queryRaw
-      .mockResolvedValueOnce([{ modelVersionId: VERSION, modelId: 1, imageId: 77 }] as never)
-      .mockResolvedValueOnce([{ id: 77, nsfwLevel: 1 }] as never);
     mocks.entry = {
       modelVersionId: VERSION,
-      rows: [],
+      rows: [row(77, 'red', { source: 'Community' })],
       community: [{ id: 77, site: 'red', nsfwLevel: 1, modelVersionId: VERSION }],
     };
   };
@@ -603,10 +599,15 @@ describe('getVersionShowcaseEditor: what the editor is sent', () => {
       modelVersions: [{ id: VERSION }],
     } as never);
     dbMock.dbWrite.modelVersionShowcaseItem.findMany.mockResolvedValue([]);
-    mocks.ownerImages = [pg, x];
+    // The creator's images, as their version cache holds them.
+    installFakeCacheRedis();
+    void redisMock.redis.packed.set(
+      `${REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION}:${VERSION}` as never,
+      { modelVersionId: VERSION, images: [pg, x] } as never
+    );
     mocks.entry = {
       modelVersionId: VERSION,
-      rows: [],
+      rows: [row(3, 'red', { source: 'Community' }), row(4, 'red', { source: 'Community' })],
       community: [
         { ...pg, id: 3 },
         { ...x, id: 4 },
@@ -670,7 +671,7 @@ describe('setVersionShowcaseCover: what it refuses', () => {
 
   it('refuses anyone but the creator', async () => {
     await expect(setCover(9)).rejects.toThrow(/Only the model’s creator/);
-    expect(mocks.updateModelNsfwLevels).not.toHaveBeenCalled();
+    expect(levelRecomputes()).toEqual([]);
   });
 
   it('refuses a community image not featured in the latest version on that site', async () => {
@@ -692,11 +693,13 @@ describe('hasCuratedShowcase: keeping a curated response out of the shared cache
     mocks.entry = { modelVersionId: VERSION, rows: [row(1, 'red')], community: [] };
     expect(await showcase.hasCuratedShowcase([VERSION])).toBe(true);
     mocks.entry = { modelVersionId: VERSION, rows: [], community: [] };
+    await showcase.refreshVersionShowcases([VERSION]);
     expect(await showcase.hasCuratedShowcase([VERSION])).toBe(false);
   });
 
   it('reads a failed read as curated, so the response is not shared', async () => {
     mocks.fetchError = new Error('redis down');
-    expect(await showcase.hasCuratedShowcase([VERSION])).toBe(true);
+    // A version no other test has read, so nothing is cached for it.
+    expect(await showcase.hasCuratedShowcase([VERSION + 1])).toBe(true);
   });
 });

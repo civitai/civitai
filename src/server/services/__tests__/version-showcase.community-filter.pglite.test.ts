@@ -3,6 +3,11 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * The version showcase's community images, run through the cache's real lookup SQL against PGlite.
@@ -11,33 +16,6 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const gallery = vi.hoisted(() => ({ settings: null as unknown }));
-vi.mock('~/server/services/model.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  getGallerySettingsByModelId: async () => gallery.settings,
-}));
-// A plain in-memory cache over the real lookup: entries stay until refreshed, like Redis does, so a
-// read that wrongly trusts the cache shows up as stale.
-const cacheStore = vi.hoisted(() => new Map<number, unknown>());
-vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  createCachedObject: (options: {
-    lookupFn: (ids: number[], fromWrite?: boolean) => Promise<Record<number, unknown>>;
-  }) => {
-    const load = async (ids: number[]) => {
-      if (!ids.length) return;
-      const records = await options.lookupFn(ids, true);
-      for (const id of ids) cacheStore.set(id, records[id]);
-    };
-    return {
-      fetch: async (ids: number[]) => {
-        await load(ids.filter((id) => !cacheStore.has(id)));
-        return Object.fromEntries(ids.map((id) => [id, cacheStore.get(id)]));
-      },
-      refresh: (ids: number[]) => load(ids),
-    };
-  },
-}));
 const imageTags = vi.hoisted(() => new Map<number, number[]>());
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -45,16 +23,6 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
     fetch: async (ids: number[]) =>
       Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: imageTags.get(id) ?? [] }])),
   },
-}));
-const saveModelCovers = vi.hoisted(() => vi.fn(async (_args: unknown) => true));
-vi.mock('~/server/services/model-cover.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  saveModelCovers,
-}));
-const bustPublicModelResponseCache = vi.hoisted(() => vi.fn(async (_ids: number[]) => undefined));
-vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  bustPublicModelResponseCache,
 }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -73,6 +41,7 @@ const {
   getMyImageShowcaseFeatures,
 } = await import('../version-showcase.service');
 const { getImagesForModelVersion } = await import('../image.service');
+const { publicModelResponseKey } = await import('../model-version.service');
 
 const CREATOR = 1;
 const MODEL = 10;
@@ -93,7 +62,8 @@ beforeAll(async () => {
     );
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, "coverImageId" int, "sfwCoverImageId" int,
-      nsfw boolean NOT NULL DEFAULT false, name text NOT NULL DEFAULT 'M'
+      nsfw boolean NOT NULL DEFAULT false, name text NOT NULL DEFAULT 'M',
+      description text, "sfwName" text, "sfwDescription" text, meta jsonb
     );
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "ImageResourceNew" ("imageId" int NOT NULL, "modelVersionId" int NOT NULL);
@@ -130,6 +100,9 @@ beforeAll(async () => {
     const sql = Array.isArray(strings)
       ? Prisma.sql(strings as TemplateStringsArray, ...values)
       : (strings as Prisma.Sql);
+    // The model level recompute after a cover change reads columns this fixture leaves out; it has
+    // its own tests (nsfwLevels).
+    if (sql.text.includes('bit_or(mv."nsfwLevel")')) return [];
     const paramTypes = sql.values.map((v) => (Number.isInteger(v) ? INT4_OID : 0));
     return (await db.query(sql.text, sql.values, { paramTypes })).rows;
   }) as never;
@@ -149,16 +122,59 @@ beforeAll(async () => {
     for (const step of batch) results.push(await step);
     return results;
   }) as never);
-  dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
-    { id: VERSION, modelId: MODEL },
-  ] as never);
+  // The showcase cache's version-to-model read, from either client.
+  for (const client of [dbMock.dbWrite, dbMock.dbRead])
+    client.modelVersion.findMany.mockResolvedValue([{ id: VERSION, modelId: MODEL }] as never);
+  // The public model response cache is Datapacket's; on here so its bust can be seen.
+  setEnv({ IS_DATAPACKET: true });
+  // The cover write reads and conditionally updates the model row, here in PGlite.
+  dbMock.dbWrite.model.findUnique.mockImplementation(
+    (async ({ where }: { where: { id: number } }) =>
+      (await db.query(`SELECT * FROM "Model" WHERE id = $1`, [where.id])).rows[0] ?? null) as never
+  );
+  dbMock.dbWrite.model.updateMany.mockImplementation((async ({
+    where,
+    data,
+  }: {
+    where: { id: number; coverImageId: number | null; sfwCoverImageId: number | null };
+    data: { coverImageId: number | null; sfwCoverImageId: number | null };
+  }) => {
+    const { affectedRows } = await db.query(
+      `UPDATE "Model" SET "coverImageId" = $1, "sfwCoverImageId" = $2
+       WHERE id = $3 AND "coverImageId" IS NOT DISTINCT FROM $4
+         AND "sfwCoverImageId" IS NOT DISTINCT FROM $5`,
+      [data.coverImageId, data.sfwCoverImageId, where.id, where.coverImageId, where.sfwCoverImageId]
+    );
+    return { count: affectedRows ?? 0 };
+  }) as never);
 });
+
+/** The model's civitai.red cover, as stored. */
+const redCover = async () =>
+  (
+    await db.query<{ coverImageId: number | null }>(
+      `SELECT "coverImageId" FROM "Model" WHERE id = $1`,
+      [MODEL]
+    )
+  ).rows[0].coverImageId;
+
+/** The model's gallery settings, as the gallery settings cache holds them. */
+const setGallery = (settings: Record<string, unknown>) =>
+  redisMock.redis.set(
+    `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${MODEL}` as never,
+    JSON.stringify({ sfwHeld: false, ...settings }) as never
+  );
+
+/** The redis deletes of the model's cached public API response. */
+const publicResponseBusts = () =>
+  redisMock.redis.del.mock.calls.filter(([keys]) =>
+    [keys].flat().includes(publicModelResponseKey(MODEL, allBrowsingLevelsFlag) as never)
+  );
 afterAll(() => db.close());
 
 beforeEach(async () => {
-  gallery.settings = null;
-  cacheStore.clear();
-  saveModelCovers.mockClear();
+  installFakeCacheRedis();
+  redisMock.redis.del.mockClear();
   await db.exec(`
     DELETE FROM "ModelVersionShowcaseItem"; DELETE FROM "Image"; DELETE FROM "Post";
     DELETE FROM "ImageResourceNew";
@@ -266,12 +282,12 @@ describe('version showcase community filter', () => {
     const hiddenImage = await featured();
     const hiddenUser = await featured();
     await featured({ nsfwLevel: R });
-    gallery.settings = {
+    await setGallery({
       hiddenImages: { [VERSION]: [hiddenImage] },
       hiddenUsers: [{ id: hiddenUser }],
       sfwHeld: true,
       level: PG,
-    };
+    });
     expect(await served()).toEqual([clean]);
   });
 
@@ -283,7 +299,6 @@ describe('version showcase community filter', () => {
       madeWith,
     ]);
     await db.query(`INSERT INTO "ImageResourceNew" VALUES ($1, $2)`, [madeWith, VERSION]);
-    cacheStore.clear();
     expect(await served()).toEqual([madeWith]);
   });
 
@@ -305,9 +320,7 @@ describe('when a featured image stops qualifying', () => {
 
     await bustVersionShowcasesForUser(banned);
 
-    expect(saveModelCovers).toHaveBeenCalledWith(
-      expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })
-    );
+    expect(await redCover()).toBeNull();
   });
 
   it('judges a cover against the current state when its showcase cache is stale', async () => {
@@ -318,9 +331,7 @@ describe('when a featured image stops qualifying', () => {
 
     await dropInvalidCommunityCovers([MODEL]);
 
-    expect(saveModelCovers).toHaveBeenCalledWith(
-      expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })
-    );
+    expect(await redCover()).toBeNull();
   });
 
   it('keeps a cover whose image is only waiting on a review, for when it clears', async () => {
@@ -331,19 +342,17 @@ describe('when a featured image stops qualifying', () => {
     await dropInvalidCommunityCovers([MODEL]);
 
     expect(await served()).not.toContain(pending);
-    expect(saveModelCovers).not.toHaveBeenCalled();
+    expect(await redCover()).toBe(pending);
   });
 
   it("clears a cover whose author the creator hid from the model's gallery", async () => {
     const hidden = await featured();
     await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [hidden, MODEL]);
-    gallery.settings = { hiddenUsers: [{ id: hidden }] };
+    await setGallery({ hiddenUsers: [{ id: hidden }] });
 
     await dropInvalidCommunityCovers([MODEL]);
 
-    expect(saveModelCovers).toHaveBeenCalledWith(
-      expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })
-    );
+    expect(await redCover()).toBeNull();
   });
 
   it('clears a cover whose image was removed for a ToS violation', async () => {
@@ -353,9 +362,7 @@ describe('when a featured image stops qualifying', () => {
 
     await dropInvalidCommunityCovers([MODEL]);
 
-    expect(saveModelCovers).toHaveBeenCalledWith(
-      expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })
-    );
+    expect(await redCover()).toBeNull();
   });
 
   it('leaves a community cover whose author is still in good standing', async () => {
@@ -364,7 +371,9 @@ describe('when a featured image stops qualifying', () => {
 
     await bustVersionShowcasesForUser(fine);
 
-    expect(saveModelCovers).not.toHaveBeenCalled();
+    expect(await redCover()).toBe(fine);
+    // The showcase was refreshed all the same, and so is the public model response carrying it.
+    expect(publicResponseBusts()).toHaveLength(1);
   });
 
   it('a deleted image stops counting as a cover at once', async () => {
@@ -439,14 +448,10 @@ describe('when a featured image stops qualifying', () => {
     await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [id, MODEL]);
     await db.query(`DELETE FROM "Image" WHERE id = $1`, [id]);
 
-    bustPublicModelResponseCache.mockClear();
     await bustVersionShowcasesForImages([id]);
 
-    expect(bustPublicModelResponseCache).toHaveBeenCalledWith([MODEL]);
-    expect(saveModelCovers).toHaveBeenCalledTimes(1);
-    expect(saveModelCovers).toHaveBeenCalledWith(
-      expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })
-    );
+    expect(publicResponseBusts().length).toBeGreaterThan(0);
+    expect(await redCover()).toBeNull();
   });
 
   it("doesn't count a row featured on another model", async () => {
@@ -478,7 +483,7 @@ describe("an author's removal", () => {
       model: { id: MODEL, name: 'M', userId: CREATOR, nsfw: false, status: 'Published' },
     } as never);
 
-    bustPublicModelResponseCache.mockClear();
+    redisMock.redis.del.mockClear();
     await removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: id, userId: id });
 
     const { rows } = await db.query<{ site: string; removed: boolean; position: number | null }>(
@@ -498,8 +503,7 @@ describe("an author's removal", () => {
     expect(inserted.affectedRows).toBe(0);
     expect(await served('com')).not.toContain(id);
     // The public model response carries the showcase, so it is dropped too.
-    expect(bustPublicModelResponseCache).toHaveBeenCalledTimes(1);
-    expect(bustPublicModelResponseCache).toHaveBeenCalledWith([MODEL]);
+    expect(publicResponseBusts()).toHaveLength(1);
   });
 });
 

@@ -3234,8 +3234,8 @@ export const modelVersionDonationGoal = async ({
 };
 
 // Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
-// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
-const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
+// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler). Read per call.
+const publicModelResponseCacheEnabled = () => env.IS_DATAPACKET;
 
 export function publicModelResponseKey(
   modelId: number,
@@ -3256,7 +3256,7 @@ export function publicModelResponseKey(
 // throw into the mutation path, so it is swallowed (the entry otherwise expires
 // via its TTL).
 export async function bustPublicModelResponseCache(modelId: number | number[]) {
-  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
+  if (!publicModelResponseCacheEnabled()) return;
   const modelIds = Array.isArray(modelId) ? modelId : [modelId];
   if (modelIds.length === 0) return;
   const keys = modelIds.flatMap((id) => [
