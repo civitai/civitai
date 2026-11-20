@@ -34,6 +34,10 @@ export const listMyServiceDealsSchema = z.object({
 });
 
 export const serviceDealActionSchema = dealId;
+export const reviewServiceDealSchema = dealId.extend({
+  verdict: z.enum(['Happy', 'NotQuite']),
+  comment: text(2000).optional(),
+});
 export const declineServiceDealSchema = dealId.extend({
   reason: text(1000).optional(),
   reasonCode: z.enum(SERVICE_DEAL_DECLINE_REASON_CODES).optional(),

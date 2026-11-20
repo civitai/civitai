@@ -8,6 +8,7 @@ import {
   requestServiceDealRevisionSchema,
   requestServiceDealSchema,
   respondServiceDealCancellationSchema,
+  reviewServiceDealSchema,
   serviceDealActionSchema,
 } from '~/server/schema/creator-service-deal.schema';
 import {
@@ -26,6 +27,7 @@ import {
   respondServiceDealCancellation,
   withdrawServiceDeal,
 } from '~/server/services/creator-service-deal.service';
+import { reviewServiceDeal } from '~/server/services/creator-service-deal-review.service';
 import { domainServableLevels, getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 
@@ -57,6 +59,17 @@ export const creatorServiceDealRouter = router({
       buzzType: domainSpendType(ctx.features),
       servableLevels: domainServableLevels(ctx),
       consentLevels: getRequestBrowsingLevel(ctx),
+      reviewEnabled: !!ctx.features.creatorServicesNext,
+    })
+  ),
+  // Behind the live review flag inside the service, so the brake stops new reviews at once.
+  review: gated.input(reviewServiceDealSchema).mutation(({ input, ctx }) =>
+    reviewServiceDeal({
+      dealId: input.id,
+      userId: ctx.user.id,
+      verdict: input.verdict,
+      comment: input.comment,
+      reviewFlag: !!ctx.features.creatorServicesNext,
     })
   ),
   accept: gated

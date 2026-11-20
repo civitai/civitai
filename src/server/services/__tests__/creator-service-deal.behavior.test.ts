@@ -117,6 +117,7 @@ const deals = await import('~/server/services/creator-service-deal.service');
 const { creatorServiceDealsJob } = await import('~/server/jobs/creator-service-deal-jobs');
 const reviews = await import('~/server/services/creator-service-dispute-review.service');
 const escrow = await import('~/server/services/creator-service-escrow.service');
+const dealReviews = await import('~/server/services/creator-service-deal-review.service');
 const { creatorServiceNotifications } = await import(
   '~/server/notifications/creator-service.notifications'
 );
@@ -152,6 +153,8 @@ const LATER_MIGRATIONS = [
   '20261224150000_service_deal_file_removed_at',
   '20270106120000_service_offering_content_scan',
   '20271119070000_service_deal_file_scanned_etag',
+  '20271120100000_service_deal_reviewed_happy',
+  '20271120100100_service_deal_reviews',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -343,7 +346,7 @@ beforeEach(async () => {
   chat.createMessage.mockResolvedValue({});
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "ServiceDisputeReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDisputeReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
@@ -3401,6 +3404,128 @@ describe('site notifications', () => {
     notifications.createNotification.mockRejectedValueOnce(new Error('down'));
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
     expect((await deal(id)).status).toBe('Accepted');
+  });
+});
+
+describe('buyer reviews', () => {
+  const review = (id: number, verdict: 'Happy' | 'NotQuite', extra: Record<string, unknown> = {}) =>
+    dealReviews.reviewServiceDeal({
+      dealId: id,
+      userId: BUYER,
+      verdict,
+      reviewFlag: true,
+      ...extra,
+    });
+  const completed = async ({ enrolled = true } = {}) => {
+    const { id } = await request({ reviewEnabled: enrolled });
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    await deliver(id);
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+    return id;
+  };
+  const reviewRows = (id: number) =>
+    q<{
+      verdict: string;
+      buyerId: number;
+      sellerId: number;
+      offeringId: number;
+      scanStatus: string;
+    }>(
+      `SELECT "verdict"::text, "buyerId", "sellerId", "offeringId", "scanStatus"::text
+       FROM "ServiceDealReview" WHERE "dealId" = $1`,
+      [id]
+    );
+  const happyEvents = async (id: number) =>
+    (
+      await q<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "ServiceDealEvent" WHERE "dealId" = $1 AND type = 'ReviewedHappy'`,
+        [id]
+      )
+    )[0].n;
+
+  it('enrols a deal requested with the review flag, and only that one', async () => {
+    const on = await completed();
+    const off = await completed({ enrolled: false });
+    expect((await deal(on)).reviewEnabledAt).not.toBeNull();
+    expect((await deal(off)).reviewEnabledAt).toBeNull();
+  });
+
+  it('a happy review moves the release to now, writes one event and one review, and pays the seller', async () => {
+    const id = await completed();
+    expect((await deal(id)).releaseAt.getTime()).toBeGreaterThan(Date.now());
+    await review(id, 'Happy', { comment: 'Lovely work' });
+
+    expect((await deal(id)).releaseAt.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(await happyEvents(id)).toBe(1);
+    expect(await reviewRows(id)).toEqual([
+      {
+        verdict: 'Happy',
+        buyerId: BUYER,
+        sellerId: SELLER,
+        offeringId: (await deal(id)).offeringId,
+        scanStatus: 'Pending',
+      },
+    ]);
+    await escrow.sweepServiceDealReleases();
+    expect((await deal(id)).settledAt).not.toBeNull();
+    // The dispute window closed with the early release.
+    await expect(
+      deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'broken' })
+    ).rejects.toEqual(conflict);
+  });
+
+  it('a second review, or one on a disputed, settled or unenrolled deal, writes nothing', async () => {
+    const twice = await completed();
+    await review(twice, 'Happy');
+    await expect(review(twice, 'Happy')).rejects.toEqual(conflict);
+    await expect(review(twice, 'NotQuite')).rejects.toEqual(conflict);
+    expect(await happyEvents(twice)).toBe(1);
+
+    const disputed = await completed();
+    await deals.openServiceDealDispute({ dealId: disputed, userId: BUYER, reason: 'broken' });
+    await expect(review(disputed, 'Happy')).rejects.toEqual(conflict);
+
+    const settled = await completed();
+    await q(`UPDATE "ServiceDeal" SET "settledAt" = now() WHERE id = $1`, [settled]);
+    await expect(review(settled, 'Happy')).rejects.toEqual(conflict);
+
+    // A deal that was ever disputed is not released early, whatever its release time says.
+    const onceDisputed = await completed();
+    await q(`UPDATE "ServiceDeal" SET "disputeOpenedAt" = now() WHERE id = $1`, [onceDisputed]);
+    await expect(review(onceDisputed, 'Happy')).rejects.toEqual(conflict);
+
+    const unenrolled = await completed({ enrolled: false });
+    await expect(review(unenrolled, 'Happy')).rejects.toEqual(conflict);
+
+    for (const id of [disputed, settled, onceDisputed, unenrolled]) {
+      expect(await reviewRows(id)).toEqual([]);
+      expect(await happyEvents(id)).toBe(0);
+    }
+  });
+
+  it('only the buyer may review, and only with the live flag', async () => {
+    const id = await completed();
+    await expect(
+      dealReviews.reviewServiceDeal({
+        dealId: id,
+        userId: SELLER,
+        verdict: 'Happy',
+        reviewFlag: true,
+      })
+    ).rejects.toEqual(conflict);
+    await expect(review(id, 'Happy', { reviewFlag: false })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(await reviewRows(id)).toEqual([]);
+  });
+
+  it('not quite records the review and leaves the release time alone', async () => {
+    const id = await completed();
+    const before = (await deal(id)).releaseAt;
+    await review(id, 'NotQuite');
+    expect((await deal(id)).releaseAt).toEqual(before);
+    expect(await happyEvents(id)).toBe(0);
+    expect(await reviewRows(id)).toMatchObject([{ verdict: 'NotQuite', scanStatus: 'Scanned' }]);
   });
 });
 

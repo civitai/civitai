@@ -32,6 +32,8 @@ export const SERVICE_DEAL_CLOSE_LABELS: Record<string, string> = {
 export const SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS = 24 * HOUR;
 /** The seller is reminded this long before the due date. */
 export const SERVICE_DEAL_DUE_SOON_NOTICE_MS = 24 * HOUR;
+/** How long a buyer may edit their review after leaving it. */
+export const SERVICE_DEAL_REVIEW_EDIT_MS = 48 * HOUR;
 /** Between completion and payout, so a buyer can report final files that are missing or broken. */
 export const SERVICE_DEAL_DISPUTE_WINDOW_MS = 48 * HOUR;
 
