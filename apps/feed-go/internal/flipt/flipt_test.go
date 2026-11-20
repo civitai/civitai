@@ -3,6 +3,7 @@ package flipt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -144,8 +145,8 @@ func TestBooleanErrors(t *testing.T) {
 	}
 }
 
-// A Switch is off before its first read, follows the flag on every read, both ways, and reads off
-// after a failed read (Flipt unreachable, or the flag deleted) until a read succeeds again.
+// A Switch is off before its first read and follows the flag on every read, both ways. A server
+// error keeps the last good value; the flag deleted (Flipt answers 404) reads off.
 func TestSwitchFollowsTheFlag(t *testing.T) {
 	f := &fakeFlipt{flags: map[string]bool{"k": false}}
 	srv := f.serve(t)
@@ -164,7 +165,7 @@ func TestSwitchFollowsTheFlag(t *testing.T) {
 	}{
 		{"off", func() {}, false},
 		{"flipped on", func() { f.setK(true) }, true},
-		{"server error", func() { f.setCode(http.StatusServiceUnavailable) }, false},
+		{"server error keeps the last good value", func() { f.setCode(http.StatusServiceUnavailable) }, true},
 		{"recovered", func() { f.setCode(0) }, true},
 		{"flag deleted", func() { f.del("k") }, false},
 		{"re-created off", func() { f.setK(false) }, false},
@@ -184,6 +185,76 @@ func TestSwitchFollowsTheFlag(t *testing.T) {
 	var nilSwitch *Switch
 	if nilSwitch.On() {
 		t.Fatal("a nil switch reads on")
+	}
+}
+
+// A failed read keeps the last value read successfully (Node's client holds its last snapshot when a
+// poll fails, errorStrategy FALLBACK): flag ON, then Flipt failing, stays ON.
+func TestSwitchKeepsLastGoodOnFailure(t *testing.T) {
+	var fail bool
+	sw := NewSwitch(func(context.Context) (bool, error) {
+		if fail {
+			return false, errors.New("flipt: connection refused")
+		}
+		return true, nil
+	})
+	sw.Refresh(context.Background())
+	fail = true
+	sw.Refresh(context.Background())
+	if !sw.On() {
+		t.Fatal("ON then a failed read: off, want the last good value (on)")
+	}
+}
+
+// Never read successfully, a failed read reads OFF.
+func TestSwitchNeverReadFailureIsOff(t *testing.T) {
+	sw := NewSwitch(func(context.Context) (bool, error) { return true, errors.New("flipt: connection refused") })
+	sw.Refresh(context.Background())
+	if sw.On() {
+		t.Fatal("never read + failure: on, want off")
+	}
+}
+
+// ON, then failures: the last good value holds up to MaxStale (the default, 10 min) and reads OFF past
+// it, OnStale told once; a later success clears the outage.
+func TestSwitchStalenessBound(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	fail, answer := false, true
+	var stale []time.Duration
+	sw := NewSwitch(func(context.Context) (bool, error) {
+		if fail {
+			return false, errors.New("flipt: http 503")
+		}
+		return answer, nil
+	})
+	sw.Now = func() time.Time { return now }
+	sw.OnStale = func(age time.Duration) { stale = append(stale, age) }
+	ctx := context.Background()
+	sw.Refresh(ctx)
+	fail = true
+	for _, step := range []struct {
+		at   time.Duration
+		want bool
+	}{{time.Minute, true}, {DefaultMaxStale, true}, {DefaultMaxStale + time.Second, false}, {DefaultMaxStale + time.Minute, false}} {
+		now = time.Unix(1_800_000_000, 0).Add(step.at)
+		sw.Refresh(ctx)
+		if got := sw.On(); got != step.want {
+			t.Fatalf("%v after the last good read: On %v, want %v", step.at, got, step.want)
+		}
+	}
+	if len(stale) != 1 || stale[0] != DefaultMaxStale+time.Second {
+		t.Fatalf("OnStale calls %v, want one, at %v", stale, DefaultMaxStale+time.Second)
+	}
+	fail = false
+	sw.Refresh(ctx)
+	if !sw.On() {
+		t.Fatal("recovered: off, want on")
+	}
+	fail = true
+	now = now.Add(DefaultMaxStale + time.Second)
+	sw.Refresh(ctx)
+	if sw.On() || len(stale) != 2 {
+		t.Fatalf("second outage past the bound: On %v, OnStale calls %d; want off, 2", sw.On(), len(stale))
 	}
 }
 

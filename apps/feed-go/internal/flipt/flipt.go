@@ -1,6 +1,9 @@
-// Package flipt reads one global boolean Flipt flag, the way the Node app's cached flag gate does
-// (createCachedFlagGate over isFliptSync, src/server/utils/cached-flag-gate.ts): evaluated with the
-// entity id 'global' and no context, at most once per refresh window, and any failure reads as OFF.
+// Package flipt reads one global boolean Flipt flag with the arguments the Node app's cached flag
+// gate passes (createCachedFlagGate over isFliptSync, src/server/utils/cached-flag-gate.ts): entity
+// id 'global', no context, a value reused for 5 s. What a failure reads as follows Node's whole
+// stack, not that gate alone: Node's client keeps its last snapshot when a poll fails, so a Switch
+// keeps its last good value through failed reads (Switch.Refresh), up to a staleness bound Node does
+// not have; a never-read flag or a key Flipt says does not exist reads OFF, as the gate reads them.
 //
 // It is the standard library on purpose, not go.flipt.io/flipt-client (the in-process engine the Go
 // services are to adopt, packages/civitai-flipt/parity, which brings a wasm runtime with it): this
@@ -22,6 +25,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -35,6 +39,9 @@ const GlobalEntityID = "global"
 // RefreshInterval is CACHED_FLAG_GATE_REFRESH_MS: how long one read of a flag is reused. A flip takes
 // effect within it.
 const RefreshInterval = 5 * time.Second
+
+// ErrFlagNotFound is Flipt answering that the flag does not exist (HTTP 404).
+var ErrFlagNotFound = errors.New("flag not found")
 
 // Config is where Flipt is.
 type Config struct {
@@ -91,7 +98,7 @@ type booleanRequest struct {
 }
 
 // Boolean evaluates flag for the global entity with no context. Anything but a 200 whose body
-// carries a boolean `enabled` is an error (an unknown flag included: Flipt answers it 404).
+// carries a boolean `enabled` is an error; an unknown flag (Flipt answers it 404) is ErrFlagNotFound.
 func (c *Client) Boolean(ctx context.Context, flag string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
@@ -118,6 +125,10 @@ func (c *Client) Boolean(ctx context.Context, flag string) (bool, error) {
 		return false, fmt.Errorf("flipt: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		return false, fmt.Errorf("flipt: %s: %w", flag, ErrFlagNotFound)
+	}
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 		return false, fmt.Errorf("flipt: %s: http %d", flag, resp.StatusCode)
@@ -135,35 +146,88 @@ func (c *Client) Boolean(ctx context.Context, flag string) (bool, error) {
 }
 
 // Switch is one global boolean flag, read in the background so a request never waits on Flipt.
-// On is false until the first read succeeds, and after any read that fails (as the Node gate reads
-// null or a throw as OFF), so a Flipt this process cannot reach keeps the flag's code path off.
+// On is false until the first read succeeds; after that a failed read keeps the last good value for
+// up to MaxStale (Refresh says exactly what each outcome does).
 type Switch struct {
 	read func(ctx context.Context) (bool, error)
 	on   atomic.Bool
 	// OnError, when set, sees every failed read.
 	OnError func(err error)
+	// OnStale, when set, is called once each time the last good value is dropped for being older
+	// than MaxStale.
+	OnStale func(age time.Duration)
+	// MaxStale is how long the last good value outlives failed reads (0: DefaultMaxStale).
+	MaxStale time.Duration
+	// Now is the clock (nil: time.Now).
+	Now func() time.Time
+
+	mu     sync.Mutex
+	lastOK time.Time // zero: never read successfully
+	stale  bool      // OnStale already called for the current outage
 }
+
+// DefaultMaxStale is how long a Switch keeps its last good value while every read fails. Past it the
+// switch reads OFF: a flag nobody can confirm stops steering traffic.
+const DefaultMaxStale = 10 * time.Minute
 
 // NewSwitch is a switch over read (Client.Boolean of one flag, in production).
 func NewSwitch(read func(ctx context.Context) (bool, error)) *Switch {
 	return &Switch{read: read}
 }
 
-// On is the last read's answer (false before the first one and after a failed one).
+// On is the current value (see Refresh).
 func (s *Switch) On() bool {
 	return s != nil && s.on.Load()
 }
 
-// Refresh reads the flag once and keeps the answer.
+// Refresh reads the flag once. A successful read sets the value. Flipt answering that the flag does
+// not exist (ErrFlagNotFound) sets it OFF, as Node's evaluation of a key missing from its snapshot
+// throws and its gate reads that as off. Any other failure keeps the last good value, as Node's client
+// keeps serving its last snapshot when a poll fails (errorStrategy FALLBACK); it reads OFF only when
+// no read has ever succeeded, or when the last success is older than MaxStale (OnStale is told once).
 func (s *Switch) Refresh(ctx context.Context) {
 	on, err := s.read(ctx)
-	if err != nil {
-		on = false
-		if s.OnError != nil {
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err == nil || errors.Is(err, ErrFlagNotFound) {
+		if err != nil {
+			on = false
+		}
+		s.lastOK, s.stale = now, false
+		s.on.Store(on)
+		if err != nil && s.OnError != nil {
 			s.OnError(err)
 		}
+		return
 	}
-	s.on.Store(on)
+	if s.OnError != nil {
+		s.OnError(err)
+	}
+	if s.lastOK.IsZero() {
+		s.on.Store(false)
+		return
+	}
+	maxStale := s.MaxStale
+	if maxStale <= 0 {
+		maxStale = DefaultMaxStale
+	}
+	if age := now.Sub(s.lastOK); age > maxStale {
+		s.on.Store(false)
+		if !s.stale {
+			s.stale = true
+			if s.OnStale != nil {
+				s.OnStale(age)
+			}
+		}
+	}
+}
+
+func (s *Switch) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
 }
 
 // Run reads the flag now and then on every tick until ctx ends.

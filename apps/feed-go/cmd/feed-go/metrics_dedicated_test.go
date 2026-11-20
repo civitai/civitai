@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -114,6 +116,26 @@ func TestAttachDedicatedMetricsReader(t *testing.T) {
 	}
 	if n := len(appHits()); n != 0 {
 		t.Fatalf("the app's endpoint got %d queries, want none", n)
+	}
+}
+
+// A bad CLICKHOUSE_METRICS_HOST (here: a login in the URL) is reported as the DEDICATED reader's
+// error, naming the dedicated reader's variables; the shared reader is still attached and serves.
+func TestDedicatedMetricsReaderBadURL(t *testing.T) {
+	ownSrv, _ := chServer(t, 0)
+	cfg := loadConfig(t, map[string]string{"FEED_GO_CLICKHOUSE_HOST": ownSrv.URL, "FEED_GO_CLICKHOUSE_USERNAME": "feed-go-reader",
+		"CLICKHOUSE_METRICS_HOST": "https://u:p@metrics-ch.example.test:8443", "CLICKHOUSE_METRICS_USERNAME": "metrics-reader"})
+	c := dedicatedCompute(t, cfg)
+	err := attachMetricsReader(cfg, c, nil)
+	var dedicated errDedicatedReader
+	if !errors.As(err, &dedicated) {
+		t.Fatalf("err %v, want the dedicated reader's error", err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "CLICKHOUSE_METRICS_USERNAME / CLICKHOUSE_METRICS_PASSWORD") || strings.Contains(msg, "FEED_GO_") {
+		t.Fatalf("message %q, want the dedicated reader's variables named, not feed-go's", msg)
+	}
+	if c.ClickHouse == nil || c.MetricsClickHouse != nil {
+		t.Fatalf("shared %v dedicated %v; want the shared reader only", c.ClickHouse, c.MetricsClickHouse)
 	}
 }
 

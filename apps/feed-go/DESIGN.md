@@ -312,8 +312,10 @@ environment, and they must never switch the reader on. Without a reader the miss
   feed-go evaluates no other Flipt flag (§8): this one is read by `internal/flipt` (stdlib, the
   server's `POST /evaluate/v1/boolean` with `FLIPT_URL`, `FLIPT_FETCHER_SECRET`, `FLIPT_ENVIRONMENT`,
   entity `global`, no context: the arguments Node's global gate passes; the flag's plain on/off only, the server's evaluator is not the engine Node runs) every 5 s in the background, so a
-  flip takes effect within 5 s with no restart and no request waits on Flipt. Unread yet, a failed
-  read, an unknown key or no `FLIPT_URL` read off. The choice is made once per populate (all its
+  flip takes effect within 5 s with no restart and no request waits on Flipt. Never read yet, an
+  unknown key (404) or no `FLIPT_URL` read off; any other failed read keeps the last good value (as
+  Node's client keeps its last snapshot) until no read has succeeded for 10 minutes, then reads off
+  (logged once per outage). The choice is made once per populate (all its
   batches go to one server). The query text and settings are unchanged, and inside the dedicated
   user's constraints (`max_threads` 1, `max_execution_time` 6, nothing else capped). A failed read
   there falls back `metrics-miss-failed` exactly as above and is never retried on the shared reader:
@@ -995,8 +997,9 @@ definitions, so read both figures over a window that begins after it.
 
 ## 8. Flags the Node path reads, and what this service does with them
 
-This service does not evaluate Flipt (a Go Flipt client is a follow-up). Each flag below is either
-irrelevant to the DB path, mirrored by an env var, or makes the affected requests fall back while on.
+This service evaluates one Flipt flag, `image-metrics-dedicated-clickhouse`, itself (`internal/flipt`,
+§3.1; a general Go Flipt client is a follow-up). Every other flag below is either irrelevant to the
+DB path, mirrored by an env var, or makes the affected requests fall back while on.
 The mirrors default to the fail-safe value (fall back) and must be set to the flag's real value.
 
 | Flag | Node effect | Here |
@@ -1011,6 +1014,7 @@ The mirrors default to the fail-safe value (fall back) and must be set to the fl
 | event decoration flags (flag `birthday-2026` for event `birthday2026`, …) | which event hats are visible to which viewer: `getVisibleDecorationEvents` asks the event engine and the event's Flipt flag per viewer (signed out: the flag's base; signed in: the flag for that user; a moderator session: always on) | `FEED_GO_DECORATION_EVENTS`: comma-separated event names (the event's `name`, e.g. `birthday2026`, not its flag key) whose hats Node shows to **every** viewer now, i.e. the event has started and its flag's base is on. It must name each such event: left empty while one is live, every image wearing that hat is `null` here and an object in Node (`items.*.images.*.eventDecoration` `type` diffs). After the event ends the hats stay visible (`canWearEventDecorations` includes `ended`), so the value does not change at the end date. Base off (the kill switch) → remove the event; then moderators and testers still see hats in Node and not here (a parity gap, §9) |
 | `use-model-version-cache-for-images` | `image.getInfinite` only: a `prioritizedUserIds` request on the Postgres path takes its ids from `imagesForModelVersionsCache` and is re-sorted into that cache's order; off in production (enabled: false, no rollout) | `FEED_GO_PRIORITIZED_VERSION_CACHE` (default off): on, those requests fall back (`prioritized-version-cache`); off, the SQL branch is ported (§14.2) |
 | `frame-cache-negative` | whether the image frame cache's notFound markers are live (read as "no frame", written for an hour on a miss) | `FEED_GO_FRAME_CACHE_NEGATIVE` (default off, as Node reads a flag it cannot evaluate): off, a marker is a miss (looked up, §3.1) and none is written, as in Node |
+| `image-metrics-dedicated-clickhouse` | the image MetricService reads a dedicated ClickHouse for entity metrics instead of the shared one | read from Flipt (not mirrored): every 5 s in the background; on with `CLICKHOUSE_METRICS_*` set, the metric-hash populate reads the dedicated reader (§3.1) |
 | `kysely-image-reactions`, `image-metrics-swr`, cache L1 switches | same results by another route | nothing to do |
 
 ## 9. Not at parity (yet)

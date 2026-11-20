@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -140,6 +139,13 @@ func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute, tp *tracing
 	return err
 }
 
+// errDedicatedReader is an attachMetricsReader error about the dedicated reader only: the shared
+// reader, when configured, is attached and still serves every populate.
+type errDedicatedReader struct{ err error }
+
+func (e errDedicatedReader) Error() string { return "dedicated metrics " + e.err.Error() }
+func (e errDedicatedReader) Unwrap() error { return e.err }
+
 // dedicatedMetricsReader is the dedicated ClickHouse for entity metrics (CLICKHOUSE_METRICS_*): nil
 // when it is not configured. Built from its own variables only (URL, login and password alike, so
 // none of the shared reader's credentials can reach it), with the shared reader's read cap and every
@@ -151,9 +157,10 @@ func dedicatedMetricsReader(cfg *config.Config, tracer chread.Tracer) (hydrate.C
 	}
 	c, err := chread.New(chread.Config{URL: cfg.MetricsClickHouseURL, Username: cfg.MetricsClickHouseUsername,
 		Password: cfg.MetricsClickHousePassword, MaxInFlight: cfg.ClickHouseMaxInFlight, Tracer: tracer,
-		HTTP: &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone(), Timeout: cfg.MetricsClickHouseRequestTimeout}})
+		CredentialEnv: "CLICKHOUSE_METRICS_USERNAME / CLICKHOUSE_METRICS_PASSWORD",
+		HTTP:          &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone(), Timeout: cfg.MetricsClickHouseRequestTimeout}})
 	if err != nil {
-		return nil, fmt.Errorf("dedicated metrics %w", err)
+		return nil, errDedicatedReader{err}
 	}
 	return c, nil
 }
@@ -166,7 +173,8 @@ const metricsClickHouseFlag = "image-metrics-dedicated-clickhouse"
 // attachMetricsSwitch reads metricsClickHouseFlag in the background (every flipt.RefreshInterval,
 // until ctx ends) and hands its answer to c, when c has a dedicated reader (attachMetricsReader).
 // Without one, or without FLIPT_URL, nothing is read and the populate keeps the shared reader. A
-// failed read reads as off; failures are logged at most once a minute.
+// failed read keeps the last good value (off when none) for up to flipt.DefaultMaxStale, then reads
+// off (flipt.Switch.Refresh); failures are logged at most once a minute, the staleness once per outage.
 func attachMetricsSwitch(ctx context.Context, cfg *config.Config, c *hydrate.MissCompute, log *slog.Logger) (*flipt.Switch, error) {
 	if c == nil || c.MetricsClickHouse == nil || cfg.FliptURL == "" {
 		return nil, nil
@@ -180,8 +188,12 @@ func attachMetricsSwitch(ctx context.Context, cfg *config.Config, c *hydrate.Mis
 	sw.OnError = func(err error) {
 		if now := time.Now(); now.Sub(lastLog) >= time.Minute {
 			lastLog = now
-			log.Warn("flag read failed; reads as off", "flag", metricsClickHouseFlag, "err", err)
+			log.Warn("flag read failed; the last good value holds", "flag", metricsClickHouseFlag, "err", err)
 		}
+	}
+	sw.OnStale = func(age time.Duration) {
+		log.Error("flag unread past its staleness bound; reads as off", "flag", metricsClickHouseFlag,
+			"since_last_good", age.Round(time.Second).String())
 	}
 	c.MetricsClickHouseOn = sw.On
 	sw.Start(ctx)
@@ -281,7 +293,12 @@ func run(log *slog.Logger) error {
 	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
 	attachWriteObservers(cfg, sources.Compute, metrics, log)
 	if err := attachMetricsReader(cfg, sources.Compute, tp); err != nil {
-		log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
+		var dedicated errDedicatedReader
+		if errors.As(err, &dedicated) {
+			log.Error("dedicated metrics clickhouse reader not configured; metric-hash populates keep the shared reader", "err", err)
+		} else {
+			log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
+		}
 	}
 	metricsSwitch, err := attachMetricsSwitch(ctx, cfg, sources.Compute, log)
 	if err != nil {
