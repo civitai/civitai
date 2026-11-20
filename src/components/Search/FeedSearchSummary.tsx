@@ -66,16 +66,19 @@ export function FeedSearchSummary({ noun, query, correctedQuery, failed, onRetry
 export function CorrectedQueryNote({
   query,
   correctedQuery,
+  onSearchAsTyped,
 }: {
   query: string;
   correctedQuery?: string;
+  /** In place of the `asTyped` URL param, for a page whose URL is not its own to write. */
+  onSearchAsTyped?: () => void;
 }) {
   const { searchAsTyped } = useSearchAsTyped(query);
   if (!correctedQuery || correctedQuery === query) return null;
   return (
     <Text size="sm" c="dimmed">
       Showing results for <strong>{correctedQuery}</strong>. Search instead for{' '}
-      <Anchor component="button" size="sm" onClick={searchAsTyped}>
+      <Anchor component="button" size="sm" onClick={onSearchAsTyped ?? searchAsTyped}>
         {query}
       </Anchor>
     </Text>

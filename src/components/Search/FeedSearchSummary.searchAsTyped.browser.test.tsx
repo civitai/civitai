@@ -1,8 +1,8 @@
 import Router from 'next/router';
 import type { Mock } from 'vitest';
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
-import { FeedSearchSummary } from '~/components/Search/FeedSearchSummary';
+import { CorrectedQueryNote, FeedSearchSummary } from '~/components/Search/FeedSearchSummary';
 import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -40,6 +40,20 @@ describe('"Search instead for" the query as typed', () => {
     expect(router.push.mock.calls.at(-1)?.[0]).toMatchObject({
       query: { query: 'Shikata nee', asTyped: 'Shikata nee' },
     });
+  });
+
+  test("runs the page's own handler where the URL is not the page's to write", async () => {
+    const onSearchAsTyped = vi.fn();
+    await renderWithProviders(
+      <CorrectedQueryNote
+        query="Shikata nee"
+        correctedQuery="Shibata nee"
+        onSearchAsTyped={onSearchAsTyped}
+      />
+    );
+    await page.getByRole('button', { name: 'Shikata nee' }).click();
+    expect(onSearchAsTyped).toHaveBeenCalledTimes(1);
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   test.each([

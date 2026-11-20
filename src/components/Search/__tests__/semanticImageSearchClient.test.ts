@@ -33,6 +33,29 @@ const imageRequest = (params: Record<string, unknown>) => ({
   params: { query: 'fox', hitsPerPage: 50, page: 0, ...params },
 });
 
+describe('the image search page searched as typed', () => {
+  const sent = async (asTyped: string | undefined, query: string) => {
+    const search = fakeSearch([{ ids: [1] }]);
+    const client = withSemanticImageSearch(
+      meili() as never,
+      createSemanticImageSearch({ search, asTyped: () => asTyped })
+    );
+    await client.search([imageRequest({ query })] as never);
+    return search.mock.calls[0][0];
+  };
+
+  it('sends the original text with the spelling correction off', async () => {
+    expect(await sent('Shikata nee', 'Shikata nee')).toMatchObject({
+      query: 'Shikata nee',
+      spellcheck: false,
+    });
+  });
+
+  it('leaves the correction on for a new search (control)', async () => {
+    expect(await sent('Shikata nee', 'anime girl')).not.toHaveProperty('spellcheck');
+  });
+});
+
 describe('withSemanticImageSearch', () => {
   it('sends the widgets’ filters as the search input', async () => {
     const search = fakeSearch([{ ids: [1] }]);
