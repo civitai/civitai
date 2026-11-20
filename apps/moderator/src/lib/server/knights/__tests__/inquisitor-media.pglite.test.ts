@@ -33,7 +33,12 @@ const { patterns } = vi.hoisted(() => ({
 vi.mock('../../blocked-for-patterns', () => ({ blockedForPatterns: () => patterns.current }));
 vi.mock('../../axiom', () => ({ logToAxiom: vi.fn() }));
 
+vi.mock('../../review-batch', () => ({ readScannerCsamVerdict: async () => 'clear' }));
+vi.mock('../../mod-activity', () => ({ insertModActivity: vi.fn() }));
+vi.mock('$env/dynamic/private', () => ({ env: {} }));
+
 const { getInquisitorQueue } = await import('../inquisitor.service');
+const { getRetractedMedia, scannerVerdicts } = await import('../../retracted-media');
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -45,6 +50,8 @@ const TABLES = [
   'KnightsQueueItem',
   'Image',
   'Post',
+  'ModelVersion',
+  'TextScanHold',
   'User',
   'CsamReport',
   'EvidenceHeldUser',
@@ -95,10 +102,22 @@ async function queued(image: { ingestion?: string; blockedFor?: string | null; m
   );
 }
 
+/** The item's media, checked against what the route would answer a moderator without the grant
+ *  (the scanner clear), so the queue never draws one way and the route answers the other. */
 const media = async () => {
   const queue = await getInquisitorQueue();
   expect(queue).toHaveLength(1);
-  return queue[0].media;
+  const item = queue[0];
+  expect(item.imageKey === '').toBe(item.media === 'restricted');
+  if (item.media !== 'cdn') {
+    scannerVerdicts.clear();
+    const served = await getRetractedMedia(item.imageId, { csamReview: false });
+    expect({ media: item.media, served: served !== null }).toEqual({
+      media: item.media,
+      served: item.media === 'retracted',
+    });
+  }
+  return item.media;
 };
 
 describe('getInquisitorQueue media', () => {
@@ -113,7 +132,6 @@ describe('getInquisitorQueue media', () => {
   });
 
   it.each([
-    ['a flag on the image', async () => db.query(`UPDATE "Image" SET minor = true`)],
     [
       'a report listing it, not yet sent',
       async () =>
@@ -140,10 +158,28 @@ describe('getInquisitorQueue media', () => {
     ],
     ['a block with no reason', async () => db.query(`UPDATE "Image" SET "blockedFor" = NULL`)],
     [
-      'a second flag on the image',
-      async () => db.query(`UPDATE "Image" SET "acceptableMinor" = true`),
+      'an owner banned for minor safety',
+      async () =>
+        db.query(
+          `INSERT INTO "User" (id, meta) VALUES ($1, '{"banDetails": {"reasonCode": "SexualMinor"}}')`,
+          [OWNER]
+        ),
     ],
-    ['a review flag', async () => db.query(`UPDATE "Image" SET "needsReview" = 'minor'`)],
+    [
+      'a model a confirmed CSAM hold removed',
+      async () => {
+        await db.query(
+          `INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES (990300002, '{}', 990500002)`
+        );
+        await db.query(
+          `INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400002, '{}', 990300002)`
+        );
+        await db.query(`UPDATE "Image" SET "postId" = 990400002`);
+        await db.query(
+          `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500002, 'csam', 'Confirmed')`
+        );
+      },
+    ],
     ['another review flag', async () => db.query(`UPDATE "Image" SET "needsReview" = 'csam'`)],
     [
       'a block reason that holds it',
@@ -180,6 +216,31 @@ describe('getInquisitorQueue media', () => {
     expect(await media()).toBe('restricted');
   });
 
+  it.each([
+    ['a flag on the image', async () => db.query(`UPDATE "Image" SET minor = true`)],
+    [
+      'a second flag on the image',
+      async () => db.query(`UPDATE "Image" SET "acceptableMinor" = true`),
+    ],
+    ['a review flag', async () => db.query(`UPDATE "Image" SET "needsReview" = 'minor'`)],
+    [
+      'a model version unpublished for its subject',
+      async () => {
+        await db.query(
+          `INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES (990300001, '{"unpublishedReason": "mature-underage"}', NULL)`
+        );
+        await db.query(
+          `INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400001, '{}', 990300001)`
+        );
+        await db.query(`UPDATE "Image" SET "postId" = 990400001`);
+      },
+    ],
+  ])('sends a blocked image with only %s to the retracted-media route', async (_label, mark) => {
+    await queued({});
+    await mark();
+    expect(await media()).toBe('retracted');
+  });
+
   it('reads block reasons against the configured patterns', async () => {
     await queued({ blockedFor: 'unlisted' });
     patterns.current = { signal: [], nonMinor: [/^unlisted$/] };
@@ -189,7 +250,7 @@ describe('getInquisitorQueue media', () => {
   it('marks each item by its own image', async () => {
     await queued({});
     await db.query(
-      `INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor", minor) VALUES (990000003, 'key-990000003', 990100004, 'Blocked', 'moderated', true)`
+      `INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor", minor) VALUES (990000003, 'key-990000003', 990100004, 'Blocked', NULL, false)`
     );
     await db.query(
       `INSERT INTO "KnightsQueueItem" ("id","questionKey","imageId","source","minRank","votesNeeded","priority","status","reason","createdAt")
@@ -206,7 +267,7 @@ describe('getInquisitorQueue media', () => {
     await queued({});
     await db.exec(`ALTER TABLE "CsamReport" RENAME TO "CsamReportAway"`);
     try {
-      expect(await media()).toBe('restricted');
+      expect((await getInquisitorQueue()).map((item) => item.media)).toEqual(['restricted']);
     } finally {
       await db.exec(`ALTER TABLE "CsamReportAway" RENAME TO "CsamReport"`);
     }

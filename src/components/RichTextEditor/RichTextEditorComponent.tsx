@@ -38,6 +38,7 @@ import { StickerEditNode } from '~/components/TipTap/StickerNode';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
+import { TextColorControl } from './TextColorControl';
 import { TextAlignControl } from '~/components/RichTextEditor/TextAlignControl';
 import { TextAlignExtension } from '~/shared/tiptap/text-align';
 import { InsertBlurbControl } from '~/components/RichTextEditor/InsertBlurbControl';
@@ -493,9 +494,7 @@ export function RichTextEditor({
                       {!withoutBlockContainers && <RTE.CodeBlock />}
                     </>
                   )}
-                  {addColors && (
-                    <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
-                  )}
+                  {addColors && <TextColorControl colors={constants.richTextEditor.presetColors} />}
                 </RTE.ControlsGroup>
               )}
 

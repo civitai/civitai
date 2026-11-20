@@ -6148,16 +6148,18 @@ export async function get404Images() {
     SELECT
       u.username,
       i.url,
-      i.meta
+      CASE WHEN i."hideMeta" THEN NULL ELSE i.meta END AS meta
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
+    LEFT JOIN "Post" p ON p.id = i."postId"
     JOIN "User" u ON u.id = i."userId" AND username IS NOT NULL
     JOIN "Collection" c ON c.id = ci."collectionId"
     WHERE c."userId" = -1
       AND c.name = '404 Contest'
       AND i."ingestion" = 'Scanned'
-      AND i."needsReview" IS NULL
       AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+      AND ${Prisma.join(imageVisibilityConditions({}), ' AND ')}
+      AND i."tosViolation" = FALSE
       AND ci.status = 'ACCEPTED';
   `;
 

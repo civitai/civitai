@@ -31,7 +31,9 @@ export const streamStatesKey = (stream: string) =>
  */
 export function createRedisSnapshotStore(
   client: SnapshotRedis = redis,
-  keep: number = STATES_KEPT_PER_STREAM
+  keep: number = STATES_KEPT_PER_STREAM,
+  /** How long a state is kept after it was last written or touched; a private stream's is shorter. */
+  retentionSeconds: number = SNAPSHOT_RETENTION_SECONDS
 ): SnapshotStore {
   const call = <T>(fn: string, op: () => Promise<T>) =>
     boundedClusterCall(`registrySnapshot.${fn}`, op);
@@ -42,8 +44,8 @@ export function createRedisSnapshotStore(
     const snapshot = snapshotKey(digest);
     await call('retain.snapshot', () =>
       value === null
-        ? client.multi().expire(snapshot, SNAPSHOT_RETENTION_SECONDS).exec()
-        : client.multi().set(snapshot, value, { EX: SNAPSHOT_RETENTION_SECONDS }).exec()
+        ? client.multi().expire(snapshot, retentionSeconds).exec()
+        : client.multi().set(snapshot, value, { EX: retentionSeconds }).exec()
     );
     const results = await call('retain.states', () =>
       client
@@ -52,7 +54,7 @@ export function createRedisSnapshotStore(
         .lPush(states, digest)
         .lRange(states, keep, -1)
         .lTrim(states, 0, keep - 1)
-        .expire(states, SNAPSHOT_RETENTION_SECONDS)
+        .expire(states, retentionSeconds)
         .exec()
     );
     const evicted = Array.isArray(results?.[2]) ? (results[2] as unknown[]) : [];

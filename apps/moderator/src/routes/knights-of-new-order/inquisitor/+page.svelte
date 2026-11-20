@@ -43,7 +43,6 @@
     name: row.imageName,
   });
 
-  // The last item whose rating key was pressed while it was blocked.
   let refusedItem = $state<number | null>(null);
 
   const actionHref = (action: string) =>

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * `Tracker.send`'s two delivery modes.
@@ -43,6 +43,21 @@ const respond = (status: number) =>
 
 let fetchMock: ReturnType<typeof respond>;
 
+/** Runs `p` under fake timers so the retry backoff costs no wall time. */
+const settle = async <T>(p: Promise<T>): Promise<PromiseSettledResult<T>> => {
+  let result: PromiseSettledResult<T> | undefined;
+  p.then(
+    (value) => (result = { status: 'fulfilled', value }),
+    (reason: unknown) => (result = { status: 'rejected', reason })
+  );
+  while (!result) await vi.advanceTimersByTimeAsync(100);
+  return result;
+};
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   fetchMock = respond(200);
@@ -54,9 +69,13 @@ describe('awaitDelivery', () => {
     fetchMock = respond(500);
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(new Tracker().entityMetric(metric(), { awaitDelivery: true })).rejects.toThrow(
-      /500/
-    );
+    vi.useFakeTimers();
+
+    const result = await settle(new Tracker().entityMetric(metric(), { awaitDelivery: true }));
+    expect(result).toMatchObject({
+      status: 'rejected',
+      reason: expect.objectContaining({ message: expect.stringMatching(/500/) }),
+    });
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
@@ -77,7 +96,10 @@ describe('awaitDelivery', () => {
     fetchMock = respond(500);
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(new Tracker().entityMetric(metric(), { awaitDelivery: true })).rejects.toThrow();
+    vi.useFakeTimers();
+
+    const result = await settle(new Tracker().entityMetric(metric(), { awaitDelivery: true }));
+    expect(result.status).toBe('rejected');
 
     // Nothing configures an undici dispatcher, so an unsignalled fetch inherits
     // a 300s header timeout — three of those on one row is a wedge, not a retry.
