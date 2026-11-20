@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import type * as CivitaiAuth from '@civitai/auth';
 import type * as Jose from 'jose';
 
@@ -43,7 +44,8 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   maybeCreateSessionSigner: () => undefined,
 }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
   checkOAuthRateLimit: vi.fn(async (bucket: string, id: string | null | undefined) => {
     h.rateLimitCalls.push([bucket, id]);
     return !h.rateLimitDeny.has(bucket);
@@ -317,7 +319,8 @@ describe('worker token exchange', () => {
     h.rateLimitDeny.add('worker-device');
     const res = await exchange();
     expect(res.status).toBe(429);
-    expect(res.body.error).toBe('rate_limited');
+    expect(res.headers.get('Retry-After')).toBe('60');
+    expect(res.body).toMatchObject({ error: 'rate_limited', retry_after: 60 });
     expect(workerKeys()).toHaveLength(0);
   });
 

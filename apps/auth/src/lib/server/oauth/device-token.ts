@@ -3,7 +3,11 @@ import { REDIS_KEYS } from '@civitai/redis';
 import { parseTokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
-import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import {
+  checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+} from '$lib/server/oauth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { createOAuthTokenPair, createPlannedOAuthTokens } from '$lib/server/oauth/token-helpers';
@@ -36,10 +40,10 @@ export async function deviceTokenGrant(
   // device_code is unvalidated until the redis lookup below, so the per-IP ceiling is charged first and
   // bounds how many device_code buckets one caller can create.
   if (!(await checkOAuthRateLimit('device-token-anon', getClientIp(request)))) {
-    return json({ error: 'rate_limited' }, { status: 429, headers });
+    return rateLimitedResponse(oauthRetryAfter('device-token-anon'), headers, 'Polling too fast');
   }
   if (!(await checkOAuthRateLimit('device-token', device_code))) {
-    return json({ error: 'rate_limited' }, { status: 429, headers });
+    return rateLimitedResponse(oauthRetryAfter('device-token'), headers, 'Polling too fast');
   }
 
   const redis = getRedis();
