@@ -1432,9 +1432,9 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       try {
         const result = await withUrlClaim(url, async (claim) => {
           const [fresh, freshState] = await Promise.all([loadFacts([url]), loadState([url])]);
-          call = callFor(url, fresh.get(url), freshState.get(url), {
-            deferred: pacedUrls.has(url),
-          });
+          const f = fresh.get(url);
+          if (pacedUrls.has(url) && (!f || desiredUrlAccess(f) !== 'retract')) unpaced.add(url);
+          call = callFor(url, f, freshState.get(url), { deferred: pacedUrls.has(url) });
           if (!call) return;
           if (call === 'retract' && !mayRetract.has(url)) {
             deferred.add(url);
@@ -1524,7 +1524,13 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       SET "createdAt" = CASE WHEN data ? 'deferred' THEN "createdAt" ELSE now() END,
           data = (COALESCE(data, '{}'::jsonb) - ${
             failuresNext.get(q) === null ? 'retractFailures' : ''
-          }::text) || jsonb_build_object('deferred', data->'seq')
+          }::text) || jsonb_build_object('deferred', data->'seq', 'pacedUrls', COALESCE((
+            SELECT jsonb_agg(DISTINCT u)
+            FROM jsonb_array_elements_text(
+              COALESCE(data->'pacedUrls', '[]'::jsonb) || ${JSON.stringify(
+                urlsByRow[queue.indexOf(q)].filter((url) => deferred.has(url))
+              )}::jsonb
+            ) u), '[]'::jsonb))
       WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
         AND "entityType" = ${q.entityType}::"EntityType"
         AND "entityId" = ${q.entityId}
@@ -1583,9 +1589,9 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   // A re-queued row still carries its first-deferral time, so its wait counts from the re-queue.
   const waitedSince = (q: QueueRow) =>
     q.data && 'deferred' in q.data && q.data.seq ? new Date(q.data.seq) : q.createdAt;
-  // Pacing markers are per url, and written apart from the rotation: a row with a url still pending,
-  // a row already deferred, or one a trigger re-queued mid-run must still record what this run
-  // deferred. A url loses its marker once retracted or lifted, or once its rows no longer want a
+  // Pacing markers are per url. The rotation writes them with its marker; this writes them again for
+  // the rows it skips: a row with a url still pending, a row already deferred, or one a trigger
+  // re-queued mid-run must still record what this run deferred. A url loses its marker once retracted or lifted, or once its rows no longer want a
   // retraction, so a hold that lands later is never undone by an old deferral.
   for (const [i, q] of queue.entries()) {
     const paced = urlsByRow[i].filter((url) => deferred.has(url));
@@ -1602,7 +1608,10 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
         AND "entityId" = ${q.entityId}
     `;
   }
-  const unpace = [...new Set([...retractSent, ...lifted, ...unpaced])];
+  // A url deferred in this run keeps the marker it was just given, whatever an earlier read said.
+  const unpace = [...new Set([...retractSent, ...lifted, ...unpaced])].filter(
+    (url) => !deferred.has(url)
+  );
   if (unpace.length)
     await dbWrite.$executeRaw`
       UPDATE "JobQueue"
@@ -1610,7 +1619,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
         SELECT jsonb_agg(u) FROM jsonb_array_elements_text(data->'pacedUrls') u
         WHERE u <> ALL(${unpace}::text[])), '[]'::jsonb))
       WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
-        AND data->'pacedUrls' ?| ${unpace}::text[]
+        AND data ? 'pacedUrls' AND data->'pacedUrls' ?| ${unpace}::text[]
     `;
 
   const oldest = earliest(queue.filter((q) => !q.deferred).map(waitedSince));
