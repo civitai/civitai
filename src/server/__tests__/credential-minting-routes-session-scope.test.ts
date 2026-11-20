@@ -301,14 +301,23 @@ describe('the minted credential is still returned to an allowed caller', () => {
 
 describe('an impersonation, through the real AuthedEndpoint', () => {
   const appRoutes = routes.filter(
-    (r) => r.path.startsWith('/api/apps/assistant/') || r.path === '/api/training-studio/host'
+    (r) =>
+      r.path.startsWith('/api/apps/assistant/') ||
+      r.path === '/api/training-studio/host' ||
+      r.path === '/api/user/orchestrator-key'
   );
 
   it.each(appRoutes)('$name mints nothing for an impersonation', async (route) => {
     hubSession.current = { user: USER, impersonatedBy: 9 };
     const { status, body } = await call(route);
     expect(status).toBe(403);
-    expect(body).toMatchObject({ error: 'impersonation_refused' });
+    expect(body).toMatchObject({
+      error: 'impersonation_refused',
+      message:
+        route.path === '/api/user/orchestrator-key'
+          ? "API keys can't be created while impersonating"
+          : 'Apps are paused while impersonating',
+    });
     expect(route.minted()).not.toHaveBeenCalled();
     // Control: the same session without the impersonation mints.
     hubSession.current = { user: USER };

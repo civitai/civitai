@@ -13,10 +13,11 @@ export const IMPERSONATION_REFUSED = {
  */
 export function refuseWhileImpersonating(
   session: Pick<Session, 'impersonatedBy'> | null | undefined,
-  res: NextApiResponse
+  res: NextApiResponse,
+  message: string = IMPERSONATION_REFUSED.message
 ): boolean {
   if (session?.impersonatedBy == null) return false;
-  res.status(403).json(IMPERSONATION_REFUSED);
+  res.status(403).json({ error: IMPERSONATION_REFUSED.error, message });
   return true;
 }
 
