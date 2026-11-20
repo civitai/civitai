@@ -64,6 +64,7 @@ import {
   type AssetSlotDrift,
 } from '~/components/Apps/listingRevisionDrift';
 import { ConnectScopesPanel } from '~/components/Apps/ConnectScopesPanel';
+import { AgentReviewPanel } from '~/components/Apps/AgentReviewPanel';
 import { getReportReasonLabel } from '~/components/Apps/appListingReportView';
 import {
   isDestructiveAction,
@@ -416,6 +417,26 @@ export function OffsiteReviewModal({
  * `busyRef` (optional) is written each render so a hosting modal shell can refuse an
  * in-flight close (the pre-split close-guard); the combined surface uses it too.
  */
+/**
+ * The agent review for a PENDING OAuth-connect listing request — the connect lane of the same
+ * panel the on-site modal mounts. Advisory: it never approves or rejects. Hidden on history
+ * (read-only) views, on external-link and on-site media rows, and unless the mod-only
+ * `app-listings-agentic-review` client flag resolves (absent ⇒ nothing renders).
+ */
+function ConnectAgentReviewSection({
+  request,
+  readOnly,
+}: {
+  request: OffsitePendingRow;
+  readOnly: boolean;
+}) {
+  const features = useFeatureFlags();
+  if (readOnly || request.status !== 'pending' || request.kind === 'onsite') return null;
+  if (!request.appListing?.connectClientId) return null;
+  if (!features?.appListingsAgenticReview) return null;
+  return <AgentReviewPanel publishRequestId={request.id} slug={request.slug} />;
+}
+
 export function OffsiteReviewModalBody({
   request,
   onClose,
@@ -779,6 +800,8 @@ export function OffsiteReviewModalBody({
           justifications={request.appListing?.connectScopeJustifications ?? null}
         />
       )}
+
+      <ConnectAgentReviewSection request={request} readOnly={readOnly} />
 
       <Stack gap={4}>
         <Text size="sm" fw={600}>
