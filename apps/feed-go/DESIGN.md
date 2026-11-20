@@ -85,7 +85,7 @@ Supported today:
 | Area | Supported | Falls back |
 |---|---|---|
 | Input | model / version / Model3D / global feed; sorts Most Reactions, Most Comments, Most Collected, Newest, Oldest; period filters; `types`, `generation`, `withMeta`, `fromPlatform`, `disablePoi`, `disableMinor`, `hideChallenges`, `excludedTagIds`, `excludedUserIds`, `tools` (images holding every listed tool: the `ImageTool` clause on every Postgres read, the positive ids as the feed query's `tools`), `techniques` (images with an `ImageTechnique` row for any listed id, likewise; the positive ids as the feed query's `techniques`, none sent when none is positive), `tags` (the blocked browsing tags stripped first, `blocked-tags-*` when that list cannot be read, only blocked ones an empty gallery; then images carrying any of the rest on every Postgres read, never cached, the positive ids as the feed query's `tags`); cursors: on the feed-service path `feed:<a>:<b>`, `offset\|entry`, a number (an offset there); on the Postgres path a positive integer | `hidden`, user / username / collection / post / reactions / followed / baseModels / pending / scheduled / jumpTo / hub inputs, `include` beyond the default, Random / Recently Added sorts; a `tools` or `techniques` entry that is not an int4 (`input-tools`, `input-techniques`: Node binds it against an integer type, and that cast is not reproduced); cursors Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`, `input-cursor` on the Postgres path) |
-| Viewer | signed out; `civ-token` cookie sessions, either slot or both (read in the main app's order, §4) | API keys / OAuth bearer tokens, a session user not in the shared cache, verified crawlers |
+| Viewer | signed out; `civ-token` cookie sessions, either slot or both (read in the main app's order, §4); a full-scope personal API key the app's principal cache holds (`FEED_GO_BEARER_AUTH`, §4.2) | every other API key and OAuth bearer token (§4.2), a session user not in the shared cache, verified crawlers |
 | Gallery gates | settings from cache, held level, taken-down models; page-1 pinned posts (narrowed to the version, pinned-first ordering); the page-1 sponsored post (see below) | a settings key Node would rebuild; a sponsored post for a viewer whose `creator-promotions` value is unknown here (`sponsored-post`); two or more live runs on one version (`sponsored-rotation`, Node picks one at random); a failed promotion lookup (`sponsored-lookup`); a payload or gallery level this service does not read as Node does (`sponsored-data`) |
 | Pages | the feed-service path (flag on) and the Postgres path (flag off); the lazy post completion on both | a failed or non-200 feed call (`feed-unavailable`, `feed-status`); a hydrate that filters out every id (`feed-hydrate-empty`) |
 | Hydration | every cache hit; Postgres miss paths for basic user data, cosmetics, profile pictures, thumbnails; computed misses (§3.1) on user cosmetics, image frames, tag ids and event decorations, and with a ClickHouse reader on metric hashes | misses on metric hashes without a ClickHouse reader (`metrics-miss`); a failed miss computation (`<reason>-failed`) |
@@ -505,11 +505,18 @@ the authenticated viewer or for nobody.
   user, so the `creator-promotions` mirror treats that session as its own case (§8).
 - Only a response computed with **no** session user gets the public cache headers. Every per-viewer
   clause binds the verified id; signed out binds `NULL`, which makes each carve-out false.
-- API keys / OAuth tokens fall back: they carry scopes and change the moderator rule (`moderatorView`).
+- API keys are resolved as the app resolves them when `FEED_GO_BEARER_AUTH` is on (default off), and
+  only where the app's answer is decided by data this service reads at the same freshness: §4.2.
+  Everything else, OAuth tokens included, falls back. Off, every API credential falls back
+  (`bearer-token`).
 - On the public route, a request whose `Origin` (else `Referer`) host is not on the app's allow-list
   (`SERVER_DOMAIN_*` hosts and aliases, `TRPC_ORIGINS`, `NEXTAUTH_URL`; `isAcceptableOrigin`) is handed
   to the Node app before anything is computed, so it answers as it does today (401 in production for a
-  cookie caller). The shadow endpoint does not apply it: Node only samples requests it already accepted.
+  cookie caller). The exception is the app's own: a request whose API key resolves to a session is
+  accepted from any origin (`isBearerAuth`, `src/server/createContext.ts:45-46`). Such a request is
+  resolved first, inside the serve slot, and computed only when the key resolved to a viewer (§4.2);
+  a key that resolves to no session is held to the origin like a cookie caller (`origin`). The
+  shadow endpoint does not apply it: Node only samples requests it already accepted.
 - The shadow endpoint receives the original `Cookie` header and verifies it the same way — it never
   trusts an identity asserted by the caller.
 
@@ -546,6 +553,62 @@ or calls the rule, so a new read fails it until it applies the rule or says why 
 paths a signed-out viewer is already held to PG (the tRPC domain cap) or has every minor image removed
 (`GET /api/v1/images` always sets `disableMinor`), so signed out the rule changes no answer today; it is
 applied all the same.
+
+
+### 4.2 API keys (`Authorization`), `FEED_GO_BEARER_AUTH`
+
+On the three tRPC procedures (`image.getImagesAsPostsInfinite`, `image.getInfinite`, `model.getAll`)
+an API key is resolved as `resolveSession` (`src/server/auth/get-server-auth-session.ts`) resolves it,
+in this order (`internal/auth/bearer.go`). "Signed out" is the app's null session: served as for an
+anonymous visitor (public cache headers, the origin check applies). "Fallback" is the request handed to
+the Node app unchanged, with the reason on `feed_go_fallback_total`.
+
+| # | The app's rule (file:line) | Here |
+|---|---|---|
+| 1 | The token is `authorization.split(' ')[1]`, whatever the scheme; a header with no second part (or an empty one) gives no token and the `?token=` key is then not read (`request-bearer-token.ts:9`) | the same split; no token → the cookies are read as §4 |
+| 2 | Without the header, the first `?token=` value is the token unless it is the webhook token (`request-bearer-token.ts:10-14`) | fallback `bearer-query-token` (the webhook token is not known here) |
+| 3 | A token, valid or not, decides the session: the cookies are never read (`get-server-auth-session.ts:67-85`) | the same: a key that signs out, or falls back, never yields to a cookie |
+| 4 | A key containing `:` (a provider download token) is no session, without a lookup (`bearer-token.ts:77`) | signed out |
+| 5 | The orchestrator service token is no session, without a lookup (`bearer-token.ts:80`, `orchestrator-service-token.ts:13-18`) | signed out, compared as digests against `ORCHESTRATOR_SERVICE_TOKEN` |
+| 6 | The row is found by `generateSecretHash(key.trim())`, SHA-512 hex of key + `NEXTAUTH_SECRET` (`bearer-token.ts:81`, `packages/civitai-auth/src/secret-hash.ts:24`) | the same hash (`NEXTAUTH_SECRET`; unset → `bearer-unconfigured`); a key with a byte outside printable ASCII → `bearer-malformed` (Node reads the header as latin-1 and trims Unicode space) |
+| 7 | The row comes from the principal cache when it holds a live entry, else from the PRIMARY database (`bearer-token.ts:88-117`; `api-key-principal-cache.ts:115-137`) | the cache only: absent, a read error or an undecodable value → `bearer-key-cache-miss` (an unknown key is always this: the cache holds only known keys) |
+| 8 | A revocation tombstone `{revoked: true}` reads the primary (`api-key-principal-cache.ts:129`) | `bearer-key-revoked` |
+| 9 | Only a key with `clientId === null` and type `User` or `System` is served from the cache; anything else (OAuth `Access` tokens, `Refresh`, a missing `clientId`) reads the primary (`api-key-principal-cache.ts:87-92,133`; allow-list `bearer-token.ts:96`) | `bearer-key-uncacheable` |
+| 10 | An entry is live while `expiresAt` is null or not before now; else the primary, which also refuses an expired key (`api-key-principal-cache.ts:94-95,133`; `bearer-token.ts:97`) | live only with at least 5 s to spare (`BearerClockMargin`: the app's pod reads its own clock); else `bearer-key-expiry` |
+| 11 | The scope is `BigInt(tokenScopeWide ?? tokenScope)` (`packages/civitai-auth/src/token-scope.ts:184`) | the same; a value `BigInt` would not read as an integer → `bearer-key-cache-shape` |
+| 12 | A key holding a client-credentials-only bit (`AppStoreCatalogWrite`, `DownloadLink`) is no session on these routes (`bearer-token.ts:120`) | signed out |
+| 13 | `lastUsedAt` is written (fire-and-forget) when the cached value is null or more than an hour old (`bearer-token.ts:125-130`, `api-key-principal-cache.ts:200-216`) | `bearer-last-used`: this service writes no row. Within the hour (minus the 5 s margin) the app writes nothing either |
+| 14 | The user is the shared session cache entry `session:data2:<userId>`, else the auth hub (`bearer-token.ts:40`, `packages/civitai-auth/src/session-client.ts:192-196`) | the §4 session read: a miss `session-cache-miss`, a cleared entry `session-cache-cleared`, another id `session-id-mismatch` |
+| 15 | A banned user (`bannedAt` truthy) is no session (`bearer-token.ts:47`) | signed out (so, unlike a banned cookie session, the response is public, as the app's `cacheable` is) |
+| 16 | The moderation account, by id or username, is no session (`bearer-token.ts:48`) | signed out |
+| 17 | A system account (`meta.systemAccount` truthy) with any scope bit outside `ReadOnly` reads its moderator access from the primary (`bearer-token.ts:52-66`) | `bearer-system-account` |
+| 18 | The app does not check `deletedAt`: a deleted user is one the hub does not know (rule 14) | the same: a cached entry is served |
+| 19 | Only a full-scope (`tokenScope === Full`) personal `User` key with no OAuth client gives a cookie session's views: moderator rights (`withModeratorRightsFor`), the owner and moderator feed views (`credentialViews`, `moderatorView`, `galleryOwnerId`) and the per-procedure scope pass (`enforceTokenScope`) (`full-user-credential.ts:18-24,39-46,63-71`; `enforce-token-scope.ts:130`; `createContext.ts:94`) | served as that user, moderator flag kept; any other key (a `System` key, a scoped key, Full plus an opt-in bit) → `bearer-scoped-key`, because the ported feeds do not model a viewer without the owner view |
+| 20 | A key that resolved to a session is accepted from any origin (`createContext.ts:45-46`) and is not edge-cacheable (`createContext.ts:60`) | the same (§4, origin) |
+
+Signed-in answers carry no public cache headers, as for a cookie session. Nothing is written: no
+principal-cache fill (the app fills it on its next read), no `lastUsedAt`, no claim key.
+
+**What still falls back, and why.**
+- A key the principal cache does not hold: the app reads the primary database. The cache keeps a key
+  for 30 s after the app last read it, so a key in steady use is mostly held; a cold one is not.
+- The hourly `lastUsedAt` write, a system account's write key, OAuth tokens (never cached), and every
+  scoped key (rule 19).
+- `?token=` (the webhook token), several `Authorization` header lines (Node keeps the first, a proxy in
+  between may not), and a key with a byte outside printable ASCII.
+- The REST routes (`/api/v1/images`, `/api/v1/models`, `/api/v1/models/[id]`) keep every API
+  credential a `bearer-token` fallback: `PublicEndpoint` shapes the cache headers on whether a
+  credential was presented, `/api/v1/images` applies `REST_SCOPE_ENFORCE`, and the models routes have
+  their own block-scope middleware, none of it ported. They are shadow-only and the sampler never sends
+  a credential.
+- Shadow and probe samples: the sampler forwards `authorization: present`, never the key, so a sample's
+  API credential stays `bearer-token` (`auth.WithRedactedCredentials`).
+
+**Residual, stated.** `ORCHESTRATOR_SERVICE_TOKEN` must be the app's value: unset here while set in the
+app, that token would be looked up as an ordinary key (rule 5). It is not an issued API key, so the
+principal cache holds no entry under its hash and the lookup falls back; the residual is only a service
+token equal to a user's API key. The clock margin (rules 10, 13) narrows, but by its nature cannot
+remove, a decision the app's pod makes a few seconds differently.
 
 ## 5. Wire format
 
@@ -1092,7 +1155,7 @@ will show.
 - a failed miss computation (§3.1, `<reason>-failed`; for tag ids also a browsing gate this service
   cannot read when a row needs it), cache misses on metric hashes without a ClickHouse reader
   (`metrics-miss`), session users (auth hub fetch not ported), gallery settings (rebuild not ported);
-- bearer tokens, verified crawlers, POST (`methodOverride`) requests;
+- API keys other than those §4.2 serves, verified crawlers, POST (`methodOverride`) requests;
 - public requests from an origin the app's allow-list does not hold (reason `origin`, see §4).
 
 **Matched behaviour worth knowing:** a page query that runs past the 20s statement timeout answers an
@@ -1438,7 +1501,8 @@ None of this is in this PR.
   public route for 8080 only when serving starts.
 - **Secrets / env:** the replica URL, both Redis URLs (plus `REDIS_SYS_SENTINELS` /
   `REDIS_SYS_SENTINEL_NAME`, the same values the Node pools carry, §3), the auth issuer + JWKS URI,
-  `CIVITAI_MODERATION_USER_ID` (§4), `TRPC_ORIGINS` + `NEXTAUTH_URL` (the origin allow-list, serving), the
+  `CIVITAI_MODERATION_USER_ID` (§4), with `FEED_GO_BEARER_AUTH` on also `NEXTAUTH_SECRET` and
+  `ORCHESTRATOR_SERVICE_TOKEN` (the app's values, §4.2), `TRPC_ORIGINS` + `NEXTAUTH_URL` (the origin allow-list, serving), the
   `SERVER_DOMAIN_*` hosts, `REGION_RESTRICTION_CONFIG`, `REGION_BLOCK_CONFIG` whenever the Node pools set
   it (§6.2; unset, both use the same generated default), `IMAGE_QUERY_CACHING`, the flag mirrors, and
   `FEED_SERVICE_URL` (the same value as the Node pools) with `FEED_GO_IMAGE_INDEX_FEED` /

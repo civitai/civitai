@@ -75,6 +75,17 @@ type Config struct {
 	// proxied to the Node app unchanged.
 	ServeInfinite bool
 
+	// BearerAuth is FEED_GO_BEARER_AUTH (default off): resolve API keys (an `Authorization` header) as
+	// the app does, from its principal cache (DESIGN.md §4.2). Off, every API credential is the
+	// `bearer-token` fallback.
+	BearerAuth bool
+	// APIKeySecret is NEXTAUTH_SECRET (same var as the Node app): the salt of the API-key hash. Read
+	// only with BearerAuth; unset, every key falls back (`bearer-unconfigured`).
+	APIKeySecret string
+	// OrchestratorServiceToken is ORCHESTRATOR_SERVICE_TOKEN (same var as the Node app), which the app
+	// answers as an unknown key without a lookup. Read only with BearerAuth.
+	OrchestratorServiceToken string
+
 	// RevocationMarkerCache is SESSION_REVOCATION_CACHE (default on; off|0|false turns it off, as
 	// isEnvSwitchOn): a failed revocation read still denies a revocation this process has already read.
 	RevocationMarkerCache bool
@@ -231,6 +242,10 @@ func Load() (*Config, error) {
 	ms := intEnv("REDIS_SYS_READ_TIMEOUT_MS", 1000)
 	c.SysReadTimeout = time.Duration(ms) * time.Millisecond
 	c.RevocationMarkerCache = envSwitchOn(os.Getenv("SESSION_REVOCATION_CACHE"))
+	if c.BearerAuth = boolEnv("FEED_GO_BEARER_AUTH", false); c.BearerAuth {
+		c.APIKeySecret = os.Getenv("NEXTAUTH_SECRET")
+		c.OrchestratorServiceToken = os.Getenv("ORCHESTRATOR_SERVICE_TOKEN")
+	}
 	c.Hosts = browsing.HostColors{}
 	for _, color := range []string{"green", "blue", "red"} {
 		up := strings.ToUpper(color)
