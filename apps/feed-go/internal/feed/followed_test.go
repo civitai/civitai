@@ -226,7 +226,7 @@ func TestBuildFollowed(t *testing.T) {
 	creator := strings.Index(b.SQL, `AND i."userId" = $`)
 	followed := strings.Index(b.SQL, followedSQL)
 	tags := strings.Index(b.SQL, `WHERE "tagId" = ANY($`)
-	if creator < 0 || followed < 0 || tags < 0 || !(creator < followed && followed < tags) {
+	if creator < 0 || followed < 0 || tags < 0 || creator >= followed || followed >= tags {
 		t.Fatalf("clause order creator %d, followed %d, tags %d:\n%s", creator, followed, tags, b.SQL)
 	}
 	if !boundInts(b.Args, []int{6, 5, 8}) {
