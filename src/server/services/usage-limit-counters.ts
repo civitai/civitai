@@ -28,8 +28,9 @@ export const usageLimitCounters: Partial<Record<UsageLimitId, UsageLimitCounter>
     (await getFeatureFlagsAsync({ user, req })).modelGiftLinks
       ? countGiftClaims(dbRead, user.id, start, end)
       : null,
+  // No row for a moderator: the Limits page would show "no limit", but they are capped too.
   'stickers.auto-track-daily': async ({ user, req, start }) =>
-    (await getFeatureFlagsAsync({ user, req })).stickerAutoTrack
+    !user.isModerator && (await getFeatureFlagsAsync({ user, req })).stickerAutoTrack
       ? Number((await redis.get(stickerAutoTrackRunsKey(user.id, start))) ?? 0)
       : null,
 };

@@ -47,6 +47,7 @@ async function stickerSpaceFor(imageId: number, userId: number) {
 
 async function takeDailyRun(user: SessionUser) {
   const resolved = await resolveUsageLimit('stickers.auto-track-daily', user);
+  // Never read `resolved.applies` here; see stickerAutoTrackDailyLimit.
   const limit = stickerAutoTrackDailyLimit(resolved, user.isModerator);
   const now = Date.now();
   const run = await takeStickerAutoTrackRun(redis, { userId: user.id, limit, now });
@@ -133,12 +134,12 @@ export async function getStickerAutoTrack({
   userId: number;
   workflowId: string;
 }): Promise<StickerAutoTrackResult> {
-  const { data, error } = await getWorkflow({
+  const { data, error, response: readResponse } = await getWorkflow({
     client: internalOrchestratorClient,
     path: { workflowId },
   });
   // A failed read is not a missing run: the client keeps polling a job it already spent a run on.
-  if (!data && error) return { status: 'running' };
+  if (!data && error && readResponse?.status !== 404) return { status: 'running' };
   const read = readStickerAutoTrackWorkflow(data, userId);
   if (read.status === 'running' || read.status === 'failed') return { status: read.status };
   if (read.status !== 'download') throw throwNotFoundError('placement: auto-track run not found');

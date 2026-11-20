@@ -111,6 +111,8 @@ describe('stickerAutoTrackWindow', () => {
   });
 });
 
+type RunCounter = Parameters<typeof takeStickerAutoTrackRun>[0];
+
 function memoryCounter() {
   const counts = new Map<string, number>();
   const bump = async (key: string, by: number) => {
@@ -118,11 +120,12 @@ function memoryCounter() {
     counts.set(key, next);
     return next;
   };
-  return {
+  const store = {
     incrBy: bump,
     decrBy: (key: string, by: number) => bump(key, -by),
-    expire: async () => 1,
+    expire: async () => true,
   };
+  return store as unknown as RunCounter;
 }
 
 describe('takeStickerAutoTrackRun', () => {
@@ -168,7 +171,7 @@ describe('takeStickerAutoTrackRun', () => {
 
   it('refuses everything when the counter is down', async () => {
     const down = new Error('redis down');
-    const store = { ...memoryCounter(), incrBy: async () => Promise.reject(down) };
+    const store = { ...memoryCounter(), incrBy: async () => Promise.reject(down) } as RunCounter;
     await expect(
       takeStickerAutoTrackRun(store, { userId: PLACER, limit: LIMIT, now: LATE })
     ).rejects.toBe(down);
