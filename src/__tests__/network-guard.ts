@@ -21,7 +21,7 @@ import { afterAll, afterEach, beforeEach, expect } from 'vitest';
 type Attempt = { host: string; port: number; stack: string };
 
 const DEDICATED_TEST_URL =
-  /^(ROSTER_REDIS_URL|[A-Z0-9_]+_TEST_DATABASE_URL|[A-Z0-9_]+_PARITY_DATABASE_URL)$/;
+  /^(ROSTER_REDIS_URL|MEILI_IT_HOST|[A-Z0-9_]+_TEST_DATABASE_URL|[A-Z0-9_]+_PARITY_DATABASE_URL)$/;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const DEFAULT_PORTS: Record<string, number> = {
   'redis:': 6379,

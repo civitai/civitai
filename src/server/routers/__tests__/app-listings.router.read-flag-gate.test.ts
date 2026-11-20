@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 
 /**
  * The DARK-POSTURE + external-before-onsite GA (Phase 1) gate on the unified store
@@ -25,11 +26,13 @@ import { TRPCError } from '@trpc/server';
 const {
   mockResolveStoreVisibilityScope,
   mockListAvailableListings,
+  mockListStoreListingsBySlugs,
   mockGetListingDetail,
   mockGetListingCard,
   mockListAppListingReviews,
   mockGetHidden,
 } = vi.hoisted(() => ({
+  mockListStoreListingsBySlugs: vi.fn(),
   mockGetHidden: vi.fn(),
   mockResolveStoreVisibilityScope: vi.fn(),
   mockListAvailableListings: vi.fn(),
@@ -52,6 +55,7 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 // generated client is never loaded, and so we can assert "NOT consulted" + scope.
 vi.mock('~/server/services/blocks/app-listing.service', () => ({
   listAvailableListings: (...a: unknown[]) => mockListAvailableListings(...a),
+  listStoreListingsBySlugs: (...a: unknown[]) => mockListStoreListingsBySlugs(...a),
   getListingDetail: (...a: unknown[]) => mockGetListingDetail(...a),
   getListingCard: (...a: unknown[]) => mockGetListingCard(...a),
   getListingHiddenByBrowsingLevel: (...a: unknown[]) => mockGetHidden(...a),
@@ -288,6 +292,56 @@ describe('appListings.listAvailable — the sub-listing response-shape flag', ()
       expect.anything(),
       expect.objectContaining({ viewerBrowsingLevel: expected })
     );
+  });
+});
+
+// The store's text search goes to the app index only for a viewer whose `app-index-search` flag is
+// on: the flag reaches `storeGridRequest` through the procedure's `features: ctx.features`. A
+// procedure that passed a narrower features object, or none, would keep every viewer on the
+// database search with every service test still green.
+describe('appListings.listAvailable — the app-index-search flag reaches the store search', () => {
+  const INDEX_URL = 'http://app-index.invalid/';
+  let fetched: string[];
+  beforeEach(() => {
+    setEnv({ APP_INDEX_URL: INDEX_URL, APP_INDEX_SEARCH_COMPARE_SAMPLE: 0 });
+    fetched = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      fetched.push(url);
+      return Response.json({
+        results: [
+          { slug: 'orbit-forge', name: 'Orbit Forge', tagline: '', iconUrl: '', rating: 'g' },
+        ],
+      });
+    });
+    mockListStoreListingsBySlugs.mockReset();
+    mockListStoreListingsBySlugs.mockResolvedValue([{ id: 'apl_orbit', slug: 'orbit-forge' }]);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setEnv({ APP_INDEX_URL: undefined });
+  });
+  // An SFW viewer on an SFW host, the audience the index holds.
+  const sfwMod = { ...modUser, showNsfw: false, browsingLevel: 1 };
+
+  it('flag on: the index answers the search', async () => {
+    const caller = appListingsRouter.createCaller(
+      fakeCtx(sfwMod, { appIndexSearch: true }) as never
+    );
+    const res = await caller.listAvailable({ limit: 20, query: 'orbit' });
+    expect(fetched).toEqual([`${INDEX_URL}search?q=orbit&limit=20`]);
+    expect(res).toEqual({
+      items: [{ id: 'apl_orbit', slug: 'orbit-forge' }],
+      nextCursor: undefined,
+      search: 'index',
+      indexSearchRoutable: true,
+    });
+  });
+
+  it('flag off: the database search, and no index call', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(sfwMod, {}) as never);
+    const res = await caller.listAvailable({ limit: 20, query: 'orbit' });
+    expect(fetched).toEqual([]);
+    expect(res).toEqual({ items: [{ id: 'apl_1' }], nextCursor: undefined });
   });
 });
 

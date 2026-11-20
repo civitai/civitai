@@ -42,6 +42,7 @@ type ImageRow = {
   blockedFor: string | null;
   minor: boolean;
   modelRestricted: boolean;
+  acceptableMinor: boolean;
 };
 const image = (id: number, over: Partial<ImageRow> = {}): ImageRow => ({
   id,
@@ -52,6 +53,7 @@ const image = (id: number, over: Partial<ImageRow> = {}): ImageRow => ({
   blockedFor: null,
   minor: false,
   modelRestricted: false,
+  acceptableMinor: false,
   ...over,
 });
 
@@ -65,6 +67,7 @@ const HELD = 5;
 const UNSCANNED = 6;
 const OTHERS_HELD = 7;
 const RESTRICTED_R = 8; // rated R, made with a base model that restricts mature images
+const ACCEPTABLE_MINOR = 10;
 const TWO_IMAGES = 20;
 const FIRST_OF_TWO = 21;
 const SECOND_OF_TWO = 22;
@@ -77,6 +80,7 @@ const images: ImageRow[] = [
   image(UNSCANNED, { ingestion: 'Pending' }),
   image(OTHERS_HELD, { userId: OTHER_UPLOADER, needsReview: 'minor' }),
   image(RESTRICTED_R, { nsfwLevel: 4, modelRestricted: true }),
+  image(ACCEPTABLE_MINOR, { acceptableMinor: true }),
   image(FIRST_OF_TWO),
   image(SECOND_OF_TWO),
 ];
@@ -114,12 +118,13 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int, "nsfwLevel" int, ingestion "ImageIngestionStatus",
-      "needsReview" text, "blockedFor" text, minor boolean, "modelRestricted" boolean NOT NULL
+      "needsReview" text, "blockedFor" text, minor boolean, "modelRestricted" boolean NOT NULL,
+      "acceptableMinor" boolean NOT NULL
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
   `);
   for (const i of images) {
-    await db.query('INSERT INTO "Image" VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [
+    await db.query('INSERT INTO "Image" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)', [
       i.id,
       i.userId,
       i.nsfwLevel,
@@ -128,6 +133,7 @@ beforeAll(async () => {
       i.blockedFor,
       i.minor,
       i.modelRestricted,
+      i.acceptableMinor,
     ]);
   }
   for (const c of connections) {
@@ -171,6 +177,7 @@ describe.each(Object.keys(readers) as (keyof typeof readers)[])('%s', (reader) =
     ['a minor-flagged image rated R', MINOR_R],
     ['an image held for review', HELD],
     ['an unscanned image', UNSCANNED],
+    ['an image marked acceptable-minor', ACCEPTABLE_MINOR],
   ] as const)('%s', (_label, id) => {
     it.each(['anonymous', 'stranger'] as const)('is withheld from the %s', async (who) => {
       expect(await imagesOf(id, viewers[who])).toEqual([]);

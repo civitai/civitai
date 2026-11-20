@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -209,7 +210,7 @@ function OfferingRow({
     <Paper withBorder radius="md" p="md">
       <Group justify="space-between" wrap="nowrap" gap="md">
         <Stack gap={2} className="min-w-0">
-          <Group gap="xs" wrap="nowrap">
+          <Group gap="xs">
             <Text fw={600} lineClamp={1}>
               {offering.title}
             </Text>
@@ -231,7 +232,7 @@ function OfferingRow({
             {offering.maxOpenDeals ? ` · ${pluralize(offering.maxOpenDeals, 'open slot')}` : ''}
           </Text>
         </Stack>
-        <Group gap="sm" wrap="nowrap">
+        <Group gap="sm" wrap="nowrap" className="shrink-0">
           <CurrencyBadge
             currency={Currency.BUZZ}
             type={domain === 'green' ? 'green' : 'yellow'}
@@ -240,9 +241,9 @@ function OfferingRow({
           />
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
-              <Button variant="subtle" color="gray" size="compact-sm" aria-label="Service actions">
+              <ActionIcon variant="subtle" color="gray" aria-label="Service actions">
                 <IconDots size={16} />
-              </Button>
+              </ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
               {canSell && <Menu.Item onClick={() => openForm(offering)}>Edit</Menu.Item>}

@@ -3,7 +3,7 @@
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import * as Select from '@civitai/ui/components/ui/select/index.js';
+  import BadgePicker from './BadgePicker.svelte';
   import { dateTime, num } from '$lib/format';
   import type { Account } from './user-account';
   import ListCard from './ListCard.svelte';
@@ -30,7 +30,13 @@
 
   // Called through, not captured: reading the prop inside the closure is what stops a re-passed
   // callback being ignored (svelte’s `state_referenced_locally`).
-  const form = new FormState({ onSuccess: () => onSuccess() });
+  const form = new FormState({
+    onSuccess: () => {
+      // The reload marks the granted badge Owned; a kept choice would leave Grant enabled for it.
+      badgeId = '';
+      onSuccess();
+    },
+  });
   let badgeId = $state('');
   // `reset: false`: a reset would empty the box picker's hidden input under a still-shown choice.
   const boxGranting = new FormState({ onSuccess: () => onSuccess(), reset: false });
@@ -60,6 +66,7 @@
   </div>
 {:then result}
   {#if result}
+    {@const unheld = result.badges.filter((b) => !b.owned).length}
     <section class="mb-4 grid gap-4 lg:grid-cols-2">
       <ListCard
         title="Shop purchases"
@@ -98,27 +105,18 @@
       <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
         <h3 class="mb-1 text-sm font-semibold text-white">Grant a badge</h3>
         <p class="mb-3 text-xs text-dark-2">
-          Badges this account does not already hold ({result.availableBadges.length}).
+          {unheld} of {result.badges.length} badges not yet held by this account.
         </p>
         {#if !canGrantCosmetics}
           <p class="text-sm text-dark-2">{denied('user.cosmetics.grant')}</p>
-        {:else if result.availableBadges.length === 0}
+        {:else if unheld === 0}
           <p class="text-sm text-dark-2">This account already holds every badge.</p>
         {:else}
           <form method="POST" action="?/grantCosmetic" use:enhance={form.enhance}>
             <input type="hidden" name="userId" value={userId} />
             <div class="flex flex-wrap items-end gap-2">
-              <Select.Root type="single" name="cosmeticId" bind:value={badgeId}>
-                <Select.Trigger class="min-w-56 flex-1">
-                  {result.availableBadges.find((b) => String(b.id) === badgeId)?.name ??
-                    'Choose a badge'}
-                </Select.Trigger>
-                <Select.Content>
-                  {#each result.availableBadges as b (b.id)}
-                    <Select.Item value={String(b.id)}>{b.name}</Select.Item>
-                  {/each}
-                </Select.Content>
-              </Select.Root>
+              <input type="hidden" name="cosmeticId" value={badgeId} />
+              <BadgePicker badges={result.badges} bind:value={badgeId} disabled={form.submitting} />
               <Button type="submit" size="sm" disabled={!badgeId || form.submitting}>Grant</Button>
             </div>
           </form>

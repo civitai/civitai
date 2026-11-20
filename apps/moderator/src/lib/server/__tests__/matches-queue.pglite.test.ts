@@ -202,6 +202,33 @@ describe('Needs review: file matches', () => {
     expect(await ids('COPIER')).toEqual([11]);
   });
 
+  it("finds a copy by any seed's model or uploader id, its own ids, and nothing else", async () => {
+    await seedModel(16, 3, 'aa', { minor: true }); // a second seed on the hash; 10 stays the one reported
+    const ids = async (id: number) =>
+      (await matches({ limit: 10, search: { modelOrUserId: id } })).items.map((r) => r.modelId);
+
+    expect(await ids(16)).toEqual([11]);
+    expect(await ids(3)).toEqual([11]);
+    expect(await ids(10)).toEqual([11]);
+    expect(await ids(1)).toEqual([11]);
+    expect(await ids(11)).toEqual([11]);
+    expect(await ids(2)).toEqual([11]);
+    expect(await ids(13)).toEqual([]);
+    expect(await ids(999)).toEqual([]);
+    expect(await getNeedsReviewCount({ sources: MATCHES, search: { modelOrUserId: 16 } })).toBe(1);
+  });
+
+  it("does not take a searched seed's id as matching a copy of a different file", async () => {
+    await pg.exec(`INSERT INTO "User" VALUES (4, 'other seeder')`);
+    await seedModel(17, 4, 'bb', { minor: true }); // seeds 'bb'; model 13 (user 3) copies it
+    const ids = async (id: number) =>
+      (await matches({ limit: 10, search: { modelOrUserId: id } })).items.map((r) => r.modelId);
+
+    expect(await ids(17)).toEqual([13]);
+    expect(await ids(4)).toEqual([13]);
+    expect(await ids(10)).toEqual([11]);
+  });
+
   it('pages with one extra row to know there is another page', async () => {
     await seedModel(15, 3, 'aa');
     const first = await matches({ limit: 1 });

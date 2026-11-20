@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { applyAction, deserialize, enhance } from '$app/forms';
+  import { dev } from '$app/environment';
   import { beforeNavigate, invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import BlockReasons from './BlockReasons.svelte';
@@ -9,6 +10,7 @@
   import CheckpointRecap from './CheckpointRecap.svelte';
   import GuideDialog from './GuideDialog.svelte';
   import ImageStage from './ImageStage.svelte';
+  import SettledCard from './SettledCard.svelte';
   import LevelToast from './LevelToast.svelte';
   import RulingToast from './RulingToast.svelte';
   import QueueClear from './QueueClear.svelte';
@@ -91,6 +93,10 @@
   let imageFailed = $derived(!!view && failedItem === view.item.key);
   let reasonItem = $state<string | null>(null);
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
+  // The item on screen that other players settled: it stays up under a card, locked, until the player moves on.
+  let settledItem = $state<string | null>(null);
+  let settledOnScreen = $derived(!!view && settledItem === view.item.key);
+  let settledReady = $state(false);
   let blockReason = $state<BlockReason | null>(null);
   // The ruling toast floats over the image stage; it is only an alert, so the answers stay live under it.
   const rulingNotice = dismissible(
@@ -128,6 +134,13 @@
   // apprenticeship Space is left to the browser. Typing in a field or holding a modifier is left alone.
   function onkeydown(event: KeyboardEvent) {
     if (headerDialogOpen()) return;
+    if (settledOnScreen) {
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'Escape') {
+        event.preventDefault();
+        if (!event.repeat) continueFromSettled();
+      }
+      return;
+    }
     if (choosingReason) {
       const reason = answerForKey([...BLOCK_REASONS], event.key);
       if (reason && !event.ctrlKey && !event.metaKey && !event.altKey) pickReason(reason as BlockReason);
@@ -543,13 +556,24 @@
     void post(input.action, input.formData, key, isVote);
   };
 
-  const SETTLED_NOTICE = 'Already settled by the Order. On to the next one.';
+  // Long enough that a click or key already on its way when the card appears cannot dismiss it.
+  const SETTLED_GUARD_MS = 600;
+  let settledTimer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => clearTimeout(settledTimer));
+
+  // Moves on the way Skip does: to the item fetched ahead, or by the form post when none is ready.
+  function continueFromSettled() {
+    if (!settledOnScreen || !settledReady) return;
+    settledItem = null;
+    skipForm?.requestSubmit();
+  }
+
   // Live keys dropped lately: a refill or reload already in flight when the drop came must not bring the item back.
   const dropped = new Set<string>();
   const MAX_DROPPED = 200;
 
-  // Items other players settled (or moved past this player's stages) leave the buffer, and the one on screen is swapped for
-  // the next, so no judgment is spent on an item the server would refuse.
+  // Items other players settled (or moved past this player's stages) leave the buffer unseen. The one on screen is not
+  // swapped under the player's hand: it is locked under a card they dismiss, so no press lands on the next image by accident.
   function onDrops(payload: unknown) {
     if (data.mode !== 'queue') return;
     const stages = data.live.stages;
@@ -567,21 +591,12 @@
     }
     syncBuffer();
     const onScreen = view?.item;
-    if (!onScreen || !gone.has(onScreen.live) || tracker.has(onScreen.key)) return;
-    // A refusal note must stay until the next judgment; it outranks this one.
-    if (!sticky) tell(SETTLED_NOTICE);
-    // Without a decoded item to show, the dropped one stays up (a vote on it is refused): falling back to the
-    // server's item would show one already judged, and the buffer head may not be decoded yet.
-    const next = buffer.peek() ? buffer.next() : null;
-    if (!next) {
-      if (!local && !tracker.pending) void invalidate('app:play');
-      return;
-    }
-    preloaded.delete(next.item.key);
-    local = next;
-    syncBuffer();
-    cooling = true;
-    setTimeout(() => (cooling = false), SETTLE_MS);
+    if (!onScreen || !gone.has(onScreen.live) || tracker.has(onScreen.key) || settledOnScreen) return;
+    reasonItem = null;
+    settledItem = onScreen.key;
+    settledReady = false;
+    clearTimeout(settledTimer);
+    settledTimer = setTimeout(() => (settledReady = true), SETTLED_GUARD_MS);
   }
 
   function onStats(payload: unknown) {
@@ -597,6 +612,12 @@
   onMount(() => {
     connectSignals();
     const offDrops = onSignal(QUEUE_DROP_EVENT, onDrops);
+    // Dev builds only: settles the item on screen as a drop signal would, for browser tests without a signal service.
+    if (dev) {
+      (window as Window & { __knightsSettleOnScreen?: () => void }).__knightsSettleOnScreen = () => {
+        if (view) onDrops({ drops: [{ k: view.item.live, to: null }] });
+      };
+    }
     const offStats = onSignal(PLAYER_STATS_EVENT, onStats);
     return () => {
       offDrops();
@@ -897,7 +918,9 @@
         {/key}
         {@render levelToast(true)}
         {@render ruling(true)}
-        {#if note}
+        {#if settledOnScreen}
+          <SettledCard ready={settledReady} oncontinue={continueFromSettled} />
+        {:else if note}
           <p class="nudge" class:sticky>
             <span role="status">{note}</span>
             {#if sticky}
@@ -912,12 +935,12 @@
         <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
           <input type="hidden" name="item" value={shown.item.id} />
           {#each shown.question.options as option, index (option.value)}
-            {@render pill(option, index, imageFailed, asksBlockReason(shown.question.key))}
+            {@render pill(option, index, imageFailed || settledOnScreen, asksBlockReason(shown.question.key))}
           {/each}
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
           <input type="hidden" name="item" value={shown.item.id} />
-          <button type="submit" class="quiet" disabled={submitting} aria-label="Skip" title="Skip (Space)">
+          <button type="submit" class="quiet" disabled={submitting || settledOnScreen} aria-label="Skip" title="Skip (Space)">
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>

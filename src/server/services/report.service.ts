@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
 import { NO_REPORT_REWARD_KEY, reportersWithoutReward } from '@civitai/shared/report-reward';
+import { reviewKeptWhenLiftedSql, withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -736,7 +737,9 @@ export async function bulkSetReportStatus({
   userId,
   ip,
   noRewardFor = () => [],
+  paysNoReporter = () => false,
   rewardRemovedReporters = true,
+  fromStatus,
 }: {
   ids: number[];
   status: ReportStatus;
@@ -744,9 +747,21 @@ export async function bulkSetReportStatus({
   ip?: string;
   /** Reporters of a report who get no reward for it; the report is still actioned. */
   noRewardFor?: (reportId: number) => readonly number[];
+  /** Reports actioned with no reporter rewarded. */
+  paysNoReporter?: (reportId: number) => boolean;
   rewardRemovedReporters?: boolean;
+  /** Moves only the reports in this status; any other is left as it is. */
+  fromStatus?: ReportStatus;
 }) {
-  if (!ids.length) return;
+  if (!ids.length) return [];
+
+  // Banned or deleted reporters, read before the status moves: a failure here leaves every report
+  // where it was, rather than actioned with nobody paid. On the primary: a ban from moments ago may
+  // not have reached a replica.
+  const removedIds =
+    status === ReportStatus.Actioned && !rewardRemovedReporters
+      ? await removedReporterIds(ids)
+      : new Set<number>();
 
   // One guarded statement on the primary, as the moderator app's `setReportStatus` writes it: a
   // report another path has already moved to `status` matches nothing, so it is not rewritten and
@@ -765,6 +780,7 @@ export async function bulkSetReportStatus({
           : Prisma.sql`"previouslyReviewedCount"`
       }
     WHERE id = ANY(${ids}::int[]) AND status != ${status}::"ReportStatus"
+      ${fromStatus ? Prisma.sql`AND status = ${fromStatus}::"ReportStatus"` : Prisma.empty}
     RETURNING id, "userId", "alsoReportedBy", details
   `;
 
@@ -773,19 +789,8 @@ export async function bulkSetReportStatus({
 
   // If we're actioning reports, we need to reward the users who reported them
   if (status === ReportStatus.Actioned) {
-    const reporterIds = [...new Set(reports.flatMap((r) => [r.userId, ...r.alsoReportedBy]))];
-    // The primary: a ban from moments ago may not have reached a replica.
-    const removed = rewardRemovedReporters
-      ? []
-      : await dbWrite.user.findMany({
-          where: {
-            id: { in: reporterIds },
-            OR: [{ bannedAt: { not: null } }, { deletedAt: { not: null } }],
-          },
-          select: { id: true },
-        });
-    const removedIds = new Set(removed.map((user) => user.id));
     const prepReports = reports.map((report) => {
+      if (paysNoReporter(report.id)) return { id: report.id, userIds: [] };
       const excluded = [...noRewardFor(report.id), ...reportersWithoutReward(report)];
       return {
         id: report.id,
@@ -803,6 +808,24 @@ export async function bulkSetReportStatus({
       )
     );
   }
+  return reports.map((r) => r.id);
+}
+
+/** The banned or deleted reporters of these reports, filers and co-reporters. */
+async function removedReporterIds(reportIds: number[]) {
+  const reports = await dbWrite.$queryRaw<{ userId: number; alsoReportedBy: number[] }[]>`
+    SELECT "userId", "alsoReportedBy" FROM "Report" WHERE id = ANY(${reportIds}::int[])
+  `;
+  const reporterIds = [...new Set(reports.flatMap((r) => [r.userId, ...r.alsoReportedBy]))];
+  if (!reporterIds.length) return new Set<number>();
+  const removed = await dbWrite.user.findMany({
+    where: {
+      id: { in: reporterIds },
+      OR: [{ bannedAt: { not: null } }, { deletedAt: { not: null } }],
+    },
+    select: { id: true },
+  });
+  return new Set(removed.map((user) => user.id));
 }
 
 // #region [helpers]
@@ -1905,12 +1928,15 @@ export async function settleResolvedAppeals(
         let written = false;
         try {
           // An approval never restores a row removed for CSAM or under the review flag, and a
-          // rejection leaves that flag on.
+          // rejection leaves that flag on. On a row an account deletion blocked, an approval settles
+          // the appeal but not a review the deletion recorded, which comes back.
           type Written = { postId: number | null; pHash: bigint | null };
           const [updated] = approved
             ? await dbWrite.$queryRaw<Written[]>`
                 UPDATE "Image"
-                SET "needsReview" = NULL, "blockedFor" = NULL, ingestion = 'Scanned'
+                SET "needsReview" = ${reviewKeptWhenLiftedSql},
+                    "blockedFor" = NULL, ingestion = 'Scanned',
+                    "metadata" = ${withoutGraceMarkersSql()}
                 WHERE id = ${appeal.entityId}
                   AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
                   AND "needsReview" IS DISTINCT FROM 'csam'

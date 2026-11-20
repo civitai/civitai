@@ -84,6 +84,7 @@ export function ImageFeedFilters({
             : undefined
         }
         isFeed
+        showTags
         size="compact-sm"
       />
     </Group>

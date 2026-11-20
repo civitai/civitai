@@ -100,10 +100,10 @@ describe('buildSearchRules', () => {
   });
 });
 
+// The levelled indexes a token grants (collections are searched through /api/search only).
 const LEVELLED_INDEXES = [
   MODELS_SEARCH_INDEX,
   ARTICLES_SEARCH_INDEX,
-  COLLECTIONS_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
 ];
@@ -213,5 +213,18 @@ describe('mintSearchToken', () => {
     expect(payload.apiKeyUid).toBe(PARENT_UID);
     expect(payload.exp).toBe(Math.floor((now + SEARCH_TOKEN_TTL_MS) / 1000));
     expect(payload.searchRules).toEqual(buildSearchRules({ id: 42 }));
+  });
+});
+
+describe('collections: searched through /api/search only', () => {
+  it('no token grants the collections index, whoever the viewer', () => {
+    expect(BROWSER_SEARCH_INDEXES).not.toContain(COLLECTIONS_SEARCH_INDEX);
+    for (const viewer of [
+      null,
+      { id: 7, browsingLevelCap: null },
+      { id: 7, browsingLevelCap: null, isModerator: true },
+      { id: 7 },
+    ])
+      expect(Object.keys(buildSearchRules(viewer, []))).not.toContain(COLLECTIONS_SEARCH_INDEX);
   });
 });

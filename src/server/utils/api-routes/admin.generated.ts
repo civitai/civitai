@@ -80,7 +80,6 @@ export const routes: ApiRoutes = {
     import('~/server/api-routes/admin/temp/backfill-unique-generators'),
   'temp/backfill-video-blurhash': () =>
     import('~/server/api-routes/admin/temp/backfill-video-blurhash'),
-  'temp/child-label-reindex': () => import('~/server/api-routes/admin/temp/child-label-reindex'),
   'temp/clamp-publishedat-bumps': () =>
     import('~/server/api-routes/admin/temp/clamp-publishedat-bumps'),
   'temp/clear-user-image-keys': () =>

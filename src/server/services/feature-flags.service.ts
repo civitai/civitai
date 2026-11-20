@@ -412,6 +412,8 @@ const featureFlags = createFeatureFlags({
   },
   // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
   trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
+  // Training Studio's Civitai Elements redesign (the embed's answer for `training-studio-elements-ui`).
+  trainingStudioElementsUi: { availability: ['mod'], fliptKey: 'training-studio-elements-ui' },
   // Training Studio's Manage tags find-and-replace row.
   trainingStudioTagFindReplace: {
     availability: ['mod'],
@@ -895,6 +897,8 @@ const featureFlags = createFeatureFlags({
   remixApps: { availability: ['mod'], fliptKey: 'remix-apps' },
   // Remix Apps v2-C: apps whose code a user wrote (rows with an `author`). Dark until their runner ships.
   remixAppsUserCode: { availability: [], fliptKey: 'remix-apps-user-code' },
+  // Who may submit a user app's code.
+  remixAppBuilder: { availability: [], fliptKey: 'remix-app-builder' },
   // App Blocks — "App builders" get-started pitch, now state A of the
   // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
   // launch: a single marketing/funnel page that explains the platform to

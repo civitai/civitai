@@ -20,7 +20,6 @@ import {
   modelSearchIndexEligibilitySql,
 } from '~/server/search-index/model-index-eligibility';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 import {
   MODELS_WITHHELD_ATTRIBUTES,
   modelsDisplayedAttributes,
@@ -217,9 +216,7 @@ export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
     coveredVersionIds.flatMap((versionId) =>
       images.filter(
         (image) =>
-          image.modelVersionId === versionId &&
-          image.availability !== Availability.Unsearchable &&
-          !isTaggedMatureImage(image)
+          image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
       )
     )
   );
