@@ -1,4 +1,5 @@
 import type { ClickHouseClient } from '@clickhouse/client';
+import { sleep } from '~/utils/errorHandling';
 
 export type ConnectionRetryOutcome = 'ok' | 'failed';
 
@@ -37,7 +38,7 @@ export function withConnectionResetRetry<C extends ClickHouseClient>(
 ): C {
   // Never re-enters itself: the attempt runs on the unwrapped client, which bounds it at one.
   const retry = async <T>(original: unknown, attempt: () => Promise<T>): Promise<T> => {
-    await new Promise((resolve) => setTimeout(resolve, Math.random() * MAX_RETRY_DELAY_MS));
+    await sleep(Math.random() * MAX_RETRY_DELAY_MS);
     try {
       const result = await attempt();
       onRetry('ok');

@@ -29,8 +29,13 @@ const REQUEST_TIMEOUT_MS = 300;
 
 const server = {
   queue: [] as Behaviour[],
-  requests: [] as { sql: string; remotePort: number | undefined }[],
+  requests: [] as { sql: string; connection: number | undefined }[],
 };
+
+// A port can be reused once a reset socket is gone, so connections are told apart by the id the
+// server assigns as each one is accepted.
+const connectionIds = new WeakMap<object, number>();
+let nextConnectionId = 0;
 
 const httpServer = http.createServer((req, res) => {
   let body = '';
@@ -39,7 +44,7 @@ const httpServer = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     server.requests.push({
       sql: url.searchParams.get('query') ?? body,
-      remotePort: req.socket.remotePort,
+      connection: connectionIds.get(req.socket),
     });
     const behaviour = server.queue.shift() ?? 'ok';
     switch (behaviour) {
@@ -69,6 +74,8 @@ const httpServer = http.createServer((req, res) => {
     }
   });
 });
+
+httpServer.on('connection', (socket) => connectionIds.set(socket, ++nextConnectionId));
 
 let ch: ReturnType<typeof createClickhouseMetricsClient>;
 
@@ -146,7 +153,8 @@ describe('dedicated metrics ClickHouse client: one retry on a connection-level e
       expect(server.requests).toHaveLength(2);
       expect(server.requests[1].sql).toBe(server.requests[0].sql);
       // The retry went out on a different socket than the one that failed.
-      expect(server.requests[1].remotePort).not.toBe(server.requests[0].remotePort);
+      expect(server.requests[1].connection).toBeDefined();
+      expect(server.requests[1].connection).not.toBe(server.requests[0].connection);
       expect(await counted()).toEqual({ ok: before.ok + 1, failed: before.failed });
     }
   );
