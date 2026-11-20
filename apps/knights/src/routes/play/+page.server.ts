@@ -54,6 +54,7 @@ import {
 } from '$lib/server/apprenticeship/apprenticeship.service';
 import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import { pickItem } from './next-item.server';
+import { inquisitorActions, inquisitorView } from './inquisitor.server';
 import { apprenticePayload, progressPayload } from './apprentice';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -121,6 +122,8 @@ async function acolyteLevelCard(progress: Notice | null, userId: number): Promis
 
 export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
+  // Moderators play the in-game inquisitor queue: settled player ratings to confirm as skill checks.
+  if (locals.user.isModerator) return inquisitorView(locals.user.id);
   const [status, { muted }] = await Promise.all([
     requireMember(db, locals.user.id),
     getStanding(db, locals.user.id),
@@ -369,6 +372,7 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
 }
 
 export const actions: Actions = {
+  ...inquisitorActions,
   // Every kind of vote (rating, yes/no, hidden check) passes the Redis vote limits here, before any database work.
   vote: async (event) => {
     const userId = event.locals.user.id;

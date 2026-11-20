@@ -43,3 +43,14 @@ blocked, it moved off the players' level, or it fell under a review or hold (the
 players' votes stay as they were.
 
 Closes count as `knights_inquisitor_reviews_closed_total{outcome}`.
+
+## Where moderators play it
+
+A moderator opening `/play` gets this queue instead of the player game (`routes/play/inquisitor.server.ts`,
+`InquisitorPlay.svelte`); the page needs no player record and pays nothing. Beside the image it shows the Knights' consensus
+and the image's current level, how the Order voted (per answer, by the stage the votes came at), the moderator votes so far,
+the prompt, and links to the image, its post and its creator on civitai.red, where tags and resources are listed. The
+moderator's own stats sit on top: votes this week, reviews waiting for them, and how often they agreed with the other
+moderator. Reviews are addressed by a sealed token bound to the moderator, under a key of its own, so a review token never
+opens as a feed item. Both actions (`inquisitorVote`, `sendToInquisitor`) are form posts that refuse anyone but a moderator.
+

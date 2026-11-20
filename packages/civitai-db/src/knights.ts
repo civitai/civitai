@@ -2,7 +2,7 @@ import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transactio
 import type { DB } from '@civitai/db-schema/kysely';
 import * as shared from '@civitai/shared';
 import { withheldCosmeticIds } from '@civitai/shared/knights-shop';
-import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
+import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_RANKS } from '@civitai/shared/new-order';
 
 // tsx loads CommonJS-scoped workspace packages as one `default` object when an ES module imports them.
 // Checked with `in`, not read: reading a missing `default` off a vitest module mock throws.
@@ -173,4 +173,65 @@ export async function withheldCosmetics(db: Kysely<DB>, ids: number[]): Promise<
       .execute(),
   ]);
   return withheldCosmeticIds(cosmetics, listings);
+}
+
+/** The counted votes on a settled item for one answer: how many, their weight, and how many came at each stage. */
+export type KnightsAnswerTally = {
+  answer: string;
+  label: string;
+  votes: number;
+  weight: number;
+  /** Votes for this answer by the stage the item was at when they were cast, lowest stage first; stages with none are left out. A higher rank can vote at a lower stage, so this is not the voter's rank. */
+  stages: { stage: string; votes: number }[];
+};
+
+type StageTally = { itemId: number; answer: string; stage: string; votes: string; weight: number };
+
+/** Per item, answer and stage, the counted votes (a held player's weight-0 vote decided nothing and is left out). */
+export function readVoteTallies(db: Kysely<DB>, itemIds: number[]): Promise<StageTally[]> {
+  return db
+    .selectFrom('KnightsVote')
+    .select([
+      'itemId',
+      'answer',
+      'stage',
+      sql<string>`count(*)`.as('votes'),
+      sql<number>`sum("weight")`.as('weight'),
+    ])
+    .where('itemId', 'in', itemIds)
+    .where('weight', '>', 0)
+    .groupBy(['itemId', 'answer', 'stage'])
+    .execute();
+}
+
+const stageOrder = (stage: string) => {
+  const index = (KNIGHTS_STAGE_RANKS as readonly string[]).indexOf(stage);
+  return index === -1 ? KNIGHTS_STAGE_RANKS.length : index;
+};
+
+/** One item's stage tallies grouped by answer, heaviest first, each answer's stages lowest first. */
+export function tallyByAnswer(
+  tallies: Pick<StageTally, 'answer' | 'stage' | 'votes' | 'weight'>[],
+  labels: Map<string, string>
+): KnightsAnswerTally[] {
+  const byAnswer = new Map<string, KnightsAnswerTally>();
+  for (const tally of tallies) {
+    const vote = byAnswer.get(tally.answer) ?? {
+      answer: tally.answer,
+      label: labels.get(tally.answer) ?? tally.answer,
+      votes: 0,
+      weight: 0,
+      stages: [],
+    };
+    vote.votes += Number(tally.votes);
+    vote.weight += Number(tally.weight);
+    vote.stages.push({ stage: tally.stage, votes: Number(tally.votes) });
+    byAnswer.set(tally.answer, vote);
+  }
+  return [...byAnswer.values()]
+    .map((vote) => ({
+      ...vote,
+      stages: vote.stages.sort((a, b) => stageOrder(a.stage) - stageOrder(b.stage)),
+    }))
+    .sort((a, b) => b.weight - a.weight || a.answer.localeCompare(b.answer));
 }

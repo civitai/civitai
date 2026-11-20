@@ -23,6 +23,10 @@ const NOW = new Date('2026-12-15T12:00:00Z');
 const PRIMARY = vi.hoisted(() => ({ client: 'primary' }));
 const REPLICA = vi.hoisted(() => ({ client: 'replica' }));
 vi.mock('$lib/server/db', () => ({ db: PRIMARY, dbRead: REPLICA }));
+vi.mock('./inquisitor.server', () => ({
+  inquisitorView: async () => ({ mode: 'inquisitor' }),
+  inquisitorActions: {},
+}));
 // Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
 vi.mock('$lib/server/membership', async (original) => ({
   ...(await original<typeof import('$lib/server/membership')>()),
@@ -372,10 +376,11 @@ describe('play load vote pacing', () => {
     expect(getFeed).toHaveBeenCalled();
   });
 
-  it('never paces a moderator', async () => {
-    await run({ isModerator: true });
+  it('serves a moderator the inquisitor queue instead of the feed, unpaced', async () => {
+    const data = await run({ isModerator: true });
+    expect(data).toMatchObject({ mode: 'inquisitor' });
     expect(lockoutFor).not.toHaveBeenCalled();
-    expect(getFeed).toHaveBeenCalled();
+    expect(getFeed).not.toHaveBeenCalled();
   });
 });
 

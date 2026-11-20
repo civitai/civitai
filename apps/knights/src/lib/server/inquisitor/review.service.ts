@@ -125,6 +125,8 @@ async function closeReview(
 
 export type ReviewOffer = {
   reviewId: number;
+  /** The settled queue item the review is of. */
+  queueItemId: number;
   imageId: number;
   imageKey: string;
   width: number | null;
@@ -153,6 +155,7 @@ export async function nextReview(
       .innerJoin('Image as img', 'img.id', 'r.imageId')
       .select([
         'r.id',
+        'r.queueItemId',
         'r.imageId',
         'r.consensusValue',
         'img.url',
@@ -206,6 +209,7 @@ export async function nextReview(
     }
     return {
       reviewId: row.id,
+      queueItemId: row.queueItemId,
       imageId: row.imageId,
       imageKey: row.url,
       width: row.width,
