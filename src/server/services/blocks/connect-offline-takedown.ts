@@ -1,48 +1,57 @@
-import { dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
+import { offlineAccessJustification } from '~/shared/constants/token-scope.constants';
 
 /**
- * A MODERATOR TAKEDOWN of an App Store connect listing cuts the app's offline access now: every
- * refresh token held for its OAuth client is deleted, so its users must sign in again, and the
- * orchestrator's cached authentication of those users' tokens is expired.
+ * A MODERATOR TAKEDOWN of an App Store connect listing cuts the app's offline access: every
+ * refresh token held for its OAuth client is deleted (through `deleteApiKeys`, which also evicts the
+ * bearer cache, revokes what the keys minted and expires each holder's orchestrator auth), so its
+ * users must sign in again.
+ *
+ * Not when ANOTHER approved listing on the same client still declares offline access: the auth hub
+ * grants per client, so that app keeps it, and cutting would only force its users to sign in again.
  *
  * Only a moderator takedown does this. An owner withdrawing the offline declaration, or
  * unpublishing their own listing, only stops the chains sliding (the auth hub's
  * listing-offline.ts): they lapse at their current expiry.
  *
- * Mirrors the auth hub's revoke path for a reused refresh family (`revokeRefreshFamily`, which
- * deletes the Refresh rows and expires the orchestrator's token cache); the hub's helpers live in
- * the hub, so this uses the main app's equivalent orchestrator call, `revokeCivitaiUserTokens`.
- *
- * DARK: runs only while `oauth-offline-grant` is on, the regime in which offline access is a grant
- * a listing must declare. Off, a takedown is unchanged. Runs AFTER the takedown commits and never
+ * DARK: runs only while `oauth-offline-grant` is on. Runs AFTER the takedown commits and never
  * throws: the takedown stands whatever happens here.
  */
-export async function cutConnectOfflineAccessAfterTakedown(
-  connectClientId: string | null | undefined
-): Promise<{ users: number }> {
-  if (!connectClientId) return { users: 0 };
+export async function cutConnectOfflineAccessAfterTakedown(opts: {
+  connectClientId: string | null | undefined;
+  takenDownListingId: string;
+}): Promise<{ cut: boolean; deleted: number }> {
+  const { connectClientId, takenDownListingId } = opts;
+  if (!connectClientId) return { cut: false, deleted: 0 };
   try {
-    if (!(await isFlipt(FLIPT_FEATURE_FLAGS.OAUTH_OFFLINE_GRANT))) return { users: 0 };
-    // primary: the delete below must see the same rows, and the takedown just committed.
-    const holders = await dbWrite.apiKey.findMany({
-      where: { type: 'Refresh', clientId: connectClientId },
-      select: { userId: true },
-      distinct: ['userId'],
+    if (!(await isFlipt(FLIPT_FEATURE_FLAGS.OAUTH_OFFLINE_GRANT)))
+      return { cut: false, deleted: 0 };
+    const others = await dbRead.appListing.findMany({
+      where: {
+        connectClientId,
+        kind: 'offsite',
+        status: 'approved',
+        revisionOfId: null,
+        id: { not: takenDownListingId },
+      },
+      select: { connectScopeJustifications: true },
     });
-    await dbWrite.apiKey.deleteMany({ where: { type: 'Refresh', clientId: connectClientId } });
-    for (const { userId } of holders) await revokeCivitaiUserTokens({ userId });
+    if (others.some((l) => offlineAccessJustification(l.connectScopeJustifications) != null)) {
+      return { cut: false, deleted: 0 };
+    }
+    const { deleteApiKeys } = await import('~/server/services/api-key.service');
+    const { count } = await deleteApiKeys({ type: 'Refresh', clientId: connectClientId });
     logToAxiom(
       {
         name: 'app-listing.takedown.offline-cut',
         type: 'info',
-        payload: { clientId: connectClientId, users: holders.length },
+        payload: { clientId: connectClientId, deleted: count },
       },
       'webhooks'
     );
-    return { users: holders.length };
+    return { cut: true, deleted: count };
   } catch (err) {
     logToAxiom(
       {
@@ -55,6 +64,6 @@ export async function cutConnectOfflineAccessAfterTakedown(
       },
       'webhooks'
     );
-    return { users: 0 };
+    return { cut: false, deleted: 0 };
   }
 }

@@ -1,8 +1,8 @@
 -- Index for the auth hub's offline-access read (apps/auth listing-offline.ts), which runs on an
 -- authorize request asking for offline_access, at its code exchange, and on a refresh under an
 -- offline grant, while the `oauth-offline-grant` flag is on:
---   SELECT status, connect_scope_justifications FROM app_listings
---   WHERE connect_client_id = $1 AND kind = 'offsite' AND status IN ('approved', 'removed')
+--   SELECT id, status, connect_scope_justifications FROM app_listings
+--   WHERE connect_client_id = $1 AND kind = 'offsite'
 -- Without it that read is a sequential scan of app_listings. Partial: only connect listings carry a
 -- client (on-site and external-link listings leave connect_client_id NULL), so the index holds
 -- just those rows.

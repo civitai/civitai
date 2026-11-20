@@ -88,7 +88,8 @@ type WriteMock = {
   appOwnershipEvent: { create: ReturnType<typeof vi.fn> };
 };
 type ReadMock = {
-  appListing: { findUnique: ReturnType<typeof vi.fn> };
+  // findMany: a takedown checks the client's OTHER approved listings for a declaration.
+  appListing: { findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
   appListingReport: { findUnique: ReturnType<typeof vi.fn> };
   appListingModerationEvent: { findMany: ReturnType<typeof vi.fn> };
   // The OUT-OF-TX table-presence probe. A missing-table error here means the
@@ -154,7 +155,7 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
     cb(write)
   );
   const read: ReadMock = {
-    appListing: { findUnique: vi.fn(async () => null) },
+    appListing: { findUnique: vi.fn(async () => null), findMany: vi.fn(async () => []) },
     appListingReport: { findUnique: vi.fn(async () => null) },
     appListingModerationEvent: { findMany: vi.fn(async () => []) },
     appCollaborator: { count: vi.fn(async () => 0) },
@@ -324,16 +325,22 @@ beforeEach(() => {
 
 describe('delistListing — a moderator takedown of a CONNECT listing cuts offline access', () => {
   const connectListing = () => ({ ...offsiteListing('approved'), connectClientId: 'oc_connect' });
+  // Through `deleteApiKeys`: its delete is `{ AND: [where, { id: { in } }] }`.
   const refreshDeletes = () =>
-    mockWrite.apiKey.deleteMany.mock.calls.filter(
-      (c) => (c[0] as { where: { type?: string } }).where.type === 'Refresh'
+    mockWrite.apiKey.deleteMany.mock.calls.filter((c) =>
+      JSON.stringify(c[0]).includes('"type":"Refresh"')
     );
   beforeEach(() => {
     flipt.on.clear();
-    mockWrite.apiKey.findMany.mockResolvedValue([{ userId: 11 }, { userId: 12 }]);
+    mockRead.appListing.findMany.mockResolvedValue([]);
+    mockWrite.apiKey.findMany.mockResolvedValue([
+      { id: 501, key: 'h1', userId: 11 },
+      { id: 502, key: 'h2', userId: 12 },
+      { id: 503, key: 'h3', userId: 11 },
+    ]);
   });
 
-  it('🔴 flag on: deletes every Refresh row of the client, then expires each holder’s orchestrator auth, after the commit', async () => {
+  it('🔴 flag on: deletes the client’s Refresh rows through deleteApiKeys, expiring each holder’s orchestrator auth once, after the commit', async () => {
     flipt.on.add('oauth-offline-grant');
     mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
     const order: string[] = [];
@@ -346,7 +353,7 @@ describe('delistListing — a moderator takedown of a CONNECT listing cuts offli
     );
     mockWrite.apiKey.deleteMany.mockImplementation(async () => {
       order.push('delete-refresh');
-      return { count: 2 };
+      return { count: 3 };
     });
     mockRevokeOrchestratorTokens.mockImplementation(async ({ userId }: { userId: number }) => {
       order.push(`orchestrator:${userId}`);
@@ -355,15 +362,55 @@ describe('delistListing — a moderator takedown of a CONNECT listing cuts offli
       input: { appListingId: APP_ID, reason: GOOD_REASON },
       reviewerUserId: REVIEWER,
     });
-    expect(mockWrite.apiKey.findMany).toHaveBeenCalledWith({
-      where: { type: 'Refresh', clientId: 'oc_connect' },
-      select: { userId: true },
-      distinct: ['userId'],
+    // The sibling check: the client's OTHER approved, top-level listings.
+    expect(mockRead.appListing.findMany).toHaveBeenCalledWith({
+      where: {
+        connectClientId: 'oc_connect',
+        kind: 'offsite',
+        status: 'approved',
+        revisionOfId: null,
+        id: { not: APP_ID },
+      },
+      select: { connectScopeJustifications: true },
     });
     expect(refreshDeletes().map((c) => c[0])).toEqual([
-      { where: { type: 'Refresh', clientId: 'oc_connect' } },
+      {
+        where: {
+          AND: [{ type: 'Refresh', clientId: 'oc_connect' }, { id: { in: [501, 502, 503] } }],
+        },
+      },
     ]);
-    expect(order).toEqual(['commit', 'delete-refresh', 'orchestrator:11', 'orchestrator:12']);
+    // One expiry per distinct holder (11 held two tokens), after the delete.
+    expect(order[0]).toBe('commit');
+    expect(order[1]).toBe('delete-refresh');
+    expect(order.slice(2).sort()).toEqual(['orchestrator:11', 'orchestrator:12']);
+  });
+
+  it('🔴 NOT cut when another approved listing on the same client still declares offline access', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    mockRead.appListing.findMany.mockResolvedValue([
+      { connectScopeJustifications: { offline_access: 'the other listing syncs nightly' } },
+    ]);
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(refreshDeletes()).toEqual([]);
+    expect(mockRevokeOrchestratorTokens).not.toHaveBeenCalled();
+  });
+
+  it('cut when the other approved listings do NOT declare it', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    mockRead.appListing.findMany.mockResolvedValue([
+      { connectScopeJustifications: { ModelsWrite: 'uploads' } },
+    ]);
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(refreshDeletes()).toHaveLength(1);
   });
 
   it('flag off: a takedown is unchanged — no refresh token is touched', async () => {

@@ -478,10 +478,8 @@ describe('isUnpublishedEdit', () => {
 });
 
 /**
- * The scope disclosure lock and the drift check are now two things. A justification edit (the
- * offline-access declaration included) is MATERIAL on the server, so every unpublished connect
- * listing locks the boxes. Drift is separate: it makes even a tagline-only save fail, which is
- * what `materialEditBlockedReason`'s "nothing can be saved" copy says.
+ * A justification edit (offline-access declaration included) is material, so every unpublished
+ * connect listing locks the boxes. Drift is separate: it fails even a tagline-only save.
  */
 describe('scopeDisclosureLockedForEdit', () => {
   const connect = {
@@ -673,8 +671,8 @@ describe('🔴 scope drift — the save dead end, and the copy that denies it', 
     });
     expect(scopeJustificationError(editContextToForm(undrifted))).toBeUndefined();
     // Not the drift dead end: the tagline, description and category still save, and the copy
-    // says so. (The justification boxes are locked on any unpublished connect listing now,
-    // because a justification edit is material — `scopeDisclosureLockedForEdit` above.)
+    // says so. (The justification boxes are locked on any unpublished connect listing, because a
+    // justification edit is material — `scopeDisclosureLockedForEdit` above.)
     expect(scopesDriftedForEdit(undrifted)).toBe(false);
     expect(materialEditBlockedReason(undrifted)).toMatch(/can be edited now/i);
   });

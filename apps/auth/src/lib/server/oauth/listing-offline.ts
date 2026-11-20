@@ -9,16 +9,16 @@ import { logAxiomError } from '$lib/server/axiom';
 // `offline_access` with a justification. An undeclared listed client never gets it. A client no
 // listing points at (Civitai's own apps, first-party spokes, plain OAuth apps) is not affected.
 //
-// The read: the listing rows themselves, from the database the hub already reads `OauthConsent`
-// and `ApiKey` in. That is the least coupled way to see them. A call to the main app would add a
-// network hop and a second service whose outage changes token issuance, and a copy of the flag on
-// the client row would need a writer to keep it in step with every approve, delist and edit.
-//
-// LISTED means EVER LIVE: the client has a listing that has been approved, i.e. one now
-// `approved` or `removed` (a removed listing was live, or it could not have been taken down or
-// unpublished). A draft or pending first submission, or a rejected one, changes nothing for the
-// app's existing users: the client keeps the unlisted rule until a listing goes live. A delisted
-// app stays listed, so it does not fall back to the unlisted rule and regain offline access.
+// LISTED means EVER LIVE: one of the client's listings has been approved at some point, whatever
+// its status now. A formerly-live listing can sit in `pending` (a moderator's reset to pending, or
+// an owner republish after an asset change), so status alone cannot tell. Any of these says it was
+// live:
+//   - its status is `approved` or `removed` (removed is only reachable from live);
+//   - an `approved` publish request points at it (every approve leaves one);
+//   - it has a moderation event (every moderation action applies to a listing that was live).
+// A client whose listings are only first-time drafts, pending first submissions or rejected ones
+// keeps the unlisted rule, so a first submission changes nothing for the app's existing users. A
+// delisted app stays listed, so it does not regain offline access through the unlisted rule.
 //
 // Only `approved` listings DECLARE. A pending edit of a live listing sits on a shadow revision,
 // which is always a draft, so its declaration counts only once approve copies it onto the live
@@ -30,24 +30,41 @@ import { logAxiomError } from '$lib/server/axiom';
 
 export type ClientOfflineListing = 'unlisted' | 'declared' | 'undeclared';
 
-/** A listing in one of these has been approved at some point: it went live. */
-const EVER_LIVE_STATUSES = ['approved', 'removed'];
-
 /** What the client's connect listings say about offline access. Throws if they cannot be read. */
 export async function readClientOfflineListing(clientId: string): Promise<ClientOfflineListing> {
   const rows = await db
     .selectFrom('app_listings')
-    .select(['status', 'connect_scope_justifications'])
+    .select(['id', 'status', 'connect_scope_justifications'])
     .where('connect_client_id', '=', clientId)
     .where('kind', '=', 'offsite')
-    .where('status', 'in', EVER_LIVE_STATUSES)
     .execute();
   if (rows.length === 0) return 'unlisted';
-  return rows.some(
-    (r) => r.status === 'approved' && offlineAccessJustification(r.connect_scope_justifications)
-  )
-    ? 'declared'
-    : 'undeclared';
+  if (
+    rows.some(
+      (r) => r.status === 'approved' && offlineAccessJustification(r.connect_scope_justifications)
+    )
+  ) {
+    return 'declared';
+  }
+  return (await anyEverLive(rows)) ? 'undeclared' : 'unlisted';
+}
+
+async function anyEverLive(rows: { id: string; status: string }[]): Promise<boolean> {
+  if (rows.some((r) => r.status === 'approved' || r.status === 'removed')) return true;
+  const ids = rows.map((r) => r.id);
+  const approvedRequest = await db
+    .selectFrom('app_listing_publish_requests')
+    .select(['id'])
+    .where('app_listing_id', 'in', ids)
+    .where('status', '=', 'approved')
+    .executeTakeFirst();
+  if (approvedRequest) return true;
+  const event = await db
+    .selectFrom('app_listing_moderation_events')
+    .select(['id'])
+    .where('app_listing_id', 'in', ids)
+    .executeTakeFirst();
+  return event != null;
 }
 
 /**

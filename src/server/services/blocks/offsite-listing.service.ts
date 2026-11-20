@@ -3463,11 +3463,7 @@ function assertConnectSensitiveScopesJustified(listing: {
     !Array.isArray(listing.connectScopeJustifications)
       ? (listing.connectScopeJustifications as Record<string, unknown>)
       : {};
-  // OFFLINE ACCESS is treated like a sensitive scope: a listing that declares it must justify it.
-  // The key present but with no reason the shared rule accepts (`offlineAccessJustification`, the
-  // one the auth hub reads) is a declaration with no reason, and is refused. NOT declaring is
-  // allowed, and it is not a gap: the hub never offers offline access to a listed app whose
-  // approved listing does not declare it, so an undeclared app simply gets none.
+  // Key present with no accepted reason is a declaration with no reason: refused.
   if (Object.hasOwn(justifications, OFFLINE_ACCESS_JUSTIFICATION_KEY)) {
     if (offlineAccessJustification(justifications) == null) {
       throw new TRPCError({

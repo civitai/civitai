@@ -559,7 +559,6 @@ export function pruneJustificationsToMask(
   mask: number | bigint
 ): Record<string, string> {
   const keys = new Set(tokenScopeMaskToList(BigInt(mask)).map((s) => s.key));
-  // The offline-access declaration is not a scope bit; it survives any mask.
   keys.add(OFFLINE_ACCESS_JUSTIFICATION_KEY);
   const out: Record<string, string> = {};
   for (const [key, text] of Object.entries(justifications)) {
@@ -597,7 +596,6 @@ export function shapeScopeJustifications(
   mask: number | bigint
 ): Record<string, string> {
   const keys = new Set(tokenScopeMaskToList(BigInt(mask)).map((s) => s.key));
-  // The offline-access declaration is not a scope bit; it survives any mask (with text only).
   keys.add(OFFLINE_ACCESS_JUSTIFICATION_KEY);
   const out: Record<string, string> = {};
   for (const [key, text] of Object.entries(justifications)) {

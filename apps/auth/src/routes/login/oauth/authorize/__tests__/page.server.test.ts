@@ -22,6 +22,11 @@ vi.mock('$lib/server/db/db', () => ({
         qb.executeTakeFirst = () => Promise.resolve(consentRow.current);
         return qb;
       }
+      // The ever-live markers (listing-offline.ts): none on record in these cases.
+      if (table === 'app_listing_publish_requests' || table === 'app_listing_moderation_events') {
+        qb.executeTakeFirst = () => Promise.resolve(undefined);
+        return qb;
+      }
       if (table === 'app_listings') {
         qb.execute = () =>
           listingRows.fail

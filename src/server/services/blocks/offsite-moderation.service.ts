@@ -762,11 +762,13 @@ export async function delistListing(opts: {
   await bustAppListingCatalogCache().catch(() => undefined);
   const live = isOnsite && listing.appBlockId ? await takeDownLiveAppAfterCommit(listing.slug) : {};
   await forgetRevokedAppTokens(revoked.value);
-  // A moderator takedown of a CONNECT listing also cuts the app's offline access now (refresh
-  // tokens deleted; users sign in again). An owner's unpublish does not (see that module).
+  // A moderator takedown of a CONNECT listing cuts the app's offline access (see that module).
   if (!isOnsite) {
     const { cutConnectOfflineAccessAfterTakedown } = await import('./connect-offline-takedown');
-    await cutConnectOfflineAccessAfterTakedown(listing.connectClientId);
+    await cutConnectOfflineAccessAfterTakedown({
+      connectClientId: listing.connectClientId,
+      takenDownListingId: input.appListingId,
+    });
   }
 
   return { appListingId: input.appListingId, status: 'removed', ...live };

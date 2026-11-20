@@ -531,6 +531,41 @@ describe('App Store connect clients: offline access only with an approved declar
       expect(res.body).not.toHaveProperty('refresh_token');
     });
 
+    // A FORMERLY-LIVE listing back in `pending`. Each fixture carries exactly one of the durable
+    // "was approved" markers, so each marker is proven on its own.
+    it('🔴 approved → a moderator reset to pending (an approved publish request on record): still listed', async () => {
+      listing('pending', { ModelsWrite: 'uploads' });
+      h.tables.app_listing_publish_requests = [
+        { id: 'alpr_first', app_listing_id: 'apl_0', status: 'approved' },
+        { id: 'alpr_reset', app_listing_id: 'apl_0', status: 'pending' },
+      ];
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(res.body).not.toHaveProperty('refresh_token');
+    });
+
+    it('🔴 removed → pending after an asset change (its moderation events on record): still listed', async () => {
+      listing('pending', { ModelsWrite: 'uploads' });
+      h.tables.app_listing_moderation_events = [
+        { id: 'alme_1', app_listing_id: 'apl_0', action: 'owner-unpublish' },
+        { id: 'alme_2', app_listing_id: 'apl_0', action: 'owner-republish' },
+      ];
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(res.body).not.toHaveProperty('refresh_token');
+    });
+
+    it('a FIRST submission still pending (only its pending request, no events) stays unlisted', async () => {
+      listing('pending', { ModelsWrite: 'uploads' });
+      h.tables.app_listing_publish_requests = [
+        { id: 'alpr_first', app_listing_id: 'apl_0', status: 'pending' },
+      ];
+      h.tables.app_listing_moderation_events = [
+        // Another listing's history does not count for this one.
+        { id: 'alme_x', app_listing_id: 'apl_other', action: 'delist' },
+      ];
+      const res = await exchangeCode(await authorize(authorizeParams(ASK), { offline: 'true' }));
+      expect(typeof res.body.refresh_token).toBe('string');
+    });
+
     it.each(['draft', 'pending', 'rejected'])(
       '🔴 a client whose only listing is %s (never live) keeps the unlisted behaviour',
       async (status) => {
