@@ -5,7 +5,8 @@ import { logToAxiom } from '~/server/logging/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { transitionDeal } from '~/server/services/creator-service-deal.service';
 import { syncDealReviewPublication } from '~/server/services/creator-service-deal-review-publish';
-import { releaseDeal } from '~/server/services/creator-service-escrow.service';
+import { dealFinalsClear, releaseDeal } from '~/server/services/creator-service-escrow.service';
+import { getReviewImages } from '~/server/services/creator-service-deal-review-images';
 import { scanServiceDealReviewText } from '~/server/services/service-deal-review-moderation.adapter';
 import { csamQueueClearSql } from '~/server/services/text-scan/csam-hold-state';
 import { SERVICE_DEAL_REVIEW_EDIT_MS } from '~/shared/constants/creator-services.constants';
@@ -215,4 +216,63 @@ export async function setServiceDealReviewHidden({
     await syncDealReviewPublication(tx, review.dealId);
     return true;
   });
+}
+
+/**
+ * The review card's data for one viewer, or null for a deal not enrolled in reviews. Each party
+ * sees their own text as written, and the other party's only once it passed its check; a
+ * moderator sees both. `servableLevels` is what the request's domain may show.
+ */
+export async function getDealReviewView({
+  dealId,
+  viewerRole,
+  servableLevels,
+}: {
+  dealId: number;
+  viewerRole: 'buyer' | 'seller' | 'moderator';
+  servableLevels: number;
+}) {
+  const [row] = await dbWrite.$queryRaw<
+    {
+      enrolled: boolean;
+      settled: boolean;
+      finalsClear: boolean;
+      id: number | null;
+      verdict: ServiceDealReviewVerdict | null;
+      comment: string | null;
+      scanStatus: string | null;
+      publishedAt: Date | null;
+      editableUntil: Date | null;
+      sellerReply: string | null;
+      sellerReplyScanStatus: string | null;
+      hidden: boolean;
+    }[]
+  >`
+    SELECT d."reviewEnabledAt" IS NOT NULL AS "enrolled", d."settledAt" IS NOT NULL AS "settled",
+      ${dealFinalsClear(Prisma.sql`d`)} AS "finalsClear",
+      r."id", r."verdict", r."comment", r."scanStatus"::text AS "scanStatus", r."publishedAt",
+      r."editableUntil", r."sellerReply", r."sellerReplyScanStatus"::text AS "sellerReplyScanStatus",
+      r."hiddenAt" IS NOT NULL AS "hidden"
+    FROM "ServiceDeal" d LEFT JOIN "ServiceDealReview" r ON r."dealId" = d."id"
+    WHERE d."id" = ${dealId}::int`;
+  if (!row?.enrolled) return null;
+  const base = { settled: row.settled, finalsClear: row.finalsClear };
+  if (row.id === null || row.verdict === null) return { ...base, review: null };
+  const sees = (author: 'buyer' | 'seller', status: string | null) =>
+    viewerRole === 'moderator' || viewerRole === author || status === 'Scanned';
+  return {
+    ...base,
+    review: {
+      id: row.id,
+      verdict: row.verdict,
+      comment: sees('buyer', row.scanStatus) ? row.comment : null,
+      scanStatus: row.scanStatus,
+      published: !!row.publishedAt,
+      editableUntil: row.editableUntil,
+      sellerReply: sees('seller', row.sellerReplyScanStatus) ? row.sellerReply : null,
+      sellerReplyScanStatus: row.sellerReplyScanStatus,
+      hidden: row.hidden,
+      images: await getReviewImages({ reviewId: row.id, levels: servableLevels }),
+    },
+  };
 }

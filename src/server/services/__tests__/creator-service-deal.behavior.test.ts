@@ -309,7 +309,7 @@ beforeAll(async () => {
     CREATE TABLE "Report" (id serial PRIMARY KEY);
     CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb NOT NULL);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
-    CREATE TABLE "Image" (id serial PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
+    CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, "nsfwLevel" int NOT NULL DEFAULT 0,
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
@@ -3764,6 +3764,47 @@ describe('review publishing and counters', () => {
       expect((await reviewRow(id)).publishedAt).not.toBeNull();
       expect((await counters()).happyCount).toBe(1);
     });
+  });
+
+  it("shows each party the other's text only once it passed its check", async () => {
+    const id = await completedBy();
+    await review(id, 'Happy', BUYER, 'From the buyer');
+    await dealReviews.replyToServiceDealReview({
+      dealId: id,
+      userId: SELLER,
+      reply: 'From the seller',
+      reviewFlag: true,
+    });
+    const view = (viewerRole: 'buyer' | 'seller' | 'moderator') =>
+      dealReviews.getDealReviewView({ dealId: id, viewerRole, servableLevels: 31 });
+    expect((await view('buyer'))?.review).toMatchObject({
+      comment: 'From the buyer',
+      sellerReply: null,
+    });
+    expect((await view('seller'))?.review).toMatchObject({
+      comment: null,
+      sellerReply: 'From the seller',
+    });
+    expect((await view('moderator'))?.review).toMatchObject({
+      comment: 'From the buyer',
+      sellerReply: 'From the seller',
+    });
+    await q(
+      `UPDATE "ServiceDealReview" SET "scanStatus" = 'Scanned', "sellerReplyScanStatus" = 'Scanned' WHERE "dealId" = $1`,
+      [id]
+    );
+    expect((await view('seller'))?.review?.comment).toBe('From the buyer');
+    expect((await view('buyer'))?.review?.sellerReply).toBe('From the seller');
+    // A deal requested without the review flag has no card.
+    const unenrolled = await completedBy(10);
+    await q(`UPDATE "ServiceDeal" SET "reviewEnabledAt" = NULL WHERE id = $1`, [unenrolled]);
+    expect(
+      await dealReviews.getDealReviewView({
+        dealId: unenrolled,
+        viewerRole: 'buyer',
+        servableLevels: 31,
+      })
+    ).toBeNull();
   });
 
   describe('the deals job', () => {

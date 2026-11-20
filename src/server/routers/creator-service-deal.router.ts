@@ -43,6 +43,7 @@ import {
 } from '~/server/services/creator-service-deal-review-images';
 import {
   editServiceDealReview,
+  getDealReviewView,
   replyToServiceDealReview,
   reviewServiceDeal,
   setServiceDealReviewHidden,
@@ -145,14 +146,20 @@ export const creatorServiceDealRouter = router({
     })
   ),
 
-  get: protectedProcedure.input(getServiceDealSchema).query(({ input, ctx }) =>
-    getServiceDealView({
+  get: protectedProcedure.input(getServiceDealSchema).query(async ({ input, ctx }) => {
+    const view = await getServiceDealView({
       dealId: input.id,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
       servicesEnabled: !!ctx.features?.creatorServices,
-    })
-  ),
+    });
+    const review = await getDealReviewView({
+      dealId: view.id,
+      viewerRole: view.viewerRole,
+      servableLevels: domainServableLevels(ctx),
+    });
+    return { ...view, review };
+  }),
   withdraw: protectedProcedure
     .input(serviceDealActionSchema)
     .mutation(({ input, ctx }) =>
