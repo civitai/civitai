@@ -190,7 +190,7 @@ All bounds live in `src/limits.ts`.
 | heap     | 16 MiB                                             | `runtime.setMemoryLimit`                                                                                        |
 | stack    | 256 KiB                                            | `runtime.setMaxStackSize` (see below)                                                                           |
 | time     | `timeoutMs`, [1, 500], default 50, evaluation only (a remix replay: 50, its awaits included) | interrupt handler (uncatchable; `catch`/`finally` cannot resume; a swallowed interrupt still ends as `timeout`) |
-| backstop | `timeoutMs` + 100 ms (a remix call: (50 + 30) ms per replay + 50 ms + 100 ms) | the pool terminates and replaces the worker; answered 500 (a remix call: 423 `quarantined`, and the app is refused for 10 minutes) |
+| backstop | `timeoutMs` + 100 ms (a remix call: (50 + 30) ms per replay + 50 ms + 100 ms) | the pool terminates and replaces the worker; answered 500 (a remix call: 423 `quarantined`, and that app's source is refused for 10 minutes) |
 | per app  | ⌈`MAX_QUEUE` / 4⌉ calls queued plus in flight (remix mode: 4) | the pool; past it that app gets 503 while others proceed                                                        |
 | source   | 64 KiB (a remix app 32 KiB)                        | request validation                                                                                              |
 | body     | 256 KiB                                            | Fastify `bodyLimit`                                                                                             |
@@ -209,7 +209,7 @@ All bounds live in `src/limits.ts`.
   calls each, one dev-box run). Native work that never polls
   the interrupt still reaches the backstop: `const a = []; a.length = 2 ** 32 - 1; a.includes(1);`
   walks the holes inside QuickJS and runs on past any deadline. That call, and every remix call
-  for the same `appId` for the next 10 minutes (`REMIX_QUARANTINE_MS`, kept per process), answer
+  for the same `appId` and `sha256` for the next 10 minutes (`REMIX_QUARANTINE_MS`, kept per process), answer
   423 `quarantined`, so one app cannot keep killing workers; the caller says "unavailable right
   now" for that app.
 - **A remix call gets more.** Every replay gets its own fresh runtime and deadline, and every

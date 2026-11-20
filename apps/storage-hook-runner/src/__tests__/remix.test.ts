@@ -399,19 +399,23 @@ describe('quarantine after the backstop', () => {
       expect(hit.headers[SIG_HEADER]).toBe(hmac(SECRET, hit.body));
       expect(p.stats().terminated).toBe(1);
 
-      // A well-behaved source from the same app is refused too, without reaching a worker.
-      const later = await call(PICK_OF_FOUR, 'remix-outruns');
+      // The same source again is refused without reaching a worker.
+      const later = await call(OUTRUNS, 'remix-outruns');
       expect(later.statusCode).toBe(423);
       expect(later.json().error.code).toBe('quarantined');
       expect(p.stats().terminated).toBe(1);
 
-      // POSITIVE CONTROL: another app is answered.
+      // A new source of the same app starts clean, and another app is answered.
+      expect((await call(PICK_OF_FOUR, 'remix-outruns')).statusCode).toBe(200);
       expect((await call(PICK_OF_FOUR, 'remix-other')).statusCode).toBe(200);
 
       now += REMIX_QUARANTINE_MS - 1;
-      expect((await call(PICK_OF_FOUR, 'remix-outruns')).statusCode).toBe(423);
+      expect((await call(OUTRUNS, 'remix-outruns')).statusCode).toBe(423);
+      expect(p.stats().terminated).toBe(1);
+      // Expired: the source runs again, and outruns the interrupt again.
       now += 1;
-      expect((await call(PICK_OF_FOUR, 'remix-outruns')).statusCode).toBe(200);
+      expect((await call(OUTRUNS, 'remix-outruns')).statusCode).toBe(423);
+      expect(p.stats().terminated).toBe(2);
     } finally {
       await a.close();
       await p.close();

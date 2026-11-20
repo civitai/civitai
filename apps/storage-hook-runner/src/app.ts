@@ -251,12 +251,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     });
 
   // An app whose call outran the interrupt can do it again on every call, and each costs a worker.
+  // Keyed by its source too: a new version of the app starts clean.
   const quarantinedUntil = new Map<string, number>();
-  const isQuarantined = (appId: string) => {
-    const until = quarantinedUntil.get(appId);
+  const quarantineKey = (appId: string, sha256: string) => `${appId}:${sha256}`;
+  const isQuarantined = (key: string) => {
+    const until = quarantinedUntil.get(key);
     if (until === undefined) return false;
     if (nowMs() < until) return true;
-    quarantinedUntil.delete(appId);
+    quarantinedUntil.delete(key);
     return false;
   };
   const refuseQuarantined = (reply: FastifyReply, req: string, appId: string) =>
@@ -278,7 +280,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const { source, base, branches = [], autoAnswer } = body.input;
       const logs = [base, ...branches.map((branch) => [...base, ...branch])];
 
-      if (isQuarantined(body.appId)) return refuseQuarantined(reply, req, body.appId);
+      const key = quarantineKey(body.appId, body.sha256);
+      if (isQuarantined(key)) return refuseQuarantined(reply, req, body.appId);
       let out;
       try {
         out = await deps.pool.runRemix({
@@ -291,7 +294,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         });
       } catch (err) {
         if (err instanceof BackstopError) {
-          quarantinedUntil.set(body.appId, nowMs() + REMIX_QUARANTINE_MS);
+          quarantinedUntil.set(key, nowMs() + REMIX_QUARANTINE_MS);
           return refuseQuarantined(reply, req, body.appId);
         }
         return refusePoolError(reply, req, body.appId, err);
