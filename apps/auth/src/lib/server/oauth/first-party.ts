@@ -103,7 +103,7 @@ export type FirstPartyOriginUse = 'authorize' | 'authorize_client' | 'code_excha
 /**
  * Resolve the first-party client for a spoke ORIGIN, if it is https and its host is authorized (exact /
  * subdomain-wildcard), or it is a dev-loopback host. Returns a per-origin client with an exact callback, or
- * undefined. Counts each admitted origin under the registry entry that admitted it.
+ * undefined.
  */
 export async function firstPartyClientForOrigin(
   origin: string,
