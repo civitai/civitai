@@ -3541,6 +3541,28 @@ export const blocksRouter = router({
   // to ctx.user.id. moderator→protected + the appBlocks flag below. The
   // /apps/activity page already gates per-user on features.appBlocks, so the
   // old moderator gate just broke this tab for non-mods on flag-public surfaces.
+  /**
+   * The viewer's stored daily Buzz limit for one app, for the consent modal: a re-consent
+   * that grants the spend scope pre-fills it, so Allow keeps it instead of writing the default.
+   */
+  getMyStoredConsentBudget: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled)
+        return { buzzBudgetPerDay: null };
+      if (!ctx.user) return { buzzBudgetPerDay: null };
+      const { getStoredConsentBudget } = await import(
+        '~/server/services/blocks/scope-grant.service'
+      );
+      return {
+        buzzBudgetPerDay: await getStoredConsentBudget({
+          userId: ctx.user.id,
+          appBlockId: input.appBlockId,
+        }),
+      };
+    }),
+
   listMyScopeGrants: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
     if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
     if (!ctx.user) return [];

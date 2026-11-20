@@ -83,20 +83,18 @@ interface BlockConsentModalProps {
  * ONLY for that scope, because it is the only one that can spend anything — a
  * limit next to "read your username" would be noise.
  *
- * OFF BY DEFAULT, and that is the honest default rather than a lazy one: with the
- * switch off the field is OMITTED from the mutation, so a first-time grant stores
- * NULL — exactly what every already-consented user has — and an app that already has
- * a limit KEEPS it. Nobody is silently tightened and nobody is silently loosened. The
+ * ON BY DEFAULT, pre-filled with the suggested daily limit. A stored limit (a re-consent
+ * after a whole-grant revoke, which un-revokes that row) is read first and pre-filled
+ * instead, and Allow waits for that read: sending the default over it would silently
+ * replace the viewer's own limit. Switched off, the field is OMITTED, never `null`. The
  * platform's own per-user daily ceiling applies either way; a limit set here only ever
  * narrows.
  *
  * ⚠️ THIS MODAL IS A WRITE-ONLY SURFACE, BY DESIGN. It is opened on `missingScopes`,
  * which is empty for every scope the user has already granted — so it can be shown at
- * most once per app for the spend scope, and it never reads the stored budget.
- * Raising, lowering, clearing and even SEEING a limit live on /apps/activity
- * (`AppBudgetControl`), which does read it. Do not add "your current limit is …" copy
- * here without giving the modal that read; the off-state copy below is worded to be
- * true WITHOUT it.
+ * most once per app for the spend scope. It reads the stored budget only to keep it.
+ * Raising, lowering, clearing and SEEING a limit live on /apps/activity
+ * (`AppBudgetControl`).
  */
 export default function BlockConsentModal({
   appBlockId,
@@ -128,6 +126,17 @@ export default function BlockConsentModal({
   const appLabel = blockName ?? 'This app';
   const [limitEnabled, setLimitEnabled] = useState(true);
   const [budget, setBudget] = useState<number | string>(BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY);
+  const stored = trpc.blocks.getMyStoredConsentBudget.useQuery(
+    { appBlockId },
+    { enabled: grantsSpend }
+  );
+  const storedBudget = stored.data?.buzzBudgetPerDay ?? null;
+  const [prefilled, setPrefilled] = useState(false);
+  if (!prefilled && storedBudget !== null) {
+    setPrefilled(true);
+    setBudget(storedBudget);
+  }
+  const budgetUnknown = grantsSpend && (stored.isLoading || stored.isError);
   const grant = trpc.blocks.grantScopes.useMutation({
     onSuccess: () => {
       setError(null);
@@ -257,7 +266,10 @@ export default function BlockConsentModal({
             color="yellow"
             loading={grant.isPending}
             disabled={
-              budgetBlocksSubmit || (grantsImport && !imports.data) || (forSource && !source)
+              budgetBlocksSubmit ||
+              budgetUnknown ||
+              (grantsImport && !imports.data) ||
+              (forSource && !source)
             }
             onClick={() =>
               grant.mutate({

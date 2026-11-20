@@ -473,6 +473,30 @@ export async function getConsentBuzzBudget(opts: {
 }
 
 /**
+ * The budget STORED on the viewer's grant row for one app, as the column holds it,
+ * including on a whole-grant-revoked row. For the consent modal only: a re-consent
+ * un-revokes that row (`clearRevocations`), so its stored limit applies again, and a
+ * modal that pre-filled its default instead would overwrite it. The spend path reads
+ * {@link getConsentBuzzBudget}, never this.
+ */
+export async function getStoredConsentBudget(opts: {
+  userId: number;
+  appBlockId: string;
+}): Promise<number | null> {
+  try {
+    const row = (await dbRead.appUserScopeGrant.findUnique({
+      where: { userId_appBlockId: { userId: opts.userId, appBlockId: opts.appBlockId } },
+      select: { buzzBudgetPerDay: true },
+    })) as { buzzBudgetPerDay: number | null } | null;
+    return row?.buzzBudgetPerDay ?? null;
+  } catch (err) {
+    if (!isMissingColumnError(err)) throw err;
+    logMissingBudgetColumn('getStoredConsentBudget', err);
+    return null;
+  }
+}
+
+/**
  * What the SPEND path needs to know about a viewer's consent for one app, as three
  * mutually exclusive outcomes.
  *
