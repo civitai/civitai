@@ -4,6 +4,7 @@ import {
   CSAM_HOLD_POST_UNPUBLISH_REASON,
   evidenceHeldUrlSql,
   heldUrlSql,
+  liveCsamTextHoldText,
   reportListedUrlSql,
 } from './held-url';
 
@@ -36,19 +37,23 @@ export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): 
   )`;
 }
 
+/** The aliases `csamRowSql` uses, which its caller's alias must not shadow. */
+const CSAM_ROW_ALIASES = 'cb ci cf cv cu cp cph cmp cmv cth cpt cpth cah ca cic hr hs he'.split(
+  ' '
+);
+
 /**
- * Whether the "Image" row aliased `image` is kept to moderators cleared for CSAM review: marked as
- * CSAM (in the CSAM queue, blocked as CSAM, a CSAM hash, a CSAM scan flag, hold or vote), listed on a
- * CSAM report, its owner reported, held or banned for minor safety, blocked with no reason, or its
- * bytes (by url or pHash copy) reported, held or under an evidence hold. A minor signal alone is not
- * here: any moderator may see it. `blockedFor` text and the scanner's labels are read by the caller.
+ * The CSAM signals read off one "Image" row aliased `image`: marked as CSAM (in the CSAM queue,
+ * blocked as CSAM, a CSAM hash, a CSAM scan flag, hold or vote), blocked with no reason, its owner
+ * reported, held or banned for minor safety, its post removed by a CSAM hold, or a CSAM text hold
+ * that is not dismissed on its post, its post's text, its model or an article it is in.
  */
-export function csamRestrictedSql(image: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+function csamRowSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || CSAM_ROW_ALIASES.includes(image))
+    throw new Error(`Bad table alias: ${image}`);
   const id = `${image}.id`;
-  const url = `${image}."url"`;
   const minorBans = BAN_REASONS_ALWAYS_REMOVING_MEDIA.map((r) => `'${r}'`).join(', ');
-  return `COALESCE((
+  return `(
     COALESCE(${heldImageSql(image)}, false)
     OR (${image}."blockedFor" IS NULL AND ${image}.ingestion = 'Blocked')
     OR EXISTS (SELECT 1 FROM "BlockedImage" cb WHERE cb.hash = ${image}."pHash" AND cb.reason = 'CSAM')
@@ -64,16 +69,10 @@ export function csamRestrictedSql(image: string): string {
         )
       )
     )
-    OR (${id})::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
     OR EXISTS (
       SELECT 1 FROM "User" cu
       WHERE cu.id = ${image}."userId" AND cu.meta -> 'banDetails' ->> 'reasonCode' IN (${minorBans})
     )
-    OR ${reportListedUrlSql(url)}
-    OR ${evidenceHeldUrlSql(url)}
-    -- The url's other rows by the held-url rule; this row by its owner, its post's CSAM reason, and
-    -- any CSAM text hold on its post or model that is not dismissed.
-    OR ${heldUrlSql(url, { exceptImageId: `${image}."id"` })}
     OR ${heldUserSql(`${image}."userId"`)}
     OR EXISTS (
       SELECT 1 FROM "Post" cp
@@ -81,15 +80,57 @@ export function csamRestrictedSql(image: string): string {
     )
     OR EXISTS (
       SELECT 1 FROM "TextScanHold" cph
-      WHERE cph."entityType" = 'Post' AND cph."entityId" = ${image}."postId"
-        AND cph.label = 'csam' AND cph.status <> 'Dismissed'
+      WHERE cph."entityType" = 'Post' AND cph."entityId" = ${image}."postId" AND ${liveCsamTextHoldText(
+    'cph'
+  )}
+    )
+    OR EXISTS (
+      SELECT 1 FROM "PostText" cpt
+      WHERE cpt."postId" = ${image}."postId" AND (cpt."csamHeld" OR EXISTS (
+        SELECT 1 FROM "TextScanHold" cpth
+        WHERE cpth."entityType" = 'PostText' AND cpth."entityId" = cpt.id AND ${liveCsamTextHoldText(
+          'cpth'
+        )}
+      ))
     )
     OR EXISTS (
       SELECT 1 FROM "Post" cmp
       JOIN "ModelVersion" cmv ON cmv.id = cmp."modelVersionId"
       JOIN "TextScanHold" cth ON cth."entityType" = 'Model' AND cth."entityId" = cmv."modelId"
-      WHERE cmp.id = ${image}."postId" AND cth.label = 'csam' AND cth.status <> 'Dismissed'
+      WHERE cmp.id = ${image}."postId" AND ${liveCsamTextHoldText('cth')}
     )
+    OR EXISTS (
+      SELECT 1 FROM "TextScanHold" cah
+      WHERE cah."entityType" = 'Article' AND ${liveCsamTextHoldText('cah')} AND cah."entityId" IN (
+        SELECT ca.id FROM "Article" ca WHERE ca."coverId" = ${id} OR ca."bannerId" = ${id}
+        UNION ALL
+        SELECT cic."entityId" FROM "ImageConnection" cic
+        WHERE cic."imageId" = ${id} AND cic."entityType" = 'Article'
+      )
+    )
+  )`;
+}
+
+/**
+ * Whether the "Image" row aliased `image` is kept to moderators cleared for CSAM review: it, or
+ * another row on its url, carries a CSAM signal (`csamRowSql`); it is listed on a CSAM report; or
+ * its bytes (by url or pHash copy) are reported, held or under an evidence hold. A minor signal
+ * alone is not here: any moderator may see it. `blockedFor` text and the scanner's labels are read
+ * by the caller.
+ */
+export function csamRestrictedSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image === 'cs')
+    throw new Error(`Bad table alias: ${image}`);
+  const id = `${image}.id`;
+  const url = `${image}."url"`;
+  const sibling = csamRowSql('cs');
+  return `COALESCE((
+    ${csamRowSql(image)}
+    OR EXISTS (SELECT 1 FROM "Image" cs WHERE cs.url = ${url} AND cs.id <> ${id} AND ${sibling})
+    OR (${id})::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
+    OR ${reportListedUrlSql(url)}
+    OR ${evidenceHeldUrlSql(url)}
+    OR ${heldUrlSql(url, { exceptImageId: `${image}."id"` })}
   ), true)`;
 }
 
