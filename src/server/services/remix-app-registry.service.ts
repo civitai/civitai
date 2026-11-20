@@ -40,6 +40,7 @@ import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import type { Prisma } from '@prisma/client';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
+import { userRemixReplayer } from '~/server/services/remix-app-runner';
 
 /** The OAuth client every remix row hangs off: no secret, no redirect, no scopes. */
 export const REMIX_APPS_CLIENT_ID = 'civitai-remix-apps';
@@ -74,7 +75,8 @@ export type RegisteredRemixApp = {
   shape: string;
 };
 
-export const REMIX_APP_UNAVAILABLE = 'This app is unavailable right now';
+export { REMIX_APP_UNAVAILABLE } from '~/server/services/remix-app-runner';
+import { REMIX_APP_UNAVAILABLE } from '~/server/services/remix-app-runner';
 
 // shortcut: until the sandbox runner ships, a user app refuses every replay.
 const unavailable = async (): Promise<never> => {
@@ -148,7 +150,9 @@ function register(
     app = compileRemixApp({ slug, name, description, version }, spec);
   }
   const replay: RemixReplayer =
-    'source' in spec ? unavailable : (source, log) => replayRemixApp(app, source, log);
+    'source' in spec
+      ? userRemixReplayer(slug, remixBlockId(slug), () => loadUserRemixSource(slug, spec.source))
+      : (source, log) => replayRemixApp(app, source, log);
   const shape = createHash('sha256').update(runShape(spec)).digest('hex').slice(0, 16);
   const { version: _, ...rest } = listing;
   return { ...rest, icon: spec.icon, app, replay, shape };
@@ -235,6 +239,50 @@ export async function readRemixAppRows(): Promise<RemixAppRow[]> {
   });
 }
 
+const SOURCE_REF = 'sha256:';
+const sha256Of = (text: string) => createHash('sha256').update(text).digest('hex');
+
+/**
+ * The rows the registry caches. A user app's source stays out of the cached value, named by its
+ * hash: every reader parses that value, and a run reads the one source it needs.
+ */
+async function readRegistryRows(): Promise<RemixAppRow[]> {
+  return (await readRemixAppRows()).map((row) => {
+    const manifest = row.manifest as { remix?: { source?: unknown } } | null;
+    const source = manifest?.remix?.source;
+    if (typeof source !== 'string') return row;
+    return {
+      ...row,
+      manifest: {
+        ...manifest,
+        remix: { ...manifest.remix, source: SOURCE_REF + sha256Of(source) },
+      },
+    };
+  });
+}
+
+const userSources = new Map<string, string>();
+const USER_SOURCES_MAX = 64;
+
+/** The source the registry named for a user app, read when a run needs it. */
+export async function loadUserRemixSource(slug: string, named: string): Promise<string> {
+  const sha256 = named.startsWith(SOURCE_REF) ? named.slice(SOURCE_REF.length) : sha256Of(named);
+  const cached = userSources.get(sha256);
+  if (cached !== undefined) return cached;
+  // primary: an approval a moment ago bumped the registry; a replica may still hold the old row.
+  const row = await dbWrite.appBlock.findUnique({
+    where: { blockId: remixBlockId(slug) },
+    select: { manifest: true },
+  });
+  const source = (row?.manifest as { remix?: { source?: unknown } } | null)?.remix?.source;
+  // Changed since the registry read it: the run waits for the registry to catch up.
+  if (typeof source !== 'string' || sha256Of(source) !== sha256)
+    throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
+  if (userSources.size >= USER_SOURCES_MAX) userSources.delete(userSources.keys().next().value!);
+  userSources.set(sha256, source);
+  return source;
+}
+
 /**
  * Every remix app, in menu order, disabled ones included: a disabled app's in-flight runs still
  * advance and post. Until any row exists, the seed.
@@ -243,10 +291,10 @@ export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
   const generation = await registryGeneration();
   const rows =
     generation === null
-      ? await readRemixAppRows()
+      ? await readRegistryRows()
       : await fetchThroughCache(
           `${REDIS_KEYS.CACHES.REMIX_APP_REGISTRY}:${generation}`,
-          readRemixAppRows,
+          readRegistryRows,
           { ttl: REGISTRY_TTL }
         );
   if (!rows.length) return seedRegistry();

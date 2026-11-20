@@ -159,6 +159,58 @@ export function remixReplayChecks(
   };
 }
 
+/** What a sandboxed replay claims: the app's calls, and its outputs when `run` returned. */
+export type RemixClaimedReplay = {
+  effects: readonly unknown[];
+  done?: { outputs: unknown };
+};
+
+/**
+ * A sandboxed replay's claim, checked against the host's own log with the same checks an
+ * in-process replay gets: the runner is the app's own interpreter, so nothing it says is taken
+ * on trust. With `autoAnswers`, an ask past the log that carries an answer is checked and
+ * recorded; those answers come back beside the outcome.
+ */
+export function checkRemixReplay(
+  slug: string,
+  source: RemixAppSource,
+  log: readonly RemixLogEntry[],
+  claimed: RemixClaimedReplay,
+  { autoAnswers = false }: { autoAnswers?: boolean } = {}
+): { outcome: RemixReplayOutcome; answered: RemixAnswer[] } {
+  const extended = [...log];
+  const answered: RemixAnswer[] = [];
+  const checks = remixReplayChecks(slug, source, extended);
+  const { effects } = claimed;
+  for (let index = 0; index < effects.length; index++) {
+    const raw = effects[index];
+    if (typeof raw !== 'object' || raw === null)
+      throw new RemixReplayError(`${slug} reported a step that is not one, at step ${index}`);
+    const { answer, ...effect } = raw as { answer?: unknown };
+    if (answer !== undefined) {
+      if (!autoAnswers || index < extended.length || (effect as { type?: unknown }).type !== 'ask')
+        throw new RemixReplayError(`${slug} answered a step itself, at step ${index}`);
+      extended.push({ type: 'ask', answer: answer as RemixAnswer });
+      answered.push(answer as RemixAnswer);
+    }
+    try {
+      checks.step(effect as RemixEffect);
+    } catch (error) {
+      if (!(error instanceof Suspend)) throw error;
+      // The first step past the log is where the run stops: it must be the last one claimed.
+      if (index !== effects.length - 1 || claimed.done)
+        throw new RemixReplayError(`${slug} went on past step ${index}, which has no result`);
+      return { outcome: { status: 'effect', index, effect: error.effect }, answered };
+    }
+  }
+  if (!claimed.done)
+    throw new RemixReplayError(`${slug} stopped without asking for a step or finishing`);
+  return {
+    outcome: { status: 'done', outputs: checks.finish(claimed.done.outputs as RemixImage[]) },
+    answered,
+  };
+}
+
 /**
  * Re-runs the app from the start against the recorded results, and returns the first effect with
  * no result yet, or the outputs once `run` returns. Pure: the same app, source and log always give

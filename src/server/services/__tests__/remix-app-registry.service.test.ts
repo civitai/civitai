@@ -42,6 +42,7 @@ import {
   clearRemixMinorThemed,
   remixReviewHash,
   visibleRemixApps,
+  loadUserRemixSource,
   type RemixAppRow,
 } from '~/server/services/remix-app-registry.service';
 import type { RemixAppInput } from '~/shared/remix-apps/row.schema';
@@ -418,8 +419,34 @@ describe('a user app row', () => {
     ]);
   });
 
-  it('refuses to replay in-process', async () => {
+  it('keeps its source out of the cached registry, and a run reads the version it names', async () => {
+    const row = userRow();
+    const source = (row.manifest.remix as { source: string }).source;
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([row] as never);
+    await getRegisteredRemixApp('u5-my-app', flagOn, { allowDisabled: false });
+    const cached = [...redis.cache.values()].map((e) => JSON.stringify(e.data));
+    expect(cached).toHaveLength(1);
+    expect(cached[0]).not.toContain(source);
+    // POSITIVE CONTROL: the cached value is the rows; their other text is there.
+    expect(cached[0]).toContain('My app');
+
+    // Changed since the registry read it: no run on a version nobody listed.
+    const named = (JSON.parse(cached[0]) as { manifest: { remix: { source: string } } }[])[0]
+      .manifest.remix.source;
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue({
+      manifest: { ...row.manifest, remix: { ...row.manifest.remix, source: source + ' ' } },
+    } as never);
+    await expect(loadUserRemixSource('u5-my-app', named)).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
+    // POSITIVE CONTROL: the version it names loads.
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row as never);
+    await expect(loadUserRemixSource('u5-my-app', named)).resolves.toBe(source);
+  });
+
+  it('refuses to replay while the runner is not configured', async () => {
     dbMock.dbWrite.appBlock.findMany.mockResolvedValue([userRow()] as never);
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(userRow() as never);
     const entry = await getRegisteredRemixApp('u5-my-app', flagOn, { allowDisabled: false });
     await expect(
       entry.replay({ imageId: 7, url: 'u', width: 1, height: 1 }, [])
