@@ -5926,6 +5926,7 @@ export const getEntityCoverImage = async ({
             AND ${coverRated}
             AND ${withinHeldGallery}
             AND ${baseModelAllowed}
+            AND ${coverNotBlocked}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (
