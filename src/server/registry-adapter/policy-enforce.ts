@@ -13,16 +13,24 @@
  *     off (`outbound-fetch-timeouts-off`), and a request still waiting past it finishes in the
  *     background, counted by the shadow, within the shadow's in-flight cap;
  *   - an answer that is a decision and that an {@link Audience} can express is streamed, counted
- *     `registry_adapter_policy_enforce_total{source="service",reason="agree"|"disagree"}`. A
- *     disagreement is still the service's answer, and is logged as one line naming the two
- *     audience keys (nothing that identifies the viewer);
+ *     `registry_adapter_policy_enforce_total{source="service",reason}`, unless it is WIDER than
+ *     this source's decision ({@link compareWidth}): `agree`; `disagree`, when it admits fewer
+ *     ratings; `region_only`, when the ratings match and only the service holds the region. A
+ *     disagreement is logged as one line naming the two audience keys and the region holds
+ *     (nothing that identifies the viewer);
+ *   - 🔴 the service never widens a stream: an answer that admits a rating this source does not,
+ *     or drops a region hold this source applied, keeps this source's decision, counted
+ *     `{source="fallback_local",reason="widen"}` and logged. Narrowing is the only direction a
+ *     disagreement may move a stream: a region list the service reads that has drifted from this
+ *     source's, or anything answering at the service's address that is not the service, can then
+ *     at worst withhold content, never release it;
  *   - anything else is this source's own decision, unchanged, counted
  *     `{source="fallback_local",reason}`: `timeout`, `error` (refused, or an HTTP error), `fallback`
  *     (the service's own fail-closed answer), `malformed` (not a decision, or one no audience can
  *     express: G, PG and PG-13 always reach everyone here, and an unknown rating reaches exactly
- *     the audiences that read every mature rating), `dropped` (the in-flight cap was full) or
- *     `no_user_id` (a subject with no user id). A failure never narrows a stream to SFW and never
- *     fails the subscription;
+ *     the audiences that read every mature rating), `dropped` (the in-flight cap was full),
+ *     `no_user_id` (a subject with no user id) or `widen` (above). A failure never narrows a
+ *     stream to SFW and never fails the subscription;
  *   - two kinds are never decided by the service and keep this source's decision, counted
  *     `{source="local"}`, and are still compared in the background as in shadow mode:
  *       - `reason="service"`: an allowlisted service principal (`auth.ts`). It has no viewer, and its
@@ -50,6 +58,7 @@ import type {
 } from '~/server/registry-adapter/policy-shadow';
 import {
   DEFAULT_POLICY_TIMEOUT_MS,
+  answerHolds,
   POLICY_CONTEXT,
   POLICY_RATINGS,
   runShadow,
@@ -61,12 +70,14 @@ import {
 export const ENFORCE_OUTCOMES = [
   ['service', 'agree'],
   ['service', 'disagree'],
+  ['service', 'region_only'],
   ['fallback_local', 'timeout'],
   ['fallback_local', 'error'],
   ['fallback_local', 'fallback'],
   ['fallback_local', 'malformed'],
   ['fallback_local', 'dropped'],
   ['fallback_local', 'no_user_id'],
+  ['fallback_local', 'widen'],
   ['local', 'service'],
   ['local', 'anonymous'],
 ] as const;
@@ -78,7 +89,7 @@ export type PolicyEnforcer = (s: Parameters<PolicyShadow>[0]) => Promise<Princip
 export function createEnforceMetrics(registry: Registry) {
   const counter = new PromCounter({
     name: 'registry_adapter_policy_enforce_total',
-    help: 'Subscriptions while the content-policy service decides (REGISTRY_ADAPTER_POLICY_ENFORCE=1), by where their audience came from: service (its answer; reason agree or disagree with this source), fallback_local (this source, because the service gave no usable answer; reason timeout, error, fallback, malformed, dropped, no_user_id), local (a kind the service never decides; reason service or anonymous).',
+    help: 'Subscriptions while the content-policy service decides (REGISTRY_ADAPTER_POLICY_ENFORCE=1), by where their audience came from: service (its answer; reason agree, disagree (fewer ratings than this source) or region_only (same ratings, only the service holds the region)), fallback_local (this source, because the service gave no usable answer or a wider one; reason timeout, error, fallback, malformed, dropped, no_user_id, widen), local (a kind the service never decides; reason service or anonymous).',
     labelNames: ['source', 'reason'],
     registers: [registry],
   });
@@ -103,6 +114,29 @@ export function serviceAudience(answer: PolicyAnswer): Audience | null {
   return audienceOf(allowed);
 }
 
+/** A decision as the enforcer weighs it: the audience streamed and whether the region is held. */
+type Weighed = { audience: Audience; held: boolean };
+
+/**
+ * The one definition of "wider": how the service's decision compares with this source's.
+ *   - `wider`: it admits a mature rating this source does not, or drops a region hold this source
+ *     applied (an unknown rating follows the mature ratings: `audienceAdmits`);
+ *   - `same`: the same ratings and the same hold;
+ *   - `region_only`: the same ratings, and only the service holds the region;
+ *   - `narrower`: a subset of this source's ratings, without dropping its hold.
+ */
+export function compareWidth(
+  service: Weighed,
+  local: Weighed
+): 'wider' | 'same' | 'region_only' | 'narrower' {
+  const keys = ['r', 'x', 'xxx'] as const;
+  const s = service.audience.allowed;
+  const l = local.audience.allowed;
+  if (keys.some((k) => s[k] && !l[k]) || (local.held && !service.held)) return 'wider';
+  if (keys.every((k) => s[k] === l[k])) return service.held === local.held ? 'same' : 'region_only';
+  return 'narrower';
+}
+
 /** `p`, or `null` once `ms` have passed without it. */
 function within<T>(p: Promise<T>, ms: number): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -123,7 +157,7 @@ export function createPolicyEnforcer(opts: {
   const waitMs = opts.waitMs ?? DEFAULT_POLICY_TIMEOUT_MS;
   const count = (source: 'service' | 'fallback_local' | 'local', reason: string) =>
     opts.counter.inc({ source, reason });
-  const fallback = (reason: NoDecision) => count('fallback_local', reason);
+  const fallback = (reason: NoDecision | 'widen') => count('fallback_local', reason);
   return async (s) => {
     const { principal } = s;
     if (principal.service === true || principal.subject === null) {
@@ -138,13 +172,10 @@ export function createPolicyEnforcer(opts: {
         fallback('timeout');
         return principal;
       }
-      if (c.result === 'service') {
-        // Not reached: a service principal is kept local above.
-        fallback('error');
-        return principal;
-      }
-      if ('why' in c) {
-        fallback(c.why);
+      if (!('answer' in c)) {
+        // `service` never reaches here (a service principal is kept local above); the type still
+        // carries it, so it is counted as an error rather than asserted away.
+        fallback('why' in c ? c.why : 'error');
         return principal;
       }
       const audience = serviceAudience(c.answer);
@@ -152,13 +183,29 @@ export function createPolicyEnforcer(opts: {
         fallback('malformed');
         return principal;
       }
-      if (c.result === 'disagree') {
+      const held = answerHolds(c.answer);
+      const width = compareWidth(
+        { audience, held },
+        { audience: principal.audience, held: s.held }
+      );
+      const line = (what: string, applied: string) =>
         log(
-          `registry-adapter: policy enforce disagree applied=service local=${principal.audience.key} ` +
-            `service=${audience.key} context=${POLICY_CONTEXT}`
+          `registry-adapter: policy enforce ${what} applied=${applied} ` +
+            `local=${principal.audience.key}${s.held ? '/held' : ''} ` +
+            `service=${audience.key}${held ? '/held' : ''} context=${POLICY_CONTEXT}`
         );
+      if (width === 'wider') {
+        line('widen', 'local');
+        fallback('widen');
+        return principal;
       }
-      count('service', c.result);
+      if (width === 'same') {
+        count('service', c.result);
+        return principal;
+      }
+      const reason = width === 'region_only' ? 'region_only' : 'disagree';
+      line(reason, 'service');
+      count('service', reason);
       return audience.key === principal.audience.key ? principal : { ...principal, audience };
     } catch {
       fallback('error');

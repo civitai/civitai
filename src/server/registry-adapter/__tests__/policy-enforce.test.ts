@@ -10,11 +10,14 @@ import {
   ANONYMOUS_AUDIENCE,
   SERVICE_AUDIENCE,
   audienceForUser,
+  audienceOf,
 } from '~/server/registry-adapter/audience';
 import type { VerifyToken } from '~/server/registry-adapter/auth';
+import { authenticate, watchPrincipal } from '~/server/registry-adapter/auth';
 import { REGISTRY_SERVICE, createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
 import type { PolicyEnforcer } from '~/server/registry-adapter/policy-enforce';
 import {
+  compareWidth,
   createEnforceMetrics,
   createPolicyEnforcer,
   serviceAudience,
@@ -57,6 +60,8 @@ function recordingAdapter(seen: (Audience | undefined)[]): Adapter {
 /** A user whose own settings read every rating: locally `mrx+xxx`, never the SFW `m`. */
 const FULL_USER = { showNsfw: true, browsingLevel: 31 };
 const LOCAL = audienceForUser(FULL_USER);
+/** A user whose settings read R but not X or XXX (PG | PG-13 | R): locally `mr`. */
+const R_USER = { showNsfw: true, browsingLevel: 1 | 2 | 4 };
 const verifyToken: VerifyToken = async (token) => {
   if (token === 'user-token')
     return {
@@ -65,6 +70,15 @@ const verifyToken: VerifyToken = async (token) => {
       scope: 0n,
       actor: null,
       user: FULL_USER,
+      expiresAt: null,
+    };
+  if (token === 'r-user-token')
+    return {
+      subject: 'user:4712/client:9',
+      clientId: '9',
+      scope: 0n,
+      actor: null,
+      user: R_USER,
       expiresAt: null,
     };
   if (token === 'service-token')
@@ -109,7 +123,16 @@ async function listen(server: Server): Promise<number> {
   return (server.address() as AddressInfo).port;
 }
 
-type Mode = 'agree' | 'disagree' | 'timeout' | 'fallback' | 'malformed' | 'unexpressible' | 'http';
+type Mode =
+  | 'agree'
+  | 'disagree'
+  | 'timeout'
+  | 'fallback'
+  | 'malformed'
+  | 'unexpressible'
+  | 'http'
+  | 'drops-hold'
+  | 'region-only';
 
 /** A stand-in content-policy service: records each request body, answers by `mode`. */
 async function fakeService(mode: Mode) {
@@ -129,6 +152,11 @@ async function fakeService(mode: Mode) {
         // A decision no audience can express: PG-13 withheld.
         if (mode === 'unexpressible') return json(200, { ...AGREEING, ratings: ['g', 'pg', 'r'] });
         if (mode === 'http') return json(500, { error: 'boom' });
+        // The SFW ratings, but no region hold: drops a hold this source applied.
+        if (mode === 'drops-hold')
+          return json(200, { ...AGREEING, ratings: ['g', 'pg', 'pg13'], unknownRating: false });
+        // The same ratings as FULL_USER's, and a region hold this source did not apply.
+        if (mode === 'region-only') return json(200, { ...AGREEING, regionHold: 'restricted' });
         return json(503, { ...AGREEING, ratings: ['g', 'pg', 'pg13'], fallback: true });
       });
     })
@@ -346,6 +374,101 @@ describe('enforcement on (HTTP)', () => {
     const res = await subscribeHttp({ policyEnforce: broken }, SIGNED_IN);
     expect(res.status).toBe(200);
     expect(res.audience).toEqual(LOCAL);
+  });
+});
+
+describe('🔴 the service never widens a stream', () => {
+  it('a wider rating answer keeps the local audience, counted fallback_local/widen and logged', async () => {
+    // The fake answers every rating; this user's own settings read R only.
+    const svc = await fakeService('agree');
+    const o = observedEnforcer(svc.url);
+    const headers = { authorization: 'Bearer r-user-token', 'cf-ipcountry': 'NL' };
+    const baseline = await subscribeHttp({}, headers);
+    expect(baseline.audience?.key).toBe('mr');
+    const res = await subscribeHttp({ policyEnforce: o.enforce }, headers);
+    expect(res.audience).toEqual(baseline.audience);
+    expect(res.text).toBe(baseline.text);
+    expect(await value(o.counter, { source: 'fallback_local', reason: 'widen' })).toBe(1);
+    expect(await value(o.counter, { source: 'service', reason: 'disagree' })).toBe(0);
+    expect(o.logged).toContain(
+      'registry-adapter: policy enforce widen applied=local local=mr service=mrx+xxx ' +
+        'context=registry-subscription'
+    );
+  });
+
+  it('an answer that drops the local region hold keeps the local audience, counted fallback_local/widen', async () => {
+    const svc = await fakeService('drops-hold');
+    const o = observedEnforcer(svc.url);
+    // No country: held to SFW here (`request-origin.ts`).
+    const headers = { authorization: 'Bearer user-token', 'cf-ipcountry': 'XX' };
+    const baseline = await subscribeHttp({}, headers);
+    expect(baseline.audience?.key).toBe('m');
+    const res = await subscribeHttp({ policyEnforce: o.enforce }, headers);
+    expect(res.audience).toEqual(baseline.audience);
+    expect(await value(o.counter, { source: 'fallback_local', reason: 'widen' })).toBe(1);
+    expect(await value(o.counter, { source: 'service', reason: 'agree' })).toBe(0);
+  });
+
+  it('invariant: a narrower answer still applies, counted service/disagree', async () => {
+    const svc = await fakeService('disagree');
+    const o = observedEnforcer(svc.url);
+    const res = await subscribeHttp({ policyEnforce: o.enforce }, SIGNED_IN);
+    expect(res.audience?.key).toBe('mr');
+    expect(await value(o.counter, { source: 'service', reason: 'disagree' })).toBe(1);
+    expect(await value(o.counter, { source: 'fallback_local', reason: 'widen' })).toBe(0);
+  });
+
+  it('a hold only the service applies, with the same ratings, is counted service/region_only', async () => {
+    const svc = await fakeService('region-only');
+    const o = observedEnforcer(svc.url);
+    const res = await subscribeHttp({ policyEnforce: o.enforce }, SIGNED_IN);
+    expect(res.audience).toEqual(LOCAL);
+    expect(await value(o.counter, { source: 'service', reason: 'region_only' })).toBe(1);
+    expect(await value(o.counter, { source: 'service', reason: 'disagree' })).toBe(0);
+    expect(o.logged).toContain(
+      'registry-adapter: policy enforce region_only applied=service local=mrx+xxx ' +
+        'service=mrx+xxx/held context=registry-subscription'
+    );
+  });
+
+  it('invariant: a re-check leaves a service-narrowed stream alone', async () => {
+    const svc = await fakeService('disagree');
+    const o = observedEnforcer(svc.url);
+    const authed = await authenticate('Bearer user-token', verifyToken, {
+      regionRestricted: () => false,
+    });
+    const narrowed = await o.enforce({
+      origin: { headers: { 'cf-ipcountry': 'NL' } },
+      principal: authed,
+      held: false,
+    });
+    expect(narrowed.audience.key).toBe('mr');
+    // The re-check re-applies the local rule to notice a changed setting; the user's settings did
+    // not change, so the narrowed stream is not ended as audience-changed.
+    expect(await narrowed.recheck!()).toBe('active');
+    const ended: string[] = [];
+    const stop = watchPrincipal(narrowed, (err) => ended.push(err.code), { recheckMs: 10 });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    stop();
+    expect(ended).toEqual([]);
+  });
+});
+
+describe('compareWidth, the one definition of wider', () => {
+  const a = (r: boolean, x: boolean, xxx: boolean) => audienceOf({ r, x, xxx });
+  it.each<[string, Audience, boolean, Audience, boolean, string]>([
+    ['same', a(true, true, true), false, a(true, true, true), false, 'same'],
+    ['fewer ratings', a(true, false, false), false, a(true, true, false), false, 'narrower'],
+    ['a rating local lacks', a(true, true, false), false, a(true, false, false), false, 'wider'],
+    ['a different set', a(false, true, false), false, a(true, false, false), false, 'wider'],
+    ['drops the local hold', a(false, false, false), false, a(false, false, false), true, 'wider'],
+    ['adds a hold', a(true, true, true), true, a(true, true, true), false, 'region_only'],
+    ['both held', a(false, false, false), true, a(false, false, false), true, 'same'],
+    ['narrower and held', a(false, false, false), true, a(true, false, false), false, 'narrower'],
+  ])('%s', (_name, sAud, sHeld, lAud, lHeld, want) => {
+    expect(compareWidth({ audience: sAud, held: sHeld }, { audience: lAud, held: lHeld })).toBe(
+      want
+    );
   });
 });
 

@@ -124,6 +124,10 @@ export function policyRequest(origin: RequestOrigin, principal: Principal): Poli
   return body;
 }
 
+/** Whether the service's answer holds the request's region to SFW: any `regionHold` but `none`. */
+export const answerHolds = (answer: Pick<PolicyAnswer, 'regionHold'>): boolean =>
+  answer.regionHold !== 'none';
+
 /** The first field where the two decisions differ, or null when they agree. */
 export function compareDecisions(
   ours: OurDecision,
@@ -138,7 +142,7 @@ export function compareDecisions(
       ours: String(ours.unknownRating),
       service: String(service.unknownRating),
     };
-  const serviceHeld = service.regionHold !== 'none';
+  const serviceHeld = answerHolds(service);
   if (ours.held !== serviceHeld)
     return {
       field: 'regionHold',
