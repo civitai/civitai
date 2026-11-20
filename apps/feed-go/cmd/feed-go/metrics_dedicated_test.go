@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"sync"
@@ -123,8 +124,9 @@ func TestAttachDedicatedMetricsReader(t *testing.T) {
 // error, naming the dedicated reader's variables; the shared reader is still attached and serves.
 func TestDedicatedMetricsReaderBadURL(t *testing.T) {
 	ownSrv, _ := chServer(t, 0)
+	withLogin := (&url.URL{Scheme: "https", User: url.UserPassword("u", "p"), Host: "metrics-ch.example.test:8443"}).String()
 	cfg := loadConfig(t, map[string]string{"FEED_GO_CLICKHOUSE_HOST": ownSrv.URL, "FEED_GO_CLICKHOUSE_USERNAME": "feed-go-reader",
-		"CLICKHOUSE_METRICS_HOST": "https://u:p@metrics-ch.example.test:8443", "CLICKHOUSE_METRICS_USERNAME": "metrics-reader"})
+		"CLICKHOUSE_METRICS_HOST": withLogin, "CLICKHOUSE_METRICS_USERNAME": "metrics-reader"})
 	c := dedicatedCompute(t, cfg)
 	err := attachMetricsReader(cfg, c, nil)
 	var dedicated errDedicatedReader
