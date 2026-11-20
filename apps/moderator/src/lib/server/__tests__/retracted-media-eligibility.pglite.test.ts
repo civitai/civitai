@@ -388,17 +388,48 @@ describe('a model version unpublished for its subject', () => {
         (990000127, 'key-990000127', 'Blocked', 'moderated', 990100127, NULL),
         (990000128, 'key-990000127', 'Scanned', NULL, 990100128, 990400126);
     `);
-    // Removed by a moderator for its subject alone: the image itself is open.
+    // Removed by a moderator for its subject alone: the image itself is open, and an image whose
+    // url a row on that model shares is kept, by the held-url rule.
     expect(await getRetractedMedia(990000126, { csamReview: false })).toMatchObject({
       url: 'key-990000126',
     });
+    expect(await getRetractedMedia(990000127, { csamReview: false })).toBeNull();
+    // A hold that does not mark this model as CSAM leaves it open.
+    for (const hold of [
+      `('Model', 990500126, 'csam', 'Dismissed')`,
+      `('Model', 990500126, 'other', 'Confirmed')`,
+      `('Article', 990500126, 'csam', 'Confirmed')`,
+      `('Model', 990500999, 'csam', 'Confirmed')`,
+    ]) {
+      await db.exec(
+        `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ${hold}`
+      );
+      try {
+        expect({
+          hold,
+          served: !!(await getRetractedMedia(990000126, { csamReview: false })),
+        }).toEqual({
+          hold,
+          served: true,
+        });
+      } finally {
+        await db.exec(`DELETE FROM "TextScanHold"`);
+      }
+    }
+    // A pending hold restricts too: a removal runs before its hold is marked confirmed.
+    await db.exec(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500126, 'csam', 'Pending')`
+    );
+    try {
+      expect(await getRetractedMedia(990000126, { csamReview: false })).toBeNull();
+    } finally {
+      await db.exec(`DELETE FROM "TextScanHold"`);
+    }
     await db.exec(
       `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500126, 'csam', 'Confirmed')`
     );
     try {
       expect(await getRetractedMedia(990000126, { csamReview: false })).toBeNull();
-      // An image whose url a row on that model shares stays kept, as it was before the hold.
-      expect(await getRetractedMedia(990000127, { csamReview: false })).toBeNull();
       expect(await getRetractedMedia(990000126, { csamReview: true })).toMatchObject({
         url: 'key-990000126',
       });

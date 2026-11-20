@@ -72,8 +72,9 @@ export function csamRestrictedSql(image: string): string {
     OR ${reportListedUrlSql(url)}
     OR ${evidenceHeldUrlSql(url)}
     -- The url's other rows by the held-url rule. This row's own owner and post by the CSAM legs, and
-    -- its own model only when a confirmed CSAM hold removed it: that removal writes the same
-    -- unpublish reason as a minor one, which alone does not restrict.
+    -- its own model only while a CSAM hold on it is not dismissed: a hold removal writes the same
+    -- unpublish reason as a minor one, which alone does not restrict, and the removal runs before
+    -- the hold is marked confirmed.
     OR ${heldUrlSql(url, { exceptImageId: `${image}."id"` })}
     OR ${heldUserSql(`${image}."userId"`)}
     OR EXISTS (
@@ -84,7 +85,7 @@ export function csamRestrictedSql(image: string): string {
       SELECT 1 FROM "Post" cmp
       JOIN "ModelVersion" cmv ON cmv.id = cmp."modelVersionId"
       JOIN "TextScanHold" cth ON cth."entityType" = 'Model' AND cth."entityId" = cmv."modelId"
-      WHERE cmp.id = ${image}."postId" AND cth.label = 'csam' AND cth.status = 'Confirmed'
+      WHERE cmp.id = ${image}."postId" AND cth.label = 'csam' AND cth.status <> 'Dismissed'
     )
   ), true)`;
 }
