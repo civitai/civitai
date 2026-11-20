@@ -125,18 +125,18 @@ function csamRowSql(image: string): string {
 }
 
 /**
- * Whether the "Image" row aliased `image` sits on a url retracted by an upgraded deny, or with no
- * retraction time. The deny may have capped a hold on a row since deleted, which nothing here can
- * see, so the row is kept to moderators cleared for CSAM review, blocked or scanned.
- * The minute: an outright retraction writes its deny and retraction in one request, while an upgrade
- * comes from a later drain run; it also absorbs app/database clock skew.
+ * Whether the "Image" row aliased `image` sits on a url retracted by an upgraded deny. An upgraded
+ * deny may have capped a hold on a row since deleted, which nothing here can see, so its url stays
+ * with the CSAM grant. An outright retraction stamps both times from one expression in one INSERT,
+ * so they are equal; an upgrade keeps the earlier deny time. Anything but equal, NULL included,
+ * reads as upgraded.
  */
 export function upgradedRetractionSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image.toLowerCase() === 'ua')
     throw new Error(`Bad table alias: ${image}`);
   return `(EXISTS (
     SELECT 1 FROM "ImageCdnAccess" ua WHERE ua.url = ${image}."url" AND ua.state = 'Retracted'
-      AND NOT COALESCE(ua."retractedAt" <= ua."deniedAt" + interval '1 minute', false)
+      AND ua."retractedAt" IS DISTINCT FROM ua."deniedAt"
   ))`;
 }
 

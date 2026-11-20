@@ -109,6 +109,7 @@ beforeAll(async () => {
       (28, 'key-28', 328, 'Scanned', NULL, false),
       (29, 'key-29', 329, 'Scanned', NULL, false),
       (30, 'key-30', 330, 'Scanned', NULL, false),
+      (33, 'key-33', 333, 'Scanned', NULL, false),
       (8, 'key-8', 308, 'Scanned', NULL, false),
       (9, 'key-9', 309, 'Scanned', NULL, false),
       (10, 'key-10', 310, 'Pending', NULL, false),
@@ -139,8 +140,10 @@ beforeAll(async () => {
     INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES
       ('key-28', 'Retracted', now() - interval '5 minutes', now()), ('key-29', 'Retracted', now(), NULL),
       ('key-30', 'Retracted', now() - interval '30 seconds', now()),
-      ('key-31', 'Retracted', now() - interval '5 minutes', now()),
-      ('key-32', 'Retracted', now() - interval '30 seconds', now());
+      ('key-31', 'Retracted', now() - interval '30 seconds', now()),
+      ('key-32', 'Retracted', now(), now()),
+      -- Written before both stamps came from one expression: the retraction from the app's clock.
+      ('key-33', 'Retracted', now(), now() - interval '5 milliseconds');
     INSERT INTO "Model" (id, meta) VALUES
       (15, '{"unpublishedReason": "mature-underage"}'), (99, '{}'),
       (26, '{"unpublishedReason": "photo-real-underage"}');
@@ -179,8 +182,6 @@ const tierOf = async (id: number) => {
 };
 
 describe('retracted media eligibility', () => {
-  // Moderation Lead ruling 2026-11-20: an upgraded deny may have capped a hold on a row since
-  // deleted, so its url stays with the CSAM grant whatever the row's own state.
   it('keeps a blocked image on a url retracted by an upgraded deny to cleared moderators', async () => {
     expect(await tierOf(31)).toBe('cleared');
     expect(await tierOf(32)).toBe('anyMod');
@@ -234,13 +235,12 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
     expect(await tierOf(7)).toBe('anyMod');
   });
 
-  // Moderation Lead ruling 2026-11-20: a deny upgraded to a retraction may have capped a hold on a
-  // row since deleted, so its url stays with the CSAM grant. Do not open it to every moderator.
   it('keeps a url retracted by an upgraded deny, or with no retraction time, to cleared moderators', async () => {
     expect(await tierOf(28)).toBe('cleared');
     expect(await tierOf(29)).toBe('cleared');
-    // Within the minute the deny and the retraction are one takedown, allowing for clock skew.
-    expect(await tierOf(30)).toBe('anyMod');
+    // An upgrade can land seconds after its deny: only stamps from one write read as outright.
+    expect(await tierOf(30)).toBe('cleared');
+    expect(await tierOf(33)).toBe('cleared');
   });
 
   it('is off unless the switch is exactly true', async () => {

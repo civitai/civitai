@@ -462,23 +462,52 @@ describe('image takedowns', () => {
     expect((await queued()).n).toBe(0);
   });
 
-  // The moderator retracted-media reads tell an upgraded deny from an outright retraction by these
-  // two stamps, so an outright one must carry both, on one clock.
-  it('stamps an outright retraction with its deny time, and a deny with none', async () => {
+  // The moderator retracted-media reads take a retraction as outright only when both stamps are
+  // equal, which holds only when one INSERT writes both from the database clock.
+  it('stamps an outright retraction with its deny time exactly, and a deny with none', async () => {
     await image(1);
     await image(2);
     await moderatorBlock(1);
     await scannerBlock(2);
     await syncCdnAccess();
     const stamps = (
-      await sql`SELECT url, "retractedAt" IS NULL AS unset,
-                  abs(extract(epoch FROM "retractedAt" - "deniedAt")) < 60 AS together
+      await sql`SELECT url, "retractedAt" IS NULL AS unset, "retractedAt" = "deniedAt" AS equal
                 FROM "ImageCdnAccess" ORDER BY url`
     ).rows;
     expect(stamps).toEqual([
-      { url: u(1), unset: false, together: true },
-      { url: u(2), unset: true, together: null },
+      { url: u(1), unset: false, equal: true },
+      { url: u(2), unset: true, equal: null },
     ]);
+  });
+
+  it('keeps the deny time when a later run upgrades it, so the stamps differ', async () => {
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+    await image(1);
+    await image(2);
+    await moderatorBlock(1);
+    await moderatorBlock(2);
+    await syncCdnAccess();
+    expect(callsFor(u(2))).toEqual(['deny']);
+    await syncCdnAccess();
+    expect(callsFor(u(2))).toEqual(['deny', 'retract']);
+    const [row] = (
+      await sql`SELECT "retractedAt" = "deniedAt" AS equal FROM "ImageCdnAccess" WHERE url = ${u(
+        2
+      )}`
+    ).rows;
+    expect(row).toEqual({ equal: false });
+  });
+
+  it('binds no timestamp in the state write, so both stamps come from the database clock', async () => {
+    await image(1);
+    await moderatorBlock(1);
+    dbMock.dbWrite.$executeRaw.mockClear();
+    await syncCdnAccess();
+    const writes = dbMock.dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
+      (strings as TemplateStringsArray).join('?').includes('INSERT INTO "ImageCdnAccess"')
+    );
+    expect(writes.length).toBeGreaterThan(0);
+    for (const [, ...values] of writes) expect(values.some((v) => v instanceof Date)).toBe(false);
   });
 
   it('an automated block denies without retracting', async () => {

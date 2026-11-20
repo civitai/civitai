@@ -680,8 +680,8 @@ async function applyCall(url: string, call: CdnCall, gate: RetractionGate, claim
   const state = call === 'retract' ? 'Retracted' : 'Denied';
   await dbWrite.$executeRaw`
     INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt", "lastAssertedAt")
-    -- Both stamps from one database clock, in UTC whatever the session zone: the upgraded-deny
-    -- test compares them.
+    -- Both stamps from one expression, so an outright retraction has them equal; an upgrade keeps the
+    -- earlier deny time on conflict. The retracted-media reads tell the two apart by that equality.
     VALUES (${url}, ${state}, timezone('UTC', now()),
       CASE WHEN ${call === 'retract'}::boolean THEN timezone('UTC', now()) END, now())
     ON CONFLICT (url) DO UPDATE SET
