@@ -107,7 +107,7 @@ func TestWithoutMinorMatureImages(t *testing.T) {
 		{"id": 7, "minor": true, "nsfwLevel": int64(1)},  // PG: kept
 	}
 	got := WithoutMinorMatureImages(images, func(m map[string]any, k string) any { return m[k] })
-	var ids []any
+	ids := make([]any, 0, len(got))
 	for _, m := range got {
 		ids = append(ids, m["id"])
 	}
@@ -141,7 +141,7 @@ func TestVersionImagesDropsMinorMatureImages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VersionImages: %v", err)
 	}
-	var ids []int
+	ids := make([]int, 0, len(got[6001]))
 	for _, img := range got[6001] {
 		id, _ := Int(img["id"])
 		ids = append(ids, id)

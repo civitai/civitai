@@ -27,7 +27,8 @@ func TestIntegrationMinorMatureSQLOverEveryRating(t *testing.T) {
 		owner int
 	}
 	tru, fls := true, false
-	levels := []*int{nil}
+	levels := make([]*int, 0, 10)
+	levels = append(levels, nil)
 	for _, n := range []int{0, 1, 2, 3, 4, 8, 16, 32, 5} {
 		levels = append(levels, &n)
 	}
@@ -38,8 +39,8 @@ func TestIntegrationMinorMatureSQLOverEveryRating(t *testing.T) {
 		}
 		return strconv.Itoa(*l)
 	}
-	var rows []row
-	var values []string
+	rows := make([]row, 0, 3*len(levels)*2)
+	values := make([]string, 0, 3*len(levels)*2)
 	for _, minor := range []*bool{&tru, &fls, nil} {
 		for _, level := range levels {
 			for _, owner := range []int{1180007, 1180042} {
@@ -147,8 +148,9 @@ func TestIntegrationVersionImagesLeaveOutMinorMature(t *testing.T) {
 	if err := e.src.fillVersionImages(ctx, ids, got, writable); err != nil {
 		t.Fatal(err)
 	}
-	var kept []int
-	for _, img := range asList(got[1180711].Value["images"]) {
+	images := asList(got[1180711].Value["images"])
+	kept := make([]int, 0, len(images))
+	for _, img := range images {
 		m, _ := img.(map[string]any)
 		id, _ := Int(m["id"])
 		kept = append(kept, id)

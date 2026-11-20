@@ -82,7 +82,7 @@ func TestMinorMatureCallSites(t *testing.T) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		src, err := os.ReadFile(path)
+		src, err := os.ReadFile(path) //nolint:gosec // G304: path is a source file of this module, from the walk
 		if err != nil {
 			return err
 		}
