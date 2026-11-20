@@ -76,6 +76,13 @@ export const getShowcaseSectionByKey = (
     ? showcaseSections.find((s) => customShowcaseKey(s.id) === key)
     : undefined;
 
+// A creator who never saved an order opens on "Most recent"; a saved order keeps its place and
+// gets new sections at the end.
+const defaultSectionOrder = (unsaved: boolean) => {
+  const keys = Object.keys(defaultProfileSectionStatus) as ProfileSectionType[];
+  return unsaved ? ['recent' as const, ...keys.filter((k) => k !== 'recent')] : keys;
+};
+
 /** Placed by its `custom:<id>` row; a row with no section is dropped and a section with no row goes last, enabled, so create/delete never rewrites `profileSectionsSettings`. */
 export const getAllAvailableProfileSections = (
   userSections: ProfileSectionSchema[] = [],
@@ -89,7 +96,7 @@ export const getAllAvailableProfileSections = (
         Object.keys(ProfileSectionComponent).includes(key) ||
         customKeys.includes(key as CustomShowcaseKey)
     ),
-    ...Object.keys(defaultProfileSectionStatus)
+    ...defaultSectionOrder(userSections.length === 0)
       .filter((k) => !userSections.find((u) => u.key === k))
       .map((k) => ({
         key: k as ProfileSectionType,

@@ -8,7 +8,7 @@ import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
 import {
   serviceStorefrontHref,
-  storefrontSectionKeys,
+  storefrontServicesSectionShown,
   storefrontShowsServices,
 } from '~/components/CreatorShop/section-meta';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
@@ -129,8 +129,7 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
 
   if (!features.creatorShop) return null;
 
-  const servicesShown =
-    !!shop && storefrontSectionKeys(shop.settings.sections, features).includes('services');
+  const servicesShown = storefrontServicesSectionShown(shop, features);
   const hasItems = shopSectionHasItems({
     enabled: shop?.settings.enabled === true,
     cosmeticCount: (shop?.featured.length ?? 0) + (shop?.cosmetics.length ?? 0),

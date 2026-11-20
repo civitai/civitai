@@ -643,7 +643,7 @@ const featureFlags = createFeatureFlags({
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
   // Creator-built showcase sections on the profile page.
   profileShowcases: { availability: ['mod'], fliptKey: 'profile-showcases' },
-  // The redesigned profile page (sidebar, customizer, mobile order).
+  // The redesigned profile page.
   profileRedesign: { availability: ['mod'], fliptKey: 'profile-redesign' },
   // Recent written reviews on the model page, between Suggested Resources and Discussion.
   modelPageReviews: { availability: ['mod'], fliptKey: 'model-page-reviews' },

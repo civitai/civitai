@@ -130,7 +130,6 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const [mainBuzzColor] = useAvailableBuzz();
   const buzzColorConfig = useBuzzCurrencyConfig(mainBuzzColor);
 
-  // A Services button beside Visit shop, only when the storefront shows an Active service.
   const hasPublicShop = !!features.creatorShop && !!user?.creatorShopEnabled;
   const { offerings: services } = useQueryShopServices(
     user?.id ?? 0,
@@ -398,7 +397,6 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     >
       {redesign ? (
         <>
-          {/* Top-right of the profile area, clear of the name however long it is. */}
           <Group
             gap="xs"
             wrap="nowrap"

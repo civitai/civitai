@@ -18,7 +18,6 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import classes from '~/components/Profile/ProfileSection.module.css';
 
-// Ellie's mockup: a wide tile beside the latest article.
 const RECENT_TILE_RATIO = 2.2;
 
 export const RecentSection = ({ user }: ProfileSectionProps) => {

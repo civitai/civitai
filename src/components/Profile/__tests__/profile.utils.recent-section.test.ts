@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { shouldDisplayUserNullState } from '~/components/Profile/profile.utils';
+import {
+  getAllAvailableProfileSections,
+  shouldDisplayUserNullState,
+} from '~/components/Profile/profile.utils';
 import type { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
 
 // Every other section switched off, so "Most recent" alone decides what the page shows.
@@ -56,5 +59,20 @@ describe('shouldDisplayUserNullState with the Most recent section', () => {
     expect(
       shouldDisplayUserNullState({ overview: overview({ imageCount: 2 }), userWithProfile })
     ).toBe(true);
+  });
+});
+
+describe('where Most recent sits on the Overview', () => {
+  it('opens the page for a creator who never saved a section order', () => {
+    expect(getAllAvailableProfileSections([])[0]).toEqual({ key: 'recent', enabled: true });
+  });
+
+  it('joins a saved order at the end, leaving the saved sections where they were', () => {
+    const sections = getAllAvailableProfileSections([
+      { key: 'imagesOverview', enabled: true },
+      { key: 'popularModels', enabled: true },
+    ]);
+    expect(sections.slice(0, 2).map((s) => s.key)).toEqual(['imagesOverview', 'popularModels']);
+    expect(sections.at(-1)?.key).toBe('recent');
   });
 });
