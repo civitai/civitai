@@ -349,8 +349,8 @@ export async function establishSession(
  * 3. The landing is the spoke's `/api/auth/authorize` — the ONE shape that produces the second hop where the
  *    pending record gets consumed. Without this, an app that sends the raw current page URL to /login as
  *    returnUrl on a foreign domain would hand off, receive no cookie, land on a page that finds no session,
- *    bounce back to /login with the same returnUrl, and loop forever with no error. Trust
- *    is a `TrustedSpokeDomain` DB row, so that app needs no code change to appear.
+ *    bounce back to /login with the same returnUrl, and loop forever with no error.
+ *    Trust is a `TrustedSpokeDomain` DB row, so that app needs no code change to appear.
  */
 async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | undefined> {
   if (!returnUrl) return undefined;
