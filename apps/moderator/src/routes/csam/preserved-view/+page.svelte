@@ -95,6 +95,9 @@
         <p class="text-sm text-white">
           Verdict recorded: {PRESERVED_VERDICT_LABELS[file.verdict]}
         </p>
+        {#if formError?.n === file.n}
+          <ErrorAlert message={formError.message} />
+        {/if}
       {:else}
         {#if open?.n === file.n}
           {#await open.url}
@@ -109,7 +112,7 @@
             />
             {#if shown === 'failed'}
               <ErrorAlert
-                message="This file did not render. No verdict can be recorded for it; tell the Moderation Lead."
+                message="This file did not render. Try opening it again; if it still does not render, no verdict can be recorded for it, so tell the Moderation Lead."
               />
               <div>
                 <Button type="button" variant="outline" size="sm" onclick={() => openFile(file.n)}>

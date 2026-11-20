@@ -131,6 +131,14 @@ describe('verdicts', () => {
     expect(await recordDelivery(A, REVIEWER)).toBe('ruled');
   });
 
+  it('does not count a verdict written before its author was delivered the file', async () => {
+    await db.exec(`
+      INSERT INTO "ModActivity" ("userId", "activity", "entityType", "entityId") VALUES
+        (777, 'preservedFile:verdict-apparent', '${ENTITY}', 1),
+        (777, 'preservedFile:delivered', '${ENTITY}', 1);`);
+    expect(await preservedVerdicts([A])).toEqual(new Map());
+  });
+
   it('writes no delivered row for a file with a verdict', async () => {
     expect(await recordDelivery(A, REVIEWER)).toBe('delivered');
     expect(await recordPreservedVerdict(A, REVIEWER, 'not')).toBe('recorded');

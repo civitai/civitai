@@ -247,6 +247,7 @@ function verdictRows(db: Kysely<DB>, entityTypes: string[]) {
           .select('d.id')
           .whereRef('d.entityType', '=', 'v.entityType')
           .whereRef('d.userId', '=', 'v.userId')
+          .whereRef('d.id', '<', 'v.id')
           .where('d.activity', '=', PRESERVED_DELIVERED_ACTIVITY)
       )
     )
