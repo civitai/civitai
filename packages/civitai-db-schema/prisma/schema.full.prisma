@@ -3014,6 +3014,14 @@ model ApiKey {
   /// Set on `Worker` tokens only: the device the token was issued to.
   workerDeviceId Int?
   workerDevice   WorkerDevice? @relation(fields: [workerDeviceId], references: [id], onDelete: Cascade)
+  // OAuth offline grant (auth hub, flag `oauth-offline-grant`), migration
+  // `20271119140000_oauth_offline_grant`. No-type, so the generated clients never name them and the
+  // deploy and the manual migration can land in either order; read and written only by flag-on code
+  // (apps/auth `offline-columns.ts`, src/server/orchestrator/offline-spend-cap.ts). `mintOrigin`: how
+  // an OAuth `Access` row was minted, or on a `Refresh` row the grant that started its chain (CHECK
+  // `ApiKey_mintOrigin_check`). `refreshFamilyId`: the id every rotation of one refresh chain shares.
+  mintOrigin      String? // @no-type
+  refreshFamilyId String? // @no-type
 
   @@index([clientId])
   @@index([workerDeviceId])
@@ -5290,6 +5298,9 @@ model OauthConsent {
   buzzLimit Json?
   createdAt DateTime    @default(now())
   updatedAt DateTime    @default(now()) @updatedAt
+  // When the user approved "stay connected while you're away" (the OAuth offline grant, flag
+  // `oauth-offline-grant`); null = none. No-type for the reason `ApiKey.mintOrigin` gives.
+  offlineGrantedAt DateTime? // @no-type
 
   @@unique([userId, clientId])
 }
