@@ -1,6 +1,7 @@
 import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import * as shared from '@civitai/shared';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldImageSql } from '@civitai/shared/held-media';
 import { withheldCosmeticIds } from '@civitai/shared/knights-shop';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 
@@ -75,6 +76,72 @@ export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
     eb('p.publishedAt', 'is not', null),
     eb('p.publishedAt', '<', sql<Date>`(now() AT TIME ZONE 'utc')`),
   ]);
+
+/** `source` of the yes/no items Paladins answer for the moderator tag review queue. */
+export const MOD_TAG_REVIEW_SOURCE = 'mod-tag-review';
+/** The axis of those items; its question key is `knights.yesno.tag_review`. */
+export const MOD_TAG_REVIEW_AXIS = 'tag_review';
+
+/**
+ * Images players may judge for a moderator review queue: `servableImageContent`, and no CSAM flag or held owner
+ * (`heldImageSql`), no listing on a CSAM report and no open report on the image. Everything else stays staff-only.
+ * Used where the tag review item is created, served, voted on and swept, and by the moderator app's write-back guard.
+ * Expects `Image as img` joined to `Post as p`; the post half is the caller's (`servableImage` for serving).
+ */
+export const modReviewEligibleImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+  eb.and([
+    servableImageContent(eb),
+    // A clean image's nullable columns make the held check NULL, not false.
+    sql<SqlBool>`NOT COALESCE(${sql.raw(heldImageSql('img'))}, false)`,
+    sql<SqlBool>`(img.id)::text NOT IN (${sql.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})`,
+    sql<SqlBool>`NOT EXISTS (
+      SELECT 1 FROM "ImageReport" ir JOIN "Report" r ON r.id = ir."reportId"
+      WHERE ir."imageId" = img.id AND r.status IN ('Pending', 'Processing')
+    )`,
+  ]);
+
+/**
+ * Whether disabling `tagId` on the image would lower its `nsfwLevel`, read as `update_nsfw_levels_new` decides it: the
+ * highest level among the image's other enabled tags (1 with none rated), floored by `metadata.judgeRating`, written only
+ * when the image is not `nsfwLevelLocked`. Two cases are deliberately stricter than the function and count as lowering:
+ * an image whose ingestion is not `Scanned`, and an image with no other enabled tag (the function leaves both levels
+ * alone). A missing image counts as lowering too. Read-only; the test pinning it to the function loads its migration.
+ */
+export async function removalLowersLevel(
+  db: Kysely<DB> | Transaction<DB>,
+  imageId: number,
+  tagId: number | null | undefined
+): Promise<boolean> {
+  if (typeof tagId !== 'number' || !Number.isInteger(tagId)) return true;
+  const { rows } = await sql<{
+    locked: boolean;
+    level: number;
+    scanned: boolean;
+    others: number;
+    otherLevel: number | null;
+    judge: number | null;
+  }>`
+    SELECT i."nsfwLevelLocked" AS locked, i."nsfwLevel" AS level, i.ingestion::text = 'Scanned' AS scanned,
+      (SELECT count(*)::int FROM "TagsOnImageDetails" d
+        WHERE d."imageId" = i.id AND NOT d.disabled AND d."tagId" <> ${tagId}) AS others,
+      (SELECT max(t."nsfwLevel")::int FROM "TagsOnImageDetails" d
+        JOIN "Tag" t ON t.id = d."tagId" AND t."nsfwLevel" > 1
+        WHERE d."imageId" = i.id AND NOT d.disabled AND d."tagId" <> ${tagId}) AS "otherLevel",
+      CASE
+        WHEN jsonb_typeof(i.metadata -> 'judgeRating' -> 'nsfwLevel') = 'number'
+          AND (i.metadata -> 'judgeRating' -> 'nsfwLevel')::text IN ('1', '2', '4', '8', '16')
+        THEN (i.metadata -> 'judgeRating' -> 'nsfwLevel')::text::int
+      END AS judge
+    FROM "Image" i
+    WHERE i.id = ${imageId}
+  `.execute(db);
+  const image = rows[0];
+  if (!image) return true;
+  if (image.locked) return false;
+  if (!image.scanned || image.others === 0) return true;
+  const after = Math.max(image.otherLevel ?? 1, image.judge ?? 0);
+  return after < image.level;
+}
 
 /**
  * Open Knight-stage rating items that players can be served, counted up to `limit` (the intake cap reads `maxOpen + 1`).

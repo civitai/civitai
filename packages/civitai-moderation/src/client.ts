@@ -3,10 +3,14 @@ import {
   abuseReportInput,
   feedbackTriageInput,
   imageModerateInput,
+  imageTagModerateInput,
+  imageTagModerateResponse,
   relabelBuildBatchInput,
   type AbuseReportInput,
   type FeedbackTriageInput,
   type ImageModerateInput,
+  type ImageTagModerateInput,
+  type ImageTagModerateResult,
   type ModActionName,
   type RelabelBuildBatchInput,
 } from './schema';
@@ -96,6 +100,11 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
     /** Block or unblock one or more images. Validates the payload locally before the network call. */
     imageModerate: (input: ImageModerateInput): Promise<unknown> =>
       call(MOD_ACTION.imageModerate, imageModerateInput.parse(input)),
+    /** Write back a Paladin consensus on one flagged tag (Knights). Not retried; an answer it cannot read throws. */
+    imageTagModerate: async (input: ImageTagModerateInput): Promise<ImageTagModerateResult> =>
+      imageTagModerateResponse.parse(
+        await call(MOD_ACTION.imageTagModerate, imageTagModerateInput.parse(input))
+      ).result,
     /**
      * File one run of an automated abuse detector on the moderation board.
      *
