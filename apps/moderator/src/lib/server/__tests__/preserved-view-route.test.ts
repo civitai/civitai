@@ -59,9 +59,9 @@ const { actions, load } = await import('../../../routes/csam/preserved-view/+pag
 const { createPreservedObjectStore, OversizeObjectError, UnlistedKeyError } = await import(
   '../preserved-object-store'
 );
-const { MAX_FILE_BYTES, openPreservedFiles, readPreservedViewConfig } = await import(
-  '../preserved-view'
-);
+const { openPreservedFiles, readPreservedViewConfig } = await import('../preserved-view');
+
+const CAP = 10 * 1024 * 1024;
 
 const PAGE = '/csam/preserved-view';
 const REVIEWER = { id: 501, roles: ['moderator:preserved-review'] };
@@ -219,7 +219,7 @@ describe('serving a file', () => {
     ],
     [
       'an entry over the size cap',
-      () => pinManifest(ENTRIES.map((e, i) => (i ? e : { ...e, size: MAX_FILE_BYTES + 1 }))),
+      () => pinManifest(ENTRIES.map((e, i) => (i ? e : { ...e, size: CAP + 1 }))),
     ],
     [
       'an entry with no sha256',
@@ -253,7 +253,7 @@ describe('serving a file', () => {
   it.each([
     ['sha256', Uint8Array.from(FILES[0]).map((b, i) => (i === 9 ? b ^ 1 : b)), { sizeMatch: true }],
     ['size', Uint8Array.from([...FILES[0], 0]), { sizeMatch: false }],
-    ['size, past the cap', new Uint8Array(MAX_FILE_BYTES + 1), { sizeMatch: false, bytes: null }],
+    ['size, past the cap', new Uint8Array(CAP + 1), { sizeMatch: false, bytes: null }],
   ])('answers 409 with no body when the stored bytes differ in %s', async (_what, stored, line) => {
     objects.set(FILE_KEYS[0], stored);
     const { status, res } = await get('1');
