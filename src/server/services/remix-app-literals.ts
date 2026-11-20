@@ -57,7 +57,7 @@ const keyName = (key: AnyNode) =>
 function readLiterals(source: string): Literals | null {
   let program: AnyNode;
   try {
-    program = parse(source, { ecmaVersion: 'latest', sourceType: 'module' }) as AnyNode;
+    program = parse(source, { ecmaVersion: 'latest', sourceType: 'module' }) as unknown as AnyNode;
   } catch {
     return null;
   }
