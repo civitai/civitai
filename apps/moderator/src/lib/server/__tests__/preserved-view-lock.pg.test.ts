@@ -30,20 +30,8 @@ vi.mock('../axiom', () => ({ logToAxiom: async () => {} }));
 
 const { recordPreservedVerdict } = await import('../preserved-view');
 
-const SHA = 'c'.repeat(64);
-const ENTITY = `preservedFile:${SHA.slice(0, 16)}`;
-const PIN = {
-  manifestKey: 'fixture/manifest.json',
-  manifestSha256: SHA,
-  reviewerIds: new Set([501]),
-  store: {
-    endpoint: 'https://store.test',
-    region: 'us-east-1',
-    bucket: 'b',
-    accessKey: 'k',
-    secretKey: 's',
-  },
-};
+const FILE = { n: 1, key: 'fixture/1.png', size: 10, sha256: 'c'.repeat(64) };
+const ENTITY = `preservedFile:${'c'.repeat(16)}`;
 const DDL = `CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "activity" TEXT NOT NULL, "entityType" TEXT,
   "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(), "credential" TEXT
@@ -81,14 +69,14 @@ describePg('recordPreservedVerdict against a verdict in another session', () => 
     const session = await other.pool.connect();
     try {
       await session.query('BEGIN');
-      await session.query('SELECT pg_advisory_xact_lock(hashtext($1), $2::int)', [ENTITY, 1]);
+      await session.query('SELECT pg_advisory_xact_lock(hashtext($1), 0)', [ENTITY]);
       await session.query(
         `INSERT INTO "ModActivity" ("userId", "activity", "entityType", "entityId")
          VALUES (502, 'preservedFile:verdict-apparent', $1, 1)`,
         [ENTITY]
       );
       let settled = false;
-      const mine = recordPreservedVerdict(PIN, 501, 1, 'not').finally(() => (settled = true));
+      const mine = recordPreservedVerdict(FILE, 501, 'not').finally(() => (settled = true));
       await new Promise((r) => setTimeout(r, 500));
       expect(settled).toBe(false);
       await session.query('COMMIT');

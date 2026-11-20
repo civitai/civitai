@@ -6,16 +6,37 @@
   import {
     PRESERVED_VERDICT_LABELS,
     PRESERVED_VERDICTS,
+    PRESERVED_VIEW_HEADER,
     type PreservedVerdict,
   } from '$lib/preserved-view';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  let open = $state<number | null>(null);
-  // The verdict buttons follow a load the browser saw, never a click alone: a refused file shows
-  // a broken image, and a verdict on it would record a review that did not happen.
-  let shown = $state<Record<number, 'loaded' | 'failed'>>({});
+  // One open at a time. Fetched rather than set as an <img> src: the route needs a header an <img>
+  // cannot send, and a fetch is never answered from the page's image cache, so every open is a request.
+  let open = $state<{ n: number; url: Promise<string> } | null>(null);
+  // The verdict buttons follow an image the browser rendered, never a click alone.
+  let shown = $state<number | null>(null);
+
+  async function fetchFile(n: number): Promise<string> {
+    const res = await fetch(`/api/preserved-view/${n}`, {
+      headers: { [PRESERVED_VIEW_HEADER]: 'open' },
+      cache: 'no-store',
+    });
+    if (!res.ok) throw new Error(`The file could not be shown (${res.status}).`);
+    return URL.createObjectURL(await res.blob());
+  }
+
+  function openFile(n: number) {
+    shown = null;
+    open = { n, url: fetchFile(n) };
+  }
+
+  $effect(() => {
+    const current = open;
+    return () => void current?.url.then(URL.revokeObjectURL, () => null);
+  });
   let confirming = $state<{ n: number; verdict: PreservedVerdict } | null>(null);
   let submitting = $state(false);
 
@@ -62,22 +83,25 @@
           Verdict recorded: {PRESERVED_VERDICT_LABELS[file.verdict]}
         </p>
       {:else}
-        {#if open === file.n}
-          <img
-            src="/api/preserved-view/{file.n}"
-            alt="Preserved file {file.n}"
-            class="max-h-[80vh] max-w-full self-center object-contain"
-            onload={() => (shown[file.n] = 'loaded')}
-            onerror={() => (shown[file.n] = 'failed')}
-          />
-          {#if shown[file.n] === 'failed'}
-            <ErrorAlert
-              message="This file could not be shown, so no verdict can be recorded for it. Tell the Moderation Lead."
+        {#if open?.n === file.n}
+          {#await open.url}
+            <p class="text-sm text-dark-2">Loading file {file.n}…</p>
+          {:then src}
+            <img
+              {src}
+              alt="Preserved file {file.n}"
+              class="max-h-[80vh] max-w-full self-center object-contain"
+              onload={() => (shown = file.n)}
+              onerror={() => (shown = null)}
             />
-          {/if}
+          {:catch e}
+            <ErrorAlert
+              message="{e instanceof Error ? e.message : 'The file could not be shown.'} No verdict can be recorded for it; tell the Moderation Lead."
+            />
+          {/await}
         {:else}
           <div>
-            <Button type="button" variant="outline" size="sm" onclick={() => (open = file.n)}>
+            <Button type="button" variant="outline" size="sm" onclick={() => openFile(file.n)}>
               Open file {file.n}
             </Button>
           </div>
@@ -87,7 +111,7 @@
           <ErrorAlert message={formError.message} />
         {/if}
 
-        {#if open === file.n && shown[file.n] === 'loaded'}
+        {#if open?.n === file.n && shown === file.n}
           <form
             method="POST"
             action="?/verdict"

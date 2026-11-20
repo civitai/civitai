@@ -1,6 +1,9 @@
 /** Where the preserved-file review lives. A hidden page: granted on /admin, never listed in the nav. */
 export const PRESERVED_VIEW_PAGE = '/csam/preserved-view';
 
+/** Sent by the page's own fetch of a file; the route refuses a request without it. */
+export const PRESERVED_VIEW_HEADER = 'x-preserved-view';
+
 export const PRESERVED_VERDICTS = ['apparent', 'not'] as const;
 export type PreservedVerdict = (typeof PRESERVED_VERDICTS)[number];
 

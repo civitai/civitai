@@ -33,6 +33,7 @@ export function createPreservedObjectStore(
     credentials: { accessKeyId: config.accessKey, secretAccessKey: config.secretKey },
     endpoint: config.endpoint,
     region: config.region,
+    requestHandler: { connectionTimeout: 5_000, requestTimeout: 30_000 },
   });
 
   return {

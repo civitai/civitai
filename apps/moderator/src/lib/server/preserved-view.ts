@@ -8,7 +8,11 @@ import { canAccess } from './access';
 import { logToAxiom } from './axiom';
 import { dbWrite } from './db';
 import { insertModActivity, modActivityRowExists } from './mod-activity';
-import { createPreservedObjectStore, type PreservedStoreConfig } from './preserved-object-store';
+import {
+  createPreservedObjectStore,
+  OversizeObjectError,
+  type PreservedStoreConfig,
+} from './preserved-object-store';
 
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
@@ -63,11 +67,10 @@ export function readPreservedViewConfig(
 }
 
 /**
- * Every row names the pinned manifest as well as the file's position in it, so pinning another
- * manifest never inherits a verdict or a view recorded against a different file at that position.
+ * Rows name the file by its own hash, so a verdict stays with the bytes it was about whichever
+ * manifest is pinned, and never attaches to a different file at the same position.
  */
-const entityTypeOf = (config: PreservedViewConfig) =>
-  `preservedFile:${config.manifestSha256.slice(0, 16)}`;
+const entityTypeOf = (file: PreservedFile) => `preservedFile:${file.sha256.slice(0, 16)}`;
 
 /**
  * Both gates: the page grant (a role), and the reviewer list, which an admin's grant does not pass.
@@ -109,12 +112,12 @@ const externalEntry = z
     status: z.literal('external'),
     size: z.number().int().positive().max(MAX_FILE_BYTES),
     sha256: z.string().regex(SHA256),
-    source: z.object({ key: z.string().min(1) }),
+    source: z.object({ key: z.string().min(1), bucket: z.string().optional() }),
     pinned: z.object({ size: z.number(), sha256: z.string() }).optional(),
   })
   .refine((e) => !e.pinned || (e.pinned.size === e.size && e.pinned.sha256 === e.sha256));
 
-function externalFiles(manifest: unknown): PreservedFile[] {
+function externalFiles(manifest: unknown, bucket: string): PreservedFile[] {
   const entries = (manifest as { entries?: unknown } | null)?.entries;
   if (!Array.isArray(entries)) throw new ManifestRefusedError('shape');
   const external = entries.filter((e) => (e as { status?: unknown } | null)?.status === 'external');
@@ -123,6 +126,8 @@ function externalFiles(manifest: unknown): PreservedFile[] {
     const parsed = externalEntry.safeParse(e);
     if (!parsed.success) throw new ManifestRefusedError('shape');
     const { source, size, sha256 } = parsed.data;
+    if (source.bucket !== undefined && source.bucket !== bucket)
+      throw new ManifestRefusedError('shape');
     return { n: i + 1, key: source.key, size, sha256 };
   });
 }
@@ -137,7 +142,10 @@ export async function openPreservedFiles(config: PreservedViewConfig) {
   const listed = new Set([config.manifestKey]);
   const store = createPreservedObjectStore(config.store, (key) => listed.has(key));
 
-  const bytes = await store.read(config.manifestKey, MAX_MANIFEST_BYTES);
+  const bytes = await store.read(config.manifestKey, MAX_MANIFEST_BYTES).catch((e: unknown) => {
+    if (e instanceof OversizeObjectError) throw new ManifestRefusedError('shape');
+    throw e;
+  });
   if (!bytes) throw new ManifestRefusedError('missing');
   if (sha256Hex(bytes) !== config.manifestSha256) throw new ManifestRefusedError('sha256');
   let manifest: unknown;
@@ -146,7 +154,7 @@ export async function openPreservedFiles(config: PreservedViewConfig) {
   } catch {
     throw new ManifestRefusedError('shape');
   }
-  const files = externalFiles(manifest);
+  const files = externalFiles(manifest, config.store.bucket);
   for (const file of files) listed.add(file.key);
 
   return {
@@ -172,49 +180,52 @@ export async function openPreservedFilesOrError(config: PreservedViewConfig) {
 
 /** Verdicts recorded so far, by file number. Read from the primary, so a verdict just made is seen. */
 export async function preservedVerdicts(
-  config: PreservedViewConfig
+  files: readonly PreservedFile[]
 ): Promise<Map<number, PreservedVerdict>> {
+  if (!files.length) return new Map();
   const rows = await dbWrite
     .selectFrom('ModActivity')
-    .select(['entityId', 'activity'])
-    .where('entityType', '=', entityTypeOf(config))
+    .select(['entityType', 'activity'])
+    .where('entityType', 'in', files.map(entityTypeOf))
     .where('activity', 'in', Object.values(PRESERVED_VERDICT_ACTIVITY))
     .execute();
   const out = new Map<number, PreservedVerdict>();
-  for (const row of rows) {
-    const verdict = VERDICT_BY_ACTIVITY.get(row.activity);
-    if (row.entityId !== null && verdict && !out.has(row.entityId)) out.set(row.entityId, verdict);
+  for (const file of files) {
+    const row = rows.find((r) => r.entityType === entityTypeOf(file));
+    const verdict = row && VERDICT_BY_ACTIVITY.get(row.activity);
+    if (verdict) out.set(file.n, verdict);
   }
   return out;
 }
 
 /** The file numbers whose bytes this reviewer has been sent. */
 export async function deliveredTo(
-  config: PreservedViewConfig,
+  files: readonly PreservedFile[],
   reviewerId: number
 ): Promise<Set<number>> {
+  if (!files.length) return new Set();
   const rows = await dbWrite
     .selectFrom('ModActivity')
-    .select('entityId')
+    .select('entityType')
     .distinct()
-    .where('entityType', '=', entityTypeOf(config))
+    .where('entityType', 'in', files.map(entityTypeOf))
     .where('activity', '=', PRESERVED_DELIVERED_ACTIVITY)
     .where('userId', '=', reviewerId)
     .execute();
-  return new Set(rows.flatMap((r) => (r.entityId === null ? [] : [r.entityId])));
+  const sent = new Set(rows.map((r) => r.entityType));
+  return new Set(files.filter((f) => sent.has(entityTypeOf(f))).map((f) => f.n));
 }
 
 async function writeAndReadBack(
-  config: PreservedViewConfig,
+  file: PreservedFile,
   reviewerId: number,
-  n: number,
   activity: string
 ): Promise<boolean> {
   try {
     const id = await insertModActivity({
       userId: reviewerId,
-      entityType: entityTypeOf(config),
-      entityId: n,
+      entityType: entityTypeOf(file),
+      entityId: file.n,
       activity,
       credential: 'web',
     });
@@ -226,31 +237,29 @@ async function writeAndReadBack(
 }
 
 /** The audit row for one serve, written and read back. `false` means call no store and send no bytes. */
-export const auditServe = (config: PreservedViewConfig, reviewerId: number, n: number) =>
-  writeAndReadBack(config, reviewerId, n, PRESERVED_SERVED_ACTIVITY);
+export const auditServe = (file: PreservedFile, reviewerId: number) =>
+  writeAndReadBack(file, reviewerId, PRESERVED_SERVED_ACTIVITY);
 
 /** The row that lets a verdict follow. `false` means send no bytes. */
-export const recordDelivery = (config: PreservedViewConfig, reviewerId: number, n: number) =>
-  writeAndReadBack(config, reviewerId, n, PRESERVED_DELIVERED_ACTIVITY);
+export const recordDelivery = (file: PreservedFile, reviewerId: number) =>
+  writeAndReadBack(file, reviewerId, PRESERVED_DELIVERED_ACTIVITY);
 
 /**
  * One verdict per file, ever. The advisory lock serialises two submits for the same file, which a
  * check-then-insert alone would let both through.
  */
 export async function recordPreservedVerdict(
-  config: PreservedViewConfig,
+  file: PreservedFile,
   reviewerId: number,
-  n: number,
   verdict: PreservedVerdict
 ): Promise<'recorded' | 'already'> {
-  const entityType = entityTypeOf(config);
+  const entityType = entityTypeOf(file);
   return dbWrite.transaction().execute(async (trx) => {
-    await sql`SELECT pg_advisory_xact_lock(hashtext(${entityType}), ${n}::int)`.execute(trx);
+    await sql`SELECT pg_advisory_xact_lock(hashtext(${entityType}), 0)`.execute(trx);
     const existing = await trx
       .selectFrom('ModActivity')
       .select('id')
       .where('entityType', '=', entityType)
-      .where('entityId', '=', n)
       .where('activity', 'in', Object.values(PRESERVED_VERDICT_ACTIVITY))
       .executeTakeFirst();
     if (existing) return 'already';
@@ -258,7 +267,7 @@ export async function recordPreservedVerdict(
       {
         userId: reviewerId,
         entityType,
-        entityId: n,
+        entityId: file.n,
         activity: PRESERVED_VERDICT_ACTIVITY[verdict],
       },
       trx
@@ -275,7 +284,14 @@ export function recordPreservedServe(record: {
   sizeMatch: boolean | null;
   sha256Match: boolean | null;
 }) {
-  void logToAxiom({ name: 'preserved-file-serve', type: 'info', ...record }).catch(() => null);
+  void logToAxiom({
+    name: 'preserved-file-serve',
+    type: 'info',
+    moderatorId: record.reviewerId,
+    status: record.status,
+    bytes: record.bytes,
+    payload: { n: record.n, sizeMatch: record.sizeMatch, sha256Match: record.sha256Match },
+  });
 }
 
 const SIGNATURES: [string, (b: Uint8Array) => boolean][] = [
