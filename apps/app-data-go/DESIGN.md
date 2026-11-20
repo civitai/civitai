@@ -252,9 +252,10 @@ lag is the adapter's poll plus the time to the next read. REST reads see a revoc
 - **An app's own collection on REST.** Hub tokens may import on REST now (#9783): an import is judged
   by `decideCollectionRead`, the predicate the private feed runs. Every fallback read names its source
   as `from=<slug>`, so a read of the token's OWN app's collection needs the storage route to treat a
-  `from` naming the token's own app as an own read; today it refuses it (`import_not_declared`: no app declares an import of itself). A
-  separate site PR in progress makes that change. Until it merges, an own-collection read falls back
-  to that refusal, and only the registry path serves it.
+  `from` naming the token's own app as an own read; today it refuses it (`import_not_declared`: no app declares an import of itself).
+  civitai/civitai#9800 makes that change, for every token kind; the `from` this service sends is the
+  blockId (the URN slug segment), which is what #9800 matches. Until it merges, an own-collection
+  read falls back to that refusal, and only the registry path serves it. Do not deploy before #9800.
 - **Record names (Q2).** A stream names a record by its record core URN (`…/<record_id>`), the REST
   list by its key, and an app cannot match the two. The REST list should expose `recordId`: the
   store reads it (`doc-store.ts`), but `presentDocs` in `doc-store-api.ts` does not return it.

@@ -6,10 +6,11 @@
 // A hub token may read another app's collection through `from` when the user granted the import
 // (#9783), decided by `decideCollectionRead`, the predicate the adapter's private feed runs.
 //
-// DEPENDS ON A SITE CHANGE IN PROGRESS. A `from` naming the token's OWN app is refused today
-// (`import_not_declared`: no app declares an import of itself); a separate site PR makes the storage route treat it as an own read. Until it
-// merges, this fallback answers an own-collection read with that refusal, and only the registry path
-// serves it.
+// DEPENDS ON civitai/civitai#9800. A `from` naming the token's OWN app (its blockId, the URN slug
+// segment this service sends) is refused until then (`import_not_declared`: no app declares an
+// import of itself); #9800 makes the storage route treat it as an own read, for every token kind.
+// Until it merges, this fallback answers an own-collection read with that refusal, and only the
+// registry path serves it.
 package rest
 
 import (
