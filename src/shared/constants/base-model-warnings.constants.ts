@@ -33,6 +33,15 @@ export const baseModelWarnings: Partial<Record<BaseModel, BaseModelWarning>> = {
     acknowledgement:
       'I understand Ideogram 4.5 is SFW only and that Ideogram can reject prompts it considers unsafe.',
   },
+  'Ideogram 4.6': {
+    title: 'Ideogram 4.6 is SFW only',
+    points: [
+      "Ideogram's terms forbid sexually explicit content, and Ideogram 4.6 can reject prompts it considers unsafe.",
+      'The block comes from Ideogram, not from Civitai — we cannot turn it off or work around it.',
+    ],
+    acknowledgement:
+      'I understand Ideogram 4.6 is SFW only and that Ideogram can reject prompts it considers unsafe.',
+  },
 };
 
 /** The generator shows these in place of the per-base-model warnings for the whole ecosystem. */
@@ -41,7 +50,7 @@ export const ecosystemWarnings: Record<string, Omit<BaseModelWarning, 'acknowled
     title: 'Ideogram is SFW only',
     points: [
       "Ideogram does not support NSFW content, and Ideogram's terms forbid sexually explicit output.",
-      'Both versions block a wide range of prompts, including some that are plainly safe for work. The block comes from Ideogram, not from Civitai — we cannot turn it off or work around it.',
+      'Every version blocks a wide range of prompts, including some that are plainly safe for work. The block comes from Ideogram, not from Civitai — we cannot turn it off or work around it.',
       'Ideogram 4.0: a blocked job has already consumed compute, so there are no refunds for a censorship block.',
     ],
   },

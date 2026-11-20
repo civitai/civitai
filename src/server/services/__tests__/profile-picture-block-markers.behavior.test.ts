@@ -29,12 +29,11 @@ import { readUserCreatorViaKysely } from '~/server/services/user-creator.reads';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const here = dirname(fileURLToPath(import.meta.url));
-const open: { pg: PGlite; db?: Kysely<DB> }[] = [];
+const open: { pg: PGlite }[] = [];
+const dbs: Kysely<DB>[] = [];
 afterAll(async () => {
-  for (const { pg, db } of open) {
-    await db?.destroy();
-    await pg.close();
-  }
+  for (const db of dbs) await db.destroy();
+  for (const { pg } of open) await pg.close();
 });
 
 // User id = picture id; each user's `User.image` names its own picture.
@@ -56,13 +55,20 @@ const imageRows = CASES.map(
 ).join(', ');
 const IMAGES = `INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevel", "blockedFor") VALUES ${imageRows};`;
 
+// One PGlite for every Kysely read: each fixture lives in its own schema, picked per query.
+let shared: PGlite | undefined;
 async function kysely(fixture: string, schema: string, seed: string) {
-  const pg = new PGlite({ extensions: { citext } });
+  if (!shared) {
+    shared = new PGlite({ extensions: { citext } });
+    open.push({ pg: shared });
+  }
+  const pg = shared;
   for (const statement of loadParitySchema(resolve(here, `fixtures/${fixture}`)))
     await pg.exec(statement);
   await pg.exec(`SET search_path TO ${schema}; ${seed}`);
   const client = {
     query: async (sql: string, params: unknown[]) => {
+      await pg.exec(`SET search_path TO ${schema}`);
       const result = await pg.query(sql, params);
       return { rows: result.rows, rowCount: result.affectedRows ?? result.rows.length };
     },
@@ -73,7 +79,7 @@ async function kysely(fixture: string, schema: string, seed: string) {
       pool: { connect: async () => client, end: async () => undefined } as never,
     }),
   });
-  open.push({ pg, db });
+  dbs.push(db);
   return db;
 }
 

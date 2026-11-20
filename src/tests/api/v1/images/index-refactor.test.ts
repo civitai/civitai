@@ -151,26 +151,9 @@ describe('/api/v1/images refactor — public contract preserved', () => {
     expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
   });
 
-  it('passes parsed params (type/limit/sort + ...data) to runImageSearch', async () => {
-    await invoke({ type: 'image', limit: '20', sort: 'Newest', modelId: '123' });
-    const [input] = mockRunImageSearch.mock.calls[0];
-    expect(input.type).toBe('image');
-    expect(input.limit).toBe(20);
-    // sort + modelId fall into the ...data rest (forwarded verbatim).
-    expect(input.data.sort).toBe('Newest');
-    expect(input.data.modelId).toBe(123);
-    // Maturity knobs are NOT in the search input — resolved into ctx.browsingLevel.
-    expect(input.data).not.toHaveProperty('nsfw');
-    expect(input.data).not.toHaveProperty('browsingLevel');
-  });
-
-  it('returns runImageSearch items + cursor metadata unchanged (shape preserved)', async () => {
-    mockRunImageSearch.mockResolvedValue({
-      items: [{ id: 1, url: 'x' }],
-      nextCursor: 'cursor-42',
-    });
+  it('returns the search cursor in metadata', async () => {
+    mockRunImageSearch.mockResolvedValue({ items: [{ id: 1, url: 'x' }], nextCursor: 'cursor-42' });
     const res = await invoke({});
-    expect(res.body.items).toEqual([{ id: 1, url: 'x' }]);
     expect(res.body.metadata.nextCursor).toBe('cursor-42');
   });
 

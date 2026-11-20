@@ -36,7 +36,7 @@ import {
   setAsideState,
 } from './csam-queue-set-aside';
 import type { Kysely, RawBuilder, Transaction } from 'kysely';
-import { queueModelsForImageChildTagChanges } from './image-models-reindex';
+import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
 
@@ -116,7 +116,7 @@ const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
   await invalidateThumbnails(imageId);
   await bustProfilePictures({ imageIds: [imageId] });
-  await queueModelsForImageChildTagChanges({ levelImageIds: [imageId] });
+  await queueDocumentsForImageMinorChanges({ levelImageIds: [imageId] });
 };
 
 // The recompute rates an image from its live tags, so one the scanner never tagged (blocked before
@@ -359,7 +359,7 @@ export async function acceptImage({
   // A minor-queue accept rewrites "minor", which no trigger watches.
   if (nr === 'minor') {
     await queueArticlesForCoverImages([imageId]);
-    await queueModelsForImageChildTagChanges({ minorImageIds: [imageId] });
+    await queueDocumentsForImageMinorChanges({ minorImageIds: [imageId] });
   }
   await rescanIfUnrated(imageId);
 

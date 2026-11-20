@@ -1,4 +1,13 @@
-import { Button, Group, Modal, SegmentedControl, Stack, Text, TextInput } from '@mantine/core';
+import {
+  Button,
+  Checkbox,
+  Group,
+  Modal,
+  SegmentedControl,
+  Stack,
+  Text,
+  TextInput,
+} from '@mantine/core';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
@@ -15,6 +24,7 @@ import {
 } from '~/server/schema/user-profile.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { ShowcaseHiddenOn } from '~/shared/constants/profile-showcase.constants';
 
 const typeIndex: Record<ShowcaseSectionType, SearchIndexKey> = {
   Model: 'models',
@@ -45,6 +55,10 @@ export default function ShowcaseSectionModal({ sections, sectionId }: Props) {
   const [items, setItems] = useState<number[]>(existing?.items ?? []);
   const [buttonLabel, setButtonLabel] = useState(existing?.button?.label ?? '');
   const [buttonUrl, setButtonUrl] = useState(existing?.button?.url ?? '');
+  const [hiddenOn, setHiddenOn] = useState(existing?.hiddenOn ?? 0);
+  const shownOn = (bit: number) => (hiddenOn & bit) === 0;
+  const toggleSite = (bit: number, shown: boolean) =>
+    setHiddenOn((bits) => (shown ? bits & ~bit : bits | bit));
 
   const { mutate, isPending } = trpc.userProfile.setShowcaseSections.useMutation({
     onSuccess: (showcaseSections) => {
@@ -72,6 +86,7 @@ export default function ShowcaseSectionModal({ sections, sectionId }: Props) {
     title,
     items,
     button: hasButton ? { label: buttonLabel, url: buttonUrl } : undefined,
+    hiddenOn,
   };
   const valid = showcaseSectionSchema.safeParse(section).success;
 
@@ -134,6 +149,23 @@ export default function ShowcaseSectionModal({ sections, sectionId }: Props) {
             error={buttonUrlError ?? (hasButton && !buttonUrl.trim() ? 'Add a link' : undefined)}
           />
         </Group>
+        <Group>
+          <Checkbox
+            label="Show on civitai.com"
+            checked={shownOn(ShowcaseHiddenOn.Com)}
+            onChange={(e) => toggleSite(ShowcaseHiddenOn.Com, e.currentTarget.checked)}
+          />
+          <Checkbox
+            label="Show on civitai.red"
+            checked={shownOn(ShowcaseHiddenOn.Red)}
+            onChange={(e) => toggleSite(ShowcaseHiddenOn.Red, e.currentTarget.checked)}
+          />
+        </Group>
+        {!shownOn(ShowcaseHiddenOn.Com) && !shownOn(ShowcaseHiddenOn.Red) && (
+          <Text size="xs" c="dimmed">
+            Shown on neither site: only you and moderators see it.
+          </Text>
+        )}
         {!items.length && (
           <Text size="xs" c="dimmed">
             A section with no items is not shown on your profile.

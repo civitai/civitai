@@ -3,11 +3,16 @@ import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-
 import { openDealsOnOffering } from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
-import { sectionIcons, storefrontSectionId } from '~/components/CreatorShop/section-meta';
+import {
+  sectionIcons,
+  servicePageHref,
+  storefrontSectionId,
+} from '~/components/CreatorShop/section-meta';
 import { ServiceCardAnchor } from '~/components/CreatorShop/Storefront/ServiceCardAnchor';
 import { SectionHeader } from '~/components/CreatorShop/Storefront/SectionHeader';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ServicesSection({
   ownerUserId,
@@ -20,6 +25,7 @@ export function ServicesSection({
   shopPublished: boolean;
 }) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { offerings } = useQueryShopServices(ownerUserId, ownerUserId > 0);
   const isOwner = !!currentUser && currentUser.id === ownerUserId;
   // The seller's own open deals: the same list as Incoming requests on the manage page.
@@ -56,6 +62,11 @@ export function ServicesSection({
                 sellerId={ownerUserId}
                 sellerUsername={username}
                 slotsOpen={offering.slotsOpen}
+                href={
+                  features.creatorServicesNext
+                    ? servicePageHref(offering.id, offering.title)
+                    : undefined
+                }
                 canRequest={shopPublished}
                 extra={
                   openDeal && (

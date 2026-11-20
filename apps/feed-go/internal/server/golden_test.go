@@ -47,7 +47,7 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 32
 	goldenMinV1       = 36
-	goldenMinInfinite = 30
+	goldenMinInfinite = 39
 	goldenMinModels   = 31
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -276,6 +276,14 @@ type goldenDB struct {
 		UserID   int    `json:"userId"`
 		Reaction string `json:"reaction"`
 	} `json:"reactions"`
+	// TagVotes are TagsOnImageVote rows (an infinite/ fixture whose signed-in request has the 'tags'
+	// include: the votes the handler merges).
+	TagVotes []struct {
+		ImageID int `json:"imageId"`
+		TagID   int `json:"tagId"`
+		UserID  int `json:"userId"`
+		Vote    int `json:"vote"`
+	} `json:"tagVotes"`
 	Placements []struct {
 		ID         int             `json:"id"`
 		Surface    string          `json:"surface"`
@@ -560,6 +568,7 @@ var (
 	goldenReModel     = regexp.MustCompile(`mv\."modelId" = \$(\d+)`)
 	goldenReLevel     = regexp.MustCompile(`\(i\."nsfwLevel" & \$(\d+)\) != 0`)
 	goldenReTarget    = regexp.MustCompile(` AND i\."userId" = \$(\d+)`)
+	goldenReFollowed  = regexp.MustCompile(`i\."userId" = ANY\(\$(\d+)::int\[\]\)`)
 	goldenReExclUsers = regexp.MustCompile(`i\."userId" != ALL\(\$(\d+)::int\[\]\)`)
 	goldenReTypes     = regexp.MustCompile(`i\.type = ANY\(\$(\d+)::text`)
 	goldenReCursor    = regexp.MustCompile(`\(\((i\."id"|irr\."imageId"|i\."index") (<=|>=) \$(\d+)\)\)`)
@@ -629,8 +638,8 @@ func goldenHas(list []int, n int) bool {
 
 // goldenImageRows answers the getAllImages page query: the clauses the fixtures reach, evaluated
 // over the images table as Postgres would (ids, posts, version or model scope, level, creator,
-// excluded creators, types, tools, base models, the minor exclusion, published-before-now, order,
-// cursor, offset, limit).
+// followed creators, excluded creators, types, tools, base models, the minor exclusion,
+// published-before-now, order, cursor, offset, limit).
 func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, error) {
 	versionModel := map[int]int{}
 	versionBase := map[int]string{}
@@ -645,6 +654,7 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	model, hasModel := goldenArg(args, goldenReModel, sql)
 	level, hasLevel := goldenArg(args, goldenReLevel, sql)
 	target, hasTarget := goldenArg(args, goldenReTarget, sql)
+	followed, hasFollowed := goldenArg(args, goldenReFollowed, sql)
 	exclUsers, hasExcl := goldenArg(args, goldenReExclUsers, sql)
 	types, hasTypes := goldenArg(args, goldenReTypes, sql)
 	minorOwner, hasMinorOwner := goldenArg(args, goldenReMinorOwn, sql)
@@ -684,6 +694,9 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 			continue
 		}
 		if hasTarget && img.UserID != goldenInt(target) {
+			continue
+		}
+		if hasFollowed && !goldenHas(goldenInts(followed), img.UserID) {
 			continue
 		}
 		if hasTags {
@@ -905,6 +918,15 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 				}
 			}
 			return testkit.NewRows([]string{"imageId", "reaction"}, rows...), nil
+		}},
+		{Match: `FROM "TagsOnImageVote"`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, v := range db.TagVotes {
+				if goldenHas(goldenInts(args[0]), v.ImageID) && v.UserID == goldenInt(args[1]) {
+					rows = append(rows, []any{v.ImageID, v.TagID, v.Vote})
+				}
+			}
+			return testkit.NewRows([]string{"imageId", "tagId", "vote"}, rows...), nil
 		}},
 		{Match: `SELECT "imageId", "modelVersionId" FROM "ImageResourceNew"`, Rows: func(args []any) (*testkit.Rows, error) {
 			var rows [][]any

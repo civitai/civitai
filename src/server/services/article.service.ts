@@ -50,7 +50,7 @@ import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
 } from '~/server/selectors/cosmetic.selector';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { connectionImageExists, imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   articleOwnImageIds,
@@ -913,7 +913,7 @@ export const getArticleById = async ({
 
     // Fetch connected images with ingestion status, and what the body needs to guard each by level.
     const imageConnections = await dbRead.imageConnection.findMany({
-      where: { entityId: id, entityType: ImageConnectionType.Article },
+      where: { entityId: id, entityType: ImageConnectionType.Article, ...connectionImageExists },
       include: { image: { select: { ...articleContentImageSelect, minor: true } } },
     });
 
@@ -2646,6 +2646,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
       where: {
         entityId: id,
         entityType: ImageConnectionType.Article,
+        ...connectionImageExists,
       },
       include: {
         image: {
@@ -3014,7 +3015,11 @@ export async function recomputeArticleIngestionInTx(
   //     Pending automatically on the next recompute, no special-case save
   //     logic required.
   const connections = await tx.imageConnection.findMany({
-    where: { entityId: articleId, entityType: ImageConnectionType.Article },
+    where: {
+      entityId: articleId,
+      entityType: ImageConnectionType.Article,
+      ...connectionImageExists,
+    },
     include: { image: { select: { ingestion: true } } },
   });
 
@@ -3409,7 +3414,7 @@ export async function rescanArticle({
   // --- Re-queue already-processed images for rescan ---
   // The primary, not a replica: a block that landed seconds ago must not read as unblocked here.
   const connections = await dbWrite.imageConnection.findMany({
-    where: { entityId: id, entityType: ImageConnectionType.Article },
+    where: { entityId: id, entityType: ImageConnectionType.Article, ...connectionImageExists },
     include: {
       image: {
         select: rescanImageSelect,

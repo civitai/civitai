@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.529",
+  "version": "5.1.531",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -182,13 +182,14 @@
     "@civitai/mod-utils": "workspace:*",
     "@civitai/moderation": "workspace:*",
     "@civitai/next-axiom": "^0.17.0",
-    "@civitai/orchestration-client": "0.2.6",
+    "@civitai/orchestration-client": "0.2.8",
     "@civitai/sdk": "^0.24.0",
     "@civitai/shared": "workspace:*",
     "@civitai/storage": "workspace:*",
     "@clavata/sdk": "^0.2.3",
     "@clickhouse/client": "^1.23.1",
     "@coinbase/cdp-sdk": "^1.13.0",
+    "@contentauth/c2pa-wasm": "0.15.1",
     "@discordjs/rest": "^2.6.0",
     "@dnd-kit/core": "^6.1.0",
     "@dnd-kit/sortable": "^8.0.0",

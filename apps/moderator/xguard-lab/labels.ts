@@ -65,6 +65,9 @@ export type DomainKey = keyof typeof DOMAINS;
  */
 export const DOMAIN_BY_SOURCE: Record<string, DomainKey> = {
   xguardPromptResults: 'prompt',
+  prohibitedRequests: 'prompt',
+  // A blind batch hides which of the two prompt sources each row came from.
+  named: 'prompt',
   model: 'modelListing',
   article: 'article',
 };

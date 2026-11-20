@@ -576,6 +576,7 @@ const featureFlags = createFeatureFlags({
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
+  creatorServicesNext: { availability: [], fliptKey: 'creator-services-next' },
   // The header bar filters the /services feed in place (`?query=`).
   servicesFeedSearch: { availability: ['public'], fliptKey: 'creator-services-feed-search' },
   // Search v3 on pages that filter their own list (PAGE_SEARCH in search-target.ts): the header bar
@@ -897,6 +898,8 @@ const featureFlags = createFeatureFlags({
   remixApps: { availability: ['mod'], fliptKey: 'remix-apps' },
   // Remix Apps v2-C: apps whose code a user wrote (rows with an `author`). Dark until their runner ships.
   remixAppsUserCode: { availability: [], fliptKey: 'remix-apps-user-code' },
+  // Who may submit a user app's code.
+  remixAppBuilder: { availability: [], fliptKey: 'remix-app-builder' },
   // App Blocks — "App builders" get-started pitch, now state A of the
   // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
   // launch: a single marketing/funnel page that explains the platform to
