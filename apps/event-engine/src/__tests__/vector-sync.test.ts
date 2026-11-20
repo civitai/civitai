@@ -448,6 +448,7 @@ describe('embedder', () => {
     const result = await e.embed(['1', '2', '3', '4'].map((id) => ({ id, imageUrl: 'u' })));
     expect([...result.vectors.keys()].sort()).toEqual([1, 2, 4]);
     expect(result.failed).toEqual([3]);
+    expect(result.rejected).toEqual([3]);
   });
 
   test('an auth failure stops the run instead of being bisected', async () => {
@@ -2184,6 +2185,7 @@ describe('one input per step (orchestration #460)', () => {
     const result = await embedderWith(fetchImpl).embed(inputs(3));
     expect([...result.vectors.keys()].sort()).toEqual([1, 3]);
     expect(result.failed).toEqual([2]);
+    expect(result.rejected).toEqual([2]);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
@@ -2643,6 +2645,8 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     expect(posts).toBe(2); // at 10 min one re-submit fits the 15-min window; at 20 min none does
 
     expect(result.failed.sort()).toEqual([1, 2]);
+    // An outage is not the media's fault: the refused-media memo must not hold these back.
+    expect(result.rejected).toEqual([]);
     expect(result.error).toBeUndefined();
   });
 

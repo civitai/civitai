@@ -82,19 +82,27 @@ const builders: Partial<Record<ImageRow['type'], (row: ImageRow, opts: BuildOpti
   }),
   video: (row, { imageLocation, embedVideo }) => {
     if (!embedVideo) return { skip: 'video-disabled' };
-    if (row.duration != null && row.duration > MAX_VIDEO_SECONDS) return { skip: 'video-too-long' };
-    if (row.sizeKB != null && row.sizeKB > MAX_VIDEO_KB) return { skip: 'video-too-large' };
-    if ((row.width ?? 0) > MAX_VIDEO_SIDE || (row.height ?? 0) > MAX_VIDEO_SIDE) {
-      return { skip: 'video-too-large-dimensions' };
-    }
-    return {
-      input: {
-        id: String(row.id),
-        videoUrl: edgeUrl(imageLocation, row.url, 'original=true', '.mp4'),
-      },
-    };
+    const skip = videoLimitSkip(row);
+    if (skip) return { skip };
+    return { input: { id: String(row.id), videoUrl: videoEmbedUrl(row.url, imageLocation) } };
   },
 };
+
+/** The worker refuses clips past these limits outright, so they are never sent. */
+export function videoLimitSkip(
+  row: Pick<ImageRow, 'duration' | 'sizeKB' | 'width' | 'height'>
+): SkipReason | null {
+  if (row.duration != null && row.duration > MAX_VIDEO_SECONDS) return 'video-too-long';
+  if (row.sizeKB != null && row.sizeKB > MAX_VIDEO_KB) return 'video-too-large';
+  if ((row.width ?? 0) > MAX_VIDEO_SIDE || (row.height ?? 0) > MAX_VIDEO_SIDE)
+    return 'video-too-large-dimensions';
+  return null;
+}
+
+/** The original clip, the only form the worker embeds video from. */
+export function videoEmbedUrl(key: string, imageLocation = config.vectorSync.imageLocation) {
+  return edgeUrl(imageLocation, key, 'original=true', '.mp4');
+}
 
 export function buildEmbedInput(
   row: ImageRow,
@@ -185,6 +193,12 @@ export type EmbedResult = {
   vectors: Map<number, number[]>;
   /** Ids whose step failed, or that a rejected workflow could not be split away from. */
   failed: number[];
+  /**
+   * The subset of `failed` the orchestrator refused on its own (a lone input rejected, or a step
+   * failing in a workflow that otherwise ran): the media is at fault, so resending it pays again for
+   * the same failure. Outage failures are not in it.
+   */
+  rejected?: number[];
   stamp: ModelStamp | null;
   /**
    * Set when a workflow failed in a way that is not the inputs' fault (retries exhausted, auth,
@@ -377,7 +391,7 @@ export class Embedder {
     { acceptStamp, onVectors }: Pick<EmbedCall, 'acceptStamp' | 'onVectors'> = {}
   ): Promise<EmbedResult> {
     const call: EmbedCall = {
-      result: { vectors: new Map(), failed: [], stamp: null },
+      result: { vectors: new Map(), failed: [], rejected: [], stamp: null },
       stamps: new Map(),
       acceptStamp,
       onVectors,
@@ -454,6 +468,7 @@ export class Embedder {
           'vector-sync: workflow rejected; inputs failed'
         );
         call.result.failed.push(...batch.map((b) => Number(b.id)));
+        if (batch.length === 1) call.result.rejected?.push(Number(batch[0].id));
         return;
       }
       const mid = Math.ceil(batch.length / 2);
@@ -533,6 +548,7 @@ export class Embedder {
         'vector-sync: steps failed to embed'
       );
       call.result.failed.push(...failed.map(Number));
+      call.result.rejected?.push(...failed.map(Number));
     }
 
     // Every distinct stamp in this workflow is checked before any of its vectors is kept.

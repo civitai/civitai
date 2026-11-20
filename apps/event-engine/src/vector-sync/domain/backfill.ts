@@ -4,9 +4,11 @@ import { logger } from '@/utils/logger';
 import { createGuardedPgPool } from '@/utils/pg-pool-guard';
 import { Embedder } from '../embedder';
 import type { VectorStore } from '../qdrant';
+import { andWhere } from './refresh';
 import {
   emptyStats,
   syncIds,
+  type RejectedMemo,
   type Domain,
   type DomainPayload,
   type DomainStore,
@@ -18,24 +20,39 @@ export type BackfillOptions = {
   to: number;
   page: number;
   limit?: number;
+  /** Qdrant writes per second (embedded, updated, deleted), averaged over the run. */
+  maxRate?: number;
   dryRun?: boolean;
 };
 
 /** Walks the domain's ids below `to` down to `from`, a page at a time. */
 export async function backfillDomain<P extends DomainPayload>(
-  domain: Pick<Domain<P>, 'name' | 'table' | 'getDocs' | 'embedInput'>,
+  domain: Pick<Domain<P>, 'name' | 'table' | 'getDocs' | 'embedInput' | 'where'>,
   opts: BackfillOptions,
   deps: {
     pg: Pick<Pool, 'query'>;
     store: DomainStore<P> & Pick<VectorStore<P>, 'idsInRange'>;
     embedder: Pick<Embedder, 'embed'> | null;
+    rejected?: RejectedMemo;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
   }
 ): Promise<{ stats: SyncStats; next: number; complete: boolean }> {
   const stats = emptyStats();
+  const now = deps.now ?? Date.now;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const started = now();
   let cursor = opts.to;
   while (cursor > opts.from) {
+    if (opts.maxRate) {
+      const writes = stats.embedded + stats.updated + stats.deleted;
+      const wait = started + (writes / opts.maxRate) * 1000 - now();
+      if (wait > 0) await sleep(wait);
+    }
     const { rows } = await deps.pg.query<{ id: number }>(
-      `SELECT id FROM "${domain.table}" WHERE id >= $1 AND id < $2 ORDER BY id DESC LIMIT $3`,
+      `SELECT id FROM "${domain.table}" WHERE id >= $1 AND id < $2${andWhere(
+        domain
+      )} ORDER BY id DESC LIMIT $3`,
       [opts.from, cursor, opts.page]
     );
     // A short page is the last one: it covers the rest of the range.
@@ -88,15 +105,17 @@ export function parseBackfillArgs(args: string[]) {
   const from = int('from', 0)!;
   const page = int('page', 500)!;
   const limit = int('limit');
-  if (to === undefined || to <= from || page < 1 || page > 5000 || limit === 0)
+  const maxRate = int('max-rate');
+  if (to === undefined || to <= from || page < 1 || page > 5000 || limit === 0 || maxRate === 0)
     throw new Error(
-      '--to <id> is required, above --from; --page is 1 to 5000; --limit is at least 1'
+      '--to <id> is required, above --from; --page is 1 to 5000; --limit and --max-rate are at least 1'
     );
   return {
     from,
     to,
     page,
     limit,
+    maxRate,
     domain: flag('domain'),
     dryRun: args.includes('--dry-run'),
     confirm: args.includes('--confirm'),
@@ -106,8 +125,8 @@ export function parseBackfillArgs(args: string[]) {
 
 /**
  * The backfill command for one domain: --to <id> [--from <id>] [--limit N] [--page 500]
- * [--dry-run] [--confirm] [--stamp-catalog]. Each page logs `next`, the --to that resumes after
- * it. --limit N stops after the first page by which N eligible rows were synced, for a first
+ * [--max-rate <writes/s>] [--dry-run] [--confirm] [--stamp-catalog]. Each page logs `next`, the
+ * --to that resumes after it. --limit N stops after the first page by which N eligible rows were synced, for a first
  * slice. --stamp-catalog records catalogBuiltAt and catalogPointsAtBuild on the collection when
  * the walk reaches --from.
  */
@@ -139,12 +158,15 @@ export async function runBackfill<P extends DomainPayload>(
       pg,
       store: exists ? store : { ...bind(store), ...empty },
       embedder: args.dryRun ? null : Embedder.fromConfig('low'),
+      rejected: await domain.rejected?.(),
     });
     logger.info(result, `${log}: done`);
     if (args.dryRun) {
       // One real document, to check its length against the embedder's limit before paying.
       const { rows } = await pg.query<{ id: number }>(
-        `SELECT id FROM "${domain.table}" WHERE id < $1 ORDER BY id DESC LIMIT 50`,
+        `SELECT id FROM "${domain.table}" WHERE id < $1${andWhere(
+          domain
+        )} ORDER BY id DESC LIMIT 50`,
         [args.to]
       );
       const [sample] = (

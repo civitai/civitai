@@ -28,7 +28,19 @@ export type DomainSyncDeps<P extends DomainPayload> = {
   embedder: Pick<Embedder, 'embed'> | null;
   /** What a point's vector is made from; unset, its search_text. */
   embedInput?: EmbedInputFor<P>;
+  rejected?: RejectedMemo;
   dryRun?: boolean;
+};
+
+/**
+ * Documents the embedder refused because of their media (a codec the worker cannot decode), by id
+ * and docHash. A refused document is treated as one with nothing to embed until its docHash changes,
+ * so a refresh walk does not pay for the same failure every pass.
+ */
+export type RejectedMemo = {
+  /** The ids among `docs` refused before with the same docHash. */
+  has(docs: Array<[id: number, docHash: string]>): Promise<Set<number>>;
+  add(docs: Array<[id: number, docHash: string]>): Promise<void>;
 };
 
 /**
@@ -132,13 +144,19 @@ async function syncRound<P extends DomainPayload>(
   const remove = ids.filter((id) => points.has(id) && !docs.has(id));
   const update = new Map<number, P>();
   const inputs: EmbedInput[] = [];
+  const toEmbed = [...docs].filter(([id, payload]) => points.get(id)?.docHash !== payload.docHash);
+  const refused = deps.rejected
+    ? await deps.rejected.has(toEmbed.map(([id, payload]) => [id, payload.docHash]))
+    : new Set<number>();
   for (const [id, payload] of docs) {
     const stored = points.get(id);
     if (stored?.docHash === payload.docHash) {
       update.set(id, payload);
       continue;
     }
-    const input = deps.embedInput
+    const input = refused.has(id)
+      ? null
+      : deps.embedInput
       ? deps.embedInput(id, payload)
       : { id: String(id), text: payload.search_text };
     // Nothing to embed the new document from: the old vector must not outlive what it was made of
@@ -191,6 +209,8 @@ async function syncRound<P extends DomainPayload>(
   });
   await store(result.vectors);
   stats.failed += result.failed.length;
+  if (deps.rejected && result.rejected?.length)
+    await deps.rejected.add(result.rejected.map((id) => [id, docs.get(id)!.docHash]));
 
   // The documents were read before a slow embed. An unpublish, delete or edit committed meanwhile
   // may already have been synced by another worker, which these upserts would undo; re-reading
@@ -252,6 +272,13 @@ export type Domain<P extends DomainPayload> = {
   refresh?: { everyMs: number; batch: number; startupDelayMs?: number };
   /** What its vectors are made from, when not the text of search_text (3D models: the thumbnail). */
   embedInput?: EmbedInputFor<P>;
+  /**
+   * A predicate over the table's own columns (unaliased) for a domain that is a slice of its table
+   * (videos of Image): the refresh walk and the backfill read only matching ids.
+   */
+  where?: string;
+  /** Where refused media is remembered, for a domain whose embeds can fail on the media itself. */
+  rejected?: () => Promise<RejectedMemo>;
   store: () => VectorStore<P>;
   alias: () => string;
 };

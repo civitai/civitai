@@ -234,6 +234,10 @@ export const config = {
     collectionAlias: process.env.VECTOR_COLLECTION_ALIAS ?? 'collections_semantic',
     bountyCollection: process.env.VECTOR_BOUNTY_COLLECTION ?? 'bounties_wemm2b_256_v1',
     bountyAlias: process.env.VECTOR_BOUNTY_ALIAS ?? 'bounties_semantic',
+    videoCollection: process.env.VECTOR_VIDEO_COLLECTION ?? 'videos_wemm2b_256_v1',
+    videoAlias: process.env.VECTOR_VIDEO_ALIAS ?? 'videos_semantic',
+    // Every pass walks Image's whole id range; keep it rare until Image_video_id_idx exists.
+    videoRefreshMinutes: vectorInt('VECTOR_VIDEO_REFRESH_MINUTES', 720, 5),
     // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',
