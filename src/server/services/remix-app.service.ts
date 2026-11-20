@@ -14,6 +14,7 @@ import { getTeamWaiverStanding } from '~/server/services/remix-gallery.service';
 import {
   getEnabledRemixApps,
   getRemixAppRegistry,
+  isRunnableBy,
   visibleRemixApps,
   type RegisteredRemixApp,
 } from '~/server/services/remix-app-registry.service';
@@ -67,13 +68,15 @@ const MAX_REFERENCE_IMAGES = 1;
 /** Every remix app, disabled ones too, so the tray can name a run of one; the menu lists `enabled`. */
 export async function listRemixApps(caller: Parameters<typeof visibleRemixApps>[1]) {
   return visibleRemixApps(await getRemixAppRegistry(), caller).map(
-    ({ slug, name, icon, description, target, enabled, app }) => ({
+    ({ slug, name, icon, description, target, enabled, app, author, review }) => ({
       slug,
       name,
       icon,
       description,
       target,
       enabled,
+      /** The caller's own app, runnable by them alone until a mod approves it. */
+      inReview: !enabled && isRunnableBy({ enabled, author, review }, caller),
       engine: app.engine,
       output: 'image' as const,
     })

@@ -389,7 +389,7 @@ import {
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
 import { REMIX_SYSTEM_ACTOR } from '~/shared/remix-apps/row.schema';
-import type { RemixAppCaller } from '~/server/services/remix-app.service';
+import { listRemixApps, type RemixAppCaller } from '~/server/services/remix-app.service';
 import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
 import {
   auditPromptServer,
@@ -1883,6 +1883,59 @@ describe('a user app', () => {
         await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
         expect(stored.status).toBe('remix_disabled');
         expect(stored.manifest).toMatchObject({ review: 'submitted' });
+      });
+
+      it("an author's run of their own held app skips B: their audit runs as them, and nothing is pulled", async () => {
+        stored = { ...askingRow(), status: 'remix_disabled' };
+        stored.manifest.review = 'submitted';
+        vi.mocked(classifyPromptServer).mockResolvedValue(blocked('nsfw_blocklist') as never);
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject({
+          message: 'Your prompt was flagged: x',
+        });
+        expect(vi.mocked(auditPromptServer)).toHaveBeenCalledWith(
+          expect.objectContaining({ prompt: 'a portrait of Ada', userId: OTHER_AUTHOR })
+        );
+        expect(vi.mocked(classifyPromptServer)).not.toHaveBeenCalled();
+        expect(written()).toHaveLength(0);
+      });
+
+      it("C: an author's refused runs of their own app never move its count", async () => {
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        vi.mocked(classifyPromptServer).mockImplementation((async ({
+          prompt,
+        }: {
+          prompt: string;
+        }) => (prompt === AUTHOR_PART ? pass : blocked('external', 'synthetic-other'))) as never);
+        for (let i = 0; i < 3; i++)
+          await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(written()).toHaveLength(0);
+        expect(stored.status).toBe('remix');
+        // POSITIVE CONTROL: another viewer's refusal does count.
+        await expect(runAs(101)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(
+          (stored.manifest as { combinationBlocks?: string[] }).combinationBlocks
+        ).toHaveLength(1);
+      });
+
+      it('an author runs their own app in review, listed to them alone; never once it is rejected', async () => {
+        stored = { ...askingRow(), status: 'remix_disabled' };
+        stored.manifest.review = 'submitted';
+        await bumpRemixAppRegistry();
+        const listed = async (id: number) =>
+          (await listRemixApps(flagOn({ id }))).find((app) => app.slug === 'u5-mine');
+        expect(await listed(OTHER_AUTHOR)).toMatchObject({ enabled: false, inReview: true });
+        expect(await runAs(OTHER_AUTHOR)).toMatchObject({ status: 'running' });
+        expect(submits()).toHaveLength(1);
+        // Another viewer neither sees it nor starts it.
+        expect(await listed(101)).toBeUndefined();
+        await expect(runAs(101)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+        stored = { ...stored, manifest: { ...stored.manifest, review: 'rejected' } };
+        await bumpRemixAppRegistry();
+        expect(await listed(OTHER_AUTHOR)).toMatchObject({ inReview: false });
+        await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+        expect(submits()).toHaveLength(1);
       });
 
       it('C: an approval starts the count again', async () => {

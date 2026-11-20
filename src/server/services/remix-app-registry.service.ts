@@ -104,6 +104,14 @@ const unavailable = async (): Promise<never> => {
  * The apps `caller` may see: user apps only behind their flag, and until approved only to their
  * author and moderators, since nobody has reviewed their listing text yet.
  */
+/** Runnable by `caller`: enabled, or their own app while it is in review, never once rejected. */
+export const isRunnableBy = (
+  entry: Pick<RegisteredRemixApp, 'enabled' | 'author' | 'review'>,
+  caller: { user?: { id: number } }
+) =>
+  entry.enabled ||
+  (!!entry.author && entry.author.userId === caller.user?.id && entry.review !== 'rejected');
+
 export function visibleRemixApps<T extends Pick<RegisteredRemixApp, 'author' | 'review'>>(
   apps: T[],
   caller: {
@@ -383,7 +391,9 @@ export async function bumpRemixAppRegistry() {
 
 /** The apps the menu lists and the quote prices. */
 export async function getEnabledRemixApps(caller: Parameters<typeof visibleRemixApps>[1]) {
-  return visibleRemixApps(await getRemixAppRegistry(), caller).filter((entry) => entry.enabled);
+  return visibleRemixApps(await getRemixAppRegistry(), caller).filter((entry) =>
+    isRunnableBy(entry, caller)
+  );
 }
 
 /**
@@ -398,7 +408,7 @@ export async function getRegisteredRemixApp(
   const entry = visibleRemixApps(await getRemixAppRegistry(), caller).find(
     (app) => app.slug === slug
   );
-  if (!entry || (!entry.enabled && !allowDisabled))
+  if (!entry || (!allowDisabled && !isRunnableBy(entry, caller)))
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
   return entry;
 }

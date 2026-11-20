@@ -510,7 +510,10 @@ async function advance({
   assertWithinQuote(priced.cost, quote);
 
   const { request } = outcome.effect;
-  if (author && authorPrompt && request.kind === 'image')
+  // An author's own run is audited as any other, with the author as the viewer: their words count
+  // against them, and their refusals never move their own app's count.
+  const othersApp = !!author && author.userId !== caller.user.id;
+  if (othersApp && authorPrompt && request.kind === 'image')
     await assertAuthorPartPasses(app.slug, await authorPrompt(source, log), caller);
 
   const tags = remixRunTags({ slug: app.slug, runId, segment: index, runtime: true });
@@ -526,7 +529,7 @@ async function advance({
     sourceProvenance: mint ? [mint] : undefined,
     remixRun,
   }).catch(async (error: unknown) => {
-    if (author && request.kind === 'image' && isPromptRefusal(error))
+    if (othersApp && request.kind === 'image' && isPromptRefusal(error))
       await recordCombinationBlock(app.slug, request.prompt, caller);
     throw error;
   });
