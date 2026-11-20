@@ -384,7 +384,7 @@ async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | und
   // THROWS without DATABASE_URL. A static import would put that in the graph of everything that touches
   // sessions, including unit tests that have no database.
   const { isFirstPartyOrigin } = await import('../oauth/first-party');
-  return (await isFirstPartyOrigin(origin)) ? domain : undefined;
+  return (await isFirstPartyOrigin(origin, 'post_login')) ? domain : undefined;
 }
 
 /** The valid session already on this request's civ-token cookie, or undefined. Best-effort. */

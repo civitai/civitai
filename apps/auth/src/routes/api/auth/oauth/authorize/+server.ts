@@ -112,7 +112,7 @@ async function resolveVerifiedClient(params: Record<string, string>): Promise<Ve
   // ORIGIN (its host checked against the TrustedSpokeDomain registry — exact / subdomain-wildcard / dev
   // loopback). Shared with getAuthorizationCode.
   const redirectUri = params.redirect_uri;
-  const client = await resolveClientLite(clientId, redirectUri);
+  const client = await resolveClientLite(clientId, redirectUri, 'authorize');
   if (!client) return { error: oauthError(400, 'invalid_client', 'Unknown client_id') };
 
   if (!redirectUri || !redirectUriMatches(client.redirectUris, redirectUri)) {
