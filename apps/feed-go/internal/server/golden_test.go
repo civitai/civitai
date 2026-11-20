@@ -48,7 +48,7 @@ const (
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
 	goldenMinInfinite = 58
-	goldenMinModels   = 31
+	goldenMinModels   = 34
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
