@@ -6,6 +6,7 @@ import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
   allBrowsingLevelsFlag,
+  onlySelectableLevels,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -69,8 +70,10 @@ export async function getServerImageQueryFilters(
 }
 
 /** `getServerBrowsingLevel` for a request whose feature flags are already resolved. */
-export const getRequestBrowsingLevel = ({ features, user }: Pick<Context, 'features' | 'user'>) =>
-  getServerBrowsingLevel({ canViewNsfw: !!features.canViewNsfw, user });
+export const getRequestBrowsingLevel = ({ features, user }: Pick<Context, 'features' | 'user'>) => {
+  const level = getServerBrowsingLevel({ canViewNsfw: !!features.canViewNsfw, user });
+  return user?.isModerator ? level : onlySelectableLevels(level);
+};
 
 /**
  * What the viewer may see, with the SFW domain applied.
@@ -153,6 +156,18 @@ export const clampToDomainCap = (requested: number | undefined, cap: number) =>
   (requested ?? 0) & cap || cap;
 
 export type RequestBrowsingLevels = { browsingLevel?: number; preCapBrowsingLevel?: number };
+
+/**
+ * Drops the Blocked bit from a request's levels, in place, unless a moderator asked: only their
+ * browsing picker offers it.
+ */
+export function stripBlockedForNonModerator(input: RequestBrowsingLevels, isModerator?: boolean) {
+  if (isModerator) return;
+  if (input.browsingLevel !== undefined)
+    input.browsingLevel = onlySelectableLevels(input.browsingLevel);
+  if (input.preCapBrowsingLevel !== undefined)
+    input.preCapBrowsingLevel = onlySelectableLevels(input.preCapBrowsingLevel);
+}
 
 /**
  * Clamps a request's levels to the domain cap, in place. `preCapBrowsingLevel`
