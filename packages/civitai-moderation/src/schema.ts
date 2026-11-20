@@ -373,6 +373,8 @@ export type CaseDefinitionsInput = z.infer<typeof caseDefinitionsInput>;
 
 export const caseIntakeInput = z.object({
   processKey,
+  /** Made by the form once per page load, so a resubmit after a timeout returns the same case. */
+  submissionId: z.string().uuid(),
   values: fieldValues,
   turnstileToken: z.string().min(1).max(4_096),
   /** Set by the main app only for a signed-in submitter; the spoke never trusts it for access. */

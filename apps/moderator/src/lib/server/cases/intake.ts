@@ -59,6 +59,26 @@ export function receiptDeadline(def: ProcessDefinition, receivedAt: Date) {
   return { due, warn };
 }
 
+/** The case an earlier call with this submission id filed. Its receipt was that call's to send. */
+async function existingSubmission(db: Pick<CasesDb, 'selectFrom'>, submissionId: string) {
+  const row = await db
+    .selectFrom('case_record as c')
+    .innerJoin('case_party as p', 'p.case_id', 'c.id')
+    .select(['c.id', 'c.public_ref', 'p.id as party_id'])
+    .where('c.submission_id', '=', submissionId)
+    .orderBy('p.id')
+    .executeTakeFirst();
+  return row
+    ? {
+        caseId: Number(row.id),
+        publicRef: row.public_ref,
+        partyId: Number(row.party_id),
+        address: null,
+        duplicate: true,
+      }
+    : null;
+}
+
 /**
  * Files one public request as a case: the record, a target per URL, the submitting party and a
  * `received` event, in one transaction. The values are checked against the definition first; nothing
@@ -70,6 +90,7 @@ export async function fileIntakeCase(
     definition: ProcessDefinition;
     versionId: number;
     values: IntakeValues;
+    submissionId?: string;
     submitterUserId?: number;
     isTest?: boolean;
     receivedAt?: Date;
@@ -97,11 +118,17 @@ export async function fileIntakeCase(
   const { due, warn } = receiptDeadline(def, receivedAt);
   const targets = targetsFromUrls(submittedUrls(def, values));
 
+  if (input.submissionId) {
+    const seen = await existingSubmission(db, input.submissionId);
+    if (seen) return seen;
+  }
+
   return db.transaction().execute(async (tx) => {
     const record = await tx
       .insertInto('case_record')
       .values({
         public_ref: newPublicRef(receivedAt),
+        submission_id: input.submissionId ?? null,
         process_key: def.key,
         definition_version_id: input.versionId,
         state: def.initialState,
@@ -115,8 +142,11 @@ export async function fileIntakeCase(
         statements: JSON.stringify(statements),
         details: JSON.stringify(details),
       })
+      .onConflict((oc) => oc.column('submission_id').doNothing())
       .returning(['id', 'public_ref'])
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
+    // The same submission won a race with this one: answer with that case, writing nothing.
+    if (!record) return (await existingSubmission(tx, input.submissionId!))!;
     for (const t of targets)
       await tx
         .insertInto('case_target')
@@ -150,6 +180,7 @@ export async function fileIntakeCase(
       publicRef: record.public_ref,
       partyId: Number(party.id),
       address,
+      duplicate: false,
     };
   });
 }

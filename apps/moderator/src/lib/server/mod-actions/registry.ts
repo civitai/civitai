@@ -3,6 +3,8 @@ import { env } from '$env/dynamic/private';
 import {
   MOD_ACTION,
   abuseReportInput,
+  caseDefinitionsInput,
+  caseIntakeInput,
   feedbackTriageInput,
   imageModerateInput,
   relabelBuildBatchInput,
@@ -18,11 +20,15 @@ import { CSAM_BLOCKLIST_RETRY, CsamBlocklistWriteError } from '../image-moderati
 import { recordAbuseRun } from '../abuse-detection.service';
 import { logToAxiom } from '../axiom';
 import { getClickhouse } from '../clickhouse';
-import { dbRead } from '../db';
+import { caseIntake, defaultCaseIntakeDeps } from '../cases/case-intake-action';
+import { enabledDefinitions, publicDefinition } from '../cases/definitions';
+import { civitaiAppUrl } from '../civitai-url';
+import { dbRead, dbWrite } from '../db';
 import { triageFeedback } from '../feedback.service';
 import { getModeratorDb } from '../moderator-db';
 import { relabelBuildBatchAction } from '../relabel-batch-build';
 import { heldRemovalMessage, type HeldRemoval } from '../removal-hold';
+import { SYSTEM_USER_ID } from '../users.service';
 
 // The cross-app moderator-action registry. Each entry maps an action the main app invokes over
 // `/api/mod/[action]` to a spoke handler. The input SCHEMA is the shared `@civitai/moderation` contract
@@ -177,9 +183,37 @@ const feedbackTriage: ModAction<z.infer<typeof feedbackTriageInput>> = {
     }),
 };
 
+/** The open takedown forms, as the public pages draw them: fields only, nothing moderator-side. */
+const caseDefinitions: ModAction<z.infer<typeof caseDefinitionsInput>> = {
+  schema: caseDefinitionsInput,
+  handler: async () => ({
+    definitions: (await enabledDefinitions()).map((d) => publicDefinition(d.definition)),
+  }),
+};
+
+/**
+ * A public takedown request from the main app's form. No acting user: the caller holds only the
+ * scoped intake credential, and `submitterUserId` is recorded, never trusted for access.
+ */
+const caseIntakeAction: ModAction<z.infer<typeof caseIntakeInput>> = {
+  schema: caseIntakeInput,
+  handler: (input) =>
+    caseIntake(
+      input,
+      defaultCaseIntakeDeps({
+        mainDb: dbWrite,
+        appUrl: civitaiAppUrl(),
+        systemUserId: SYSTEM_USER_ID,
+        log: (data) => void logToAxiom(data),
+      })
+    ),
+};
+
 export const modActions: Record<string, ModAction> = {
   [MOD_ACTION.imageModerate]: imageModerate,
   [MOD_ACTION.abuseReport]: abuseReport,
   [MOD_ACTION.relabelBuildBatch]: relabelBuildBatch,
   [MOD_ACTION.feedbackTriage]: feedbackTriage,
+  [MOD_ACTION.caseDefinitions]: caseDefinitions,
+  [MOD_ACTION.caseIntake]: caseIntakeAction,
 };
