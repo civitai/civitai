@@ -139,7 +139,6 @@ describe('tipalti webhook endpoint: paymentGroupApproved for a cash withdrawal',
     ]);
   });
 
-  // Tipalti has already approved; a failed hold read must be visible but not drop the approval.
   it('records the approval and logs when the hold cannot be read', async () => {
     dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockRejectedValue(
       new Error('connection reset')
@@ -158,6 +157,29 @@ describe('tipalti webhook endpoint: paymentGroupApproved for a cash withdrawal',
         withdrawalId: 'abc123-full',
         refCode,
         message: 'connection reset',
+      })
+    );
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-program-payout-approved-while-held' })
+    );
+  });
+
+  it('records the approval and alerts when the creator is held', async () => {
+    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockResolvedValue([
+      { userId: 7, status: 'open', hold: true, period: '2026-10' },
+    ]);
+
+    const res = await approve();
+
+    expect(res._status()).toBe(200);
+    expect(updateCashWithdrawal).toHaveBeenCalledWith(
+      expect.objectContaining({ withdrawalId: 'abc123-full', status: 'Cleared' })
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'creator-program-payout-approved-while-held',
+        userId: 7,
+        withdrawalId: 'abc123-full',
       })
     );
   });
