@@ -41,8 +41,8 @@ export type ScannedRowsPath = {
  *   The copy refuses while the flag is off for this app, so a copy that succeeds shows the flag
  *   is on, and the app gets the scanned row. A copy that fails leaves the flag unknown, so the app
  *   gets the blob: the gate stays the authority, and refuses it at submit if the flag is on.
- *   🔴 Why the query can fail while the flag is on: during a rollout a pod without the query
- *   answers it with an error, and reading that as OFF handed back a blob the new gate refused.
+ *   🔴 Why: the query can fail while the flag is on (a transient error, or a rollout whose pods
+ *   disagree about it), and reading that as OFF handed back a blob the gate then refused.
  *
  * `isCurrent`: whether the caller still wants this pick. Read after the path query, so a pick the
  * viewer abandoned meanwhile (re-picked, closed) resolves `null` without asking for a copy, and
