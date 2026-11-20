@@ -5,6 +5,7 @@ import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { cachedCounter } from '~/server/utils/cache-helpers';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
@@ -207,7 +208,7 @@ export const researchRouter = router({
       SELECT i.id, i.url, i."nsfwLevel"
       FROM "Image" i
       JOIN "Post" p ON i."postId" = p.id
-      WHERE (i."nsfwLevel" & ${input.level}) != 0
+      WHERE (i."nsfwLevel" & ${input.level & getRequestBrowsingLevel(ctx)}) != 0
         AND i.type = 'image'
         AND p."publishedAt" IS NOT NULL
         AND ${imageNotRestrictedSql()}
