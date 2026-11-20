@@ -20,8 +20,6 @@
 }
 
 // Article images. max-width, not width: images never upscale past their natural size.
-// An unsized image keeps the pre-sizing layout (inline, at the start of the line, no height cap);
-// only a size the author picked centres it.
 .sizedImages,
 .htmlRenderer {
   img {

@@ -109,10 +109,9 @@ describe.each([
     expect(box(unsized).width).toBe(200);
   });
 
-  // Decided 11/20: an image the author has not sized renders as it did before sizing shipped
-  // (11/05): at its natural size up to the column, from the start of the line, never capped to the
-  // screen height. The 80vh cap and centring shrank existing stories; do not bring them back for
-  // unsized images.
+  // Product decision: an unsized image keeps the pre-sizing layout (natural size up to the column,
+  // start of the line, no screen-height cap). The 80vh cap and centring shrank existing stories;
+  // do not bring them back for unsized images.
   it('shows an unsized tall portrait at its natural size, from the start of the column', async () => {
     const [portrait] = await renderArticle([media(await imageUrl(832, 1216))]);
     const host = portrait.closest('div[style]') as HTMLElement;

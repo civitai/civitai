@@ -5,7 +5,6 @@
   width: fit-content;
   max-width: 100%;
 
-  // Only a size the author picked centres the image; unsized stays at the start of the line.
   &[data-width] {
     margin-inline: auto;
   }
