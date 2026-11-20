@@ -52,6 +52,7 @@ function firstCharBox(text: string) {
   range.setEnd(node, 1);
   return range.getBoundingClientRect();
 }
+type Box = ReturnType<typeof box>;
 const columnBox = () => box(document.querySelector('[data-column]') as HTMLElement);
 
 // An article page guards every body image; a PG image is shown, inside the guard's box.
@@ -156,16 +157,16 @@ describe.each([
   });
 
   it.each([
-    ['left', (img: DOMRect, col: DOMRect) => img.left - col.left],
-    ['right', (img: DOMRect, col: DOMRect) => col.right - img.right],
+    ['left', (img: Box, col: Box) => img.left - col.left],
+    ['right', (img: Box, col: Box) => col.right - img.right],
   ])('aligns a sized image %s, flush with that edge of the column', async (align, gap) => {
     const [img] = await renderArticle([media(await imageUrl(1600, 900), '40', align)]);
     expect(gap(box(img), columnBox())).toBeCloseTo(0, 0);
   });
 
   it.each([
-    ['float-left', (img: DOMRect, char: DOMRect) => char.left >= img.right],
-    ['float-right', (img: DOMRect, char: DOMRect) => char.right <= img.left],
+    ['float-left', (img: Box, char: Box) => char.left >= img.right],
+    ['float-right', (img: Box, char: Box) => char.right <= img.left],
   ])('%s wraps the following text beside the image', async (align, beside) => {
     const [img] = await renderArticle(
       [media(await imageUrl(1600, 900), '40', align), paragraph(WORDS)],
