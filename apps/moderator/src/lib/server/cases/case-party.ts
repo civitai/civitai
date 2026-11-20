@@ -145,10 +145,7 @@ export async function casePartyAction(input: CasePartyActionInput, deps: CasePar
       .executeTakeFirst();
     if (seen) return { recorded: action.records, state: current.state };
     if (!actionOpenIn(def, action, current.state))
-      throw Object.assign(new Error('This can no longer be done on this case.'), {
-        status: 409,
-        public: true,
-      });
+      throw Object.assign(new Error(closedStepMessage(def)), { status: 409, public: true });
 
     const existing = new Set(
       (
@@ -192,6 +189,10 @@ export async function casePartyAction(input: CasePartyActionInput, deps: CasePar
     return { recorded: action.records, state: action.moveTo ?? current.state };
   });
 }
+
+/** Legal's wording (2026-11-20): the mailbox stays a full path for anything the page no longer takes. */
+const closedStepMessage = (def: ProcessDefinition) =>
+  `This step is closed. To send us more about this case, email ${def.mailbox} with your case number.`;
 
 /** An action is open in its `from` states, or, with none listed, in any state that is not terminal. */
 function actionOpenIn(

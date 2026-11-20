@@ -193,7 +193,11 @@ describe('casePartyAction', () => {
   it('refuses an action outside the states it is open in, and stops offering it', async () => {
     const c = await fileCase();
     await act(c, 'report-suit');
-    await expect(act(c, 'report-suit')).rejects.toMatchObject({ status: 409 });
+    await expect(act(c, 'report-suit')).rejects.toMatchObject({
+      status: 409,
+      message:
+        'This step is closed. To send us more about this case, email dmca@civitai.com with your case number.',
+    });
     const view = await casePartyView(access(c), deps());
     expect(view.actions.map((a) => a.id)).toEqual(['add-info']);
   });
