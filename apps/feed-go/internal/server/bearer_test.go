@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -172,4 +173,51 @@ func TestRESTRoutesKeepAPICredentialsAFallback(t *testing.T) {
 	if got := reads.Load(); got != 0 {
 		t.Fatalf("principal-cache reads = %d, want 0", got)
 	}
+}
+
+// The shadow comparison and the Go-first probe run the real compute path (prepare → Resolve) under the
+// context they mark (auth.WithRedactedCredentials). A sample carrying `Bearer <a key that resolves>`
+// must stay the bearer-token fallback with no principal-cache read: without the mark it would resolve
+// (read 1) and go on to compute.
+func TestShadowAndProbeSamplesNeverResolveAPIKeys(t *testing.T) {
+	headers := map[string]string{"authorization": "Bearer k-full-user", "host": "site.example"}
+
+	t.Run("control: the same request off the sample paths resolves", func(t *testing.T) {
+		resolver, reads := bearerResolver(t)
+		s := serveServer(prometheus.NewRegistry(), nil, nil)
+		s.Resolver = resolver
+		r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/trpc/"+Procedure+"?input="+url.QueryEscape(computeInput), nil)
+		r.Header.Set("Authorization", headers["authorization"])
+		req, signedOut, err := s.prepare(context.Background(), r)
+		if err != nil || signedOut || req.Viewer == nil || req.Viewer.ID != 42 || reads.Load() != 1 {
+			t.Fatalf("viewer %+v signedOut %v err %v reads %d, want 42, false, nil, 1", req.Viewer, signedOut, err, reads.Load())
+		}
+	})
+
+	t.Run("shadow compare", func(t *testing.T) {
+		resolver, reads := bearerResolver(t)
+		reg := prometheus.NewRegistry()
+		s := serveServer(reg, nil, nil) // computeFn nil: the real s.compute
+		s.Resolver = resolver
+		s.RequestBudget = time.Second
+		s.compare(context.Background(), EndpointAsPosts, ShadowRequest{Input: computeInput, Headers: headers})
+		v, _ := metricValue(t, reg, "feed_go_fallback_total", map[string]string{EndpointLabel: EndpointAsPosts, "mode": "shadow", "reason": "bearer-token"})
+		if v != 1 || reads.Load() != 0 {
+			t.Fatalf("shadow bearer-token fallbacks = %v, principal-cache reads = %d; want 1, 0", v, reads.Load())
+		}
+	})
+
+	t.Run("go-first probe", func(t *testing.T) {
+		resolver, reads := bearerResolver(t)
+		reg := prometheus.NewRegistry()
+		s := serveServer(reg, nil, nil)
+		s.Resolver = resolver
+		s.RequestBudget = time.Second
+		s.Deps = &feed.Deps{Hydrator: &hydrate.Sources{}} // a presence checker; never reached
+		s.probe(context.Background(), probes[Procedure], ProbeRequest{Input: computeInput, Headers: headers})
+		v, _ := metricValue(t, reg, "feed_go_fallback_total", map[string]string{EndpointLabel: EndpointAsPosts, "mode": "probe", "reason": "bearer-token"})
+		if v != 1 || reads.Load() != 0 {
+			t.Fatalf("probe bearer-token fallbacks = %v, principal-cache reads = %d; want 1, 0", v, reads.Load())
+		}
+	})
 }
