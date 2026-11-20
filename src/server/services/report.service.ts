@@ -51,7 +51,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { getBaseUrl } from '~/server/utils/url-helpers';
+import { getBaseUrl, getColorBaseUrl } from '~/server/utils/url-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
@@ -2048,7 +2048,10 @@ export async function settleResolvedAppeals(
   for (const appeal of appeals) {
     if (reopenedIds.has(appeal.id)) continue;
     const color = linkColor(appeal);
-    const url = color && appealEntityLink(appeal.entityType, appeal.entityId, color).url;
+    const url =
+      color && getColorBaseUrl(color)
+        ? appealEntityLink(appeal.entityType, appeal.entityId, color).url
+        : undefined;
     await createNotification({
       userId: appeal.userId,
       type: 'entity-appeal-resolved',
