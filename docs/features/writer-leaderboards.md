@@ -102,7 +102,7 @@ results.
 
 | File                                                                                            | What it holds                                                 |
 | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `packages/civitai-db-schema/prisma/migrations/20261120180000_writer_leaderboards/migration.sql` | The four `Leaderboard` rows, their queries and the rollback   |
+| `packages/civitai-db-schema/prisma/migrations/20271120180000_writer_leaderboards/migration.sql` | The four `Leaderboard` rows, their queries and the rollback   |
 | `src/server/jobs/prepare-leaderboard.ts`                                                        | Runs the queries                                              |
 | `src/server/jobs/leaderboard-board-query.ts`                                                    | Replaces `{{metricExcludedUserIds}}`                          |
 | `src/components/Leaderboard/LeaderboardMetrics.tsx`                                             | Icons for the metrics the new boards report                   |
