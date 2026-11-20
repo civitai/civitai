@@ -12,6 +12,7 @@ const retryPendingConversions = vi.hoisted(() => vi.fn());
 const runLabelPass = vi.hoisted(() => vi.fn());
 const retryPendingPurchases = vi.hoisted(() => vi.fn());
 const closeStrandedYesNo = vi.hoisted(() => vi.fn());
+const runTagReview = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 const logToAxiom = vi.hoisted(() => vi.fn());
 const buzzConfigured = vi.hoisted(() => vi.fn());
@@ -27,6 +28,7 @@ vi.mock('$lib/server/conversion/label-pass', () => ({ runLabelPass }));
 vi.mock('$lib/server/shop/purchase', () => ({ retryPendingPurchases }));
 vi.mock('$lib/server/shop/main-app', () => ({ getMainAppPort: () => ({}) }));
 vi.mock('$lib/server/yesno/sweep', () => ({ closeStrandedYesNo }));
+vi.mock('$lib/server/yesno/tag-review', () => ({ runTagReview }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ maxAgeDays: 14 }) }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { mirrorXp: undefined } }));
@@ -83,6 +85,8 @@ beforeEach(() => {
   retryPendingPurchases.mockResolvedValue({ retried: 0, granted: 0, failed: 0 });
   closeStrandedYesNo.mockReset();
   closeStrandedYesNo.mockResolvedValue({ unplayable: 0, stale: 0, failed: 0 });
+  runTagReview.mockReset();
+  runTagReview.mockResolvedValue({ created: 0, ruled: 0, ended: 0, failed: 0 });
   runLabelPass.mockReset();
   runLabelPass.mockResolvedValue({ done: true, labelsWritten: 0, labelFailures: 0 });
   tickItemFailures.mockReset();
@@ -110,6 +114,8 @@ describe('POST /api/jobs/tick', () => {
       settledVotes: 0,
       hiddenChecksGraded: 0,
       yesNoClosed: 0,
+      tagReviewCreated: 0,
+      tagReviewRuled: 0,
       expiredSmites: 0,
       resets: 0,
       conversionsRetried: 0,
