@@ -7422,6 +7422,7 @@ model ModelVersionGiftLink {
 
   @@index([modelVersionId, createdAt(sort: Desc)])
   @@index([batchId])
+  @@index([createdById])
 }
 
 model ModelVersionGiftRedemption {

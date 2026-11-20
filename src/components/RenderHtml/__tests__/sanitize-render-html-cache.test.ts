@@ -17,6 +17,7 @@ import {
 
 const BASE: RenderHtmlSanitizeOptions = {
   maskProfanity: false,
+  profanityBlocklist: null,
   allowStickers: false,
   allowCustomStyles: true,
   colorScheme: 'dark',
@@ -29,6 +30,7 @@ const BASE: RenderHtmlSanitizeOptions = {
 /** One alternative value per option, each different from BASE. */
 const FLIPPED: { [K in keyof RenderHtmlSanitizeOptions]: RenderHtmlSanitizeOptions[K] } = {
   maskProfanity: true,
+  profanityBlocklist: { version: '1:42', words: ['zorblat'] },
   allowStickers: true,
   allowCustomStyles: false,
   colorScheme: 'light',
@@ -81,6 +83,9 @@ describe('getSanitizedRenderHtml memo', () => {
       optionsKey({ ...BASE, ownHosts: ['a', 'b'] })
     );
     expect(optionsKey({ ...BASE, host: '' })).not.toBe(optionsKey({ ...BASE, host: null }));
+    expect(
+      optionsKey({ ...BASE, profanityBlocklist: { version: '1:1', words: ['zorblat'] } })
+    ).not.toBe(optionsKey({ ...BASE, profanityBlocklist: { version: '1:2', words: ['zorblat'] } }));
   });
 
   it('is bounded by entry count, evicting the oldest first', () => {

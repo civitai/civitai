@@ -63,7 +63,11 @@ CREATE TABLE "Post" (id INTEGER PRIMARY KEY, metadata JSONB, "modelVersionId" IN
 CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, meta JSONB, "modelId" INTEGER);
 CREATE TABLE "Model" (id INTEGER PRIMARY KEY, meta JSONB);
 CREATE TABLE "User" (id INTEGER PRIMARY KEY, meta JSONB);
-CREATE TABLE "ImageCdnAccess" (url TEXT PRIMARY KEY, state TEXT NOT NULL);
+-- An outright retraction by default; an upgraded deny sets "deniedAt" earlier.
+CREATE TABLE "ImageCdnAccess" (
+  url TEXT PRIMARY KEY, state TEXT NOT NULL,
+  "deniedAt" TIMESTAMPTZ NOT NULL DEFAULT now(), "retractedAt" TIMESTAMPTZ DEFAULT now()
+);
 CREATE TABLE "ImageCdnModeratorDelete" (
   "imageId" INTEGER PRIMARY KEY, url TEXT NOT NULL, "userId" INTEGER, "csamReview" BOOLEAN NOT NULL DEFAULT true
 );
@@ -90,6 +94,8 @@ beforeAll(async () => {
   await db.exec(`
     INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview", "blockedFor", minor) VALUES
       (1, 'key-1', 301, 'Blocked', NULL, 'moderated', false),
+      (31, 'key-31', 331, 'Blocked', NULL, 'moderated', false),
+      (32, 'key-32', 332, 'Blocked', NULL, 'moderated', false),
       (2, 'key-2', 302, 'Blocked', NULL, 'moderated', true),
       (3, 'key-3', 303, 'Blocked', NULL, NULL, false),
       (4, 'key-4', 304, 'Blocked', 'csam', 'moderated', false),
@@ -100,6 +106,10 @@ beforeAll(async () => {
     -- The CDN-refusal leg. Each differs from 7 (scanned, url retracted, the url's only row) in one fact.
     INSERT INTO "Image" (id, url, "userId", ingestion, "postId", minor) VALUES
       (7, 'key-7', 307, 'Scanned', NULL, false),
+      (28, 'key-28', 328, 'Scanned', NULL, false),
+      (29, 'key-29', 329, 'Scanned', NULL, false),
+      (30, 'key-30', 330, 'Scanned', NULL, false),
+      (33, 'key-33', 333, 'Scanned', NULL, false),
       (8, 'key-8', 308, 'Scanned', NULL, false),
       (9, 'key-9', 309, 'Scanned', NULL, false),
       (10, 'key-10', 310, 'Pending', NULL, false),
@@ -127,6 +137,13 @@ beforeAll(async () => {
       ('key-18', 'Retracted'), ('key-19', 'Retracted'), ('key-20', 'Retracted'),
       ('key-21', 'Retracted'), ('key-23', 'Retracted'), ('key-24', 'Retracted'),
       ('key-25', 'Retracted'), ('key-26', 'Retracted'), ('key-27', 'Retracted');
+    INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES
+      ('key-28', 'Retracted', now() - interval '5 minutes', now()), ('key-29', 'Retracted', now(), NULL),
+      ('key-30', 'Retracted', now() - interval '30 seconds', now()),
+      ('key-31', 'Retracted', now() - interval '30 seconds', now()),
+      ('key-32', 'Retracted', now(), now()),
+      -- Written before both stamps came from one expression: the retraction from the app's clock.
+      ('key-33', 'Retracted', now(), now() - interval '5 milliseconds');
     INSERT INTO "Model" (id, meta) VALUES
       (15, '{"unpublishedReason": "mature-underage"}'), (99, '{}'),
       (26, '{"unpublishedReason": "photo-real-underage"}');
@@ -165,6 +182,11 @@ const tierOf = async (id: number) => {
 };
 
 describe('retracted media eligibility', () => {
+  it('keeps a blocked image on a url retracted by an upgraded deny to cleared moderators', async () => {
+    expect(await tierOf(31)).toBe('cleared');
+    expect(await tierOf(32)).toBe('anyMod');
+  });
+
   it('keeps an image the scanner marks, or cannot read, to moderators cleared for CSAM review', async () => {
     for (const verdict of ['hit', null] as const) {
       scanner.verdict = verdict;
@@ -211,6 +233,14 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
 
   it('serves a scanned image whose url the CDN retracted, the url being its alone', async () => {
     expect(await tierOf(7)).toBe('anyMod');
+  });
+
+  it('keeps a url retracted by an upgraded deny, or with no retraction time, to cleared moderators', async () => {
+    expect(await tierOf(28)).toBe('cleared');
+    expect(await tierOf(29)).toBe('cleared');
+    // An upgrade can land seconds after its deny: only stamps from one write read as outright.
+    expect(await tierOf(30)).toBe('cleared');
+    expect(await tierOf(33)).toBe('cleared');
   });
 
   it('is off unless the switch is exactly true', async () => {
