@@ -6,6 +6,16 @@
 export const MINOR_SEXUALIZATION_VIOLATION = 'Child abuse and exploitation';
 
 /**
+ * The TOS violations whose open report puts an image or post in a child-safety case, which holds
+ * its owner's delete (`childSafetyImageCase` in @civitai/db-queries/content-deletion). Entries of
+ * `TOS_VIOLATIONS`, held together by the same test.
+ */
+export const CHILD_SAFETY_VIOLATIONS = [
+  MINOR_SEXUALIZATION_VIOLATION,
+  'Photorealistic depiction of a minor',
+] as const;
+
+/**
  * Whether a report on a storyline text goes to the CSAM text-hold queue rather than an ordinary
  * refusal: a moderator's CSAM report, or a minor-sexualization violation from anyone.
  */

@@ -74,7 +74,7 @@ import { drainStdio, runScriptAndExit } from './lib/run-as-script';
  * it parks the ids in Postgres for `search-index-queue-drain` and returns
  * `false` — and `modelsSearchIndex.queueUpdate` does not propagate that
  * boolean (stated at
- * src/pages/api/admin/temp/queue-paid-models-reindex.ts). So the counter is
+ * src/server/api-routes/admin/temp/queue-paid-models-reindex.ts). So the counter is
  * identical on a healthy run and on a run whose every enqueue was parked.
  *
  * So a real run that announces anything READS THE QUEUE BACK ONCE, after the

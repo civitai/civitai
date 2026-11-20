@@ -25,6 +25,7 @@ import {
   addBlockedImage,
   bulkRemoveBlockedImages,
   deleteImages,
+  imagesPendingDeletion,
   getAllImagesIndex,
   getImagesForModelVersionCache,
   getPostDetailByImageId,
@@ -76,6 +77,7 @@ import {
 } from '~/server/services/image-removal-hold.service';
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
+import { queueDocumentsForBlockedImages } from '~/server/services/image-models-reindex.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
@@ -197,6 +199,9 @@ export const deleteImageHandler = async ({
       .map((tag) => ({ tagName: tag.tagName }));
 
     const [image] = await deleteImages([input.id], { actor: ctx.user });
+    // Only a case the owner can already see is acknowledged; any other kept delete answers like a delete.
+    if (!image && (await imagesPendingDeletion([input.id])).has(input.id))
+      return { deleteAfterReview: true as const };
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
@@ -348,13 +353,18 @@ export const setTosViolationHandler = async ({
     // After the steps that hide the image: a blocklist write that throws must not skip them.
     const pHash = written.pHashes.get(id);
     if (!pHash && written.removedForCsam.has(id)) logCsamBlocklistNoHash([id], 'block');
-    if (pHash)
-      await addBlockedImage({
-        hash: pHash,
-        // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
-        reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
-        context: { step: 'block', imageIds: [id], actorUserId: user.id },
-      });
+    // The requeue follows the blocklist write and runs when it throws: the block has landed.
+    try {
+      if (pHash)
+        await addBlockedImage({
+          hash: pHash,
+          // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+          reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
+          context: { step: 'block', imageIds: [id], actorUserId: user.id },
+        });
+    } finally {
+      await queueDocumentsForBlockedImages([id]);
+    }
 
     // Look up report details for violation type resolution
     const reportDetails = await getReportViolationDetailsForImages([id]);
@@ -1201,7 +1211,14 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
         return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
       }),
     ]);
-    const result = { ...image, eventDecoration: eventDecorations[image.id] ?? null };
+    // Told only to the owner, and only for a review they can already see.
+    const deleteAfterReview =
+      ctx.user?.id === image.user.id && (await imagesPendingDeletion([image.id])).has(image.id);
+    const result = {
+      ...image,
+      eventDecoration: eventDecorations[image.id] ?? null,
+      deleteAfterReview,
+    };
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: result.user.id });

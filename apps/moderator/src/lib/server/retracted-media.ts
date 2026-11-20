@@ -8,6 +8,7 @@ import { blockedForSignal } from '@civitai/shared/review-batch';
 import {
   createScannerVerdictCache,
   csamRestrictedSql,
+  upgradedRetractionSql,
   retractedImageWhereSql,
   siblingsServable,
   urlSiblingsSql,
@@ -45,7 +46,9 @@ export async function getRetractedMedia(
         .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor', 'i.ingestion'])
         // Read only for a moderator who could be refused on it.
         .select(
-          sql<boolean>`${sql.raw(csamReview ? 'false' : csamRestrictedSql('i'))}`.as('restricted')
+          sql<boolean>`${sql.raw(
+            csamReview ? 'false' : `(${csamRestrictedSql('i')} OR ${upgradedRetractionSql('i')})`
+          )}`.as('restricted')
         )
         .select(
           sql<UrlSibling[]>`${sql.raw(csamReview ? "'[]'::json" : urlSiblingsSql('i'))}`.as(

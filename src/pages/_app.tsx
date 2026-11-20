@@ -104,6 +104,7 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { ProfanityBlocklistProvider } from '~/providers/ProfanityBlocklistProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 import {
   ShellBootstrapProvider,
@@ -391,40 +392,44 @@ function MyApp(props: CustomAppProps) {
                           <BrowserSettingsProvider>
                             <BrowsingLevelProvider>
                               <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
-                                <SignalsProviderStack>
-                                  <ActivityReportingProvider>
-                                    <ReferralsProvider
-                                      {...cookies.referrals}
-                                      pending={referralsPending}
-                                    >
-                                      <FiltersProvider>
-                                        <AdsProvider gated={adsGated}>
-                                          <HiddenPreferencesProvider>
-                                            <CivitaiLinkProvider>
-                                              <BrowserRouterProvider>
-                                                <IntersectionObserverProvider>
-                                                  <ToursProvider>
-                                                    <AuctionContextProvider>
-                                                      <BaseLayout>
-                                                        {isProd && <TrackPageView />}
-                                                        <CustomModalsProvider>
-                                                          {getLayout(<Component {...pageProps} />)}
-                                                          {/* <StripeSetupSuccessProvider /> */}
-                                                          <DialogProvider />
-                                                          <RoutedDialogProvider />
-                                                        </CustomModalsProvider>
-                                                      </BaseLayout>
-                                                    </AuctionContextProvider>
-                                                  </ToursProvider>
-                                                </IntersectionObserverProvider>
-                                              </BrowserRouterProvider>
-                                            </CivitaiLinkProvider>
-                                          </HiddenPreferencesProvider>
-                                        </AdsProvider>
-                                      </FiltersProvider>
-                                    </ReferralsProvider>
-                                  </ActivityReportingProvider>
-                                </SignalsProviderStack>
+                                <ProfanityBlocklistProvider>
+                                  <SignalsProviderStack>
+                                    <ActivityReportingProvider>
+                                      <ReferralsProvider
+                                        {...cookies.referrals}
+                                        pending={referralsPending}
+                                      >
+                                        <FiltersProvider>
+                                          <AdsProvider gated={adsGated}>
+                                            <HiddenPreferencesProvider>
+                                              <CivitaiLinkProvider>
+                                                <BrowserRouterProvider>
+                                                  <IntersectionObserverProvider>
+                                                    <ToursProvider>
+                                                      <AuctionContextProvider>
+                                                        <BaseLayout>
+                                                          {isProd && <TrackPageView />}
+                                                          <CustomModalsProvider>
+                                                            {getLayout(
+                                                              <Component {...pageProps} />
+                                                            )}
+                                                            {/* <StripeSetupSuccessProvider /> */}
+                                                            <DialogProvider />
+                                                            <RoutedDialogProvider />
+                                                          </CustomModalsProvider>
+                                                        </BaseLayout>
+                                                      </AuctionContextProvider>
+                                                    </ToursProvider>
+                                                  </IntersectionObserverProvider>
+                                                </BrowserRouterProvider>
+                                              </CivitaiLinkProvider>
+                                            </HiddenPreferencesProvider>
+                                          </AdsProvider>
+                                        </FiltersProvider>
+                                      </ReferralsProvider>
+                                    </ActivityReportingProvider>
+                                  </SignalsProviderStack>
+                                </ProfanityBlocklistProvider>
                               </BrowsingSettingsAddonsProvider>
                             </BrowsingLevelProvider>
                           </BrowserSettingsProvider>

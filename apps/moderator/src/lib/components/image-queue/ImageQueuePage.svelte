@@ -431,6 +431,9 @@
               title={removedTitle(item)}>Removed</Badge
             >
           {/if}
+          {#if item.deleteRequested}
+            <Badge class="shrink-0 bg-red-500/15 text-red-400" title="Its owner deleted it; it is kept until its child-safety review is complete">Deletion requested</Badge>
+          {/if}
           {#if item.report.count > 0}
             <span class="shrink-0 text-muted-foreground">+{item.report.count} others</span>
           {/if}

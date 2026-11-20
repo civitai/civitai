@@ -732,7 +732,7 @@ export const deletePostHandler = async ({
       actor: ctx.user,
       viewerIsModerator: ctx.user.isModerator,
     });
-    if (result) {
+    if (result && 'id' in result) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
       await closeAppealsDeletedByOwner({
         entityType: EntityType.Image,

@@ -143,7 +143,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
 
-import unpublishAllModels from '~/pages/api/admin/unpublish-all-models';
+import unpublishAllModels from '~/server/api-routes/admin/unpublish-all-models';
 import { unpublishModelById } from '~/server/services/model.service';
 import { unpublishForModelRules } from '~/server/services/text-scan/actions/model-rules';
 import { ModelStatus } from '~/shared/utils/prisma/enums';

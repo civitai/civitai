@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
@@ -327,7 +328,8 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 		return
 	}
 	rec := &hydrate.PresenceProbe{Checker: checker, RacedSince: racedSince(req.StartedAt)}
-	err := s.within(ctx, "probe", func(ctx context.Context) error { return spec.run(s, ctx, req, rec) })
+	// The sample's credential is the sampler's placeholder, never a key (auth.WithRedactedCredentials).
+	err := s.within(auth.WithRedactedCredentials(ctx), "probe", func(ctx context.Context) error { return spec.run(s, ctx, req, rec) })
 	first, pages := rec.FirstCheck()
 	if pages > 0 {
 		observeLag(s.Metrics.GoFirstCheckLag, spec.endpoint, first, req.StartedAt)

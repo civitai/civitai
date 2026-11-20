@@ -47,7 +47,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     isInitialLoading,
     isRefetching,
   } = trpc.userProfile.overview.useQuery({ username });
-  const { data: user } = trpc.userProfile.get.useQuery({ username });
+  const { data: user, isLoading: userLoading } = trpc.userProfile.get.useQuery({ username });
   const { count: achievementCount } = useProfileAchievements(user?.id);
 
   const activePath = router.pathname.split('/').pop() || overviewPath;
@@ -158,7 +158,8 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     <HomeStyleSegmentedControl
       data={opts}
       value={activePath}
-      loading={isInitialLoading || isRefetching}
+      // The user decides which tabs exist, so the row waits for it too before picking its density.
+      loading={isInitialLoading || isRefetching || userLoading}
       keepLabels={settings.navigation?.keepProfileLabels}
     />
   );

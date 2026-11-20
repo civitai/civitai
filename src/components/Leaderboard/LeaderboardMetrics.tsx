@@ -21,13 +21,16 @@ import {
   IconDownload,
   IconEye,
   IconFileStar,
+  IconFileText,
   IconHeart,
   IconHexagonFilled,
   IconMedal,
+  IconMessages,
   IconMoodSmile,
   IconPhoto,
   IconReport,
   IconScoreboard,
+  IconSeedling,
   IconShieldChevron,
   IconStar,
   IconSwords,
@@ -38,6 +41,7 @@ import {
   IconTrophy,
   IconUsers,
   IconVideo,
+  IconWritingSign,
   IconX,
 } from '@tabler/icons-react';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -230,6 +234,26 @@ const metricTypes: Record<
   wins: () => ({
     tooltip: 'Wins',
     icon: <IconMedal {...iconProps} />,
+  }),
+  articles: () => ({
+    tooltip: 'Articles counted',
+    icon: <IconFileText {...iconProps} />,
+  }),
+  readers: () => ({
+    tooltip: 'Readers',
+    icon: <IconUsers {...iconProps} />,
+  }),
+  participants: () => ({
+    tooltip: 'Commenters, added up across the counted articles',
+    icon: <IconMessages {...iconProps} />,
+  }),
+  answers: () => ({
+    tooltip: 'Writers who answered with an article',
+    icon: <IconWritingSign {...iconProps} />,
+  }),
+  firstTimers: () => ({
+    tooltip: 'Of them, writing their first article',
+    icon: <IconSeedling {...iconProps} />,
   }),
 };
 
