@@ -813,6 +813,7 @@ export const reorderPostImagesHandler = async ({
       ...input,
       user: ctx.user,
       servableLevels: requestServableLevels(ctx),
+      ownerSeesHeld: isSessionOrFullUserKey(ctx),
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

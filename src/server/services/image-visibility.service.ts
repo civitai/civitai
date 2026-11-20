@@ -79,9 +79,15 @@ export function entityImageVisibilityConditions({
 export function imageVisibilityConditions({
   userId,
   isModerator,
+  ownerSeesHeld = false,
 }: {
   userId?: number;
   isModerator?: boolean;
+  /**
+   * `userId` (the session user) also sees their own items under an owner-hidden review hold. Only
+   * for a read that shows the owner their item; not for one that acts on the image (a remix, say).
+   */
+  ownerSeesHeld?: boolean;
 }) {
   if (isModerator) return [];
   return [
@@ -141,8 +147,8 @@ export function imageVisibilityConditions({
     userId
       ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
       : Prisma.sql`(i."acceptableMinor" = FALSE)`,
-    // Not even to the owner (or a collection manager).
-    notHeldForReviewSql(),
+    // Not to a collection manager; to the owner only where the caller asks.
+    notHeldForReviewSql(ownerSeesHeld ? userId : undefined),
     minorMatureImageVisibleSql({ userId }),
     ...imageBlockedForConditions({ userId }),
     imageNotRestrictedSql({ viewerId: userId }),
@@ -159,10 +165,13 @@ export async function assertImageVisibleToViewer({
   isModerator,
   confirmBlockOnPrimary = false,
   withSignedOutVerdict = false,
+  ownerSeesHeld = false,
 }: {
   id: number;
   userId?: number;
   isModerator?: boolean;
+  /** `imageVisibilityConditions`' `ownerSeesHeld`. */
+  ownerSeesHeld?: boolean;
   /**
    * Only for a caller that WRITES on the strength of this check (the prompt-provenance mint):
    * confirm a cache "not blocked" against the primary. Read callers leave it off.
@@ -196,7 +205,10 @@ export async function assertImageVisibleToViewer({
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(
-      [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })],
+      [
+        Prisma.sql`i.id = ${id}`,
+        ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld }),
+      ],
       ' AND '
     )}
   `

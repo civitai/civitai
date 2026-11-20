@@ -166,10 +166,10 @@ describe('reorderPostImages around images the editor does not list', () => {
     expect(new Set(all).size).toBe(all.length);
   });
 
-  it('without `items` on a post with text, a listed held image keeps its index', async () => {
+  it("without `items` on a post with text, a listed held image of another user's keeps its index", async () => {
     const pgIds = await seedPost();
     await harness.pg.exec(`
-      UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1;
+      UPDATE "Image" SET "needsReview" = 'csam', "userId" = 11 WHERE id = 1;
       INSERT INTO "PostText" VALUES (5, ${POST}, 22);
     `);
     const positions = await reorderPostImages({
@@ -198,6 +198,25 @@ describe('reorderPostImages around images the editor does not list', () => {
     expect((await indexes())[1]).toBe(21);
   });
 
+  it("with the owner's view, the owner moves their own held image it lists, as a moderator does", async () => {
+    const pgIds = await seedPost();
+    await harness.pg.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`);
+    await reorderPostImages({
+      ...OWNER_EDITOR,
+      ownerSeesHeld: true,
+      id: POST,
+      imageIds: [...pgIds, 1],
+    });
+    expect((await indexes())[1]).toBe(21);
+  });
+
+  it("without the owner's view, the owner's own held image keeps its index", async () => {
+    const pgIds = await seedPost();
+    await harness.pg.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`);
+    await reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [...pgIds, 1] });
+    expect((await indexes())[1]).toBe(0);
+  });
+
   it('control: with every image listed, positions are numbered from 0', async () => {
     const pgIds = await seedPost();
     await reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [...pgIds, 1] });
@@ -209,8 +228,8 @@ describe('reorderPostImages around images the editor does not list', () => {
 
   it.each([
     [
-      'held for review',
-      `UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 1`,
+      "held for review, another user's",
+      `UPDATE "Image" SET "needsReview" = 'minor', "userId" = 11 WHERE id = 1`,
       allBrowsingLevelsFlag,
     ],
     ['above the request cap', '', sfwBrowsingLevelsFlag],
@@ -442,8 +461,8 @@ describe('reorderPostImages around images the editor does not list', () => {
   // The editor gets every id from post.getImageIds, so a crafted list can name a hidden image.
   it.each([
     [
-      'held for review, listed by the owner',
-      `UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`,
+      "held for review, another user's, listed by the post owner",
+      `UPDATE "Image" SET "needsReview" = 'csam', "userId" = 11 WHERE id = 1`,
       allBrowsingLevelsFlag,
     ],
     ['above the request cap, listed by the owner', '', sfwBrowsingLevelsFlag],
