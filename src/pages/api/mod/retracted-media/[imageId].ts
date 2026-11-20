@@ -7,10 +7,11 @@ import {
   RETRACTED_MEDIA_RATE_LIMIT,
   RETRACTED_MEDIA_STREAM_MS,
   RETRACTED_SERVED_ACTIVITY,
+  retractedMediaRateKey,
 } from '@civitai/shared/retracted-media';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { getRetractedMedia, NEEDS_CSAM_QUEUE } from '~/server/services/retracted-media.service';
+import { getRetractedMedia } from '~/server/services/retracted-media.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
 import { streamStoredMedia } from '~/server/utils/stream-stored-media';
@@ -35,7 +36,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   const { imageId } = parsed.data;
 
   const limit = await checkFixedWindow(
-    prefixCacheKey(`retracted-media:rate-limit:${user.id}`),
+    prefixCacheKey(retractedMediaRateKey(user.id)),
     RETRACTED_MEDIA_RATE_LIMIT,
     60,
     { failOpen: false }
@@ -45,9 +46,12 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     return void res.status(429).json({ error: 'Too many requests' });
   }
 
-  const media = await getRetractedMedia(imageId, { csamReview: !!flags.csamReports });
-  if (media === NEEDS_CSAM_QUEUE)
-    return void res.status(403).json({ error: 'Needs CSAM-queue access' });
+  // A read that fails or runs past its timeout refuses, with nothing served.
+  const media = await getRetractedMedia(imageId, { csamReview: !!flags.csamReports }).catch(
+    () => 'failed' as const
+  );
+  if (media === 'failed')
+    return void res.status(503).json({ error: 'Could not check this image; retry' });
   if (!media) return void res.status(404).json({ error: 'Not available here' });
   if (!isProbeableMediaKey(media.url))
     return void res.status(422).json({ error: 'This file is not in a servable place' });

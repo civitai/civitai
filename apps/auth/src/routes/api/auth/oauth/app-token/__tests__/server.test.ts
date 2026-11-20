@@ -113,6 +113,16 @@ describe('oauth/app-token +server', () => {
     expect((await call({ ...body, clientId: 'civitai-remix-apps' })).status).toBe(200);
   });
 
+  it('mints nothing for an impersonation', async () => {
+    const res = await call({ ...body, impersonatedBy: 3 });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('impersonation_refused');
+    expect(h.inserts).toHaveLength(0);
+    // Control: the same request with no impersonation mints.
+    expect((await call({ ...body, impersonatedBy: null })).status).toBe(200);
+    expect(h.inserts).toHaveLength(1);
+  });
+
   it('mints nothing for a service client, which acts only as itself', async () => {
     h.rows.OauthClient = {
       allowedScopes: REQUESTED,

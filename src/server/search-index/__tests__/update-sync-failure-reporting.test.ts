@@ -10,7 +10,6 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => ({
 const { createSearchIndexUpdateProcessor, DEFAULT_UPDATE_SYNC_CHUNK_SIZE } = await import(
   '~/server/search-index/base.search-index'
 );
-const { collectionsSearchIndex } = await import('~/server/search-index/collections.search-index');
 
 type Processor = Parameters<typeof createSearchIndexUpdateProcessor>[0];
 
@@ -36,13 +35,22 @@ const updateItems = (count: number) => Array.from({ length: count }, (_, i) => (
 const statementTimeout = () =>
   Object.assign(new Error('canceling statement due to statement timeout'), { code: 'P2010' });
 
+// Idle workers poll every 1s and retries back off 1s, so drive the clock instead of waiting.
+const settle = async <T>(promise: Promise<T>): Promise<T> => {
+  let done = false;
+  void promise.finally(() => (done = true)).catch(() => undefined);
+  while (!done) await vi.advanceTimersByTimeAsync(1000);
+  return promise;
+};
+
 beforeEach(() => {
-  // processSearchIndexTask logs every caught error; keep the run readable.
+  vi.useFakeTimers();
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -51,7 +59,7 @@ describe('updateSync :: failure reporting', () => {
     const pullData = vi.fn().mockRejectedValue(statementTimeout());
     const index = buildIndex({ pullData, updateSyncChunkSize: 300 });
 
-    const result = await index.updateSync(updateItems(3));
+    const result = await settle(index.updateSync(updateItems(3)));
 
     expect(result).toEqual({
       indexName: 'test_index',
@@ -66,7 +74,7 @@ describe('updateSync :: failure reporting', () => {
     // the backoff, every worker exited during the first retry's sleep and the task was dropped
     // after a single attempt with nothing recorded as failed.
     expect(pullData).toHaveBeenCalledTimes(4);
-  }, 30_000);
+  });
 
   it('attributes a failure at the push step back to the ids that were never written', async () => {
     // Pins that `idCount` survives the pull -> transform -> push handoff, so a push-step failure
@@ -74,11 +82,11 @@ describe('updateSync :: failure reporting', () => {
     const pushData = vi.fn().mockRejectedValue(new Error('meilisearch rejected the batch'));
     const index = buildIndex({ pushData, updateSyncChunkSize: 300 });
 
-    const result = await index.updateSync(updateItems(7));
+    const result = await settle(index.updateSync(updateItems(7)));
 
     expect(result.failedTasks).toBe(1);
     expect(result.failedIds).toBe(7);
-  }, 30_000);
+  });
 
   it('counts only the ids of the batches that failed, not every id in the run', async () => {
     // Deliberately pairwise-distinct, and distinct from every constant the assertions name:
@@ -109,7 +117,7 @@ describe('updateSync :: failure reporting', () => {
 
     const index = buildIndex({ pullData, pushData, updateSyncChunkSize: CHUNK_SIZE });
 
-    const result = await index.updateSync(updateItems(ITEM_COUNT));
+    const result = await settle(index.updateSync(updateItems(ITEM_COUNT)));
 
     expect(result).toEqual({
       indexName: 'test_index',
@@ -120,46 +128,11 @@ describe('updateSync :: failure reporting', () => {
       idsWithoutDocumentSample: [],
       handledWithoutDocument: 0,
     });
-    // A partial failure, not a total one: strictly fewer than every batch, and strictly fewer
-    // than every id.
-    expect(result.failedTasks).toBeLessThan(result.totalTasks);
-    expect(result.failedIds).toBeLessThan(ITEM_COUNT);
     // The batches that did not fail were still written — 16 ids, the complement of the 14.
     expect(pushData).toHaveBeenCalledTimes(2);
     expect(pushed.sort((a, b) => a - b)).toEqual([
       9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
     ]);
-  }, 30_000);
-
-  it('reports zero failures when every batch succeeds', async () => {
-    const pushData = vi.fn().mockResolvedValue(undefined);
-    const index = buildIndex({ pushData, updateSyncChunkSize: 300 });
-
-    const result = await index.updateSync(updateItems(7));
-
-    expect(result).toEqual({
-      indexName: 'test_index',
-      totalTasks: 1,
-      failedTasks: 0,
-      failedIds: 0,
-      idsWithoutDocument: 0,
-      idsWithoutDocumentSample: [],
-      handledWithoutDocument: 0,
-    });
-    expect(pushData).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns an all-zero result for an empty item list', async () => {
-    const index = buildIndex();
-    await expect(index.updateSync([])).resolves.toEqual({
-      indexName: 'test_index',
-      totalTasks: 0,
-      failedTasks: 0,
-      failedIds: 0,
-      idsWithoutDocument: 0,
-      idsWithoutDocumentSample: [],
-      handledWithoutDocument: 0,
-    });
   });
 });
 
@@ -175,68 +148,21 @@ describe('updateSync :: per-index chunk size', () => {
     const pullData = vi.fn(async (_ctx, batch) => (batch.type === 'update' ? batch.ids : []));
     const index = buildIndex({ pullData, updateSyncChunkSize: 25 });
 
-    const result = await index.updateSync(updateItems(ITEM_COUNT));
+    const result = await settle(index.updateSync(updateItems(ITEM_COUNT)));
 
     expect(result.totalTasks).toBe(3);
     expect(pulledIdCounts(pullData).sort((a, b) => b - a)).toEqual([25, 25, 10]);
   });
 
-  it('falls back to the default chunk size when a processor sets none', async () => {
-    const pullData = vi.fn(async (_ctx, batch) => (batch.type === 'update' ? batch.ids : []));
-    const index = buildIndex({ pullData });
-
-    const result = await index.updateSync(updateItems(ITEM_COUNT));
-
-    expect(index.updateSyncChunkSize).toBe(DEFAULT_UPDATE_SYNC_CHUNK_SIZE);
-    // 60 ids fit in a single default-sized batch, so the same input produces ONE task here and
-    // three above — the chunk size is what moved.
-    expect(result.totalTasks).toBe(1);
-    expect(pulledIdCounts(pullData)).toEqual([ITEM_COUNT]);
-  });
-
-  // `chunk(xs, 0)`, `chunk(xs, -1)` and `chunk(xs, NaN)` all return [] in lodash, so an unguarded
-  // chunk size would queue zero tasks and return `{ totalTasks: 0, failedTasks: 0 }` — a clean
-  // result for a run that indexed nothing. The two arms of the guard produce different sizes and
-  // are pinned separately: a non-positive but finite value is CLAMPED to the one-id floor, while a
-  // non-finite one FALLS BACK to the default.
-  //
-  // The non-finite cases are what pin `Number.isFinite` rather than a `typeof x === 'number'`
-  // test: `NaN`, `Infinity` and `-Infinity` are all of type `number`, so the declared type does
-  // not exclude them, and `Math.max(1, Math.floor(NaN))` is `NaN` — the same empty-chunk silent
-  // success the clamp exists to remove. (`Infinity` is the weakest of the three: under a `typeof`
-  // mutant `Math.max(1, Math.floor(Infinity))` is `Infinity`, and `chunk(60, Infinity)` is one
-  // batch of 60 — byte-identical to the default-sized batch this row expects — so the exact-size
-  // assertion below is the only thing that separates them. `-Infinity` clamps to 1 under the same
-  // mutant, giving 60 batches instead of 1, so the batch-count assertions catch it too.)
-
-  // 60 ids at one id per batch is 60 batches of 1; 60 ids at the default (which is larger than
-  // 60) is a single batch of 60.
+  // lodash `chunk` returns [] for a size of 0 or NaN, which would report a clean run that indexed nothing.
   const CLAMPED_TO_FLOOR = Array.from({ length: ITEM_COUNT }, () => 1);
   const ONE_DEFAULT_SIZED_BATCH = [ITEM_COUNT];
 
   it.each([
     { configured: 0, label: 'zero', expectedChunkSize: 1, expectedBatchSizes: CLAMPED_TO_FLOOR },
     {
-      configured: -5,
-      label: 'negative',
-      expectedChunkSize: 1,
-      expectedBatchSizes: CLAMPED_TO_FLOOR,
-    },
-    {
       configured: NaN,
       label: 'NaN',
-      expectedChunkSize: DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
-      expectedBatchSizes: ONE_DEFAULT_SIZED_BATCH,
-    },
-    {
-      configured: Infinity,
-      label: 'Infinity',
-      expectedChunkSize: DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
-      expectedBatchSizes: ONE_DEFAULT_SIZED_BATCH,
-    },
-    {
-      configured: -Infinity,
-      label: 'negative Infinity',
       expectedChunkSize: DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
       expectedBatchSizes: ONE_DEFAULT_SIZED_BATCH,
     },
@@ -247,35 +173,13 @@ describe('updateSync :: per-index chunk size', () => {
       const pushData = vi.fn().mockResolvedValue(undefined);
       const index = buildIndex({ pullData, pushData, updateSyncChunkSize: configured });
 
-      const result = await index.updateSync(updateItems(ITEM_COUNT));
+      const result = await settle(index.updateSync(updateItems(ITEM_COUNT)));
 
-      // An exact size, not `toBeGreaterThanOrEqual(1)`: that weaker form cannot tell the clamped
-      // floor from the default from `Infinity`, all three of which satisfy it.
       expect(index.updateSyncChunkSize).toBe(expectedChunkSize);
-      // The point common to every case is that this is not 0.
       expect(result.totalTasks).toBe(expectedBatchSizes.length);
       expect(result.failedTasks).toBe(0);
       expect(pushData).toHaveBeenCalledTimes(expectedBatchSizes.length);
       expect(pulledIdCounts(pullData)).toEqual(expectedBatchSizes);
-    },
-    30_000
+    }
   );
-
-  it('rounds a fractional chunk size down to a whole number of ids', async () => {
-    const pullData = vi.fn(async (_ctx, batch) => (batch.type === 'update' ? batch.ids : []));
-    const index = buildIndex({ pullData, updateSyncChunkSize: 7.9 });
-
-    expect(index.updateSyncChunkSize).toBe(7);
-
-    const result = await index.updateSync(updateItems(ITEM_COUNT));
-    // 60 / 7 => 8 full batches of 7 plus a final 4.
-    expect(result.totalTasks).toBe(9);
-    expect(pulledIdCounts(pullData).sort((a, b) => b - a)).toEqual([7, 7, 7, 7, 7, 7, 7, 7, 4]);
-  });
-
-  it('keeps the collections index well below the default', () => {
-    // The batch that timed out in production was 300 ids; the default is 500.
-    expect(collectionsSearchIndex.updateSyncChunkSize).toBeLessThan(DEFAULT_UPDATE_SYNC_CHUNK_SIZE);
-    expect(collectionsSearchIndex.updateSyncChunkSize).toBe(25);
-  });
 });

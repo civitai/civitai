@@ -333,6 +333,31 @@ describe('POST /api/v1/block-tokens', () => {
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
+  it('mints nothing for an impersonation, before any install lookup', async () => {
+    const impersonation = {
+      user: { id: 42, bannedAt: null, isModerator: true },
+      impersonatedBy: 7,
+    };
+    mockSession.value = impersonation as never;
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(403);
+    expect(res._body).toEqual({
+      error: 'impersonation_refused',
+      message: 'Apps are paused while impersonating',
+    });
+    expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+
+    // Control: the same session without the impersonation mints.
+    mockSession.value = { user: impersonation.user } as never;
+    const ok = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), ok);
+    expect(ok._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalled();
+  });
+
   it('M1: banned user is rejected at issuance', async () => {
     // Mod (passes the Phase-2 mint-gate) but banned → rejected at the ban check.
     mockSession.value = { user: { id: 99, bannedAt: new Date(), isModerator: true } } as never;

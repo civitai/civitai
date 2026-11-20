@@ -7,7 +7,10 @@ A search index of the apps a registry streams. It subscribes to the app entity s
 the registry spec's model-index example.
 
 The `/apps` store reads it for text search when the `app-index-search` Flipt flag is on for the
-viewer (`src/server/services/blocks/app-index-search.service.ts`, `APP_INDEX_URL`).
+viewer (`src/server/services/blocks/app-index-search.service.ts`, `APP_INDEX_URL`). Any failed
+call serves the store's database search instead, and a run of them opens a per-process breaker
+that stops calling the index for a cooldown (`APP_INDEX_BREAKER_FAILURE_THRESHOLD`,
+`APP_INDEX_BREAKER_COOLDOWN_MS`).
 
 ## HTTP
 

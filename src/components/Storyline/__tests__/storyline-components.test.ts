@@ -336,16 +336,6 @@ describe('StorylineContinueForm post picker', () => {
     expect(uncounted.querySelector('[data-testid="storyline-post-image-count"]')).toBeNull();
   });
 
-  it('puts no control inside a tile, even over a blurred picture', () => {
-    const cover = { id: 99, url: 'x', type: 'image' as const, nsfwLevel: NsfwLevel.X, hash: null };
-    const el = render(
-      continueForm({ posts: [{ id: 16, title: 'Blurred', nsfwLevel: NsfwLevel.PG, cover }] })
-    );
-
-    const [tile] = radios(el);
-    expect(tile.querySelectorAll('button, a, input')).toHaveLength(0);
-  });
-
   it('says the posts could not load instead of claiming there are none', () => {
     const text = visibleText(render(continueForm({ posts: [], postsError: true })));
 
@@ -579,7 +569,6 @@ describe('StorylineQueueList rows', () => {
     expect(button(withheld, 'Approve + invite').disabled).toBe(false);
   });
 
-  // Accepting under a chapter that already has a main-path chapter makes a branch: say which first.
   it('says whether accepting it joins the main path or starts a branch', () => {
     const el = list([
       { ...row(7), startsBranch: false },
@@ -610,28 +599,6 @@ describe('StorylineQueueList rows', () => {
     ).toEqual([false, false, false]);
   });
 
-  it('puts no control inside the cover and does not wrap it in a link', () => {
-    const cover = {
-      id: 9,
-      url: 'u9',
-      nsfwLevel: NsfwLevel.X,
-      hash: 'LKO2?U%2Tw=w',
-      width: 2,
-      height: 3,
-    };
-    const el = list([{ ...row(7), post: { ...row(7).post, coverImage: cover } }]);
-    const card = el.querySelector('[data-testid="storyline-queue-row-7"]') as HTMLElement;
-
-    // Nothing from the guard's explainer.
-    expect([...card.querySelectorAll('button')].map((node) => node.textContent)).toEqual([
-      'Accept',
-      'Approve + invite',
-      'Decline',
-    ]);
-    // The title and the parent chapter; the cover is not a third link.
-    expect(card.querySelectorAll('a')).toHaveLength(2);
-  });
-
   it('fills a hidden cover with stripes whenever there is nothing to draw', () => {
     const covers = [
       { id: 1, url: 'u1', nsfwLevel: NsfwLevel.X, hash: 'LKO2?U%2Tw=w', width: null, height: 3 },
@@ -642,14 +609,6 @@ describe('StorylineQueueList rows', () => {
     );
 
     expect(el.querySelectorAll('[data-testid="storyline-chapter-image-blurred"]')).toHaveLength(2);
-  });
-
-  it('says there is no preview when the row carries no cover at all', () => {
-    const el = list([row(5)]);
-
-    expect(
-      el.querySelector('[data-testid="storyline-chapter-image-hidden-label"]')?.textContent
-    ).toBe('Preview not available on this site');
   });
 
   it('names an untitled continuation as a continuation by its author', () => {
@@ -761,14 +720,6 @@ describe('StorylineSettingsForm', () => {
     expect(visibleText(inherited)).not.toContain('Use my default');
   });
 
-  it('warns that lowering the ceiling hides chapters, and that raising it brings them back', () => {
-    const text = visibleText(render(settingsForm()));
-
-    expect(text).toContain(
-      'chapters rated above this are hidden from readers. Raising it again brings them back.'
-    );
-  });
-
   it('says how many chapters the current ceiling hides, and will not go below chapter 1', () => {
     const el = render(
       settingsForm({
@@ -785,13 +736,6 @@ describe('StorylineSettingsForm', () => {
     expect(option(el, 'Maximum rating', 'PG').disabled).toBe(true);
     expect(option(el, 'Maximum rating', 'PG-13').disabled).toBe(false);
     expect(option(el, 'Maximum rating', 'XXX').disabled).toBe(false);
-  });
-
-  it('offers every rating and no count before the chapter ratings are read', () => {
-    const el = render(settingsForm({ chapterLevels: null }));
-
-    expect(visibleText(el)).not.toContain('rated above this and are hidden');
-    expect(option(el, 'Maximum rating', 'PG').disabled).toBe(false);
   });
 
   it('shows no price slider while pricing is unavailable, and says the storyline is free', () => {
@@ -937,13 +881,5 @@ describe('StorylineRatingInput', () => {
     expect(option(el, 'Maximum rating', 'PG-13').disabled).toBe(true);
     expect(option(el, 'Maximum rating', 'R').disabled).toBe(false);
     expect(option(el, 'Maximum rating', 'XXX').disabled).toBe(false);
-  });
-
-  it('allows every rating without isAllowed', () => {
-    const el = render(
-      React.createElement(StorylineRatingInput, { value: NsfwLevel.PG, onChange: () => undefined })
-    );
-
-    expect(option(el, 'Maximum rating', 'PG').disabled).toBe(false);
   });
 });

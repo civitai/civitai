@@ -57,6 +57,9 @@ vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
+  getGateRuleState: vi.fn(async () => ({ known: true, value: [] })),
+  getGateSubjects: vi.fn(async () => new Map()),
+  gatedVersionIds: vi.fn(() => new Set()),
   resolveCanGenerateForVersions: vi.fn(
     async () => new Map([[VERSION_ID, { canGenerate: h.canGenerate.value }]])
   ),

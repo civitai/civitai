@@ -26,7 +26,7 @@ export function firstAnswer(spec: RemixAsk): RemixAnswer {
 }
 
 /** Placeholder outputs shaped like the real ones: as many images, at the size they would be. */
-function mockResult(request: RemixWorkflowRequest, step: number): RemixWorkflowResult {
+export function mockResult(request: RemixWorkflowRequest, step: number): RemixWorkflowResult {
   const image = (i: number, width?: number, height?: number): RemixImage => ({
     url: `mock://remix/${step}/${i}`,
     width,

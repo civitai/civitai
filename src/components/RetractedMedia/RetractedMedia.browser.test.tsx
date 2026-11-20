@@ -17,10 +17,10 @@ afterEach(() => vi.unstubAllGlobals());
 describe('RetractedMedia', () => {
   test("shows the route's reason for a refusal a moderator can act on", async () => {
     fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ error: 'Needs CSAM-queue access' }), { status: 403 })
+      new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 })
     );
     renderWithProviders(<RetractedMedia src="/api/mod/retracted-media/41" type="image" />);
-    await expect.element(page.getByText('Needs CSAM-queue access')).toBeVisible();
+    await expect.element(page.getByText('Forbidden')).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith('/api/mod/retracted-media/41?probe=1');
   });
 
