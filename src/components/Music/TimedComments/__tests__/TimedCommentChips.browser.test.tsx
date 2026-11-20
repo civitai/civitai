@@ -159,20 +159,26 @@ describe('a timed comment’s time in the list', () => {
       ['light', [255, 255, 255]],
       ['dark', [0x25, 0x26, 0x2b]],
     ] as const)
-      test(`in ${scheme} mode`, async () => {
-        await renderChip();
-        // After the render: the provider sets the scheme on mount.
-        document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
-        const chip = page.getByRole('button', { name: 'Play from 0:42' }).element();
-        // Polled: the button's colours transition after the scheme flips.
-        const ratio = () => {
-          const style = getComputedStyle(chip);
-          const text = lum(rgb(style.color));
-          const background = lum(over(rgb(style.backgroundColor), [...card]));
-          return (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
-        };
-        await expect.poll(ratio).toBeGreaterThanOrEqual(4.5);
-      });
+      for (const hovered of [false, true])
+        test(`in ${scheme} mode${hovered ? ', hovered' : ''}`, async () => {
+          await renderChip();
+          // After the render: the provider sets the scheme on mount.
+          document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+          const locator = page.getByRole('button', { name: 'Play from 0:42' });
+          // Hovering darkens the tint, so the text must read on that too. Unhovered, the pointer is
+          // moved off: an earlier test's click can leave it resting on the chip.
+          if (hovered) await userEvent.hover(locator);
+          else await userEvent.unhover(locator);
+          const chip = locator.element();
+          // Polled: the button's colours transition after the scheme flips.
+          const ratio = () => {
+            const style = getComputedStyle(chip);
+            const text = lum(rgb(style.color));
+            const background = lum(over(rgb(style.backgroundColor), [...card]));
+            return (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
+          };
+          await expect.poll(ratio).toBeGreaterThanOrEqual(4.5);
+        });
 
     // A highlighted comment tints the card behind the chip; an opaque chip keeps its own contrast.
     for (const scheme of ['light', 'dark'] as const)
