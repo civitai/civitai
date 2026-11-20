@@ -14,7 +14,6 @@ import {
   type CookieRead,
   type CookieSlot,
 } from './cookies';
-import { hubBaseUrl } from './hub';
 import { spokeAuthorizeUrl, spokeSessionCookies } from './spoke-signin';
 import type { SessionUser, SessionClaims } from './types';
 
@@ -25,9 +24,9 @@ import type { SessionUser, SessionClaims } from './types';
 // Resolves the RICH user via createSessionClient (verify → shared cache → hub /api/auth/identity on miss), so
 // role checks like `isModerator` work (the thin token carries identity only).
 //
-// Where a signed-out browser goes follows AUTH_SESSION_COOKIE_MODE: `shared` sends it to the hub login (the hub's
-// shared cookie is the session); `host` sends a page load to this app's own /api/auth/authorize, and answers any
-// other request 401 with the authorize URL, since a fetch can't follow a sign-in redirect.
+// A signed-out page load goes to this app's own /api/auth/authorize in either cookie mode; any other request is
+// answered 401 with that URL, since a fetch can't follow a sign-in redirect. Not the hub login: with a live hub
+// session and no shared cookie, the hub login returns straight to returnUrl without minting one, and loops.
 
 /**
  * Why a request was sent to sign in. `unavailable`: a session cookie is present but the hub could not resolve
@@ -41,7 +40,7 @@ export type SpokeGuardResult =
   | { status: 'ok'; user: SessionUser; setCookies: string[] }
   /** Sign-in needed (see `reason`) — redirect the browser to `redirect` (it returns to `returnUrl` after). */
   | { status: 'login'; redirect: string; reason: SpokeSignInReason }
-  /** Sign-in needed on a non-navigation request in host mode — answer 401 (`spokeReauthResponse`). */
+  /** Sign-in needed on a non-navigation request — answer 401 (`spokeReauthResponse`). */
   | { status: 'reauth'; authorize: string; reason: SpokeSignInReason }
   /** Authenticated but fails `require` (e.g. not a moderator) — 403. NOT a login redirect: re-login can't help. */
   | { status: 'forbidden'; user: SessionUser };
@@ -54,8 +53,6 @@ export interface SpokeGuardConfig {
    * resolves on a cache hit.
    */
   isRevoked: (claims: SessionClaims) => boolean | Promise<boolean>;
-  /** Hub login path. Default `/login`. */
-  loginPath?: string;
   /** Seconds after which a session is rolled (AUTH_SESSION_UPDATE_AGE, default 24h). */
   updateAgeSeconds?: number;
   sessionTokenClient?: Pick<SessionTokenClient, 'refresh'>;
@@ -97,7 +94,6 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
     );
   }
   const sessions = createSessionClient({ isRevoked: config.isRevoked });
-  const loginPath = config.loginPath ?? '/login';
   const updateAgeMs =
     (config.updateAgeSeconds ?? (Number(process.env.AUTH_SESSION_UPDATE_AGE) || 24 * 60 * 60)) *
     1000;
@@ -105,18 +101,11 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
   // Concurrent requests carrying the same aged token share one hub refresh.
   const rolling = new Map<string, Promise<string | undefined>>();
 
-  const hubLogin = (returnUrl: string): string => {
-    const base = hubBaseUrl() ?? ''; // hub origin (AUTH_JWT_ISSUER); '' is a degenerate misconfig fallback
-    return `${base}${loginPath}?returnUrl=${encodeURIComponent(returnUrl)}`;
-  };
-
   const signIn = (
     returnUrl: string,
     navigation: boolean,
     reason: SpokeSignInReason
   ): SpokeGuardResult => {
-    if (sessionCookieMode(null) === 'shared')
-      return { status: 'login', redirect: hubLogin(returnUrl), reason };
     const authorize = spokeAuthorizeUrl(returnUrl);
     return navigation
       ? { status: 'login', redirect: authorize, reason }
