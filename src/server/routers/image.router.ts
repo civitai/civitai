@@ -174,12 +174,12 @@ export const imageRouter = router({
     .query(getEntitiesCoverImageHandler),
   get404Images: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
-    // Shared and signed-out: invalidateImageVisibilityCaches purges both by tag; any other
-    // moderation change reaches this list only when they expire.
+    // invalidateImageVisibilityCaches purges both by tag. The key's version drops entries cached
+    // before they carried the tag.
     .use(edgeCacheIt({ ttl: CacheTTL.day, tags: () => [IMAGE_404_CACHE_TAG] }))
     .use(
       cacheIt({
-        key: 'image:get404Images:v3',
+        key: 'image:get404Images:v4',
         ttl: CacheTTL.day,
         tags: () => [IMAGE_404_CACHE_TAG],
       })

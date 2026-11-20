@@ -7557,6 +7557,11 @@ export async function updateImageAcceptableMinor({
   id,
   acceptableMinor,
 }: UpdateImageAcceptableMinorInput) {
+  // primary: whether this write changes the flag decides whether shared caches are purged.
+  const before = await dbWrite.image.findUnique({
+    where: { id },
+    select: { acceptableMinor: true },
+  });
   const image = await dbWrite.image.update({
     where: { id },
     data: { acceptableMinor },
@@ -7573,11 +7578,13 @@ export async function updateImageAcceptableMinor({
   if (acceptableMinor) {
     await invalidateManyImageExistence([id]);
   }
-  // Lazy: the invalidation reads post.service, which sits in this module's import cycle.
-  const { invalidateImageVisibilityCaches } = await import(
-    '~/server/services/image-visibility-invalidation.service'
-  );
-  await invalidateImageVisibilityCaches(id);
+  if (before?.acceptableMinor !== acceptableMinor) {
+    // Lazy: the invalidation reads post.service, which sits in this module's import cycle.
+    const { invalidateImageVisibilityCaches } = await import(
+      '~/server/services/image-visibility-invalidation.service'
+    );
+    await invalidateImageVisibilityCaches(id);
+  }
 
   return image;
 }
