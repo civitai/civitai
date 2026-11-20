@@ -1,6 +1,7 @@
 import { Client } from '@axiomhq/axiom-node';
 import { loadAxiomEnv, type AxiomConfig } from './env';
 import { isCredentialField, REDACTED_CREDENTIAL, redactCredentials } from './redact-credentials';
+import { withConsoleForwardingSuppressed } from './console-forwarding';
 
 // Package-local alias (not a `declare global`) so a consumer transpiling this package doesn't need the main
 // app's ambient MixedObject global in scope. Same shape, so main-app callers are unaffected.
@@ -218,7 +219,8 @@ export function createAxiomLogger(
    */
   function writeSelfReport(record: MixedObject) {
     const line = JSON.stringify(record);
-    console.error(line);
+    // Suppressed: the sink call below already forwards this line.
+    withConsoleForwardingSuppressed(() => console.error(line));
     if (!deps.emitLog) return;
     try {
       deps.emitLog(line, record, config.datastream);
@@ -385,7 +387,8 @@ export function createAxiomLogger(
         }
       }
 
-      console.error(line);
+      // Suppressed: the sink call below already forwards this line.
+      withConsoleForwardingSuppressed(() => console.error(line));
 
       // Additional sink, if one was injected. Deliberately AFTER the stderr write and
       // contained: an injected sink is app-supplied code, and neither its cost nor its
@@ -486,7 +489,8 @@ export function createAxiomLogger(
       // Off-switch (AXIOM_AWAIT_UPLOADS=true): wait for the outcome, bounded by AXIOM_INGEST_TIMEOUT_MS.
       if (config.awaitUploads) await outcome;
     } else {
-      console.log('logToAxiom', sendData);
+      // Not forwarded: outside production this echo is the logger's only output, by design.
+      withConsoleForwardingSuppressed(() => console.log('logToAxiom', sendData));
     }
   }
 

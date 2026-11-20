@@ -76,7 +76,10 @@ export function setStructuredLogSink(emitLog: EmitLog): void {
  */
 export const CONSOLE_LOG_DATASTREAM = 'civitai-console';
 
-export type ConsoleLogSource = 'createLogger' | 'prisma';
+export type ConsoleLogSource = 'createLogger' | 'prisma' | 'console';
+
+// One record's body; a longer line is cut here (stdout still gets all of it).
+export const MAX_FORWARDED_LOG_BODY = 8192;
 
 /**
  * Send one already-formatted console line to the registered sink, if any. A no-op without a sink
