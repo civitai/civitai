@@ -365,7 +365,7 @@ describe('list surfaces — the public feed', () => {
     expect(where).toContain(
       JSON.stringify({
         ingestion: ImageIngestionStatus.Scanned,
-        nsfwLevel: { notIn: [0] },
+        nsfwLevel: { notIn: [0, 32] },
         needsReview: null,
         tosViolation: false,
       })

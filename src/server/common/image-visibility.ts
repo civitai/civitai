@@ -262,7 +262,12 @@ export function withServableImage<
   T extends { [P in K]: RestrictableImage | null | undefined }
 >(row: T, key: K, viewerId?: number | null): T & { [P in K]: T[P] | null } {
   const image = row[key];
-  return { ...row, [key]: image && isImageNotRestricted(image, viewerId) ? image : null };
+  const servable =
+    image &&
+    isImageNotRestricted(image, viewerId) &&
+    (image.nsfwLevel !== NsfwLevel.Blocked ||
+      (isUploaderId(viewerId) && image.userId === viewerId));
+  return { ...row, [key]: servable ? image : null };
 }
 
 /** The exact complement of `imageNotRestrictedSql`: a NULL flag on a mature image counts as restricted. */
