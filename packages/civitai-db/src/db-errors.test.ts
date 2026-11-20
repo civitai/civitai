@@ -62,6 +62,32 @@ describe('the connection-unavailable family', () => {
     expect(dbUnavailableCause(e)).toEqual({ name: 'PrismaClientUnknownRequestError', code: '' });
   });
 
+  // A full pool, pooler or server: answered with a 503, but a retry would only add load to it.
+  it.each([
+    [
+      'pg 08P01 from the pooler: no more connections allowed',
+      () => pgError('08P01', 'no more connections allowed (max_client_conn)'),
+    ],
+    ['pg 08P01 from the pooler: query_wait_timeout', () => pgError('08P01', 'query_wait_timeout')],
+    ['pg 53300 too many connections', () => pgError('53300', 'sorry, too many clients already')],
+    [
+      'Prisma unknown error wrapping the pooler query_wait_timeout',
+      () => unknown('Error in connector: Error querying the database: ERROR: query_wait_timeout'),
+    ],
+    [
+      'Prisma unknown error wrapping no more connections allowed',
+      () =>
+        unknown(
+          'Error in connector: Error querying the database: FATAL: no more connections allowed (max_client_conn)'
+        ),
+    ],
+  ])('%s is unavailable (503) but not a connection error, and not retried', (_label, make) => {
+    const e = make();
+    expect(isDbUnavailableError(e)).toBe(true);
+    expect(isDbConnectionError(e)).toBe(false);
+    expect(isTransientDbConnectionError(e)).toBe(false);
+  });
+
   it('P2024 (no pooled connection in time) is unavailable but not retried', () => {
     const e = known('P2024', 'Timed out fetching a new connection from the connection pool');
     expect(isDbUnavailableError(e)).toBe(true);

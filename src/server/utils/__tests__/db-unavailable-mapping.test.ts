@@ -142,6 +142,23 @@ describe('publicProcedure maps an uncaught unreachable-database error to 503', (
     ['pg-pool acquire timeout', () => new Error('timeout exceeded when trying to connect')],
     ['pg connect timeout', () => new Error('Connection terminated due to connection timeout')],
     ['Prisma unknown error wrapping a pooler login failure', prismaWrappedLoginFailing],
+    // Pool saturation is not retried (read-retry.ts) but is still a 503.
+    [
+      'pg 08P01 from the pooler: no more connections allowed',
+      () =>
+        Object.assign(new Error('no more connections allowed (max_client_conn)'), {
+          severity: 'FATAL',
+          code: '08P01',
+        }),
+    ],
+    [
+      'Prisma unknown error wrapping the pooler query_wait_timeout',
+      () =>
+        new Prisma.PrismaClientUnknownRequestError(
+          'Error in connector: Error querying the database: ERROR: query_wait_timeout',
+          { clientVersion: 'test' }
+        ),
+    ],
   ])('%s → SERVICE_UNAVAILABLE, generic message', async (_label, make) => {
     const err = (await call(make()).catch((e) => e)) as TRPCError;
     expect(err).toBeInstanceOf(TRPCError);

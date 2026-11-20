@@ -26,6 +26,8 @@ const pg08P01 = () =>
     code: '08P01',
     severity: 'FATAL',
   });
+const pgError = (code: string, message: string) =>
+  Object.assign(new Error(message), { code, severity: 'FATAL' });
 const uniqueViolation = () =>
   new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
     code: 'P2002',
@@ -130,6 +132,59 @@ const run = (
 ) => h({ ...params, query });
 
 describe('readRetryHook', () => {
+  // The pooler's outage messages: the server is unreachable for a moment, so a read is retried.
+  it.each([
+    'server login has been failing, cached error: connect failed (server_login_retry)',
+    'server conn crashed?',
+    'pgbouncer cannot connect to server',
+  ])('retries a read that failed with 08P01 %j', async (message) => {
+    const clock = fakeClock();
+    const { query, calls } = scriptedQuery([
+      Object.assign(new Error(message), { code: '08P01', severity: 'FATAL' }),
+    ]);
+    await run(
+      hook(clock.opts),
+      { operation: 'findMany', args: {}, __internalParams: outside },
+      query
+    );
+    expect(calls).toHaveLength(2);
+  });
+
+  // A full pool, pooler or server: a retry would only add load to it, so the read fails at once.
+  it.each([
+    [
+      'pg 08P01 no more connections allowed',
+      () => pgError('08P01', 'no more connections allowed (max_client_conn)'),
+    ],
+    ['pg 08P01 query_wait_timeout', () => pgError('08P01', 'query_wait_timeout')],
+    ['pg 53300', () => pgError('53300', 'sorry, too many clients already')],
+    [
+      'Prisma-wrapped query_wait_timeout',
+      () =>
+        new Prisma.PrismaClientUnknownRequestError(
+          'Error in connector: Error querying the database: ERROR: query_wait_timeout',
+          { clientVersion: 'test' }
+        ),
+    ],
+    [
+      'Prisma P2024',
+      () =>
+        new Prisma.PrismaClientKnownRequestError('Timed out fetching a new connection', {
+          code: 'P2024',
+          clientVersion: 'test',
+        }),
+    ],
+  ])('does not retry a read on pool saturation: %s', async (_label, make) => {
+    const clock = fakeClock();
+    const failure = make();
+    const { query, calls } = scriptedQuery([failure]);
+    await expect(
+      run(hook(clock.opts), { operation: 'findMany', args: {}, __internalParams: outside }, query)
+    ).rejects.toBe(failure);
+    expect(calls).toHaveLength(1);
+    expect(clock.sleeps).toEqual([]);
+  });
+
   it.each(['findUnique', 'findFirst', 'findMany', 'count', 'aggregate', 'groupBy'])(
     'retries %s outside a transaction',
     async (operation) => {

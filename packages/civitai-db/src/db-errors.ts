@@ -7,7 +7,7 @@
 //   - a Prisma error code (P1001/P1002/P1017; P2024 for a pool acquire timeout),
 //   - a pg server error of the connection-exception class (SQLSTATE 08xxx) or a shutdown / too many
 //     connections (57P01-57P03, 53300), recognised by pg's `severity` field. 08P01 counts only with
-//     one of the pooler's own outage messages (POOLER_TRANSIENT_08P01_MESSAGE),
+//     one of the pooler's own outage or saturation messages (POOLER_TRANSIENT_08P01_MESSAGE),
 //   - a Prisma PrismaClientUnknownRequestError (no code) whose message carries one of those pooler
 //     messages or a server shutdown/startup message,
 //   - pg / pg-pool's own messages for a connection that never came up, died, or was not handed out,
@@ -33,7 +33,7 @@ const SOCKET_CODES = new Set([
 const PRISMA_UNREACHABLE_CODES = new Set(['P1001', 'P1002', 'P1017']);
 
 // pg server errors that mean "this connection / this server is not usable right now".
-const PG_UNAVAILABLE_SQLSTATES = new Set(['57P01', '57P02', '57P03', '53300']);
+const PG_UNAVAILABLE_SQLSTATES = new Set(['57P01', '57P02', '57P03']);
 
 /**
  * PgBouncer's 08P01 messages for a server it cannot use right now, e.g. while the primary switches
@@ -41,15 +41,23 @@ const PG_UNAVAILABLE_SQLSTATES = new Set(['57P01', '57P02', '57P03', '53300']);
  * message from the client ("bind message supplies 1 parameters, but prepared statement requires 2"),
  * a bug, and PgBouncer uses it for permanent refusals ("unsupported startup parameter").
  */
-export const POOLER_TRANSIENT_08P01_MESSAGE =
-  /server login has been failing|server conn crashed\?|no more connections allowed|pgbouncer cannot connect to server|query_wait_timeout/i;
+const POOLER_OUTAGE_08P01_MESSAGE =
+  /server login has been failing|server conn crashed\?|pgbouncer cannot connect to server/i;
+// The same code when the pooler is full rather than the server unreachable: unavailable (503), but
+// grouped with the pool-wait timeouts below, which are not retried.
+const POOLER_SATURATION_08P01_MESSAGE = /no more connections allowed|query_wait_timeout/i;
+/** Every PgBouncer 08P01 message for a server it cannot use right now: outage or saturation. */
+export const POOLER_TRANSIENT_08P01_MESSAGE = new RegExp(
+  `${POOLER_OUTAGE_08P01_MESSAGE.source}|${POOLER_SATURATION_08P01_MESSAGE.source}`,
+  'i'
+);
 
 // Prisma reports some server and pooler failures as a PrismaClientUnknownRequestError with no code:
 // "Error in connector: Error querying the database: FATAL: server login has been failing, …". The
 // error class is Prisma's own, so the message is the database's, not another dependency's.
 const PRISMA_UNKNOWN_REQUEST_ERROR = 'PrismaClientUnknownRequestError';
-const PRISMA_WRAPPED_UNAVAILABLE_MESSAGE = new RegExp(
-  `${POOLER_TRANSIENT_08P01_MESSAGE.source}|terminating connection due to administrator command|the database system is (?:starting up|shutting down)`,
+const PRISMA_WRAPPED_OUTAGE_MESSAGE = new RegExp(
+  `${POOLER_OUTAGE_08P01_MESSAGE.source}|terminating connection due to administrator command|the database system is (?:starting up|shutting down)`,
   'i'
 );
 
@@ -59,10 +67,16 @@ const PG_UNREACHABLE_MESSAGES = [
   'Connection terminated unexpectedly',
 ];
 
-// Waiting for a pooled connection: Prisma P2024, pg-pool's queue timeout. The database may be
-// healthy and the pool merely saturated, but the request still cannot be served now.
+// Waiting for a pooled connection, or no room for one: Prisma P2024, pg-pool's queue timeout, the
+// pooler's saturation messages, Postgres 53300 too_many_connections. The database may be healthy and
+// the pool merely saturated, but the request still cannot be served now.
 const PRISMA_ACQUIRE_TIMEOUT_CODES = new Set(['P2024']);
 const PG_ACQUIRE_TIMEOUT_MESSAGE = 'timeout exceeded when trying to connect';
+const PG_TOO_MANY_CONNECTIONS = '53300';
+const PRISMA_WRAPPED_SATURATION_MESSAGE = new RegExp(
+  `${POOLER_SATURATION_08P01_MESSAGE.source}|sorry, too many clients already`,
+  'i'
+);
 
 const DB_CONNECT_ERROR = Symbol.for('civitai.db.connectError');
 
@@ -108,18 +122,25 @@ function isConnectionLink(cur: Errorish): boolean {
   if (PRISMA_UNREACHABLE_CODES.has(code)) return true;
   if (typeof cur.severity === 'string') {
     if (code === '08P01') {
-      if (POOLER_TRANSIENT_08P01_MESSAGE.test(message)) return true;
+      if (POOLER_OUTAGE_08P01_MESSAGE.test(message)) return true;
     } else if (code.startsWith('08') || PG_UNAVAILABLE_SQLSTATES.has(code)) return true;
   }
-  if (cur.name === PRISMA_UNKNOWN_REQUEST_ERROR && PRISMA_WRAPPED_UNAVAILABLE_MESSAGE.test(message))
+  if (cur.name === PRISMA_UNKNOWN_REQUEST_ERROR && PRISMA_WRAPPED_OUTAGE_MESSAGE.test(message))
     return true;
   if (SOCKET_CODES.has(code) && cur[DB_CONNECT_ERROR] === true) return true;
   return PG_UNREACHABLE_MESSAGES.some((m) => message.startsWith(m));
 }
 
 function isAcquireTimeoutLink(cur: Errorish): boolean {
+  const code = codeOf(cur);
+  const message = typeof cur.message === 'string' ? cur.message : '';
+  if (PRISMA_ACQUIRE_TIMEOUT_CODES.has(code) || message === PG_ACQUIRE_TIMEOUT_MESSAGE) return true;
+  if (typeof cur.severity === 'string') {
+    if (code === PG_TOO_MANY_CONNECTIONS) return true;
+    if (code === '08P01' && POOLER_SATURATION_08P01_MESSAGE.test(message)) return true;
+  }
   return (
-    PRISMA_ACQUIRE_TIMEOUT_CODES.has(codeOf(cur)) || cur.message === PG_ACQUIRE_TIMEOUT_MESSAGE
+    cur.name === PRISMA_UNKNOWN_REQUEST_ERROR && PRISMA_WRAPPED_SATURATION_MESSAGE.test(message)
   );
 }
 
@@ -128,7 +149,7 @@ export function isDbConnectionError(e: unknown): boolean {
   return !!findInChain(e, isConnectionLink);
 }
 
-/** Waiting for a pooled connection timed out. */
+/** No pooled connection in time, or the pool / pooler / server has no room for another one. */
 export function isDbAcquireTimeout(e: unknown): boolean {
   return !!findInChain(e, isAcquireTimeoutLink);
 }
@@ -144,8 +165,9 @@ const PG_CONNECT_TIMEOUT_MESSAGE = 'Connection terminated due to connection time
 /**
  * Whether a single statement that failed with `e` is worth running again after a short wait: the
  * connection was lost or refused (isDbConnectionError), or the pooler failed its own login (a pg
- * 28P01). Not a pg connect timeout, and not a wait for a pooled connection (isDbAcquireTimeout):
- * retrying either only queues the caller again behind the same saturated pool.
+ * 28P01). Not a pg connect timeout, and not a full pool, pooler or server (isDbAcquireTimeout: a
+ * pool-wait timeout, the pooler's saturation messages, 53300): retrying only adds load to the pool
+ * that is already full.
  *
  * It says nothing about whether running the statement twice is safe; that is the caller's to know.
  */

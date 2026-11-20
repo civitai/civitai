@@ -226,8 +226,11 @@ type ExtendableClient = { $extends: (extension: never) => unknown };
 
 /**
  * `prisma` with reads retried across a brief failover (readRetryHook). Each retried read is counted
- * in PRISMA_READ_RETRY_COUNTER_NAME by `target` and outcome. The extended client's type is not the
- * base client's; every call site uses the same API.
+ * in PRISMA_READ_RETRY_COUNTER_NAME by `target` and outcome.
+ *
+ * The budget is per read, not per request: there is no request-wide cap, so a request that makes N
+ * reads during a failover can wait up to N budgets before its last one fails, and a caller that
+ * catches a failed read has already waited out that read's budget.
  */
 export function withReadRetry<C extends ExtendableClient>(
   prisma: C,
@@ -241,5 +244,7 @@ export function withReadRetry<C extends ExtendableClient>(
     name: 'read-retry',
     query: { $allOperations: readRetryHook({ ...opts, onResult }) },
   };
+  // `as C`: a query-only extension adds no methods or result fields, so the extended client has the
+  // same API; its own type (DynamicClientExtensionThis) would change PrismaClients for every caller.
   return prisma.$extends(extension as never) as C;
 }
