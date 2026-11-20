@@ -114,6 +114,12 @@ describe.each([
     guard.perRequest = perRequest;
   });
 
+  // The stub, not the static fallback, answers: without it this flag reads off in both modes.
+  it('reads the flag-guard mode from the stubbed Flipt client', async () => {
+    const { ctx } = await callerAs(USER);
+    expect(!!ctx.features?.trpcFlagGuardPerRequest).toBe(perRequest);
+  });
+
   it.each([
     ['a scoped personal key', scopedKey],
     ['an app token', appToken],
