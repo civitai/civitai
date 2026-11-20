@@ -2,7 +2,7 @@ import { styleText } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { setStructuredLogSink, structuredLogSink } from '~/server/logging/structured-log-sink';
-import { createLogger } from '~/utils/logging';
+import { createLogger, MAX_FORWARDED_LOG_BODY } from '~/utils/logging';
 
 const NAME = 'otel-bridge-test-logger';
 const RED = '\x1b[31mred text\x1b[39m';
@@ -62,6 +62,29 @@ describe('createLogger', () => {
 
     expect(() => createLogger(NAME)('still logs')).not.toThrow();
     expect(logSpy).toHaveBeenCalledWith(styleText('green', NAME), 'still logs');
+  });
+
+  it('keeps a forward: false logger on stdout only', () => {
+    const emit = vi.fn();
+    setStructuredLogSink(emit);
+
+    createLogger(NAME, 'blue', { forward: false })('SELECT 1');
+
+    expect(emit).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(styleText('blue', NAME), 'SELECT 1');
+  });
+
+  it('cuts a forwarded body to the cap and leaves stdout whole', () => {
+    const emit = vi.fn();
+    setStructuredLogSink(emit);
+    const long = 'x'.repeat(MAX_FORWARDED_LOG_BODY * 2 + 17);
+
+    createLogger(NAME)(long);
+
+    const body = emit.mock.calls[0][0] as string;
+    expect(body).toHaveLength(MAX_FORWARDED_LOG_BODY);
+    expect(body.startsWith(`${NAME} xxx`)).toBe(true);
+    expect(logSpy).toHaveBeenCalledWith(styleText('green', NAME), long);
   });
 
   it('sends nothing for a logger LOGGING does not enable', () => {

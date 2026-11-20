@@ -1144,10 +1144,9 @@ export function attachSysSentinelListeners(
     errorCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
   }
 ) {
-  // @redis/client 6.3.0 emits SENTINE_LIST_CHANGE (sic) on sentinel scans even when the list has
-  // not changed, and the event carries only the list's size. Log it only when that size moves; the
-  // counter below still counts every event. Seeded with a value no event size can equal, so the
-  // first event always logs even if it carries no size.
+  // @redis/client emits SENTINE_LIST_CHANGE (sic) on every sentinel scan, carrying only the list
+  // size; log it only when the size moves. The Symbol seed makes the first event always log, even
+  // without a size.
   let lastSentinelListSize: unknown = Symbol('no sentinel list size seen');
   client.on('topology-change', (event: any) => {
     const { type: eventType, node } = event ?? {};

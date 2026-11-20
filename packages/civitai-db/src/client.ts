@@ -61,7 +61,6 @@ export function prismaLogConfig(logging: string[]): {
       .map((x) => x.replace('prisma:', '') as Prisma.LogLevel)
   );
   const slow = logging.some((x) => x.includes('prisma-slow'));
-  // Slow-query logging takes the query event over, and query lines are then not printed.
   if (slow) printed.delete('query');
   const levels = new Set(printed);
   if (slow) levels.add('query');
