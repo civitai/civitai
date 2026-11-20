@@ -293,6 +293,7 @@ describe('gating: no candidate request at all', () => {
     await settleAll();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(goRequests()).toHaveLength(1);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
   });
 });
 
@@ -311,6 +312,7 @@ describe('the two legs', () => {
     expect(control?.method).toBe('GET');
     expect(control?.headers).toEqual(flagOff.headers);
     expect(control?.url).not.toContain('batch=1');
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
   });
 
   it('in the batch cohort the control leg is still one unbatched GET', async () => {
@@ -320,6 +322,7 @@ describe('the two legs', () => {
     const control = sent.find((s) => s.leg === 'node');
     expect(control?.url).toContain('/api/trpc/image.getInfinite?');
     expect(control?.url).not.toContain('batch=1');
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
   });
 
   it('the candidate asks the same question: same query string, same headers, Go path', async () => {
@@ -334,6 +337,7 @@ describe('the two legs', () => {
     expect(candidate.search).toContain('input=');
     expect(goRequests()[0].method).toBe('GET');
     expect(goRequests()[0].headers).toEqual(sent.find((s) => s.leg === 'node')?.headers);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
   });
 
   it('both legs start before either answers', async () => {
@@ -564,6 +568,7 @@ describe('the app only ever gets the control leg', () => {
     const flagOn = await callQuery(INFINITE, INFINITE_INPUT);
     expect((flagOn.error as Error).message).toBe((flagOff.error as Error).message);
     expect((flagOn.error as Error).message).toBe('boom');
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
   });
 
   it('a cancelled query cancels the candidate and beacons nothing', async () => {
@@ -599,6 +604,7 @@ describe('per page-load cap', () => {
     await settleAll();
     expect(goRequests()).toHaveLength(20);
     expect(fetchMock).toHaveBeenCalledTimes(45);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(20));
   });
 });
 
@@ -753,5 +759,6 @@ describe('a pluggable candidate', () => {
     await callQuery(INFINITE, INFINITE_INPUT);
     await settleAll();
     expect(goRequests()).toHaveLength(1);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
   });
 });
