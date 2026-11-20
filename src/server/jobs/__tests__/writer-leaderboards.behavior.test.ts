@@ -10,7 +10,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const MIGRATION = path.resolve(
   __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261120120000_writer_leaderboards/migration.sql'
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261120180000_writer_leaderboards/migration.sql'
 );
 
 const STORYTELLER = 10;
@@ -194,6 +194,10 @@ beforeAll(async () => {
       (20, 'article', 201, ${COMMENTERS[0]}, now()), (21, 'article', 201, ${OLD_HIT}, now()),
       (22, 'article', 201, ${EXCLUDED_COMMENTER}, now()),
       (23, 'article', 201, ${COMMENTERS[1]}, now() - interval '400 days');
+    INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId", hidden, "tosViolation", "deletedAt") VALUES
+      (24, 'article', 201, ${HIDDEN_COMMENTER}, true, false, NULL),
+      (25, 'article', 201, ${TOS_COMMENTER}, false, true, NULL),
+      (26, 'article', 201, ${DELETED_COMMENTER}, false, false, now());
 
     INSERT INTO "User" (id) VALUES (${SYSTEM_MUSING_AUTHOR_NOTES}), (${SYSTEM_NOTES_AUTHOR_MUSING}),
       (${SYSTEM_GUIDE_AUTHOR_MUSING}), (${SYSTEM_MUSING_AUTHOR_GUIDE});
@@ -370,7 +374,7 @@ describe('Guide Writers', () => {
     expect(byUser(rows, DORMANT_GUIDE)).toBeUndefined();
   });
 
-  it("counts only other people's comments from the past year, never metric-excluded accounts", async () => {
+  it("counts only other people's live comments from the past year, never metric-excluded accounts", async () => {
     const rows = await run('writer-guide', [EXCLUDED_COMMENTER]);
     expect(byUser(rows, OLD_HIT)!.metrics.participants).toBe(1);
   });

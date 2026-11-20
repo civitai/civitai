@@ -244,7 +244,7 @@ const metricTypes: Record<
     icon: <IconUsers {...iconProps} />,
   }),
   participants: () => ({
-    tooltip: 'People who joined the discussion',
+    tooltip: 'Commenters, added up across the counted articles',
     icon: <IconMessages {...iconProps} />,
   }),
   answers: () => ({
