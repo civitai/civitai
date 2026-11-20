@@ -75,7 +75,8 @@ type Reader = (
  * Index posture, read off the database rather than the Prisma schema: `Post`, `Article` and
  * `BountyEntry` have `userId` indexes the schema does not declare; `Collection` and `ChatMember`
  * have declared `userId` btree indexes, `Bounty` and `ResourceReview` hash indexes;
- * `ServiceOffering` has `(sellerId, status)`. `PostText`, `Question` and `Answer` have none and
+ * `ServiceOffering` has `(sellerId, status)`, `ServiceDealReview` `(sellerId, publishedAt)` and none on
+ * `buyerId`. `PostText`, `Question` and `Answer` have none and
  * are small. For `ChatMessage`, see `chatMessages`. Reads use the read pool `db`, except the
  * `chatMessages` author pass and its edit reads, which use `authorDb` (see `authorPassPool`).
  */
@@ -260,6 +261,38 @@ export const userContentReaders: { name: string; rows: Reader }[] = [
               'removedAt',
               'createdAt',
             ])
+            .where('sellerId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'serviceDealReviews',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('ServiceDealReview')
+            .select(['id', 'dealId', 'buyerId', 'comment', 'hiddenAt', 'createdAt', 'updatedAt'])
+            .where('buyerId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'serviceDealReviewReplies',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('ServiceDealReview')
+            .select(['id', 'dealId', 'sellerId', 'sellerReply', 'sellerReplyAt', 'hiddenAt'])
             .where('sellerId', '=', userId)
             .orderBy('id', 'asc')
             .limit(take);

@@ -15,7 +15,9 @@ type Def = {
   handler: (input: unknown, ctx: { actor: { id: number } }) => Promise<unknown>;
 };
 
-const { default: endpoint } = (await import('~/pages/api/mod/restriction/resolve')) as unknown as {
+const { default: endpoint } = (await import(
+  '~/server/api-routes/mod/restriction/resolve'
+)) as unknown as {
   default: Def;
 };
 

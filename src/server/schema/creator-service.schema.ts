@@ -46,6 +46,8 @@ export const upsertServiceOfferingSchema = z.object({
   revisionsIncluded: z.number().int().min(0).max(SERVICE_REVISIONS_MAX),
   maxOpenDeals: z.number().int().min(SERVICE_OPEN_DEALS_MIN).max(SERVICE_OPEN_DEALS_MAX),
   previewKind: z.enum(ServicePreviewKind),
+  // Buyers may attach the delivered work to their review; omitted leaves it as it is.
+  allowReviewWork: z.boolean().optional(),
   // The seller's rating. The offering's shown rating is never below what its content checks find.
   declaredNsfwLevel: z
     .number()

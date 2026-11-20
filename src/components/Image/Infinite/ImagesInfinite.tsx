@@ -199,7 +199,9 @@ function ImagesFeed({
         : undefined,
     [searchQuery, similarTo, filters, browsingLevel, feedSearch?.sort, excludeOwn, modelVersionIds]
   );
-  const search = useSemanticImageFeed(searchInput);
+  const search = useSemanticImageFeed(searchInput, {
+    videos: filterType === 'videos' && !!features.semanticVideoSearch,
+  });
   useScrollToTopOnChange(searchInput && JSON.stringify(searchInput));
   // A search that fails falls back to the plain feed with a banner, never an empty page.
   const searchFailed = !!searchInput && search.isError;

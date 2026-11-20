@@ -102,7 +102,7 @@ both, but the silent `if (!userId) return` remains in the legacy file, along wit
 
 ## 5. `unblock-images.ts` clears `blockedFor` without touching `ingestion`
 
-`src/pages/api/mod/unblock-images.ts` is a batch backfill that nulls `blockedFor` for images that
+`src/server/api-routes/mod/unblock-images.ts` is a batch backfill that nulls `blockedFor` for images that
 are not actually blocked (`needsReview` null, `nsfwLevel` not Blocked). It now also drops the
 `BlockedImageDelete` queue rows, so it can no longer arm a purge on the very update meant to
 unblock. But it still leaves `ingestion` untouched.

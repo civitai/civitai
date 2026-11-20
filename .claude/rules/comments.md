@@ -17,6 +17,7 @@ Comments are not type-checked, so they rot silently. Write the minimum comment n
 - **Default to no comment.** Prefer a clearer name, smaller method, or better type over a comment explaining confusing code.
 - **Comment only the non-obvious why:** a rationale, tradeoff, gotcha, invariant or workaround the code can't convey. Link an issue/PR when relevant.
 - **Keep it to a line or two.** A long block means the code or naming should be clearer.
+- **A comment that states a rule must hold on every branch.** Before writing "the same rules as X" or "X alone never Y", read X and each branch that decides the outcome.
 
 ## What not to write
 

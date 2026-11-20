@@ -22,7 +22,13 @@ import { eventViewerOf } from '~/server/events/event-viewer';
 import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  archiveProfileBeforeModeratorChange,
+} from '~/server/services/user.service';
+import { archiveUserProfile } from '~/server/services/csam.service-new';
+import { logToAxiom } from '~/server/logging/client';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { getShowcaseHatForUser } from '~/server/events/showcase-hat';
 
 export const getUserContentOverviewHandler = async ({
@@ -128,6 +134,26 @@ export const updateUserProfileHandler = async ({
       throw throwAuthorizationError();
 
     const userId = sessionUser.isModerator ? input.userId || sessionUser.id : sessionUser.id;
+    const byModerator = userId !== sessionUser.id;
+    if (byModerator) {
+      // The civitai.com copies count as the field they override.
+      const touched = {
+        bio: ['bio', 'sfwBio'],
+        message: ['message', 'sfwMessage'],
+        location: ['location'],
+        links: ['socialLinks', 'sponsorshipLinks'],
+      };
+      const fields = (Object.keys(touched) as (keyof typeof touched)[]).filter((field) =>
+        touched[field].some((key) => key in input)
+      );
+      if (fields.length)
+        await archiveProfileBeforeModeratorChange({
+          userId,
+          actorId: sessionUser.id,
+          fields,
+          archive: archiveUserProfile,
+        });
+    }
     const user = await updateUserProfile({
       ...input,
       userId,
@@ -137,6 +163,23 @@ export const updateUserProfileHandler = async ({
     });
 
     await bustUserCreator(userId);
+    // The edit has committed: a failed record must not report it as failed.
+    if (byModerator) {
+      try {
+        await trackModActivity(sessionUser.id, {
+          entityType: 'user',
+          activity: 'editProfile',
+          entityId: userId,
+        });
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'edit-profile-mod-activity',
+          userId,
+          message: (error as Error).message,
+        });
+      }
+    }
 
     return user;
   } catch (error) {

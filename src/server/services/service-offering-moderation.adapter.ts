@@ -13,7 +13,12 @@ import {
 } from '~/server/services/text-scan/actions/settle-skipped';
 import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { csamHoldBars } from '~/server/services/text-scan/csam-hold-bars';
-import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import {
+  csamHoldState,
+  csamQueueClearSql,
+  readCsamHolds,
+  type CsamHoldState,
+} from '~/server/services/text-scan/csam-hold-state';
 import { loadServiceOfferingSubjects } from '~/server/services/text-scan/profiles/service-offering.profile';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import {
@@ -68,12 +73,6 @@ async function markServiceOfferingScanned(offeringId: number, current: CurrentTe
   });
 }
 
-const readCsamHolds = (offeringId: number) =>
-  dbWrite.textScanHold.findMany({
-    where: { entityType: ENTITY_TYPE, entityId: offeringId, label: 'csam' },
-    select: { status: true, textHash: true, meta: true },
-  });
-
 /**
  * Sends a blocked offering's new text back to its check, unless the csam queue holds it: a hold
  * pending or confirmed there, or a csam verdict no moderator dismissed for its text. Only that
@@ -83,45 +82,16 @@ export async function requeueBlockedServiceOffering(offeringId: number) {
   await dbWrite.$executeRaw`
     UPDATE "ServiceOffering" SET "ingestion" = 'Pending', "scanWorkflowId" = NULL
     WHERE "id" = ${offeringId} AND "ingestion" = 'Blocked'
-      AND NOT EXISTS (SELECT 1 FROM "TextScanHold" h
-        WHERE h."entityType" = ${ENTITY_TYPE} AND h."entityId" = ${offeringId} AND h."label" = 'csam'
-          AND h."status" IN ('Pending', 'Confirmed'))
-      AND NOT EXISTS (SELECT 1 FROM "EntityModeration" em
-        WHERE em."entityType" = ${ENTITY_TYPE} AND em."entityId" = ${offeringId}
-          AND em."status" = 'Succeeded' AND 'csam' = ANY(em."triggeredLabels")
-          AND NOT EXISTS (SELECT 1 FROM "TextScanHold" h
-            WHERE h."entityType" = ${ENTITY_TYPE} AND h."entityId" = ${offeringId}
-              AND h."label" = 'csam' AND h."status" = 'Dismissed'
-              AND h."textHash" = em."result"->>'textHash'
-              AND h."meta"->>'decision' IS DISTINCT FROM 'superseded'))`;
+      AND ${csamQueueClearSql(ENTITY_TYPE, offeringId)}`;
 }
 
-export type ServiceOfferingHoldState = 'held' | 'clear' | 'unverified';
+export type ServiceOfferingHoldState = CsamHoldState;
 
-/**
- * Whether the offering is held for the csam queue, read from the stored rows alone. `unverified`
- * when the stored verdict is not about the current text, or there is none; such an offering is not
- * shown.
- */
-export async function serviceOfferingHoldState(
-  offeringId: number
-): Promise<ServiceOfferingHoldState> {
-  const holds = await readCsamHolds(offeringId);
-  if (csamHoldBars(null, holds)) return 'held';
-  const verdict = await dbWrite.entityModeration.findUnique({
-    where: { entityType_entityId: { entityType: ENTITY_TYPE, entityId: offeringId } },
-    select: { status: true, triggeredLabels: true, result: true },
-  });
-  if (verdict?.status !== EntityModerationStatus.Succeeded) return 'unverified';
-  const held = csamHoldBars(verdict, holds);
-  const result = verdict.result as { version?: unknown; textHash?: unknown } | null;
-  // A fallback-check row carries no text hash and never this label.
-  if (result?.version === undefined) return held ? 'held' : 'clear';
-  const subject = (await loadServiceOfferingSubjects([offeringId])).get(offeringId);
-  if (typeof result.textHash !== 'string' || !subject) return held ? 'held' : 'unverified';
-  if (textScanTextHash(subject) !== result.textHash) return 'unverified';
-  return held ? 'held' : 'clear';
-}
+/** {@link csamHoldState} of the offering's current title and description. */
+export const serviceOfferingHoldState = (offeringId: number) =>
+  csamHoldState(ENTITY_TYPE, offeringId, async (id) =>
+    (await loadServiceOfferingSubjects([id])).get(id)
+  );
 
 /** Settles a check, unless it is held: `verdict` is the check's own, when it has one to give. */
 async function settleUnlessHeld(
@@ -129,7 +99,7 @@ async function settleUnlessHeld(
   current: CurrentText = {},
   verdict: Parameters<typeof csamHoldBars>[0] = null
 ) {
-  if (csamHoldBars(verdict, await readCsamHolds(offeringId)))
+  if (csamHoldBars(verdict, await readCsamHolds(ENTITY_TYPE, offeringId)))
     await blockServiceOffering(offeringId, current, { inHoldQueue: true });
   else await markServiceOfferingScanned(offeringId, current);
 }

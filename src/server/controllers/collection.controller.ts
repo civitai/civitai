@@ -371,17 +371,10 @@ export const saveItemHandler = async ({
     }
 
     // Check ownership if only one collection is being modified
-    const [itemId] = [
-      input.articleId,
-      input.modelId,
-      input.postId,
-      input.imageId,
-      input.model3dId,
-    ].filter(isDefined);
     if (input.collections.length === 1) {
       const [collection] = input.collections;
       const isOwner = await checkUserOwnsCollectionAndItem({
-        itemId,
+        item: input,
         userId: user.id,
         collectionId: collection.collectionId,
       });
@@ -460,15 +453,8 @@ export const upsertCollectionHandler = async ({
       coverViewer: credentialViews(ctx).asOwner ? undefined : {},
     });
 
-    const [itemId] = [
-      input.articleId,
-      input.modelId,
-      input.postId,
-      input.imageId,
-      input.model3dId,
-    ].filter(isDefined);
     const isOwner = await checkUserOwnsCollectionAndItem({
-      itemId,
+      item: input,
       userId: user.id,
       collectionId: collection.id,
     });

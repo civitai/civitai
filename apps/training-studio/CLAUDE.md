@@ -48,7 +48,7 @@ enters the flow.
 - **Per-blob upload, no zip.** Scan on upload (same policy as generation). Auto-label over signals.
 - **Live training over signals** (step/checkpoint; near-real-time possible). Generate/Publish operate
   off the **workflow ID / AIR**, not a `ModelVersion`.
-- **AI Toolkit by default**, with Kohya available for SD 1.5, SDXL, Flux.1 and Chroma behind the `training-studio-kohya` gate (`KOHYA_FLAG_KEY`: moderators only until the Flipt flag exists; the submit, continuation and quote paths refuse Kohya without it, not just the Select toggle). Both use the `training` workflow step; Kohya uses its own generated input contract. Trigger word is **model-dependent** (large/
+- **AI Toolkit by default**, with Kohya available for SD 1.5, SDXL, Flux.1, Chroma and Anima behind the `training-studio-kohya` gate (`KOHYA_FLAG_KEY`: moderators only until the Flipt flag exists; the submit, continuation and quote paths refuse Kohya without it, not just the Select toggle). Both use the `training` workflow step; Kohya uses its own generated input contract. Trigger word is **model-dependent** (large/
   video models can't train it — check per model before enforcing).
 
 - **Every submit calls the main app's trigger word check** (`POST /api/training-studio/check-text`,
@@ -94,7 +94,7 @@ training-studio` (port 5176; the hub holds 5173).
 
 - **Auth allows any signed-in user.** Training is a normal user feature, so the spoke guard in
   `src/lib/server/auth.ts` requires only a resolved session (`(user) => !!user`) — NOT `isModerator`.
-  `hooks.server.ts` sends an unauthenticated request to the hub login and a forbidden one to
+  `hooks.server.ts` sends an unauthenticated page load to this app's `/api/auth/authorize` and a forbidden one to
   civitai.com.
 
 - **No form actions.** The flow UI also ships as a web component embedded in the main app, so every

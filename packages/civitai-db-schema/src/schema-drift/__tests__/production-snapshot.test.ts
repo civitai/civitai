@@ -290,6 +290,8 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `ServiceDealFile.scannedEtag` / `.scannedVersionId`: `20271119070000_service_deal_file_scanned_etag`
     //   the three `ServiceOffering.license*` and four `ServiceDeal.license*` columns:
     //     `20271120030000_service_license_presets`
+    //   `ServiceDeal.reviewEnabledAt` and the four `ServiceOffering` review columns:
+    //     `20271120100100_service_deal_reviews`
     const inFlightColumns = new Set([
       'ServiceOffering.licensePreset',
       'ServiceOffering.licenseCustomText',
@@ -298,6 +300,11 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ServiceDeal.licenseCustomText',
       'ServiceDeal.licenseAllowResale',
       'ServiceDeal.licenseAgreedAt',
+      'ServiceDeal.reviewEnabledAt',
+      'ServiceOffering.allowReviewWork',
+      'ServiceOffering.happyCount',
+      'ServiceOffering.reviewCount',
+      'ServiceOffering.happySortKey',
       'ServiceDealFile.scannedEtag',
       'ServiceDealFile.scannedVersionId',
       'ApiKey.tokenScopeWide',

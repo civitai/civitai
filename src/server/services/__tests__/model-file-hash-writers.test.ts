@@ -155,7 +155,7 @@ const WRITER_LEDGER = [
     why: 'applyScanOutcome — the orchestrator scan-webhook path, the primary writer',
   },
   {
-    file: 'src/pages/api/mod/reprocess-scan.ts',
+    file: 'src/server/api-routes/mod/reprocess-scan.ts',
     writes: ['modelFileHash.deleteMany', 'modelFileHash.createMany'],
     normalizes: true,
     why: 'replays rawScanResult, where AutoV3 is still full-length and SHA256_12 is absent',

@@ -188,11 +188,30 @@ describe('Images search in the showcase picker', () => {
     });
     expect(state.semanticQuery).not.toHaveBeenCalled();
     // Whose images is the session's call: the request names no user.
-    expect(state.myImages).toHaveBeenCalledWith({
-      limit: 25,
-      mediaTypes: ['image'],
-      publishedOnly: true,
-    });
+    expect(state.myImages).toHaveBeenCalledWith(expect.objectContaining({ publishedOnly: true }));
+    expect(state.myImages.mock.calls[0][0]).not.toHaveProperty('userId');
+  });
+
+  test('on open, it lists more than one page of the caller’s media, videos included', async () => {
+    state.imageSearch = false;
+    // As the server: the caller's newest first, narrowed to the media types asked for, up to limit.
+    const own = Array.from({ length: 40 }, (_, i) => ({
+      id: 1000 + i,
+      nsfwLevel: 1,
+      url: `m${i}`,
+      type: i === 30 ? 'video' : 'image',
+    }));
+    state.myImages.mockImplementation(async (input: { limit: number; mediaTypes: string[] }) => ({
+      items: own.filter((item) => input.mediaTypes.includes(item.type)).slice(0, input.limit),
+    }));
+    renderWithProviders(
+      <ShowcaseItemsInput username="fox" supportedIndexes={['images']} value={[]} />
+    );
+
+    await userEvent.click(page.getByPlaceholder('Search Civitai'));
+
+    await vi.waitFor(() => expect(offeredIds()).toHaveLength(40), { timeout: 3000 });
+    expect(offeredIds()).toContain(1030);
   });
 
   // The profile editor renders this input signed in with no owner: a session check in place of the

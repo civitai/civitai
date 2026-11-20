@@ -189,7 +189,7 @@ import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-image
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
 import { purgeFeedbackCaptures } from '~/server/jobs/purge-feedback-captures';
 import { imageStorageDeletes } from '~/server/jobs/image-storage-deletes';
-import { imageDeletes } from '~/server/jobs/image-deletes';
+import { pendingDeletes } from '~/server/jobs/pending-deletes';
 import { retryUploadPromptScansJob } from '~/server/jobs/retry-upload-prompt-scans';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
@@ -239,7 +239,7 @@ export const jobs: Job[] = [
   removeReplacedImages,
   purgeFeedbackCaptures,
   imageStorageDeletes,
-  imageDeletes,
+  pendingDeletes,
   retryUploadPromptScansJob,
   processScheduledPublishing,
   knightsPublishSampling,

@@ -4,10 +4,12 @@ import { useState } from 'react';
 import type * as z from 'zod';
 import { SellerAffirmationCheckbox } from '~/components/CreatorShop/Services/SellerAffirmation';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { useMutateMyServices } from '~/components/CreatorShop/Services/creator-service.util';
 import {
   Form,
+  InputCheckbox,
   InputNumber,
   InputSelect,
   InputSimpleImageUpload,
@@ -39,7 +41,6 @@ import {
   ServiceOfferingStatus,
   ServicePreviewKind,
 } from '~/shared/utils/prisma/enums';
-import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   SERVICE_LICENSE_CUSTOM_TEXT_MAX,
   SERVICE_LICENSE_PRESET_LABELS,
@@ -86,6 +87,7 @@ export function ServiceOfferingFormModal({
   copyOf?: ServiceOffering;
 }) {
   const dialog = useDialogContext();
+  const reviewsNext = !!useOptionalFeatureFlags()?.creatorServicesNext;
   const { upsert } = useMutateMyServices();
   const source = offering ?? copyOf;
   // Outside the rollout the license is neither shown nor sent, and the server leaves it as it is.
@@ -103,6 +105,7 @@ export function ServiceOfferingFormModal({
       revisionsIncluded: source?.revisionsIncluded ?? 2,
       maxOpenDeals: source?.maxOpenDeals ?? 3,
       previewKind: source?.previewKind ?? ServicePreviewKind.Image,
+      allowReviewWork: source?.allowReviewWork ?? false,
       declaredNsfwLevel:
         offering?.declaredNsfwLevel ?? offering?.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
       coverImage: offering?.coverImage
@@ -233,6 +236,13 @@ export function ServiceOfferingFormModal({
                 <InputSwitch name="licenseAllowResale" label={SERVICE_LICENSE_RESALE_LABEL} />
               )}
             </>
+          )}
+          {reviewsNext && (
+            <InputCheckbox
+              name="allowReviewWork"
+              label="Let buyers show the work you deliver in their review"
+              description="Only still images from deals that were never disputed, once they pass our checks."
+            />
           )}
           {!isActive && needsAffirmation && (
             <SellerAffirmationCheckbox checked={affirmed} onChange={setAffirmed} />

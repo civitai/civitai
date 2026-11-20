@@ -13,6 +13,7 @@ import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import {
   queueArticlesAndComicsForImages,
+  queueDocumentsForBlockedImages,
   queueDocumentsForImageMinorChanges,
 } from '~/server/services/image-models-reindex.service';
 
@@ -289,5 +290,49 @@ describe('queueDocumentsForImageMinorChanges: collections and bounties', () => {
     expect(idsQueuedOn(bountiesSearchIndex)).toEqual([70, 71]);
     expect(query('"ImageConnection"')?.values[0]).toEqual([7]);
     expect(tagRefresh).toHaveBeenCalledWith([7]);
+  });
+});
+
+describe('queueDocumentsForBlockedImages', () => {
+  it('queues the models, bounties, collections, articles and comics showing a blocked image with no minor flag', async () => {
+    arm({ models: [5], bounties: [7], articles: [8], comics: [9] });
+    vi.mocked(getCollectionIdsForImages).mockResolvedValueOnce({
+      collectionIds: [11],
+      truncated: false,
+    } as never);
+    await queueDocumentsForBlockedImages([1]);
+    expect(queued()).toEqual([5]);
+    expect(idsQueuedOn(bountiesSearchIndex)).toEqual([7]);
+    expect(idsQueuedOn(articlesSearchIndex)).toEqual([8]);
+    expect(idsQueuedOn(comicsSearchIndex)).toEqual([9]);
+    expect(vi.mocked(enqueueCollectionRebuild)).toHaveBeenCalledWith(
+      expect.objectContaining({ collectionIds: [11] })
+    );
+    expect(vi.mocked(imagesForModelVersionsCache.refresh)).toHaveBeenCalledWith([50]);
+  });
+
+  it('reaches documents the re-rating path leaves alone (control)', async () => {
+    arm({ models: [5], bounties: [7] });
+    await queueDocumentsForImageMinorChanges({ levelImageIds: [1] });
+    expect(queued()).toEqual([]);
+    expect(idsQueuedOn(bountiesSearchIndex)).toEqual([]);
+  });
+
+  it('queues nothing for an image no document shows', async () => {
+    await queueDocumentsForBlockedImages([1]);
+    expect(queued()).toEqual([]);
+    expect(idsQueuedOn(bountiesSearchIndex)).toEqual([]);
+  });
+
+  it('reads nothing for no images', async () => {
+    await queueDocumentsForBlockedImages([]);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when every attempt fails', async () => {
+    dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('db down'));
+    await expect(queueDocumentsForBlockedImages([1])).resolves.toBeUndefined();
+    // The model lookup runs once per attempt: two attempts.
+    expect(queries().filter((q) => q.text.includes('"Post"'))).toHaveLength(2);
   });
 });

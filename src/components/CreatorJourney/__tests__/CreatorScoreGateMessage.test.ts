@@ -89,6 +89,12 @@ describe('CreatorScoreGateMessageView', () => {
     expect(hrefs).toEqual([CREATOR_JOURNEY_HREF]);
   });
 
+  it('climbs the ladder from the total it is handed', () => {
+    const { text } = render({ score: 120, total: 1, required, ladder });
+
+    expect(text).toMatch(/^You're at 1\. Your next step is Spark at 500/);
+  });
+
   it('states the gap close to the gate and links to what moves the score', () => {
     const { text, hrefs } = render({ score: required - 300, required, ladder });
 

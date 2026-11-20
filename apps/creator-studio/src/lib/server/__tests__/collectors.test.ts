@@ -48,6 +48,7 @@ vi.mock('@civitai/db/kysely', () => {
 });
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+vi.mock('$lib/server/metric-excluded-users', () => ({ getMetricExcludedUserIds: async () => [] }));
 
 const { getCollectors, collectorsHandler } = await import('../collectors');
 

@@ -151,6 +151,7 @@ import type {
   ServiceDealFileScanStatus,
   ServiceDisputeResolution,
   ServiceDealLeg,
+  ServiceDealReviewVerdict,
   UserHubSourceType,
   CrucibleStatus,
   CrucibleIngestionStatus,
@@ -5848,6 +5849,11 @@ export type ServiceDeal = {
   disputeResolvedById: number | null;
   closedAt: Timestamp | null;
   closeReason: string | null;
+  /**
+   * Set at accept when the buyer had the review flag: the deal ends in a review card, and a happy
+   * review may release the Buzz early.
+   */
+  reviewEnabledAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -5964,6 +5970,41 @@ export type ServiceDealFilePurge = {
   etag: string | null;
   purgedAt: Generated<Timestamp>;
 };
+export type ServiceDealReview = {
+  id: Generated<number>;
+  dealId: number;
+  offeringId: number;
+  sellerId: number;
+  buyerId: number;
+  verdict: ServiceDealReviewVerdict;
+  comment: string | null;
+  /**
+   * The content check of `comment`; reset to Pending on every edit.
+   */
+  scanStatus: Generated<ServiceOfferingIngestionStatus>;
+  scanWorkflowId: string | null;
+  publishedAt: Timestamp | null;
+  /**
+   * The buyer may edit until then.
+   */
+  editableUntil: Timestamp;
+  sellerReply: string | null;
+  sellerReplyAt: Timestamp | null;
+  sellerReplyScanStatus: ServiceOfferingIngestionStatus | null;
+  sellerReplyScanWorkflowId: string | null;
+  hiddenAt: Timestamp | null;
+  hiddenById: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type ServiceDealReviewImage = {
+  reviewId: number;
+  imageId: number;
+  /**
+   * The final it was copied from; one copy per final per review.
+   */
+  sourceFileId: number | null;
+};
 export type ServiceDealTransaction = {
   id: Generated<number>;
   dealId: number;
@@ -6058,6 +6099,20 @@ export type ServiceOffering = {
    * affirmedAt, version and the statement verbatim. Null until first published.
    */
   sellerAffirmation: unknown | null;
+  /**
+   * The seller lets buyers attach delivered work to their review. Off until the seller opts in.
+   */
+  allowReviewWork: Generated<boolean>;
+  /**
+   * Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
+   * only in the transaction that publishes or hides a review; the deals job compares them to rows.
+   */
+  happyCount: Generated<number>;
+  reviewCount: Generated<number>;
+  /**
+   * happyCount / reviewCount once reviewCount >= 3, else -1. Never null, so the feed pages by it with an id cursor.
+   */
+  happySortKey: Generated<number>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -7373,6 +7428,8 @@ export type DB = {
   ServiceDealFile: ServiceDealFile;
   ServiceDealFileEntry: ServiceDealFileEntry;
   ServiceDealFilePurge: ServiceDealFilePurge;
+  ServiceDealReview: ServiceDealReview;
+  ServiceDealReviewImage: ServiceDealReviewImage;
   ServiceDealTransaction: ServiceDealTransaction;
   ServiceDisputeReview: ServiceDisputeReview;
   ServiceOffering: ServiceOffering;

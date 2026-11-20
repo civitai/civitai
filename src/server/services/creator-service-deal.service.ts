@@ -116,6 +116,8 @@ type Transition = {
   reason?: PreparedReason;
   /** The deal column that also keeps the reason's text. */
   reasonColumn?: 'cancellationReason' | 'disputeReason';
+  /** Writes that must exist exactly when the move does: run in its transaction, after the event. */
+  then?: (tx: Prisma.TransactionClient) => Promise<unknown>;
 };
 
 /** A party's reason, after `prepareReason`. */
@@ -206,6 +208,7 @@ export async function transitionDeal(t: Transition) {
 
     // A deal still confirming payment claims nothing here; reconcile claims it if the hold lands.
     if (t.refund) await claimRefund(tx, t.dealId);
+    if (t.then) await t.then(tx);
     return event.id;
   });
   const moved = eventId !== null;
@@ -335,6 +338,7 @@ export async function requestServiceDeal({
   buzzType,
   servableLevels,
   consentLevels,
+  reviewEnabled = false,
 }: {
   offeringId: number;
   /** The terms the buyer was shown. The deal never takes different ones. */
@@ -354,6 +358,8 @@ export async function requestServiceDeal({
   servableLevels: number;
   /** The buyer's own browsing level (`getRequestBrowsingLevel`): their consent to mature levels. */
   consentLevels: number;
+  /** The buyer has the review flag: the deal ends in a review card instead of the dispute box. */
+  reviewEnabled?: boolean;
 }) {
   if (!isServiceDealBuzzType(buzzType))
     throw throwBadRequestError(`Services cannot be paid in ${buzzType} Buzz`);
@@ -419,11 +425,12 @@ export async function requestServiceDeal({
     const [created] = await tx.$queryRaw<{ id: number }[]>`
       INSERT INTO "ServiceDeal" ("offeringId", "buyerId", "sellerId", "price", "buzzType",
         "feeAmount", "revisionsIncluded", "deliveryDays", "previewKind", "status", "requestText",
-        "updatedAt", "maxNsfwLevel", "licensePreset", "licenseCustomText", "licenseAllowResale",
-        "licenseAgreedAt")
+        "updatedAt", "maxNsfwLevel", "reviewEnabledAt", "licensePreset", "licenseCustomText",
+        "licenseAllowResale", "licenseAgreedAt")
       SELECT o."id", ${buyerId}::int, o."sellerId", o."price", ${buzzType}::"ServiceBuzzType",
         0, o."revisionsIncluded", o."deliveryDays", o."previewKind", 'Requested'::"ServiceDealStatus",
-        ${requestText}::text, now(), ${offeringLevel}, o."licensePreset", o."licenseCustomText",
+        ${requestText}::text, now(), ${offeringLevel},
+        CASE WHEN ${reviewEnabled}::boolean THEN now() END, o."licensePreset", o."licenseCustomText",
         o."licenseAllowResale", CASE WHEN o."licensePreset" IS NULL THEN NULL ELSE now() END
       FROM "ServiceOffering" o
       WHERE o."id" = ${offeringId}::int

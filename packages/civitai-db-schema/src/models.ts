@@ -186,7 +186,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "ImageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "CsamArchive";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "ImageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "CsamArchive" | "PendingDelete";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -291,6 +291,8 @@ export type ServiceDealFileScanStatus = "Pending" | "Passed" | "Failed" | "NotSc
 export type ServiceDisputeResolution = "Refund" | "Release";
 
 export type ServiceDealLeg = "Hold" | "Release" | "Fee" | "Refund";
+
+export type ServiceDealReviewVerdict = "Happy" | "NotQuite";
 
 export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
 
@@ -1800,6 +1802,7 @@ export interface Image {
   crucibles?: Crucible[];
   crucibleHeroes?: Crucible[];
   serviceOfferingCovers?: ServiceOffering[];
+  serviceDealReviewImage?: ServiceDealReviewImage | null;
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
@@ -7156,10 +7159,15 @@ export interface ServiceOffering {
   removedAt: Date | null;
   removedById: number | null;
   sellerAffirmation: JsonValue | null;
+  allowReviewWork: boolean;
+  happyCount: number;
+  reviewCount: number;
+  happySortKey: number;
   createdAt: Date;
   updatedAt: Date;
   deals?: ServiceDeal[];
   reports?: ServiceOfferingReport[];
+  reviews?: ServiceDealReview[];
 }
 
 export interface ServiceOfferingReport {
@@ -7210,9 +7218,11 @@ export interface ServiceDeal {
   disputeResolvedById: number | null;
   closedAt: Date | null;
   closeReason: string | null;
+  reviewEnabledAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   events?: ServiceDealEvent[];
+  review?: ServiceDealReview | null;
   files?: ServiceDealFile[];
   transactions?: ServiceDealTransaction[];
   disputeReviews?: ServiceDisputeReview[];
@@ -7233,6 +7243,40 @@ export interface ServiceDisputeReview {
   humanId: number | null;
   agreed: boolean | null;
   createdAt: Date;
+}
+
+export interface ServiceDealReview {
+  id: number;
+  dealId: number;
+  deal?: ServiceDeal;
+  offeringId: number;
+  offering?: ServiceOffering;
+  sellerId: number;
+  buyerId: number;
+  verdict: ServiceDealReviewVerdict;
+  comment: string | null;
+  scanStatus: ServiceOfferingIngestionStatus;
+  scanWorkflowId: string | null;
+  publishedAt: Date | null;
+  editableUntil: Date;
+  sellerReply: string | null;
+  sellerReplyAt: Date | null;
+  sellerReplyScanStatus: ServiceOfferingIngestionStatus | null;
+  sellerReplyScanWorkflowId: string | null;
+  hiddenAt: Date | null;
+  hiddenById: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+  images?: ServiceDealReviewImage[];
+}
+
+export interface ServiceDealReviewImage {
+  reviewId: number;
+  review?: ServiceDealReview;
+  imageId: number;
+  image?: Image;
+  sourceFileId: number | null;
+  sourceFile?: ServiceDealFile | null;
 }
 
 export interface ServiceDealEvent {
@@ -7290,6 +7334,7 @@ export interface ServiceDealFile {
   removedAt: Date | null;
   createdAt: Date;
   entries?: ServiceDealFileEntry[];
+  reviewImages?: ServiceDealReviewImage[];
 }
 
 export interface ServiceDealFileEntry {
