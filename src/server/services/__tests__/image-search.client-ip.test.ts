@@ -91,7 +91,7 @@ const FIXTURES: ReadonlyArray<
   ],
   [
     'a request whose edge value is not an address, falling through',
-    { 'cf-connecting-ip': 'notanip', 'x-client-ip': '198.51.100.4' },
+    { 'cf-connecting-ip': 'notanip', 'x-forwarded-for': '198.51.100.4' },
     undefined,
     '198.51.100.4',
   ],

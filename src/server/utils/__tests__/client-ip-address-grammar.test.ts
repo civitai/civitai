@@ -72,7 +72,9 @@ function reqWith(headers: Record<string, string | string[]>): NextApiRequest {
  * `true` = the candidate was returned verbatim, i.e. accepted.
  */
 function resolveBranchAccepts(value: string): boolean {
-  return resolveClientIp(reqWith({ 'cf-connecting-ip': value, 'x-client-ip': RESCUER })) === value;
+  return (
+    resolveClientIp(reqWith({ 'cf-connecting-ip': value, 'x-forwarded-for': RESCUER })) === value
+  );
 }
 
 /**
@@ -132,7 +134,7 @@ describe('client-ip: the one address grammar', () => {
       // peer and not on an empty string. If the fallthrough target ever moves,
       // `resolveBranchAccepts` stops meaning what it says and this goes red.
       expect(
-        resolveClientIp(reqWith({ 'cf-connecting-ip': 'notanip', 'x-client-ip': RESCUER }))
+        resolveClientIp(reqWith({ 'cf-connecting-ip': 'notanip', 'x-forwarded-for': RESCUER }))
       ).toBe(RESCUER);
     });
 
