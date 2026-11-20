@@ -1,4 +1,10 @@
-import { guardedProcedure, isFlagProtected, protectedProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  isFlagProtected,
+  moderatorProcedure,
+  protectedProcedure,
+  router,
+} from '~/server/trpc';
 import {
   declineServiceDealSchema,
   getServiceDealSchema,
@@ -9,6 +15,9 @@ import {
   requestServiceDealSchema,
   respondServiceDealCancellationSchema,
   reviewServiceDealSchema,
+  editServiceDealReviewSchema,
+  replyServiceDealReviewSchema,
+  hideServiceDealReviewSchema,
   serviceDealActionSchema,
 } from '~/server/schema/creator-service-deal.schema';
 import {
@@ -27,7 +36,12 @@ import {
   respondServiceDealCancellation,
   withdrawServiceDeal,
 } from '~/server/services/creator-service-deal.service';
-import { reviewServiceDeal } from '~/server/services/creator-service-deal-review.service';
+import {
+  editServiceDealReview,
+  replyToServiceDealReview,
+  reviewServiceDeal,
+  setServiceDealReviewHidden,
+} from '~/server/services/creator-service-deal-review.service';
 import { domainServableLevels, getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 
@@ -70,6 +84,30 @@ export const creatorServiceDealRouter = router({
       verdict: input.verdict,
       comment: input.comment,
       reviewFlag: !!ctx.features.creatorServicesNext,
+    })
+  ),
+  editReview: gated.input(editServiceDealReviewSchema).mutation(({ input, ctx }) =>
+    editServiceDealReview({
+      dealId: input.id,
+      userId: ctx.user.id,
+      comment: input.comment,
+      reviewFlag: !!ctx.features.creatorServicesNext,
+    })
+  ),
+  replyToReview: gated.input(replyServiceDealReviewSchema).mutation(({ input, ctx }) =>
+    replyToServiceDealReview({
+      dealId: input.id,
+      userId: ctx.user.id,
+      reply: input.reply,
+      reviewFlag: !!ctx.features.creatorServicesNext,
+    })
+  ),
+  // Not behind the flag: moderation of what was published must outlast a brake.
+  hideReview: moderatorProcedure.input(hideServiceDealReviewSchema).mutation(({ input, ctx }) =>
+    setServiceDealReviewHidden({
+      reviewId: input.reviewId,
+      moderatorId: ctx.user.id,
+      hidden: input.hidden,
     })
   ),
   accept: gated

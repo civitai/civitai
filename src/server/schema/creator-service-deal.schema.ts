@@ -38,6 +38,12 @@ export const reviewServiceDealSchema = dealId.extend({
   verdict: z.enum(['Happy', 'NotQuite']),
   comment: text(2000).optional(),
 });
+export const editServiceDealReviewSchema = dealId.extend({ comment: text(2000).optional() });
+export const replyServiceDealReviewSchema = dealId.extend({ reply: text(2000) });
+export const hideServiceDealReviewSchema = z.object({
+  reviewId: z.number().int().positive(),
+  hidden: z.boolean(),
+});
 export const declineServiceDealSchema = dealId.extend({
   reason: text(1000).optional(),
   reasonCode: z.enum(SERVICE_DEAL_DECLINE_REASON_CODES).optional(),

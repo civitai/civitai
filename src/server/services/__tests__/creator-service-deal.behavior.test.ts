@@ -131,6 +131,10 @@ const MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261025120000_creator_services_foundation/migration.sql'
 );
+const TEXT_SCAN_HOLD_MIGRATION = join(
+  process.cwd(),
+  'packages/civitai-db-schema/prisma/migrations/20261016150000_text_scan_hold/migration.sql'
+);
 const FILE_STATE_MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261028140000_creator_service_deal_file_state/migration.sql'
@@ -309,6 +313,14 @@ beforeAll(async () => {
       "needsReview" text, "nsfwLevel" int NOT NULL DEFAULT 0,
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
+  // The review text check reads the csam queue's rows.
+  await holder.db.exec(`
+    CREATE TABLE "EntityModeration" ("entityType" text NOT NULL, "entityId" int NOT NULL, blocked boolean,
+      "triggeredLabels" text[] NOT NULL DEFAULT '{}', result jsonb, "nsfwLevel" int, "workflowId" text,
+      status text NOT NULL DEFAULT 'Succeeded', "retryCount" int NOT NULL DEFAULT 0,
+      "updatedAt" timestamp(3) NOT NULL DEFAULT now(), PRIMARY KEY ("entityType", "entityId"));
+  `);
+  await holder.db.exec(readFileSync(TEXT_SCAN_HOLD_MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(REASON_CODE_MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(FILE_STATE_MIGRATION, 'utf8'));
@@ -349,7 +361,7 @@ beforeEach(async () => {
   chat.createMessage.mockResolvedValue({});
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDisputeReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "TextScanHold", "EntityModeration", "ServiceDealReviewImage", "ServiceDealReview", "ServiceDisputeReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
@@ -3652,6 +3664,106 @@ describe('review publishing and counters', () => {
     expect(await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED)).toBe(true);
     expect(await published(id)).toBeNull();
     expect((await counters()).happyCount).toBe(0);
+  });
+
+  describe('edits, replies and hiding', () => {
+    const reviewRow = async (dealId: number) =>
+      (
+        await q<{
+          id: number;
+          comment: string | null;
+          scanStatus: string;
+          sellerReply: string | null;
+          sellerReplyScanStatus: string | null;
+          publishedAt: Date | null;
+          hiddenById: number | null;
+        }>(
+          `SELECT id, comment, "scanStatus"::text, "sellerReply", "sellerReplyScanStatus"::text,
+             "publishedAt", "hiddenById" FROM "ServiceDealReview" WHERE "dealId" = $1`,
+          [dealId]
+        )
+      )[0];
+    const edit = (dealId: number, comment: string | null, userId = BUYER) =>
+      dealReviews.editServiceDealReview({ dealId, userId, comment, reviewFlag: true });
+    const reply = (dealId: number, text: string, userId = SELLER) =>
+      dealReviews.replyToServiceDealReview({ dealId, userId, reply: text, reviewFlag: true });
+
+    it('unshows an edited review until the new comment passes, and keeps the verdict', async () => {
+      const id = await completedBy();
+      await review(id, 'Happy');
+      expect((await counters()).happyCount).toBe(1);
+      await edit(id, 'Even better on a second look');
+      expect(await reviewRow(id)).toMatchObject({ scanStatus: 'Pending', publishedAt: null });
+      expect((await counters()).happyCount).toBe(0);
+      // Clearing the comment leaves nothing to check.
+      await edit(id, '  ');
+      expect(await reviewRow(id)).toMatchObject({ comment: null, scanStatus: 'Scanned' });
+      expect((await counters()).happyCount).toBe(1);
+    });
+
+    it('refuses an edit after the window, by someone else, or on a hidden review', async () => {
+      const id = await completedBy();
+      await review(id, 'NotQuite', BUYER, 'meh');
+      await expect(edit(id, 'x', SELLER)).rejects.toEqual(conflict);
+      await q(`UPDATE "ServiceDealReview" SET "hiddenAt" = now() WHERE "dealId" = $1`, [id]);
+      await expect(edit(id, 'x')).rejects.toEqual(conflict);
+      await q(
+        `UPDATE "ServiceDealReview" SET "hiddenAt" = NULL, "editableUntil" = now() WHERE "dealId" = $1`,
+        [id]
+      );
+      await expect(edit(id, 'x')).rejects.toEqual(conflict);
+      expect((await reviewRow(id)).comment).toBe('meh');
+    });
+
+    it('keeps a comment the csam queue holds blocked whatever the buyer changes it to', async () => {
+      const id = await completedBy();
+      await review(id, 'Happy', BUYER, 'held text');
+      const { id: reviewId } = await reviewRow(id);
+      await q(`UPDATE "ServiceDealReview" SET "scanStatus" = 'Blocked' WHERE id = $1`, [reviewId]);
+      await q(
+        `INSERT INTO "TextScanHold" ("entityType", "entityId", label, "textHash", text, reason, status, "updatedAt")
+         VALUES ('ServiceDealReview', $1, 'csam', 'h', 't', 'r', 'Confirmed', now())`,
+        [reviewId]
+      );
+      await edit(id, 'something harmless');
+      expect((await reviewRow(id)).scanStatus).toBe('Blocked');
+    });
+
+    it('lets the seller reply once, and sends the reply to its check', async () => {
+      const id = await completedBy();
+      await review(id, 'Happy');
+      await expect(reply(id, 'thanks', BUYER)).rejects.toEqual(conflict);
+      await reply(id, '  Thank you!  ');
+      expect(await reviewRow(id)).toMatchObject({
+        sellerReply: 'Thank you!',
+        sellerReplyScanStatus: 'Pending',
+      });
+      await expect(reply(id, 'again')).rejects.toEqual(conflict);
+    });
+
+    it('runs the text guard on every comment and reply', async () => {
+      const id = await completedBy();
+      await review(id, 'Happy', BUYER, 'first');
+      await edit(id, 'second');
+      await reply(id, 'third');
+      const scanned = vi.mocked(throwOnBlockedUserContent).mock.calls.map(([t]) => t);
+      expect(scanned).toEqual(expect.arrayContaining(['first', 'second', 'third']));
+    });
+
+    it('a moderator hides and restores a review, and the counters follow', async () => {
+      const id = await completedBy();
+      await review(id, 'Happy');
+      const { id: reviewId } = await reviewRow(id);
+      const hide = (hidden: boolean) =>
+        dealReviews.setServiceDealReviewHidden({ reviewId, moderatorId: STRANGER, hidden });
+      expect(await hide(true)).toBe(true);
+      expect(await hide(true)).toBe(false);
+      expect(await reviewRow(id)).toMatchObject({ publishedAt: null, hiddenById: STRANGER });
+      expect((await counters()).happyCount).toBe(0);
+      expect(await hide(false)).toBe(true);
+      expect((await reviewRow(id)).publishedAt).not.toBeNull();
+      expect((await counters()).happyCount).toBe(1);
+    });
   });
 
   describe('the deals job', () => {
