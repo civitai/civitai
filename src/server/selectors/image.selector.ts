@@ -92,6 +92,13 @@ const reviewedImageWhere = { needsReview: null, tosViolation: false } as const;
 
 const publishedPostWhere = (): Prisma.PostWhereInput => ({ publishedAt: { lte: new Date() } });
 
+/** An ImageConnection whose Image row still exists. The table has no foreign key in production, so a
+ *  deleted image leaves its connections behind, and a read that includes `image` then fails on the
+ *  required relation. Every connection read that includes or selects `image` spreads this. */
+export const connectionImageExists = {
+  image: { id: { gt: 0 } },
+} satisfies Prisma.ImageConnectionWhereInput;
+
 export const publishedImageWhere = (): Prisma.ImageWhereInput => ({
   ...reviewedImageWhere,
   post: publishedPostWhere(),
