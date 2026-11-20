@@ -26,7 +26,9 @@ vi.mock('$lib/server/auth/captcha', () => ({
   isCaptchaEnabled: () => false,
   verifyCaptchaToken: vi.fn(async () => true),
 }));
-vi.mock('$lib/server/auth/rate-limit', () => ({ checkRateLimit: vi.fn(async () => true) }));
+vi.mock('$lib/server/auth/rate-limit', () => ({
+  consumeRateLimit: vi.fn(async () => ({ ok: true })),
+}));
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => '203.0.113.1' }));
 vi.mock('$lib/server/metrics', () => ({
   blockedEmailDomainSignupsTotal: { inc: vi.fn() },

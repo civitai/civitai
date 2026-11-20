@@ -1,3 +1,4 @@
+import { json } from '@sveltejs/kit';
 import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 
 // OAuth endpoint rate limits, ported from the main app's src/server/oauth/rate-limit.ts RATE_LIMITS.
@@ -80,6 +81,33 @@ const OAUTH_RATE_LIMITS = {
 } as const;
 
 export type OAuthRateLimitBucket = keyof typeof OAUTH_RATE_LIMITS;
+
+// The only place the auth app writes this status: every 429 goes through rateLimitedResponse, and
+// rate-limited-response.test.ts fails on a 429 built anywhere else.
+export const RATE_LIMITED_STATUS = 429;
+
+/**
+ * A bucket's Retry-After: its static window, not the key's remaining TTL, so callers sharing one bucket
+ * (a worker pool behind one IP) spread their retries instead of all returning at the window edge.
+ */
+export function oauthRetryAfter(bucket: OAuthRateLimitBucket): number {
+  return OAUTH_RATE_LIMITS[bucket].windowSeconds;
+}
+
+/** A 429 with `Retry-After` and `retry_after` (whole seconds, at least 1). */
+export function rateLimitedResponse(
+  retryAfter: number,
+  headers?: HeadersInit,
+  description = 'Too many requests'
+): Response {
+  const seconds = Math.max(1, Math.ceil(retryAfter));
+  const out = new Headers(headers);
+  out.set('Retry-After', String(seconds));
+  return json(
+    { error: 'rate_limited', error_description: description, retry_after: seconds },
+    { status: RATE_LIMITED_STATUS, headers: out }
+  );
+}
 
 /**
  * Check an OAuth endpoint's rate limit for `identifier` (userId for /authorize, IP for /token, /revoke

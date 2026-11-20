@@ -6,7 +6,11 @@ import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { getClientIp } from '$lib/server/auth/request';
 import { parseBody } from '$lib/server/oauth/http';
 import { hasScope, isScopeGrantable, scopeFromColumn } from '$lib/server/oauth/scope';
-import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import {
+  checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+} from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { AppBlockSuspendedError, createAppAccessToken } from '$lib/server/oauth/token-helpers';
 import { isOfflineGrantOn } from '$lib/server/oauth/offline-grant';
@@ -46,7 +50,11 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   if (!(await checkOAuthRateLimit('app-token', `${userId}:${clientId}`))) {
-    return bad('rate_limited', 'Too many app token requests', 429);
+    return rateLimitedResponse(
+      oauthRetryAfter('app-token'),
+      undefined,
+      'Too many app token requests'
+    );
   }
 
   const client = await db

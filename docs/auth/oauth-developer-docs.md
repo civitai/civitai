@@ -238,7 +238,7 @@ Responses:
 
 > **Over-polling returns HTTP `429` with `{"error":"rate_limited"}`, not `slow_down`.** Poll no
 > faster than `interval`; on a 429, add 5 seconds to your interval and keep polling. The limit is
-> per client id, so every instance of an app shares one budget.
+> per `device_code`, so one sign-in polling too fast never slows another.
 
 ## Client Credentials Flow
 
@@ -436,7 +436,9 @@ Buckets are keyed differently per endpoint — check which one applies before si
 - Introspection endpoint: 60 requests/minute per **client id**, plus 120/minute per **IP** charged
   before client authentication
 
-The hub sends no rate-limit headers and no `Retry-After`. A throttled request is `429` with `{"error":"rate_limited"}` — back off on the 429 itself.
+A throttled request is `429` with a `Retry-After` header and the same wait, in whole seconds, in the body:
+`{"error":"rate_limited","error_description":"…","retry_after":60}`. Wait that long before retrying. The hub
+sends no other rate-limit headers.
 
 ## Token Lifetime
 

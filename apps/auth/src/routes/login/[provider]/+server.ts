@@ -11,7 +11,8 @@ import {
   NO_PKCE_COOKIE,
 } from '$lib/server/auth/providers';
 import { readReturnUrl, readSync } from '$lib/server/auth/redirect';
-import { checkRateLimit } from '$lib/server/auth/rate-limit';
+import { consumeRateLimit } from '$lib/server/auth/rate-limit';
+import { rateLimitedResponse } from '$lib/server/oauth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
 
 // Start the upstream OAuth flow: stash state (and the PKCE verifier, when the leg uses PKCE) + the returnUrl/sync we must honor
@@ -22,9 +23,8 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals, reques
   // Rate limit per CLIENT IP — bounds redirect/cookie churn from someone hammering the login start.
   // Use the proxy-resolved client IP (not the ingress socket peer) so this never throttles all users
   // through one shared bucket; getClientIp returns null behind a misconfigured proxy → limit is skipped.
-  if (!(await checkRateLimit('oauth-start', getClientIp(request), 30, 60))) {
-    error(429, 'Too many requests');
-  }
+  const limit = await consumeRateLimit('oauth-start', getClientIp(request), 30, 60);
+  if (!limit.ok) return rateLimitedResponse(limit.retryAfter);
 
   const provider = getProvider(params.provider);
   if (!provider || !provider.clientId() || !provider.clientSecret()) {

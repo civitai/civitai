@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   newAccountRefusal: vi.fn(),
   checkRateLimit: vi.fn(),
   isRateLimited: vi.fn(),
+  rateLimitTtl: vi.fn(),
   send: vi.fn(),
   isEmailConfigured: vi.fn(),
 }));
@@ -39,6 +40,7 @@ vi.mock('$lib/server/auth/users', () => ({ userExistsByEmail: vi.fn(async () => 
 vi.mock('$lib/server/auth/rate-limit', () => ({
   checkRateLimit: mocks.checkRateLimit,
   isRateLimited: mocks.isRateLimited,
+  rateLimitTtl: mocks.rateLimitTtl,
 }));
 vi.mock('$lib/server/email/invite.email', () => ({ inviteEmail: { send: mocks.send } }));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
@@ -59,7 +61,7 @@ async function invite(body: Record<string, unknown>) {
     body: JSON.stringify(body),
   });
   const res = await POST({ request, url: new URL(request.url) } as never);
-  return { status: res.status, body: await res.json() };
+  return { status: res.status, retryAfter: res.headers.get('Retry-After'), body: await res.json() };
 }
 
 beforeEach(() => {
@@ -128,10 +130,24 @@ describe('POST /api/auth/invite', () => {
     expect(mocks.send).not.toHaveBeenCalled();
   });
 
-  it('refuses once rate limited', async () => {
+  it('refuses once rate limited, retrying when the client window ends', async () => {
     mocks.isRateLimited.mockResolvedValue(true);
-    expect((await invite(VALID)).status).toBe(429);
+    mocks.rateLimitTtl.mockResolvedValue(1234);
+    const res = await invite(VALID);
+    expect(res.status).toBe(429);
+    expect(res.retryAfter).toBe('1234');
+    expect(res.body.retry_after).toBe(1234);
     expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("answers a recipient-only refusal with that bucket's window, never its TTL", async () => {
+    // The recipient key's TTL would tell any client when someone last invited that address.
+    mocks.isRateLimited.mockImplementation(async (bucket: string) => bucket === 'invite-recipient');
+    mocks.rateLimitTtl.mockResolvedValue(1234);
+    const res = await invite(VALID);
+    expect(res.status).toBe(429);
+    expect(res.retryAfter).toBe('86400');
+    expect(mocks.rateLimitTtl).not.toHaveBeenCalledWith('invite-recipient', expect.anything());
   });
 });
 
