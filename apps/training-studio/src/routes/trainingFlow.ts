@@ -727,7 +727,10 @@ export function runExtraCapabilities(
     steps: params.steps,
   });
   if (runEngine(run) === 'kohya' && isKohyaFlow(runVersion(run).ecosystem))
-    caps.noiseOffset = { supported: false, reason: 'Flux and Chroma do not use noise offset.' };
+    caps.noiseOffset = {
+      supported: false,
+      reason: 'Flux, Chroma and Anima do not use noise offset.',
+    };
   return caps;
 }
 
