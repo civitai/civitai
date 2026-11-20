@@ -1,5 +1,6 @@
 import { createHash, createHmac } from 'crypto';
 import type { RemixApp } from '~/shared/remix-apps/define';
+import { RemixReplayRequest } from '../../../apps/storage-hook-runner/src/contract';
 
 /**
  * A stand-in for the storage hook runner's `POST /v1/remix/replay` (its README is the contract):
@@ -24,9 +25,9 @@ export function fakeRemixRunner({
     const body = String(init.body);
     const request = JSON.parse(body) as Record<string, unknown>;
     calls.push(request);
-    // The runner's MAX_REMIX_BRANCHES: it refuses a call with more.
-    if (((request.input as ReplayInput).branches?.length ?? 0) > 12)
-      return new Response('too many branches', { status: 400 });
+    // The runner's own request schema: a request it would refuse is refused here too.
+    const parsed = RemixReplayRequest.safeParse(request);
+    if (!parsed.success) return new Response(parsed.error.message, { status: 400 });
     const req = createHash('sha256').update(body).digest('hex');
     const message = 'this app outran the interrupt and is quarantined';
     const response = quarantined

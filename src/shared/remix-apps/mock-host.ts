@@ -8,6 +8,7 @@ import type {
   RemixWorkflowResult,
 } from '~/shared/remix-apps/define';
 import {
+  REMIX_RUN_LIMITS,
   replayRemixApp,
   type RemixEffect,
   type RemixLogEntry,
@@ -27,10 +28,13 @@ export function firstAnswer(spec: RemixAsk): RemixAnswer {
 
 /** Placeholder outputs shaped like the real ones: as many images, at the size they would be. */
 export function mockResult(request: RemixWorkflowRequest, step: number): RemixWorkflowResult {
+  // A size the app chose can be any number; one outside the runner's log contract is dropped.
+  const size = (n?: number) =>
+    Number.isInteger(n) && n! > 0 && n! <= REMIX_RUN_LIMITS.imageDimension ? n : undefined;
   const image = (i: number, width?: number, height?: number): RemixImage => ({
     url: `mock://remix/${step}/${i}`,
-    width,
-    height,
+    width: size(width),
+    height: size(height),
   });
   if (request.kind === 'upscale') {
     const { width, height } = request.image;

@@ -38,6 +38,8 @@ export const REMIX_RUN_LIMITS = {
   textMaxLength: 500,
   choiceOptions: 12,
   pickImages: 4,
+  /** The widest or tallest image the runner's log accepts. */
+  imageDimension: 100_000,
 } as const;
 
 // Not strict: an app may pass `ctx.source` itself, which also carries its imageId.

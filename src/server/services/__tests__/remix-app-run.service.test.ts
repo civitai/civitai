@@ -2413,6 +2413,32 @@ describe('a user app', () => {
         });
       });
 
+      it("a mod dry run sends the runner only sizes its log accepts, whatever the app's upscales make", async () => {
+        const BIG_SOURCE =
+          "export default defineRemixApp({ async run(ctx) { const a = await ctx.workflow({ kind: 'upscale', image: { url: ctx.source.url, width: 60000, height: 60000 }, scale: 2 }); const b = await ctx.workflow({ kind: 'upscale', image: a.images[0], scale: 2 }); return b.images; } });";
+        const big: Pick<RemixApp, 'run'> = {
+          async run(ctx) {
+            const a = await ctx.workflow({
+              kind: 'upscale',
+              image: { url: ctx.source.url, width: 60000, height: 60000 },
+              scale: 2,
+            });
+            const b = await ctx.workflow({ kind: 'upscale', image: a.images[0], scale: 2 });
+            return b.images;
+          },
+        };
+        const sha = createHash('sha256').update(BIG_SOURCE).digest('hex');
+        vi.stubGlobal('fetch', fakeRemixRunner({ secret: SECRET, apps: { [sha]: big } }).fetchImpl);
+        stored = rowOf(BIG_SOURCE);
+        await bumpRemixAppRegistry();
+        const { validateUserRemixApp } = await import(
+          '~/server/services/remix-app-registry.service'
+        );
+        const { issues, paths } = await validateUserRemixApp('u5-mine');
+        expect(issues).toEqual([]);
+        expect(paths).toBe(1);
+      });
+
       it('C: an approval starts the count again', async () => {
         vi.mocked(auditPromptServer).mockRejectedValue(refusal());
         classify(blocked('external', 'synthetic-other'));

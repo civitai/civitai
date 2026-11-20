@@ -62,7 +62,8 @@ const oneByOne =
 
 /** A stand-in source image: no real image is read or sent anywhere. */
 export const VALIDATION_SOURCE: RemixAppSource = {
-  imageId: 0,
+  // The runner's contract takes a positive id.
+  imageId: 1,
   url: 'mock://remix/source',
   width: 1024,
   height: 1024,
