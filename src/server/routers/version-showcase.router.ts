@@ -67,5 +67,7 @@ export const versionShowcaseRouter = router({
     ),
   moderatorRemove: moderatorProcedure
     .input(versionShowcaseImageSchema)
-    .mutation(({ input }) => moderatorRemoveFromVersionShowcase(input)),
+    .mutation(({ input, ctx }) =>
+      moderatorRemoveFromVersionShowcase({ ...input, moderatorId: ctx.user.id })
+    ),
 });

@@ -1053,11 +1053,19 @@ export async function removeMyImageFromVersionShowcase({
 export async function moderatorRemoveFromVersionShowcase({
   modelVersionId,
   imageId,
+  moderatorId,
 }: {
   modelVersionId: number;
   imageId: number;
+  moderatorId: number;
 }) {
   await tombstoneOnEverySite(modelVersionId, imageId);
+  const { trackModActivity } = await import('~/server/services/moderator.service');
+  await trackModActivity(moderatorId, {
+    entityType: 'image',
+    entityId: imageId,
+    activity: `versionShowcaseRemove:${modelVersionId}`,
+  });
   const version = await getVersionForWrite(modelVersionId);
   await afterShowcaseWrite(modelVersionId, version.model.id);
 }

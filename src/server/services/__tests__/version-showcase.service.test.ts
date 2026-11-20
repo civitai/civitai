@@ -549,9 +549,26 @@ const publishedVersion = () =>
 describe('moderatorRemoveFromVersionShowcase', () => {
   it('leaves a tombstone instead of deleting, so the creator can’t feature it again', async () => {
     publishedVersion();
-    await showcase.moderatorRemoveFromVersionShowcase({ modelVersionId: VERSION, imageId: 77 });
+    await showcase.moderatorRemoveFromVersionShowcase({
+      modelVersionId: VERSION,
+      imageId: 77,
+      moderatorId: 3,
+    });
     expect(tombstoneWrites()).toHaveLength(1);
     expect(dbMock.dbWrite.modelVersionShowcaseItem.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('records which moderator removed it, from which version', async () => {
+    publishedVersion();
+    await showcase.moderatorRemoveFromVersionShowcase({
+      modelVersionId: VERSION,
+      imageId: 77,
+      moderatorId: 3,
+    });
+    const audit = dbMock.dbWrite.$executeRaw.mock.calls.find(([strings]) =>
+      (strings as string[]).join('').includes('INSERT INTO "ModActivity"')
+    );
+    expect(audit?.slice(1)).toEqual([3, 'image', `versionShowcaseRemove:${VERSION}`, [77]]);
   });
 });
 
