@@ -493,6 +493,9 @@ const featureFlags = createFeatureFlags({
   // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
   // does, Flipt decides both ways, so keep mods in its rule.
   imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
+  // Video search: Video in /search/semantic's Media type filter, and semanticImageSearch.searchVideos.
+  // Mods until the Flipt flag exists; once it does, Flipt decides both ways, so keep mods in its rule.
+  semanticVideoSearch: { availability: ['mod'], fliptKey: 'semantic-video-search' },
   // Search v3: the header bar filters the feed you are on (?query=) instead of opening /search/*.
   // Images first. It switches between the old and the new search on its own (it opens the semantic
   // search procedure without `imageSearch`), so a Flipt rollout moves people over; off is the old UI.

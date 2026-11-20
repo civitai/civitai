@@ -77,6 +77,7 @@ const holdOwnImages = async (started: number) => {
 
 // Timed first, so flag and rate-limit refusals land on the dashboard too.
 const semanticSearchProcedure = publicProcedure.use(timeSemanticSearch('images'));
+const semanticVideoSearchProcedure = publicProcedure.use(timeSemanticSearch('videos'));
 
 export const semanticImageSearchRouter = router({
   search: semanticSearchProcedure
@@ -135,6 +136,38 @@ export const semanticImageSearchRouter = router({
           correctedQuery: undefined,
           latencyMs: 0,
         };
+      }
+      return { ...result, latencyMs };
+    }),
+
+  searchVideos: semanticVideoSearchProcedure
+    .use(isFlagProtected('semanticVideoSearch'))
+    .use(
+      rateLimit({ limit: 60, period: 60 }, undefined, {
+        sharedKey: 'semanticImageSearch:searchVideos',
+      })
+    )
+    .input(semanticImageSearchSchema)
+    .query(async ({ input, ctx }) => {
+      const started = Date.now();
+      const result = await searchSemanticImages({
+        input,
+        user: ctx.user,
+        ...credentialViews(ctx),
+        domain: getRequestBoardDomainColor(ctx.req),
+        track: ctx.track,
+        collection: 'videos',
+      });
+      const latencyMs = Date.now() - started;
+      if (!input.cursor) {
+        const { query, imageId, cursor, limit, ...filters } = input;
+        void ctx.track
+          .search({
+            query: query ?? '',
+            index: 'videos_semantic',
+            filters: { ...filters, imageId, resultCount: result.items.length, latencyMs },
+          })
+          .catch(() => undefined);
       }
       return { ...result, latencyMs };
     }),

@@ -10,6 +10,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 const h = vi.hoisted(() => ({
   flagOn: false,
   feedOn: false,
+  videoOn: false,
   search: vi.fn(),
   createFeedback: vi.fn(),
   trackSearch: vi.fn(),
@@ -17,7 +18,11 @@ const h = vi.hoisted(() => ({
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
-  getFeatureFlags: () => ({ imageSearch: h.flagOn, feedSearch: h.feedOn }),
+  getFeatureFlags: () => ({
+    imageSearch: h.flagOn,
+    feedSearch: h.feedOn,
+    semanticVideoSearch: h.videoOn,
+  }),
 }));
 vi.mock('~/server/services/semantic-image-search.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SemanticSearch>()),
@@ -293,5 +298,26 @@ describe('semanticImageSearch router — own-images answer time', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(run.settled()).toBe(true);
     expect(h.trackSearch.mock.calls[0][0].filters.ownImages).toBeUndefined();
+  });
+});
+
+describe('semanticImageSearch.searchVideos', () => {
+  afterEach(() => {
+    h.flagOn = false;
+    h.videoOn = false;
+  });
+
+  it('is refused without its own flag, even with image search on', async () => {
+    h.flagOn = true;
+    await expect(caller().searchVideos({ query: 'fox' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(h.search).not.toHaveBeenCalled();
+  });
+
+  it('searches the clip index with the flag', async () => {
+    h.videoOn = true;
+    await caller().searchVideos({ query: 'fox' });
+    expect(h.search).toHaveBeenCalledWith(expect.objectContaining({ collection: 'videos' }));
   });
 });

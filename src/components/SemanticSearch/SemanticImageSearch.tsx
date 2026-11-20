@@ -19,6 +19,7 @@ import { imageBaseModelSelectData } from '~/shared/constants/basemodel.constants
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 export function SemanticImageSearch() {
@@ -34,6 +35,9 @@ export function SemanticImageSearch() {
   const [baseModels, setBaseModels] = useState<string[]>([]);
   const [types, setTypes] = useState<MediaType[]>([]);
   const browsingLevel = useBrowsingLevelDebounced();
+  const { semanticVideoSearch } = useFeatureFlags();
+  // Clips are a separate index, so Video is searched on its own rather than mixed with images.
+  const videos = !!semanticVideoSearch && types.length === 1 && types[0] === MediaType.video;
 
   const input = {
     query: imageId ? undefined : query,
@@ -45,12 +49,21 @@ export function SemanticImageSearch() {
     types,
   };
   const enabled = !!input.query || !!input.imageId;
-  const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetching } =
-    trpc.semanticImageSearch.search.useInfiniteQuery(input, {
-      enabled,
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-      retry: false,
-    });
+  const options = {
+    getNextPageParam: (lastPage: { nextCursor?: number }) => lastPage.nextCursor,
+    retry: false,
+  };
+  const imageResults = trpc.semanticImageSearch.search.useInfiniteQuery(input, {
+    ...options,
+    enabled: enabled && !videos,
+  });
+  const videoResults = trpc.semanticImageSearch.searchVideos.useInfiniteQuery(input, {
+    ...options,
+    enabled: enabled && videos,
+  });
+  const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetching } = videos
+    ? videoResults
+    : imageResults;
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
   const latencyMs = data?.pages[0]?.latencyMs;
   const correctedQuery = data?.pages[0]?.correctedQuery;
@@ -132,10 +145,10 @@ export function SemanticImageSearch() {
         <MultiSelect
           label="Media type"
           placeholder="All types"
-          // No video until the index embeds videos (VECTOR_EMBED_VIDEO).
-          data={[MediaType.image]}
+          data={semanticVideoSearch ? [MediaType.image, MediaType.video] : [MediaType.image]}
           value={types}
-          onChange={(v) => setTypes(v as MediaType[])}
+          // One type at a time: the last one picked.
+          onChange={(v) => setTypes((v as MediaType[]).slice(-1))}
           clearable
         />
       </div>
