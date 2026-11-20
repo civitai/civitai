@@ -74,10 +74,10 @@ const hold = dbMock.dbWrite.textScanHold;
 const updateMany = hold.updateMany;
 const findFirst = hold.findFirst;
 
-import handler from '~/pages/api/mod/text-scan/csam-hold/resolve';
-import markReportedHandler from '~/pages/api/mod/text-scan/csam-hold/mark-reported';
-import referHandler from '~/pages/api/mod/text-scan/csam-hold/refer';
-import setReportChoiceHandler from '~/pages/api/mod/text-scan/csam-hold/set-report-choice';
+import handler from '~/server/api-routes/mod/text-scan/csam-hold/resolve';
+import markReportedHandler from '~/server/api-routes/mod/text-scan/csam-hold/mark-reported';
+import referHandler from '~/server/api-routes/mod/text-scan/csam-hold/refer';
+import setReportChoiceHandler from '~/server/api-routes/mod/text-scan/csam-hold/set-report-choice';
 import { decideCsamHold } from '~/server/services/text-scan/csam-hold-decision';
 import { archiveUserProfile } from '~/server/services/csam.service-new';
 

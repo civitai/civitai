@@ -1,5 +1,5 @@
 import Router from 'next/router';
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import type * as NotificationThumbnails from '~/components/Notifications/notification-thumbnails';
 
 // The thumbnail hook is the only tRPC caller in this tree; the id normaliser
@@ -133,6 +133,7 @@ describe('NotificationList announcement icon', () => {
 
 // A mature item's appeal result links to .red, which the client router cannot reach.
 describe('NotificationList link to another host', () => {
+  const RED_URL = 'https://civitai.red.test/models/7';
   const appealResult = (url?: string) =>
     ({
       id: 4,
@@ -143,11 +144,10 @@ describe('NotificationList link to another host', () => {
       details: { entityType: 'Model', entityId: 7, status: 'Approved', ...(url && { url }) },
     } as any);
 
-  // Runs after React's handler; whatever the list left unprevented, the browser would follow.
-  async function clickRow(item: any) {
+  async function clickRow(item: any, onItemClick: (...args: any[]) => unknown) {
     renderWithProviders(
       <IsClientProvider>
-        <NotificationList items={[item]} searchText="" onItemClick={vi.fn()} />
+        <NotificationList items={[item]} searchText="" onItemClick={onItemClick as any} />
       </IsClientProvider>
     );
     await vi.waitFor(() => {
@@ -156,31 +156,47 @@ describe('NotificationList link to another host', () => {
         `body: ${document.body.textContent}`
       ).toBeTruthy();
     });
-    const row = document.body.querySelector('a[href]') as HTMLAnchorElement;
-    let followed: string | null = null;
-    const capture = (e: Event) => {
-      if (!e.defaultPrevented) followed = row.href;
-      e.preventDefault();
-    };
-    window.addEventListener('click', capture);
     vi.mocked(Router.push).mockClear();
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    // If the list ever lets the anchor navigate, a test fails here instead of the page unloading the runner.
+    const stayOnPage = (e: Event) => e.preventDefault();
+    window.addEventListener('click', stayOnPage);
     try {
-      row.click();
+      (document.body.querySelector('a[href]') as HTMLAnchorElement).click();
     } finally {
-      window.removeEventListener('click', capture);
+      window.removeEventListener('click', stayOnPage);
     }
-    return { followed, push: vi.mocked(Router.push) };
+    return { open, push: vi.mocked(Router.push) };
   }
 
-  test('an absolute .red url leaves the origin instead of a client-side push', async () => {
-    const { followed, push } = await clickRow(appealResult('https://civitai.red.test/models/7'));
-    expect(followed).toBe('https://civitai.red.test/models/7');
+  afterEach(() => vi.restoreAllMocks());
+
+  test('leaves the origin for an absolute .red url only once mark-read has landed', async () => {
+    let markRead!: () => void;
+    const { open, push } = await clickRow(
+      appealResult(RED_URL),
+      () => new Promise<void>((resolve) => (markRead = resolve))
+    );
+
+    expect(open).not.toHaveBeenCalled();
+    markRead();
+    await vi.waitFor(() => expect(open).toHaveBeenCalledWith(RED_URL, '_self'));
     expect(push).not.toHaveBeenCalled();
   });
 
+  test('still leaves when mark-read fails', async () => {
+    const { open } = await clickRow(appealResult(RED_URL), () => Promise.reject(new Error('down')));
+    await vi.waitFor(() => expect(open).toHaveBeenCalledWith(RED_URL, '_self'));
+  });
+
+  test('still leaves when mark-read never answers', async () => {
+    const { open } = await clickRow(appealResult(RED_URL), () => new Promise(() => undefined));
+    await vi.waitFor(() => expect(open).toHaveBeenCalledWith(RED_URL, '_self'), { timeout: 5000 });
+  });
+
   test('a relative url stays on the client router', async () => {
-    const { followed, push } = await clickRow(appealResult());
-    expect(followed).toBeNull();
+    const { open, push } = await clickRow(appealResult(), () => undefined);
     expect(push).toHaveBeenCalledWith('/models/7');
+    expect(open).not.toHaveBeenCalled();
   });
 });

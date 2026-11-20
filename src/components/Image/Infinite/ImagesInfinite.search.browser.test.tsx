@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
   searchFails: false,
   refusal: undefined as string | undefined,
   searchInputs: [] as unknown[],
+  searchOptions: [] as unknown[],
   feedEnabled: [] as (boolean | undefined)[],
   features: {} as Record<string, boolean>,
   periodWrites: [] as unknown[],
@@ -63,8 +64,9 @@ const result = (ids: number[], extra: Record<string, unknown> = {}) => ({
 vi.mock('~/components/Image/Infinite/useImageFeedSearch', async (importOriginal) => ({
   ...(await importOriginal<typeof FeedSearch>()),
   useImageFeedSearchQuery: () => useUrlQuery().query,
-  useSemanticImageFeed: (input: unknown) => {
+  useSemanticImageFeed: (input: unknown, options?: unknown) => {
     state.searchInputs.push(input);
+    state.searchOptions.push(options);
     return state.searchFails ? result([], { isError: true }) : result([101, 102]);
   },
 }));
@@ -124,6 +126,7 @@ describe('ImagesInfinite with a search', () => {
     state.searchFails = false;
     state.refusal = undefined;
     state.searchInputs = [];
+    state.searchOptions = [];
     state.feedEnabled = [];
     state.features = {};
     state.periodWrites = [];
@@ -140,6 +143,22 @@ describe('ImagesInfinite with a search', () => {
     expect(page.getByText('image 1', { exact: true }).query()).toBeNull();
     expect(state.feedEnabled.at(-1)).toBe(false);
   });
+
+  // Videos are their own index: the videos feed searches it, and only with its flag.
+  test.each([
+    ['videos', true, true],
+    ['videos', false, false],
+    ['images', true, false],
+  ] as const)(
+    'a %s feed with semanticVideoSearch %s searches the video index: %s',
+    async (filterType, flagOn, videos) => {
+      state.features = { semanticVideoSearch: flagOn };
+      renderWithProviders(<ImagesInfiniteContent searchable filterType={filterType} />);
+
+      await expect.element(page.getByText('image 101')).toBeVisible();
+      expect(state.searchOptions.at(-1)).toEqual({ videos });
+    }
+  );
 
   test('shows the images like ?similarTo= and keeps the plain feed switched off', async () => {
     state.features = { feedSearch: true, moreLikeThis: true };

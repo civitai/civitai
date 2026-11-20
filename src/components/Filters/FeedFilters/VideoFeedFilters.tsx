@@ -12,7 +12,7 @@ export function VideoFeedFilters({ ...groupProps }: GroupProps) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   // Searchable, the videos feed takes the images feed's bar: its sort and filters while searching.
-  if (features.videoFeedSearch && features.feedSearch)
+  if (features.videoFeedSearch && features.feedSearch && features.semanticVideoSearch)
     return <ImageFeedFilters type="videos" hideMediaTypes {...groupProps} />;
 
   return (

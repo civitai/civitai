@@ -292,6 +292,20 @@ export const usageLimitDefs = [
     // Shown to the claimer, whose own count and limit are not what was reached.
     message: "This creator's gift links have reached this month's limit.",
   },
+  {
+    // Counted by sticker auto-track itself (a calendar window), not by rateLimit(). Each run is
+    // paid by the system account, so this is what bounds that spend.
+    id: 'stickers.auto-track-daily',
+    area: 'stickers',
+    kind: 'product',
+    label: 'Sticker auto-tracks per day',
+    window: { type: 'utc-day' },
+    base: 3,
+    message: ({ limit }) =>
+      `You've used your ${numberWithCommas(limit)} sticker ${
+        limit === 1 ? 'auto-track' : 'auto-tracks'
+      } for today. Try again tomorrow.`,
+  },
   // ── Per-user App Platform caps, by membership tier. Read ONLY through `resolveUserAppCaps`
   // (`server/services/blocks/user-app-caps.service.ts`), which both enforcement and the
   // account Limits section call, so the two cannot disagree. Never `rateLimit()` rules.

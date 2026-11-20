@@ -165,8 +165,8 @@ import { refundBidsForVersions } from '~/server/services/auction.service';
 import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
 import { restoreModelRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { purgeUserAppStorageForAccountWipe } from '~/server/services/apps/user-storage-purge.service';
-import deleteUserImages from '~/pages/api/mod/delete-user-images';
-import removeAllContentWebhook from '~/pages/api/mod/remove-all-content';
+import deleteUserImages from '~/server/api-routes/mod/delete-user-images';
+import removeAllContentWebhook from '~/server/api-routes/mod/remove-all-content';
 
 const CLEAN = 1;
 const HELD = 2; // named on a pending report

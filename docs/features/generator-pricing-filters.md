@@ -99,7 +99,7 @@ export enum ModelVersionPricingSignal {
 Separate booleans were considered and rejected. The live index carries 22 filterable attributes and
 each settings write reindexes the filterable fields across every document — the `hasActivePaidAccess`
 addition took 6.5 min of processing after ~2h50m queued (see the header comment in
-`src/pages/api/admin/temp/apply-models-index-filterable-attributes.ts`). One array attribute means one
+`src/server/api-routes/admin/temp/apply-models-index-filterable-attributes.ts`). One array attribute means one
 write, and **a future member is a document rewrite rather than a settings change**, which is what
 keeps licensing fees cheap to add back later.
 

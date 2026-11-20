@@ -71,6 +71,7 @@ const TABLES = [
   'ImageConnection',
   'ServiceOffering',
   'UserProfile',
+  'ImageCdnAccess',
 ];
 
 let db: PGlite;
@@ -224,6 +225,20 @@ describe('getInquisitorQueue media', () => {
         await db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (990000002)`);
       },
     ],
+    [
+      'its url retracted by a deny upgraded later',
+      async () =>
+        db.query(
+          `INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES ('key-990000001', 'Retracted', now() - interval '5 minutes', now())`
+        ),
+    ],
+    [
+      'its url retracted with no retraction time',
+      async () =>
+        db.query(
+          `INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES ('key-990000001', 'Retracted', now(), NULL)`
+        ),
+    ],
   ])('restricts a blocked image with %s', async (_label, mark) => {
     await queued({});
     await mark();
@@ -248,6 +263,13 @@ describe('getInquisitorQueue media', () => {
         );
         await db.query(`UPDATE "Image" SET "postId" = 990400001`);
       },
+    ],
+    [
+      'its url retracted outright',
+      async () =>
+        db.query(
+          `INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES ('key-990000001', 'Retracted', now(), now())`
+        ),
     ],
   ])('sends a blocked image with only %s to the retracted-media route', async (_label, mark) => {
     await queued({});
