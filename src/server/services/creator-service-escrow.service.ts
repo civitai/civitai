@@ -388,7 +388,7 @@ async function markHeld(tx: Db, dealId: number) {
 }
 
 /**
- * A settled deal's review is shown whatever its verdict. Outside the receipt's transaction, so a
+ * A settled deal's review is published, unless it is a happy review of a refunded deal. Outside the receipt's transaction, so a
  * recount that fails never rolls back the record of a payout; the deals job retries a missed one.
  */
 const syncReviewAfterSettle = (dealId: number) =>

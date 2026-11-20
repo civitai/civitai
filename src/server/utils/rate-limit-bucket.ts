@@ -101,7 +101,7 @@ export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'commentv3',
   'content',
   'cosmetic',
-  // editReview / attachReviewImage: scans the site pays for, never a Buzz charge.
+  // Limits scans the site pays for, not Buzz charges.
   'creatorServiceDeal',
   'creatorServiceDealFile',
   'crucible',

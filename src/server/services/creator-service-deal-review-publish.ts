@@ -2,6 +2,9 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { SERVICE_PRICE_MIN } from '~/shared/constants/creator-service.constants';
 
+/** The advisory-lock class for an offering's review writes and recounts. */
+const REVIEW_LOCK_CLASS = 'service-offering-reviews';
+
 type Db = Pick<Prisma.TransactionClient, '$executeRaw' | '$queryRaw'>;
 
 /**
@@ -14,7 +17,6 @@ export const reviewPublic = Prisma.sql`(
   r."scanStatus" = 'Scanned'::"ServiceOfferingIngestionStatus" AND r."hiddenAt" IS NULL
   AND (d."settledAt" IS NOT NULL
     OR (r."verdict" = 'Happy'::"ServiceDealReviewVerdict" AND d."status" <> 'Disputed'::"ServiceDealStatus"))
-  -- A happy review of a deal refunded on dispute is never shown or counted: the seller was not paid.
   AND NOT (r."verdict" = 'Happy'::"ServiceDealReviewVerdict"
     AND d."disputeResolution" IS NOT DISTINCT FROM 'Refund'::"ServiceDisputeResolution")
 )`;
@@ -64,7 +66,7 @@ export async function lockDealReviewCounters(tx: Db, dealId: number) {
   const [review] = await tx.$queryRaw<{ offeringId: number }[]>`
     SELECT "offeringId" FROM "ServiceDealReview" WHERE "dealId" = ${dealId}::int`;
   if (!review) return null;
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('service-offering-reviews'), ${review.offeringId}::int)`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${REVIEW_LOCK_CLASS}), ${review.offeringId}::int)`;
   return review.offeringId;
 }
 
@@ -74,7 +76,7 @@ export async function lockDealReviewCounters(tx: Db, dealId: number) {
  */
 export const recountOfferingReviews = (offeringId: number) =>
   dbWrite.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('service-offering-reviews'), ${offeringId}::int)`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${REVIEW_LOCK_CLASS}), ${offeringId}::int)`;
     await recountOffering(tx, offeringId);
   });
 

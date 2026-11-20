@@ -3683,10 +3683,9 @@ describe('review publishing and counters', () => {
     expect((await counters()).reviewCount).toBe(2);
     await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = 10`);
     await q(`UPDATE "User" SET "deletedAt" = now() WHERE id = 11`);
-    expect(await reconcile.reconcileServiceDealReviews({ limit: 10 })).toMatchObject({
-      recounted: 1,
-      counterDrift: 0,
-    });
+    expect(
+      await reconcile.reconcileServiceDealReviews({ limit: 10, counters: true })
+    ).toMatchObject({ recounted: 1 });
     expect((await counters()).reviewCount).toBe(0);
   });
 
@@ -3915,7 +3914,7 @@ describe('review publishing and counters', () => {
 
   describe('the deals job', () => {
     const readBack = () => reconcile.readBackServiceDealReviews();
-    const zero = { eventsWithoutReview: 0, unpaidHappy: 0, earlyRelease: 0, counterDrift: 0 };
+    const zero = { eventsWithoutReview: 0, unpaidHappy: 0, earlyRelease: 0 };
 
     it('reads back zero on a happy release, and flags each kind of mismatch', async () => {
       const id = await completedBy();
@@ -3923,9 +3922,15 @@ describe('review publishing and counters', () => {
       await escrow.sweepServiceDealReleases();
       expect(await readBack()).toEqual(zero);
 
+      // Drifted counters are found and recounted by the hourly pass, and logged.
       await q(`UPDATE "ServiceOffering" SET "happyCount" = 5 WHERE id = 1`);
-      expect((await readBack()).counterDrift).toBe(1);
-      await q(`UPDATE "ServiceOffering" SET "happyCount" = 1 WHERE id = 1`);
+      expect(await reconcile.reconcileServiceDealReviews({ limit: 10 })).toMatchObject({
+        recounted: 0,
+      });
+      expect(
+        await reconcile.reconcileServiceDealReviews({ limit: 10, counters: true })
+      ).toMatchObject({ recounted: 1 });
+      expect((await counters()).happyCount).toBe(1);
 
       // A deal paid early with no happy review behind it.
       const early = await completedBy(10);

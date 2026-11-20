@@ -49,9 +49,8 @@ async function syncDriftedPublications(limit: number) {
 }
 
 /**
- * The plan's release-on-review read-backs, each zero when the feature works, over deals completed
- * in the last month and offerings with reviews. A mismatch is logged, not repaired, so a person
- * looks at it.
+ * Read-backs of the release-on-review invariants over recent deals, each zero when the feature
+ * works. A mismatch is logged, not repaired, so a person looks at it.
  */
 export async function readBackServiceDealReviews() {
   const [counts] = await dbWrite.$queryRaw<
@@ -59,7 +58,6 @@ export async function readBackServiceDealReviews() {
       eventsWithoutReview: number;
       unpaidHappy: number;
       earlyRelease: number;
-      counterDrift: number;
     }[]
   >`
     SELECT
@@ -85,17 +83,7 @@ export async function readBackServiceDealReviews() {
             + (${SERVICE_DEAL_DISPUTE_WINDOW_MS}::int * interval '1 millisecond')
           AND NOT EXISTS (SELECT 1 FROM "ServiceDealEvent" e WHERE e."dealId" = d."id"
             AND e."type" = 'ReviewedHappy'::"ServiceDealEventType")
-      ) AS "earlyRelease",
-      (SELECT count(*)::int FROM "ServiceOffering" o CROSS JOIN LATERAL ${offeringReviewTotals(
-        Prisma.sql`o."id"`
-      )} t
-        WHERE EXISTS (SELECT 1 FROM "ServiceDealReview" r WHERE r."offeringId" = o."id")
-          AND (o."happyCount", o."reviewCount", o."happySortKey")
-          IS DISTINCT FROM (t.happy, t.total, ${happySortKey(
-            Prisma.sql`t.happy`,
-            Prisma.sql`t.total`
-          )})
-      ) AS "counterDrift"`;
+      ) AS "earlyRelease"`;
   if (Object.values(counts).some((n) => n > 0))
     logToAxiom({
       name: 'creator-service-deal-review',
@@ -108,7 +96,7 @@ export async function readBackServiceDealReviews() {
 
 /**
  * Offerings whose counters differ from their rows with no review having changed state: a buyer
- * banned or deleted since. Logged when found, so a recount that should have happened is visible.
+ * banned or deleted since. The counters' read-back: each one found is logged, then recounted.
  */
 async function recountDriftedOfferings(limit: number) {
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -131,13 +119,19 @@ async function recountDriftedOfferings(limit: number) {
 }
 
 /**
- * The deals job's review step: recheck stranded texts, fix drifted publications and counters, then
- * read back. Counter drift that survives the recount is what the read-back reports.
+ * The deals job's review step: recheck stranded texts, fix drifted publications, then read back.
+ * `counters` also recounts drifted offerings, a pass over every reviewed offering the job runs hourly.
  */
-export async function reconcileServiceDealReviews({ limit }: { limit: number }) {
+export async function reconcileServiceDealReviews({
+  limit,
+  counters = false,
+}: {
+  limit: number;
+  counters?: boolean;
+}) {
   const rescanned = await rescanUnsubmittedTexts(limit);
   const synced = await syncDriftedPublications(limit);
-  const recounted = await recountDriftedOfferings(limit);
+  const recounted = counters ? await recountDriftedOfferings(limit) : 0;
   const readBack = await readBackServiceDealReviews();
   return { rescanned, synced, recounted, ...readBack };
 }
