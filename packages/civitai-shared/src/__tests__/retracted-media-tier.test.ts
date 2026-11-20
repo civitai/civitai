@@ -70,7 +70,8 @@ describe('csamRestrictedSql and urlSiblingsSql', () => {
         refused: true,
       });
     }
-    expect(() => urlSiblingsSql('us')).toThrow(/Bad table alias|Alias taken/);
+    expect(() => urlSiblingsSql('us')).toThrow(/Bad table alias/);
+    expect(() => urlSiblingsSql('US')).toThrow(/Bad table alias/);
     expect(() => urlSiblingsSql('i')).not.toThrow();
   });
 });

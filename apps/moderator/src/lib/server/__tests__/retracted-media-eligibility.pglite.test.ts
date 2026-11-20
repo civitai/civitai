@@ -582,7 +582,7 @@ describe('rows sharing its url, its post text and its articles', () => {
         url: target.url,
       });
     } finally {
-      await db.exec(`DELETE FROM "Image" WHERE id BETWEEN 990900100 AND 990900199`);
+      await db.exec(`DELETE FROM "Image" WHERE id = ANY(ARRAY[${ids.join(', ')}])`);
     }
   });
 

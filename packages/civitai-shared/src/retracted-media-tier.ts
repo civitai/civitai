@@ -156,7 +156,8 @@ function buildCsamRestrictedSql(image: string): string {
   ), true)`;
 }
 
-/** The table aliases `csamRestrictedSql` declares, which its caller's alias must not shadow. */
+/** The aliases `csamRestrictedSql` declares after a quoted table name, which its caller's alias must
+ *  not shadow. */
 const CSAM_RESTRICTED_ALIASES = new Set(
   [...buildCsamRestrictedSql('i').matchAll(/(?:FROM|JOIN) "\w+" (\w+)/g)].map((m) =>
     m[1].toLowerCase()
