@@ -594,8 +594,9 @@ export async function claimRateLimitAttempt({
       if (failClosed) throw storeUnavailable();
       degraded = true;
     } else {
+      // The script errored: a scope in SCRIPT_ERROR_REFUSED_SCOPES refuses; any other decides on
+      // the read-then-write path below.
       if (scriptErrorRefusedScopes.has(scope.split(/[.:]/, 1)[0])) throw storeUnavailable();
-      // The script errored: this call decides on the read-then-write path below.
       rateLimitClaimPathCounter.inc({ path: 'fallback' });
     }
   } else rateLimitClaimPathCounter.inc({ path: 'degraded' });
