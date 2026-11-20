@@ -9,6 +9,7 @@ import { fault } from './result.ts';
 import type { HookFaultCause, HookResult } from './result.ts';
 import { classifyVmError, evaluateOn, instantiate, loadModule } from './sandbox.ts';
 import type { CallScope, CompiledQuickJS } from './sandbox.ts';
+import type { QuickJSWASMModule } from 'quickjs-emscripten-core';
 
 /**
  * Remix app replay (`POST /v1/remix/replay`). A remix app is a module whose default export is
@@ -203,10 +204,12 @@ globalThis.defineRemixApp = (app) => app;
 /** Every replay of one call, on a WebAssembly instance of its own. */
 export async function evaluateRemix(
   compiled: CompiledQuickJS,
-  args: RemixArgs
+  args: RemixArgs,
+  /** Test seam: how the call's instances are created. */
+  create: () => Promise<QuickJSWASMModule> = () => instantiate(compiled)
 ): Promise<RemixOutput> {
   const t0 = performance.now();
-  let qjs = await instantiate(compiled);
+  let qjs = await create();
   const results: RemixReplayResult[] = [];
   for (const log of args.logs) {
     const input = JSON.stringify({ source: args.image, log, autoAnswer: args.autoAnswer });
@@ -215,7 +218,7 @@ export async function evaluateRemix(
       replay(scope, args.source, input)
     );
     results.push('allow' in result ? toFault(result) : result);
-    if (poisoned) qjs = await instantiate(compiled);
+    if (poisoned) qjs = await create();
   }
   return { results, elapsedMs: performance.now() - t0 };
 }

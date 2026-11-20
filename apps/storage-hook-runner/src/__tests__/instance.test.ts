@@ -9,6 +9,7 @@ import {
   instantiate,
   loadModule,
 } from '../sandbox.ts';
+import { evaluateRemix } from '../remix.ts';
 import { hookInputJson } from '../test-support/fixtures.ts';
 
 /**
@@ -134,6 +135,60 @@ describe('QuickJSInstance', () => {
     await expect(inst.evaluate(ALLOW)).rejects.toThrow('injected: cannot create runtime');
     expect((await inst.evaluate(ALLOW)).result).toEqual({ allow: true });
     expect(inst.created).toBe(2);
+  });
+});
+
+describe('remix instances', () => {
+  const IMAGE = { imageId: 1, url: 'https://image.example/s.png', width: 1, height: 1 };
+  const ASKS = {
+    source:
+      'export default defineRemixApp({ async run(ctx) { await ctx.ask({ kind: "text", prompt: "p", maxLength: 9 }); return []; } });',
+    image: IMAGE,
+    logs: [[], []],
+  };
+
+  /** Real instances, each tagged; `used` lists the tag of the instance each runtime came from. */
+  function tagged(poisonFirst = false) {
+    const used: number[] = [];
+    let made = 0;
+    const create = async () => {
+      const tag = ++made;
+      const real = await instantiate(compiled);
+      return {
+        newRuntime: (...a: Parameters<QuickJSWASMModule['newRuntime']>) => {
+          used.push(tag);
+          const rt = real.newRuntime(...a);
+          if (poisonFirst && tag === 1) {
+            const newContext = rt.newContext.bind(rt);
+            rt.newContext = (...c: Parameters<typeof rt.newContext>) => {
+              const ctx = newContext(...c);
+              ctx.evalCode = () => {
+                throw new WebAssembly.RuntimeError('injected: unreachable');
+              };
+              return ctx;
+            };
+          }
+          return rt;
+        },
+      } as unknown as QuickJSWASMModule;
+    };
+    return { used, create };
+  }
+
+  it("gives every call a fresh instance, shared by that call's replays", async () => {
+    const { used, create } = tagged();
+    await evaluateRemix(compiled, ASKS, create);
+    await evaluateRemix(compiled, ASKS, create);
+    expect(used).toEqual([1, 1, 2, 2]);
+  });
+
+  it('replaces the instance after a replay that threw out of the WASM boundary', async () => {
+    const { used, create } = tagged(true);
+    const { results } = await evaluateRemix(compiled, ASKS, create);
+    expect(results[0]).toEqual({ cause: 'error', detail: 'sandbox trap: RuntimeError' });
+    // The next replay ran on a new instance, and answered normally.
+    expect(results[1]).toEqual({ effects: [expect.objectContaining({ type: 'ask' })] });
+    expect(used).toEqual([1, 2]);
   });
 });
 
