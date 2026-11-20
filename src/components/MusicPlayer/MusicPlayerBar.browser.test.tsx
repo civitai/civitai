@@ -458,10 +458,22 @@ describe('on a phone', () => {
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
   });
 
-  test('tapping the song opens the now-playing sheet; play/pause does not', async () => {
+  test('tapping the song opens the now-playing sheet; play/pause and comments do not', async () => {
     await renderPhone();
     await button('Pause').click();
     expect(player().playing).toBe(false);
+    // The comments link would navigate; only whether the tap reaches the bar matters here.
+    const comments = page
+      .getByRole('region', { name: 'Music player' })
+      .getByRole('link', { name: 'Comments' })
+      .element();
+    comments.addEventListener('click', (e) => e.preventDefault(), { once: true });
+    await page
+      .getByRole('region', { name: 'Music player' })
+      .getByRole('link', { name: 'Comments' })
+      .click();
+    // Long enough for a sheet the taps had opened to start showing.
+    await new Promise((resolve) => setTimeout(resolve, 300));
     expect(page.getByRole('dialog').elements()).toHaveLength(0);
 
     await openSheet();
@@ -492,7 +504,9 @@ describe('on a phone', () => {
     await inSheet('Repeat').click();
     expect(player().repeat).toBe('all');
     await inSheet('Repeat').click();
+    expect(player().repeat).toBe('one');
     await inSheet('Repeat').click();
+    expect(player().repeat).toBe('off');
     await inSheet('Pause').click();
     expect(player().playing).toBe(false);
     await inSheet('Next').click();

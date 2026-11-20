@@ -25,6 +25,7 @@ vi.mock('~/components/Tours/ToursProvider', async (importOriginal) => ({
 
 import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
+import { SongUpNextButton } from '~/components/Music/SongDetail/SongUpNextButton';
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 import { formatPlaybackTime } from '~/utils/audio-player';
@@ -393,5 +394,27 @@ describe('the Up next sheet on a phone', () => {
     await userEvent.keyboard('{Escape}');
     await expect.element(upNextSheet()).not.toBeInTheDocument();
     await expect.element(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible();
+  });
+});
+
+// The song page's own Up next button (Pencil `bgZ7u`) opens the same queue as the player.
+describe("the song page's Up next button", () => {
+  const openFromSongPage = async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    await renderWithProviders(<SongUpNextButton />);
+    await page.getByRole('button', { name: 'Up next' }).click();
+  };
+
+  test('on a phone, opens the Up next sheet', async () => {
+    await page.viewport(390, 844);
+    await openFromSongPage();
+    await expect.element(page.getByRole('dialog', { name: 'Up next' })).toBeVisible();
+    await expect.element(panel()).not.toBeInTheDocument();
+  });
+
+  test('on a desktop, opens the Up next panel as before', async () => {
+    await openFromSongPage();
+    await expect.element(panel()).toBeVisible();
+    await expect.element(page.getByRole('dialog', { name: 'Up next' })).not.toBeInTheDocument();
   });
 });

@@ -286,37 +286,32 @@ describe('the song stage below md', () => {
     await expect.element(toggle('Lyrics')).not.toBeInTheDocument();
   });
 
-  for (const scheme of ['light', 'dark'])
-    test(`the current line stands apart from the others in ${scheme} mode`, async () => {
-      await render(true, 390);
-      await page.getByRole('button', { name: 'Play Midnight Arcade' }).click();
-      await choose('Lyrics');
-      useMusicPlayheadStore.setState({ currentTime: 5.5 });
-      const line = (name: string) => page.getByRole('button', { name, exact: true });
-      await expect.element(line('Every high score')).toHaveAttribute('aria-current', 'true');
+  // The stage is the cover's tinted surface in both schemes, so the lines' tones do not change with it.
+  test('the current line stands apart from the others', async () => {
+    await render(true, 390);
+    await page.getByRole('button', { name: 'Play Midnight Arcade' }).click();
+    await choose('Lyrics');
+    useMusicPlayheadStore.setState({ currentTime: 5.5 });
+    const line = (name: string) => page.getByRole('button', { name, exact: true });
+    await expect.element(line('Every high score')).toHaveAttribute('aria-current', 'true');
 
-      const previous = document.documentElement.getAttribute('data-mantine-color-scheme');
-      document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
-      // The end colours at once, without the fade.
-      const noFade = document.head.appendChild(document.createElement('style'));
-      noFade.textContent = '* { transition: none !important; }';
-      try {
-        const colour = (name: string) =>
-          getComputedStyle(line(name).element().querySelector('span:last-child')!).color;
-        // Opaque, and the others at most 70%: not a shade apart, as 100% against 80% was.
-        const alpha = (name: string) =>
-          Number(colour(name).match(/rgba\(.*, ([\d.]+)\)/)?.[1] ?? 1);
-        expect(alpha('Every high score')).toBe(1);
-        expect(alpha('Coins in the slot')).toBeLessThanOrEqual(0.7);
-        expect(alpha('Joystick heartbeat')).toBeLessThanOrEqual(0.7);
-        const marker = line('Every high score').element().querySelector('span[aria-hidden]')!;
-        expect(marker.getBoundingClientRect().width).toBeGreaterThan(0);
-      } finally {
-        noFade.remove();
-        if (previous) document.documentElement.setAttribute('data-mantine-color-scheme', previous);
-        else document.documentElement.removeAttribute('data-mantine-color-scheme');
-      }
-    });
+    // The end colours at once, without the fade.
+    const noFade = document.head.appendChild(document.createElement('style'));
+    noFade.textContent = '* { transition: none !important; }';
+    try {
+      const colour = (name: string) =>
+        getComputedStyle(line(name).element().querySelector('span:last-child')!).color;
+      // Opaque, and the others at most 70%: not a shade apart, as 100% against 80% was.
+      const alpha = (name: string) => Number(colour(name).match(/rgba\(.*, ([\d.]+)\)/)?.[1] ?? 1);
+      expect(alpha('Every high score')).toBe(1);
+      expect(alpha('Coins in the slot')).toBeLessThanOrEqual(0.7);
+      expect(alpha('Joystick heartbeat')).toBeLessThanOrEqual(0.7);
+      const marker = line('Every high score').element().querySelector('span[aria-hidden]')!;
+      expect(marker.getBoundingClientRect().width).toBeGreaterThan(0);
+    } finally {
+      noFade.remove();
+    }
+  });
 });
 
 test('from md up the cover and lyrics show side by side, with no toggle', async () => {
