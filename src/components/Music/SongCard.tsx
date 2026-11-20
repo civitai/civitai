@@ -1,6 +1,6 @@
 import { IconHeadphones, IconMessage, IconThumbUp } from '@tabler/icons-react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
-import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { SongContextMenu } from '~/components/Music/SongContextMenu';
 import {
   FeedSongMenuItems,
   FeedSongPlayButton,
@@ -72,7 +72,7 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
         </div>
         {/* Inset as the duration badge is, so the two share a right edge. */}
         <div className="absolute right-3 top-3 z-[4]">
-          <ImageContextMenu
+          <SongContextMenu
             image={data}
             leadingMenuItems={<FeedSongMenuItems song={data} />}
             size={26}

@@ -6,7 +6,7 @@ import type { ComponentProps, ReactNode } from 'react';
 import { DEFAULT_THEME, MantineProvider } from '@mantine/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-react';
 import type * as TrpcModule from '~/utils/trpc';
 import type * as ImageDetailProviderModule from '~/components/Image/Detail/ImageDetailProvider';
@@ -53,6 +53,7 @@ const state = vi.hoisted(() => ({
   index: 0,
   highlight: undefined as number | undefined,
   lyrics: [] as { t: number | null; text: string }[],
+  viewer: null as { id: number; isModerator?: boolean } | null,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -98,7 +99,7 @@ vi.mock('~/components/HatTurf/detail/HatTurfDetailControls', async (importOrigin
 }));
 vi.mock('~/hooks/useCurrentUser', async (o) => ({
   ...(await o<object>()),
-  useCurrentUser: () => null,
+  useCurrentUser: () => state.viewer,
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (o) => ({
   ...(await o<object>()),
@@ -324,6 +325,7 @@ beforeEach(async () => {
   state.index = 0;
   state.highlight = undefined;
   state.lyrics = [];
+  state.viewer = null;
   localStorage.removeItem('image-detail-open');
 });
 
@@ -527,4 +529,50 @@ describe('the detail view over the site with the player bar open', () => {
       last.scrollIntoView({ block: 'end' });
       await expect.poll(() => last.getBoundingClientRect().bottom).toBeLessThanOrEqual(bottom);
     });
+});
+
+describe('the song’s ⋯ menu', () => {
+  // The image menu's actions that don't apply to a song.
+  const IMAGE_ONLY = [
+    'Add to Showcase',
+    'Flag as minor',
+    'Flag as POI',
+    'View Post',
+    'Edit Post',
+    'More like this',
+    'Report image',
+  ];
+  async function menuItems(viewer: { id: number; isModerator?: boolean } | null) {
+    state.viewer = viewer;
+    renderDetail();
+    await userEvent.click(page.getByRole('button', { name: 'Song options' }));
+    await expect.element(page.getByRole('menuitem', { name: 'Share' })).toBeVisible();
+    return [...document.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent?.trim());
+  }
+
+  // Save and Report sit behind LoginRedirect, which this file stubs out.
+  test('offers a listener share and open, no delete and no image-only action', async () => {
+    const items = await menuItems({ id: 99 });
+    expect(items).toEqual(expect.arrayContaining(['Share', 'Open song']));
+    expect(items).not.toContain('Delete song');
+    for (const name of IMAGE_ONLY) expect(items).not.toContain(name);
+  });
+
+  test('lets the owner delete the song', async () => {
+    expect(await menuItems({ id: 2 })).toContain('Delete song');
+  });
+
+  test('gives a moderator the song tools, without the minor and POI flags', async () => {
+    const items = await menuItems({ id: 99, isModerator: true });
+    expect(items).toEqual(
+      expect.arrayContaining([
+        'Lookup song',
+        'Remove as ToS violation',
+        'Rescan song',
+        'Report CSAM',
+        'Delete song',
+      ])
+    );
+    for (const name of IMAGE_ONLY) expect(items).not.toContain(name);
+  });
 });

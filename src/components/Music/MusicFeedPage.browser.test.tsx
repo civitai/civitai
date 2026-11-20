@@ -73,8 +73,8 @@ vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
     };
   },
 }));
-vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
-  ImageContextMenu: () => null,
+vi.mock('~/components/Music/SongContextMenu', () => ({
+  SongContextMenu: () => null,
 }));
 vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
   ImagesProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,

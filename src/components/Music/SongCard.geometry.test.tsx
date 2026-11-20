@@ -29,16 +29,16 @@ vi.mock('~/components/Music/useSongPlays', () => ({
   useSongListPlays: () => ({ 1: 9700 }),
 }));
 // The menu's items need the image's own reads; the card's real trigger stands in for the whole menu.
-vi.mock('~/components/Image/ContextMenu/ImageContextMenu', async () => {
+vi.mock('~/components/Music/SongContextMenu', async () => {
   const { ActionIconDotsVertical } = await import(
     '~/components/Cards/components/ActionIconDotsVertical'
   );
   return {
-    ImageContextMenu: ({
+    SongContextMenu: ({
       image: _image,
       leadingMenuItems: _items,
       ...props
-    }: Record<string, unknown>) => <ActionIconDotsVertical {...props} />,
+    }: Record<string, unknown>) => <ActionIconDotsVertical aria-label="Song options" {...props} />,
   };
 });
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
@@ -174,7 +174,7 @@ test("the menu's ⋯ is small, and the menu and the duration badge share the cov
     { width: 1440, height: 900 }
   );
   await vi.waitFor(() => expect(title('Midnight Arcade')).toBeTruthy());
-  const menu = document.querySelector('button[aria-label="More options"]')!;
+  const menu = document.querySelector('button[aria-label="Song options"]')!;
   const badge = [...document.querySelectorAll('span')].find((s) => s.textContent === '3:05')!;
   const cover = cardOf(title('Midnight Arcade')).firstElementChild!.getBoundingClientRect();
   const box = menu.getBoundingClientRect();

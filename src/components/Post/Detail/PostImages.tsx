@@ -10,6 +10,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { SongContextMenu } from '~/components/Music/SongContextMenu';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -209,14 +210,14 @@ export function PostImages({
                                 'right-10 top-2.5': !!vimeoVideoId,
                               })}
                             >
-                              <ImageContextMenu
-                                image={image}
-                                leadingMenuItems={
-                                  isSong ? (
-                                    <SongMenuItems song={image} list={songList} />
-                                  ) : undefined
-                                }
-                              />
+                              {isSong ? (
+                                <SongContextMenu
+                                  image={image}
+                                  leadingMenuItems={<SongMenuItems song={image} list={songList} />}
+                                />
+                              ) : (
+                                <ImageContextMenu image={image} />
+                              )}
                               {features.imageGeneration && isRemixMenuVisible(image) && (
                                 <RemixMenu image={image} source="remix:post-image-card">
                                   <HoverActionButton

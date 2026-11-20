@@ -2,7 +2,7 @@ import { IconHeadphones } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { memo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
-import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { SongContextMenu } from '~/components/Music/SongContextMenu';
 import {
   FeedSongMenuItems,
   FeedSongPlayButton,
@@ -88,7 +88,7 @@ export const SongRow = memo(function SongRow({
         )}
         {formatPlaybackTime(track.durationSec)}
       </span>
-      <ImageContextMenu image={data} leadingMenuItems={<FeedSongMenuItems song={data} />} />
+      <SongContextMenu image={data} leadingMenuItems={<FeedSongMenuItems song={data} />} />
     </div>
   );
 });

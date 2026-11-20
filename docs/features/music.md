@@ -118,6 +118,21 @@ Below the `sm` breakpoint the player is a mini bar with two sheets over it
 | Up next sheet (`MusicUpNextSheet`)         | Opened from the now-playing sheet: the desktop panel's list (`MusicUpNextList`) in a bottom sheet, with the same sections (Queued by you, Next from <list>, Repeating), reorder by the grip, remove (always shown, as there is no hover), Clear, shuffle and repeat. Dark in both schemes, like the sheet under it. Closes by Escape, a downward drag of its top, Back and the scrim.                                                                                                                                              |
 | Song detail (`SongDetailStage`)            | Below the `md` container width, a song with lyrics shows the cover or the lyrics in the same spot, with a Cover / Lyrics toggle under it; in the lyrics view a play/pause button sits beside the toggle. No lyrics, no toggle. From `md` up the two sit side by side as before.                                                                                                                                                                                                                                                    |
 
+## The song menu
+
+A song's ⋯ menu (`SongContextMenu`, Pencil `rUDmm`) is its own, not the image menu. It is used on the
+feed card, the song row, the post page and the song detail view, and offers:
+
+- Play now, Add to up next and Play next, for the list the song is shown in.
+- Save to playlist (a published song), Share (the system share sheet, or the link copied) and Open song.
+- For listeners: Report song, Hide this song, and hide or block the creator.
+- For the owner and moderators: Delete song (not on a collection page, which removes from the collection).
+- For moderators: Lookup song and post, Remove as ToS violation, Rescan song and Report CSAM.
+
+The image menu's Add to Showcase, art frame and event decorations, More like this, storylines, the
+minor and POI flags, View Post and Edit Post are not offered on a song. The moderator design's "ToS
+cover image" and "Remove from feed" have no action yet.
+
 ## After launch
 
 - **A music section on the profile overview.** The profile's Music tab lists a creator's songs; a
