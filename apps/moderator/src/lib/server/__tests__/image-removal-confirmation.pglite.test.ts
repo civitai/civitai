@@ -111,6 +111,7 @@ CREATE TABLE "Appeal" (
   "resolvedMessage" TEXT
 );
 CREATE TABLE "AppealDecisionRecord" ("appealId" INTEGER UNIQUE, "removalLabel" TEXT);
+CREATE TABLE "ModActivity" (id SERIAL PRIMARY KEY, "userId" INTEGER, "entityType" TEXT, "entityId" INTEGER, activity TEXT, "createdAt" TIMESTAMP(3) DEFAULT now());
 `;
 
 const REQUESTER = 2;
@@ -227,12 +228,45 @@ describe('a removal of an image approved on appeal', () => {
 
   // The CDN access sync reads a block as a takedown only once its ModActivity row exists, so the two
   // must commit together: a sync run between them would deny without ever retracting.
-  it('takes nothing down when its audit row cannot be written', async () => {
-    insertModActivity.mockRejectedValueOnce(new Error('audit write failed'));
-    await expect(
-      blockImage({ imageId: IMAGE, userId: REQUESTER, violationType: 'gore' })
-    ).rejects.toThrow('audit write failed');
-    expect((await image()).ingestion).toBe('Scanned');
+  describe('the takedown audit row, written for real', () => {
+    const actual = async () =>
+      (await vi.importActual<typeof import('../mod-activity')>('../mod-activity'))
+        .insertModActivity;
+    const auditRows = async () =>
+      (
+        await db.query<{ activity: string }>(
+          `SELECT activity FROM "ModActivity" WHERE "entityId" = $1`,
+          [IMAGE]
+        )
+      ).rows;
+
+    it('commits with the block, through its transaction', async () => {
+      const insert = await actual();
+      let isTransaction: boolean | undefined;
+      insertModActivity.mockImplementationOnce(async (input, client) => {
+        // One PGlite connection runs a plain-client write inside the open transaction too, so the
+        // rows alone cannot tell the two apart: the client has to be the transaction.
+        isTransaction = (client as { isTransaction?: boolean }).isTransaction;
+        return insert(input as never, client as never);
+      });
+      await blockImage({ imageId: IMAGE, userId: REQUESTER, violationType: 'gore' });
+      expect((await image()).ingestion).toBe('Blocked');
+      expect(await auditRows()).toEqual([{ activity: 'review' }]);
+      expect(isTransaction).toBe(true);
+    });
+
+    it('rolls back with the block when a later write in it fails', async () => {
+      const insert = await actual();
+      insertModActivity.mockImplementationOnce(async (input, client) => {
+        await insert(input as never, client as never);
+        throw new Error('a later write failed');
+      });
+      await expect(
+        blockImage({ imageId: IMAGE, userId: REQUESTER, violationType: 'gore' })
+      ).rejects.toThrow('a later write failed');
+      expect((await image()).ingestion).toBe('Scanned');
+      expect(await auditRows()).toEqual([]);
+    });
   });
 
   it('applies when the image has no approved appeal', async () => {

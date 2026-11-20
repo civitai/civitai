@@ -2777,7 +2777,7 @@ describe('retractions per run', () => {
     expect(callsFor(u(2))).toEqual(['deny']);
   });
 
-  // Rows deferred before this change carry no per-url marker.
+  // A legacy row has 'deferred' and no pacedUrls.
   describe('a row deferred before per-url markers', () => {
     const deferredWithoutMarkers = async () => {
       setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
