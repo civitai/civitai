@@ -34,10 +34,6 @@ const SYSTEM_MUSING_AUTHOR_NOTES = 32;
 const SYSTEM_NOTES_AUTHOR_MUSING = 33;
 const SYSTEM_GUIDE_AUTHOR_MUSING = 51;
 const SYSTEM_MUSING_AUTHOR_GUIDE = 52;
-// Articles the Writers board leaves out.
-const UNRATED = 80;
-const UNSCANNED = 81;
-const BANNED = 82;
 // One article each that every board would count but for one gate; PASSES_GATES is the same article with none.
 const GATED = {
   unrated: 80,

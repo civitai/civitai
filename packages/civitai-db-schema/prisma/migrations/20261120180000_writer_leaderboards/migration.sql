@@ -20,8 +20,8 @@
 -- ROLLBACK (deletes the four boards and what they produced: results, Legends rows, populated markers, and
 -- ranks taken from them, which are rebuilt from the remaining public boards as leaderboardRankInsert in
 -- user.service.ts does). Run it BEFORE reverting the job change: the reverted job would send the token to
--- Postgres unreplaced. To keep the
--- history instead, set active = false, public = false; Legends still counts a hidden board's past results.
+-- Postgres unreplaced. To keep the history instead, set active = false, public = false; Legends still
+-- counts a hidden board's past results.
 -- Afterwards purge the `leaderboard` cache tag, or wait for clear-leaderboard-cache at midnight.
 --   BEGIN;
 --   SET LOCAL lock_timeout = '3s';
