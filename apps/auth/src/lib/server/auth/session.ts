@@ -154,7 +154,9 @@ export async function mintSession(
     { jti: tokenId, expiresIn: sessionExpiresIn(lineage, now) }
   );
   // Best-effort: track the token so it can be invalidated later (logout / ban). A redis blip must not fail.
-  await sessions.trackToken(tokenId, user.id).catch(() => {});
+  await sessions.trackToken(tokenId, user.id).catch(() => {
+    // Swallowed on purpose: see above.
+  });
   return { token, family: familyId({ sid: lineage.sid, jti: tokenId }) ?? tokenId };
 }
 
