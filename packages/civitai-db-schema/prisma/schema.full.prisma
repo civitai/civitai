@@ -11542,6 +11542,8 @@ enum ServiceDealEventType {
   Held
   Released
   Refunded
+  /// The buyer's happy review, which pays the seller now instead of after the dispute window.
+  ReviewedHappy
 }
 
 /// Preview and Final are the seller's delivery. An Attachment is a file the buyer gives the seller
