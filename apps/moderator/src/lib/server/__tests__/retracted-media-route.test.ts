@@ -64,7 +64,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   grants.paths = new Set();
   enabled.on = true;
-  getRetractedMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null, tier: 'plain' });
+  getRetractedMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null });
   recordRetractedView.mockResolvedValue(undefined);
   fetchMock.mockImplementation(
     async () =>
@@ -170,6 +170,16 @@ describe('/api/retracted-media', () => {
     );
     expect((await call()).status).toBe(413);
     expect(recordRetractedView).not.toHaveBeenCalled();
+  });
+});
+
+describe('/api/retracted-media eligibility read failure', () => {
+  it('answers 503, no-store, and touches no storage', async () => {
+    getRetractedMedia.mockRejectedValue(new Error('canceling statement due to statement timeout'));
+    const { status, res } = await call();
+    expect(status).toBe(503);
+    expect(res?.headers.get('cache-control')).toBe('private, no-store');
+    expect(getGetUrl).not.toHaveBeenCalled();
   });
 });
 

@@ -33,7 +33,12 @@ const { patterns } = vi.hoisted(() => ({
 vi.mock('../../blocked-for-patterns', () => ({ blockedForPatterns: () => patterns.current }));
 vi.mock('../../axiom', () => ({ logToAxiom: vi.fn() }));
 
+vi.mock('../../review-batch', () => ({ readScannerCsamVerdict: async () => 'clear' }));
+vi.mock('../../mod-activity', () => ({ insertModActivity: vi.fn() }));
+vi.mock('$env/dynamic/private', () => ({ env: {} }));
+
 const { getInquisitorQueue } = await import('../inquisitor.service');
+const { getRetractedMedia, scannerVerdicts } = await import('../../retracted-media');
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -96,10 +101,21 @@ async function queued(image: { ingestion?: string; blockedFor?: string | null; m
   );
 }
 
+/** The item's media, checked against what the route would answer a moderator without the grant
+ *  (the scanner clear), so the queue never draws one way and the route answers the other. */
 const media = async () => {
   const queue = await getInquisitorQueue();
   expect(queue).toHaveLength(1);
-  return queue[0].media;
+  const item = queue[0];
+  if (item.media !== 'cdn') {
+    scannerVerdicts.clear();
+    const served = await getRetractedMedia(item.imageId, { csamReview: false });
+    expect({ media: item.media, served: served !== null }).toEqual({
+      media: item.media,
+      served: item.media === 'retracted',
+    });
+  }
+  return item.media;
 };
 
 describe('getInquisitorQueue media', () => {
@@ -234,7 +250,7 @@ describe('getInquisitorQueue media', () => {
     await queued({});
     await db.exec(`ALTER TABLE "CsamReport" RENAME TO "CsamReportAway"`);
     try {
-      expect(await media()).toBe('restricted');
+      expect((await getInquisitorQueue()).map((item) => item.media)).toEqual(['restricted']);
     } finally {
       await db.exec(`ALTER TABLE "CsamReportAway" RENAME TO "CsamReport"`);
     }

@@ -1,5 +1,5 @@
 import { prefixCacheKey } from '@civitai/redis';
-import { RETRACTED_MEDIA_RATE_LIMIT } from '@civitai/shared/retracted-media';
+import { RETRACTED_MEDIA_RATE_LIMIT, retractedMediaRateKey } from '@civitai/shared/retracted-media';
 import { getRedis } from './redis';
 
 const WINDOW_SECONDS = 60;
@@ -12,14 +12,15 @@ type Counter = {
 
 /**
  * Counts one `/api/retracted-media` request for this moderator: the seconds to wait when over
- * `RETRACTED_MEDIA_RATE_LIMIT` a minute, otherwise null. The main app's route counts in the same
- * window. A counter that cannot be read refuses.
+ * `RETRACTED_MEDIA_RATE_LIMIT` a minute, otherwise null. The main app's route uses the same key, so
+ * the two share one window where both apps use the same cache Redis and key namespace. A counter
+ * that cannot be read refuses.
  */
 export async function retractedMediaRetryAfter(
   moderatorId: number,
   redis: Counter = getRedis() as unknown as Counter
 ): Promise<number | null> {
-  const key = prefixCacheKey(`retracted-media:rate-limit:${moderatorId}`) as never;
+  const key = prefixCacheKey(retractedMediaRateKey(moderatorId)) as never;
   try {
     const count = await redis.incrBy(key, 1);
     // Re-asserts a lost TTL, which would otherwise lock the moderator out for good.

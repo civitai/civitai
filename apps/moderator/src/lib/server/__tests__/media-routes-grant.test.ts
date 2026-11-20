@@ -80,7 +80,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.grants = new Set();
   h.getHeldMedia.mockResolvedValue(MEDIA);
-  h.getRetractedMedia.mockResolvedValue({ ...MEDIA, tier: 'plain' });
+  h.getRetractedMedia.mockResolvedValue({ ...MEDIA });
   vi.stubGlobal(
     'fetch',
     vi.fn(

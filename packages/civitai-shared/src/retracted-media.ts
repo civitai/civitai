@@ -10,6 +10,10 @@ export const RETRACTED_SERVED_ACTIVITY = 'retractedMedia:view';
 /** Per moderator, per minute. */
 export const RETRACTED_MEDIA_RATE_LIMIT = 600;
 
+/** The per-moderator request counter both apps' routes count in, before the cache-key prefix. */
+export const retractedMediaRateKey = (moderatorId: number) =>
+  `retracted-media:rate-limit:${moderatorId}`;
+
 /** The eligibility read's statement timeout: a read that cannot finish refuses. */
 export const RETRACTED_MEDIA_READ_TIMEOUT_MS = 2_000;
 

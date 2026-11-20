@@ -297,8 +297,13 @@ describe('getRetractedMedia', () => {
 describe('the eligibility read', () => {
   it('runs under a statement timeout, so a slow read refuses instead of hanging', async () => {
     await getRetractedMedia(1, { csamReview: false });
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledWith(
       expect.stringMatching(/^SET LOCAL statement_timeout = \d+$/)
+    );
+    // Before the read, so the read is the statement it bounds.
+    expect(dbMock.dbWrite.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+      dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]
     );
   });
 });

@@ -12,6 +12,7 @@ import {
   type KnightsWritebackReason,
 } from '@civitai/shared/new-order';
 import { csamRestrictedSql, retractedImageWhereSql } from '@civitai/shared/retracted-media-tier';
+import { RETRACTED_MEDIA_READ_TIMEOUT_MS } from '@civitai/shared/retracted-media';
 import { blockedForSignal } from '@civitai/shared/review-batch';
 import { INQUISITOR_FILTERS, type InquisitorFilter } from '$lib/knights/inquisitor-filters';
 import { BLOCKED_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
@@ -259,13 +260,16 @@ async function blockedImagesAnyModeratorMaySee(imageIds: number[]): Promise<Set<
 }
 
 async function readViewable(imageIds: number[]): Promise<Set<number>> {
-  const rows = await dbWrite
-    .selectFrom('Image as i')
-    .select(['i.id', 'i.blockedFor'])
-    .where('i.id', 'in', imageIds)
-    .where(sql<boolean>`${sql.raw(retractedImageWhereSql('i'))}`)
-    .where(sql<boolean>`NOT ${sql.raw(csamRestrictedSql('i'))}`)
-    .execute();
+  const rows = await dbWrite.transaction().execute(async (trx) => {
+    await sql.raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`).execute(trx);
+    return trx
+      .selectFrom('Image as i')
+      .select(['i.id', 'i.blockedFor'])
+      .where('i.id', 'in', imageIds)
+      .where(sql<boolean>`${sql.raw(retractedImageWhereSql('i'))}`)
+      .where(sql<boolean>`NOT ${sql.raw(csamRestrictedSql('i'))}`)
+      .execute();
+  });
   const patterns = blockedForPatterns();
   return new Set(
     rows.filter((row) => !blockedForSignal(row.blockedFor, patterns)).map((row) => row.id)

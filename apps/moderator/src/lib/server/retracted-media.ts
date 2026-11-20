@@ -28,7 +28,7 @@ export type RetractedMedia = {
  * `null` otherwise, so an image they may not see is answered exactly as a missing one. CSAM-restricted
  * media (`csamRestrictedSql`, a `blockedFor` signal, or the scanner's CSAM label) needs `csamReview`;
  * a minor signal alone does not. The same rules as the main app's `/api/mod/retracted-media`, read on the
- * primary for the same reason: a flag or hold the replica has not seen would otherwise be missed. A read past its timeout throws, and the route refuses.
+ * primary for the same reason: a flag or hold the replica has not seen would otherwise be missed.
  */
 export async function getRetractedMedia(
   imageId: number,

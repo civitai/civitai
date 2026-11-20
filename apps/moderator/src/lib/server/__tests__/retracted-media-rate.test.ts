@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RETRACTED_MEDIA_RATE_LIMIT } from '@civitai/shared/retracted-media';
+import { prefixCacheKey } from '@civitai/redis';
+import { RETRACTED_MEDIA_RATE_LIMIT, retractedMediaRateKey } from '@civitai/shared/retracted-media';
 
 vi.mock('../redis', () => ({
   getRedis: () => {
@@ -30,6 +31,26 @@ describe('retractedMediaRetryAfter', () => {
       expect(await retractedMediaRetryAfter(7, redis as never)).toBeNull();
     expect(await retractedMediaRetryAfter(7, redis as never)).toBe(60);
     expect(await retractedMediaRetryAfter(8, redis as never)).toBeNull();
+  });
+
+  it("counts under the main app's key for the moderator", async () => {
+    const redis = counter();
+    await retractedMediaRetryAfter(7, redis as never);
+    expect(redis.incrBy).toHaveBeenCalledWith(prefixCacheKey(retractedMediaRateKey(7)), 1);
+    expect(retractedMediaRateKey(7)).toBe('retracted-media:rate-limit:7');
+  });
+
+  it("answers with the window's remaining seconds, and restores a lost expiry", async () => {
+    const redis = counter();
+    const key = prefixCacheKey(retractedMediaRateKey(7));
+    for (let i = 0; i < RETRACTED_MEDIA_RATE_LIMIT; i++)
+      await retractedMediaRetryAfter(7, redis as never);
+    redis.ttl.mockResolvedValueOnce(17).mockResolvedValueOnce(17);
+    expect(await retractedMediaRetryAfter(7, redis as never)).toBe(17);
+    redis.expire.mockClear();
+    redis.ttl.mockResolvedValueOnce(-1);
+    await retractedMediaRetryAfter(7, redis as never);
+    expect(redis.expire).toHaveBeenCalledWith(key, 60);
   });
 
   it('refuses when the counter cannot be read', async () => {

@@ -267,7 +267,13 @@ describe('the eligibility read', () => {
       spyQ.mockRestore();
       spyE.mockRestore();
     }
-    expect(seen.some((q) => /SET LOCAL statement_timeout = \d+/.test(q))).toBe(true);
+    // Inside the transaction and before the read, so the read is the statement it bounds.
+    const begin = seen.findIndex((q) => /^\s*begin/i.test(q));
+    const set = seen.findIndex((q) => /SET LOCAL statement_timeout = \d+/.test(q));
+    const read = seen.findIndex((q) => /from "Image" as "i"/i.test(q));
+    expect(begin).toBeGreaterThanOrEqual(0);
+    expect(set).toBeGreaterThan(begin);
+    expect(read).toBeGreaterThan(set);
   });
 });
 
@@ -380,6 +386,22 @@ describe('a model version unpublished for its subject', () => {
     expect(await getRetractedMedia(990000122, { csamReview: false })).toBeNull();
     expect(await getRetractedMedia(990000122, { csamReview: true })).toMatchObject({
       url: 'key-990000122',
+    });
+  });
+
+  it('keeps an image whose owner is named on a report to cleared moderators', async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
+        (990000125, 'key-990000125', 'Blocked', 'AiNotVerified', 990100125, NULL);
+      INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100125, '{}', '[]');
+    `);
+    try {
+      expect(await getRetractedMedia(990000125, { csamReview: false })).toBeNull();
+    } finally {
+      await db.exec(`DELETE FROM "CsamReport" WHERE "userId" = 990100125`);
+    }
+    expect(await getRetractedMedia(990000125, { csamReview: false })).toMatchObject({
+      url: 'key-990000125',
     });
   });
 

@@ -1,34 +1,17 @@
-import {
-  CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
-  heldImageSql,
-  heldUserSql,
-  reviewSuspectImageSql,
-} from './held-media';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldImageSql, heldUserSql } from './held-media';
 import {
   BAN_REASONS_ALWAYS_REMOVING_MEDIA,
   CSAM_HOLD_POST_UNPUBLISH_REASON,
   evidenceHeldUrlSql,
   heldUrlSql,
-  MINOR_UNPUBLISH_REASONS,
   reportListedUrlSql,
 } from './held-url';
-import { blockedForSignal, type BlockedForPatterns } from './review-batch';
 
-/**
- * A blocked image's signal tier, as the review routing reads it: `suspect` for an image carrying a
- * CSAM or minor signal, a block with no reason or a reason `blockedForSignal` reads as a signal, or
- * an owner named on a report or held; `plain` otherwise. Which moderators may see it on the
- * retracted-media routes is `csamRestrictedSql`'s call, not the tier's.
- * Held media (`heldImageSql`) and an image row under an evidence hold are never served there; the
- * held-media route serves the first. With `cdnLeg`, a scanned image is also eligible while the image
- * CDN has retracted its url, unless the url is held (`heldUrlSql`) or another image row, a moderator
- * delete or a shop takedown shares it.
- */
-export type RetractedTier = 'plain' | 'suspect';
-
-/** Whether this route may serve the "Image" row aliased `image` at all, to anyone: it is blocked
- *  (or, with `cdnLeg`, scanned with its url retracted and not held), not held media, and not under
- *  an evidence hold. */
+/** Whether the retracted-media routes may serve the "Image" row aliased `image` at all, to anyone:
+ *  it is blocked (or, with `cdnLeg`, scanned with its url retracted and not held), not held media
+ *  (`heldImageSql`, which the held-media route serves), and not under an evidence hold. With
+ *  `cdnLeg`, the url must also be the row's alone. Who among moderators may see it is
+ *  `csamRestrictedSql`'s call. */
 export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const eligible = cdnLeg
@@ -97,45 +80,6 @@ export function csamRestrictedSql(image: string): string {
       WHERE cp.id = ${image}."postId" AND cp.metadata ->> 'unpublishedReason' = '${CSAM_HOLD_POST_UNPUBLISH_REASON}'
     )
   ), true)`;
-}
-
-/** Whether the "Image" row aliased `image` has a signal that puts it in the `suspect` tier, read in
- *  Postgres. `blockedFor` text is read by `retractedTier` against the private patterns. */
-export function retractedSuspectSql(image: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
-  const minorReasons = MINOR_UNPUBLISH_REASONS.map((r) => `'${r}'`).join(', ');
-  const minorBans = BAN_REASONS_ALWAYS_REMOVING_MEDIA.map((r) => `'${r}'`).join(', ');
-  return `COALESCE((
-    -- A block with no reason. An image that is not blocked has no reason by construction.
-    (${image}."blockedFor" IS NULL AND ${image}.ingestion = 'Blocked')
-    OR ${reviewSuspectImageSql(image)}
-    OR ${heldUserSql(`${image}."userId"`)}
-    -- A scanned image is here only because its url was retracted: a minor reason on its post or
-    -- model, or a minor-safety ban of its owner, is a signal that its own flags may not carry.
-    OR (${image}.ingestion = 'Scanned' AND (
-      EXISTS (
-        SELECT 1 FROM "Post" sp
-        LEFT JOIN "ModelVersion" smv ON smv.id = sp."modelVersionId"
-        LEFT JOIN "Model" smo ON smo.id = smv."modelId"
-        WHERE sp.id = ${image}."postId" AND (
-          sp.metadata ->> 'unpublishedReason' IN (${minorReasons})
-          OR smv.meta ->> 'unpublishedReason' IN (${minorReasons})
-          OR smo.meta ->> 'unpublishedReason' IN (${minorReasons})
-        )
-      )
-      OR EXISTS (
-        SELECT 1 FROM "User" su
-        WHERE su.id = ${image}."userId" AND su.meta -> 'banDetails' ->> 'reasonCode' IN (${minorBans})
-      )
-    ))
-  ), false)`;
-}
-
-export function retractedTier(
-  row: { suspect: boolean; blockedFor: string | null },
-  patterns: BlockedForPatterns | null
-): RetractedTier {
-  return row.suspect || blockedForSignal(row.blockedFor, patterns) ? 'suspect' : 'plain';
 }
 
 export type ScannerVerdict = 'hit' | 'clear' | 'none';
