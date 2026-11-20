@@ -10,7 +10,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const MIGRATION = path.resolve(
   __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20271120120000_writer_leaderboards/migration.sql'
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261120120000_writer_leaderboards/migration.sql'
 );
 
 const STORYTELLER = 10;
