@@ -20,3 +20,11 @@
 .handle[data-side='right'] {
   right: -5px;
 }
+
+// Below 640px the layout overrides sizes (_image-layout.scss), so the width shown is not the one
+// stored, and a resize there would save the wrong number. Resize on a wider screen.
+@media (max-width: 640px) {
+  .handle {
+    display: none;
+  }
+}

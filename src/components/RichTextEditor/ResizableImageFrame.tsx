@@ -93,8 +93,10 @@ export function ResizableImageFrame({
       // A tap measures the shown width, which on a phone is not the stored one: only a drag saves.
       if (percent === null) return;
       const next = snapImageWidth(percent);
+      // Back where it started: no change, even where the start doesn't snap (legacy 33, natural size).
+      if (next === size || next === snapImageWidth((startWidth / columnWidth) * 100)) return;
       // One attribute change on release, so a drag is a single undo step.
-      if (next !== size) onResize(next);
+      onResize(next);
     };
     // On window, so the drag keeps going when the pointer leaves the small handle.
     window.addEventListener('pointermove', move);

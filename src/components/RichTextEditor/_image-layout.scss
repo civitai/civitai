@@ -39,9 +39,12 @@
   }
 
   // The article body's block margin on images would push a floated image below the text beside it.
-  &[data-align='float-left'] img,
-  &[data-align='float-right'] img {
-    margin-block: 0;
+  // Above 640px only: below it a float is a block again and keeps the body's spacing.
+  @media (min-width: 641px) {
+    &[data-align='float-left'] img,
+    &[data-align='float-right'] img {
+      margin-block: 0;
+    }
   }
 
   // 640px: no theme breakpoint matches. Small sizes are too small on a phone, and text squeezed

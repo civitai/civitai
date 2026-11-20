@@ -64,8 +64,8 @@ const selectFirst = (type: string) => {
 
 const alignControl = () => page.getByRole('radiogroup', { name: 'Image alignment' });
 
-/** Drag a resize handle of the selected image by `dx` pixels. */
-async function dragHandle(side: 'left' | 'right', dx: number) {
+/** Drag a resize handle of the selected image through each `dx` (pixels from where it started). */
+async function dragHandle(side: 'left' | 'right', ...path: number[]) {
   const handle = await expect
     .poll(() => document.querySelector<HTMLElement>(`[data-side="${side}"]`))
     .not.toBeNull()
@@ -75,9 +75,8 @@ async function dragHandle(side: 'left' | 'right', dx: number) {
   const y = top + height / 2;
   const at = (clientX: number) => ({ clientX, clientY: y, bubbles: true, pointerId: 1 });
   handle.dispatchEvent(new PointerEvent('pointerdown', at(x)));
-  window.dispatchEvent(new PointerEvent('pointermove', at(x + dx / 2)));
-  window.dispatchEvent(new PointerEvent('pointermove', at(x + dx)));
-  window.dispatchEvent(new PointerEvent('pointerup', at(x + dx)));
+  for (const dx of path) window.dispatchEvent(new PointerEvent('pointermove', at(x + dx)));
+  window.dispatchEvent(new PointerEvent('pointerup', at(x + (path.at(-1) ?? 0))));
 }
 
 describe('image placement menu', () => {
@@ -138,6 +137,31 @@ describe('image placement menu', () => {
     // A later drag proves the handle was live, so the tap above had its chance to save.
     await dragHandle('right', -60);
     await expect.poll(() => editor!.getHTML()).toContain('data-width="30"');
+  });
+
+  test('dragging out and back to the start leaves a legacy size alone', async () => {
+    await mount(`<p><img src="${await imageUrl(COLUMN, 400)}" data-width="33"></p>`);
+    selectFirst('image');
+
+    // Pointer events and the attribute update are synchronous, so this reads after the release.
+    await dragHandle('right', 80, 0);
+    expect(editor!.getHTML()).toContain('data-width="33"');
+
+    // A live handle: the same drag without coming back does save.
+    await dragHandle('right', 80);
+    await expect.poll(() => editor!.getHTML()).toContain('data-width="55"');
+  });
+
+  test('shows no resize handles on a phone, where the shown width is not the stored one', async () => {
+    await page.viewport(375, 800);
+    await mount(`<p><img src="${await imageUrl(300, 200)}" data-width="40"></p>`);
+    selectFirst('image');
+
+    const handle = await expect
+      .poll(() => document.querySelector<HTMLElement>('[data-side="right"]'))
+      .not.toBeNull()
+      .then(() => document.querySelector<HTMLElement>('[data-side="right"]')!);
+    expect(getComputedStyle(handle).display).toBe('none');
   });
 
   test('dragging a centred image grows it on both sides, and to the edge clears the size', async () => {
