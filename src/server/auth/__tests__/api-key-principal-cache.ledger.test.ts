@@ -123,7 +123,9 @@ const LEDGER: Record<string, { count: number; why: string }> = {
   'src/server/routers/oauth-consent.router.ts': { count: 1, why: NOT_CACHED },
   'src/server/services/blocks/oauth-consent-sync.service.ts': { count: 1, why: NOT_CACHED },
   'apps/auth/src/lib/server/oauth/model.ts': { count: 1, why: NOT_CACHED },
-  'apps/auth/src/lib/server/oauth/token-helpers.ts': { count: 1, why: 'insert: OAuth rows' },
+  'apps/auth/src/lib/server/oauth/token-helpers.ts': { count: 2, why: 'insert: OAuth rows' },
+  // Refresh-family revoke (Refresh + Access) and the offline-decline Refresh delete: OAuth rows.
+  'apps/auth/src/lib/server/oauth/offline-grant.ts': { count: 3, why: NOT_CACHED },
   'apps/auth/src/routes/api/auth/oauth/revoke/+server.ts': { count: 2, why: NOT_CACHED },
   'apps/auth/src/lib/server/oauth/worker-grant.ts': { count: 2, why: WORKER_ONLY },
   'apps/auth/src/lib/server/oauth/worker-admin.ts': { count: 1, why: WORKER_ONLY },
