@@ -8,12 +8,21 @@ export const SERVICE_REVIEWS_PAGE_SIZE = 12;
 /**
  * A review shown on its offering's page: published (which already carries the scan, hidden,
  * settled and refund rules), by a buyer still in good standing, on a deal whose rating the viewer's
- * levels allow. `r` the review, `d` its deal, `u` its buyer.
+ * levels allow, minus buyers this viewer hid or has a block with. `r` the review, `d` its deal, `u` its buyer.
  */
-const shownReviewSql = (offeringId: number, levels: number) => Prisma.sql`
+const shownReviewSql = (
+  offeringId: number,
+  levels: number,
+  excludedUserIds: number[]
+) => Prisma.sql`
   r."offeringId" = ${offeringId}::int AND r."publishedAt" IS NOT NULL
   AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
-  AND (d."maxNsfwLevel" & ${levels}::int) <> 0`;
+  AND (d."maxNsfwLevel" & ${levels}::int) <> 0
+  ${
+    excludedUserIds.length
+      ? Prisma.sql`AND r."buyerId" NOT IN (${Prisma.join(excludedUserIds)})`
+      : Prisma.empty
+  }`;
 
 type ReviewImageRow = {
   reviewId: number;
@@ -38,11 +47,14 @@ const reviewImageColumns = Prisma.sql`ri."reviewId", i."id", i."name", i."url", 
 export async function getServiceOfferingReviews({
   offeringId,
   levels,
+  excludedUserIds,
   cursor,
   limit = SERVICE_REVIEWS_PAGE_SIZE,
 }: {
   offeringId: number;
   levels: number;
+  /** `getHiddenOrBlockedUserIds` for a signed-in viewer. The offering's counters ignore it. */
+  excludedUserIds: number[];
   cursor?: number;
   limit?: number;
 }) {
@@ -63,7 +75,7 @@ export async function getServiceOfferingReviews({
     FROM "ServiceDealReview" r
     JOIN "ServiceDeal" d ON d."id" = r."dealId"
     JOIN "User" u ON u."id" = r."buyerId"
-    WHERE ${shownReviewSql(offeringId, levels)}
+    WHERE ${shownReviewSql(offeringId, levels, excludedUserIds)}
       ${
         cursor
           ? Prisma.sql`AND (r."publishedAt", r."id") <
@@ -97,11 +109,13 @@ export async function getServiceOfferingReviews({
 export async function getServiceOfferingReviewWork({
   offeringId,
   levels,
+  excludedUserIds,
   cursor,
   limit = SERVICE_REVIEWS_PAGE_SIZE,
 }: {
   offeringId: number;
   levels: number;
+  excludedUserIds: number[];
   /** The last image id of the previous page. */
   cursor?: number;
   limit?: number;
@@ -113,7 +127,9 @@ export async function getServiceOfferingReviewWork({
     JOIN "ServiceDealReview" r ON r."id" = ri."reviewId"
     JOIN "ServiceDeal" d ON d."id" = r."dealId"
     JOIN "User" u ON u."id" = r."buyerId"
-    WHERE ${shownReviewSql(offeringId, levels)} AND ${reviewImageVisibleSql(levels)}
+    WHERE ${shownReviewSql(offeringId, levels, excludedUserIds)} AND ${reviewImageVisibleSql(
+    levels
+  )}
       ${
         cursor
           ? Prisma.sql`AND (r."publishedAt", i."id") < (

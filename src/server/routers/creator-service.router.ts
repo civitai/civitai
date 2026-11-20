@@ -35,6 +35,7 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
+import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
 import { domainServableLevels, resolveRequestBrowsingLevels } from '~/server/utils/browsing-level';
 import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
@@ -58,7 +59,7 @@ const reviewsProcedure = publicProcedure
   .use(isFlagProtected('creatorServicesNext'))
   .input(getServiceOfferingReviewsSchema);
 
-async function viewableReviewLevels(
+async function reviewViewer(
   input: GetServiceOfferingReviewsInput,
   ctx: Parameters<typeof domainServableLevels>[0] & { user?: { id: number; isModerator?: boolean } }
 ) {
@@ -71,7 +72,12 @@ async function viewableReviewLevels(
     viewerId: ctx.user?.id,
     isModerator: ctx.user?.isModerator,
   });
-  return (input.browsingLevel ?? servable) & servable;
+  const viewerId = ctx.user?.id;
+  return {
+    offeringId: input.id,
+    levels: (input.browsingLevel ?? servable) & servable,
+    excludedUserIds: viewerId ? await getHiddenOrBlockedUserIds(viewerId) : [],
+  };
 }
 
 export const creatorServiceRouter = router({
@@ -144,12 +150,10 @@ export const creatorServiceRouter = router({
         viewerId: ctx.user?.id,
       });
     }),
-  getReviews: reviewsProcedure.query(async ({ input, ctx }) => {
-    const levels = await viewableReviewLevels(input, ctx);
-    return getServiceOfferingReviews({ offeringId: input.id, levels, cursor: input.cursor });
-  }),
-  getReviewWork: reviewsProcedure.query(async ({ input, ctx }) => {
-    const levels = await viewableReviewLevels(input, ctx);
-    return getServiceOfferingReviewWork({ offeringId: input.id, levels, cursor: input.cursor });
-  }),
+  getReviews: reviewsProcedure.query(async ({ input, ctx }) =>
+    getServiceOfferingReviews({ ...(await reviewViewer(input, ctx)), cursor: input.cursor })
+  ),
+  getReviewWork: reviewsProcedure.query(async ({ input, ctx }) =>
+    getServiceOfferingReviewWork({ ...(await reviewViewer(input, ctx)), cursor: input.cursor })
+  ),
 });

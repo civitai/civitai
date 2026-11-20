@@ -1769,7 +1769,13 @@ describe('reviews on the offering page', () => {
     return id;
   }
   const list = async (levels: number, cursor?: number, limit?: number) =>
-    reviewDisplay.getServiceOfferingReviews({ offeringId: 1, levels, cursor, limit });
+    reviewDisplay.getServiceOfferingReviews({
+      offeringId: 1,
+      levels,
+      cursor,
+      limit,
+      excludedUserIds: [],
+    });
 
   beforeEach(async () => {
     await q(`UPDATE "ServiceOffering" SET "allowReviewWork" = true`);
@@ -1808,15 +1814,47 @@ describe('reviews on the offering page', () => {
     expect((await list(RED)).items.map((x) => x.id)).toEqual([r.reviewId, pg.reviewId]);
     // The R deal's PG-scanned image is rated R, so it never reaches .com.
     const work = async (levels: number) =>
-      (await reviewDisplay.getServiceOfferingReviewWork({ offeringId: 1, levels })).items.map(
-        (i) => [i.id, i.nsfwLevel]
-      );
+      (
+        await reviewDisplay.getServiceOfferingReviewWork({
+          offeringId: 1,
+          levels,
+          excludedUserIds: [],
+        })
+      ).items.map((i) => [i.id, i.nsfwLevel]);
     expect(await work(COM)).toEqual([[pgImage, 1]]);
     expect(await work(RED)).toEqual([
       [rImage, 4],
       [pgImage, 1],
     ]);
     expect((await list(RED)).items[0].images.map((i) => i.id)).toEqual([rImage]);
+  });
+
+  it('leaves out reviews and work by buyers the viewer hid or has a block with', async () => {
+    const blocked = await shownReview({ buyerId: 30 });
+    const kept = await shownReview({ buyerId: 31 });
+    await shownImage(blocked.reviewId);
+    const keptImage = await shownImage(kept.reviewId);
+    const excludedUserIds = [30];
+    expect(
+      (
+        await reviewDisplay.getServiceOfferingReviews({
+          offeringId: 1,
+          levels: RED,
+          excludedUserIds,
+        })
+      ).items.map((r) => r.id)
+    ).toEqual([kept.reviewId]);
+    expect(
+      (
+        await reviewDisplay.getServiceOfferingReviewWork({
+          offeringId: 1,
+          levels: RED,
+          excludedUserIds,
+        })
+      ).items.map((i) => i.id)
+    ).toEqual([keptImage]);
+    // Hiding is the viewer's: the offering's score still counts the hidden buyer.
+    expect((await list(RED)).items).toHaveLength(2);
   });
 
   it("shows the seller's reply only once it passed its check", async () => {
@@ -1836,12 +1874,14 @@ describe('reviews on the offering page', () => {
     const first = await reviewDisplay.getServiceOfferingReviewWork({
       offeringId: 1,
       levels: RED,
+      excludedUserIds: [],
       limit: 1,
     });
     expect(first.items.map((i) => i.id)).toEqual([newer]);
     const second = await reviewDisplay.getServiceOfferingReviewWork({
       offeringId: 1,
       levels: RED,
+      excludedUserIds: [],
       limit: 1,
       cursor: first.nextCursor,
     });
