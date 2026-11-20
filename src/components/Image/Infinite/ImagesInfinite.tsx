@@ -1,5 +1,6 @@
 import { useRouter } from 'next/router';
 import { Button, Center, Group, Loader, LoadingOverlay, Text } from '@mantine/core';
+import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 import { getQueryKey } from '@trpc/react-query';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
@@ -184,20 +185,33 @@ function ImagesFeed({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [String(rawModelVersionIds ?? '')]
   );
+  const { asTyped } = useSearchAsTyped(searchQuery);
   const searchInput = useMemo(
     () =>
       searchQuery || similarTo
-        ? toSemanticImageSearchInput({
-            query: searchQuery,
-            imageId: similarTo,
-            filters,
-            browsingLevel,
-            sort: feedSearch?.sort,
-            excludeOwn,
-            modelVersionIds,
-          })
+        ? {
+            ...toSemanticImageSearchInput({
+              query: searchQuery,
+              imageId: similarTo,
+              filters,
+              browsingLevel,
+              sort: feedSearch?.sort,
+              excludeOwn,
+              modelVersionIds,
+            }),
+            ...spellcheckFor(asTyped && !!searchQuery),
+          }
         : undefined,
-    [searchQuery, similarTo, filters, browsingLevel, feedSearch?.sort, excludeOwn, modelVersionIds]
+    [
+      searchQuery,
+      similarTo,
+      filters,
+      browsingLevel,
+      feedSearch?.sort,
+      excludeOwn,
+      modelVersionIds,
+      asTyped,
+    ]
   );
   const search = useSemanticImageFeed(searchInput);
   useScrollToTopOnChange(searchInput && JSON.stringify(searchInput));

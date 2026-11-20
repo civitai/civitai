@@ -2,6 +2,7 @@ import { Alert, Anchor, Button, Text, Title } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
+import { SEARCH_AS_TYPED_PARAM, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 
 type Props = {
   /** What the feed lists, as the title words it: "Models", "Articles". */
@@ -15,6 +16,7 @@ type Props = {
 /** Above a feed while it answers a search: what was searched, and the way back out. */
 export function FeedSearchSummary({ noun, query, correctedQuery, failed, onRetry }: Props) {
   const router = useRouter();
+  const { searchAsTyped } = useSearchAsTyped(query);
   const shownQuery = correctedQuery && correctedQuery !== query ? correctedQuery : undefined;
 
   return (
@@ -31,7 +33,11 @@ export function FeedSearchSummary({ noun, query, correctedQuery, failed, onRetry
             void router.push(
               {
                 pathname: router.pathname,
-                query: removeEmpty({ ...router.query, query: undefined }),
+                query: removeEmpty({
+                  ...router.query,
+                  query: undefined,
+                  [SEARCH_AS_TYPED_PARAM]: undefined,
+                }),
               },
               undefined,
               { shallow: true }
@@ -43,7 +49,10 @@ export function FeedSearchSummary({ noun, query, correctedQuery, failed, onRetry
       </div>
       {shownQuery && (
         <Text size="sm" c="dimmed">
-          Showing results for <strong>{shownQuery}</strong>
+          Showing results for <strong>{shownQuery}</strong>. Search instead for{' '}
+          <Anchor component="button" size="sm" onClick={searchAsTyped}>
+            {query}
+          </Anchor>
         </Text>
       )}
       {failed && (

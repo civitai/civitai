@@ -423,6 +423,20 @@ describe('the shared held-media rule', () => {
   });
 });
 
+describe('a query searched as typed', () => {
+  it('asks the service for the text with its spelling correction off', async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    const { source, calls } = rankedSource([101]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: undefined, query: 'Shikata nee', spellcheck: false }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].query).toEqual({ text: 'Shikata nee', spellcheck: false });
+  });
+});
+
 describe('tags that cannot be browsed', () => {
   it('returns an empty page when every chosen tag is one', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([5]));

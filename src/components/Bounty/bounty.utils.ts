@@ -1,5 +1,6 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 import type { SemanticBountySearchInput } from '~/server/schema/semantic-bounty-search.schema';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import dayjs from '~/shared/utils/dayjs';
@@ -137,7 +138,11 @@ export const useSemanticBountyFeed = (
   query: string | undefined
 ) => {
   const browsingLevel = useBrowsingLevelDebounced();
-  const input = toSemanticBountySearchInput(filters, query ?? '', browsingLevel);
+  const { asTyped } = useSearchAsTyped(query);
+  const input = {
+    ...toSemanticBountySearchInput(filters, query ?? '', browsingLevel),
+    ...spellcheckFor(asTyped),
+  };
   const { data, ...rest } = trpc.semanticBountySearch.search.useInfiniteQuery(input, {
     enabled: !!query,
     getNextPageParam: (lastPage) => lastPage.nextCursor,

@@ -14,6 +14,7 @@ import useIsClient from '~/hooks/useIsClient';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 
 const isEmptyFilter = (value: unknown) =>
   value === undefined || (Array.isArray(value) && value.length === 0);
@@ -41,6 +42,7 @@ export function ImageFeedSearchSummary({
 }: Props) {
   const currentUser = useCurrentUser();
   const router = useRouter();
+  const { searchAsTyped } = useSearchAsTyped(query);
   // The saved feed filters load in the browser, so the server can't render their chips.
   const isClient = useIsClient();
   const setStoreFilters = useFiltersContext((state) => state.setImageFilters);
@@ -97,7 +99,10 @@ export function ImageFeedSearchSummary({
       </Title>
       {shownQuery && (
         <Text size="sm" c="dimmed">
-          Showing results for <strong>{shownQuery}</strong>
+          Showing results for <strong>{shownQuery}</strong>. Search instead for{' '}
+          <Anchor component="button" size="sm" onClick={searchAsTyped}>
+            {query}
+          </Anchor>
         </Text>
       )}
       {unavailable ? (

@@ -11,6 +11,9 @@ export type SemanticBountySearchInput = z.infer<typeof semanticBountySearchSchem
 /** The bounty feed's filters (getInfiniteBountySchema) that semantic search can apply. */
 export const semanticBountySearchSchema = baseQuerySchema.extend({
   query: z.string().trim().min(1, 'Enter a query').max(SEMANTIC_QUERY_MAX_LENGTH),
+  // The query as typed: the service's spelling correction is skipped ("Search instead for").
+  // The text is still audited as any query is.
+  spellcheck: z.literal(false).optional(),
   types: z.enum(BountyType).array().optional(),
   mode: z.enum(BountyMode).optional(),
   // Depends on the clock, so applied at hydration rather than in the index.

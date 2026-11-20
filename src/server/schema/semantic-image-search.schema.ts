@@ -10,6 +10,9 @@ export type SemanticImageSearchInput = z.infer<typeof semanticImageSearchSchema>
 export const semanticImageSearchSchema = baseQuerySchema
   .extend({
     query: z.string().trim().max(SEMANTIC_QUERY_MAX_LENGTH).optional(),
+    // The query as typed: the service's spelling correction is skipped ("Search instead for").
+    // The text is still audited as any query is.
+    spellcheck: z.literal(false).optional(),
     // "More like this": the image whose vector is the query.
     imageId: z.number().int().positive().optional(),
     // "More like this" without the viewer's own images (results only, never the source image).

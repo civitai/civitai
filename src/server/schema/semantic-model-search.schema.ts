@@ -13,6 +13,9 @@ export const semanticModelSearchSchema = getAllModelsSchema
   .omit({ ids: true, modelVersionIds: true, page: true, cursor: true, query: true, limit: true })
   .extend({
     query: z.string().trim().min(1, 'Enter a query').max(SEMANTIC_QUERY_MAX_LENGTH),
+    // The query as typed: the service's spelling correction is skipped ("Search instead for").
+    // The text is still audited as any query is.
+    spellcheck: z.literal(false).optional(),
     limit: z.number().int().min(1).max(100).default(SEMANTIC_SEARCH_PAGE_SIZE),
     // Offset into the ranked candidate list.
     cursor: z.number().int().min(0).optional(),
