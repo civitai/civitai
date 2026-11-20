@@ -54,7 +54,6 @@
     onExit,
   }: { prices: FromPrices; enabledModelFlags?: string[]; onExit: () => void } = $props();
 
-  // The Civitai Elements redesign, behind its own gate until it replaces the old UI.
   const elementsUi = $derived(enabledModelFlags.includes(ELEMENTS_UI_FLAG_KEY));
   setElementsUi(() => elementsUi);
   const Select = $derived(elementsUi ? SelectStepElements : SelectStep);
