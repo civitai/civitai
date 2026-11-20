@@ -19,6 +19,11 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
+  const retryIn = (seconds: unknown) =>
+    typeof seconds !== 'number' || seconds <= 60
+      ? 'in a minute'
+      : `in ${Math.ceil(seconds / 60)} minutes`;
+
   // The method this browser last signed in with goes first, marked "Last used".
   const providers = $derived(
     data.lastMethod
@@ -480,7 +485,7 @@
             </button>
             {#if form?.invalid}<p class="error">Enter a valid email address.</p>{/if}
             {#if form?.rateLimited}
-              <p class="error">Too many attempts. Please wait a few minutes and try again.</p>
+              <p class="error">Too many attempts. Try again {retryIn(form.retryAfter)}.</p>
             {/if}
             <!-- "try again" only where a retry can work — a rejected (expired/reused) token, not a
                  check that cannot run. Dropping the second term re-invites a doomed retry. -->

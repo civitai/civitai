@@ -263,6 +263,7 @@ export const IMAGE_USES = {
   crucibleHeroes: ['Crucible', 'heroImageId'],
   crucibleEntries: ['CrucibleEntry', 'imageId'],
   serviceOfferingCovers: ['ServiceOffering', 'coverImageId'],
+  serviceDealReviewImage: ['ServiceDealReviewImage', 'imageId'],
   storylineCovers: ['Storyline', 'coverImageId'],
   storylineHeroes: ['Storyline', 'heroImageId'],
   storylineSparks: ['Storyline', 'sparkImageId'],

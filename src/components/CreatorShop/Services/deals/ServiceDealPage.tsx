@@ -20,6 +20,7 @@ import { DealActionsPanel } from '~/components/CreatorShop/Services/deals/DealAc
 import { DealEscrowPanel } from '~/components/CreatorShop/Services/deals/DealEscrowPanel';
 import { DealAttachmentsPanel } from '~/components/CreatorShop/Services/deals/DealAttachmentsPanel';
 import { DealFilesPanel } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
+import { DealReviewCard } from '~/components/CreatorShop/Services/deals/DealReviewCard';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
 import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
 import { Gated } from '~/components/Gated/Gated';
@@ -31,6 +32,7 @@ import {
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDeal } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { PushSoftAsk } from '~/components/Notifications/PushSoftAsk';
 import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { pluralize } from '~/shared/utils/pluralize';
@@ -198,8 +200,18 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
           <Grid.Col span={{ base: 12, md: 7 }}>
             <Stack gap="lg">
               <DealEscrowPanel deal={deal} />
-              {deal.deadlines.disputeUntil && (
-                <DisputeWindow deal={deal} until={deal.deadlines.disputeUntil} />
+              {features.creatorServicesNext &&
+              deal.review &&
+              (deal.deadlines.disputeUntil || deal.review.review) ? (
+                <DealReviewCard
+                  deal={deal}
+                  state={deal.review}
+                  until={deal.deadlines.disputeUntil}
+                />
+              ) : (
+                deal.deadlines.disputeUntil && (
+                  <DisputeWindow deal={deal} until={deal.deadlines.disputeUntil} />
+                )
               )}
               {lines.length > 0 && (
                 <Paper withBorder radius="md" p="md">
@@ -213,6 +225,9 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
                 </Paper>
               )}
               <DealActionsPanel deal={deal} />
+              {features.creatorServicesNext &&
+                deal.status === 'Requested' &&
+                deal.viewerRole !== 'moderator' && <PushSoftAsk surface="deal-flow" />}
               <DealFilesPanel deal={deal} />
               <DealAttachmentsPanel deal={deal} />
               <Paper withBorder radius="md" p="md">

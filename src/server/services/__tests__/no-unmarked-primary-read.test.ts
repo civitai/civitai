@@ -266,7 +266,7 @@ const BASELINE: Counts = {
   'src/server/services/resourceReview.service.ts': 4,
   'src/server/services/resourceReview.visibility.ts': 1,
   'src/server/services/scam-cleanup.service.ts': 1,
-  'src/server/services/service-offering-moderation.adapter.ts': 6,
+  'src/server/services/service-offering-moderation.adapter.ts': 4,
   'src/server/services/site-appeal.service.ts': 4,
   'src/server/services/sticker-placement.service.ts': 3,
   'src/server/services/sticker.service.ts': 4,

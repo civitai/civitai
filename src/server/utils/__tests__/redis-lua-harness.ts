@@ -6,7 +6,7 @@ import { LuaFactory } from 'wasmoon';
  * with a settable clock, so a script's arithmetic and its redis.call sequence are tested rather
  * than mocked. CI has no Redis server.
  *
- * Supports only the commands the scripts under test use: TIME, EXISTS, GET, SET (NX, EX, PX), HGET, HEXISTS, HLEN, HMGET, HSET, HDEL, HINCRBY, PEXPIRE,
+ * Supports only the commands the scripts under test use: TIME, EXISTS, GET, SET (NX, EX, PX), INCR, HGET, HEXISTS, HLEN, HMGET, HSET, HDEL, HINCRBY, PEXPIRE,
  * HPEXPIRE, EXPIRE, TTL, DEL, LRANGE, LSET, SADD, SCARD, SISMEMBER, SREM, SMEMBERS, ZADD, ZREM,
  * ZRANGE (BYSCORE, REV, LIMIT, WITHSCORES), ZUNIONSTORE (sum), and redis.error_reply (thrown, as the client would). It is deliberately stricter than Redis in two places that would otherwise hide a 5.1/5.4 divergence:
  * every redis.call argument must already be a string (so a script must format its own numbers),
@@ -214,6 +214,14 @@ export function createLuaRedis(
         else if (px !== -1) expiresAt.set(key, state.nowMs + Number(strArgs[2 + px + 1]));
         else expiresAt.delete(key);
         return { ok: 'OK' };
+      }
+      case 'INCR': {
+        const current = strings.get(key) ?? '0';
+        if (!/^-?\d+$/.test(current))
+          throw new Error('ERR value is not an integer or out of range');
+        const next = String(Number(current) + 1);
+        strings.set(key, next);
+        return Number(next);
       }
       case 'EXISTS':
         return exists(key) ? 1 : 0;

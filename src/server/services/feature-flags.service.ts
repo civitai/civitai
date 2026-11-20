@@ -552,6 +552,9 @@ const featureFlags = createFeatureFlags({
   // moderators at deploy: an absent Flipt key falls through to ['mod']. Create
   // `mod-retracted-media` in Flipt, disabled, to turn it off.
   modRetractedMedia: { availability: ['mod'], fliptKey: 'mod-retracted-media' },
+  // The retracted-media route's CDN-refusal leg and its tile fallback. DARK, fails CLOSED when the
+  // Flipt key is absent or Flipt is down. Only takes effect within modRetractedMedia.
+  modRetractedMediaCdnLeg: { availability: [], fliptKey: 'mod-retracted-media-cdn-leg' },
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {

@@ -398,7 +398,8 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
     it('control: the full card exercises every relation, so its equality is not vacuous', async () => {
       const read = golden.peek<UserCreatorRead>('creator:by id, every relation filled');
       expect(read?.modelCount).toBe(1);
-      expect(read?.user.links).toHaveLength(2);
+      // The fixture creator is banned, so the card serves none of their links (the rows stay).
+      expect(read?.user.links).toEqual([]);
       expect(read?.user.cosmetics.map((c) => c.cosmetic.id).sort()).toEqual([
         COSMETIC_A,
         COSMETIC_B,
@@ -418,6 +419,8 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       const bare = golden.peek<UserCreatorRead>('creator:a user with no relations');
       expect(bare).toMatchObject({ modelCount: 0 });
       expect(bare?.user).toMatchObject({ stats: null, rank: null, profilePicture: null });
+      // An unbanned user's links are served, so the links shape is still compared.
+      expect(bare?.user.links).toHaveLength(1);
     });
   });
 

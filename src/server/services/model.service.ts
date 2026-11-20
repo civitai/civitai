@@ -360,8 +360,14 @@ import {
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import {
+  hasSfwFaceParts,
+  losesSfwFace,
+  sfwFaceStamp,
+} from '~/server/services/model-sfw-face-stamp';
+import {
   queueComFaceRecheck,
   queueComFaceRestore,
+  rescanTextAfterFaceLoss,
 } from '~/server/services/model-com-face-recheck.service';
 import {
   isGenerationDisabled,
@@ -4262,16 +4268,34 @@ export const upsertModel = async (
   // Checked as it will be stored: a save carrying only one .com field, or only a cover (the step
   // that lists a mature model on .com), still has its whole face checked.
   const storedSfwName = data.sfwName !== undefined ? data.sfwName : beforeUpdate?.sfwName;
-  if (!isModerator && storedSfwName && (sfwFaceChanged || coverChanged))
-    await assertSfwFaceSafe({
+  if (!isModerator && storedSfwName && (sfwFaceChanged || coverChanged)) {
+    const storedSfwDescription =
+      data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription;
+    const { stamp } = await assertSfwFaceSafe({
       sfwName: storedSfwName,
-      sfwDescription:
-        data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription,
+      sfwDescription: storedSfwDescription,
       name: data.name ?? beforeUpdate?.name ?? '',
       description: data.description !== undefined ? data.description : beforeUpdate?.description,
       modelId: id,
       userId,
     });
+    if (stamp)
+      meta = {
+        ...(meta ?? {}),
+        sfwFaceCheckedAt: sfwFaceStamp(
+          {
+            sfwName: storedSfwName,
+            sfwDescription: storedSfwDescription ?? null,
+            sfwCoverImageId:
+              (data.sfwCoverImageId !== undefined
+                ? data.sfwCoverImageId
+                : beforeUpdate?.sfwCoverImageId) ?? null,
+            versionFields: stamp.versionFields,
+          },
+          stamp.promptId
+        ),
+      };
+  }
   if (coverChanged) {
     if (!beforeUpdate || !id)
       throw throwBadRequestError('Covers can be picked once the model has published images.');
@@ -4825,6 +4849,11 @@ export const upsertModel = async (
           data.availability !== Availability.Private
         )
           heldVerdictApplied = await heldVerdict.applyHeldVerdictLeavingPrivate(tx, updated.id);
+        if (
+          losesSfwFace(beforeUpdate, data) &&
+          (await heldVerdict.applyComFaceHeldVerdict(tx, updated.id))
+        )
+          heldVerdictApplied = true;
 
         return updated;
       },
@@ -4839,6 +4868,7 @@ export const upsertModel = async (
     if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
       await queueComFaceRecheck(id);
     if (!isModerator && listingChanged) await queueComFaceRestore(id);
+    if (losesSfwFace(beforeUpdate, data)) await rescanTextAfterFaceLoss(id);
     if (heldVerdictApplied) {
       const { finishHeldVerdictApply } = await import(
         '~/server/services/text-scan/actions/model-nsfw'
@@ -7315,7 +7345,7 @@ export async function migrateResourceToCollection({
   const faceMoves = remainingVersions.some((v) => v.id === coverVersionId);
   const noFace = { sfwName: null, sfwDescription: null, sfwCoverImageId: null };
 
-  const { collection, modelIds } = await dbWrite.$transaction(
+  const { collection, modelIds, faceless } = await dbWrite.$transaction(
     async (tx) => {
       // Create the collection
       const collection = await tx.collection.create({
@@ -7334,6 +7364,7 @@ export async function migrateResourceToCollection({
 
       // create a model for each remaining version
       const modelIds = [];
+      let faceModelId: number | undefined = faceMoves ? undefined : model.id;
       for (const version of remainingVersions) {
         const newModel = await tx.model.create({
           data: {
@@ -7360,6 +7391,7 @@ export async function migrateResourceToCollection({
         );
 
         modelIds.push(newModel.id);
+        if (version.id === coverVersionId) faceModelId = newModel.id;
 
         const versionReviewIds = resourceReviews
           .filter((r) => r.modelVersionId === version.id)
@@ -7401,7 +7433,14 @@ export async function migrateResourceToCollection({
         },
       });
 
-      return { collection, modelIds };
+      // A model left without the face is rated here if the text scan let it stand on that face.
+      const { applyComFaceHeldVerdict } = await import(
+        '~/server/services/text-scan/actions/model-nsfw'
+      );
+      const faceless = hasSfwFaceParts(model) ? modelIds.filter((id) => id !== faceModelId) : [];
+      for (const id of faceless) await applyComFaceHeldVerdict(tx, id);
+
+      return { collection, modelIds, faceless };
     },
     { timeout: 60000, maxWait: 10000 }
   );
@@ -7445,6 +7484,8 @@ export async function migrateResourceToCollection({
     modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
   modelIds.forEach((id) => scanModelAndRules(id, { rules: !isModerator }));
+  // Past the unchanged-text skip: a face this split took away was what let the text stand.
+  await Promise.all(faceless.map((id) => rescanTextAfterFaceLoss(id)));
 
   return { ok: true };
 }

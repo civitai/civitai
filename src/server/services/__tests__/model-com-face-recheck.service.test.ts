@@ -47,8 +47,10 @@ import {
   COM_FACE_RECHECK_GAVE_UP,
   COM_FACE_RECHECK_MAX_DELAY_MS,
   COM_FACE_RECHECK_WINDOW_MS,
+  faceLossRescan,
   processComFaceRechecks,
   queueComFaceRecheck,
+  rescanTextAfterFaceLoss,
 } from '~/server/services/model-com-face-recheck.service';
 
 const db = dbMock.dbWrite;
@@ -237,7 +239,18 @@ describe('the .com face listing re-check', () => {
 
     await processComFaceRechecks(NOW);
 
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    // The removal, then the scan verdict its face held back, rated in the same transaction.
+    const statements = tx.$executeRaw.mock.calls.map((call: unknown[]) => {
+      const [first] = call as [{ sql?: string } | readonly string[]];
+      return Array.isArray(first) ? first.join('?') : (first as { sql: string }).sql;
+    });
+    expect(statements[0]).toMatch(/SET "sfwCoverImageId" = NULL/);
+    const flip = tx.$executeRaw.mock.calls.find((call: unknown[]) => {
+      const [first] = call as [readonly string[]];
+      return Array.isArray(first) && first.join('?').includes('SET nsfw = TRUE');
+    });
+    expect(flip).toBeDefined();
+    expect(flip).toContain(MODEL_ID);
     expect(tx.modActivity.create).toHaveBeenCalledTimes(1);
     expect(db.$executeRaw).not.toHaveBeenCalled();
     expect(db.modActivity.create).not.toHaveBeenCalled();
@@ -596,6 +609,45 @@ describe('the .com face listing re-check', () => {
     expect(counts.gaveUp).toBe(0);
     expect(intentLogs()).toEqual([]);
     expect(db.keyValue.deleteMany).toHaveBeenCalledWith({ where: { key: KEY } });
+  });
+});
+
+describe('the text rescan after a face loss', () => {
+  const realLoad = faceLossRescan.loadSubmit;
+  const scan = vi.fn();
+  beforeEach(() => {
+    scan.mockReset();
+    faceLossRescan.loadSubmit = (async () => ({ scanEntityInBackground: scan })) as never;
+  });
+  afterEach(() => {
+    faceLossRescan.loadSubmit = realLoad;
+  });
+
+  it('forces a text rescan of a model the re-check takes off .com', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+    await processComFaceRechecks(NOW);
+    expect(coverCleared()).toBe(true);
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(scan).toHaveBeenCalledWith({ entityType: 'Model', entityId: MODEL_ID, force: true });
+  });
+
+  it('forces none when the face stays (control)', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    await processComFaceRechecks(NOW);
+    expect(scan).not.toHaveBeenCalled();
+  });
+
+  it('never throws when the scan cannot be started', async () => {
+    faceLossRescan.loadSubmit = (async () => {
+      throw new Error('import failed');
+    }) as never;
+    await expect(rescanTextAfterFaceLoss(MODEL_ID)).resolves.toBeUndefined();
+    scan.mockImplementation(() => {
+      throw new Error('scan threw');
+    });
+    faceLossRescan.loadSubmit = (async () => ({ scanEntityInBackground: scan })) as never;
+    await expect(rescanTextAfterFaceLoss(MODEL_ID)).resolves.toBeUndefined();
   });
 });
 
