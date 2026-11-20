@@ -454,7 +454,7 @@ describe('a model version unpublished for its subject', () => {
         );
       }
     }
-    // A pending hold restricts too: a removal runs before its hold is marked confirmed.
+    // A pending hold restricts too.
     await pg.exec(
       `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500126, 'csam', 'Pending')`
     );
@@ -499,7 +499,7 @@ describe('a model version unpublished for its subject', () => {
     `);
     try {
       expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
-      // A republish clears the post's reason; the hold still restricts.
+      // With the post's reason cleared, the hold still restricts.
       await pg.exec(`UPDATE "Post" SET metadata = '{}' WHERE id = 990400129`);
       expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
       await pg.exec(`UPDATE "TextScanHold" SET status = 'Pending' WHERE "entityId" = 990400129`);
