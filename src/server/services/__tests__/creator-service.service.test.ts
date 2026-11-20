@@ -193,6 +193,28 @@ describe('writes', () => {
     expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
   });
 
+  it("saves the seller's choice to allow review work, and leaves it alone when omitted", async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Active,
+      sellerAffirmation: null,
+      title: fields.title,
+      description: fields.description,
+      ingestion: 'Scanned',
+      coverImageId: null,
+    } as never);
+    const data = () =>
+      (dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1)?.[0] as { data: object }).data;
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      // Through the router's schema, which drops a key it does not declare.
+      input: upsertServiceOfferingSchema.parse({ ...fields, id: 9, allowReviewWork: true }),
+    });
+    expect(data()).toMatchObject({ allowReviewWork: true });
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, id: 9, publish: false } });
+    expect(data()).not.toHaveProperty('allowReviewWork');
+  });
+
   it('removes by status, scoped to the caller', async () => {
     await removeServiceOffering({ sellerId: SELLER, id: 4 });
     expect(dbMock.dbWrite.serviceOffering.updateMany).toHaveBeenCalledWith({
