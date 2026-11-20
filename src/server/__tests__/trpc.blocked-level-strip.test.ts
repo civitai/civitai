@@ -103,6 +103,9 @@ describe('procedure input browsing levels, signed in where mature content is all
     'refuses a level of %s rather than masking it into a valid one',
     async (level) => {
       await expect(caller(false).levels({ browsingLevel: level })).rejects.toThrow();
+      await expect(
+        caller(false).levels({ browsingLevel: 13, preCapBrowsingLevel: level })
+      ).rejects.toThrow();
     }
   );
 

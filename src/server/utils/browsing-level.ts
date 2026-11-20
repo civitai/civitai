@@ -177,8 +177,9 @@ export function stripBlockedForNonModerator(input: RequestBrowsingLevels, isMode
 }
 
 /**
- * A level held to the browsing levels. Anything but a whole, non-negative number becomes NaN, so
- * the procedure's schema refuses it rather than masking it into a valid level.
+ * A number or numeric string as a level held to the browsing levels; a negative or fractional one
+ * becomes NaN, so the procedure's schema refuses it rather than masking it into a valid level.
+ * Anything else is left for the schema to refuse.
  */
 function selectableOrInvalid(level: unknown) {
   if (typeof level !== 'number' && typeof level !== 'string') return level as number;
