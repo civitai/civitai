@@ -260,15 +260,15 @@ export type OwnerImageUser = {
   profilePicture?: unknown;
 };
 
+/** Cap on the owner's newest images and videos the empty picker lists. */
+export const OWNER_LIST_LIMIT = 100;
+
 /**
  * The showcase picker's Images, offered with or without image search. A typed query goes to the
  * semantic search, scoped by the `user.username` facet (without the flag the server serves only the
- * caller's own name). An empty one lists the caller's recent published images, which the semantic
- * search cannot, at the viewer's browsing level.
+ * caller's own name). An empty one lists the caller's recent published images and videos, which the
+ * semantic search cannot, at the viewer's browsing level.
  */
-/** How many of the owner's newest images and videos the empty picker lists, scrolled. */
-export const OWNER_LIST_LIMIT = 100;
-
 export function createOwnerImageSearch({
   searchImages = createSemanticImageSearch(),
   getMyImages = (input: MyImagesInput) => trpcVanilla.image.getMyImages.query(input),
