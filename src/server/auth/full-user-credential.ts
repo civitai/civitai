@@ -90,14 +90,12 @@ export function withModeratorRightsFor<T extends { id: number; isModerator?: boo
  * Read it ONLY for the author capability. It is no moderator check: `ctx.user.isModerator` is.
  * Whether the credential may call a procedure at all stays with `enforceTokenScope`.
  *
- * Falls back to `ctx.user` when the context carries no subject (a context built outside
- * `createContext`) or one for another user. No signed-in user reads as no one, so a banned
- * session (`trpcViewer` moves it to `bannedUser`) gets nothing from here — except behind
- * `isAuthedAllowRestricted`, which puts the banned account back on `ctx.user`. No author gate sits
- * on such a procedure; do not add one there without refusing a banned account first.
+ * A banned session reads as no one (`trpcViewer` moves it to `bannedUser`), except behind
+ * `isAuthedAllowRestricted`, which restores it to `ctx.user`: put no author gate on such a
+ * procedure without refusing banned accounts first.
  *
- * Its readers are pinned by `trpc-app-author-scoped-credential.test.ts`: add one only for the
- * author capability.
+ * Its readers are a ledger (`no-unledgered-app-author-subject-read`): add one only for the author
+ * capability.
  */
 export function appBlocksAuthorAccount<T extends { id: number }>(ctx: {
   user?: T | null;

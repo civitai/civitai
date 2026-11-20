@@ -141,19 +141,6 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next }) => {
 });
 
 /**
- * AUTHOR flag gate (P3a) — the WIDENED gate for the creator asset-CRUD procs +
- * the off-site submit/withdraw/my-submissions procs. Evaluated WITH the caller's
- * context against `app-blocks-author` (`isAppBlocksAuthorEnabled`: mod floor +
- * the `app-dev-testers` cohort segment), so an app-dev-tester may manage their
- * OWN listing's assets + submit off-site apps — while the SERVICE-layer owner
- * check still bounds every mutation to the caller's own listings. This REPLACES
- * the mod-only `enforceAppBlocksFlag` (`isAppBlocksEnabled`) on those procs;
- * mods still pass via the author floor. Fail-CLOSED: absent flag / Flipt-down →
- * mods only. (The mod-only `backfillAssets` proc keeps `enforceAppBlocksFlag`.)
- * It lives in `~/server/trpc/app-blocks-author.middleware`, shared with `app-collaborators`.
- */
-
-/**
  * Token-scope gate for the OWNER-SCOPED listing procs the civitai CLI drives
  * (`civitai app listing set-icon/set-cover/add-screenshot/rm-screenshot/reorder/status`,
  * civitai/cli#186; and `civitai app doctor` — the listing-problems read + its fixes).

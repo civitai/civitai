@@ -1,6 +1,4 @@
 import { EventEmitter } from 'events';
-import { readdirSync, readFileSync } from 'node:fs';
-import path from 'node:path';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
@@ -152,12 +150,10 @@ describe.each([
 // scope annotation, so only a full-scope credential reaches them: a full-scope app token still
 // withholds moderator rights.
 describe('enforceAppBlocksAuthorFlag', () => {
-  // Imported per call, so a tree without the shared middleware fails only these cases.
   async function authorFlagAs(user: Record<string, unknown>, credential?: Record<string, unknown>) {
     const { enforceAppBlocksAuthorFlag } = await import(
       '~/server/trpc/app-blocks-author.middleware'
     );
-    // Attached as the app-listings and app-collaborators routers attach it.
     const gated = router({
       authorFlag: protectedProcedure.use(enforceAppBlocksAuthorFlag).query(() => 'ok'),
     });
@@ -204,52 +200,5 @@ describe('appBlocksAuthorAccount', () => {
     expect(
       appBlocksAuthorAccount({ user, appBlocksAuthorSubject: { id: 2, isModerator: true } })
     ).toBe(user);
-  });
-});
-
-// The subject carries the account's moderator flag, which a scoped credential withholds from
-// `ctx.user`. Read anywhere but the author gates, it would hand moderator rights back. So the
-// readers are a closed set: this fails when one is added, and when one disappears.
-describe('who reads the author subject', () => {
-  function sourceFiles(dir: string): string[] {
-    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) return entry.name === '__tests__' ? [] : sourceFiles(full);
-      return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [full] : [];
-    });
-  }
-  const root = path.join(process.cwd(), 'src');
-  const files = sourceFiles(root);
-  // Per file, the number of matches: a second read inside an allowed file fails too.
-  const matching = (pattern: RegExp) =>
-    Object.fromEntries(
-      files
-        .map((file) => [
-          path.relative(root, file).split(path.sep).join('/'),
-          readFileSync(file, 'utf8').match(pattern)?.length ?? 0,
-        ])
-        .filter(([, count]) => count)
-        .sort(([a], [b]) => String(a).localeCompare(String(b)))
-    );
-
-  it('scans the source tree', () => {
-    expect(files.length).toBeGreaterThan(1000);
-  });
-
-  it('names the subject field only where it is set and resolved', () => {
-    expect(matching(/\bappBlocksAuthorSubject\b/g)).toEqual({
-      'server/auth/full-user-credential.ts': 2,
-      'server/createContext.ts': 5,
-    });
-  });
-
-  // Generic calls included; the definition (`appBlocksAuthorAccount<T …>(`) is the one match in
-  // full-user-credential.
-  it('resolves the author account only in the two author gates', () => {
-    expect(matching(/\bappBlocksAuthorAccount\s*(<[^>]*>)?\(/g)).toEqual({
-      'server/auth/full-user-credential.ts': 1,
-      'server/trpc.ts': 1,
-      'server/trpc/app-blocks-author.middleware.ts': 1,
-    });
   });
 });
