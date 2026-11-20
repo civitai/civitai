@@ -42,7 +42,11 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   UserAvatar: ({ user }: { user: { username: string } }) => <span data-avatar={user.username} />,
 }));
 
-import { timedComments } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
+import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import {
+  songDetails,
+  timedComments,
+} from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 
@@ -145,7 +149,8 @@ describe('timed comments on the bar’s waveform', () => {
     await renderBar();
     await expect.poll(() => cluster(1)).toBeTruthy();
     const playTop = () =>
-      page.getByRole('button', { name: 'Pause', exact: true }).element().getBoundingClientRect().top;
+      page.getByRole('button', { name: 'Pause', exact: true }).element().getBoundingClientRect()
+        .top;
     const before = { waveform: slider().top, play: playTop() };
     expect(Math.abs(middle(slider()) - middle(bar()))).toBeLessThanOrEqual(1);
     await userEvent.click(page.getByRole('button', { name: 'Hide timed comments', exact: true }));
@@ -399,13 +404,19 @@ describe('a cluster of nearby comments', () => {
         await expect.poll(() => cluster(1)).toBeTruthy();
         cluster(1).focus();
         await expect.poll(listOpen).toBeTruthy();
-        const rgb = (css: string) => css.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+        const rgb = (css: string) =>
+          css
+            .match(/[\d.]+/g)!
+            .slice(0, 3)
+            .map(Number);
         const lum = (c: number[]) =>
           c
             .map((v) => v / 255)
             .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
             .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
-        const time = [...listOpen()!.querySelectorAll('span')].find((el) => el.textContent === '0:50')!;
+        const time = [...listOpen()!.querySelectorAll('span')].find(
+          (el) => el.textContent === '0:50'
+        )!;
         const [a, b] = [
           lum(rgb(getComputedStyle(time).color)),
           lum(rgb(getComputedStyle(listOpen()!).backgroundColor)),
@@ -437,5 +448,59 @@ describe('a cluster of nearby comments', () => {
     await expect.poll(labels).toEqual(['kat: here it comes']);
     await at(58.5);
     await expect.poll(labels).toEqual(['jun: on loop']);
+  });
+});
+
+describe('timed comments on a phone', () => {
+  const sheet = () => page.getByRole('dialog', { name: 'Now playing' });
+  // The app's session wraps the player; the now-playing sheet reads it for the like.
+  const renderPhone = () =>
+    renderWithProviders(
+      <SignedOutSessionProvider>
+        <MusicPlayerBar />
+      </SignedOutSessionProvider>
+    );
+
+  beforeEach(async () => {
+    await page.viewport(390, 800);
+    songDetails.reset();
+  });
+
+  test('show on the now-playing sheet’s waveform, the reached one’s label above it and on top', async () => {
+    await renderPhone();
+    await page.getByRole('button', { name: 'Open now playing' }).click();
+    await expect.element(sheet()).toBeVisible();
+    await expect.poll(() => cluster(1)).toBeTruthy();
+    expect(sheet().element().contains(strip())).toBe(true);
+
+    await at(50.5);
+    await expect.poll(labels).toEqual(['mira: that bass drop']);
+    const box = label().getBoundingClientRect();
+    expect(box.bottom).toBeLessThanOrEqual(strip()!.getBoundingClientRect().top);
+    expect(box.top).toBeGreaterThanOrEqual(0);
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    expect(label().contains(hit)).toBe(true);
+  });
+
+  test('a label has its own row in the sheet: it never covers the lyric lines above', async () => {
+    songDetails.lyrics = {
+      [SONG_ID]: [
+        { t: 40_000, text: 'Every high score I chase leads back to you' },
+        { t: 50_000, text: 'Joystick heartbeat, pixel rain' },
+        { t: 60_000, text: 'Player two, press start again' },
+      ],
+    };
+    await renderPhone();
+    await page.getByRole('button', { name: 'Open now playing' }).click();
+    await expect.element(sheet()).toBeVisible();
+    await expect.poll(() => cluster(1)).toBeTruthy();
+
+    await at(50.5);
+    await expect.poll(labels).toEqual(['mira: that bass drop']);
+    const box = label().getBoundingClientRect();
+    const lyrics = page.getByTestId('now-playing-lyrics').element().getBoundingClientRect();
+    expect(box.top).toBeGreaterThanOrEqual(lyrics.bottom);
+    // One label at a time, nothing left behind it.
+    expect(document.querySelectorAll('[data-testid="timed-comment-label"]')).toHaveLength(1);
   });
 });

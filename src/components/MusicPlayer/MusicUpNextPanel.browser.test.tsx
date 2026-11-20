@@ -23,7 +23,9 @@ vi.mock('~/components/Tours/ToursProvider', async (importOriginal) => ({
   useTourContext: () => ({ running: false, pauseTour: vi.fn(), activeTour: null }),
 }));
 
+import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
+import { SongUpNextButton } from '~/components/Music/SongDetail/SongUpNextButton';
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 import { formatPlaybackTime } from '~/utils/audio-player';
@@ -287,5 +289,187 @@ describe('the Up next panel', () => {
     await onBar('Repeat').click();
     await onBar('Repeat').click();
     await expect.element(inPanel('Repeat')).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+
+describe('the Up next sheet on a phone', () => {
+  const upNextSheet = () => page.getByRole('dialog', { name: 'Up next' });
+  const inSheet = (name: string) => upNextSheet().getByRole('button', { name, exact: true });
+
+  async function openSheet() {
+    // The app's session wraps the player; the now-playing sheet reads it for the like.
+    await renderWithProviders(
+      <SignedOutSessionProvider>
+        <MusicPlayerBar />
+      </SignedOutSessionProvider>
+    );
+    await onBar('Open now playing').click();
+    await page
+      .getByRole('dialog', { name: 'Now playing' })
+      .getByRole('button', { name: 'Up next', exact: true })
+      .click();
+    await expect.element(upNextSheet()).toBeVisible();
+  }
+
+  beforeEach(async () => {
+    await page.viewport(390, 800);
+  });
+
+  test('opens over the now-playing sheet with the same sections as the desktop panel', async () => {
+    player().playTrack(nowPlaying, {
+      list: { name: 'Night Drive', tracks: [nowPlaying, palm, chrome] },
+    });
+    player().addToUpNext(rain);
+    await openSheet();
+
+    await expect.element(upNextSheet().getByText('QUEUED BY YOU')).toBeVisible();
+    await expect.element(upNextSheet().getByText('NEXT FROM NIGHT DRIVE')).toBeVisible();
+    const rows = upNextSheet()
+      .getByRole('button', { name: /^Play / })
+      .elements()
+      .map((el) => el.textContent?.replace(/artist.*/, ''));
+    expect(rows).toEqual(['Rain on Shibuya', 'Palm Static', 'Chrome Heart']);
+    // On top of the now-playing sheet, once it has slid in.
+    await expect
+      .poll(() => {
+        const { left, top, width, height } = upNextSheet().element().getBoundingClientRect();
+        const hit = document.elementFromPoint(left + width / 2, top + height / 2);
+        return upNextSheet().element().contains(hit);
+      })
+      .toBe(true);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+  });
+
+  test('its rows play, remove and reorder through the player, with remove shown without hover', async () => {
+    player().playTrack(nowPlaying, {
+      list: { name: 'Post', tracks: [nowPlaying, palm, chrome, rain] },
+    });
+    await openSheet();
+
+    const remove = inSheet('Remove Palm Static from up next');
+    expect(getComputedStyle(remove.element()).opacity).toBe('1');
+    await remove.click();
+    expect(titles(player().list)).toEqual(['Chrome Heart', 'Rain on Shibuya']);
+
+    (inSheet('Reorder Rain on Shibuya').element() as HTMLElement).focus();
+    await userEvent.keyboard('{Space}');
+    // The lifted row is placed against the window: inside the drawer, whose transform makes it the
+    // containing block, it would sit rows off where the drop is measured.
+    await vi.waitFor(() => {
+      const lifted = [...document.querySelectorAll('[aria-label="Play Rain on Shibuya"]')].filter(
+        (el) => !upNextSheet().element().contains(el)
+      );
+      expect(lifted).toHaveLength(1);
+    });
+    await userEvent.keyboard('{ArrowUp}');
+    await userEvent.keyboard('{Space}');
+    await vi.waitFor(() =>
+      expect(titles(player().list)).toEqual(['Rain on Shibuya', 'Chrome Heart'])
+    );
+
+    await inSheet('Play Chrome Heart').click();
+    expect(player().current?.title).toBe('Chrome Heart');
+  });
+
+  test('its header shuffles, repeats and clears through the player', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    player().addToUpNext(rain);
+    await openSheet();
+
+    await inSheet('Shuffle').click();
+    expect(player().shuffle).toBe(true);
+    await inSheet('Repeat').click();
+    expect(player().repeat).toBe('all');
+    await inSheet('Clear').click();
+    expect(player().queued).toEqual([]);
+    expect(player().list).toEqual([]);
+    expect(player().playing).toBe(true);
+  });
+
+  test('lists the songs that repeat, shown only', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    player().cycleRepeat();
+    player().next();
+    await openSheet();
+
+    await expect.element(upNextSheet().getByText('REPEATING')).toBeVisible();
+    await expect.element(inSheet('Play Midnight Arcade')).not.toBeInTheDocument();
+  });
+
+  test('a long downward drag of its top closes it; a short one does not', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    await openSheet();
+    const drag = (distance: number) => {
+      const grab = upNextSheet().getByTestId('up-next-grab').element();
+      const { left, top } = grab.getBoundingClientRect();
+      for (const [type, y] of [
+        ['pointerdown', top + 4],
+        ['pointermove', top + 4 + distance / 2],
+        ['pointermove', top + 4 + distance],
+        ['pointerup', top + 4 + distance],
+      ] as const)
+        grab.dispatchEvent(
+          new PointerEvent(type, { bubbles: true, pointerId: 1, clientX: left + 20, clientY: y })
+        );
+    };
+
+    drag(30);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await expect.element(upNextSheet()).toBeVisible();
+
+    drag(160);
+    await expect.element(upNextSheet()).not.toBeInTheDocument();
+    await expect.element(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible();
+  });
+
+  test('stays dark in light mode, over the always-dark now-playing sheet', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'light');
+    try {
+      await openSheet();
+      const rgb = (css: string) =>
+        css
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number);
+      // Pencil `sQ6E2`: dark-5.
+      expect(rgb(getComputedStyle(upNextSheet().element()).backgroundColor)).toEqual([44, 46, 51]);
+      const title = upNextSheet().getByText('Palm Static').element();
+      // Light text on it, not the light scheme's black.
+      for (const channel of rgb(getComputedStyle(title).color))
+        expect(channel).toBeGreaterThan(240);
+    } finally {
+      document.documentElement.removeAttribute('data-mantine-color-scheme');
+    }
+  });
+
+  test('closes by Escape back to the now-playing sheet', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    await openSheet();
+    await userEvent.keyboard('{Escape}');
+    await expect.element(upNextSheet()).not.toBeInTheDocument();
+    await expect.element(page.getByRole('dialog', { name: 'Now playing' })).toBeVisible();
+  });
+});
+
+// The song page's own Up next button (Pencil `bgZ7u`) opens the same queue as the player.
+describe("the song page's Up next button", () => {
+  const openFromSongPage = async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
+    await renderWithProviders(<SongUpNextButton />);
+    await page.getByRole('button', { name: 'Up next' }).click();
+  };
+
+  test('on a phone, opens the Up next sheet', async () => {
+    await page.viewport(390, 844);
+    await openFromSongPage();
+    await expect.element(page.getByRole('dialog', { name: 'Up next' })).toBeVisible();
+    await expect.element(panel()).not.toBeInTheDocument();
+  });
+
+  test('on a desktop, opens the Up next panel as before', async () => {
+    await openFromSongPage();
+    await expect.element(panel()).toBeVisible();
+    await expect.element(page.getByRole('dialog', { name: 'Up next' })).not.toBeInTheDocument();
   });
 });

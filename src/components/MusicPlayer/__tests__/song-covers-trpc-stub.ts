@@ -87,16 +87,46 @@ function useTimedCommentsQuery(input: { imageId: number }, options?: { enabled?:
 }
 
 /**
+ * The song reads the phone's now-playing sheet makes: `image.get` (its comment count, reactions and
+ * remix source) answered from `images`, `image.getSongLyrics` from `lyrics`, by song id.
+ */
+export const songDetails = {
+  images: {} as Record<number, unknown>,
+  lyrics: {} as Record<number, { t: number | null; text: string }[]>,
+  reset() {
+    songDetails.images = {};
+    songDetails.lyrics = {};
+  },
+};
+
+function useSongImageQuery(input: { id: number }, options?: { enabled?: boolean }) {
+  if (options?.enabled === false) return { data: undefined };
+  return { data: songDetails.images[input.id] };
+}
+
+function useSongLyricsQuery(input: { id: number }, options?: { enabled?: boolean }) {
+  if (options?.enabled === false) return { data: undefined, isLoading: false };
+  return { data: songDetails.lyrics[input.id] ?? [], isLoading: false, isError: false };
+}
+
+/**
  * `trpc` with `image.getSongCovers` and `image.getSongPlays` (single and through `useQueries`)
- * answered by `songCovers` and `songPlays`, and `commentv3.getTimed` by `timedComments`; for a `vi.mock('~/utils/trpc')` factory.
+ * answered by `songCovers` and `songPlays`, `image.get` and `image.getSongLyrics` by `songDetails`,
+ * and `commentv3.getTimed` by `timedComments`; for a `vi.mock('~/utils/trpc')` factory.
  */
 export function withSongCoversStub<T extends object>(trpc: T): T {
   answers = new WeakMap();
   const image = {
     getSongCovers: { useQuery: useSongCoversQuery },
     getSongPlays: { useQuery: readSongPlays },
+    get: { useQuery: useSongImageQuery },
+    getSongLyrics: { useQuery: useSongLyricsQuery },
   };
   const commentv3 = { getTimed: { useQuery: useTimedCommentsQuery } };
+  // The sheet's like: inert, as no test here presses it.
+  const reaction = {
+    toggleWithPoints: { useMutation: () => ({ mutate: () => undefined, isPending: false }) },
+  };
   // `trpc.useQueries` for chunked reads: each `t.image.getSongCovers(input)` is one read.
   const useQueries = (build: (t: unknown) => unknown[]) =>
     (
@@ -113,6 +143,8 @@ export function withSongCoversStub<T extends object>(trpc: T): T {
         ? image
         : key === 'commentv3'
         ? commentv3
+        : key === 'reaction'
+        ? reaction
         : key === 'useQueries'
         ? useQueries
         : Reflect.get(target, key),

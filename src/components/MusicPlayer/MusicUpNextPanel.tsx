@@ -30,6 +30,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import {
+  MUSIC_UP_NEXT_DRAG_Z_INDEX,
   MUSIC_UP_NEXT_Z_INDEX,
   PlayerTooltip,
   MUSIC_PLAYER_BAR_HEIGHT,
@@ -82,6 +83,45 @@ export function MusicUpNextPanel({
   onClose: () => void;
   ignore: HTMLElement | null;
 }) {
+  const [panel, setPanel] = useState<HTMLElement | null>(null);
+  useClickOutside(onClose, null, [panel, ignore]);
+
+  return (
+    <Portal>
+      <section
+        ref={setPanel}
+        aria-label="Up next"
+        className="fixed right-5 flex w-[400px] max-w-[calc(100vw-40px)] flex-col overflow-hidden rounded-2xl border border-gray-4 bg-white shadow-[0_14px_36px_#000000AA] dark:border-dark-3 dark:bg-dark-5"
+        style={
+          {
+            ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
+            zIndex: MUSIC_UP_NEXT_Z_INDEX,
+            bottom: `calc(${MUSIC_PLAYER_BAR_HEIGHT}px + var(--safe-area-inset-bottom) + 12px)`,
+            maxHeight: `calc(100dvh - var(--header-height, 0px) - ${MUSIC_PLAYER_BAR_HEIGHT}px - var(--safe-area-inset-bottom) - 24px)`,
+          } as CSSProperties
+        }
+      >
+        <MusicUpNextList current={current} onEscape={onClose} />
+      </section>
+    </Portal>
+  );
+}
+
+/**
+ * Up next's header and list, shared by the desktop panel and the phone's Up next sheet: the same
+ * sections, rows and store actions in both. `onEscape` runs on Escape unless a row is being dragged
+ * (Escape cancels the drag first). `sheet` is the phone's: remove buttons always show, as a touch
+ * screen has no hover, and the title is the sheet's smaller one (Pencil `sQ6E2`).
+ */
+export function MusicUpNextList({
+  current,
+  onEscape,
+  sheet = false,
+}: {
+  current: MusicTrack;
+  onEscape: () => void;
+  sheet?: boolean;
+}) {
   const playing = useMusicPlayerStore((s) => s.playing);
   const queued = useMusicPlayerStore((s) => s.queued);
   const list = useMusicPlayerStore((s) => s.list);
@@ -89,19 +129,17 @@ export function MusicUpNextPanel({
   const repeating = useMusicPlayerStore(useShallow(repeatingAfterUpNext));
   // On the wrap, all but the first song are shuffled again, so this order is not the one played.
   const shuffle = useMusicPlayerStore((s) => s.shuffle);
-  const [panel, setPanel] = useState<HTMLElement | null>(null);
   const [dragId, setDragId] = useState<number | null>(null);
   const [dropHint, setDropHint] = useState<DropHint>(null);
 
-  useClickOutside(onClose, null, [panel, ignore]);
   useEffect(() => {
     if (dragId !== null) return; // Escape cancels the drag first.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onEscape();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [dragId, onClose]);
+  }, [dragId, onEscape]);
 
   const ids = useMemo(
     () => [...new Set([current, ...queued, ...list, ...repeating].map((t) => t.id))],
@@ -173,90 +211,86 @@ export function MusicUpNextPanel({
     cover: covers.get(track.id),
     hint: dropHint?.id === track.id ? dropHint.side : null,
     faded: dragId === track.id,
+    sheet,
   });
 
   return (
-    <Portal>
-      <section
-        ref={setPanel}
-        aria-label="Up next"
-        className="fixed right-5 flex w-[400px] max-w-[calc(100vw-40px)] flex-col overflow-hidden rounded-2xl border border-gray-4 bg-white shadow-[0_14px_36px_#000000AA] dark:border-dark-3 dark:bg-dark-5"
-        style={
-          {
-            ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
-            zIndex: MUSIC_UP_NEXT_Z_INDEX,
-            bottom: `calc(${MUSIC_PLAYER_BAR_HEIGHT}px + var(--safe-area-inset-bottom) + 12px)`,
-            maxHeight: `calc(100dvh - var(--header-height, 0px) - ${MUSIC_PLAYER_BAR_HEIGHT}px - var(--safe-area-inset-bottom) - 24px)`,
-          } as CSSProperties
-        }
-      >
-        <PanelHeader summary={upNextSummary(repeating.length ? repeating : upNext)} />
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <NowPlaying track={current} cover={covers.get(current.id)} playing={playing} />
-          {repeating.length > 0 ? (
-            // Repeat all with Up next played out: the songs that play again. Not reorderable.
+    <>
+      <PanelHeader summary={upNextSummary(repeating.length ? repeating : upNext)} sheet={sheet} />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <NowPlaying track={current} cover={covers.get(current.id)} playing={playing} />
+        {repeating.length > 0 ? (
+          // Repeat all with Up next played out: the songs that play again. Not reorderable.
+          <div className="flex flex-col gap-0.5 px-2.5 pb-2.5 pt-1.5">
+            <SectionLabel>{shuffle ? 'REPEATING, SHUFFLED' : 'REPEATING'}</SectionLabel>
+            {repeating.map((track, i) => (
+              <RowContent
+                key={`${track.id}-${i}`}
+                track={track}
+                cover={covers.get(track.id)}
+                still
+              />
+            ))}
+          </div>
+        ) : !upNext.length && !dragging ? (
+          <p className={clsx('px-[18px] py-4 text-sm', dimmed)}>
+            Nothing queued. Add songs with Add to up next.
+          </p>
+        ) : (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            accessibility={{ announcements }}
+            onDragStart={onDragStart}
+            onDragOver={onDragOver}
+            onDragEnd={onDragEnd}
+            onDragCancel={onDragCancel}
+          >
             <div className="flex flex-col gap-0.5 px-2.5 pb-2.5 pt-1.5">
-              <SectionLabel>{shuffle ? 'REPEATING, SHUFFLED' : 'REPEATING'}</SectionLabel>
-              {repeating.map((track, i) => (
-                <RowContent
-                  key={`${track.id}-${i}`}
-                  track={track}
-                  cover={covers.get(track.id)}
-                  still
-                />
-              ))}
+              {(queued.length > 0 || showQueuedZone) && <SectionLabel>QUEUED BY YOU</SectionLabel>}
+              <SortableContext items={queued.map((t) => t.id)}>
+                {queued.map((track) => (
+                  <UpNextRow key={track.id} {...rowProps(track)} />
+                ))}
+              </SortableContext>
+              {showQueuedZone && (
+                <QueuedEndZone empty={!queued.length} active={dropHint?.id === QUEUED_END} />
+              )}
+              {list.length > 0 && (
+                <SectionLabel>
+                  {listName ? `NEXT FROM ${listName.toUpperCase()}` : 'NEXT IN LINE'}
+                </SectionLabel>
+              )}
+              <SortableContext items={list.map((t) => t.id)}>
+                {list.map((track) => (
+                  <UpNextRow key={track.id} {...rowProps(track)} />
+                ))}
+              </SortableContext>
             </div>
-          ) : !upNext.length && !dragging ? (
-            <p className={clsx('px-[18px] py-4 text-sm', dimmed)}>
-              Nothing queued. Add songs with Add to up next.
-            </p>
-          ) : (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              accessibility={{ announcements }}
-              onDragStart={onDragStart}
-              onDragOver={onDragOver}
-              onDragEnd={onDragEnd}
-              onDragCancel={onDragCancel}
-            >
-              <div className="flex flex-col gap-0.5 px-2.5 pb-2.5 pt-1.5">
-                {(queued.length > 0 || showQueuedZone) && (
-                  <SectionLabel>QUEUED BY YOU</SectionLabel>
-                )}
-                <SortableContext items={queued.map((t) => t.id)}>
-                  {queued.map((track) => (
-                    <UpNextRow key={track.id} {...rowProps(track)} />
-                  ))}
-                </SortableContext>
-                {showQueuedZone && (
-                  <QueuedEndZone empty={!queued.length} active={dropHint?.id === QUEUED_END} />
-                )}
-                {list.length > 0 && (
-                  <SectionLabel>
-                    {listName ? `NEXT FROM ${listName.toUpperCase()}` : 'NEXT IN LINE'}
-                  </SectionLabel>
-                )}
-                <SortableContext items={list.map((t) => t.id)}>
-                  {list.map((track) => (
-                    <UpNextRow key={track.id} {...rowProps(track)} />
-                  ))}
-                </SortableContext>
-              </div>
-              <DragOverlay>
+            {/* In a portal: inside the sheet's transformed drawer, the fixed-position overlay would be
+                placed against the drawer, not the window, and the drop would land rows off. */}
+            <Portal>
+              <DragOverlay zIndex={MUSIC_UP_NEXT_DRAG_Z_INDEX}>
                 {dragging ? (
-                  <RowContent track={dragging} cover={covers.get(dragging.id)} className={LIFTED} />
+                  // Portalled out of the sheet: it takes the sheet's dark scheme along.
+                  <div data-mantine-color-scheme={sheet ? 'dark' : undefined}>
+                    <RowContent
+                      track={dragging}
+                      cover={covers.get(dragging.id)}
+                      className={LIFTED}
+                    />
+                  </div>
                 ) : null}
               </DragOverlay>
-            </DndContext>
-          )}
-        </div>
-      </section>
-    </Portal>
+            </Portal>
+          </DndContext>
+        )}
+      </div>
+    </>
   );
 }
 
-function PanelHeader({ summary }: { summary: string }) {
+function PanelHeader({ summary, sheet }: { summary: string; sheet: boolean }) {
   const shuffle = useMusicPlayerStore((s) => s.shuffle);
   const repeat = useMusicPlayerStore((s) => s.repeat);
   // System toggles in the panel stay Civitai blue (Pencil `uGWPy`).
@@ -268,7 +302,15 @@ function PanelHeader({ summary }: { summary: string }) {
   return (
     <div className="flex shrink-0 items-center gap-1 border-b border-gray-3 px-[18px] py-4 dark:border-dark-4">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className={clsx('text-xl font-bold leading-tight', brightText)}>Up next</span>
+        <span
+          className={clsx(
+            'leading-tight',
+            sheet ? 'text-base font-semibold' : 'text-xl font-bold',
+            brightText
+          )}
+        >
+          Up next
+        </span>
         <span className={clsx('text-xs', dimmed)}>{summary}</span>
       </div>
       <PlayerTooltip label="Shuffle">
@@ -369,11 +411,13 @@ function UpNextRow({
   cover,
   hint,
   faded,
+  sheet,
 }: {
   track: MusicTrack;
   cover?: PlayerSongCover;
   hint: 'before' | 'after' | null;
   faded: boolean;
+  sheet: boolean;
 }) {
   const { setNodeRef, setActivatorNodeRef, attributes, listeners } = useSortable({ id: track.id });
   const title = track.title || 'Untitled song';
@@ -409,7 +453,11 @@ function UpNextRow({
               type="button"
               aria-label={`Remove ${title} from up next`}
               onClick={() => store().removeFromUpNext(track.id)}
-              className="flex size-6 shrink-0 items-center justify-center rounded text-gray-9 opacity-0 hover:bg-gray-2 focus-visible:opacity-100 group-hover:opacity-100 dark:text-dark-0 dark:hover:bg-dark-4"
+              className={clsx(
+                'flex size-6 shrink-0 items-center justify-center rounded text-gray-9 hover:bg-gray-2 dark:text-dark-0 dark:hover:bg-dark-4',
+                // A touch screen has no hover to reveal it.
+                !sheet && 'opacity-0 focus-visible:opacity-100 group-hover:opacity-100'
+              )}
             >
               <IconX size={16} />
             </button>

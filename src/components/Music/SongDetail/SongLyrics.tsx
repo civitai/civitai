@@ -17,11 +17,12 @@ const store = useMusicPlayerStore.getState;
 const syncedLine = 'text-xl leading-[1.15] @md:text-[40px]';
 const plainLine =
   'text-xl font-bold leading-[1.15] text-white/80 @md:text-[31px] @md:font-semibold @md:text-white/85';
-// A named group: the detail view's own `group` wraps the stage.
+// A named group: the detail view's own `group` wraps the stage. On a phone too the lines around the
+// current one are dimmed, so it stands out (Pencil `KUEww`).
 const lineTone = {
   current: 'font-bold text-white',
-  past: 'font-bold text-white/80 @md:font-semibold @md:text-white/45 @md:group-hover/lyric:text-white/80',
-  next: 'font-bold text-white/80 @md:font-semibold @md:text-white/70 @md:group-hover/lyric:text-white',
+  past: 'font-bold text-white/45 @md:font-semibold @md:group-hover/lyric:text-white/80',
+  next: 'font-bold text-white/70 @md:font-semibold @md:group-hover/lyric:text-white',
 };
 
 /** The nearest scroll container that actually scrolls: the lyrics column, or on a phone the stage. */
@@ -58,7 +59,8 @@ export function SongLyrics({
 
   useEffect(() => {
     const line = currentRef.current;
-    if (current < 0 || !line) return;
+    // Hidden behind the cover on a phone: nothing to bring into view, and no stage to scroll.
+    if (current < 0 || !line?.offsetParent) return;
     const parent = scrollParentOf(line);
     if (!parent) return;
     const offset =
@@ -84,7 +86,7 @@ export function SongLyrics({
               key={i}
               className={clsx(
                 'text-[10px] font-bold text-[#8c8fa3] @md:text-[13px] @md:font-medium @md:text-white/55',
-                synced && '@md:pl-[21px]'
+                synced && 'pl-5 @md:pl-[21px]'
               )}
             >
               <span className="@md:hidden">[</span>
@@ -109,7 +111,7 @@ export function SongLyrics({
           <span
             aria-hidden
             className={clsx(
-              'hidden w-[5px] shrink-0 self-stretch rounded-[3px] @md:block',
+              'w-1 shrink-0 self-stretch rounded-[3px] @md:w-[5px]',
               !isActive && 'bg-transparent'
             )}
             style={isActive ? { backgroundColor: ACCENT } : undefined}

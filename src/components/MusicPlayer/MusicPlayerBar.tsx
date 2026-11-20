@@ -1,33 +1,24 @@
 import { Slider } from '@mantine/core';
 import {
   IconArrowsDiagonalMinimize2,
-  IconArrowsShuffle,
   IconBookmark,
   IconMessage,
   IconPlayerPauseFilled,
   IconPlayerPlayFilled,
-  IconPlayerSkipBackFilled,
-  IconPlayerSkipForwardFilled,
   IconPlaylist,
-  IconRepeat,
-  IconRepeatOnce,
   IconVolume,
   IconVolumeOff,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import type { CSSProperties, PointerEvent, ReactNode } from 'react';
-import { forwardRef, useCallback, useMemo, useState } from 'react';
-import { resamplePeaks } from '~/components/Audio/resample-peaks';
-import { useAudioPeaks } from '~/components/Audio/useAudioPeaks';
-import { WaveformBars } from '~/components/Audio/WaveformBars';
+import type { CSSProperties, ReactNode } from 'react';
+import { forwardRef, useCallback, useState } from 'react';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import { withAlpha } from '~/components/MusicPlayer/music-accent';
-import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
 import {
   MUSIC_PLAYER_BAR_HEIGHT,
   MUSIC_PLAYER_Z_INDEX,
@@ -40,38 +31,23 @@ import {
   SongArt,
   songCreatorHref,
 } from '~/components/MusicPlayer/MusicPlayerParts';
+import { MusicNowPlayingSheet } from '~/components/MusicPlayer/MusicNowPlayingSheet';
 import {
-  TimedCommentStrip,
-  usePlayerTimedComments,
-} from '~/components/MusicPlayer/MusicPlayerTimedComments';
+  hoverSurface,
+  smallIconButton,
+  Timeline,
+  Transport,
+} from '~/components/MusicPlayer/MusicPlayerTransport';
 import { MusicUpNextPanel } from '~/components/MusicPlayer/MusicUpNextPanel';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
-import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useResizeObserver } from '~/hooks/useResizeObserver';
 import type { MusicTrack } from '~/store/music-player.store';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
-import { formatPlaybackTime, playbackProgress, timeFromPointer } from '~/utils/audio-player';
+import { playbackProgress } from '~/utils/audio-player';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 
-const SEEK_STEP_SECONDS = 5;
-// Decoded once at this resolution, then shown as one bar per WAVEFORM_BAR_PITCH px of the timeline,
-// so a wide screen gets more bars rather than the same bars spread thin.
-const WAVEFORM_PEAKS = 400;
-const WAVEFORM_BAR_PITCH = 6;
-const WAVEFORM_MIN_BARS = 40;
-// The waveform decode downloads the whole song: wait until it has played this long, so skipping
-// through songs costs nothing.
-const WAVEFORM_AFTER_LISTENED_SEC = 1;
-
-const hoverSurface = 'transition-colors hover:bg-gray-1 dark:hover:bg-dark-5';
 const iconButton = clsx(
   'flex size-9 shrink-0 items-center justify-center rounded-lg text-gray-9 dark:text-dark-0',
-  hoverSurface
-);
-// The transport's and the volume's small icon buttons: the 36px buttons' hover, in 28px.
-const smallIconButton = clsx(
-  'flex size-7 shrink-0 items-center justify-center rounded-md',
   hoverSurface
 );
 
@@ -91,13 +67,16 @@ export function MusicPlayerBar() {
 }
 
 /**
- * The bar below the `sm` breakpoint (Pencil `Pf8Oy`): cover, song, play/pause and close over the
- * cover's colours. The close button is not in the frame: a phone has no other way to dismiss it.
+ * The mini bar on a phone (Pencil `b7MfU`): cover, song, comments and play/pause over the cover's
+ * colours. Tapping the song opens the now-playing sheet, where shuffle, repeat, Up next, the timed
+ * comments and closing the player are; the bar shows no timed comments of its own.
  */
 function CompactBar({ track }: { track: MusicTrack }) {
   const playing = useMusicPlayerStore((s) => s.playing);
   const error = useMusicPlayerStore((s) => s.error);
   const { cover, accent } = useMusicPlayerCover(track.id);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const closeSheet = useCallback(() => setSheetOpen(false), []);
   // Without an accent the bar keeps the site's surface and text colours.
   const onColour = !!accent;
 
@@ -125,25 +104,45 @@ function CompactBar({ track }: { track: MusicTrack }) {
     >
       <CompactProgress track={track} onColour={onColour} />
       <div className="flex min-h-0 min-w-0 flex-1 items-center gap-3 px-4">
-        <SongDetailLink track={track} className="shrink-0">
+        <button
+          type="button"
+          aria-label="Open now playing"
+          aria-haspopup="dialog"
+          aria-expanded={sheetOpen}
+          onClick={() => setSheetOpen(true)}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        >
           <SongArt url={cover?.url} width={40} iconSize={20} className="size-10 rounded-lg" />
-        </SongDetailLink>
-        <div className="flex min-w-0 flex-1 flex-col gap-px">
-          <SongDetailLink
-            track={track}
-            className={clsx(
-              'truncate text-sm font-bold leading-tight',
-              onColour ? 'text-white' : 'text-black dark:text-white'
-            )}
-          >
-            {track.title || 'Untitled song'}
-          </SongDetailLink>
-          <CreatorLine
-            track={track}
-            error={error}
-            className={clsx('text-xs font-semibold', onColour ? 'text-white/90' : dimmed)}
-          />
-        </div>
+          <span className="flex min-w-0 flex-1 flex-col gap-px">
+            <span
+              className={clsx(
+                'truncate text-sm font-bold leading-tight',
+                onColour ? 'text-white' : 'text-black dark:text-white'
+              )}
+            >
+              {track.title || 'Untitled song'}
+            </span>
+            <span
+              className={clsx(
+                'truncate text-xs font-semibold',
+                onColour ? 'text-white/90' : dimmed
+              )}
+            >
+              {error ? "Couldn't play this song" : track.creator.username}
+            </span>
+          </span>
+        </button>
+        <RoutedDialogLink
+          name="imageDetail"
+          state={{ imageId: track.id }}
+          aria-label="Comments"
+          className={clsx(
+            'flex size-9 shrink-0 items-center justify-center rounded-lg',
+            onColour ? 'text-white' : 'text-gray-9 dark:text-dark-0'
+          )}
+        >
+          <IconMessage size={20} />
+        </RoutedDialogLink>
         <button
           type="button"
           aria-label={playing ? 'Pause' : 'Play'}
@@ -156,18 +155,14 @@ function CompactBar({ track }: { track: MusicTrack }) {
         >
           {playing ? <IconPlayerPauseFilled size={18} /> : <IconPlayerPlayFilled size={18} />}
         </button>
-        <button
-          type="button"
-          aria-label="Close player"
-          onClick={() => store().close()}
-          className={clsx(
-            'flex size-9 shrink-0 items-center justify-center rounded-lg',
-            onColour ? 'text-white' : 'text-gray-9 dark:text-dark-0'
-          )}
-        >
-          <IconX size={18} />
-        </button>
       </div>
+      <MusicNowPlayingSheet
+        track={track}
+        accent={accent}
+        coverUrl={cover?.url}
+        opened={sheetOpen}
+        onClose={closeSheet}
+      />
     </div>
   );
 }
@@ -317,176 +312,6 @@ function Cover({
     <div className="shrink-0 rounded-xl" style={{ boxShadow: glow }}>
       <SongArt url={url} width={48} iconSize={22} className="size-12 rounded-xl" />
     </div>
-  );
-}
-
-function Transport({ playing }: { playing: boolean }) {
-  const shuffle = useMusicPlayerStore((s) => s.shuffle);
-  const repeat = useMusicPlayerStore((s) => s.repeat);
-  const toggleColour = (on: boolean) => (on ? { color: ACCENT } : undefined);
-  return (
-    <div className="flex w-[200px] shrink-0 items-center justify-center gap-2.5">
-      <PlayerTooltip label="Shuffle">
-        <button
-          type="button"
-          aria-label="Shuffle"
-          aria-pressed={shuffle}
-          onClick={() => store().toggleShuffle()}
-          className={clsx(smallIconButton, !shuffle && dimmed)}
-          style={toggleColour(shuffle)}
-        >
-          <IconArrowsShuffle size={18} />
-        </button>
-      </PlayerTooltip>
-      <button
-        type="button"
-        aria-label="Previous"
-        onClick={() => store().previous()}
-        className={clsx(smallIconButton, 'text-gray-9 dark:text-dark-0')}
-      >
-        <IconPlayerSkipBackFilled size={20} />
-      </button>
-      <PlayerTooltip label={playing ? 'Pause' : 'Play'}>
-        <button
-          type="button"
-          aria-label={playing ? 'Pause' : 'Play'}
-          onClick={() => store().togglePlay()}
-          className="flex size-10 shrink-0 items-center justify-center rounded-full text-white transition-transform hover:scale-105"
-          style={{ backgroundColor: ACCENT }}
-        >
-          {playing ? <IconPlayerPauseFilled size={20} /> : <IconPlayerPlayFilled size={20} />}
-        </button>
-      </PlayerTooltip>
-      <button
-        type="button"
-        aria-label="Next"
-        onClick={() => store().next()}
-        className={clsx(smallIconButton, 'text-gray-9 dark:text-dark-0')}
-      >
-        <IconPlayerSkipForwardFilled size={20} />
-      </button>
-      <PlayerTooltip
-        label={repeat === 'one' ? 'Repeat one' : repeat === 'all' ? 'Repeat all' : 'Repeat'}
-      >
-        <button
-          type="button"
-          aria-label="Repeat"
-          aria-pressed={repeat !== 'off'}
-          onClick={() => store().cycleRepeat()}
-          className={clsx(smallIconButton, repeat === 'off' && dimmed)}
-          style={toggleColour(repeat !== 'off')}
-        >
-          {repeat === 'one' ? <IconRepeatOnce size={18} /> : <IconRepeat size={18} />}
-        </button>
-      </PlayerTooltip>
-    </div>
-  );
-}
-
-/** Elapsed time, waveform and length: the only part of the bar that follows the playhead. */
-function Timeline({
-  track,
-  playing,
-  accent,
-}: {
-  track: MusicTrack;
-  playing: boolean;
-  accent: MusicAccent | null;
-}) {
-  const currentTime = useMusicPlayheadStore((s) => s.currentTime);
-  const duration = useMusicPlayheadStore((s) => s.duration) || track.durationSec;
-  const [barCount, setBarCount] = useState(100);
-  const sliderRef = useResizeObserver<HTMLDivElement>((entry) =>
-    setBarCount(
-      Math.max(WAVEFORM_MIN_BARS, Math.floor(entry.contentRect.width / WAVEFORM_BAR_PITCH))
-    )
-  );
-  const { url } = useEdgeUrl(track.url, { type: 'audio' });
-  // A song started part-way in (restored after a page load, or started from a comment's or a
-  // lyric's time) was chosen, not skipped through: draw it at once, even while paused.
-  const listened = useMusicPlayerStore(
-    (s) =>
-      (s.playback?.listenedSec ?? 0) >= WAVEFORM_AFTER_LISTENED_SEC ||
-      (s.playback?.startAtSec ?? 0) > 0
-  );
-  const peaks = useAudioPeaks(url, WAVEFORM_PEAKS, sliderRef, { enabled: listened });
-  const bars = useMemo(() => (peaks ? resamplePeaks(peaks, barCount) : null), [peaks, barCount]);
-  const progress = playbackProgress(currentTime, duration);
-  const played = playing ? ACCENT : accentAt(50);
-  const timedComments = usePlayerTimedComments(track.id);
-
-  const seekFromPointer = (e: PointerEvent<HTMLElement>) =>
-    seekMusicPlayer(timeFromPointer(e.clientX, e.currentTarget.getBoundingClientRect(), duration));
-
-  return (
-    <>
-      <span className={clsx('w-[34px] shrink-0 text-xs', dimmed)}>
-        {formatPlaybackTime(currentTime)}
-      </span>
-      {/* The waveform alone sets this column's height, centred in the bar like the controls; the
-          comment avatars float over its top edge, so showing or hiding them moves nothing. */}
-      <div className="relative min-w-0 flex-1">
-        {timedComments.show && timedComments.comments.length > 0 && (
-          <TimedCommentStrip
-            songId={track.id}
-            comments={timedComments.comments}
-            duration={duration}
-            currentTime={currentTime}
-            accent={accent}
-          />
-        )}
-        <div
-          ref={sliderRef}
-          role="slider"
-          tabIndex={0}
-          aria-label="Song progress"
-          aria-valuemin={0}
-          aria-valuemax={Math.round(duration)}
-          aria-valuenow={Math.round(currentTime)}
-          aria-valuetext={`${formatPlaybackTime(currentTime)} of ${formatPlaybackTime(duration)}`}
-          className="relative flex h-12 w-full min-w-0 cursor-pointer touch-none items-center"
-          style={{ '--waveform-played': played } as CSSProperties}
-          onPointerDown={(e) => {
-            e.currentTarget.setPointerCapture(e.pointerId);
-            seekFromPointer(e);
-          }}
-          onPointerMove={(e) => {
-            if (e.buttons === 1) seekFromPointer(e);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowRight') seekMusicPlayer(currentTime + SEEK_STEP_SECONDS);
-            else if (e.key === 'ArrowLeft') seekMusicPlayer(currentTime - SEEK_STEP_SECONDS);
-            else return;
-            e.preventDefault();
-          }}
-        >
-          {bars ? (
-            <>
-              <WaveformBars
-                peaks={bars}
-                progress={progress}
-                className="justify-between"
-                barClassName="min-w-px max-w-[3px] flex-1 rounded-[2px]"
-                unplayedClassName="bg-gray-4 dark:bg-dark-3"
-              />
-              <div
-                aria-hidden
-                className="absolute inset-y-0 w-0.5 bg-black dark:bg-white"
-                style={{ left: `${progress * 100}%` }}
-              />
-            </>
-          ) : (
-            <div className="h-1 w-full overflow-hidden rounded-full bg-gray-4 dark:bg-dark-3">
-              <div
-                className="h-full"
-                style={{ width: `${progress * 100}%`, backgroundColor: played }}
-              />
-            </div>
-          )}
-        </div>
-      </div>
-      <span className={clsx('shrink-0 text-xs', dimmed)}>{formatPlaybackTime(duration)}</span>
-    </>
   );
 }
 

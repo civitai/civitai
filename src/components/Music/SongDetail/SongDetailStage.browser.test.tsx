@@ -1,3 +1,7 @@
+// The real cascade: what shows below the stage's `md` container width is decided in CSS.
+import '../../../../test/cascade-layer-order.css';
+import '@mantine/core/styles.layer.css';
+import '~/styles/globals.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -67,11 +71,22 @@ const player = () => useMusicPlayerStore.getState();
 const line = (name: string) => page.getByRole('button', { name, exact: true });
 const lyricsBox = () => page.getByTestId('song-lyrics');
 
-function render(revealed = true) {
-  return renderWithProviders(<SongDetailStage image={midnight} revealed={revealed} />);
+/** The stage in a container as wide as the detail view's stage column: desktop unless `width`. */
+function render(revealed = true, width = 1200) {
+  return renderWithProviders(
+    <div className="@container" style={{ width, height: 800 }}>
+      <SongDetailStage image={midnight} revealed={revealed} />
+    </div>
+  );
 }
+const toggle = (name: 'Cover' | 'Lyrics') => page.getByRole('radio', { name });
+// The radio itself is visually hidden behind its label.
+const choose = (name: 'Cover' | 'Lyrics') => page.getByText(name, { exact: true }).click();
+const cover = () => page.getByTestId('music-cover-placeholder');
+const heading = () => page.getByRole('heading', { name: 'Midnight Arcade' });
 
-beforeEach(() => {
+beforeEach(async () => {
+  await page.viewport(1440, 900);
   player().close();
   useMusicPlayheadStore.setState({ currentTime: 0, duration: 0 });
   lyrics.lines = TIMED;
@@ -242,4 +257,98 @@ test('lyrics that failed to load say so, and do not claim the song is instrument
   await expect.element(page.getByText("Lyrics couldn't load.")).toBeInTheDocument();
   await expect.element(page.getByText('No lyrics on this one.')).not.toBeInTheDocument();
   await expect.element(lyricsBox()).not.toBeInTheDocument();
+});
+
+describe('the song stage below md', () => {
+  test('shows the cover, and a toggle swaps the lyrics into its spot', async () => {
+    await render(true, 390);
+    await expect.element(cover()).toBeVisible();
+    await expect.element(lyricsBox()).not.toBeVisible();
+    await expect.element(toggle('Cover')).toBeChecked();
+
+    await choose('Lyrics');
+    await expect.element(lyricsBox()).toBeVisible();
+    await expect.element(cover()).not.toBeVisible();
+    // In the cover's spot: above the title, not below it.
+    expect(lyricsBox().element().getBoundingClientRect().top).toBeLessThan(
+      heading().element().getBoundingClientRect().top
+    );
+
+    await choose('Cover');
+    await expect.element(cover()).toBeVisible();
+    await expect.element(lyricsBox()).not.toBeVisible();
+  });
+
+  test('in the lyrics view a play button is still there, and plays the song', async () => {
+    await render(true, 390);
+    await choose('Lyrics');
+    const play = page.getByRole('button', { name: 'Play Midnight Arcade' });
+    await expect.element(play).toBeVisible();
+    await play.click();
+    expect(player().current?.id).toBe(1);
+    expect(player().playing).toBe(true);
+    await expect.element(page.getByRole('button', { name: 'Pause Midnight Arcade' })).toBeVisible();
+  });
+
+  test('the toggle is translucent chrome over the stage in light mode, not a white pill', async () => {
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'light');
+    try {
+      await render(true, 390);
+      const root = toggle('Cover').element().closest('.mantine-SegmentedControl-root')!;
+      const [r, g, b, a = 1] = getComputedStyle(root)
+        .backgroundColor.match(/[\d.]+/g)!
+        .map(Number);
+      // Not an opaque light surface.
+      expect(a < 0.5 || r + g + b < 300).toBe(true);
+      const label = page.getByText('Lyrics', { exact: true }).element();
+      const [lr, lg, lb] = getComputedStyle(label)
+        .color.match(/[\d.]+/g)!
+        .map(Number);
+      expect(lr + lg + lb).toBeGreaterThan(600);
+    } finally {
+      document.documentElement.removeAttribute('data-mantine-color-scheme');
+    }
+  });
+
+  test('a song without lyrics shows no toggle', async () => {
+    lyrics.lines = null;
+    await render(true, 390);
+    await expect.element(page.getByText('No lyrics on this one.')).toBeVisible();
+    await expect.element(toggle('Lyrics')).not.toBeInTheDocument();
+  });
+
+  // The stage is the cover's tinted surface in both schemes, so the lines' tones do not change with it.
+  test('the current line stands apart from the others', async () => {
+    await render(true, 390);
+    await page.getByRole('button', { name: 'Play Midnight Arcade' }).click();
+    await choose('Lyrics');
+    useMusicPlayheadStore.setState({ currentTime: 5.5 });
+    const line = (name: string) => page.getByRole('button', { name, exact: true });
+    await expect.element(line('Every high score')).toHaveAttribute('aria-current', 'true');
+
+    // The end colours at once, without the fade.
+    const noFade = document.head.appendChild(document.createElement('style'));
+    noFade.textContent = '* { transition: none !important; }';
+    try {
+      const colour = (name: string) =>
+        getComputedStyle(line(name).element().querySelector('span:last-child')!).color;
+      // Opaque, and the others at most 70%: not a shade apart, as 100% against 80% was.
+      const alpha = (name: string) => Number(colour(name).match(/rgba\(.*, ([\d.]+)\)/)?.[1] ?? 1);
+      expect(alpha('Every high score')).toBe(1);
+      expect(alpha('Coins in the slot')).toBeLessThanOrEqual(0.7);
+      expect(alpha('Joystick heartbeat')).toBeLessThanOrEqual(0.7);
+      const marker = line('Every high score').element().querySelector('span[aria-hidden]')!;
+      expect(marker.getBoundingClientRect().width).toBeGreaterThan(0);
+    } finally {
+      noFade.remove();
+    }
+  });
+});
+
+test('from md up the cover and lyrics show side by side, with no toggle', async () => {
+  await render();
+  await expect.element(cover()).toBeVisible();
+  await expect.element(lyricsBox()).toBeVisible();
+  // Hidden from the accessibility tree along with the screen.
+  expect(toggle('Lyrics').query()).toBeNull();
 });

@@ -1,5 +1,8 @@
+import { SegmentedControl } from '@mantine/core';
 import { IconPlayerPauseFilled, IconPlayerPlayFilled } from '@tabler/icons-react';
+import clsx from 'clsx';
 import type { CSSProperties } from 'react';
+import { useState } from 'react';
 import { ViewerBrowsingLevelScope } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { Tooltip } from '~/components/MantineOverlays';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -20,6 +23,11 @@ import { trpc } from '~/utils/trpc';
 
 const store = useMusicPlayerStore.getState;
 
+const FACES = [
+  { label: 'Cover', value: 'cover' },
+  { label: 'Lyrics', value: 'lyrics' },
+];
+
 // Pencil `VKZHS` scaled up for the instrumental stage (variant c).
 const BIG_EQ_HEIGHTS = [48, 80, 36, 64, 96, 52, 72, 40];
 
@@ -32,7 +40,8 @@ export function isSongDetail(image: { type: string }, features: { music?: boolea
  * A song in the image detail view (Pencil `03 Song detail` `bgZ7u`, phone `dVjl0`): the cover with a
  * play button, title and creator, and the lyrics beside it, or an instrumental card when it has none.
  * It plays through the global player with the creator's other songs as Up next, and opening it never
- * starts playback. `revealed` is the image guard's verdict: until then neither cover nor lyrics show,
+ * starts playback. Below `md` a song with lyrics shows the cover or the lyrics in the same spot, with
+ * a toggle between them, so the lyrics are not a scroll away. `revealed` is the image guard's verdict: until then neither cover nor lyrics show,
  * and it cannot be played from here.
  */
 export function SongDetailStage(props: { image: SongImage; revealed: boolean }) {
@@ -59,6 +68,7 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
 
   const play = (startAtSec?: number) => playSongWithCreatorList(image, moreFrom, startAtSec);
   const togglePlay = () => (isCurrent ? store().togglePlay() : play());
+  const [face, setFace] = useState<'cover' | 'lyrics'>('cover');
   const lyricsState = !revealed
     ? 'hidden'
     : lyricsLoading
@@ -68,6 +78,9 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
     : lyrics?.length
     ? 'lyrics'
     : 'none';
+  // Below `md` only: from `md` up the cover and the lyrics sit side by side.
+  const toggled = lyricsState === 'lyrics';
+  const showLyrics = toggled && face === 'lyrics';
 
   return (
     <div
@@ -76,13 +89,19 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
       className="flex size-full flex-col gap-6 overflow-y-auto px-4 pb-6 pt-1 text-white @md:flex-row @md:items-center @md:justify-center @md:gap-10 @md:overflow-hidden @md:px-16 @md:py-10 @lg:gap-16"
       style={
         accent
-          ? ({ '--music-accent': accent.accent, '--music-accent-2': accent.accent2 } as CSSProperties)
+          ? ({
+              '--music-accent': accent.accent,
+              '--music-accent-2': accent.accent2,
+            } as CSSProperties)
           : undefined
       }
     >
       <div className="flex w-full shrink-0 flex-col gap-3.5 @md:w-80 @md:gap-[18px] @lg:w-[400px]">
         <div
-          className="relative h-[300px] w-full shrink-0 rounded-2xl @md:size-80 @md:rounded-3xl @lg:size-[400px]"
+          className={clsx(
+            'relative h-[300px] w-full shrink-0 rounded-2xl @md:size-80 @md:rounded-3xl @lg:size-[400px]',
+            showLyrics && '@max-md:hidden'
+          )}
           style={{ boxShadow: `0 20px 60px ${accentAt(40)}` }}
         >
           <SongArt
@@ -114,6 +133,39 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
             </Tooltip>
           )}
         </div>
+        {toggled && (
+          <div className="flex items-center justify-between gap-3 @md:hidden">
+            <SegmentedControl
+              aria-label="Show"
+              data={FACES}
+              value={face}
+              onChange={(value) => setFace(value as typeof face)}
+              radius="xl"
+              size="xs"
+              // Translucent chrome over the stage in both schemes, as its header buttons are.
+              styles={{
+                root: { backgroundColor: 'rgb(255 255 255 / 0.1)' },
+                indicator: { backgroundColor: 'rgb(255 255 255 / 0.22)', boxShadow: 'none' },
+                label: { color: 'var(--mantine-color-white)' },
+              }}
+            />
+            {/* The cover's play button is hidden with the cover: the lyrics keep one. */}
+            {showLyrics && revealed && (
+              <button
+                type="button"
+                aria-label={`${playing ? 'Pause' : 'Play'} ${title}`}
+                onClick={togglePlay}
+                className="flex size-11 shrink-0 items-center justify-center rounded-full bg-white text-dark-7 shadow-[0_8px_24px_#00000066] transition-transform hover:scale-105"
+              >
+                {playing ? (
+                  <IconPlayerPauseFilled className="size-5" />
+                ) : (
+                  <IconPlayerPlayFilled className="size-5" />
+                )}
+              </button>
+            )}
+          </div>
+        )}
         <div className="flex flex-col gap-1">
           <h1 className="m-0 text-[28px] font-extrabold leading-tight @md:text-[34px] @md:font-bold">
             {title}
@@ -136,7 +188,15 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
       </div>
       <div
         data-lyrics-scroll
-        className="min-w-0 flex-1 @md:max-h-full @md:max-w-[720px] @md:self-stretch @md:overflow-y-auto @md:py-[10%] @md:[mask-image:linear-gradient(to_bottom,transparent,black_8%,black_92%,transparent)]"
+        className={clsx(
+          'min-w-0 flex-1 @md:max-h-full',
+          // In the cover's spot and size, above the toggle and title; or out of the way.
+          toggled &&
+            (showLyrics
+              ? '@max-md:order-first @max-md:h-[300px] @max-md:flex-none @max-md:overflow-y-auto'
+              : '@max-md:hidden'),
+          '@md:max-w-[720px] @md:self-stretch @md:overflow-y-auto @md:py-[10%] @md:[mask-image:linear-gradient(to_bottom,transparent,black_8%,black_92%,transparent)]'
+        )}
       >
         <div className="@md:flex @md:min-h-full @md:flex-col @md:justify-center">
           {lyricsState === 'loading' && <LyricsPlaceholder />}
@@ -144,7 +204,8 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
             <p className="m-0 text-sm text-white/70">Lyrics couldn&apos;t load.</p>
           )}
           {lyricsState === 'lyrics' && lyrics && (
-            <SongLyrics songId={image.id} lines={lyrics} play={play} />
+            // Mounted again when it comes into view, to bring the current line to it.
+            <SongLyrics key={face} songId={image.id} lines={lyrics} play={play} />
           )}
           {lyricsState === 'none' && <Instrumental playing={playing} />}
         </div>
