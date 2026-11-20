@@ -34,6 +34,7 @@ const provider = createOtelLoggerProvider({
       done({ code: 0 });
     },
     shutdown: async () => undefined,
+    forceFlush: async () => undefined,
   },
 });
 const flushed = async () => {
