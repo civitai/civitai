@@ -46,7 +46,7 @@
   } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { loraTypeById, mediaCount, type LabelType, type Media } from '$lib/data/trainingModels';
   import { pool } from '$lib/pool';
-  import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
+  import { offersLabelRetry, runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
   import { buildTagExcluder, loadTagCategories, type TagCategories } from '$lib/autolabel-exclude';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { isAbort } from '$lib/upload';
@@ -1022,7 +1022,7 @@
 {#snippet labelFailure(img: Img)}
   <div class="mb-1 flex items-start gap-2 font-mono text-xs leading-tight text-red-300">
     <span class="min-w-0 flex-1">{img.labelError}</span>
-    {#if canAutoLabel && img.blobUrl && canAutoLabelImage(img)}
+    {#if canAutoLabel && img.blobUrl && canAutoLabelImage(img) && offersLabelRetry(img)}
       <button
         type="button"
         onclick={(e) => {

@@ -22,12 +22,19 @@ export const RESEND_GAVE_UP =
 
 // Every submitted item is a charged orchestrator job. However a caller asks — the drain, a format
 // switch, the editor's Re-run — one media URL gets at most this many runs per page session (a run's
-// resends of a failed item share its one slot), so a
-// caller that keeps re-selecting the same tiles stops after a bounded spend instead of draining the
-// user's Buzz (the earlier auto-label loop recurred after its fix with the same signature).
+// resends of a failed item share its one slot), so a caller that keeps re-selecting the same tiles
+// stops after a bounded spend instead of draining the user's Buzz (the earlier auto-label loop
+// recurred after its fix with the same signature).
 export const MAX_SUBMITS_PER_MEDIA = 3;
 const submitsByMedia = new Map<string, number>();
 const AUTO_LABEL_UNAVAILABLE = 'Auto-labeling is unavailable right now.';
+/** Whether a label-failed tile offers Retry: never over a label the user typed (Retry clears it
+ *  first), nor once the image is over the cap, where Retry would send nothing. */
+export function offersLabelRetry(tile: { tags: string[]; caption: string; labelError?: string }) {
+  return (
+    !!tile.labelError && tile.labelError !== CAP_REFUSAL && tile.tags.length === 0 && !tile.caption
+  );
+}
 export const CAP_REFUSAL = `Auto-labeled ${MAX_SUBMITS_PER_MEDIA} times already this session — edit this label by hand.`;
 
 // Counted per blob, not per URL string: a re-signed URL for the same blob must not reset its count.

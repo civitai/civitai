@@ -168,7 +168,7 @@ async function reserveDailyItems(userId: number, count: number) {
 
 /** The Studio sends a failed item up to this many times (apps/training-studio autolabel.ts
  *  RESEND_DELAYS_MS, plus the first send), each one counted and given back. */
-const SENDS_PER_FAILED_ITEM = 4;
+export const SENDS_PER_FAILED_ITEM = 4;
 
 /** Gives each failed step's item back to the quota it was counted against, once per step however
  *  often the workflow is polled, and only for a workflow this service submitted for this user (its

@@ -17,6 +17,6 @@ export interface AutoLabelResult {
   caption?: string;
   /** Why the item failed (shown on the tile). */
   error?: string;
-  /** Refused before it ran (no worker free): sending it again later may succeed. */
+  /** The poll can't tell this failure from a capacity refusal, so resending may succeed. */
   retryable?: boolean;
 }

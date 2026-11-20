@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** The Studio's auto-label is free to the user: it must be submitted with the system client, and
@@ -24,6 +25,7 @@ import { REDIS_KEYS } from '~/server/redis/client';
 import {
   AUTO_LABEL_UNFINISHED,
   pollStudioAutoLabel,
+  SENDS_PER_FAILED_ITEM,
   STUDIO_AUTO_LABEL_DAILY_ITEMS,
   submitStudioAutoLabel,
 } from '~/server/services/training-studio-auto-label.service';
@@ -374,7 +376,7 @@ describe('Training Studio auto-label', () => {
       counters.set(quotaKey(), STUDIO_AUTO_LABEL_DAILY_ITEMS);
       counters.set(
         `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED_DAILY}:7:${today()}`,
-        STUDIO_AUTO_LABEL_DAILY_ITEMS * 4 - 1
+        STUDIO_AUTO_LABEL_DAILY_ITEMS * SENDS_PER_FAILED_ITEM - 1
       );
       record('wf-q', { userId: 7, day: today(), count: 2 });
       orch.getWorkflow.mockResolvedValue(failed(2));
@@ -382,10 +384,18 @@ describe('Training Studio auto-label', () => {
       expect(counters.get(quotaKey())).toBe(STUDIO_AUTO_LABEL_DAILY_ITEMS - 1);
     });
 
+    it("allows as many give-backs per item as the Studio's sends of a failed item", () => {
+      // Separate programs: read the Studio's resend delays from its source.
+      const src = readFileSync('apps/training-studio/src/lib/autolabel.ts', 'utf8');
+      const delays = /RESEND_DELAYS_MS = \[([^\]]*)\]/.exec(src)?.[1];
+      expect(delays).toBeDefined();
+      expect(delays!.split(',').filter((d) => d.trim()).length + 1).toBe(SENDS_PER_FAILED_ITEM);
+    });
+
     it('an item that fails on every send leaves the quota where it started', async () => {
       counters.set(quotaKey(), 5);
       const one = [items[0]!];
-      for (let send = 0; send < 4; send++) {
+      for (let send = 0; send < SENDS_PER_FAILED_ITEM; send++) {
         orch.submitWorkflow.mockResolvedValueOnce({ data: { id: `wf-s${send}` } });
         const { workflowId } = await submitStudioAutoLabel({
           userId: 7,

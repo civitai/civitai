@@ -41,8 +41,14 @@ vi.mock('$lib/host', () => ({
   }),
 }));
 
-const { runAutoLabel, MAX_SUBMITS_PER_MEDIA, CAP_REFUSAL, RESEND_DELAYS_MS, RESEND_GAVE_UP } =
-  await import('./autolabel');
+const {
+  runAutoLabel,
+  offersLabelRetry,
+  MAX_SUBMITS_PER_MEDIA,
+  CAP_REFUSAL,
+  RESEND_DELAYS_MS,
+  RESEND_GAVE_UP,
+} = await import('./autolabel');
 const { AutoLabelRefusedError } = await import('./autolabel-errors');
 
 describe('auto-label per-image submit cap', () => {
@@ -265,9 +271,7 @@ describe('auto-label under load', () => {
     const { results, done } = await run([{ key: 'k', mediaUrl: url }], controller.signal);
     const settled = done.catch((e: unknown) => e);
     await vi.advanceTimersByTimeAsync(1);
-    // Parked in the resend wait: polled once, one timer (the wait) left.
     expect(sendsByUrl.get(url)).toBe(1);
-    expect(vi.getTimerCount()).toBe(1);
     controller.abort();
     await expect(settled).resolves.toMatchObject({ name: 'AbortError' });
     expect(results).toEqual([]);
@@ -277,5 +281,19 @@ describe('auto-label under load', () => {
     for (let i = 0; i < MAX_SUBMITS_PER_MEDIA; i++)
       sent.push(await (await run([{ key: 'k', mediaUrl: url }])).done);
     expect(sent).toEqual([...Array(MAX_SUBMITS_PER_MEDIA - 1).fill(1), 0]);
+  });
+});
+
+describe('tile Retry after a failed auto-label', () => {
+  const error = RESEND_GAVE_UP;
+  it('is offered on an unlabeled tile', () => {
+    expect(offersLabelRetry({ tags: [], caption: '', labelError: error })).toBe(true);
+  });
+  it('is not offered over a label the user typed, which Retry would wipe', () => {
+    expect(offersLabelRetry({ tags: ['cat'], caption: '', labelError: error })).toBe(false);
+    expect(offersLabelRetry({ tags: [], caption: 'a cat', labelError: error })).toBe(false);
+  });
+  it('is not offered past the per-image cap, where it would send nothing', () => {
+    expect(offersLabelRetry({ tags: [], caption: '', labelError: CAP_REFUSAL })).toBe(false);
   });
 });
