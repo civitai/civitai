@@ -32,15 +32,15 @@ import {
   MinDepositWarning,
   useCurrencySelection,
 } from '~/components/Buzz/CryptoDeposit/CurrencySelector';
-import {
-  getFiatDisplay,
-  outerCardStyle,
-} from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
+import { getFiatDisplay, outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { FiatMenu } from '~/components/Buzz/CryptoDeposit/FiatMenu';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useSpotlight } from '~/hooks/useSpotlight';
-import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
+import {
+  useCurrentUserSettings,
+  useMutateUserSettings,
+} from '~/components/UserSettings/hooks';
 import { getChainDisplayName, getNetworkDisplayName } from '~/server/common/chain-config';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -52,14 +52,7 @@ const QRCodeSVG = dynamic(() => import('qrcode.react').then((mod) => mod.QRCodeS
   loading: () => <div style={{ height: 150, width: 150 }} />,
 });
 
-export function DepositCardContent({
-  depositAddress,
-  error,
-  loading,
-  onRetry,
-  chain,
-  onCurrencySelect,
-}: DepositCardProps) {
+export function DepositCardContent({ depositAddress, error, loading, onRetry, chain, onCurrencySelect }: DepositCardProps) {
   const currentUser = useCurrentUser();
   const clipboard = useClipboard({ timeout: 2000 });
   const userSettings = useCurrentUserSettings();
@@ -113,11 +106,7 @@ export function DepositCardContent({
     if (!networkCode) return chainName;
     const networkName = getNetworkDisplayName(networkCode);
     // Only show network suffix for multi-network chains where network differs from chain name
-    if (
-      currencyState.selectedGroup &&
-      currencyState.selectedGroup.networks.length > 1 &&
-      networkName !== chainName
-    ) {
+    if (currencyState.selectedGroup && currencyState.selectedGroup.networks.length > 1 && networkName !== chainName) {
       return `${chainName} — ${networkName}`;
     }
     return chainName;
@@ -155,13 +144,7 @@ export function DepositCardContent({
           <Stack gap="md" p="lg" pl="xl" className="relative z-[1]">
             {/* Conversion rate — most prominent */}
             <Stack gap={4}>
-              <Text
-                size="xs"
-                c="dimmed"
-                tt="uppercase"
-                fw={600}
-                style={{ letterSpacing: '0.08em' }}
-              >
+              <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: '0.08em' }}>
                 Conversion rate
               </Text>
               <Group gap={6} align="center">
@@ -189,12 +172,7 @@ export function DepositCardContent({
                     —
                   </Text>
                 )}
-                <FiatMenu
-                  selectedFiat={selectedFiat}
-                  onFiatChange={handleFiatChange}
-                  size="sm"
-                  fw={500}
-                />
+                <FiatMenu selectedFiat={selectedFiat} onFiatChange={handleFiatChange} size="sm" fw={500} />
               </Group>
             </Stack>
 
@@ -202,13 +180,7 @@ export function DepositCardContent({
 
             {/* Conversion flow visual */}
             <Stack gap={6}>
-              <Text
-                size="xs"
-                c="dimmed"
-                tt="uppercase"
-                fw={600}
-                style={{ letterSpacing: '0.08em' }}
-              >
+              <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: '0.08em' }}>
                 How it works
               </Text>
               <Group gap={4} align="center" wrap="nowrap">
@@ -263,13 +235,7 @@ export function DepositCardContent({
           {/* Currency selector — always visible at top */}
           <Stack gap={4}>
             <Group gap={4} align="center">
-              <Text
-                size="xs"
-                c="dimmed"
-                fw={600}
-                tt="uppercase"
-                style={{ letterSpacing: '0.06em' }}
-              >
+              <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
                 Select currency
               </Text>
               {currentUser?.isModerator && <FlushCurrencyCacheButton />}
@@ -306,13 +272,7 @@ export function DepositCardContent({
               {/* Address + copy */}
               <Stack gap={6}>
                 <Group gap={6} align="center">
-                  <Text
-                    size="xs"
-                    c="dimmed"
-                    fw={600}
-                    tt="uppercase"
-                    style={{ letterSpacing: '0.06em' }}
-                  >
+                  <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
                     Your deposit address
                   </Text>
                   <Badge size="xs" variant="light" color="blue" radius="sm">
@@ -324,7 +284,6 @@ export function DepositCardContent({
                     code={currencyState.selectedCode}
                     ticker={currencyState.selectedGroup?.ticker}
                     network={currencyState.selectedNetwork?.network}
-                    chain={chain}
                   />
                 )}
                 {isEmpty && loading ? (
@@ -375,68 +334,44 @@ export function DepositCardContent({
                 <MinDepositWarning />
                 {chain === 'btc' && (
                   <Group gap="xs" wrap="nowrap" align="flex-start">
-                    <IconAlertTriangle
-                      size={14}
-                      className="text-yellow-500"
-                      style={{ flexShrink: 0, marginTop: 2 }}
-                    />
+                    <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send BTC on the{' '}
-                      <Text span fw={600} c="yellow">
-                        Bitcoin network
-                      </Text>{' '}
-                      only. Coinbase users: select &quot;Bitcoin&quot; as the network, not Base or
+                      Send BTC on the <Text span fw={600} c="yellow">Bitcoin network</Text>{' '}
+                      only.
+                      Coinbase users: select &quot;Bitcoin&quot; as the network, not Base or
                       other networks. cbBTC (wrapped Bitcoin) is not supported.
                     </Text>
                   </Group>
                 )}
                 {chain === 'ltc' && (
                   <Group gap="xs" wrap="nowrap" align="flex-start">
-                    <IconAlertTriangle
-                      size={14}
-                      className="text-yellow-500"
-                      style={{ flexShrink: 0, marginTop: 2 }}
-                    />
+                    <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send LTC on the{' '}
-                      <Text span fw={600} c="yellow">
-                        Litecoin network
-                      </Text>{' '}
-                      only. Coinbase users: select &quot;Litecoin&quot; as the network, not Base or
+                      Send LTC on the <Text span fw={600} c="yellow">Litecoin network</Text>{' '}
+                      only.
+                      Coinbase users: select &quot;Litecoin&quot; as the network, not Base or
                       other networks. cbLTC (wrapped Litecoin) is not supported.
                     </Text>
                   </Group>
                 )}
                 {chain === 'doge' && (
                   <Group gap="xs" wrap="nowrap" align="flex-start">
-                    <IconAlertTriangle
-                      size={14}
-                      className="text-yellow-500"
-                      style={{ flexShrink: 0, marginTop: 2 }}
-                    />
+                    <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send DOGE on the{' '}
-                      <Text span fw={600} c="yellow">
-                        Dogecoin network
-                      </Text>{' '}
-                      only. Coinbase users: select &quot;Dogecoin&quot; as the network, not Base or
+                      Send DOGE on the <Text span fw={600} c="yellow">Dogecoin network</Text>{' '}
+                      only.
+                      Coinbase users: select &quot;Dogecoin&quot; as the network, not Base or
                       other networks. cbDOGE (wrapped Dogecoin) is not supported.
                     </Text>
                   </Group>
                 )}
                 {chain === 'sol' && (
                   <Group gap="xs" wrap="nowrap" align="flex-start">
-                    <IconAlertTriangle
-                      size={14}
-                      className="text-yellow-500"
-                      style={{ flexShrink: 0, marginTop: 2 }}
-                    />
+                    <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send {currencyState.selectedTicker.toUpperCase()} on the{' '}
-                      <Text span fw={600} c="yellow">
-                        Solana network
-                      </Text>{' '}
-                      only. Coinbase users: select &quot;Solana&quot; as the network, not Base.{' '}
+                      Send {currencyState.selectedTicker.toUpperCase()} on the <Text span fw={600} c="yellow">Solana network</Text>{' '}
+                      only.
+                      Coinbase users: select &quot;Solana&quot; as the network, not Base.{' '}
                       {currencyState.selectedTicker.toUpperCase()} sent via Base is not supported.
                     </Text>
                   </Group>
