@@ -216,6 +216,47 @@ describe('feedback-triage: the handler guard', () => {
   });
 });
 
+describe('feedback-triage: the HQ sync hold guard', () => {
+  /**
+   * 🔴 The race the guard closes: the sync read the row unheld at `new`, then a moderator moved it
+   * forward and back to `new` (setting the hold, clearing the handler). Status and handler guards
+   * both still pass; only `expectedUnheld` refuses the sync's forward write.
+   */
+  it('🔴 refuses a write expecting an unheld row once a moderator moved it back to new', async () => {
+    const id = await seedFeedback(db, { userId: reporterId });
+    await run({ id, status: 'reviewed', expectedStatus: 'new' });
+    await run({ id, status: 'new', expectedStatus: 'reviewed' });
+    const held = await readContext(id);
+    expect(Object.keys(held)).toContain('syncHold');
+
+    expect(
+      await run({
+        id,
+        status: 'reviewed',
+        expectedStatus: 'new',
+        expectedHandledById: null,
+        expectedUnheld: true,
+      })
+    ).toEqual({ ok: true, changed: false });
+    expect((await readFeedback(db, id)).status).toBe('new');
+    expect(await readContext(id)).toEqual(held);
+  });
+
+  it('writes an unheld row when expecting one (the control for the case above)', async () => {
+    const id = await seedFeedback(db, { userId: reporterId });
+    expect(
+      await run({
+        id,
+        status: 'reviewed',
+        expectedStatus: 'new',
+        expectedHandledById: null,
+        expectedUnheld: true,
+      })
+    ).toEqual({ ok: true, changed: true });
+    expect((await readFeedback(db, id)).status).toBe('reviewed');
+  });
+});
+
 describe('feedback-triage: the note', () => {
   it('appends below a stored note, keeping it', async () => {
     const id = await seedFeedback(db, { userId: reporterId, triageNote: 'first line' });

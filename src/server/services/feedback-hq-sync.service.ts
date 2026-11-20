@@ -79,9 +79,9 @@ export type SyncDeps = {
   readRows: (ids: number[]) => Promise<FeedbackSyncRow[]>;
   /** null: HQ does not show the task. Throws on any other failure. */
   readTask: (id: string) => Promise<HqTaskRow | null>;
-  /** The shared triage write, scoped on the status AND the handler the sync read. */
+  /** The shared triage write, scoped on the status AND the handler the sync read, and unheld. */
   triage: (
-    request: FeedbackTriageRequest & { expectedHandledById: number | null }
+    request: FeedbackTriageRequest & { expectedHandledById: number | null; expectedUnheld: true }
   ) => Promise<FeedbackTriageOutcome>;
   /** The account the sync's writes are attributed to. */
   actorId: number;
@@ -239,7 +239,13 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
       // 🔴 Scoped on the handler read at the start of the run as well as the status: a moderator's
       // same-status save re-stamps `handledById` without moving the status, and the sync must not
       // then act on a "sync-set" row that is now the moderator's (above all: dismiss it).
-      outcome = await deps.triage({ ...request, expectedHandledById: row.handledById });
+      // 🔴 And on the row still being unheld: a moderator can move it back to `new` (setting the
+      // hold, clearing the handler) after the read, which the status and handler guards both pass.
+      outcome = await deps.triage({
+        ...request,
+        expectedHandledById: row.handledById,
+        expectedUnheld: true,
+      });
     } catch (error) {
       summary.writeFailures++;
       deps.count('write_failed');

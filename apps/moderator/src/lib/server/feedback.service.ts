@@ -595,6 +595,8 @@ export async function triageFeedback(input: {
    * moderator's same-status save re-stamps `handledById` without moving the status.
    */
   expectedHandledById?: number | null;
+  /** `true`: write only while the row carries no HQ sync hold (see `withSyncHold`). */
+  expectedUnheld?: boolean;
   moderatorId: number;
 }): Promise<TriageResult> {
   if (input.note !== undefined && input.noteAppend !== undefined)
@@ -679,6 +681,8 @@ export async function triageFeedback(input: {
       input.expectedHandledById === null
         ? update.where('handledById', 'is', null)
         : update.where('handledById', '=', input.expectedHandledById);
+  if (input.expectedUnheld === true)
+    update = update.where(sql<boolean>`NOT (${sql.ref('context')} ? ${FEEDBACK_SYNC_HOLD_KEY})`);
   /**
    * 🔴 Area, `server` and the resolution being edited are checked in the same statement, never taken
    * from the form: a resolution on another area is a stray key nothing reads, `jsonb_set` under a

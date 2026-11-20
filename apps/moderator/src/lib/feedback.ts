@@ -5,7 +5,6 @@ import {
   FEEDBACK_ERROR_REF_PATTERN,
   FEEDBACK_STATUSES,
   FEEDBACK_ORCHESTRATOR_ID_PATTERN,
-  FEEDBACK_SYNC_HOLD_KEY,
   FEEDBACK_TOAST_TEXT_MAX_LENGTH,
   ORCHESTRATION_FEEDBACK_AREA,
 } from '@civitai/shared/feedback.constants';
@@ -476,9 +475,6 @@ export function splitContext(context: unknown): FeedbackContext {
       out.hqTask = { id: value.id, url: value.url };
     } else if (key === 'toast' && isToast(value)) {
       out.toast = { title: value.title ?? null, message: value.message };
-    } else if (key === FEEDBACK_SYNC_HOLD_KEY) {
-      // The queue's own HQ sync hold (`withSyncHold`), not something the reporter sent.
-      continue;
     } else {
       other[key] = value;
     }
