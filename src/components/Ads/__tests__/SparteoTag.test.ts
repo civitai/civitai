@@ -15,14 +15,18 @@ const act = (React as unknown as { act: typeof actType }).act;
 
 const SPARTEO = 1028;
 // Shape of a TCF v2.2 getTCData / addEventListener payload in the EEA (GDPR applies).
-const euTcData = (consents: Record<number, boolean>, eventStatus = 'tcloaded') => ({
+const euTcData = (
+  consents: Record<number, boolean>,
+  eventStatus = 'tcloaded',
+  purposes: Record<number, boolean> = { 1: true }
+) => ({
   tcString: 'CQIYAAAQIYAAAAKAAAENBQFgAAAAAAAAAAAAAAAAAAAA',
   gdprApplies: true,
   eventStatus,
   cmpStatus: 'loaded',
   listenerId: 7,
   vendor: { consents, legitimateInterests: {} },
-  purpose: { consents: {}, legitimateInterests: {} },
+  purpose: { consents: purposes, legitimateInterests: {} },
 });
 
 type Listener = (tcData: unknown, success: boolean) => void;
@@ -63,7 +67,7 @@ afterEach(async () => {
 
 describe('SparteoTag TCF gate', () => {
   it('EU visitor who refused all: no Sparteo script', async () => {
-    installCmp(euTcData({}));
+    installCmp(euTcData({}, 'tcloaded', {}));
     await mount();
     expect(sparteoScripts()).toBe(0);
   });
@@ -72,6 +76,12 @@ describe('SparteoTag TCF gate', () => {
     installCmp(euTcData({ [SPARTEO]: true, 755: true }));
     await mount();
     expect(sparteoScripts()).toBe(1);
+  });
+
+  it('Sparteo vendor consent without Purpose 1 (device storage): no Sparteo script', async () => {
+    installCmp(euTcData({ [SPARTEO]: true }, 'tcloaded', { 1: false, 3: true, 4: true }));
+    await mount();
+    expect(sparteoScripts()).toBe(0);
   });
 
   it('consent to other vendors but not Sparteo: no Sparteo script', async () => {

@@ -15,10 +15,11 @@ type TcData = {
   gdprApplies?: boolean;
   listenerId?: number;
   vendor?: { consents?: Record<string, boolean> };
+  purpose?: { consents?: Record<string, boolean> };
 };
 
 /**
- * Whether a TCF `addEventListener` callback lets `vendorId` run: `null` while the CMP has not
+ * Whether a TCF `addEventListener` callback lets `vendorId` set cookies (vendor consent plus Purpose 1): `null` while the CMP has not
  * settled (stub, UI still showing), so the caller keeps waiting.
  */
 export function tcfAllowsVendor(
@@ -29,7 +30,8 @@ export function tcfAllowsVendor(
   if (!success || !tcData) return null;
   if (tcData.eventStatus !== 'tcloaded' && tcData.eventStatus !== 'useractioncomplete') return null;
   if (tcData.gdprApplies === false) return true;
-  return tcData.vendor?.consents?.[vendorId] === true;
+  // Purpose 1 (store/access information on a device) needs consent too; it has no legitimate-interest basis.
+  return tcData.vendor?.consents?.[vendorId] === true && tcData.purpose?.consents?.[1] === true;
 }
 
 /**
