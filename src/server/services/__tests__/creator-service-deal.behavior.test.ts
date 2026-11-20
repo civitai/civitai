@@ -206,6 +206,8 @@ const deal = async (id: number) =>
       dueAt: Date | null;
       releaseAt: Date | null;
       completedAt: Date | null;
+      reviewEnabledAt: Date | null;
+      offeringId: number;
     }>(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id])
   )[0];
 
@@ -3468,10 +3470,10 @@ describe('buyer reviews', () => {
 
   it('a happy review moves the release to now, writes one event and one review, and pays the seller', async () => {
     const id = await completed();
-    expect((await deal(id)).releaseAt.getTime()).toBeGreaterThan(Date.now());
+    expect((await deal(id)).releaseAt!.getTime()).toBeGreaterThan(Date.now());
     await review(id, 'Happy', { comment: 'Lovely work' });
 
-    expect((await deal(id)).releaseAt.getTime()).toBeLessThanOrEqual(Date.now());
+    expect((await deal(id)).releaseAt!.getTime()).toBeLessThanOrEqual(Date.now());
     expect(await happyEvents(id)).toBe(1);
     expect(await reviewRows(id)).toEqual([
       {
