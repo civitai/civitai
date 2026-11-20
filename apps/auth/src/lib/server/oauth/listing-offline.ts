@@ -14,8 +14,9 @@ import { logAxiomError } from '$lib/server/axiom';
 // network hop and a second service whose outage changes token issuance, and a copy of the flag on
 // the client row would need a writer to keep it in step with every approve, delist and edit.
 //
-// Only top-level listings count (a shadow revision's declaration is not live until it is
-// approved), and only `approved` ones declare. A listing in any other state (draft, pending,
+// Only `approved` listings declare. A pending edit of a live listing sits on a shadow revision,
+// which is always a draft, so its declaration counts only once approve copies it onto the live
+// listing; no separate shadow filter is needed. A listing in any other state (draft, pending,
 // rejected, removed) still makes the client a listed one, so a delisted app does not fall back to
 // the unlisted rule and regain offline access.
 //
@@ -32,7 +33,6 @@ export async function readClientOfflineListing(clientId: string): Promise<Client
     .select(['status', 'connect_scope_justifications'])
     .where('connect_client_id', '=', clientId)
     .where('kind', '=', 'offsite')
-    .where('revision_of_id', 'is', null)
     .execute();
   if (rows.length === 0) return 'unlisted';
   return rows.some(
