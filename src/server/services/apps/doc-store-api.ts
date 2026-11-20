@@ -34,11 +34,13 @@
 // merge-patch of `data` is reserved for later. The deprecated routes answer exactly as before,
 // with `Deprecation` and `Link` headers (`LEGACY_TALLY_HEADERS`); no `Sunset` is set yet.
 //
-// IMPORTS. Every collection route takes an optional `?from=<source blockId>`: the call then runs
-// in that SOURCE app, as the same viewer, through an import the caller's manifest declares
-// (`resolveImportAccess` in `doc-store-access.ts`). The call is first charged to the CONSUMER's
-// read bucket for the viewer, before it is resolved. Everything after that — gates, budgets, rate
-// limits, moderation, ceilings — reads the source's access, so it applies as the source.
+// IMPORTS. Every collection route takes an optional `?from=<source blockId>`. A `from` naming the
+// token's OWN app (its blockId) is an own call, exactly as if `from` were omitted: same access,
+// rate bucket and response (`otherAppSource`). Any other `from` runs the call in that SOURCE app,
+// as the same viewer, through an import the caller's manifest declares (`resolveImportAccess` in
+// `doc-store-access.ts`). Such a call is first charged to the CONSUMER's read bucket for the
+// viewer, before it is resolved. Everything after that — gates, budgets, rate limits, moderation,
+// ceilings — reads the source's access, so it applies as the source.
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { sessionClient } from '~/server/auth/session-client';

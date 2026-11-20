@@ -3829,6 +3829,83 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     });
     expect(r.status).toBe(403);
     expect(r.body).toMatchObject({ code: 'not_eligible', details: { reason: 'import_dev_token' } });
+
+    // A review token of the consumer's pending request, naming the same source.
+    const pr = {
+      id: `pubreq_01JFROMOWNOTHER${seq}000000`,
+      status: 'pending',
+      manifest: C.manifest,
+    };
+    publishRequests.push(pr);
+    const review = await mint({
+      app: { id: pr.id, appId: C.appId, blockId: C.blockId },
+      uid: VIEWER_IDS.v1,
+      scopes: CONSUMER_SCOPES,
+      dev: true,
+      reviewRunForReal: true,
+    });
+    const rr = await call({
+      token: review,
+      method: 'GET',
+      path: '/notes/x',
+      query: { from: S.blockId },
+    });
+    expect(rr.status).toBe(403);
+    expect(rr.body).toMatchObject({
+      code: 'not_eligible',
+      details: { reason: 'import_in_review' },
+    });
+  });
+
+  it("🔴 a resubmission's review token: from=<its slug>, which is also the LIVE app's blockId, reads the review namespace, never production", async () => {
+    // The live, approved app and the viewer's production document in it.
+    const { C: live } = importApps();
+    await call({
+      token: await as(live, VIEWER_IDS.v1),
+      method: 'PUT',
+      path: '/notes/same',
+      body: { data: { t: 'LIVE-PROD-CANARY' } },
+    });
+    // A resubmission of that app: its pending request carries the SAME blockId.
+    const pr = {
+      id: `pubreq_01JFROMOWNRESUB${seq}000000`,
+      status: 'pending',
+      manifest: live.manifest,
+    };
+    publishRequests.push(pr);
+    const review = await mint({
+      app: { id: pr.id, appId: live.appId, blockId: live.blockId },
+      uid: VIEWER_IDS.v1,
+      scopes: ['apps:storage'],
+      dev: true,
+      reviewRunForReal: true,
+    });
+    await call({
+      token: review,
+      method: 'PUT',
+      path: '/notes/same',
+      body: { data: { t: 'REVIEW-CANARY' } },
+    });
+    const named = await call({
+      token: review,
+      method: 'GET',
+      path: '/notes/same',
+      query: { from: live.blockId },
+    });
+    expect(named.status).toBe(200);
+    expect(named.body).toMatchObject({ data: { t: 'REVIEW-CANARY' } });
+    expect(JSON.stringify(named.body)).not.toContain('LIVE-PROD-CANARY');
+    expect(shape(named)).toEqual(
+      shape(await call({ token: review, method: 'GET', path: '/notes/same' }))
+    );
+    // POSITIVE CONTROL: the live app's own token does read the production document.
+    const prod = await call({
+      token: await as(live, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/same',
+      query: { from: live.blockId },
+    });
+    expect(prod.body).toMatchObject({ data: { t: 'LIVE-PROD-CANARY' } });
   });
 
   it('from=<another app> is still judged as an import (unchanged)', async () => {
