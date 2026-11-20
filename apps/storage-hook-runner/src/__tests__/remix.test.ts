@@ -7,6 +7,7 @@ import {
   MAX_REMIX_EFFECTS,
   MAX_REMIX_SOURCE_BYTES,
   REMIX_QUARANTINE_MS,
+  REMIX_REPLAY_TIMEOUT_MS,
   SIG_HEADER,
 } from '../limits.ts';
 import { createMetrics } from '../metrics.ts';
@@ -333,15 +334,35 @@ describe("POST /v1/remix/replay: faults are the author's, per replay", () => {
   });
 });
 
-it(`gives each of ${
-  1 + MAX_REMIX_BRANCHES
-} looping replays its own deadline, inside the call's backstop`, async () => {
-  const loop = 'export default defineRemixApp({ async run() { for (;;) {} } });';
-  const all = await results(loop, {
-    branches: Array.from({ length: MAX_REMIX_BRANCHES }, () => []),
-  });
-  expect(all).toHaveLength(1 + MAX_REMIX_BRANCHES);
-  expect(all.every((r) => r.cause === 'timeout')).toBe(true);
+it(`gives each of ${1 + MAX_REMIX_BRANCHES} looping replays its own deadline`, async () => {
+  // Its own pool, with a backstop far past the call's: a CI host slow enough to push the call
+  // past remixBudgetMs would otherwise turn it into a 423 and quarantine the shared app.
+  const p = await HookPool.start({ size: 1, backstopMs: 30_000 });
+  const a = buildApp({ secret: SECRET, mode: 'remix', pool: p, metrics: createMetrics() });
+  try {
+    const loop = 'export default defineRemixApp({ async run() { for (;;) {} } });';
+    const body = JSON.stringify(
+      replayBody(loop, { branches: Array.from({ length: MAX_REMIX_BRANCHES }, () => []) })
+    );
+    const res = await a.inject({
+      method: 'POST',
+      url: '/v1/remix/replay',
+      headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    const { results: all, elapsedMs } = res.json() as {
+      results: Record<string, unknown>[];
+      elapsedMs: number;
+    };
+    expect(all).toHaveLength(1 + MAX_REMIX_BRANCHES);
+    expect(all.every((r) => r.cause === 'timeout')).toBe(true);
+    // Each replay ran to its own deadline, not one shared by the call.
+    expect(elapsedMs).toBeGreaterThanOrEqual((1 + MAX_REMIX_BRANCHES) * REMIX_REPLAY_TIMEOUT_MS);
+  } finally {
+    await a.close();
+    await p.close();
+  }
 });
 
 describe('quarantine after the backstop', () => {

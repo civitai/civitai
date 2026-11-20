@@ -204,8 +204,9 @@ All bounds live in `src/limits.ts`.
   could read freed memory from an earlier call.
 - **A remix call's backstop** allows each replay 30 ms beyond its 50 (the compile-only pass,
   the compile allowance and floor, runtime setup and disposal) and the call 50 ms for its fresh
-  instance, so a looping app's own timeouts do not add up to a runner fault: 13 looping replays of
-  a 28 KiB app measured 755-863 ms against the 1,190 ms backstop. Native work that never polls
+  instance, so a looping app's own timeouts do not add up to a runner fault: 13 looping replays
+  measured 732-754 ms for the call against its 1,190 ms backstop (63-byte and 28 KiB apps, 10
+  calls each, one dev-box run). Native work that never polls
   the interrupt still reaches the backstop: `const a = []; a.length = 2 ** 32 - 1; a.includes(1);`
   walks the holes inside QuickJS and runs on past any deadline. That call, and every remix call
   for the same `appId` for the next 10 minutes (`REMIX_QUARANTINE_MS`, kept per process), answer
@@ -216,7 +217,7 @@ All bounds live in `src/limits.ts`.
   an author sees what their own unreviewed app returns. `Date` and `Math.random` are removed
   before the app's module runs, so it is a pure function of its input, which replay relies on.
   Pick of four, 13 replays in one call over HTTP: p50 12.4 / p99 33.2 ms (n=200, one local run)
-  against a 750 ms backstop.
+  against its 1,190 ms backstop.
 - **When the shared instance is replaced.** After a call that leaves the VM other than by a clean
   in-VM exception: a throw out of the WASM boundary (a WASM trap, a host stack overflow), a
   failure creating the runtime or context, a failure disposing them, or a failed instantiation.
