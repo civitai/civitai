@@ -3772,6 +3772,7 @@ export const REDIS_SUB_KEYS = {
   },
   QUEUES: {
     MERGING: 'merging', // sys
+    CONSUMING: 'consuming', // sys
   },
 } as const;
 

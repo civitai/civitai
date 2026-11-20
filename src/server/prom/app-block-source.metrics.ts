@@ -27,6 +27,17 @@ export const APP_BLOCK_ACCEPTED_SOURCE_CLASSES = [
   'external',
 ] as const;
 
+/** The App Blocks source flags whose unreadable evaluations are counted. */
+export const APP_BLOCK_SOURCE_FLAGS = ['source-scanned-rows', 'refuse-external-sources'] as const;
+export type AppBlockSourceFlag = (typeof APP_BLOCK_SOURCE_FLAGS)[number];
+
+/** App Blocks source flag reads that could not be evaluated and so answered ON (refuse). */
+export const appBlockSourceFlagUnknownCounter = registerCounterWithLabels({
+  name: 'app_block_source_flag_unknown_total',
+  help: 'App Blocks source flag reads that could not be evaluated and answered on, by flag.',
+  labelNames: ['flag'] as const,
+});
+
 /**
  * Orchestrator sources on App Blocks entries, counted only: nothing is refused on this count.
  * `host-orchestrator-source` is a consumer-blob path; `host-unparsable` is any other orchestrator
@@ -54,6 +65,7 @@ export const appBlockSourceAcceptedCounter = registerCounterWithLabels({
  */
 export function seedAppBlockSourceMetrics(): void {
   try {
+    for (const flag of APP_BLOCK_SOURCE_FLAGS) appBlockSourceFlagUnknownCounter.inc({ flag }, 0);
     for (const entry of APP_BLOCK_ENTRY_LIST) {
       for (const reason of APP_BLOCK_HOST_SOURCE_REASONS)
         appBlockHostSourceCounter.inc({ entry, reason }, 0);

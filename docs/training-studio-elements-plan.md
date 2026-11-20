@@ -1,6 +1,6 @@
 # Training Studio on Civitai Elements
 
-**Status:** in progress, behind the `training-studio-elements-ui` flag. The Select step is redesigned (#9552).
+**Status:** in progress, behind the `training-studio-elements-ui` flag. The Select step (#9552) and the Data step (#9878) are redesigned; the shell and the Review step are next.
 Tracked in HQ as `training_studio_civitai_ww5n`; slice 0 is `elements_training_studio_d595`.
 
 ## Goal
@@ -56,10 +56,15 @@ Measured on the Select step (Media, Type and Engine rows, Continue button):
   with the tags read from the kit's manifest and the `studio-*` element files.
 - **a11y warnings.** Svelte's a11y checks treat every `<civitai-*>` tag as a static `<div>` and warn on
   click handlers. The elements render real controls in their shadow roots, so `svelte.config.js` filters
-  those two warning codes for `<civitai-` tags only.
+  those two warning codes for `<civitai-` and `<studio-` tags only.
 - **Bundle.** The embed's JS grows from 454.45 to 466.65 kB gzipped (+12.2 kB) for Lit, the kit's base
   and two elements. CSS is unchanged at 31.37 kB. Later elements should add less, since Lit and the
   base are shared, but that is not measured yet.
+- **Labels.** A kit field's accessible name comes only from its own visible `label`; `aria-label` on
+  the host is not forwarded into the shadow root. So every converted field gets a visible label (the
+  Data step's trigger word moved its help tooltip into the field's `description`).
+- **Datalists.** A `list=` id can't reach an `<input>` inside a shadow root, so a field with datalist
+  suggestions (the Data step's tag filter) stays a native input.
 - **Not yet checked:** rendering inside the main-app embed. The spike was checked in the standalone
   shell only.
 
@@ -98,10 +103,11 @@ the embed as well as the standalone app.
 
 0. This plan and the Select-step spike: the Media, Type and Engine rows and the Continue button.
 1. The rest of the Select step and the shared shell: page header, stepper, summary panel, alerts.
-2. Data step (uploads, label editor, tag management).
+2. Data step (uploads, label editor, tag management), with the first Studio-owned popover
+   (`studio-popover`, a native `popover` panel) for "Set repeats".
 3. Review step (parameter form, prices, confirm dialogs).
 4. Run detail and My trainings (loss graph as the first Studio-owned element, epoch media cards).
-5. Studio-owned popover, then drop the remaining `@civitai/ui` imports from the Studio.
+5. Drop the remaining `@civitai/ui` imports from the Studio.
 
 ### The flag
 

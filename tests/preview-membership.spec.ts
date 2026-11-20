@@ -46,9 +46,7 @@ test.describe('membership page — gold (paid, tier=gold)', () => {
     // <Title>My Membership Plan</Title>), present in BOTH the has-subscription
     // and the no-active-subscription branches. This is the structural marker
     // that the membership view (not a redirect target) rendered.
-    await expect(
-      page.getByRole('heading', { name: /My Membership Plan/i })
-    ).toBeVisible();
+    await expect(page.getByRole('heading', { name: /My Membership Plan/i })).toBeVisible();
 
     // NOTE: distinguishing active-member affordance. For an active, non-canceled,
     // non-Civitai-provider subscription, membership.tsx renders a
@@ -63,7 +61,29 @@ test.describe('membership page — gold (paid, tier=gold)', () => {
       .getByRole('button', { name: /Cancel membership/i })
       .or(page.getByRole('link', { name: /^Upgrade$/i }))
       .or(page.getByRole('button', { name: /Update Payment/i }));
-    await expect(manageControl.first()).toBeVisible();
+
+    // The page looks up the subscription for the domain's Buzz type (features.isGreen:
+    // green on a .com-labelled preview, yellow otherwise). The seeded gold sub is
+    // yellow, so on a green preview the page finds no green sub and shows the
+    // "Yellow Membership Detected" alert instead of the manage controls.
+    // FeatureAccess is sparse: a flag that is off is absent, not false.
+    const flags = await page.evaluate(
+      () =>
+        (window as unknown as { __NEXT_DATA__?: { props?: { pageProps?: { flags?: unknown } } } })
+          .__NEXT_DATA__?.props?.pageProps?.flags
+    );
+    expect(
+      flags,
+      'feature flags in __NEXT_DATA__ (which domain the preview serves)'
+    ).toBeInstanceOf(Object);
+    const isGreen = (flags as { isGreen?: boolean }).isGreen === true;
+    // Exact name: the has-subscription view's "View Yellow Membership" must not match.
+    const viewOtherMembership = page.getByRole('button', { name: /^View Membership$/ });
+    const memberSignal = isGreen ? manageControl.or(viewOtherMembership) : manageControl;
+    await expect(memberSignal.first()).toBeVisible();
+    if (isGreen && !(await manageControl.first().isVisible())) {
+      await expect(page.getByText('Yellow Membership Detected')).toBeVisible();
+    }
   });
 });
 

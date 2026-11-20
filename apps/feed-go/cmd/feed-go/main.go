@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -348,6 +349,13 @@ func run(log *slog.Logger) error {
 		OnSlot:              func(slot string) { metrics.SessionCookieSlot.WithLabelValues(slot).Inc() },
 		ModerationAccountID: cfg.ModerationAccountID,
 	}
+	if cfg.BearerAuth {
+		// API keys resolved from the app's principal cache (DESIGN.md §4.2); off, every one falls back.
+		resolver.APIKeys = &auth.APIKeys{Cache: packed, Secret: cfg.APIKeySecret, OrchestratorToken: cfg.OrchestratorServiceToken}
+	}
+	// The secrets themselves are never logged: only whether each is set.
+	log.Info("api keys", "FEED_GO_BEARER_AUTH", cfg.BearerAuth, "NEXTAUTH_SECRET_set", strings.TrimSpace(cfg.APIKeySecret) != "",
+		"ORCHESTRATOR_SERVICE_TOKEN_set", strings.TrimSpace(cfg.OrchestratorServiceToken) != "")
 	deps := &feed.Deps{
 		DB:       pool,
 		Cache:    &feed.QueryCache{Redis: cache, Prefix: cfg.CacheKeyPrefix, Enabled: cfg.ImageQueryCache},
