@@ -62,16 +62,19 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
             variant="disc"
             className="pointer-events-auto"
           />
-          <span className="mr-[9px] rounded-[10px] bg-black/60 px-2 py-[3px] text-[11px] font-semibold leading-[13px] text-white">
+          <span className="rounded-[10px] bg-black/60 px-2 py-[3px] text-[11px] font-semibold leading-[13px] text-white">
             {formatPlaybackTime(track.durationSec)}
           </span>
         </div>
-        <div className="absolute right-2 top-2 z-[4]">
+        {/* Inset as the duration badge is, so the two share a right edge. */}
+        <div className="absolute right-3 top-3 z-[4]">
           <ImageContextMenu
             image={data}
             leadingMenuItems={<FeedSongMenuItems song={data} />}
-            // A dark round under the white ⋯, so it reads on a light cover too.
-            className="rounded-full bg-black/60 hover:bg-black/70"
+            size={26}
+            // A dark round under the white ⋯, so it reads on a light cover too; the shared trigger's
+            // 26px icon would fill it, so the ⋯ is the 16px of the design's other menus.
+            className="rounded-full bg-black/60 hover:bg-black/70 [&_svg]:size-4"
           />
         </div>
       </div>

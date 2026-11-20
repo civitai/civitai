@@ -28,9 +28,19 @@ vi.mock('~/components/MusicPlayer/useMusicPlayerCover', () => ({
 vi.mock('~/components/Music/useSongPlays', () => ({
   useSongListPlays: () => ({ 1: 9700 }),
 }));
-vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
-  ImageContextMenu: () => null,
-}));
+// The menu's items need the image's own reads; the card's real trigger stands in for the whole menu.
+vi.mock('~/components/Image/ContextMenu/ImageContextMenu', async () => {
+  const { ActionIconDotsVertical } = await import(
+    '~/components/Cards/components/ActionIconDotsVertical'
+  );
+  return {
+    ImageContextMenu: ({
+      image: _image,
+      leadingMenuItems: _items,
+      ...props
+    }: Record<string, unknown>) => <ActionIconDotsVertical {...props} />,
+  };
+});
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ...(await importOriginal<typeof RoutedDialogLinkModule>()),
   RoutedDialogLink: ({ children, className }: { children: ReactNode; className?: string }) => (
@@ -144,4 +154,25 @@ test('the music feed lays Song Cards six across at 1440 (Pencil `xNZ0Z`)', async
   const cards = many.slice(0, 6).map((s) => cardOf(title(`Song ${s.id}`)).getBoundingClientRect());
   expect(new Set(cards.map((c) => Math.round(c.top))).size).toBe(1);
   expect(cards.map((c) => c.width)).toEqual(Array(6).fill(MUSIC_FEED_COLUMN_WIDTH));
+});
+
+test("the menu's ⋯ is small, and the menu and the duration badge share the cover's right edge", async () => {
+  const height = Math.floor(MUSIC_FEED_COLUMN_WIDTH * SONG_COVER_RATIO + SONG_CARD_TEXT_HEIGHT);
+  await renderAtViewport(
+    <div style={{ width: MUSIC_FEED_COLUMN_WIDTH }}>
+      <SongCard data={songs[0]} height={height} />
+    </div>,
+    { width: 1440, height: 900 }
+  );
+  await vi.waitFor(() => expect(title('Midnight Arcade')).toBeTruthy());
+  const menu = document.querySelector('button[aria-label="More options"]')!;
+  const badge = [...document.querySelectorAll('span')].find((s) => s.textContent === '3:05')!;
+  const cover = cardOf(title('Midnight Arcade')).firstElementChild!.getBoundingClientRect();
+  const box = menu.getBoundingClientRect();
+  const icon = menu.querySelector('svg')!.getBoundingClientRect();
+  expect([box.width, box.height]).toEqual([26, 26]);
+  expect([icon.width, icon.height]).toEqual([16, 16]);
+  expect(cover.right - box.right).toBe(12);
+  expect(cover.right - badge.getBoundingClientRect().right).toBe(12);
+  expect(box.top - cover.top).toBe(12);
 });
