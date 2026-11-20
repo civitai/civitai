@@ -36,7 +36,7 @@ import {
 } from '~/shared/constants/moderator-app';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import { showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 type SongContextMenuProps = {
   image: ImageContextMenuProps['image'];
@@ -57,7 +57,13 @@ async function shareSong(imageId: number, onCopied: (url: string) => void) {
     }
     return;
   }
-  await navigator.clipboard.writeText(url);
+  try {
+    await navigator.clipboard.writeText(url);
+  } catch {
+    // No clipboard (an insecure context, or permission refused): say so rather than fail silently.
+    showErrorNotification({ title: 'Couldn’t copy the link', error: new Error(url) });
+    return;
+  }
   onCopied(url);
   showSuccessNotification({
     title: 'Link copied',
