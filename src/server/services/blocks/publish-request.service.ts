@@ -4708,8 +4708,10 @@ async function approveRequestUnderClaim(
           }`
       );
     }
-    // Awaited (bounded): the hold re-suspended a version that was serving, and the moderator must
-    // hear if the previous version may still be up.
+    // Before the takedown wait: the orchestrator must stop honouring the revoked tokens at once.
+    const { forgetRevokedAppTokens } = await import('./app-block-token-revoke.service');
+    await forgetRevokedAppTokens(revokedTokens);
+    // Awaited, not fire-and-forget: the moderator must hear if the previous version may still serve.
     const { takeDownLiveApp, LATE_HOLD_TAKEDOWN_WAIT_MS, unconfirmedTakedownNote } = await import(
       './live-unpublish.service'
     );
@@ -4718,8 +4720,6 @@ async function approveRequestUnderClaim(
     }).catch(() => ({
       liveNote: unconfirmedTakedownNote(request.slug, 'its live takedown could not be started'),
     }));
-    const { forgetRevokedAppTokens } = await import('./app-block-token-revoke.service');
-    await forgetRevokedAppTokens(revokedTokens);
     return {
       publishRequestId: request.id,
       appBlockId,

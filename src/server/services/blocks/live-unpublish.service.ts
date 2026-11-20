@@ -41,6 +41,7 @@
  * (offsite-listing.service); the after-deploy check from build-callback.
  */
 import { liveAppImageRef } from '~/server/services/blocks/app-block-image';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 
 type JobOutcome = 'succeeded' | 'failed' | 'timeout';
 type PointerJob =
@@ -271,15 +272,8 @@ export async function takeDownLiveApp(
     };
   }
   const sync = syncLivePointer(slug, opts).catch((): SyncOutcome => 'failed');
-  if (opts.awaitMs === undefined) return {};
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const outcome = await Promise.race([
-    sync,
-    new Promise<'waiting'>((resolve) => {
-      timer = setTimeout(() => resolve('waiting'), opts.awaitMs);
-    }),
-  ]);
-  clearTimeout(timer);
+  if (!opts.awaitMs || opts.awaitMs <= 0) return {};
+  const outcome = await withTimeoutFallback<SyncOutcome | 'waiting'>(sync, opts.awaitMs, 'waiting');
   return outcome === 'settled'
     ? {}
     : { liveNote: unconfirmedTakedownNote(slug, UNSETTLED_WHY[outcome]) };

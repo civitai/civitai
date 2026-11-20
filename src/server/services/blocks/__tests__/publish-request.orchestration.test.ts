@@ -2201,12 +2201,38 @@ describe('approveRequest', () => {
     expect(mockTriggerBuild).not.toHaveBeenCalled();
     expect(result.lateHoldIds).toEqual([7]);
     // The previous version stops serving on the subdomain too.
-    // Awaited, bounded, so a takedown that does not settle reaches the moderator as a note.
     expect(takeDown).toHaveBeenCalledWith('hello', { awaitMs: 20_000 });
     // The put-back listing is not served from a stale catalog cache.
     expect(bust).toHaveBeenCalled();
     // The tokens the late hold revoked are dropped from the orchestrator's auth cache too.
     expect(mockRevokeOrchestratorTokens).toHaveBeenCalledWith({ userId: 5 });
+    // ...before the takedown wait, not after it.
+    expect(mockRevokeOrchestratorTokens.mock.invocationCallOrder[0]).toBeLessThan(
+      takeDown.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('a late hold whose takedown is unconfirmed hands the moderator the note', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    const finalise = await finaliseMock();
+    const takeDown = vi.mocked(
+      (await import('~/server/services/blocks/live-unpublish.service')).takeDownLiveApp
+    );
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    finalise.mockImplementationOnce(async () => ({ lateHoldIds: [7], revokedTokens: null }));
+    takeDown.mockResolvedValueOnce({ liveNote: 'hello may still be served on its subdomain: x' });
+    const noted = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    expect(noted.liveNote).toBe('hello may still be served on its subdomain: x');
+
+    finalise.mockImplementationOnce(async () => ({ lateHoldIds: [7], revokedTokens: null }));
+    takeDown.mockRejectedValueOnce(new Error('boom'));
+    const thrown = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    expect(thrown.liveNote).toBe(
+      'hello may still be served on its subdomain: its live takedown could not be started'
+    );
   });
 
   it('first-version happy path wires the 4 external systems in order', async () => {

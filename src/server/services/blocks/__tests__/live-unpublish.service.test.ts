@@ -254,6 +254,18 @@ describe('takeDownLiveApp awaited (the late-hold approve)', () => {
     await vi.waitFor(() => expect(w.lock).toBe(false));
   });
 
+  it('a takedown that did not settle within its steps is noted', async () => {
+    const { deps } = world({ status: 'suspended' });
+    // The block flips between suspended and approved on every read, so each step undoes the last.
+    let reads = 0;
+    deps.readBlockBySlug.mockImplementation(async () => ({
+      id: BLOCK,
+      status: reads++ % 2 === 0 ? 'suspended' : 'approved',
+    }));
+    const { liveNote } = await takeDownLiveApp(SLUG, { deps, awaitMs: 1000 });
+    expect(liveNote).toMatch(/did not settle/);
+  });
+
   it('a takedown queued behind another run of the app is noted as not confirmed', async () => {
     const { w, deps } = world({ status: 'suspended' });
     w.lock = true;
