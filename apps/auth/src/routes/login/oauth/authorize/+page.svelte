@@ -15,6 +15,9 @@
   // Which decision is on its way. Both forms are native submits, so the page gives no sign of the round
   // trip through the client's callback on its own; this shows it and blocks a second click.
   let submitting = $state<'approve' | 'deny' | null>(null);
+  // The offline line (shown only when the app asked for offline access): ticked to start with, so the
+  // user sees what the app asked for and can untick it.
+  let stayConnected = $state(true);
   // User images are sometimes bare CDN keys, not URLs — only render an <img> for an absolute URL, else
   // fall back to an initial avatar so the picker never shows a broken image.
   const isUrl = (s: string | undefined) => !!s && /^https?:\/\//.test(s);
@@ -131,6 +134,43 @@
           <input type="hidden" {name} {value} />
         {/each}
         <input type="hidden" name="approved" value="true" />
+
+        {#if data.offline}
+          <div class="offline">
+            <label class="offline-line">
+              <input type="checkbox" name="offline" value="true" bind:checked={stayConnected} />
+              <span>Stay connected while you're away, until you disconnect</span>
+            </label>
+            {#if stayConnected}
+              <div class="offline-cap">
+                <label for="offline-cap-limit">Buzz it may spend while you're away</label>
+                <div class="offline-cap-fields">
+                  <input
+                    id="offline-cap-limit"
+                    type="number"
+                    name="offline_cap_limit"
+                    min="1"
+                    step="1"
+                    inputmode="numeric"
+                    placeholder="No limit"
+                    value={data.offline.cap?.limit ?? ''}
+                  />
+                  <select name="offline_cap_period" aria-label="Per">
+                    {#each ['day', 'week', 'month'] as period (period)}
+                      <option value={period} selected={(data.offline.cap?.period ?? 'day') === period}
+                        >per {period}</option
+                      >
+                    {/each}
+                  </select>
+                </div>
+              </div>
+              <p class="offline-note">
+                Staying connected remembers this approval. Change the limit or disconnect the app any
+                time in Connected apps.
+              </p>
+            {/if}
+          </div>
+        {/if}
 
         <label class="remember">
           <input type="checkbox" name="remember" value="true" checked />
@@ -368,6 +408,50 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+  }
+  .offline {
+    margin: 0 0 0.75rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid #2a2d34;
+    border-radius: 8px;
+    background: #1b1e24;
+  }
+  .offline-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  .offline-cap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin: 0.6rem 0 0;
+    font-size: 0.8rem;
+    color: #c8ccd0;
+  }
+  .offline-cap-fields {
+    display: flex;
+    gap: 0.4rem;
+  }
+  .offline-cap-fields input,
+  .offline-cap-fields select {
+    min-width: 0;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid #2a2d34;
+    border-radius: 6px;
+    background: #16181d;
+    color: #e8eaed;
+    font-size: 0.85rem;
+  }
+  .offline-cap-fields input {
+    flex: 1;
+  }
+  .offline-note {
+    margin: 0.5rem 0 0;
+    color: #9aa0a6;
+    font-size: 0.75rem;
   }
   .remember {
     display: flex;

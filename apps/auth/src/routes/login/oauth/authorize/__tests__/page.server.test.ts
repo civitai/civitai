@@ -42,6 +42,10 @@ const { getGrantedScope } = vi.hoisted(() => ({
   getGrantedScope: vi.fn(async (): Promise<bigint | null> => null),
 }));
 vi.mock('$lib/server/oauth/granted-scope', () => ({ getGrantedScope }));
+const flags = vi.hoisted(() => ({ offlineGrant: false }));
+vi.mock('$lib/server/flipt', () => ({
+  isGlobalFlagOn: async (flag: string) => flag === 'oauth-offline-grant' && flags.offlineGrant,
+}));
 
 import { load } from '../+page.server';
 
@@ -148,5 +152,35 @@ describe('consent screen — permissions new to this app', () => {
     getGrantedScope.mockClear();
     await loadWith(request);
     expect(getGrantedScope).toHaveBeenCalledWith(7, 'game-frame');
+  });
+});
+
+describe('consent screen load — the offline line', () => {
+  const ask = { offline_buzz_limit: '500', offline_buzz_period: 'week' };
+
+  it('with the offline-grant flag off, is not shown and the Approve form is unchanged', async () => {
+    flags.offlineGrant = false;
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline ?? null).toBeNull();
+    expect((page.params as Record<string, string>).scope).toBe(String(TokenScope.UserRead));
+    expect(page.params).not.toHaveProperty('offline_buzz_limit');
+  });
+
+  it('with the flag on, is shown with the app’s proposed cap, and the form keeps offline_access', async () => {
+    flags.offlineGrant = true;
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline).toEqual({ cap: { limit: 500, period: 'week' }, granted: false });
+    expect(page.params).toMatchObject({
+      scope: `offline_access ${TokenScope.UserRead}`,
+      offline_buzz_limit: '500',
+      offline_buzz_period: 'week',
+    });
+  });
+
+  it('with the flag on, is not shown when the app did not ask for offline access', async () => {
+    flags.offlineGrant = true;
+    const page = await loadWith(TokenScope.UserRead, ask);
+    expect(page.offline ?? null).toBeNull();
+    expect((page.params as Record<string, string>).scope).toBe(String(TokenScope.UserRead));
   });
 });

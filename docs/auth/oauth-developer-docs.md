@@ -154,7 +154,30 @@ grant_type=refresh_token
 &client_secret=YOUR_CLIENT_SECRET  (confidential clients only)
 ```
 
-The old access and refresh tokens are revoked, and new ones are issued.
+The old refresh token is revoked, and new access and refresh tokens are issued.
+
+### Offline access (rolling out)
+
+Offline access is becoming a separate grant. While it rolls out, the rules below apply only where it
+is switched on; elsewhere every authorization-code grant still gets a refresh token.
+
+- **Ask for it with `offline_access`.** A refresh token is issued only when the authorization request's
+  `scope` includes `offline_access` and the user approves "Stay connected while you're away, until you
+  disconnect" on the consent screen. Without both, the code exchange returns an access token alone (no
+  `refresh_token` field), and you send the user through authorization again when it expires.
+- **Propose a Buzz cap.** Add `offline_buzz_limit` (a positive whole number of Buzz) and optionally
+  `offline_buzz_period` (`day`, `week` or `month`; default `day`) to the authorization request. The
+  consent screen shows it on the offline line, the user can raise, lower or clear it, and they can
+  change it later in Connected apps. A malformed value is refused with `invalid_request`. While the
+  cap applies, Buzz spent with a token you obtained by refreshing is held to it; over the cap, the
+  request is refused with `403`.
+- **Refresh tokens issued before the switch keep working until their current expiry.** Refreshing one
+  whose consent has no offline grant returns a new refresh token with the same expiry, so it does not
+  slide; re-authorize with `offline_access` to keep access past it.
+- **Never reuse a refresh token.** Each refresh returns a new refresh token; store it and discard the
+  old one. Presenting a refresh token that was already exchanged revokes every refresh token in its
+  chain and all of the user's access tokens for your app, and the user must authorize again. If two
+  parts of your app may refresh at once, serialize the refresh.
 
 ## Device Authorization Flow
 
@@ -328,8 +351,9 @@ token endpoints carry: this is a server-to-server call.
 Request scopes by name, space-separated (`scope=ModelsRead MediaRead`), or as the integer bitmask
 (`scope=36`), combining values with bitwise OR. Names and numbers can be mixed. The OIDC scopes work too:
 `openid` asks for an `id_token`; `profile` and `email` are covered by `UserRead`; and `offline_access`
-changes nothing, because a refresh token is always issued. Discovery's `scopes_supported` lists every
-name. Token responses report `scope` as the bitmask.
+asks for a refresh token (see [Offline access](#offline-access-rolling-out); until that is switched on
+it changes nothing, because a refresh token is always issued). Discovery's `scopes_supported` lists
+every name. Token responses report `scope` as the bitmask.
 
 > **UserRead is always granted.** Every issued token includes the `UserRead` bit regardless of what you request — an app always needs to identify the user it's acting on. You don't need to add it explicitly, and it can't be omitted.
 
@@ -408,6 +432,23 @@ Buckets are keyed differently per endpoint — check which one applies before si
   before client authentication
 
 The hub sends no rate-limit headers and no `Retry-After`. A throttled request is `429` with `{"error":"rate_limited"}` — back off on the 429 itself.
+
+## How a token was minted: `mint_origin`
+
+Where offline access is switched on, a resource JWT (`typ: at+jwt`) obtained by token exchange carries
+a `mint_origin` claim naming how the access token it was exchanged from was minted:
+
+| Value | Meaning |
+| --- | --- |
+| `auth_code` | The user signed in to the app (authorization-code grant). |
+| `device_code` | The user approved a device (device authorization grant). |
+| `refresh` | The app renewed access with a refresh token; no user was necessarily present. |
+| `app_token` | Minted for a user using the app on civitai.com. |
+| `client_credentials` | The app acting as itself. |
+
+The claim is absent for tokens minted before it was recorded. Civitai enforces nothing on it apart from
+the offline Buzz cap; a resource may use it, for example to ask for a fresh sign-in before a sensitive
+action when the value is `refresh`.
 
 ## Token Lifetime
 

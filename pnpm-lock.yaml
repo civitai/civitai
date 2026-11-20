@@ -971,6 +971,9 @@ importers:
       '@civitai/email':
         specifier: workspace:*
         version: link:../../packages/civitai-email
+      '@civitai/flipt':
+        specifier: workspace:*
+        version: link:../../packages/civitai-flipt
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis

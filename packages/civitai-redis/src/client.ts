@@ -3248,6 +3248,11 @@ const REDIS_KEYS_UNPREFIXED = {
     DEVICE_CODES: 'packed:oauth:device-codes',
     DEVICE_USER_CODES: 'packed:oauth:device-user-codes',
     OIDC_CONTEXT: 'packed:oauth:oidc-context',
+    // `packed:oauth:refresh-tombstone:<sha256 of the token>` → the chain a rotated refresh token
+    // belonged to (family id, user, client). TTL at most 7 days, and never past the rotated token's own
+    // expiry. Presenting a tombstoned token is reuse: the auth hub revokes the chain. See apps/auth
+    // src/lib/server/oauth/offline-grant.ts.
+    REFRESH_TOMBSTONES: 'packed:oauth:refresh-tombstone',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',

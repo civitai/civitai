@@ -17,7 +17,22 @@ import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
 import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL, SYSTEM_USER_ID } from './constants';
-import { createAppAccessToken, createOAuthTokenPair } from './token-helpers';
+import {
+  createAppAccessToken,
+  createOAuthTokenPair,
+  createPlannedOAuthTokens,
+} from './token-helpers';
+import {
+  isOfflineGrantOn,
+  newRefreshFamilyId,
+  planAuthCodeGrant,
+  planRefreshGrant,
+  readRefreshChainColumns,
+  readRefreshTombstone,
+  revokeRefreshFamily,
+  tombstoneRotatedRefreshToken,
+  type RefreshChain,
+} from './offline-grant';
 import { OriginNotAllowedError } from './errors';
 import { redirectUriMatches } from './redirect-uri';
 import { isAppBlockOauthClientId } from './block-guard';
@@ -198,6 +213,9 @@ export const oauthModel = {
       userId: user.id,
       // On the code itself, so the hand-off knows an impersonation even when its context is lost.
       ...((user as { impersonation?: boolean }).impersonation && { impersonation: true }),
+      // Set by /authorize only with the offline-grant flag on: the request asked for offline_access
+      // and the consent carries the offline grant. The token grant re-checks the consent.
+      ...((user as GrantUser).offlineRequested && { offlineRequested: true }),
       scope: scopeValue,
       redirectUri: code.redirectUri,
       codeChallenge: code.codeChallenge,
@@ -234,6 +252,7 @@ export const oauthModel = {
       codeChallengeMethod?: string;
       expiresAt: string;
       impersonation?: boolean;
+      offlineRequested?: boolean;
     }>(REDIS_KEYS.OAUTH.AUTHORIZATION_CODES, hashedCode);
 
     if (!data) return false;
@@ -250,7 +269,11 @@ export const oauthModel = {
       codeChallenge: data.codeChallenge,
       codeChallengeMethod: data.codeChallengeMethod,
       client: client as Client,
-      user: { id: data.userId, ...(data.impersonation && { impersonation: true }) },
+      user: {
+        id: data.userId,
+        ...(data.impersonation && { impersonation: true }),
+        ...(data.offlineRequested && { offlineRequested: true }),
+      },
     } as unknown as AuthorizationCode;
   },
 
@@ -324,14 +347,35 @@ export const oauthModel = {
       .where('User.bannedAt', 'is', null)
       .executeTakeFirst();
 
-    if (!apiKey) return false;
+    // Offline-grant flag on: a token with no live row may be one that was already rotated, i.e.
+    // replayed. Its tombstone names the chain, which is revoked whole (offline-grant.ts).
+    const offlineGrant = await isOfflineGrantOn();
+    if (!apiKey) {
+      if (offlineGrant) {
+        const tombstone = await readRefreshTombstone(refreshToken);
+        if (tombstone) await revokeRefreshFamily(tombstone);
+      }
+      return false;
+    }
+
+    // Flag on: the chain this token belongs to rides the user object to revokeToken (tombstone) and
+    // saveToken (family + expiry); the library passes `token.user` to both.
+    let refreshChain: RefreshChain | undefined;
+    if (offlineGrant && apiKey.clientId) {
+      const chain = await readRefreshChainColumns(hash);
+      refreshChain = {
+        familyId: chain?.familyId ?? newRefreshFamilyId(),
+        rootOrigin: chain?.rootOrigin ?? null,
+        expiresAt: apiKey.expiresAt ?? null,
+      };
+    }
 
     return {
       refreshToken,
       refreshTokenExpiresAt: apiKey.expiresAt ?? undefined,
       scope: scopeToString(apiKeyRowScope(apiKey)),
       client: { id: apiKey.clientId ?? '' } as Client,
-      user: { id: apiKey.userId },
+      user: { id: apiKey.userId, viaRefresh: true, ...(refreshChain && { refreshChain }) },
     } as unknown as RefreshToken;
   },
 
@@ -351,8 +395,19 @@ export const oauthModel = {
       .where('key', '=', hash)
       .where('type', '=', 'Refresh')
       .executeTakeFirst();
+    const revoked = Number(deleted.numDeletedRows ?? 0n) > 0;
 
-    return Number(deleted.numDeletedRows ?? 0n) > 0;
+    // Offline-grant flag on (getRefreshToken attached the chain): only the caller that actually
+    // deleted the row leaves the tombstone, so a concurrent loser of the same rotation does not.
+    const chain = (token.user as GrantUser | undefined)?.refreshChain;
+    if (revoked && chain) {
+      await tombstoneRotatedRefreshToken(
+        token.refreshToken,
+        { familyId: chain.familyId, userId: token.user.id, clientId: token.client.id },
+        chain.expiresAt
+      );
+    }
+    return revoked;
   },
 
   // ─── Client Credentials ─────────────────────────────────────
@@ -406,6 +461,18 @@ export const oauthModel = {
   },
 };
 
+/**
+ * The user the library carries through a grant. `viaRefresh` marks one getRefreshToken returned.
+ * `offlineRequested` comes off an authorization code and `refreshChain` off a refresh token; those
+ * two are set only with the offline-grant flag on.
+ */
+type GrantUser = User & {
+  id: number;
+  viaRefresh?: boolean;
+  offlineRequested?: boolean;
+  refreshChain?: RefreshChain;
+};
+
 /** The client owner, as `getUserFromClient` returns it for the client_credentials grant. */
 type ClientCredentialsUser = { id: number; viaClientCredentials: true };
 
@@ -419,6 +486,7 @@ async function issueToken(token: Token, client: Client, user: User): Promise<Tok
   if (isClientCredentialsUser(user)) {
     const access = await createAppAccessToken(user.id, client.id, scope, ACCESS_TOKEN_TTL, {
       clientCredentials: true,
+      ...((await isOfflineGrantOn()) && { mintOrigin: 'client_credentials' as const }),
     });
     return {
       accessToken: access.accessToken,
@@ -429,13 +497,37 @@ async function issueToken(token: Token, client: Client, user: User): Promise<Tok
     } as Token;
   }
 
-  const pair = await createOAuthTokenPair(user.id, client.id, scope);
+  // Offline-grant flag on: what the grant mints depends on the consent's offline grant
+  // (offline-grant.ts). A refresh grant follows the flag as getRefreshToken read it, i.e. whether it
+  // attached the chain, so one grant never mixes the two behaviours; an authorization-code grant
+  // reads the flag here.
+  const grantUser = user as GrantUser;
+  const plan = grantUser.viaRefresh
+    ? grantUser.refreshChain &&
+      (await planRefreshGrant({
+        userId: user.id,
+        clientId: client.id,
+        chain: grantUser.refreshChain,
+      }))
+    : (await isOfflineGrantOn())
+    ? await planAuthCodeGrant({
+        userId: user.id,
+        clientId: client.id,
+        offlineRequested: grantUser.offlineRequested === true,
+      })
+    : undefined;
+  const pair = plan
+    ? await createPlannedOAuthTokens(user.id, client.id, scope, plan)
+    : await createOAuthTokenPair(user.id, client.id, scope);
 
   return {
     accessToken: pair.accessToken,
     accessTokenExpiresAt: pair.accessTokenExpiresAt,
-    refreshToken: pair.refreshToken,
-    refreshTokenExpiresAt: pair.refreshTokenExpiresAt,
+    // Absent when the plan issues no refresh token; the token response then has no refresh_token.
+    ...(pair.refreshToken && {
+      refreshToken: pair.refreshToken,
+      refreshTokenExpiresAt: pair.refreshTokenExpiresAt,
+    }),
     scope: scopeToString(scope),
     client,
     user,

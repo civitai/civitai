@@ -100,6 +100,12 @@ export interface AccessTokenJwtClaims {
   roles?: string[];
   /** A service token's user id at the resource. */
   civitai_uid?: number;
+  /**
+   * How the exchanged (subject) access token was minted: `auth_code` or `device_code` (the user
+   * signed in to the app), `refresh` (renewed by the app with no user present), `app_token` (minted
+   * for a user on the site), or `client_credentials`. Absent when the hub did not record it.
+   */
+  mint_origin?: string;
 }
 
 export const ACCESS_TOKEN_JWT_TYP = 'at+jwt';
@@ -193,6 +199,7 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
       ...(claims.act ? { act: { sub: claims.act.sub } } : {}),
       ...(claims.roles ? { roles: [...claims.roles] } : {}),
       ...(claims.civitai_uid !== undefined ? { civitai_uid: claims.civitai_uid } : {}),
+      ...(claims.mint_origin ? { mint_origin: claims.mint_origin } : {}),
     })
       .setProtectedHeader({ alg: ALG, kid: cfg.kid, typ: ACCESS_TOKEN_JWT_TYP })
       .setIssuer(claims.iss)

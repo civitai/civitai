@@ -23,6 +23,12 @@ import {
 import { mintUserSession, setSessionCookie } from '$lib/server/auth/session';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { NO_FRAMING } from '$lib/server/auth/same-origin';
+import { budgetsToSimpleBuzzLimit, type SimpleBuzzLimit } from '@civitai/auth/buzz-limit';
+import {
+  isOfflineGrantOn,
+  parseOfflineBuzzCap,
+  readConsentForOffline,
+} from '$lib/server/oauth/offline-grant';
 
 // Consent screen for the OAuth authorization_code flow. The §D /authorize endpoint redirects here
 // (303) when a user has no stored consent for the requested (client, scope). Approve POSTs straight
@@ -88,13 +94,39 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
     isNew: granted !== null && !hasScope(granted, bit),
   }));
 
+  // Offline access (flag `oauth-offline-grant`; offline-grant.ts): the "Stay connected while you're
+  // away" line, with a Buzz cap prefilled from the consent's current cap, else the app's proposal. Off,
+  // the page is unchanged.
+  let offline: { cap: SimpleBuzzLimit | null; granted: boolean } | null = null;
+  const offlineParams: Record<string, string> = {};
+  if (requested.offlineAccess && (await isOfflineGrantOn())) {
+    const proposed = parseOfflineBuzzCap(
+      url.searchParams.get('offline_buzz_limit') ?? undefined,
+      url.searchParams.get('offline_buzz_period') ?? undefined
+    );
+    if (proposed === 'invalid') return { invalid: true as const };
+    const consent = await readConsentForOffline(locals.user.id, clientId);
+    const current = budgetsToSimpleBuzzLimit(
+      Array.isArray(consent?.buzzLimit)
+        ? (consent.buzzLimit as Parameters<typeof budgetsToSimpleBuzzLimit>[0])
+        : null
+    );
+    offline = { cap: current ?? proposed, granted: consent?.offlineGrantedAt != null };
+    // Carried so a switch of account reloads this page with the app's proposal intact.
+    for (const key of ['offline_buzz_limit', 'offline_buzz_period'] as const) {
+      const value = url.searchParams.get(key);
+      if (value !== null) offlineParams[key] = value;
+    }
+  }
+
   // Hidden-field values for the Approve form (normalized scope incl. UserRead, keeping an `openid`
-  // request so the id_token survives the round-trip). Typed as a Record so the page can read individual
-  // keys (client_id/redirect_uri/state) for the Deny form.
-  const formParams: Record<string, string> = {
-    ...params,
-    scope: requested.openid ? `openid ${scope}` : String(scope),
-  };
+  // request so the id_token survives the round-trip, and `offline_access` while the offline line is
+  // shown). Typed as a Record so the page can read individual keys (client_id/redirect_uri/state) for
+  // the Deny form.
+  const scopeParam = [requested.openid && 'openid', offline && 'offline_access', String(scope)]
+    .filter(Boolean)
+    .join(' ');
+  const formParams: Record<string, string> = { ...params, ...offlineParams, scope: scopeParam };
 
   // prompt=select_account: the client asked for the account picker, so it opens straight away and shows
   // even with one account, with a way to sign in to another.
@@ -137,6 +169,7 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
       isVerified: client.isVerified,
     },
     scopes,
+    offline,
     params: formParams,
     accounts,
     selectAccount,
